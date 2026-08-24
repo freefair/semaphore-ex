@@ -60,3 +60,6 @@ __debug_bin*
 /*-config.yml
 /*-config.config
 /*.sqlite*
+/.claude/task-notes/
+
+/.claude/rules/

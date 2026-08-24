@@ -771,7 +771,7 @@ definitions:
         example: master
       ssh_key_id:
         type: integer
-  
+
   Repository:
     type: object
     properties:
@@ -1596,7 +1596,7 @@ paths:
           description: Created project
           schema:
             $ref: "#/definitions/Project"
-  
+
   /projects/restore:
     post:
       tags:
@@ -1626,7 +1626,7 @@ paths:
             type: array
             items:
               $ref: '#/definitions/Event'
-  
+
   /events/last:
     get:
       summary: Get last 200 Events related to Semaphore and projects you are part of
@@ -1949,7 +1949,7 @@ paths:
           description: Integration Created
           schema:
             $ref: "#/definitions/Integration"
-  
+
   /project/{project_id}/integrations/{integration_id}:
     parameters:
       - $ref: "#/parameters/project_id"
