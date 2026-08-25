@@ -1,2 +1,15 @@
 web/node_modules/
+api/public/
+bin/
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+docs/node_modules/
+docs/build/
+test/e2e/node_modules/
+test/e2e/playwright-report/
+test/e2e/test-results/
+dist/
 vendor/
