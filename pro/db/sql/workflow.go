@@ -11,6 +11,8 @@ import (
 type WorkflowStoreImpl struct {
 }
 
+var _ db.WorkflowManager = (*WorkflowStoreImpl)(nil)
+
 func (d *WorkflowStoreImpl) GetWorkflowRunTasks(projectID int, runID int, params db.RetrieveQueryParams) (res []db.TaskWithTpl, err error) {
 	return
 }

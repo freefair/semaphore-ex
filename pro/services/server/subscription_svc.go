@@ -12,6 +12,8 @@ func NewSubscriptionService(userRepo db.UserManager, optionsRepo db.OptionsManag
 type SubscriptionServiceImpl struct {
 }
 
+var _ pro_interfaces.SubscriptionService = (*SubscriptionServiceImpl)(nil)
+
 func (s *SubscriptionServiceImpl) GetToken() (res pro_interfaces.SubscriptionToken, err error) {
 	err = db.ErrNotFound
 	return

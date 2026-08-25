@@ -15,6 +15,8 @@ import (
 // flag (see pro/pkg/features).
 type workflowController struct{}
 
+var _ pro_interfaces.WorkflowController = (*workflowController)(nil)
+
 func NewWorkflowController(svc pro_interfaces.WorkflowService, workflowRepo db.WorkflowManager) pro_interfaces.WorkflowController {
 	return &workflowController{}
 }

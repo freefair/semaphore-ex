@@ -7,6 +7,8 @@ import (
 type LogWriteServiceImpl struct {
 }
 
+var _ pro_interfaces.LogWriteService = (*LogWriteServiceImpl)(nil)
+
 // NewLogWriteService creates a new instance of LogWriteServiceImpl.
 func NewLogWriteService() pro_interfaces.LogWriteService {
 	return &LogWriteServiceImpl{}

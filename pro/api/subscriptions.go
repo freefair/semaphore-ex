@@ -19,6 +19,8 @@ func NewSubscriptionController(
 type subscriptionControllerImpl struct {
 }
 
+var _ pro_interfaces.SubscriptionController = (*subscriptionControllerImpl)(nil)
+
 func (ctrl *subscriptionControllerImpl) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }

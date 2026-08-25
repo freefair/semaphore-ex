@@ -7,6 +7,8 @@ import (
 type TerraformStoreImpl struct {
 }
 
+var _ db.TerraformStore = (*TerraformStoreImpl)(nil)
+
 func (d *TerraformStoreImpl) CreateTerraformInventoryAlias(alias db.TerraformInventoryAlias) (res db.TerraformInventoryAlias, err error) {
 	return
 }
