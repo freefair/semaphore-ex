@@ -17,25 +17,26 @@ type SystemInfoController struct {
 }
 
 type SystemInfo struct {
-	Version           string                  `json:"version"`
-	Ansible           string                  `json:"ansible"`
-	WebHost           string                  `json:"web_host"`
-	UseRemoteRunner   bool                    `json:"use_remote_runner"`
-	AuthMethods       LoginAuthMethods        `json:"auth_methods"`
-	LoginWithPassword bool                    `json:"login_with_password"`
-	Features          pro_interfaces.Features `json:"features"`
-	SubscriptionState string                  `json:"subscription_state"`
-	GitClient         string                  `json:"git_client"`
-	ScheduleTimezone  string                  `json:"schedule_timezone"`
-	Teams             *util.TeamsConfig       `json:"teams"`
-	Roles             []db.Role               `json:"roles"`
-	BoltdbUsed        bool                    `json:"boltdb_used"`
-	JWT               SystemInfoJWT           `json:"jwt"`
-	Edition           pro_interfaces.Edition  `json:"edition"`
-	ContractVersion   string                  `json:"contract_version"`
-	Implementation    string                  `json:"implementation_version"`
-	CoreRevision      string                  `json:"core_revision"`
-	EnhancedRevision  string                  `json:"enhanced_revision,omitempty"`
+	Version           string                            `json:"version"`
+	Ansible           string                            `json:"ansible"`
+	WebHost           string                            `json:"web_host"`
+	UseRemoteRunner   bool                              `json:"use_remote_runner"`
+	AuthMethods       LoginAuthMethods                  `json:"auth_methods"`
+	LoginWithPassword bool                              `json:"login_with_password"`
+	Features          pro_interfaces.Features           `json:"features"`
+	SubscriptionState string                            `json:"subscription_state"`
+	GitClient         string                            `json:"git_client"`
+	ScheduleTimezone  string                            `json:"schedule_timezone"`
+	Teams             *util.TeamsConfig                 `json:"teams"`
+	Roles             []db.Role                         `json:"roles"`
+	BoltdbUsed        bool                              `json:"boltdb_used"`
+	JWT               SystemInfoJWT                     `json:"jwt"`
+	Edition           pro_interfaces.Edition            `json:"edition"`
+	ContractVersion   string                            `json:"contract_version"`
+	Implementation    string                            `json:"implementation_version"`
+	CoreRevision      string                            `json:"core_revision"`
+	EnhancedRevision  string                            `json:"enhanced_revision,omitempty"`
+	Capabilities      pro_interfaces.CapabilitySnapshot `json:"capabilities"`
 }
 
 // SystemInfoJWT exposes the global JWT configuration for the WebUI.
@@ -52,6 +53,11 @@ func NewSystemInfoController(subscriptionService pro_interfaces.SubscriptionServ
 
 func (c *SystemInfoController) GetSystemInfo(w http.ResponseWriter, r *http.Request) {
 	user := helpers.GetFromContext(r, "user").(*db.User)
+	capabilities, ok := capabilitySnapshotFromHTTP(r)
+	if !ok {
+		helpers.WriteErrorStatus(w, "CAPABILITY_CONTEXT_ERROR", http.StatusInternalServerError)
+		return
+	}
 
 	var authMethods LoginAuthMethods
 
@@ -127,6 +133,7 @@ func (c *SystemInfoController) GetSystemInfo(w http.ResponseWriter, r *http.Requ
 		Implementation:   util.EditionImplementation,
 		CoreRevision:     util.CoreRevision,
 		EnhancedRevision: util.EnhancedRevision,
+		Capabilities:     capabilities,
 	}
 
 	helpers.WriteJSON(w, http.StatusOK, body)

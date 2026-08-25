@@ -60,6 +60,42 @@
           </v-card-text>
         </v-card>
 
+        <template v-if="lifecycleDecision">
+          <v-subheader class="px-0 mt-2">{{ $t('lifecycleCapability') }}</v-subheader>
+          <v-card
+            data-testid="capability-lifecycle"
+            style="background: var(--highlighted-card-bg-color)"
+          >
+            <v-card-text class="px-0 py-2">
+              <v-simple-table dense style="background: transparent">
+                <tbody>
+                  <tr>
+                    <td class="font-weight-medium" style="width: 200px">
+                      {{ $t('capabilityState') }}
+                    </td>
+                    <td>
+                      <v-chip
+                        data-testid="capability-state"
+                        :color="capabilityStateColor(lifecycleDecision.state)"
+                        small
+                        dark
+                      >
+                        {{ lifecycleDecision.state }}
+                      </v-chip>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-weight-medium">{{ $t('capabilityReason') }}</td>
+                    <td>
+                      <code data-testid="capability-reason">{{ lifecycleDecision.reason }}</code>
+                    </td>
+                  </tr>
+                </tbody>
+              </v-simple-table>
+            </v-card-text>
+          </v-card>
+        </template>
+
         <!-- Ansible -->
         <v-subheader class="px-0 mt-2">Ansible</v-subheader>
         <v-card style="background: var(--highlighted-card-bg-color)">
@@ -291,11 +327,14 @@
 </style>
 
 <script>
+import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/system-info-dialog';
+
 import axios from 'axios';
 
 export default {
   props: {
     value: Boolean,
+    systemInfo: Object,
   },
 
   data() {
@@ -320,7 +359,13 @@ export default {
     },
   },
 
+  computed: {
+    ...enhancedComputed,
+  },
+
   methods: {
+    ...enhancedMethods,
+
     formatNotificationName(name) {
       return name.replace(/_/g, ' ');
     },

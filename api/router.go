@@ -14,6 +14,8 @@ import (
 
 	proApi "github.com/semaphoreui/semaphore/pro/api"
 	proProjects "github.com/semaphoreui/semaphore/pro/api/projects"
+	proFeatures "github.com/semaphoreui/semaphore/pro/pkg/features"
+	capabilityServices "github.com/semaphoreui/semaphore/services/capabilities"
 	"github.com/semaphoreui/semaphore/services/server"
 	taskServices "github.com/semaphoreui/semaphore/services/tasks"
 
@@ -119,6 +121,10 @@ func Route(
 	rolesController := proApi.NewRolesController(store)
 	templateController := projects.NewTemplateController(store, store)
 	systemInfoController := NewSystemInfoController(subscriptionService)
+	capabilityProvider := proFeatures.NewCapabilityProvider(store)
+	capabilityTestService := proFeatures.NewCapabilityTestService(store)
+	capabilityFacade := capabilityServices.NewServiceFacade(capabilityProvider, capabilityTestService)
+	capabilityController := NewCapabilityController(capabilityFacade)
 
 	r := mux.NewRouter()
 	r.NotFoundHandler = http.HandlerFunc(servePublic)
@@ -193,7 +199,31 @@ func Route(
 	authenticatedAPI := r.PathPrefix(webPath + "api").Subrouter()
 	authenticatedAPI.Use(csrfProtectionMiddleware, StoreMiddleware, JSONMiddleware, authentication)
 
-	authenticatedAPI.Path("/info").HandlerFunc(systemInfoController.GetSystemInfo).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/info").Handler(
+		capabilityController.SnapshotMiddleware(http.HandlerFunc(systemInfoController.GetSystemInfo)),
+	).Methods("GET", "HEAD")
+
+	authenticatedAPI.Path("/capabilities/lifecycle-test/records").Handler(
+		capabilityController.SnapshotMiddleware(
+			capabilityController.Require(pro_interfaces.CapabilityAccessRead)(
+				http.HandlerFunc(capabilityController.ListRecords),
+			),
+		),
+	).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/capabilities/lifecycle-test/records").Handler(
+		capabilityController.SnapshotMiddleware(
+			capabilityController.Require(pro_interfaces.CapabilityAccessWrite)(
+				http.HandlerFunc(capabilityController.CreateRecord),
+			),
+		),
+	).Methods("POST")
+	authenticatedAPI.Path("/capabilities/lifecycle-test/background-actions").Handler(
+		capabilityController.SnapshotMiddleware(
+			capabilityController.Require(pro_interfaces.CapabilityAccessExecute)(
+				http.HandlerFunc(capabilityController.RunBackgroundAction),
+			),
+		),
+	).Methods("POST")
 
 	authenticatedAPI.Path("/subscription").HandlerFunc(subscriptionController.Activate).Methods("POST")
 	authenticatedAPI.Path("/subscription/refresh").HandlerFunc(subscriptionController.Refresh).Methods("POST")
@@ -225,6 +255,7 @@ func Route(
 	adminAPI.Path("/options").HandlerFunc(getOptions).Methods("GET", "HEAD")
 	adminAPI.Path("/options").HandlerFunc(setOption).Methods("POST")
 	adminAPI.Path("/admin/info").HandlerFunc(getAdminInfo).Methods("GET", "HEAD")
+	adminAPI.Path("/capabilities/lifecycle-test").HandlerFunc(capabilityController.Configure).Methods("PUT")
 
 	adminAPI.Path("/cluster").HandlerFunc(getClusterStatus).Methods("GET", "HEAD")
 	adminAPI.Path("/cluster/tasks").HandlerFunc(getClusterTasks).Methods("GET", "HEAD")

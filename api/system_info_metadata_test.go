@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/stretchr/testify/assert"
@@ -10,12 +11,23 @@ import (
 )
 
 func TestSystemInfoEditionMetadataJSON(t *testing.T) {
+	resolvedAt := time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC)
 	info := SystemInfo{
 		Edition:          pro_interfaces.EditionEnhanced,
 		ContractVersion:  pro_interfaces.CoreContractVersion,
 		Implementation:   "enhanced-revision",
 		CoreRevision:     "core-revision",
 		EnhancedRevision: "enhanced-revision",
+		Capabilities: pro_interfaces.NewCapabilitySnapshot(
+			pro_interfaces.CapabilityRequest{UserID: 42, IsAdmin: true, At: resolvedAt},
+			[]pro_interfaces.CapabilityDecision{pro_interfaces.NewCapabilityDecision(
+				pro_interfaces.CapabilityLifecycleTest,
+				pro_interfaces.CapabilityStateActive,
+				pro_interfaces.CapabilityReasonActive,
+				[]pro_interfaces.CapabilityAccess{pro_interfaces.CapabilityAccessRead},
+				nil,
+			)},
+		),
 	}
 
 	encoded, err := json.Marshal(info)
@@ -36,11 +48,22 @@ func TestSystemInfoEditionMetadataJSON(t *testing.T) {
 		"boltdb_used":false,
 		"jwt":{"enabled":false},
 		"edition":"enhanced",
-		"contract_version":"1.0.0",
+		"contract_version":"1.1.0",
 		"implementation_version":"enhanced-revision",
 		"core_revision":"core-revision",
-		"enhanced_revision":"enhanced-revision"
+		"enhanced_revision":"enhanced-revision",
+		"capabilities":{
+			"resolved_at":"2026-08-25T10:00:00Z",
+			"capabilities":[{
+				"id":"lifecycle_test",
+				"state":"active",
+				"reason":"active",
+				"access":["read"],
+				"limits":{}
+			}]
+		}
 	}`, string(encoded))
+	assert.NotContains(t, string(encoded), "42")
 }
 
 func TestSystemInfoOmitsCommunityEnhancedRevision(t *testing.T) {
