@@ -11,7 +11,10 @@ import (
 
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/test/securityfixtures"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -85,7 +88,7 @@ func TestCapabilityControllerConfiguresThroughFacade(t *testing.T) {
 		nil,
 		nil,
 	)}
-	controller := NewCapabilityController(facade)
+	controller := NewCapabilityController(facade, nil)
 	request := httptest.NewRequest(
 		http.MethodPut,
 		"/api/capabilities/lifecycle-test",
@@ -114,7 +117,7 @@ func TestCapabilityControllerListsAndRunsBackgroundAction(t *testing.T) {
 		},
 		nil,
 	)}
-	controller := NewCapabilityController(facade)
+	controller := NewCapabilityController(facade, nil)
 
 	listHandler := controller.SnapshotMiddleware(
 		controller.Require(pro_interfaces.CapabilityAccessRead)(http.HandlerFunc(controller.ListRecords)),
@@ -155,7 +158,7 @@ func TestCapabilityMiddlewareResolvesOneSnapshotForRequest(t *testing.T) {
 		[]pro_interfaces.CapabilityAccess{pro_interfaces.CapabilityAccessWrite},
 		nil,
 	)}
-	controller := NewCapabilityController(facade)
+	controller := NewCapabilityController(facade, nil)
 	handler := controller.SnapshotMiddleware(
 		controller.Require(pro_interfaces.CapabilityAccessWrite)(http.HandlerFunc(controller.CreateRecord)),
 	)
@@ -197,7 +200,7 @@ func TestCapabilityMiddlewareMapsLifecycleDenials(t *testing.T) {
 				nil,
 				nil,
 			)}
-			controller := NewCapabilityController(facade)
+			controller := NewCapabilityController(facade, nil)
 			handler := controller.SnapshotMiddleware(
 				controller.Require(pro_interfaces.CapabilityAccessWrite)(http.HandlerFunc(controller.CreateRecord)),
 			)
@@ -219,8 +222,13 @@ func TestCapabilityMiddlewareMapsLifecycleDenials(t *testing.T) {
 }
 
 func TestCapabilityMiddlewareHidesResolutionError(t *testing.T) {
-	facade := &capabilityFacadeStub{resolveError: errors.New("database connection details")}
-	controller := NewCapabilityController(facade)
+	var logOutput bytes.Buffer
+	logger := log.StandardLogger()
+	previousOutput := logger.Out
+	logger.SetOutput(&logOutput)
+	defer logger.SetOutput(previousOutput)
+	facade := &capabilityFacadeStub{resolveError: errors.New(securityfixtures.TripwireValues[0])}
+	controller := NewCapabilityController(facade, nil)
 	handler := controller.SnapshotMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("handler must not run")
 	}))
@@ -232,5 +240,15 @@ func TestCapabilityMiddlewareHidesResolutionError(t *testing.T) {
 
 	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 	assert.JSONEq(t, `{"error":"CAPABILITY_PROVIDER_ERROR"}`, recorder.Body.String())
-	assert.NotContains(t, recorder.Body.String(), "database")
+	securityfixtures.AssertTripwiresAbsent(t, recorder.Body.String(), logOutput.String())
+}
+
+func TestCapabilityValidationErrorDoesNotEchoInput(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	writeCapabilityError(recorder, common_errors.NewValidationError(securityfixtures.TripwireValues[0]))
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.JSONEq(t, `{"error":"CAPABILITY_INPUT_INVALID"}`, recorder.Body.String())
+	securityfixtures.AssertTripwiresAbsent(t, recorder.Body.String())
 }

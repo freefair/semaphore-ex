@@ -12,9 +12,11 @@ import (
 
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 
+	"github.com/semaphoreui/semaphore/api/helpers"
 	proApi "github.com/semaphoreui/semaphore/pro/api"
 	proProjects "github.com/semaphoreui/semaphore/pro/api/projects"
 	proFeatures "github.com/semaphoreui/semaphore/pro/pkg/features"
+	auditServices "github.com/semaphoreui/semaphore/services/audit"
 	capabilityServices "github.com/semaphoreui/semaphore/services/capabilities"
 	"github.com/semaphoreui/semaphore/services/server"
 	taskServices "github.com/semaphoreui/semaphore/services/tasks"
@@ -95,6 +97,7 @@ func Route(
 	jwtSigner jwt.Signer,
 	runnerService server.RunnerService,
 	workflowService pro_interfaces.WorkflowService,
+	logWriteService pro_interfaces.LogWriteService,
 	appMetrics *metrics.Metrics,
 ) *mux.Router {
 
@@ -124,10 +127,12 @@ func Route(
 	capabilityProvider := proFeatures.NewCapabilityProvider(store)
 	capabilityTestService := proFeatures.NewCapabilityTestService(store)
 	capabilityFacade := capabilityServices.NewServiceFacade(capabilityProvider, capabilityTestService)
-	capabilityController := NewCapabilityController(capabilityFacade)
+	auditFacade := auditServices.NewServiceFacade(store, logWriteService, appMetrics)
+	capabilityController := NewCapabilityController(capabilityFacade, auditFacade)
 
 	r := mux.NewRouter()
 	r.NotFoundHandler = http.HandlerFunc(servePublic)
+	r.Use(helpers.CorrelationMiddleware)
 
 	if util.Config.Debugging.ApiDelay != "" {
 		delay, err := time.ParseDuration(util.Config.Debugging.ApiDelay)
@@ -197,7 +202,13 @@ func Route(
 	authenticatedWS.Path("/ws").HandlerFunc(sockets.Handler).Methods("GET", "HEAD")
 
 	authenticatedAPI := r.PathPrefix(webPath + "api").Subrouter()
-	authenticatedAPI.Use(csrfProtectionMiddleware, StoreMiddleware, JSONMiddleware, authentication)
+	authenticatedAPI.Use(
+		EnhancedAnonymousAuditMiddleware(auditFacade),
+		csrfProtectionMiddleware,
+		StoreMiddleware,
+		JSONMiddleware,
+		authentication,
+	)
 
 	authenticatedAPI.Path("/info").Handler(
 		capabilityController.SnapshotMiddleware(http.HandlerFunc(systemInfoController.GetSystemInfo)),
@@ -251,7 +262,7 @@ func Route(
 	tokenAPI.Path("/identities/ldap").HandlerFunc(linkLdapIdentity).Methods("POST")
 
 	adminAPI := authenticatedAPI.NewRoute().Subrouter()
-	adminAPI.Use(adminMiddleware)
+	adminAPI.Use(EnhancedAdminAuditMiddleware(auditFacade), adminMiddleware)
 	adminAPI.Path("/options").HandlerFunc(getOptions).Methods("GET", "HEAD")
 	adminAPI.Path("/options").HandlerFunc(setOption).Methods("POST")
 	adminAPI.Path("/admin/info").HandlerFunc(getAdminInfo).Methods("GET", "HEAD")

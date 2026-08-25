@@ -414,10 +414,10 @@ func csrfProtectionMiddleware(next http.Handler) http.Handler {
 
 		if origin, ok := requestOriginHost(r); ok && !isSameOriginHost(origin, r) {
 			log.WithFields(log.Fields{
-				"origin": origin,
-				"host":   r.Host,
-				"path":   r.URL.Path,
-				"method": r.Method,
+				"context":        "csrf",
+				"correlation_id": helpers.CorrelationID(r.Context()),
+				"method":         r.Method,
+				"outcome":        "denied",
 			}).Warn("Blocked cross-origin request (possible CSRF)")
 			helpers.WriteErrorStatus(w, "CROSS_ORIGIN_REQUEST_BLOCKED", http.StatusForbidden)
 			return

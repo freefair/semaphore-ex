@@ -1,7 +1,7 @@
 # Task: Implement selected enhanced edition slices
 
 **Started:** 2026-08-25
-**Last update:** 2026-08-25 20:55
+**Last update:** 2026-08-25 21:28
 
 ## Scope
 Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with tests, documentation, review, and atomic commits
@@ -27,6 +27,8 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 - 2026-08-25 20:51 — Slice 004 migration matrix is green on SQLite, MySQL 8.4, MariaDB 10.11, and PostgreSQL 12.22. Fresh install, rollback with Community data, forward upgrade, semantic schema equivalence, restart persistence, Community mixed-version behavior, full Community/enhanced suites, race, vet, workflow YAML parsing, and docs build all pass. Manual diff review found and corrected the initial missing rollback-data assertion.
 
 - 2026-08-25 20:55 — Final Slice 004 review added CI assertions for every report field; the external TDD contract and all four real database engines remain green afterward.
+
+- 2026-08-25 21:28 — Slice 005 is green on the current worktree: go test ./..., focused race tests, go vet ./..., the clean-room enhanced go.work test, and the Docusaurus production build all exit 0. The docs build retains only the three known unrelated broken-anchor warnings.
 
 ## Decisions
 
@@ -68,3 +70,5 @@ Wait for the source-map decision, implement it, rerun dual Community/enhanced re
 After Dennis chooses both options, implement them and rerun byte-equivalence, both browser smokes, final Community server/runner container builds, all tests, docs build, review, checklist, and commits.
 Commit Slice 002 atomically (nested docs first, then root), then begin Slice 003 capability lifecycle with a failing /tmp contract.
 After GitHub authentication is restored, query the private repository default branch/revision, clone it as pro_impl without exposing credentials, inspect its current capability implementation, and write the failing /tmp Slice 003 contract before editing either module.
+Proceed to Slice 005: reusable enhanced auth, audit, redaction, correlation, dependency metrics, and tripwire harness.
+Commit the verified Slice 005 documentation and implementation atomically, then begin Slice 010 with a new /tmp contract test before production edits.

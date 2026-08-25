@@ -23,7 +23,7 @@ func TestCapabilityHTTPIntegrationMatchesSelectedEdition(t *testing.T) {
 		proFeatures.NewCapabilityProvider(store),
 		proFeatures.NewCapabilityTestService(store),
 	)
-	controller := NewCapabilityController(facade)
+	controller := NewCapabilityController(facade, nil)
 	admin := &db.User{ID: 7, Admin: true}
 
 	if proFeatures.Compatibility().Edition == pro_interfaces.EditionCommunity {

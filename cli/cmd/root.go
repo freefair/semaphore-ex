@@ -319,6 +319,7 @@ func runService() {
 		jwtSigner,
 		runnerService,
 		workflowService,
+		logWriteService,
 		appMetrics,
 	)
 
