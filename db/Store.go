@@ -594,6 +594,7 @@ type Store interface {
 	SecretStorageRepository
 	SecretSyncRepository
 	RoleRepository
+	CapabilityRepository
 }
 
 var AccessKeyProps = ObjectProps{
