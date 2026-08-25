@@ -14,6 +14,13 @@ type EventLogRecord struct {
 	IntegrationID *int    `json:"integration,omitempty"`
 	ProjectID     *int    `json:"project,omitempty"`
 	Description   *string `json:"description,omitempty"`
+
+	CorrelationID string          `json:"correlation_id,omitempty"`
+	TargetType    AuditTargetType `json:"target_type,omitempty"`
+	TargetID      string          `json:"target_id,omitempty"`
+	Outcome       AuditOutcome    `json:"outcome,omitempty"`
+	Source        AuditSource     `json:"source,omitempty"`
+	Reason        string          `json:"reason,omitempty"`
 }
 
 type TaskLogRecord struct {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"runtime/debug"
 	"time"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
@@ -20,11 +19,15 @@ type capabilitySnapshotContextKey struct{}
 // CapabilityController handles capability transport concerns through the facade boundary.
 type CapabilityController struct {
 	facade pro_interfaces.CapabilityServiceFacade
+	audit  pro_interfaces.AuditServiceFacade
 }
 
 // NewCapabilityController creates the capability API controller.
-func NewCapabilityController(facade pro_interfaces.CapabilityServiceFacade) *CapabilityController {
-	return &CapabilityController{facade: facade}
+func NewCapabilityController(
+	facade pro_interfaces.CapabilityServiceFacade,
+	audit pro_interfaces.AuditServiceFacade,
+) *CapabilityController {
+	return &CapabilityController{facade: facade, audit: audit}
 }
 
 // SnapshotMiddleware resolves exactly one immutable snapshot for the request.
@@ -37,10 +40,10 @@ func (c *CapabilityController) SnapshotMiddleware(next http.Handler) http.Handle
 		}
 		snapshot, err := c.facade.Resolve(r.Context(), request)
 		if err != nil {
-			log.WithFields(log.Fields{
-				"context": "capability_resolution",
-				"user_id": request.UserID,
-			}).WithError(err).Error("Failed to resolve capability snapshot")
+			event := capabilityAuditEvent(r, pro_interfaces.AuditActionCapabilityResolve,
+				pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonProviderError)
+			c.recordAudit(r, event)
+			log.WithFields(event.SafeFields()).Error("Failed to resolve capability snapshot")
 			helpers.WriteErrorStatus(w, "CAPABILITY_PROVIDER_ERROR", http.StatusServiceUnavailable)
 			return
 		}
@@ -59,6 +62,13 @@ func (c *CapabilityController) Require(access pro_interfaces.CapabilityAccess) f
 				return
 			}
 			if err := snapshot.Require(pro_interfaces.CapabilityLifecycleTest, access); err != nil {
+				var denied pro_interfaces.CapabilityDeniedError
+				reason := pro_interfaces.AuditReasonOperationError
+				if errors.As(err, &denied) {
+					reason = string(denied.Decision.Reason())
+				}
+				c.recordAudit(r, capabilityAuditEvent(r, auditActionForAccess(access),
+					pro_interfaces.AuditOutcomeDenied, reason))
 				writeCapabilityError(w, err)
 				return
 			}
@@ -74,6 +84,8 @@ func (c *CapabilityController) Configure(w http.ResponseWriter, r *http.Request)
 		ExpiresAt *time.Time                     `json:"expires_at"`
 	}
 	if !helpers.Bind(w, r, &body) {
+		c.recordAudit(r, capabilityAuditEvent(r, pro_interfaces.AuditActionCapabilityConfigure,
+			pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonInvalidInput))
 		return
 	}
 	request, ok := capabilityRequestFromHTTP(r)
@@ -87,9 +99,13 @@ func (c *CapabilityController) Configure(w http.ResponseWriter, r *http.Request)
 		ExpiresAt: body.ExpiresAt,
 	})
 	if err != nil {
+		c.recordCapabilityError(r, pro_interfaces.AuditActionCapabilityConfigure, err)
 		writeCapabilityError(w, err)
 		return
 	}
+	decision := snapshot.Decision(pro_interfaces.CapabilityLifecycleTest)
+	c.recordAudit(r, capabilityAuditEvent(r, pro_interfaces.AuditActionCapabilityConfigure,
+		pro_interfaces.AuditOutcomeAllowed, string(decision.Reason())))
 	helpers.WriteJSON(w, http.StatusOK, snapshot)
 }
 
@@ -102,31 +118,39 @@ func (c *CapabilityController) ListRecords(w http.ResponseWriter, r *http.Reques
 	}
 	records, err := c.facade.ListRecords(r.Context(), snapshot)
 	if err != nil {
+		c.recordCapabilityError(r, pro_interfaces.AuditActionCapabilityRead, err)
 		writeCapabilityError(w, err)
 		return
 	}
+	c.recordAudit(r, capabilityAuditEvent(r, pro_interfaces.AuditActionCapabilityRead,
+		pro_interfaces.AuditOutcomeAllowed, string(snapshot.Decision(pro_interfaces.CapabilityLifecycleTest).Reason())))
 	helpers.WriteJSON(w, http.StatusOK, records)
 }
 
 // CreateRecord persists a lifecycle-test record through the request path.
 func (c *CapabilityController) CreateRecord(w http.ResponseWriter, r *http.Request) {
-	c.createRecord(w, r, c.facade.CreateRecord)
+	c.createRecord(w, r, pro_interfaces.AuditActionCapabilityWrite, pro_interfaces.AuditSourceAPI, c.facade.CreateRecord)
 }
 
 // RunBackgroundAction exercises the separately guarded background entry point.
 func (c *CapabilityController) RunBackgroundAction(w http.ResponseWriter, r *http.Request) {
-	c.createRecord(w, r, c.facade.RunBackgroundAction)
+	c.createRecord(w, r, pro_interfaces.AuditActionCapabilityExecute, pro_interfaces.AuditSourceWorker,
+		c.facade.RunBackgroundAction)
 }
 
 func (c *CapabilityController) createRecord(
 	w http.ResponseWriter,
 	r *http.Request,
+	action pro_interfaces.AuditAction,
+	source pro_interfaces.AuditSource,
 	create func(context.Context, pro_interfaces.CapabilitySnapshot, string) (pro_interfaces.CapabilityTestRecordDTO, error),
 ) {
 	var body struct {
 		Value string `json:"value"`
 	}
 	if !helpers.Bind(w, r, &body) {
+		c.recordAudit(r, capabilityAuditEvent(r, action,
+			pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonInvalidInput))
 		return
 	}
 	snapshot, ok := capabilitySnapshotFromHTTP(r)
@@ -136,10 +160,54 @@ func (c *CapabilityController) createRecord(
 	}
 	record, err := create(r.Context(), snapshot, body.Value)
 	if err != nil {
+		c.recordCapabilityError(r, action, err)
 		writeCapabilityError(w, err)
 		return
 	}
+	event := capabilityAuditEvent(r, action, pro_interfaces.AuditOutcomeAllowed,
+		string(snapshot.Decision(pro_interfaces.CapabilityLifecycleTest).Reason()))
+	event.Source = source
+	c.recordAudit(r, event)
 	helpers.WriteJSON(w, http.StatusCreated, record)
+}
+
+func (c *CapabilityController) recordCapabilityError(
+	r *http.Request,
+	action pro_interfaces.AuditAction,
+	err error,
+) {
+	outcome := pro_interfaces.AuditOutcomeFailure
+	reason := pro_interfaces.AuditReasonOperationError
+	var denied pro_interfaces.CapabilityDeniedError
+	var validationError *common_errors.ValidationError
+	switch {
+	case errors.As(err, &denied):
+		outcome = pro_interfaces.AuditOutcomeDenied
+		reason = string(denied.Decision.Reason())
+	case errors.As(err, &validationError):
+		reason = pro_interfaces.AuditReasonInvalidInput
+	}
+	c.recordAudit(r, capabilityAuditEvent(r, action, outcome, reason))
+}
+
+func (c *CapabilityController) recordAudit(r *http.Request, event pro_interfaces.AuditEvent) {
+	if c.audit == nil {
+		return
+	}
+	if err := c.audit.Record(r.Context(), event); err != nil {
+		log.WithFields(event.SafeFields()).Error("Failed to store enhanced audit event")
+	}
+}
+
+func auditActionForAccess(access pro_interfaces.CapabilityAccess) pro_interfaces.AuditAction {
+	switch access {
+	case pro_interfaces.CapabilityAccessRead:
+		return pro_interfaces.AuditActionCapabilityRead
+	case pro_interfaces.CapabilityAccessExecute:
+		return pro_interfaces.AuditActionCapabilityExecute
+	default:
+		return pro_interfaces.AuditActionCapabilityWrite
+	}
 }
 
 func capabilityRequestFromHTTP(r *http.Request) (pro_interfaces.CapabilityRequest, bool) {
@@ -181,10 +249,8 @@ func writeCapabilityError(w http.ResponseWriter, err error) {
 	}
 	var validationError *common_errors.ValidationError
 	if errors.As(err, &validationError) {
-		helpers.WriteErrorStatus(w, validationError.Error(), http.StatusBadRequest)
+		helpers.WriteErrorStatus(w, "CAPABILITY_INPUT_INVALID", http.StatusBadRequest)
 		return
 	}
-	log.WithError(err).Error("Capability operation failed")
-	debug.PrintStack()
 	helpers.WriteErrorStatus(w, "CAPABILITY_OPERATION_ERROR", http.StatusInternalServerError)
 }

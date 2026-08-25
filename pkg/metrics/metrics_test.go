@@ -1,11 +1,10 @@
 package metrics
 
 import (
-	"net/http/httptest"
-	"testing"
-
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/stretchr/testify/assert"
+	"net/http/httptest"
+	"testing"
 )
 
 // scrape renders the current metrics in Prometheus text exposition format,

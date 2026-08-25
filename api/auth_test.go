@@ -1,14 +1,13 @@
 package api
 
 import (
+	"github.com/semaphoreui/semaphore/util"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
-
-	"github.com/semaphoreui/semaphore/util"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestIsStateChangingMethod(t *testing.T) {
