@@ -79,7 +79,7 @@ jobs:
           MYSQL_ROOT_PASSWORD: p455w0rd
           MYSQL_USER: semaphore
           MYSQL_PASSWORD: p455w0rd
-          MYSQL_DATABASE: semaphore
+          MYSQL_DATABASE: semaphore_matrix
         options: >-
           --health-cmd "mysqladmin ping"
           --health-interval 10s
@@ -89,6 +89,14 @@ jobs:
           - 3306:3306
 
     steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Setup golang
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.5'
+
       - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
@@ -102,12 +110,24 @@ jobs:
                 "host": "localhost:3306",
                 "user": "semaphore",
                 "pass": "p455w0rd",
-                "name": "semaphore"
+                "name": "semaphore_matrix"
               },
               "dialect": "mysql",
               "email_alert": false
             }
           EOF
+
+      - name: Verify migration matrix
+        env:
+          SEMAPHORE_MIGRATION_MATRIX: '1'
+          SEMAPHORE_MIGRATION_MATRIX_DIALECT: mysql
+          SEMAPHORE_MIGRATION_MATRIX_DB_HOST: localhost:3306
+          SEMAPHORE_MIGRATION_MATRIX_DB_NAME: semaphore_matrix
+          SEMAPHORE_MIGRATION_MATRIX_DB_USER: semaphore
+        run: |
+          export SEMAPHORE_MIGRATION_MATRIX_DB_PASS
+          SEMAPHORE_MIGRATION_MATRIX_DB_PASS="$(jq -r '.mysql.pass' config.json)"
+          go test ./db/sql -run '^TestMigrationMatrix$' -count=1
 
       - name: Migrate database
         run: |
@@ -126,7 +146,7 @@ jobs:
           MARIADB_ROOT_PASSWORD: p455w0rd
           MARIADB_USER: semaphore
           MARIADB_PASSWORD: p455w0rd
-          MARIADB_DATABASE: semaphore
+          MARIADB_DATABASE: semaphore_matrix
         options: >-
           --health-cmd "mysqladmin ping"
           --health-interval 10s
@@ -136,6 +156,14 @@ jobs:
           - 3306:3306
 
     steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Setup golang
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.5'
+
       - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
@@ -149,12 +177,24 @@ jobs:
                 "host": "localhost:3306",
                 "user": "semaphore",
                 "pass": "p455w0rd",
-                "name": "semaphore"
+                "name": "semaphore_matrix"
               },
               "dialect": "mysql",
               "email_alert": false
             }
           EOF
+
+      - name: Verify migration matrix
+        env:
+          SEMAPHORE_MIGRATION_MATRIX: '1'
+          SEMAPHORE_MIGRATION_MATRIX_DIALECT: mysql
+          SEMAPHORE_MIGRATION_MATRIX_DB_HOST: localhost:3306
+          SEMAPHORE_MIGRATION_MATRIX_DB_NAME: semaphore_matrix
+          SEMAPHORE_MIGRATION_MATRIX_DB_USER: semaphore
+        run: |
+          export SEMAPHORE_MIGRATION_MATRIX_DB_PASS
+          SEMAPHORE_MIGRATION_MATRIX_DB_PASS="$(jq -r '.mysql.pass' config.json)"
+          go test ./db/sql -run '^TestMigrationMatrix$' -count=1
 
       - name: Migrate database
         run: |
@@ -172,7 +212,7 @@ jobs:
         env:
           POSTGRES_USER: semaphore
           POSTGRES_PASSWORD: p455w0rd
-          POSTGRES_DB: semaphore
+          POSTGRES_DB: semaphore_matrix
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -182,6 +222,14 @@ jobs:
           - 5432:5432
 
     steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Setup golang
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.5'
+
       - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
@@ -195,7 +243,7 @@ jobs:
                 "host": "localhost:5432",
                 "user": "semaphore",
                 "pass": "p455w0rd",
-                "name": "semaphore",
+                "name": "semaphore_matrix",
                 "options": {
                   "sslmode": "disable"
                 }
@@ -204,6 +252,18 @@ jobs:
               "email_alert": false
             }
           EOF
+
+      - name: Verify migration matrix
+        env:
+          SEMAPHORE_MIGRATION_MATRIX: '1'
+          SEMAPHORE_MIGRATION_MATRIX_DIALECT: postgres
+          SEMAPHORE_MIGRATION_MATRIX_DB_HOST: localhost:5432
+          SEMAPHORE_MIGRATION_MATRIX_DB_NAME: semaphore_matrix
+          SEMAPHORE_MIGRATION_MATRIX_DB_USER: semaphore
+        run: |
+          export SEMAPHORE_MIGRATION_MATRIX_DB_PASS
+          SEMAPHORE_MIGRATION_MATRIX_DB_PASS="$(jq -r '.postgres.pass' config.json)"
+          go test ./db/sql -run '^TestMigrationMatrix$' -count=1
 
       - name: Migrate database
         run: |
@@ -216,6 +276,14 @@ jobs:
       - build-local
 
     steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Setup golang
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.5'
+
       - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
@@ -232,6 +300,11 @@ jobs:
               "email_alert": false
             }
           EOF
+
+      - name: Verify migration matrix
+        env:
+          SEMAPHORE_MIGRATION_MATRIX_DIALECT: sqlite
+        run: go test ./db/sql -run '^TestMigrationMatrix$' -count=1
 
       - name: Migrate database
         run: |
