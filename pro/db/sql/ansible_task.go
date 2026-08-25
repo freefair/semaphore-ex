@@ -8,6 +8,8 @@ import (
 type AnsibleTaskStoreImpl struct {
 }
 
+var _ db.AnsibleTaskRepository = (*AnsibleTaskStoreImpl)(nil)
+
 func NewAnsibleTask(connection *sql.SqlDbConnection) db.AnsibleTaskRepository {
 	return &AnsibleTaskStoreImpl{}
 }

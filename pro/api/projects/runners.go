@@ -19,6 +19,8 @@ func NewProjectRunnerController(
 type ProjectRunnerControllerImpl struct {
 }
 
+var _ pro_interfaces.ProjectRunnerController = (*ProjectRunnerControllerImpl)(nil)
+
 func (c *ProjectRunnerControllerImpl) RegenerateRegistrationToken(w http.ResponseWriter, r *http.Request) {
 	helpers.WriteJSON(w, http.StatusCreated, map[string]interface{}{})
 }

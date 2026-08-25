@@ -10,6 +10,8 @@ import (
 
 type terraformInventoryController struct{}
 
+var _ pro_interfaces.TerraformInventoryController = (*terraformInventoryController)(nil)
+
 func NewTerraformInventoryController(terraformRepo db.TerraformStore) pro_interfaces.TerraformInventoryController {
 	return &terraformInventoryController{}
 }

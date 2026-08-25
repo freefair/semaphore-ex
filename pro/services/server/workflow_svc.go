@@ -12,6 +12,8 @@ import (
 // Workflows feature flag.
 type workflowService struct{}
 
+var _ pro_interfaces.WorkflowService = (*workflowService)(nil)
+
 func NewWorkflowService(workflowRepo db.WorkflowManager, templateReceiver db.WorkflowTemplateValidationStore, enqueuer pro_interfaces.WorkflowTaskEnqueuer, locker pro_interfaces.WorkflowRunLocker) pro_interfaces.WorkflowService {
 	return &workflowService{}
 }
