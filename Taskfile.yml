@@ -5,6 +5,12 @@ vars:
   DOCKER_SERVER: semaphore
   DOCKER_RUNNER: runner
   DOCKER_CMD: docker
+  CORE_REVISION:
+    sh: git rev-parse HEAD
+  ENHANCED_REVISION:
+    sh: if git -C pro_impl rev-parse HEAD >/dev/null 2>&1; then git -C pro_impl rev-parse HEAD; fi
+  SOURCE_DATE_EPOCH:
+    sh: git show -s --format=%ct HEAD
 
 tasks:
   all:
@@ -46,7 +52,7 @@ tasks:
     desc: Installs nodejs requirements
     dir: web
     cmds:
-      - npm install
+      - npm ci
 
   build:
     desc: Build a full set of release binaries and packages
@@ -54,27 +60,65 @@ tasks:
       - task: build:fe
       - task: build:be
 
+  build:edition:
+    desc: Build traceable server, runner, and frontend artifacts for one edition
+    vars:
+      EDITION: '{{ if eq .APP_BUILD_TYPE "pro_selfhosted" }}enhanced{{ else }}community{{ end }}'
+      IMPLEMENTATION_VERSION:
+        sh: if [ "{{ .EDITION }}" = "enhanced" ]; then echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'; else echo 'community-1'; fi
+      OUTPUT_DIR: '{{ .OUTPUT_DIR | default (printf "dist/%s" .EDITION) }}'
+    preconditions:
+      - sh: '[ -z "{{ .APP_BUILD_TYPE }}" ] || [ "{{ .APP_BUILD_TYPE }}" = "pro_selfhosted" ]'
+        msg: APP_BUILD_TYPE must be empty or pro_selfhosted
+      - sh: '[ "{{ .EDITION }}" = "community" ] || [ -n "{{ .ENHANCED_REVISION }}" ]'
+        msg: Enhanced builds require a pinned pro_impl checkout
+    cmds:
+      - task: build:fe:edition
+        vars:
+          APP_BUILD_TYPE: '{{ .APP_BUILD_TYPE }}'
+          OUTPUT_DIR: '{{ .OUTPUT_DIR }}'
+      - task: build:be
+        vars:
+          APP_BUILD_TYPE: '{{ .APP_BUILD_TYPE }}'
+      - >-
+        go run ./tools/buildmeta
+        -binary "bin/semaphore"
+        -frontend "api/public"
+        -frontend-lock "web/package-lock.json"
+        -source-maps "{{ .OUTPUT_DIR }}.source-maps"
+        -output "{{ .OUTPUT_DIR }}"
+        -edition "{{ .EDITION }}"
+        -core-revision "{{ .CORE_REVISION }}"
+        -enhanced-revision "{{ .ENHANCED_REVISION }}"
+        -implementation "{{ .IMPLEMENTATION_VERSION }}"
+        -source-date-epoch "{{ .SOURCE_DATE_EPOCH }}"
+
   build:debug:
     desc: Build DEBUG server binary
     cmds:
       - >-
         env CGO_ENABLED=0 GOOS={{ .GOOS }} GOARCH={{ .GOARCH }}
-        go build -o bin/semaphore{{ if eq OS "windows" }}.exe{{ end }}
+        go build -trimpath -buildvcs=false -o bin/semaphore{{ if eq OS "windows" }}.exe{{ end }}
         -tags "netgo"
         -gcflags="all=-N -l"
-        -ldflags "-X {{ .IMPORT }}/util.Ver={{ .VERSION }} -X {{ .IMPORT }}/util.Commit={{ .SHA }} -X {{ .IMPORT }}/util.Date={{ .DATE }}" ./cli
+        -ldflags "-X {{ .IMPORT }}/util.Ver={{ .VERSION }} -X {{ .IMPORT }}/util.Commit={{ .SHA }} -X {{ .IMPORT }}/util.Date={{ .DATE }} -X {{ .IMPORT }}/util.BuildEdition={{ .EDITION }} -X {{ .IMPORT }}/util.CoreRevision={{ .CORE_REVISION }} -X {{ .IMPORT }}/util.EnhancedRevision={{ .ENHANCED_REVISION }} -X {{ .IMPORT }}/util.EditionImplementation={{ .IMPLEMENTATION_VERSION }}" ./cli
     vars:
+      EDITION: '{{ if eq .APP_BUILD_TYPE "pro_selfhosted" }}enhanced{{ else }}community{{ end }}'
+      IMPLEMENTATION_VERSION:
+        sh: if [ "{{ .EDITION }}" = "enhanced" ]; then echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'; else echo 'community-1'; fi
       TAG:
         sh: git name-rev --name-only --tags --no-undefined HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD
       SHA:
         sh: git log --pretty=format:'%h' -n 1
       VERSION: "{{ if eq .GITHUB_REF_TYPE \"tag\" }}{{ .GITHUB_REF_NAME }}{{ else }}{{ .TAG }}{{ end }}"
-      DATE: "{{ now | unixEpoch }}"
+      DATE: "{{ .SOURCE_DATE_EPOCH }}"
       IMPORT: "github.com/semaphoreui/semaphore"
 
   build:fe:
     desc: Build VueJS project
     dir: web
+    vars:
+      EDITION: '{{ if eq .APP_BUILD_TYPE "pro_selfhosted" }}enhanced{{ else }}community{{ end }}'
     sources:
       - src/*.*
       - src/**/*.*
@@ -91,24 +135,45 @@ tasks:
       - ../api/public/favicon.ico
     cmds:
       - >-
-        {{ if eq OS "windows" }}set VUE_APP_BUILD_TYPE={{ .APP_BUILD_TYPE }} && {{ else }}env VUE_APP_BUILD_TYPE={{ .APP_BUILD_TYPE }}{{ end }}
+        {{ if eq OS "windows" }}set VUE_APP_BUILD_TYPE={{ .APP_BUILD_TYPE }} && set VUE_APP_EDITION={{ .EDITION }} && set VUE_APP_SOURCE_MAP_MODE=none && {{ else }}env VUE_APP_BUILD_TYPE={{ .APP_BUILD_TYPE }} VUE_APP_EDITION={{ .EDITION }} VUE_APP_SOURCE_MAP_MODE=none{{ end }}
         npm run build
+
+  build:fe:edition:
+    desc: Rebuild production frontend and separate deterministic debug source maps
+    dir: web
+    vars:
+      EDITION: '{{ if eq .APP_BUILD_TYPE "pro_selfhosted" }}enhanced{{ else }}community{{ end }}'
+    cmds:
+      - >-
+        {{ if eq OS "windows" }}set VUE_APP_BUILD_TYPE={{ .APP_BUILD_TYPE }} && set VUE_APP_EDITION={{ .EDITION }} && set VUE_APP_SOURCE_MAP_MODE=none && {{ else }}env VUE_APP_BUILD_TYPE={{ .APP_BUILD_TYPE }} VUE_APP_EDITION={{ .EDITION }} VUE_APP_SOURCE_MAP_MODE=none{{ end }}
+        npm run build
+      - >-
+        {{ if eq OS "windows" }}set VUE_APP_BUILD_TYPE={{ .APP_BUILD_TYPE }} && set VUE_APP_EDITION={{ .EDITION }} && set VUE_APP_SOURCE_MAP_MODE=hidden && set VUE_APP_OUTPUT_DIR={{ .ROOT_DIR }}/{{ .OUTPUT_DIR }}.frontend-debug && {{ else }}env VUE_APP_BUILD_TYPE={{ .APP_BUILD_TYPE }} VUE_APP_EDITION={{ .EDITION }} VUE_APP_SOURCE_MAP_MODE=hidden VUE_APP_OUTPUT_DIR="{{ .ROOT_DIR }}/{{ .OUTPUT_DIR }}.frontend-debug"{{ end }}
+        npm run build
+      - >-
+        cd "{{ .ROOT_DIR }}" && go run ./tools/frontendmaps
+        -production "api/public"
+        -debug "{{ .OUTPUT_DIR }}.frontend-debug"
+        -output "{{ .OUTPUT_DIR }}.source-maps"
 
   build:be:
     desc: Build server binary
     cmds:
       - >-
         {{ if eq OS "windows" }}set CGO_ENABLED=0 && GOOS={{ .GOOS }} && GOARCH={{ .GOARCH }} && {{ else }}env CGO_ENABLED=0 GOOS={{ .GOOS }} GOARCH={{ .GOARCH }}{{ end }}
-        go build -o bin/semaphore{{ if eq OS "windows" }}.exe{{ end }}
+        go build -trimpath -buildvcs=false -o bin/semaphore{{ if eq OS "windows" }}.exe{{ end }}
         -tags "netgo"
-        -ldflags "-s -w -X {{ .IMPORT }}/util.Ver={{ .VERSION }} -X {{ .IMPORT }}/util.Commit={{ .SHA }} -X {{ .IMPORT }}/util.Date={{ .DATE }}" ./cli
+        -ldflags "-s -w -X {{ .IMPORT }}/util.Ver={{ .VERSION }} -X {{ .IMPORT }}/util.Commit={{ .SHA }} -X {{ .IMPORT }}/util.Date={{ .DATE }} -X {{ .IMPORT }}/util.BuildEdition={{ .EDITION }} -X {{ .IMPORT }}/util.CoreRevision={{ .CORE_REVISION }} -X {{ .IMPORT }}/util.EnhancedRevision={{ .ENHANCED_REVISION }} -X {{ .IMPORT }}/util.EditionImplementation={{ .IMPLEMENTATION_VERSION }}" ./cli
     vars:
+      EDITION: '{{ if eq .APP_BUILD_TYPE "pro_selfhosted" }}enhanced{{ else }}community{{ end }}'
+      IMPLEMENTATION_VERSION:
+        sh: if [ "{{ .EDITION }}" = "enhanced" ]; then echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'; else echo 'community-1'; fi
       TAG:
         sh: git name-rev --name-only --tags --no-undefined HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD
       SHA:
         sh: git log --pretty=format:'%h' -n 1
       VERSION: "{{ if eq .GITHUB_REF_TYPE \"tag\" }}{{ .GITHUB_REF_NAME }}{{ else }}{{ .TAG }}{{ end }}"
-      DATE: "{{ now | unixEpoch }}"
+      DATE: "{{ .SOURCE_DATE_EPOCH }}"
       IMPORT: "github.com/semaphoreui/semaphore"
 
   lint:
@@ -170,13 +235,39 @@ tasks:
 
   release:prod:
     desc: Create and publish a release
+    vars:
+      EDITION: '{{ if eq .APP_BUILD_TYPE "pro_selfhosted" }}enhanced{{ else }}community{{ end }}'
+      IMPLEMENTATION_VERSION:
+        sh: if [ "{{ .EDITION }}" = "enhanced" ]; then echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'; else echo 'community-1'; fi
+    preconditions:
+      - sh: '[ "{{ .EDITION }}" = "community" ] || [ -n "{{ .ENHANCED_REVISION }}" ]'
+        msg: Enhanced releases require ENHANCED_REVISION
     cmds:
-      - goreleaser
+      - >-
+        env BUILD_EDITION="{{ .EDITION }}"
+        CORE_REVISION="{{ .CORE_REVISION }}"
+        ENHANCED_REVISION="{{ .ENHANCED_REVISION }}"
+        EDITION_IMPLEMENTATION="{{ .IMPLEMENTATION_VERSION }}"
+        SOURCE_DATE_EPOCH="{{ .SOURCE_DATE_EPOCH }}"
+        goreleaser
 
   release:test:
     desc: Create a local test release
+    vars:
+      EDITION: '{{ if eq .APP_BUILD_TYPE "pro_selfhosted" }}enhanced{{ else }}community{{ end }}'
+      IMPLEMENTATION_VERSION:
+        sh: if [ "{{ .EDITION }}" = "enhanced" ]; then echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'; else echo 'community-1'; fi
+    preconditions:
+      - sh: '[ "{{ .EDITION }}" = "community" ] || [ -n "{{ .ENHANCED_REVISION }}" ]'
+        msg: Enhanced releases require ENHANCED_REVISION
     cmds:
-      - goreleaser --auto-snapshot --clean --skip=sign
+      - >-
+        env BUILD_EDITION="{{ .EDITION }}"
+        CORE_REVISION="{{ .CORE_REVISION }}"
+        ENHANCED_REVISION="{{ .ENHANCED_REVISION }}"
+        EDITION_IMPLEMENTATION="{{ .IMPLEMENTATION_VERSION }}"
+        SOURCE_DATE_EPOCH="{{ .SOURCE_DATE_EPOCH }}"
+        goreleaser --auto-snapshot --clean --skip=sign
 
   docker:test:
     desc: Test containers by building, running, testing and deleting them

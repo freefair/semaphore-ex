@@ -11,6 +11,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment: enhanced-build
 
     steps:
       - name: Checkout source
@@ -18,36 +19,38 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout pinned PRO implementation
+        uses: actions/checkout@v7
+        with:
+          repository: semaphoreui/semaphorepro-module
+          ref: ${{ vars.ENHANCED_REVISION }}
+          token: ${{ secrets.ENHANCED_REPOSITORY_TOKEN }}
+          path: pro_impl
+          persist-credentials: false
+
       - name: Setup golang
         uses: actions/setup-go@v7
         with:
-          go-version: '^1.26.4'
+          go-version: '1.26.5'
 
       - name: Setup nodejs
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.19.0'
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
       - name: Install go-task
         run: |
-          go install github.com/go-task/task/v3/cmd/task@latest
+          go install github.com/go-task/task/v3/cmd/task@v3.53.1
 
       - name: Install rpm
         run: |
           sudo apt update && sudo apt-get install rpm
 
-      - name: Determine PRO branch
-        uses: ./.github/actions/determine-pro-branch
-        with:
-          gh_token: ${{ secrets.GH_TOKEN }}
-
       - name: Add PRO implementation
-        env:
-          PRO_REPO: https://${{ secrets.GH_TOKEN }}@github.com/semaphoreui/semaphorepro-module.git
         run: |
-          git clone -b "$PRO_BRANCH" "$PRO_REPO" pro_impl
+          test "$(git -C pro_impl rev-parse HEAD)" = "${{ vars.ENHANCED_REVISION }}"
           go work init . ./pro_impl
 
       - name: Install deps
@@ -79,6 +82,7 @@ jobs:
   deploy-prod:
     runs-on: ubuntu-latest
     if: github.repository_owner == 'semaphoreui'
+    environment: enhanced-build
 
     steps:
       - name: Checkout source
@@ -86,10 +90,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Determine PRO branch
-        uses: ./.github/actions/determine-pro-branch
+      - name: Checkout pinned PRO implementation
+        uses: actions/checkout@v7
         with:
-          gh_token: ${{ secrets.GH_TOKEN }}
+          repository: semaphoreui/semaphorepro-module
+          ref: ${{ vars.ENHANCED_REVISION }}
+          token: ${{ secrets.ENHANCED_REPOSITORY_TOKEN }}
+          path: pro_impl
+          persist-credentials: false
 
       - name: Setup qemu
         id: qemu
@@ -141,9 +149,10 @@ jobs:
           builder: ${{ steps.buildx.outputs.name }}
           context: .
           build-args: |
-            GH_TOKEN=${{ secrets.GH_TOKEN }}
             APP_BUILD_TYPE=pro_selfhosted
-            PRO_BRANCH=${{ env.PRO_BRANCH }}
+            EDITION=enhanced
+            CORE_REVISION=${{ github.sha }}
+            ENHANCED_REVISION=${{ vars.ENHANCED_REVISION }}
           file: deployment/docker/server/Dockerfile
           platforms: linux/amd64,linux/arm64 # ,linux/arm/v6
           push: ${{ github.event_name != 'pull_request' }}
@@ -151,7 +160,8 @@ jobs:
           tags: ${{ steps.server.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: false
+          provenance: mode=max
+          sbom: true
 
       - name: Server build with Ansible 2.16.5
         uses: docker/build-push-action@v7
@@ -160,9 +170,10 @@ jobs:
           context: .
           build-args: |
             ANSIBLE_VERSION=9.4.0
-            GH_TOKEN=${{ secrets.GH_TOKEN }}
             APP_BUILD_TYPE=pro_selfhosted
-            PRO_BRANCH=${{ env.PRO_BRANCH }}
+            EDITION=enhanced
+            CORE_REVISION=${{ github.sha }}
+            ENHANCED_REVISION=${{ vars.ENHANCED_REVISION }}
           file: deployment/docker/server/Dockerfile
           platforms: linux/amd64,linux/arm64 # ,linux/arm/v6
           push: ${{ github.event_name != 'pull_request' }}
@@ -173,7 +184,8 @@ jobs:
             semaphoreui/semaphore:${{ github.ref_name }}-ansible2.16.5
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: false
+          provenance: mode=max
+          sbom: true
 
       - name: Server build with PowerShell 7.5.0
         uses: docker/build-push-action@v7
@@ -184,8 +196,6 @@ jobs:
             POWERSHELL_VERSION=7.5.0
             SEMAPHORE_IMAGE=public.ecr.aws/semaphore/server
             SEMAPHORE_VERSION=${{ github.ref_name }}
-            GH_TOKEN=${{ secrets.GH_TOKEN }}
-            APP_BUILD_TYPE=pro_selfhosted
           file: deployment/docker/server/powershell/Dockerfile
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
@@ -196,7 +206,8 @@ jobs:
             semaphoreui/semaphore:${{ github.ref_name }}-powershell7.5.0
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: false
+          provenance: mode=max
+          sbom: true
 
 
 
@@ -223,9 +234,10 @@ jobs:
           builder: ${{ steps.buildx.outputs.name }}
           context: .
           build-args: |
-            GH_TOKEN=${{ secrets.GH_TOKEN }}
             APP_BUILD_TYPE=pro_selfhosted
-            PRO_BRANCH=${{ env.PRO_BRANCH }}
+            EDITION=enhanced
+            CORE_REVISION=${{ github.sha }}
+            ENHANCED_REVISION=${{ vars.ENHANCED_REVISION }}
           file: deployment/docker/runner/Dockerfile
           platforms: linux/amd64,linux/arm64 #,linux/arm/v6
           push: ${{ github.event_name != 'pull_request' }}
@@ -233,7 +245,8 @@ jobs:
           tags: ${{ steps.runner.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: false
+          provenance: mode=max
+          sbom: true
 
       - name: Runner build with Ansible 2.16.5
         uses: docker/build-push-action@v7
@@ -242,9 +255,10 @@ jobs:
           context: .
           build-args: |
             ANSIBLE_VERSION=9.4.0
-            GH_TOKEN=${{ secrets.GH_TOKEN }}
             APP_BUILD_TYPE=pro_selfhosted
-            PRO_BRANCH=${{ env.PRO_BRANCH }}
+            EDITION=enhanced
+            CORE_REVISION=${{ github.sha }}
+            ENHANCED_REVISION=${{ vars.ENHANCED_REVISION }}
           file: deployment/docker/runner/Dockerfile
           platforms: linux/amd64,linux/arm64 #,linux/arm/v6
           push: ${{ github.event_name != 'pull_request' }}
@@ -255,7 +269,8 @@ jobs:
             semaphoreui/runner:${{ github.ref_name }}-ansible2.16.5
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: false
+          provenance: mode=max
+          sbom: true
 
       - name: Runner build with PowerShell 7.5.0
         uses: docker/build-push-action@v7
@@ -266,7 +281,6 @@ jobs:
             POWERSHELL_VERSION=7.5.0
             SEMAPHORE_IMAGE=public.ecr.aws/semaphore/runner
             SEMAPHORE_VERSION=${{ github.ref_name }}
-            GH_TOKEN=${{ secrets.GH_TOKEN }}
             APP_BUILD_TYPE=pro_selfhosted
           file: deployment/docker/server/powershell/Dockerfile
           platforms: linux/amd64
@@ -278,4 +292,5 @@ jobs:
             semaphoreui/runner:${{ github.ref_name }}-powershell7.5.0
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: false
+          provenance: mode=max
+          sbom: true

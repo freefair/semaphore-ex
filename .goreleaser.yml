@@ -10,7 +10,10 @@ builds:
     env:
       - CGO_ENABLED=0
     main: ./cli/main.go
-    ldflags: -s -w -X github.com/semaphoreui/semaphore/util.Ver={{ .Version }} -X github.com/semaphoreui/semaphore/util.Commit={{ .ShortCommit }} -X github.com/semaphoreui/semaphore/util.Date={{ .Timestamp }}
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    ldflags: -s -w -X github.com/semaphoreui/semaphore/util.Ver={{ .Version }} -X github.com/semaphoreui/semaphore/util.Commit={{ .ShortCommit }} -X github.com/semaphoreui/semaphore/util.Date={{ .Env.SOURCE_DATE_EPOCH }} -X github.com/semaphoreui/semaphore/util.BuildEdition={{ .Env.BUILD_EDITION }} -X github.com/semaphoreui/semaphore/util.CoreRevision={{ .Env.CORE_REVISION }} -X github.com/semaphoreui/semaphore/util.EnhancedRevision={{ .Env.ENHANCED_REVISION }} -X github.com/semaphoreui/semaphore/util.EditionImplementation={{ .Env.EDITION_IMPLEMENTATION }}
     tags:
       - netgo
     goos:

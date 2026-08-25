@@ -887,6 +887,7 @@ import YesNoDialog from '@/components/YesNoDialog.vue';
 import TaskLogDialog from '@/components/TaskLogDialog.vue';
 import SystemInfoDialog from '@/components/SystemInfoDialog.vue';
 import delay from '@/lib/delay';
+import { isEnhancedEdition } from '@/lib/edition';
 
 const PROJECT_COLORS = ['red', 'blue', 'orange', 'green'];
 
@@ -1063,7 +1064,7 @@ export default {
 
   computed: {
     isPro() {
-      return (process.env.VUE_APP_BUILD_TYPE || '').startsWith('pro_');
+      return isEnhancedEdition(this.systemInfo?.edition, process.env.VUE_APP_EDITION);
     },
 
     lang() {

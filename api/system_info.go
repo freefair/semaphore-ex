@@ -31,6 +31,11 @@ type SystemInfo struct {
 	Roles             []db.Role               `json:"roles"`
 	BoltdbUsed        bool                    `json:"boltdb_used"`
 	JWT               SystemInfoJWT           `json:"jwt"`
+	Edition           pro_interfaces.Edition  `json:"edition"`
+	ContractVersion   string                  `json:"contract_version"`
+	Implementation    string                  `json:"implementation_version"`
+	CoreRevision      string                  `json:"core_revision"`
+	EnhancedRevision  string                  `json:"enhanced_revision,omitempty"`
 }
 
 // SystemInfoJWT exposes the global JWT configuration for the WebUI.
@@ -117,6 +122,11 @@ func (c *SystemInfoController) GetSystemInfo(w http.ResponseWriter, r *http.Requ
 			Enabled: util.Config.JWT.Enabled,
 			MaxTTL:  util.Config.JWT.MaxTTL,
 		},
+		Edition:          pro_interfaces.Edition(util.BuildEdition),
+		ContractVersion:  pro_interfaces.CoreContractVersion,
+		Implementation:   util.EditionImplementation,
+		CoreRevision:     util.CoreRevision,
+		EnhancedRevision: util.EnhancedRevision,
 	}
 
 	helpers.WriteJSON(w, http.StatusOK, body)

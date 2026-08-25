@@ -25,31 +25,17 @@ jobs:
       - name: Setup nodejs
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.19.0'
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
       - name: Install go-task
         run: |
-          go install github.com/go-task/task/v3/cmd/task@latest
+          go install github.com/go-task/task/v3/cmd/task@v3.53.1
 
       - name: Install deps
         run: |
           task deps
-
-      - name: Determine PRO branch
-        if: github.event_name == 'push'
-        uses: ./.github/actions/determine-pro-branch
-        with:
-          gh_token: ${{ secrets.GH_TOKEN }}
-
-      - name: Add PRO implementation
-        if: github.event_name == 'push'
-        env:
-          PRO_REPO: https://${{ secrets.GH_TOKEN }}@github.com/semaphoreui/semaphorepro-module.git
-        run: |
-          git clone -b "$PRO_BRANCH" "$PRO_REPO" pro_impl
-          go work init . ./pro_impl
 
       - name: Run build
         run: task build
@@ -68,13 +54,8 @@ jobs:
           path: bin/semaphore
           retention-days: 1
 
-      # The dredd hooks set up workflow fixtures through the Pro workflow store,
-      # so they must be built with the PRO implementation (go.work + pro_impl is
-      # set up above for push builds). The integration jobs only have the
-      # open-source stub, where those store methods are no-ops, so build the
-      # hooks here and share them. On pull_request builds pro_impl is not
-      # available; the hooks are built with the stub and detect this at runtime
-      # (isProBuild), skipping the workflow tests.
+      # Community CI never receives the enhanced repository credential. The
+      # hooks detect the disabled workflow store and skip enhanced-only cases.
       - name: Build dredd hooks
         run: task dredd:hooks
 
@@ -290,13 +271,13 @@ jobs:
       - name: Setup nodejs
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.19.0'
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
       - name: Install go-task
         run: |
-          go install github.com/go-task/task/v3/cmd/task@latest
+          go install github.com/go-task/task/v3/cmd/task@v3.53.1
 
       - name: Download artifacts
         uses: actions/download-artifact@v8
@@ -377,13 +358,13 @@ jobs:
       - name: Setup nodejs
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.19.0'
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
       - name: Install go-task
         run: |
-          go install github.com/go-task/task/v3/cmd/task@latest
+          go install github.com/go-task/task/v3/cmd/task@v3.53.1
 
       - name: Download artifacts
         uses: actions/download-artifact@v8
@@ -463,13 +444,13 @@ jobs:
       - name: Setup nodejs
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.19.0'
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
       - name: Install go-task
         run: |
-          go install github.com/go-task/task/v3/cmd/task@latest
+          go install github.com/go-task/task/v3/cmd/task@v3.53.1
 
       - name: Download artifacts
         uses: actions/download-artifact@v8
@@ -534,13 +515,13 @@ jobs:
       - name: Setup nodejs
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.19.0'
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
       - name: Install go-task
         run: |
-          go install github.com/go-task/task/v3/cmd/task@latest
+          go install github.com/go-task/task/v3/cmd/task@v3.53.1
 
       - name: Download artifacts
         uses: actions/download-artifact@v8

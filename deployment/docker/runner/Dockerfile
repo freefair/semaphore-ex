@@ -1,11 +1,15 @@
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine3.24 as builder
+FROM --platform=$BUILDPLATFORM node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS builder
+
+COPY --from=golang:1.26.5-alpine3.24@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 /usr/local/go /usr/local/go
+
+ENV GOPATH=/go
+ENV PATH=/usr/local/go/bin:/go/bin:$PATH
+
+ARG TASK_VERSION=3.53.1
 
 RUN apk add --no-cache -U \
-    libc-dev curl nodejs npm git gcc zip unzip tar
-
-WORKDIR /usr/local
-# hadolint ignore=DL4006
-RUN curl -sL https://taskfile.dev/install.sh | sh
+    libc-dev curl git gcc zip unzip tar && \
+    go install github.com/go-task/task/v3/cmd/task@v${TASK_VERSION}
 
 WORKDIR /go/src/semaphore
 COPY . /go/src/semaphore
@@ -16,18 +20,19 @@ RUN --mount=type=cache,target=/go/pkg \
 ARG APP_BUILD_TYPE
 ARG TARGETOS
 ARG TARGETARCH
-ARG GH_TOKEN
-ARG PRO_BRANCH=main
+ARG CORE_REVISION
+ARG ENHANCED_REVISION
 
 RUN if [ -n "$APP_BUILD_TYPE" ]; then \
-      git clone -b "$PRO_BRANCH" https://${GH_TOKEN}@github.com/semaphoreui/semaphorepro-module.git pro_impl && \
+      test -f pro_impl/go.mod && \
       go work init . ./pro_impl; \
     fi
 
 RUN --mount=type=cache,target=/go/pkg \
     --mount=type=cache,target=/root/.cache/go-build \
-    task deps APP_BUILD_TYPE=${APP_BUILD_TYPE} && \
-    task build GOOS=${TARGETOS} GOARCH=${TARGETARCH} APP_BUILD_TYPE=${APP_BUILD_TYPE}
+    task deps:be APP_BUILD_TYPE=${APP_BUILD_TYPE} && \
+    task deps:fe && \
+    task build GOOS=${TARGETOS} GOARCH=${TARGETARCH} APP_BUILD_TYPE=${APP_BUILD_TYPE} CORE_REVISION=${CORE_REVISION} ENHANCED_REVISION=${ENHANCED_REVISION}
 
 
 # renovate: datasource=github-releases depName=opentofu/opentofu
@@ -39,19 +44,33 @@ ENV TERRAGRUNT_VERSION=0.78.0
 #ENV PULUMI_VERSION="3.116.1"
 
 RUN wget https://github.com/opentofu/opentofu/releases/download/v${OPENTOFU_VERSION}/tofu_${OPENTOFU_VERSION}_linux_${TARGETARCH}.tar.gz && \
+    case "${TARGETARCH}" in amd64) checksum=2463ce749bbe7396e7a384918e1065aeda54317e3fec8db07c2bddee8f714c61 ;; arm64) checksum=cd0b275699416f1417fed4d2911e557eef78126a545fcfc0cb5eee68fe192524 ;; *) exit 1 ;; esac && \
+    echo "${checksum}  tofu_${OPENTOFU_VERSION}_linux_${TARGETARCH}.tar.gz" | sha256sum -c - && \
     tar xf tofu_${OPENTOFU_VERSION}_linux_${TARGETARCH}.tar.gz -C /tmp && \
     rm tofu_${OPENTOFU_VERSION}_linux_${TARGETARCH}.tar.gz
 
-RUN curl -O https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${TARGETARCH}.zip && \
+RUN curl -fSLO https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${TARGETARCH}.zip && \
+    case "${TARGETARCH}" in amd64) checksum=377c8c18e2beab24f721994859236e98383350bf767921436511370d1f7c472b ;; arm64) checksum=d685953bec501c0acda13319f34dddaadf33a8f553c85533531d3c7d5f84604a ;; *) exit 1 ;; esac && \
+    echo "${checksum}  terraform_${TERRAFORM_VERSION}_linux_${TARGETARCH}.zip" | sha256sum -c - && \
     unzip terraform_${TERRAFORM_VERSION}_linux_${TARGETARCH}.zip -d /tmp && \
     rm terraform_${TERRAFORM_VERSION}_linux_${TARGETARCH}.zip
 
 RUN wget -O /tmp/terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_${TARGETARCH} && \
+    case "${TARGETARCH}" in amd64) checksum=debc5b37c44f2e170f83995c3ff8068cfcc61f32e93c28ea442555b56de93c46 ;; arm64) checksum=1d4ca5e428325a4d76ed2d9dbb4f9fb3acce8be781442a184aa3dd3236076cb8 ;; *) exit 1 ;; esac && \
+    echo "${checksum}  /tmp/terragrunt" | sha256sum -c - && \
     chmod +x /tmp/terragrunt
 
-FROM alpine:3.24
+FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 ARG TARGETARCH="amd64"
+ARG EDITION="community"
+ARG CORE_REVISION
+ARG ENHANCED_REVISION
+
+LABEL org.opencontainers.image.revision=${CORE_REVISION} \
+      io.semaphore.edition=${EDITION} \
+      io.semaphore.core.revision=${CORE_REVISION} \
+      io.semaphore.enhanced.revision=${ENHANCED_REVISION}
 
 RUN apk add --no-cache -U \
     bash curl git gnupg mysql-client openssh-client-default python3 python3-dev py3-pip rsync sshpass tar tini tzdata unzip wget zip && \
