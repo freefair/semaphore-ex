@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/semaphoreui/semaphore/db"
 	sqldb "github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/stretchr/testify/assert"
@@ -15,6 +16,7 @@ import (
 func TestCommunityProviderAndWorkerRemainUnavailable(t *testing.T) {
 	store := sqldb.InitConfigCreateTestStore()
 	defer store.Close()
+	require.NoError(t, db.Rollback(store, "2.20.1"))
 	provider := NewCapabilityProvider(store)
 	service := NewCapabilityTestService(store)
 	request := pro_interfaces.CapabilityRequest{

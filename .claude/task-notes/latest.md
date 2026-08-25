@@ -1,7 +1,7 @@
 # Task: Implement selected enhanced edition slices
 
 **Started:** 2026-08-25
-**Last update:** 2026-08-25 20:26
+**Last update:** 2026-08-25 20:55
 
 ## Scope
 Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with tests, documentation, review, and atomic commits
@@ -22,6 +22,12 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 
 - 2026-08-25 20:18 — Slice 003 verification: Community and clean-room Enhanced full Go suites pass; focused capability packages pass with the race detector; go vet passes; production frontend build and Chromium capability dialog test pass with visual screenshot review; changed frontend files lint clean; docs build passes. Known baseline failures remain unchanged: three frontend unit tests, six global lint errors, and three unrelated documentation anchors.
 
+- 2026-08-25 20:29 — Slice 003 completed and committed: docs 1181c97, root 005ac565. Contract is 1.1.0; workers resolve once at execution start. Proceed to Slice 004 migration matrix.
+
+- 2026-08-25 20:51 — Slice 004 migration matrix is green on SQLite, MySQL 8.4, MariaDB 10.11, and PostgreSQL 12.22. Fresh install, rollback with Community data, forward upgrade, semantic schema equivalence, restart persistence, Community mixed-version behavior, full Community/enhanced suites, race, vet, workflow YAML parsing, and docs build all pass. Manual diff review found and corrected the initial missing rollback-data assertion.
+
+- 2026-08-25 20:55 — Final Slice 004 review added CI assertions for every report field; the external TDD contract and all four real database engines remain green afterward.
+
 ## Decisions
 
 - **Pin the Docker build toolchain to Go 1.26.5 and Node.js 24.19.0 images by multi-architecture digest.** (2026-08-25): The isolated /tmp Dockerfile proved the Node-based builder can import the pinned Go toolchain. This removes the mutable Alpine Node package from the build and preserves multi-architecture builds.
@@ -35,6 +41,8 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 - **Use a dedicated capability_test_records table for the Slice 003 lifecycle proof.** (2026-08-25): Dennis selected option B to avoid the risk that a generic OptionsManager namespace becomes accidental long-term domain persistence; the dedicated schema makes lifecycle data ownership and future evolution explicit.
 
 - **Bump the enhanced-module contract to 1.1.0 and resolve worker capability once at execution start.** (2026-08-25): The Slice 003 seam expansion is additive but requires new constructors, so a minor-version signal is accurate. One execution-start snapshot preserves per-operation consistency; queued work resolves later and observes disablement while in-flight work avoids partial policy changes.
+
+- **Use an executable 2.20.1 schema fixture and semantic cross-dialect comparison for Slice 004.** (2026-08-25): A registry target plus representative Community data exercises the real migration engine on every supported database without maintaining brittle SQL dumps; the empty _matrix database gate prevents accidental use against populated state.
 
 ## Open
 
