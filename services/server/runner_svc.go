@@ -4,11 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"time"
-
+	"errors"
 	"github.com/gorilla/securecookie"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
+	"time"
 )
 
 // runnerRegistrationTokenTTL is how long a one-time registration token issued for
@@ -42,12 +42,18 @@ type RunnerService interface {
 	// CreateRunner generates the runner's credentials and persists it.
 	CreateRunner(runner db.Runner) (newRunner db.Runner, err error)
 
+	// CreateProjectRunner creates an inactive project-bound runner and returns
+	// its short-lived registration token exactly once. Only the hash is stored.
+	CreateProjectRunner(runner db.Runner) (newRunner db.Runner, registrationToken string, err error)
+
 	// RegenerateRegistrationToken issues a fresh one-time registration token and
 	// returns its plaintext (handed to the caller once). If the runner was already
 	// registered, it is reset to the unregistered state (auth token cleared,
 	// deactivated) so it can be registered again.
 	RegenerateRegistrationToken(runner db.Runner) (registrationToken string, err error)
 }
+
+var ErrProjectRunnerRequiresProject = errors.New("project runner requires a project")
 
 type RunnerServiceImpl struct {
 	runnerRepo db.RunnerManager

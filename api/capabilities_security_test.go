@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/metrics"
@@ -142,6 +143,69 @@ func TestCapabilityConfigurationAdminDenialIsAudited(t *testing.T) {
 	assert.Equal(t, string(pro_interfaces.CapabilityReasonInsufficientPermission), auditRecorder.events[0].Reason)
 	require.NotNil(t, auditRecorder.events[0].ActorID)
 	assert.Equal(t, 10, *auditRecorder.events[0].ActorID)
+}
+
+func TestProjectRunnerPermissionDenialIsAudited(t *testing.T) {
+	auditRecorder := &auditRecorderStub{}
+	handler := helpers.CorrelationMiddleware(
+		EnhancedProjectPermissionAuditMiddleware(auditRecorder)(http.HandlerFunc(
+			func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) },
+		)),
+	)
+	request := httptest.NewRequest(http.MethodPost, "/api/project/12/runners", bytes.NewBufferString(`{"name":"denied"}`))
+	request = mux.SetURLVars(request, map[string]string{"project_id": "12"})
+	request = helpers.SetContextValue(request, "user", &db.User{ID: 11})
+	request = helpers.SetContextValue(request, "permissions", db.ProjectUserPermission(0))
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	require.Len(t, auditRecorder.events, 1)
+	assert.Equal(t, pro_interfaces.AuditActionProjectRunnerCreate, auditRecorder.events[0].Action)
+	assert.Equal(t, pro_interfaces.AuditTargetProjectRunner, auditRecorder.events[0].TargetType)
+	assert.Equal(t, "project:12", auditRecorder.events[0].TargetID)
+	assert.Equal(t, string(pro_interfaces.CapabilityReasonInsufficientPermission), auditRecorder.events[0].Reason)
+	require.NoError(t, auditRecorder.events[0].Validate())
+}
+
+func TestProjectRunnerPermissionAuditDoesNotDuplicateDownstreamCapabilityDenial(t *testing.T) {
+	auditRecorder := &auditRecorderStub{}
+	handler := helpers.CorrelationMiddleware(
+		EnhancedProjectPermissionAuditMiddleware(auditRecorder)(http.HandlerFunc(
+			func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) },
+		)),
+	)
+	request := httptest.NewRequest(http.MethodPost, "/api/project/12/runners", bytes.NewBufferString(`{"name":"capability-denied"}`))
+	request = mux.SetURLVars(request, map[string]string{"project_id": "12"})
+	request = helpers.SetContextValue(request, "user", &db.User{ID: 11})
+	request = helpers.SetContextValue(request, "permissions", db.CanManageProjectResources)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Empty(t, auditRecorder.events)
+}
+
+func TestAnonymousProjectRunnerRequestIsAudited(t *testing.T) {
+	auditRecorder := &auditRecorderStub{}
+	handler := helpers.CorrelationMiddleware(
+		EnhancedAnonymousAuditMiddleware(auditRecorder)(http.HandlerFunc(
+			func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) },
+		)),
+	)
+	request := httptest.NewRequest(http.MethodGet, "/api/project/12/runners", nil)
+	request = mux.SetURLVars(request, map[string]string{"project_id": "12"})
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+	require.Len(t, auditRecorder.events, 1)
+	assert.Equal(t, pro_interfaces.AuditActionProjectRunnerList, auditRecorder.events[0].Action)
+	assert.Equal(t, pro_interfaces.AuditReasonUnauthenticated, auditRecorder.events[0].Reason)
+	require.NoError(t, auditRecorder.events[0].Validate())
 }
 
 func insufficientPermissionAuditDecision() pro_interfaces.CapabilityDecision {

@@ -60,8 +60,8 @@ type Runner struct {
 	Status RunnerStatus `db:"-" json:"status"`
 
 	// RegistrationTokenHash is the stored SHA-256 hash of the one-time registration
-	// token (the plaintext is never persisted). It is issued on demand via
-	// RegenerateRegistrationToken, not at creation time.
+	// token (the plaintext is never persisted). Project-runner creation and explicit
+	// regeneration may issue the plaintext exactly once.
 	RegistrationTokenHash      *string    `db:"registration_token" json:"-" backup:"-"`
 	RegistrationTokenExpiresAt *time.Time `db:"registration_token_expires_at" json:"-" backup:"-"`
 }

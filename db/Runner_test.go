@@ -1,10 +1,9 @@
 package db
 
 import (
+	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestRunner_IsOnline(t *testing.T) {

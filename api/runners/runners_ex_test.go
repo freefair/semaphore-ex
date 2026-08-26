@@ -1,0 +1,91 @@
+package runners
+
+import (
+	"bytes"
+	"encoding/json"
+	"github.com/semaphoreui/semaphore/api/helpers"
+	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/db/sql"
+	"github.com/semaphoreui/semaphore/services/runners"
+	"github.com/semaphoreui/semaphore/services/server"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestRegisterRunnerConsumesProjectTokenOnceAndPreservesBinding(t *testing.T) {
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	origin, err := store.CreateProject(db.Project{Name: "origin"})
+	require.NoError(t, err)
+	other, err := store.CreateProject(db.Project{Name: "other"})
+	require.NoError(t, err)
+	created, registrationToken, err := server.NewRunnerService(store).CreateProjectRunner(db.Runner{
+		Name: "bound runner", ProjectID: &origin.ID,
+	})
+	require.NoError(t, err)
+
+	body, err := json.Marshal(runners.RunnerRegistration{
+		RegistrationToken: registrationToken,
+		ProjectID:         &other.ID,
+		Enabled:           false,
+	})
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPost, "/api/internal/runners", bytes.NewReader(body))
+	request = helpers.SetContextValue(request, "store", store)
+	response := httptest.NewRecorder()
+
+	RegisterRunner(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.NotContains(t, response.Body.String(), registrationToken)
+	stored, err := store.GetRunner(origin.ID, created.ID)
+	require.NoError(t, err)
+	require.NotNil(t, stored.ProjectID)
+	assert.Equal(t, origin.ID, *stored.ProjectID)
+	assert.True(t, stored.Active)
+	assert.True(t, stored.IsRegistered())
+	assert.Nil(t, stored.RegistrationTokenHash)
+	assert.Nil(t, stored.RegistrationTokenExpiresAt)
+	persistedJSON, err := json.Marshal(stored)
+	require.NoError(t, err)
+	assert.NotContains(t, string(persistedJSON), registrationToken)
+
+	replay := httptest.NewRequest(http.MethodPost, "/api/internal/runners", bytes.NewReader(body))
+	replay = helpers.SetContextValue(replay, "store", store)
+	replayResponse := httptest.NewRecorder()
+	RegisterRunner(replayResponse, replay)
+	assert.Equal(t, http.StatusBadRequest, replayResponse.Code)
+}
+
+func TestRegisterRunnerRejectsExpiredProjectToken(t *testing.T) {
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "expired"})
+	require.NoError(t, err)
+	runner, err := store.CreateRunner(db.Runner{Name: "expired", ProjectID: &project.ID})
+	require.NoError(t, err)
+	registrationToken := server.RunnerRegistrationTokenPrefix + strings.Repeat("x", 43)
+	err = store.ResetRunnerRegistration(
+		runner.ID,
+		server.HashRunnerRegistrationToken(registrationToken),
+		time.Now().Add(-time.Minute),
+	)
+	require.NoError(t, err)
+	body, err := json.Marshal(runners.RunnerRegistration{RegistrationToken: registrationToken})
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPost, "/api/internal/runners", bytes.NewReader(body))
+	request = helpers.SetContextValue(request, "store", store)
+	response := httptest.NewRecorder()
+
+	RegisterRunner(response, request)
+
+	assert.Equal(t, http.StatusBadRequest, response.Code)
+	stored, err := store.GetRunner(project.ID, runner.ID)
+	require.NoError(t, err)
+	assert.False(t, stored.IsRegistered())
+}

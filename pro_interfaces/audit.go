@@ -14,11 +14,18 @@ const (
 	AuditActionCapabilityWrite     AuditAction = "capability_write"
 	AuditActionCapabilityExecute   AuditAction = "capability_execute"
 	AuditActionCapabilityConfigure AuditAction = "capability_configure"
+	AuditActionProjectRunnerList   AuditAction = "project_runner_list"
+	AuditActionProjectRunnerRead   AuditAction = "project_runner_read"
+	AuditActionProjectRunnerCreate AuditAction = "project_runner_create"
+	AuditActionProjectRunnerIssue  AuditAction = "project_runner_registration_issue"
 )
 
 type AuditTargetType string
 
-const AuditTargetCapability AuditTargetType = "capability"
+const (
+	AuditTargetCapability    AuditTargetType = "capability"
+	AuditTargetProjectRunner AuditTargetType = "project_runner"
+)
 
 type AuditOutcome string
 
@@ -69,8 +76,9 @@ type QueueID string
 const QueueEnhancedAudit QueueID = "enhanced_audit"
 
 var (
-	correlationPattern = regexp.MustCompile(`^(?:[a-f0-9]{32}|internal)$`)
-	identifierPattern  = regexp.MustCompile(`^[a-z0-9_.:-]{1,64}$`)
+	correlationPattern         = regexp.MustCompile(`^(?:[a-f0-9]{32}|internal)$`)
+	identifierPattern          = regexp.MustCompile(`^[a-z0-9_.:-]{1,64}$`)
+	projectRunnerTargetPattern = regexp.MustCompile(`^(?:project|runner):[1-9][0-9]*$`)
 )
 
 // AuditEvent is the allowlisted payload shared by enhanced features. It has no
@@ -101,7 +109,14 @@ func (e AuditEvent) Validate() error {
 }
 
 func validAuditTarget(targetType AuditTargetType, targetID string) bool {
-	return targetType == AuditTargetCapability && targetID == string(CapabilityLifecycleTest)
+	switch targetType {
+	case AuditTargetCapability:
+		return targetID == string(CapabilityLifecycleTest)
+	case AuditTargetProjectRunner:
+		return projectRunnerTargetPattern.MatchString(targetID)
+	default:
+		return false
+	}
 }
 
 func validAuditReason(reason string) bool {
@@ -147,7 +162,9 @@ type AuditServiceFacade interface {
 func validAuditAction(action AuditAction) bool {
 	switch action {
 	case AuditActionCapabilityResolve, AuditActionCapabilityRead, AuditActionCapabilityWrite,
-		AuditActionCapabilityExecute, AuditActionCapabilityConfigure:
+		AuditActionCapabilityExecute, AuditActionCapabilityConfigure,
+		AuditActionProjectRunnerList, AuditActionProjectRunnerRead,
+		AuditActionProjectRunnerCreate, AuditActionProjectRunnerIssue:
 		return true
 	default:
 		return false

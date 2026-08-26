@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -203,17 +204,31 @@ func (d *SqlDb) RegisterRunner(registrationTokenHash string, publicKey *string) 
 
 	token := db.GenerateRunnerToken()
 
-	_, err = d.exec(
-		"update `runner` set `token`=?, `public_key`=?, `registration_token`=null, `registration_token_expires_at`=null where id=?",
+	var result sql.Result
+	result, err = d.exec(
+		"update `runner` set `token`=?, `active`=?, `public_key`=?, `registration_token`=null, `registration_token_expires_at`=null "+
+			"where id=? and `token`='' and `registration_token`=? and `registration_token_expires_at` > CURRENT_TIMESTAMP",
 		token,
+		true,
 		publicKey,
-		runner.ID)
+		runner.ID,
+		registrationTokenHash)
 
 	if err != nil {
 		return
 	}
+	var updated int64
+	updated, err = result.RowsAffected()
+	if err != nil {
+		return
+	}
+	if updated != 1 {
+		err = db.ErrNotFound
+		return
+	}
 
 	runner.Token = token
+	runner.Active = true
 	runner.PublicKey = publicKey
 	runner.RegistrationTokenHash = nil
 	runner.RegistrationTokenExpiresAt = nil
@@ -224,7 +239,7 @@ func (d *SqlDb) RegisterRunner(registrationTokenHash string, publicKey *string) 
 
 func (d *SqlDb) ResetRunnerRegistration(runnerID int, registrationTokenHash string, expiresAt time.Time) (err error) {
 	_, err = d.exec(
-		"update `runner` set `token`='', `public_key`=null, `registration_token`=?, `registration_token_expires_at`=? where id=?",
+		"update `runner` set `token`='', `active`=false, `public_key`=null, `registration_token`=?, `registration_token_expires_at`=? where id=?",
 		registrationTokenHash,
 		expiresAt,
 		runnerID)

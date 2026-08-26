@@ -21,5 +21,5 @@ func Compatibility() pro_interfaces.Compatibility {
 }
 
 func GetFeatures(_ *db.User, _ string) pro_interfaces.Features {
-	return pro_interfaces.Features{TaskSummary: true}
+	return pro_interfaces.Features{ProjectRunners: true, TaskSummary: true}
 }

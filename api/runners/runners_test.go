@@ -3,27 +3,35 @@ package runners
 import (
 	"bytes"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"testing"
-
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/services/runners"
+	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/services/tasks"
+	"github.com/semaphoreui/semaphore/test/securityfixtures"
 	"github.com/semaphoreui/semaphore/util"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"net/http"
+	"net/http/httptest"
+	"testing"
 )
 
 func TestRegisterRunner_InvalidTokenReturnsBadRequest(t *testing.T) {
 	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	var logOutput bytes.Buffer
+	logger := log.StandardLogger()
+	previousOutput := logger.Out
+	logger.SetOutput(&logOutput)
+	t.Cleanup(func() { logger.SetOutput(previousOutput) })
 
 	body, err := json.Marshal(map[string]any{
-		"registration_token": "not-a-valid-token",
+		"registration_token": server.RunnerRegistrationTokenPrefix + securityfixtures.TripwireValues[0],
 		"name":               "test-runner",
 	})
 	require.NoError(t, err)
@@ -39,6 +47,7 @@ func TestRegisterRunner_InvalidTokenReturnsBadRequest(t *testing.T) {
 	var res map[string]string
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
 	assert.Equal(t, "Invalid registration token", res["error"])
+	securityfixtures.AssertTripwiresAbsent(t, w.Body.String(), logOutput.String())
 }
 
 func newProgressRequest(t *testing.T, store db.Store, runner db.Runner, progress runners.RunnerProgress) *http.Request {
