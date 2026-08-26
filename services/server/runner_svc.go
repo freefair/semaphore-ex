@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"time"
 
 	"github.com/gorilla/securecookie"
@@ -42,12 +43,18 @@ type RunnerService interface {
 	// CreateRunner generates the runner's credentials and persists it.
 	CreateRunner(runner db.Runner) (newRunner db.Runner, err error)
 
+	// CreateProjectRunner creates an inactive project-bound runner and returns
+	// its short-lived registration token exactly once. Only the hash is stored.
+	CreateProjectRunner(runner db.Runner) (newRunner db.Runner, registrationToken string, err error)
+
 	// RegenerateRegistrationToken issues a fresh one-time registration token and
 	// returns its plaintext (handed to the caller once). If the runner was already
 	// registered, it is reset to the unregistered state (auth token cleared,
 	// deactivated) so it can be registered again.
 	RegenerateRegistrationToken(runner db.Runner) (registrationToken string, err error)
 }
+
+var ErrProjectRunnerRequiresProject = errors.New("project runner requires a project")
 
 type RunnerServiceImpl struct {
 	runnerRepo db.RunnerManager
@@ -72,6 +79,27 @@ func (s *RunnerServiceImpl) CreateRunner(runner db.Runner) (newRunner db.Runner,
 	}
 
 	newRunner, err = s.runnerRepo.CreateRunner(runner)
+	return
+}
+
+func (s *RunnerServiceImpl) CreateProjectRunner(
+	runner db.Runner,
+) (newRunner db.Runner, registrationToken string, err error) {
+	if runner.ProjectID == nil || *runner.ProjectID <= 0 {
+		err = ErrProjectRunnerRequiresProject
+		return
+	}
+	registrationToken, hash := generateRunnerRegistrationToken()
+	expiresAt := tz.Now().Add(runnerRegistrationTokenTTL)
+	runner.Token = ""
+	runner.Active = false
+	runner.Registered = false
+	runner.RegistrationTokenHash = &hash
+	runner.RegistrationTokenExpiresAt = &expiresAt
+	newRunner, err = s.runnerRepo.CreateRunner(runner)
+	if err != nil {
+		registrationToken = ""
+	}
 	return
 }
 

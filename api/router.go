@@ -118,7 +118,6 @@ func Route(
 	userController := NewUserController(subscriptionService)
 	usersController := NewUsersController(subscriptionService)
 	subscriptionController := proApi.NewSubscriptionController(store, store, store, terraformStore)
-	projectRunnerController := proProjects.NewProjectRunnerController(subscriptionService, runnerService)
 	globalRunnerController := NewGlobalRunnerController(runnerService)
 	taskController := projects.NewTaskController(store, ansibleTaskRepo)
 	rolesController := proApi.NewRolesController(store)
@@ -128,6 +127,7 @@ func Route(
 	capabilityTestService := proFeatures.NewCapabilityTestService(store)
 	capabilityFacade := capabilityServices.NewServiceFacade(capabilityProvider, capabilityTestService)
 	auditFacade := auditServices.NewServiceFacade(store, logWriteService, appMetrics)
+	projectRunnerController := proProjects.NewProjectRunnerController(subscriptionService, runnerService, capabilityProvider, auditFacade)
 	capabilityController := NewCapabilityController(capabilityFacade, auditFacade)
 
 	r := mux.NewRouter()
@@ -346,7 +346,11 @@ func Route(
 	//
 	// Project resources CRUD
 	projectUserAPI := authenticatedAPI.PathPrefix("/project/{project_id}").Subrouter()
-	projectUserAPI.Use(projects.ProjectMiddleware, projects.GetMustCanMiddleware(db.CanManageProjectResources))
+	projectUserAPI.Use(
+		projects.ProjectMiddleware,
+		EnhancedProjectPermissionAuditMiddleware(auditFacade),
+		projects.GetMustCanMiddleware(db.CanManageProjectResources),
+	)
 
 	projectUserAPI.Path("/role").HandlerFunc(projects.GetUserRole).Methods("GET", "HEAD")
 

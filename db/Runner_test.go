@@ -1,11 +1,36 @@
 package db
 
 import (
+	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestRunnerRegistrationMaterialIsExcludedFromSerializationAndBackups(t *testing.T) {
+	registrationHash := strings.Repeat("a", 64)
+	expiresAt := time.Now().Add(time.Hour)
+	runner := Runner{
+		Token:                      "runner-auth-material",
+		RegistrationTokenHash:      &registrationHash,
+		RegistrationTokenExpiresAt: &expiresAt,
+	}
+
+	serialized, err := json.Marshal(runner)
+	assert.NoError(t, err)
+	assert.NotContains(t, string(serialized), runner.Token)
+	assert.NotContains(t, string(serialized), registrationHash)
+
+	runnerType := reflect.TypeOf(Runner{})
+	for _, fieldName := range []string{"Token", "RegistrationTokenHash", "RegistrationTokenExpiresAt"} {
+		field, found := runnerType.FieldByName(fieldName)
+		assert.True(t, found)
+		assert.Equal(t, "-", field.Tag.Get("backup"), fieldName)
+	}
+}
 
 func TestRunner_IsOnline(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)

@@ -17,6 +17,8 @@ const (
 	// CapabilityLifecycleTest exercises activation and downgrade behavior without
 	// coupling the contract to a product capability.
 	CapabilityLifecycleTest CapabilityID = "lifecycle_test"
+	// CapabilityProjectRunners gates project-scoped runner inventory and registration.
+	CapabilityProjectRunners CapabilityID = "project_runners"
 )
 
 // LimitID identifies one numeric limit in a capability decision.

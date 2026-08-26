@@ -1,7 +1,7 @@
 # Task: Implement selected enhanced edition slices
 
 **Started:** 2026-08-25
-**Last update:** 2026-08-25 21:28
+**Last update:** 2026-08-26 11:18
 
 ## Scope
 Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with tests, documentation, review, and atomic commits
@@ -30,6 +30,14 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 
 - 2026-08-25 21:28 — Slice 005 is green on the current worktree: go test ./..., focused race tests, go vet ./..., the clean-room enhanced go.work test, and the Docusaurus production build all exit 0. The docs build retains only the three known unrelated broken-anchor warnings.
 
+- 2026-08-25 21:58 — Slice 010 backend is green: root go test ./..., Community pro go test ./..., enhanced workspace go test ./..., and the atomic registration race test all pass. The focused runner-registration frontend test has 3 passing tests and the enhanced production bundle builds successfully.
+
+- 2026-08-26 10:44 — Slice 010 browser acceptance passed in the in-app Browser: project runner creation showed the one-time token and copyable commands, the real CLI registration consumed it, a live runner heartbeat rendered Online in the originating project, later DOM contained no smrs_ material, and console had no errors. Existing German vue-i18n warnings remain an unrelated baseline side defect.
+
+- 2026-08-26 11:15 — Slice 010 final review found and fixed two scope-owned defects: registration-token regeneration now deactivates the runner, and project-permission audit middleware no longer duplicates downstream capability denials. Both failures reproduced in /tmp/semaphore-slice-010-review-contract.go before production changes; the isolated contract is green after the fixes.
+
+- 2026-08-26 11:18 — Slice 010 final verification after review fixes: root go test ./... passes outside the sandbox; Community pro and clean-room Enhanced full suites pass; root go vet passes; atomic token race test passes; focused UI tests are 3/3; enhanced production build, changed-file ESLint, docs build, and browser create/register/online acceptance pass. Known unrelated baselines remain the three full frontend unit failures, six global lint errors, German i18n warnings, and three docs anchors.
+
 ## Decisions
 
 - **Pin the Docker build toolchain to Go 1.26.5 and Node.js 24.19.0 images by multi-architecture digest.** (2026-08-25): The isolated /tmp Dockerfile proved the Node-based builder can import the pinned Go toolchain. This removes the mutable Alpine Node package from the build and preserves multi-architecture builds.
@@ -45,6 +53,10 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 - **Bump the enhanced-module contract to 1.1.0 and resolve worker capability once at execution start.** (2026-08-25): The Slice 003 seam expansion is additive but requires new constructors, so a minor-version signal is accurate. One execution-start snapshot preserves per-operation consistency; queued work resolves later and observes disablement while in-flight work avoids partial policy changes.
 
 - **Use an executable 2.20.1 schema fixture and semantic cross-dialect comparison for Slice 004.** (2026-08-25): A registry target plus representative Community data exercises the real migration engine on every supported database without maintaining brittle SQL dumps; the empty _matrix database gate prevents accidental use against populated state.
+
+- **Implement project runners as an executable clean-room enhanced-module reference while preserving the Community no-op seam.** (2026-08-25): The private Pro/Enterprise module is unavailable by design; the public contract and repository specification are the authorized sources, and Community behavior must remain unchanged.
+
+- **Do not apply the legacy subscription runner quota in the clean-room project-runner controller.** (2026-08-25): Commercial quotas are explicitly unselected. The Community subscription service always denies CanAddRunner, which made the enhanced create flow return 409 even with an active project_runners capability; backend capability state is the selected availability authority.
 
 ## Open
 
@@ -64,6 +76,14 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 
 - [ ] Contract version decision pending: A bump CoreContractVersion from 1.0.0 to 1.1.0 for the additive Slice 003 seam expansion, or B keep 1.0.0 only if Slices 001-005 are one unreleased baseline. No version change or Slice 003 commit until Dennis decides.
 
+- [ ] Browser acceptance is still required for Slice 010. Browser discovery returned zero connected instances, so create/copy/register/online visual evidence cannot yet be retained.
+
+- [ ] Known unrelated frontend baseline failures remain: full unit suite fails ArgsPicker, YesNoDialog, and Socket; global lint fails gulp-gpt-translate.js and vue.config.js. The Slice 010 focused test and production build are green.
+
+- [ ] Browser acceptance remains blocked by a stale Codex browser runtime after the plugin update: both browser and Chrome clients at 26.818.61809 fail because trusted-worker.js imports the removed 26.818.41509/browser-service.mjs. Runtime reset and both supported surfaces reproduce the same error. Restart Codex, resume this session, then rerun the Slice 010 browser flow.
+
+- [ ] Slice 010 is code-complete and automated verification is green, but UI acceptance, final review, acceptance checkboxes, and commits remain blocked on an available in-app Browser instance.
+
 ## Next session
 Slice 001 implemented: versioned module contract, Community compile assertions and black-box contracts, workspace replacement fixture, full Community/enhanced builds, docs and test suites green. Proceed with Slice 002 dual-build verification.
 Wait for the source-map decision, implement it, rerun dual Community/enhanced reproducibility, finish container startup smoke, update Slice 002 checklist, build docs, review, and commit.
@@ -72,3 +92,5 @@ Commit Slice 002 atomically (nested docs first, then root), then begin Slice 003
 After GitHub authentication is restored, query the private repository default branch/revision, clone it as pro_impl without exposing credentials, inspect its current capability implementation, and write the failing /tmp Slice 003 contract before editing either module.
 Proceed to Slice 005: reusable enhanced auth, audit, redaction, correlation, dependency metrics, and tripwire harness.
 Commit the verified Slice 005 documentation and implementation atomically, then begin Slice 010 with a new /tmp contract test before production edits.
+When Dennis replies that a browser is connected, run the visible project-runner create/copy/register/online flow, retain evidence, mark Slice 010 acceptance complete, rerun focused verification, review, commit docs submodule and root atomically, then continue with Slice 011.
+Open the Codex in-app Browser at http://127.0.0.1:8080, then complete the Slice 010 create/copy/register/online visual flow. Browser plugin discovery returned no available browsers after restart, and Computer Use is prohibited from controlling the Codex app.

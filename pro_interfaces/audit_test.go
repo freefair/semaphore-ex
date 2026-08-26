@@ -61,6 +61,22 @@ func TestAuditEventRejectsTripwiresInEveryStringSlot(t *testing.T) {
 	}
 }
 
+func TestAuditEventAcceptsBoundedProjectRunnerTarget(t *testing.T) {
+	event := AuditEvent{
+		CorrelationID: "0123456789abcdef0123456789abcdef",
+		Action:        AuditActionProjectRunnerCreate,
+		TargetType:    AuditTargetProjectRunner,
+		TargetID:      "runner:42",
+		Outcome:       AuditOutcomeAllowed,
+		Source:        AuditSourceAPI,
+		Reason:        string(CapabilityReasonActive),
+	}
+
+	require.NoError(t, event.Validate())
+	event.TargetID = "runner:" + securityfixtures.TripwireValues[0]
+	assert.Error(t, event.Validate())
+}
+
 func withAuditCorrelation(event AuditEvent, value string) AuditEvent {
 	event.CorrelationID = value
 	return event

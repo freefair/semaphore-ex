@@ -372,6 +372,9 @@ export default {
   unregisteredRunnerHint:
     'The runner will be created without any token. You can then generate a one-time '
     + 'registration token for it and use that to register the runner later.',
+  projectRunnerRegistrationHint:
+    'The runner will be created inactive. Its one-time registration token is shown '
+    + 'once after creation and expires in 1 hour.',
   runnerRegistrationToken: 'New Runner',
   registrationToken: 'Registration token:',
   registrationTokenHint:

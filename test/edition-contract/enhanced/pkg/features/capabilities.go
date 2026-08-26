@@ -44,7 +44,17 @@ func (p *capabilityProvider) Resolve(
 	if err != nil {
 		return pro_interfaces.CapabilitySnapshot{}, err
 	}
-	return pro_interfaces.NewCapabilitySnapshot(request, []pro_interfaces.CapabilityDecision{decision}), nil
+	projectRunners := pro_interfaces.NewCapabilityDecision(
+		pro_interfaces.CapabilityProjectRunners,
+		pro_interfaces.CapabilityStateActive,
+		pro_interfaces.CapabilityReasonActive,
+		[]pro_interfaces.CapabilityAccess{
+			pro_interfaces.CapabilityAccessRead,
+			pro_interfaces.CapabilityAccessWrite,
+		},
+		nil,
+	)
+	return pro_interfaces.NewCapabilitySnapshot(request, []pro_interfaces.CapabilityDecision{decision, projectRunners}), nil
 }
 
 func (p *capabilityProvider) Configure(

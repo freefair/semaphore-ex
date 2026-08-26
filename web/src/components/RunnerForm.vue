@@ -57,7 +57,7 @@
         </v-checkbox>
       </v-col>
       <v-col>
-        <v-checkbox v-if="isNew" v-model="item.registered" :disabled="formSaving">
+        <v-checkbox v-if="isNew && !projectId" v-model="item.registered" :disabled="formSaving">
           <template v-slot:label>
             {{ $t('register') }}
             <v-chip class="ml-2" color="error" small>New</v-chip>
@@ -67,7 +67,7 @@
     </v-row>
 
     <v-alert v-if="isNew && !item.registered" class="mb-4" color="info" dense text>
-      {{ $t('unregisteredRunnerHint') }}
+      {{ $t(projectId ? 'projectRunnerRegistrationHint' : 'unregisteredRunnerHint') }}
     </v-alert>
 
     <v-text-field
@@ -133,11 +133,10 @@ export default {
 
   methods: {
     getNewItem() {
-      // New runners default to "registered": the server returns an auth token as
-      // usual. Unchecking it creates an unregistered runner that must register
-      // itself later using a one-time registration token.
+      // Project runners always use the one-time registration flow. Global
+      // runners retain the existing direct-token option.
       return {
-        registered: true,
+        registered: this.projectId == null,
         is_default: this.projectId == null,
       };
     },

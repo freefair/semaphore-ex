@@ -3,7 +3,7 @@ package pro_interfaces
 // CoreContractVersion identifies the public core-to-enhanced module contract.
 // Implementations must publish the same value before they can be paired with
 // this core revision.
-const CoreContractVersion = "1.2.0"
+const CoreContractVersion = "1.3.0"
 
 // Edition identifies which enhanced-module implementation is active.
 type Edition string
