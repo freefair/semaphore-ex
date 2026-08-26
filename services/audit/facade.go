@@ -41,10 +41,14 @@ func (f *serviceFacade) Record(_ context.Context, event pro_interfaces.AuditEven
 	}
 	description := string(payload)
 	objectType := db.EventCapability
+	if event.TargetType == pro_interfaces.AuditTargetProjectRunner {
+		objectType = db.EventProjectRunnerAudit
+	}
 
 	databaseStart := time.Now()
 	_, databaseErr := f.repository.CreateEvent(db.Event{
 		UserID:      event.ActorID,
+		ProjectID:   event.ProjectID,
 		ObjectType:  &objectType,
 		Description: &description,
 	})
@@ -57,6 +61,7 @@ func (f *serviceFacade) Record(_ context.Context, event pro_interfaces.AuditEven
 	fileErr := f.logWriter.WriteEventLog(pro_interfaces.EventLogRecord{
 		Action:        string(event.Action),
 		UserID:        event.ActorID,
+		ProjectID:     event.ProjectID,
 		Description:   &description,
 		CorrelationID: event.CorrelationID,
 		TargetType:    event.TargetType,

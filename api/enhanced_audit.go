@@ -131,6 +131,7 @@ type enhancedAuditDescriptor struct {
 	Action     pro_interfaces.AuditAction
 	TargetType pro_interfaces.AuditTargetType
 	TargetID   string
+	ProjectID  *int
 }
 
 func enhancedAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {
@@ -154,9 +155,9 @@ func enhancedAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {
 	if strings.HasSuffix(path, "/runners") {
 		switch method {
 		case http.MethodGet, http.MethodHead:
-			return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerList, projectTarget), true
+			return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerList, projectTarget, projectID), true
 		case http.MethodPost:
-			return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerCreate, projectTarget), true
+			return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerCreate, projectTarget, projectID), true
 		}
 	}
 	runnerID, runnerOK := positiveMuxID(r, "runner_id")
@@ -165,10 +166,10 @@ func enhancedAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {
 	}
 	runnerTarget := fmt.Sprintf("runner:%d", runnerID)
 	if strings.HasSuffix(path, "/registration-token") && method == http.MethodPost {
-		return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerIssue, runnerTarget), true
+		return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerIssue, runnerTarget, projectID), true
 	}
 	if strings.HasSuffix(path, fmt.Sprintf("/runners/%d", runnerID)) && (method == http.MethodGet || method == http.MethodHead) {
-		return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerRead, runnerTarget), true
+		return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerRead, runnerTarget, projectID), true
 	}
 	return enhancedAuditDescriptor{}, false
 }
@@ -180,8 +181,11 @@ func capabilityAuditDescriptor(action pro_interfaces.AuditAction) enhancedAuditD
 	}
 }
 
-func projectRunnerAuditDescriptor(action pro_interfaces.AuditAction, targetID string) enhancedAuditDescriptor {
-	return enhancedAuditDescriptor{Action: action, TargetType: pro_interfaces.AuditTargetProjectRunner, TargetID: targetID}
+func projectRunnerAuditDescriptor(action pro_interfaces.AuditAction, targetID string, projectID int) enhancedAuditDescriptor {
+	return enhancedAuditDescriptor{
+		Action: action, TargetType: pro_interfaces.AuditTargetProjectRunner,
+		TargetID: targetID, ProjectID: &projectID,
+	}
 }
 
 func positiveMuxID(r *http.Request, name string) (int, bool) {
@@ -198,7 +202,29 @@ func routeAuditEvent(
 	event := capabilityAuditEvent(r, descriptor.Action, outcome, reason)
 	event.TargetType = descriptor.TargetType
 	event.TargetID = descriptor.TargetID
+	event.ProjectID = verifiedAuditProjectID(r, descriptor.ProjectID)
 	return event
+}
+
+func verifiedAuditProjectID(r *http.Request, requestedProjectID *int) *int {
+	if requestedProjectID == nil {
+		return nil
+	}
+	if project, ok := helpers.GetFromContext(r, "project").(db.Project); ok && project.ID == *requestedProjectID {
+		projectID := project.ID
+		return &projectID
+	}
+	value, ok := helpers.GetOkFromContext(r, "store")
+	store, valid := value.(db.Store)
+	if !ok || !valid {
+		return nil
+	}
+	project, err := store.GetProject(*requestedProjectID)
+	if err != nil || project.ID != *requestedProjectID {
+		return nil
+	}
+	projectID := project.ID
+	return &projectID
 }
 
 func capabilityAuditEvent(

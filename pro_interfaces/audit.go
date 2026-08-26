@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
+	"strings"
 )
 
 type AuditAction string
@@ -86,6 +88,7 @@ var (
 type AuditEvent struct {
 	CorrelationID string          `json:"correlation_id"`
 	ActorID       *int            `json:"actor_id,omitempty"`
+	ProjectID     *int            `json:"project_id,omitempty"`
 	Action        AuditAction     `json:"action"`
 	TargetType    AuditTargetType `json:"target_type"`
 	TargetID      string          `json:"target_id"`
@@ -101,19 +104,33 @@ func (e AuditEvent) Validate() error {
 	if !identifierPattern.MatchString(e.TargetID) || !identifierPattern.MatchString(e.Reason) {
 		return fmt.Errorf("invalid audit identifier")
 	}
-	if !validAuditAction(e.Action) || !validAuditTarget(e.TargetType, e.TargetID) ||
+	if !validAuditAction(e.Action) || !validAuditTarget(e) ||
 		!validAuditOutcome(e.Outcome) || !validAuditSource(e.Source) || !validAuditReason(e.Reason) {
 		return fmt.Errorf("unsupported audit context")
 	}
 	return nil
 }
 
-func validAuditTarget(targetType AuditTargetType, targetID string) bool {
-	switch targetType {
+func validAuditTarget(event AuditEvent) bool {
+	switch event.TargetType {
 	case AuditTargetCapability:
-		return targetID == string(CapabilityLifecycleTest)
+		return event.ProjectID == nil && event.TargetID == string(CapabilityLifecycleTest)
 	case AuditTargetProjectRunner:
-		return projectRunnerTargetPattern.MatchString(targetID)
+		if !projectRunnerTargetPattern.MatchString(event.TargetID) {
+			return false
+		}
+		if event.ProjectID == nil {
+			return event.Outcome == AuditOutcomeDenied &&
+				(event.Reason == AuditReasonUnauthenticated || event.Reason == AuditReasonCrossOrigin)
+		}
+		if *event.ProjectID <= 0 {
+			return false
+		}
+		if !strings.HasPrefix(event.TargetID, "project:") {
+			return true
+		}
+		targetProjectID, err := strconv.Atoi(strings.TrimPrefix(event.TargetID, "project:"))
+		return err == nil && targetProjectID == *event.ProjectID
 	default:
 		return false
 	}
@@ -151,6 +168,9 @@ func (e AuditEvent) SafeFields() map[string]any {
 	}
 	if e.ActorID != nil {
 		fields["actor_id"] = *e.ActorID
+	}
+	if e.ProjectID != nil {
+		fields["project_id"] = *e.ProjectID
 	}
 	return fields
 }

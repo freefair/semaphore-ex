@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/semaphoreui/semaphore/db"
@@ -54,6 +55,66 @@ func TestServiceFacadePersistsSafeEventToBothSinks(t *testing.T) {
 	securityfixtures.AssertTripwiresAbsent(t, *events[0].Description, string(filePayload), metricsPayload)
 	assert.Contains(t, metricsPayload,
 		`semaphore_enhanced_actions_total{action="capability_write",outcome="denied",source="api"} 1`)
+}
+
+func TestServiceFacadeScopesProjectRunnerEventsAndPreservesGlobalEvents(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	defer store.Close()
+	actor, err := store.CreateUser(db.UserWithPwd{User: db.User{
+		Username: "audit-actor", Name: "Audit Actor", Email: "audit-actor@example.invalid",
+	}, Pwd: "synthetic-password"})
+	require.NoError(t, err)
+	member, err := store.CreateUser(db.UserWithPwd{User: db.User{
+		Username: "audit-member", Name: "Audit Member", Email: "audit-member@example.invalid",
+	}, Pwd: "synthetic-password"})
+	require.NoError(t, err)
+	unrelated, err := store.CreateUser(db.UserWithPwd{User: db.User{
+		Username: "audit-unrelated", Name: "Audit Unrelated", Email: "audit-unrelated@example.invalid",
+	}, Pwd: "synthetic-password"})
+	require.NoError(t, err)
+	project, err := store.CreateProject(db.Project{Name: "audit-scope"})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUser(db.ProjectUser{
+		ProjectID: project.ID,
+		UserID:    member.ID,
+		Role:      db.ProjectGuest,
+	})
+	require.NoError(t, err)
+
+	actorID := actor.ID
+	projectID := project.ID
+	writer := &auditLogWriter{}
+	recorder := NewServiceFacade(store, writer, metrics.NewMetrics())
+	require.NoError(t, recorder.Record(context.Background(), pro_interfaces.AuditEvent{
+		CorrelationID: "0123456789abcdef0123456789abcdef",
+		ActorID:       &actorID,
+		ProjectID:     &projectID,
+		Action:        pro_interfaces.AuditActionProjectRunnerCreate,
+		TargetType:    pro_interfaces.AuditTargetProjectRunner,
+		TargetID:      "project:" + strconv.Itoa(project.ID),
+		Outcome:       pro_interfaces.AuditOutcomeDenied,
+		Source:        pro_interfaces.AuditSourceAPI,
+		Reason:        string(pro_interfaces.CapabilityReasonInsufficientPermission),
+	}))
+
+	require.NotNil(t, writer.record.ProjectID)
+	assert.Equal(t, project.ID, *writer.record.ProjectID)
+	memberEvents, err := store.GetUserEvents(member.ID, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, memberEvents, 1)
+	require.NotNil(t, memberEvents[0].ProjectID)
+	assert.Equal(t, project.ID, *memberEvents[0].ProjectID)
+	require.NotNil(t, memberEvents[0].ObjectType)
+	assert.Equal(t, db.EventProjectRunnerAudit, *memberEvents[0].ObjectType)
+	unrelatedEvents, err := store.GetUserEvents(unrelated.ID, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	assert.Empty(t, unrelatedEvents)
+
+	require.NoError(t, recorder.Record(context.Background(), validAuditEvent()))
+	unrelatedEvents, err = store.GetUserEvents(unrelated.ID, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, unrelatedEvents, 1)
+	assert.Nil(t, unrelatedEvents[0].ProjectID)
 }
 
 func TestServiceFacadeRedactsSinkFailuresAndMeasuresDrops(t *testing.T) {

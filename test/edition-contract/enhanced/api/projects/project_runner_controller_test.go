@@ -86,6 +86,8 @@ func TestProjectRunnerCreateReturnsRegistrationTokenOnceAndListsOnlyOriginProjec
 	require.Len(t, audit.events, 1)
 	assert.Equal(t, pro_interfaces.AuditActionProjectRunnerCreate, audit.events[0].Action)
 	assert.Equal(t, pro_interfaces.AuditOutcomeAllowed, audit.events[0].Outcome)
+	require.NotNil(t, audit.events[0].ProjectID)
+	assert.Equal(t, project.ID, *audit.events[0].ProjectID)
 
 	originList := httptest.NewRecorder()
 	originRequest := runnerContractRequest(httptest.NewRequest(http.MethodGet, "/api/project/1/runners", nil), store, project)
@@ -127,6 +129,8 @@ func TestProjectRunnerMiddlewareRejectsCrossProjectLookup(t *testing.T) {
 	require.Len(t, audit.events, 1)
 	assert.Equal(t, pro_interfaces.AuditOutcomeDenied, audit.events[0].Outcome)
 	assert.Equal(t, "runner:"+strconv.Itoa(runner.ID), audit.events[0].TargetID)
+	require.NotNil(t, audit.events[0].ProjectID)
+	assert.Equal(t, other.ID, *audit.events[0].ProjectID)
 }
 
 func TestProjectRunnerCapabilityIsRequiredByBackend(t *testing.T) {

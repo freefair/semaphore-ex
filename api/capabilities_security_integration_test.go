@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	sqldb "github.com/semaphoreui/semaphore/db/sql"
@@ -69,4 +70,34 @@ func TestDeniedCapabilityActionPersistsRedactedAuditAndMetrics(t *testing.T) {
 	assert.Contains(t, *events[0].Description, `"outcome":"denied"`)
 	assert.Contains(t, metricsResponse.Body.String(),
 		`semaphore_enhanced_actions_total{action="capability_write",outcome="denied",source="api"} 1`)
+}
+
+func TestAnonymousMissingProjectDenialIsRetainedWithoutUserFeedExposure(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	defer store.Close()
+	user, err := store.CreateUserWithoutPassword(db.User{
+		Username: "unrelated-audit-user", Name: "Unrelated Audit User", Email: "unrelated-audit@example.invalid",
+	})
+	require.NoError(t, err)
+	auditFacade := auditservice.NewServiceFacade(store, &integrationAuditWriter{}, metrics.NewMetrics())
+	handler := EnhancedAnonymousAuditMiddleware(auditFacade)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	request := httptest.NewRequest(http.MethodGet, "/api/project/999999/runners", nil)
+	request = mux.SetURLVars(request, map[string]string{"project_id": "999999"})
+	request = helpers.SetContextValue(request, "store", store)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	assert.Equal(t, http.StatusUnauthorized, response.Code)
+	events, err := store.GetAllEvents(db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Nil(t, events[0].ProjectID)
+	require.NotNil(t, events[0].ObjectType)
+	assert.Equal(t, db.EventProjectRunnerAudit, *events[0].ObjectType)
+	userEvents, err := store.GetUserEvents(user.ID, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	assert.Empty(t, userEvents)
 }
