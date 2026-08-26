@@ -227,7 +227,9 @@ func (c *ProjectRunnerControllerImpl) recordAudit(
 		return
 	}
 	user := helpers.GetFromContext(r, "user").(*db.User)
+	project := helpers.GetFromContext(r, "project").(db.Project)
 	actorID := user.ID
+	projectID := project.ID
 	correlationID := helpers.CorrelationID(r.Context())
 	if correlationID == "" {
 		correlationID = "internal"
@@ -235,6 +237,7 @@ func (c *ProjectRunnerControllerImpl) recordAudit(
 	event := pro_interfaces.AuditEvent{
 		CorrelationID: correlationID,
 		ActorID:       &actorID,
+		ProjectID:     &projectID,
 		Action:        action,
 		TargetType:    pro_interfaces.AuditTargetProjectRunner,
 		TargetID:      targetID,

@@ -5,11 +5,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	sqldb "github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pkg/metrics"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/test/securityfixtures"
@@ -156,6 +158,7 @@ func TestProjectRunnerPermissionDenialIsAudited(t *testing.T) {
 	request = mux.SetURLVars(request, map[string]string{"project_id": "12"})
 	request = helpers.SetContextValue(request, "user", &db.User{ID: 11})
 	request = helpers.SetContextValue(request, "permissions", db.ProjectUserPermission(0))
+	request = helpers.SetContextValue(request, "project", db.Project{ID: 12})
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, request)
@@ -165,6 +168,8 @@ func TestProjectRunnerPermissionDenialIsAudited(t *testing.T) {
 	assert.Equal(t, pro_interfaces.AuditActionProjectRunnerCreate, auditRecorder.events[0].Action)
 	assert.Equal(t, pro_interfaces.AuditTargetProjectRunner, auditRecorder.events[0].TargetType)
 	assert.Equal(t, "project:12", auditRecorder.events[0].TargetID)
+	require.NotNil(t, auditRecorder.events[0].ProjectID)
+	assert.Equal(t, 12, *auditRecorder.events[0].ProjectID)
 	assert.Equal(t, string(pro_interfaces.CapabilityReasonInsufficientPermission), auditRecorder.events[0].Reason)
 	require.NoError(t, auditRecorder.events[0].Validate())
 }
@@ -189,14 +194,19 @@ func TestProjectRunnerPermissionAuditDoesNotDuplicateDownstreamCapabilityDenial(
 }
 
 func TestAnonymousProjectRunnerRequestIsAudited(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	defer store.Close()
+	project, err := store.CreateProject(db.Project{Name: "anonymous-audit"})
+	require.NoError(t, err)
 	auditRecorder := &auditRecorderStub{}
 	handler := helpers.CorrelationMiddleware(
 		EnhancedAnonymousAuditMiddleware(auditRecorder)(http.HandlerFunc(
 			func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) },
 		)),
 	)
-	request := httptest.NewRequest(http.MethodGet, "/api/project/12/runners", nil)
-	request = mux.SetURLVars(request, map[string]string{"project_id": "12"})
+	request := httptest.NewRequest(http.MethodGet, "/api/project/1/runners", nil)
+	request = mux.SetURLVars(request, map[string]string{"project_id": strconv.Itoa(project.ID)})
+	request = helpers.SetContextValue(request, "store", store)
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, request)
@@ -205,6 +215,8 @@ func TestAnonymousProjectRunnerRequestIsAudited(t *testing.T) {
 	require.Len(t, auditRecorder.events, 1)
 	assert.Equal(t, pro_interfaces.AuditActionProjectRunnerList, auditRecorder.events[0].Action)
 	assert.Equal(t, pro_interfaces.AuditReasonUnauthenticated, auditRecorder.events[0].Reason)
+	require.NotNil(t, auditRecorder.events[0].ProjectID)
+	assert.Equal(t, project.ID, *auditRecorder.events[0].ProjectID)
 	require.NoError(t, auditRecorder.events[0].Validate())
 }
 

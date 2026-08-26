@@ -68,6 +68,7 @@ const (
 	EventIntegrationExtractValue EventObjectType = "integrationextractvalue"
 	EventIntegrationMatcher      EventObjectType = "integrationmatcher"
 	EventCapability              EventObjectType = "capability"
+	EventProjectRunnerAudit      EventObjectType = "project_runner_audit"
 
 	EventTerraformInventoryAlias EventObjectType = "terraform_inventory_alias"
 )

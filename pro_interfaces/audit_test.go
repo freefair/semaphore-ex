@@ -62,8 +62,10 @@ func TestAuditEventRejectsTripwiresInEveryStringSlot(t *testing.T) {
 }
 
 func TestAuditEventAcceptsBoundedProjectRunnerTarget(t *testing.T) {
+	projectID := 42
 	event := AuditEvent{
 		CorrelationID: "0123456789abcdef0123456789abcdef",
+		ProjectID:     &projectID,
 		Action:        AuditActionProjectRunnerCreate,
 		TargetType:    AuditTargetProjectRunner,
 		TargetID:      "runner:42",
@@ -75,6 +77,57 @@ func TestAuditEventAcceptsBoundedProjectRunnerTarget(t *testing.T) {
 	require.NoError(t, event.Validate())
 	event.TargetID = "runner:" + securityfixtures.TripwireValues[0]
 	assert.Error(t, event.Validate())
+}
+
+func TestAuditEventRequiresConsistentProjectScope(t *testing.T) {
+	projectID := 42
+	otherProjectID := 43
+	projectRunner := AuditEvent{
+		CorrelationID: "0123456789abcdef0123456789abcdef",
+		ProjectID:     &projectID,
+		Action:        AuditActionProjectRunnerCreate,
+		TargetType:    AuditTargetProjectRunner,
+		TargetID:      "project:42",
+		Outcome:       AuditOutcomeAllowed,
+		Source:        AuditSourceAPI,
+		Reason:        string(CapabilityReasonActive),
+	}
+
+	require.NoError(t, projectRunner.Validate())
+	assert.Equal(t, 42, projectRunner.SafeFields()["project_id"])
+
+	missingScope := projectRunner
+	missingScope.ProjectID = nil
+	assert.Error(t, missingScope.Validate())
+	missingScope.Outcome = AuditOutcomeDenied
+	missingScope.Reason = AuditReasonUnauthenticated
+	require.NoError(t, missingScope.Validate())
+	missingScope.Reason = AuditReasonCrossOrigin
+	require.NoError(t, missingScope.Validate())
+	missingScope.Outcome = AuditOutcomeFailure
+	assert.Error(t, missingScope.Validate())
+
+	invalidScope := projectRunner
+	invalidProjectID := 0
+	invalidScope.ProjectID = &invalidProjectID
+	assert.Error(t, invalidScope.Validate())
+
+	mismatchedScope := projectRunner
+	mismatchedScope.ProjectID = &otherProjectID
+	assert.Error(t, mismatchedScope.Validate())
+
+	globalCapability := AuditEvent{
+		CorrelationID: "fedcba9876543210fedcba9876543210",
+		Action:        AuditActionCapabilityRead,
+		TargetType:    AuditTargetCapability,
+		TargetID:      string(CapabilityLifecycleTest),
+		Outcome:       AuditOutcomeAllowed,
+		Source:        AuditSourceAPI,
+		Reason:        string(CapabilityReasonActive),
+	}
+	require.NoError(t, globalCapability.Validate())
+	globalCapability.ProjectID = &projectID
+	assert.Error(t, globalCapability.Validate())
 }
 
 func withAuditCorrelation(event AuditEvent, value string) AuditEvent {

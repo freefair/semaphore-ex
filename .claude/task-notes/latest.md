@@ -1,7 +1,7 @@
 # Task: Implement selected enhanced edition slices
 
 **Started:** 2026-08-25
-**Last update:** 2026-08-26 11:18
+**Last update:** 2026-08-26 18:29
 
 ## Scope
 Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with tests, documentation, review, and atomic commits
@@ -38,6 +38,8 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 
 - 2026-08-26 11:18 — Slice 010 final verification after review fixes: root go test ./... passes outside the sandbox; Community pro and clean-room Enhanced full suites pass; root go vet passes; atomic token race test passes; focused UI tests are 3/3; enhanced production build, changed-file ESLint, docs build, and browser create/register/online acceptance pass. Known unrelated baselines remain the three full frontend unit failures, six global lint errors, German i18n warnings, and three docs anchors.
 
+- 2026-08-26 18:29 — Fixed validated Slice 010 cross-project audit metadata disclosure. Both /tmp reproducers, focused tests, race tests, full root/Community/enhanced suites, all go vet variants, and docs build pass. Independent reviewer finding for nonexistent project IDs was reproduced and fixed.
+
 ## Decisions
 
 - **Pin the Docker build toolchain to Go 1.26.5 and Node.js 24.19.0 images by multi-architecture digest.** (2026-08-25): The isolated /tmp Dockerfile proved the Node-based builder can import the pinned Go toolchain. This removes the mutable Alpine Node package from the build and preserves multi-architecture builds.
@@ -57,6 +59,8 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 - **Implement project runners as an executable clean-room enhanced-module reference while preserving the Community no-op seam.** (2026-08-25): The private Pro/Enterprise module is unavailable by design; the public contract and repository specification are the authorized sources, and Community behavior must remain unchanged.
 
 - **Do not apply the legacy subscription runner quota in the clean-room project-runner controller.** (2026-08-25): Commercial quotas are explicitly unselected. The Community subscription service always denies CanAddRunner, which made the enhanced create flow return 409 even with an active project_runners capability; backend capability state is the selected availability authority.
+
+- **Scope project-runner audit events through AuditEvent.ProjectID and contract 1.4.0** (2026-08-26): Existing project foreign key and EventLogRecord project field provide the narrow shared boundary; a typed project_runner_audit fallback retains anonymous nonexistent-project attempts without exposing them in user feeds.
 
 ## Open
 
@@ -84,6 +88,10 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 
 - [ ] Slice 010 is code-complete and automated verification is green, but UI acceptance, final review, acceptance checkboxes, and commits remain blocked on an available in-app Browser instance.
 
+- [ ] Slice 010 security diff scan a8aca8f2-3093-4322-afb0-f084b6aa27ee completed with one validated low-severity finding: project-runner audit events are persisted without db.Event.ProjectID and therefore exposed to unrelated authenticated users by GetUserEvents. Remediation requires adding project scope to the typed audit contract, persistence, and isolation tests before Slice 011.
+
+- [ ] ntfy-cc remediation approval timed out after 1800 seconds with exit 2. This is not approval. Repository remains unchanged except for task-journal state; resume by choosing either fix the scoped AuditEvent ProjectID issue now or explicitly accept/document it and continue to Slice 011.
+
 ## Next session
 Slice 001 implemented: versioned module contract, Community compile assertions and black-box contracts, workspace replacement fixture, full Community/enhanced builds, docs and test suites green. Proceed with Slice 002 dual-build verification.
 Wait for the source-map decision, implement it, rerun dual Community/enhanced reproducibility, finish container startup smoke, update Slice 002 checklist, build docs, review, and commit.
@@ -94,3 +102,4 @@ Proceed to Slice 005: reusable enhanced auth, audit, redaction, correlation, dep
 Commit the verified Slice 005 documentation and implementation atomically, then begin Slice 010 with a new /tmp contract test before production edits.
 When Dennis replies that a browser is connected, run the visible project-runner create/copy/register/online flow, retain evidence, mark Slice 010 acceptance complete, rerun focused verification, review, commit docs submodule and root atomically, then continue with Slice 011.
 Open the Codex in-app Browser at http://127.0.0.1:8080, then complete the Slice 010 create/copy/register/online visual flow. Browser plugin discovery returned no available browsers after restart, and Computer Use is prohibited from controlling the Codex app.
+Commit the verified Slice 010 audit-scope fix, then begin Slice 011 with a failing /tmp lifecycle contract.
