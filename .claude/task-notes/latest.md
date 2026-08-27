@@ -1,7 +1,7 @@
 # Task: Implement selected enhanced edition slices
 
 **Started:** 2026-08-25
-**Last update:** 2026-08-27 15:03
+**Last update:** 2026-08-27 16:02
 
 ## Scope
 Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with tests, documentation, review, and atomic commits
@@ -68,6 +68,14 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 
 - 2026-08-27 15:03 — Slice 015 is feature-complete and green: full Go, race, vet, community and clean-room suites; executor image /tmp contract; targeted UI and production builds; docs build; browser save-normalize, clear-to-default, immutable task/attempt image, and corrected 390px mobile wrapping.
 
+- 2026-08-27 15:07 — Started Slice 016 (runner secure mode). Independent /tmp contract is red on missing named policies, structured trust/identity report, supported-version protocol, and redacted fail-closed compliance decision.
+
+- 2026-08-27 15:09 — Slice 016 independent contract and policy matrix are green. Production wiring remains open: persistence/migration, CLI identity and trust report, registration/reconnect enforcement, downgrade protection, API/UI/docs/browser, full verification and commits.
+
+- 2026-08-27 15:23 — Slice 016 policy, migration 2.20.8, one-time registration enforcement, reconnect enforcement, Ed25519 identity creation, TLS trust classification/fixtures, API contracts, UI policy/compliance presentation, and operator/developer documentation are implemented. Focused Go tests, secure registration/reconnect API tests, TLS fixture test, and the runner UI unit cases are green; the known unrelated Vue baseline still has ArgsPicker, YesNoDialog, and Socket failures.
+
+- 2026-08-27 16:02 — Slice 016 final verification is green: full go test ./..., full go test -race ./..., go vet, Community module, clean-room enhanced/consumer, docs build, OpenAPI YAML parse, changed-file ESLint, web build, and focused UI tests. Full UI baseline remains 50 passing with the same three unrelated failures in ArgsPicker, YesNoDialog, and Socket. Browser QA on the Codex-owned disposable instance verified desktop/mobile policy selection, immediate one-time enforcement, red/green compliance states, disabled registered policy, reason, and remediation.
+
 ## Decisions
 
 - **Pin the Docker build toolchain to Go 1.26.5 and Node.js 24.19.0 images by multi-architecture digest.** (2026-08-25): The isolated /tmp Dockerfile proved the Node-based builder can import the pinned Go toolchain. This removes the mutable Alpine Node package from the build and preserves multi-architecture builds.
@@ -91,6 +99,14 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 - **Scope project-runner audit events through AuditEvent.ProjectID and contract 1.4.0** (2026-08-26): Existing project foreign key and EventLogRecord project field provide the narrow shared boundary; a typed project_runner_audit fallback retains anonymous nonexistent-project attempts without exposing them in user feeds.
 
 - **Separate live runner ownership from historical runner identity** (2026-08-27): task.runner_id remains the live authorization/foreign-key relation, while runner_id_snapshot and runner_name retain non-secret assignment attribution after deletion; health remains latest-report state so uptime can be derived and reset on restart without an append-only health table.
+
+- **Slice 016 uses named standard/secure policies and a structured RunnerSecurityReport with one-time/shared registration kind, transport trust enum, runner version, protocol version, executor type, and public identity.** (2026-08-27): A single fail-closed policy evaluator keeps standard runners backward compatible while making every secure requirement explicit, redacted, testable, and reusable at registration and reconnect boundaries.
+
+- **Secure runner policy is server-owned and persisted; secure registration is one-time and reconnect reports are evaluated fail-closed.** (2026-08-27): This preserves standard-runner compatibility while preventing clients from selecting or silently downgrading the policy. Compliance diagnostics remain actionable and omit identity and credential material.
+
+- **Treat the locally created QA server, database, and test data as Codex-owned disposable infrastructure for this plan.** (2026-08-27): Dennis explicitly confirmed that Codex created and owns this instance; routine local mutations, migrations, restarts, and browser QA require no further approval. Shared or remote state and pushes remain out of scope.
+
+- **Use smrs_secure_ as a subtype of the existing smrs_ one-time token prefix so the CLI creates identity material only for secure runners.** (2026-08-27): The server owns the policy, the prefix remains compatible with one-time token routing, and standard runners remain usable in read-only or configless environments where optional identity files cannot be created.
 
 ## Open
 
@@ -139,3 +155,6 @@ Commit verified Slice 012 docs and implementation atomically, then begin Slice 0
 Begin Slice 013 with a failing deterministic lost-runner reconciliation and late-report generation contract.
 Complete final diff review, rerun post-documentation checks, commit docs submodule and root atomically, then continue with Slice 015.
 Complete focused diff review, final post-browser checks, commit docs and root atomically, then continue with Slice 016.
+Persist policy/compliance/report fields in migration 2.20.8; wire secure identity generation and structured registration metadata; enforce on one-time registration and every poll; then API/UI/docs/browser acceptance.
+Finish Slice 016 verification: tighten API/UI edge cases, build docs/UI, run full Go/race/vet/community/clean-room gates, browser-check policy selection/compliance at desktop and mobile sizes, manually review/redaction-check the diff, then commit docs and root atomically before starting Slice 020.
+Commit Slice 016 docs and root changes atomically, then begin the next open slice from the approved plan.

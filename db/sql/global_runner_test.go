@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +36,7 @@ func TestRegisterRunnerAtomicallyConsumesToken(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			<-start
-			registered, registerErr := store.RegisterRunner(hash, nil)
+			registered, registerErr := store.RegisterRunner(hash, db.RunnerSecurityReport{})
 			if registerErr == nil {
 				if registered.ID != runner.ID {
 					unexpectedRunnerIDs.Add(1)
@@ -49,4 +50,42 @@ func TestRegisterRunnerAtomicallyConsumesToken(t *testing.T) {
 
 	require.Equal(t, int32(1), successes.Load())
 	require.Zero(t, unexpectedRunnerIDs.Load())
+}
+
+func TestSecureRunnerRegistrationPersistsComplianceAndRejectsFallback(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	hash := "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	expiresAt := time.Now().Add(time.Hour)
+	runner, err := store.CreateRunner(db.Runner{
+		Name: "secure runner", RegistrationPolicy: db.RunnerRegistrationSecure,
+		RegistrationTokenHash: &hash, RegistrationTokenExpiresAt: &expiresAt,
+	})
+	require.NoError(t, err)
+
+	_, err = store.RegisterRunner(hash, db.RunnerSecurityReport{
+		TransportTrust: db.RunnerTransportInsecure, RunnerVersion: db.MinSecureRunnerVersion,
+		ProtocolVersion: db.CurrentSecureRunnerProtocol, ExecutorType: db.RunnerExecutorDocker,
+		PublicKey: "public-key",
+	})
+	var violation db.RunnerSecurityViolationError
+	require.ErrorAs(t, err, &violation)
+	assert.Contains(t, violation.Decision.RejectedCriteria, "server identity not verified")
+	rejected, getErr := store.GetGlobalRunner(runner.ID)
+	require.NoError(t, getErr)
+	assert.False(t, rejected.SecurityCompliant)
+	assert.False(t, rejected.IsRegistered())
+	assert.NotContains(t, rejected.SecurityReason, "public-key")
+
+	registered, err := store.RegisterRunner(hash, db.RunnerSecurityReport{
+		TransportTrust: db.RunnerTransportSystemCA, RunnerVersion: db.MinSecureRunnerVersion,
+		ProtocolVersion: db.CurrentSecureRunnerProtocol, ExecutorType: db.RunnerExecutorDocker,
+		PublicKey: "public-key",
+	})
+	require.NoError(t, err)
+	assert.True(t, registered.SecurityCompliant)
+	assert.Equal(t, db.RunnerRegistrationSecure, registered.RegistrationPolicy)
+	assert.Equal(t, db.RunnerRegistrationOneTime, registered.RegistrationKind)
+	assert.Equal(t, db.RunnerTransportSystemCA, registered.TransportTrust)
+	assert.NotNil(t, registered.SecurityCheckedAt)
 }

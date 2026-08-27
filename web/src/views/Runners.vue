@@ -560,6 +560,34 @@ semaphore runner start --config ./config.runner.json</pre
         </v-tooltip>
       </template>
 
+      <template v-slot:item.registration_policy="{ item }">
+        <v-tooltip bottom :disabled="item.security_compliant || !item.security_remediation">
+          <template v-slot:activator="{ on, attrs }">
+            <v-chip
+              v-bind="attrs"
+              v-on="on"
+              small
+              :color="
+                item.registration_policy === 'secure'
+                  ? item.security_compliant
+                    ? 'success'
+                    : 'error'
+                  : 'blue-grey lighten-4'
+              "
+              :dark="item.registration_policy === 'secure'"
+              :data-testid="`runner-policy-${item.id}`"
+            >
+              {{
+                item.registration_policy === 'secure'
+                  ? $t('runnerPolicySecure')
+                  : $t('runnerPolicyStandard')
+              }}
+            </v-chip>
+          </template>
+          <span>{{ item.security_reason }} {{ item.security_remediation }}</span>
+        </v-tooltip>
+      </template>
+
       <template v-slot:item.project_id="{ item }">
         {{ item.project_id ? `#${item.project_id}` : '&mdash;' }}
       </template>
@@ -1108,6 +1136,11 @@ ${advancedOptions}-d semaphoreui/runner:${this.version}`;
         {
           text: this.$i18n.t('status'),
           value: 'status',
+        },
+        {
+          text: this.$i18n.t('runnerRegistrationPolicy'),
+          value: 'registration_policy',
+          sortable: false,
         },
         {
           text: this.$i18n.t('actions'),

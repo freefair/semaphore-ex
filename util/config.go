@@ -150,6 +150,10 @@ type RunnerConfig struct {
 	RegistrationTokenFile string `json:"registration_token_file,omitempty" env:"SEMAPHORE_RUNNER_REGISTRATION_TOKEN_FILE"`
 	Token                 string `json:"token,omitempty" env:"SEMAPHORE_RUNNER_TOKEN,sensitive"`
 	TokenFile             string `json:"token_file,omitempty" env:"SEMAPHORE_RUNNER_TOKEN_FILE"`
+	// IdentityPublicKey is a non-secret Ed25519 public identity registered with
+	// secure runners. The corresponding private key remains in IdentityPrivateKeyFile.
+	IdentityPublicKey      string `json:"identity_public_key,omitempty" env:"SEMAPHORE_RUNNER_IDENTITY_PUBLIC_KEY"`
+	IdentityPrivateKeyFile string `json:"identity_private_key_file,omitempty" env:"SEMAPHORE_RUNNER_IDENTITY_PRIVATE_KEY_FILE"`
 
 	// OneOff indicates than runner runs only one job and exit. It is very useful for dynamic runners.
 	// How it works?

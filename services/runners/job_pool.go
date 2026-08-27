@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,20 +37,45 @@ func derefString(s *string) string {
 func newHTTPClient() *http.Client {
 	tlsConfig := &tls.Config{}
 	conn := util.Config.Runner.Connection
+	if conn == nil {
+		conn = &util.RunnerConnectionConfig{}
+	}
 	if conn.SkipTLSVerify {
 		tlsConfig.InsecureSkipVerify = true
 	}
 	if conn.ServerCACertFile != "" {
-		caCert, err := os.ReadFile(conn.ServerCACertFile)
-		if err == nil {
-			pool := x509.NewCertPool()
-			pool.AppendCertsFromPEM(caCert)
-			tlsConfig.RootCAs = pool
+		pool, systemErr := x509.SystemCertPool()
+		if systemErr != nil {
+			pool = x509.NewCertPool()
 		}
+		caCert, readErr := os.ReadFile(conn.ServerCACertFile)
+		if readErr != nil || !pool.AppendCertsFromPEM(caCert) {
+			pool = x509.NewCertPool()
+		}
+		// A configured custom CA is fail-closed: an unreadable or invalid bundle
+		// produces an empty trust store instead of silently falling back to system roots.
+		tlsConfig.RootCAs = pool
 	}
 	return &http.Client{
 		Transport: &http.Transport{TLSClientConfig: tlsConfig},
 	}
+}
+
+func runnerTransportTrust(webHost string, conn *util.RunnerConnectionConfig) db.RunnerTransportTrust {
+	parsed, err := url.Parse(webHost)
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") {
+		return db.RunnerTransportPlaintext
+	}
+	if conn == nil {
+		return db.RunnerTransportSystemCA
+	}
+	if conn.SkipTLSVerify {
+		return db.RunnerTransportInsecure
+	}
+	if conn.ServerCACertFile != "" {
+		return db.RunnerTransportCustomCA
+	}
+	return db.RunnerTransportSystemCA
 }
 
 type JobPool struct {
@@ -111,6 +138,8 @@ func (p *JobPool) setCommonHeaders(req *http.Request) {
 	req.Header.Set(RunnerPlatformHeader, runtime.GOOS+"/"+runtime.GOARCH)
 	req.Header.Set(RunnerCurrentLoadHeader, strconv.Itoa(p.runningJobsCount()))
 	req.Header.Set(RunnerExecutorTypeHeader, string(resolveExecutorType(util.Config.Runner.Executor)))
+	req.Header.Set(RunnerTransportTrustHeader, string(runnerTransportTrust(util.Config.WebHost, util.Config.Runner.Connection)))
+	req.Header.Set(RunnerSecurityProtocolHeader, strconv.Itoa(db.CurrentSecureRunnerProtocol))
 }
 
 // addRunningJob registers a running job under the lock.
@@ -597,7 +626,9 @@ func (p *JobPool) getResponseErrorMessage(resp *http.Response) (res string) {
 	}
 
 	var errRes struct {
-		Error string `json:"error"`
+		Error       string `json:"error"`
+		Reason      string `json:"reason"`
+		Remediation string `json:"remediation"`
 	}
 
 	err = json.Unmarshal(body, &errRes)
@@ -605,7 +636,19 @@ func (p *JobPool) getResponseErrorMessage(resp *http.Response) (res string) {
 		return
 	}
 
-	res += ": " + errRes.Error
+	details := make([]string, 0, 3)
+	if errRes.Error != "" {
+		details = append(details, errRes.Error)
+	}
+	if errRes.Reason != "" {
+		details = append(details, errRes.Reason)
+	}
+	if errRes.Remediation != "" {
+		details = append(details, "remediation: "+errRes.Remediation)
+	}
+	if len(details) != 0 {
+		res += ": " + strings.Join(details, "; ")
+	}
 
 	return
 }
@@ -620,18 +663,28 @@ func (p *JobPool) tryRegisterRunner(configFilePath *string) (ok bool) {
 		}).Error("registration token is not configured")
 		return
 	}
+	if runnerRegistrationRequiresIdentity(util.Config.Runner.RegistrationToken) {
+		if err := EnsureRunnerIdentity(configFilePath); err != nil {
+			log.WithError(err).WithField("context", "registration").Error("failed to prepare runner identity")
+			return false
+		}
+	}
 
 	url := util.Config.WebHost + "/api/internal/runners"
 
 	jsonBytes, err := json.Marshal(RunnerRegistration{
-		RegistrationToken: util.Config.Runner.RegistrationToken,
-		Webhook:           util.Config.Runner.Webhook,
-		Name:              util.Config.Runner.Name,
-		Tags:              util.Config.Runner.Tags,
-		MaxParallelTasks:  util.Config.Runner.MaxParallelTasks,
-		Enabled:           util.Config.Runner.Enabled,
-		ProjectID:         util.Config.Runner.ProjectID,
-		ExecutorType:      db.RunnerExecutorType(resolveExecutorType(util.Config.Runner.Executor)),
+		RegistrationToken:       util.Config.Runner.RegistrationToken,
+		Webhook:                 util.Config.Runner.Webhook,
+		Name:                    util.Config.Runner.Name,
+		Tags:                    util.Config.Runner.Tags,
+		MaxParallelTasks:        util.Config.Runner.MaxParallelTasks,
+		Enabled:                 util.Config.Runner.Enabled,
+		ProjectID:               util.Config.Runner.ProjectID,
+		ExecutorType:            db.RunnerExecutorType(resolveExecutorType(util.Config.Runner.Executor)),
+		TransportTrust:          runnerTransportTrust(util.Config.WebHost, util.Config.Runner.Connection),
+		RunnerVersion:           util.Version(),
+		SecurityProtocolVersion: db.CurrentSecureRunnerProtocol,
+		PublicKey:               util.Config.Runner.IdentityPublicKey,
 	})
 
 	if err != nil {
@@ -683,7 +736,10 @@ func (p *JobPool) tryRegisterRunner(configFilePath *string) (ok bool) {
 	}
 
 	var res struct {
-		Token string `json:"token"`
+		Token              string                      `json:"token"`
+		RegistrationPolicy db.RunnerRegistrationPolicy `json:"registration_policy"`
+		SecurityCompliant  bool                        `json:"security_compliant"`
+		SecurityReason     string                      `json:"security_reason"`
 	}
 
 	err = json.Unmarshal(body, &res)
@@ -749,9 +805,12 @@ func (p *JobPool) tryRegisterRunner(configFilePath *string) (ok bool) {
 	}
 
 	log.WithFields(log.Fields{
-		"context":     "registration",
-		"runner_name": util.Config.Runner.Name,
-	}).Debug("Runner registered successfully")
+		"context":             "registration",
+		"runner_name":         util.Config.Runner.Name,
+		"registration_policy": res.RegistrationPolicy,
+		"security_compliant":  res.SecurityCompliant,
+		"security_reason":     res.SecurityReason,
+	}).Info("Runner registered successfully")
 
 	ok = true
 	return

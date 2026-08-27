@@ -1313,6 +1313,35 @@ definitions:
         type: string
         enum: [local, docker, k8s]
         description: Runner-reported execution strategy used for image compatibility.
+      registration_policy:
+        type: string
+        enum: [standard, secure]
+        description: Server-owned registration policy enforced for this runner.
+      registration_kind:
+        type: string
+        enum: [shared, one_time]
+        readOnly: true
+      security_compliant:
+        type: boolean
+        readOnly: true
+      security_reason:
+        type: string
+        readOnly: true
+      security_remediation:
+        type: string
+        readOnly: true
+      transport_trust:
+        type: string
+        enum: [plaintext, insecure_skip_verify, system_ca, custom_ca]
+        readOnly: true
+      security_protocol_version:
+        type: integer
+        readOnly: true
+      security_checked_at:
+        type: string
+        format: date-time
+        x-nullable: true
+        readOnly: true
 
   RunnerRequest:
     type: object
@@ -1328,6 +1357,10 @@ definitions:
         type: integer
       active:
         type: boolean
+      registration_policy:
+        type: string
+        enum: [standard, secure]
+        description: Named registration policy. Secure runners require one-time registration and verified TLS.
       tags:
         type: array
         items:

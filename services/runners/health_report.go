@@ -10,10 +10,12 @@ import (
 )
 
 const (
-	RunnerVersionHeader      = "X-Runner-Version"
-	RunnerPlatformHeader     = "X-Runner-Platform"
-	RunnerCurrentLoadHeader  = "X-Runner-Current-Load"
-	RunnerExecutorTypeHeader = "X-Runner-Executor-Type"
+	RunnerVersionHeader          = "X-Runner-Version"
+	RunnerPlatformHeader         = "X-Runner-Platform"
+	RunnerCurrentLoadHeader      = "X-Runner-Current-Load"
+	RunnerExecutorTypeHeader     = "X-Runner-Executor-Type"
+	RunnerTransportTrustHeader   = "X-Runner-Transport-Trust"
+	RunnerSecurityProtocolHeader = "X-Runner-Security-Protocol"
 
 	maxRunnerReportTextBytes = 128
 	maxRunnerReportedLoad    = 100_000
@@ -22,10 +24,12 @@ const (
 // HealthReport contains optional metadata added by health-aware runners.
 // Pointers preserve compatibility with older runners that send no such headers.
 type HealthReport struct {
-	Version      *string
-	Platform     *string
-	CurrentLoad  *int
-	ExecutorType *db.RunnerExecutorType
+	Version                 *string
+	Platform                *string
+	CurrentLoad             *int
+	ExecutorType            *db.RunnerExecutorType
+	TransportTrust          *db.RunnerTransportTrust
+	SecurityProtocolVersion *int
 }
 
 // ParseHealthReport validates the bounded metadata attached to a runner poll.
@@ -61,6 +65,22 @@ func ParseHealthReport(header http.Header) (HealthReport, error) {
 		}
 		report.ExecutorType = &value
 	}
+	if raw, present := header[RunnerTransportTrustHeader]; present {
+		value := db.RunnerTransportTrust(strings.TrimSpace(strings.Join(raw, ",")))
+		switch value {
+		case db.RunnerTransportPlaintext, db.RunnerTransportInsecure, db.RunnerTransportSystemCA, db.RunnerTransportCustomCA:
+			report.TransportTrust = &value
+		default:
+			return HealthReport{}, fmt.Errorf("%s contains an unknown trust mode", RunnerTransportTrustHeader)
+		}
+	}
+	if raw, present := header[RunnerSecurityProtocolHeader]; present {
+		value, err := strconv.Atoi(strings.TrimSpace(strings.Join(raw, ",")))
+		if err != nil || value < 0 || value > db.CurrentSecureRunnerProtocol {
+			return HealthReport{}, fmt.Errorf("%s contains an unsupported protocol", RunnerSecurityProtocolHeader)
+		}
+		report.SecurityProtocolVersion = &value
+	}
 	return report, nil
 }
 
@@ -77,5 +97,11 @@ func (report HealthReport) Apply(runner *db.Runner) {
 	}
 	if report.ExecutorType != nil {
 		runner.ExecutorType = *report.ExecutorType
+	}
+	if report.TransportTrust != nil {
+		runner.TransportTrust = *report.TransportTrust
+	}
+	if report.SecurityProtocolVersion != nil {
+		runner.SecurityProtocolVersion = *report.SecurityProtocolVersion
 	}
 }

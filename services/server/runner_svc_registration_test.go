@@ -36,6 +36,12 @@ func TestCreateProjectRunnerIssuesOneTimeRegistrationMaterial(t *testing.T) {
 	assert.Equal(t, HashRunnerRegistrationToken(token), *stored.RegistrationTokenHash)
 	require.NotNil(t, stored.RegistrationTokenExpiresAt)
 	assert.WithinDuration(t, time.Now().Add(time.Hour), *stored.RegistrationTokenExpiresAt, 5*time.Second)
+
+	_, secureToken, err := service.CreateProjectRunner(db.Runner{
+		Name: "secure", ProjectID: &project.ID, RegistrationPolicy: db.RunnerRegistrationSecure,
+	})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(secureToken, RunnerSecureRegistrationTokenPrefix))
 }
 
 func createProjectRunnerServiceFixture(t *testing.T) (*sql.SqlDb, RunnerService, int, db.Runner) {

@@ -10,6 +10,26 @@ describe('project runner registration', () => {
     expect(projectRunner.registered).to.equal(false);
     expect(projectRunner.is_default).to.equal(false);
     expect(globalRunner.registered).to.equal(true);
+    expect(projectRunner.registration_policy).to.equal('standard');
+  });
+
+  it('forces secure runners through one-time registration', () => {
+    const context = {
+      item: {
+        registration_policy: 'secure',
+        registered: true,
+        max_parallel_tasks: 1,
+        tags: [],
+      },
+    };
+    RunnerForm.methods.beforeSave.call(context);
+    expect(context.item.registered).to.equal(false);
+  });
+
+  it('shows secure requirements immediately when the policy changes', () => {
+    const context = { isNew: true, item: { registered: true } };
+    RunnerForm.methods.onRegistrationPolicyChange.call(context, 'secure');
+    expect(context.item.registered).to.equal(false);
   });
 
   it('shows returned registration material and builds copyable register commands', async () => {
