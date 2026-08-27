@@ -7,6 +7,84 @@
       v-model="itemRefsDialog"
     />
 
+    <v-dialog v-model="syncHistoryDialog" max-width="900" scrollable>
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          Synchronization history
+          <v-spacer />
+          <v-btn icon aria-label="Close synchronization history" @click="syncHistoryDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+        <v-card-subtitle v-if="syncHistoryStorage">
+          {{ syncHistoryStorage.name }} · Secret values are never included
+        </v-card-subtitle>
+        <v-card-text>
+          <v-progress-linear v-if="syncHistoryLoading" indeterminate color="primary" />
+          <v-alert v-else-if="syncHistoryError" type="error" text>
+            {{ syncHistoryError }}
+            <v-btn text color="primary" @click="openSyncHistory(syncHistoryStorage)">Retry</v-btn>
+          </v-alert>
+          <v-alert v-else-if="syncHistory.length === 0" type="info" text>
+            No synchronization has been attempted yet.
+          </v-alert>
+          <v-expansion-panels v-else accordion>
+            <v-expansion-panel v-for="operation in syncHistory" :key="operation.id">
+              <v-expansion-panel-header>
+                <div class="sync-operation-summary">
+                  <v-chip small :color="syncStatusColor(operation.status)" dark>
+                    {{ operation.status }}
+                  </v-chip>
+                  <span>{{ formatTimestamp(operation.finished_at || operation.created_at) }}</span>
+                  <span>
+                    {{ operation.changed_count }} changed · {{ operation.skipped_count }} skipped ·
+                    {{ operation.conflict_count }} conflicts
+                  </span>
+                </div>
+              </v-expansion-panel-header>
+              <v-expansion-panel-content>
+                <v-alert v-if="operation.error_category" dense text type="warning">
+                  {{ formatCapabilityValue(operation.error_category) }}
+                </v-alert>
+                <v-simple-table dense>
+                  <thead>
+                    <tr>
+                      <th>Status</th>
+                      <th>Semaphore key</th>
+                      <th>Remote reference</th>
+                      <th>Version</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="outcome in operation.outcomes"
+                      :key="`${operation.id}-${outcome.mapping_id}`"
+                    >
+                      <td>{{ outcome.status }}</td>
+                      <td>{{ keyName(outcome.access_key_id) }}</td>
+                      <td>
+                        <code>{{ outcome.mount }}/{{ outcome.path }}#{{ outcome.field }}</code>
+                      </td>
+                      <td>{{ outcome.remote_version || '—' }}</td>
+                    </tr>
+                  </tbody>
+                </v-simple-table>
+                <v-btn
+                  v-if="operation.status === 'conflict'"
+                  class="mt-4"
+                  color="warning"
+                  :disabled="!runtimeCanWrite || syncInProgress"
+                  @click="syncItem(syncHistoryStorage.id, operation.id)"
+                >
+                  Confirm overwrite of observed versions
+                </v-btn>
+              </v-expansion-panel-content>
+            </v-expansion-panel>
+          </v-expansion-panels>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
     <YesNoDialog
       :title="$t('deleteStorage')"
       :text="$t('askDeleteStorage')"
@@ -201,9 +279,10 @@
       class="PageAlert"
       data-testid="secretStorage-runtimeCapability"
     >
-      Runtime secrets are {{ formatCapabilityValue(runtimeDecision.state) }}
-      ({{ formatCapabilityValue(runtimeDecision.reason) }}). Existing configuration remains visible,
-      but unavailable actions are blocked by the server.
+      Runtime secrets are {{ formatCapabilityValue(runtimeDecision.state) }} ({{
+        formatCapabilityValue(runtimeDecision.reason)
+      }}). Existing configuration remains visible, but unavailable actions are blocked by the
+      server.
     </v-alert>
 
     <v-data-table
@@ -224,25 +303,52 @@
         <v-chip v-if="item.readonly" style="transform: translateY(-1px)" color="info" small>
           Read only
         </v-chip>
+
+        <div class="d-md-none text-caption text--secondary mt-1">
+          Last attempt: {{ formatTimestamp(lastAttempt(item)) }}<br />
+          Last success: {{ formatTimestamp(item.last_synced_at) }}
+        </div>
       </template>
 
       <template v-slot:item.type="{ item }">
         <code>{{ item.type }}</code>
       </template>
 
+      <template v-slot:item.last_attempt="{ item }">
+        {{ formatTimestamp(lastAttempt(item)) }}
+      </template>
+
+      <template v-slot:item.last_success="{ item }">
+        {{ formatTimestamp(item.last_synced_at) }}
+      </template>
+
       <template v-slot:item.actions="{ item }">
         <v-btn-toggle dense :value-comparator="() => false" style="">
           <v-btn
-            v-if="item.sync_enabled"
+            v-if="item.sync_direction === 'outbound'"
             @click="syncItem(item.id)"
-            :disabled="!(item.sync_paths && item.sync_paths.length > 0)"
+            :disabled="
+              !runtimeCanWrite || syncInProgress || !(item.sync_paths && item.sync_paths.length > 0)
+            "
+            aria-label="Synchronize selected keys"
           >
             <v-icon>mdi-sync</v-icon>
           </v-btn>
-          <v-btn @click="askDeleteItem(item.id)" :disabled="!runtimeCanWrite">
+          <v-btn @click="openSyncHistory(item)" aria-label="Open synchronization history">
+            <v-icon>mdi-history</v-icon>
+          </v-btn>
+          <v-btn
+            @click="askDeleteItem(item.id)"
+            :disabled="!runtimeCanWrite"
+            aria-label="Delete secret storage"
+          >
             <v-icon>mdi-delete</v-icon>
           </v-btn>
-          <v-btn @click="editItem(item.id)" :disabled="!runtimeCanRead">
+          <v-btn
+            @click="editItem(item.id)"
+            :disabled="!runtimeCanRead"
+            aria-label="Edit secret storage"
+          >
             <v-icon>mdi-pencil</v-icon>
           </v-btn>
         </v-btn-toggle>
@@ -302,6 +408,13 @@ export default {
   data() {
     return {
       itemType: 'vault',
+      syncHistoryDialog: false,
+      syncHistoryLoading: false,
+      syncHistoryError: '',
+      syncHistory: [],
+      syncHistoryStorage: null,
+      syncInProgress: false,
+      localKeys: [],
     };
   },
 
@@ -320,25 +433,44 @@ export default {
   methods: {
     ...enhancedMethods,
 
-    async syncItem(itemId) {
+    async syncItem(itemId, resolveOperationId = null) {
+      this.syncInProgress = true;
       try {
-        const item = this.items.find((x) => x.id === itemId);
-        await axios({
+        const response = await axios({
           method: 'post',
           url: `/api/project/${this.projectId}/secret_storages/${itemId}/sync`,
-          data: item,
+          data: {
+            request_id: this.createSyncRequestID(),
+            resolve_operation_id: resolveOperationId,
+          },
           responseType: 'json',
         });
         EventBus.$emit('i-snackbar', {
-          color: 'success',
-          text: 'Secrets synced successfully',
+          color: response.data.status === 'succeeded' ? 'success' : 'info',
+          text: `Synchronization ${response.data.status}`,
         });
         await this.loadItems();
+        await this.openSyncHistory(this.items.find((item) => item.id === itemId));
       } catch (err) {
+        const operation = err.response?.data;
+        if (operation?.id) {
+          EventBus.$emit('i-snackbar', {
+            color: operation.status === 'conflict' ? 'warning' : 'error',
+            text:
+              operation.status === 'conflict'
+                ? 'Remote changes require an explicit overwrite decision'
+                : `Synchronization failed: ${this.formatCapabilityValue(operation.error_category)}`,
+          });
+          await this.loadItems();
+          await this.openSyncHistory(this.items.find((item) => item.id === itemId));
+          return;
+        }
         EventBus.$emit('i-snackbar', {
           color: 'error',
           text: getErrorMessage(err),
         });
+      } finally {
+        this.syncInProgress = false;
       }
     },
 
@@ -360,16 +492,26 @@ export default {
     },
 
     getHeaders() {
-      return [
+      const headers = [
         {
           text: this.$i18n.t('name'),
           value: 'name',
-          width: '60%',
+          width: '40%',
         },
         {
           text: this.$i18n.t('type'),
           value: 'type',
-          width: '40%',
+          width: '20%',
+        },
+        {
+          text: 'Last attempt',
+          value: 'last_attempt',
+          width: '20%',
+        },
+        {
+          text: 'Last success',
+          value: 'last_success',
+          width: '20%',
         },
         {
           value: 'actions',
@@ -378,6 +520,10 @@ export default {
           align: 'end',
         },
       ];
+
+      return this.$vuetify.breakpoint.smAndDown
+        ? headers.filter((header) => ['name', 'actions'].includes(header.value))
+        : headers;
     },
     getItemsUrl() {
       return `/api/project/${this.projectId}/secret_storages`;

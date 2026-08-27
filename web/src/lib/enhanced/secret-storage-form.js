@@ -5,6 +5,22 @@ export const enhancedComputed = {
   isRuntimeProvider() {
     return this.item?.type === 'vault' || this.item?.type === 'openbao';
   },
+  isManagedOutbound() {
+    return this.isRuntimeProvider && this.item?.sync_direction === 'outbound';
+  },
+  managedLocalKeys() {
+    return (this.localKeys || []).filter(
+      (key) => !key.owner
+          && !key.source_storage_type
+          && ['string', 'login_password', 'ssh'].includes(key.type),
+    );
+  },
+  runtimeProviderNotice() {
+    if (this.isManagedOutbound) {
+      return 'Managed provider: Semaphore can resolve fields at runtime and synchronize selected local keys outbound.';
+    }
+    return 'Runtime provider: Semaphore reads one named field only during task execution.';
+  },
   runtimeCredentialLabel() {
     switch (this.item?.params?.auth_method) {
       case 'approle':
@@ -31,9 +47,9 @@ export const enhancedMethods = {
     this.connectionTesting = true;
     this.connectionHealth = null;
     try {
-      this.connectionHealth = (await axios.post(
-        `/api/project/${this.projectId}/secret_storages/${this.itemId}/test`,
-      )).data;
+      this.connectionHealth = (
+        await axios.post(`/api/project/${this.projectId}/secret_storages/${this.itemId}/test`)
+      ).data;
     } catch (err) {
       this.connectionHealth = err.response?.data || {
         state: 'failed',

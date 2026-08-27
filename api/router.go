@@ -482,6 +482,7 @@ func Route(
 	projectSecretStorageManagement.HandleFunc("/{storage_id}", secretStorageController.Update).Methods("PUT")
 	projectSecretStorageManagement.HandleFunc("/{storage_id}", secretStorageController.Remove).Methods("DELETE")
 	projectSecretStorageManagement.HandleFunc("/{storage_id}/sync", secretStorageController.SyncSecrets).Methods("POST")
+	projectSecretStorageManagement.HandleFunc("/{storage_id}/sync/history", secretStorageController.GetSyncHistory).Methods("GET", "HEAD")
 	projectSecretStorageManagement.HandleFunc("/{storage_id}/test", secretStorageController.TestConnection).Methods("POST")
 
 	projectRepoManagement := projectUserAPI.PathPrefix("/repositories").Subrouter()

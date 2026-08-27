@@ -1,9 +1,9 @@
 package sql
 
 import (
-	"time"
-
+	"errors"
 	"github.com/semaphoreui/semaphore/db"
+	"time"
 )
 
 func (d *SqlDb) GetSyncEnabledSecretSyncs() (syncs []db.SecretSync, err error) {
@@ -61,36 +61,61 @@ func (d *SqlDb) getSecretSyncByOwner(storageID int, environmentID *int) (sync db
 	}
 
 	sync.Paths, err = d.getSecretSyncPaths(sync.ID)
+	if sync.Direction == "" {
+		sync.Direction = db.SecretSyncDirectionReadOnly
+	}
 	return
 }
 
 func (d *SqlDb) SaveSecretSync(sync db.SecretSync) error {
+	if sync.Direction == "" {
+		sync.Direction = db.SecretSyncDirectionReadOnly
+	}
+	if err := sync.Direction.Validate(); err != nil {
+		return err
+	}
 	// If the row can't carry any info (disabled with no paths), remove it
 	// entirely instead of keeping a blank row around.
-	if !sync.SyncEnabled && sync.SyncInterval == 0 && len(sync.Paths) == 0 {
+	if sync.Direction == db.SecretSyncDirectionReadOnly && !sync.SyncEnabled &&
+		sync.SyncInterval == 0 && len(sync.Paths) == 0 {
 		return d.deleteSecretSync(sync.StorageID, sync.EnvironmentID)
 	}
 
 	existing, err := d.getSecretSyncByOwner(sync.StorageID, sync.EnvironmentID)
+	if sync.Direction == db.SecretSyncDirectionOutbound {
+		seen := make(map[string]struct{}, len(sync.Paths))
+		for _, path := range sync.Paths {
+			if err := path.ValidateManaged(); err != nil {
+				return err
+			}
+			identity := path.Mount + "\x00" + path.Path + "\x00" + path.Field
+			if _, exists := seen[identity]; exists {
+				return errors.New("managed secret target is duplicated")
+			}
+			seen[identity] = struct{}{}
+		}
+	}
 
 	var syncID int
 	switch err {
 	case nil:
 		syncID = existing.ID
+		sync.Revision = existing.Revision + 1
 		if _, err = d.exec(
-			"update project__secret_sync set sync_enabled=?, sync_interval=? where id=?",
-			sync.SyncEnabled, sync.SyncInterval, syncID,
+			"update project__secret_sync set sync_enabled=?, sync_interval=?, direction=?, revision=? where id=?",
+			sync.SyncEnabled, sync.SyncInterval, sync.Direction, sync.Revision, syncID,
 		); err != nil {
 			return err
 		}
 	case db.ErrNotFound:
+		sync.Revision = 1
 		syncID, err = d.insert(
 			"id",
 			"insert into project__secret_sync "+
-				"(project_id, storage_id, environment_id, sync_enabled, sync_interval) "+
-				"values (?, ?, ?, ?, ?)",
+				"(project_id, storage_id, environment_id, sync_enabled, sync_interval, direction, revision) "+
+				"values (?, ?, ?, ?, ?, ?, ?)",
 			sync.ProjectID, sync.StorageID, sync.EnvironmentID,
-			sync.SyncEnabled, sync.SyncInterval,
+			sync.SyncEnabled, sync.SyncInterval, sync.Direction, sync.Revision,
 		)
 		if err != nil {
 			return err
@@ -99,7 +124,7 @@ func (d *SqlDb) SaveSecretSync(sync db.SecretSync) error {
 		return err
 	}
 
-	return d.replaceSecretSyncPaths(syncID, sync.Paths)
+	return d.saveSecretSyncPaths(syncID, sync.Direction, sync.Paths)
 }
 
 func (d *SqlDb) deleteSecretSync(storageID int, environmentID *int) error {
@@ -120,7 +145,8 @@ func (d *SqlDb) getSecretSyncPaths(syncID int) (paths []db.SecretSyncPath, err e
 	paths = make([]db.SecretSyncPath, 0)
 	_, err = d.selectAll(
 		&paths,
-		"select id, sync_id, path, prefix, `separator` "+
+		"select id, sync_id, path, prefix, `separator`, access_key_id, mount, field, "+
+			"remote_version, content_fingerprint "+
 			"from project__secret_sync_path where sync_id=? order by id",
 		syncID,
 	)
@@ -134,8 +160,10 @@ func (d *SqlDb) replaceSecretSyncPaths(syncID int, paths []db.SecretSyncPath) er
 	for _, p := range paths {
 		if _, err := d.insert(
 			"id",
-			"insert into project__secret_sync_path (sync_id, path, prefix, `separator`) values (?, ?, ?, ?)",
-			syncID, p.Path, p.Prefix, p.Separator,
+			"insert into project__secret_sync_path "+
+				"(sync_id, path, prefix, `separator`, access_key_id, mount, field, remote_version, content_fingerprint) "+
+				"values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			syncID, p.Path, p.Prefix, p.Separator, nil, "", "", 0, "",
 		); err != nil {
 			return err
 		}

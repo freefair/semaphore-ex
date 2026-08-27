@@ -7,6 +7,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"net/http"
+	"strconv"
 )
 
 func (c *SecretStorageController) TestConnection(w http.ResponseWriter, r *http.Request) {
@@ -70,4 +71,28 @@ func writeRuntimeSecretCapabilityError(w http.ResponseWriter, err error) {
 		return
 	}
 	helpers.WriteErrorStatus(w, "CAPABILITY_PROVIDER_ERROR", http.StatusServiceUnavailable)
+}
+
+func (c *SecretStorageController) GetSyncHistory(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead) {
+		return
+	}
+	storage := helpers.GetFromContext(r, "secretStorage").(db.SecretStorage)
+	limit := 25
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			helpers.WriteErrorStatus(w, "history limit must be between 1 and 100", http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+	}
+	operations, err := c.secretStorageService.GetSecretSyncHistory(
+		storage.ProjectID, storage.ID, limit,
+	)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, operations)
 }

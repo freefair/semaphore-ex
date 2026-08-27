@@ -1,6 +1,9 @@
 package server
 
 import (
+	"context"
+	"errors"
+
 	"github.com/semaphoreui/semaphore/db"
 )
 
@@ -14,10 +17,14 @@ func StorageRequiresSecret(_ db.SecretStorage) bool {
 }
 
 func SyncSecrets(
-	sync db.SecretSync,
-	storageRepo db.SecretStorageRepository,
-	accessKeyRepo db.AccessKeyManager,
-	decryptor DvlsStorageTokenDeserializer,
-) error {
-	return nil
+	_ context.Context,
+	_ db.SecretSync,
+	_ db.SecretSyncOperation,
+	_ *db.SecretSyncOperation,
+	_ func() error,
+	_ db.SecretStorageRepository,
+	_ db.AccessKeyManager,
+	_ DvlsStorageTokenDeserializer,
+) (db.SecretSyncExecution, error) {
+	return db.SecretSyncExecution{}, errors.New("managed secret synchronization is unavailable")
 }

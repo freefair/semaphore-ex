@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/random"
 	pro "github.com/semaphoreui/semaphore/pro/services/server"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/server"
@@ -144,7 +145,7 @@ func (c *SecretStorageController) Update(w http.ResponseWriter, r *http.Request)
 	helpers.EventLog(r, helpers.EventLogUpdate, helpers.EventLogItem{
 		UserID:      helpers.UserFromContext(r).ID,
 		ProjectID:   oldStorage.ProjectID,
-		ObjectType:  db.EventSchedule,
+		ObjectType:  db.EventSecretStorage,
 		ObjectID:    oldStorage.ID,
 		Description: fmt.Sprintf("Secret storage with ID %d has been updated", storage.ID),
 	})
@@ -180,7 +181,7 @@ func (c *SecretStorageController) Add(w http.ResponseWriter, r *http.Request) {
 	helpers.EventLog(r, helpers.EventLogCreate, helpers.EventLogItem{
 		UserID:      helpers.UserFromContext(r).ID,
 		ProjectID:   newStorage.ProjectID,
-		ObjectType:  db.EventKey,
+		ObjectType:  db.EventSecretStorage,
 		ObjectID:    newStorage.ID,
 		Description: fmt.Sprintf("Secret storage %s has been created", storage.Name),
 	})
@@ -204,6 +205,12 @@ func (c *SecretStorageController) Remove(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	helpers.EventLog(r, helpers.EventLogDelete, helpers.EventLogItem{
+		UserID: helpers.UserFromContext(r).ID, ProjectID: project.ID,
+		ObjectType: db.EventSecretStorage, ObjectID: storageID,
+		Description: fmt.Sprintf("Secret storage with ID %d has been deleted", storageID),
+	})
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -211,46 +218,53 @@ func (c *SecretStorageController) SyncSecrets(w http.ResponseWriter, r *http.Req
 	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessWrite) {
 		return
 	}
-	oldStorage := helpers.GetFromContext(r, "secretStorage").(db.SecretStorage)
-
-	var storage db.SecretStorage
-	if !helpers.Bind(w, r, &storage) {
+	storage := helpers.GetFromContext(r, "secretStorage").(db.SecretStorage)
+	var request struct {
+		RequestID          string `json:"request_id"`
+		ResolveOperationID *int   `json:"resolve_operation_id,omitempty"`
+	}
+	if r.Body != nil && r.ContentLength != 0 && !helpers.Bind(w, r, &request) {
 		return
 	}
-
-	if storage.ID != oldStorage.ID {
-		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "Secret storage id in URL and in body must be the same",
-		})
-		return
+	if request.RequestID == "" {
+		request.RequestID = r.Header.Get("Idempotency-Key")
 	}
-
-	if storage.ProjectID != oldStorage.ProjectID {
-		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "You can not move secret storage to other project",
-		})
-		return
+	if request.RequestID == "" {
+		request.RequestID = "manual:" + random.String(32)
 	}
-
 	sync, err := helpers.Store(r).GetStorageSecretSync(storage.ID)
 	if err != nil {
 		helpers.WriteError(w, err)
 		return
 	}
 
-	err = c.secretStorageService.SyncSecrets(sync)
-	if err != nil {
+	userID := helpers.UserFromContext(r).ID
+	operation, err := c.secretStorageService.RequestSecretSync(
+		r.Context(), sync, request.RequestID, &userID, request.ResolveOperationID,
+	)
+	if err != nil && operation.ID == 0 {
 		helpers.WriteError(w, err)
 		return
 	}
 
 	helpers.EventLog(r, helpers.EventLogUpdate, helpers.EventLogItem{
-		UserID:      helpers.UserFromContext(r).ID,
-		ProjectID:   oldStorage.ProjectID,
-		ObjectType:  db.EventSchedule,
-		ObjectID:    oldStorage.ID,
-		Description: fmt.Sprintf("Secret storage with ID %d has been synced", storage.ID),
+		UserID:     helpers.UserFromContext(r).ID,
+		ProjectID:  storage.ProjectID,
+		ObjectType: db.EventSecretStorage,
+		ObjectID:   storage.ID,
+		Description: fmt.Sprintf(
+			"Secret storage sync operation %d finished with status %s", operation.ID, operation.Status,
+		),
 	})
 
-	helpers.WriteJSON(w, http.StatusOK, storage)
+	status := http.StatusOK
+	switch operation.Status {
+	case db.SecretSyncOperationPending, db.SecretSyncOperationRunning:
+		status = http.StatusAccepted
+	case db.SecretSyncOperationConflict:
+		status = http.StatusConflict
+	case db.SecretSyncOperationFailed:
+		status = http.StatusServiceUnavailable
+	}
+	helpers.WriteJSON(w, status, operation)
 }

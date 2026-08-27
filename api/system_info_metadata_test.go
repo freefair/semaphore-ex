@@ -48,7 +48,7 @@ func TestSystemInfoEditionMetadataJSON(t *testing.T) {
 		"boltdb_used":false,
 		"jwt":{"enabled":false},
 		"edition":"enhanced",
-		"contract_version":"1.10.0",
+		"contract_version":"1.11.0",
 		"implementation_version":"enhanced-revision",
 		"core_revision":"core-revision",
 		"enhanced_revision":"enhanced-revision",

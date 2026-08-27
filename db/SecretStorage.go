@@ -22,11 +22,13 @@ type SecretStorage struct {
 	ReadOnly  bool              `db:"readonly" json:"readonly"`
 
 	// Sync fields are transfer-only; persisted in project__secret_sync.
-	SyncEnabled      bool             `db:"-" json:"sync_enabled" backup:"sync_enabled"`
-	SyncInterval     int              `db:"-" json:"sync_interval" backup:"sync_interval"`
-	LastSyncedAt     *time.Time       `db:"-" json:"last_synced_at,omitempty" backup:"-"`
-	LastSyncFailedAt *time.Time       `db:"-" json:"last_sync_failed_at,omitempty" backup:"-"`
-	SyncPaths        []SecretSyncPath `db:"-" json:"sync_paths" backup:"-"`
+	SyncEnabled      bool                `db:"-" json:"sync_enabled" backup:"sync_enabled"`
+	SyncDirection    SecretSyncDirection `db:"-" json:"sync_direction" backup:"sync_direction"`
+	SyncRevision     int                 `db:"-" json:"sync_revision" backup:"-"`
+	SyncInterval     int                 `db:"-" json:"sync_interval" backup:"sync_interval"`
+	LastSyncedAt     *time.Time          `db:"-" json:"last_synced_at,omitempty" backup:"-"`
+	LastSyncFailedAt *time.Time          `db:"-" json:"last_sync_failed_at,omitempty" backup:"-"`
+	SyncPaths        []SecretSyncPath    `db:"-" json:"sync_paths" backup:"-"`
 
 	SourceStorageType *AccessKeySourceStorageType `db:"-" json:"source_storage_type,omitempty" backup:"-"`
 	// Secret is a source value: literal secret for local storage,

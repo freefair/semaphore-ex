@@ -124,6 +124,42 @@ func (d *VaultAccessKeyDeserializer) TestRuntimeSecretProvider(
 	return d.client.TestConnection(ctx, configuration)
 }
 
+func (d *VaultAccessKeyDeserializer) ReadManagedSecretField(
+	ctx context.Context,
+	projectID int,
+	reference pro_interfaces.SecretReference,
+) (pro_interfaces.ManagedSecretField, error) {
+	if err := d.requireCapability(ctx, pro_interfaces.CapabilityAccessExecute); err != nil {
+		return pro_interfaces.ManagedSecretField{}, err
+	}
+	configuration, credential, err := d.configuration(projectID, reference.StorageID)
+	if err != nil {
+		return pro_interfaces.ManagedSecretField{}, err
+	}
+	defer zero(credential)
+	configuration.Auth.BootstrapCredential = credential
+	return d.client.ReadManagedSecretField(ctx, configuration, reference)
+}
+
+func (d *VaultAccessKeyDeserializer) WriteManagedSecretField(
+	ctx context.Context,
+	projectID int,
+	reference pro_interfaces.SecretReference,
+	value []byte,
+	expectedVersion int,
+) (int, error) {
+	if err := d.requireCapability(ctx, pro_interfaces.CapabilityAccessWrite); err != nil {
+		return 0, err
+	}
+	configuration, credential, err := d.configuration(projectID, reference.StorageID)
+	if err != nil {
+		return 0, err
+	}
+	defer zero(credential)
+	configuration.Auth.BootstrapCredential = credential
+	return d.client.WriteManagedSecretField(ctx, configuration, reference, value, expectedVersion)
+}
+
 func (d *VaultAccessKeyDeserializer) requireCapability(
 	ctx context.Context,
 	access pro_interfaces.CapabilityAccess,
@@ -337,6 +373,88 @@ func (c *vaultOpenBaoClient) ReadKV(
 	return []byte(text), nil
 }
 
+func (c *vaultOpenBaoClient) ReadManagedSecretField(
+	ctx context.Context,
+	configuration pro_interfaces.SecretProviderConfiguration,
+	reference pro_interfaces.SecretReference,
+) (pro_interfaces.ManagedSecretField, error) {
+	if err := reference.Validate(); err != nil || reference.StorageID != configuration.StorageID ||
+		reference.Version != 0 {
+		return pro_interfaces.ManagedSecretField{}, providerError(
+			pro_interfaces.SecretProviderErrorValidation, "read_managed",
+		)
+	}
+	token, _, err := c.token(ctx, configuration)
+	if err != nil {
+		return pro_interfaces.ManagedSecretField{}, err
+	}
+	defer zero(token)
+	var response struct {
+		Data struct {
+			Data     map[string]any `json:"data"`
+			Metadata struct {
+				Version int `json:"version"`
+			} `json:"metadata"`
+		} `json:"data"`
+	}
+	endpoint := "/v1/" + url.PathEscape(reference.Mount) + "/data/" + escapeSecretPath(reference.Path)
+	err = c.doJSON(ctx, configuration, http.MethodGet, endpoint, nil, token, nil, &response)
+	if errorCategory(err) == pro_interfaces.SecretProviderErrorNotFound {
+		return pro_interfaces.ManagedSecretField{Exists: false, Version: 0}, nil
+	}
+	if err != nil {
+		return pro_interfaces.ManagedSecretField{}, err
+	}
+	value, exists := response.Data.Data[reference.Field]
+	if !exists {
+		return pro_interfaces.ManagedSecretField{Exists: false, Version: response.Data.Metadata.Version}, nil
+	}
+	text, ok := value.(string)
+	if !ok || response.Data.Metadata.Version <= 0 {
+		return pro_interfaces.ManagedSecretField{}, providerError(
+			pro_interfaces.SecretProviderErrorResponseInvalid, "read_managed",
+		)
+	}
+	return pro_interfaces.ManagedSecretField{
+		Value: []byte(text), Version: response.Data.Metadata.Version, Exists: true,
+	}, nil
+}
+
+func (c *vaultOpenBaoClient) WriteManagedSecretField(
+	ctx context.Context,
+	configuration pro_interfaces.SecretProviderConfiguration,
+	reference pro_interfaces.SecretReference,
+	value []byte,
+	expectedVersion int,
+) (int, error) {
+	if err := reference.Validate(); err != nil || reference.StorageID != configuration.StorageID ||
+		reference.Version != 0 || expectedVersion < 0 {
+		return 0, providerError(pro_interfaces.SecretProviderErrorValidation, "write_managed")
+	}
+	token, _, err := c.token(ctx, configuration)
+	if err != nil {
+		return 0, err
+	}
+	defer zero(token)
+	payload := map[string]any{
+		"options": map[string]int{"cas": expectedVersion},
+		"data":    map[string]string{reference.Field: string(value)},
+	}
+	var response struct {
+		Data struct {
+			Version int `json:"version"`
+		} `json:"data"`
+	}
+	endpoint := "/v1/" + url.PathEscape(reference.Mount) + "/data/" + escapeSecretPath(reference.Path)
+	if err = c.doJSON(ctx, configuration, http.MethodPatch, endpoint, nil, token, payload, &response); err != nil {
+		return 0, err
+	}
+	if response.Data.Version <= 0 {
+		return 0, providerError(pro_interfaces.SecretProviderErrorResponseInvalid, "write_managed")
+	}
+	return response.Data.Version, nil
+}
+
 func (c *vaultOpenBaoClient) TestConnection(
 	ctx context.Context,
 	configuration pro_interfaces.SecretProviderConfiguration,
@@ -492,11 +610,14 @@ func (c *vaultOpenBaoClient) doJSON(
 		base.RawQuery = query.Encode()
 	}
 	var body io.Reader
+	var encoded []byte
 	if payload != nil {
-		encoded, marshalErr := json.Marshal(payload)
+		var marshalErr error
+		encoded, marshalErr = json.Marshal(payload)
 		if marshalErr != nil {
 			return providerError(pro_interfaces.SecretProviderErrorValidation, "request")
 		}
+		defer zero(encoded)
 		body = bytes.NewReader(encoded)
 	}
 	request, err := http.NewRequestWithContext(ctx, method, base.String(), body)
@@ -505,7 +626,11 @@ func (c *vaultOpenBaoClient) doJSON(
 	}
 	request.Header.Set("Accept", "application/json")
 	if payload != nil {
-		request.Header.Set("Content-Type", "application/json")
+		contentType := "application/json"
+		if method == http.MethodPatch {
+			contentType = "application/merge-patch+json"
+		}
+		request.Header.Set("Content-Type", contentType)
 	}
 	if len(token) > 0 {
 		request.Header.Set("X-Vault-Token", string(token))
@@ -523,6 +648,7 @@ func (c *vaultOpenBaoClient) doJSON(
 	if err != nil {
 		return providerError(pro_interfaces.SecretProviderErrorUnavailable, "response")
 	}
+	defer zero(content)
 	if int64(len(content)) > configuration.MaxResponseSize {
 		return providerError(pro_interfaces.SecretProviderErrorResponseTooLarge, "response")
 	}
@@ -532,6 +658,16 @@ func (c *vaultOpenBaoClient) doJSON(
 		return providerError(pro_interfaces.SecretProviderErrorAuthentication, "request")
 	case http.StatusForbidden:
 		return providerError(pro_interfaces.SecretProviderErrorPermission, "request")
+	case http.StatusNotFound:
+		if method == http.MethodGet && strings.Contains(endpoint, "/data/") {
+			return providerError(pro_interfaces.SecretProviderErrorNotFound, "request")
+		}
+		return providerError(pro_interfaces.SecretProviderErrorResponseInvalid, "request")
+	case http.StatusBadRequest:
+		if method == http.MethodPatch {
+			return providerError(pro_interfaces.SecretProviderErrorConflict, "request")
+		}
+		return providerError(pro_interfaces.SecretProviderErrorResponseInvalid, "request")
 	default:
 		if response.StatusCode >= 500 {
 			return providerError(pro_interfaces.SecretProviderErrorUnavailable, "request")
@@ -642,4 +778,5 @@ func zero(value []byte) {
 }
 
 var _ pro_interfaces.RuntimeSecretResolver = (*VaultAccessKeyDeserializer)(nil)
+var _ pro_interfaces.ManagedSecretProvider = (*VaultAccessKeyDeserializer)(nil)
 var _ pro_interfaces.VaultOpenBaoClient = (*vaultOpenBaoClient)(nil)

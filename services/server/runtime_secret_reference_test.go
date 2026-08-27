@@ -262,3 +262,55 @@ func TestRuntimeSecretStorageValidationRejectsUnsafeTLSAndUnsupportedProviders(t
 		assert.Error(t, ValidateRuntimeSecretStorage(&current))
 	}
 }
+
+func TestRuntimeSecretStorageDefaultsToReadOnlyWithoutAutomaticSync(t *testing.T) {
+	storage := db.SecretStorage{
+		Type:         db.SecretStorageTypeVault,
+		Params:       db.MapStringAnyField{"url": "https://vault.example"},
+		Secret:       "bootstrap-token",
+		SyncEnabled:  true,
+		SyncInterval: 15,
+	}
+
+	require.NoError(t, ValidateRuntimeSecretStorage(&storage))
+	assert.Equal(t, db.SecretSyncDirectionReadOnly, storage.SyncDirection)
+	assert.True(t, storage.ReadOnly)
+	assert.False(t, storage.SyncEnabled)
+	assert.Zero(t, storage.SyncInterval)
+}
+
+func TestRuntimeSecretStorageValidatesOutboundMappings(t *testing.T) {
+	valid := db.SecretStorage{
+		Type:          db.SecretStorageTypeOpenBao,
+		Params:        db.MapStringAnyField{"url": "https://bao.example"},
+		Secret:        "bootstrap-token",
+		SyncDirection: db.SecretSyncDirectionOutbound,
+		SyncPaths: []db.SecretSyncPath{{
+			AccessKeyID: 7,
+			Mount:       "secret",
+			Path:        "apps/api",
+			Field:       "password",
+		}},
+	}
+
+	require.NoError(t, ValidateRuntimeSecretStorage(&valid))
+	assert.False(t, valid.ReadOnly)
+
+	invalid := valid
+	invalid.SyncPaths = []db.SecretSyncPath{{
+		AccessKeyID: 7,
+		Mount:       "secret",
+		Path:        "../outside",
+		Field:       "password",
+	}}
+	assert.Error(t, ValidateRuntimeSecretStorage(&invalid))
+
+	duplicate := valid
+	duplicate.SyncPaths = append(duplicate.SyncPaths, db.SecretSyncPath{
+		AccessKeyID: 8,
+		Mount:       "secret",
+		Path:        "apps/api",
+		Field:       "password",
+	})
+	assert.ErrorContains(t, ValidateRuntimeSecretStorage(&duplicate), "duplicated")
+}

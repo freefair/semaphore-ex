@@ -39,3 +39,4 @@ func (d *VaultAccessKeyDeserializer) DeserializeSecret(key *db.AccessKey) (res s
 }
 
 var _ pro_interfaces.RuntimeSecretResolver = (*VaultAccessKeyDeserializer)(nil)
+var _ pro_interfaces.ManagedSecretProvider = (*VaultAccessKeyDeserializer)(nil)

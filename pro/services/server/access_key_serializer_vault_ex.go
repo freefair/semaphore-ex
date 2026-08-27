@@ -28,6 +28,24 @@ func (d *VaultAccessKeyDeserializer) TestRuntimeSecretProvider(
 	}, err
 }
 
+func (d *VaultAccessKeyDeserializer) ReadManagedSecretField(
+	_ context.Context,
+	_ int,
+	_ pro_interfaces.SecretReference,
+) (pro_interfaces.ManagedSecretField, error) {
+	return pro_interfaces.ManagedSecretField{}, d.denied(pro_interfaces.CapabilityAccessExecute)
+}
+
+func (d *VaultAccessKeyDeserializer) WriteManagedSecretField(
+	_ context.Context,
+	_ int,
+	_ pro_interfaces.SecretReference,
+	_ []byte,
+	_ int,
+) (int, error) {
+	return 0, d.denied(pro_interfaces.CapabilityAccessWrite)
+}
+
 func (d *VaultAccessKeyDeserializer) denied(access pro_interfaces.CapabilityAccess) error {
 	decision := pro_interfaces.NewCapabilityDecision(
 		pro_interfaces.CapabilityRuntimeSecrets,

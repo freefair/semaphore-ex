@@ -18,15 +18,25 @@ import (
 )
 
 type runtimeSecretStorageServiceStub struct {
-	created db.SecretStorage
-	updated db.SecretStorage
-	deleted int
-	health  pro_interfaces.SecretProviderHealth
+	created   db.SecretStorage
+	updated   db.SecretStorage
+	deleted   int
+	health    pro_interfaces.SecretProviderHealth
+	operation db.SecretSyncOperation
+	history   []db.SecretSyncOperation
+	requestID string
+	resolveID *int
 }
 
-type runtimeSecretAPIStore struct{ db.Store }
+type runtimeSecretAPIStore struct {
+	db.Store
+	sync db.SecretSync
+}
 
 func (runtimeSecretAPIStore) CreateEvent(event db.Event) (db.Event, error) { return event, nil }
+func (s runtimeSecretAPIStore) GetStorageSecretSync(int) (db.SecretSync, error) {
+	return s.sync, nil
+}
 
 type runtimeSecretLogWriter struct{}
 
@@ -55,6 +65,30 @@ func (s *runtimeSecretStorageServiceStub) Create(storage db.SecretStorage) (db.S
 	return storage, nil
 }
 func (s *runtimeSecretStorageServiceStub) SyncSecrets(db.SecretSync) error { return nil }
+func (s *runtimeSecretStorageServiceStub) RequestSecretSync(
+	_ context.Context,
+	_ db.SecretSync,
+	requestID string,
+	_ *int,
+	resolveID *int,
+) (db.SecretSyncOperation, error) {
+	s.requestID = requestID
+	s.resolveID = resolveID
+	return s.operation, nil
+}
+func (s *runtimeSecretStorageServiceStub) RunSecretSyncOperation(
+	context.Context,
+	db.SecretSyncOperation,
+) (db.SecretSyncOperation, error) {
+	return s.operation, nil
+}
+func (s *runtimeSecretStorageServiceStub) GetSecretSyncHistory(
+	int,
+	int,
+	int,
+) ([]db.SecretSyncOperation, error) {
+	return s.history, nil
+}
 func (s *runtimeSecretStorageServiceStub) TestConnection(
 	context.Context,
 	int,
@@ -189,6 +223,57 @@ func TestSecretStorageDeleteRequiresWriteCapability(t *testing.T) {
 	disabled.Remove(deniedRecorder, request)
 	assert.Equal(t, http.StatusForbidden, deniedRecorder.Code)
 	assert.Zero(t, service.deleted)
+}
+
+func TestSecretStorageManualSyncReturnsConflictAndAcceptsExplicitResolution(t *testing.T) {
+	service := &runtimeSecretStorageServiceStub{operation: db.SecretSyncOperation{
+		ID: 41, RequestID: "manual:api-0001", Status: db.SecretSyncOperationConflict,
+		ConflictCount: 1, ErrorCategory: "remote_changed",
+		Outcomes: []db.SecretSyncItemOutcome{{
+			MappingID: 12, AccessKeyID: 17, Mount: "secret", Path: "apps/api",
+			Field: "password", Status: db.SecretSyncItemConflict, RemoteVersion: 5,
+		}},
+	}}
+	controller := NewSecretStorageController(nil, service, projectRuntimeCapabilityProvider{})
+	body := []byte(`{"request_id":"manual:api-0001","resolve_operation_id":40}`)
+	request := runtimeSecretRequest(http.MethodPost, "/api/project/3/secret_storages/9/sync", body)
+	request = helpers.SetContextValue(request, "secretStorage", db.SecretStorage{ID: 9, ProjectID: 3})
+	request = helpers.SetContextValue(request, "store", runtimeSecretAPIStore{sync: db.SecretSync{
+		ID: 6, ProjectID: 3, StorageID: 9,
+	}})
+	recorder := httptest.NewRecorder()
+
+	controller.SyncSecrets(recorder, request)
+
+	assert.Equal(t, http.StatusConflict, recorder.Code)
+	assert.Equal(t, "manual:api-0001", service.requestID)
+	require.NotNil(t, service.resolveID)
+	assert.Equal(t, 40, *service.resolveID)
+	assert.NotContains(t, recorder.Body.String(), "secret-value")
+	assert.Contains(t, recorder.Body.String(), `"remote_version":5`)
+}
+
+func TestSecretStorageSyncHistoryIsValueFree(t *testing.T) {
+	service := &runtimeSecretStorageServiceStub{history: []db.SecretSyncOperation{{
+		ID: 41, Status: db.SecretSyncOperationSucceeded, ChangedCount: 1,
+		Outcomes: []db.SecretSyncItemOutcome{{
+			MappingID: 12, AccessKeyID: 17, Mount: "secret", Path: "apps/api",
+			Field: "password", Status: db.SecretSyncItemChanged,
+			ContentFingerprint: "sha256:value-free", RemoteVersion: 6,
+		}},
+	}}}
+	controller := NewSecretStorageController(nil, service, projectRuntimeCapabilityProvider{})
+	request := runtimeSecretRequest(
+		http.MethodGet, "/api/project/3/secret_storages/9/sync/history?limit=10", nil,
+	)
+	request = helpers.SetContextValue(request, "secretStorage", db.SecretStorage{ID: 9, ProjectID: 3})
+	recorder := httptest.NewRecorder()
+
+	controller.GetSyncHistory(recorder, request)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "sha256:value-free")
+	assert.NotContains(t, recorder.Body.String(), "secret-value")
 }
 
 func runtimeSecretRequest(method, path string, body []byte) *http.Request {

@@ -133,9 +133,36 @@ func ValidateRuntimeSecretStorage(storage *db.SecretStorage) error {
 	if storage.Secret == "" && storage.ID == 0 {
 		return common_errors.NewValidationError("provider credential is required")
 	}
-	storage.ReadOnly = true
-	storage.SyncEnabled = false
-	storage.SyncPaths = []db.SecretSyncPath{}
+	if storage.SyncDirection == "" {
+		storage.SyncDirection = db.SecretSyncDirectionReadOnly
+	}
+	if err := storage.SyncDirection.Validate(); err != nil {
+		return common_errors.NewValidationError(err.Error())
+	}
+	switch storage.SyncDirection {
+	case db.SecretSyncDirectionReadOnly:
+		storage.ReadOnly = true
+		storage.SyncEnabled = false
+		storage.SyncInterval = 0
+	case db.SecretSyncDirectionOutbound:
+		storage.ReadOnly = false
+		if storage.SyncEnabled && storage.SyncInterval <= 0 {
+			return common_errors.NewValidationError(
+				"sync interval must be positive when automatic sync is enabled",
+			)
+		}
+		seenTargets := make(map[string]struct{}, len(storage.SyncPaths))
+		for _, path := range storage.SyncPaths {
+			if err := path.ValidateManaged(); err != nil {
+				return common_errors.NewValidationError(err.Error())
+			}
+			target := strings.Join([]string{path.Mount, path.Path, path.Field}, "\x00")
+			if _, exists := seenTargets[target]; exists {
+				return common_errors.NewValidationError("managed secret target is duplicated")
+			}
+			seenTargets[target] = struct{}{}
+		}
+	}
 	return nil
 }
 

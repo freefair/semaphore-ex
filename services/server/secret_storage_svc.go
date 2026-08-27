@@ -8,6 +8,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/random"
 	pro "github.com/semaphoreui/semaphore/pro/services/server"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"regexp"
 )
 
 type SecretStorageService interface {
@@ -17,6 +18,9 @@ type SecretStorageService interface {
 	GetSecretStorages(projectID int) ([]db.SecretStorage, error)
 	Create(storage db.SecretStorage) (res db.SecretStorage, err error)
 	SyncSecrets(sync db.SecretSync) error
+	RequestSecretSync(context.Context, db.SecretSync, string, *int, *int) (db.SecretSyncOperation, error)
+	RunSecretSyncOperation(context.Context, db.SecretSyncOperation) (db.SecretSyncOperation, error)
+	GetSecretSyncHistory(int, int, int) ([]db.SecretSyncOperation, error)
 	TestConnection(context.Context, int, int) (pro_interfaces.SecretProviderHealth, error)
 }
 
@@ -31,6 +35,10 @@ func NewSecretStorageService(
 		accessKeyRepo:     accessKeyRepo,
 		accessKeyService:  accessKeyService,
 		encryptionService: encryptionService,
+		secretSyncRepo: func() db.SecretSyncRepository {
+			repo, _ := secretStorageRepo.(db.SecretSyncRepository)
+			return repo
+		}(),
 	}
 }
 
@@ -39,10 +47,18 @@ type SecretStorageServiceImpl struct {
 	accessKeyRepo     db.AccessKeyManager
 	accessKeyService  AccessKeyService
 	encryptionService AccessKeyEncryptionService
+	secretSyncRepo    db.SecretSyncRepository
 }
 
+var secretSyncRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{7,63}$`)
+var errSecretSyncLeaseLost = errors.New("secret sync operation lease lost")
+
 func (s *SecretStorageServiceImpl) SyncSecrets(sync db.SecretSync) error {
-	return pro.SyncSecrets(sync, s.secretStorageRepo, s.accessKeyRepo, s.encryptionService)
+	_, err := pro.SyncSecrets(
+		context.Background(), sync, db.SecretSyncOperation{}, nil, nil,
+		s.secretStorageRepo, s.accessKeyRepo, s.encryptionService,
+	)
+	return err
 }
 
 func (s *SecretStorageServiceImpl) Delete(projectID int, storageID int) (err error) {
