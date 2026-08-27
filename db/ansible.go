@@ -1,6 +1,8 @@
 package db
 
-import "time"
+import (
+	"time"
+)
 
 type AnsibleTaskHost struct {
 	ID          int       `json:"id" db:"id"`

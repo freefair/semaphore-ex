@@ -13,6 +13,9 @@ import (
 	"github.com/semaphoreui/semaphore/db_lib"
 	"github.com/semaphoreui/semaphore/pkg/ssh"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	proFeatures "github.com/semaphoreui/semaphore/pro/pkg/features"
+	"github.com/semaphoreui/semaphore/pro/pkg/stage_parsers"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 )
 
@@ -809,6 +812,17 @@ func (t *LocalExecutor) Prepare(username string, incomingVersion *string, alias 
 		return
 	}
 	environmentVariables = append(environmentVariables, surveyEnvVars...)
+	if t.Template.App == db.AppAnsible && proFeatures.Compatibility().Edition == pro_interfaces.EditionEnhanced {
+		callbackEnvironment, callbackErr := stage_parsers.TaskSummaryCallbackEnvironment(
+			path.Join(t.Repository.GetInternalPath(t.Template.ID), "callbacks"),
+			environmentVariables,
+		)
+		if callbackErr != nil {
+			t.Log(stage_parsers.TaskSummaryCollectionFailureOutput(callbackErr))
+		} else {
+			environmentVariables = callbackEnvironment
+		}
+	}
 
 	tplParams, err := t.getTemplateParams()
 	if err != nil {

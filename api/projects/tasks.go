@@ -215,8 +215,8 @@ func (c *TaskController) GetTaskMiddleware(next http.Handler) http.Handler {
 
 		task, err := c.store.GetTask(project.ID, taskID)
 		if err != nil {
-			util.LogErrorF(err, log.Fields{"error": "Bad request. Cannot get task from database"})
-			w.WriteHeader(http.StatusBadRequest)
+			util.LogErrorF(err, log.Fields{"error": "Cannot get task from database"})
+			helpers.WriteError(w, err)
 			return
 		}
 

@@ -6,10 +6,7 @@ import (
 	"github.com/semaphoreui/semaphore/pro/db/sql"
 )
 
-func NewTerraformStore(store db.Store) db.TerraformStore {
-	return &sql.TerraformStoreImpl{}
-}
-
+// NewAnsibleTaskRepository selects the Enhanced durable summary store.
 func NewAnsibleTaskRepository(store db.Store) db.AnsibleTaskRepository {
 	connectionStore, ok := store.(interface {
 		GetConnection() *coresql.SqlDbConnection
@@ -18,8 +15,4 @@ func NewAnsibleTaskRepository(store db.Store) db.AnsibleTaskRepository {
 		return sql.NewAnsibleTask(nil)
 	}
 	return sql.NewAnsibleTask(connectionStore.GetConnection())
-}
-
-func NewWorkflowStore(store db.Store) db.WorkflowManager {
-	return &sql.WorkflowStoreImpl{}
 }

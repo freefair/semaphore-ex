@@ -47,6 +47,196 @@ definitions:
         type: string
       resolved_executor_image:
         type: string
+  TaskSummary:
+    type: object
+    description: Persisted, normalized Ansible result summary. Available in the enhanced edition.
+    required:
+    - version
+    - task_id
+    - project_id
+    - runner_result_version
+    - state
+    - task_status
+    - expected_hosts
+    - total_hosts
+    - ok_hosts
+    - failed_hosts
+    - event_count
+    - updated
+    properties:
+      version:
+        type: integer
+        description: Server-side summary schema version
+      task_id:
+        type: integer
+      project_id:
+        type: integer
+      runner_result_version:
+        type: integer
+        description: Version of the runner event contract
+      state:
+        type: string
+        enum:
+        - collecting
+        - complete
+        - partial
+        - empty
+        - unsupported
+      task_status:
+        type: string
+      expected_hosts:
+        type: integer
+      total_hosts:
+        type: integer
+      ok_hosts:
+        type: integer
+      failed_hosts:
+        type: integer
+      event_count:
+        type: integer
+      diagnostic:
+        type: string
+      started_at:
+        type: string
+        format: date-time
+        x-nullable: true
+      ended_at:
+        type: string
+        format: date-time
+        x-nullable: true
+      updated:
+        type: string
+        format: date-time
+  TaskSummaryHost:
+    type: object
+    properties:
+      id:
+        type: integer
+      host:
+        type: string
+      status:
+        type: string
+        enum:
+        - success
+        - failed
+      changed:
+        type: integer
+      failed:
+        type: integer
+      ignored:
+        type: integer
+      ok:
+        type: integer
+      rescued:
+        type: integer
+      skipped:
+        type: integer
+      unreachable:
+        type: integer
+      started_at:
+        type: string
+        format: date-time
+        x-nullable: true
+      ended_at:
+        type: string
+        format: date-time
+        x-nullable: true
+      duration_ms:
+        type: integer
+        format: int64
+  TaskSummaryStage:
+    type: object
+    properties:
+      id:
+        type: integer
+      stage_id:
+        type: string
+      stage:
+        type: string
+      ok:
+        type: integer
+      changed:
+        type: integer
+      failed:
+        type: integer
+      ignored:
+        type: integer
+      rescued:
+        type: integer
+      skipped:
+        type: integer
+      unreachable:
+        type: integer
+      started_at:
+        type: string
+        format: date-time
+        x-nullable: true
+      ended_at:
+        type: string
+        format: date-time
+        x-nullable: true
+      duration_ms:
+        type: integer
+        format: int64
+  TaskSummaryError:
+    type: object
+    properties:
+      id:
+        type: integer
+      event_id:
+        type: string
+      host:
+        type: string
+      stage:
+        type: string
+      status:
+        type: string
+        enum:
+        - failed
+        - unreachable
+      error:
+        type: string
+        description: Bounded error text with common secret-bearing values redacted
+      output_time:
+        type: string
+        format: date-time
+        x-nullable: true
+  TaskSummaryHostPage:
+    type: object
+    required:
+    - items
+    properties:
+      items:
+        type: array
+        items:
+          $ref: ./api-docs.yml#/definitions/TaskSummaryHost
+      next_cursor:
+        type: integer
+        x-nullable: true
+  TaskSummaryStagePage:
+    type: object
+    required:
+    - items
+    properties:
+      items:
+        type: array
+        items:
+          $ref: ./api-docs.yml#/definitions/TaskSummaryStage
+      next_cursor:
+        type: integer
+        x-nullable: true
+  TaskSummaryErrorPage:
+    type: object
+    required:
+    - items
+    properties:
+      items:
+        type: array
+        items:
+          $ref: ./api-docs.yml#/definitions/TaskSummaryError
+      next_cursor:
+        type: integer
+        x-nullable: true
 paths:
   /project/{project_id}/tasks/{task_id}/runner-attempts:
     parameters:
@@ -63,3 +253,98 @@ paths:
             type: array
             items:
               $ref: ./api-docs.yml#/definitions/RunnerAttempt
+  /project/{project_id}/tasks/{task_id}/ansible/summary:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/task_id
+    get:
+      tags:
+      - task
+      summary: Get the persisted Ansible task summary
+      description: Returns the project-scoped normalized summary without reparsing task logs. Missing or interrupted
+        terminal summaries are repaired from persisted events.
+      responses:
+        200:
+          description: Persisted task summary
+          schema:
+            $ref: ./api-docs.yml#/definitions/TaskSummary
+        404:
+          description: Project or task not found
+  /project/{project_id}/tasks/{task_id}/ansible/summary/hosts:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/task_id
+    - name: count
+      in: query
+      type: integer
+      minimum: 1
+      maximum: 200
+      default: 50
+    - name: before
+      in: query
+      type: integer
+      minimum: 1
+      description: Return rows with IDs lower than this cursor
+    get:
+      tags:
+      - task
+      summary: Get a bounded page of persisted Ansible host results
+      responses:
+        200:
+          description: Host result page
+          schema:
+            $ref: ./api-docs.yml#/definitions/TaskSummaryHostPage
+        404:
+          description: Project or task not found
+  /project/{project_id}/tasks/{task_id}/ansible/summary/stages:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/task_id
+    - name: count
+      in: query
+      type: integer
+      minimum: 1
+      maximum: 200
+      default: 50
+    - name: before
+      in: query
+      type: integer
+      minimum: 1
+      description: Return stage groups with event IDs lower than this cursor
+    get:
+      tags:
+      - task
+      summary: Get a bounded page of persisted Ansible stage results
+      responses:
+        200:
+          description: Stage result page
+          schema:
+            $ref: ./api-docs.yml#/definitions/TaskSummaryStagePage
+        404:
+          description: Project or task not found
+  /project/{project_id}/tasks/{task_id}/ansible/summary/errors:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/task_id
+    - name: count
+      in: query
+      type: integer
+      minimum: 1
+      maximum: 200
+      default: 50
+    - name: before
+      in: query
+      type: integer
+      minimum: 1
+      description: Return rows with IDs lower than this cursor
+    get:
+      tags:
+      - task
+      summary: Get a bounded page of redacted Ansible failures
+      responses:
+        200:
+          description: Error result page
+          schema:
+            $ref: ./api-docs.yml#/definitions/TaskSummaryErrorPage
+        404:
+          description: Project or task not found

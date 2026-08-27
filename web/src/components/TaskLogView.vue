@@ -242,7 +242,7 @@ import socket from '@/socket';
 import VirtualList from 'vue-virtual-scroll-list';
 import TaskLogViewRecord from '@/components/TaskLogViewRecord.vue';
 import ProjectMixin from '@/components/ProjectMixin';
-import AnsibleStageView from '@/components/AnsibleStageView.vue';
+import AnsibleStageView from '@/components/EnhancedTaskSummary.vue';
 import TaskDetails from '@/components/TaskDetails.vue';
 
 export default {

@@ -4,7 +4,6 @@ package factory
 import community "github.com/semaphoreui/semaphore/community-pro/db/factory"
 
 var (
-	NewAnsibleTaskRepository = community.NewAnsibleTaskRepository
-	NewTerraformStore        = community.NewTerraformStore
-	NewWorkflowStore         = community.NewWorkflowStore
+	NewTerraformStore = community.NewTerraformStore
+	NewWorkflowStore  = community.NewWorkflowStore
 )

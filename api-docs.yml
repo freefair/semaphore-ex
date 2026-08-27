@@ -929,6 +929,20 @@ definitions:
       output:
         type: string
 
+  TaskSummary:
+    $ref: "./api-docs-ex.yml#/definitions/TaskSummary"
+  TaskSummaryHost:
+    $ref: "./api-docs-ex.yml#/definitions/TaskSummaryHost"
+  TaskSummaryStage:
+    $ref: "./api-docs-ex.yml#/definitions/TaskSummaryStage"
+  TaskSummaryError:
+    $ref: "./api-docs-ex.yml#/definitions/TaskSummaryError"
+  TaskSummaryHostPage:
+    $ref: "./api-docs-ex.yml#/definitions/TaskSummaryHostPage"
+  TaskSummaryStagePage:
+    $ref: "./api-docs-ex.yml#/definitions/TaskSummaryStagePage"
+  TaskSummaryErrorPage:
+    $ref: "./api-docs-ex.yml#/definitions/TaskSummaryErrorPage"
   TemplateRequest:
     type: object
     properties:
@@ -3633,6 +3647,15 @@ paths:
             content-type:
               type: string
               x-example: text/plain; charset=utf-8
+
+  /project/{project_id}/tasks/{task_id}/ansible/summary:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1tasks~1{task_id}~1ansible~1summary"
+  /project/{project_id}/tasks/{task_id}/ansible/summary/hosts:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1tasks~1{task_id}~1ansible~1summary~1hosts"
+  /project/{project_id}/tasks/{task_id}/ansible/summary/stages:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1tasks~1{task_id}~1ansible~1summary~1stages"
+  /project/{project_id}/tasks/{task_id}/ansible/summary/errors:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1tasks~1{task_id}~1ansible~1summary~1errors"
   /apps:
     get:
       summary: Get apps

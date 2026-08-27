@@ -332,6 +332,15 @@ func (t *TaskRunner) finishRun() {
 	now := tz.Now()
 	t.Task.End = &now
 	t.saveStatus()
+	if t.Template.App == db.AppAnsible && t.pool.ansibleTaskRepo != nil {
+		if err := t.pool.ansibleTaskRepo.FinalizeTaskSummary(
+			t.Task.ProjectID, t.Task.ID, t.Task.Status, t.Task.Start, t.Task.End,
+		); err != nil {
+			log.WithError(err).WithFields(log.Fields{
+				"context": "task_summary", "project_id": t.Task.ProjectID, "task_id": t.Task.ID,
+			}).Warn("failed to persist task summary completion time; it remains repairable")
+		}
+	}
 
 	// The task-bound survey-secret key is only needed until dispatch; drop it
 	// as soon as the task is terminal. Failure is non-fatal: the expired-key

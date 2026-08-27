@@ -3,8 +3,5 @@ package sql
 
 import community "github.com/semaphoreui/semaphore/community-pro/db/sql"
 
-type AnsibleTaskStoreImpl = community.AnsibleTaskStoreImpl
 type TerraformStoreImpl = community.TerraformStoreImpl
 type WorkflowStoreImpl = community.WorkflowStoreImpl
-
-var NewAnsibleTask = community.NewAnsibleTask

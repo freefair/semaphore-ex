@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/semaphoreui/semaphore/api/sockets"
+	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/tz"
+	"github.com/semaphoreui/semaphore/pro/pkg/stage_parsers"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 	"io"
@@ -24,6 +26,19 @@ func (t *TaskRunner) Logf(format string, a ...any) {
 }
 
 func (t *TaskRunner) LogWithTime(now time.Time, msg string) {
+	if t.Template.App == db.AppAnsible {
+		recognized, err := stage_parsers.IngestTaskSummaryOutput(
+			t.pool.ansibleTaskRepo, t.Task.ProjectID, t.Task.ID, msg, now,
+		)
+		if recognized {
+			if err != nil {
+				log.WithError(err).WithFields(log.Fields{
+					"context": "task_summary", "project_id": t.Task.ProjectID, "task_id": t.Task.ID,
+				}).Warn("failed to persist task summary result")
+			}
+			return
+		}
+	}
 	t.sendToWs(now, msg)
 
 	t.pool.logger <- logRecord{
