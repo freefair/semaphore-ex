@@ -58,13 +58,15 @@ type Task struct {
 	ScheduleID    *int `db:"schedule_id" json:"schedule_id,omitempty"`
 	// RunnerID is set while a task is assigned to a remote runner (cleared when the task finishes).
 	// Used so runner progress API can authorize updates on any HA node.
-	RunnerID             *int                     `db:"runner_id" json:"-"`
-	RunnerSnapshotID     *int                     `db:"runner_id_snapshot" json:"-"`
-	RunnerName           *string                  `db:"runner_name" json:"-"`
-	AssignmentGeneration int                      `db:"assignment_generation" json:"assignment_generation,omitempty"`
-	RunnerAssignedAt     *time.Time               `db:"runner_assigned_at" json:"runner_assigned_at,omitempty"`
-	RecoveryReason       string                   `db:"recovery_reason" json:"recovery_reason,omitempty"`
-	PlacementDecision    *RunnerPlacementDecision `db:"placement_decision" json:"placement_decision,omitempty"`
+	RunnerID               *int                     `db:"runner_id" json:"-"`
+	RunnerSnapshotID       *int                     `db:"runner_id_snapshot" json:"-"`
+	RunnerName             *string                  `db:"runner_name" json:"-"`
+	AssignmentGeneration   int                      `db:"assignment_generation" json:"assignment_generation,omitempty"`
+	RunnerAssignedAt       *time.Time               `db:"runner_assigned_at" json:"runner_assigned_at,omitempty"`
+	RecoveryReason         string                   `db:"recovery_reason" json:"recovery_reason,omitempty"`
+	PlacementDecision      *RunnerPlacementDecision `db:"placement_decision" json:"placement_decision,omitempty"`
+	RequestedExecutorImage *string                  `db:"requested_executor_image" json:"requested_executor_image,omitempty"`
+	ResolvedExecutorImage  *string                  `db:"resolved_executor_image" json:"resolved_executor_image,omitempty"`
 
 	Created time.Time  `db:"created" json:"created"`
 	Start   *time.Time `db:"start" json:"start,omitempty"`
@@ -107,19 +109,21 @@ const (
 
 // RunnerAttempt records one immutable runner assignment and its terminal result.
 type RunnerAttempt struct {
-	ID              int                  `db:"id" json:"id"`
-	ProjectID       int                  `db:"project_id" json:"project_id"`
-	TaskID          int                  `db:"task_id" json:"task_id"`
-	Generation      int                  `db:"generation" json:"generation"`
-	RunnerID        int                  `db:"runner_id" json:"runner_id"`
-	RunnerName      string               `db:"runner_name" json:"runner_name"`
-	AssignedAt      time.Time            `db:"assigned_at" json:"assigned_at"`
-	EndedAt         *time.Time           `db:"ended_at" json:"ended_at,omitempty"`
-	Outcome         RunnerAttemptOutcome `db:"outcome" json:"outcome"`
-	Reason          string               `db:"reason" json:"reason,omitempty"`
-	RequestedTags   StringArrayField     `db:"requested_tags" json:"requested_tags,omitempty"`
-	MatchMode       RunnerTagMatchMode   `db:"match_mode" json:"match_mode,omitempty"`
-	PlacementReason string               `db:"placement_reason" json:"placement_reason,omitempty"`
+	ID                     int                  `db:"id" json:"id"`
+	ProjectID              int                  `db:"project_id" json:"project_id"`
+	TaskID                 int                  `db:"task_id" json:"task_id"`
+	Generation             int                  `db:"generation" json:"generation"`
+	RunnerID               int                  `db:"runner_id" json:"runner_id"`
+	RunnerName             string               `db:"runner_name" json:"runner_name"`
+	AssignedAt             time.Time            `db:"assigned_at" json:"assigned_at"`
+	EndedAt                *time.Time           `db:"ended_at" json:"ended_at,omitempty"`
+	Outcome                RunnerAttemptOutcome `db:"outcome" json:"outcome"`
+	Reason                 string               `db:"reason" json:"reason,omitempty"`
+	RequestedTags          StringArrayField     `db:"requested_tags" json:"requested_tags,omitempty"`
+	MatchMode              RunnerTagMatchMode   `db:"match_mode" json:"match_mode,omitempty"`
+	PlacementReason        string               `db:"placement_reason" json:"placement_reason,omitempty"`
+	RequestedExecutorImage *string              `db:"requested_executor_image" json:"requested_executor_image,omitempty"`
+	ResolvedExecutorImage  *string              `db:"resolved_executor_image" json:"resolved_executor_image,omitempty"`
 }
 
 func (task *Task) ExtractParams(target any) (err error) {

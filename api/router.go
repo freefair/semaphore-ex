@@ -119,9 +119,13 @@ func Route(
 	usersController := NewUsersController(subscriptionService)
 	subscriptionController := proApi.NewSubscriptionController(store, store, store, terraformStore)
 	globalRunnerController := NewGlobalRunnerController(runnerService)
+	executorImageResolver := capabilityServices.NewExecutorImageResolver(subscriptionService)
+	if taskPool != nil {
+		taskPool.SetExecutorImageCapabilityResolver(executorImageResolver)
+	}
 	taskController := projects.NewTaskController(store, ansibleTaskRepo)
 	rolesController := proApi.NewRolesController(store)
-	templateController := projects.NewTemplateController(store, store)
+	templateController := projects.NewTemplateController(store, store, executorImageResolver)
 	systemInfoController := NewSystemInfoController(subscriptionService)
 	capabilityProvider := proFeatures.NewCapabilityProvider(store)
 	capabilityTestService := proFeatures.NewCapabilityTestService(store)
@@ -380,7 +384,7 @@ func Route(
 	projectUserAPI.Path("/stats").HandlerFunc(taskController.GetTaskStats).Methods("GET", "HEAD")
 
 	projectUserAPI.Path("/templates").HandlerFunc(projects.GetTemplates).Methods("GET", "HEAD")
-	projectUserAPI.Path("/templates").HandlerFunc(projects.AddTemplate).Methods("POST")
+	projectUserAPI.Path("/templates").HandlerFunc(templateController.AddTemplate).Methods("POST")
 	projectUserAPI.Path("/workflows").HandlerFunc(workflowController.GetWorkflows).Methods("GET", "HEAD")
 	projectUserAPI.Path("/workflows").HandlerFunc(workflowController.AddWorkflow).Methods("POST")
 
@@ -511,7 +515,7 @@ func Route(
 	projectTmplManagement := projectUserAPI.PathPrefix("/templates").Subrouter()
 	projectTmplManagement.Use(projects.TemplatesMiddleware)
 
-	projectTmplManagement.HandleFunc("/{template_id}", projects.UpdateTemplate).Methods("PUT")
+	projectTmplManagement.HandleFunc("/{template_id}", templateController.UpdateTemplate).Methods("PUT")
 	projectTmplManagement.HandleFunc("/{template_id}/description", projects.UpdateTemplateDescription).Methods("PUT")
 	projectTmplManagement.HandleFunc("/{template_id}", projects.RemoveTemplate).Methods("DELETE")
 	projectTmplManagement.HandleFunc("/{template_id}", projects.GetTemplate).Methods("GET")

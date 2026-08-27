@@ -93,10 +93,11 @@ func (d *SqlDb) AssignTaskRunner(
 	if _, err = tx.Exec(d.PrepareQuery(
 		"insert into task__runner_attempt "+
 			"(project_id, task_id, generation, runner_id, runner_name, assigned_at, outcome, "+
-			"requested_tags, match_mode, placement_reason) "+
-			"values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+			"requested_tags, match_mode, placement_reason, requested_executor_image, resolved_executor_image) "+
+			"values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
 		projectID, taskID, task.AssignmentGeneration, runnerID, runnerName, assignedAt,
 		db.RunnerAttemptActive, requestedTags, matchMode, placementReason,
+		task.RequestedExecutorImage, task.ResolvedExecutorImage,
 	); err != nil {
 		_ = tx.Rollback()
 		return task, false, err

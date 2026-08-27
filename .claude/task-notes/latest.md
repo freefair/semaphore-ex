@@ -1,7 +1,7 @@
 # Task: Implement selected enhanced edition slices
 
 **Started:** 2026-08-25
-**Last update:** 2026-08-27 14:31
+**Last update:** 2026-08-27 15:03
 
 ## Scope
 Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with tests, documentation, review, and atomic commits
@@ -63,6 +63,10 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 - 2026-08-27 13:47 — Slice 014 started. Existing implementation supports only one exact template/inventory tag and random runner shuffling; it lacks multi-tag match modes, deterministic precedence/tie-breaking, persisted placement explanations, and actionable no-runner decisions. The independent /tmp placement contract is red on the missing candidate/decision API and all/any match modes.
 
 - 2026-08-27 14:31 — Slice 014 implementation is feature-complete and green: independent /tmp contract; full Go suite; scoped race and vet; clean-room enhanced and community modules; targeted UI tests/ESLint; web and docs production builds; browser acceptance for multi-tag all/any persistence, selected placement, actionable rejection, criteria, attempt policy, desktop and 390px mobile.
+
+- 2026-08-27 14:38 — Started Slice 015 (executor image). Independent /tmp contract is red on missing image normalization, runner executor capability metadata, image-aware placement, and immutable task image fields.
+
+- 2026-08-27 15:03 — Slice 015 is feature-complete and green: full Go, race, vet, community and clean-room suites; executor image /tmp contract; targeted UI and production builds; docs build; browser save-normalize, clear-to-default, immutable task/attempt image, and corrected 390px mobile wrapping.
 
 ## Decisions
 
@@ -134,3 +138,4 @@ Begin Slice 012 with a failing /tmp contract covering runner health samples, bou
 Commit verified Slice 012 docs and implementation atomically, then begin Slice 013 with a failing deterministic reconciliation contract.
 Begin Slice 013 with a failing deterministic lost-runner reconciliation and late-report generation contract.
 Complete final diff review, rerun post-documentation checks, commit docs submodule and root atomically, then continue with Slice 015.
+Complete focused diff review, final post-browser checks, commit docs and root atomically, then continue with Slice 016.

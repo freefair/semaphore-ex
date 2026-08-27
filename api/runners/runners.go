@@ -143,6 +143,12 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 // fails and finalizes the task in place, leaving data untouched, so a single
 // bad task does not abort the poll for the whole runner.
 func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Runner, data *runners.RunnerState) {
+	if tsk.Task.ResolvedExecutorImage != nil && !runner.SupportsExecutorImage() {
+		tsk.Log("Runner executor does not support the resolved image. Use a Docker or Kubernetes runner, or clear the template executor image.")
+		tsk.SetStatus(task_logger.TaskFailStatus)
+		c.taskPool.FinalizeRemoteTask(tsk, runner)
+		return
+	}
 	// Survey secret variables are stored as a task-bound encrypted
 	// access key in the shared DB, so any HA node serving this poll can
 	// deliver them. An unreadable (e.g. expired) secret fails the task
@@ -176,7 +182,9 @@ func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Ru
 		InventoryRepository: tsk.Inventory.Repository,
 		Repository:          tsk.Repository,
 		Environment:         tsk.Environment,
+		ExecutorImage:       tsk.Task.ResolvedExecutorImage,
 	}
+	jobData.Template.ExecutorImage = jobData.ExecutorImage
 
 	// Always overwrite: the dispatched Secret must be exactly the
 	// DB-derived value, never whatever the in-memory task carries
@@ -468,6 +476,12 @@ func RegisterRunner(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	executorType, executorErr := db.NormalizeRunnerExecutorType(register.ExecutorType)
+	if executorErr != nil {
+		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": executorErr.Error()})
+		return
+	}
+	register.ExecutorType = executorType
 
 	store := helpers.Store(r)
 
@@ -477,7 +491,7 @@ func RegisterRunner(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(register.RegistrationToken, "smrs_") {
 		// Otherwise the value is a one-time registration token issued for a specific
 		// unregistered runner. The global token cannot be used to register it.
-		runner, err = store.RegisterRunner(server.HashRunnerRegistrationToken(register.RegistrationToken), nil)
+		runner, err = store.RegisterRunner(server.HashRunnerRegistrationToken(register.RegistrationToken), nil, executorType)
 
 		if err != nil {
 			helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
@@ -495,6 +509,7 @@ func RegisterRunner(w http.ResponseWriter, r *http.Request) {
 			MaxParallelTasks: register.MaxParallelTasks,
 			Active:           register.Enabled,
 			ProjectID:        register.ProjectID,
+			ExecutorType:     register.ExecutorType,
 		})
 
 		if err != nil {

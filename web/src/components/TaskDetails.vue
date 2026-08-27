@@ -144,6 +144,18 @@
                   <td><b>Runner</b></td>
                   <td data-testid="task-runner-identity">{{ runnerIdentity }}</td>
                 </tr>
+                <tr v-if="item.requested_executor_image">
+                  <td><b>Requested executor image</b></td>
+                  <td data-testid="task-requested-executor-image">
+                    <code>{{ item.requested_executor_image }}</code>
+                  </td>
+                </tr>
+                <tr v-if="item.resolved_executor_image">
+                  <td><b>Resolved executor image</b></td>
+                  <td data-testid="task-resolved-executor-image">
+                    <code>{{ item.resolved_executor_image }}</code>
+                  </td>
+                </tr>
                 </tbody>
               </template>
             </v-simple-table>
@@ -274,6 +286,10 @@
                 <div v-if="attempt.placement_reason" class="mt-1 text--secondary">
                   {{ attempt.placement_reason }}
                 </div>
+                <div v-if="attempt.resolved_executor_image" class="mt-1">
+                  <strong>Executor image:</strong>
+                  <code>{{ attempt.resolved_executor_image }}</code>
+                </div>
               </div>
             </div>
           </v-card-text>
@@ -331,6 +347,26 @@
 <style lang="scss">
 .TaskDetails__table {
   background-color: transparent !important;
+
+  table {
+    width: 100%;
+    table-layout: fixed;
+  }
+
+  td {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  td:first-child {
+    width: 42%;
+  }
+
+  code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   .v-data-table__wrapper {
     padding-left: 0 !important;
     padding-right: 0 !important;
@@ -383,6 +419,28 @@
 }
 
 @media (max-width: 600px) {
+  .TaskDetails__table {
+    table,
+    tbody,
+    tr,
+    td {
+      display: block;
+      width: 100% !important;
+    }
+
+    tr {
+      padding: 8px 0;
+      border-bottom: thin solid rgba(0, 0, 0, 0.12);
+    }
+
+    td {
+      height: auto !important;
+      padding-top: 3px !important;
+      padding-bottom: 3px !important;
+      border-bottom: 0 !important;
+    }
+  }
+
   .TaskDetails__attempt {
     grid-template-columns: 1fr;
     gap: 8px;

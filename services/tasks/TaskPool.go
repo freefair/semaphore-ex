@@ -80,7 +80,8 @@ type TaskPool struct {
 	// workflowService orchestrates workflow runs (a Pro feature). It is injected
 	// after construction via SetWorkflowService; the pool only calls back into it
 	// when a workflow task finishes. nil in tests / before wiring.
-	workflowService pro_interfaces.WorkflowService
+	workflowService        pro_interfaces.WorkflowService
+	executorImageAvailable func(*db.User) bool
 	// stop signals the background loops started by Run to exit. Closing it (via
 	// Stop) terminates the runner-task reconcile loop and Run's own select.
 	// Channels are used rather than sync.WaitGroup/sync.Once because TaskPool is
@@ -139,6 +140,11 @@ func (p *TaskPool) StateStore() TaskStateStore {
 // and the pool needs the service to progress runs as tasks finish).
 func (p *TaskPool) SetWorkflowService(svc pro_interfaces.WorkflowService) {
 	p.workflowService = svc
+}
+
+// SetExecutorImageCapabilityResolver injects the replaceable-edition entitlement decision.
+func (p *TaskPool) SetExecutorImageCapabilityResolver(resolver func(*db.User) bool) {
+	p.executorImageAvailable = resolver
 }
 
 // HandleWorkflowTaskCompletion notifies the workflow service that a task that
@@ -511,6 +517,8 @@ func applyDBPersistedTaskSnapshot(dst *db.Task, src db.Task) {
 	dst.RunnerAssignedAt = src.RunnerAssignedAt
 	dst.RecoveryReason = src.RecoveryReason
 	dst.PlacementDecision = src.PlacementDecision
+	dst.RequestedExecutorImage = src.RequestedExecutorImage
+	dst.ResolvedExecutorImage = src.ResolvedExecutorImage
 	dst.Message = src.Message
 	dst.CommitHash = src.CommitHash
 	dst.CommitMessage = src.CommitMessage
@@ -550,11 +558,12 @@ func (p *TaskPool) hydrateTaskRunner(taskID int, projectID int) (*TaskRunner, er
 
 	// set the appropriate job handler for consistency (not run)
 	var job Job
-	if util.Config.IsUseRemoteRunner() || len(tr.Template.EffectiveRunnerTags()) > 0 || tr.Inventory.RunnerTag != nil {
+	if util.Config.IsUseRemoteRunner() || len(tr.Template.EffectiveRunnerTags()) > 0 ||
+		tr.Inventory.RunnerTag != nil || tr.Task.ResolvedExecutorImage != nil {
 		tags, matchMode, legacyTag := runnerPlacementPolicy(tr.Template, tr.Inventory)
 		job = &RemoteJob{
 			RunnerTag: legacyTag, RunnerTags: tags, RunnerTagMatchMode: matchMode,
-			Task: tr.Task, taskPool: p,
+			ExecutorImage: tr.Task.ResolvedExecutorImage, Task: tr.Task, taskPool: p,
 		}
 	} else {
 		app := db_lib.CreateApp(tr.Template, tr.Repository, tr.Inventory, tr)
@@ -1039,10 +1048,33 @@ func (p *TaskPool) AddTask(
 		return
 	}
 
+	requestedImage, err := tpl.ResolveExecutorImage()
+	if err != nil {
+		return newTask, err
+	}
+	if requestedImage != nil {
+		var user *db.User
+		if userID != nil {
+			loadedUser, userErr := p.store.GetUser(*userID)
+			if userErr != nil {
+				return newTask, userErr
+			}
+			user = &loadedUser
+		}
+		if p.executorImageAvailable == nil || !p.executorImageAvailable(user) {
+			return newTask, db.ErrExecutorImageCapabilityUnavailable
+		}
+		if err = p.validateExecutorImageCompatibility(taskObj, tpl); err != nil {
+			return newTask, err
+		}
+	}
+
 	err = taskObj.ValidateNewTask(tpl)
 	if err != nil {
 		return
 	}
+	taskObj.RequestedExecutorImage = requestedImage
+	taskObj.ResolvedExecutorImage = taskObj.RequestedExecutorImage
 
 	// A task-supplied commit hash redirects the checkout away from the
 	// template's pinned branch, so it is honored only when the template allows
@@ -1102,7 +1134,8 @@ func (p *TaskPool) AddTask(
 
 	if util.Config.IsUseRemoteRunner() ||
 		len(taskRunner.Template.EffectiveRunnerTags()) > 0 ||
-		taskRunner.Inventory.RunnerTag != nil {
+		taskRunner.Inventory.RunnerTag != nil ||
+		taskRunner.Task.ResolvedExecutorImage != nil {
 
 		tags, matchMode, legacyTag := runnerPlacementPolicy(taskRunner.Template, taskRunner.Inventory)
 
@@ -1110,6 +1143,7 @@ func (p *TaskPool) AddTask(
 			RunnerTag:          legacyTag,
 			RunnerTags:         tags,
 			RunnerTagMatchMode: matchMode,
+			ExecutorImage:      taskRunner.Task.ResolvedExecutorImage,
 			Task:               taskRunner.Task,
 			taskPool:           p,
 		}

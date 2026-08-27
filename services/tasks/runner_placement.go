@@ -36,6 +36,51 @@ func runnerPlacementPolicy(
 	return tags, matchMode, legacyTag
 }
 
+func (p *TaskPool) validateExecutorImageCompatibility(task db.Task, template db.Template) error {
+	inventory := db.Inventory{}
+	inventoryID := template.InventoryID
+	canOverride, err := template.CanOverrideInventory()
+	if err != nil {
+		return err
+	}
+	if canOverride && task.InventoryID != nil {
+		inventoryID = task.InventoryID
+	}
+	if inventoryID != nil {
+		inventory, err = p.store.GetInventory(template.ProjectID, *inventoryID)
+		if err != nil {
+			return err
+		}
+	}
+	tags, matchMode, _ := runnerPlacementPolicy(template, inventory)
+	projectRunners, err := p.store.GetRunners(
+		template.ProjectID, false, db.RunnerFilterIgnoreTags, nil,
+	)
+	if err != nil {
+		return err
+	}
+	globalRunners, err := p.store.GetAllRunners(
+		false, true, db.RunnerFilterIgnoreTags, nil,
+	)
+	if err != nil {
+		return err
+	}
+	matching := 0
+	for _, runner := range append(projectRunners, globalRunners...) {
+		if !runnerTagsMatch(runner, tags, matchMode) {
+			continue
+		}
+		matching++
+		if runner.SupportsExecutorImage() {
+			return nil
+		}
+	}
+	if matching > 0 {
+		return db.ErrExecutorImageIncompatible
+	}
+	return nil
+}
+
 // DecideRunnerPlacement returns a deterministic, redacted decision for all
 // candidates. Project runners precede global runners; within the same scope,
 // lower assignment load and then stable runner ID win.
@@ -46,8 +91,13 @@ func DecideRunnerPlacement(
 	candidates []RunnerPlacementCandidate,
 	now time.Time,
 	offlineTimeout time.Duration,
+	executorImages ...*string,
 ) db.RunnerPlacementDecision {
 	tags := db.NormalizeRunnerTags(requestedTags)
+	var executorImage *string
+	if len(executorImages) > 0 {
+		executorImage = executorImages[0]
+	}
 	if matchMode != db.RunnerTagMatchAny {
 		matchMode = db.RunnerTagMatchAll
 	}
@@ -55,7 +105,7 @@ func DecideRunnerPlacement(
 	evaluated := make([]evaluatedRunnerPlacement, 0, len(candidates))
 	for _, candidate := range candidates {
 		evaluated = append(evaluated, evaluateRunnerPlacement(
-			projectID, tags, matchMode, candidate, now, offlineTimeout,
+			projectID, tags, matchMode, candidate, now, offlineTimeout, executorImage,
 		))
 	}
 	sort.SliceStable(evaluated, func(i, j int) bool {
@@ -70,9 +120,11 @@ func DecideRunnerPlacement(
 	})
 
 	decision := db.RunnerPlacementDecision{
-		RequestedTags: tags,
-		MatchMode:     matchMode,
-		Evaluations:   make([]db.RunnerPlacementEvaluation, 0, len(evaluated)),
+		RequestedTags:  tags,
+		MatchMode:      matchMode,
+		RequestedImage: executorImage,
+		ResolvedImage:  executorImage,
+		Evaluations:    make([]db.RunnerPlacementEvaluation, 0, len(evaluated)),
 	}
 	for _, item := range evaluated {
 		decision.Evaluations = append(decision.Evaluations, item.evaluation)
@@ -101,6 +153,7 @@ func evaluateRunnerPlacement(
 	candidate RunnerPlacementCandidate,
 	now time.Time,
 	offlineTimeout time.Duration,
+	executorImage *string,
 ) evaluatedRunnerPlacement {
 	runner := candidate.Runner
 	scope := db.RunnerPlacementGlobal
@@ -127,6 +180,10 @@ func evaluateRunnerPlacement(
 		"capacity available", "at capacity")
 	criterion(runnerTagsMatch(runner, requestedTags, matchMode),
 		"tag policy matched", "tag policy did not match")
+	if executorImage != nil {
+		criterion(runner.SupportsExecutorImage(),
+			"executor image compatible", "executor image unsupported")
+	}
 	evaluation.Eligible = len(evaluation.RejectedCriteria) == 0
 	return evaluatedRunnerPlacement{candidate: candidate, evaluation: evaluation}
 }
@@ -179,6 +236,17 @@ func rejectedPlacementSummary(
 		return fmt.Sprintf("no runner matched requested tags: %s", strings.Join(tags, ", ")),
 			"Add the requested tags to a runner or change the template tag policy."
 	}
+	imageCompatible := make([]evaluatedRunnerPlacement, 0, len(matching))
+	for _, item := range matching {
+		if !containsPlacementCriterion(item.evaluation.RejectedCriteria, "executor image unsupported") {
+			imageCompatible = append(imageCompatible, item)
+		}
+	}
+	if len(imageCompatible) == 0 {
+		return "matching runners do not support executor image overrides",
+			"Use a Docker or Kubernetes runner, or clear the template executor image."
+	}
+	matching = imageCompatible
 	blockers := make(map[string]int)
 	for _, item := range matching {
 		for _, rejected := range item.evaluation.RejectedCriteria {

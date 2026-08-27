@@ -150,23 +150,25 @@ func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
 	}
 	if runner.ProjectID == nil {
 		_, err = d.exec(
-			"update `runner` set `touched`=?, `started_at`=?, `version`=?, `platform`=?, `current_load`=? where id=?",
+			"update `runner` set `touched`=?, `started_at`=?, `version`=?, `platform`=?, `current_load`=?, `executor_type`=? where id=?",
 			touchedAt,
 			runner.StartedAt,
 			runner.Version,
 			runner.Platform,
 			runner.CurrentLoad,
+			runner.EffectiveExecutorType(),
 			runner.ID)
 		return
 	}
 
 	_, err = d.exec(
-		"update `runner` set `touched`=?, `started_at`=?, `version`=?, `platform`=?, `current_load`=? where id=? and project_id=?",
+		"update `runner` set `touched`=?, `started_at`=?, `version`=?, `platform`=?, `current_load`=?, `executor_type`=? where id=? and project_id=?",
 		touchedAt,
 		runner.StartedAt,
 		runner.Version,
 		runner.Platform,
 		runner.CurrentLoad,
+		runner.EffectiveExecutorType(),
 		runner.ID,
 		runner.ProjectID)
 
@@ -196,7 +198,7 @@ func (d *SqlDb) UpdateRunner(runner db.Runner) (err error) {
 	return
 }
 
-func (d *SqlDb) RegisterRunner(registrationTokenHash string, publicKey *string) (runner db.Runner, err error) {
+func (d *SqlDb) RegisterRunner(registrationTokenHash string, publicKey *string, executorTypes ...db.RunnerExecutorType) (runner db.Runner, err error) {
 	runners := make([]db.Runner, 0)
 
 	err = d.getObjects(0, db.GlobalRunnerProps, db.RetrieveQueryParams{}, func(builder squirrel.SelectBuilder) squirrel.SelectBuilder {
@@ -225,14 +227,19 @@ func (d *SqlDb) RegisterRunner(registrationTokenHash string, publicKey *string) 
 	}
 
 	token := db.GenerateRunnerToken()
+	executorType := db.RunnerExecutorLocal
+	if len(executorTypes) > 0 {
+		executorType = executorTypes[0]
+	}
 
 	var result sql.Result
 	result, err = d.exec(
-		"update `runner` set `token`=?, `active`=?, `public_key`=?, `registration_token`=null, `registration_token_expires_at`=null "+
+		"update `runner` set `token`=?, `active`=?, `public_key`=?, `executor_type`=?, `registration_token`=null, `registration_token_expires_at`=null "+
 			"where id=? and `token`='' and `registration_token`=? and `registration_token_expires_at` > CURRENT_TIMESTAMP",
 		token,
 		true,
 		publicKey,
+		executorType,
 		runner.ID,
 		registrationTokenHash)
 
@@ -252,6 +259,7 @@ func (d *SqlDb) RegisterRunner(registrationTokenHash string, publicKey *string) 
 	runner.Token = token
 	runner.Active = true
 	runner.PublicKey = publicKey
+	runner.ExecutorType = executorType
 	runner.RegistrationTokenHash = nil
 	runner.RegistrationTokenExpiresAt = nil
 
@@ -301,10 +309,14 @@ func (d *SqlDb) CreateRunner(runner db.Runner) (newRunner db.Runner, err error) 
 		return
 	}
 	runner.Tags = db.NormalizeRunnerTags(runner.Tags)
+	runner.ExecutorType, err = db.NormalizeRunnerExecutorType(runner.ExecutorType)
+	if err != nil {
+		return
+	}
 
 	insertID, err := d.insert(
 		"id",
-		"insert into `runner` (project_id, token, webhook, max_parallel_tasks, `name`, `active`, `is_default`, public_key, registration_token, registration_token_expires_at, `version`, `platform`, current_load) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"insert into `runner` (project_id, token, webhook, max_parallel_tasks, `name`, `active`, `is_default`, public_key, registration_token, registration_token_expires_at, `version`, `platform`, current_load, executor_type) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		runner.ProjectID,
 		runner.Token,
 		runner.Webhook,
@@ -317,7 +329,8 @@ func (d *SqlDb) CreateRunner(runner db.Runner) (newRunner db.Runner, err error) 
 		runner.RegistrationTokenExpiresAt,
 		runner.Version,
 		runner.Platform,
-		runner.CurrentLoad)
+		runner.CurrentLoad,
+		runner.EffectiveExecutorType())
 
 	if err != nil {
 		return

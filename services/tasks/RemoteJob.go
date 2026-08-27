@@ -21,6 +21,7 @@ type RemoteJob struct {
 	RunnerTag          *string
 	RunnerTags         []string
 	RunnerTagMatchMode db.RunnerTagMatchMode
+	ExecutorImage      *string
 	Task               db.Task
 	taskPool           *TaskPool
 	killed             bool
@@ -132,7 +133,7 @@ func (t *RemoteJob) Run(username string, incomingVersion *string, alias string) 
 	for {
 		decision := DecideRunnerPlacement(
 			t.Task.ProjectID, requestedTags, matchMode, candidates,
-			tz.Now(), util.Config.RunnersOfflineTimeout(),
+			tz.Now(), util.Config.RunnersOfflineTimeout(), t.ExecutorImage,
 		)
 		if decision.SelectedRunnerID == nil {
 			persisted, persistErr := t.taskPool.store.SetTaskRunnerPlacement(

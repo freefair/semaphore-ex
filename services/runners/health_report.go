@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	RunnerVersionHeader     = "X-Runner-Version"
-	RunnerPlatformHeader    = "X-Runner-Platform"
-	RunnerCurrentLoadHeader = "X-Runner-Current-Load"
+	RunnerVersionHeader      = "X-Runner-Version"
+	RunnerPlatformHeader     = "X-Runner-Platform"
+	RunnerCurrentLoadHeader  = "X-Runner-Current-Load"
+	RunnerExecutorTypeHeader = "X-Runner-Executor-Type"
 
 	maxRunnerReportTextBytes = 128
 	maxRunnerReportedLoad    = 100_000
@@ -21,9 +22,10 @@ const (
 // HealthReport contains optional metadata added by health-aware runners.
 // Pointers preserve compatibility with older runners that send no such headers.
 type HealthReport struct {
-	Version     *string
-	Platform    *string
-	CurrentLoad *int
+	Version      *string
+	Platform     *string
+	CurrentLoad  *int
+	ExecutorType *db.RunnerExecutorType
 }
 
 // ParseHealthReport validates the bounded metadata attached to a runner poll.
@@ -50,6 +52,15 @@ func ParseHealthReport(header http.Header) (HealthReport, error) {
 		}
 		report.CurrentLoad = &value
 	}
+	if raw, present := header[RunnerExecutorTypeHeader]; present {
+		value, err := db.NormalizeRunnerExecutorType(db.RunnerExecutorType(
+			strings.TrimSpace(strings.Join(raw, ",")),
+		))
+		if err != nil {
+			return HealthReport{}, err
+		}
+		report.ExecutorType = &value
+	}
 	return report, nil
 }
 
@@ -63,5 +74,8 @@ func (report HealthReport) Apply(runner *db.Runner) {
 	}
 	if report.CurrentLoad != nil {
 		runner.CurrentLoad = *report.CurrentLoad
+	}
+	if report.ExecutorType != nil {
+		runner.ExecutorType = *report.ExecutorType
 	}
 }

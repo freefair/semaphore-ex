@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 
 	"github.com/semaphoreui/semaphore/db_lib"
@@ -109,6 +110,7 @@ func (p *JobPool) setCommonHeaders(req *http.Request) {
 	req.Header.Set(RunnerVersionHeader, util.Version())
 	req.Header.Set(RunnerPlatformHeader, runtime.GOOS+"/"+runtime.GOARCH)
 	req.Header.Set(RunnerCurrentLoadHeader, strconv.Itoa(p.runningJobsCount()))
+	req.Header.Set(RunnerExecutorTypeHeader, string(resolveExecutorType(util.Config.Runner.Executor)))
 }
 
 // addRunningJob registers a running job under the lock.
@@ -629,6 +631,7 @@ func (p *JobPool) tryRegisterRunner(configFilePath *string) (ok bool) {
 		MaxParallelTasks:  util.Config.Runner.MaxParallelTasks,
 		Enabled:           util.Config.Runner.Enabled,
 		ProjectID:         util.Config.Runner.ProjectID,
+		ExecutorType:      db.RunnerExecutorType(resolveExecutorType(util.Config.Runner.Executor)),
 	})
 
 	if err != nil {
@@ -932,7 +935,13 @@ func (p *JobPool) checkNewJobs() {
 
 		newJob.Inventory.Repository = newJob.InventoryRepository
 
-		executor, execErr := newExecutor(newJob, response.AccessKeys, p.provider)
+		execErr := validateExecutorImageCompatibility(
+			newJob.ExecutorImage, resolveExecutorType(util.Config.Runner.Executor),
+		)
+		var executor tasks.Executor
+		if execErr == nil {
+			executor, execErr = newExecutor(newJob, response.AccessKeys, p.provider)
+		}
 		if execErr != nil {
 			log.WithError(execErr).WithFields(log.Fields{
 				"context":    "checking_new_jobs",

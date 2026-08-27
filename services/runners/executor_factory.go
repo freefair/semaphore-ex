@@ -48,6 +48,16 @@ func resolveExecutorType(executorCfg *util.ExecutorConfig) util.ExecutorType {
 	return executorCfg.Type
 }
 
+func validateExecutorImageCompatibility(image *string, executorType util.ExecutorType) error {
+	if image == nil {
+		return nil
+	}
+	if executorType != util.ExecutorTypeDocker && executorType != util.ExecutorTypeKubernetes {
+		return fmt.Errorf("executor image override requires a Docker or Kubernetes runner")
+	}
+	return nil
+}
+
 // newExecutor wires per-task data through the Provider. Access keys are hydrated
 // here (not inside each Provider) so the behaviour is identical regardless of
 // strategy: ansible vault passwords, SSH keys, inventory keys, and the inventory
@@ -62,6 +72,7 @@ func newExecutor(
 	}
 
 	hydrateJobAccessKeys(&jobData, accessKeys)
+	jobData.Template.ExecutorImage = jobData.ExecutorImage
 
 	return provider.NewExecutor(
 		jobData.Task,

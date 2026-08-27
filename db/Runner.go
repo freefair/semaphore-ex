@@ -34,6 +34,9 @@ const (
 
 type RunnerTagFilterMode string
 
+// RunnerExecutorType identifies the runner-side execution strategy.
+type RunnerExecutorType string
+
 // RunnerTagMatchMode controls how a task's requested tags are matched.
 type RunnerTagMatchMode string
 
@@ -50,6 +53,10 @@ const (
 
 	RunnerTagMatchAll RunnerTagMatchMode = "all"
 	RunnerTagMatchAny RunnerTagMatchMode = "any"
+
+	RunnerExecutorLocal  RunnerExecutorType = "local"
+	RunnerExecutorDocker RunnerExecutorType = "docker"
+	RunnerExecutorK8s    RunnerExecutorType = "k8s"
 )
 
 // NormalizeRunnerTags returns the canonical lower-case, trimmed, sorted tag set.
@@ -111,6 +118,8 @@ type Runner struct {
 	// latest poll. It is operational metadata, not an assignment authority.
 	CurrentLoad int `db:"current_load" json:"current_load" backup:"-"`
 
+	ExecutorType RunnerExecutorType `db:"executor_type" json:"executor_type" backup:"-"`
+
 	PublicKey *string `db:"public_key" json:"-"`
 
 	// Registered is a transient flag (never persisted) used at creation time to
@@ -129,6 +138,37 @@ type Runner struct {
 	// regeneration may issue the plaintext exactly once.
 	RegistrationTokenHash      *string    `db:"registration_token" json:"-" backup:"-"`
 	RegistrationTokenExpiresAt *time.Time `db:"registration_token_expires_at" json:"-" backup:"-"`
+}
+
+// EffectiveExecutorType preserves compatibility with runners predating executor reports.
+func (r Runner) EffectiveExecutorType() RunnerExecutorType {
+	if r.ExecutorType == "" {
+		return RunnerExecutorLocal
+	}
+	return r.ExecutorType
+}
+
+// SupportsExecutorImage reports whether this runner executes tasks in containers.
+func (r Runner) SupportsExecutorImage() bool {
+	switch r.EffectiveExecutorType() {
+	case RunnerExecutorDocker, RunnerExecutorK8s:
+		return true
+	default:
+		return false
+	}
+}
+
+// NormalizeRunnerExecutorType validates a runner report and maps omitted legacy values to local.
+func NormalizeRunnerExecutorType(value RunnerExecutorType) (RunnerExecutorType, error) {
+	if value == "" {
+		return RunnerExecutorLocal, nil
+	}
+	switch value {
+	case RunnerExecutorLocal, RunnerExecutorDocker, RunnerExecutorK8s:
+		return value, nil
+	default:
+		return "", fmt.Errorf("unsupported runner executor type %q", value)
+	}
 }
 
 // IsRegistered reports whether the runner has been registered (has a token).
@@ -261,6 +301,8 @@ type RunnerPlacementEvaluation struct {
 type RunnerPlacementDecision struct {
 	RequestedTags    []string                    `json:"requested_tags"`
 	MatchMode        RunnerTagMatchMode          `json:"match_mode"`
+	RequestedImage   *string                     `json:"requested_executor_image,omitempty"`
+	ResolvedImage    *string                     `json:"resolved_executor_image,omitempty"`
 	SelectedRunnerID *int                        `json:"selected_runner_id,omitempty"`
 	SelectedName     string                      `json:"selected_runner_name,omitempty"`
 	SelectedScope    RunnerPlacementScope        `json:"selected_scope,omitempty"`

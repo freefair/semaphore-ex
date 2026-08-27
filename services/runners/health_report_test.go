@@ -19,13 +19,15 @@ func TestParseHealthReportValidatesBoundsAndPreservesMissingFields(t *testing.T)
 	}{
 		{name: "older runner", header: http.Header{}},
 		{name: "valid", header: http.Header{
-			RunnerVersionHeader:     []string{" 2.20.4 "},
-			RunnerPlatformHeader:    []string{"linux/amd64"},
-			RunnerCurrentLoadHeader: []string{"3"},
+			RunnerVersionHeader:      []string{" 2.20.4 "},
+			RunnerPlatformHeader:     []string{"linux/amd64"},
+			RunnerCurrentLoadHeader:  []string{"3"},
+			RunnerExecutorTypeHeader: []string{"docker"},
 		}},
 		{name: "negative load", header: http.Header{RunnerCurrentLoadHeader: []string{"-1"}}, wantErr: "between"},
 		{name: "excessive load", header: http.Header{RunnerCurrentLoadHeader: []string{strconv.Itoa(maxRunnerReportedLoad + 1)}}, wantErr: "between"},
 		{name: "long version", header: http.Header{RunnerVersionHeader: []string{strings.Repeat("v", maxRunnerReportTextBytes+1)}}, wantErr: "exceeds"},
+		{name: "unknown executor", header: http.Header{RunnerExecutorTypeHeader: []string{"shell"}}, wantErr: "unsupported"},
 	}
 
 	for _, tt := range tests {
@@ -37,17 +39,19 @@ func TestParseHealthReportValidatesBoundsAndPreservesMissingFields(t *testing.T)
 			}
 			require.NoError(t, err)
 			if tt.name == "older runner" {
-				runner := db.Runner{Version: "kept", Platform: "kept", CurrentLoad: 7}
+				runner := db.Runner{Version: "kept", Platform: "kept", CurrentLoad: 7, ExecutorType: db.RunnerExecutorK8s}
 				report.Apply(&runner)
-				assert.Equal(t, db.Runner{Version: "kept", Platform: "kept", CurrentLoad: 7}, runner)
+				assert.Equal(t, db.Runner{Version: "kept", Platform: "kept", CurrentLoad: 7, ExecutorType: db.RunnerExecutorK8s}, runner)
 				return
 			}
 			require.NotNil(t, report.Version)
 			require.NotNil(t, report.Platform)
 			require.NotNil(t, report.CurrentLoad)
+			require.NotNil(t, report.ExecutorType)
 			assert.Equal(t, "2.20.4", *report.Version)
 			assert.Equal(t, "linux/amd64", *report.Platform)
 			assert.Equal(t, 3, *report.CurrentLoad)
+			assert.Equal(t, db.RunnerExecutorDocker, *report.ExecutorType)
 		})
 	}
 }

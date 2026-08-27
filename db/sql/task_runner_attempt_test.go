@@ -211,6 +211,13 @@ func TestRunnerTransitionRollsBackWhenActiveAttemptIsMissing(t *testing.T) {
 
 func TestRunnerAttemptPersistsRedactedPlacementDecision(t *testing.T) {
 	store, projectID, runner, task := createRunnerAttemptFixture(t)
+	image := "registry.example.com/team/job:v1"
+	_, err := store.Sql().Exec(store.PrepareQuery(
+		"update task set requested_executor_image=?, resolved_executor_image=? where id=?",
+	), image, image, task.ID)
+	require.NoError(t, err)
+	task, err = store.GetTask(projectID, task.ID)
+	require.NoError(t, err)
 	selectedID := runner.ID
 	decision := db.RunnerPlacementDecision{
 		RequestedTags:    []string{"gpu", "linux"},
@@ -219,6 +226,8 @@ func TestRunnerAttemptPersistsRedactedPlacementDecision(t *testing.T) {
 		SelectedName:     runner.Name,
 		SelectedScope:    db.RunnerPlacementProject,
 		Reason:           "selected project runner by deterministic placement",
+		RequestedImage:   &image,
+		ResolvedImage:    &image,
 	}
 
 	assigned, ok, err := store.AssignTaskRunner(
@@ -234,6 +243,10 @@ func TestRunnerAttemptPersistsRedactedPlacementDecision(t *testing.T) {
 	assert.Equal(t, db.StringArrayField{"gpu", "linux"}, attempts[0].RequestedTags)
 	assert.Equal(t, db.RunnerTagMatchAll, attempts[0].MatchMode)
 	assert.Equal(t, decision.Reason, attempts[0].PlacementReason)
+	require.NotNil(t, attempts[0].RequestedExecutorImage)
+	require.NotNil(t, attempts[0].ResolvedExecutorImage)
+	assert.Equal(t, image, *attempts[0].RequestedExecutorImage)
+	assert.Equal(t, image, *attempts[0].ResolvedExecutorImage)
 }
 
 func assertOneConcurrentCapacityWinner(

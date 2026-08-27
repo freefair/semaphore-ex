@@ -32,18 +32,49 @@ func TemplatesMiddleware(next http.Handler) http.Handler {
 }
 
 type TemplateController struct {
-	templateRepo db.TemplateManager
-	roleRepo     db.RoleRepository
+	templateRepo           db.TemplateManager
+	roleRepo               db.RoleRepository
+	executorImageAvailable func(*db.User) bool
 }
 
 func NewTemplateController(
 	templateRepo db.TemplateManager,
 	roleRepo db.RoleRepository,
+	executorImageResolvers ...func(*db.User) bool,
 ) *TemplateController {
-	return &TemplateController{
+	controller := &TemplateController{
 		templateRepo: templateRepo,
 		roleRepo:     roleRepo,
 	}
+	if len(executorImageResolvers) > 0 {
+		controller.executorImageAvailable = executorImageResolvers[0]
+	}
+	return controller
+}
+
+func validateTemplateExecutorImage(
+	w http.ResponseWriter,
+	r *http.Request,
+	template *db.Template,
+	available func(*db.User) bool,
+) bool {
+	if template.ExecutorImage == nil {
+		return true
+	}
+	image, err := db.NormalizeExecutorImage(*template.ExecutorImage)
+	if err != nil {
+		helpers.WriteErrorStatus(w, err.Error(), http.StatusBadRequest)
+		return false
+	}
+	template.ExecutorImage = image
+	if image == nil {
+		return true
+	}
+	if available == nil || !available(helpers.UserFromContext(r)) {
+		helpers.WriteErrorStatus(w, db.ErrExecutorImageCapabilityUnavailable.Error(), http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 // GetTemplate returns single template by ID
@@ -89,10 +120,21 @@ func GetTemplates(w http.ResponseWriter, r *http.Request) {
 
 // AddTemplate adds a template to the database
 func AddTemplate(w http.ResponseWriter, r *http.Request) {
+	addTemplate(w, r, nil)
+}
+
+func (c *TemplateController) AddTemplate(w http.ResponseWriter, r *http.Request) {
+	addTemplate(w, r, c.executorImageAvailable)
+}
+
+func addTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailable func(*db.User) bool) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 
 	var template db.Template
 	if !helpers.Bind(w, r, &template) {
+		return
+	}
+	if !validateTemplateExecutorImage(w, r, &template, executorImageAvailable) {
 		return
 	}
 
@@ -194,10 +236,21 @@ func UpdateTemplateDescription(w http.ResponseWriter, r *http.Request) {
 
 // UpdateTemplate writes a template to an existing key in the database
 func UpdateTemplate(w http.ResponseWriter, r *http.Request) {
+	updateTemplate(w, r, nil)
+}
+
+func (c *TemplateController) UpdateTemplate(w http.ResponseWriter, r *http.Request) {
+	updateTemplate(w, r, c.executorImageAvailable)
+}
+
+func updateTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailable func(*db.User) bool) {
 	oldTemplate := helpers.GetFromContext(r, "template").(db.Template)
 
 	var template db.Template
 	if !helpers.Bind(w, r, &template) {
+		return
+	}
+	if !validateTemplateExecutorImage(w, r, &template, executorImageAvailable) {
 		return
 	}
 
