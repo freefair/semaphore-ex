@@ -1,6 +1,8 @@
 package pro_interfaces
 
-import "github.com/semaphoreui/semaphore/pkg/task_logger"
+import (
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
+)
 
 type LogWriteService interface {
 	WriteEventLog(event EventLogRecord) error

@@ -3,12 +3,14 @@ package tasks
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/semaphoreui/semaphore/api/sockets"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/pro/pkg/stage_parsers"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 	"io"
@@ -27,10 +29,28 @@ func (t *TaskRunner) Logf(format string, a ...any) {
 
 func (t *TaskRunner) LogWithTime(now time.Time, msg string) {
 	if t.Template.App == db.AppAnsible {
-		recognized, err := stage_parsers.IngestTaskSummaryOutput(
-			t.pool.ansibleTaskRepo, t.Task.ProjectID, t.Task.ID, msg, now,
-		)
+		event, recognized, err := stage_parsers.ParseTaskSummaryEvent(msg)
 		if recognized {
+			if err == nil {
+				if t.pool.ansibleTaskRepo == nil {
+					err = errors.New("task summary repository is not configured")
+				} else {
+					err = t.pool.ansibleTaskRepo.IngestTaskSummaryEvent(
+						t.Task.ProjectID, t.Task.ID, event, now,
+					)
+				}
+				if writeErr := t.pool.logWriteService.WriteResult(pro_interfaces.ResultLogRecord{
+					TaskID:        t.Task.ID,
+					ProjectID:     t.Task.ProjectID,
+					CorrelationID: event.EventID,
+					EventType:     string(event.Kind),
+					Result:        event,
+				}); writeErr != nil {
+					log.WithError(writeErr).WithFields(log.Fields{
+						"context": "structured_result_log", "project_id": t.Task.ProjectID, "task_id": t.Task.ID,
+					}).Warn("failed to enqueue structured task result")
+				}
+			}
 			if err != nil {
 				log.WithError(err).WithFields(log.Fields{
 					"context": "task_summary", "project_id": t.Task.ProjectID, "task_id": t.Task.ID,

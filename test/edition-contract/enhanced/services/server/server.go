@@ -11,7 +11,6 @@ type AwsSmAccessKeyDeserializer = community.AwsSmAccessKeyDeserializer
 type AzureKvAccessKeyDeserializer = community.AzureKvAccessKeyDeserializer
 type DvlsAccessKeyDeserializer = community.DvlsAccessKeyDeserializer
 type VaultAccessKeyDeserializer = community.VaultAccessKeyDeserializer
-type LogWriteServiceImpl = community.LogWriteServiceImpl
 type SubscriptionServiceImpl = community.SubscriptionServiceImpl
 
 var (
@@ -19,7 +18,6 @@ var (
 	NewAwsSmAccessKeyDeserializer   = community.NewAwsSmAccessKeyDeserializer
 	NewAzureKvAccessKeyDeserializer = community.NewAzureKvAccessKeyDeserializer
 	NewDvlsAccessKeyDeserializer    = community.NewDvlsAccessKeyDeserializer
-	NewLogWriteService              = community.NewLogWriteService
 	NewSubscriptionService          = community.NewSubscriptionService
 	NewVaultAccessKeyDeserializer   = community.NewVaultAccessKeyDeserializer
 	NewWorkflowReconciler           = community.NewWorkflowReconciler

@@ -5,10 +5,23 @@ import (
 	"runtime"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 )
 
 func getAdminInfo(w http.ResponseWriter, r *http.Request) {
+	structuredLogs := pro_interfaces.StructuredLogDiagnostics{
+		State:        pro_interfaces.StructuredLogDisabled,
+		Destinations: []pro_interfaces.StructuredLogDestinationDiagnostics{},
+	}
+	if writer, ok := helpers.GetOkFromContext(r, "log_writer"); ok {
+		if diagnostics, supported := writer.(interface {
+			Diagnostics() pro_interfaces.StructuredLogDiagnostics
+		}); supported {
+			structuredLogs = diagnostics.Diagnostics()
+		}
+	}
+
 	// Database info
 	dbInfo := map[string]any{
 		"dialect": util.Config.Dialect,
@@ -99,14 +112,15 @@ func getAdminInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	body := map[string]any{
-		"system":        systemInfo,
-		"database":      dbInfo,
-		"auth":          authInfo,
-		"notifications": notifications,
-		"cluster":       clusterInfo,
-		"runners":       runnersInfo,
-		"task_settings": taskSettings,
-		"features":      features,
+		"system":          systemInfo,
+		"database":        dbInfo,
+		"auth":            authInfo,
+		"notifications":   notifications,
+		"cluster":         clusterInfo,
+		"runners":         runnersInfo,
+		"task_settings":   taskSettings,
+		"features":        features,
+		"structured_logs": structuredLogs,
 	}
 
 	helpers.WriteJSON(w, http.StatusOK, body)

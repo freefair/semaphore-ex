@@ -4,23 +4,15 @@ import (
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
 
-type LogWriteServiceImpl struct {
-}
+// LogWriteServiceImpl preserves the Community no-op structured log contract.
+type LogWriteServiceImpl struct{}
 
-var _ pro_interfaces.LogWriteService = (*LogWriteServiceImpl)(nil)
+var _ pro_interfaces.LogWriteServiceLifecycle = (*LogWriteServiceImpl)(nil)
 
-// NewLogWriteService creates a new instance of LogWriteServiceImpl.
-func NewLogWriteService() pro_interfaces.LogWriteService {
+func NewLogWriteService() pro_interfaces.LogWriteServiceLifecycle {
 	return &LogWriteServiceImpl{}
 }
 
-func (l *LogWriteServiceImpl) WriteEventLog(event pro_interfaces.EventLogRecord) error {
-	return nil
-}
-
-func (l *LogWriteServiceImpl) WriteTaskLog(task pro_interfaces.TaskLogRecord) error {
-	return nil
-}
-func (l *LogWriteServiceImpl) WriteResult(task any) error {
-	return nil
-}
+func (*LogWriteServiceImpl) WriteEventLog(pro_interfaces.EventLogRecord) error { return nil }
+func (*LogWriteServiceImpl) WriteTaskLog(pro_interfaces.TaskLogRecord) error   { return nil }
+func (*LogWriteServiceImpl) WriteResult(any) error                             { return nil }

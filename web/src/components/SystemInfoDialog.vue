@@ -96,6 +96,119 @@
           </v-card>
         </template>
 
+        <v-subheader class="px-0 mt-2">Structured file logs</v-subheader>
+        <v-card
+          v-if="structuredLogs"
+          data-testid="structured-logs"
+          style="background: var(--highlighted-card-bg-color)"
+        >
+          <v-card-text class="px-0 py-2">
+            <v-simple-table dense style="background: transparent">
+              <tbody>
+                <tr>
+                  <td class="font-weight-medium" style="width: 200px">Writer state</td>
+                  <td>
+                    <v-chip
+                      data-testid="structured-logs-state"
+                      :color="structuredLogStateColor(structuredLogs.state)"
+                      small
+                      dark
+                    >
+                      {{ structuredLogs.state }}
+                    </v-chip>
+                    <span class="ml-2 text--secondary">
+                      {{ structuredLogStateText(structuredLogs.state) }}
+                    </span>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Queue</td>
+                  <td data-testid="structured-logs-queue">
+                    {{ structuredLogs.queue_depth }} / {{ structuredLogs.queue_capacity }} records
+                  </td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Dropped records</td>
+                  <td data-testid="structured-logs-drops">
+                    {{ structuredLogs.dropped_records }}
+                  </td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Flush interval</td>
+                  <td>{{ structuredLogs.flush_interval || '—' }}</td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Rotation interval</td>
+                  <td>{{ structuredLogs.rotation_interval || '—' }}</td>
+                </tr>
+                <tr>
+                  <td class="font-weight-medium">Last successful flush</td>
+                  <td data-testid="structured-logs-last-flush">
+                    {{ formatStructuredLogTime(structuredLogs.last_successful_flush) }}
+                  </td>
+                </tr>
+              </tbody>
+            </v-simple-table>
+
+            <v-alert
+              v-if="structuredLogs.state === 'dropping'"
+              data-testid="structured-logs-dropping"
+              class="mx-4 mt-3 mb-1"
+              type="warning"
+              dense
+              outlined
+            >
+              The writer queue is full. New log records are being dropped without blocking task
+              execution.
+            </v-alert>
+            <v-alert
+              v-if="structuredLogs.state === 'failed'"
+              data-testid="structured-logs-failed"
+              class="mx-4 mt-3 mb-1"
+              type="error"
+              dense
+              outlined
+            >
+              {{ structuredLogFailureText(structuredLogs) }}
+            </v-alert>
+            <v-alert
+              v-if="structuredLogs.state === 'disabled'"
+              data-testid="structured-logs-disabled"
+              class="mx-4 mt-3 mb-1"
+              type="info"
+              dense
+              outlined
+            >
+              Structured file logging is disabled. Normal task execution is unaffected.
+            </v-alert>
+
+            <v-simple-table
+              v-if="structuredLogs.destinations && structuredLogs.destinations.length"
+              data-testid="structured-logs-destinations"
+              dense
+              class="mt-2"
+              style="background: transparent"
+            >
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th>Destination</th>
+                  <th>Retention</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="destination in structuredLogs.destinations" :key="destination.category">
+                  <td>{{ destination.category }}</td>
+                  <td class="structured-log-path">{{ destination.filename }}</td>
+                  <td>
+                    {{ structuredLogRetention(destination) }}
+                  </td>
+                </tr>
+              </tbody>
+            </v-simple-table>
+          </v-card-text>
+        </v-card>
+
         <!-- Ansible -->
         <v-subheader class="px-0 mt-2">Ansible</v-subheader>
         <v-card style="background: var(--highlighted-card-bg-color)">
@@ -324,6 +437,11 @@
   font-family: monospace;
   overflow-x: auto;
 }
+
+.structured-log-path {
+  font-family: monospace;
+  overflow-wrap: anywhere;
+}
 </style>
 
 <script>
@@ -361,6 +479,7 @@ export default {
 
   computed: {
     ...enhancedComputed,
+
   },
 
   methods: {

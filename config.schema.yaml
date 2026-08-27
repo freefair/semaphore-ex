@@ -511,6 +511,16 @@ $defs:
   ConfigLog:
     type: object
     properties:
+      queue_size:
+        type: integer
+        minimum: 1
+        description: Maximum number of serialized records waiting for disk writes.
+      flush_interval:
+        type: string
+        description: Go duration between durable file flushes.
+      rotation_interval:
+        type: string
+        description: Go duration after which an active file rotates even when its size limit is not reached.
       events: { $ref: "#/$defs/EventLogType" }
       tasks:  { $ref: "#/$defs/TaskLogType" }
 
