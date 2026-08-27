@@ -836,6 +836,15 @@ definitions:
         type: string
       message:
         type: string
+      assignment_generation:
+        type: integer
+        description: Monotonic remote-runner assignment generation
+      runner_assigned_at:
+        type: string
+        format: date-time
+      recovery_reason:
+        type: string
+        description: Last deterministic runner-recovery decision
       inventory_id:
         type: integer
       params:
@@ -843,6 +852,34 @@ definitions:
           - $ref: '#/definitions/AnsibleTaskParams'
           - $ref: '#/definitions/TerraformTaskParams'
       limit:
+        type: string
+
+  RunnerAttempt:
+    type: object
+    properties:
+      id:
+        type: integer
+      project_id:
+        type: integer
+      task_id:
+        type: integer
+      generation:
+        type: integer
+      runner_id:
+        type: integer
+      runner_name:
+        type: string
+      assigned_at:
+        type: string
+        format: date-time
+      ended_at:
+        type: string
+        format: date-time
+        x-nullable: true
+      outcome:
+        type: string
+        enum: [active, requeued, succeeded, failed, stopped]
+      reason:
         type: string
 
   AnsibleTaskParams:
@@ -3551,6 +3588,22 @@ paths:
             type: array
             items:
               $ref: "#/definitions/TaskOutput"
+
+  /project/{project_id}/tasks/{task_id}/runner-attempts:
+    parameters:
+      - $ref: '#/parameters/project_id'
+      - $ref: '#/parameters/task_id'
+    get:
+      tags:
+        - task
+      summary: Get runner assignment attempts for a task
+      responses:
+        200:
+          description: Assignment attempts ordered by generation
+          schema:
+            type: array
+            items:
+              $ref: '#/definitions/RunnerAttempt'
 
   /project/{project_id}/tasks/{task_id}/raw_output:
     parameters:

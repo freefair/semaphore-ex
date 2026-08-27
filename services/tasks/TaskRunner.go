@@ -102,28 +102,35 @@ func (t *TaskRunner) AddLogListener(l task_logger.LogListener) {
 }
 
 func (t *TaskRunner) saveStatus() {
-	for _, user := range t.users {
-		b, err := json.Marshal(&map[string]any{
-			"type":        "update",
-			"start":       t.Task.Start,
-			"end":         t.Task.End,
-			"status":      t.Task.Status,
-			"task_id":     t.Task.ID,
-			"template_id": t.Task.TemplateID,
-			"project_id":  t.Task.ProjectID,
-			"version":     t.Task.Version,
-		})
-
-		util.LogPanic(err)
-
-		sockets.Message(user, b)
-	}
+	t.publishStatus()
 
 	if err := t.pool.store.UpdateTask(t.Task); err != nil {
 		t.panicOnError(err, "Failed to update TaskRunner status")
 	}
 
 	t.pool.state.UpdateRuntimeFields(t)
+}
+
+func (t *TaskRunner) publishStatus() {
+	for _, user := range t.users {
+		b, err := json.Marshal(&map[string]any{
+			"type":                  "update",
+			"start":                 t.Task.Start,
+			"end":                   t.Task.End,
+			"status":                t.Task.Status,
+			"task_id":               t.Task.ID,
+			"template_id":           t.Task.TemplateID,
+			"project_id":            t.Task.ProjectID,
+			"version":               t.Task.Version,
+			"assignment_generation": t.Task.AssignmentGeneration,
+			"runner_assigned_at":    t.Task.RunnerAssignedAt,
+			"recovery_reason":       t.Task.RecoveryReason,
+		})
+
+		util.LogPanic(err)
+
+		sockets.Message(user, b)
+	}
 }
 
 func (t *TaskRunner) kill() {

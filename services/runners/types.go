@@ -31,8 +31,9 @@ type RunnerState struct {
 }
 
 type JobState struct {
-	ID     int                    `json:"id" binding:"required"`
-	Status task_logger.TaskStatus `json:"status" binding:"required"`
+	ID         int                    `json:"id" binding:"required"`
+	Generation int                    `json:"generation"`
+	Status     task_logger.TaskStatus `json:"status" binding:"required"`
 }
 
 type LogRecord struct {
@@ -61,6 +62,7 @@ type RunnerProgressResponse struct {
 
 type JobProgress struct {
 	ID         int
+	Generation int
 	Status     task_logger.TaskStatus
 	LogRecords []LogRecord
 	Commit     *CommitInfo
@@ -95,7 +97,8 @@ type job struct {
 	// Pods). Field accesses that need the original db.Task/db.Template/... go
 	// through taskID/template — kept here so progress reporting and orphan cleanup
 	// don't need to type-assert back to the concrete executor.
-	job    tasks.Executor
-	taskID int
-	status task_logger.TaskStatus
+	job        tasks.Executor
+	taskID     int
+	generation int
+	status     task_logger.TaskStatus
 }

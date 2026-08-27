@@ -34,6 +34,23 @@ func (s *reconcilerStoreStub) UpdateTask(task db.Task) error {
 	return s.Store.UpdateTask(task)
 }
 
+func (s *reconcilerStoreStub) UpdateTaskRunner(
+	task db.Task,
+	expectedStatus task_logger.TaskStatus,
+	expectedRunnerID int,
+	expectedGeneration int,
+	outcome db.RunnerAttemptOutcome,
+	attemptReason string,
+	transitionedAt time.Time,
+) (bool, error) {
+	if s.updateTaskErr != nil {
+		return false, s.updateTaskErr
+	}
+	return s.Store.UpdateTaskRunner(
+		task, expectedStatus, expectedRunnerID, expectedGeneration, outcome, attemptReason, transitionedAt,
+	)
+}
+
 func newReconcilerTestPool(store db.Store, state TaskStateStore) TaskPool {
 	return TaskPool{
 		queueEvents:     make(chan PoolEvent, 10),
@@ -159,126 +176,146 @@ func TestDecideRunnerTaskAction(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		status    task_logger.TaskStatus
-		taskStart *time.Time
-		runner    *db.Runner
-		expected  RunnerTaskAction
+		name             string
+		status           task_logger.TaskStatus
+		taskStart        *time.Time
+		runnerAssignedAt *time.Time
+		runner           *db.Runner
+		expected         RunnerTaskAction
 	}{
 		{
 			"alive runner, starting task",
-			task_logger.TaskStartingStatus, nil,
+			task_logger.TaskStartingStatus, nil, ago(time.Minute),
 			&db.Runner{Touched: ago(10 * time.Second)},
 			RunnerTaskKeep,
 		},
 		{
 			"alive runner, running task",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(time.Hour),
 			&db.Runner{Touched: ago(10 * time.Second), StartedAt: ago(2 * time.Hour)},
 			RunnerTaskKeep,
 		},
 		{
 			"starting task, runner offline",
-			task_logger.TaskStartingStatus, nil,
+			task_logger.TaskStartingStatus, nil, ago(time.Minute),
 			&db.Runner{Touched: ago(3 * time.Minute)},
 			RunnerTaskRequeue,
 		},
 		{
 			"waiting task with runner, runner offline",
-			task_logger.TaskWaitingStatus, nil,
+			task_logger.TaskWaitingStatus, nil, ago(time.Minute),
 			&db.Runner{Touched: ago(3 * time.Minute)},
 			RunnerTaskRequeue,
 		},
 		{
 			"running task, silence within recovery window",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(time.Hour),
 			&db.Runner{Touched: ago(5 * time.Minute)},
 			RunnerTaskKeep,
 		},
 		{
 			"running task, silence past recovery window",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(time.Hour),
 			&db.Runner{Touched: ago(8 * time.Minute)},
 			RunnerTaskFail,
 		},
 		{
 			"running task, runner restarted after task start",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(time.Hour),
 			&db.Runner{Touched: ago(5 * time.Second), StartedAt: ago(10 * time.Minute)},
 			RunnerTaskFail,
 		},
 		{
 			"running task, restart within skew margin",
-			task_logger.TaskRunningStatus, ago(time.Minute),
+			task_logger.TaskRunningStatus, ago(time.Minute), ago(time.Minute),
 			&db.Runner{Touched: ago(5 * time.Second), StartedAt: ago(50 * time.Second)},
 			RunnerTaskFail,
 		},
 		{
 			"starting task, runner restarted (self-heals via NewJobs)",
-			task_logger.TaskStartingStatus, nil,
+			task_logger.TaskStartingStatus, nil, ago(time.Minute),
 			&db.Runner{Touched: ago(5 * time.Second), StartedAt: ago(time.Minute)},
 			RunnerTaskKeep,
 		},
 		{
 			"runner started before task",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(time.Hour),
 			&db.Runner{Touched: ago(time.Minute), StartedAt: ago(2 * time.Hour)},
 			RunnerTaskKeep,
 		},
 		{
 			"runner deleted, starting task",
-			task_logger.TaskStartingStatus, nil,
+			task_logger.TaskStartingStatus, nil, ago(time.Minute),
 			nil,
 			RunnerTaskRequeue,
 		},
 		{
 			"runner deleted, running task",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(time.Hour),
 			nil,
 			RunnerTaskFail,
 		},
 		{
 			"finished task",
-			task_logger.TaskSuccessStatus, ago(time.Hour),
+			task_logger.TaskSuccessStatus, ago(time.Hour), ago(time.Hour),
 			nil,
 			RunnerTaskKeep,
 		},
 		{
-			"stopping task is out of scope",
-			task_logger.TaskStoppingStatus, ago(time.Hour),
+			"stopping task converges when runner is lost",
+			task_logger.TaskStoppingStatus, ago(time.Hour), ago(time.Hour),
 			&db.Runner{Touched: ago(time.Hour)},
-			RunnerTaskKeep,
+			RunnerTaskStop,
 		},
 		{
-			"webhook runner, starting task, stale heartbeat",
-			task_logger.TaskStartingStatus, nil,
+			"rejected task converges when runner is deleted",
+			task_logger.TaskRejected, ago(time.Hour), ago(time.Hour),
+			nil,
+			RunnerTaskStop,
+		},
+		{
+			"webhook runner within startup grace ignores stale heartbeat",
+			task_logger.TaskStartingStatus, nil, ago(taskFailTimeout),
 			&db.Runner{Webhook: "https://example.com/hook", Touched: ago(time.Hour)},
 			RunnerTaskKeep,
 		},
 		{
+			"webhook runner past startup grace is requeued",
+			task_logger.TaskStartingStatus, nil, ago(taskFailTimeout + time.Second),
+			&db.Runner{Webhook: "https://example.com/hook", Touched: ago(time.Hour)},
+			RunnerTaskRequeue,
+		},
+		{
 			"webhook runner, running task, silence past recovery window",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(time.Hour),
 			&db.Runner{Webhook: "https://example.com/hook", Touched: ago(8 * time.Minute)},
 			RunnerTaskFail,
 		},
 		{
 			"poll runner never polled, starting task",
-			task_logger.TaskStartingStatus, nil,
+			task_logger.TaskStartingStatus, nil, ago(time.Minute),
 			&db.Runner{},
 			RunnerTaskRequeue,
 		},
 		{
-			"poll runner never polled, running task",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			"poll runner never polled, running task within grace",
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(taskFailTimeout),
 			&db.Runner{},
 			RunnerTaskKeep,
+		},
+		{
+			"poll runner never polled, running task past grace",
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(taskFailTimeout + time.Second),
+			&db.Runner{},
+			RunnerTaskFail,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			action, reason := DecideRunnerTaskAction(
-				tt.status, tt.taskStart, tt.runner, now, offlineTimeout, taskFailTimeout)
+				tt.status, tt.taskStart, tt.runnerAssignedAt,
+				tt.runner, now, offlineTimeout, taskFailTimeout)
 			assert.Equal(t, tt.expected, action)
 			if action != RunnerTaskKeep {
 				assert.NotEmpty(t, reason)
@@ -467,6 +504,36 @@ func TestFinalizeRemoteTask_DoesNotOverwriteConcurrentTerminalSuccess(t *testing
 	assert.Nil(t, row.End)
 }
 
+func TestFailTaskRunnerLost_FinalizesConcurrentTerminalWinner(t *testing.T) {
+	setupReconcilerConfig(t)
+	store := sql.InitConfigCreateTestStore()
+	state := NewMemoryTaskStateStore()
+	pool := newReconcilerTestPool(store, state)
+	now := time.Now()
+	newTask, _ := createReconcilerTestTask(t, store, task_logger.TaskRunningStatus, &now)
+	tsk := &TaskRunner{Task: newTask, pool: &pool}
+	state.SetRunning(tsk)
+
+	winner := newTask
+	winner.Status = task_logger.TaskSuccessStatus
+	require.NoError(t, store.UpdateTask(winner))
+
+	pool.failTaskRunnerLost(tsk, nil, "runner stopped responding")
+
+	assert.Equal(t, task_logger.TaskSuccessStatus, tsk.Task.Status)
+	assert.NotNil(t, tsk.Task.End)
+	stored, err := store.GetTaskByID(newTask.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task_logger.TaskSuccessStatus, stored.Status)
+	assert.NotNil(t, stored.End)
+	select {
+	case event := <-pool.queueEvents:
+		assert.Equal(t, EventTypeFinished, event.eventType)
+	default:
+		t.Fatal("expected the persisted runner winner to be finalized")
+	}
+}
+
 func TestFailTaskRunnerLost(t *testing.T) {
 	setupReconcilerConfig(t)
 
@@ -511,6 +578,34 @@ func TestFailTaskRunnerLost(t *testing.T) {
 	// Second call is a no-op: the task is already finished.
 	pool.failTaskRunnerLost(tsk, nil, "runner stopped responding")
 	assert.Empty(t, pool.queueEvents)
+}
+
+func TestStopTaskRunnerLost(t *testing.T) {
+	setupReconcilerConfig(t)
+	store := sql.InitConfigCreateTestStore()
+	state := NewMemoryTaskStateStore()
+	pool := newReconcilerTestPool(store, state)
+	now := time.Now()
+	newTask, _ := createReconcilerTestTask(t, store, task_logger.TaskStoppingStatus, &now)
+	tsk := &TaskRunner{Task: newTask, pool: &pool}
+	state.SetRunning(tsk)
+
+	pool.stopTaskRunnerLost(tsk, nil, "runner disappeared during cancellation")
+
+	assert.Equal(t, task_logger.TaskStoppedStatus, tsk.Task.Status)
+	assert.Equal(t, "runner disappeared during cancellation", tsk.Task.RecoveryReason)
+	assert.NotNil(t, tsk.Task.End)
+	row, err := store.GetTaskByID(newTask.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task_logger.TaskStoppedStatus, row.Status)
+	assert.Equal(t, tsk.Task.RecoveryReason, row.RecoveryReason)
+	assert.NotNil(t, row.End)
+	select {
+	case event := <-pool.queueEvents:
+		assert.Equal(t, EventTypeFinished, event.eventType)
+	default:
+		t.Fatal("expected EventTypeFinished in queueEvents")
+	}
 }
 
 func TestReconcileRunnerTasks(t *testing.T) {

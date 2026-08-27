@@ -326,9 +326,10 @@ func (p *JobPool) Run() {
 			// before the job goroutine's first SetStatus(running). A rejected PUT fails the
 			// whole batch and can leave the server stuck on "starting" forever.
 			rj := &runningJob{
-				job:    t.job,
-				taskID: t.taskID,
-				status: task_logger.TaskStartingStatus,
+				job:        t.job,
+				taskID:     t.taskID,
+				generation: t.generation,
+				status:     task_logger.TaskStartingStatus,
 			}
 			p.addRunningJob(t.taskID, rj)
 
@@ -447,6 +448,7 @@ func (p *JobPool) sendProgress() (ok bool) {
 
 		body.Jobs = append(body.Jobs, JobProgress{
 			ID:         id,
+			Generation: j.generation,
 			LogRecords: logRecords,
 			Status:     status,
 			Commit:     commit,
@@ -850,6 +852,9 @@ func (p *JobPool) checkNewJobs() {
 		if !exists {
 			continue
 		}
+		if runJob.generation != currJob.Generation {
+			continue
+		}
 
 		status := runJob.getStatus()
 
@@ -943,6 +948,7 @@ func (p *JobPool) checkNewJobs() {
 			alias:           newJob.Alias,
 			job:             executor,
 			taskID:          newJob.Task.ID,
+			generation:      newJob.Task.AssignmentGeneration,
 			status:          newJob.Task.Status,
 		}
 

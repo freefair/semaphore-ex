@@ -22,6 +22,8 @@ const (
 	RunnerTaskRequeue
 	// RunnerTaskFail fails a running task whose runner is lost.
 	RunnerTaskFail
+	// RunnerTaskStop completes a cancellation after its runner is lost.
+	RunnerTaskStop
 )
 
 // DecideRunnerTaskAction classifies a dispatched, unfinished task against its
@@ -43,6 +45,7 @@ const (
 func DecideRunnerTaskAction(
 	status task_logger.TaskStatus,
 	taskStart *time.Time,
+	runnerAssignedAt *time.Time,
 	runner *db.Runner,
 	now time.Time,
 	offlineTimeout time.Duration,
@@ -50,9 +53,11 @@ func DecideRunnerTaskAction(
 ) (RunnerTaskAction, string) {
 
 	starting := status == task_logger.TaskStartingStatus || status == task_logger.TaskWaitingStatus
-	running := status == task_logger.TaskRunningStatus
+	running := status == task_logger.TaskRunningStatus ||
+		status == task_logger.TaskWaitingConfirmation || status == task_logger.TaskConfirmed
+	canceling := status == task_logger.TaskStoppingStatus || status == task_logger.TaskRejected
 
-	if !starting && !running {
+	if !starting && !running && !canceling {
 		return RunnerTaskKeep, ""
 	}
 
@@ -60,11 +65,17 @@ func DecideRunnerTaskAction(
 		if starting {
 			return RunnerTaskRequeue, "runner no longer exists"
 		}
+		if canceling {
+			return RunnerTaskStop, "runner disappeared during cancellation"
+		}
 		return RunnerTaskFail, "runner no longer exists"
 	}
 
-	if running && runner.StartedAt != nil && taskStart != nil &&
+	if (running || canceling) && runner.StartedAt != nil && taskStart != nil &&
 		runner.StartedAt.After(*taskStart) {
+		if canceling {
+			return RunnerTaskStop, "runner restarted during cancellation"
+		}
 		return RunnerTaskFail, "runner restarted and lost the task"
 	}
 
@@ -74,6 +85,9 @@ func DecideRunnerTaskAction(
 	// task running, its heartbeat is meaningful again and the fail check below
 	// applies as usual.
 	if starting && runner.Webhook != "" {
+		if runnerAssignedAt != nil && now.Sub(*runnerAssignedAt) > taskFailTimeout {
+			return RunnerTaskRequeue, "webhook runner did not start before the recovery timeout"
+		}
 		return RunnerTaskKeep, ""
 	}
 
@@ -82,6 +96,12 @@ func DecideRunnerTaskAction(
 		// a fresh heartbeat, so a starting task here is safe to give back.
 		if starting {
 			return RunnerTaskRequeue, "runner never polled the server"
+		}
+		if runnerAssignedAt != nil && now.Sub(*runnerAssignedAt) > taskFailTimeout {
+			if canceling {
+				return RunnerTaskStop, "runner never acknowledged cancellation"
+			}
+			return RunnerTaskFail, "runner never reported the assigned task"
 		}
 		return RunnerTaskKeep, ""
 	}
@@ -94,6 +114,9 @@ func DecideRunnerTaskAction(
 
 	if running && silence > taskFailTimeout {
 		return RunnerTaskFail, "runner stopped responding"
+	}
+	if canceling && silence > offlineTimeout {
+		return RunnerTaskStop, "runner stopped responding during cancellation"
 	}
 
 	return RunnerTaskKeep, ""
@@ -171,13 +194,16 @@ func (p *TaskPool) reconcileRunnerTasks(now time.Time) {
 		}
 
 		action, reason := DecideRunnerTaskAction(
-			tsk.Task.Status, tsk.Task.Start, runnerPtr, now, offlineTimeout, taskFailTimeout)
+			tsk.Task.Status, tsk.Task.Start, tsk.Task.RunnerAssignedAt,
+			runnerPtr, now, offlineTimeout, taskFailTimeout)
 
 		switch action {
 		case RunnerTaskRequeue:
 			p.requeueTaskRunnerOffline(tsk, runnerID, reason)
 		case RunnerTaskFail:
 			p.failTaskRunnerLost(tsk, runnerPtr, reason)
+		case RunnerTaskStop:
+			p.stopTaskRunnerLost(tsk, runnerPtr, reason)
 		case RunnerTaskKeep:
 			// Do nothing
 		}
@@ -212,18 +238,102 @@ func (p *TaskPool) failTaskRunnerLost(tsk *TaskRunner, runner *db.Runner, reason
 	}
 	log.WithFields(fields).Warn("Runner lost: marking task failed")
 
-	tsk.Log("Runner lost: " + reason)
-	tsk.Task.Message = reason
-
+	oldStatus := tsk.Task.Status
+	candidate := tsk.Task
+	candidate.Message = reason
+	candidate.RecoveryReason = reason
 	if runner == nil {
 		// The runner row no longer exists and the DB has already nulled
 		// task.runner_id (the FK is "on delete set null"); persisting the
 		// stale ID would violate the FK and panic in saveStatus.
-		tsk.Task.RunnerID = nil
+		candidate.RunnerID = nil
 	}
+	candidate.Status = task_logger.TaskFailStatus
+	updated, err := p.store.UpdateTaskRunner(
+		candidate, oldStatus, runnerIDFromSnapshot(tsk.Task), tsk.Task.AssignmentGeneration,
+		db.RunnerAttemptFailed, reason, tz.Now(),
+	)
+	if err != nil {
+		log.WithError(err).WithField("task_id", tsk.Task.ID).Error("failed to persist lost-runner failure")
+		return
+	}
+	if !updated {
+		p.finalizeConcurrentRunnerWinner(tsk, runner)
+		return
+	}
+	tsk.Task = candidate
+	p.applyPersistedRunnerStatus(tsk, oldStatus)
+	tsk.Log("Runner lost: " + reason)
 
-	tsk.SetStatus(task_logger.TaskFailStatus)
+	p.finalizeRemoteTaskLocked(tsk, runner)
+}
 
+func runnerIDFromSnapshot(task db.Task) int {
+	if task.RunnerID != nil {
+		return *task.RunnerID
+	}
+	if task.RunnerSnapshotID != nil {
+		return *task.RunnerSnapshotID
+	}
+	return 0
+}
+
+func (p *TaskPool) applyPersistedRunnerStatus(tsk *TaskRunner, oldStatus task_logger.TaskStatus) {
+	p.state.UpdateRuntimeFields(tsk)
+	tsk.publishStatus()
+	tsk.afterStatusChange(oldStatus, tsk.Task.Status)
+}
+
+// finalizeConcurrentRunnerWinner handles the CAS-loser side of a terminal
+// runner-report race. The reconciler already owns the finalize lock here; if
+// the runner won SQL first, its own FinalizeRemoteTask call cannot acquire that
+// lock. The lock owner must therefore finish the persisted winner instead.
+func (p *TaskPool) finalizeConcurrentRunnerWinner(tsk *TaskRunner, runner *db.Runner) {
+	p.refreshTaskStatusFromDB(tsk)
+	if !tsk.Task.Status.IsFinished() {
+		return
+	}
+	if tsk.Task.End != nil {
+		p.onTaskStop(tsk)
+		return
+	}
+	p.finalizeRemoteTaskLocked(tsk, runner)
+}
+
+func (p *TaskPool) stopTaskRunnerLost(tsk *TaskRunner, runner *db.Runner, reason string) {
+	if !p.state.TryFinalize(tsk.Task.ID) {
+		return
+	}
+	defer p.state.DeleteFinalize(tsk.Task.ID)
+	if util.HAEnabled() {
+		p.refreshTaskStatusFromDB(tsk)
+	}
+	if tsk.Task.Status.IsFinished() {
+		return
+	}
+	oldStatus := tsk.Task.Status
+	candidate := tsk.Task
+	candidate.Status = task_logger.TaskStoppedStatus
+	candidate.Message = reason
+	candidate.RecoveryReason = reason
+	if runner == nil {
+		candidate.RunnerID = nil
+	}
+	updated, err := p.store.UpdateTaskRunner(
+		candidate, oldStatus, runnerIDFromSnapshot(tsk.Task), tsk.Task.AssignmentGeneration,
+		db.RunnerAttemptStopped, reason, tz.Now(),
+	)
+	if err != nil {
+		log.WithError(err).WithField("task_id", tsk.Task.ID).Error("failed to persist lost-runner cancellation")
+		return
+	}
+	if !updated {
+		p.finalizeConcurrentRunnerWinner(tsk, runner)
+		return
+	}
+	tsk.Task = candidate
+	p.applyPersistedRunnerStatus(tsk, oldStatus)
+	tsk.Log("Runner cancellation completed: " + reason)
 	p.finalizeRemoteTaskLocked(tsk, runner)
 }
 
@@ -267,20 +377,30 @@ func (p *TaskPool) requeueTaskRunnerOffline(tsk *TaskRunner, runnerID int, reaso
 		"context":   "runner_reconciler",
 	}).Warn("Runner offline: returning task to queue")
 
-	tsk.Logf("Runner #%d lost the task: %s. Returning task to queue.", runnerID, reason)
-
-	tsk.Task.RunnerID = nil
-	tsk.SetStatus(task_logger.TaskWaitingStatus)
-
-	// SetStatus is a no-op when the status is already "waiting"; persist the
-	// cleared RunnerID explicitly so the old runner cannot pull the task again.
-	if err := p.store.UpdateTask(tsk.Task); err != nil {
+	oldStatus := tsk.Task.Status
+	candidate := tsk.Task
+	candidate.RunnerID = nil
+	candidate.RunnerAssignedAt = nil
+	candidate.Status = task_logger.TaskWaitingStatus
+	candidate.RecoveryReason = reason
+	updated, err := p.store.UpdateTaskRunner(
+		candidate, oldStatus, runnerID, tsk.Task.AssignmentGeneration,
+		db.RunnerAttemptRequeued, reason, tz.Now(),
+	)
+	if err != nil {
 		log.WithError(err).WithFields(log.Fields{
 			"task_id": tsk.Task.ID,
 			"context": "runner_reconciler",
 		}).Error("failed to persist requeued task")
 		return
 	}
+	if !updated {
+		p.finalizeConcurrentRunnerWinner(tsk, nil)
+		return
+	}
+	tsk.Task = candidate
+	p.applyPersistedRunnerStatus(tsk, oldStatus)
+	tsk.Logf("Runner #%d lost the task: %s. Returning task to queue.", runnerID, reason)
 
 	// Same flow as the ErrAllRunnersBusy requeue in TaskRunner.run:
 	// put the task back into the queue, then let the pool release its

@@ -194,16 +194,24 @@ func (t *RemoteJob) Run(username string, incomingVersion *string, alias string) 
 		return
 	}
 
-	tsk.Task.RunnerID = &runner.ID
-	tsk.Task.RunnerSnapshotID = &runner.ID
-	tsk.Task.RunnerName = &runner.Name
-
-	tsk.Logf("Task #%d is assigned to runner #%d", tsk.Task.ID, runner.ID)
-	err = t.taskPool.store.UpdateTask(tsk.Task)
-
-	if err != nil {
-		return
+	assignedTask, assigned, assignErr := t.taskPool.store.AssignTaskRunner(
+		tsk.Task.ProjectID, tsk.Task.ID, runner.ID, runner.Name, tz.Now(),
+	)
+	if assignErr != nil {
+		return assignErr
 	}
+	if !assigned {
+		return fmt.Errorf("task assignment changed concurrently")
+	}
+	tsk.Task.RunnerID = assignedTask.RunnerID
+	tsk.Task.RunnerSnapshotID = assignedTask.RunnerSnapshotID
+	tsk.Task.RunnerName = assignedTask.RunnerName
+	tsk.Task.AssignmentGeneration = assignedTask.AssignmentGeneration
+	tsk.Task.RunnerAssignedAt = assignedTask.RunnerAssignedAt
+	tsk.Task.RecoveryReason = assignedTask.RecoveryReason
+
+	tsk.Logf("Task #%d is assigned to runner #%d (attempt %d)",
+		tsk.Task.ID, runner.ID, tsk.Task.AssignmentGeneration)
 
 	t.taskPool.state.UpdateRuntimeFields(tsk)
 

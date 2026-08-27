@@ -172,6 +172,18 @@ func (c *TaskController) GetTask(w http.ResponseWriter, r *http.Request) {
 	helpers.WriteJSON(w, http.StatusOK, task)
 }
 
+// GetTaskRunnerAttempts returns the immutable runner assignment history for a task.
+func (c *TaskController) GetTaskRunnerAttempts(w http.ResponseWriter, r *http.Request) {
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	task := helpers.GetFromContext(r, "task").(db.Task)
+	attempts, err := c.store.GetTaskRunnerAttempts(project.ID, task.ID)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, attempts)
+}
+
 func (c *TaskController) GetTaskPermissionsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		project := helpers.GetFromContext(r, "project").(db.Project)

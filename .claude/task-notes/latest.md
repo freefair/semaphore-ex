@@ -1,7 +1,7 @@
 # Task: Implement selected enhanced edition slices
 
 **Started:** 2026-08-25
-**Last update:** 2026-08-27 12:47
+**Last update:** 2026-08-27 13:43
 
 ## Scope
 Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with tests, documentation, review, and atomic commits
@@ -53,6 +53,12 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 - 2026-08-27 12:45 — Slice 012 browser acceptance passed on the isolated Enhanced QA instance at desktop and 390x844: online, offline, webhook, restart uptime reset, 12-row history pagination, responsive layouts, and zero browser console warnings/errors. Browser QA caught and drove fixes for clipped desktop columns and mobile table/title overflow.
 
 - 2026-08-27 12:47 — Slice 012 completed and committed: docs 43f1483, root d143b02f. Full Go and race suites, Community and Enhanced contracts, /tmp contract, lint/build/docs, and desktop/mobile browser acceptance passed; only the three pre-existing unrelated Vue unit failures remain.
+
+- 2026-08-27 12:53 — Slice 013 red contract at /tmp/semaphore-runner-reconciliation-contract.go proves the same-runner reassignment gap: assignment generation, conditional runner-task transition, and persisted attempt history APIs are absent, so a late generation cannot yet be distinguished.
+
+- 2026-08-27 13:25 — Slice 013 first substantial green run: SQL assignment-generation CAS races, state/action matrix, cancellation convergence, stale same-runner API reports, runner progress generation, task attempt API, and focused UI tests pass. Browser QA on recovered task #14 shows terminal Success, the retained recovery banner, Requeued attempt #1, Succeeded attempt #2, and responsive desktop/mobile attempt layouts. Browser QA caught and drove separation of task recovery reason from per-attempt end reason.
+
+- 2026-08-27 13:43 — Slice 013 final verification after review fixes: full root Go and Race suites pass; Go vet, Community module, clean-room Enhanced contract, SQL/API YAML, independent /tmp CAS contract, focused UI 8/8, changed-file ESLint, production web build, docs build, and final desktop/mobile browser acceptance pass. Manual diff review fixed terminal-winner finalization, rejected-state regression, attempt-reason attribution, active-attempt transaction integrity, rolling wire-key compatibility, and live UI refresh races. Known unrelated baselines remain the ArgsPicker/YesNoDialog/Socket full Vue failures, global lint errors, and three docs anchors.
 
 ## Decisions
 

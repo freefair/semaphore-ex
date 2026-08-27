@@ -58,9 +58,12 @@ type Task struct {
 	ScheduleID    *int `db:"schedule_id" json:"schedule_id,omitempty"`
 	// RunnerID is set while a task is assigned to a remote runner (cleared when the task finishes).
 	// Used so runner progress API can authorize updates on any HA node.
-	RunnerID         *int    `db:"runner_id" json:"-"`
-	RunnerSnapshotID *int    `db:"runner_id_snapshot" json:"-"`
-	RunnerName       *string `db:"runner_name" json:"-"`
+	RunnerID             *int       `db:"runner_id" json:"-"`
+	RunnerSnapshotID     *int       `db:"runner_id_snapshot" json:"-"`
+	RunnerName           *string    `db:"runner_name" json:"-"`
+	AssignmentGeneration int        `db:"assignment_generation" json:"assignment_generation,omitempty"`
+	RunnerAssignedAt     *time.Time `db:"runner_assigned_at" json:"runner_assigned_at,omitempty"`
+	RecoveryReason       string     `db:"recovery_reason" json:"recovery_reason,omitempty"`
 
 	Created time.Time  `db:"created" json:"created"`
 	Start   *time.Time `db:"start" json:"start,omitempty"`
@@ -89,6 +92,30 @@ type Task struct {
 
 	// Limit is deprecated, use Params.Limit instead
 	Limit string `db:"-" json:"limit"`
+}
+
+type RunnerAttemptOutcome string
+
+const (
+	RunnerAttemptActive    RunnerAttemptOutcome = "active"
+	RunnerAttemptRequeued  RunnerAttemptOutcome = "requeued"
+	RunnerAttemptSucceeded RunnerAttemptOutcome = "succeeded"
+	RunnerAttemptFailed    RunnerAttemptOutcome = "failed"
+	RunnerAttemptStopped   RunnerAttemptOutcome = "stopped"
+)
+
+// RunnerAttempt records one immutable runner assignment and its terminal result.
+type RunnerAttempt struct {
+	ID         int                  `db:"id" json:"id"`
+	ProjectID  int                  `db:"project_id" json:"project_id"`
+	TaskID     int                  `db:"task_id" json:"task_id"`
+	Generation int                  `db:"generation" json:"generation"`
+	RunnerID   int                  `db:"runner_id" json:"runner_id"`
+	RunnerName string               `db:"runner_name" json:"runner_name"`
+	AssignedAt time.Time            `db:"assigned_at" json:"assigned_at"`
+	EndedAt    *time.Time           `db:"ended_at" json:"ended_at,omitempty"`
+	Outcome    RunnerAttemptOutcome `db:"outcome" json:"outcome"`
+	Reason     string               `db:"reason" json:"reason,omitempty"`
 }
 
 func (task *Task) ExtractParams(target any) (err error) {

@@ -274,6 +274,12 @@ func decodeProgressResponse(t *testing.T, w *httptest.ResponseRecorder) runners.
 	return res
 }
 
+func TestNormalizeReportedGenerationAllowsOnlyLegacyFirstAssignment(t *testing.T) {
+	assert.Equal(t, 1, normalizeReportedGeneration(0, 1))
+	assert.Equal(t, 0, normalizeReportedGeneration(0, 2))
+	assert.Equal(t, 2, normalizeReportedGeneration(2, 2))
+}
+
 func TestUpdateRunner_StoppedTaskReportedAsTerminated(t *testing.T) {
 	prevCfg := util.Config
 	t.Cleanup(func() { util.Config = prevCfg })
@@ -408,6 +414,90 @@ func TestUpdateRunner_ReassignedTaskReportedAsTerminated(t *testing.T) {
 	// The late report must not overwrite status or assignee.
 	assert.Equal(t, task_logger.TaskStartingStatus, tr.Task.Status)
 	assert.Equal(t, newRunnerID, *tr.Task.RunnerID)
+}
+
+func TestUpdateRunner_StaleGenerationFromSameRunnerReportedAsTerminated(t *testing.T) {
+	prevCfg := util.Config
+	t.Cleanup(func() { util.Config = prevCfg })
+	store := sql.InitConfigCreateTestStore()
+	pool := tasks.CreateTaskPool(
+		store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, nil, nil, nil,
+	)
+	ctrl := NewRunnerController(nil, &pool, nil, nil)
+	runnerID := 1
+	tr := tasks.NewTaskRunner(db.Task{
+		ID: 9, ProjectID: 1, RunnerID: &runnerID,
+		AssignmentGeneration: 2, Status: task_logger.TaskStartingStatus,
+	}, &pool, "", nil)
+	pool.StateStore().SetRunning(tr)
+
+	req := newProgressRequest(t, store, db.Runner{ID: runnerID}, runners.RunnerProgress{
+		Jobs: []runners.JobProgress{{
+			ID: 9, Generation: 1, Status: task_logger.TaskSuccessStatus,
+			LogRecords: []runners.LogRecord{{Time: tz.Now(), Message: "late attempt output"}},
+		}},
+	})
+	w := httptest.NewRecorder()
+
+	ctrl.UpdateRunner(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, []int{9}, decodeProgressResponse(t, w).TerminatedJobs)
+	assert.Equal(t, task_logger.TaskStartingStatus, tr.Task.Status)
+	assert.Equal(t, 2, tr.Task.AssignmentGeneration)
+}
+
+func TestUpdateRunner_CancelingTaskRejectsNonTerminalProgress(t *testing.T) {
+	prevCfg := util.Config
+	t.Cleanup(func() { util.Config = prevCfg })
+	store := sql.InitConfigCreateTestStore()
+	pool := tasks.CreateTaskPool(
+		store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, nil, nil, nil,
+	)
+	ctrl := NewRunnerController(nil, &pool, nil, nil)
+	runnerID := 1
+	tr := tasks.NewTaskRunner(db.Task{
+		ID: 10, ProjectID: 1, RunnerID: &runnerID,
+		Status: task_logger.TaskStoppingStatus,
+	}, &pool, "", nil)
+	pool.StateStore().SetRunning(tr)
+
+	req := newProgressRequest(t, store, db.Runner{ID: runnerID}, runners.RunnerProgress{
+		Jobs: []runners.JobProgress{{ID: 10, Status: task_logger.TaskRunningStatus}},
+	})
+	w := httptest.NewRecorder()
+
+	ctrl.UpdateRunner(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, []int{10}, decodeProgressResponse(t, w).TerminatedJobs)
+	assert.Equal(t, task_logger.TaskStoppingStatus, tr.Task.Status)
+}
+
+func TestUpdateRunner_RejectedTaskRejectsNonTerminalProgress(t *testing.T) {
+	prevCfg := util.Config
+	t.Cleanup(func() { util.Config = prevCfg })
+	store := sql.InitConfigCreateTestStore()
+	pool := tasks.CreateTaskPool(
+		store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, nil, nil, nil,
+	)
+	ctrl := NewRunnerController(nil, &pool, nil, nil)
+	runnerID := 1
+	tr := tasks.NewTaskRunner(db.Task{
+		ID: 11, ProjectID: 1, RunnerID: &runnerID, Status: task_logger.TaskRejected,
+	}, &pool, "", nil)
+	pool.StateStore().SetRunning(tr)
+
+	req := newProgressRequest(t, store, db.Runner{ID: runnerID}, runners.RunnerProgress{
+		Jobs: []runners.JobProgress{{ID: 11, Status: task_logger.TaskRunningStatus}},
+	})
+	w := httptest.NewRecorder()
+
+	ctrl.UpdateRunner(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, []int{11}, decodeProgressResponse(t, w).TerminatedJobs)
+	assert.Equal(t, task_logger.TaskRejected, tr.Task.Status)
 }
 
 func TestUpdateRunner_RunningTaskAcceptedWithoutTermination(t *testing.T) {

@@ -1,5 +1,15 @@
 <template xmlns:v-slot="http://www.w3.org/1999/XSL/Transform">
   <div class="pb-3">
+    <v-alert
+      v-if="item.recovery_reason"
+      type="warning"
+      outlined
+      class="mb-4"
+      data-testid="task-recovery-reason"
+    >
+      <strong>Runner recovery:</strong> {{ item.recovery_reason }}
+    </v-alert>
+
     <v-row>
       <v-col cols="12" md="6">
         <v-card
@@ -208,6 +218,47 @@
         </v-card>
       </v-col>
     </v-row>
+
+    <v-row v-if="runnerAttempts.length > 0 || runnerAttemptsError">
+      <v-col cols="12">
+        <v-card
+          :color="$vuetify.theme.dark ? '#212121' : 'white'"
+          style="background: #8585850f"
+          class="mb-5"
+        >
+          <v-card-title>Runner attempts</v-card-title>
+          <v-card-text>
+            <v-alert v-if="runnerAttemptsError" type="error" dense text class="mb-0">
+              {{ runnerAttemptsError }}
+            </v-alert>
+            <div
+              v-for="attempt in runnerAttempts"
+              :key="attempt.generation"
+              class="TaskDetails__attempt"
+              data-testid="task-runner-attempt"
+            >
+              <div class="TaskDetails__attemptHeader">
+                <strong>Attempt #{{ attempt.generation }}</strong>
+                <v-chip small label :color="runnerAttemptColor(attempt.outcome)" text-color="white">
+                  {{ runnerAttemptLabel(attempt.outcome) }}
+                </v-chip>
+              </div>
+              <div>
+                <div><strong>Runner:</strong> {{ runnerAttemptIdentity(attempt) }}</div>
+                <div class="text--secondary">
+                  Assigned {{ attempt.assigned_at | formatDate }}
+                  <span v-if="attempt.ended_at"> · Ended {{ attempt.ended_at | formatDate }}</span>
+                  <span v-else> · In progress</span>
+                </div>
+                <div v-if="attempt.reason" class="mt-1" data-testid="task-runner-attempt-reason">
+                  {{ attempt.reason }}
+                </div>
+              </div>
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
   </div>
 </template>
 
@@ -228,10 +279,38 @@
   margin: 0;
 }
 
+.TaskDetails__attempt {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.35fr) minmax(0, 1fr);
+  gap: 16px;
+  padding: 14px 0;
+  border-top: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.TaskDetails__attempt:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.TaskDetails__attemptHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .TaskDetails__attempt {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}
+
 </style>
 
 <script>
 
+import axios from 'axios';
 import ProjectMixin from '@/components/ProjectMixin';
 import AppsMixin from '@/components/AppsMixin';
 
@@ -251,14 +330,26 @@ export default {
   data() {
     return {
       template: null,
+      runnerAttempts: [],
+      runnerAttemptsError: null,
+      loadedTaskId: null,
+      loadedTaskStatus: null,
+      loadedAssignmentGeneration: null,
+      loadRevision: 0,
     };
   },
 
   watch: {
-    async item() {
-      if (this.item?.template_id !== this.template?.id) {
-        await this.loadData();
-      }
+    item: {
+      deep: true,
+      async handler(item) {
+        if (item?.id !== this.loadedTaskId
+            || item?.template_id !== this.template?.id
+            || item?.status !== this.loadedTaskStatus
+            || item?.assignment_generation !== this.loadedAssignmentGeneration) {
+          await this.loadData();
+        }
+      },
     },
   },
 
@@ -310,8 +401,66 @@ export default {
       return `#${id}`;
     },
 
+    runnerAttemptIdentity(attempt) {
+      if (attempt.runner_id == null) return attempt.runner_name || '—';
+      return attempt.runner_name
+        ? `#${attempt.runner_id} — ${attempt.runner_name}`
+        : `#${attempt.runner_id}`;
+    },
+
+    runnerAttemptLabel(outcome) {
+      const labels = {
+        active: 'Active',
+        requeued: 'Requeued',
+        succeeded: 'Succeeded',
+        failed: 'Failed',
+        stopped: 'Stopped',
+      };
+      return labels[outcome] || outcome;
+    },
+
+    runnerAttemptColor(outcome) {
+      const colors = {
+        active: 'info',
+        requeued: 'warning',
+        succeeded: 'success',
+        failed: 'error',
+        stopped: 'grey darken-1',
+      };
+      return colors[outcome] || 'grey';
+    },
+
+    async loadRunnerAttempts(taskId) {
+      if (taskId == null) return { attempts: [], error: null };
+      try {
+        const { data } = await axios.get(
+          `/api/project/${this.projectId}/tasks/${taskId}/runner-attempts`,
+        );
+        return { attempts: data || [], error: null };
+      } catch {
+        return {
+          attempts: [],
+          error: 'Runner attempt history could not be loaded.',
+        };
+      }
+    },
+
     async loadData() {
-      this.template = await this.loadProjectResource('templates', this.item.template_id);
+      const taskId = this.item?.id;
+      const templateId = this.item?.template_id;
+      const revision = this.loadRevision + 1;
+      this.loadRevision = revision;
+      const [template, runnerAttemptResult] = await Promise.all([
+        templateId == null ? null : this.loadProjectResource('templates', templateId),
+        this.loadRunnerAttempts(taskId),
+      ]);
+      if (this.item?.id !== taskId || this.loadRevision !== revision) return;
+      this.template = template;
+      this.runnerAttempts = runnerAttemptResult.attempts;
+      this.runnerAttemptsError = runnerAttemptResult.error;
+      this.loadedTaskId = taskId;
+      this.loadedTaskStatus = this.item?.status;
+      this.loadedAssignmentGeneration = this.item?.assignment_generation;
     },
   },
 };
