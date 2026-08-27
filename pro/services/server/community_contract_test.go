@@ -32,6 +32,9 @@ func TestCommunityLogWriterHasNoSideEffects(t *testing.T) {
 	assert.NoError(t, service.WriteEventLog(pro_interfaces.EventLogRecord{Action: "tripwire"}))
 	assert.NoError(t, service.WriteTaskLog(pro_interfaces.TaskLogRecord{TaskID: 42}))
 	assert.NoError(t, service.WriteResult(map[string]string{"secret": "tripwire"}))
+	assert.Equal(t, pro_interfaces.StructuredLogDisabled, service.Diagnostics().State)
+	assert.False(t, service.Diagnostics().Enabled)
+	assert.NoError(t, service.Close())
 }
 
 func TestCommunityWorkflowServiceReturnsEmptyResults(t *testing.T) {

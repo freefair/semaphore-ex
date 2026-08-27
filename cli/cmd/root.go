@@ -185,6 +185,11 @@ func runService() {
 	runnerService := server.NewRunnerService(store)
 	subscriptionService := proServer.NewSubscriptionService(store, store, store, terraformStore)
 	logWriteService := proServer.NewLogWriteService()
+	defer func() {
+		if err := logWriteService.Close(); err != nil {
+			log.WithError(err).Error("failed to flush structured logs during shutdown")
+		}
+	}()
 	appMetrics := metrics.NewMetrics()
 
 	taskPool := tasks.CreateTaskPool(

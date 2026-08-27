@@ -328,8 +328,11 @@ type TaskLogType struct {
 }
 
 type ConfigLog struct {
-	Events *EventLogType `json:"events,omitempty"`
-	Tasks  *TaskLogType  `json:"tasks,omitempty"`
+	QueueSize        int           `json:"queue_size,omitempty" env:"SEMAPHORE_LOG_QUEUE_SIZE" default:"1024"`
+	FlushInterval    string        `json:"flush_interval,omitempty" env:"SEMAPHORE_LOG_FLUSH_INTERVAL" default:"1s"`
+	RotationInterval string        `json:"rotation_interval,omitempty" env:"SEMAPHORE_LOG_ROTATION_INTERVAL" default:"24h"`
+	Events           *EventLogType `json:"events,omitempty"`
+	Tasks            *TaskLogType  `json:"tasks,omitempty"`
 }
 
 type SyslogFormat string
