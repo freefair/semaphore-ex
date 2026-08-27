@@ -191,6 +191,13 @@ func runService() {
 		}
 	}()
 	appMetrics := metrics.NewMetrics()
+	auditWebhookService := proServer.NewAuditWebhookService(store, appMetrics)
+	auditWebhookService.Start()
+	defer func() {
+		if err := auditWebhookService.Close(); err != nil {
+			log.WithError(err).Error("failed to stop audit webhook service")
+		}
+	}()
 
 	taskPool := tasks.CreateTaskPool(
 		store,
@@ -325,6 +332,7 @@ func runService() {
 		runnerService,
 		workflowService,
 		logWriteService,
+		auditWebhookService,
 		appMetrics,
 	)
 

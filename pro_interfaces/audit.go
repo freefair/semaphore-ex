@@ -2,10 +2,16 @@ package pro_interfaces
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"net"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 type AuditAction string
@@ -26,6 +32,11 @@ const (
 	AuditActionProjectRunnerActive  AuditAction = "project_runner_set_active"
 	AuditActionProjectRunnerDelete  AuditAction = "project_runner_delete"
 	AuditActionProjectRunnerCache   AuditAction = "project_runner_cache_clear"
+	AuditActionWebhookRead          AuditAction = "audit_webhook_read"
+	AuditActionWebhookConfigure     AuditAction = "audit_webhook_configure"
+	AuditActionWebhookTest          AuditAction = "audit_webhook_test"
+	AuditActionWebhookPause         AuditAction = "audit_webhook_pause"
+	AuditActionWebhookResume        AuditAction = "audit_webhook_resume"
 )
 
 type AuditTargetType string
@@ -33,6 +44,7 @@ type AuditTargetType string
 const (
 	AuditTargetCapability    AuditTargetType = "capability"
 	AuditTargetProjectRunner AuditTargetType = "project_runner"
+	AuditTargetWebhook       AuditTargetType = "audit_webhook"
 )
 
 type AuditOutcome string
@@ -64,6 +76,7 @@ type DependencyID string
 const (
 	DependencyAuditDatabase DependencyID = "audit_database"
 	DependencyAuditFile     DependencyID = "audit_file"
+	DependencyAuditWebhook  DependencyID = "audit_webhook"
 )
 
 type AuditSink string
@@ -82,10 +95,20 @@ const (
 
 type QueueID string
 
-const QueueEnhancedAudit QueueID = "enhanced_audit"
+const (
+	QueueEnhancedAudit QueueID = "enhanced_audit"
+	QueueAuditWebhook  QueueID = "audit_webhook"
+)
+
+const (
+	AuditWebhookSchemaVersion = "semaphore.audit.v1"
+	AuditEventIDBytes         = 16
+	AuditUserAgentMaxLength   = 256
+)
 
 var (
 	correlationPattern         = regexp.MustCompile(`^(?:[a-f0-9]{32}|internal)$`)
+	eventIDPattern             = regexp.MustCompile(`^[a-f0-9]{32}$`)
 	identifierPattern          = regexp.MustCompile(`^[a-z0-9_.:-]{1,64}$`)
 	projectRunnerTargetPattern = regexp.MustCompile(`^(?:project|runner):[1-9][0-9]*$`)
 )
@@ -93,6 +116,8 @@ var (
 // AuditEvent is the allowlisted payload shared by enhanced features. It has no
 // field for request bodies, credentials, raw errors, or arbitrary log values.
 type AuditEvent struct {
+	EventID       string          `json:"event_id,omitempty"`
+	OccurredAt    time.Time       `json:"occurred_at,omitempty"`
 	CorrelationID string          `json:"correlation_id"`
 	ActorID       *int            `json:"actor_id,omitempty"`
 	ProjectID     *int            `json:"project_id,omitempty"`
@@ -101,12 +126,26 @@ type AuditEvent struct {
 	TargetID      string          `json:"target_id"`
 	Outcome       AuditOutcome    `json:"outcome"`
 	Source        AuditSource     `json:"source"`
+	SourceIP      string          `json:"source_ip,omitempty"`
+	UserAgent     string          `json:"user_agent,omitempty"`
 	Reason        string          `json:"reason"`
 }
 
 func (e AuditEvent) Validate() error {
 	if !correlationPattern.MatchString(e.CorrelationID) {
 		return fmt.Errorf("invalid audit correlation ID")
+	}
+	if e.EventID != "" && !eventIDPattern.MatchString(e.EventID) {
+		return fmt.Errorf("invalid audit event ID")
+	}
+	if !e.OccurredAt.IsZero() && e.OccurredAt.Location() != time.UTC {
+		return fmt.Errorf("audit occurrence time must be UTC")
+	}
+	if e.SourceIP != "" && net.ParseIP(e.SourceIP) == nil {
+		return fmt.Errorf("invalid audit source IP")
+	}
+	if !validAuditUserAgent(e.UserAgent) {
+		return fmt.Errorf("invalid audit user agent")
 	}
 	if !identifierPattern.MatchString(e.TargetID) || !identifierPattern.MatchString(e.Reason) {
 		return fmt.Errorf("invalid audit identifier")
@@ -138,6 +177,8 @@ func validAuditTarget(event AuditEvent) bool {
 		}
 		targetProjectID, err := strconv.Atoi(strings.TrimPrefix(event.TargetID, "project:"))
 		return err == nil && targetProjectID == *event.ProjectID
+	case AuditTargetWebhook:
+		return event.ProjectID == nil && event.TargetID == "audit_webhook"
 	default:
 		return false
 	}
@@ -174,6 +215,18 @@ func (e AuditEvent) SafeFields() map[string]any {
 		"source":         e.Source,
 		"reason":         e.Reason,
 	}
+	if e.EventID != "" {
+		fields["event_id"] = e.EventID
+	}
+	if !e.OccurredAt.IsZero() {
+		fields["occurred_at"] = e.OccurredAt
+	}
+	if e.SourceIP != "" {
+		fields["source_ip"] = e.SourceIP
+	}
+	if e.UserAgent != "" {
+		fields["user_agent"] = e.UserAgent
+	}
 	if e.ActorID != nil {
 		fields["actor_id"] = *e.ActorID
 	}
@@ -181,6 +234,121 @@ func (e AuditEvent) SafeFields() map[string]any {
 		fields["project_id"] = *e.ProjectID
 	}
 	return fields
+}
+
+// EnsureDeliveryMetadata returns an event with a stable identifier and an
+// immutable UTC occurrence time. Existing values are preserved so retries use
+// the same logical event identity.
+func (e AuditEvent) EnsureDeliveryMetadata(now time.Time) (AuditEvent, error) {
+	if e.EventID == "" {
+		id, err := NewAuditEventID()
+		if err != nil {
+			return AuditEvent{}, err
+		}
+		e.EventID = id
+	}
+	if e.OccurredAt.IsZero() {
+		e.OccurredAt = now.UTC()
+	}
+	if err := e.Validate(); err != nil {
+		return AuditEvent{}, err
+	}
+	return e, nil
+}
+
+func NewAuditEventID() (string, error) {
+	random := make([]byte, AuditEventIDBytes)
+	if _, err := rand.Read(random); err != nil {
+		return "", fmt.Errorf("generate audit event ID: %w", err)
+	}
+	return hex.EncodeToString(random), nil
+}
+
+// AuditWebhookActor and AuditWebhookTarget deliberately expose only bounded,
+// identifier-shaped values. There is no generic metadata or request payload.
+type AuditWebhookActor struct {
+	ID *int `json:"id,omitempty"`
+}
+
+type AuditWebhookTarget struct {
+	Type      AuditTargetType `json:"type"`
+	ID        string          `json:"id"`
+	ProjectID *int            `json:"project_id,omitempty"`
+}
+
+// AuditWebhookEnvelope is the complete allow-listed wire schema. Adding a new
+// field requires an explicit schema-version decision.
+type AuditWebhookEnvelope struct {
+	SchemaVersion string             `json:"schema_version"`
+	EventID       string             `json:"event_id"`
+	OccurredAt    time.Time          `json:"occurred_at"`
+	Actor         AuditWebhookActor  `json:"actor"`
+	Action        AuditAction        `json:"action"`
+	Target        AuditWebhookTarget `json:"target"`
+	Outcome       AuditOutcome       `json:"outcome"`
+	Source        AuditSource        `json:"source"`
+	SourceIP      string             `json:"source_ip,omitempty"`
+	UserAgent     string             `json:"user_agent,omitempty"`
+	CorrelationID string             `json:"correlation_id"`
+	Reason        string             `json:"reason"`
+}
+
+func NewAuditWebhookEnvelope(event AuditEvent) (AuditWebhookEnvelope, error) {
+	if err := event.Validate(); err != nil || event.EventID == "" || event.OccurredAt.IsZero() {
+		return AuditWebhookEnvelope{}, fmt.Errorf("invalid audit webhook event")
+	}
+	return AuditWebhookEnvelope{
+		SchemaVersion: AuditWebhookSchemaVersion,
+		EventID:       event.EventID,
+		OccurredAt:    event.OccurredAt,
+		Actor:         AuditWebhookActor{ID: event.ActorID},
+		Action:        event.Action,
+		Target: AuditWebhookTarget{
+			Type:      event.TargetType,
+			ID:        event.TargetID,
+			ProjectID: event.ProjectID,
+		},
+		Outcome:       event.Outcome,
+		Source:        event.Source,
+		SourceIP:      event.SourceIP,
+		UserAgent:     event.UserAgent,
+		CorrelationID: event.CorrelationID,
+		Reason:        event.Reason,
+	}, nil
+}
+
+// NormalizeAuditSourceIP extracts a literal peer IP without trusting forwarded
+// headers. Invalid or unavailable addresses are omitted from the envelope.
+func NormalizeAuditSourceIP(remoteAddress string) string {
+	host, _, err := net.SplitHostPort(remoteAddress)
+	if err != nil {
+		host = remoteAddress
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil {
+		return ""
+	}
+	return ip.String()
+}
+
+// SanitizeAuditUserAgent keeps only printable characters and a fixed maximum
+// size so this protocol field cannot become an unrestricted log channel.
+func SanitizeAuditUserAgent(value string) string {
+	value = strings.TrimSpace(value)
+	var sanitized strings.Builder
+	for _, r := range value {
+		if unicode.IsPrint(r) && !unicode.IsControl(r) {
+			if sanitized.Len()+utf8.RuneLen(r) > AuditUserAgentMaxLength {
+				break
+			}
+			sanitized.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(sanitized.String())
+}
+
+func validAuditUserAgent(value string) bool {
+	return value == SanitizeAuditUserAgent(value) && len(value) <= AuditUserAgentMaxLength
 }
 
 type AuditServiceFacade interface {
@@ -195,7 +363,9 @@ func validAuditAction(action AuditAction) bool {
 		AuditActionProjectRunnerHealth, AuditActionProjectRunnerHistory,
 		AuditActionProjectRunnerCreate, AuditActionProjectRunnerIssue,
 		AuditActionProjectRunnerUpdate, AuditActionProjectRunnerActive,
-		AuditActionProjectRunnerDelete, AuditActionProjectRunnerCache:
+		AuditActionProjectRunnerDelete, AuditActionProjectRunnerCache,
+		AuditActionWebhookRead, AuditActionWebhookConfigure, AuditActionWebhookTest,
+		AuditActionWebhookPause, AuditActionWebhookResume:
 		return true
 	default:
 		return false

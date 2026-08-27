@@ -610,6 +610,7 @@ type Store interface {
 	SecretSyncRepository
 	RoleRepository
 	CapabilityRepository
+	AuditWebhookRepository
 }
 
 var AccessKeyProps = ObjectProps{

@@ -2,6 +2,7 @@ package pro_interfaces
 
 import (
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"time"
 )
 
 type LogWriteService interface {
@@ -11,17 +12,21 @@ type LogWriteService interface {
 }
 
 type EventLogRecord struct {
-	Action        string  `json:"action"`
-	UserID        *int    `json:"user,omitempty"`
-	IntegrationID *int    `json:"integration,omitempty"`
-	ProjectID     *int    `json:"project,omitempty"`
-	Description   *string `json:"description,omitempty"`
+	EventID       string    `json:"event_id,omitempty"`
+	OccurredAt    time.Time `json:"occurred_at,omitempty"`
+	Action        string    `json:"action"`
+	UserID        *int      `json:"user,omitempty"`
+	IntegrationID *int      `json:"integration,omitempty"`
+	ProjectID     *int      `json:"project,omitempty"`
+	Description   *string   `json:"description,omitempty"`
 
 	CorrelationID string          `json:"correlation_id,omitempty"`
 	TargetType    AuditTargetType `json:"target_type,omitempty"`
 	TargetID      string          `json:"target_id,omitempty"`
 	Outcome       AuditOutcome    `json:"outcome,omitempty"`
 	Source        AuditSource     `json:"source,omitempty"`
+	SourceIP      string          `json:"source_ip,omitempty"`
+	UserAgent     string          `json:"user_agent,omitempty"`
 	Reason        string          `json:"reason,omitempty"`
 }
 

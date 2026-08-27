@@ -13,24 +13,32 @@ import (
 
 type EventRepository interface {
 	CreateEvent(db.Event) (db.Event, error)
+	CreateEventWithAuditWebhook(db.Event, db.AuditWebhookDelivery) (db.Event, error)
 }
 
 type serviceFacade struct {
 	repository EventRepository
 	logWriter  pro_interfaces.LogWriteService
 	metrics    *metrics.Metrics
+	webhook    pro_interfaces.AuditWebhookService
 }
 
 func NewServiceFacade(
 	repository EventRepository,
 	logWriter pro_interfaces.LogWriteService,
 	appMetrics *metrics.Metrics,
+	webhook ...pro_interfaces.AuditWebhookService,
 ) pro_interfaces.AuditServiceFacade {
-	return &serviceFacade{repository: repository, logWriter: logWriter, metrics: appMetrics}
+	var webhookService pro_interfaces.AuditWebhookService
+	if len(webhook) > 0 {
+		webhookService = webhook[0]
+	}
+	return &serviceFacade{repository: repository, logWriter: logWriter, metrics: appMetrics, webhook: webhookService}
 }
 
-func (f *serviceFacade) Record(_ context.Context, event pro_interfaces.AuditEvent) error {
-	if err := event.Validate(); err != nil {
+func (f *serviceFacade) Record(ctx context.Context, event pro_interfaces.AuditEvent) error {
+	event, err := event.EnsureDeliveryMetadata(time.Now())
+	if err != nil {
 		f.metrics.RecordDroppedRecord(pro_interfaces.AuditSinkDatabase, pro_interfaces.DroppedRecordInvalid)
 		return fmt.Errorf("invalid audit record")
 	}
@@ -45,13 +53,30 @@ func (f *serviceFacade) Record(_ context.Context, event pro_interfaces.AuditEven
 		objectType = db.EventProjectRunnerAudit
 	}
 
-	databaseStart := time.Now()
-	_, databaseErr := f.repository.CreateEvent(db.Event{
+	databaseEvent := db.Event{
 		UserID:      event.ActorID,
 		ProjectID:   event.ProjectID,
 		ObjectType:  &objectType,
 		Description: &description,
-	})
+	}
+	var delivery *db.AuditWebhookDelivery
+	if f.webhook != nil {
+		delivery, err = f.webhook.PrepareDelivery(ctx, event)
+		if err != nil {
+			f.metrics.RecordDroppedRecord(pro_interfaces.AuditSinkDatabase, pro_interfaces.DroppedRecordInvalid)
+			return fmt.Errorf("audit persistence failed")
+		}
+	}
+	databaseStart := time.Now()
+	var databaseErr error
+	if delivery == nil {
+		_, databaseErr = f.repository.CreateEvent(databaseEvent)
+	} else {
+		_, databaseErr = f.repository.CreateEventWithAuditWebhook(databaseEvent, *delivery)
+		if databaseErr == nil {
+			f.webhook.Notify()
+		}
+	}
 	f.metrics.ObserveDependency(pro_interfaces.DependencyAuditDatabase, time.Since(databaseStart), databaseErr == nil)
 	if databaseErr != nil {
 		f.metrics.RecordDroppedRecord(pro_interfaces.AuditSinkDatabase, pro_interfaces.DroppedRecordWriteFailure)
@@ -59,6 +84,8 @@ func (f *serviceFacade) Record(_ context.Context, event pro_interfaces.AuditEven
 
 	fileStart := time.Now()
 	fileErr := f.logWriter.WriteEventLog(pro_interfaces.EventLogRecord{
+		EventID:       event.EventID,
+		OccurredAt:    event.OccurredAt,
 		Action:        string(event.Action),
 		UserID:        event.ActorID,
 		ProjectID:     event.ProjectID,
@@ -68,6 +95,8 @@ func (f *serviceFacade) Record(_ context.Context, event pro_interfaces.AuditEven
 		TargetID:      event.TargetID,
 		Outcome:       event.Outcome,
 		Source:        event.Source,
+		SourceIP:      event.SourceIP,
+		UserAgent:     event.UserAgent,
 		Reason:        event.Reason,
 	})
 	f.metrics.ObserveDependency(pro_interfaces.DependencyAuditFile, time.Since(fileStart), fileErr == nil)

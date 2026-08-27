@@ -27,6 +27,7 @@ import IntegrationExtractor from '../views/project/IntegrationExtractor.vue';
 import Apps from '../views/Apps.vue';
 import Runners from '../views/Runners.vue';
 import Cluster from '../views/Cluster.vue';
+import AuditWebhooks from '../views/AuditWebhooks.vue';
 import Stats from '../views/project/Stats.vue';
 import Tokens from '../views/Tokens.vue';
 import AcceptInvite from '../views/AcceptInvite.vue';
@@ -208,6 +209,10 @@ const routes = [
   {
     path: '/cluster',
     component: Cluster,
+  },
+  {
+    path: '/audit-webhooks',
+    component: AuditWebhooks,
   },
   {
     path: '/tasks',

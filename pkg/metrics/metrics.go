@@ -22,6 +22,11 @@ type Metrics struct {
 	dependencyLatency *prometheus.HistogramVec
 	queueDepth        *prometheus.GaugeVec
 	droppedRecords    *prometheus.CounterVec
+	auditWebhookAge   prometheus.Gauge
+	auditWebhookTries prometheus.Counter
+	auditWebhookOK    prometheus.Counter
+	auditWebhookDead  prometheus.Counter
+	auditWebhookDrops prometheus.Counter
 }
 
 func NewMetrics() *Metrics {
@@ -66,6 +71,26 @@ func NewMetrics() *Metrics {
 		Name: "semaphore_enhanced_dropped_records_total",
 		Help: "Enhanced observability records dropped by sink and reason.",
 	}, []string{"sink", "reason"})
+	auditWebhookAge := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "semaphore_audit_webhook_oldest_queued_age_seconds",
+		Help: "Age in seconds of the oldest queued audit webhook delivery.",
+	})
+	auditWebhookTries := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "semaphore_audit_webhook_attempts_total",
+		Help: "Total audit webhook delivery attempts.",
+	})
+	auditWebhookOK := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "semaphore_audit_webhook_successes_total",
+		Help: "Total successful audit webhook deliveries.",
+	})
+	auditWebhookDead := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "semaphore_audit_webhook_permanent_failures_total",
+		Help: "Total audit webhook deliveries moved to terminal failure.",
+	})
+	auditWebhookDrops := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "semaphore_audit_webhook_redaction_failures_total",
+		Help: "Total audit events rejected by the export allow-list.",
+	})
 
 	registry.MustRegister(
 		tasksRunning,
@@ -76,10 +101,17 @@ func NewMetrics() *Metrics {
 		dependencyLatency,
 		queueDepth,
 		droppedRecords,
+		auditWebhookAge,
+		auditWebhookTries,
+		auditWebhookOK,
+		auditWebhookDead,
+		auditWebhookDrops,
 	)
 	dependencyHealthy.WithLabelValues(string(pro_interfaces.DependencyAuditDatabase)).Set(1)
 	dependencyHealthy.WithLabelValues(string(pro_interfaces.DependencyAuditFile)).Set(1)
+	dependencyHealthy.WithLabelValues(string(pro_interfaces.DependencyAuditWebhook)).Set(1)
 	queueDepth.WithLabelValues(string(pro_interfaces.QueueEnhancedAudit)).Set(0)
+	queueDepth.WithLabelValues(string(pro_interfaces.QueueAuditWebhook)).Set(0)
 
 	return &Metrics{
 		registry:          registry,
@@ -92,6 +124,11 @@ func NewMetrics() *Metrics {
 		dependencyLatency: dependencyLatency,
 		queueDepth:        queueDepth,
 		droppedRecords:    droppedRecords,
+		auditWebhookAge:   auditWebhookAge,
+		auditWebhookTries: auditWebhookTries,
+		auditWebhookOK:    auditWebhookOK,
+		auditWebhookDead:  auditWebhookDead,
+		auditWebhookDrops: auditWebhookDrops,
 	}
 }
 
