@@ -2,11 +2,6 @@ package runners
 
 import (
 	"errors"
-	"maps"
-	"net/http"
-	"strings"
-	"time"
-
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/jwt"
@@ -16,6 +11,10 @@ import (
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
+	"maps"
+	"net/http"
+	"strings"
+	"time"
 )
 
 func RunnerMiddleware(next http.Handler) http.Handler {
@@ -122,15 +121,15 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 		if tsk.Task.RunnerID == nil || *tsk.Task.RunnerID != runner.ID {
 			continue
 		}
-
 		if tsk.Task.Status == task_logger.TaskWaitingStatus || tsk.Task.Status == task_logger.TaskStartingStatus {
 
 			c.prepareRemoteJob(tsk, &runner, &data)
 
 		} else {
 			data.CurrentJobs = append(data.CurrentJobs, runners.JobState{
-				ID:     tsk.Task.ID,
-				Status: tsk.Task.Status,
+				ID:         tsk.Task.ID,
+				Generation: tsk.Task.AssignmentGeneration,
+				Status:     tsk.Task.Status,
 			})
 		}
 	}
@@ -390,6 +389,13 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			response.TerminatedJobs = append(response.TerminatedJobs, job.ID)
 			continue
 		}
+		reportedGeneration := normalizeReportedGeneration(
+			job.Generation, tsk.Task.AssignmentGeneration,
+		)
+		if reportedGeneration != tsk.Task.AssignmentGeneration {
+			response.TerminatedJobs = append(response.TerminatedJobs, job.ID)
+			continue
+		}
 
 		if !job.Status.IsValid() {
 			helpers.WriteErrorStatus(w, "Invalid task status", http.StatusBadRequest)
@@ -405,14 +411,21 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		for _, logRecord := range job.LogRecords {
-			tsk.LogWithTime(logRecord.Time, logRecord.Message)
+		var commitHash *string
+		var commitMessage string
+		if job.Commit != nil {
+			commitHash = &job.Commit.Hash
+			commitMessage = job.Commit.Message
+		}
+		if !tsk.ApplyRunnerProgress(
+			job.Status, runner.ID, reportedGeneration, commitHash, commitMessage,
+		) {
+			response.TerminatedJobs = append(response.TerminatedJobs, job.ID)
+			continue
 		}
 
-		tsk.SetStatus(job.Status)
-
-		if job.Commit != nil {
-			tsk.SetCommit(job.Commit.Hash, job.Commit.Message)
+		for _, logRecord := range job.LogRecords {
+			tsk.LogWithTime(logRecord.Time, logRecord.Message)
 		}
 
 		// When the runner reports a terminal status, finalize the task here:

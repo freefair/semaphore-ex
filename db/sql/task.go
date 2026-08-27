@@ -197,7 +197,7 @@ func (d *SqlDb) UpdateTask(task db.Task) error {
 
 	if task.CommitHash != nil {
 		_, err = d.exec(
-			"update task set status=?, start=?, `end`=?, commit_hash=?, commit_message=?, runner_id=?, runner_id_snapshot=?, runner_name=? where id=?",
+			"update task set status=?, start=?, `end`=?, commit_hash=?, commit_message=?, runner_id=?, runner_id_snapshot=?, runner_name=?, assignment_generation=?, runner_assigned_at=?, recovery_reason=?, message=? where id=?",
 			task.Status,
 			task.Start,
 			task.End,
@@ -206,16 +206,24 @@ func (d *SqlDb) UpdateTask(task db.Task) error {
 			task.RunnerID,
 			task.RunnerSnapshotID,
 			task.RunnerName,
+			task.AssignmentGeneration,
+			task.RunnerAssignedAt,
+			task.RecoveryReason,
+			task.Message,
 			task.ID)
 	} else {
 		_, err = d.exec(
-			"update task set status=?, start=?, `end`=?, runner_id=?, runner_id_snapshot=?, runner_name=? where id=?",
+			"update task set status=?, start=?, `end`=?, runner_id=?, runner_id_snapshot=?, runner_name=?, assignment_generation=?, runner_assigned_at=?, recovery_reason=?, message=? where id=?",
 			task.Status,
 			task.Start,
 			task.End,
 			task.RunnerID,
 			task.RunnerSnapshotID,
 			task.RunnerName,
+			task.AssignmentGeneration,
+			task.RunnerAssignedAt,
+			task.RecoveryReason,
+			task.Message,
 			task.ID)
 	}
 

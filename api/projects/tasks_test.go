@@ -1,11 +1,10 @@
 package projects
 
 import (
-	"net/url"
-	"testing"
-
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/stretchr/testify/assert"
+	"net/url"
+	"testing"
 )
 
 func TestParseTasksPageParams(t *testing.T) {

@@ -180,11 +180,13 @@ tasks:
   dredd:test:
     desc: Run end to end test for API with dredd
     cmds:
+      - go run ./tools/openapibundle
       - ./web/node_modules/.bin/dredd --config .dredd/dredd.testing.yml
 
   dredd:test:local:
     desc: Run end to end test for API with dredd
     cmds:
+      - go run ./tools/openapibundle
       - ./web/node_modules/.bin/dredd --config .dredd/dredd.local.yml
 
   release:prod:

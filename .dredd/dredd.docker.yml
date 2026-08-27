@@ -26,5 +26,5 @@ hooks-worker-term-retry: 500
 hooks-worker-handler-host: 0.0.0.0
 hooks-worker-handler-port: 61321
 config: ./.dredd/dredd.yml
-blueprint: api-docs.yml
+blueprint: .dredd/api-docs.bundled.yml
 endpoint: 'http://server:3000'

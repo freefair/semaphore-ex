@@ -4,16 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/go-gorp/gorp/v3"
+	"github.com/semaphoreui/semaphore/pkg/git"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pkg/tz"
+	"github.com/semaphoreui/semaphore/util"
 	"strings"
 	"time"
-
-	"github.com/semaphoreui/semaphore/pkg/git"
-	"github.com/semaphoreui/semaphore/pkg/tz"
-
-	"github.com/go-gorp/gorp/v3"
-
-	"github.com/semaphoreui/semaphore/pkg/task_logger"
-	"github.com/semaphoreui/semaphore/util"
 )
 
 type DefaultTaskParams struct {
@@ -58,9 +55,12 @@ type Task struct {
 	ScheduleID    *int `db:"schedule_id" json:"schedule_id,omitempty"`
 	// RunnerID is set while a task is assigned to a remote runner (cleared when the task finishes).
 	// Used so runner progress API can authorize updates on any HA node.
-	RunnerID         *int    `db:"runner_id" json:"-"`
-	RunnerSnapshotID *int    `db:"runner_id_snapshot" json:"-"`
-	RunnerName       *string `db:"runner_name" json:"-"`
+	RunnerID             *int       `db:"runner_id" json:"-"`
+	RunnerSnapshotID     *int       `db:"runner_id_snapshot" json:"-"`
+	RunnerName           *string    `db:"runner_name" json:"-"`
+	AssignmentGeneration int        `db:"assignment_generation" json:"assignment_generation,omitempty"`
+	RunnerAssignedAt     *time.Time `db:"runner_assigned_at" json:"runner_assigned_at,omitempty"`
+	RecoveryReason       string     `db:"recovery_reason" json:"recovery_reason,omitempty"`
 
 	Created time.Time  `db:"created" json:"created"`
 	Start   *time.Time `db:"start" json:"start,omitempty"`

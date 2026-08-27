@@ -3,23 +3,19 @@ package tasks
 import (
 	"encoding/json"
 	"errors"
-	"os"
-	"strconv"
-	"strings"
-	"sync/atomic"
-
+	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db_lib"
 	"github.com/semaphoreui/semaphore/pkg/jwt"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/services/tasks/hooks"
-
-	"github.com/semaphoreui/semaphore/api/sockets"
-	"github.com/semaphoreui/semaphore/db"
-	"github.com/semaphoreui/semaphore/pkg/task_logger"
-	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
+	"os"
+	"strconv"
+	"strings"
+	"sync/atomic"
 )
 
 type Job interface {
@@ -102,22 +98,7 @@ func (t *TaskRunner) AddLogListener(l task_logger.LogListener) {
 }
 
 func (t *TaskRunner) saveStatus() {
-	for _, user := range t.users {
-		b, err := json.Marshal(&map[string]any{
-			"type":        "update",
-			"start":       t.Task.Start,
-			"end":         t.Task.End,
-			"status":      t.Task.Status,
-			"task_id":     t.Task.ID,
-			"template_id": t.Task.TemplateID,
-			"project_id":  t.Task.ProjectID,
-			"version":     t.Task.Version,
-		})
-
-		util.LogPanic(err)
-
-		sockets.Message(user, b)
-	}
+	t.publishStatus()
 
 	if err := t.pool.store.UpdateTask(t.Task); err != nil {
 		t.panicOnError(err, "Failed to update TaskRunner status")

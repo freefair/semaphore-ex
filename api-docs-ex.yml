@@ -1,0 +1,50 @@
+# Fork-owned API definitions and paths, referenced by api-docs.yml.
+definitions:
+  RunnerAttempt:
+    type: object
+    properties:
+      id:
+        type: integer
+      project_id:
+        type: integer
+      task_id:
+        type: integer
+      generation:
+        type: integer
+      runner_id:
+        type: integer
+      runner_name:
+        type: string
+      assigned_at:
+        type: string
+        format: date-time
+      ended_at:
+        type: string
+        format: date-time
+        x-nullable: true
+      outcome:
+        type: string
+        enum:
+        - active
+        - requeued
+        - succeeded
+        - failed
+        - stopped
+      reason:
+        type: string
+paths:
+  /project/{project_id}/tasks/{task_id}/runner-attempts:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/task_id
+    get:
+      tags:
+      - task
+      summary: Get runner assignment attempts for a task
+      responses:
+        200:
+          description: Assignment attempts ordered by generation
+          schema:
+            type: array
+            items:
+              $ref: ./api-docs.yml#/definitions/RunnerAttempt

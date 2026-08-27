@@ -4,17 +4,15 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"github.com/semaphoreui/semaphore/api/sockets"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pkg/tz"
+	"github.com/semaphoreui/semaphore/util"
+	log "github.com/sirupsen/logrus"
 	"io"
 	"os/exec"
 	"sync"
 	"time"
-
-	"github.com/semaphoreui/semaphore/pkg/tz"
-
-	"github.com/semaphoreui/semaphore/api/sockets"
-	"github.com/semaphoreui/semaphore/pkg/task_logger"
-	"github.com/semaphoreui/semaphore/util"
-	log "github.com/sirupsen/logrus"
 )
 
 func (t *TaskRunner) Log(msg string) {
@@ -97,70 +95,7 @@ func (t *TaskRunner) SetCommit(hash, message string) {
 }
 
 func (t *TaskRunner) SetStatus(status task_logger.TaskStatus) {
-	if status == t.Task.Status {
-		return
-	}
-
-	oldStatus := t.Task.Status
-
-	switch t.Task.Status { // check old status
-	case task_logger.TaskConfirmed:
-		if status == task_logger.TaskWaitingConfirmation {
-			return
-		}
-	case task_logger.TaskRunningStatus:
-		if status == task_logger.TaskWaitingStatus {
-			return
-		}
-	case task_logger.TaskStoppingStatus:
-		if status == task_logger.TaskWaitingStatus || status == task_logger.TaskRunningStatus || status == task_logger.TaskWaitingConfirmation {
-			//panic("stopping TaskRunner cannot be " + status)
-			return
-		}
-	case task_logger.TaskSuccessStatus:
-	case task_logger.TaskFailStatus:
-	case task_logger.TaskStoppedStatus:
-		return
-	}
-
-	t.Task.Status = status
-	if t.pool != nil {
-		t.pool.metrics.RecordTaskStatusChange(oldStatus, status)
-	}
-
-	if status == task_logger.TaskRunningStatus {
-		now := tz.Now()
-		t.Task.Start = &now
-	}
-
-	t.saveStatus()
-
-	if localJob, ok := t.job.(*LocalExecutor); ok {
-		localJob.SetStatus(status)
-	}
-
-	if status == task_logger.TaskFailStatus {
-		t.sendMailAlert()
-	}
-
-	if status.IsNotifiable() {
-		t.sendTelegramAlert()
-		t.sendSlackAlert()
-		t.sendRocketChatAlert()
-		t.sendMicrosoftTeamsAlert()
-		t.sendDingTalkAlert()
-		t.sendGotifyAlert()
-	}
-
-	for _, l := range t.statusListeners {
-		l(status)
-	}
-
-	log.WithFields(log.Fields{
-		"task_id": t.Task.ID,
-		"context": "task_logger",
-		"status":  status,
-	}).Info("Task status updated")
+	t.setStatus(status, nil, nil, 0, 0)
 }
 
 func (t *TaskRunner) panicOnError(err error, msg string) {

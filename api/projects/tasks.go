@@ -4,17 +4,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/url"
-	"strconv"
-	"time"
-
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
+	"net/http"
+	"net/url"
+	"strconv"
+	"time"
 )
 
 // maxTasksPageSize limits how many tasks can be requested in a single page.

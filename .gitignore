@@ -60,6 +60,9 @@ __debug_bin*
 /*-config.yml
 /*-config.config
 /*.sqlite*
+# Generated standalone API description for legacy Dredd consumers.
+/.dredd/api-docs.bundled.yml
+
 /.claude/task-notes/
 
 /.claude/rules/

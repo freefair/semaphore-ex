@@ -2,15 +2,14 @@ package tasks
 
 import (
 	"errors"
-	"testing"
-	"time"
-
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"testing"
+	"time"
 )
 
 // reconcilerStoreStub wraps a real store and forces errors on selected methods.
@@ -159,126 +158,146 @@ func TestDecideRunnerTaskAction(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		status    task_logger.TaskStatus
-		taskStart *time.Time
-		runner    *db.Runner
-		expected  RunnerTaskAction
+		name             string
+		status           task_logger.TaskStatus
+		taskStart        *time.Time
+		runnerAssignedAt *time.Time
+		runner           *db.Runner
+		expected         RunnerTaskAction
 	}{
 		{
 			"alive runner, starting task",
-			task_logger.TaskStartingStatus, nil,
+			task_logger.TaskStartingStatus, nil, ago(time.Minute),
 			&db.Runner{Touched: ago(10 * time.Second)},
 			RunnerTaskKeep,
 		},
 		{
 			"alive runner, running task",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(time.Hour),
 			&db.Runner{Touched: ago(10 * time.Second), StartedAt: ago(2 * time.Hour)},
 			RunnerTaskKeep,
 		},
 		{
 			"starting task, runner offline",
-			task_logger.TaskStartingStatus, nil,
+			task_logger.TaskStartingStatus, nil, ago(time.Minute),
 			&db.Runner{Touched: ago(3 * time.Minute)},
 			RunnerTaskRequeue,
 		},
 		{
 			"waiting task with runner, runner offline",
-			task_logger.TaskWaitingStatus, nil,
+			task_logger.TaskWaitingStatus, nil, ago(time.Minute),
 			&db.Runner{Touched: ago(3 * time.Minute)},
 			RunnerTaskRequeue,
 		},
 		{
 			"running task, silence within recovery window",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(time.Hour),
 			&db.Runner{Touched: ago(5 * time.Minute)},
 			RunnerTaskKeep,
 		},
 		{
 			"running task, silence past recovery window",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(time.Hour),
 			&db.Runner{Touched: ago(8 * time.Minute)},
 			RunnerTaskFail,
 		},
 		{
 			"running task, runner restarted after task start",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(time.Hour),
 			&db.Runner{Touched: ago(5 * time.Second), StartedAt: ago(10 * time.Minute)},
 			RunnerTaskFail,
 		},
 		{
 			"running task, restart within skew margin",
-			task_logger.TaskRunningStatus, ago(time.Minute),
+			task_logger.TaskRunningStatus, ago(time.Minute), ago(time.Minute),
 			&db.Runner{Touched: ago(5 * time.Second), StartedAt: ago(50 * time.Second)},
 			RunnerTaskFail,
 		},
 		{
 			"starting task, runner restarted (self-heals via NewJobs)",
-			task_logger.TaskStartingStatus, nil,
+			task_logger.TaskStartingStatus, nil, ago(time.Minute),
 			&db.Runner{Touched: ago(5 * time.Second), StartedAt: ago(time.Minute)},
 			RunnerTaskKeep,
 		},
 		{
 			"runner started before task",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(time.Hour),
 			&db.Runner{Touched: ago(time.Minute), StartedAt: ago(2 * time.Hour)},
 			RunnerTaskKeep,
 		},
 		{
 			"runner deleted, starting task",
-			task_logger.TaskStartingStatus, nil,
+			task_logger.TaskStartingStatus, nil, ago(time.Minute),
 			nil,
 			RunnerTaskRequeue,
 		},
 		{
 			"runner deleted, running task",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(time.Hour),
 			nil,
 			RunnerTaskFail,
 		},
 		{
 			"finished task",
-			task_logger.TaskSuccessStatus, ago(time.Hour),
+			task_logger.TaskSuccessStatus, ago(time.Hour), ago(time.Hour),
 			nil,
 			RunnerTaskKeep,
 		},
 		{
-			"stopping task is out of scope",
-			task_logger.TaskStoppingStatus, ago(time.Hour),
+			"stopping task converges when runner is lost",
+			task_logger.TaskStoppingStatus, ago(time.Hour), ago(time.Hour),
 			&db.Runner{Touched: ago(time.Hour)},
-			RunnerTaskKeep,
+			RunnerTaskStop,
 		},
 		{
-			"webhook runner, starting task, stale heartbeat",
-			task_logger.TaskStartingStatus, nil,
+			"rejected task converges when runner is deleted",
+			task_logger.TaskRejected, ago(time.Hour), ago(time.Hour),
+			nil,
+			RunnerTaskStop,
+		},
+		{
+			"webhook runner within startup grace ignores stale heartbeat",
+			task_logger.TaskStartingStatus, nil, ago(taskFailTimeout),
 			&db.Runner{Webhook: "https://example.com/hook", Touched: ago(time.Hour)},
 			RunnerTaskKeep,
 		},
 		{
+			"webhook runner past startup grace is requeued",
+			task_logger.TaskStartingStatus, nil, ago(taskFailTimeout + time.Second),
+			&db.Runner{Webhook: "https://example.com/hook", Touched: ago(time.Hour)},
+			RunnerTaskRequeue,
+		},
+		{
 			"webhook runner, running task, silence past recovery window",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(time.Hour),
 			&db.Runner{Webhook: "https://example.com/hook", Touched: ago(8 * time.Minute)},
 			RunnerTaskFail,
 		},
 		{
 			"poll runner never polled, starting task",
-			task_logger.TaskStartingStatus, nil,
+			task_logger.TaskStartingStatus, nil, ago(time.Minute),
 			&db.Runner{},
 			RunnerTaskRequeue,
 		},
 		{
-			"poll runner never polled, running task",
-			task_logger.TaskRunningStatus, ago(time.Hour),
+			"poll runner never polled, running task within grace",
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(taskFailTimeout),
 			&db.Runner{},
 			RunnerTaskKeep,
+		},
+		{
+			"poll runner never polled, running task past grace",
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(taskFailTimeout + time.Second),
+			&db.Runner{},
+			RunnerTaskFail,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			action, reason := DecideRunnerTaskAction(
-				tt.status, tt.taskStart, tt.runner, now, offlineTimeout, taskFailTimeout)
+				tt.status, tt.taskStart, tt.runnerAssignedAt,
+				tt.runner, now, offlineTimeout, taskFailTimeout)
 			assert.Equal(t, tt.expected, action)
 			if action != RunnerTaskKeep {
 				assert.NotEmpty(t, reason)

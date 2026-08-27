@@ -29,9 +29,10 @@ type runningJob struct {
 	// taskID is captured at enqueue time so log/error paths don't need to reach into
 	// the executor for it. Necessary because executor is now an interface and the
 	// id-bearing db.Task is owned by the concrete type.
-	taskID int
-	job    tasks.Executor
-	commit *CommitInfo
+	taskID     int
+	generation int
+	job        tasks.Executor
+	commit     *CommitInfo
 
 	statusListeners []task_logger.StatusListener
 	logListeners    []task_logger.LogListener

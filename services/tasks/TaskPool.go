@@ -505,6 +505,12 @@ func applyDBPersistedTaskSnapshot(dst *db.Task, src db.Task) {
 	dst.Start = src.Start
 	dst.End = src.End
 	dst.RunnerID = src.RunnerID
+	dst.RunnerSnapshotID = src.RunnerSnapshotID
+	dst.RunnerName = src.RunnerName
+	dst.AssignmentGeneration = src.AssignmentGeneration
+	dst.RunnerAssignedAt = src.RunnerAssignedAt
+	dst.RecoveryReason = src.RecoveryReason
+	dst.Message = src.Message
 	dst.CommitHash = src.CommitHash
 	dst.CommitMessage = src.CommitMessage
 }

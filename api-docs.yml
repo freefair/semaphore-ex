@@ -836,6 +836,15 @@ definitions:
         type: string
       message:
         type: string
+      assignment_generation:
+        type: integer
+        description: Monotonic remote-runner assignment generation
+      runner_assigned_at:
+        type: string
+        format: date-time
+      recovery_reason:
+        type: string
+        description: Last deterministic runner-recovery decision
       inventory_id:
         type: integer
       params:
@@ -845,6 +854,8 @@ definitions:
       limit:
         type: string
 
+  RunnerAttempt:
+    $ref: "./api-docs-ex.yml#/definitions/RunnerAttempt"
   AnsibleTaskParams:
     type: object
     properties:
@@ -3552,6 +3563,8 @@ paths:
             items:
               $ref: "#/definitions/TaskOutput"
 
+  /project/{project_id}/tasks/{task_id}/runner-attempts:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1tasks~1{task_id}~1runner-attempts"
   /project/{project_id}/tasks/{task_id}/raw_output:
     parameters:
       - $ref: '#/parameters/project_id'
