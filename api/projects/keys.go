@@ -66,6 +66,7 @@ func GetKeyRefs(w http.ResponseWriter, r *http.Request) {
 func GetKeys(w http.ResponseWriter, r *http.Request) {
 	if key := helpers.GetFromContext(r, "accessKey"); key != nil {
 		k := key.(db.AccessKey)
+		server.ExposeRuntimeSecretReference(&k)
 		helpers.WriteJSON(w, http.StatusOK, k)
 		return
 	}
@@ -78,6 +79,9 @@ func GetKeys(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		helpers.WriteError(w, err)
 		return
+	}
+	for index := range keys {
+		server.ExposeRuntimeSecretReference(&keys[index])
 	}
 
 	helpers.WriteJSON(w, http.StatusOK, keys)
@@ -140,6 +144,7 @@ func (c *KeyController) AddKey(w http.ResponseWriter, r *http.Request) {
 		helpers.WriteError(w, err)
 		return
 	}
+	server.ExposeRuntimeSecretReference(&key)
 
 	helpers.WriteJSON(w, http.StatusCreated, key)
 }

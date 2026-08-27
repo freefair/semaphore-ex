@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	pro "github.com/semaphoreui/semaphore/pro/services/server"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
 
 const RekeyBatchSize = 100
@@ -35,18 +37,27 @@ type AccessKeyEncryptionService interface {
 	DeleteTaskSurveySecrets(projectID int, taskID int) error
 }
 
+type RuntimeSecretProviderTester interface {
+	TestRuntimeSecretProvider(context.Context, int, int) (pro_interfaces.SecretProviderHealth, error)
+}
+
 func NewAccessKeyEncryptionService(
 	accessKeyRepo db.AccessKeyManager,
 	environmentRepo db.EnvironmentManager,
 	secretStorageRepo db.SecretStorageRepository,
 	projectRepo db.ProjectStore,
+	capabilityProviders ...pro_interfaces.CapabilityProvider,
 ) AccessKeyEncryptionService {
-	return &accessKeyEncryptionServiceImpl{
+	service := &accessKeyEncryptionServiceImpl{
 		accessKeyRepo:     accessKeyRepo,
 		environmentRepo:   environmentRepo,
 		secretStorageRepo: secretStorageRepo,
 		projectRepo:       projectRepo,
 	}
+	service.vaultDeserializer = pro.NewVaultAccessKeyDeserializer(
+		accessKeyRepo, secretStorageRepo, service, capabilityProviders...,
+	)
+	return service
 }
 
 func unmarshalAppropriateField(key *db.AccessKey, secret []byte) (err error) {
@@ -74,6 +85,7 @@ type accessKeyEncryptionServiceImpl struct {
 	environmentRepo   db.EnvironmentManager
 	secretStorageRepo db.SecretStorageRepository
 	projectRepo       db.ProjectStore
+	vaultDeserializer AccessKeyDeserializer
 }
 
 func (s *accessKeyEncryptionServiceImpl) getDeserializer(key *db.AccessKey) (AccessKeyDeserializer, bool, error) {
@@ -100,7 +112,7 @@ func (s *accessKeyEncryptionServiceImpl) getDeserializer(key *db.AccessKey) (Acc
 
 	switch storage.Type {
 	case db.SecretStorageTypeVault, db.SecretStorageTypeOpenBao:
-		return pro.NewVaultAccessKeyDeserializer(s.accessKeyRepo, s.secretStorageRepo, s), storage.ReadOnly, nil
+		return s.vaultDeserializer, storage.ReadOnly, nil
 	case db.SecretStorageTypeDvls:
 		return pro.NewDvlsAccessKeyDeserializer(s.accessKeyRepo, s.secretStorageRepo, s), storage.ReadOnly, nil
 	case db.SecretStorageTypeAwsSm:
@@ -110,6 +122,18 @@ func (s *accessKeyEncryptionServiceImpl) getDeserializer(key *db.AccessKey) (Acc
 	}
 
 	return nil, false, fmt.Errorf("unsupported secret storage type '%s'", storage.Type)
+}
+
+func (s *accessKeyEncryptionServiceImpl) TestRuntimeSecretProvider(
+	ctx context.Context,
+	projectID int,
+	storageID int,
+) (pro_interfaces.SecretProviderHealth, error) {
+	resolver, ok := s.vaultDeserializer.(pro_interfaces.RuntimeSecretResolver)
+	if !ok {
+		return pro_interfaces.SecretProviderHealth{}, errors.New("runtime secret resolver unavailable")
+	}
+	return resolver.TestRuntimeSecretProvider(ctx, projectID, storageID)
 }
 
 func (s *accessKeyEncryptionServiceImpl) DeleteSecret(key *db.AccessKey) error {
@@ -191,12 +215,23 @@ func (s *accessKeyEncryptionServiceImpl) FillEnvironmentSecrets(env *db.Environm
 			}
 		}
 
-		env.Secrets = append(env.Secrets, db.EnvironmentSecret{
+		environmentSecret := db.EnvironmentSecret{
 			ID:     k.ID,
 			Name:   secretName,
 			Type:   secretType,
 			Secret: k.String,
-		})
+		}
+		if k.SourceStorageType != nil && *k.SourceStorageType == db.AccessKeySourceStorageVault &&
+			k.SourceStorageKey != nil {
+			if reference, decodeErr := pro_interfaces.DecodeSecretReference(*k.SourceStorageKey); decodeErr == nil {
+				environmentSecret.StorageID = &reference.StorageID
+				environmentSecret.Mount = reference.Mount
+				environmentSecret.Path = reference.Path
+				environmentSecret.Version = reference.Version
+				environmentSecret.Field = reference.Field
+			}
+		}
+		env.Secrets = append(env.Secrets, environmentSecret)
 	}
 
 	return nil

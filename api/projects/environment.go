@@ -52,8 +52,23 @@ func (c *EnvironmentController) updateEnvironmentSecrets(env db.Environment) err
 		case db.EnvironmentSecretCreate:
 			var sourceStorageKey *string
 			var storageType *db.AccessKeySourceStorageType
+			secretValue := secret.Secret
 
-			if env.SecretStorageID != nil {
+			if secret.StorageID != nil {
+				if secret.Secret != "" {
+					errors = append(errors, fmt.Errorf("runtime secret references must not include plaintext"))
+					continue
+				}
+				encoded, encodeErr := server.EncodeEnvironmentRuntimeSecretReference(secret)
+				if encodeErr != nil {
+					errors = append(errors, encodeErr)
+					continue
+				}
+				sourceStorageKey = &encoded
+				keyType := db.AccessKeySourceStorageVault
+				storageType = &keyType
+				secretValue = ""
+			} else if env.SecretStorageID != nil {
 				keyPrefix := ""
 				if env.SecretStorageKeyPrefix != nil {
 					keyPrefix = *env.SecretStorageKeyPrefix
@@ -67,12 +82,12 @@ func (c *EnvironmentController) updateEnvironmentSecrets(env db.Environment) err
 
 			key, err = c.accessKeyService.Create(db.AccessKey{
 				Name:              secret.Name,
-				String:            secret.Secret,
+				String:            secretValue,
 				EnvironmentID:     &env.ID,
 				ProjectID:         &env.ProjectID,
 				Type:              db.AccessKeyString,
 				Owner:             secret.Type.GetAccessKeyOwner(),
-				SourceStorageID:   env.SecretStorageID,
+				SourceStorageID:   firstStorageID(secret.StorageID, env.SecretStorageID),
 				SourceStorageKey:  sourceStorageKey,
 				SourceStorageType: storageType,
 			})
@@ -122,7 +137,22 @@ func (c *EnvironmentController) updateEnvironmentSecrets(env db.Environment) err
 				SourceStorageType: key.SourceStorageType,
 				SourceStorageKey:  key.SourceStorageKey,
 			}
-			if secret.Secret != "" {
+			if secret.StorageID != nil {
+				if secret.Secret != "" {
+					errors = append(errors, fmt.Errorf("runtime secret references must not include plaintext"))
+					continue
+				}
+				encoded, encodeErr := server.EncodeEnvironmentRuntimeSecretReference(secret)
+				if encodeErr != nil {
+					errors = append(errors, encodeErr)
+					continue
+				}
+				storageType := db.AccessKeySourceStorageVault
+				updateKey.SourceStorageID = secret.StorageID
+				updateKey.SourceStorageType = &storageType
+				updateKey.SourceStorageKey = &encoded
+				updateKey.OverrideSecret = true
+			} else if secret.Secret != "" {
 				updateKey.String = secret.Secret
 				updateKey.OverrideSecret = true
 			}
@@ -140,6 +170,13 @@ func (c *EnvironmentController) updateEnvironmentSecrets(env db.Environment) err
 	}
 
 	return nil
+}
+
+func firstStorageID(primary, fallback *int) *int {
+	if primary != nil {
+		return primary
+	}
+	return fallback
 }
 
 // EnvironmentMiddleware ensures an environment exists and loads it to the context

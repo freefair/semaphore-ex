@@ -17,7 +17,7 @@
     <EditDialog
       v-model="editDialog"
       :save-button-text="itemId === 'new' ? $t('create') : $t('save')"
-      :title="`${itemId === 'new' ? $t('nnew') : $t('edit')} ${itemType} Storage`"
+      :title="`${itemId === 'new' ? $t('nnew') : $t('edit')} ${dialogStorageType} Storage`"
       :max-width="450"
       @save="loadItems()"
     >
@@ -30,6 +30,7 @@
           @error="onError"
           :need-save="needSave"
           :need-reset="needReset"
+          :can-test-connection="runtimeCanExecute"
         />
       </template>
     </EditDialog>
@@ -47,6 +48,8 @@
             v-on="on"
             color="primary"
             v-if="can(USER_PERMISSIONS.manageProjectResources)"
+            :disabled="!runtimeCanWrite"
+            data-testid="secretStorage-newMenu"
           >
             New Storage
             <v-icon>mdi-chevron-down</v-icon>
@@ -59,7 +62,7 @@
               editItem('new');
               itemType = 'vault';
             "
-            :disabled="!features.secret_storage_management"
+            :disabled="!features.secret_storage_management || !runtimeCanWrite"
           >
             <v-list-item-icon>
               <v-icon>$vuetify.icons.hashicorp_vault</v-icon>
@@ -73,7 +76,7 @@
               editItem('new');
               itemType = 'openbao';
             "
-            :disabled="!features.secret_storage_management"
+            :disabled="!features.secret_storage_management || !runtimeCanWrite"
           >
             <v-list-item-icon>
               <v-icon>$vuetify.icons.openbao</v-icon>
@@ -191,6 +194,18 @@
       </span>
     </v-alert>
 
+    <v-alert
+      v-if="runtimeDecision && runtimeDecision.state !== 'active'"
+      text
+      :type="runtimeDecision.state === 'read_only' ? 'info' : 'warning'"
+      class="PageAlert"
+      data-testid="secretStorage-runtimeCapability"
+    >
+      Runtime secrets are {{ formatCapabilityValue(runtimeDecision.state) }}
+      ({{ formatCapabilityValue(runtimeDecision.reason) }}). Existing configuration remains visible,
+      but unavailable actions are blocked by the server.
+    </v-alert>
+
     <v-data-table
       :headers="headers"
       :items="items"
@@ -224,10 +239,10 @@
           >
             <v-icon>mdi-sync</v-icon>
           </v-btn>
-          <v-btn @click="askDeleteItem(item.id)">
+          <v-btn @click="askDeleteItem(item.id)" :disabled="!runtimeCanWrite">
             <v-icon>mdi-delete</v-icon>
           </v-btn>
-          <v-btn @click="editItem(item.id)">
+          <v-btn @click="editItem(item.id)" :disabled="!runtimeCanRead">
             <v-icon>mdi-pencil</v-icon>
           </v-btn>
         </v-btn-toggle>
@@ -278,6 +293,7 @@ import ItemListPageBase from '@/components/ItemListPageBase';
 import SecretStorageForm from '@/components/SecretStorageForm.vue';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
+import { findCapabilityDecision } from '@/lib/capabilities';
 
 export default {
   components: { SecretStorageForm },
@@ -296,9 +312,36 @@ export default {
     features() {
       return this.systemInfo?.features || {};
     },
+
+    runtimeDecision() {
+      return findCapabilityDecision(this.systemInfo, 'runtime_secrets');
+    },
+
+    dialogStorageType() {
+      if (this.itemId === 'new') {
+        return this.itemType;
+      }
+      return this.items?.find((item) => item.id === this.itemId)?.type || this.itemType;
+    },
+
+    runtimeCanRead() {
+      return this.runtimeDecision?.access?.includes('read') || false;
+    },
+
+    runtimeCanWrite() {
+      return this.runtimeDecision?.access?.includes('write') || false;
+    },
+
+    runtimeCanExecute() {
+      return this.runtimeDecision?.access?.includes('execute') || false;
+    },
   },
 
   methods: {
+    formatCapabilityValue(value) {
+      return (value || 'unknown').replace(/_/g, ' ');
+    },
+
     async syncItem(itemId) {
       try {
         const item = this.items.find((x) => x.id === itemId);

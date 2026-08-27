@@ -25,7 +25,7 @@
         <v-autocomplete
           v-model="item.secret_storage_id"
           :label="$t('Secret storage (optional)')"
-          :items="secretStorages"
+          :items="managedSecretStorages"
           :disabled="formSaving || !isNew"
           item-value="id"
           item-text="name"
@@ -456,6 +456,12 @@ export default {
   },
 
   computed: {
+    managedSecretStorages() {
+      return (this.secretStorages || []).filter(
+        (storage) => !['vault', 'openbao'].includes(storage.type),
+      );
+    },
+
     secretStorage() {
       if (this.item && this.item.secret_storage_id && this.secretStorages) {
         return this.secretStorages.find((s) => s.id === this.item.secret_storage_id);

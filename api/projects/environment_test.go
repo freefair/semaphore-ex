@@ -37,11 +37,13 @@ func (m *mockAccessKeyRepo) DeleteTaskAccessKeys(int, int) error { return nil }
 func (m *mockAccessKeyRepo) DeleteExpiredTaskAccessKeys() error  { return nil }
 
 type mockAccessKeyService struct {
+	created []db.AccessKey
 	deleted []int
 	updated []db.AccessKey
 }
 
 func (m *mockAccessKeyService) Create(key db.AccessKey) (db.AccessKey, error) {
+	m.created = append(m.created, key)
 	return key, nil
 }
 func (m *mockAccessKeyService) Update(key db.AccessKey) error {
@@ -54,6 +56,26 @@ func (m *mockAccessKeyService) GetAll(int, db.GetAccessKeyOptions, db.RetrieveQu
 func (m *mockAccessKeyService) Delete(_ int, keyID int) error {
 	m.deleted = append(m.deleted, keyID)
 	return nil
+}
+
+func TestUpdateEnvironmentRejectsInvalidRuntimeReference(t *testing.T) {
+	storageID := 9
+	svc := &mockAccessKeyService{}
+	controller := &EnvironmentController{accessKeyService: svc}
+	environment := db.Environment{ID: 4, ProjectID: 3}
+	environment.Secrets = append(environment.Secrets, db.EnvironmentSecret{
+		Type: db.EnvironmentSecretEnv, Name: "TOKEN", Operation: db.EnvironmentSecretCreate,
+		StorageID: &storageID, Mount: "team", Path: "../escape", Field: "value",
+	})
+
+	err := controller.updateEnvironmentSecrets(environment)
+
+	if err == nil {
+		t.Fatal("expected invalid runtime reference to be rejected")
+	}
+	if len(svc.created) != 0 {
+		t.Fatalf("expected no access key creation, got %d", len(svc.created))
+	}
 }
 
 func TestUpdateEnvironmentSecrets_DeleteRejectsKeyFromOtherEnvironment(t *testing.T) {

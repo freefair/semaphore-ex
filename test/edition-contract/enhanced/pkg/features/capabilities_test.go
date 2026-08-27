@@ -141,6 +141,49 @@ func TestProviderKeepsExplicitDisableReasonAfterExpiry(t *testing.T) {
 	assertCapabilityState(t, snapshot, pro_interfaces.CapabilityStateDisabled, pro_interfaces.CapabilityReasonDisabledByAdmin)
 }
 
+func TestRuntimeSecretsCapabilityDefaultsActiveAndDisablesReversibly(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	defer store.Close()
+	provider := NewCapabilityProvider(store)
+	ctx := context.Background()
+	request := pro_interfaces.CapabilityRequest{
+		UserID: 7, IsAdmin: true, At: time.Unix(1_700_000_000, 0).UTC(),
+	}
+
+	active, err := provider.Resolve(ctx, request)
+	if err != nil {
+		t.Fatalf("resolve runtime secrets default: %v", err)
+	}
+	activeDecision := active.Decision(pro_interfaces.CapabilityRuntimeSecrets)
+	if activeDecision.State() != pro_interfaces.CapabilityStateActive ||
+		!activeDecision.Allows(pro_interfaces.CapabilityAccessExecute) {
+		t.Fatalf("runtime secrets must default active, got %s", activeDecision.State())
+	}
+
+	disabled, err := provider.Configure(ctx, request, pro_interfaces.CapabilityConfiguration{
+		ID: pro_interfaces.CapabilityRuntimeSecrets, State: pro_interfaces.CapabilityStateDisabled,
+	})
+	if err != nil {
+		t.Fatalf("disable runtime secrets: %v", err)
+	}
+	if disabled.Decision(pro_interfaces.CapabilityRuntimeSecrets).Allows(pro_interfaces.CapabilityAccessExecute) {
+		t.Fatal("disabled runtime secrets must block execution")
+	}
+	if !disabled.Decision(pro_interfaces.CapabilityRuntimeSecrets).Allows(pro_interfaces.CapabilityAccessRead) {
+		t.Fatal("disabled runtime secrets must keep configuration readable for rollback")
+	}
+
+	reenabled, err := provider.Configure(ctx, request, pro_interfaces.CapabilityConfiguration{
+		ID: pro_interfaces.CapabilityRuntimeSecrets, State: pro_interfaces.CapabilityStateActive,
+	})
+	if err != nil {
+		t.Fatalf("re-enable runtime secrets: %v", err)
+	}
+	if !reenabled.Decision(pro_interfaces.CapabilityRuntimeSecrets).Allows(pro_interfaces.CapabilityAccessExecute) {
+		t.Fatal("re-enabled runtime secrets must allow execution")
+	}
+}
+
 func TestConcurrentResolutionsReturnCompleteSnapshots(t *testing.T) {
 	store := sqldb.InitConfigCreateTestStore()
 	defer store.Close()

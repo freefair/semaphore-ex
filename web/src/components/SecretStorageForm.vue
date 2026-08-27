@@ -25,10 +25,15 @@
     ></v-text-field>
 
     <div v-if="item.type === 'vault' || item.type === 'openbao'">
+      <v-alert text type="info" dense data-testid="secretStorage-runtimeNotice">
+        Runtime-only provider: Semaphore reads one named field during task execution. Secret
+        values are never listed or synchronized.
+      </v-alert>
+
       <v-text-field
         v-model="item.params.mount"
         :label="$t('Mount')"
-        hint="'secret' by default"
+        hint="KV v2 mount; 'secret' by default"
         :disabled="formSaving"
         data-testid="secretStorage-vaultMount"
         outlined
@@ -47,13 +52,84 @@
         dense
       ></v-text-field>
 
-      <SecretSourceToggle v-model="secretStorage" label="Token" :disabled="formSaving" />
+      <v-textarea
+        v-model="item.params.ca_certificate"
+        label="Custom CA certificate (PEM, optional)"
+        :disabled="formSaving"
+        data-testid="secretStorage-vaultCACertificate"
+        rows="3"
+        outlined
+        dense
+      ></v-textarea>
+
+      <v-text-field
+        v-model="item.params.timeout"
+        label="Request timeout"
+        hint="Go duration up to 30s, for example 5s"
+        :disabled="formSaving"
+        data-testid="secretStorage-vaultTimeout"
+        outlined
+        dense
+      ></v-text-field>
+
+      <v-select
+        v-model="item.params.auth_method"
+        label="Authentication method"
+        :items="runtimeAuthMethods"
+        item-value="value"
+        item-text="text"
+        :disabled="formSaving"
+        data-testid="secretStorage-vaultAuthMethod"
+        outlined
+        dense
+      ></v-select>
+
+      <v-text-field
+        v-if="item.params.auth_method !== 'token'"
+        v-model="item.params.auth_mount"
+        label="Authentication mount"
+        :hint="item.params.auth_method === 'approle'
+          ? 'approle by default'
+          : 'kubernetes by default'"
+        :disabled="formSaving"
+        data-testid="secretStorage-vaultAuthMount"
+        outlined
+        dense
+      ></v-text-field>
+
+      <v-text-field
+        v-if="item.params.auth_method === 'approle'"
+        v-model="item.params.role_id"
+        label="AppRole role ID"
+        :rules="[(v) => !!v || 'Role ID is required']"
+        :disabled="formSaving"
+        data-testid="secretStorage-vaultRoleId"
+        outlined
+        dense
+      ></v-text-field>
+
+      <v-text-field
+        v-if="item.params.auth_method === 'kubernetes'"
+        v-model="item.params.role"
+        label="Kubernetes role"
+        :rules="[(v) => !!v || 'Kubernetes role is required']"
+        :disabled="formSaving"
+        data-testid="secretStorage-vaultKubernetesRole"
+        outlined
+        dense
+      ></v-text-field>
+
+      <SecretSourceToggle
+        v-model="secretStorage"
+        :label="runtimeCredentialLabel"
+        :disabled="formSaving"
+      />
 
       <v-text-field
         v-if="secretStorage === 'database'"
         class="masked-secret-input"
         v-model="item.secret"
-        :label="$t('Token')"
+        :label="runtimeCredentialLabel"
         :disabled="formSaving"
         :rules="[(v) => !!v || itemId !== 'new' || $t('token_required')]"
         required
@@ -74,6 +150,29 @@
         outlined
         dense
       ></v-text-field>
+
+      <div v-if="itemId !== 'new'" class="mb-5">
+        <v-btn
+          outlined
+          color="primary"
+          :loading="connectionTesting"
+          :disabled="formSaving || !canTestConnection"
+          data-testid="secretStorage-testConnection"
+          @click="testConnection"
+        >
+          Test connection
+        </v-btn>
+        <v-alert
+          v-if="connectionHealth"
+          class="mt-3 mb-0"
+          dense
+          text
+          :type="connectionHealth.state === 'healthy' ? 'success' : 'error'"
+          data-testid="secretStorage-connectionHealth"
+        >
+          {{ connectionHealthMessage }}
+        </v-alert>
+      </div>
     </div>
 
     <div v-else-if="item.type === 'dvls'">
@@ -284,9 +383,11 @@
     <v-checkbox
       v-model="item.readonly"
       :label="$t('Read only')"
-      :disabled="formSaving"
+      :disabled="formSaving || isRuntimeProvider"
       hide-details
-      style="position: absolute; bottom: 15px; margin: 0; left: 25px"
+      :style="isRuntimeProvider
+        ? { margin: '0 0 8px 0' }
+        : { position: 'absolute', bottom: '15px', margin: '0', left: '25px' }"
     />
 
     <div class="d-flex items-center justify-space-between">
@@ -294,7 +395,8 @@
         class="mt-0"
         v-model="item.sync_enabled"
         :label="$t('Sync keys enabled')"
-        :disabled="formSaving"
+        :disabled="formSaving || isRuntimeProvider"
+        v-if="!isRuntimeProvider"
       />
 
       <v-btn
@@ -346,12 +448,18 @@
 import ItemFormBase from '@/components/ItemFormBase';
 import SecretStorageSyncOptionsForm from '@/components/SecretStorageSyncOptionsForm.vue';
 import SecretSourceToggle from '@/components/SecretSourceToggle.vue';
+import axios from 'axios';
+import { getErrorMessage } from '@/lib/error';
 
 export default {
   components: { SecretStorageSyncOptionsForm, SecretSourceToggle },
 
   props: {
     itemType: String,
+    canTestConnection: {
+      type: Boolean,
+      default: true,
+    },
   },
 
   mixins: [ItemFormBase],
@@ -363,7 +471,55 @@ export default {
       syncSettingsDialog: false,
       // IAM role state of the storage at load time.
       initialUseIamRole: false,
+      connectionTesting: false,
+      connectionHealth: null,
+      runtimeAuthMethods: [
+        { value: 'token', text: 'Token' },
+        { value: 'approle', text: 'AppRole' },
+        { value: 'kubernetes', text: 'Kubernetes JWT' },
+      ],
     };
+  },
+
+  computed: {
+    isRuntimeProvider() {
+      return this.item?.type === 'vault' || this.item?.type === 'openbao';
+    },
+
+    runtimeCredentialLabel() {
+      switch (this.item?.params?.auth_method) {
+        case 'approle':
+          return 'AppRole secret ID';
+        case 'kubernetes':
+          return 'Kubernetes JWT';
+        default:
+          return 'Token';
+      }
+    },
+
+    connectionHealthMessage() {
+      if (!this.connectionHealth) {
+        return '';
+      }
+      if (this.connectionHealth.state === 'healthy') {
+        return `Connection healthy (${this.connectionHealth.latency_ms || 0} ms)`;
+      }
+      return `Connection failed: ${this.connectionHealth.error_category || 'unavailable'}`;
+    },
+
+    useIamRole() {
+      return this.item?.params?.use_iam_role;
+    },
+
+    awsSecretRequired() {
+      if (this.useIamRole) {
+        return false;
+      }
+
+      // Switching the IAM role off removes the previously stored credentials,
+      // so a new secret must be provided.
+      return this.itemId === 'new' || this.initialUseIamRole;
+    },
   },
 
   methods: {
@@ -397,6 +553,15 @@ export default {
 
       this.initialUseIamRole = !!this.item.params.use_iam_role;
 
+      if (this.item.type === 'vault' || this.item.type === 'openbao') {
+        this.$set(this.item.params, 'mount', this.item.params.mount || 'secret');
+        this.$set(this.item.params, 'auth_method', this.item.params.auth_method || 'token');
+        this.$set(this.item.params, 'timeout', this.item.params.timeout || '5s');
+        this.item.readonly = true;
+        this.item.sync_enabled = false;
+        this.item.sync_paths = [];
+      }
+
       this.secretStorageReady = false;
       this.secretStorage = this.item.source_storage_type || 'database';
       this.$nextTick(() => {
@@ -420,21 +585,22 @@ export default {
     getSingleItemUrl() {
       return `/api/project/${this.projectId}/secret_storages/${this.itemId}`;
     },
-  },
 
-  computed: {
-    useIamRole() {
-      return this.item?.params?.use_iam_role;
-    },
-
-    awsSecretRequired() {
-      if (this.useIamRole) {
-        return false;
+    async testConnection() {
+      this.connectionTesting = true;
+      this.connectionHealth = null;
+      try {
+        this.connectionHealth = (await axios.post(
+          `/api/project/${this.projectId}/secret_storages/${this.itemId}/test`,
+        )).data;
+      } catch (err) {
+        this.connectionHealth = err.response?.data || {
+          state: 'failed',
+          error_category: getErrorMessage(err),
+        };
+      } finally {
+        this.connectionTesting = false;
       }
-
-      // Switching the IAM role off removes the previously stored credentials,
-      // so a new secret must be provided.
-      return this.itemId === 'new' || this.initialUseIamRole;
     },
   },
 
@@ -475,4 +641,22 @@ export default {
   }
 }
 
+@media (max-width: 600px) {
+  .runtime-credential-source {
+    align-items: stretch !important;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .runtime-credential-source .v-btn-toggle {
+    display: flex;
+    width: 100%;
+  }
+
+  .runtime-credential-source .v-btn {
+    flex: 1 1 0;
+    min-width: 0 !important;
+    padding: 0 6px !important;
+  }
+}
 </style>

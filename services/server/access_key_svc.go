@@ -1,10 +1,13 @@
 package server
 
 import (
+	"context"
 	"errors"
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
+	"github.com/semaphoreui/semaphore/pkg/tz"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
 
 type AccessKeyService interface {
@@ -15,20 +18,27 @@ type AccessKeyService interface {
 }
 
 type AccessKeyServiceImpl struct {
-	accessKeyRepo     db.AccessKeyManager
-	encryptionService AccessKeyEncryptionService
-	secretStorageRepo db.SecretStorageRepository
+	accessKeyRepo      db.AccessKeyManager
+	encryptionService  AccessKeyEncryptionService
+	secretStorageRepo  db.SecretStorageRepository
+	capabilityProvider pro_interfaces.CapabilityProvider
 }
 
 func NewAccessKeyService(
 	accessKeyRepo db.AccessKeyManager,
 	encryptionService AccessKeyEncryptionService,
 	secretStorageRepo db.SecretStorageRepository,
+	capabilityProviders ...pro_interfaces.CapabilityProvider,
 ) AccessKeyService {
+	var capabilityProvider pro_interfaces.CapabilityProvider
+	if len(capabilityProviders) > 0 {
+		capabilityProvider = capabilityProviders[0]
+	}
 	return &AccessKeyServiceImpl{
-		accessKeyRepo:     accessKeyRepo,
-		encryptionService: encryptionService,
-		secretStorageRepo: secretStorageRepo,
+		accessKeyRepo:      accessKeyRepo,
+		encryptionService:  encryptionService,
+		secretStorageRepo:  secretStorageRepo,
+		capabilityProvider: capabilityProvider,
 	}
 }
 
@@ -70,6 +80,12 @@ func (s *AccessKeyServiceImpl) GetAll(projectID int, options db.GetAccessKeyOpti
 }
 
 func (s *AccessKeyServiceImpl) Create(key db.AccessKey) (newKey db.AccessKey, err error) {
+	if err = s.requireRuntimeSecretWrite(key); err != nil {
+		return
+	}
+	if err = normalizeRuntimeSecretReference(&key, s.secretStorageRepo); err != nil {
+		return
+	}
 
 	// SerializeSecret encrypts/persists the secret for writable backends. For read-only
 	// external storage the secret is not stored in Semaphore, so SerializeSecret fails
@@ -86,6 +102,12 @@ func (s *AccessKeyServiceImpl) Create(key db.AccessKey) (newKey db.AccessKey, er
 func (s *AccessKeyServiceImpl) Update(key db.AccessKey) (err error) {
 	if !key.OverrideSecret {
 		err = s.accessKeyRepo.UpdateAccessKey(key)
+		return
+	}
+	if err = s.requireRuntimeSecretWrite(key); err != nil {
+		return
+	}
+	if err = normalizeRuntimeSecretReference(&key, s.secretStorageRepo); err != nil {
 		return
 	}
 
@@ -112,7 +134,9 @@ func (s *AccessKeyServiceImpl) Update(key db.AccessKey) (err error) {
 
 	if !key.IsNativelyReadOnly() {
 		err = s.encryptionService.SerializeSecret(&key)
-		if err != nil {
+		if err != nil && !(key.SourceStorageType != nil &&
+			*key.SourceStorageType == db.AccessKeySourceStorageVault &&
+			errors.Is(err, ErrReadOnlyStorage)) {
 			return
 		}
 	}
@@ -120,4 +144,30 @@ func (s *AccessKeyServiceImpl) Update(key db.AccessKey) (err error) {
 	err = s.accessKeyRepo.UpdateAccessKey(key)
 
 	return
+}
+
+func (s *AccessKeyServiceImpl) requireRuntimeSecretWrite(key db.AccessKey) error {
+	if key.SourceStorageType == nil || *key.SourceStorageType != db.AccessKeySourceStorageVault {
+		return nil
+	}
+	if s.capabilityProvider == nil {
+		return pro_interfaces.CapabilityDeniedError{
+			Decision: pro_interfaces.NewCapabilityDecision(
+				pro_interfaces.CapabilityRuntimeSecrets,
+				pro_interfaces.CapabilityStateUnavailable,
+				pro_interfaces.CapabilityReasonProviderUnavailable,
+				nil,
+				nil,
+			),
+			Required: pro_interfaces.CapabilityAccessWrite,
+		}
+	}
+	snapshot, err := s.capabilityProvider.Resolve(context.Background(), pro_interfaces.CapabilityRequest{
+		IsAdmin: true,
+		At:      tz.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	return snapshot.Require(pro_interfaces.CapabilityRuntimeSecrets, pro_interfaces.CapabilityAccessWrite)
 }
