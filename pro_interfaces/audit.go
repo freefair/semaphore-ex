@@ -20,6 +20,10 @@ const (
 	AuditActionProjectRunnerRead   AuditAction = "project_runner_read"
 	AuditActionProjectRunnerCreate AuditAction = "project_runner_create"
 	AuditActionProjectRunnerIssue  AuditAction = "project_runner_registration_issue"
+	AuditActionProjectRunnerUpdate AuditAction = "project_runner_update"
+	AuditActionProjectRunnerActive AuditAction = "project_runner_set_active"
+	AuditActionProjectRunnerDelete AuditAction = "project_runner_delete"
+	AuditActionProjectRunnerCache  AuditAction = "project_runner_cache_clear"
 )
 
 type AuditTargetType string
@@ -45,11 +49,12 @@ const (
 )
 
 const (
-	AuditReasonUnauthenticated = "unauthenticated"
-	AuditReasonCrossOrigin     = "cross_origin"
-	AuditReasonProviderError   = "provider_error"
-	AuditReasonInvalidInput    = "invalid_input"
-	AuditReasonOperationError  = "operation_error"
+	AuditReasonUnauthenticated   = "unauthenticated"
+	AuditReasonCrossOrigin       = "cross_origin"
+	AuditReasonProviderError     = "provider_error"
+	AuditReasonInvalidInput      = "invalid_input"
+	AuditReasonOperationError    = "operation_error"
+	AuditReasonActiveAssignments = "active_assignments"
 )
 
 type DependencyID string
@@ -139,6 +144,7 @@ func validAuditTarget(event AuditEvent) bool {
 func validAuditReason(reason string) bool {
 	switch reason {
 	case AuditReasonUnauthenticated, AuditReasonCrossOrigin, AuditReasonProviderError, AuditReasonInvalidInput, AuditReasonOperationError,
+		AuditReasonActiveAssignments,
 		string(CapabilityReasonActive), string(CapabilityReasonProviderUnavailable),
 		string(CapabilityReasonDisabledByAdmin), string(CapabilityReasonEntitlementExpired),
 		string(CapabilityReasonReadOnly), string(CapabilityReasonInsufficientPermission):
@@ -184,7 +190,9 @@ func validAuditAction(action AuditAction) bool {
 	case AuditActionCapabilityResolve, AuditActionCapabilityRead, AuditActionCapabilityWrite,
 		AuditActionCapabilityExecute, AuditActionCapabilityConfigure,
 		AuditActionProjectRunnerList, AuditActionProjectRunnerRead,
-		AuditActionProjectRunnerCreate, AuditActionProjectRunnerIssue:
+		AuditActionProjectRunnerCreate, AuditActionProjectRunnerIssue,
+		AuditActionProjectRunnerUpdate, AuditActionProjectRunnerActive,
+		AuditActionProjectRunnerDelete, AuditActionProjectRunnerCache:
 		return true
 	default:
 		return false

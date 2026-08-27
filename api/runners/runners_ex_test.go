@@ -8,6 +8,8 @@ import (
 	"github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/services/runners"
 	"github.com/semaphoreui/semaphore/services/server"
+	"github.com/semaphoreui/semaphore/services/tasks"
+	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"net/http"
@@ -88,4 +90,89 @@ func TestRegisterRunnerRejectsExpiredProjectToken(t *testing.T) {
 	stored, err := store.GetRunner(project.ID, runner.ID)
 	require.NoError(t, err)
 	assert.False(t, stored.IsRegistered())
+}
+
+func TestGetRunnerAcknowledgesCacheClearOnceAcrossRepeatedPolls(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "cache clear"})
+	require.NoError(t, err)
+	runner, err := store.CreateRunner(db.Runner{
+		Name: "cache runner", ProjectID: &project.ID, Token: db.GenerateRunnerToken(), Active: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.ClearRunnerCache(runner))
+	pool := tasks.CreateTaskPool(
+		store,
+		tasks.NewMemoryTaskStateStore(),
+		nil, nil, nil, nil, nil, nil, nil,
+	)
+	controller := NewRunnerController(store, &pool, nil, nil)
+
+	poll := func() runners.RunnerState {
+		fresh, getErr := store.GetRunner(project.ID, runner.ID)
+		require.NoError(t, getErr)
+		request := httptest.NewRequest(http.MethodGet, "/api/internal/runners", nil)
+		request = helpers.SetContextValue(request, "store", store)
+		request = helpers.SetContextValue(request, "runner", fresh)
+		response := httptest.NewRecorder()
+		controller.GetRunner(response, request)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var state runners.RunnerState
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &state))
+		return state
+	}
+
+	first := poll()
+	assert.True(t, first.ClearCache)
+	require.NotNil(t, first.CacheCleanProjectID)
+	assert.Equal(t, project.ID, *first.CacheCleanProjectID)
+
+	second := poll()
+	assert.False(t, second.ClearCache)
+	assert.Nil(t, second.CacheCleanProjectID)
+}
+
+func TestGetRunnerAcknowledgesEqualTimestampCacheClearOnce(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "equal timestamp cache clear"})
+	require.NoError(t, err)
+	runner, err := store.CreateRunner(db.Runner{
+		Name: "cache runner", ProjectID: &project.ID, Token: db.GenerateRunnerToken(), Active: true,
+	})
+	require.NoError(t, err)
+	equalTimestamp := time.Now().UTC().Truncate(time.Second)
+	_, err = store.Sql().Exec(
+		store.PrepareQuery("update runner set touched=?, cleaning_requested=? where id=?"),
+		equalTimestamp, equalTimestamp, runner.ID,
+	)
+	require.NoError(t, err)
+	pool := tasks.CreateTaskPool(
+		store,
+		tasks.NewMemoryTaskStateStore(),
+		nil, nil, nil, nil, nil, nil, nil,
+	)
+	controller := NewRunnerController(store, &pool, nil, nil)
+
+	poll := func() runners.RunnerState {
+		fresh, getErr := store.GetRunner(project.ID, runner.ID)
+		require.NoError(t, getErr)
+		request := httptest.NewRequest(http.MethodGet, "/api/internal/runners", nil)
+		request = helpers.SetContextValue(request, "store", store)
+		request = helpers.SetContextValue(request, "runner", fresh)
+		response := httptest.NewRecorder()
+		controller.GetRunner(response, request)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var state runners.RunnerState
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &state))
+		return state
+	}
+
+	assert.True(t, poll().ClearCache)
+	assert.False(t, poll().ClearCache)
 }

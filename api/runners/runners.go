@@ -97,7 +97,7 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if runner.CleaningRequested != nil && (runner.Touched == nil || runner.CleaningRequested.After(*runner.Touched)) {
+	if runner.IsCacheClearPending() {
 		clearCache = true
 	}
 

@@ -193,6 +193,35 @@ func TestProjectRunnerPermissionAuditDoesNotDuplicateDownstreamCapabilityDenial(
 	assert.Empty(t, auditRecorder.events)
 }
 
+func TestProjectRunnerLifecycleRoutesUseSpecificAuditActions(t *testing.T) {
+	tests := []struct {
+		method string
+		path   string
+		action pro_interfaces.AuditAction
+	}{
+		{http.MethodPut, "/api/project/12/runners/34", pro_interfaces.AuditActionProjectRunnerUpdate},
+		{http.MethodPost, "/api/project/12/runners/34/active", pro_interfaces.AuditActionProjectRunnerActive},
+		{http.MethodPost, "/api/project/12/runners/34/registration-token", pro_interfaces.AuditActionProjectRunnerIssue},
+		{http.MethodDelete, "/api/project/12/runners/34/cache", pro_interfaces.AuditActionProjectRunnerCache},
+		{http.MethodDelete, "/api/project/12/runners/34", pro_interfaces.AuditActionProjectRunnerDelete},
+	}
+	for _, test := range tests {
+		t.Run(string(test.action), func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, nil)
+			request = mux.SetURLVars(request, map[string]string{"project_id": "12", "runner_id": "34"})
+
+			descriptor, enhanced := enhancedAuditForRoute(request)
+
+			require.True(t, enhanced)
+			assert.Equal(t, test.action, descriptor.Action)
+			assert.Equal(t, pro_interfaces.AuditTargetProjectRunner, descriptor.TargetType)
+			assert.Equal(t, "runner:34", descriptor.TargetID)
+			require.NotNil(t, descriptor.ProjectID)
+			assert.Equal(t, 12, *descriptor.ProjectID)
+		})
+	}
+}
+
 func TestAnonymousProjectRunnerRequestIsAudited(t *testing.T) {
 	store := sqldb.InitConfigCreateTestStore()
 	defer store.Close()

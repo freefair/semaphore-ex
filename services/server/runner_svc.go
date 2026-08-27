@@ -51,9 +51,17 @@ type RunnerService interface {
 	// registered, it is reset to the unregistered state (auth token cleared,
 	// deactivated) so it can be registered again.
 	RegenerateRegistrationToken(runner db.Runner) (registrationToken string, err error)
+
+	UpdateProjectRunner(current db.Runner, changes db.Runner) (updated db.Runner, err error)
+	SetProjectRunnerActive(runner db.Runner, active bool) error
+	DeleteProjectRunner(runner db.Runner) error
+	ClearProjectRunnerCache(runner db.Runner) error
 }
 
 var ErrProjectRunnerRequiresProject = errors.New("project runner requires a project")
+var ErrProjectRunnerNameRequired = errors.New("project runner name is required")
+var ErrProjectRunnerUnregistered = errors.New("unregistered project runner cannot be activated")
+var ErrProjectRunnerParallelismInvalid = errors.New("project runner max parallel tasks cannot be negative")
 
 type RunnerServiceImpl struct {
 	runnerRepo db.RunnerManager
@@ -88,7 +96,12 @@ func (s *RunnerServiceImpl) RegenerateRegistrationToken(runner db.Runner) (regis
 	// This works for both unregistered and already-registered runners: a registered
 	// runner is reset to the unregistered state (its auth token is cleared and it is
 	// deactivated) and gets a fresh one-time registration token.
-	if err = s.runnerRepo.ResetRunnerRegistration(runner.ID, hash, expiresAt); err != nil {
+	if runner.ProjectID != nil {
+		err = s.runnerRepo.ResetProjectRunnerRegistration(runner.ID, *runner.ProjectID, hash, expiresAt)
+	} else {
+		err = s.runnerRepo.ResetRunnerRegistration(runner.ID, hash, expiresAt)
+	}
+	if err != nil {
 		return
 	}
 

@@ -51,7 +51,7 @@ func TestMigration_2_19_14_DataSurvivesRebuild(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// SqlDb.CreateTemplate writes working_directory, which appears only in 2.20.3,
+	// SqlDb.CreateTemplate writes working_directory, which appears only in 2.20.67,
 	// so seed the template with SQL matching the 2.19.12 schema.
 	templateID, err := store.insert("id",
 		"insert into project__template (project_id, repository_id, name, playbook, app) "+
@@ -59,15 +59,15 @@ func TestMigration_2_19_14_DataSurvivesRebuild(t *testing.T) {
 		projectID, repo.ID)
 	require.NoError(t, err)
 
-	task, err := store.CreateTask(db.Task{
-		TemplateID: templateID,
-		ProjectID:  projectID,
-		Status:     "success",
-		Playbook:   "site.yml",
-		UserID:     &user.ID,
-		Created:    now,
-	}, 0)
+	// Seed against the historical schema directly. The current Task mapping
+	// contains columns introduced after 2.19.12 and therefore cannot be used
+	// with gorp's full-struct INSERT at this point in the migration test.
+	taskID, err := store.insert("id", `
+		insert into task (template_id, project_id, status, playbook, environment, user_id, created)
+		values (?, ?, ?, ?, ?, ?, ?)`,
+		templateID, projectID, "success", "site.yml", "", user.ID, now)
 	require.NoError(t, err)
+	task := db.Task{ID: taskID}
 
 	_, err = store.CreateTaskOutput(db.TaskOutput{
 		TaskID: task.ID,

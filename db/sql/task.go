@@ -282,10 +282,16 @@ func (d *SqlDb) getTasks(projectID int, templateID *int, workflowRunID *int, tas
 	}
 
 	fields := "task.*"
+	runnerNameField := "runner.name"
+	if applied, migrationErr := d.IsMigrationApplied(db.Migration{Version: "2.20.3"}); migrationErr != nil {
+		return migrationErr
+	} else if applied {
+		runnerNameField = "coalesce(runner.name, task.runner_name)"
+	}
 	fields += ", tpl.playbook as tpl_playbook" +
 		", `user`.name as user_name" +
 		", task.runner_id as used_runner_id" +
-		", runner.name as used_runner_name" +
+		", " + runnerNameField + " as used_runner_name" +
 		", tpl.name as tpl_alias" +
 		", tpl.type as tpl_type" +
 		", tpl.app as tpl_app"

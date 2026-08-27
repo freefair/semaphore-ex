@@ -1,1 +1,1 @@
-alter table `project__template` drop column `working_directory`;
+alter table `task` drop `runner_name`;

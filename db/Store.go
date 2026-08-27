@@ -498,6 +498,7 @@ type RunnerManager interface {
 	GetRunner(projectID int, runnerID int) (Runner, error)
 	GetRunners(projectID int, activeAndRegisteredOnly bool, tagFilterMode RunnerTagFilterMode, tag *string) ([]Runner, error)
 	DeleteRunner(projectID int, runnerID int) error
+	SetProjectRunnerActive(projectID int, runnerID int, active bool) error
 	GetRunnerByToken(token string) (Runner, error)
 	GetGlobalRunner(runnerID int) (Runner, error)
 	GetAllRunners(activeAndRegisteredOnly bool, globalOnly bool, tagFilterMode RunnerTagFilterMode, tag *string) ([]Runner, error)
@@ -514,6 +515,7 @@ type RunnerManager interface {
 	// clears the auth token, public key and active flag, and stores a new one-time
 	// registration token hash and its expiry.
 	ResetRunnerRegistration(runnerID int, registrationTokenHash string, expiresAt time.Time) error
+	ResetProjectRunnerRegistration(runnerID int, projectID int, registrationTokenHash string, expiresAt time.Time) error
 	TouchRunner(runner Runner) (err error)
 	ClearRunnerCache(runner Runner) (err error)
 	GetRunnerTags(projectID int) ([]RunnerTag, error)

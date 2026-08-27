@@ -2,10 +2,9 @@ package db
 
 import (
 	"encoding/base64"
+	"github.com/gorilla/securecookie"
 	"slices"
 	"time"
-
-	"github.com/gorilla/securecookie"
 )
 
 type RunnerState string

@@ -90,6 +90,7 @@
     ></v-text-field>
 
     <v-checkbox
+      v-if="!projectId"
       style="position: absolute; left: 24px; bottom: 15px"
       class="mt-0"
       v-model="item.active"

@@ -2,7 +2,6 @@ package sql
 
 import (
 	"fmt"
-
 	"github.com/Masterminds/squirrel"
 	"github.com/semaphoreui/semaphore/db"
 )
@@ -85,8 +84,43 @@ func (d *SqlDb) GetRunners(projectID int, activeOnly bool, tagFilterMode db.Runn
 }
 
 func (d *SqlDb) DeleteRunner(projectID int, runnerID int) (err error) {
-	err = d.deleteObject(projectID, runnerProps, runnerID)
-	return
+	runner, err := d.GetRunner(projectID, runnerID)
+	if err != nil {
+		return err
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(d.PrepareQuery("update task set runner_name=? where project_id=? and runner_id=?"),
+		runner.Name, projectID, runnerID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	query, args, err := squirrel.Delete("runner").
+		Where(squirrel.Eq{"id": runnerID, "project_id": projectID}).
+		Where("not exists (select 1 from task where task.runner_id=runner.id and task.status in (?,?,?,?,?,?,?))",
+			unfinishedRunnerStatusArgs()...).
+		ToSql()
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	result, err := tx.Exec(d.PrepareQuery(query), args...)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if deleted != 1 {
+		_ = tx.Rollback()
+		return d.runnerLifecycleConflict(projectID, runnerID)
+	}
+	return tx.Commit()
 }
 
 func (d *SqlDb) GetRunnerCount() (res int, err error) {

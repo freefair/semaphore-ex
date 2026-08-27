@@ -3,11 +3,10 @@ package sql
 import (
 	"database/sql"
 	"fmt"
-	"time"
-
 	"github.com/Masterminds/squirrel"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
+	"time"
 )
 
 func (d *SqlDb) GetRunnerByToken(token string) (runner db.Runner, err error) {
@@ -137,10 +136,20 @@ func (d *SqlDb) ClearRunnerCache(runner db.Runner) (err error) {
 }
 
 func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
+	touchedAt := tz.Now()
+	if runner.IsCacheClearPending() {
+		// MySQL/MariaDB DATETIME columns can round both the request and the
+		// preceding heartbeat to the same second. Persist the acknowledgement
+		// strictly after the request so a repeated poll does not clear twice.
+		acknowledgedAt := runner.CleaningRequested.Add(time.Second)
+		if touchedAt.Before(acknowledgedAt) {
+			touchedAt = acknowledgedAt
+		}
+	}
 	if runner.ProjectID == nil {
 		_, err = d.exec(
 			"update `runner` set `touched`=?, `started_at`=? where id=?",
-			tz.Now(),
+			touchedAt,
 			runner.StartedAt,
 			runner.ID)
 		return
@@ -148,7 +157,7 @@ func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
 
 	_, err = d.exec(
 		"update `runner` set `touched`=?, `started_at`=? where id=? and project_id=?",
-		tz.Now(),
+		touchedAt,
 		runner.StartedAt,
 		runner.ID,
 		runner.ProjectID)

@@ -479,7 +479,7 @@ semaphore runner start --config ./config.runner.json</pre
           v-model="item.active"
           inset
           @change="setActive(item.id, item.active)"
-          :disabled="item.project_id == null && !isAdmin"
+          :disabled="(item.project_id == null && !isAdmin) || isRunnerDeleting(item.id)"
         />
       </template>
 
@@ -523,6 +523,17 @@ semaphore runner start --config ./config.runner.json</pre
       </template>
 
       <template v-slot:item.status="{ item }">
+        <v-chip
+          v-if="item.project_id != null"
+          :data-testid="`runner-lifecycle-${item.id}`"
+          class="mr-1 mb-1"
+          small
+          :color="runnerLifecycleColor(item)"
+          :dark="runnerLifecycleState(item) !== 'inactive'"
+          style="font-weight: bold"
+        >
+          {{ $t(runnerLifecycleLabel(item)) }}
+        </v-chip>
         <v-tooltip bottom>
           <template v-slot:activator="{ on, attrs }">
             <v-chip
@@ -575,7 +586,7 @@ semaphore runner start --config ./config.runner.json</pre
           >
             <template v-slot:activator="{ on, attrs }">
               <v-btn
-                :disabled="item.project_id == null && !isAdmin"
+                :disabled="(item.project_id == null && !isAdmin) || isRunnerDeleting(item.id)"
                 class="mr-1"
                 icon
                 v-bind="attrs"
@@ -598,7 +609,7 @@ semaphore runner start --config ./config.runner.json</pre
             icon
             class="mr-1"
             @click="askDeleteItem(item.id)"
-            :disabled="item.project_id == null && !isAdmin"
+            :disabled="(item.project_id == null && !isAdmin) || isRunnerDeleting(item.id)"
           >
             <v-icon>mdi-delete</v-icon>
           </v-btn>
@@ -608,7 +619,7 @@ semaphore runner start --config ./config.runner.json</pre
             icon
             class="mr-1"
             @click="editItem(item.id)"
-            :disabled="item.project_id == null && !isAdmin"
+            :disabled="(item.project_id == null && !isAdmin) || isRunnerDeleting(item.id)"
           >
             <v-icon>mdi-pencil</v-icon>
           </v-btn>
@@ -621,7 +632,9 @@ semaphore runner start --config ./config.runner.json</pre
                 icon
                 class="mr-1"
                 @click="clearCache(item)"
-                :disabled="item.project_id == null && !isAdmin"
+                :disabled="(item.project_id == null && !isAdmin)
+                  || isRunnerDeleting(item.id)
+                  || runnerLifecycleState(item) === 'cache-cleaning'"
               >
                 <v-icon>mdi-broom</v-icon>
               </v-btn>
@@ -643,6 +656,8 @@ semaphore runner start --config ./config.runner.json</pre
   </div>
 </template>
 <script>
+import enhancedMethods from '@/lib/enhanced/runners';
+
 import EventBus from '@/event-bus';
 import YesNoDialog from '@/components/YesNoDialog.vue';
 import ItemListPageBase from '@/components/ItemListPageBase';
@@ -817,10 +832,13 @@ ${advancedOptions}-d semaphoreui/runner:${this.version}`;
       resetRegistrationDialog: false,
       resetRegistrationRunner: null,
       advancedOptions: null,
+      deletingRunnerIds: [],
+      cacheCleaningRunnerIds: [],
     };
   },
 
   methods: {
+    ...enhancedMethods,
     checkIntervalRule(v) {
       const n = Number(v);
       return (Number.isInteger(n) && n > 0) || this.$t('runnerCheckIntervalInvalid');
@@ -834,6 +852,9 @@ ${advancedOptions}-d semaphoreui/runner:${this.version}`;
         : `/api/runners/${runner.id}/cache`;
 
       try {
+        if (!this.cacheCleaningRunnerIds.includes(runner.id)) {
+          this.cacheCleaningRunnerIds.push(runner.id);
+        }
         await axios({
           method: 'delete',
           url,
@@ -843,8 +864,10 @@ ${advancedOptions}-d semaphoreui/runner:${this.version}`;
       } catch (e) {
         EventBus.$emit('i-snackbar', {
           color: 'error',
-          text: `Cannot clear cache: ${e.message}`,
+          text: this.lifecycleErrorMessage(e),
         });
+      } finally {
+        this.cacheCleaningRunnerIds = this.cacheCleaningRunnerIds.filter((id) => id !== runner.id);
       }
     },
 
@@ -884,7 +907,7 @@ ${advancedOptions}-d semaphoreui/runner:${this.version}`;
       } catch (e) {
         EventBus.$emit('i-snackbar', {
           color: 'error',
-          text: `Cannot regenerate registration token: ${e.message}`,
+          text: this.lifecycleErrorMessage(e),
         });
       }
     },
@@ -926,14 +949,26 @@ ${advancedOptions}-d semaphoreui/runner:${this.version}`;
         ? `/api/project/${projectId}/runners/${runnerId}/active`
         : `/api/runners/${runnerId}/active`;
 
-      await axios({
-        method: 'post',
-        url,
-        responseType: 'json',
-        data: {
-          active,
-        },
-      });
+      try {
+        await axios({
+          method: 'post',
+          url,
+          responseType: 'json',
+          data: {
+            active,
+          },
+        });
+        await this.loadItems();
+      } catch (error) {
+        const runner = this.items.find((item) => item.id === runnerId);
+        if (runner) {
+          runner.active = !active;
+        }
+        EventBus.$emit('i-snackbar', {
+          color: 'error',
+          text: this.lifecycleErrorMessage(error),
+        });
+      }
     },
 
     getHeaders() {
