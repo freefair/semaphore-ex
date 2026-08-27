@@ -137,7 +137,7 @@ func GetMigrations(dialect string) []Migration {
 		{Version: "2.20.1"},
 		{Version: "2.20.2"},
 		{Version: "2.20.3"},
-		// Keep shipped fork migration identities stable when upstream reuses a version.
+		{Version: "2.20.4"},
 		{Version: "2.20.66"},
 		{Version: "2.20.67"},
 	}

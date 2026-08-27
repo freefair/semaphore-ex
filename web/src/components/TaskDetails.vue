@@ -116,9 +116,9 @@
                   <td><b>{{ $t('duration') }}</b></td>
                   <td>{{ [item.start, item.end] | formatMilliseconds }}</td>
                 </tr>
-                <tr v-if="item.used_runner_name">
+                <tr v-if="runnerIdentity">
                   <td><b>Runner</b></td>
-                  <td>{{ item.used_runner_name }}</td>
+                  <td data-testid="task-runner-identity">{{ runnerIdentity }}</td>
                 </tr>
                 </tbody>
               </template>
@@ -263,6 +263,13 @@ export default {
   },
 
   computed: {
+    runnerIdentity() {
+      const id = this.item?.used_runner_id;
+      const name = this.item?.used_runner_name;
+      if (id == null) return name || '';
+      return name ? `#${id} — ${name}` : `#${id}`;
+    },
+
     parsedArtifacts() {
       const raw = this.item?.artifacts;
       if (raw == null || raw === '') return null;

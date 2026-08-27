@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
@@ -44,6 +45,17 @@ func NewProjectRunnerController(
 type runnerRegistrationResponse struct {
 	db.Runner
 	RegistrationToken string `json:"registration_token"`
+}
+
+const (
+	defaultRunnerHistoryPageSize = 20
+	maxRunnerHistoryPageSize     = 100
+)
+
+type runnerHistoryResponse struct {
+	Items      []db.RunnerTaskHistoryItem `json:"items"`
+	HasMore    bool                       `json:"has_more"`
+	NextBefore *int                       `json:"next_before,omitempty"`
 }
 
 func (c *ProjectRunnerControllerImpl) GetRunners(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +140,74 @@ func (c *ProjectRunnerControllerImpl) GetRunner(w http.ResponseWriter, r *http.R
 	runner.FillStatus(tz.Now(), util.Config.RunnersOfflineTimeout())
 	c.recordAudit(r, pro_interfaces.AuditActionProjectRunnerRead, pro_interfaces.AuditOutcomeAllowed, string(pro_interfaces.CapabilityReasonActive), runnerTarget(runner.ID))
 	helpers.WriteJSON(w, http.StatusOK, runner)
+}
+
+func (c *ProjectRunnerControllerImpl) GetRunnerHealth(w http.ResponseWriter, r *http.Request) {
+	runner := helpers.GetFromContext(r, "runner").(*db.Runner)
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead,
+		pro_interfaces.AuditActionProjectRunnerHealth, runnerTarget(runner.ID)) {
+		return
+	}
+	health := c.runnerService.GetProjectRunnerHealth(
+		*runner,
+		tz.Now(),
+		util.Config.RunnersOfflineTimeout(),
+	)
+	c.recordAudit(r, pro_interfaces.AuditActionProjectRunnerHealth, pro_interfaces.AuditOutcomeAllowed,
+		string(pro_interfaces.CapabilityReasonActive), runnerTarget(runner.ID))
+	helpers.WriteJSON(w, http.StatusOK, health)
+}
+
+func (c *ProjectRunnerControllerImpl) GetRunnerHistory(w http.ResponseWriter, r *http.Request) {
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	runnerID, err := helpers.GetIntParam("runner_id", w, r)
+	if err != nil {
+		return
+	}
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead,
+		pro_interfaces.AuditActionProjectRunnerHistory, runnerTarget(runnerID)) {
+		return
+	}
+	pageSize, before := runnerHistoryPageParams(r)
+	items, err := c.runnerService.GetProjectRunnerHistory(project.ID, runnerID, db.RetrieveQueryParams{
+		Count:    pageSize + 1,
+		BeforeID: before,
+	})
+	if err != nil {
+		c.recordAudit(r, pro_interfaces.AuditActionProjectRunnerHistory, pro_interfaces.AuditOutcomeFailure,
+			pro_interfaces.AuditReasonOperationError, runnerTarget(runnerID))
+		helpers.WriteErrorStatus(w, "PROJECT_RUNNER_HISTORY_UNAVAILABLE", http.StatusInternalServerError)
+		return
+	}
+	hasMore := len(items) > pageSize
+	if hasMore {
+		items = items[:pageSize]
+	}
+	var nextBefore *int
+	if hasMore && len(items) > 0 {
+		cursor := items[len(items)-1].TaskID
+		nextBefore = &cursor
+	}
+	w.Header().Set("X-Has-Next", strconv.FormatBool(hasMore))
+	c.recordAudit(r, pro_interfaces.AuditActionProjectRunnerHistory, pro_interfaces.AuditOutcomeAllowed,
+		string(pro_interfaces.CapabilityReasonActive), runnerTarget(runnerID))
+	helpers.WriteJSON(w, http.StatusOK, runnerHistoryResponse{
+		Items: items, HasMore: hasMore, NextBefore: nextBefore,
+	})
+}
+
+func runnerHistoryPageParams(r *http.Request) (pageSize int, before int) {
+	pageSize = defaultRunnerHistoryPageSize
+	if value, err := strconv.Atoi(r.URL.Query().Get("count")); err == nil && value > 0 {
+		pageSize = value
+	}
+	if pageSize > maxRunnerHistoryPageSize {
+		pageSize = maxRunnerHistoryPageSize
+	}
+	if value, err := strconv.Atoi(r.URL.Query().Get("before")); err == nil && value > 0 {
+		before = value
+	}
+	return
 }
 
 func (c *ProjectRunnerControllerImpl) RegenerateRegistrationToken(w http.ResponseWriter, r *http.Request) {
@@ -350,6 +430,10 @@ func actionForRunnerRequest(r *http.Request) pro_interfaces.AuditAction {
 		return pro_interfaces.AuditActionProjectRunnerActive
 	case strings.HasSuffix(r.URL.Path, "/cache"):
 		return pro_interfaces.AuditActionProjectRunnerCache
+	case strings.HasSuffix(r.URL.Path, "/health"):
+		return pro_interfaces.AuditActionProjectRunnerHealth
+	case strings.HasSuffix(r.URL.Path, "/history"):
+		return pro_interfaces.AuditActionProjectRunnerHistory
 	case r.Method == http.MethodDelete:
 		return pro_interfaces.AuditActionProjectRunnerDelete
 	case r.Method == http.MethodPut || r.Method == http.MethodPost:

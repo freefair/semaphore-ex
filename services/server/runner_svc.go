@@ -58,6 +58,8 @@ type RunnerService interface {
 	SetProjectRunnerActive(runner db.Runner, active bool) error
 	DeleteProjectRunner(runner db.Runner) error
 	ClearProjectRunnerCache(runner db.Runner) error
+	GetProjectRunnerHealth(runner db.Runner, now time.Time, offlineTimeout time.Duration) db.RunnerHealth
+	GetProjectRunnerHistory(projectID int, runnerID int, params db.RetrieveQueryParams) ([]db.RunnerTaskHistoryItem, error)
 }
 
 var ErrProjectRunnerRequiresProject = errors.New("project runner requires a project")
@@ -176,4 +178,23 @@ func (s *RunnerServiceImpl) ClearProjectRunnerCache(runner db.Runner) error {
 		return ErrProjectRunnerRequiresProject
 	}
 	return s.runnerRepo.ClearRunnerCache(runner)
+}
+
+func (s *RunnerServiceImpl) GetProjectRunnerHealth(
+	runner db.Runner,
+	now time.Time,
+	offlineTimeout time.Duration,
+) db.RunnerHealth {
+	return runner.Health(now, offlineTimeout)
+}
+
+func (s *RunnerServiceImpl) GetProjectRunnerHistory(
+	projectID int,
+	runnerID int,
+	params db.RetrieveQueryParams,
+) ([]db.RunnerTaskHistoryItem, error) {
+	if projectID <= 0 {
+		return nil, ErrProjectRunnerRequiresProject
+	}
+	return s.runnerRepo.GetRunnerTaskHistory(projectID, runnerID, params)
 }

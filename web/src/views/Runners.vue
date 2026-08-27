@@ -363,6 +363,12 @@ semaphore runner start --config ./config.runner.json</pre
       @yes="deleteItem(itemId)"
     />
 
+    <RunnerHealthDialog
+      v-model="runnerHealthDialog"
+      :project-id="projectId"
+      :runner="selectedHealthRunner"
+    />
+
     <YesNoDialog
       v-model="resetRegistrationDialog"
       :text="$t('askResetRunnerRegistration')"
@@ -605,6 +611,18 @@ semaphore runner start --config ./config.runner.json</pre
           </v-tooltip>
 
           <v-btn
+            v-if="item.project_id != null"
+            :data-testid="`runner-health-${item.id}`"
+            :aria-label="$t('runnerHealthAndHistory')"
+            icon
+            class="mr-1"
+            :disabled="isRunnerDeleting(item.id)"
+            @click="openRunnerHealth(item)"
+          >
+            <v-icon>mdi-heart-pulse</v-icon>
+          </v-btn>
+
+          <v-btn
             v-if="item.project_id != null || projectId == null"
             icon
             class="mr-1"
@@ -661,6 +679,7 @@ import YesNoDialog from '@/components/YesNoDialog.vue';
 import ItemListPageBase from '@/components/ItemListPageBase';
 import EditDialog from '@/components/EditDialog.vue';
 import RunnerForm from '@/components/RunnerForm.vue';
+import RunnerHealthDialog from '@/components/RunnerHealthDialog.vue';
 import axios from 'axios';
 import CopyClipboardButton from '@/components/CopyClipboardButton.vue';
 import PageMixin from '@/components/PageMixin';
@@ -674,6 +693,7 @@ export default {
     HighlightedCard,
     CopyClipboardButton,
     RunnerForm,
+    RunnerHealthDialog,
     YesNoDialog,
     EditDialog,
   },
@@ -833,6 +853,8 @@ ${advancedOptions}-d semaphoreui/runner:${this.version}`;
       advancedOptions: null,
       deletingRunnerIds: [],
       cacheCleaningRunnerIds: [],
+      runnerHealthDialog: false,
+      selectedHealthRunner: null,
     };
   },
 
@@ -840,6 +862,11 @@ ${advancedOptions}-d semaphoreui/runner:${this.version}`;
     checkIntervalRule(v) {
       const n = Number(v);
       return (Number.isInteger(n) && n > 0) || this.$t('runnerCheckIntervalInvalid');
+    },
+
+    openRunnerHealth(runner) {
+      this.selectedHealthRunner = runner;
+      this.runnerHealthDialog = true;
     },
 
     isRunnerDeleting(runnerId) {

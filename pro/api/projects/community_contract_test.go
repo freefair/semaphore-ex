@@ -42,6 +42,8 @@ func TestCommunityProjectResourcesAreNotFound(t *testing.T) {
 	handlers := map[string]http.HandlerFunc{
 		"add runner":                runnerController.AddRunner,
 		"get runner":                runnerController.GetRunner,
+		"get runner health":         runnerController.GetRunnerHealth,
+		"get runner history":        runnerController.GetRunnerHistory,
 		"update runner":             runnerController.UpdateRunner,
 		"delete runner":             runnerController.DeleteRunner,
 		"activate runner":           runnerController.SetRunnerActive,

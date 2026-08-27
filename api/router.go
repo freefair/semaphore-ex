@@ -399,11 +399,15 @@ func Route(
 
 	projectUserAPI.Path("/runners").HandlerFunc(projectRunnerController.GetRunners).Methods("GET", "HEAD")
 	projectUserAPI.Path("/runners").HandlerFunc(projectRunnerController.AddRunner).Methods("POST")
+	// History intentionally does not require a live runner row: finished task
+	// snapshots remain queryable after the runner has been deleted.
+	projectUserAPI.Path("/runners/{runner_id}/history").HandlerFunc(projectRunnerController.GetRunnerHistory).Methods("GET", "HEAD")
 	projectUserAPI.Path("/runner_tags").HandlerFunc(projectRunnerController.GetRunnerTags).Methods("GET", "HEAD")
 
 	projectRunnersAPI := projectUserAPI.PathPrefix("/runners").Subrouter()
 	projectRunnersAPI.Use(projectRunnerController.RunnerMiddleware)
 	projectRunnersAPI.Path("/{runner_id}").HandlerFunc(projectRunnerController.GetRunner).Methods("GET", "HEAD")
+	projectRunnersAPI.Path("/{runner_id}/health").HandlerFunc(projectRunnerController.GetRunnerHealth).Methods("GET", "HEAD")
 	projectRunnersAPI.Path("/{runner_id}").HandlerFunc(projectRunnerController.UpdateRunner).Methods("PUT", "POST")
 	projectRunnersAPI.Path("/{runner_id}/active").HandlerFunc(projectRunnerController.SetRunnerActive).Methods("POST")
 	projectRunnersAPI.Path("/{runner_id}/registration-token").HandlerFunc(projectRunnerController.RegenerateRegistrationToken).Methods("POST")

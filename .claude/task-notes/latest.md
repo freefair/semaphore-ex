@@ -1,7 +1,7 @@
 # Task: Implement selected enhanced edition slices
 
 **Started:** 2026-08-25
-**Last update:** 2026-08-27 12:11
+**Last update:** 2026-08-27 12:45
 
 ## Scope
 Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with tests, documentation, review, and atomic commits
@@ -46,6 +46,12 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 
 - 2026-08-27 12:11 — Slice 011 browser acceptance completed on the isolated Enhanced QA instance: edit, deactivate, cache clear, re-registration, and delete all exercised; the runner was removed and the browser console had no errors.
 
+- 2026-08-27 12:16 — Slice 012 red contract created at /tmp/semaphore-runner-health-history-contract.go. It fails on the intentionally missing version/platform/load health model, runner identity snapshot, and paginated runner task history APIs.
+
+- 2026-08-27 12:29 — Slice 012 first green: /tmp health/history contract passes; focused core and clean-room Go tests pass; changed frontend files lint clean; all four new health/history UI tests pass; web and docs production builds exit 0. The full Vue runner still has the three pre-existing ArgsPicker, YesNoDialog, and Socket failures.
+
+- 2026-08-27 12:45 — Slice 012 browser acceptance passed on the isolated Enhanced QA instance at desktop and 390x844: online, offline, webhook, restart uptime reset, 12-row history pagination, responsive layouts, and zero browser console warnings/errors. Browser QA caught and drove fixes for clipped desktop columns and mobile table/title overflow.
+
 ## Decisions
 
 - **Pin the Docker build toolchain to Go 1.26.5 and Node.js 24.19.0 images by multi-architecture digest.** (2026-08-25): The isolated /tmp Dockerfile proved the Node-based builder can import the pinned Go toolchain. This removes the mutable Alpine Node package from the build and preserves multi-architecture builds.
@@ -67,6 +73,8 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 - **Do not apply the legacy subscription runner quota in the clean-room project-runner controller.** (2026-08-25): Commercial quotas are explicitly unselected. The Community subscription service always denies CanAddRunner, which made the enhanced create flow return 409 even with an active project_runners capability; backend capability state is the selected availability authority.
 
 - **Scope project-runner audit events through AuditEvent.ProjectID and contract 1.4.0** (2026-08-26): Existing project foreign key and EventLogRecord project field provide the narrow shared boundary; a typed project_runner_audit fallback retains anonymous nonexistent-project attempts without exposing them in user feeds.
+
+- **Separate live runner ownership from historical runner identity** (2026-08-27): task.runner_id remains the live authorization/foreign-key relation, while runner_id_snapshot and runner_name retain non-secret assignment attribution after deletion; health remains latest-report state so uptime can be derived and reset on restart without an append-only health table.
 
 ## Open
 
@@ -111,3 +119,4 @@ Open the Codex in-app Browser at http://127.0.0.1:8080, then complete the Slice 
 Commit the verified Slice 010 audit-scope fix, then begin Slice 011 with a failing /tmp lifecycle contract.
 Slice 011 browser acceptance: in-app Browser unavailable after turn change; ntfy-cc --ask sent. Verify edit/deactivate/cache-clear/re-register/delete before starting Slice 012. When Dennis replies bereit, reconnect the in-app Browser to the isolated local Enhanced instance, finish the Slice 011 lifecycle flow, record evidence, then begin Slice 012 with a failing /tmp health/history contract.
 Begin Slice 012 with a failing /tmp contract covering runner health samples, bounded history pagination, and retained runner identity.
+Commit verified Slice 012 docs and implementation atomically, then begin Slice 013 with a failing deterministic reconciliation contract.

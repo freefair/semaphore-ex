@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -105,6 +106,9 @@ func NewJobPool(keyInstaller db_lib.AccessKeyInstaller) *JobPool {
 func (p *JobPool) setCommonHeaders(req *http.Request) {
 	req.Header.Set("X-Runner-Token", util.Config.Runner.Token)
 	req.Header.Set("X-Runner-Started-At", p.startedAt.UTC().Format(time.RFC3339))
+	req.Header.Set(RunnerVersionHeader, util.Version())
+	req.Header.Set(RunnerPlatformHeader, runtime.GOOS+"/"+runtime.GOARCH)
+	req.Header.Set(RunnerCurrentLoadHeader, strconv.Itoa(p.runningJobsCount()))
 }
 
 // addRunningJob registers a running job under the lock.

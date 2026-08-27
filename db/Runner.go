@@ -15,9 +15,16 @@ type RunnerState string
 // RunnerStatus reports whether a runner is currently reachable.
 type RunnerStatus string
 
+// RunnerHeartbeatState distinguishes poll-based liveness from webhook delivery.
+type RunnerHeartbeatState string
+
 const (
 	RunnerStatusOnline  RunnerStatus = "online"
 	RunnerStatusOffline RunnerStatus = "offline"
+
+	RunnerHeartbeatOnline  RunnerHeartbeatState = "online"
+	RunnerHeartbeatOffline RunnerHeartbeatState = "offline"
+	RunnerHeartbeatWebhook RunnerHeartbeatState = "webhook"
 )
 
 type RunnerTagFilterMode string
@@ -47,6 +54,12 @@ type Runner struct {
 	// It changes on every restart, which is how the server detects that a
 	// runner lost its in-memory job pool while still polling.
 	StartedAt *time.Time `db:"started_at" json:"started_at"`
+	Version   string     `db:"version" json:"version" backup:"-"`
+	Platform  string     `db:"platform" json:"platform" backup:"-"`
+
+	// CurrentLoad is the bounded number of jobs reported by the runner on its
+	// latest poll. It is operational metadata, not an assignment authority.
+	CurrentLoad int `db:"current_load" json:"current_load" backup:"-"`
 
 	PublicKey *string `db:"public_key" json:"-"`
 
@@ -110,6 +123,64 @@ func (r *Runner) FillStatus(now time.Time, offlineTimeout time.Duration) {
 	}
 }
 
+// HeartbeatState reports whether a runner is live, stale, or webhook-driven.
+func (r Runner) HeartbeatState(now time.Time, offlineTimeout time.Duration) RunnerHeartbeatState {
+	if r.Webhook != "" {
+		return RunnerHeartbeatWebhook
+	}
+	if r.IsOnline(now, offlineTimeout) {
+		return RunnerHeartbeatOnline
+	}
+	return RunnerHeartbeatOffline
+}
+
+// RunnerHealth is the non-secret operational projection shown to operators.
+type RunnerHealth struct {
+	RunnerID                int                  `json:"runner_id"`
+	Name                    string               `json:"name"`
+	Version                 string               `json:"version"`
+	Platform                string               `json:"platform"`
+	StartedAt               *time.Time           `json:"started_at,omitempty"`
+	LastHeartbeat           *time.Time           `json:"last_heartbeat,omitempty"`
+	UptimeSeconds           *int64               `json:"uptime_seconds,omitempty"`
+	HeartbeatAgeSeconds     *int64               `json:"heartbeat_age_seconds,omitempty"`
+	HeartbeatTimeoutSeconds int64                `json:"heartbeat_timeout_seconds"`
+	HeartbeatState          RunnerHeartbeatState `json:"heartbeat_state"`
+	CurrentLoad             int                  `json:"current_load"`
+	MaxParallelTasks        int                  `json:"max_parallel_tasks"`
+}
+
+// Health derives an operator projection from persisted runner report metadata.
+func (r Runner) Health(now time.Time, offlineTimeout time.Duration) RunnerHealth {
+	health := RunnerHealth{
+		RunnerID:                r.ID,
+		Name:                    r.Name,
+		Version:                 r.Version,
+		Platform:                r.Platform,
+		StartedAt:               r.StartedAt,
+		LastHeartbeat:           r.Touched,
+		HeartbeatTimeoutSeconds: int64(offlineTimeout / time.Second),
+		HeartbeatState:          r.HeartbeatState(now, offlineTimeout),
+		CurrentLoad:             r.CurrentLoad,
+		MaxParallelTasks:        r.MaxParallelTasks,
+	}
+	if r.StartedAt != nil {
+		seconds := int64(now.Sub(*r.StartedAt) / time.Second)
+		if seconds < 0 {
+			seconds = 0
+		}
+		health.UptimeSeconds = &seconds
+	}
+	if r.Touched != nil {
+		seconds := int64(now.Sub(*r.Touched) / time.Second)
+		if seconds < 0 {
+			seconds = 0
+		}
+		health.HeartbeatAgeSeconds = &seconds
+	}
+	return health
+}
+
 type RunnerTag struct {
 	Tag             string `db:"-" json:"tag"`
 	NumberOfRunners int    `db:"-" json:"number_of_runners"`
@@ -120,6 +191,19 @@ type RunnerTag struct {
 type RunnerTaskAssignment struct {
 	TaskID int                    `db:"task_id" json:"task_id"`
 	Status task_logger.TaskStatus `db:"status" json:"status"`
+}
+
+// RunnerTaskHistoryItem is a bounded, non-secret completed-assignment projection.
+type RunnerTaskHistoryItem struct {
+	TaskID       int                    `db:"task_id" json:"task_id"`
+	TemplateID   int                    `db:"template_id" json:"template_id"`
+	TemplateName string                 `db:"template_name" json:"template_name"`
+	Status       task_logger.TaskStatus `db:"status" json:"status"`
+	RunnerID     int                    `db:"runner_id" json:"runner_id"`
+	RunnerName   string                 `db:"runner_name" json:"runner_name"`
+	Created      time.Time              `db:"created" json:"created"`
+	Start        *time.Time             `db:"start" json:"start,omitempty"`
+	End          *time.Time             `db:"end" json:"end,omitempty"`
 }
 
 // RunnerLifecycleConflictError reports every assignment that blocked a

@@ -521,6 +521,7 @@ type RunnerManager interface {
 	GetRunnerTags(projectID int) ([]RunnerTag, error)
 	GetGlobalRunnerTags() ([]RunnerTag, error)
 	GetRunnerCount() (int, error)
+	GetRunnerTaskHistory(projectID int, runnerID int, params RetrieveQueryParams) ([]RunnerTaskHistoryItem, error)
 }
 
 // EventManager handles event-related operations

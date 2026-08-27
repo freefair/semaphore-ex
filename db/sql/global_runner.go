@@ -149,17 +149,23 @@ func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
 	}
 	if runner.ProjectID == nil {
 		_, err = d.exec(
-			"update `runner` set `touched`=?, `started_at`=? where id=?",
+			"update `runner` set `touched`=?, `started_at`=?, `version`=?, `platform`=?, `current_load`=? where id=?",
 			touchedAt,
 			runner.StartedAt,
+			runner.Version,
+			runner.Platform,
+			runner.CurrentLoad,
 			runner.ID)
 		return
 	}
 
 	_, err = d.exec(
-		"update `runner` set `touched`=?, `started_at`=? where id=? and project_id=?",
+		"update `runner` set `touched`=?, `started_at`=?, `version`=?, `platform`=?, `current_load`=? where id=? and project_id=?",
 		touchedAt,
 		runner.StartedAt,
+		runner.Version,
+		runner.Platform,
+		runner.CurrentLoad,
 		runner.ID,
 		runner.ProjectID)
 
@@ -287,7 +293,7 @@ func (d *SqlDb) ResetProjectRunnerRegistration(
 func (d *SqlDb) CreateRunner(runner db.Runner) (newRunner db.Runner, err error) {
 	insertID, err := d.insert(
 		"id",
-		"insert into `runner` (project_id, token, webhook, max_parallel_tasks, `name`, `active`, `is_default`, public_key, registration_token, registration_token_expires_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"insert into `runner` (project_id, token, webhook, max_parallel_tasks, `name`, `active`, `is_default`, public_key, registration_token, registration_token_expires_at, `version`, `platform`, current_load) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		runner.ProjectID,
 		runner.Token,
 		runner.Webhook,
@@ -297,7 +303,10 @@ func (d *SqlDb) CreateRunner(runner db.Runner) (newRunner db.Runner, err error) 
 		runner.IsDefault,
 		runner.PublicKey,
 		runner.RegistrationTokenHash,
-		runner.RegistrationTokenExpiresAt)
+		runner.RegistrationTokenExpiresAt,
+		runner.Version,
+		runner.Platform,
+		runner.CurrentLoad)
 
 	if err != nil {
 		return

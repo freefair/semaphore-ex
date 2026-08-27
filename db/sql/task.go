@@ -197,21 +197,25 @@ func (d *SqlDb) UpdateTask(task db.Task) error {
 
 	if task.CommitHash != nil {
 		_, err = d.exec(
-			"update task set status=?, start=?, `end`=?, commit_hash=?, commit_message=?, runner_id=? where id=?",
+			"update task set status=?, start=?, `end`=?, commit_hash=?, commit_message=?, runner_id=?, runner_id_snapshot=?, runner_name=? where id=?",
 			task.Status,
 			task.Start,
 			task.End,
 			task.CommitHash,
 			task.CommitMessage,
 			task.RunnerID,
+			task.RunnerSnapshotID,
+			task.RunnerName,
 			task.ID)
 	} else {
 		_, err = d.exec(
-			"update task set status=?, start=?, `end`=?, runner_id=? where id=?",
+			"update task set status=?, start=?, `end`=?, runner_id=?, runner_id_snapshot=?, runner_name=? where id=?",
 			task.Status,
 			task.Start,
 			task.End,
 			task.RunnerID,
+			task.RunnerSnapshotID,
+			task.RunnerName,
 			task.ID)
 	}
 
@@ -288,9 +292,15 @@ func (d *SqlDb) getTasks(projectID int, templateID *int, workflowRunID *int, tas
 	} else if applied {
 		runnerNameField = "coalesce(runner.name, task.runner_name)"
 	}
+	usedRunnerIDField := "task.runner_id"
+	if applied, migrationErr := d.IsMigrationApplied(db.Migration{Version: "2.20.4"}); migrationErr != nil {
+		return migrationErr
+	} else if applied {
+		usedRunnerIDField = "coalesce(task.runner_id_snapshot, task.runner_id)"
+	}
 	fields += ", tpl.playbook as tpl_playbook" +
 		", `user`.name as user_name" +
-		", task.runner_id as used_runner_id" +
+		", " + usedRunnerIDField + " as used_runner_id" +
 		", " + runnerNameField + " as used_runner_name" +
 		", tpl.name as tpl_alias" +
 		", tpl.type as tpl_type" +

@@ -58,8 +58,9 @@ type Task struct {
 	ScheduleID    *int `db:"schedule_id" json:"schedule_id,omitempty"`
 	// RunnerID is set while a task is assigned to a remote runner (cleared when the task finishes).
 	// Used so runner progress API can authorize updates on any HA node.
-	RunnerID   *int    `db:"runner_id" json:"-"`
-	RunnerName *string `db:"runner_name" json:"-"`
+	RunnerID         *int    `db:"runner_id" json:"-"`
+	RunnerSnapshotID *int    `db:"runner_id_snapshot" json:"-"`
+	RunnerName       *string `db:"runner_name" json:"-"`
 
 	Created time.Time  `db:"created" json:"created"`
 	Start   *time.Time `db:"start" json:"start,omitempty"`
