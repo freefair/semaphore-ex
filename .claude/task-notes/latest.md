@@ -1,7 +1,7 @@
 # Task: Implement selected enhanced edition slices
 
 **Started:** 2026-08-25
-**Last update:** 2026-08-27 09:56
+**Last update:** 2026-08-27 12:11
 
 ## Scope
 Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with tests, documentation, review, and atomic commits
@@ -43,6 +43,8 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 - 2026-08-26 18:51 — Slice 011 backend first green: unsafe deactivate, re-registration, and delete return typed assignment conflicts; successful delete preserves historical runner names; update cannot overwrite lifecycle/credentials; cache-clear is acknowledged exactly once across polls; Enhanced API and audit actions are covered. Verified with go test ./db/sql ./services/server ./api ./api/runners ./pro_interfaces -count=1 and /tmp/semaphore-runner-lifecycle-contract.go.
 
 - 2026-08-27 09:56 — Slice 011 cache acknowledgement: reproduced second-precision SQL collision where touched == cleaning_requested lost the clear request; centralized pending detection and persisted the acknowledgement strictly after the request. /tmp contract and api/runners + db/sql tests are green.
+
+- 2026-08-27 12:11 — Slice 011 browser acceptance completed on the isolated Enhanced QA instance: edit, deactivate, cache clear, re-registration, and delete all exercised; the runner was removed and the browser console had no errors.
 
 ## Decisions
 
@@ -107,3 +109,5 @@ Commit the verified Slice 005 documentation and implementation atomically, then 
 When Dennis replies that a browser is connected, run the visible project-runner create/copy/register/online flow, retain evidence, mark Slice 010 acceptance complete, rerun focused verification, review, commit docs submodule and root atomically, then continue with Slice 011.
 Open the Codex in-app Browser at http://127.0.0.1:8080, then complete the Slice 010 create/copy/register/online visual flow. Browser plugin discovery returned no available browsers after restart, and Computer Use is prohibited from controlling the Codex app.
 Commit the verified Slice 010 audit-scope fix, then begin Slice 011 with a failing /tmp lifecycle contract.
+Slice 011 browser acceptance: in-app Browser unavailable after turn change; ntfy-cc --ask sent. Verify edit/deactivate/cache-clear/re-register/delete before starting Slice 012. When Dennis replies bereit, reconnect the in-app Browser to the isolated local Enhanced instance, finish the Slice 011 lifecycle flow, record evidence, then begin Slice 012 with a failing /tmp health/history contract.
+Begin Slice 012 with a failing /tmp contract covering runner health samples, bounded history pagination, and retained runner identity.
