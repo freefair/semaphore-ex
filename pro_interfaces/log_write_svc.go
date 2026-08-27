@@ -14,6 +14,7 @@ type LogWriteService interface {
 
 type LogWriteServiceLifecycle interface {
 	LogWriteService
+	DebugLogService
 	Diagnostics() StructuredLogDiagnostics
 	Close() error
 }

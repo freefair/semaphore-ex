@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/semaphoreui/semaphore/pkg/debuglog"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -54,6 +55,7 @@ type structuredLogService struct {
 	configuredCount  int
 	flushInterval    time.Duration
 	rotationInterval time.Duration
+	debugFilter      pro_interfaces.DebugFilter
 
 	closeMu   sync.RWMutex
 	closed    bool
@@ -74,28 +76,43 @@ var _ pro_interfaces.LogWriteServiceLifecycle = (*structuredLogService)(nil)
 // NewLogWriteService creates the enhanced structured writer from the effective
 // process configuration. A completely disabled configuration remains a no-op.
 func NewLogWriteService() pro_interfaces.LogWriteServiceLifecycle {
+	return NewLogWriteServiceWithFilter(nil)
+}
+
+func NewLogWriteServiceWithFilter(filter pro_interfaces.DebugFilter) pro_interfaces.LogWriteServiceLifecycle {
 	instance := "semaphore"
 	if hostname, err := os.Hostname(); err == nil && hostname != "" {
 		instance = hostname
 	}
 	if util.Config == nil {
-		return NewLogWriteServiceWithConfig(nil, instance)
+		return NewLogWriteServiceWithConfigAndFilter(nil, instance, filter)
 	}
 	if util.Config.HA != nil && util.Config.HA.NodeID != "" {
 		instance = util.Config.HA.NodeID
 	}
 	if util.Config.Log == nil {
-		return NewLogWriteServiceWithConfig(nil, instance)
+		return NewLogWriteServiceWithConfigAndFilter(nil, instance, filter)
 	}
-	return NewLogWriteServiceWithConfig(util.Config.Log, instance)
+	return NewLogWriteServiceWithConfigAndFilter(util.Config.Log, instance, filter)
 }
 
 // NewLogWriteServiceWithConfig creates a structured writer with an explicit
 // configuration. It is exported so enhanced-module contract tests can exercise
 // the implementation without mutating the global server configuration.
 func NewLogWriteServiceWithConfig(config *util.ConfigLog, instance string) pro_interfaces.LogWriteServiceLifecycle {
+	return NewLogWriteServiceWithConfigAndFilter(config, instance, nil)
+}
+
+func NewLogWriteServiceWithConfigAndFilter(
+	config *util.ConfigLog,
+	instance string,
+	filter pro_interfaces.DebugFilter,
+) pro_interfaces.LogWriteServiceLifecycle {
 	if config == nil {
 		config = &util.ConfigLog{}
+	}
+	if filter == nil {
+		filter = debuglog.NewManager(instance, config.DebugFilter, time.Now().UTC())
 	}
 	queueSize := config.QueueSize
 	if queueSize <= 0 {
@@ -112,16 +129,26 @@ func NewLogWriteServiceWithConfig(config *util.ConfigLog, instance string) pro_i
 		writeFailures:    map[string]bool{},
 		flushInterval:    flushInterval,
 		rotationInterval: rotationInterval,
+		debugFilter:      filter,
 	}
 
 	service.configureEventDestination(*config)
 	service.configureTaskDestinations(*config)
+	service.configureDebugDestination(*config)
 	if len(service.destinations) == 0 {
 		close(service.done)
 		return service
 	}
 	go service.run()
 	return service
+}
+
+func (s *structuredLogService) configureDebugDestination(config util.ConfigLog) {
+	if config.Debug == nil || !config.Debug.Enabled {
+		return
+	}
+	s.configuredCount++
+	s.addDestination("debug", config.Debug.Format, config.Debug.Logger)
 }
 
 func parsePositiveDuration(value string, fallback time.Duration) time.Duration {
@@ -248,6 +275,46 @@ func (s *structuredLogService) WriteResult(value any) error {
 		EventType:     record.EventType,
 		Payload:       record.Result,
 	})
+}
+
+func (s *structuredLogService) WriteDebug(record pro_interfaces.DebugLogRecord) error {
+	if _, enabled := s.destinations["debug"]; !enabled {
+		return nil
+	}
+	if err := record.Validate(); err != nil {
+		return err
+	}
+	if s.debugFilter == nil || !s.debugFilter.Enabled(record.Component) {
+		return nil
+	}
+	fields := map[string]any{}
+	if record.Fields != nil {
+		fields = record.Fields()
+	}
+	payload := map[string]any{
+		"component": record.Component,
+		"fields":    fields,
+	}
+	return s.enqueue("debug", pro_interfaces.StructuredLogEnvelope{
+		Version:       structuredLogVersion,
+		Schema:        "semaphore.debug.v1",
+		Timestamp:     time.Now().UTC(),
+		Instance:      s.instance,
+		CorrelationID: correlationID(record.CorrelationID, "debug"),
+		ProjectID:     record.ProjectID,
+		EventType:     record.EventType,
+		Payload:       payload,
+	})
+}
+
+func (s *structuredLogService) DebugFilterDiagnostics() pro_interfaces.DebugFilterDiagnostics {
+	if s.debugFilter == nil {
+		return pro_interfaces.DebugFilterDiagnostics{
+			Default: debuglog.DebugFilterDefaultAll, Configured: []string{}, Effective: []string{"*"},
+			Rejected: []pro_interfaces.DebugFilterRejectedEntry{},
+		}
+	}
+	return s.debugFilter.Diagnostics()
 }
 
 func correlationID(value, prefix string) string {

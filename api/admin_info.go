@@ -5,6 +5,7 @@ import (
 	"runtime"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
+	"github.com/semaphoreui/semaphore/pkg/debuglog"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 )
@@ -14,11 +15,20 @@ func getAdminInfo(w http.ResponseWriter, r *http.Request) {
 		State:        pro_interfaces.StructuredLogDisabled,
 		Destinations: []pro_interfaces.StructuredLogDestinationDiagnostics{},
 	}
+	debugFilter := pro_interfaces.DebugFilterDiagnostics{
+		Default: debuglog.DebugFilterDefaultAll, Configured: []string{}, Effective: []string{"*"},
+		Rejected: []pro_interfaces.DebugFilterRejectedEntry{},
+	}
 	if writer, ok := helpers.GetOkFromContext(r, "log_writer"); ok {
 		if diagnostics, supported := writer.(interface {
 			Diagnostics() pro_interfaces.StructuredLogDiagnostics
 		}); supported {
 			structuredLogs = diagnostics.Diagnostics()
+		}
+		if diagnostics, supported := writer.(interface {
+			DebugFilterDiagnostics() pro_interfaces.DebugFilterDiagnostics
+		}); supported {
+			debugFilter = diagnostics.DebugFilterDiagnostics()
 		}
 	}
 
@@ -121,6 +131,7 @@ func getAdminInfo(w http.ResponseWriter, r *http.Request) {
 		"task_settings":   taskSettings,
 		"features":        features,
 		"structured_logs": structuredLogs,
+		"debug_filter":    debugFilter,
 	}
 
 	helpers.WriteJSON(w, http.StatusOK, body)

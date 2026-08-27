@@ -521,8 +521,12 @@ $defs:
       rotation_interval:
         type: string
         description: Go duration after which an active file rotates even when its size limit is not reached.
+      debug_filter:
+        type: string
+        description: Exact and terminal-prefix component filters for DEBUG output.
       events: { $ref: "#/$defs/EventLogType" }
       tasks:  { $ref: "#/$defs/TaskLogType" }
+      debug:  { $ref: "#/$defs/DebugLogType" }
 
   EventLogType:
     type: object
@@ -542,6 +546,15 @@ $defs:
         enum: ["", json]
       logger:        { $ref: "#/$defs/LumberjackLogger" }
       result_logger: { $ref: "#/$defs/LumberjackLogger" }
+
+  DebugLogType:
+    type: object
+    properties:
+      enabled: { type: boolean }
+      format:
+        type: string
+        enum: ["", json]
+      logger: { $ref: "#/$defs/LumberjackLogger" }
 
   LumberjackLogger:
     type: object

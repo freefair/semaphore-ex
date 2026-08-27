@@ -33,7 +33,7 @@ func TestFilter_Enabled(t *testing.T) {
 	}{
 		{"exact match", "runner", "runner", true},
 		{"exact no match", "runner", "task_pool", false},
-		{"empty spec disables", "", "runner", false},
+		{"empty spec uses explicit all default", "", "runner", true},
 		{"multiple includes first", "runner,task_pool", "runner", true},
 		{"multiple includes second", "runner,task_pool", "task_pool", true},
 		{"multiple includes miss", "runner,task_pool", "git", false},
@@ -50,7 +50,7 @@ func TestFilter_Enabled(t *testing.T) {
 		{"exclude wildcard", "*,-task_*", "task_logger", false},
 		{"exclude wildcard others", "*,-task_*", "runner", true},
 		{"only exclude no include", "-db", "runner", false},
-		{"middle wildcard", "a*z", "abcz", true},
+		{"middle wildcard rejected", "a*z", "abcz", false},
 		{"middle wildcard miss", "a*z", "abc", false},
 		{"dot is literal", "task.pool", "taskXpool", false},
 		{"dot literal match", "task.pool", "task.pool", true},

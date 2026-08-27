@@ -209,6 +209,97 @@
           </v-card-text>
         </v-card>
 
+        <template v-if="debugFilter">
+          <v-subheader class="px-0 mt-2">Debug log filtering</v-subheader>
+          <v-card
+            data-testid="debug-filter"
+            style="background: var(--highlighted-card-bg-color)"
+          >
+            <v-card-text class="px-0 py-2">
+              <v-simple-table dense style="background: transparent">
+                <tbody>
+                  <tr>
+                    <td class="font-weight-medium" style="width: 200px">Instance</td>
+                    <td data-testid="debug-filter-instance">
+                      <code>{{ debugFilter.instance || '—' }}</code>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-weight-medium">Configured</td>
+                    <td>
+                      <template v-if="debugFilter.configured && debugFilter.configured.length">
+                        <v-chip
+                          v-for="entry in debugFilter.configured"
+                          :key="`configured-${entry}`"
+                          class="mr-1 my-1"
+                          small
+                        >
+                          {{ entry }}
+                        </v-chip>
+                      </template>
+                      <span v-else data-testid="debug-filter-empty" class="text--secondary">
+                        {{ debugFilterDefaultText(debugFilter) }}
+                      </span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-weight-medium">Effective</td>
+                    <td>
+                      <template v-if="debugFilter.effective && debugFilter.effective.length">
+                        <v-chip
+                          v-for="entry in debugFilter.effective"
+                          :key="`effective-${entry}`"
+                          data-testid="debug-filter-effective"
+                          class="mr-1 my-1"
+                          color="primary"
+                          outlined
+                          small
+                        >
+                          {{ entry }}
+                        </v-chip>
+                      </template>
+                      <span v-else data-testid="debug-filter-none" class="text--secondary">
+                        No components are captured.
+                      </span>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="font-weight-medium">Last reload</td>
+                    <td data-testid="debug-filter-reloaded-at">
+                      {{ formatStructuredLogTime(debugFilter.reloaded_at) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </v-simple-table>
+
+              <v-alert
+                v-if="debugFilter.rejected && debugFilter.rejected.length"
+                data-testid="debug-filter-rejected"
+                class="mx-4 mt-3 mb-1"
+                type="warning"
+                dense
+                outlined
+              >
+                Rejected entries keep the filter narrow:
+                <div v-for="entry in debugFilter.rejected" :key="entry.entry">
+                  <code>{{ debugFilterRejectedText(entry) }}</code>
+                </div>
+              </v-alert>
+              <v-alert
+                v-if="debugFilter.reload_error"
+                data-testid="debug-filter-reload-error"
+                class="mx-4 mt-3 mb-1"
+                type="error"
+                dense
+                outlined
+              >
+                Reload failed; the last-known-good filter remains active.
+                <div><code>{{ debugFilter.reload_error }}</code></div>
+              </v-alert>
+            </v-card-text>
+          </v-card>
+        </template>
+
         <!-- Ansible -->
         <v-subheader class="px-0 mt-2">Ansible</v-subheader>
         <v-card style="background: var(--highlighted-card-bg-color)">
@@ -484,6 +575,10 @@ export default {
     structuredLogs() {
       return this.info?.structured_logs || null;
     },
+
+    debugFilter() {
+      return this.info?.debug_filter || null;
+    },
   },
 
   methods: {
@@ -529,6 +624,15 @@ export default {
       const parsed = new Date(value);
       if (Number.isNaN(parsed.getTime())) return value;
       return parsed.toLocaleString();
+    },
+
+    debugFilterDefaultText(diagnostics) {
+      if (diagnostics.default === 'all') return 'All components are captured by default.';
+      return 'No component filters are configured.';
+    },
+
+    debugFilterRejectedText(entry) {
+      return `${entry.entry} — ${entry.reason.replace(/_/g, ' ')}`;
     },
 
     formatNotificationName(name) {

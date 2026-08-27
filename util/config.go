@@ -327,12 +327,20 @@ type TaskLogType struct {
 	ResultLogger *lumberjack.Logger `json:"result_logger,omitempty" env:"SEMAPHORE_TASK_RESULT_LOGGER"`
 }
 
+type DebugLogType struct {
+	Enabled bool               `json:"enabled" env:"SEMAPHORE_DEBUG_LOG_ENABLED"`
+	Format  string             `json:"format,omitempty" env:"SEMAPHORE_DEBUG_LOG_FORMAT"`
+	Logger  *lumberjack.Logger `json:"logger,omitempty" env:"SEMAPHORE_DEBUG_LOGGER"`
+}
+
 type ConfigLog struct {
 	QueueSize        int           `json:"queue_size,omitempty" env:"SEMAPHORE_LOG_QUEUE_SIZE" default:"1024"`
 	FlushInterval    string        `json:"flush_interval,omitempty" env:"SEMAPHORE_LOG_FLUSH_INTERVAL" default:"1s"`
 	RotationInterval string        `json:"rotation_interval,omitempty" env:"SEMAPHORE_LOG_ROTATION_INTERVAL" default:"24h"`
+	DebugFilter      string        `json:"debug_filter,omitempty" env:"SEMAPHORE_DEBUG_FILTER"`
 	Events           *EventLogType `json:"events,omitempty"`
 	Tasks            *TaskLogType  `json:"tasks,omitempty"`
+	Debug            *DebugLogType `json:"debug,omitempty"`
 }
 
 type SyslogFormat string

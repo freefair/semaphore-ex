@@ -64,45 +64,12 @@ Complete documentation is available at https://semaphoreui.com.`,
 			log.SetLevel(lvl)
 		}
 
-		initDebugFilter()
 	},
-}
-
-// initDebugFilter installs a Node.js-`debug`-style namespace filter for DEBUG
-// logs, driven by the --debug-filter flag or SEMAPHORE_DEBUG_FILTER env var.
-// The filter only narrows DEBUG-level output and only takes effect when the log
-// level is already DEBUG; otherwise there are no debug entries to filter and the
-// logger is left untouched.
-func initDebugFilter() {
-	spec, filter := configuredDebugFilter()
-	if filter == nil {
-		return
-	}
-
-	log.SetFormatter(debuglog.NewFilteringFormatter(
-		log.StandardLogger().Formatter,
-		filter,
-	))
-
-	fmt.Println("Debug filter active:", spec)
-}
-
-func configuredDebugFilter() (string, *debuglog.Filter) {
-	spec := persistentFlags.debugFilter
-	if spec == "" {
-		spec = os.Getenv("SEMAPHORE_DEBUG_FILTER")
-	}
-
-	if spec == "" || log.GetLevel() < log.DebugLevel {
-		return "", nil
-	}
-
-	return spec, debuglog.Parse(spec)
 }
 
 func Execute() {
 	rootCmd.PersistentFlags().StringVar(&persistentFlags.logLevel, "log-level", "", "Log level: DEBUG, INFO, WARN, ERROR, FATAL, PANIC")
-	rootCmd.PersistentFlags().StringVar(&persistentFlags.debugFilter, "debug-filter", "", "Debug namespace filter (only with DEBUG level), e.g. 'runner,task_*' or '*,-db'")
+	rootCmd.PersistentFlags().StringVar(&persistentFlags.debugFilter, "debug-filter", "", "Debug component filter, e.g. 'runner,task_*' or '*,-db'")
 	rootCmd.PersistentFlags().StringVar(&persistentFlags.configPath, "config", "", "Configuration file path")
 	rootCmd.PersistentFlags().BoolVar(&persistentFlags.noConfig, "no-config", false, "Don't use configuration file")
 	if err := rootCmd.Execute(); err != nil {
@@ -111,12 +78,12 @@ func Execute() {
 	}
 }
 
-// watchEncryptionKeyReload enables key rotation without restarting the server:
+// watchRuntimeConfigurationReload enables runtime configuration changes:
 //   - a SIGHUP forces an immediate reload;
 //   - a background poller applies changes to the encryption-keys file (and the
 //     key files it references) automatically. The poller runs only when a keys
 //     file is configured and the poll interval is positive.
-func watchEncryptionKeyReload() {
+func watchRuntimeConfigurationReload(debugFilter *debuglog.Manager, source debugFilterSource) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGHUP)
 	go func() {
@@ -125,6 +92,20 @@ func watchEncryptionKeyReload() {
 				log.WithError(err).Error("failed to reload encryption keys")
 			} else {
 				log.Info("encryption keys reloaded (SIGHUP)")
+			}
+
+			diagnostics := reloadDebugFilter(debugFilter, source, time.Now().UTC())
+			entry := log.WithFields(log.Fields{
+				"debug_filter_effective": diagnostics.Effective,
+				"debug_filter_rejected":  len(diagnostics.Rejected),
+			})
+			if diagnostics.ReloadError != "" {
+				entry.WithField("debug_filter_reload_error", diagnostics.ReloadError).
+					Error("failed to reload debug filter; retaining last-known-good filter")
+			} else if len(diagnostics.Rejected) > 0 {
+				entry.Warn("debug filter reloaded with rejected entries")
+			} else {
+				entry.Info("debug filter reloaded (SIGHUP)")
 			}
 		}
 	}()
@@ -149,19 +130,28 @@ func watchEncryptionKeyReload() {
 }
 
 func runService() {
-	store := createStore("root")
+	store, configPath := createStoreWithMigrationVersionAndConfigPath("root", nil, nil)
 
-	watchEncryptionKeyReload()
+	// Initialize HA node identity before components expose per-instance diagnostics.
+	util.InitHANodeID()
+	filterSource := newDebugFilterSource(configPath)
+	debugFilterSpec, debugFilterErr := filterSource.Load()
+	loadedAt := time.Now().UTC()
+	var debugFilter *debuglog.Manager
+	if debugFilterErr != nil {
+		debugFilter = debuglog.NewManagerWithReloadError(debugLogInstance(), debugFilterErr.Error(), loadedAt)
+	} else {
+		debugFilter = debuglog.NewManager(debugLogInstance(), debugFilterSpec, loadedAt)
+	}
+	log.SetFormatter(debuglog.NewFilteringFormatter(log.StandardLogger().Formatter, debugFilter))
+	watchRuntimeConfigurationReload(debugFilter, filterSource)
 
 	jwtSigner, jwtErr := util.InitJWTSignerFromStore(store)
 	if jwtErr != nil {
 		log.WithError(jwtErr).Warning("failed to initialise JWT signer")
 	}
 
-	initSyslog(util.Config.Syslog)
-
-	// Initialize HA node identity before any component that uses it.
-	util.InitHANodeID()
+	initSyslog(util.Config.Syslog, debugFilter)
 
 	state := proTasks.NewTaskStateStore()
 	terraformStore := proFactory.NewTerraformStore(store)
@@ -184,7 +174,7 @@ func runService() {
 	environmentService := server.NewEnvironmentService(store, encryptionService, store)
 	runnerService := server.NewRunnerService(store)
 	subscriptionService := proServer.NewSubscriptionService(store, store, store, terraformStore)
-	logWriteService := proServer.NewLogWriteService()
+	logWriteService := proServer.NewLogWriteServiceWithFilter(debugFilter)
 	defer func() {
 		if err := logWriteService.Close(); err != nil {
 			log.WithError(err).Error("failed to flush structured logs during shutdown")
@@ -424,7 +414,12 @@ func runService() {
 }
 
 func createStoreWithMigrationVersion(token string, undoTo *string, applyTo *string) db.Store {
-	util.ConfigInit(persistentFlags.configPath, persistentFlags.noConfig)
+	store, _ := createStoreWithMigrationVersionAndConfigPath(token, undoTo, applyTo)
+	return store
+}
+
+func createStoreWithMigrationVersionAndConfigPath(token string, undoTo *string, applyTo *string) (db.Store, *string) {
+	usedConfigPath := util.ConfigInit(persistentFlags.configPath, persistentFlags.noConfig)
 
 	store := factory.CreateStore()
 
@@ -449,7 +444,7 @@ func createStoreWithMigrationVersion(token string, undoTo *string, applyTo *stri
 
 	util.LookupDefaultApps()
 
-	return store
+	return store, usedConfigPath
 }
 
 func createStore(token string) db.Store {
