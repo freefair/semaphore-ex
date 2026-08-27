@@ -514,13 +514,14 @@ type RunnerManager interface {
 	// it generates the runner's auth token, stores its public key, activates it and
 	// clears the registration token. It fails if no matching runner exists, the
 	// token has expired, or the runner is already registered.
-	RegisterRunner(registrationTokenHash string, publicKey *string, executorType ...RunnerExecutorType) (Runner, error)
+	RegisterRunner(registrationTokenHash string, report RunnerSecurityReport) (Runner, error)
 	// ResetRunnerRegistration moves a runner (back) to the unregistered state: it
 	// clears the auth token, public key and active flag, and stores a new one-time
 	// registration token hash and its expiry.
 	ResetRunnerRegistration(runnerID int, registrationTokenHash string, expiresAt time.Time) error
 	ResetProjectRunnerRegistration(runnerID int, projectID int, registrationTokenHash string, expiresAt time.Time) error
 	TouchRunner(runner Runner) (err error)
+	UpdateRunnerSecurity(runner Runner) error
 	ClearRunnerCache(runner Runner) (err error)
 	GetRunnerTags(projectID int) ([]RunnerTag, error)
 	GetGlobalRunnerTags() ([]RunnerTag, error)

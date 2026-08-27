@@ -12,6 +12,35 @@
       dense
     ></v-text-field>
 
+    <v-select
+      v-model="item.registration_policy"
+      :items="registrationPolicies"
+      item-text="text"
+      item-value="value"
+      :label="$t('runnerRegistrationPolicy')"
+      :disabled="formSaving || (!isNew && item.registered)"
+      @change="onRegistrationPolicyChange"
+      outlined
+      dense
+    ></v-select>
+
+    <v-alert
+      v-if="item.registration_policy === 'secure'"
+      :type="
+        item.registered && item.security_compliant ? 'success' : item.registered ? 'error' : 'info'
+      "
+      dense
+      text
+      data-testid="runner-secure-policy-state"
+    >
+      <div class="font-weight-bold">{{ $t('runnerSecurePolicy') }}</div>
+      <div v-if="item.registered">{{ item.security_reason }}</div>
+      <div v-if="item.registered && !item.security_compliant">
+        {{ item.security_remediation }}
+      </div>
+      <div v-else-if="!item.registered">{{ $t('runnerSecureRequirements') }}</div>
+    </v-alert>
+
     <div style="position: relative">
       <v-combobox
         v-model="item.tags"
@@ -101,6 +130,8 @@
   </v-form>
 </template>
 <script>
+import enhancedMethods from '@/lib/enhanced/runner-form';
+
 import axios from 'axios';
 import ItemFormBase from '@/components/ItemFormBase';
 
@@ -116,6 +147,10 @@ export default {
   data() {
     return {
       tagSuggestions: null,
+      registrationPolicies: [
+        { text: this.$t('runnerPolicyStandard'), value: 'standard' },
+        { text: this.$t('runnerPolicySecure'), value: 'secure' },
+      ],
     };
   },
 
@@ -133,12 +168,15 @@ export default {
   },
 
   methods: {
+    ...enhancedMethods,
+
     getNewItem() {
       // Project runners always use the one-time registration flow. Global
       // runners retain the existing direct-token option.
       return {
         registered: this.projectId == null,
         is_default: this.projectId == null,
+        registration_policy: 'standard',
       };
     },
 
@@ -151,6 +189,11 @@ export default {
     },
 
     beforeSave() {
+      if (this.item.registration_policy === 'secure') {
+        // Secure registration is deliberately one-time; direct shared-token
+        // creation would violate the selected policy.
+        this.item.registered = false;
+      }
       if (!this.item.max_parallel_tasks) {
         this.item.max_parallel_tasks = 0;
       }

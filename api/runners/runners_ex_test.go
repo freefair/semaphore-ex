@@ -68,6 +68,113 @@ func TestRegisterRunnerConsumesProjectTokenOnceAndPreservesBinding(t *testing.T)
 	assert.Equal(t, http.StatusBadRequest, replayResponse.Code)
 }
 
+func TestSecureRunnerRegistrationAndVersionRejectionContract(t *testing.T) {
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "secure registration"})
+	require.NoError(t, err)
+	service := server.NewRunnerService(store)
+	register := func(version string) *httptest.ResponseRecorder {
+		_, token, createErr := service.CreateProjectRunner(db.Runner{
+			Name: "secure runner", ProjectID: &project.ID,
+			RegistrationPolicy: db.RunnerRegistrationSecure,
+		})
+		require.NoError(t, createErr)
+		body, marshalErr := json.Marshal(runners.RunnerRegistration{
+			RegistrationToken:       token,
+			ExecutorType:            db.RunnerExecutorDocker,
+			TransportTrust:          db.RunnerTransportSystemCA,
+			RunnerVersion:           version,
+			SecurityProtocolVersion: db.CurrentSecureRunnerProtocol,
+			PublicKey:               "public-key",
+		})
+		require.NoError(t, marshalErr)
+		request := httptest.NewRequest(http.MethodPost, "/api/internal/runners", bytes.NewReader(body))
+		request = helpers.SetContextValue(request, "store", store)
+		response := httptest.NewRecorder()
+		RegisterRunner(response, request)
+		return response
+	}
+
+	accepted := register(db.MinSecureRunnerVersion)
+	require.Equal(t, http.StatusOK, accepted.Code, accepted.Body.String())
+	assert.Contains(t, accepted.Body.String(), `"registration_policy":"secure"`)
+	assert.NotContains(t, accepted.Body.String(), "public-key")
+
+	rejected := register("2.19.99")
+	require.Equal(t, http.StatusConflict, rejected.Code, rejected.Body.String())
+	assert.Contains(t, rejected.Body.String(), "Upgrade the runner")
+	assert.NotContains(t, rejected.Body.String(), "public-key")
+
+	_, missingExecutorToken, err := service.CreateProjectRunner(db.Runner{
+		Name: "secure missing executor", ProjectID: &project.ID,
+		RegistrationPolicy: db.RunnerRegistrationSecure,
+	})
+	require.NoError(t, err)
+	body, err := json.Marshal(runners.RunnerRegistration{
+		RegistrationToken:       missingExecutorToken,
+		TransportTrust:          db.RunnerTransportSystemCA,
+		RunnerVersion:           db.MinSecureRunnerVersion,
+		SecurityProtocolVersion: db.CurrentSecureRunnerProtocol,
+		PublicKey:               "public-key",
+	})
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPost, "/api/internal/runners", bytes.NewReader(body))
+	request = helpers.SetContextValue(request, "store", store)
+	missingExecutor := httptest.NewRecorder()
+	RegisterRunner(missingExecutor, request)
+	require.Equal(t, http.StatusConflict, missingExecutor.Code, missingExecutor.Body.String())
+	assert.Contains(t, missingExecutor.Body.String(), "executor capability missing")
+}
+
+func TestSecureRunnerReconnectRejectsDowngradeAndStandardRunnerStaysCompatible(t *testing.T) {
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "secure reconnect"})
+	require.NoError(t, err)
+	_, token, err := server.NewRunnerService(store).CreateProjectRunner(db.Runner{
+		Name: "secure runner", ProjectID: &project.ID,
+		RegistrationPolicy: db.RunnerRegistrationSecure,
+	})
+	require.NoError(t, err)
+	secureRunner, err := store.RegisterRunner(server.HashRunnerRegistrationToken(token), db.RunnerSecurityReport{
+		TransportTrust: db.RunnerTransportSystemCA, RunnerVersion: db.MinSecureRunnerVersion,
+		ProtocolVersion: db.CurrentSecureRunnerProtocol, ExecutorType: db.RunnerExecutorDocker,
+		PublicKey: "public-key",
+	})
+	require.NoError(t, err)
+	pool := tasks.CreateTaskPool(store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, nil, nil, nil)
+	controller := NewRunnerController(store, &pool, nil, nil)
+	poll := func(runner db.Runner, withSecureHeaders bool) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, "/api/internal/runners", nil)
+		if withSecureHeaders {
+			request.Header.Set(runners.RunnerVersionHeader, db.MinSecureRunnerVersion)
+			request.Header.Set(runners.RunnerExecutorTypeHeader, string(db.RunnerExecutorDocker))
+			request.Header.Set(runners.RunnerTransportTrustHeader, string(db.RunnerTransportSystemCA))
+			request.Header.Set(runners.RunnerSecurityProtocolHeader, "1")
+		}
+		request = helpers.SetContextValue(request, "store", store)
+		request = helpers.SetContextValue(request, "runner", runner)
+		response := httptest.NewRecorder()
+		controller.GetRunner(response, request)
+		return response
+	}
+
+	require.Equal(t, http.StatusOK, poll(secureRunner, true).Code)
+	downgraded := poll(secureRunner, false)
+	require.Equal(t, http.StatusConflict, downgraded.Code, downgraded.Body.String())
+	assert.Contains(t, downgraded.Body.String(), "verified TLS server identity")
+	persisted, err := store.GetRunner(project.ID, secureRunner.ID)
+	require.NoError(t, err)
+	assert.False(t, persisted.SecurityCompliant)
+
+	standard, err := store.CreateRunner(db.Runner{
+		Name: "standard runner", ProjectID: &project.ID, Token: db.GenerateRunnerToken(), Active: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, poll(standard, false).Code)
+}
+
 func TestRegisterRunnerRejectsExpiredProjectToken(t *testing.T) {
 	store := sql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)

@@ -11,9 +11,11 @@ import (
 
 func TestRunnerRegistrationMaterialIsExcludedFromSerializationAndBackups(t *testing.T) {
 	registrationHash := strings.Repeat("a", 64)
+	publicIdentity := "runner-public-identity"
 	expiresAt := time.Now().Add(time.Hour)
 	runner := Runner{
 		Token:                      "runner-auth-material",
+		PublicKey:                  &publicIdentity,
 		RegistrationTokenHash:      &registrationHash,
 		RegistrationTokenExpiresAt: &expiresAt,
 	}
@@ -21,10 +23,11 @@ func TestRunnerRegistrationMaterialIsExcludedFromSerializationAndBackups(t *test
 	serialized, err := json.Marshal(runner)
 	assert.NoError(t, err)
 	assert.NotContains(t, string(serialized), runner.Token)
+	assert.NotContains(t, string(serialized), *runner.PublicKey)
 	assert.NotContains(t, string(serialized), registrationHash)
 
 	runnerType := reflect.TypeOf(Runner{})
-	for _, fieldName := range []string{"Token", "RegistrationTokenHash", "RegistrationTokenExpiresAt"} {
+	for _, fieldName := range []string{"Token", "PublicKey", "RegistrationTokenHash", "RegistrationTokenExpiresAt"} {
 		field, found := runnerType.FieldByName(fieldName)
 		assert.True(t, found)
 		assert.Equal(t, "-", field.Tag.Get("backup"), fieldName)

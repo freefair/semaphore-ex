@@ -55,3 +55,19 @@ func TestParseHealthReportValidatesBoundsAndPreservesMissingFields(t *testing.T)
 		})
 	}
 }
+
+func TestParseHealthReportIncludesSecureModeMetadata(t *testing.T) {
+	header := http.Header{}
+	header.Set(RunnerTransportTrustHeader, string(db.RunnerTransportCustomCA))
+	header.Set(RunnerSecurityProtocolHeader, strconv.Itoa(db.CurrentSecureRunnerProtocol))
+	report, err := ParseHealthReport(header)
+	require.NoError(t, err)
+	require.NotNil(t, report.TransportTrust)
+	assert.Equal(t, db.RunnerTransportCustomCA, *report.TransportTrust)
+	require.NotNil(t, report.SecurityProtocolVersion)
+	assert.Equal(t, db.CurrentSecureRunnerProtocol, *report.SecurityProtocolVersion)
+
+	header.Set(RunnerTransportTrustHeader, "fallback")
+	_, err = ParseHealthReport(header)
+	assert.Error(t, err)
+}

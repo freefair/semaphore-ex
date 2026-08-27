@@ -2,6 +2,12 @@ export default {
   projectRunnerRegistrationHint:
     'The runner will be created inactive. Its one-time registration token is shown '
     + 'once after creation and expires in 1 hour.',
+  runnerRegistrationPolicy: 'Registration policy',
+  runnerPolicyStandard: 'Standard',
+  runnerPolicySecure: 'Secure',
+  runnerSecurePolicy: 'Secure runner registration',
+  runnerSecureRequirements:
+    'Requires HTTPS with verified server identity, a one-time token, a supported runner version, an explicit executor, and a generated runner identity.',
   runnerPending: 'Pending',
   runnerRegistered: 'Registered',
   runnerInactive: 'Inactive',

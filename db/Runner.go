@@ -64,7 +64,16 @@ type Runner struct {
 
 	ExecutorType RunnerExecutorType `db:"executor_type" json:"executor_type" backup:"-"`
 
-	PublicKey *string `db:"public_key" json:"-"`
+	PublicKey *string `db:"public_key" json:"-" backup:"-"`
+
+	RegistrationPolicy      RunnerRegistrationPolicy `db:"registration_policy" json:"registration_policy"`
+	RegistrationKind        RunnerRegistrationKind   `db:"registration_kind" json:"registration_kind" backup:"-"`
+	SecurityCompliant       bool                     `db:"security_compliant" json:"security_compliant" backup:"-"`
+	SecurityReason          string                   `db:"security_reason" json:"security_reason" backup:"-"`
+	SecurityRemediation     string                   `db:"security_remediation" json:"security_remediation" backup:"-"`
+	TransportTrust          RunnerTransportTrust     `db:"transport_trust" json:"transport_trust" backup:"-"`
+	SecurityProtocolVersion int                      `db:"security_protocol_version" json:"security_protocol_version" backup:"-"`
+	SecurityCheckedAt       *time.Time               `db:"security_checked_at" json:"security_checked_at" backup:"-"`
 
 	// Registered is a transient flag (never persisted) used at creation time to
 	// request a runner without an auth token. Such a runner gets a one-time,

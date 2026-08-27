@@ -6,6 +6,7 @@ import (
 	"github.com/Masterminds/squirrel"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
+	"strings"
 	"time"
 )
 
@@ -138,6 +139,7 @@ func (d *SqlDb) ClearRunnerCache(runner db.Runner) (err error) {
 
 func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
 	touchedAt := tz.Now()
+	runner.SecurityCheckedAt = &touchedAt
 	if runner.IsCacheClearPending() {
 		// MySQL/MariaDB DATETIME columns can round both the request and the
 		// preceding heartbeat to the same second. Persist the acknowledgement
@@ -149,25 +151,37 @@ func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
 	}
 	if runner.ProjectID == nil {
 		_, err = d.exec(
-			"update `runner` set `touched`=?, `started_at`=?, `version`=?, `platform`=?, `current_load`=?, `executor_type`=? where id=?",
+			"update `runner` set `touched`=?, `started_at`=?, `version`=?, `platform`=?, `current_load`=?, `executor_type`=?, `security_compliant`=?, `security_reason`=?, `security_remediation`=?, `transport_trust`=?, `security_protocol_version`=?, `security_checked_at`=? where id=?",
 			touchedAt,
 			runner.StartedAt,
 			runner.Version,
 			runner.Platform,
 			runner.CurrentLoad,
 			runner.EffectiveExecutorType(),
+			runner.SecurityCompliant,
+			runner.SecurityReason,
+			runner.SecurityRemediation,
+			runner.TransportTrust,
+			runner.SecurityProtocolVersion,
+			runner.SecurityCheckedAt,
 			runner.ID)
 		return
 	}
 
 	_, err = d.exec(
-		"update `runner` set `touched`=?, `started_at`=?, `version`=?, `platform`=?, `current_load`=?, `executor_type`=? where id=? and project_id=?",
+		"update `runner` set `touched`=?, `started_at`=?, `version`=?, `platform`=?, `current_load`=?, `executor_type`=?, `security_compliant`=?, `security_reason`=?, `security_remediation`=?, `transport_trust`=?, `security_protocol_version`=?, `security_checked_at`=? where id=? and project_id=?",
 		touchedAt,
 		runner.StartedAt,
 		runner.Version,
 		runner.Platform,
 		runner.CurrentLoad,
 		runner.EffectiveExecutorType(),
+		runner.SecurityCompliant,
+		runner.SecurityReason,
+		runner.SecurityRemediation,
+		runner.TransportTrust,
+		runner.SecurityProtocolVersion,
+		runner.SecurityCheckedAt,
 		runner.ID,
 		runner.ProjectID)
 
@@ -179,14 +193,31 @@ func (d *SqlDb) UpdateRunner(runner db.Runner) (err error) {
 		return
 	}
 	runner.Tags = db.NormalizeRunnerTags(runner.Tags)
+	runner.RegistrationPolicy, err = db.NormalizeRunnerRegistrationPolicy(runner.RegistrationPolicy)
+	if err != nil {
+		return
+	}
+	var current db.Runner
+	if runner.ProjectID == nil {
+		current, err = d.GetGlobalRunner(runner.ID)
+	} else {
+		current, err = d.GetRunner(*runner.ProjectID, runner.ID)
+	}
+	if err != nil {
+		return
+	}
+	if err = db.ValidateRunnerRegistrationPolicyChange(current, runner.RegistrationPolicy); err != nil {
+		return
+	}
 
 	_, err = d.exec(
-		"update `runner` set `name`=?, `active`=?, `is_default`=?, webhook=?, max_parallel_tasks=? where id=?",
+		"update `runner` set `name`=?, `active`=?, `is_default`=?, webhook=?, max_parallel_tasks=?, registration_policy=? where id=?",
 		runner.Name,
 		runner.Active,
 		runner.IsDefault,
 		runner.Webhook,
 		runner.MaxParallelTasks,
+		runner.RegistrationPolicy,
 		runner.ID)
 
 	if err != nil {
@@ -197,7 +228,7 @@ func (d *SqlDb) UpdateRunner(runner db.Runner) (err error) {
 	return
 }
 
-func (d *SqlDb) RegisterRunner(registrationTokenHash string, publicKey *string, executorTypes ...db.RunnerExecutorType) (runner db.Runner, err error) {
+func (d *SqlDb) RegisterRunner(registrationTokenHash string, report db.RunnerSecurityReport) (runner db.Runner, err error) {
 	runners := make([]db.Runner, 0)
 
 	err = d.getObjects(0, db.GlobalRunnerProps, db.RetrieveQueryParams{}, func(builder squirrel.SelectBuilder) squirrel.SelectBuilder {
@@ -214,7 +245,6 @@ func (d *SqlDb) RegisterRunner(registrationTokenHash string, publicKey *string, 
 	}
 
 	runner = runners[0]
-
 	if runner.IsRegistered() {
 		err = fmt.Errorf("runner is already registered")
 		return
@@ -225,20 +255,52 @@ func (d *SqlDb) RegisterRunner(registrationTokenHash string, publicKey *string, 
 		return
 	}
 
+	report.RegistrationKind = db.RunnerRegistrationOneTime
+	requestedExecutorType := report.ExecutorType
+	if requestedExecutorType != "" {
+		report.ExecutorType, err = db.NormalizeRunnerExecutorType(requestedExecutorType)
+		if err != nil {
+			return
+		}
+	}
+	decision := db.EvaluateRunnerRegistrationPolicy(runner.RegistrationPolicy, report)
+	checkedAt := tz.Now()
+	if !decision.Compliant {
+		_, err = d.exec(
+			"update `runner` set `security_compliant`=?, `security_reason`=?, `security_remediation`=?, `transport_trust`=?, `security_protocol_version`=?, `security_checked_at`=? where id=?",
+			false, decision.Reason, decision.Remediation, report.TransportTrust, report.ProtocolVersion, checkedAt, runner.ID)
+		if err == nil {
+			err = db.RunnerSecurityViolationError{Decision: decision}
+		}
+		return
+	}
+
 	token := db.GenerateRunnerToken()
-	executorType := db.RunnerExecutorLocal
-	if len(executorTypes) > 0 {
-		executorType = executorTypes[0]
+	persistedExecutorType := report.ExecutorType
+	if persistedExecutorType == "" {
+		persistedExecutorType = db.RunnerExecutorLocal
+	}
+	var publicKey *string
+	if value := strings.TrimSpace(report.PublicKey); value != "" {
+		publicKey = &value
 	}
 
 	var result sql.Result
 	result, err = d.exec(
-		"update `runner` set `token`=?, `active`=?, `public_key`=?, `executor_type`=?, `registration_token`=null, `registration_token_expires_at`=null "+
+		"update `runner` set `token`=?, `active`=?, `public_key`=?, `executor_type`=?, `registration_kind`=?, `security_compliant`=?, `security_reason`=?, `security_remediation`=?, `transport_trust`=?, `security_protocol_version`=?, `security_checked_at`=?, `version`=?, `registration_token`=null, `registration_token_expires_at`=null "+
 			"where id=? and `token`='' and `registration_token`=? and `registration_token_expires_at` > CURRENT_TIMESTAMP",
 		token,
 		true,
 		publicKey,
-		executorType,
+		persistedExecutorType,
+		db.RunnerRegistrationOneTime,
+		true,
+		decision.Reason,
+		decision.Remediation,
+		report.TransportTrust,
+		report.ProtocolVersion,
+		checkedAt,
+		report.RunnerVersion,
 		runner.ID,
 		registrationTokenHash)
 
@@ -258,7 +320,15 @@ func (d *SqlDb) RegisterRunner(registrationTokenHash string, publicKey *string, 
 	runner.Token = token
 	runner.Active = true
 	runner.PublicKey = publicKey
-	runner.ExecutorType = executorType
+	runner.ExecutorType = persistedExecutorType
+	runner.RegistrationKind = db.RunnerRegistrationOneTime
+	runner.SecurityCompliant = true
+	runner.SecurityReason = decision.Reason
+	runner.SecurityRemediation = decision.Remediation
+	runner.TransportTrust = report.TransportTrust
+	runner.SecurityProtocolVersion = report.ProtocolVersion
+	runner.SecurityCheckedAt = &checkedAt
+	runner.Version = report.RunnerVersion
 	runner.RegistrationTokenHash = nil
 	runner.RegistrationTokenExpiresAt = nil
 
@@ -268,7 +338,7 @@ func (d *SqlDb) RegisterRunner(registrationTokenHash string, publicKey *string, 
 
 func (d *SqlDb) ResetRunnerRegistration(runnerID int, registrationTokenHash string, expiresAt time.Time) (err error) {
 	_, err = d.exec(
-		"update `runner` set `token`='', `active`=false, `public_key`=null, `registration_token`=?, `registration_token_expires_at`=? where id=?",
+		"update `runner` set `token`='', `active`=false, `public_key`=null, `registration_kind`='one_time', `security_compliant`=case when `registration_policy`='standard' then true else false end, `security_reason`='registration required', `security_remediation`='Register with the new one-time token.', `transport_trust`='plaintext', `security_protocol_version`=0, `security_checked_at`=null, `registration_token`=?, `registration_token_expires_at`=? where id=?",
 		registrationTokenHash,
 		expiresAt,
 		runnerID)
@@ -284,10 +354,32 @@ func (d *SqlDb) CreateRunner(runner db.Runner) (newRunner db.Runner, err error) 
 	if err != nil {
 		return
 	}
+	runner.RegistrationPolicy, err = db.NormalizeRunnerRegistrationPolicy(runner.RegistrationPolicy)
+	if err != nil {
+		return
+	}
+	if runner.RegistrationTokenHash != nil {
+		runner.RegistrationKind = db.RunnerRegistrationOneTime
+	} else if runner.RegistrationKind == "" {
+		runner.RegistrationKind = db.RunnerRegistrationShared
+	}
+	decision := db.EvaluateRunnerRegistrationPolicy(runner.RegistrationPolicy, db.RunnerSecurityReport{
+		RegistrationKind: runner.RegistrationKind,
+		TransportTrust:   runner.TransportTrust,
+		RunnerVersion:    runner.Version,
+		ProtocolVersion:  runner.SecurityProtocolVersion,
+		ExecutorType:     runner.ExecutorType,
+	})
+	runner.SecurityCompliant = decision.Compliant
+	runner.SecurityReason = decision.Reason
+	runner.SecurityRemediation = decision.Remediation
+	if runner.IsRegistered() && runner.RegistrationPolicy == db.RunnerRegistrationSecure {
+		return db.Runner{}, db.RunnerSecurityViolationError{Decision: decision}
+	}
 
 	insertID, err := d.insert(
 		"id",
-		"insert into `runner` (project_id, token, webhook, max_parallel_tasks, `name`, `active`, `is_default`, public_key, registration_token, registration_token_expires_at, `version`, `platform`, current_load, executor_type) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"insert into `runner` (project_id, token, webhook, max_parallel_tasks, `name`, `active`, `is_default`, public_key, registration_token, registration_token_expires_at, `version`, `platform`, current_load, executor_type, registration_policy, registration_kind, security_compliant, security_reason, security_remediation, transport_trust, security_protocol_version) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		runner.ProjectID,
 		runner.Token,
 		runner.Webhook,
@@ -301,7 +393,14 @@ func (d *SqlDb) CreateRunner(runner db.Runner) (newRunner db.Runner, err error) 
 		runner.Version,
 		runner.Platform,
 		runner.CurrentLoad,
-		runner.EffectiveExecutorType())
+		runner.EffectiveExecutorType(),
+		runner.RegistrationPolicy,
+		runner.RegistrationKind,
+		runner.SecurityCompliant,
+		runner.SecurityReason,
+		runner.SecurityRemediation,
+		runner.TransportTrust,
+		runner.SecurityProtocolVersion)
 
 	if err != nil {
 		return

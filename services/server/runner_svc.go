@@ -17,13 +17,17 @@ const runnerRegistrationTokenTTL = time.Hour
 
 // RunnerRegistrationTokenPrefix prefixes every one-time registration token so it
 // is easy to recognize (e.g. in cloud-init scripts or logs).
-const RunnerRegistrationTokenPrefix = "smrs_"
+const RunnerRegistrationTokenPrefix = db.RunnerRegistrationTokenPrefix
 
 // generateRunnerRegistrationToken creates a new one-time registration token and
 // returns the plaintext token (handed to the caller once) together with its hash
 // (stored in the database, never the plaintext).
-func generateRunnerRegistrationToken() (token string, hash string) {
-	token = RunnerRegistrationTokenPrefix + base64.StdEncoding.EncodeToString(securecookie.GenerateRandomKey(32))
+func generateRunnerRegistrationToken(policy db.RunnerRegistrationPolicy) (token string, hash string) {
+	prefix := RunnerRegistrationTokenPrefix
+	if policy == db.RunnerRegistrationSecure {
+		prefix = RunnerSecureRegistrationTokenPrefix
+	}
+	token = prefix + base64.StdEncoding.EncodeToString(securecookie.GenerateRandomKey(32))
 	hash = HashRunnerRegistrationToken(token)
 	return
 }
@@ -93,7 +97,7 @@ func (s *RunnerServiceImpl) CreateRunner(runner db.Runner) (newRunner db.Runner,
 }
 
 func (s *RunnerServiceImpl) RegenerateRegistrationToken(runner db.Runner) (registrationToken string, err error) {
-	token, hash := generateRunnerRegistrationToken()
+	token, hash := generateRunnerRegistrationToken(runner.RegistrationPolicy)
 	expiresAt := tz.Now().Add(runnerRegistrationTokenTTL)
 
 	// This works for both unregistered and already-registered runners: a registered

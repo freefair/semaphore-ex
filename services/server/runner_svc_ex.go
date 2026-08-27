@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+const RunnerSecureRegistrationTokenPrefix = db.RunnerSecureRegistrationTokenPrefix
+
 func (s *RunnerServiceImpl) CreateProjectRunner(
 	runner db.Runner,
 ) (newRunner db.Runner, registrationToken string, err error) {
@@ -15,7 +17,7 @@ func (s *RunnerServiceImpl) CreateProjectRunner(
 		err = ErrProjectRunnerRequiresProject
 		return
 	}
-	registrationToken, hash := generateRunnerRegistrationToken()
+	registrationToken, hash := generateRunnerRegistrationToken(runner.RegistrationPolicy)
 	expiresAt := tz.Now().Add(runnerRegistrationTokenTTL)
 	runner.Token = ""
 	runner.Active = false
@@ -48,6 +50,10 @@ func (s *RunnerServiceImpl) UpdateProjectRunner(current db.Runner, changes db.Ru
 	current.IsDefault = changes.IsDefault
 	current.Webhook = strings.TrimSpace(changes.Webhook)
 	current.MaxParallelTasks = changes.MaxParallelTasks
+	if err := db.ValidateRunnerRegistrationPolicyChange(current, changes.RegistrationPolicy); err != nil {
+		return db.Runner{}, err
+	}
+	current.RegistrationPolicy, _ = db.NormalizeRunnerRegistrationPolicy(changes.RegistrationPolicy)
 	if err := s.runnerRepo.UpdateRunner(current); err != nil {
 		return db.Runner{}, err
 	}

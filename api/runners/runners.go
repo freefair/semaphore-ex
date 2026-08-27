@@ -78,6 +78,38 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	report.Apply(&runner)
+	securityReport := db.RunnerSecurityReport{
+		RegistrationKind: runner.RegistrationKind,
+		PublicKey:        "",
+	}
+	if runner.PublicKey != nil {
+		securityReport.PublicKey = *runner.PublicKey
+	}
+	if report.Version != nil {
+		securityReport.RunnerVersion = *report.Version
+	}
+	if report.ExecutorType != nil {
+		securityReport.ExecutorType = *report.ExecutorType
+	}
+	if report.TransportTrust != nil {
+		securityReport.TransportTrust = *report.TransportTrust
+	}
+	if report.SecurityProtocolVersion != nil {
+		securityReport.ProtocolVersion = *report.SecurityProtocolVersion
+	}
+	securityDecision := db.EvaluateRunnerRegistrationPolicy(runner.RegistrationPolicy, securityReport)
+	runner.SecurityCompliant = securityDecision.Compliant
+	runner.SecurityReason = securityDecision.Reason
+	runner.SecurityRemediation = securityDecision.Remediation
+	checkedAt := time.Now().UTC()
+	runner.SecurityCheckedAt = &checkedAt
+	if !securityDecision.Compliant {
+		if updateErr := c.runnerRepo.UpdateRunnerSecurity(runner); updateErr != nil {
+			log.WithError(updateErr).WithField("runner_id", runner.ID).Error("failed to persist runner security decision")
+		}
+		helpers.WriteJSON(w, http.StatusConflict, securityDecision)
+		return
+	}
 
 	// The runner reports its process start time on every poll. It changes on
 	// every restart and is persisted next to "touched", so the task reconciler
@@ -465,6 +497,7 @@ func RegisterRunner(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	reportedExecutorType := register.ExecutorType
 	executorType, executorErr := db.NormalizeRunnerExecutorType(register.ExecutorType)
 	if executorErr != nil {
 		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": executorErr.Error()})
@@ -480,9 +513,21 @@ func RegisterRunner(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(register.RegistrationToken, "smrs_") {
 		// Otherwise the value is a one-time registration token issued for a specific
 		// unregistered runner. The global token cannot be used to register it.
-		runner, err = store.RegisterRunner(server.HashRunnerRegistrationToken(register.RegistrationToken), nil, executorType)
+		runner, err = store.RegisterRunner(server.HashRunnerRegistrationToken(register.RegistrationToken), db.RunnerSecurityReport{
+			RegistrationKind: db.RunnerRegistrationOneTime,
+			TransportTrust:   register.TransportTrust,
+			RunnerVersion:    register.RunnerVersion,
+			ProtocolVersion:  register.SecurityProtocolVersion,
+			ExecutorType:     reportedExecutorType,
+			PublicKey:        register.PublicKey,
+		})
 
 		if err != nil {
+			var violation db.RunnerSecurityViolationError
+			if errors.As(err, &violation) {
+				helpers.WriteJSON(w, http.StatusConflict, violation.Decision)
+				return
+			}
 			helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
 				"error": "Invalid registration token",
 			})
@@ -524,10 +569,16 @@ func RegisterRunner(w http.ResponseWriter, r *http.Request) {
 	}).Info("New runner registered")
 
 	var res struct {
-		Token string `json:"token"`
+		Token              string                      `json:"token"`
+		RegistrationPolicy db.RunnerRegistrationPolicy `json:"registration_policy"`
+		SecurityCompliant  bool                        `json:"security_compliant"`
+		SecurityReason     string                      `json:"security_reason"`
 	}
 
 	res.Token = runner.Token
+	res.RegistrationPolicy = runner.RegistrationPolicy
+	res.SecurityCompliant = runner.SecurityCompliant
+	res.SecurityReason = runner.SecurityReason
 
 	helpers.WriteJSON(w, http.StatusOK, res)
 }

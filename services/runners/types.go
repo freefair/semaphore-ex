@@ -73,14 +73,18 @@ type RunnerRegistration struct {
 	// RegistrationToken is either the shared global registration token (which
 	// creates a new runner) or a one-time token issued for a specific unregistered
 	// runner (which registers that runner).
-	RegistrationToken string                `json:"registration_token" binding:"required"`
-	Webhook           string                `json:"webhook,omitempty"`
-	Name              string                `json:"name,omitempty"`
-	Tags              []string              `json:"tags,omitempty"`
-	MaxParallelTasks  int                   `json:"max_parallel_tasks"`
-	Enabled           bool                  `json:"enabled,omitempty"`
-	ProjectID         *int                  `json:"project_id,omitempty"`
-	ExecutorType      db.RunnerExecutorType `json:"executor_type,omitempty"`
+	RegistrationToken       string                  `json:"registration_token" binding:"required"`
+	Webhook                 string                  `json:"webhook,omitempty"`
+	Name                    string                  `json:"name,omitempty"`
+	Tags                    []string                `json:"tags,omitempty"`
+	MaxParallelTasks        int                     `json:"max_parallel_tasks"`
+	Enabled                 bool                    `json:"enabled,omitempty"`
+	ProjectID               *int                    `json:"project_id,omitempty"`
+	ExecutorType            db.RunnerExecutorType   `json:"executor_type,omitempty"`
+	TransportTrust          db.RunnerTransportTrust `json:"transport_trust,omitempty"`
+	RunnerVersion           string                  `json:"runner_version,omitempty"`
+	SecurityProtocolVersion int                     `json:"security_protocol_version,omitempty"`
+	PublicKey               string                  `json:"public_key,omitempty"`
 }
 
 type jobLogRecord struct {
