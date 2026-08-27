@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/gorilla/securecookie"
@@ -52,9 +53,17 @@ type RunnerService interface {
 	// registered, it is reset to the unregistered state (auth token cleared,
 	// deactivated) so it can be registered again.
 	RegenerateRegistrationToken(runner db.Runner) (registrationToken string, err error)
+
+	UpdateProjectRunner(current db.Runner, changes db.Runner) (updated db.Runner, err error)
+	SetProjectRunnerActive(runner db.Runner, active bool) error
+	DeleteProjectRunner(runner db.Runner) error
+	ClearProjectRunnerCache(runner db.Runner) error
 }
 
 var ErrProjectRunnerRequiresProject = errors.New("project runner requires a project")
+var ErrProjectRunnerNameRequired = errors.New("project runner name is required")
+var ErrProjectRunnerUnregistered = errors.New("unregistered project runner cannot be activated")
+var ErrProjectRunnerParallelismInvalid = errors.New("project runner max parallel tasks cannot be negative")
 
 type RunnerServiceImpl struct {
 	runnerRepo db.RunnerManager
@@ -110,10 +119,61 @@ func (s *RunnerServiceImpl) RegenerateRegistrationToken(runner db.Runner) (regis
 	// This works for both unregistered and already-registered runners: a registered
 	// runner is reset to the unregistered state (its auth token is cleared and it is
 	// deactivated) and gets a fresh one-time registration token.
-	if err = s.runnerRepo.ResetRunnerRegistration(runner.ID, hash, expiresAt); err != nil {
+	if runner.ProjectID != nil {
+		err = s.runnerRepo.ResetProjectRunnerRegistration(runner.ID, *runner.ProjectID, hash, expiresAt)
+	} else {
+		err = s.runnerRepo.ResetRunnerRegistration(runner.ID, hash, expiresAt)
+	}
+	if err != nil {
 		return
 	}
 
 	registrationToken = token
 	return
+}
+
+func (s *RunnerServiceImpl) UpdateProjectRunner(current db.Runner, changes db.Runner) (db.Runner, error) {
+	if current.ProjectID == nil || *current.ProjectID <= 0 {
+		return db.Runner{}, ErrProjectRunnerRequiresProject
+	}
+	name := strings.TrimSpace(changes.Name)
+	if name == "" {
+		return db.Runner{}, ErrProjectRunnerNameRequired
+	}
+	if changes.MaxParallelTasks < 0 {
+		return db.Runner{}, ErrProjectRunnerParallelismInvalid
+	}
+	current.Name = name
+	current.Tags = changes.Tags
+	current.IsDefault = changes.IsDefault
+	current.Webhook = strings.TrimSpace(changes.Webhook)
+	current.MaxParallelTasks = changes.MaxParallelTasks
+	if err := s.runnerRepo.UpdateRunner(current); err != nil {
+		return db.Runner{}, err
+	}
+	return current, nil
+}
+
+func (s *RunnerServiceImpl) SetProjectRunnerActive(runner db.Runner, active bool) error {
+	if runner.ProjectID == nil || *runner.ProjectID <= 0 {
+		return ErrProjectRunnerRequiresProject
+	}
+	if active && !runner.IsRegistered() {
+		return ErrProjectRunnerUnregistered
+	}
+	return s.runnerRepo.SetProjectRunnerActive(*runner.ProjectID, runner.ID, active)
+}
+
+func (s *RunnerServiceImpl) DeleteProjectRunner(runner db.Runner) error {
+	if runner.ProjectID == nil || *runner.ProjectID <= 0 {
+		return ErrProjectRunnerRequiresProject
+	}
+	return s.runnerRepo.DeleteRunner(*runner.ProjectID, runner.ID)
+}
+
+func (s *RunnerServiceImpl) ClearProjectRunnerCache(runner db.Runner) error {
+	if runner.ProjectID == nil || *runner.ProjectID <= 0 {
+		return ErrProjectRunnerRequiresProject
+	}
+	return s.runnerRepo.ClearRunnerCache(runner)
 }

@@ -382,6 +382,14 @@ export default {
     + 'Use it to register the runner.',
   howToRegister: 'How to register',
   runnerCreated: 'Runner created',
+  runnerPending: 'Pending',
+  runnerRegistered: 'Registered',
+  runnerInactive: 'Inactive',
+  runnerDeleting: 'Deleting',
+  runnerCacheCleaning: 'Cache cleaning',
+  runnerAssignmentConflict:
+    'This runner still has unfinished task assignments: {assignments}. '
+    + 'Wait for them to finish or stop them before changing the runner lifecycle.',
   regenerateRegistrationToken: 'Regenerate registration token',
   askResetRunnerRegistration:
     'This runner is registered. Regenerating the token will reset it: its current '

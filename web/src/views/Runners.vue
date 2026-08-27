@@ -479,7 +479,7 @@ semaphore runner start --config ./config.runner.json</pre
           v-model="item.active"
           inset
           @change="setActive(item.id, item.active)"
-          :disabled="item.project_id == null && !isAdmin"
+          :disabled="(item.project_id == null && !isAdmin) || isRunnerDeleting(item.id)"
         />
       </template>
 
@@ -523,6 +523,17 @@ semaphore runner start --config ./config.runner.json</pre
       </template>
 
       <template v-slot:item.status="{ item }">
+        <v-chip
+          v-if="item.project_id != null"
+          :data-testid="`runner-lifecycle-${item.id}`"
+          class="mr-1 mb-1"
+          small
+          :color="runnerLifecycleColor(item)"
+          :dark="runnerLifecycleState(item) !== 'inactive'"
+          style="font-weight: bold"
+        >
+          {{ $t(runnerLifecycleLabel(item)) }}
+        </v-chip>
         <v-tooltip bottom>
           <template v-slot:activator="{ on, attrs }">
             <v-chip
@@ -575,7 +586,7 @@ semaphore runner start --config ./config.runner.json</pre
           >
             <template v-slot:activator="{ on, attrs }">
               <v-btn
-                :disabled="item.project_id == null && !isAdmin"
+                :disabled="(item.project_id == null && !isAdmin) || isRunnerDeleting(item.id)"
                 class="mr-1"
                 icon
                 v-bind="attrs"
@@ -598,7 +609,7 @@ semaphore runner start --config ./config.runner.json</pre
             icon
             class="mr-1"
             @click="askDeleteItem(item.id)"
-            :disabled="item.project_id == null && !isAdmin"
+            :disabled="(item.project_id == null && !isAdmin) || isRunnerDeleting(item.id)"
           >
             <v-icon>mdi-delete</v-icon>
           </v-btn>
@@ -608,7 +619,7 @@ semaphore runner start --config ./config.runner.json</pre
             icon
             class="mr-1"
             @click="editItem(item.id)"
-            :disabled="item.project_id == null && !isAdmin"
+            :disabled="(item.project_id == null && !isAdmin) || isRunnerDeleting(item.id)"
           >
             <v-icon>mdi-pencil</v-icon>
           </v-btn>
@@ -621,7 +632,9 @@ semaphore runner start --config ./config.runner.json</pre
                 icon
                 class="mr-1"
                 @click="clearCache(item)"
-                :disabled="item.project_id == null && !isAdmin"
+                :disabled="(item.project_id == null && !isAdmin)
+                  || isRunnerDeleting(item.id)
+                  || runnerLifecycleState(item) === 'cache-cleaning'"
               >
                 <v-icon>mdi-broom</v-icon>
               </v-btn>
@@ -652,6 +665,7 @@ import axios from 'axios';
 import CopyClipboardButton from '@/components/CopyClipboardButton.vue';
 import PageMixin from '@/components/PageMixin';
 import HighlightedCard from '@/components/HighlightedCard.vue';
+import { getErrorMessage } from '@/lib/error';
 
 export default {
   mixins: [ItemListPageBase, PageMixin],
@@ -817,6 +831,8 @@ ${advancedOptions}-d semaphoreui/runner:${this.version}`;
       resetRegistrationDialog: false,
       resetRegistrationRunner: null,
       advancedOptions: null,
+      deletingRunnerIds: [],
+      cacheCleaningRunnerIds: [],
     };
   },
 
@@ -824,6 +840,68 @@ ${advancedOptions}-d semaphoreui/runner:${this.version}`;
     checkIntervalRule(v) {
       const n = Number(v);
       return (Number.isInteger(n) && n > 0) || this.$t('runnerCheckIntervalInvalid');
+    },
+
+    isRunnerDeleting(runnerId) {
+      return this.deletingRunnerIds.includes(runnerId);
+    },
+
+    isRunnerCacheCleaning(runner) {
+      if (this.cacheCleaningRunnerIds.includes(runner.id)) {
+        return true;
+      }
+      if (!runner.cleaning_requested) {
+        return false;
+      }
+      return !runner.touched
+        || new Date(runner.cleaning_requested).getTime() >= new Date(runner.touched).getTime();
+    },
+
+    runnerLifecycleState(runner) {
+      if (this.isRunnerDeleting(runner.id)) {
+        return 'deleting';
+      }
+      if (this.isRunnerCacheCleaning(runner)) {
+        return 'cache-cleaning';
+      }
+      if (!runner.registered) {
+        return 'pending';
+      }
+      if (!runner.active) {
+        return 'inactive';
+      }
+      return 'registered';
+    },
+
+    runnerLifecycleLabel(runner) {
+      return {
+        pending: 'runnerPending',
+        registered: 'runnerRegistered',
+        inactive: 'runnerInactive',
+        deleting: 'runnerDeleting',
+        'cache-cleaning': 'runnerCacheCleaning',
+      }[this.runnerLifecycleState(runner)];
+    },
+
+    runnerLifecycleColor(runner) {
+      return {
+        pending: 'warning',
+        registered: 'success',
+        inactive: 'blue-grey lighten-3',
+        deleting: 'error',
+        'cache-cleaning': 'info',
+      }[this.runnerLifecycleState(runner)];
+    },
+
+    lifecycleErrorMessage(error) {
+      const payload = error.response && error.response.data;
+      if (payload && payload.error === 'PROJECT_RUNNER_ASSIGNMENTS_ACTIVE') {
+        const assignments = (payload.assignments || [])
+          .map((assignment) => `#${assignment.task_id} (${assignment.status})`)
+          .join(', ');
+        return this.$t('runnerAssignmentConflict', { assignments });
+      }
+      return getErrorMessage(error);
     },
 
     async clearCache(runner) {
@@ -834,6 +912,9 @@ ${advancedOptions}-d semaphoreui/runner:${this.version}`;
         : `/api/runners/${runner.id}/cache`;
 
       try {
+        if (!this.cacheCleaningRunnerIds.includes(runner.id)) {
+          this.cacheCleaningRunnerIds.push(runner.id);
+        }
         await axios({
           method: 'delete',
           url,
@@ -843,8 +924,10 @@ ${advancedOptions}-d semaphoreui/runner:${this.version}`;
       } catch (e) {
         EventBus.$emit('i-snackbar', {
           color: 'error',
-          text: `Cannot clear cache: ${e.message}`,
+          text: this.lifecycleErrorMessage(e),
         });
+      } finally {
+        this.cacheCleaningRunnerIds = this.cacheCleaningRunnerIds.filter((id) => id !== runner.id);
       }
     },
 
@@ -884,7 +967,7 @@ ${advancedOptions}-d semaphoreui/runner:${this.version}`;
       } catch (e) {
         EventBus.$emit('i-snackbar', {
           color: 'error',
-          text: `Cannot regenerate registration token: ${e.message}`,
+          text: this.lifecycleErrorMessage(e),
         });
       }
     },
@@ -926,14 +1009,50 @@ ${advancedOptions}-d semaphoreui/runner:${this.version}`;
         ? `/api/project/${projectId}/runners/${runnerId}/active`
         : `/api/runners/${runnerId}/active`;
 
-      await axios({
-        method: 'post',
-        url,
-        responseType: 'json',
-        data: {
-          active,
-        },
-      });
+      try {
+        await axios({
+          method: 'post',
+          url,
+          responseType: 'json',
+          data: {
+            active,
+          },
+        });
+        await this.loadItems();
+      } catch (error) {
+        const runner = this.items.find((item) => item.id === runnerId);
+        if (runner) {
+          runner.active = !active;
+        }
+        EventBus.$emit('i-snackbar', {
+          color: 'error',
+          text: this.lifecycleErrorMessage(error),
+        });
+      }
+    },
+
+    async deleteItem(itemId) {
+      this.itemId = itemId;
+      const item = this.items.find((runner) => runner.id === itemId);
+      if (!this.deletingRunnerIds.includes(itemId)) {
+        this.deletingRunnerIds.push(itemId);
+      }
+      try {
+        await axios({
+          method: 'delete',
+          url: this.getSingleItemUrl(),
+          responseType: 'json',
+        });
+        EventBus.$emit(this.getEventName(), { action: 'delete', item });
+        await this.loadItems();
+      } catch (error) {
+        EventBus.$emit('i-snackbar', {
+          color: 'error',
+          text: this.lifecycleErrorMessage(error),
+        });
+      } finally {
+        this.deletingRunnerIds = this.deletingRunnerIds.filter((id) => id !== itemId);
+      }
     },
 
     getHeaders() {

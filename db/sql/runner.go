@@ -5,6 +5,7 @@ import (
 
 	"github.com/Masterminds/squirrel"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
 )
 
 func validateTag(tag string) error {
@@ -85,8 +86,96 @@ func (d *SqlDb) GetRunners(projectID int, activeOnly bool, tagFilterMode db.Runn
 }
 
 func (d *SqlDb) DeleteRunner(projectID int, runnerID int) (err error) {
-	err = d.deleteObject(projectID, runnerProps, runnerID)
-	return
+	runner, err := d.GetRunner(projectID, runnerID)
+	if err != nil {
+		return err
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(d.PrepareQuery("update task set runner_name=? where project_id=? and runner_id=?"),
+		runner.Name, projectID, runnerID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	query, args, err := squirrel.Delete("runner").
+		Where(squirrel.Eq{"id": runnerID, "project_id": projectID}).
+		Where("not exists (select 1 from task where task.runner_id=runner.id and task.status in (?,?,?,?,?,?,?))",
+			unfinishedRunnerStatusArgs()...).
+		ToSql()
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	result, err := tx.Exec(d.PrepareQuery(query), args...)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if deleted != 1 {
+		_ = tx.Rollback()
+		return d.runnerLifecycleConflict(projectID, runnerID)
+	}
+	return tx.Commit()
+}
+
+func (d *SqlDb) SetProjectRunnerActive(projectID int, runnerID int, active bool) error {
+	query := "update runner set active=? where id=? and project_id=?"
+	args := []any{active, runnerID, projectID}
+	if !active {
+		query += " and not exists (select 1 from task where task.runner_id=runner.id and task.status in (?,?,?,?,?,?,?))"
+		args = append(args, unfinishedRunnerStatusArgs()...)
+	}
+	result, err := d.exec(query, args...)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 1 {
+		return nil
+	}
+	if _, err = d.GetRunner(projectID, runnerID); err != nil {
+		return err
+	}
+	return d.runnerLifecycleConflict(projectID, runnerID)
+}
+
+func unfinishedRunnerStatusArgs() []any {
+	statuses := task_logger.UnfinishedTaskStatuses()
+	args := make([]any, len(statuses))
+	for i := range statuses {
+		args[i] = statuses[i]
+	}
+	return args
+}
+
+func (d *SqlDb) runnerLifecycleConflict(projectID int, runnerID int) error {
+	query, args, err := squirrel.Select("id as task_id", "status").
+		From("task").
+		Where(squirrel.Eq{
+			"project_id": projectID,
+			"runner_id":  runnerID,
+			"status":     task_logger.UnfinishedTaskStatuses(),
+		}).
+		OrderBy("id").
+		ToSql()
+	if err != nil {
+		return err
+	}
+	assignments := make([]db.RunnerTaskAssignment, 0)
+	if _, err = d.selectAll(&assignments, query, args...); err != nil {
+		return err
+	}
+	return &db.RunnerLifecycleConflictError{RunnerID: runnerID, Assignments: assignments}
 }
 
 func (d *SqlDb) GetRunnerCount() (res int, err error) {

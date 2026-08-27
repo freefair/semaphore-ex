@@ -137,10 +137,20 @@ func (d *SqlDb) ClearRunnerCache(runner db.Runner) (err error) {
 }
 
 func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
+	touchedAt := tz.Now()
+	if runner.IsCacheClearPending() {
+		// MySQL/MariaDB DATETIME columns can round both the request and the
+		// preceding heartbeat to the same second. Persist the acknowledgement
+		// strictly after the request so a repeated poll does not clear twice.
+		acknowledgedAt := runner.CleaningRequested.Add(time.Second)
+		if touchedAt.Before(acknowledgedAt) {
+			touchedAt = acknowledgedAt
+		}
+	}
 	if runner.ProjectID == nil {
 		_, err = d.exec(
 			"update `runner` set `touched`=?, `started_at`=? where id=?",
-			tz.Now(),
+			touchedAt,
 			runner.StartedAt,
 			runner.ID)
 		return
@@ -148,7 +158,7 @@ func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
 
 	_, err = d.exec(
 		"update `runner` set `touched`=?, `started_at`=? where id=? and project_id=?",
-		tz.Now(),
+		touchedAt,
 		runner.StartedAt,
 		runner.ID,
 		runner.ProjectID)
@@ -244,6 +254,34 @@ func (d *SqlDb) ResetRunnerRegistration(runnerID int, registrationTokenHash stri
 		expiresAt,
 		runnerID)
 	return
+}
+
+func (d *SqlDb) ResetProjectRunnerRegistration(
+	runnerID int,
+	projectID int,
+	registrationTokenHash string,
+	expiresAt time.Time,
+) error {
+	query := "update `runner` set `token`='', `active`=false, `public_key`=null, `registration_token`=?, `registration_token_expires_at`=? " +
+		"where id=? and project_id=? and not exists " +
+		"(select 1 from task where task.runner_id=runner.id and task.status in (?,?,?,?,?,?,?))"
+	args := []any{registrationTokenHash, expiresAt, runnerID, projectID}
+	args = append(args, unfinishedRunnerStatusArgs()...)
+	result, err := d.exec(query, args...)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 1 {
+		return nil
+	}
+	if _, err = d.GetRunner(projectID, runnerID); err != nil {
+		return err
+	}
+	return d.runnerLifecycleConflict(projectID, runnerID)
 }
 
 func (d *SqlDb) CreateRunner(runner db.Runner) (newRunner db.Runner, err error) {

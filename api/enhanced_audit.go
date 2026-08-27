@@ -168,8 +168,21 @@ func enhancedAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {
 	if strings.HasSuffix(path, "/registration-token") && method == http.MethodPost {
 		return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerIssue, runnerTarget, projectID), true
 	}
-	if strings.HasSuffix(path, fmt.Sprintf("/runners/%d", runnerID)) && (method == http.MethodGet || method == http.MethodHead) {
-		return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerRead, runnerTarget, projectID), true
+	if strings.HasSuffix(path, "/active") && method == http.MethodPost {
+		return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerActive, runnerTarget, projectID), true
+	}
+	if strings.HasSuffix(path, "/cache") && method == http.MethodDelete {
+		return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerCache, runnerTarget, projectID), true
+	}
+	if strings.HasSuffix(path, fmt.Sprintf("/runners/%d", runnerID)) {
+		switch method {
+		case http.MethodGet, http.MethodHead:
+			return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerRead, runnerTarget, projectID), true
+		case http.MethodPut, http.MethodPost:
+			return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerUpdate, runnerTarget, projectID), true
+		case http.MethodDelete:
+			return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerDelete, runnerTarget, projectID), true
+		}
 	}
 	return enhancedAuditDescriptor{}, false
 }
