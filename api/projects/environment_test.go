@@ -2,9 +2,8 @@ package projects
 
 import (
 	"fmt"
-	"testing"
-
 	"github.com/semaphoreui/semaphore/db"
+	"testing"
 )
 
 type mockAccessKeyRepo struct {
@@ -37,11 +36,13 @@ func (m *mockAccessKeyRepo) DeleteTaskAccessKeys(int, int) error { return nil }
 func (m *mockAccessKeyRepo) DeleteExpiredTaskAccessKeys() error  { return nil }
 
 type mockAccessKeyService struct {
+	created []db.AccessKey
 	deleted []int
 	updated []db.AccessKey
 }
 
 func (m *mockAccessKeyService) Create(key db.AccessKey) (db.AccessKey, error) {
+	m.created = append(m.created, key)
 	return key, nil
 }
 func (m *mockAccessKeyService) Update(key db.AccessKey) error {

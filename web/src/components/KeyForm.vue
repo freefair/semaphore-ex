@@ -28,7 +28,7 @@
         >
         <v-tab
           v-if="isPro"
-          :disabled="formSaving || !canEditSecrets || isSynced"
+          :disabled="formSaving || !canEditSecrets || isSynced || !runtimeCanWrite"
           style="padding: 0"
           >
             Storage
@@ -58,10 +58,11 @@
           v-if="supportStorages && sourceStorageType === 'vault'"
           v-model="item.source_storage_id"
           :label="$t('Storage')"
-          :items="secretStorages"
+          :items="runtimeSecretStorages"
           item-value="id"
           item-text="name"
-          :disabled="formSaving || !canEditSecrets || isSynced"
+          :disabled="formSaving || !canEditSecrets || isSynced || !runtimeCanWrite"
+          data-testid="key-runtimeStorage"
           outlined
           dense
           clearable
@@ -69,12 +70,73 @@
 
         <v-text-field
           v-if="supportStorages && sourceStorageType === 'vault' && item.source_storage_id != null"
-          v-model="item.source_storage_key"
-          :label="$t('Source Key')"
-          :disabled="formSaving || !canEditSecrets || isSynced"
+          v-model="item.source_storage_mount"
+          label="KV v2 mount"
+          :rules="[(v) => !!v || 'Mount is required']"
+          :disabled="runtimeReferenceDisabled"
+          data-testid="key-runtimeMount"
           outlined
           dense
         />
+
+        <v-text-field
+          v-if="supportStorages && sourceStorageType === 'vault' && item.source_storage_id != null"
+          v-model="item.source_storage_key"
+          label="Secret path"
+          hint="Path within the mount; values are not browsed"
+          :rules="[(v) => !!v || 'Secret path is required']"
+          :disabled="runtimeReferenceDisabled"
+          data-testid="key-runtimePath"
+          outlined
+          dense
+        />
+
+        <v-row
+          v-if="supportStorages && sourceStorageType === 'vault' && item.source_storage_id != null"
+        >
+          <v-col cols="12" sm="5">
+            <v-text-field
+              v-model.number="item.source_storage_version"
+              label="Version (optional)"
+              type="number"
+              min="0"
+              :rules="[(v) => v == null || v >= 0 || 'Version must not be negative']"
+              :disabled="runtimeReferenceDisabled"
+              data-testid="key-runtimeVersion"
+              outlined
+              dense
+            />
+          </v-col>
+          <v-col cols="12" sm="7">
+            <v-text-field
+              v-model="item.source_storage_field"
+              label="Field"
+              :rules="[(v) => !!v || 'Field is required']"
+              :disabled="runtimeReferenceDisabled"
+              data-testid="key-runtimeField"
+              outlined
+              dense
+            />
+          </v-col>
+        </v-row>
+
+        <v-alert
+          v-if="sourceStorageType === 'vault' && runtimeDecision
+            && runtimeDecision.state !== 'active'"
+          dense
+          text
+          :type="runtimeDecision.state === 'read_only' ? 'info' : 'warning'"
+          data-testid="key-runtimeCapability"
+        >
+          Runtime secrets are {{ runtimeDecision.state.replace('_', ' ') }}.
+          <template v-if="runtimeDecision.state === 'read_only'">
+            Existing references remain executable, but changes are blocked by the server.
+          </template>
+          <template v-else>
+            Existing references remain visible, but resolution and changes are blocked by the
+            server.
+          </template>
+        </v-alert>
 
         <v-text-field
           v-if="['env', 'file'].includes(sourceStorageType)"
@@ -98,7 +160,7 @@
       item-value="id"
       item-text="name"
       :required="canEditSecrets"
-      :disabled="formSaving || !canEditSecrets"
+      :disabled="formSaving || !canEditSecrets || runtimeTypeDisabled"
       outlined
       dense
     />
@@ -167,6 +229,8 @@
   </v-form>
 </template>
 <script>
+import enhancedComputed from '@/lib/enhanced/key-form';
+
 import ItemFormBase from '@/components/ItemFormBase';
 
 export default {
@@ -174,6 +238,7 @@ export default {
 
   props: {
     supportStorages: Boolean,
+    systemInfo: Object,
   },
 
   data() {
@@ -200,6 +265,7 @@ export default {
   },
 
   computed: {
+    ...enhancedComputed,
 
     isPro() {
       return (process.env.VUE_APP_BUILD_TYPE || '').startsWith('pro_');
@@ -253,6 +319,20 @@ export default {
     },
   },
 
+  watch: {
+    'item.source_storage_id': {
+      handler(storageId) {
+        if (this.item?.source_storage_type !== 'vault' || storageId == null) {
+          return;
+        }
+        const storage = this.runtimeSecretStorages.find((candidate) => candidate.id === storageId);
+        if (storage && !this.item.source_storage_mount) {
+          this.$set(this.item, 'source_storage_mount', storage.params?.mount || 'secret');
+        }
+      },
+    },
+  },
+
   async created() {
     [this.secretStorages] = await Promise.all([this.loadProjectResources('secret_storages')]);
   },
@@ -260,12 +340,16 @@ export default {
   methods: {
     afterLoadData() {
       this.isSynced = JSON.parse(this.item.plain || '{}').dvls_id != null;
+      if (this.item.source_storage_type === 'vault' && !this.item.source_storage_mount) {
+        this.$set(this.item, 'source_storage_mount', 'secret');
+      }
     },
 
     getNewItem() {
       return {
         ssh: {},
         login_password: {},
+        source_storage_version: 0,
       };
     },
 

@@ -40,6 +40,11 @@ type EnvironmentSecret struct {
 	Name      string                     `json:"name"`
 	Secret    string                     `json:"secret"`
 	Operation EnvironmentSecretOperation `json:"operation"`
+	StorageID *int                       `json:"storage_id,omitempty"`
+	Mount     string                     `json:"mount,omitempty"`
+	Path      string                     `json:"path,omitempty"`
+	Version   int                        `json:"version,omitempty"`
+	Field     string                     `json:"field,omitempty"`
 }
 
 // Environment is used to pass additional arguments, in json form to ansible

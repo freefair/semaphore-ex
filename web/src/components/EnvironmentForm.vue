@@ -25,7 +25,7 @@
         <v-autocomplete
           v-model="item.secret_storage_id"
           :label="$t('Secret storage (optional)')"
-          :items="secretStorages"
+          :items="managedSecretStorages"
           :disabled="formSaving || !isNew"
           item-value="id"
           item-text="name"
@@ -429,6 +429,8 @@
 }
 </style>
 <script>
+import enhancedComputed from '@/lib/enhanced/environment-form';
+
 /* eslint-disable import/no-extraneous-dependencies,import/extensions */
 
 import ItemFormBase from '@/components/ItemFormBase';
@@ -456,6 +458,8 @@ export default {
   },
 
   computed: {
+    ...enhancedComputed,
+
     secretStorage() {
       if (this.item && this.item.secret_storage_id && this.secretStorages) {
         return this.secretStorages.find((s) => s.id === this.item.secret_storage_id);

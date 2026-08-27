@@ -1,12 +1,13 @@
 package server
 
 import (
+	"context"
 	"errors"
-
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pkg/random"
 	pro "github.com/semaphoreui/semaphore/pro/services/server"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
 
 type SecretStorageService interface {
@@ -16,6 +17,7 @@ type SecretStorageService interface {
 	GetSecretStorages(projectID int) ([]db.SecretStorage, error)
 	Create(storage db.SecretStorage) (res db.SecretStorage, err error)
 	SyncSecrets(sync db.SecretSync) error
+	TestConnection(context.Context, int, int) (pro_interfaces.SecretProviderHealth, error)
 }
 
 func NewSecretStorageService(
@@ -88,10 +90,15 @@ func (s *SecretStorageServiceImpl) Delete(projectID int, storageID int) (err err
 }
 
 func (s *SecretStorageServiceImpl) GetSecretStorage(projectID int, storageID int) (res db.SecretStorage, err error) {
-	return s.secretStorageRepo.GetSecretStorage(projectID, storageID)
+	res, err = s.secretStorageRepo.GetSecretStorage(projectID, storageID)
+	res.Secret = ""
+	return
 }
 
 func (s *SecretStorageServiceImpl) Create(storage db.SecretStorage) (res db.SecretStorage, err error) {
+	if err = ValidateRuntimeSecretStorage(&storage); err != nil {
+		return
+	}
 	sourceStorageType := storage.SourceStorageType
 	sourceStorageKey := ""
 
@@ -140,11 +147,14 @@ func (s *SecretStorageServiceImpl) Create(storage db.SecretStorage) (res db.Secr
 	}
 
 	_, err = s.accessKeyService.Create(key)
-
+	res.Secret = ""
 	return
 }
 
 func (s *SecretStorageServiceImpl) Update(storage db.SecretStorage) (err error) {
+	if err = ValidateRuntimeSecretStorage(&storage); err != nil {
+		return
+	}
 	err = s.secretStorageRepo.UpdateSecretStorage(storage)
 	if err != nil {
 		return
@@ -249,5 +259,9 @@ func (s *SecretStorageServiceImpl) Update(storage db.SecretStorage) (err error) 
 }
 
 func (s *SecretStorageServiceImpl) GetSecretStorages(projectID int) (storages []db.SecretStorage, err error) {
-	return pro.GetSecretStorages(s.secretStorageRepo, projectID)
+	storages, err = pro.GetSecretStorages(s.secretStorageRepo, projectID)
+	for index := range storages {
+		storages[index].Secret = ""
+	}
+	return
 }

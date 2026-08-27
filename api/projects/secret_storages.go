@@ -2,17 +2,18 @@ package projects
 
 import (
 	"fmt"
-	"net/http"
-
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	pro "github.com/semaphoreui/semaphore/pro/services/server"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/server"
+	"net/http"
 )
 
 type SecretStorageController struct {
 	secretRepo           db.SecretStorageRepository
 	secretStorageService server.SecretStorageService
+	capabilityProvider   pro_interfaces.CapabilityProvider
 }
 
 func SecretStorageMiddleware(next http.Handler) http.Handler {
@@ -46,11 +47,8 @@ func SecretStorageMiddleware(next http.Handler) http.Handler {
 				return
 			}
 		} else {
-			if keys[0].SourceStorageKey != nil {
-				storage.Secret = *keys[0].SourceStorageKey
-			}
-
 			storage.SourceStorageType = keys[0].SourceStorageType
+			storage.Secret = ""
 		}
 
 		r = helpers.SetContextValue(r, "secretStorage", storage)
@@ -61,15 +59,23 @@ func SecretStorageMiddleware(next http.Handler) http.Handler {
 func NewSecretStorageController(
 	secretRepo db.SecretStorageRepository,
 	secretStorageService server.SecretStorageService,
-
+	capabilityProviders ...pro_interfaces.CapabilityProvider,
 ) *SecretStorageController {
+	var capabilityProvider pro_interfaces.CapabilityProvider
+	if len(capabilityProviders) > 0 {
+		capabilityProvider = capabilityProviders[0]
+	}
 	return &SecretStorageController{
 		secretRepo:           secretRepo,
 		secretStorageService: secretStorageService,
+		capabilityProvider:   capabilityProvider,
 	}
 }
 
 func (c *SecretStorageController) GetRefs(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead) {
+		return
+	}
 	key := helpers.GetFromContext(r, "secretStorage").(db.SecretStorage)
 	refs, err := helpers.Store(r).GetSecretStorageRefs(key.ProjectID, key.ID)
 	if err != nil {
@@ -81,22 +87,32 @@ func (c *SecretStorageController) GetRefs(w http.ResponseWriter, r *http.Request
 }
 
 func (c *SecretStorageController) GetSecretStorages(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead) {
+		return
+	}
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	storages, err := c.secretStorageService.GetSecretStorages(project.ID)
 	if err != nil {
 		helpers.WriteError(w, err)
+		return
 	}
 
 	helpers.WriteJSON(w, http.StatusOK, storages)
 }
 
 func (c *SecretStorageController) GetSecretStorage(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead) {
+		return
+	}
 	storage := helpers.GetFromContext(r, "secretStorage").(db.SecretStorage)
 
 	helpers.WriteJSON(w, http.StatusOK, storage)
 }
 
 func (c *SecretStorageController) Update(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessWrite) {
+		return
+	}
 	oldStorage := helpers.GetFromContext(r, "secretStorage").(db.SecretStorage)
 
 	var storage db.SecretStorage
@@ -123,6 +139,7 @@ func (c *SecretStorageController) Update(w http.ResponseWriter, r *http.Request)
 		helpers.WriteError(w, err)
 		return
 	}
+	storage.Secret = ""
 
 	helpers.EventLog(r, helpers.EventLogUpdate, helpers.EventLogItem{
 		UserID:      helpers.UserFromContext(r).ID,
@@ -136,6 +153,9 @@ func (c *SecretStorageController) Update(w http.ResponseWriter, r *http.Request)
 }
 
 func (c *SecretStorageController) Add(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessWrite) {
+		return
+	}
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	var storage db.SecretStorage
 
@@ -169,6 +189,9 @@ func (c *SecretStorageController) Add(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *SecretStorageController) Remove(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessWrite) {
+		return
+	}
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	storageID, ok := helpers.GetIntParamOrAbort("storage_id", w, r)
 	if !ok {
@@ -185,6 +208,9 @@ func (c *SecretStorageController) Remove(w http.ResponseWriter, r *http.Request)
 }
 
 func (c *SecretStorageController) SyncSecrets(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessWrite) {
+		return
+	}
 	oldStorage := helpers.GetFromContext(r, "secretStorage").(db.SecretStorage)
 
 	var storage db.SecretStorage

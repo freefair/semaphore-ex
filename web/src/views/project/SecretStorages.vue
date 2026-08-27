@@ -17,7 +17,7 @@
     <EditDialog
       v-model="editDialog"
       :save-button-text="itemId === 'new' ? $t('create') : $t('save')"
-      :title="`${itemId === 'new' ? $t('nnew') : $t('edit')} ${itemType} Storage`"
+      :title="`${itemId === 'new' ? $t('nnew') : $t('edit')} ${dialogStorageType} Storage`"
       :max-width="450"
       @save="loadItems()"
     >
@@ -30,6 +30,7 @@
           @error="onError"
           :need-save="needSave"
           :need-reset="needReset"
+          :can-test-connection="runtimeCanExecute"
         />
       </template>
     </EditDialog>
@@ -47,6 +48,8 @@
             v-on="on"
             color="primary"
             v-if="can(USER_PERMISSIONS.manageProjectResources)"
+            :disabled="!runtimeCanWrite"
+            data-testid="secretStorage-newMenu"
           >
             New Storage
             <v-icon>mdi-chevron-down</v-icon>
@@ -59,7 +62,7 @@
               editItem('new');
               itemType = 'vault';
             "
-            :disabled="!features.secret_storage_management"
+            :disabled="!features.secret_storage_management || !runtimeCanWrite"
           >
             <v-list-item-icon>
               <v-icon>$vuetify.icons.hashicorp_vault</v-icon>
@@ -73,7 +76,7 @@
               editItem('new');
               itemType = 'openbao';
             "
-            :disabled="!features.secret_storage_management"
+            :disabled="!features.secret_storage_management || !runtimeCanWrite"
           >
             <v-list-item-icon>
               <v-icon>$vuetify.icons.openbao</v-icon>
@@ -191,6 +194,18 @@
       </span>
     </v-alert>
 
+    <v-alert
+      v-if="runtimeDecision && runtimeDecision.state !== 'active'"
+      text
+      :type="runtimeDecision.state === 'read_only' ? 'info' : 'warning'"
+      class="PageAlert"
+      data-testid="secretStorage-runtimeCapability"
+    >
+      Runtime secrets are {{ formatCapabilityValue(runtimeDecision.state) }}
+      ({{ formatCapabilityValue(runtimeDecision.reason) }}). Existing configuration remains visible,
+      but unavailable actions are blocked by the server.
+    </v-alert>
+
     <v-data-table
       :headers="headers"
       :items="items"
@@ -224,10 +239,10 @@
           >
             <v-icon>mdi-sync</v-icon>
           </v-btn>
-          <v-btn @click="askDeleteItem(item.id)">
+          <v-btn @click="askDeleteItem(item.id)" :disabled="!runtimeCanWrite">
             <v-icon>mdi-delete</v-icon>
           </v-btn>
-          <v-btn @click="editItem(item.id)">
+          <v-btn @click="editItem(item.id)" :disabled="!runtimeCanRead">
             <v-icon>mdi-pencil</v-icon>
           </v-btn>
         </v-btn-toggle>
@@ -273,6 +288,8 @@
 </style>
 
 <script>
+import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/secret-storages';
+
 import axios from 'axios';
 import ItemListPageBase from '@/components/ItemListPageBase';
 import SecretStorageForm from '@/components/SecretStorageForm.vue';
@@ -293,12 +310,16 @@ export default {
   },
 
   computed: {
+    ...enhancedComputed,
     features() {
       return this.systemInfo?.features || {};
     },
+
   },
 
   methods: {
+    ...enhancedMethods,
+
     async syncItem(itemId) {
       try {
         const item = this.items.find((x) => x.id === itemId);

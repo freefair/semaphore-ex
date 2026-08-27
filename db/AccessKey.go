@@ -80,6 +80,11 @@ type AccessKey struct {
 	// If SourceStorageID is nil, this field is references to an environment variable.
 	SourceStorageKey  *string                     `db:"source_storage_key" json:"source_storage_key,omitempty"`
 	SourceStorageType *AccessKeySourceStorageType `db:"source_storage_type" json:"source_storage_type,omitempty"`
+	// Runtime-secret reference fields are API-only. The canonical value-free
+	// reference is persisted in SourceStorageKey for schema compatibility.
+	SourceStorageMount   string `db:"-" json:"source_storage_mount,omitempty" backup:"-"`
+	SourceStorageVersion int    `db:"-" json:"source_storage_version,omitempty" backup:"-"`
+	SourceStorageField   string `db:"-" json:"source_storage_field,omitempty" backup:"-"`
 
 	Synchronized bool `db:"synchronized" json:"synchronized,omitempty"`
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/debuglog"
 	"github.com/semaphoreui/semaphore/pkg/metrics"
 	proFactory "github.com/semaphoreui/semaphore/pro/db/factory"
+	proFeatures "github.com/semaphoreui/semaphore/pro/pkg/features"
 	proHA "github.com/semaphoreui/semaphore/pro/services/ha"
 	proServer "github.com/semaphoreui/semaphore/pro/services/server"
 	proTasks "github.com/semaphoreui/semaphore/pro/services/tasks"
@@ -104,7 +105,8 @@ func runService() {
 	workflowStore := proFactory.NewWorkflowStore(store)
 
 	projectService := server.NewProjectService(store, store)
-	encryptionService := server.NewAccessKeyEncryptionService(store, store, store, store)
+	capabilityProvider := proFeatures.NewCapabilityProvider(store)
+	encryptionService := server.NewAccessKeyEncryptionService(store, store, store, store, capabilityProvider)
 	accessKeyInstallationService := server.NewAccessKeyInstallationService(encryptionService)
 	integrationService := server.NewIntegrationService(store, encryptionService)
 	inventoryService := server.NewInventoryService(
@@ -113,7 +115,7 @@ func runService() {
 		store,
 		encryptionService,
 	)
-	accessKeyService := server.NewAccessKeyService(store, encryptionService, store)
+	accessKeyService := server.NewAccessKeyService(store, encryptionService, store, capabilityProvider)
 	secretStorageService := server.NewSecretStorageService(store, store, accessKeyService, encryptionService)
 	secretStorageSyncScheduler := server.NewSecretStorageSyncScheduler(store, secretStorageService)
 	environmentService := server.NewEnvironmentService(store, encryptionService, store)

@@ -16,6 +16,7 @@
           :need-save="needSave"
           :need-reset="needReset"
           :support-storages="features.secret_storages"
+          :system-info="systemInfo"
         />
       </template>
     </EditDialog>

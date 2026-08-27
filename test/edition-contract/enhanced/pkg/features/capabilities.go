@@ -54,7 +54,13 @@ func (p *capabilityProvider) Resolve(
 		},
 		nil,
 	)
-	return pro_interfaces.NewCapabilitySnapshot(request, []pro_interfaces.CapabilityDecision{decision, projectRunners}), nil
+	runtimeSecrets, err := p.resolveRuntimeSecretsDecision(request)
+	if err != nil {
+		return pro_interfaces.CapabilitySnapshot{}, err
+	}
+	return pro_interfaces.NewCapabilitySnapshot(request, []pro_interfaces.CapabilityDecision{
+		decision, projectRunners, runtimeSecrets,
+	}), nil
 }
 
 func (p *capabilityProvider) Configure(
@@ -78,7 +84,8 @@ func (p *capabilityProvider) Configure(
 			Required: pro_interfaces.CapabilityAccessWrite,
 		}
 	}
-	if configuration.ID != pro_interfaces.CapabilityLifecycleTest {
+	if configuration.ID != pro_interfaces.CapabilityLifecycleTest &&
+		configuration.ID != pro_interfaces.CapabilityRuntimeSecrets {
 		return pro_interfaces.CapabilitySnapshot{}, common_errors.NewValidationError(
 			fmt.Sprintf("unsupported capability %q", configuration.ID),
 		)
@@ -101,6 +108,68 @@ func (p *capabilityProvider) Configure(
 		return pro_interfaces.CapabilitySnapshot{}, fmt.Errorf("save capability configuration: %w", err)
 	}
 	return p.Resolve(ctx, request)
+}
+
+func (p *capabilityProvider) resolveRuntimeSecretsDecision(
+	request pro_interfaces.CapabilityRequest,
+) (pro_interfaces.CapabilityDecision, error) {
+	config, err := p.repository.GetCapabilityConfig(string(pro_interfaces.CapabilityRuntimeSecrets))
+	if errors.Is(err, db.ErrNotFound) {
+		config = db.CapabilityConfig{
+			CapabilityID: string(pro_interfaces.CapabilityRuntimeSecrets),
+			State:        string(pro_interfaces.CapabilityStateActive),
+		}
+	} else if err != nil {
+		return pro_interfaces.CapabilityDecision{}, fmt.Errorf("load runtime secret capability: %w", err)
+	}
+	state := pro_interfaces.CapabilityState(config.State)
+	if state == pro_interfaces.CapabilityStateDisabled {
+		return pro_interfaces.NewCapabilityDecision(
+			pro_interfaces.CapabilityRuntimeSecrets,
+			state,
+			pro_interfaces.CapabilityReasonDisabledByAdmin,
+			[]pro_interfaces.CapabilityAccess{pro_interfaces.CapabilityAccessRead},
+			nil,
+		), nil
+	}
+	if config.ExpiresAt != nil && !request.At.Before(*config.ExpiresAt) {
+		return pro_interfaces.NewCapabilityDecision(
+			pro_interfaces.CapabilityRuntimeSecrets,
+			pro_interfaces.CapabilityStateExpired,
+			pro_interfaces.CapabilityReasonEntitlementExpired,
+			[]pro_interfaces.CapabilityAccess{pro_interfaces.CapabilityAccessRead},
+			nil,
+		), nil
+	}
+	switch state {
+	case pro_interfaces.CapabilityStateActive:
+		return pro_interfaces.NewCapabilityDecision(
+			pro_interfaces.CapabilityRuntimeSecrets,
+			state,
+			pro_interfaces.CapabilityReasonActive,
+			[]pro_interfaces.CapabilityAccess{
+				pro_interfaces.CapabilityAccessRead,
+				pro_interfaces.CapabilityAccessWrite,
+				pro_interfaces.CapabilityAccessExecute,
+			},
+			nil,
+		), nil
+	case pro_interfaces.CapabilityStateReadOnly:
+		return pro_interfaces.NewCapabilityDecision(
+			pro_interfaces.CapabilityRuntimeSecrets,
+			state,
+			pro_interfaces.CapabilityReasonReadOnly,
+			[]pro_interfaces.CapabilityAccess{
+				pro_interfaces.CapabilityAccessRead,
+				pro_interfaces.CapabilityAccessExecute,
+			},
+			nil,
+		), nil
+	default:
+		return pro_interfaces.CapabilityDecision{}, fmt.Errorf(
+			"unsupported stored runtime secret capability state %q", config.State,
+		)
+	}
 }
 
 func resolveLifecycleTestDecision(

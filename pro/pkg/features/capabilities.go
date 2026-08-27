@@ -25,17 +25,20 @@ func (p *communityCapabilityProvider) Resolve(
 	}
 	return pro_interfaces.NewCapabilitySnapshot(
 		request,
-		[]pro_interfaces.CapabilityDecision{communityUnavailableDecision()},
+		[]pro_interfaces.CapabilityDecision{
+			communityUnavailableDecision(pro_interfaces.CapabilityLifecycleTest),
+			communityUnavailableDecision(pro_interfaces.CapabilityRuntimeSecrets),
+		},
 	), nil
 }
 
 func (p *communityCapabilityProvider) Configure(
 	_ context.Context,
 	_ pro_interfaces.CapabilityRequest,
-	_ pro_interfaces.CapabilityConfiguration,
+	configuration pro_interfaces.CapabilityConfiguration,
 ) (pro_interfaces.CapabilitySnapshot, error) {
 	return pro_interfaces.CapabilitySnapshot{}, pro_interfaces.CapabilityDeniedError{
-		Decision: communityUnavailableDecision(),
+		Decision: communityUnavailableDecision(configuration.ID),
 		Required: pro_interfaces.CapabilityAccessWrite,
 	}
 }
@@ -52,7 +55,7 @@ func (s *communityCapabilityTestService) ListRecords(
 	_ context.Context,
 	_ pro_interfaces.CapabilitySnapshot,
 ) ([]db.CapabilityTestRecord, error) {
-	return nil, communityDenied(pro_interfaces.CapabilityAccessRead)
+	return nil, communityDenied(pro_interfaces.CapabilityLifecycleTest, pro_interfaces.CapabilityAccessRead)
 }
 
 func (s *communityCapabilityTestService) CreateRecord(
@@ -60,7 +63,7 @@ func (s *communityCapabilityTestService) CreateRecord(
 	_ pro_interfaces.CapabilitySnapshot,
 	_ string,
 ) (db.CapabilityTestRecord, error) {
-	return db.CapabilityTestRecord{}, communityDenied(pro_interfaces.CapabilityAccessWrite)
+	return db.CapabilityTestRecord{}, communityDenied(pro_interfaces.CapabilityLifecycleTest, pro_interfaces.CapabilityAccessWrite)
 }
 
 func (s *communityCapabilityTestService) RunBackgroundAction(
@@ -68,12 +71,12 @@ func (s *communityCapabilityTestService) RunBackgroundAction(
 	_ pro_interfaces.CapabilitySnapshot,
 	_ string,
 ) (db.CapabilityTestRecord, error) {
-	return db.CapabilityTestRecord{}, communityDenied(pro_interfaces.CapabilityAccessExecute)
+	return db.CapabilityTestRecord{}, communityDenied(pro_interfaces.CapabilityLifecycleTest, pro_interfaces.CapabilityAccessExecute)
 }
 
-func communityUnavailableDecision() pro_interfaces.CapabilityDecision {
+func communityUnavailableDecision(id pro_interfaces.CapabilityID) pro_interfaces.CapabilityDecision {
 	return pro_interfaces.NewCapabilityDecision(
-		pro_interfaces.CapabilityLifecycleTest,
+		id,
 		pro_interfaces.CapabilityStateUnavailable,
 		pro_interfaces.CapabilityReasonProviderUnavailable,
 		nil,
@@ -81,9 +84,9 @@ func communityUnavailableDecision() pro_interfaces.CapabilityDecision {
 	)
 }
 
-func communityDenied(access pro_interfaces.CapabilityAccess) error {
+func communityDenied(id pro_interfaces.CapabilityID, access pro_interfaces.CapabilityAccess) error {
 	return pro_interfaces.CapabilityDeniedError{
-		Decision: communityUnavailableDecision(),
+		Decision: communityUnavailableDecision(id),
 		Required: access,
 	}
 }

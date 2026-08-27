@@ -79,6 +79,18 @@ func (c *CapabilityController) Require(access pro_interfaces.CapabilityAccess) f
 
 // Configure updates the non-secret lifecycle-test configuration.
 func (c *CapabilityController) Configure(w http.ResponseWriter, r *http.Request) {
+	c.configure(w, r, pro_interfaces.CapabilityLifecycleTest)
+}
+
+func (c *CapabilityController) ConfigureRuntimeSecrets(w http.ResponseWriter, r *http.Request) {
+	c.configure(w, r, pro_interfaces.CapabilityRuntimeSecrets)
+}
+
+func (c *CapabilityController) configure(
+	w http.ResponseWriter,
+	r *http.Request,
+	id pro_interfaces.CapabilityID,
+) {
 	var body struct {
 		State     pro_interfaces.CapabilityState `json:"state"`
 		ExpiresAt *time.Time                     `json:"expires_at"`
@@ -94,7 +106,7 @@ func (c *CapabilityController) Configure(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	snapshot, err := c.facade.Configure(r.Context(), request, pro_interfaces.CapabilityConfiguration{
-		ID:        pro_interfaces.CapabilityLifecycleTest,
+		ID:        id,
 		State:     body.State,
 		ExpiresAt: body.ExpiresAt,
 	})
@@ -103,7 +115,7 @@ func (c *CapabilityController) Configure(w http.ResponseWriter, r *http.Request)
 		writeCapabilityError(w, err)
 		return
 	}
-	decision := snapshot.Decision(pro_interfaces.CapabilityLifecycleTest)
+	decision := snapshot.Decision(id)
 	c.recordAudit(r, capabilityAuditEvent(r, pro_interfaces.AuditActionCapabilityConfigure,
 		pro_interfaces.AuditOutcomeAllowed, string(decision.Reason())))
 	helpers.WriteJSON(w, http.StatusOK, snapshot)

@@ -29,11 +29,17 @@ func TestCommunityProviderAndWorkerRemainUnavailable(t *testing.T) {
 	require.NoError(t, err)
 	decision := snapshot.Decision(pro_interfaces.CapabilityLifecycleTest)
 	assert.Equal(t, pro_interfaces.CapabilityStateUnavailable, decision.State())
+	assert.Equal(t, pro_interfaces.CapabilityStateUnavailable,
+		snapshot.Decision(pro_interfaces.CapabilityRuntimeSecrets).State())
 	_, err = service.RunBackgroundAction(context.Background(), snapshot, "blocked")
 	assertCommunityDenied(t, err, pro_interfaces.CapabilityAccessExecute)
 	_, err = provider.Configure(context.Background(), request, pro_interfaces.CapabilityConfiguration{
 		ID:    pro_interfaces.CapabilityLifecycleTest,
 		State: pro_interfaces.CapabilityStateActive,
+	})
+	assertCommunityDenied(t, err, pro_interfaces.CapabilityAccessWrite)
+	_, err = provider.Configure(context.Background(), request, pro_interfaces.CapabilityConfiguration{
+		ID: pro_interfaces.CapabilityRuntimeSecrets, State: pro_interfaces.CapabilityStateActive,
 	})
 	assertCommunityDenied(t, err, pro_interfaces.CapabilityAccessWrite)
 }
