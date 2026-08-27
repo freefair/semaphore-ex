@@ -2,7 +2,6 @@ package runners
 
 import (
 	"fmt"
-
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db_lib"
 	"github.com/semaphoreui/semaphore/pro/services/tasks/docker"
@@ -62,6 +61,7 @@ func newExecutor(
 	}
 
 	hydrateJobAccessKeys(&jobData, accessKeys)
+	jobData.Template.ExecutorImage = jobData.ExecutorImage
 
 	return provider.NewExecutor(
 		jobData.Task,

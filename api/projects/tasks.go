@@ -59,6 +59,18 @@ func (c *TaskController) AddTask(w http.ResponseWriter, r *http.Request) {
 		helpers.WriteErrorStatus(w, "No active subscription available.", http.StatusForbidden)
 		return
 	}
+	if errors.Is(err, db.ErrExecutorImageCapabilityUnavailable) {
+		helpers.WriteErrorStatus(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if errors.Is(err, db.ErrExecutorImageIncompatible) {
+		helpers.WriteErrorStatus(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if errors.Is(err, db.ErrExecutorImageInvalid) {
+		helpers.WriteErrorStatus(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if err != nil {
 		log.WithFields(log.Fields{

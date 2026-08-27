@@ -31,6 +31,10 @@ const (
 
 	RunnerTagMatchAll RunnerTagMatchMode = "all"
 	RunnerTagMatchAny RunnerTagMatchMode = "any"
+
+	RunnerExecutorLocal  RunnerExecutorType = "local"
+	RunnerExecutorDocker RunnerExecutorType = "docker"
+	RunnerExecutorK8s    RunnerExecutorType = "k8s"
 )
 
 type Runner struct {
@@ -57,6 +61,8 @@ type Runner struct {
 	// CurrentLoad is the bounded number of jobs reported by the runner on its
 	// latest poll. It is operational metadata, not an assignment authority.
 	CurrentLoad int `db:"current_load" json:"current_load" backup:"-"`
+
+	ExecutorType RunnerExecutorType `db:"executor_type" json:"executor_type" backup:"-"`
 
 	PublicKey *string `db:"public_key" json:"-"`
 

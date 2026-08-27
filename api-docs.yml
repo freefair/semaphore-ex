@@ -845,6 +845,12 @@ definitions:
       recovery_reason:
         type: string
         description: Last deterministic runner-recovery decision
+      requested_executor_image:
+        type: string
+        description: Normalized image requested from the template when the task was created
+      resolved_executor_image:
+        type: string
+        description: Immutable credential-free image delivered to the selected runner
       inventory_id:
         type: integer
       params:
@@ -1000,6 +1006,9 @@ definitions:
         type: boolean
       task_params:
         $ref: '#/definitions/TaskPrams'
+      executor_image:
+        type: string
+        description: Credential-free OCI image reference for Docker or Kubernetes runners
 
   Template:
     type: object
@@ -1072,6 +1081,13 @@ definitions:
           $ref: "#/definitions/TemplateVault"
       task_params:
         $ref: '#/definitions/TaskPrams'
+      runner_tags:
+        type: array
+        items:
+          type: string
+      runner_tag_match_mode:
+        type: string
+        enum: [all, any]
       executor_image:
         type: string
         description: >-
@@ -1254,6 +1270,10 @@ definitions:
       registered:
         type: boolean
         description: Whether the runner has been registered (has an auth token).
+      executor_type:
+        type: string
+        enum: [local, docker, k8s]
+        description: Runner-reported execution strategy used for image compatibility.
 
   RunnerRequest:
     type: object

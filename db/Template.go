@@ -359,14 +359,8 @@ func (tpl *Template) NormalizedExecutorImage() *string {
 	if tpl.ExecutorImage == nil {
 		return nil
 	}
-
-	img := strings.TrimSpace(*tpl.ExecutorImage)
-
-	if img == "" {
-		return nil
-	}
-
-	return &img
+	image, _ := NormalizeExecutorImage(*tpl.ExecutorImage)
+	return image
 }
 
 func (tpl *Template) CanOverrideInventory() (ok bool, err error) {
@@ -384,6 +378,13 @@ func (tpl *Template) CanOverrideInventory() (ok bool, err error) {
 }
 
 func (tpl *Template) Validate() error {
+	if tpl.ExecutorImage != nil {
+		image, err := NormalizeExecutorImage(*tpl.ExecutorImage)
+		if err != nil {
+			return common_errors.NewValidationError(err.Error())
+		}
+		tpl.ExecutorImage = image
+	}
 	if tpl.RunnerTag != nil && strings.TrimSpace(*tpl.RunnerTag) == "" {
 		return common_errors.NewValidationError("template runner tag can not be empty")
 	}

@@ -1169,6 +1169,7 @@ export default {
     },
 
     async beforeSave() {
+      this.item.executor_image = this.item.executor_image?.trim() || null;
       const tags = [...new Set((this.item.runner_tags || [])
         .map((tag) => (typeof tag === 'string' ? tag.trim().toLowerCase() : ''))
         .filter(Boolean))]

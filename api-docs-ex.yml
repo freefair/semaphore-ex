@@ -32,6 +32,21 @@ definitions:
         - stopped
       reason:
         type: string
+      requested_tags:
+        type: array
+        items:
+          type: string
+      match_mode:
+        type: string
+        enum:
+        - all
+        - any
+      placement_reason:
+        type: string
+      requested_executor_image:
+        type: string
+      resolved_executor_image:
+        type: string
 paths:
   /project/{project_id}/tasks/{task_id}/runner-attempts:
     parameters:

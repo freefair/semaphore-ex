@@ -151,3 +151,29 @@ func TestDecideRunnerPlacementRejectsWithActionableReason(t *testing.T) {
 	assert.Equal(t, "no runner matched requested tags: arm64", decision.Reason)
 	assert.NotEmpty(t, decision.ActionHint)
 }
+
+func TestDecideRunnerPlacementRequiresContainerExecutorForImage(t *testing.T) {
+	now := time.Now().UTC()
+	projectID := 1
+	image := "registry.example.com/team/job:v1"
+	candidates := []RunnerPlacementCandidate{
+		{Runner: db.Runner{ID: 1, ProjectID: &projectID, Active: true, Token: "x", IsDefault: true, Touched: &now, ExecutorType: db.RunnerExecutorLocal}},
+		{Runner: db.Runner{ID: 2, ProjectID: &projectID, Active: true, Token: "x", IsDefault: true, Touched: &now, ExecutorType: db.RunnerExecutorDocker}},
+	}
+
+	decision := DecideRunnerPlacement(
+		projectID, nil, db.RunnerTagMatchAll, candidates, now, time.Minute, &image,
+	)
+
+	require.NotNil(t, decision.SelectedRunnerID)
+	assert.Equal(t, 2, *decision.SelectedRunnerID)
+	assert.Equal(t, &image, decision.ResolvedImage)
+	assert.Contains(t, decision.Evaluations[0].RejectedCriteria, "executor image unsupported")
+
+	localOnly := DecideRunnerPlacement(
+		projectID, nil, db.RunnerTagMatchAll, candidates[:1], now, time.Minute, &image,
+	)
+	assert.Nil(t, localOnly.SelectedRunnerID)
+	assert.Equal(t, "matching runners do not support executor image overrides", localOnly.Reason)
+	assert.Contains(t, localOnly.ActionHint, "Docker or Kubernetes")
+}

@@ -37,6 +37,7 @@ func TestRegisterRunnerConsumesProjectTokenOnceAndPreservesBinding(t *testing.T)
 		RegistrationToken: registrationToken,
 		ProjectID:         &other.ID,
 		Enabled:           false,
+		ExecutorType:      db.RunnerExecutorDocker,
 	})
 	require.NoError(t, err)
 	request := httptest.NewRequest(http.MethodPost, "/api/internal/runners", bytes.NewReader(body))
@@ -53,6 +54,7 @@ func TestRegisterRunnerConsumesProjectTokenOnceAndPreservesBinding(t *testing.T)
 	assert.Equal(t, origin.ID, *stored.ProjectID)
 	assert.True(t, stored.Active)
 	assert.True(t, stored.IsRegistered())
+	assert.Equal(t, db.RunnerExecutorDocker, stored.ExecutorType)
 	assert.Nil(t, stored.RegistrationTokenHash)
 	assert.Nil(t, stored.RegistrationTokenExpiresAt)
 	persistedJSON, err := json.Marshal(stored)
@@ -157,6 +159,7 @@ func TestGetRunnerPersistsBoundedHealthReportAndRestart(t *testing.T) {
 		request.Header.Set(runners.RunnerVersionHeader, version)
 		request.Header.Set(runners.RunnerPlatformHeader, platform)
 		request.Header.Set(runners.RunnerCurrentLoadHeader, load)
+		request.Header.Set(runners.RunnerExecutorTypeHeader, string(db.RunnerExecutorDocker))
 		request = helpers.SetContextValue(request, "store", store)
 		request = helpers.SetContextValue(request, "runner", fresh)
 		response := httptest.NewRecorder()
@@ -175,6 +178,7 @@ func TestGetRunnerPersistsBoundedHealthReportAndRestart(t *testing.T) {
 	assert.Equal(t, "new", stored.Version)
 	assert.Equal(t, "linux/amd64", stored.Platform)
 	assert.Equal(t, 1, stored.CurrentLoad)
+	assert.Equal(t, db.RunnerExecutorDocker, stored.ExecutorType)
 
 	invalid := poll(restartedAt, "new", "linux/amd64", "-1")
 	assert.Equal(t, http.StatusBadRequest, invalid.Code)

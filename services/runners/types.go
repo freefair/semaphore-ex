@@ -19,6 +19,7 @@ type JobData struct {
 	Repository          db.Repository  `json:"repository" binding:"required"`
 	Environment         db.Environment `json:"environment" binding:"required"`
 	JWT                 string         `json:"jwt,omitempty"`
+	ExecutorImage       *string        `json:"executor_image,omitempty"`
 }
 
 type RunnerState struct {
@@ -72,13 +73,14 @@ type RunnerRegistration struct {
 	// RegistrationToken is either the shared global registration token (which
 	// creates a new runner) or a one-time token issued for a specific unregistered
 	// runner (which registers that runner).
-	RegistrationToken string   `json:"registration_token" binding:"required"`
-	Webhook           string   `json:"webhook,omitempty"`
-	Name              string   `json:"name,omitempty"`
-	Tags              []string `json:"tags,omitempty"`
-	MaxParallelTasks  int      `json:"max_parallel_tasks"`
-	Enabled           bool     `json:"enabled,omitempty"`
-	ProjectID         *int     `json:"project_id,omitempty"`
+	RegistrationToken string                `json:"registration_token" binding:"required"`
+	Webhook           string                `json:"webhook,omitempty"`
+	Name              string                `json:"name,omitempty"`
+	Tags              []string              `json:"tags,omitempty"`
+	MaxParallelTasks  int                   `json:"max_parallel_tasks"`
+	Enabled           bool                  `json:"enabled,omitempty"`
+	ProjectID         *int                  `json:"project_id,omitempty"`
+	ExecutorType      db.RunnerExecutorType `json:"executor_type,omitempty"`
 }
 
 type jobLogRecord struct {
