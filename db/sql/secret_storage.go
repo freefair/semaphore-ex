@@ -107,6 +107,8 @@ func secretSyncFromStorage(storage db.SecretStorage) db.SecretSync {
 		ProjectID:        storage.ProjectID,
 		StorageID:        storage.ID,
 		SyncEnabled:      storage.SyncEnabled,
+		Direction:        storage.SyncDirection,
+		Revision:         storage.SyncRevision,
 		SyncInterval:     storage.SyncInterval,
 		LastSyncedAt:     storage.LastSyncedAt,
 		LastSyncFailedAt: storage.LastSyncFailedAt,
@@ -118,6 +120,8 @@ func (d *SqlDb) fillStorageSync(storage *db.SecretStorage) error {
 	sync, err := d.GetStorageSecretSync(storage.ID)
 	if err == db.ErrNotFound {
 		storage.SyncEnabled = false
+		storage.SyncDirection = db.SecretSyncDirectionReadOnly
+		storage.SyncRevision = 0
 		storage.SyncInterval = 0
 		storage.LastSyncedAt = nil
 		storage.LastSyncFailedAt = nil
@@ -128,6 +132,8 @@ func (d *SqlDb) fillStorageSync(storage *db.SecretStorage) error {
 		return err
 	}
 	storage.SyncEnabled = sync.SyncEnabled
+	storage.SyncDirection = sync.Direction
+	storage.SyncRevision = sync.Revision
 	storage.SyncInterval = sync.SyncInterval
 	storage.LastSyncedAt = sync.LastSyncedAt
 	storage.LastSyncFailedAt = sync.LastSyncFailedAt

@@ -106,6 +106,26 @@ func (r SecretReference) Fingerprint() string {
 	return hex.EncodeToString(sum[:])
 }
 
+// SecretContentFingerprint returns a value-free identity for comparison and
+// audit. The secret itself must be discarded immediately after use.
+func SecretContentFingerprint(secret []byte) string {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte("semaphore-managed-secret:v1\x00"))
+	_, _ = hash.Write(secret)
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
+}
+
+type ManagedSecretField struct {
+	Value   []byte
+	Version int
+	Exists  bool
+}
+
+type ManagedSecretProvider interface {
+	ReadManagedSecretField(context.Context, int, SecretReference) (ManagedSecretField, error)
+	WriteManagedSecretField(context.Context, int, SecretReference, []byte, int) (int, error)
+}
+
 type SecretProviderAuth struct {
 	Method              SecretProviderAuthMethod
 	Mount               string
@@ -148,6 +168,8 @@ const (
 	SecretProviderErrorResponseInvalid    SecretProviderErrorCategory = "response_invalid"
 	SecretProviderErrorResponseTooLarge   SecretProviderErrorCategory = "response_too_large"
 	SecretProviderErrorFieldMissing       SecretProviderErrorCategory = "field_missing"
+	SecretProviderErrorNotFound           SecretProviderErrorCategory = "not_found"
+	SecretProviderErrorConflict           SecretProviderErrorCategory = "conflict"
 )
 
 type SecretProviderError struct {
@@ -173,6 +195,18 @@ type SecretProviderHealth struct {
 // exchange and token renewal; returned secret values must not be cached.
 type VaultOpenBaoClient interface {
 	ReadKV(context.Context, SecretProviderConfiguration, SecretReference) ([]byte, error)
+	ReadManagedSecretField(
+		context.Context,
+		SecretProviderConfiguration,
+		SecretReference,
+	) (ManagedSecretField, error)
+	WriteManagedSecretField(
+		context.Context,
+		SecretProviderConfiguration,
+		SecretReference,
+		[]byte,
+		int,
+	) (int, error)
 	TestConnection(context.Context, SecretProviderConfiguration) (SecretProviderHealth, error)
 }
 

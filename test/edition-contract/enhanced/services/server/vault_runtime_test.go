@@ -73,7 +73,9 @@ func (p runtimeCapabilityProvider) Resolve(
 	if p.active {
 		state = pro_interfaces.CapabilityStateActive
 		reason = pro_interfaces.CapabilityReasonActive
-		access = []pro_interfaces.CapabilityAccess{pro_interfaces.CapabilityAccessExecute}
+		access = []pro_interfaces.CapabilityAccess{
+			pro_interfaces.CapabilityAccessWrite, pro_interfaces.CapabilityAccessExecute,
+		}
 	}
 	return pro_interfaces.NewCapabilitySnapshot(request, []pro_interfaces.CapabilityDecision{
 		pro_interfaces.NewCapabilityDecision(
@@ -148,6 +150,81 @@ func TestVaultRuntimeDeserializesCanonicalReferenceAtExecutionBoundary(t *testin
 	assert.Equal(t, "task-only-value", value)
 	assert.Equal(t, encoded, *key.SourceStorageKey)
 	assert.Empty(t, deserializer.client.cache)
+}
+
+func TestVaultManagedSecretFieldUsesKVPatchAndCAS(t *testing.T) {
+	var patchRequests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/team/data/apps/api", r.URL.Path)
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(t, w, map[string]any{"data": map[string]any{
+				"data":     map[string]any{"password": "remote-before"},
+				"metadata": map[string]any{"version": 2},
+			}})
+		case http.MethodPatch:
+			patchRequests.Add(1)
+			assert.Equal(t, "application/merge-patch+json", r.Header.Get("Content-Type"))
+			var body struct {
+				Options map[string]int    `json:"options"`
+				Data    map[string]string `json:"data"`
+			}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, 2, body.Options["cas"])
+			assert.Equal(t, "local-after", body.Data["password"])
+			writeJSON(t, w, map[string]any{"data": map[string]any{"version": 3}})
+		default:
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+	}))
+	defer server.Close()
+	deserializer, _ := newRuntimeDeserializer(
+		server.URL, nil, "bootstrap-token", runtimeCapabilityProvider{active: true},
+	)
+	reference := pro_interfaces.SecretReference{
+		StorageID: 9, Mount: "team", Path: "apps/api", Field: "password",
+	}
+
+	field, err := deserializer.ReadManagedSecretField(context.Background(), 3, reference)
+	require.NoError(t, err)
+	assert.True(t, field.Exists)
+	assert.Equal(t, 2, field.Version)
+	assert.Equal(t, "remote-before", string(field.Value))
+	zero(field.Value)
+	version, err := deserializer.WriteManagedSecretField(
+		context.Background(), 3, reference, []byte("local-after"), 2,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 3, version)
+	assert.Equal(t, int64(1), patchRequests.Load())
+}
+
+func TestVaultManagedSecretFieldClassifiesMissingAndCASConflict(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+	deserializer, _ := newRuntimeDeserializer(
+		server.URL, nil, "bootstrap-token", runtimeCapabilityProvider{active: true},
+	)
+	reference := pro_interfaces.SecretReference{
+		StorageID: 9, Mount: "secret", Path: "missing", Field: "value",
+	}
+
+	field, err := deserializer.ReadManagedSecretField(context.Background(), 3, reference)
+	require.NoError(t, err)
+	assert.False(t, field.Exists)
+	assert.Zero(t, field.Version)
+	_, err = deserializer.WriteManagedSecretField(
+		context.Background(), 3, reference, []byte("not-in-error"), 0,
+	)
+	require.Error(t, err)
+	assert.Equal(t, pro_interfaces.SecretProviderErrorConflict, errorCategory(err))
+	assert.NotContains(t, err.Error(), "not-in-error")
 }
 
 func TestVaultRuntimeAppRoleCachesAndRenewsOnlyProviderToken(t *testing.T) {
@@ -245,6 +322,8 @@ func TestVaultRuntimeConnectionHealthAndRedactedFailureCategories(t *testing.T) 
 		category pro_interfaces.SecretProviderErrorCategory
 	}{
 		{name: "denied", handler: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) }, category: pro_interfaces.SecretProviderErrorPermission},
+		{name: "bad request", handler: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadRequest) }, category: pro_interfaces.SecretProviderErrorResponseInvalid},
+		{name: "missing health endpoint", handler: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }, category: pro_interfaces.SecretProviderErrorResponseInvalid},
 		{name: "too large", handler: func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(strings.Repeat("x", 65))) }, params: db.MapStringAnyField{"max_response_bytes": float64(64)}, category: pro_interfaces.SecretProviderErrorResponseTooLarge},
 		{name: "timeout", handler: func(w http.ResponseWriter, _ *http.Request) {
 			time.Sleep(100 * time.Millisecond)

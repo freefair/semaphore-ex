@@ -136,6 +136,32 @@ func (s *accessKeyEncryptionServiceImpl) TestRuntimeSecretProvider(
 	return resolver.TestRuntimeSecretProvider(ctx, projectID, storageID)
 }
 
+func (s *accessKeyEncryptionServiceImpl) ReadManagedSecretField(
+	ctx context.Context,
+	projectID int,
+	reference pro_interfaces.SecretReference,
+) (pro_interfaces.ManagedSecretField, error) {
+	provider, ok := s.vaultDeserializer.(pro_interfaces.ManagedSecretProvider)
+	if !ok {
+		return pro_interfaces.ManagedSecretField{}, errors.New("managed secret provider unavailable")
+	}
+	return provider.ReadManagedSecretField(ctx, projectID, reference)
+}
+
+func (s *accessKeyEncryptionServiceImpl) WriteManagedSecretField(
+	ctx context.Context,
+	projectID int,
+	reference pro_interfaces.SecretReference,
+	value []byte,
+	expectedVersion int,
+) (int, error) {
+	provider, ok := s.vaultDeserializer.(pro_interfaces.ManagedSecretProvider)
+	if !ok {
+		return 0, errors.New("managed secret provider unavailable")
+	}
+	return provider.WriteManagedSecretField(ctx, projectID, reference, value, expectedVersion)
+}
+
 func (s *accessKeyEncryptionServiceImpl) DeleteSecret(key *db.AccessKey) error {
 	d, _, err := s.getDeserializer(key)
 	if err != nil {

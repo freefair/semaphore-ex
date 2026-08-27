@@ -571,6 +571,15 @@ type SecretSyncRepository interface {
 	// is false, SyncInterval is zero, and Paths is empty, the row is
 	// deleted instead of being written.
 	SaveSecretSync(sync SecretSync) error
+	GetSecretSync(syncID int) (SecretSync, error)
+
+	CreateSecretSyncOperation(operation SecretSyncOperation) (SecretSyncOperation, error)
+	GetSecretSyncOperation(projectID int, storageID int, operationID int) (SecretSyncOperation, error)
+	GetSecretSyncOperations(projectID int, storageID int, limit int) ([]SecretSyncOperation, error)
+	ClaimSecretSyncOperation(operationID int, now time.Time, leaseUntil time.Time) (SecretSyncOperation, bool, error)
+	ClaimPendingSecretSyncOperations(now time.Time, leaseUntil time.Time, limit int) ([]SecretSyncOperation, error)
+	RenewSecretSyncOperationLease(operationID int, attempt int, now time.Time, leaseUntil time.Time) (bool, error)
+	CompleteSecretSyncOperation(operation SecretSyncOperation, paths []SecretSyncPath) error
 }
 
 type RoleRepository interface {

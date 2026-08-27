@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -71,33 +73,42 @@ func (s *SecretStorageSyncScheduler) tick() {
 		return
 	}
 
+	now := tz.Now()
+	claimed, err := s.secretSyncRepo.ClaimPendingSecretSyncOperations(
+		now, now.Add(secretSyncOperationLease), 10,
+	)
+	if err != nil {
+		log.WithError(err).Warn("secret sync: failed to claim pending operations")
+		return
+	}
+	for _, operation := range claimed {
+		if _, runErr := s.secretStorageService.RunSecretSyncOperation(
+			context.Background(), operation,
+		); runErr != nil {
+			log.WithError(runErr).
+				WithField("operation_id", operation.ID).
+				Warn("secret sync operation failed")
+		}
+	}
+
 	syncs, err := s.secretSyncRepo.GetSyncEnabledSecretSyncs()
 	if err != nil {
 		log.WithError(err).Warn("secret sync: failed to list sync-enabled configs")
 		return
 	}
 
-	now := tz.Now()
 	for _, sync := range syncs {
-		if !secretSyncDue(sync, now) {
+		if sync.Direction != db.SecretSyncDirectionOutbound || !secretSyncDue(sync, now) {
 			continue
 		}
-
-		syncErr := s.secretStorageService.SyncSecrets(sync)
-		markTime := tz.Now()
-		success := syncErr == nil
-
-		if syncErr != nil {
+		requestID := fmt.Sprintf("auto:%d:%d", sync.ID, now.Unix()/60)
+		if _, syncErr := s.secretStorageService.RequestSecretSync(
+			context.Background(), sync, requestID, nil, nil,
+		); syncErr != nil {
 			log.WithError(syncErr).
 				WithField("sync_id", sync.ID).
 				WithField("storage_id", sync.StorageID).
 				Warn("secret sync failed")
-		}
-
-		if err := s.secretSyncRepo.MarkSecretSyncSynced(sync.ID, success, markTime); err != nil {
-			log.WithError(err).
-				WithField("sync_id", sync.ID).
-				Warn("secret sync: failed to record sync timestamp")
 		}
 	}
 }

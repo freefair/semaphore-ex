@@ -26,8 +26,24 @@
 
     <div v-if="item.type === 'vault' || item.type === 'openbao'">
       <v-alert text type="info" dense data-testid="secretStorage-runtimeNotice">
-        Runtime-only provider: Semaphore reads one named field during task execution. Secret
-        values are never listed or synchronized.
+        {{ runtimeProviderNotice }} Secret values are never listed or returned by the API.
+      </v-alert>
+
+      <v-select
+        v-model="item.sync_direction"
+        label="Synchronization direction"
+        :items="runtimeSyncDirections"
+        item-value="value"
+        item-text="text"
+        :disabled="formSaving"
+        data-testid="secretStorage-syncDirection"
+        outlined
+        dense
+      />
+
+      <v-alert v-if="isManagedOutbound" text type="warning" dense>
+        Outbound synchronization writes only the selected Semaphore keys below. Existing remote
+        values cause a conflict and require an explicit overwrite decision.
       </v-alert>
 
       <v-text-field
@@ -43,9 +59,11 @@
       <v-text-field
         v-model="item.params.namespace"
         :label="$t('Namespace')"
-        :hint="item.type === 'openbao'
-          ? 'OpenBao namespaces (v2.3+)'
-          : 'For Vault Enterprise and HCP Dedicated only'"
+        :hint="
+          item.type === 'openbao'
+            ? 'OpenBao namespaces (v2.3+)'
+            : 'For Vault Enterprise and HCP Dedicated only'
+        "
         :disabled="formSaving"
         data-testid="secretStorage-vaultNamespace"
         outlined
@@ -88,9 +106,9 @@
         v-if="item.params.auth_method !== 'token'"
         v-model="item.params.auth_mount"
         label="Authentication mount"
-        :hint="item.params.auth_method === 'approle'
-          ? 'approle by default'
-          : 'kubernetes by default'"
+        :hint="
+          item.params.auth_method === 'approle' ? 'approle by default' : 'kubernetes by default'
+        "
         :disabled="formSaving"
         data-testid="secretStorage-vaultAuthMount"
         outlined
@@ -381,22 +399,29 @@
     </div>
 
     <v-checkbox
+      v-if="!isRuntimeProvider"
       v-model="item.readonly"
       :label="$t('Read only')"
-      :disabled="formSaving || isRuntimeProvider"
+      :disabled="formSaving"
       hide-details
-      :style="isRuntimeProvider
-        ? { margin: '0 0 8px 0' }
-        : { position: 'absolute', bottom: '15px', margin: '0', left: '25px' }"
+      style="position: absolute; bottom: 15px; margin: 0; left: 25px"
     />
+
+    <v-alert v-else text dense type="info" class="mb-3">
+      {{
+        isManagedOutbound
+          ? 'Managed outbound writes are enabled for selected keys.'
+          : 'Read-only runtime resolution is enabled. Remote data cannot be changed.'
+      }}
+    </v-alert>
 
     <div class="d-flex items-center justify-space-between">
       <v-checkbox
         class="mt-0"
         v-model="item.sync_enabled"
-        :label="$t('Sync keys enabled')"
-        :disabled="formSaving || isRuntimeProvider"
-        v-if="!isRuntimeProvider"
+        :label="isRuntimeProvider ? 'Automatic synchronization enabled' : $t('Sync keys enabled')"
+        :disabled="formSaving"
+        v-if="!isRuntimeProvider || isManagedOutbound"
       />
 
       <v-btn
@@ -405,7 +430,7 @@
         color="primary"
         @click="syncSettingsDialog = true"
         :disabled="formSaving"
-        v-if="item.sync_enabled"
+        v-if="item.sync_enabled || isManagedOutbound"
       >
         <v-icon left>mdi-cog-sync</v-icon>
         Sync paths
@@ -415,7 +440,7 @@
       </v-btn>
     </div>
 
-    <v-dialog v-model="syncSettingsDialog" max-width="500" persistent>
+    <v-dialog v-model="syncSettingsDialog" :max-width="isManagedOutbound ? 760 : 500" persistent>
       <v-card>
         <v-card-title>Sync paths</v-card-title>
         <v-card-text class="pt-4 pb-0">
@@ -432,7 +457,12 @@
             dense
           ></v-text-field>
 
-          <SecretStorageSyncOptionsForm v-model="item.sync_paths" />
+          <SecretStorageSyncOptionsForm
+            v-model="item.sync_paths"
+            :managed="isRuntimeProvider"
+            :keys="managedLocalKeys"
+            :default-mount="item.params.mount || 'secret'"
+          />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
@@ -478,12 +508,36 @@ export default {
         { value: 'approle', text: 'AppRole' },
         { value: 'kubernetes', text: 'Kubernetes JWT' },
       ],
+      runtimeSyncDirections: [
+        { value: 'read_only', text: 'Read-only runtime resolution (recommended)' },
+        { value: 'outbound', text: 'Outbound managed synchronization' },
+      ],
+      localKeys: [],
     };
   },
 
   computed: {
     isRuntimeProvider() {
       return this.item?.type === 'vault' || this.item?.type === 'openbao';
+    },
+
+    isManagedOutbound() {
+      return this.isRuntimeProvider && this.item?.sync_direction === 'outbound';
+    },
+
+    managedLocalKeys() {
+      return (this.localKeys || []).filter(
+        (key) => !key.owner
+          && !key.source_storage_type
+          && ['string', 'login_password', 'ssh'].includes(key.type),
+      );
+    },
+
+    runtimeProviderNotice() {
+      if (this.isManagedOutbound) {
+        return 'Managed provider: Semaphore can resolve fields at runtime and synchronize selected local keys outbound.';
+      }
+      return 'Runtime provider: Semaphore reads one named field only during task execution.';
     },
 
     runtimeCredentialLabel() {
@@ -532,7 +586,7 @@ export default {
       };
     },
 
-    afterLoadData() {
+    async afterLoadData() {
       if (!this.item.params) {
         this.item.params = {};
       }
@@ -557,9 +611,13 @@ export default {
         this.$set(this.item.params, 'mount', this.item.params.mount || 'secret');
         this.$set(this.item.params, 'auth_method', this.item.params.auth_method || 'token');
         this.$set(this.item.params, 'timeout', this.item.params.timeout || '5s');
-        this.item.readonly = true;
-        this.item.sync_enabled = false;
-        this.item.sync_paths = [];
+        this.$set(this.item, 'sync_direction', this.item.sync_direction || 'read_only');
+        this.item.readonly = this.item.sync_direction !== 'outbound';
+        if (this.item.sync_direction !== 'outbound') {
+          this.item.sync_enabled = false;
+          this.item.sync_interval = 0;
+        }
+        this.localKeys = await this.loadProjectResources('keys');
       }
 
       this.secretStorageReady = false;
@@ -590,9 +648,9 @@ export default {
       this.connectionTesting = true;
       this.connectionHealth = null;
       try {
-        this.connectionHealth = (await axios.post(
-          `/api/project/${this.projectId}/secret_storages/${this.itemId}/test`,
-        )).data;
+        this.connectionHealth = (
+          await axios.post(`/api/project/${this.projectId}/secret_storages/${this.itemId}/test`)
+        ).data;
       } catch (err) {
         this.connectionHealth = err.response?.data || {
           state: 'failed',
@@ -605,6 +663,18 @@ export default {
   },
 
   watch: {
+    'item.sync_direction': {
+      handler: function syncDirectionChanged(value) {
+        if (!this.isRuntimeProvider) {
+          return;
+        }
+        this.item.readonly = value !== 'outbound';
+        if (value !== 'outbound') {
+          this.item.sync_enabled = false;
+          this.item.sync_interval = 0;
+        }
+      },
+    },
     secretStorage(value, oldValue) {
       this.item.source_storage_type = value === 'database' ? undefined : value;
 
