@@ -322,7 +322,9 @@ type Template struct {
 
 	TaskParams MapStringAnyField `db:"task_params" json:"task_params,omitempty"`
 
-	RunnerTag *string `db:"runner_tag" json:"runner_tag,omitempty"`
+	RunnerTag          *string            `db:"runner_tag" json:"runner_tag,omitempty"`
+	RunnerTags         StringArrayField   `db:"runner_tags" json:"runner_tags,omitempty"`
+	RunnerTagMatchMode RunnerTagMatchMode `db:"runner_tag_match_mode" json:"runner_tag_match_mode,omitempty"`
 
 	// ExecutorImage overrides the container image the runner uses to run this
 	// template's tasks. Only the container-based executors (Docker, Kubernetes)
@@ -383,10 +385,26 @@ func (tpl *Template) CanOverrideInventory() (ok bool, err error) {
 }
 
 func (tpl *Template) Validate() error {
-	if tpl.RunnerTag != nil && *tpl.RunnerTag == "" {
+	if tpl.RunnerTag != nil && strings.TrimSpace(*tpl.RunnerTag) == "" {
 		return common_errors.NewValidationError("template runner tag can not be empty")
 	}
-
+	if len(tpl.RunnerTags) == 0 && tpl.RunnerTag != nil {
+		tpl.RunnerTags = StringArrayField{*tpl.RunnerTag}
+	}
+	if err := ValidateRunnerTags(tpl.RunnerTags); err != nil {
+		return common_errors.NewValidationError(err.Error())
+	}
+	tpl.RunnerTags = NormalizeRunnerTags(tpl.RunnerTags)
+	if len(tpl.RunnerTags) > 0 {
+		legacyTag := tpl.RunnerTags[0]
+		tpl.RunnerTag = &legacyTag
+	}
+	if tpl.RunnerTagMatchMode == "" {
+		tpl.RunnerTagMatchMode = RunnerTagMatchAll
+	}
+	if tpl.RunnerTagMatchMode != RunnerTagMatchAll && tpl.RunnerTagMatchMode != RunnerTagMatchAny {
+		return common_errors.NewValidationError("invalid runner tag match mode")
+	}
 	// Reject apps that are not in the administrator-configured whitelist, otherwise
 	// an unknown app becomes a ShellApp that executes string(App) as a system binary
 	// (arbitrary command execution). util.Config is nil in some unit tests; an empty
@@ -457,6 +475,25 @@ func (tpl *Template) Validate() error {
 	}
 
 	return nil
+}
+
+// EffectiveRunnerTags returns the multi-tag policy with a legacy single-tag fallback.
+func (tpl Template) EffectiveRunnerTags() []string {
+	if tags := NormalizeRunnerTags(tpl.RunnerTags); len(tags) > 0 {
+		return tags
+	}
+	if tpl.RunnerTag != nil {
+		return NormalizeRunnerTags([]string{*tpl.RunnerTag})
+	}
+	return nil
+}
+
+// EffectiveRunnerTagMatchMode returns the validated match mode default.
+func (tpl Template) EffectiveRunnerTagMatchMode() RunnerTagMatchMode {
+	if tpl.RunnerTagMatchMode == RunnerTagMatchAny {
+		return RunnerTagMatchAny
+	}
+	return RunnerTagMatchAll
 }
 
 // ApplyLegacyEnvironmentField copies deprecated environment_id into environment_ids when

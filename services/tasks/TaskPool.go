@@ -510,6 +510,7 @@ func applyDBPersistedTaskSnapshot(dst *db.Task, src db.Task) {
 	dst.AssignmentGeneration = src.AssignmentGeneration
 	dst.RunnerAssignedAt = src.RunnerAssignedAt
 	dst.RecoveryReason = src.RecoveryReason
+	dst.PlacementDecision = src.PlacementDecision
 	dst.Message = src.Message
 	dst.CommitHash = src.CommitHash
 	dst.CommitMessage = src.CommitMessage
@@ -549,12 +550,12 @@ func (p *TaskPool) hydrateTaskRunner(taskID int, projectID int) (*TaskRunner, er
 
 	// set the appropriate job handler for consistency (not run)
 	var job Job
-	if util.Config.IsUseRemoteRunner() || tr.Template.RunnerTag != nil || tr.Inventory.RunnerTag != nil {
-		tag := tr.Template.RunnerTag
-		if tag == nil {
-			tag = tr.Inventory.RunnerTag
+	if util.Config.IsUseRemoteRunner() || len(tr.Template.EffectiveRunnerTags()) > 0 || tr.Inventory.RunnerTag != nil {
+		tags, matchMode, legacyTag := runnerPlacementPolicy(tr.Template, tr.Inventory)
+		job = &RemoteJob{
+			RunnerTag: legacyTag, RunnerTags: tags, RunnerTagMatchMode: matchMode,
+			Task: tr.Task, taskPool: p,
 		}
-		job = &RemoteJob{RunnerTag: tag, Task: tr.Task, taskPool: p}
 	} else {
 		app := db_lib.CreateApp(tr.Template, tr.Repository, tr.Inventory, tr)
 
@@ -1100,18 +1101,17 @@ func (p *TaskPool) AddTask(
 	var job Job
 
 	if util.Config.IsUseRemoteRunner() ||
-		taskRunner.Template.RunnerTag != nil ||
+		len(taskRunner.Template.EffectiveRunnerTags()) > 0 ||
 		taskRunner.Inventory.RunnerTag != nil {
 
-		tag := taskRunner.Template.RunnerTag
-		if tag == nil {
-			tag = taskRunner.Inventory.RunnerTag
-		}
+		tags, matchMode, legacyTag := runnerPlacementPolicy(taskRunner.Template, taskRunner.Inventory)
 
 		job = &RemoteJob{
-			RunnerTag: tag,
-			Task:      taskRunner.Task,
-			taskPool:  p,
+			RunnerTag:          legacyTag,
+			RunnerTags:         tags,
+			RunnerTagMatchMode: matchMode,
+			Task:               taskRunner.Task,
+			taskPool:           p,
 		}
 	} else {
 		app := db_lib.CreateApp(

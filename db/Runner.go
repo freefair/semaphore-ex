@@ -1,9 +1,14 @@
 package db
 
 import (
+	"database/sql/driver"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/gorilla/securecookie"
@@ -29,12 +34,57 @@ const (
 
 type RunnerTagFilterMode string
 
+// RunnerTagMatchMode controls how a task's requested tags are matched.
+type RunnerTagMatchMode string
+
+const (
+	MaxRunnerTags      = 32
+	MaxRunnerTagLength = 255
+)
+
 const (
 	RunnerFilterTagCompleteMatch RunnerTagFilterMode = "complete_match"
 	RunnerFilterHasAnyTag        RunnerTagFilterMode = "has_any_tag"
 	RunnerFilterIgnoreTags       RunnerTagFilterMode = "ignore_tags"
 	RunnerFilterIsDefault        RunnerTagFilterMode = "is_default"
+
+	RunnerTagMatchAll RunnerTagMatchMode = "all"
+	RunnerTagMatchAny RunnerTagMatchMode = "any"
 )
+
+// NormalizeRunnerTags returns the canonical lower-case, trimmed, sorted tag set.
+func NormalizeRunnerTags(tags []string) []string {
+	seen := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		tag = strings.ToLower(strings.TrimSpace(tag))
+		if tag != "" {
+			seen[tag] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(seen))
+	for tag := range seen {
+		result = append(result, tag)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// ValidateRunnerTags bounds placement policy and runner metadata persisted in SQL and API responses.
+func ValidateRunnerTags(tags []string) error {
+	normalized := NormalizeRunnerTags(tags)
+	if len(normalized) > MaxRunnerTags {
+		return fmt.Errorf("runner tags must contain at most %d entries", MaxRunnerTags)
+	}
+	for _, tag := range normalized {
+		if len(tag) > MaxRunnerTagLength {
+			return fmt.Errorf("runner tag must contain at most %d bytes", MaxRunnerTagLength)
+		}
+	}
+	return nil
+}
 
 type Runner struct {
 	ID                int        `db:"id" json:"id"`
@@ -100,7 +150,11 @@ func GenerateRunnerToken() string {
 
 // HasTag reports whether the runner is tagged with the given tag.
 func (r Runner) HasTag(tag string) bool {
-	return slices.Contains(r.Tags, tag)
+	normalized := NormalizeRunnerTags([]string{tag})
+	if len(normalized) == 0 {
+		return false
+	}
+	return slices.Contains(NormalizeRunnerTags(r.Tags), normalized[0])
 }
 
 // IsOnline reports whether the runner is considered reachable for dispatch.
@@ -184,6 +238,65 @@ func (r Runner) Health(now time.Time, offlineTimeout time.Duration) RunnerHealth
 type RunnerTag struct {
 	Tag             string `db:"-" json:"tag"`
 	NumberOfRunners int    `db:"-" json:"number_of_runners"`
+}
+
+type RunnerPlacementScope string
+
+const (
+	RunnerPlacementProject RunnerPlacementScope = "project"
+	RunnerPlacementGlobal  RunnerPlacementScope = "global"
+)
+
+// RunnerPlacementEvaluation is a redacted explanation for one considered runner.
+type RunnerPlacementEvaluation struct {
+	RunnerID         int                  `json:"runner_id"`
+	RunnerName       string               `json:"runner_name"`
+	Scope            RunnerPlacementScope `json:"scope"`
+	Eligible         bool                 `json:"eligible"`
+	AcceptedCriteria []string             `json:"accepted_criteria"`
+	RejectedCriteria []string             `json:"rejected_criteria"`
+}
+
+// RunnerPlacementDecision explains the deterministic result of one placement attempt.
+type RunnerPlacementDecision struct {
+	RequestedTags    []string                    `json:"requested_tags"`
+	MatchMode        RunnerTagMatchMode          `json:"match_mode"`
+	SelectedRunnerID *int                        `json:"selected_runner_id,omitempty"`
+	SelectedName     string                      `json:"selected_runner_name,omitempty"`
+	SelectedScope    RunnerPlacementScope        `json:"selected_scope,omitempty"`
+	Reason           string                      `json:"reason"`
+	ActionHint       string                      `json:"action_hint,omitempty"`
+	Evaluations      []RunnerPlacementEvaluation `json:"evaluations"`
+}
+
+// Scan implements sql.Scanner for persisted placement decisions.
+func (d *RunnerPlacementDecision) Scan(value any) error {
+	if value == nil {
+		*d = RunnerPlacementDecision{}
+		return nil
+	}
+	var data []byte
+	switch typed := value.(type) {
+	case []byte:
+		data = typed
+	case string:
+		data = []byte(typed)
+	default:
+		return errors.New("unsupported type for RunnerPlacementDecision")
+	}
+	if len(data) == 0 {
+		*d = RunnerPlacementDecision{}
+		return nil
+	}
+	return json.Unmarshal(data, d)
+}
+
+// Value implements driver.Valuer for persisted placement decisions.
+func (d *RunnerPlacementDecision) Value() (driver.Value, error) {
+	if d == nil {
+		return nil, nil
+	}
+	return json.Marshal(d)
 }
 
 // RunnerTaskAssignment identifies unfinished work that makes a destructive

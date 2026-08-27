@@ -1,7 +1,7 @@
 # Task: Implement selected enhanced edition slices
 
 **Started:** 2026-08-25
-**Last update:** 2026-08-27 13:43
+**Last update:** 2026-08-27 14:31
 
 ## Scope
 Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with tests, documentation, review, and atomic commits
@@ -59,6 +59,10 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 - 2026-08-27 13:25 — Slice 013 first substantial green run: SQL assignment-generation CAS races, state/action matrix, cancellation convergence, stale same-runner API reports, runner progress generation, task attempt API, and focused UI tests pass. Browser QA on recovered task #14 shows terminal Success, the retained recovery banner, Requeued attempt #1, Succeeded attempt #2, and responsive desktop/mobile attempt layouts. Browser QA caught and drove separation of task recovery reason from per-attempt end reason.
 
 - 2026-08-27 13:43 — Slice 013 final verification after review fixes: full root Go and Race suites pass; Go vet, Community module, clean-room Enhanced contract, SQL/API YAML, independent /tmp CAS contract, focused UI 8/8, changed-file ESLint, production web build, docs build, and final desktop/mobile browser acceptance pass. Manual diff review fixed terminal-winner finalization, rejected-state regression, attempt-reason attribution, active-attempt transaction integrity, rolling wire-key compatibility, and live UI refresh races. Known unrelated baselines remain the ArgsPicker/YesNoDialog/Socket full Vue failures, global lint errors, and three docs anchors.
+
+- 2026-08-27 13:47 — Slice 014 started. Existing implementation supports only one exact template/inventory tag and random runner shuffling; it lacks multi-tag match modes, deterministic precedence/tie-breaking, persisted placement explanations, and actionable no-runner decisions. The independent /tmp placement contract is red on the missing candidate/decision API and all/any match modes.
+
+- 2026-08-27 14:31 — Slice 014 implementation is feature-complete and green: independent /tmp contract; full Go suite; scoped race and vet; clean-room enhanced and community modules; targeted UI tests/ESLint; web and docs production builds; browser acceptance for multi-tag all/any persistence, selected placement, actionable rejection, criteria, attempt policy, desktop and 390px mobile.
 
 ## Decisions
 
@@ -129,3 +133,4 @@ Slice 011 browser acceptance: in-app Browser unavailable after turn change; ntfy
 Begin Slice 012 with a failing /tmp contract covering runner health samples, bounded history pagination, and retained runner identity.
 Commit verified Slice 012 docs and implementation atomically, then begin Slice 013 with a failing deterministic reconciliation contract.
 Begin Slice 013 with a failing deterministic lost-runner reconciliation and late-report generation contract.
+Complete final diff review, rerun post-documentation checks, commit docs submodule and root atomically, then continue with Slice 015.

@@ -67,11 +67,14 @@ func (d *SqlDb) loadRunnerTagsSingle(runner *db.Runner) error {
 // statements; concurrent writes to the same runner row are not expected
 // — runner edits are admin-driven and rare).
 func (d *SqlDb) replaceRunnerTags(runnerID int, tags []string) error {
+	if err := db.ValidateRunnerTags(tags); err != nil {
+		return err
+	}
+	tags = normalizeTags(tags)
 	if _, err := d.exec("delete from runner__tag where runner_id=?", runnerID); err != nil {
 		return err
 	}
 
-	tags = normalizeTags(tags)
 	if len(tags) == 0 {
 		return nil
 	}
@@ -90,23 +93,7 @@ func (d *SqlDb) replaceRunnerTags(runnerID int, tags []string) error {
 	return err
 }
 
-// normalizeTags trims, drops empty, and dedupes (preserving order).
+// normalizeTags keeps storage aligned with placement's canonical tag set.
 func normalizeTags(tags []string) []string {
-	if len(tags) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(tags))
-	out := make([]string, 0, len(tags))
-	for _, t := range tags {
-		t = strings.TrimSpace(t)
-		if t == "" {
-			continue
-		}
-		if _, ok := seen[t]; ok {
-			continue
-		}
-		seen[t] = struct{}{}
-		out = append(out, t)
-	}
-	return out
+	return db.NormalizeRunnerTags(tags)
 }

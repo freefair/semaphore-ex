@@ -154,7 +154,7 @@ func TestUpdateProjectRunnerPreservesLifecycleAndCredentials(t *testing.T) {
 	assert.Equal(t, runner.Token, updated.Token)
 	assert.True(t, updated.Active)
 	assert.Nil(t, updated.RegistrationTokenHash)
-	assert.Equal(t, []string{"new", "linux"}, updated.Tags)
+	assert.Equal(t, []string{"linux", "new"}, updated.Tags)
 	assert.Equal(t, "https://example.com/hook", updated.Webhook)
 	assert.Equal(t, 4, updated.MaxParallelTasks)
 	stored, err := store.GetRunner(projectID, runner.ID)
@@ -173,6 +173,9 @@ func TestUpdateProjectRunnerValidatesEditableFields(t *testing.T) {
 	for name, changes := range map[string]db.Runner{
 		"blank name":           {Name: "  "},
 		"negative parallelism": {Name: "valid", MaxParallelTasks: -1},
+		"oversized tag": {
+			Name: "valid", Tags: []string{strings.Repeat("x", db.MaxRunnerTagLength+1)},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := service.UpdateProjectRunner(runner, changes)

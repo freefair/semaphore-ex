@@ -444,7 +444,8 @@ type ExternalIdentityManager interface {
 type TaskManager interface {
 	CreateTask(task Task, maxTasks int) (Task, error)
 	UpdateTask(task Task) error
-	AssignTaskRunner(projectID int, taskID int, runnerID int, runnerName string, assignedAt time.Time) (Task, bool, error)
+	AssignTaskRunner(projectID int, taskID int, runnerID int, runnerName string, assignedAt time.Time, placement ...RunnerPlacementDecision) (Task, bool, error)
+	SetTaskRunnerPlacement(projectID int, taskID int, decision RunnerPlacementDecision) (bool, error)
 	UpdateTaskRunner(task Task, expectedStatus task_logger.TaskStatus, expectedRunnerID int, expectedGeneration int, outcome RunnerAttemptOutcome, attemptReason string, transitionedAt time.Time) (bool, error)
 	GetTaskRunnerAttempts(projectID int, taskID int) ([]RunnerAttempt, error)
 	UpdateTaskArtifacts(projectID int, taskID int, artifacts *string) error

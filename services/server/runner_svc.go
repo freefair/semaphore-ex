@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -66,6 +67,7 @@ var ErrProjectRunnerRequiresProject = errors.New("project runner requires a proj
 var ErrProjectRunnerNameRequired = errors.New("project runner name is required")
 var ErrProjectRunnerUnregistered = errors.New("unregistered project runner cannot be activated")
 var ErrProjectRunnerParallelismInvalid = errors.New("project runner max parallel tasks cannot be negative")
+var ErrProjectRunnerTagsInvalid = errors.New("project runner tags are invalid")
 
 type RunnerServiceImpl struct {
 	runnerRepo db.RunnerManager
@@ -145,8 +147,11 @@ func (s *RunnerServiceImpl) UpdateProjectRunner(current db.Runner, changes db.Ru
 	if changes.MaxParallelTasks < 0 {
 		return db.Runner{}, ErrProjectRunnerParallelismInvalid
 	}
+	if err := db.ValidateRunnerTags(changes.Tags); err != nil {
+		return db.Runner{}, fmt.Errorf("%w: %v", ErrProjectRunnerTagsInvalid, err)
+	}
 	current.Name = name
-	current.Tags = changes.Tags
+	current.Tags = db.NormalizeRunnerTags(changes.Tags)
 	current.IsDefault = changes.IsDefault
 	current.Webhook = strings.TrimSpace(changes.Webhook)
 	current.MaxParallelTasks = changes.MaxParallelTasks

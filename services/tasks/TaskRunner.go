@@ -125,6 +125,7 @@ func (t *TaskRunner) publishStatus() {
 			"assignment_generation": t.Task.AssignmentGeneration,
 			"runner_assigned_at":    t.Task.RunnerAssignedAt,
 			"recovery_reason":       t.Task.RecoveryReason,
+			"placement_decision":    t.Task.PlacementDecision,
 		})
 
 		util.LogPanic(err)

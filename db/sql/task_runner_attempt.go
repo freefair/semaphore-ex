@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -14,16 +15,62 @@ func (d *SqlDb) AssignTaskRunner(
 	runnerID int,
 	runnerName string,
 	assignedAt time.Time,
+	placements ...db.RunnerPlacementDecision,
 ) (task db.Task, assigned bool, err error) {
+	var placement *db.RunnerPlacementDecision
+	var requestedTags *db.StringArrayField
+	var matchMode db.RunnerTagMatchMode
+	var placementReason string
+	if len(placements) > 0 {
+		placement = &placements[0]
+		requestedTags = (*db.StringArrayField)(&placement.RequestedTags)
+		matchMode = placement.MatchMode
+		placementReason = placement.Reason
+	}
 	tx, err := d.Sql().Begin()
 	if err != nil {
 		return task, false, err
 	}
+	// Lock the runner row before checking capacity. This serializes assignments
+	// to different task rows on every SQL dialect and prevents write skew.
+	if _, err = tx.Exec(d.PrepareQuery(
+		"update runner set current_load=current_load "+
+			"where id=? and active=true and token != '' and (project_id=? or project_id is null)"),
+		runnerID, projectID,
+	); err != nil {
+		_ = tx.Rollback()
+		return task, false, err
+	}
+	type capacityRow struct {
+		MaxParallelTasks int `db:"max_parallel_tasks"`
+		Assignments      int `db:"assignments"`
+	}
+	var capacity capacityRow
+	capacityErr := tx.SelectOne(&capacity, d.PrepareQuery(
+		"select r.max_parallel_tasks, "+
+			"(select count(*) from task assigned where assigned.runner_id=r.id "+
+			"and assigned.status in (?, ?, ?, ?, ?, ?, ?)) as assignments "+
+			"from runner r where r.id=? and r.active=true and r.token != '' "+
+			"and (r.project_id=? or r.project_id is null)"),
+		append(unfinishedRunnerStatusArgs(), runnerID, projectID)...,
+	)
+	if capacityErr != nil {
+		_ = tx.Rollback()
+		if capacityErr == sql.ErrNoRows {
+			return task, false, nil
+		}
+		return task, false, capacityErr
+	}
+	if capacity.MaxParallelTasks > 0 && capacity.Assignments >= capacity.MaxParallelTasks {
+		_ = tx.Rollback()
+		return task, false, nil
+	}
+
 	result, err := tx.Exec(d.PrepareQuery(
 		"update task set runner_id=?, runner_id_snapshot=?, runner_name=?, runner_assigned_at=?, "+
-			"assignment_generation=assignment_generation+1 "+
+			"assignment_generation=assignment_generation+1, placement_decision=? "+
 			"where id=? and project_id=? and runner_id is null and status in (?, ?)"),
-		runnerID, runnerID, runnerName, assignedAt,
+		runnerID, runnerID, runnerName, assignedAt, placement,
 		taskID, projectID, task_logger.TaskWaitingStatus, task_logger.TaskStartingStatus,
 	)
 	if err != nil {
@@ -45,9 +92,11 @@ func (d *SqlDb) AssignTaskRunner(
 	}
 	if _, err = tx.Exec(d.PrepareQuery(
 		"insert into task__runner_attempt "+
-			"(project_id, task_id, generation, runner_id, runner_name, assigned_at, outcome) "+
-			"values (?, ?, ?, ?, ?, ?, ?)"),
-		projectID, taskID, task.AssignmentGeneration, runnerID, runnerName, assignedAt, db.RunnerAttemptActive,
+			"(project_id, task_id, generation, runner_id, runner_name, assigned_at, outcome, "+
+			"requested_tags, match_mode, placement_reason) "+
+			"values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+		projectID, taskID, task.AssignmentGeneration, runnerID, runnerName, assignedAt,
+		db.RunnerAttemptActive, requestedTags, matchMode, placementReason,
 	); err != nil {
 		_ = tx.Rollback()
 		return task, false, err
@@ -56,6 +105,23 @@ func (d *SqlDb) AssignTaskRunner(
 		return task, false, err
 	}
 	return task, true, nil
+}
+
+func (d *SqlDb) SetTaskRunnerPlacement(
+	projectID int,
+	taskID int,
+	decision db.RunnerPlacementDecision,
+) (bool, error) {
+	result, err := d.exec(
+		"update task set placement_decision=? where id=? and project_id=? "+
+			"and runner_id is null and status in (?, ?)",
+		&decision, taskID, projectID, task_logger.TaskWaitingStatus, task_logger.TaskStartingStatus,
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows == 1, err
 }
 
 func (d *SqlDb) UpdateTaskRunner(
@@ -76,11 +142,12 @@ func (d *SqlDb) UpdateTaskRunner(
 	}
 	result, err := tx.Exec(d.PrepareQuery(
 		"update task set status=?, start=?, `end`=?, commit_hash=?, commit_message=?, runner_id=?, "+
-			"runner_id_snapshot=?, runner_name=?, runner_assigned_at=?, message=?, recovery_reason=? "+
+			"runner_id_snapshot=?, runner_name=?, runner_assigned_at=?, message=?, recovery_reason=?, placement_decision=? "+
 			"where id=? and project_id=? and status=? and assignment_generation=? "+
 			"and (runner_id=? or (runner_id is null and (runner_id_snapshot=? or assignment_generation=0)))"),
 		task.Status, task.Start, task.End, task.CommitHash, task.CommitMessage, task.RunnerID,
 		task.RunnerSnapshotID, task.RunnerName, task.RunnerAssignedAt, task.Message, task.RecoveryReason,
+		task.PlacementDecision,
 		task.ID, task.ProjectID, expectedStatus, expectedGeneration, expectedRunnerID, expectedRunnerID,
 	)
 	if err != nil {

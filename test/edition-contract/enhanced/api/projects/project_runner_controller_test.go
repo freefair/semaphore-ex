@@ -181,15 +181,28 @@ func TestProjectRunnerLifecycleMutationsPersistAndAreAudited(t *testing.T) {
 	controller := NewProjectRunnerController(nil, server.NewRunnerService(store), features.NewCapabilityProvider(store), audit)
 
 	update := runnerLifecycleRequest(httptest.NewRequest(http.MethodPut, "/api/project/1/runners/1",
-		bytes.NewBufferString(`{"name":"after","tags":["linux"],"is_default":true,"max_parallel_tasks":3}`)), store, project, runner)
+		bytes.NewBufferString(`{"name":"after","tags":[" GPU ","linux","gpu"],"is_default":true,"max_parallel_tasks":3}`)), store, project, runner)
 	updated := httptest.NewRecorder()
 	controller.UpdateRunner(updated, update)
 	require.Equal(t, http.StatusNoContent, updated.Code, updated.Body.String())
 	stored, err := store.GetRunner(project.ID, runner.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "after", stored.Name)
-	assert.Equal(t, []string{"linux"}, stored.Tags)
+	assert.Equal(t, []string{"gpu", "linux"}, stored.Tags)
 	assert.True(t, stored.Active)
+
+	tagsRequest := runnerContractRequest(
+		httptest.NewRequest(http.MethodGet, "/api/project/1/runner_tags", nil), store, project,
+	)
+	tagsResponse := httptest.NewRecorder()
+	controller.GetRunnerTags(tagsResponse, tagsRequest)
+	require.Equal(t, http.StatusOK, tagsResponse.Code, tagsResponse.Body.String())
+	var tags []db.RunnerTag
+	require.NoError(t, json.Unmarshal(tagsResponse.Body.Bytes(), &tags))
+	assert.Equal(t, []db.RunnerTag{
+		{Tag: "gpu", NumberOfRunners: 1},
+		{Tag: "linux", NumberOfRunners: 1},
+	}, tags)
 
 	deactivate := runnerLifecycleRequest(httptest.NewRequest(http.MethodPost, "/api/project/1/runners/1/active",
 		bytes.NewBufferString(`{"active":false}`)), store, project, stored)

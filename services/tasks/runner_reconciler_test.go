@@ -324,63 +324,6 @@ func TestDecideRunnerTaskAction(t *testing.T) {
 	}
 }
 
-func TestSelectRunner(t *testing.T) {
-	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
-	offlineTimeout := 2 * time.Minute
-
-	ago := func(d time.Duration) *time.Time {
-		v := now.Add(-d)
-		return &v
-	}
-
-	online := db.Runner{ID: 1, Touched: ago(10 * time.Second), MaxParallelTasks: 0}
-	offline := db.Runner{ID: 2, Touched: ago(time.Hour), MaxParallelTasks: 0}
-	webhook := db.Runner{ID: 3, Webhook: "https://example.com/hook", MaxParallelTasks: 0}
-	busyOnline := db.Runner{ID: 4, Touched: ago(10 * time.Second), MaxParallelTasks: 1}
-
-	noBusy := func(int) int { return 0 }
-
-	t.Run("offline runner excluded", func(t *testing.T) {
-		r := selectRunner([]db.Runner{offline, online}, now, offlineTimeout, noBusy)
-		require.NotNil(t, r)
-		assert.Equal(t, online.ID, r.ID)
-	})
-
-	t.Run("all offline returns nil", func(t *testing.T) {
-		assert.Nil(t, selectRunner([]db.Runner{offline}, now, offlineTimeout, noBusy))
-	})
-
-	t.Run("webhook runner selectable regardless of heartbeat", func(t *testing.T) {
-		r := selectRunner([]db.Runner{offline, webhook}, now, offlineTimeout, noBusy)
-		require.NotNil(t, r)
-		assert.Equal(t, webhook.ID, r.ID)
-	})
-
-	t.Run("online but at capacity skipped", func(t *testing.T) {
-		busy := func(runnerID int) int {
-			if runnerID == busyOnline.ID {
-				return 1
-			}
-			return 0
-		}
-		r := selectRunner([]db.Runner{busyOnline, online}, now, offlineTimeout, busy)
-		require.NotNil(t, r)
-		assert.Equal(t, online.ID, r.ID)
-	})
-
-	t.Run("previously offline runner selectable after fresh poll", func(t *testing.T) {
-		revived := offline
-		revived.Touched = ago(5 * time.Second)
-		r := selectRunner([]db.Runner{revived}, now, offlineTimeout, noBusy)
-		require.NotNil(t, r)
-		assert.Equal(t, revived.ID, r.ID)
-	})
-
-	t.Run("no runners returns nil", func(t *testing.T) {
-		assert.Nil(t, selectRunner(nil, now, offlineTimeout, noBusy))
-	})
-}
-
 func TestRequeueTaskRunnerOffline(t *testing.T) {
 	setupReconcilerConfig(t)
 

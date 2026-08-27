@@ -159,14 +159,15 @@ export default {
       // de-duped strings so the API never sees blank or duplicate tags.
       const seen = new Set();
       this.item.tags = (this.item.tags || [])
-        .map((t) => (typeof t === 'string' ? t.trim() : ''))
+        .map((t) => (typeof t === 'string' ? t.trim().toLowerCase() : ''))
         .filter((t) => {
           if (!t || seen.has(t)) {
             return false;
           }
           seen.add(t);
           return true;
-        });
+        })
+        .sort();
     },
 
     getSingleItemUrl() {

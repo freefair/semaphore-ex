@@ -2,11 +2,9 @@ package tasks
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"net/http"
 	"time"
 
@@ -14,17 +12,18 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/util"
-	log "github.com/sirupsen/logrus"
 )
 
 // ErrAllRunnersBusy is returned when all available runners are busy. Used for logic
 var ErrAllRunnersBusy = errors.New("all runners busy")
 
 type RemoteJob struct {
-	RunnerTag *string
-	Task      db.Task
-	taskPool  *TaskPool
-	killed    bool
+	RunnerTag          *string
+	RunnerTags         []string
+	RunnerTagMatchMode db.RunnerTagMatchMode
+	Task               db.Task
+	taskPool           *TaskPool
+	killed             bool
 }
 
 type runnerWebhookPayload struct {
@@ -83,54 +82,6 @@ func callRunnerWebhook(runner *db.Runner, tsk *TaskRunner, action string) (err e
 	return
 }
 
-func shuffleRunners(rs []db.Runner) []db.Runner {
-	if len(rs) < 2 {
-		return rs
-	}
-
-	// Work on a copy so that if randomness fails, we can safely return the original order.
-	shuffled := make([]db.Runner, len(rs))
-	copy(shuffled, rs)
-
-	// Fisher–Yates shuffle using crypto/rand: for each i, pick j in [0, i].
-	for i := len(shuffled) - 1; i > 0; i-- {
-		max := big.NewInt(int64(i + 1))
-		j, err := rand.Int(rand.Reader, max)
-		if err != nil {
-			log.WithError(err).Warn("failed to shuffle runners, using original order")
-			return rs
-		}
-
-		ji := int(j.Int64())
-		shuffled[i], shuffled[ji] = shuffled[ji], shuffled[i]
-	}
-
-	return shuffled
-}
-
-// selectRunner returns the first runner that is online (see db.Runner.IsOnline)
-// and has free capacity, or nil when there is none. Offline runners are
-// excluded outright — dispatching to a silent runner is exactly how tasks used
-// to hang forever; a task with no online runner stays queued instead and is
-// retried by the pool.
-func selectRunner(
-	runners []db.Runner,
-	now time.Time,
-	offlineTimeout time.Duration,
-	busyTasks func(runnerID int) int,
-) *db.Runner {
-	for i := range runners {
-		r := &runners[i]
-		if !r.IsOnline(now, offlineTimeout) {
-			continue
-		}
-		if n := busyTasks(r.ID); n < r.MaxParallelTasks || r.MaxParallelTasks == 0 {
-			return r
-		}
-	}
-	return nil
-}
-
 func (t *RemoteJob) Run(username string, incomingVersion *string, alias string) (err error) {
 	tsk, err := t.taskPool.GetTask(t.Task.ID)
 
@@ -147,82 +98,122 @@ func (t *RemoteJob) Run(username string, incomingVersion *string, alias string) 
 	tsk.Alias = alias
 	t.taskPool.state.UpdateRuntimeFields(tsk)
 
-	var runners []db.Runner
-	tagFilterMode := db.RunnerFilterTagCompleteMatch
-	if t.RunnerTag == nil {
-		tagFilterMode = db.RunnerFilterIsDefault
+	requestedTags := db.NormalizeRunnerTags(t.RunnerTags)
+	if len(requestedTags) == 0 && t.RunnerTag != nil {
+		requestedTags = db.NormalizeRunnerTags([]string{*t.RunnerTag})
+	}
+	matchMode := t.RunnerTagMatchMode
+	if matchMode != db.RunnerTagMatchAny {
+		matchMode = db.RunnerTagMatchAll
 	}
 
 	var projectRunners []db.Runner
-	projectRunners, err = t.taskPool.store.GetRunners(t.Task.ProjectID, true, tagFilterMode, t.RunnerTag)
+	projectRunners, err = t.taskPool.store.GetRunners(
+		t.Task.ProjectID, false, db.RunnerFilterIgnoreTags, nil,
+	)
 	if err != nil {
 		return
 	}
 
 	var globalRunners []db.Runner
-	globalRunners, err = t.taskPool.store.GetAllRunners(true, true, tagFilterMode, t.RunnerTag)
-	if err != nil {
-		return
-	}
-
-	runners = append(runners, shuffleRunners(projectRunners)...)
-	runners = append(runners, shuffleRunners(globalRunners)...)
-
-	if err != nil {
-		return
-	}
-
-	if len(runners) == 0 {
-		err = fmt.Errorf("no runners available")
-		return
-	}
-
-	runner := selectRunner(
-		runners,
-		tz.Now(),
-		util.Config.RunnersOfflineTimeout(),
-		t.taskPool.GetNumberOfRunningTasksOfRunner)
-
-	if runner == nil {
-		err = ErrAllRunnersBusy
-		return
-	}
-
-	err = callRunnerWebhook(runner, tsk, "start")
-
-	if err != nil {
-		return
-	}
-
-	assignedTask, assigned, assignErr := t.taskPool.store.AssignTaskRunner(
-		tsk.Task.ProjectID, tsk.Task.ID, runner.ID, runner.Name, tz.Now(),
+	globalRunners, err = t.taskPool.store.GetAllRunners(
+		false, true, db.RunnerFilterIgnoreTags, nil,
 	)
-	if assignErr != nil {
-		return assignErr
+	if err != nil {
+		return
 	}
-	if !assigned {
-		return fmt.Errorf("task assignment changed concurrently")
+	candidates := make([]RunnerPlacementCandidate, 0, len(projectRunners)+len(globalRunners))
+	for _, runner := range append(projectRunners, globalRunners...) {
+		candidates = append(candidates, RunnerPlacementCandidate{
+			Runner: runner, RunningTasks: t.taskPool.GetNumberOfRunningTasksOfRunner(runner.ID),
+		})
 	}
-	tsk.Task.RunnerID = assignedTask.RunnerID
-	tsk.Task.RunnerSnapshotID = assignedTask.RunnerSnapshotID
-	tsk.Task.RunnerName = assignedTask.RunnerName
-	tsk.Task.AssignmentGeneration = assignedTask.AssignmentGeneration
-	tsk.Task.RunnerAssignedAt = assignedTask.RunnerAssignedAt
-	tsk.Task.RecoveryReason = assignedTask.RecoveryReason
 
-	tsk.Logf("Task #%d is assigned to runner #%d (attempt %d)",
-		tsk.Task.ID, runner.ID, tsk.Task.AssignmentGeneration)
+	for {
+		decision := DecideRunnerPlacement(
+			t.Task.ProjectID, requestedTags, matchMode, candidates,
+			tz.Now(), util.Config.RunnersOfflineTimeout(),
+		)
+		if decision.SelectedRunnerID == nil {
+			persisted, persistErr := t.taskPool.store.SetTaskRunnerPlacement(
+				tsk.Task.ProjectID, tsk.Task.ID, decision,
+			)
+			if persistErr != nil {
+				return persistErr
+			}
+			if !persisted {
+				return fmt.Errorf("task placement changed concurrently")
+			}
+			tsk.Task.PlacementDecision = &decision
+			tsk.Log("Runner placement delayed: " + decision.Reason + ". " + decision.ActionHint)
+			return ErrAllRunnersBusy
+		}
 
-	t.taskPool.state.UpdateRuntimeFields(tsk)
+		selectedIndex := -1
+		for index := range candidates {
+			if candidates[index].Runner.ID == *decision.SelectedRunnerID {
+				selectedIndex = index
+				break
+			}
+		}
+		if selectedIndex < 0 {
+			return fmt.Errorf("selected runner disappeared from placement candidates")
+		}
+		runner := &candidates[selectedIndex].Runner
 
-	// The task now runs on the remote runner. Its completion is reported back
-	// via the runner API (PUT /runners) and finalized by
-	// TaskPool.FinalizeRemoteTask on whichever node receives the terminal
-	// status. Returning here instead of polling means the task survives the
-	// death or restart of the node that dispatched it: no node-local goroutine
-	// owns its completion.
-	t.scheduleTimeout(runner)
-	return
+		assignedTask, assigned, assignErr := t.taskPool.store.AssignTaskRunner(
+			tsk.Task.ProjectID, tsk.Task.ID, runner.ID, runner.Name, tz.Now(), decision,
+		)
+		if assignErr != nil {
+			return assignErr
+		}
+		if !assigned {
+			fresh, freshErr := t.taskPool.store.GetTask(tsk.Task.ProjectID, tsk.Task.ID)
+			if freshErr != nil {
+				return freshErr
+			}
+			if fresh.RunnerID != nil ||
+				(fresh.Status != task_logger.TaskWaitingStatus && fresh.Status != task_logger.TaskStartingStatus) {
+				return fmt.Errorf("task assignment changed concurrently")
+			}
+			// The task is still assignable, so the runner lost a concurrent
+			// capacity claim. Mark it full and deterministically try the next one.
+			if candidates[selectedIndex].Runner.MaxParallelTasks > 0 {
+				candidates[selectedIndex].RunningTasks = candidates[selectedIndex].Runner.MaxParallelTasks
+			} else {
+				candidates = append(candidates[:selectedIndex], candidates[selectedIndex+1:]...)
+			}
+			continue
+		}
+		tsk.Task.RunnerID = assignedTask.RunnerID
+		tsk.Task.RunnerSnapshotID = assignedTask.RunnerSnapshotID
+		tsk.Task.RunnerName = assignedTask.RunnerName
+		tsk.Task.AssignmentGeneration = assignedTask.AssignmentGeneration
+		tsk.Task.RunnerAssignedAt = assignedTask.RunnerAssignedAt
+		tsk.Task.RecoveryReason = assignedTask.RecoveryReason
+		tsk.Task.PlacementDecision = assignedTask.PlacementDecision
+		t.taskPool.state.UpdateRuntimeFields(tsk)
+
+		// Capacity is reserved before an external webhook can start work. If the
+		// webhook fails, TaskRunner.run marks this assigned attempt failed, which
+		// releases the slot without ever notifying a runner that lost the claim.
+		err = callRunnerWebhook(runner, tsk, "start")
+		if err != nil {
+			return
+		}
+
+		tsk.Logf("Task #%d is assigned to runner #%d (attempt %d): %s",
+			tsk.Task.ID, runner.ID, tsk.Task.AssignmentGeneration, decision.Reason)
+
+		// The task now runs on the remote runner. Its completion is reported back
+		// via the runner API (PUT /runners) and finalized by
+		// TaskPool.FinalizeRemoteTask on whichever node receives the terminal
+		// status. Returning here instead of polling means the task survives the
+		// death or restart of the node that dispatched it: no node-local goroutine
+		// owns its completion.
+		t.scheduleTimeout(runner)
+		return nil
+	}
 }
 
 // scheduleTimeout enforces util.Config.MaxTaskDurationSec for a dispatched
