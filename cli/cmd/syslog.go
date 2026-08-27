@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/semaphoreui/semaphore/pkg/debuglog"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 	lSyslog "github.com/sirupsen/logrus/hooks/syslog"
@@ -20,7 +21,7 @@ import (
 
 var localSyslogPaths = []string{"/dev/log", "/var/run/syslog", "/var/run/log"}
 
-func initSyslog(conf *util.SyslogConfig) {
+func initSyslog(conf *util.SyslogConfig, filter pro_interfaces.DebugFilter) {
 	if !conf.Enabled {
 		return
 	}
@@ -32,7 +33,7 @@ func initSyslog(conf *util.SyslogConfig) {
 			log.WithError(err).Fatal("Failed to create syslog hook")
 			return
 		}
-		addSyslogHook(hook)
+		addSyslogHook(hook, filter)
 		log.Info("Syslog logging enabled (RFC 5424)")
 	default:
 		hook, err := lSyslog.NewSyslogHook(conf.Network, conf.Address, syslog.LOG_DEBUG, conf.Tag)
@@ -40,13 +41,12 @@ func initSyslog(conf *util.SyslogConfig) {
 			log.WithError(err).Fatal("Failed to create syslog hook")
 			return
 		}
-		addSyslogHook(hook)
+		addSyslogHook(hook, filter)
 		log.Info("Syslog logging enabled")
 	}
 }
 
-func addSyslogHook(hook log.Hook) {
-	_, filter := configuredDebugFilter()
+func addSyslogHook(hook log.Hook, filter pro_interfaces.DebugFilter) {
 	if filter != nil {
 		hook = debuglog.NewFilteringHook(hook, filter)
 	}

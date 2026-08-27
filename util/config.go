@@ -8,6 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/go-github/github"
+	"github.com/gorilla/securecookie"
+	"golang.org/x/crypto/bcrypt"
+	"gopkg.in/natefinch/lumberjack.v2"
+	"gopkg.in/yaml.v3"
 	"io"
 	"math"
 	"net/url"
@@ -21,12 +26,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/google/go-github/github"
-	"github.com/gorilla/securecookie"
-	"golang.org/x/crypto/bcrypt"
-	"gopkg.in/natefinch/lumberjack.v2"
-	"gopkg.in/yaml.v3"
 )
 
 // Cookie is a runtime generated secure cookie used for authentication
@@ -331,8 +330,10 @@ type ConfigLog struct {
 	QueueSize        int           `json:"queue_size,omitempty" env:"SEMAPHORE_LOG_QUEUE_SIZE" default:"1024"`
 	FlushInterval    string        `json:"flush_interval,omitempty" env:"SEMAPHORE_LOG_FLUSH_INTERVAL" default:"1s"`
 	RotationInterval string        `json:"rotation_interval,omitempty" env:"SEMAPHORE_LOG_ROTATION_INTERVAL" default:"24h"`
+	DebugFilter      string        `json:"debug_filter,omitempty" env:"SEMAPHORE_DEBUG_FILTER"`
 	Events           *EventLogType `json:"events,omitempty"`
 	Tasks            *TaskLogType  `json:"tasks,omitempty"`
+	Debug            *DebugLogType `json:"debug,omitempty"`
 }
 
 type SyslogFormat string

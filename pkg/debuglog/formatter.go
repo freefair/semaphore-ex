@@ -12,12 +12,12 @@ import (
 // result verbatim, so returning nil produces no output (not even a newline).
 type FilteringFormatter struct {
 	Inner  log.Formatter
-	Filter *Filter
+	Filter interface{ Enabled(string) bool }
 }
 
 // NewFilteringFormatter wraps inner with debug-namespace filtering driven by
 // filter. If inner is nil, a default logrus.TextFormatter is used.
-func NewFilteringFormatter(inner log.Formatter, filter *Filter) *FilteringFormatter {
+func NewFilteringFormatter(inner log.Formatter, filter interface{ Enabled(string) bool }) *FilteringFormatter {
 	if inner == nil {
 		inner = &log.TextFormatter{}
 	}

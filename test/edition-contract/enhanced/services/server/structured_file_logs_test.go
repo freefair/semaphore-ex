@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/semaphoreui/semaphore/pkg/debuglog"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
@@ -348,6 +350,101 @@ func TestStructuredLogDisabledConfigurationRemainsNoOp(t *testing.T) {
 	diagnostics := service.Diagnostics()
 	assert.False(t, diagnostics.Enabled)
 	assert.Equal(t, pro_interfaces.StructuredLogDisabled, diagnostics.State)
+}
+
+func TestStructuredDebugFiltersArePerInstanceAndLazy(t *testing.T) {
+	directory := realTempDir(t)
+	firstPath := filepath.Join(directory, "first-debug.jsonl")
+	secondPath := filepath.Join(directory, "second-debug.jsonl")
+	firstFilter := debuglog.NewManager("node-a", "runner", time.Now().UTC())
+	secondFilter := debuglog.NewManager("node-b", "db", time.Now().UTC())
+	newService := func(path, instance string, filter pro_interfaces.DebugFilter) pro_interfaces.LogWriteServiceLifecycle {
+		return NewLogWriteServiceWithConfigAndFilter(&util.ConfigLog{
+			QueueSize: 8, FlushInterval: "10ms", RotationInterval: "1h",
+			Debug: &util.DebugLogType{Enabled: true, Format: util.FileLogJSON,
+				Logger: &lumberjack.Logger{Filename: path}},
+		}, instance, filter)
+	}
+	first := newService(firstPath, "node-a", firstFilter)
+	second := newService(secondPath, "node-b", secondFilter)
+	var constructed atomic.Uint64
+	write := func(service pro_interfaces.LogWriteServiceLifecycle, component string) {
+		require.NoError(t, service.WriteDebug(pro_interfaces.DebugLogRecord{
+			Component: component, EventType: "decision",
+			Fields: func() map[string]any {
+				constructed.Add(1)
+				return map[string]any{"component_value": component}
+			},
+		}))
+	}
+
+	write(first, "runner")
+	write(first, "db")
+	write(second, "runner")
+	write(second, "db")
+	require.NoError(t, first.Close())
+	require.NoError(t, second.Close())
+
+	assert.Equal(t, uint64(2), constructed.Load(), "filtered fields must not be constructed")
+	assertDebugComponents(t, firstPath, "runner")
+	assertDebugComponents(t, secondPath, "db")
+}
+
+func TestStructuredDebugReloadChangesOutputWithoutFilteringRequiredRecords(t *testing.T) {
+	directory := realTempDir(t)
+	debugPath := filepath.Join(directory, "debug.jsonl")
+	eventPath := filepath.Join(directory, "events.jsonl")
+	resultPath := filepath.Join(directory, "results.jsonl")
+	filter := debuglog.NewManager("instance-a", "runner", time.Now().UTC())
+	service := NewLogWriteServiceWithConfigAndFilter(&util.ConfigLog{
+		QueueSize: 16, FlushInterval: "10ms", RotationInterval: "1h",
+		Debug: &util.DebugLogType{Enabled: true, Format: util.FileLogJSON,
+			Logger: &lumberjack.Logger{Filename: debugPath}},
+		Events: &util.EventLogType{Enabled: true, Format: util.FileLogJSON,
+			Logger: &lumberjack.Logger{Filename: eventPath}},
+		Tasks: &util.TaskLogType{Enabled: true, Format: util.FileLogJSON,
+			ResultLogger: &lumberjack.Logger{Filename: resultPath}},
+	}, "instance-a", filter)
+
+	require.NoError(t, service.WriteDebug(pro_interfaces.DebugLogRecord{
+		Component: "runner", EventType: "before_reload",
+	}))
+	filter.Reload("db,runner*middle", time.Now().UTC())
+	require.NoError(t, service.WriteDebug(pro_interfaces.DebugLogRecord{
+		Component: "db", EventType: "after_reload",
+	}))
+	require.NoError(t, service.WriteEventLog(pro_interfaces.EventLogRecord{
+		Action: "audit_required", CorrelationID: "audit-required",
+	}))
+	require.NoError(t, service.WriteResult(pro_interfaces.ResultLogRecord{
+		TaskID: 7, ProjectID: 9, CorrelationID: "result-required",
+		EventType: "result_required", Result: map[string]any{"ok": true},
+	}))
+	require.NoError(t, service.Close())
+
+	assertDebugComponents(t, debugPath, "runner", "db")
+	assertEnvelope(t, eventPath, "semaphore.application.v1", "audit_required", "audit-required")
+	assertEnvelope(t, resultPath, "semaphore.result.v1", "result_required", "result-required")
+	require.Len(t, service.DebugFilterDiagnostics().Rejected, 1)
+}
+
+func assertDebugComponents(t *testing.T, path string, expected ...string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	require.NoError(t, err)
+	lines := splitJSONLines(content)
+	require.Len(t, lines, len(expected))
+	for index, line := range lines {
+		var envelope struct {
+			Schema  string `json:"schema"`
+			Payload struct {
+				Component string `json:"component"`
+			} `json:"payload"`
+		}
+		require.NoError(t, json.Unmarshal(line, &envelope))
+		assert.Equal(t, "semaphore.debug.v1", envelope.Schema)
+		assert.Equal(t, expected[index], envelope.Payload.Component)
+	}
 }
 
 func realTempDir(t *testing.T) string {

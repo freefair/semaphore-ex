@@ -7,6 +7,9 @@ export const enhancedComputed = {
   structuredLogs() {
     return this.info?.structured_logs || null;
   },
+  debugFilter() {
+    return this.info?.debug_filter || null;
+  },
 };
 
 export const enhancedMethods = {
@@ -47,5 +50,12 @@ export const enhancedMethods = {
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) return value;
     return parsed.toLocaleString();
+  },
+  debugFilterDefaultText(diagnostics) {
+    if (diagnostics.default === 'all') return 'All components are captured by default.';
+    return 'No component filters are configured.';
+  },
+  debugFilterRejectedText(entry) {
+    return `${entry.entry} — ${entry.reason.replace(/_/g, ' ')}`;
   },
 };

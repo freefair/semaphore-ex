@@ -2,20 +2,11 @@ package cmd
 
 import (
 	"fmt"
-	"net/http"
-	"net/url"
-	"os"
-	"os/signal"
-	"strings"
-	"syscall"
-	"time"
-
 	"github.com/gorilla/handlers"
 	"github.com/semaphoreui/semaphore/api"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/api/sockets"
 	"github.com/semaphoreui/semaphore/db"
-	"github.com/semaphoreui/semaphore/db/factory"
 	"github.com/semaphoreui/semaphore/pkg/debuglog"
 	"github.com/semaphoreui/semaphore/pkg/metrics"
 	proFactory "github.com/semaphoreui/semaphore/pro/db/factory"
@@ -28,6 +19,11 @@ import (
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
 )
 
 var persistentFlags struct {
@@ -64,45 +60,12 @@ Complete documentation is available at https://semaphoreui.com.`,
 			log.SetLevel(lvl)
 		}
 
-		initDebugFilter()
 	},
-}
-
-// initDebugFilter installs a Node.js-`debug`-style namespace filter for DEBUG
-// logs, driven by the --debug-filter flag or SEMAPHORE_DEBUG_FILTER env var.
-// The filter only narrows DEBUG-level output and only takes effect when the log
-// level is already DEBUG; otherwise there are no debug entries to filter and the
-// logger is left untouched.
-func initDebugFilter() {
-	spec, filter := configuredDebugFilter()
-	if filter == nil {
-		return
-	}
-
-	log.SetFormatter(debuglog.NewFilteringFormatter(
-		log.StandardLogger().Formatter,
-		filter,
-	))
-
-	fmt.Println("Debug filter active:", spec)
-}
-
-func configuredDebugFilter() (string, *debuglog.Filter) {
-	spec := persistentFlags.debugFilter
-	if spec == "" {
-		spec = os.Getenv("SEMAPHORE_DEBUG_FILTER")
-	}
-
-	if spec == "" || log.GetLevel() < log.DebugLevel {
-		return "", nil
-	}
-
-	return spec, debuglog.Parse(spec)
 }
 
 func Execute() {
 	rootCmd.PersistentFlags().StringVar(&persistentFlags.logLevel, "log-level", "", "Log level: DEBUG, INFO, WARN, ERROR, FATAL, PANIC")
-	rootCmd.PersistentFlags().StringVar(&persistentFlags.debugFilter, "debug-filter", "", "Debug namespace filter (only with DEBUG level), e.g. 'runner,task_*' or '*,-db'")
+	rootCmd.PersistentFlags().StringVar(&persistentFlags.debugFilter, "debug-filter", "", "Debug component filter, e.g. 'runner,task_*' or '*,-db'")
 	rootCmd.PersistentFlags().StringVar(&persistentFlags.configPath, "config", "", "Configuration file path")
 	rootCmd.PersistentFlags().BoolVar(&persistentFlags.noConfig, "no-config", false, "Don't use configuration file")
 	if err := rootCmd.Execute(); err != nil {
@@ -111,57 +74,29 @@ func Execute() {
 	}
 }
 
-// watchEncryptionKeyReload enables key rotation without restarting the server:
-//   - a SIGHUP forces an immediate reload;
-//   - a background poller applies changes to the encryption-keys file (and the
-//     key files it references) automatically. The poller runs only when a keys
-//     file is configured and the poll interval is positive.
-func watchEncryptionKeyReload() {
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGHUP)
-	go func() {
-		for range sigCh {
-			if err := util.ReloadEncryptionKeys(); err != nil {
-				log.WithError(err).Error("failed to reload encryption keys")
-			} else {
-				log.Info("encryption keys reloaded (SIGHUP)")
-			}
-		}
-	}()
-
-	interval := util.Config.EncryptionKeysPollInterval()
-	if util.Config.EncryptionKeysFile() == "" || interval <= 0 {
-		return
-	}
-
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for range ticker.C {
-			changed, err := util.ReloadEncryptionKeysIfChanged()
-			if err != nil {
-				log.WithError(err).Error("failed to reload encryption keys")
-			} else if changed {
-				log.Info("encryption keys reloaded (file changed)")
-			}
-		}
-	}()
-}
-
 func runService() {
-	store := createStore("root")
+	store, configPath := createStoreWithMigrationVersionAndConfigPath("root", nil, nil)
 
-	watchEncryptionKeyReload()
+	// Initialize HA node identity before components expose per-instance diagnostics.
+	util.InitHANodeID()
+	filterSource := newDebugFilterSource(configPath)
+	debugFilterSpec, debugFilterErr := filterSource.Load()
+	loadedAt := time.Now().UTC()
+	var debugFilter *debuglog.Manager
+	if debugFilterErr != nil {
+		debugFilter = debuglog.NewManagerWithReloadError(debugLogInstance(), debugFilterErr.Error(), loadedAt)
+	} else {
+		debugFilter = debuglog.NewManager(debugLogInstance(), debugFilterSpec, loadedAt)
+	}
+	log.SetFormatter(debuglog.NewFilteringFormatter(log.StandardLogger().Formatter, debugFilter))
+	watchRuntimeConfigurationReload(debugFilter, filterSource)
 
 	jwtSigner, jwtErr := util.InitJWTSignerFromStore(store)
 	if jwtErr != nil {
 		log.WithError(jwtErr).Warning("failed to initialise JWT signer")
 	}
 
-	initSyslog(util.Config.Syslog)
-
-	// Initialize HA node identity before any component that uses it.
-	util.InitHANodeID()
+	initSyslog(util.Config.Syslog, debugFilter)
 
 	state := proTasks.NewTaskStateStore()
 	terraformStore := proFactory.NewTerraformStore(store)
@@ -184,7 +119,7 @@ func runService() {
 	environmentService := server.NewEnvironmentService(store, encryptionService, store)
 	runnerService := server.NewRunnerService(store)
 	subscriptionService := proServer.NewSubscriptionService(store, store, store, terraformStore)
-	logWriteService := proServer.NewLogWriteService()
+	logWriteService := proServer.NewLogWriteServiceWithFilter(debugFilter)
 	defer func() {
 		if err := logWriteService.Close(); err != nil {
 			log.WithError(err).Error("failed to flush structured logs during shutdown")
@@ -424,31 +359,7 @@ func runService() {
 }
 
 func createStoreWithMigrationVersion(token string, undoTo *string, applyTo *string) db.Store {
-	util.ConfigInit(persistentFlags.configPath, persistentFlags.noConfig)
-
-	store := factory.CreateStore()
-
-	store.Connect()
-
-	var err error
-	if undoTo != nil {
-		err = db.Rollback(store, *undoTo)
-	} else {
-		err = db.Migrate(store, applyTo)
-	}
-
-	if err != nil {
-		panic(err)
-	}
-
-	err = db.FillConfigFromDB(store)
-
-	if err != nil {
-		panic(err)
-	}
-
-	util.LookupDefaultApps()
-
+	store, _ := createStoreWithMigrationVersionAndConfigPath(token, undoTo, applyTo)
 	return store
 }
 

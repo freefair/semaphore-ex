@@ -236,6 +236,12 @@ func (p *TaskPool) Run() {
 				"task_id":   task.Task.ID,
 				"task_name": task.Template.Name,
 			}).Info("Task added to queue")
+			p.writeStructuredDebug(pro_interfaces.DebugLogRecord{
+				Component: pro_interfaces.DebugComponentTaskPool, EventType: "task_queued", ProjectID: &task.Task.ProjectID,
+				Fields: func() map[string]any {
+					return map[string]any{"task_id": task.Task.ID}
+				},
+			})
 			task.saveStatus()
 
 			p.queueEvents <- PoolEvent{EventTypeNew, task}
@@ -423,6 +429,12 @@ func runTask(task *TaskRunner, p *TaskPool) {
 		"task_id":   task.Task.ID,
 		"task_name": task.Template.Name,
 	}).Info("Task started")
+	p.writeStructuredDebug(pro_interfaces.DebugLogRecord{
+		Component: pro_interfaces.DebugComponentTaskPool, EventType: "task_started", ProjectID: &task.Task.ProjectID,
+		Fields: func() map[string]any {
+			return map[string]any{"task_id": task.Task.ID}
+		},
+	})
 	go func() {
 		time.Sleep(1 * time.Second)
 		task.run()

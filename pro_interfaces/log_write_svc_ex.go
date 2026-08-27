@@ -6,6 +6,7 @@ import (
 
 type LogWriteServiceLifecycle interface {
 	LogWriteService
+	DebugLogService
 	Diagnostics() StructuredLogDiagnostics
 	Close() error
 }

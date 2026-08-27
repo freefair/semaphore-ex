@@ -4,12 +4,13 @@
 package cmd
 
 import (
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 )
 
 // initSyslog is disabled on Windows because the standard syslog package is not supported.
-func initSyslog(conf *util.SyslogConfig) {
+func initSyslog(conf *util.SyslogConfig, _ pro_interfaces.DebugFilter) {
 	if conf != nil && conf.Enabled {
 		log.Warn("Syslog is not supported on Windows. The syslog log channel will be disabled.")
 	}

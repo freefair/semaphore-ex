@@ -7,11 +7,11 @@ import log "github.com/sirupsen/logrus"
 // hook. Entries at any other level pass through unchanged.
 type FilteringHook struct {
 	Inner  log.Hook
-	Filter *Filter
+	Filter interface{ Enabled(string) bool }
 }
 
 // NewFilteringHook wraps inner with debug-namespace filtering driven by filter.
-func NewFilteringHook(inner log.Hook, filter *Filter) *FilteringHook {
+func NewFilteringHook(inner log.Hook, filter interface{ Enabled(string) bool }) *FilteringHook {
 	return &FilteringHook{Inner: inner, Filter: filter}
 }
 
