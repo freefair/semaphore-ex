@@ -58,3 +58,38 @@ func TestGetTaskRunnerAttemptsIsScopedToContextTask(t *testing.T) {
 	assert.Equal(t, runner.ID, attempts[0].RunnerID)
 	assert.Equal(t, db.RunnerAttemptActive, attempts[0].Outcome)
 }
+
+func TestGetTaskReturnsRedactedPlacementDecision(t *testing.T) {
+	runnerID := 7
+	task := db.Task{
+		ID: 42, ProjectID: 3, TemplateID: 9,
+		PlacementDecision: &db.RunnerPlacementDecision{
+			RequestedTags:    []string{"gpu", "linux"},
+			MatchMode:        db.RunnerTagMatchAll,
+			SelectedRunnerID: &runnerID,
+			SelectedName:     "project-gpu",
+			SelectedScope:    db.RunnerPlacementProject,
+			Reason:           "selected project runner #7 by scope, current load, and stable runner id",
+			Evaluations: []db.RunnerPlacementEvaluation{{
+				RunnerID: runnerID, RunnerName: "project-gpu", Scope: db.RunnerPlacementProject,
+				Eligible: true, AcceptedCriteria: []string{"active", "registered"},
+			}},
+		},
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/project/3/tasks/42", nil)
+	request = helpers.SetContextValue(request, "task", task)
+	response := httptest.NewRecorder()
+
+	NewTaskController(nil, nil).GetTask(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	placement, ok := body["placement_decision"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []any{"gpu", "linux"}, placement["requested_tags"])
+	assert.Equal(t, "all", placement["match_mode"])
+	assert.Equal(t, float64(runnerID), placement["selected_runner_id"])
+	assert.NotContains(t, response.Body.String(), "token")
+	assert.NotContains(t, response.Body.String(), "webhook")
+}

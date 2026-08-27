@@ -1,13 +1,60 @@
 package db
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"sort"
+	"strings"
 	"time"
 )
 
 // RunnerHeartbeatState distinguishes poll-based liveness from webhook delivery.
 type RunnerHeartbeatState string
+
+// RunnerTagMatchMode controls how a task's requested tags are matched.
+type RunnerTagMatchMode string
+
+const (
+	MaxRunnerTags      = 32
+	MaxRunnerTagLength = 255
+)
+
+// NormalizeRunnerTags returns the canonical lower-case, trimmed, sorted tag set.
+func NormalizeRunnerTags(tags []string) []string {
+	seen := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		tag = strings.ToLower(strings.TrimSpace(tag))
+		if tag != "" {
+			seen[tag] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(seen))
+	for tag := range seen {
+		result = append(result, tag)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// ValidateRunnerTags bounds placement policy and runner metadata persisted in SQL and API responses.
+func ValidateRunnerTags(tags []string) error {
+	normalized := NormalizeRunnerTags(tags)
+	if len(normalized) > MaxRunnerTags {
+		return fmt.Errorf("runner tags must contain at most %d entries", MaxRunnerTags)
+	}
+	for _, tag := range normalized {
+		if len(tag) > MaxRunnerTagLength {
+			return fmt.Errorf("runner tag must contain at most %d bytes", MaxRunnerTagLength)
+		}
+	}
+	return nil
+}
 
 // IsCacheClearPending tolerates database timestamp precision that can store a
 // cache-clear request and the preceding heartbeat at the same instant.
@@ -72,6 +119,65 @@ func (r Runner) Health(now time.Time, offlineTimeout time.Duration) RunnerHealth
 		health.HeartbeatAgeSeconds = &seconds
 	}
 	return health
+}
+
+type RunnerPlacementScope string
+
+const (
+	RunnerPlacementProject RunnerPlacementScope = "project"
+	RunnerPlacementGlobal  RunnerPlacementScope = "global"
+)
+
+// RunnerPlacementEvaluation is a redacted explanation for one considered runner.
+type RunnerPlacementEvaluation struct {
+	RunnerID         int                  `json:"runner_id"`
+	RunnerName       string               `json:"runner_name"`
+	Scope            RunnerPlacementScope `json:"scope"`
+	Eligible         bool                 `json:"eligible"`
+	AcceptedCriteria []string             `json:"accepted_criteria"`
+	RejectedCriteria []string             `json:"rejected_criteria"`
+}
+
+// RunnerPlacementDecision explains the deterministic result of one placement attempt.
+type RunnerPlacementDecision struct {
+	RequestedTags    []string                    `json:"requested_tags"`
+	MatchMode        RunnerTagMatchMode          `json:"match_mode"`
+	SelectedRunnerID *int                        `json:"selected_runner_id,omitempty"`
+	SelectedName     string                      `json:"selected_runner_name,omitempty"`
+	SelectedScope    RunnerPlacementScope        `json:"selected_scope,omitempty"`
+	Reason           string                      `json:"reason"`
+	ActionHint       string                      `json:"action_hint,omitempty"`
+	Evaluations      []RunnerPlacementEvaluation `json:"evaluations"`
+}
+
+// Scan implements sql.Scanner for persisted placement decisions.
+func (d *RunnerPlacementDecision) Scan(value any) error {
+	if value == nil {
+		*d = RunnerPlacementDecision{}
+		return nil
+	}
+	var data []byte
+	switch typed := value.(type) {
+	case []byte:
+		data = typed
+	case string:
+		data = []byte(typed)
+	default:
+		return errors.New("unsupported type for RunnerPlacementDecision")
+	}
+	if len(data) == 0 {
+		*d = RunnerPlacementDecision{}
+		return nil
+	}
+	return json.Unmarshal(data, d)
+}
+
+// Value implements driver.Valuer for persisted placement decisions.
+func (d *RunnerPlacementDecision) Value() (driver.Value, error) {
+	if d == nil {
+		return nil, nil
+	}
+	return json.Marshal(d)
 }
 
 // RunnerTaskAssignment identifies unfinished work that makes a destructive

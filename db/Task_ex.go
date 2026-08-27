@@ -16,14 +16,17 @@ const (
 
 // RunnerAttempt records one immutable runner assignment and its terminal result.
 type RunnerAttempt struct {
-	ID         int                  `db:"id" json:"id"`
-	ProjectID  int                  `db:"project_id" json:"project_id"`
-	TaskID     int                  `db:"task_id" json:"task_id"`
-	Generation int                  `db:"generation" json:"generation"`
-	RunnerID   int                  `db:"runner_id" json:"runner_id"`
-	RunnerName string               `db:"runner_name" json:"runner_name"`
-	AssignedAt time.Time            `db:"assigned_at" json:"assigned_at"`
-	EndedAt    *time.Time           `db:"ended_at" json:"ended_at,omitempty"`
-	Outcome    RunnerAttemptOutcome `db:"outcome" json:"outcome"`
-	Reason     string               `db:"reason" json:"reason,omitempty"`
+	ID              int                  `db:"id" json:"id"`
+	ProjectID       int                  `db:"project_id" json:"project_id"`
+	TaskID          int                  `db:"task_id" json:"task_id"`
+	Generation      int                  `db:"generation" json:"generation"`
+	RunnerID        int                  `db:"runner_id" json:"runner_id"`
+	RunnerName      string               `db:"runner_name" json:"runner_name"`
+	AssignedAt      time.Time            `db:"assigned_at" json:"assigned_at"`
+	EndedAt         *time.Time           `db:"ended_at" json:"ended_at,omitempty"`
+	Outcome         RunnerAttemptOutcome `db:"outcome" json:"outcome"`
+	Reason          string               `db:"reason" json:"reason,omitempty"`
+	RequestedTags   StringArrayField     `db:"requested_tags" json:"requested_tags,omitempty"`
+	MatchMode       RunnerTagMatchMode   `db:"match_mode" json:"match_mode,omitempty"`
+	PlacementReason string               `db:"placement_reason" json:"placement_reason,omitempty"`
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"strings"
@@ -39,8 +40,11 @@ func (s *RunnerServiceImpl) UpdateProjectRunner(current db.Runner, changes db.Ru
 	if changes.MaxParallelTasks < 0 {
 		return db.Runner{}, ErrProjectRunnerParallelismInvalid
 	}
+	if err := db.ValidateRunnerTags(changes.Tags); err != nil {
+		return db.Runner{}, fmt.Errorf("%w: %v", ErrProjectRunnerTagsInvalid, err)
+	}
 	current.Name = name
-	current.Tags = changes.Tags
+	current.Tags = db.NormalizeRunnerTags(changes.Tags)
 	current.IsDefault = changes.IsDefault
 	current.Webhook = strings.TrimSpace(changes.Webhook)
 	current.MaxParallelTasks = changes.MaxParallelTasks

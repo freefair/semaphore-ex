@@ -64,6 +64,7 @@ var ErrProjectRunnerRequiresProject = errors.New("project runner requires a proj
 var ErrProjectRunnerNameRequired = errors.New("project runner name is required")
 var ErrProjectRunnerUnregistered = errors.New("unregistered project runner cannot be activated")
 var ErrProjectRunnerParallelismInvalid = errors.New("project runner max parallel tasks cannot be negative")
+var ErrProjectRunnerTagsInvalid = errors.New("project runner tags are invalid")
 
 type RunnerServiceImpl struct {
 	runnerRepo db.RunnerManager

@@ -28,6 +28,9 @@ const (
 	RunnerFilterHasAnyTag        RunnerTagFilterMode = "has_any_tag"
 	RunnerFilterIgnoreTags       RunnerTagFilterMode = "ignore_tags"
 	RunnerFilterIsDefault        RunnerTagFilterMode = "is_default"
+
+	RunnerTagMatchAll RunnerTagMatchMode = "all"
+	RunnerTagMatchAny RunnerTagMatchMode = "any"
 )
 
 type Runner struct {
@@ -87,7 +90,11 @@ func GenerateRunnerToken() string {
 
 // HasTag reports whether the runner is tagged with the given tag.
 func (r Runner) HasTag(tag string) bool {
-	return slices.Contains(r.Tags, tag)
+	normalized := NormalizeRunnerTags([]string{tag})
+	if len(normalized) == 0 {
+		return false
+	}
+	return slices.Contains(NormalizeRunnerTags(r.Tags), normalized[0])
 }
 
 // IsOnline reports whether the runner is considered reachable for dispatch.

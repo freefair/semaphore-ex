@@ -79,11 +79,12 @@ func (d *SqlDb) GetAllRunners(activeAndRegisteredOnly bool, globalOnly bool, tag
 }
 
 func (d *SqlDb) GetGlobalRunnerTags() (res []db.RunnerTag, err error) {
-	query, args, err := squirrel.Select("rt.tag", "count(distinct rt.runner_id) as cnt").
+	query, args, err := squirrel.Select("lower(trim(rt.tag)) as tag", "count(distinct rt.runner_id) as cnt").
 		From("runner__tag rt").
 		Join("runner r on r.id = rt.runner_id").
 		Where("r.project_id is null").
-		GroupBy("rt.tag").
+		GroupBy("lower(trim(rt.tag))").
+		OrderBy("tag").
 		ToSql()
 
 	if err != nil {
@@ -172,6 +173,11 @@ func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
 }
 
 func (d *SqlDb) UpdateRunner(runner db.Runner) (err error) {
+	if err = db.ValidateRunnerTags(runner.Tags); err != nil {
+		return
+	}
+	runner.Tags = db.NormalizeRunnerTags(runner.Tags)
+
 	_, err = d.exec(
 		"update `runner` set `name`=?, `active`=?, `is_default`=?, webhook=?, max_parallel_tasks=? where id=?",
 		runner.Name,
@@ -262,6 +268,11 @@ func (d *SqlDb) ResetRunnerRegistration(runnerID int, registrationTokenHash stri
 }
 
 func (d *SqlDb) CreateRunner(runner db.Runner) (newRunner db.Runner, err error) {
+	if err = db.ValidateRunnerTags(runner.Tags); err != nil {
+		return
+	}
+	runner.Tags = db.NormalizeRunnerTags(runner.Tags)
+
 	insertID, err := d.insert(
 		"id",
 		"insert into `runner` (project_id, token, webhook, max_parallel_tasks, `name`, `active`, `is_default`, public_key, registration_token, registration_token_expires_at, `version`, `platform`, current_load) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -285,7 +296,7 @@ func (d *SqlDb) CreateRunner(runner db.Runner) (newRunner db.Runner, err error) 
 
 	newRunner = runner
 	newRunner.ID = insertID
-	newRunner.Tags = normalizeTags(runner.Tags)
+	newRunner.Tags = runner.Tags
 
 	if err = d.replaceRunnerTags(newRunner.ID, newRunner.Tags); err != nil {
 		return

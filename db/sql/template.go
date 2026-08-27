@@ -17,33 +17,44 @@ func (d *SqlDb) CreateTemplate(tmpl db.Template) (db.Template, error) {
 
 	tmpl.ApplyLegacyEnvironmentField()
 
+	hasRunnerTagPolicy, err := d.IsMigrationApplied(db.Migration{Version: "2.20.6"})
+	if err != nil {
+		return db.Template{}, err
+	}
+
+	fields := map[string]any{
+		"project_id":                    tmpl.ProjectID,
+		"inventory_id":                  tmpl.InventoryID,
+		"repository_id":                 tmpl.RepositoryID,
+		"name":                          tmpl.Name,
+		"playbook":                      tmpl.Playbook,
+		"working_directory":             tmpl.WorkingDirectory,
+		"arguments":                     tmpl.Arguments,
+		"allow_override_args_in_task":   tmpl.AllowOverrideArgsInTask,
+		"description":                   tmpl.Description,
+		"`type`":                        tmpl.Type,
+		"start_version":                 tmpl.StartVersion,
+		"build_template_id":             tmpl.BuildTemplateID,
+		"view_id":                       tmpl.ViewID,
+		"autorun":                       tmpl.Autorun,
+		"survey_vars":                   db.ObjectToJSON(tmpl.SurveyVars),
+		"suppress_success_alerts":       tmpl.SuppressSuccessAlerts,
+		"app":                           tmpl.App,
+		"git_branch":                    tmpl.GitBranch,
+		"runner_tag":                    tmpl.RunnerTag,
+		"task_params":                   tmpl.TaskParams,
+		"allow_override_branch_in_task": tmpl.AllowOverrideBranchInTask,
+		"allow_parallel_tasks":          tmpl.AllowParallelTasks,
+		"jwt_params":                    tmpl.JWTParams,
+		"executor_image":                tmpl.NormalizedExecutorImage(),
+	}
+	if hasRunnerTagPolicy {
+		fields["runner_tags"] = &tmpl.RunnerTags
+		fields["runner_tag_match_mode"] = tmpl.RunnerTagMatchMode
+	}
+
 	query, args, err := sq.Insert("project__template").
-		SetMap(map[string]any{
-			"project_id":                    tmpl.ProjectID,
-			"inventory_id":                  tmpl.InventoryID,
-			"repository_id":                 tmpl.RepositoryID,
-			"name":                          tmpl.Name,
-			"playbook":                      tmpl.Playbook,
-			"working_directory":             tmpl.WorkingDirectory,
-			"arguments":                     tmpl.Arguments,
-			"allow_override_args_in_task":   tmpl.AllowOverrideArgsInTask,
-			"description":                   tmpl.Description,
-			"`type`":                        tmpl.Type,
-			"start_version":                 tmpl.StartVersion,
-			"build_template_id":             tmpl.BuildTemplateID,
-			"view_id":                       tmpl.ViewID,
-			"autorun":                       tmpl.Autorun,
-			"survey_vars":                   db.ObjectToJSON(tmpl.SurveyVars),
-			"suppress_success_alerts":       tmpl.SuppressSuccessAlerts,
-			"app":                           tmpl.App,
-			"git_branch":                    tmpl.GitBranch,
-			"runner_tag":                    tmpl.RunnerTag,
-			"task_params":                   tmpl.TaskParams,
-			"allow_override_branch_in_task": tmpl.AllowOverrideBranchInTask,
-			"allow_parallel_tasks":          tmpl.AllowParallelTasks,
-			"jwt_params":                    tmpl.JWTParams,
-			"executor_image":                tmpl.NormalizedExecutorImage(),
-		}).
+		SetMap(fields).
 		ToSql()
 	if err != nil {
 		return db.Template{}, err
@@ -78,32 +89,43 @@ func (d *SqlDb) UpdateTemplate(tmpl db.Template) error {
 		return err
 	}
 
+	hasRunnerTagPolicy, err := d.IsMigrationApplied(db.Migration{Version: "2.20.6"})
+	if err != nil {
+		return err
+	}
+
+	fields := map[string]any{
+		"inventory_id":                  tmpl.InventoryID,
+		"repository_id":                 tmpl.RepositoryID,
+		"name":                          tmpl.Name,
+		"playbook":                      tmpl.Playbook,
+		"working_directory":             tmpl.WorkingDirectory,
+		"arguments":                     tmpl.Arguments,
+		"allow_override_args_in_task":   tmpl.AllowOverrideArgsInTask,
+		"description":                   tmpl.Description,
+		"`type`":                        tmpl.Type,
+		"start_version":                 tmpl.StartVersion,
+		"build_template_id":             tmpl.BuildTemplateID,
+		"view_id":                       tmpl.ViewID,
+		"autorun":                       tmpl.Autorun,
+		"survey_vars":                   db.ObjectToJSON(tmpl.SurveyVars),
+		"suppress_success_alerts":       tmpl.SuppressSuccessAlerts,
+		"app":                           tmpl.App,
+		"`git_branch`":                  tmpl.GitBranch,
+		"task_params":                   tmpl.TaskParams,
+		"runner_tag":                    tmpl.RunnerTag,
+		"allow_override_branch_in_task": tmpl.AllowOverrideBranchInTask,
+		"allow_parallel_tasks":          tmpl.AllowParallelTasks,
+		"jwt_params":                    tmpl.JWTParams,
+		"executor_image":                tmpl.NormalizedExecutorImage(),
+	}
+	if hasRunnerTagPolicy {
+		fields["runner_tags"] = &tmpl.RunnerTags
+		fields["runner_tag_match_mode"] = tmpl.RunnerTagMatchMode
+	}
+
 	query, args, err := sq.Update("project__template").
-		SetMap(map[string]any{
-			"inventory_id":                  tmpl.InventoryID,
-			"repository_id":                 tmpl.RepositoryID,
-			"name":                          tmpl.Name,
-			"playbook":                      tmpl.Playbook,
-			"working_directory":             tmpl.WorkingDirectory,
-			"arguments":                     tmpl.Arguments,
-			"allow_override_args_in_task":   tmpl.AllowOverrideArgsInTask,
-			"description":                   tmpl.Description,
-			"`type`":                        tmpl.Type,
-			"start_version":                 tmpl.StartVersion,
-			"build_template_id":             tmpl.BuildTemplateID,
-			"view_id":                       tmpl.ViewID,
-			"autorun":                       tmpl.Autorun,
-			"survey_vars":                   db.ObjectToJSON(tmpl.SurveyVars),
-			"suppress_success_alerts":       tmpl.SuppressSuccessAlerts,
-			"app":                           tmpl.App,
-			"`git_branch`":                  tmpl.GitBranch,
-			"task_params":                   tmpl.TaskParams,
-			"runner_tag":                    tmpl.RunnerTag,
-			"allow_override_branch_in_task": tmpl.AllowOverrideBranchInTask,
-			"allow_parallel_tasks":          tmpl.AllowParallelTasks,
-			"jwt_params":                    tmpl.JWTParams,
-			"executor_image":                tmpl.NormalizedExecutorImage(),
-		}).
+		SetMap(fields).
 		Where(sq.Eq{
 			"id":         tmpl.ID,
 			"project_id": tmpl.ProjectID,

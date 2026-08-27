@@ -340,19 +340,38 @@
         <h2 class="mb-4">{{ $t('template_advanced') }}</h2>
 
         <div class="mb-4">
-          <v-autocomplete
+          <v-combobox
             v-if="features.project_runners"
-            v-model="item.runner_tag"
+            v-model="item.runner_tags"
             :items="runnerTags"
-            :label="fieldLabel('runner_tag')"
+            label="Runner tags"
             item-value="tag"
             item-text="tag"
             outlined
             dense
             :disabled="formSaving"
-            :placeholder="$t('runner_tag')"
+            placeholder="Select or type tags"
+            multiple
+            chips
+            small-chips
+            deletable-chips
             clearable
-          ></v-autocomplete>
+            hint="Leave empty to use default runners. Tags are case-insensitive."
+            persistent-hint
+          ></v-combobox>
+
+          <v-select
+            v-if="features.project_runners && item.runner_tags?.length > 0"
+            v-model="item.runner_tag_match_mode"
+            :items="runnerTagMatchModes"
+            label="Tag match mode"
+            outlined
+            dense
+            :disabled="formSaving"
+            hint="All requires every tag; Any requires at least one."
+            persistent-hint
+            class="mb-4"
+          ></v-select>
 
           <div style="position: relative">
             <v-text-field
@@ -721,6 +740,10 @@ export default {
 
       args: [],
       runnerTags: null,
+      runnerTagMatchModes: [
+        { text: 'Match all tags', value: 'all' },
+        { text: 'Match any tag', value: 'any' },
+      ],
       branches: null,
       playbooks: null,
       playbooksLoading: false,
@@ -991,6 +1014,8 @@ export default {
         task_params: {},
         jwt_params: { enabled: false, audience: [], ttl: '' },
         environment_ids: [],
+        runner_tags: [],
+        runner_tag_match_mode: 'all',
       };
     },
 
@@ -1079,6 +1104,13 @@ export default {
         this.item.task_params = {};
       }
 
+      if (!Array.isArray(this.item.runner_tags)) {
+        this.$set(this.item, 'runner_tags', this.item.runner_tag ? [this.item.runner_tag] : []);
+      }
+      if (!['all', 'any'].includes(this.item.runner_tag_match_mode)) {
+        this.$set(this.item, 'runner_tag_match_mode', 'all');
+      }
+
       // The API omits executor_image when it is not set; declare it explicitly so
       // the text field stays reactive for templates without an override.
       if (this.item.executor_image === undefined) {
@@ -1137,6 +1169,16 @@ export default {
     },
 
     async beforeSave() {
+      const tags = [...new Set((this.item.runner_tags || [])
+        .map((tag) => (typeof tag === 'string' ? tag.trim().toLowerCase() : ''))
+        .filter(Boolean))]
+        .sort();
+      this.item.runner_tags = tags;
+      this.item.runner_tag = tags[0] || null;
+      if (!['all', 'any'].includes(this.item.runner_tag_match_mode)) {
+        this.item.runner_tag_match_mode = 'all';
+      }
+
       if (this.cronFormat == null || this.cronFormat === '') {
         return;
       }

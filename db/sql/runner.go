@@ -26,9 +26,13 @@ var runnerProps = makePropsNonGlobal(db.GlobalRunnerProps)
 // whether the runner row identified by `pe.id` has the given tag.
 // runner__tag.tag is indexed, so this is O(log N) per row.
 func runnerHasTagExpr(tag string) squirrel.Sqlizer {
+	normalized := db.NormalizeRunnerTags([]string{tag})
+	if len(normalized) == 0 {
+		return squirrel.Expr("1=0")
+	}
 	return squirrel.Expr(
-		"exists (select 1 from runner__tag rt where rt.runner_id = pe.id and rt.tag = ?)",
-		tag,
+		"exists (select 1 from runner__tag rt where rt.runner_id = pe.id and lower(trim(rt.tag)) = ?)",
+		normalized[0],
 	)
 }
 
@@ -145,14 +149,15 @@ func (d *SqlDb) GetRunnerTags(projectID int) (res []db.RunnerTag, err error) {
 	// Project runners (scoped to this project) plus global runners (project_id IS NULL)
 	// both contribute tags here so the template/inventory tag autocomplete sees every
 	// runner that could be selected for this project's tasks.
-	query, args, err := squirrel.Select("rt.tag", "count(distinct rt.runner_id) as cnt").
+	query, args, err := squirrel.Select("lower(trim(rt.tag)) as tag", "count(distinct rt.runner_id) as cnt").
 		From("runner__tag rt").
 		Join("runner r on r.id = rt.runner_id").
 		Where(squirrel.Or{
 			squirrel.Eq{"r.project_id": projectID},
 			squirrel.Eq{"r.project_id": nil},
 		}).
-		GroupBy("rt.tag").
+		GroupBy("lower(trim(rt.tag))").
+		OrderBy("tag").
 		ToSql()
 
 	if err != nil {

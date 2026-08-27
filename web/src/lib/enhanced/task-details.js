@@ -1,6 +1,12 @@
 import axios from 'axios';
 
 export const enhancedComputed = {
+  placementDecision() {
+    return this.item?.placement_decision || null;
+  },
+  placementRejected() {
+    return this.placementDecision?.selected_runner_id == null;
+  },
   runnerIdentity() {
     const id = this.item?.used_runner_id;
     const name = this.item?.used_runner_name;

@@ -339,6 +339,7 @@ func (c *ProjectRunnerControllerImpl) writeLifecycleError(
 	status := http.StatusBadRequest
 	if errors.Is(err, server.ErrProjectRunnerNameRequired) ||
 		errors.Is(err, server.ErrProjectRunnerParallelismInvalid) ||
+		errors.Is(err, server.ErrProjectRunnerTagsInvalid) ||
 		errors.Is(err, server.ErrProjectRunnerUnregistered) {
 		reason = pro_interfaces.AuditReasonInvalidInput
 	}

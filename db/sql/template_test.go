@@ -1,11 +1,10 @@
 package sql
 
 import (
-	"testing"
-
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"testing"
 )
 
 // newTemplateTestProject creates the project + repository a template needs to
