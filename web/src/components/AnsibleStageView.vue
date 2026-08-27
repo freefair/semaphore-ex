@@ -1,186 +1,263 @@
-<template xmlns:v-slot="http://www.w3.org/1999/XSL/Transform">
-  <div style="overflow: hidden" class="pb-5">
-    <v-alert text color="hsl(348deg, 86%, 61%)" class="PageAlert" v-if="!features.task_summary">
-      <span class="mr-2">
-        This is <b>DEMO</b> data. Task summary available only in <b>PRO</b> version.
-      </span>
+<template>
+  <section class="TaskSummary px-5 py-5" aria-labelledby="task-summary-title">
+    <div class="d-flex align-center flex-wrap mb-4 TaskSummary__heading">
+      <div>
+        <h2 id="task-summary-title" class="text-h6 mb-1">Task summary</h2>
+        <p class="text-body-2 text--secondary mb-0">
+          Persisted Ansible results for this task.
+        </p>
+      </div>
+      <v-spacer />
+      <v-btn
+        v-if="featureAvailable && !loading"
+        text
+        small
+        color="primary"
+        data-testid="task-summary-refresh"
+        @click="loadData"
+      >
+        <v-icon left small>mdi-refresh</v-icon>
+        Refresh
+      </v-btn>
+    </div>
 
-      <v-btn dark class="ml-2" color="hsl(348deg, 86%, 61%)" @click="upgradeToPro('task_summary')">
+    <v-alert
+      v-if="summaryDisplayState === 'unavailable'"
+      text
+      type="info"
+      class="PageAlert"
+      data-testid="task-summary-unavailable"
+    >
+      <span class="mr-2">Task summaries are available in the enhanced edition.</span>
+      <v-btn small text color="primary" @click="upgradeToPro('task_summary')">
         {{ $t('upgrade_to_pro') }}
       </v-btn>
     </v-alert>
 
-    <div class="pl-5 pt-5 d-flex" style="column-gap: 10px">
-      <div class="AnsibleServerStatus AnsibleServerStatus--ok">
-        <div class="AnsibleServerStatus__count">{{ okServers }}</div>
-        <div class="AnsibleServerStatus__title">OK SERVERS</div>
-      </div>
-
-      <div class="AnsibleServerStatus AnsibleServerStatus--bad">
-        <div class="AnsibleServerStatus__count">{{ notOkServers }}</div>
-        <div class="AnsibleServerStatus__title">NOT OK SERVERS</div>
-      </div>
+    <div
+      v-else-if="summaryDisplayState === 'loading'"
+      data-testid="task-summary-loading"
+      aria-live="polite"
+    >
+      <v-progress-linear indeterminate color="primary" class="mb-3" />
+      <span class="text-body-2 text--secondary">Loading persisted task results…</span>
     </div>
 
-    <v-btn-toggle class="pl-5 mt-8 mb-3" dense v-model="tab" mandatory>
-      <v-btn value="notOkServers"> Not ok servers </v-btn>
-      <v-btn value="allServers"> All servers </v-btn>
-    </v-btn-toggle>
-
-    <v-data-table
-      v-if="tab === 'notOkServers'"
-      hide-default-footer
-      single-expand
-      show-expand
-      :headers="notOkServersHeaders"
-      :items="failedTasks"
-      :items-per-page="Number.MAX_VALUE"
-      class="w-100"
+    <v-alert
+      v-else-if="summaryDisplayState === 'error'"
+      type="error"
+      outlined
+      data-testid="task-summary-error"
     >
-      <template v-slot:item.error="{ item }">
-        <div style="overflow: hidden; color: #ff5252; max-width: 400px; text-overflow: ellipsis">
-          {{ item.error }}
-        </div>
-      </template>
-      <template v-slot:expanded-item="{ headers, item }">
-        <td :colspan="headers.length">
-          <pre
-            style="
-              overflow: auto;
-              background: gray;
-              font-size: 14px;
-              color: white;
-              border-radius: 10px;
-              white-space: pre-wrap;
-              margin-top: 5px;
-              margin-bottom: 5px;
-            "
-            class="pa-2"
-            >{{ item.error.trim() }}</pre
-          >
-        </td>
-      </template>
-    </v-data-table>
+      <div class="d-flex align-center flex-wrap">
+        <span>Task results could not be loaded. The underlying task result is unchanged.</span>
+        <v-spacer />
+        <v-btn small text color="error" @click="loadData">Retry</v-btn>
+      </div>
+    </v-alert>
 
-    <v-simple-table v-else-if="tab === 'allServers'">
-      <template v-slot:default>
-        <thead>
-          <tr>
-            <th>Host</th>
-            <th>Changed</th>
-            <th>Failed</th>
-            <th>Ignored</th>
-            <th>Ok</th>
-            <th>Rescued</th>
-            <th>Skipped</th>
-            <th>Unreachable</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(host, index) in hosts" :key="index">
-            <td>{{ host.host }}</td>
+    <v-alert
+      v-else-if="summaryDisplayState === 'unsupported'"
+      type="warning"
+      outlined
+      data-testid="task-summary-unsupported"
+    >
+      Runner result version {{ summary.runner_result_version }} is not supported by this server.
+      The task log remains available.
+    </v-alert>
 
-            <td
-              :style="{
-                color: host.changed > 0 ? 'rgb(170,85,0)' : undefined,
-                'font-weight': host.changed > 0 ? 'bold' : undefined,
-              }"
-            >
-              {{ host.changed }}
+    <v-alert
+      v-else-if="summaryDisplayState === 'empty'"
+      type="info"
+      outlined
+      data-testid="task-summary-empty"
+    >
+      This task produced no supported host results.
+    </v-alert>
+
+    <div v-else-if="summary" data-testid="task-summary-content">
+      <v-alert
+        v-if="pageError"
+        type="error"
+        outlined
+        dismissible
+        data-testid="task-summary-page-error"
+        @input="pageError = null"
+      >
+        This result page could not be loaded. The currently displayed results were kept.
+      </v-alert>
+
+      <v-alert
+        v-if="summary.state === 'partial'"
+        type="warning"
+        outlined
+        data-testid="task-summary-partial"
+      >
+        <strong>Partial task summary.</strong>
+        {{ summary.diagnostic || 'Some runner results are unavailable.' }}
+        Available results are shown below; the underlying task status is unchanged.
+      </v-alert>
+
+      <v-alert
+        v-else-if="summary.state === 'collecting'"
+        type="info"
+        outlined
+        data-testid="task-summary-collecting"
+      >
+        Results are still being collected. Refresh after the task finishes to see the final summary.
+      </v-alert>
+
+      <div class="TaskSummary__metrics mb-6">
+        <article
+          class="TaskSummaryMetric TaskSummaryMetric--ok"
+          data-testid="task-summary-ok-hosts"
+        >
+          <span class="TaskSummaryMetric__value">{{ summary.ok_hosts }}</span>
+          <span class="TaskSummaryMetric__label">Healthy hosts</span>
+        </article>
+        <article
+          class="TaskSummaryMetric TaskSummaryMetric--failed"
+          data-testid="task-summary-failed-hosts"
+        >
+          <span class="TaskSummaryMetric__value">{{ summary.failed_hosts }}</span>
+          <span class="TaskSummaryMetric__label">Failed hosts</span>
+        </article>
+        <article
+          class="TaskSummaryMetric TaskSummaryMetric--total"
+          data-testid="task-summary-total-hosts"
+        >
+          <span class="TaskSummaryMetric__value">{{ summary.total_hosts }}</span>
+          <span class="TaskSummaryMetric__label">Total hosts</span>
+        </article>
+      </div>
+
+      <v-btn-toggle v-model="tab" mandatory dense class="mb-4 TaskSummary__tabs">
+        <v-btn value="errors" data-testid="task-summary-errors-tab">
+          Failures
+          <v-chip x-small class="ml-2" :color="summary.failed_hosts ? 'error' : undefined">
+            {{ summary.failed_hosts }}
+          </v-chip>
+        </v-btn>
+        <v-btn value="hosts" data-testid="task-summary-hosts-tab">Hosts</v-btn>
+        <v-btn value="stages" data-testid="task-summary-stages-tab">Stages</v-btn>
+      </v-btn-toggle>
+
+      <div v-if="tab === 'errors'" data-testid="task-summary-errors">
+        <v-alert v-if="errorsPage.length === 0" text type="success">
+          No failed or unreachable hosts in this result page.
+        </v-alert>
+        <v-data-table
+          v-else
+          :headers="errorHeaders"
+          :items="errorsPage"
+          :items-per-page="pageSize"
+          hide-default-footer
+          single-expand
+          show-expand
+          item-key="event_id"
+        >
+          <template v-slot:item.error="{ item }">
+            <span class="TaskSummary__error-preview">{{ item.error }}</span>
+          </template>
+          <template v-slot:item.output_time="{ item }">
+            <a :href="rawLogURL" target="_blank" rel="noopener">
+              {{ formatTime(item.output_time) }}
+            </a>
+          </template>
+          <template v-slot:expanded-item="{ headers, item }">
+            <td :colspan="headers.length" class="pa-3">
+              <pre class="TaskSummary__error-detail">{{ item.error }}</pre>
             </td>
+          </template>
+        </v-data-table>
+        <SummaryPagination
+          :has-previous="pagination.errors.history.length > 0"
+          :has-next="pagination.errors.next !== null"
+          :loading="pageLoading === 'errors'"
+          @previous="previousPage('errors')"
+          @next="nextPage('errors')"
+        />
+      </div>
 
-            <td
-              :style="{
-                color: host.failed > 0 ? 'red' : undefined,
-                'font-weight': host.failed > 0 ? 'bold' : undefined,
-              }"
-            >
-              {{ host.failed }}
-            </td>
+      <div v-else-if="tab === 'hosts'" data-testid="task-summary-hosts">
+        <v-alert v-if="hostsPage.length === 0" text type="info">
+          No host results on this page.
+        </v-alert>
+        <v-data-table
+          v-else
+          :headers="hostHeaders"
+          :items="hostsPage"
+          :items-per-page="pageSize"
+          hide-default-footer
+          item-key="id"
+        >
+          <template v-slot:item.status="{ item }">
+            <v-chip x-small :color="item.status === 'failed' ? 'error' : 'success'" dark>
+              {{ item.status }}
+            </v-chip>
+          </template>
+        </v-data-table>
+        <SummaryPagination
+          :has-previous="pagination.hosts.history.length > 0"
+          :has-next="pagination.hosts.next !== null"
+          :loading="pageLoading === 'hosts'"
+          @previous="previousPage('hosts')"
+          @next="nextPage('hosts')"
+        />
+      </div>
 
-            <td
-              :style="{
-                color: host.ignored > 0 ? 'red' : undefined,
-                'font-weight': host.ignored > 0 ? 'bold' : undefined,
-              }"
-            >
-              {{ host.ignored }}
-            </td>
-
-            <td
-              :style="{
-                color: host.ok > 0 ? 'green' : undefined,
-                'font-weight': host.ok > 0 ? 'bold' : undefined,
-              }"
-            >
-              {{ host.ok }}
-            </td>
-
-            <td
-              :style="{
-                'font-weight': host.rescued > 0 ? 'bold' : undefined,
-              }"
-            >
-              {{ host.rescued }}
-            </td>
-
-            <td
-              :style="{
-                color: host.skipped > 0 ? 'rgb(0,170,170)' : undefined,
-                'font-weight': host.skipped > 0 ? 'bold' : undefined,
-              }"
-            >
-              {{ host.skipped }}
-            </td>
-
-            <td
-              :style="{
-                color: host.unreachable > 0 ? 'red' : undefined,
-                'font-weight': host.unreachable > 0 ? 'bold' : undefined,
-              }"
-            >
-              {{ host.unreachable }}
-            </td>
-          </tr>
-        </tbody>
-      </template>
-    </v-simple-table>
-  </div>
+      <div v-else data-testid="task-summary-stages">
+        <v-alert v-if="stagesPage.length === 0" text type="info">
+          No stage results on this page.
+        </v-alert>
+        <v-data-table
+          v-else
+          :headers="stageHeaders"
+          :items="stagesPage"
+          :items-per-page="pageSize"
+          hide-default-footer
+          item-key="id"
+        />
+        <SummaryPagination
+          :has-previous="pagination.stages.history.length > 0"
+          :has-next="pagination.stages.next !== null"
+          :loading="pageLoading === 'stages'"
+          @previous="previousPage('stages')"
+          @next="nextPage('stages')"
+        />
+      </div>
+    </div>
+  </section>
 </template>
-<style lang="scss">
-.AnsibleServerStatus {
-  text-align: center;
-  width: 250px;
-  font-weight: bold;
-  color: white;
-  font-size: 24px;
-  line-height: 1.2;
-  border-radius: 8px;
-}
-
-.AnsibleServerStatus__count {
-  padding-top: 10px;
-  font-size: 80px;
-  line-height: 1;
-}
-
-.AnsibleServerStatus--ok {
-  background-color: #4caf50;
-}
-
-.AnsibleServerStatus--bad {
-  background-color: #ff5252;
-}
-
-.AnsibleServerStatus__title {
-  padding-bottom: 10px;
-}
-</style>
 
 <script>
 import ProjectMixin from '@/components/ProjectMixin';
 
+const SummaryPagination = {
+  props: {
+    hasPrevious: Boolean,
+    hasNext: Boolean,
+    loading: Boolean,
+  },
+  template: `
+    <div class="d-flex justify-end align-center mt-3" data-testid="task-summary-pagination">
+      <v-btn small text :disabled="!hasPrevious || loading" @click="$emit('previous')">
+        <v-icon left small>mdi-chevron-left</v-icon>Previous
+      </v-btn>
+      <v-btn small text :disabled="!hasNext || loading" @click="$emit('next')">
+        Next<v-icon right small>mdi-chevron-right</v-icon>
+      </v-btn>
+    </div>
+  `,
+};
+
+function newPaginationState() {
+  return { before: null, next: null, history: [] };
+}
+
 export default {
+  components: { SummaryPagination },
+
   props: {
     projectId: Number,
     taskId: Number,
@@ -191,152 +268,265 @@ export default {
 
   data() {
     return {
-      stages: null,
-      okServers: 0,
-      notOkServers: 0,
-      tab: 'notOkServers',
-      failedTasks: [],
-      hosts: null,
-      notOkServersHeaders: [
-        {
-          text: 'Server',
-          value: 'host',
-          sortable: false,
-        },
-        {
-          text: 'Task',
-          value: 'task',
-          sortable: false,
-        },
-        {
-          text: 'Error',
-          value: 'error',
-          sortable: false,
-        },
+      loading: false,
+      pageLoading: null,
+      loadError: null,
+      pageError: null,
+      summary: null,
+      hostsPage: [],
+      stagesPage: [],
+      errorsPage: [],
+      tab: 'errors',
+      pageSize: 50,
+      pagination: {
+        hosts: newPaginationState(),
+        stages: newPaginationState(),
+        errors: newPaginationState(),
+      },
+      errorHeaders: [
+        { text: 'Host', value: 'host', sortable: false },
+        { text: 'Stage', value: 'stage', sortable: false },
+        { text: 'Error', value: 'error', sortable: false },
+        { text: 'Raw log', value: 'output_time', sortable: false },
+      ],
+      hostHeaders: [
+        { text: 'Host', value: 'host', sortable: false },
+        { text: 'Status', value: 'status', sortable: false },
+        { text: 'Changed', value: 'changed', sortable: false },
+        { text: 'Failed', value: 'failed', sortable: false },
+        { text: 'Ignored', value: 'ignored', sortable: false },
+        { text: 'OK', value: 'ok', sortable: false },
+        { text: 'Rescued', value: 'rescued', sortable: false },
+        { text: 'Skipped', value: 'skipped', sortable: false },
+        { text: 'Unreachable', value: 'unreachable', sortable: false },
+      ],
+      stageHeaders: [
+        { text: 'Stage', value: 'stage', sortable: false },
+        { text: 'OK', value: 'ok', sortable: false },
+        { text: 'Changed', value: 'changed', sortable: false },
+        { text: 'Failed', value: 'failed', sortable: false },
+        { text: 'Ignored', value: 'ignored', sortable: false },
+        { text: 'Rescued', value: 'rescued', sortable: false },
+        { text: 'Skipped', value: 'skipped', sortable: false },
+        { text: 'Unreachable', value: 'unreachable', sortable: false },
+        { text: 'Duration (ms)', value: 'duration_ms', sortable: false },
       ],
     };
   },
 
-  watch: {
-    async taskId() {
-      await this.loadData();
-      this.calcStats();
+  computed: {
+    summaryDisplayState() {
+      if (!this.featureAvailable) return 'unavailable';
+      if (this.loading) return 'loading';
+      if (this.loadError) return 'error';
+      return this.summary?.state || 'idle';
+    },
+
+    featureAvailable() {
+      return Boolean(this.features?.task_summary);
+    },
+
+    rawLogURL() {
+      return `/api/project/${this.projectId}/tasks/${this.taskId}/raw_output`;
     },
   },
 
-  async created() {
-    await this.loadData();
-    this.calcStats();
+  watch: {
+    taskId() {
+      this.loadData();
+    },
+  },
+
+  created() {
+    this.loadData();
   },
 
   methods: {
-    async loadData() {
-      if (this.features.task_summary) {
-        [this.failedTasks, this.hosts, this.stages] = await Promise.all([
-          this.loadProjectEndpoint(`/tasks/${this.taskId}/ansible/errors`),
-          this.loadProjectEndpoint(`/tasks/${this.taskId}/ansible/hosts`),
-          this.loadProjectEndpoint(`/tasks/${this.taskId}/stages`),
-        ]);
-      } else {
-        [this.failedTasks, this.hosts, this.stages] = this.getDemoData();
+    resetPagination() {
+      this.pagination = {
+        hosts: newPaginationState(),
+        stages: newPaginationState(),
+        errors: newPaginationState(),
+      };
+    },
+
+    pageEndpoint(kind) {
+      return `/tasks/${this.taskId}/ansible/summary/${kind}`;
+    },
+
+    pageItemsProperty(kind) {
+      return `${kind}Page`;
+    },
+
+    async fetchPage(kind, before = null) {
+      const params = { count: this.pageSize };
+      if (before !== null) {
+        params.before = before;
       }
-
-      this.hosts.forEach((host) => {
-        if (host.unreachable) {
-          this.failedTasks.push({
-            host: host.host,
-            task: '—',
-            error: 'Host is unreachable',
-          });
-        }
-      });
+      return this.loadProjectEndpoint(this.pageEndpoint(kind), { params });
     },
 
-    calcStats() {
-      this.hosts.forEach((host) => {
-        if (host.failed > 0 || host.unreachable > 0) {
-          this.notOkServers += 1;
-        } else {
-          this.okServers += 1;
-        }
-      });
+    applyPage(kind, page, before) {
+      this[this.pageItemsProperty(kind)] = page.items || [];
+      this.pagination[kind].before = before;
+      this.pagination[kind].next = page.next_cursor ?? null;
     },
 
-    getDemoData() {
-      const failedTasks = [
-        {
-          id: 1,
-          host: 'web-01.prod.example.com',
-          task: 'Install nginx package',
-          error: 'fatal: [web-01.prod.example.com]: FAILED! => {"changed": false, "msg": "No package matching \'nginx\' is available"}',
-        },
-        {
-          id: 2,
-          host: 'web-02.prod.example.com',
-          task: 'Start nginx service',
-          error: 'fatal: [web-02.prod.example.com]: FAILED! => {"changed": false, "msg": "Could not find the requested service nginx: host"}',
-        },
-        {
-          id: 3,
-          host: 'db-01.prod.example.com',
-          task: 'Apply database migrations',
-          error: 'fatal: [db-01.prod.example.com]: FAILED! => {"changed": false, "msg": "Migration failed: relation \\"users\\" already exists", "rc": 1}',
-        },
-        {
-          id: 4,
-          host: 'cache-01.prod.example.com',
-          task: 'Configure redis maxmemory',
-          error: 'fatal: [cache-01.prod.example.com]: FAILED! => {"changed": false, "msg": "Destination /etc/redis/redis.conf does not exist!"}',
-        },
-      ];
+    async loadData() {
+      if (!this.featureAvailable) {
+        this.summary = null;
+        return;
+      }
+      this.loading = true;
+      this.loadError = null;
+      this.pageError = null;
+      this.resetPagination();
+      try {
+        const [summary, hosts, stages, errors] = await Promise.all([
+          this.loadProjectEndpoint(`/tasks/${this.taskId}/ansible/summary`),
+          this.fetchPage('hosts'),
+          this.fetchPage('stages'),
+          this.fetchPage('errors'),
+        ]);
+        this.summary = summary;
+        this.applyPage('hosts', hosts, null);
+        this.applyPage('stages', stages, null);
+        this.applyPage('errors', errors, null);
+      } catch (error) {
+        this.loadError = error;
+        this.summary = null;
+      } finally {
+        this.loading = false;
+      }
+    },
 
-      const hosts = [
-        {
-          host: 'web-01.prod.example.com', changed: 3, failed: 1, ignored: 0, ok: 12, rescued: 0, skipped: 2, unreachable: 0,
-        },
-        {
-          host: 'web-02.prod.example.com', changed: 2, failed: 1, ignored: 0, ok: 11, rescued: 0, skipped: 2, unreachable: 0,
-        },
-        {
-          host: 'web-03.prod.example.com', changed: 4, failed: 0, ignored: 0, ok: 15, rescued: 0, skipped: 1, unreachable: 0,
-        },
-        {
-          host: 'db-01.prod.example.com', changed: 1, failed: 1, ignored: 0, ok: 8, rescued: 0, skipped: 3, unreachable: 0,
-        },
-        {
-          host: 'db-02.prod.example.com', changed: 0, failed: 0, ignored: 0, ok: 9, rescued: 0, skipped: 3, unreachable: 0,
-        },
-        {
-          host: 'cache-01.prod.example.com', changed: 0, failed: 1, ignored: 0, ok: 5, rescued: 0, skipped: 0, unreachable: 0,
-        },
-        {
-          host: 'worker-01.prod.example.com', changed: 2, failed: 0, ignored: 1, ok: 10, rescued: 0, skipped: 1, unreachable: 0,
-        },
-        {
-          host: 'worker-02.prod.example.com', changed: 0, failed: 0, ignored: 0, ok: 0, rescued: 0, skipped: 0, unreachable: 1,
-        },
-      ];
+    async nextPage(kind) {
+      const state = this.pagination[kind];
+      if (state.next === null || this.pageLoading) return;
+      this.pageLoading = kind;
+      this.pageError = null;
+      try {
+        const page = await this.fetchPage(kind, state.next);
+        state.history.push(state.before);
+        this.applyPage(kind, page, state.next);
+      } catch (error) {
+        this.pageError = error;
+      } finally {
+        this.pageLoading = null;
+      }
+    },
 
-      const stages = [
-        {
-          name: 'Gathering Facts', ok: 7, failed: 0, changed: 0,
-        },
-        {
-          name: 'Install packages', ok: 5, failed: 2, changed: 3,
-        },
-        {
-          name: 'Configure services', ok: 6, failed: 1, changed: 4,
-        },
-        {
-          name: 'Start services', ok: 6, failed: 1, changed: 2,
-        },
-        {
-          name: 'Run migrations', ok: 5, failed: 1, changed: 1,
-        },
-      ];
+    async previousPage(kind) {
+      const state = this.pagination[kind];
+      if (state.history.length === 0 || this.pageLoading) return;
+      const before = state.history[state.history.length - 1];
+      this.pageLoading = kind;
+      this.pageError = null;
+      try {
+        const page = await this.fetchPage(kind, before);
+        state.history.pop();
+        this.applyPage(kind, page, before);
+      } catch (error) {
+        this.pageError = error;
+      } finally {
+        this.pageLoading = null;
+      }
+    },
 
-      return [failedTasks, hosts, stages];
+    formatTime(value) {
+      if (!value) return 'Open log';
+      return new Date(value).toLocaleTimeString();
     },
   },
 };
 </script>
+
+<style lang="scss">
+.TaskSummary {
+  max-width: 1200px;
+}
+
+.TaskSummary__heading {
+  gap: 12px;
+}
+
+.TaskSummary__metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.TaskSummaryMetric {
+  min-height: 112px;
+  padding: 18px;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-left-width: 5px;
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.06);
+}
+
+.TaskSummaryMetric--ok { border-left-color: #43a047; }
+.TaskSummaryMetric--failed { border-left-color: #e53935; }
+.TaskSummaryMetric--total { border-left-color: #546e7a; }
+
+.TaskSummaryMetric__value,
+.TaskSummaryMetric__label {
+  display: block;
+}
+
+.TaskSummaryMetric__value {
+  font-size: 2.25rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.TaskSummaryMetric__label {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.TaskSummary__tabs {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.TaskSummary__error-preview {
+  display: inline-block;
+  max-width: 420px;
+  overflow: hidden;
+  color: #e53935;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.TaskSummary__error-detail {
+  max-height: 280px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 6px;
+  background: #263238;
+  color: #fff;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 700px) {
+  .TaskSummary {
+    padding-right: 12px !important;
+    padding-left: 12px !important;
+  }
+
+  .TaskSummary__metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .TaskSummaryMetric {
+    min-height: 88px;
+  }
+}
+</style>

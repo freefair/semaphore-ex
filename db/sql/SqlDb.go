@@ -249,6 +249,10 @@ func (d *SqlDbConnection) ExecTx(tx *gorp.Transaction, query string, args ...any
 	return tx.Exec(q, args...)
 }
 
+func (d *SqlDbConnection) Begin() (*gorp.Transaction, error) {
+	return d.sql.Begin()
+}
+
 func (d *SqlDbConnection) SelectOne(holder any, query string, args ...any) error {
 	err := d.sql.SelectOne(holder, d.PrepareQuery(query), args...)
 

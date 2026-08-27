@@ -14,6 +14,7 @@ import (
 
 	"github.com/semaphoreui/semaphore/api/sockets"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pro/pkg/stage_parsers"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 )
@@ -27,6 +28,19 @@ func (t *TaskRunner) Logf(format string, a ...any) {
 }
 
 func (t *TaskRunner) LogWithTime(now time.Time, msg string) {
+	if t.Template.App == db.AppAnsible {
+		recognized, err := stage_parsers.IngestTaskSummaryOutput(
+			t.pool.ansibleTaskRepo, t.Task.ProjectID, t.Task.ID, msg, now,
+		)
+		if recognized {
+			if err != nil {
+				log.WithError(err).WithFields(log.Fields{
+					"context": "task_summary", "project_id": t.Task.ProjectID, "task_id": t.Task.ID,
+				}).Warn("failed to persist task summary result")
+			}
+			return
+		}
+	}
 	t.sendToWs(now, msg)
 
 	t.pool.logger <- logRecord{
@@ -220,6 +234,15 @@ func (t *TaskRunner) setStatus(
 }
 
 func (t *TaskRunner) afterStatusChange(oldStatus task_logger.TaskStatus, status task_logger.TaskStatus) {
+	if t.pool != nil && status.IsFinished() && t.Template.App == db.AppAnsible && t.pool.ansibleTaskRepo != nil {
+		if err := t.pool.ansibleTaskRepo.FinalizeTaskSummary(
+			t.Task.ProjectID, t.Task.ID, status, t.Task.Start, t.Task.End,
+		); err != nil {
+			log.WithError(err).WithFields(log.Fields{
+				"context": "task_summary", "project_id": t.Task.ProjectID, "task_id": t.Task.ID,
+			}).Warn("failed to finalize task summary; it remains repairable")
+		}
+	}
 	if t.pool != nil {
 		t.pool.metrics.RecordTaskStatusChange(oldStatus, status)
 	}

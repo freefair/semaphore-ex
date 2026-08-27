@@ -472,6 +472,13 @@ type AnsibleTaskRepository interface {
 	CreateAnsibleTaskError(error AnsibleTaskError) error
 	GetAnsibleTaskHosts(projectID int, taskID int) ([]AnsibleTaskHost, error)
 	GetAnsibleTaskErrors(projectID int, taskID int) ([]AnsibleTaskError, error)
+	IngestTaskSummaryEvent(projectID int, taskID int, event TaskSummaryEvent, outputTime time.Time) error
+	FinalizeTaskSummary(projectID int, taskID int, taskStatus task_logger.TaskStatus, started *time.Time, ended *time.Time) error
+	RepairTaskSummary(projectID int, taskID int, taskStatus task_logger.TaskStatus) error
+	GetTaskSummary(projectID int, taskID int) (TaskSummary, error)
+	GetTaskSummaryHosts(projectID int, taskID int, params RetrieveQueryParams) (TaskSummaryPage[TaskSummaryHost], error)
+	GetTaskSummaryStages(projectID int, taskID int, params RetrieveQueryParams) (TaskSummaryPage[TaskSummaryStage], error)
+	GetTaskSummaryErrors(projectID int, taskID int, params RetrieveQueryParams) (TaskSummaryPage[TaskSummaryError], error)
 }
 
 // ScheduleManager handles schedule-related operations

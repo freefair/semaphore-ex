@@ -2,6 +2,7 @@ package factory
 
 import (
 	"github.com/semaphoreui/semaphore/db"
+	coresql "github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pro/db/sql"
 )
 
@@ -10,7 +11,13 @@ func NewTerraformStore(store db.Store) db.TerraformStore {
 }
 
 func NewAnsibleTaskRepository(store db.Store) db.AnsibleTaskRepository {
-	return &sql.AnsibleTaskStoreImpl{}
+	connectionStore, ok := store.(interface {
+		GetConnection() *coresql.SqlDbConnection
+	})
+	if !ok {
+		return sql.NewAnsibleTask(nil)
+	}
+	return sql.NewAnsibleTask(connectionStore.GetConnection())
 }
 
 func NewWorkflowStore(store db.Store) db.WorkflowManager {

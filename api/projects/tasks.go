@@ -20,6 +20,11 @@ import (
 // maxTasksPageSize limits how many tasks can be requested in a single page.
 const maxTasksPageSize = 200
 
+const (
+	defaultTaskSummaryPageSize = 50
+	maxTaskSummaryPageSize     = 200
+)
+
 type TaskController struct {
 	store           db.Store
 	ansibleTaskRepo db.AnsibleTaskRepository
@@ -169,6 +174,25 @@ func parseTasksPageParams(query url.Values, base db.RetrieveQueryParams) (db.Ret
 	return base, pageSize
 }
 
+func parseTaskSummaryPageParams(query url.Values) db.RetrieveQueryParams {
+	count := defaultTaskSummaryPageSize
+	if raw := query.Get("count"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			count = parsed
+		}
+	}
+	if count > maxTaskSummaryPageSize {
+		count = maxTaskSummaryPageSize
+	}
+	params := db.RetrieveQueryParams{Count: count}
+	if raw := query.Get("before"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			params.BeforeID = parsed
+		}
+	}
+	return params
+}
+
 // GetLastTasks returns a page of the most recent tasks using keyset pagination.
 // The page size is controlled by the `count` query parameter (legacy `limit` is
 // still accepted) and the `before` cursor selects the next, older page. The
@@ -228,14 +252,70 @@ func (c *TaskController) GetTaskMiddleware(next http.Handler) http.Handler {
 
 		task, err := c.store.GetTask(project.ID, taskID)
 		if err != nil {
-			util.LogErrorF(err, log.Fields{"error": "Bad request. Cannot get task from database"})
-			w.WriteHeader(http.StatusBadRequest)
+			util.LogErrorF(err, log.Fields{"error": "Cannot get task from database"})
+			helpers.WriteError(w, err)
 			return
 		}
 
 		r = helpers.SetContextValue(r, "task", task)
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (c *TaskController) GetTaskSummary(w http.ResponseWriter, r *http.Request) {
+	task := helpers.GetFromContext(r, "task").(db.Task)
+	project := helpers.GetFromContext(r, "project").(db.Project)
+
+	summary, err := c.ansibleTaskRepo.GetTaskSummary(project.ID, task.ID)
+	if errors.Is(err, db.ErrNotFound) || err == nil && task.Status.IsFinished() &&
+		(summary.State == db.TaskSummaryCollecting || summary.State == db.TaskSummaryPartial) {
+		if repairErr := c.ansibleTaskRepo.RepairTaskSummary(project.ID, task.ID, task.Status); repairErr != nil {
+			helpers.WriteError(w, repairErr)
+			return
+		}
+		summary, err = c.ansibleTaskRepo.GetTaskSummary(project.ID, task.ID)
+	}
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, summary)
+}
+
+func (c *TaskController) GetTaskSummaryHosts(w http.ResponseWriter, r *http.Request) {
+	task := helpers.GetFromContext(r, "task").(db.Task)
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	page, err := c.ansibleTaskRepo.GetTaskSummaryHosts(
+		project.ID, task.ID, parseTaskSummaryPageParams(r.URL.Query()))
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, page)
+}
+
+func (c *TaskController) GetTaskSummaryStages(w http.ResponseWriter, r *http.Request) {
+	task := helpers.GetFromContext(r, "task").(db.Task)
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	page, err := c.ansibleTaskRepo.GetTaskSummaryStages(
+		project.ID, task.ID, parseTaskSummaryPageParams(r.URL.Query()))
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, page)
+}
+
+func (c *TaskController) GetTaskSummaryErrors(w http.ResponseWriter, r *http.Request) {
+	task := helpers.GetFromContext(r, "task").(db.Task)
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	page, err := c.ansibleTaskRepo.GetTaskSummaryErrors(
+		project.ID, task.ID, parseTaskSummaryPageParams(r.URL.Query()))
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, page)
 }
 
 // NewTaskMiddleware is middleware that binds a task from the request body and sets the context to it

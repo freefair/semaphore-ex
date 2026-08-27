@@ -1,0 +1,4 @@
+SEMAPHORE_TASK_RESULT {"version":1,"event":"task_result","event_id":"task-install:web-01:changed","play_id":"play-1","stage_id":"task-install","stage":" Install   package ","host":" WEB-01.EXAMPLE.COM. ","status":"changed","changed":1,"started_at":"2026-08-27T08:00:00Z","ended_at":"2026-08-27T08:00:01Z","duration_ms":1000}
+SEMAPHORE_TASK_RESULT {"version":1,"event":"task_result","event_id":"task-start:web-01:failed","play_id":"play-1","stage_id":"task-start","stage":"Start service","host":"web-01.example.com","status":"failed","started_at":"2026-08-27T08:00:01Z","ended_at":"2026-08-27T08:00:02Z","duration_ms":1000,"error":"authorization=Bearer super-secret password=hunter2 service failed"}
+SEMAPHORE_TASK_RESULT {"version":1,"event":"host_summary","event_id":"host:web-01.example.com","host":"web-01.example.com","status":"failed","changed":1,"failed":1,"ok":1}
+SEMAPHORE_TASK_RESULT {"version":1,"event":"run_complete","event_id":"run:complete","expected_hosts":1}

@@ -568,6 +568,10 @@ func Route(
 	projectTaskManagement.HandleFunc("/{task_id}/stages", taskController.GetTaskStages).Methods("GET", "HEAD")
 	projectTaskManagement.HandleFunc("/{task_id}/ansible/hosts", taskController.GetAnsibleTaskHosts).Methods("GET", "HEAD")
 	projectTaskManagement.HandleFunc("/{task_id}/ansible/errors", taskController.GetAnsibleTaskErrors).Methods("GET", "HEAD")
+	projectTaskManagement.HandleFunc("/{task_id}/ansible/summary", taskController.GetTaskSummary).Methods("GET", "HEAD")
+	projectTaskManagement.HandleFunc("/{task_id}/ansible/summary/hosts", taskController.GetTaskSummaryHosts).Methods("GET", "HEAD")
+	projectTaskManagement.HandleFunc("/{task_id}/ansible/summary/stages", taskController.GetTaskSummaryStages).Methods("GET", "HEAD")
+	projectTaskManagement.HandleFunc("/{task_id}/ansible/summary/errors", taskController.GetTaskSummaryErrors).Methods("GET", "HEAD")
 
 	projectScheduleManagement := projectUserAPI.PathPrefix("/schedules").Subrouter()
 	projectScheduleManagement.Use(projects.SchedulesMiddleware)
