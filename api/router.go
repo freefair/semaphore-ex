@@ -98,6 +98,7 @@ func Route(
 	runnerService server.RunnerService,
 	workflowService pro_interfaces.WorkflowService,
 	logWriteService pro_interfaces.LogWriteService,
+	auditWebhookService pro_interfaces.AuditWebhookService,
 	appMetrics *metrics.Metrics,
 ) *mux.Router {
 
@@ -130,7 +131,8 @@ func Route(
 	capabilityProvider := proFeatures.NewCapabilityProvider(store)
 	capabilityTestService := proFeatures.NewCapabilityTestService(store)
 	capabilityFacade := capabilityServices.NewServiceFacade(capabilityProvider, capabilityTestService)
-	auditFacade := auditServices.NewServiceFacade(store, logWriteService, appMetrics)
+	auditFacade := auditServices.NewServiceFacade(store, logWriteService, appMetrics, auditWebhookService)
+	auditWebhookController := NewAuditWebhookController(auditWebhookService, auditFacade)
 	projectRunnerController := proProjects.NewProjectRunnerController(subscriptionService, runnerService, capabilityProvider, auditFacade)
 	capabilityController := NewCapabilityController(capabilityFacade, auditFacade)
 
@@ -271,6 +273,12 @@ func Route(
 	adminAPI.Path("/options").HandlerFunc(setOption).Methods("POST")
 	adminAPI.Path("/admin/info").HandlerFunc(getAdminInfo).Methods("GET", "HEAD")
 	adminAPI.Path("/capabilities/lifecycle-test").HandlerFunc(capabilityController.Configure).Methods("PUT")
+	adminAPI.Path("/audit-webhook").HandlerFunc(auditWebhookController.GetConfiguration).Methods("GET", "HEAD")
+	adminAPI.Path("/audit-webhook").HandlerFunc(auditWebhookController.Configure).Methods("PUT")
+	adminAPI.Path("/audit-webhook/test").HandlerFunc(auditWebhookController.TestDelivery).Methods("POST")
+	adminAPI.Path("/audit-webhook/pause").HandlerFunc(auditWebhookController.Pause).Methods("POST")
+	adminAPI.Path("/audit-webhook/resume").HandlerFunc(auditWebhookController.Resume).Methods("POST")
+	adminAPI.Path("/audit-webhook/deliveries").HandlerFunc(auditWebhookController.History).Methods("GET", "HEAD")
 
 	adminAPI.Path("/cluster").HandlerFunc(getClusterStatus).Methods("GET", "HEAD")
 	adminAPI.Path("/cluster/tasks").HandlerFunc(getClusterTasks).Methods("GET", "HEAD")

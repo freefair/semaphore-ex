@@ -36,6 +36,46 @@ func (r failingEventRepository) CreateEvent(db.Event) (db.Event, error) {
 	return db.Event{}, r.err
 }
 
+func (r failingEventRepository) CreateEventWithAuditWebhook(db.Event, db.AuditWebhookDelivery) (db.Event, error) {
+	return db.Event{}, r.err
+}
+
+type auditWebhookStub struct {
+	prepared pro_interfaces.AuditEvent
+	notified bool
+}
+
+func (s *auditWebhookStub) PrepareDelivery(_ context.Context, event pro_interfaces.AuditEvent) (*db.AuditWebhookDelivery, error) {
+	s.prepared = event
+	envelope, err := pro_interfaces.NewAuditWebhookEnvelope(event)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, err
+	}
+	return &db.AuditWebhookDelivery{EventID: event.EventID, Payload: string(payload)}, nil
+}
+func (s *auditWebhookStub) Notify() { s.notified = true }
+func (*auditWebhookStub) Configuration(context.Context) (pro_interfaces.AuditWebhookConfigDTO, error) {
+	return pro_interfaces.AuditWebhookConfigDTO{}, nil
+}
+func (*auditWebhookStub) Configure(context.Context, pro_interfaces.AuditWebhookConfigInput) (pro_interfaces.AuditWebhookConfigDTO, error) {
+	return pro_interfaces.AuditWebhookConfigDTO{}, nil
+}
+func (*auditWebhookStub) TestDelivery(context.Context) (pro_interfaces.AuditWebhookDeliveryDTO, error) {
+	return pro_interfaces.AuditWebhookDeliveryDTO{}, nil
+}
+func (*auditWebhookStub) SetPaused(context.Context, bool) (pro_interfaces.AuditWebhookConfigDTO, error) {
+	return pro_interfaces.AuditWebhookConfigDTO{}, nil
+}
+func (*auditWebhookStub) DeliveryHistory(context.Context, db.RetrieveQueryParams) ([]pro_interfaces.AuditWebhookDeliveryDTO, error) {
+	return nil, nil
+}
+func (*auditWebhookStub) Start()       {}
+func (*auditWebhookStub) Close() error { return nil }
+
 func TestServiceFacadePersistsSafeEventToBothSinks(t *testing.T) {
 	store := sqldb.InitConfigCreateTestStore()
 	defer store.Close()
@@ -55,6 +95,29 @@ func TestServiceFacadePersistsSafeEventToBothSinks(t *testing.T) {
 	securityfixtures.AssertTripwiresAbsent(t, *events[0].Description, string(filePayload), metricsPayload)
 	assert.Contains(t, metricsPayload,
 		`semaphore_enhanced_actions_total{action="capability_write",outcome="denied",source="api"} 1`)
+}
+
+func TestServiceFacadeCommitsWebhookOutboxWithStableMetadata(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	defer store.Close()
+	writer := &auditLogWriter{}
+	webhook := &auditWebhookStub{}
+	recorder := NewServiceFacade(store, writer, metrics.NewMetrics(), webhook)
+
+	require.NoError(t, recorder.Record(context.Background(), validAuditEvent()))
+
+	require.Regexp(t, `^[a-f0-9]{32}$`, webhook.prepared.EventID)
+	assert.False(t, webhook.prepared.OccurredAt.IsZero())
+	assert.True(t, webhook.notified)
+	assert.Equal(t, webhook.prepared.EventID, writer.record.EventID)
+	assert.Equal(t, webhook.prepared.OccurredAt, writer.record.OccurredAt)
+	events, err := store.GetAllEvents(db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	deliveries, err := store.GetAuditWebhookDeliveries(db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, deliveries, 1)
+	assert.Equal(t, webhook.prepared.EventID, deliveries[0].EventID)
 }
 
 func TestServiceFacadeScopesProjectRunnerEventsAndPreservesGlobalEvents(t *testing.T) {

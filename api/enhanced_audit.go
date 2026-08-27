@@ -138,6 +138,18 @@ func enhancedAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {
 	method := r.Method
 	path := r.URL.Path
 	switch {
+	case strings.HasSuffix(path, "/audit-webhook/deliveries") && (method == http.MethodGet || method == http.MethodHead):
+		return webhookAuditDescriptor(pro_interfaces.AuditActionWebhookRead), true
+	case strings.HasSuffix(path, "/audit-webhook/test") && method == http.MethodPost:
+		return webhookAuditDescriptor(pro_interfaces.AuditActionWebhookTest), true
+	case strings.HasSuffix(path, "/audit-webhook/pause") && method == http.MethodPost:
+		return webhookAuditDescriptor(pro_interfaces.AuditActionWebhookPause), true
+	case strings.HasSuffix(path, "/audit-webhook/resume") && method == http.MethodPost:
+		return webhookAuditDescriptor(pro_interfaces.AuditActionWebhookResume), true
+	case strings.HasSuffix(path, "/audit-webhook") && (method == http.MethodGet || method == http.MethodHead):
+		return webhookAuditDescriptor(pro_interfaces.AuditActionWebhookRead), true
+	case strings.HasSuffix(path, "/audit-webhook") && method == http.MethodPut:
+		return webhookAuditDescriptor(pro_interfaces.AuditActionWebhookConfigure), true
 	case strings.HasSuffix(path, "/capabilities/lifecycle-test") && method == http.MethodPut:
 		return capabilityAuditDescriptor(pro_interfaces.AuditActionCapabilityConfigure), true
 	case strings.HasSuffix(path, "/capabilities/lifecycle-test/records") && method == http.MethodGet:
@@ -185,6 +197,12 @@ func enhancedAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {
 		}
 	}
 	return enhancedAuditDescriptor{}, false
+}
+
+func webhookAuditDescriptor(action pro_interfaces.AuditAction) enhancedAuditDescriptor {
+	return enhancedAuditDescriptor{
+		Action: action, TargetType: pro_interfaces.AuditTargetWebhook, TargetID: "audit_webhook",
+	}
 }
 
 func capabilityAuditDescriptor(action pro_interfaces.AuditAction) enhancedAuditDescriptor {
@@ -265,6 +283,8 @@ func capabilityAuditEvent(
 		TargetID:      string(pro_interfaces.CapabilityLifecycleTest),
 		Outcome:       outcome,
 		Source:        pro_interfaces.AuditSourceAPI,
+		SourceIP:      pro_interfaces.NormalizeAuditSourceIP(r.RemoteAddr),
+		UserAgent:     pro_interfaces.SanitizeAuditUserAgent(r.UserAgent()),
 		Reason:        reason,
 	}
 }

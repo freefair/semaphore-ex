@@ -37,6 +37,11 @@ func TestMetricsEnhancedSignalsUseBoundedLabels(t *testing.T) {
 	m.ObserveDependency(pro_interfaces.DependencyAuditFile, 25*time.Millisecond, false)
 	m.SetQueueDepth(pro_interfaces.QueueEnhancedAudit, 3)
 	m.RecordDroppedRecord(pro_interfaces.AuditSinkFile, pro_interfaces.DroppedRecordWriteFailure)
+	m.SetAuditWebhookQueueHealth(2, 5*time.Second)
+	m.RecordAuditWebhookAttempt()
+	m.RecordAuditWebhookSuccess()
+	m.RecordAuditWebhookPermanentFailure()
+	m.RecordAuditWebhookRedactionFailure()
 
 	body := scrape(m)
 	assert.Contains(t, body, `semaphore_enhanced_actions_total{action="capability_write",outcome="denied",source="api"} 1`)
@@ -44,6 +49,12 @@ func TestMetricsEnhancedSignalsUseBoundedLabels(t *testing.T) {
 	assert.Contains(t, body, `semaphore_enhanced_dependency_latency_seconds_count{dependency="audit_file"} 1`)
 	assert.Contains(t, body, `semaphore_enhanced_queue_depth{queue="enhanced_audit"} 3`)
 	assert.Contains(t, body, `semaphore_enhanced_dropped_records_total{reason="write_failure",sink="file"} 1`)
+	assert.Contains(t, body, `semaphore_enhanced_queue_depth{queue="audit_webhook"} 2`)
+	assert.Contains(t, body, `semaphore_audit_webhook_oldest_queued_age_seconds 5`)
+	assert.Contains(t, body, `semaphore_audit_webhook_attempts_total 1`)
+	assert.Contains(t, body, `semaphore_audit_webhook_successes_total 1`)
+	assert.Contains(t, body, `semaphore_audit_webhook_permanent_failures_total 1`)
+	assert.Contains(t, body, `semaphore_audit_webhook_redaction_failures_total 1`)
 	securityfixtures.AssertTripwiresAbsent(t, body)
 }
 

@@ -478,6 +478,21 @@
                 </v-list-item-content>
               </v-list-item>
 
+              <v-list-item
+                key="audit-webhooks"
+                to="/audit-webhooks"
+                v-if="isPro && user.admin"
+                data-testid="sidebar-audit-webhooks"
+              >
+                <v-list-item-icon>
+                  <v-icon>mdi-webhook</v-icon>
+                </v-list-item-icon>
+
+                <v-list-item-content>
+                  {{ $t('auditWebhook') }}
+                </v-list-item-content>
+              </v-list-item>
+
               <v-list-item key="tasks" to="/tasks" v-if="user.admin">
                 <v-list-item-icon>
                   <v-icon>mdi-check-all</v-icon>

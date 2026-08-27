@@ -24,6 +24,11 @@ type Metrics struct {
 	dependencyLatency *prometheus.HistogramVec
 	queueDepth        *prometheus.GaugeVec
 	droppedRecords    *prometheus.CounterVec
+	auditWebhookAge   prometheus.Gauge
+	auditWebhookTries prometheus.Counter
+	auditWebhookOK    prometheus.Counter
+	auditWebhookDead  prometheus.Counter
+	auditWebhookDrops prometheus.Counter
 }
 
 func NewMetrics() *Metrics {
@@ -68,6 +73,26 @@ func NewMetrics() *Metrics {
 		Name: "semaphore_enhanced_dropped_records_total",
 		Help: "Enhanced observability records dropped by sink and reason.",
 	}, []string{"sink", "reason"})
+	auditWebhookAge := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "semaphore_audit_webhook_oldest_queued_age_seconds",
+		Help: "Age in seconds of the oldest queued audit webhook delivery.",
+	})
+	auditWebhookTries := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "semaphore_audit_webhook_attempts_total",
+		Help: "Total audit webhook delivery attempts.",
+	})
+	auditWebhookOK := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "semaphore_audit_webhook_successes_total",
+		Help: "Total successful audit webhook deliveries.",
+	})
+	auditWebhookDead := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "semaphore_audit_webhook_permanent_failures_total",
+		Help: "Total audit webhook deliveries moved to terminal failure.",
+	})
+	auditWebhookDrops := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "semaphore_audit_webhook_redaction_failures_total",
+		Help: "Total audit events rejected by the export allow-list.",
+	})
 
 	registry.MustRegister(
 		tasksRunning,
@@ -78,10 +103,17 @@ func NewMetrics() *Metrics {
 		dependencyLatency,
 		queueDepth,
 		droppedRecords,
+		auditWebhookAge,
+		auditWebhookTries,
+		auditWebhookOK,
+		auditWebhookDead,
+		auditWebhookDrops,
 	)
 	dependencyHealthy.WithLabelValues(string(pro_interfaces.DependencyAuditDatabase)).Set(1)
 	dependencyHealthy.WithLabelValues(string(pro_interfaces.DependencyAuditFile)).Set(1)
+	dependencyHealthy.WithLabelValues(string(pro_interfaces.DependencyAuditWebhook)).Set(1)
 	queueDepth.WithLabelValues(string(pro_interfaces.QueueEnhancedAudit)).Set(0)
+	queueDepth.WithLabelValues(string(pro_interfaces.QueueAuditWebhook)).Set(0)
 
 	return &Metrics{
 		registry:          registry,
@@ -94,6 +126,11 @@ func NewMetrics() *Metrics {
 		dependencyLatency: dependencyLatency,
 		queueDepth:        queueDepth,
 		droppedRecords:    droppedRecords,
+		auditWebhookAge:   auditWebhookAge,
+		auditWebhookTries: auditWebhookTries,
+		auditWebhookOK:    auditWebhookOK,
+		auditWebhookDead:  auditWebhookDead,
+		auditWebhookDrops: auditWebhookDrops,
 	}
 }
 
@@ -119,10 +156,42 @@ func (m *Metrics) ObserveDependency(dependency pro_interfaces.DependencyID, late
 }
 
 func (m *Metrics) SetQueueDepth(queue pro_interfaces.QueueID, depth float64) {
-	if m == nil || queue != pro_interfaces.QueueEnhancedAudit || depth < 0 {
+	if m == nil || (queue != pro_interfaces.QueueEnhancedAudit && queue != pro_interfaces.QueueAuditWebhook) || depth < 0 {
 		return
 	}
 	m.queueDepth.WithLabelValues(string(queue)).Set(depth)
+}
+
+func (m *Metrics) SetAuditWebhookQueueHealth(depth int, oldestAge time.Duration) {
+	if m == nil || depth < 0 || oldestAge < 0 {
+		return
+	}
+	m.SetQueueDepth(pro_interfaces.QueueAuditWebhook, float64(depth))
+	m.auditWebhookAge.Set(oldestAge.Seconds())
+}
+
+func (m *Metrics) RecordAuditWebhookAttempt() {
+	if m != nil {
+		m.auditWebhookTries.Inc()
+	}
+}
+
+func (m *Metrics) RecordAuditWebhookSuccess() {
+	if m != nil {
+		m.auditWebhookOK.Inc()
+	}
+}
+
+func (m *Metrics) RecordAuditWebhookPermanentFailure() {
+	if m != nil {
+		m.auditWebhookDead.Inc()
+	}
+}
+
+func (m *Metrics) RecordAuditWebhookRedactionFailure() {
+	if m != nil {
+		m.auditWebhookDrops.Inc()
+	}
 }
 
 func (m *Metrics) RecordDroppedRecord(sink pro_interfaces.AuditSink, reason pro_interfaces.DroppedRecordReason) {
@@ -133,7 +202,8 @@ func (m *Metrics) RecordDroppedRecord(sink pro_interfaces.AuditSink, reason pro_
 }
 
 func validDependency(dependency pro_interfaces.DependencyID) bool {
-	return dependency == pro_interfaces.DependencyAuditDatabase || dependency == pro_interfaces.DependencyAuditFile
+	return dependency == pro_interfaces.DependencyAuditDatabase || dependency == pro_interfaces.DependencyAuditFile ||
+		dependency == pro_interfaces.DependencyAuditWebhook
 }
 
 func validSink(sink pro_interfaces.AuditSink) bool {
