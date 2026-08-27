@@ -78,7 +78,8 @@ func TestDeleteRunnerPreservesNameInFinishedTaskHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	assert.Equal(t, task.ID, tasks[0].ID)
-	assert.Nil(t, tasks[0].UsedRunnerID)
+	require.NotNil(t, tasks[0].UsedRunnerID)
+	assert.Equal(t, runner.ID, *tasks[0].UsedRunnerID)
 	require.NotNil(t, tasks[0].UsedRunnerName)
 	assert.Equal(t, runner.Name, *tasks[0].UsedRunnerName)
 }

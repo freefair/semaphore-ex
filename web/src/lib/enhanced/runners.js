@@ -3,6 +3,10 @@ import axios from 'axios';
 import { getErrorMessage } from '@/lib/error';
 
 const enhancedMethods = {
+  openRunnerHealth(runner) {
+    this.selectedHealthRunner = runner;
+    this.runnerHealthDialog = true;
+  },
   isRunnerDeleting(runnerId) {
     return this.deletingRunnerIds.includes(runnerId);
   },

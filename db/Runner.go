@@ -15,6 +15,10 @@ type RunnerStatus string
 const (
 	RunnerStatusOnline  RunnerStatus = "online"
 	RunnerStatusOffline RunnerStatus = "offline"
+
+	RunnerHeartbeatOnline  RunnerHeartbeatState = "online"
+	RunnerHeartbeatOffline RunnerHeartbeatState = "offline"
+	RunnerHeartbeatWebhook RunnerHeartbeatState = "webhook"
 )
 
 type RunnerTagFilterMode string
@@ -44,6 +48,12 @@ type Runner struct {
 	// It changes on every restart, which is how the server detects that a
 	// runner lost its in-memory job pool while still polling.
 	StartedAt *time.Time `db:"started_at" json:"started_at"`
+	Version   string     `db:"version" json:"version" backup:"-"`
+	Platform  string     `db:"platform" json:"platform" backup:"-"`
+
+	// CurrentLoad is the bounded number of jobs reported by the runner on its
+	// latest poll. It is operational metadata, not an assignment authority.
+	CurrentLoad int `db:"current_load" json:"current_load" backup:"-"`
 
 	PublicKey *string `db:"public_key" json:"-"`
 

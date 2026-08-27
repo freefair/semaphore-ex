@@ -11,19 +11,21 @@ import (
 type AuditAction string
 
 const (
-	AuditActionCapabilityResolve   AuditAction = "capability_resolve"
-	AuditActionCapabilityRead      AuditAction = "capability_read"
-	AuditActionCapabilityWrite     AuditAction = "capability_write"
-	AuditActionCapabilityExecute   AuditAction = "capability_execute"
-	AuditActionCapabilityConfigure AuditAction = "capability_configure"
-	AuditActionProjectRunnerList   AuditAction = "project_runner_list"
-	AuditActionProjectRunnerRead   AuditAction = "project_runner_read"
-	AuditActionProjectRunnerCreate AuditAction = "project_runner_create"
-	AuditActionProjectRunnerIssue  AuditAction = "project_runner_registration_issue"
-	AuditActionProjectRunnerUpdate AuditAction = "project_runner_update"
-	AuditActionProjectRunnerActive AuditAction = "project_runner_set_active"
-	AuditActionProjectRunnerDelete AuditAction = "project_runner_delete"
-	AuditActionProjectRunnerCache  AuditAction = "project_runner_cache_clear"
+	AuditActionCapabilityResolve    AuditAction = "capability_resolve"
+	AuditActionCapabilityRead       AuditAction = "capability_read"
+	AuditActionCapabilityWrite      AuditAction = "capability_write"
+	AuditActionCapabilityExecute    AuditAction = "capability_execute"
+	AuditActionCapabilityConfigure  AuditAction = "capability_configure"
+	AuditActionProjectRunnerList    AuditAction = "project_runner_list"
+	AuditActionProjectRunnerRead    AuditAction = "project_runner_read"
+	AuditActionProjectRunnerHealth  AuditAction = "project_runner_health"
+	AuditActionProjectRunnerHistory AuditAction = "project_runner_history"
+	AuditActionProjectRunnerCreate  AuditAction = "project_runner_create"
+	AuditActionProjectRunnerIssue   AuditAction = "project_runner_registration_issue"
+	AuditActionProjectRunnerUpdate  AuditAction = "project_runner_update"
+	AuditActionProjectRunnerActive  AuditAction = "project_runner_set_active"
+	AuditActionProjectRunnerDelete  AuditAction = "project_runner_delete"
+	AuditActionProjectRunnerCache   AuditAction = "project_runner_cache_clear"
 )
 
 type AuditTargetType string
@@ -190,6 +192,7 @@ func validAuditAction(action AuditAction) bool {
 	case AuditActionCapabilityResolve, AuditActionCapabilityRead, AuditActionCapabilityWrite,
 		AuditActionCapabilityExecute, AuditActionCapabilityConfigure,
 		AuditActionProjectRunnerList, AuditActionProjectRunnerRead,
+		AuditActionProjectRunnerHealth, AuditActionProjectRunnerHistory,
 		AuditActionProjectRunnerCreate, AuditActionProjectRunnerIssue,
 		AuditActionProjectRunnerUpdate, AuditActionProjectRunnerActive,
 		AuditActionProjectRunnerDelete, AuditActionProjectRunnerCache:

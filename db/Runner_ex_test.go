@@ -30,3 +30,35 @@ func TestRunnerRegistrationMaterialIsExcludedFromSerializationAndBackups(t *test
 		assert.Equal(t, "-", field.Tag.Get("backup"), fieldName)
 	}
 }
+
+func TestRunner_HealthDerivesHeartbeatAndUptime(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	timeout := 2 * time.Minute
+	started := now.Add(-75 * time.Second)
+	touched := now.Add(-timeout)
+	runner := Runner{
+		ID: 9, Name: "health", Version: "2.20.4", Platform: "linux/amd64",
+		StartedAt: &started, Touched: &touched, CurrentLoad: 2, MaxParallelTasks: 4,
+	}
+
+	health := runner.Health(now, timeout)
+
+	assert.Equal(t, RunnerHeartbeatOnline, health.HeartbeatState)
+	assert.Equal(t, int64(75), *health.UptimeSeconds)
+	assert.Equal(t, int64(120), *health.HeartbeatAgeSeconds)
+	assert.Equal(t, int64(120), health.HeartbeatTimeoutSeconds)
+	assert.Equal(t, 2, health.CurrentLoad)
+	assert.Equal(t, 4, health.MaxParallelTasks)
+
+	assert.Equal(t, RunnerHeartbeatOffline, runner.Health(now.Add(time.Nanosecond), timeout).HeartbeatState)
+	assert.Equal(t, RunnerHeartbeatWebhook, (Runner{Webhook: "https://example.com/hook"}).Health(now, timeout).HeartbeatState)
+}
+
+func TestRunner_HealthClampsFutureReportTimes(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	future := now.Add(time.Minute)
+	health := (Runner{StartedAt: &future, Touched: &future}).Health(now, 2*time.Minute)
+
+	assert.Equal(t, int64(0), *health.UptimeSeconds)
+	assert.Equal(t, int64(0), *health.HeartbeatAgeSeconds)
+}

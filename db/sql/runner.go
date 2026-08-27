@@ -92,7 +92,8 @@ func (d *SqlDb) DeleteRunner(projectID int, runnerID int) (err error) {
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(d.PrepareQuery("update task set runner_name=? where project_id=? and runner_id=?"),
+	if _, err = tx.Exec(d.PrepareQuery(
+		"update task set runner_name=?, runner_id_snapshot=coalesce(runner_id_snapshot, runner_id) where project_id=? and runner_id=?"),
 		runner.Name, projectID, runnerID); err != nil {
 		_ = tx.Rollback()
 		return err

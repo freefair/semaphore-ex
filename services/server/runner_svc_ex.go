@@ -4,6 +4,7 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"strings"
+	"time"
 )
 
 func (s *RunnerServiceImpl) CreateProjectRunner(
@@ -71,4 +72,23 @@ func (s *RunnerServiceImpl) ClearProjectRunnerCache(runner db.Runner) error {
 		return ErrProjectRunnerRequiresProject
 	}
 	return s.runnerRepo.ClearRunnerCache(runner)
+}
+
+func (s *RunnerServiceImpl) GetProjectRunnerHealth(
+	runner db.Runner,
+	now time.Time,
+	offlineTimeout time.Duration,
+) db.RunnerHealth {
+	return runner.Health(now, offlineTimeout)
+}
+
+func (s *RunnerServiceImpl) GetProjectRunnerHistory(
+	projectID int,
+	runnerID int,
+	params db.RetrieveQueryParams,
+) ([]db.RunnerTaskHistoryItem, error) {
+	if projectID <= 0 {
+		return nil, ErrProjectRunnerRequiresProject
+	}
+	return s.runnerRepo.GetRunnerTaskHistory(projectID, runnerID, params)
 }

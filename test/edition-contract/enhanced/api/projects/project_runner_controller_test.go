@@ -242,6 +242,133 @@ func TestProjectRunnerLifecycleMutationsPersistAndAreAudited(t *testing.T) {
 	}, actions)
 }
 
+func TestProjectRunnerHealthAndPaginatedHistorySurviveRestartAndDeletion(t *testing.T) {
+	store, project, runner, task := createBusyProjectRunnerControllerFixture(t)
+	startedAt := time.Now().Add(-90 * time.Second).UTC().Truncate(time.Second)
+	touched := time.Now().Add(-10 * time.Second).UTC().Truncate(time.Second)
+	runner.StartedAt = &startedAt
+	runner.Touched = &touched
+	runner.Version = "2.20.4"
+	runner.Platform = "linux/amd64"
+	runner.CurrentLoad = 1
+	require.NoError(t, store.TouchRunner(runner))
+	runner, err := store.GetRunner(project.ID, runner.ID)
+	require.NoError(t, err)
+	audit := &runnerAuditRecorder{}
+	controller := NewProjectRunnerController(nil, server.NewRunnerService(store), features.NewCapabilityProvider(store), audit)
+
+	healthRequest := runnerLifecycleRequest(
+		httptest.NewRequest(http.MethodGet, "/api/project/1/runners/1/health", nil),
+		store, project, runner,
+	)
+	healthResponse := httptest.NewRecorder()
+	controller.GetRunnerHealth(healthResponse, healthRequest)
+	require.Equal(t, http.StatusOK, healthResponse.Code, healthResponse.Body.String())
+	assert.NotContains(t, healthResponse.Body.String(), runner.Token)
+	var health db.RunnerHealth
+	require.NoError(t, json.Unmarshal(healthResponse.Body.Bytes(), &health))
+	assert.Equal(t, "2.20.4", health.Version)
+	assert.Equal(t, "linux/amd64", health.Platform)
+	assert.Equal(t, db.RunnerHeartbeatOnline, health.HeartbeatState)
+	require.NotNil(t, health.UptimeSeconds)
+	assert.GreaterOrEqual(t, *health.UptimeSeconds, int64(90))
+
+	runnerID := runner.ID
+	runnerName := runner.Name
+	task.Status = task_logger.TaskSuccessStatus
+	task.RunnerSnapshotID = &runnerID
+	task.RunnerName = &runnerName
+	end := time.Now()
+	task.End = &end
+	require.NoError(t, store.UpdateTask(task))
+	for index := 0; index < 2; index++ {
+		finishedAt := end.Add(time.Duration(index+1) * time.Second)
+		_, err = store.CreateTask(db.Task{
+			TemplateID: task.TemplateID, ProjectID: project.ID, Status: task_logger.TaskSuccessStatus,
+			Playbook: "site.yml", RunnerID: &runnerID, RunnerSnapshotID: &runnerID,
+			RunnerName: &runnerName, Created: time.Now().Add(time.Duration(index) * time.Minute), End: &finishedAt,
+		}, 0)
+		require.NoError(t, err)
+	}
+	require.NoError(t, store.DeleteRunner(project.ID, runner.ID))
+
+	historyRequest := runnerContractRequest(
+		httptest.NewRequest(http.MethodGet, "/api/project/1/runners/1/history?count=2", nil),
+		store, project,
+	)
+	historyRequest = mux.SetURLVars(historyRequest, map[string]string{"project_id": strconv.Itoa(project.ID), "runner_id": strconv.Itoa(runner.ID)})
+	historyResponse := httptest.NewRecorder()
+	controller.GetRunnerHistory(historyResponse, historyRequest)
+	require.Equal(t, http.StatusOK, historyResponse.Code, historyResponse.Body.String())
+	assert.NotContains(t, historyResponse.Body.String(), runner.Token)
+	var page runnerHistoryResponse
+	require.NoError(t, json.Unmarshal(historyResponse.Body.Bytes(), &page))
+	require.Len(t, page.Items, 2)
+	assert.True(t, page.HasMore)
+	require.NotNil(t, page.NextBefore)
+	for _, item := range page.Items {
+		assert.Equal(t, runner.ID, item.RunnerID)
+		assert.Equal(t, runner.Name, item.RunnerName)
+	}
+
+	nextRequest := runnerContractRequest(
+		httptest.NewRequest(http.MethodGet, "/api/project/1/runners/1/history?count=2&before="+strconv.Itoa(*page.NextBefore), nil),
+		store, project,
+	)
+	nextRequest = mux.SetURLVars(nextRequest, map[string]string{"project_id": strconv.Itoa(project.ID), "runner_id": strconv.Itoa(runner.ID)})
+	nextResponse := httptest.NewRecorder()
+	controller.GetRunnerHistory(nextResponse, nextRequest)
+	require.Equal(t, http.StatusOK, nextResponse.Code, nextResponse.Body.String())
+	require.NoError(t, json.Unmarshal(nextResponse.Body.Bytes(), &page))
+	assert.Len(t, page.Items, 1)
+	assert.False(t, page.HasMore)
+	otherProject, err := store.CreateProject(db.Project{Name: "history isolation"})
+	require.NoError(t, err)
+	otherRequest := runnerContractRequest(
+		httptest.NewRequest(http.MethodGet, "/api/project/2/runners/1/history", nil),
+		store, otherProject,
+	)
+	otherRequest = mux.SetURLVars(otherRequest, map[string]string{
+		"project_id": strconv.Itoa(otherProject.ID), "runner_id": strconv.Itoa(runner.ID),
+	})
+	otherResponse := httptest.NewRecorder()
+	controller.GetRunnerHistory(otherResponse, otherRequest)
+	require.Equal(t, http.StatusOK, otherResponse.Code, otherResponse.Body.String())
+	require.NoError(t, json.Unmarshal(otherResponse.Body.Bytes(), &page))
+	assert.Empty(t, page.Items)
+
+	assert.Equal(t, []pro_interfaces.AuditAction{
+		pro_interfaces.AuditActionProjectRunnerHealth,
+		pro_interfaces.AuditActionProjectRunnerHistory,
+		pro_interfaces.AuditActionProjectRunnerHistory,
+		pro_interfaces.AuditActionProjectRunnerHistory,
+	}, []pro_interfaces.AuditAction{
+		audit.events[0].Action, audit.events[1].Action, audit.events[2].Action, audit.events[3].Action,
+	})
+}
+
+func TestProjectRunnerHealthAndHistoryRequireCapability(t *testing.T) {
+	store, project, runner, _ := createBusyProjectRunnerControllerFixture(t)
+	controller := NewProjectRunnerController(nil, server.NewRunnerService(store), deniedRunnerProvider{}, nil)
+
+	healthRequest := runnerLifecycleRequest(
+		httptest.NewRequest(http.MethodGet, "/api/project/1/runners/1/health", nil),
+		store, project, runner,
+	)
+	healthResponse := httptest.NewRecorder()
+	controller.GetRunnerHealth(healthResponse, healthRequest)
+	assert.Equal(t, http.StatusForbidden, healthResponse.Code)
+
+	historyRequest := runnerContractRequest(
+		httptest.NewRequest(http.MethodGet, "/api/project/1/runners/1/history", nil),
+		store, project,
+	)
+	historyRequest = mux.SetURLVars(historyRequest, map[string]string{"project_id": strconv.Itoa(project.ID), "runner_id": strconv.Itoa(runner.ID)})
+	historyResponse := httptest.NewRecorder()
+	controller.GetRunnerHistory(historyResponse, historyRequest)
+	assert.Equal(t, http.StatusForbidden, historyResponse.Code)
+}
+
 func TestProjectRunnerDestructiveMutationsReturnAssignmentConflict(t *testing.T) {
 	for name, invoke := range map[string]func(pro_interfaces.ProjectRunnerController, http.ResponseWriter, *http.Request){
 		"deactivate": func(controller pro_interfaces.ProjectRunnerController, response http.ResponseWriter, request *http.Request) {

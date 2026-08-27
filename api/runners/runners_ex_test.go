@@ -135,6 +135,49 @@ func TestGetRunnerAcknowledgesCacheClearOnceAcrossRepeatedPolls(t *testing.T) {
 	assert.Nil(t, second.CacheCleanProjectID)
 }
 
+func TestGetRunnerPersistsBoundedHealthReportAndRestart(t *testing.T) {
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "runner health"})
+	require.NoError(t, err)
+	runner, err := store.CreateRunner(db.Runner{
+		Name: "health runner", ProjectID: &project.ID, Token: db.GenerateRunnerToken(), Active: true,
+	})
+	require.NoError(t, err)
+	pool := tasks.CreateTaskPool(store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, nil, nil, nil)
+	controller := NewRunnerController(store, &pool, nil, nil)
+
+	poll := func(started time.Time, version, platform, load string) *httptest.ResponseRecorder {
+		fresh, getErr := store.GetRunner(project.ID, runner.ID)
+		require.NoError(t, getErr)
+		request := httptest.NewRequest(http.MethodGet, "/api/internal/runners", nil)
+		request.Header.Set("X-Runner-Started-At", started.Format(time.RFC3339))
+		request.Header.Set(runners.RunnerVersionHeader, version)
+		request.Header.Set(runners.RunnerPlatformHeader, platform)
+		request.Header.Set(runners.RunnerCurrentLoadHeader, load)
+		request = helpers.SetContextValue(request, "store", store)
+		request = helpers.SetContextValue(request, "runner", fresh)
+		response := httptest.NewRecorder()
+		controller.GetRunner(response, request)
+		return response
+	}
+
+	firstStart := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	require.Equal(t, http.StatusOK, poll(firstStart, "old", "linux/arm64", "4").Code)
+	restartedAt := time.Now().Add(-10 * time.Second).UTC().Truncate(time.Second)
+	require.Equal(t, http.StatusOK, poll(restartedAt, "new", "linux/amd64", "1").Code)
+	stored, err := store.GetRunner(project.ID, runner.ID)
+	require.NoError(t, err)
+	require.NotNil(t, stored.StartedAt)
+	assert.Equal(t, restartedAt, *stored.StartedAt)
+	assert.Equal(t, "new", stored.Version)
+	assert.Equal(t, "linux/amd64", stored.Platform)
+	assert.Equal(t, 1, stored.CurrentLoad)
+
+	invalid := poll(restartedAt, "new", "linux/amd64", "-1")
+	assert.Equal(t, http.StatusBadRequest, invalid.Code)
+}
+
 func TestGetRunnerAcknowledgesEqualTimestampCacheClearOnce(t *testing.T) {
 	previousConfig := util.Config
 	t.Cleanup(func() { util.Config = previousConfig })

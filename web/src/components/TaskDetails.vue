@@ -116,9 +116,9 @@
                   <td><b>{{ $t('duration') }}</b></td>
                   <td>{{ [item.start, item.end] | formatMilliseconds }}</td>
                 </tr>
-                <tr v-if="item.used_runner_name">
+                <tr v-if="runnerIdentity">
                   <td><b>Runner</b></td>
-                  <td>{{ item.used_runner_name }}</td>
+                  <td data-testid="task-runner-identity">{{ runnerIdentity }}</td>
                 </tr>
                 </tbody>
               </template>
@@ -231,6 +231,7 @@
 </style>
 
 <script>
+import enhancedComputed from '@/lib/enhanced/task-details';
 
 import ProjectMixin from '@/components/ProjectMixin';
 import AppsMixin from '@/components/AppsMixin';
@@ -263,6 +264,8 @@ export default {
   },
 
   computed: {
+    ...enhancedComputed,
+
     parsedArtifacts() {
       const raw = this.item?.artifacts;
       if (raw == null || raw === '') return null;

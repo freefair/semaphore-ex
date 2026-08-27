@@ -73,6 +73,12 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 	runner := helpers.GetFromContext(r, "runner").(db.Runner)
 
 	clearCache := false
+	report, err := runners.ParseHealthReport(r.Header)
+	if err != nil {
+		helpers.WriteErrorStatus(w, "Invalid runner health report", http.StatusBadRequest)
+		return
+	}
+	report.Apply(&runner)
 
 	// The runner reports its process start time on every poll. It changes on
 	// every restart and is persisted next to "touched", so the task reconciler
