@@ -1,7 +1,7 @@
 # Task: Implement selected enhanced edition slices
 
 **Started:** 2026-08-25
-**Last update:** 2026-08-27 12:45
+**Last update:** 2026-08-27 12:47
 
 ## Scope
 Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with tests, documentation, review, and atomic commits
@@ -51,6 +51,8 @@ Implement the ordered backlog in docs/docs/developer-guide/plans/pro-slices with
 - 2026-08-27 12:29 — Slice 012 first green: /tmp health/history contract passes; focused core and clean-room Go tests pass; changed frontend files lint clean; all four new health/history UI tests pass; web and docs production builds exit 0. The full Vue runner still has the three pre-existing ArgsPicker, YesNoDialog, and Socket failures.
 
 - 2026-08-27 12:45 — Slice 012 browser acceptance passed on the isolated Enhanced QA instance at desktop and 390x844: online, offline, webhook, restart uptime reset, 12-row history pagination, responsive layouts, and zero browser console warnings/errors. Browser QA caught and drove fixes for clipped desktop columns and mobile table/title overflow.
+
+- 2026-08-27 12:47 — Slice 012 completed and committed: docs 43f1483, root d143b02f. Full Go and race suites, Community and Enhanced contracts, /tmp contract, lint/build/docs, and desktop/mobile browser acceptance passed; only the three pre-existing unrelated Vue unit failures remain.
 
 ## Decisions
 
@@ -120,3 +122,4 @@ Commit the verified Slice 010 audit-scope fix, then begin Slice 011 with a faili
 Slice 011 browser acceptance: in-app Browser unavailable after turn change; ntfy-cc --ask sent. Verify edit/deactivate/cache-clear/re-register/delete before starting Slice 012. When Dennis replies bereit, reconnect the in-app Browser to the isolated local Enhanced instance, finish the Slice 011 lifecycle flow, record evidence, then begin Slice 012 with a failing /tmp health/history contract.
 Begin Slice 012 with a failing /tmp contract covering runner health samples, bounded history pagination, and retained runner identity.
 Commit verified Slice 012 docs and implementation atomically, then begin Slice 013 with a failing deterministic reconciliation contract.
+Begin Slice 013 with a failing deterministic lost-runner reconciliation and late-report generation contract.
