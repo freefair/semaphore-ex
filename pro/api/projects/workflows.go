@@ -1,11 +1,10 @@
 package projects
 
 import (
-	"net/http"
-
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"net/http"
 )
 
 // workflowController is the open-source stub. Workflows are a Pro feature; the
@@ -17,7 +16,7 @@ type workflowController struct{}
 
 var _ pro_interfaces.WorkflowController = (*workflowController)(nil)
 
-func NewWorkflowController(svc pro_interfaces.WorkflowService, workflowRepo db.WorkflowManager) pro_interfaces.WorkflowController {
+func NewWorkflowController(_ pro_interfaces.WorkflowService, _ db.WorkflowManager, _ pro_interfaces.WorkflowDefinitionService) pro_interfaces.WorkflowController {
 	return &workflowController{}
 }
 

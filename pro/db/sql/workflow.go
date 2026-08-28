@@ -29,7 +29,7 @@ func (d *WorkflowStoreImpl) CreateWorkflowTemplate(workflow db.WorkflowTemplate)
 	return
 }
 
-func (d *WorkflowStoreImpl) UpdateWorkflowTemplate(workflow db.WorkflowTemplate) (err error) {
+func (d *WorkflowStoreImpl) UpdateWorkflowTemplate(workflow db.WorkflowTemplate) (res db.WorkflowTemplate, err error) {
 	return
 }
 

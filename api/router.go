@@ -99,6 +99,7 @@ func Route(
 	jwtSigner jwt.Signer,
 	runnerService server.RunnerService,
 	workflowService pro_interfaces.WorkflowService,
+	workflowDefinitionService pro_interfaces.WorkflowDefinitionService,
 	logWriteService pro_interfaces.LogWriteService,
 	auditWebhookService pro_interfaces.AuditWebhookService,
 	appMetrics *metrics.Metrics,
@@ -124,7 +125,7 @@ func Route(
 	projectsController := projects.NewProjectsController(accessKeyService)
 	terraformController := proApi.NewTerraformController(encryptionService, terraformStore, store)
 	terraformInventoryController := proProjects.NewTerraformInventoryController(terraformStore)
-	workflowController := proProjects.NewWorkflowController(workflowService, workflowStore)
+	workflowController := proProjects.NewWorkflowController(workflowService, workflowStore, workflowDefinitionService)
 	workflowMiddlewareController := projects.NewWorkflowController(workflowStore)
 	backupController := projects.NewBackupController(workflowStore)
 	userController := NewUserController(subscriptionService)
@@ -433,6 +434,7 @@ func Route(
 	projectUserAPI.Path("/templates").HandlerFunc(templateController.AddTemplate).Methods("POST")
 	projectUserAPI.Path("/workflows").HandlerFunc(workflowController.GetWorkflows).Methods("GET", "HEAD")
 	projectUserAPI.Path("/workflows").HandlerFunc(workflowController.AddWorkflow).Methods("POST")
+	projectUserAPI.Path("/workflows/validate").HandlerFunc(workflowController.ValidateWorkflow).Methods("POST")
 
 	projectUserAPI.Path("/schedules").HandlerFunc(projects.GetProjectSchedules).Methods("GET", "HEAD")
 	projectUserAPI.Path("/schedules").HandlerFunc(projects.AddSchedule).Methods("POST")

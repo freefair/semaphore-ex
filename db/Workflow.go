@@ -1,9 +1,8 @@
 package db
 
 import (
-	"time"
-
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
+	"time"
 )
 
 type WorkflowEdgeCondition string
@@ -40,6 +39,11 @@ type WorkflowTemplate struct {
 
 	StartVersion *string `db:"start_version" json:"start_version,omitempty" backup:"start_version"`
 
+	// DefinitionVersion identifies the workflow definition schema. Revision is
+	// incremented after every successful update and is the optimistic-lock token.
+	DefinitionVersion int `db:"definition_version" json:"definition_version" backup:"definition_version"`
+	Revision          int `db:"revision" json:"revision" backup:"revision"`
+
 	Nodes []WorkflowNode `db:"-" bolt:"include" json:"nodes" backup:"-"`
 	Edges []WorkflowEdge `db:"-" bolt:"include" json:"edges" backup:"edges"`
 
@@ -52,6 +56,7 @@ type WorkflowNode struct {
 	WorkflowTemplateID int `db:"workflow_template_id" json:"workflow_template_id" backup:"-"`
 
 	TemplateID      int                     `db:"template_id" json:"template_id,omitempty" backup:"-"`
+	DisplayName     string                  `db:"display_name" json:"display_name,omitempty" backup:"display_name"`
 	Kind            WorkflowNodeKind        `db:"kind" json:"kind,omitempty" backup:"kind"`
 	ConvergenceMode WorkflowConvergenceMode `db:"convergence_mode" json:"convergence_mode,omitempty" backup:"convergence_mode"`
 	ApprovalTimeout *int                    `db:"approval_timeout" json:"approval_timeout,omitempty" backup:"approval_timeout"`
@@ -75,6 +80,7 @@ type WorkflowEdge struct {
 	DestinationNodeID  int `db:"destination_node_id" json:"destination_node_id" backup:"destination_node_id"`
 
 	Condition WorkflowEdgeCondition `db:"condition" json:"condition" backup:"condition"`
+	Label     string                `db:"label" json:"label,omitempty" backup:"label"`
 }
 
 type WorkflowDelayStatus string

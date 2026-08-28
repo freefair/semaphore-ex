@@ -25,6 +25,8 @@
 </template>
 
 <script>
+import enhancedMethods from '@/lib/enhanced/workflow-graph';
+
 import Drawflow from 'drawflow';
 import 'drawflow/dist/drawflow.min.css';
 import { layoutWorkflowNodes, needsAutoLayout } from '@/lib/workflowLayout';
@@ -49,8 +51,8 @@ export default {
   data() {
     return {
       editor: null,
-      // condition keyed by `${sourceNodeId}->${destNodeId}`
-      conditions: {},
+      // Stable edge metadata keyed by `${sourceNodeId}->${destNodeId}`.
+      edgeMetadata: {},
       // guards re-entrancy while we mutate Drawflow programmatically
       syncing: false,
       built: false,
@@ -135,6 +137,7 @@ export default {
   },
 
   methods: {
+    ...enhancedMethods,
     // ---- building the canvas from the model ----------------------------------
 
     buildCanvas() {
@@ -142,7 +145,7 @@ export default {
       this.syncing = true;
       try {
         this.editor.clear();
-        this.conditions = {};
+        this.edgeMetadata = {};
         const dfIdByNodeId = {};
 
         // Lay out nodes when no coordinates are stored (legacy workflows, or runs
@@ -178,7 +181,11 @@ export default {
           if (src == null || dst == null) return;
           this.editor.addConnection(src, dst, 'output_1', 'input_1');
           const key = this.condKey(edge.source_node_id, edge.destination_node_id);
-          this.conditions[key] = edge.condition || CONDITION_DEFAULT;
+          this.edgeMetadata[key] = {
+            id: edge.id,
+            condition: edge.condition || CONDITION_DEFAULT,
+            label: edge.label || '',
+          };
         });
         this.built = true;
       } finally {
@@ -207,9 +214,12 @@ export default {
           const destNodeId = data[conn.node] ? data[conn.node].data.nodeId : null;
           if (destNodeId == null) return;
           edges.push({
+            id: this.edgeMetadata[this.condKey(nodeId, destNodeId)]?.id,
             source_node_id: nodeId,
             destination_node_id: destNodeId,
-            condition: this.conditions[this.condKey(nodeId, destNodeId)] || CONDITION_DEFAULT,
+            condition: this.edgeMetadata[this.condKey(nodeId, destNodeId)]?.condition
+              || CONDITION_DEFAULT,
+            label: this.edgeMetadata[this.condKey(nodeId, destNodeId)]?.label || '',
           });
         });
       });
@@ -271,7 +281,8 @@ export default {
     },
 
     setCondition(sourceNodeId, destNodeId, condition) {
-      this.conditions[this.condKey(sourceNodeId, destNodeId)] = condition;
+      const key = this.condKey(sourceNodeId, destNodeId);
+      this.edgeMetadata[key] = { ...this.edgeMetadata[key], condition };
       this.emitChange();
     },
 
@@ -297,7 +308,7 @@ export default {
 
     onConnectionCreated(e) {
       // Ignore connections we add programmatically while (re)building the canvas;
-      // their conditions are set explicitly in buildCanvas().
+      // their metadata is set explicitly in buildCanvas().
       if (this.syncing) return;
       const source = this.nodeIdOf(e.output_id);
       const dest = this.nodeIdOf(e.input_id);
@@ -315,7 +326,11 @@ export default {
         return;
       }
 
-      this.conditions[this.condKey(source, dest)] = CONDITION_DEFAULT;
+      this.edgeMetadata[this.condKey(source, dest)] = {
+        id: this.nextEdgeId(),
+        condition: CONDITION_DEFAULT,
+        label: '',
+      };
       this.emitChange();
     },
 
@@ -323,7 +338,7 @@ export default {
       if (this.syncing) return;
       const source = this.nodeIdOf(e.output_id);
       const dest = this.nodeIdOf(e.input_id);
-      delete this.conditions[this.condKey(source, dest)];
+      delete this.edgeMetadata[this.condKey(source, dest)];
       this.emitChange();
     },
 
@@ -331,9 +346,11 @@ export default {
       const source = this.nodeIdOf(e.output_id);
       const dest = this.nodeIdOf(e.input_id);
       this.$emit('connection-selected', {
+        id: this.edgeMetadata[this.condKey(source, dest)]?.id,
         source_node_id: source,
         destination_node_id: dest,
-        condition: this.conditions[this.condKey(source, dest)] || CONDITION_DEFAULT,
+        condition: this.edgeMetadata[this.condKey(source, dest)]?.condition || CONDITION_DEFAULT,
+        label: this.edgeMetadata[this.condKey(source, dest)]?.label || '',
       });
     },
 
@@ -420,7 +437,8 @@ export default {
       const ids = [];
       const data = this.editor.export().drawflow.Home.data;
       Object.keys(data).forEach((dfId) => ids.push(data[dfId].data.nodeId || 0));
-      return (ids.length === 0 ? 0 : Math.max(...ids)) + 1;
+      const temporary = ids.filter((id) => id < 0);
+      return temporary.length === 0 ? -1 : Math.min(...temporary) - 1;
     },
 
     nodeIdOf(dfId) {
@@ -483,6 +501,7 @@ export default {
       if (isApproval) title = this.$t('workflowNodeKindApproval');
       else if (isDelay) title = this.escape(this.delayNodeTitle(node));
       else title = this.escape(this.templateName(node.template_id));
+      if (node.display_name && !isDelay) title = this.escape(node.display_name);
       const status = this.nodeStatuses[node.id];
       const statusHtml = status
         ? `<span class="WorkflowGraph__nodeStatus WorkflowGraph__nodeStatus--${status}">${this.escape(status)}</span>`
@@ -501,15 +520,16 @@ export default {
     // Static "Delay 60s" label everywhere except a currently-waiting run node,
     // where it becomes a live "Ns left" / "Nm Ss left" countdown to resume_at.
     delayNodeTitle(node) {
-      const configured = `${this.$t('workflowNodeKindDelay')} ${node.delay_seconds != null ? node.delay_seconds : '?'}s`;
+      const label = node.display_name || this.$t('workflowNodeKindDelay');
+      const configured = `${label} ${node.delay_seconds != null ? node.delay_seconds : '?'}s`;
       const status = this.nodeStatuses[node.id];
       const resumeAt = this.nodeDelays[node.id];
       if (status !== 'waiting' || !resumeAt) return configured;
 
       const remainingMs = new Date(resumeAt).getTime() - Date.now();
-      if (remainingMs <= 0) return this.$t('workflowDelayElapsed');
+      if (remainingMs <= 0) return `${label}: ${this.$t('workflowDelayElapsed')}`;
 
-      return this.$t('workflowDelayRemaining', { time: this.formatDuration(remainingMs) });
+      return `${label}: ${this.$t('workflowDelayRemaining', { time: this.formatDuration(remainingMs) })}`;
     },
 
     formatDuration(ms) {
@@ -533,7 +553,7 @@ export default {
       const data = this.editor.export().drawflow.Home.data;
       const dfIdByNodeId = {};
       Object.keys(data).forEach((dfId) => { dfIdByNodeId[data[dfId].data.nodeId] = dfId; });
-      Object.keys(this.conditions).forEach((key) => {
+      Object.keys(this.edgeMetadata).forEach((key) => {
         const [source, dest] = key.split('->').map(Number);
         const outId = dfIdByNodeId[source];
         const inId = dfIdByNodeId[dest];
@@ -547,7 +567,7 @@ export default {
           'WorkflowGraph__conn--on_failure',
           'WorkflowGraph__conn--always',
         );
-        conn.classList.add(`WorkflowGraph__conn--${this.conditions[key]}`);
+        conn.classList.add(`WorkflowGraph__conn--${this.edgeMetadata[key].condition}`);
       });
     },
 

@@ -21,6 +21,7 @@
               :aria-label="$t('name')"
               size="1"
               class="WorkflowEditor__nameField"
+              @input="markDirty"
             />
           </span>
         </span>
@@ -39,8 +40,23 @@
       </v-btn>
 
       <v-btn
+        text
+        :disabled="!canManage || validating || saving"
+        :loading="validating"
+        @click="validate()"
+      >{{ $t('workflowValidate') }}
+      </v-btn>
+
+      <v-btn
+        text
+        :disabled="!canManage || !dirty || validating || saving"
+        @click="discard()"
+      >{{ $t('discard') }}
+      </v-btn>
+
+      <v-btn
         color="primary"
-        :disabled="!canManage || saving || problems.length > 0"
+        :disabled="!canManage || saving || validating || clientIssues.length > 0"
         :loading="saving"
         @click="save()"
       >{{ $t('save') }}
@@ -49,6 +65,22 @@
     </v-toolbar>
 
     <v-divider />
+
+    <v-alert
+      v-if="conflict"
+      type="warning"
+      prominent
+      tile
+      class="mb-0"
+    >
+      <div class="d-flex align-center">
+        <span>{{ $t('workflowConflictMessage') }}</span>
+        <v-spacer />
+        <v-btn color="warning" outlined @click="reloadAfterConflict()">
+          {{ $t('workflowReloadServerVersion') }}
+        </v-btn>
+      </div>
+    </v-alert>
 
     <div class="WorkflowEditor__body" v-if="item != null && templates != null">
       <!-- Palette + meta -->
@@ -78,6 +110,7 @@
                 :disabled="!canManage"
                 outlined
                 dense
+                @input="markDirty"
               />
             </div>
 
@@ -134,23 +167,38 @@
           <div class="pa-3">
             <template v-if="!sideCollapsed">
               <div class="text-subtitle-2 mb-1">{{ $t('workflowProblemsPanelTitle') }}</div>
-              <v-alert v-if="problems.length === 0" type="success" text dense class="mb-0">
+              <v-alert
+                v-if="problems.length === 0 && validationState === 'valid'"
+                type="success"
+                text
+                dense
+                class="mb-0"
+              >
                 {{ $t('workflowValidationPassed') }}
               </v-alert>
               <v-alert
+                v-else-if="problems.length === 0"
+                type="info"
+                text
+                dense
+                class="mb-0"
+              >
+                {{ $t('workflowValidationNotRun') }}
+              </v-alert>
+              <v-alert
                 v-for="(p, i) in problems"
-                :key="`problem-${i}`"
+                :key="`${p.code}-${p.path || i}`"
                 type="warning"
                 text
                 dense
                 class="mb-1"
-              >{{ p }}
+              >{{ problemText(p) }}
               </v-alert
               >
             </template>
             <div v-else class="d-flex flex-column align-center">
               <v-tooltip
-                v-if="problems.length === 0"
+                v-if="problems.length === 0 && validationState === 'valid'"
                 right
                 max-width="320"
                 transition="fade-transition"
@@ -160,10 +208,21 @@
                 </template>
                 <span>{{ $t('workflowValidationPassed') }}</span>
               </v-tooltip>
+              <v-tooltip
+                v-else-if="problems.length === 0"
+                right
+                max-width="320"
+                transition="fade-transition"
+              >
+                <template v-slot:activator="{ on, attrs }">
+                  <v-icon color="info" v-bind="attrs" v-on="on">mdi-information</v-icon>
+                </template>
+                <span>{{ $t('workflowValidationNotRun') }}</span>
+              </v-tooltip>
               <template v-else>
                 <v-tooltip
                   v-for="(p, i) in problems"
-                  :key="`problem-icon-${i}`"
+                  :key="`${p.code}-${p.path || i}`"
                   right
                   max-width="320"
                   transition="fade-transition"
@@ -173,7 +232,7 @@
                       mdi-alert
                     </v-icon>
                   </template>
-                  <span>{{ p }}</span>
+                  <span>{{ problemText(p) }}</span>
                 </v-tooltip>
               </template>
             </div>
@@ -210,6 +269,17 @@
               <v-icon small>mdi-delete</v-icon>
             </v-btn>
           </div>
+
+          <v-text-field
+            v-model="editingNode.display_name"
+            :label="$t('workflowDisplayName')"
+            :disabled="!canManage"
+            outlined
+            dense
+            hide-details="auto"
+            class="mb-5"
+            @input="applyNodeEdit"
+          />
 
           <v-textarea
             v-if="editingNode.kind === 'note'"
@@ -357,6 +427,16 @@
             hide-details="auto"
             @change="applyEdgeEdit"
           />
+          <v-text-field
+            v-model="editingEdge.label"
+            :label="$t('workflowEdgeLabel')"
+            :disabled="!canManage"
+            outlined
+            dense
+            hide-details="auto"
+            class="mt-4"
+            @input="applyEdgeEdit"
+          />
         </div>
       </div>
     </div>
@@ -368,6 +448,8 @@
 </template>
 
 <script>
+import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/workflow-editor';
+
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
@@ -377,6 +459,7 @@ import ProjectMixin from '@/components/ProjectMixin';
 import PermissionsCheck from '@/components/PermissionsCheck';
 import { USER_PERMISSIONS } from '@/lib/constants';
 import { layoutWorkflowNodes, needsAutoLayout } from '@/lib/workflowLayout';
+import { WORKFLOW_DEFINITION_VERSION } from '@/lib/workflowValidation';
 
 export default {
   components: { TaskParamsForm, WorkflowGraph },
@@ -387,8 +470,14 @@ export default {
   data() {
     return {
       item: null,
+      baseline: null,
       templates: null,
       saving: false,
+      validating: false,
+      dirty: false,
+      validationState: 'idle',
+      validationIssues: [],
+      conflict: null,
       graphKey: 0,
       // Set before navigating new -> /edit after a create, so the route watcher
       // does not reload (which would reset the selection and rebuild the canvas).
@@ -401,6 +490,7 @@ export default {
     };
   },
   computed: {
+    ...enhancedComputed,
     workflowId() {
       const raw = this.$route.params.workflowId;
       return raw ? parseInt(raw, 10) : null;
@@ -435,39 +525,17 @@ export default {
         { value: 'always', text: this.$t('workflowConditionAlways') },
       ];
     },
-    // Client-side mirror of db.ValidateWorkflowTemplate (the structural subset).
     problems() {
-      const out = [];
-      const nodes = this.item?.nodes || [];
-      const edges = this.item?.edges || [];
-      if (!this.item?.name) out.push(this.$t('name_required'));
-      if (nodes.length === 0) {
-        out.push(this.$t('workflowErrorNoNodes'));
-        return out;
-      }
-      const incoming = {};
-      edges.forEach((e) => {
-        incoming[e.destination_node_id] = (incoming[e.destination_node_id] || 0) + 1;
-      });
-      // Note nodes are annotations: excluded from the run graph (root count) and
-      // from the task-completeness check.
-      const roots = nodes.filter((n) => n.kind !== 'note' && !incoming[n.id]).length;
-      if (roots === 0) out.push(this.$t('workflowErrorNoRoot'));
-      else if (roots > 1) out.push(this.$t('workflowErrorMultipleRoots', { count: roots }));
-
-      const incompleteTask = nodes.some((n) => (n.kind || 'task') === 'task' && !n.template_id);
-      if (incompleteTask) out.push(this.$t('workflowErrorTaskNeedsTemplate'));
-
-      const badTimeout = nodes.some(
-        (n) => n.kind === 'approval' && n.approval_timeout != null && n.approval_timeout <= 0,
+      if (this.validationIssues.length === 0) return this.clientIssues;
+      const serverLocations = new Set(
+        this.validationIssues.map((entry) => `${entry.code}:${entry.path || ''}`),
       );
-      if (badTimeout) out.push(this.$t('workflowErrorApprovalTimeoutPositive'));
-
-      const badDelay = nodes.some(
-        (n) => n.kind === 'delay' && (n.delay_seconds == null || n.delay_seconds <= 0),
-      );
-      if (badDelay) out.push(this.$t('workflowErrorDelayPositive'));
-      return out;
+      return [
+        ...this.validationIssues,
+        ...this.clientIssues.filter(
+          (entry) => !serverLocations.has(`${entry.code}:${entry.path || ''}`),
+        ),
+      ];
     },
   },
   watch: {
@@ -484,6 +552,7 @@ export default {
     await this.loadData();
   },
   methods: {
+    ...enhancedMethods,
     showDrawer() {
       EventBus.$emit('i-show-drawer');
     },
@@ -491,36 +560,30 @@ export default {
       return {
         name: '',
         description: '',
+        definition_version: WORKFLOW_DEFINITION_VERSION,
+        revision: 0,
         nodes: [],
         edges: [],
       };
     },
     async loadData() {
-      this.selectedNodeId = null;
-      this.editingNode = null;
-      this.editingEdge = null;
+      this.resetEditorState();
       try {
         if (this.isNew) {
-          this.item = this.getNewItem();
+          this.item = this.prepareItem(this.getNewItem());
         } else {
-          this.item = await this.loadEndpoint(
+          const loaded = await this.loadEndpoint(
             `/api/project/${this.projectId}/workflows/${this.workflowId}`,
           );
-          if (!Array.isArray(this.item.nodes)) this.item.nodes = [];
-          if (!Array.isArray(this.item.edges)) this.item.edges = [];
-          this.item.nodes = this.item.nodes.map((node) => ({
-            kind: 'task',
-            convergence_mode: 'all',
-            position_x: 0,
-            position_y: 0,
-            ...node,
-          }));
+          this.item = this.prepareItem(loaded);
           this.autoLayout();
         }
       } catch (err) {
         EventBus.$emit('i-snackbar', { color: 'error', text: getErrorMessage(err) });
         return;
       }
+      this.baseline = this.clone(this.item);
+      this.dirty = false;
       // Force a clean canvas rebuild matching the freshly loaded model.
       this.graphKey += 1;
     },
@@ -545,6 +608,7 @@ export default {
     onGraphChange({ nodes, edges }) {
       this.item.nodes = nodes;
       this.item.edges = edges;
+      this.markDirty();
       // Keep the open property panel in sync with the latest model snapshot.
       if (this.selectedNodeId != null) {
         const found = nodes.find((n) => n.id === this.selectedNodeId);
@@ -605,11 +669,7 @@ export default {
     },
     applyEdgeEdit() {
       if (!this.editingEdge || !this.$refs.graph) return;
-      this.$refs.graph.setCondition(
-        this.editingEdge.source_node_id,
-        this.editingEdge.destination_node_id,
-        this.editingEdge.condition,
-      );
+      this.$refs.graph.syncEdge({ ...this.editingEdge });
     },
     deleteSelectedNode() {
       if (this.editingNode == null || !this.$refs.graph) return;
@@ -629,29 +689,50 @@ export default {
 
     // ---- save -----------------------------------------------------------------
     async save() {
-      if (this.problems.length > 0) return;
+      if (this.clientIssues.length > 0) return;
+      if (!await this.validate(false)) return;
       this.saving = true;
       try {
-        const payload = { ...this.item, project_id: this.projectId };
-        // An empty start_version means "no run versioning" — send null, not "".
-        if (!payload.start_version) delete payload.start_version;
+        const payload = this.payload();
+        let saved;
         if (this.isNew) {
-          const created = (await axios.post(`/api/project/${this.projectId}/workflows`, payload))
-            .data;
+          saved = (await axios.post(`/api/project/${this.projectId}/workflows`, payload)).data;
           EventBus.$emit('i-snackbar', { color: 'success', text: this.$t('workflowSaved') });
-          // Adopt the server id so subsequent saves PUT to the right workflow,
-          // then switch the URL to the edit route — but keep the current canvas
-          // and selection (skip the route-triggered reload). The backend remaps
-          // client node ids on every save, so no reload is needed.
-          this.item.id = created.id;
+          this.item = this.prepareItem(saved);
+          this.clearSelection();
+          this.baseline = this.clone(this.item);
+          this.dirty = false;
+          this.validationState = 'valid';
+          this.graphKey += 1;
           this.skipNextRouteReload = true;
-          this.$router.replace(`/project/${this.projectId}/workflows/${created.id}/edit`);
+          this.$router.replace(`/project/${this.projectId}/workflows/${saved.id}/edit`);
         } else {
-          await axios.put(`/api/project/${this.projectId}/workflows/${this.workflowId}`, payload);
+          saved = (await axios.put(
+            `/api/project/${this.projectId}/workflows/${this.workflowId}`,
+            payload,
+          )).data;
+          this.item = this.prepareItem(saved);
+          this.clearSelection();
+          this.baseline = this.clone(this.item);
+          this.dirty = false;
+          this.validationState = 'valid';
+          this.graphKey += 1;
           EventBus.$emit('i-snackbar', { color: 'success', text: this.$t('workflowSaved') });
-          // No reload: keep the canvas and the selected element intact.
         }
       } catch (err) {
+        if (err.response?.status === 409
+            && err.response?.data?.code === 'WORKFLOW_REVISION_CONFLICT') {
+          this.conflict = err.response.data;
+          EventBus.$emit('i-snackbar', {
+            color: 'warning', text: this.$t('workflowConflictMessage'),
+          });
+          return;
+        }
+        if (err.response?.status === 422 && Array.isArray(err.response?.data?.issues)) {
+          this.validationIssues = err.response.data.issues;
+          this.validationState = 'invalid';
+          return;
+        }
         EventBus.$emit('i-snackbar', { color: 'error', text: getErrorMessage(err) });
       } finally {
         this.saving = false;
