@@ -112,6 +112,19 @@
                 dense
                 @input="markDirty"
               />
+              <v-text-field
+                v-model.number="item.max_parallel_tasks"
+                type="number"
+                min="1"
+                max="32"
+                :label="$t('workflowMaxParallelTasks')"
+                :hint="$t('workflowMaxParallelTasksHint')"
+                persistent-hint
+                :disabled="!canManage"
+                outlined
+                dense
+                @input="markDirty"
+              />
             </div>
 
             <v-divider />
@@ -324,6 +337,20 @@
               @change="applyNodeEdit"
             />
 
+            <v-select
+              v-model="editingNode.join_mode"
+              :items="joinOptions"
+              item-value="value"
+              item-text="text"
+              :label="$t('workflowJoinMode')"
+              :disabled="!canManage"
+              outlined
+              dense
+              hide-details="auto"
+              class="mb-5"
+              @change="applyNodeEdit"
+            />
+
             <v-autocomplete
             v-if="editingNode.kind !== 'approval' && editingNode.kind !== 'delay'"
               v-model="editingNode.template_id"
@@ -425,7 +452,21 @@
             outlined
             dense
             hide-details="auto"
-            @change="applyEdgeEdit"
+            @change="onEdgeConditionChanged"
+          />
+          <v-textarea
+            v-if="editingEdge.condition === 'expression'"
+            v-model="editingEdge.condition_expression"
+            :label="$t('workflowConditionExpression')"
+            :hint="$t('workflowConditionExpressionHint')"
+            persistent-hint
+            :disabled="!canManage"
+            outlined
+            dense
+            auto-grow
+            rows="2"
+            class="mt-4"
+            @input="applyEdgeEdit"
           />
           <v-text-field
             v-model="editingEdge.label"
@@ -518,11 +559,19 @@ export default {
         { value: 'any', text: this.$t('workflowConvergenceAny') },
       ];
     },
+    joinOptions() {
+      return [
+        { value: 'all-successful', text: this.$t('workflowJoinAllSuccessful') },
+        { value: 'all-complete', text: this.$t('workflowJoinAllComplete') },
+        { value: 'any-successful', text: this.$t('workflowJoinAnySuccessful') },
+      ];
+    },
     conditionOptions() {
       return [
         { value: 'on_success', text: this.$t('workflowConditionOnSuccess') },
         { value: 'on_failure', text: this.$t('workflowConditionOnFailure') },
         { value: 'always', text: this.$t('workflowConditionAlways') },
+        { value: 'expression', text: this.$t('workflowConditionExpression') },
       ];
     },
     clientIssues() {
@@ -567,6 +616,7 @@ export default {
         description: '',
         definition_version: WORKFLOW_DEFINITION_VERSION,
         revision: 0,
+        max_parallel_tasks: 4,
         nodes: [],
         edges: [],
       };
@@ -579,19 +629,26 @@ export default {
         ...value,
         definition_version: value.definition_version || WORKFLOW_DEFINITION_VERSION,
         revision: value.revision || 0,
+        max_parallel_tasks: value.max_parallel_tasks ?? 4,
         nodes: Array.isArray(value.nodes) ? value.nodes : [],
         edges: Array.isArray(value.edges) ? value.edges : [],
       };
-      item.nodes = item.nodes.map((node) => ({
-        kind: 'task',
-        convergence_mode: 'all',
-        position_x: 0,
-        position_y: 0,
-        display_name: '',
-        ...node,
-      }));
+      item.nodes = item.nodes.map((node) => {
+        const convergence = node.convergence_mode || 'all';
+        return {
+          kind: 'task',
+          position_x: 0,
+          position_y: 0,
+          display_name: '',
+          ...node,
+          convergence_mode: convergence,
+          join_mode: node.join_mode
+            || (convergence === 'any' ? 'any-successful' : 'all-successful'),
+        };
+      });
       item.edges = item.edges.map((edge) => ({
         condition: 'on_success',
+        condition_expression: '',
         label: '',
         ...edge,
       }));
@@ -712,6 +769,13 @@ export default {
     applyEdgeEdit() {
       if (!this.editingEdge || !this.$refs.graph) return;
       this.$refs.graph.syncEdge({ ...this.editingEdge });
+    },
+    onEdgeConditionChanged() {
+      if (!this.editingEdge) return;
+      if (this.editingEdge.condition !== 'expression') {
+        this.editingEdge.condition_expression = '';
+      }
+      this.applyEdgeEdit();
     },
     deleteSelectedNode() {
       if (this.editingNode == null || !this.$refs.graph) return;

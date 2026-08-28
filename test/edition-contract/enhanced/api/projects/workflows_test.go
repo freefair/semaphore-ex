@@ -319,6 +319,52 @@ func TestWorkflowRunControllerRejectsOversizedIdempotencyKey(t *testing.T) {
 	assert.Empty(t, service.correlationIDs)
 }
 
+func TestWorkflowRunControllerExposesConditionalPresentationFields(t *testing.T) {
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7}
+	run := db.WorkflowRun{
+		ID: 91, ProjectID: 7, WorkflowTemplateID: 41, Status: db.WorkflowRunSucceeded,
+		DefinitionSnapshot: db.WorkflowTemplate{
+			ID: 41, Name: "Conditional", MaxParallelTasks: 2,
+			Nodes: []db.WorkflowNode{
+				{ID: 201, TemplateID: 51, DisplayName: "Root"},
+				{ID: 202, TemplateID: 52, DisplayName: "Optional", JoinMode: db.WorkflowJoinAnySuccessful},
+			},
+			Edges: []db.WorkflowEdge{{
+				ID: 301, SourceNodeID: 201, DestinationNodeID: 202,
+				Condition: db.WorkflowEdgeExpression, Expression: `result.summary.failed_hosts == 0`,
+				ConditionProgram: db.WorkflowConditionProgram{Version: 1, Instructions: []db.WorkflowConditionInstruction{{Operation: "field", Field: "result.secret"}}},
+			}},
+		},
+		Nodes: []db.WorkflowRunNode{
+			{WorkflowNodeID: 201, Status: db.WorkflowRunNodeSucceeded, TemplateSnapshot: db.Template{ID: 51, Name: "Root"}},
+			{
+				WorkflowNodeID: 202, Status: db.WorkflowRunNodeSkipped, Reason: "condition did not match",
+				ResultJSON:       `{"status":"skipped","successful":false}`,
+				Result:           db.WorkflowNodeResult{Status: db.WorkflowRunNodeSkipped},
+				TemplateSnapshot: db.Template{ID: 52, Name: "Optional"},
+			},
+		},
+	}
+	service := &workflowServiceStub{run: run}
+	manager := &workflowManagerStub{run: run}
+	controller := NewWorkflowController(service, manager, &workflowDefinitionServiceStub{})
+	recorder := httptest.NewRecorder()
+
+	controller.GetWorkflowRun(recorder, workflowRunRequest(
+		http.MethodGet, "/api/project/7/workflows/41/runs/91", workflow, run,
+	))
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	body := recorder.Body.String()
+	assert.Contains(t, body, `"max_parallel_tasks":2`)
+	assert.Contains(t, body, `"join_mode":"any-successful"`)
+	assert.Contains(t, body, `"condition_expression":"result.summary.failed_hosts == 0"`)
+	assert.Contains(t, body, `"status":"skipped"`)
+	assert.Contains(t, body, `"result":{"status":"skipped","successful":false}`)
+	assert.NotContains(t, body, "condition_program")
+	assert.NotContains(t, body, "result.secret")
+}
+
 func TestWorkflowRunResponsesExposeOnlyRunPresentationData(t *testing.T) {
 	taskArguments := "sensitive-task-arguments"
 	vaultScript := "sensitive-vault-script"

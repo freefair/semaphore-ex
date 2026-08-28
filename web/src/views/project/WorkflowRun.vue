@@ -26,6 +26,14 @@
         class="mr-3"
       >{{ details.run.status }}</v-chip>
 
+      <v-chip
+        v-if="parallelProgress"
+        small
+        outlined
+        class="mr-3"
+        data-testid="workflow-parallel-progress"
+      >{{ $t('workflowParallelProgress', parallelProgress) }}</v-chip>
+
       <v-btn
         v-if="canStopRun"
         color="error"
@@ -249,6 +257,14 @@ export default {
       const { run } = this.details;
       return this.formatElapsed(run.start || run.created, run.end);
     },
+    parallelProgress() {
+      const max = this.workflow?.max_parallel_tasks;
+      if (!max || !this.details) return null;
+      const active = (this.details.nodes || []).filter(
+        (node) => ['queued', 'running'].includes(node.status),
+      ).length;
+      return { active, max };
+    },
   },
   async created() {
     this.socketListenerId = socket.addListener((data) => this.onWebsocketDataReceived(data));
@@ -289,6 +305,11 @@ export default {
         case 'stopped':
         case 'rejected':
           return 'error';
+        case 'blocked':
+          return 'warning';
+        case 'canceled':
+        case 'skipped':
+          return 'grey';
         case 'running':
         case 'pending':
           return 'primary';

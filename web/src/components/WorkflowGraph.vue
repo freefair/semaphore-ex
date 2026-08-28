@@ -20,6 +20,10 @@
         <i class="WorkflowGraph__legendDot WorkflowGraph__legendDot--always"></i>
         {{ $t('workflowConditionAlways') }}
       </span>
+      <span class="WorkflowGraph__legendItem">
+        <i class="WorkflowGraph__legendDot WorkflowGraph__legendDot--expression"></i>
+        {{ $t('workflowConditionExpression') }}
+      </span>
     </div>
   </div>
 </template>
@@ -181,6 +185,7 @@ export default {
           this.edgeMetadata[key] = {
             id: edge.id,
             condition: edge.condition || CONDITION_DEFAULT,
+            condition_expression: edge.condition_expression || '',
             label: edge.label || '',
           };
         });
@@ -216,6 +221,8 @@ export default {
             destination_node_id: destNodeId,
             condition: this.edgeMetadata[this.condKey(nodeId, destNodeId)]?.condition
               || CONDITION_DEFAULT,
+            condition_expression:
+              this.edgeMetadata[this.condKey(nodeId, destNodeId)]?.condition_expression || '',
             label: this.edgeMetadata[this.condKey(nodeId, destNodeId)]?.label || '',
           });
         });
@@ -239,6 +246,7 @@ export default {
           id: nodeId,
           kind,
           convergence_mode: 'all',
+          join_mode: 'all-successful',
           template_id: null,
           // Approval and delay nodes must not carry task params (backend validation).
           task_params: kind === 'task' ? {} : null,
@@ -332,6 +340,7 @@ export default {
       this.edgeMetadata[this.condKey(source, dest)] = {
         id: this.nextEdgeId(),
         condition: CONDITION_DEFAULT,
+        condition_expression: '',
         label: '',
       };
       this.emitChange();
@@ -353,6 +362,8 @@ export default {
         source_node_id: source,
         destination_node_id: dest,
         condition: this.edgeMetadata[this.condKey(source, dest)]?.condition || CONDITION_DEFAULT,
+        condition_expression:
+          this.edgeMetadata[this.condKey(source, dest)]?.condition_expression || '',
         label: this.edgeMetadata[this.condKey(source, dest)]?.label || '',
       });
     },
@@ -576,8 +587,15 @@ export default {
           'WorkflowGraph__conn--on_success',
           'WorkflowGraph__conn--on_failure',
           'WorkflowGraph__conn--always',
+          'WorkflowGraph__conn--expression',
         );
-        conn.classList.add(`WorkflowGraph__conn--${this.edgeMetadata[key].condition}`);
+        const metadata = this.edgeMetadata[key];
+        conn.classList.add(`WorkflowGraph__conn--${metadata.condition}`);
+        const title = metadata.condition === 'expression'
+          ? metadata.condition_expression
+          : metadata.label;
+        if (title) conn.setAttribute('title', title);
+        else conn.removeAttribute('title');
       });
     },
 
@@ -642,7 +660,10 @@ export default {
     bottom: 8px;
     right: 12px;
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 12px;
+    max-width: calc(100% - 24px);
     font-size: 11px;
     padding: 4px 8px;
     border-radius: 4px;
@@ -657,6 +678,7 @@ export default {
     &--on_success { background: #4caf50; }
     &--on_failure { background: #f44336; }
     &--always { background: #9e9e9e; }
+    &--expression { background: #7e57c2; }
   }
 
   // Node card
@@ -701,7 +723,10 @@ export default {
     border-radius: 8px;
     color: #fff;
     &--success, &--approved { background: #4caf50; }
-    &--failed, &--error, &--stopped, &--rejected, &--blocked { background: #f44336; }
+    &--failed, &--error, &--stopped, &--rejected { background: #f44336; }
+    &--blocked { background: #ef6c00; }
+    &--canceled { background: #616161; }
+    &--skipped { background: #9e9e9e; }
     &--running, &--pending, &--waiting { background: #2196f3; }
   }
 
@@ -744,7 +769,10 @@ export default {
   .drawflow-node.WorkflowGraph__nodeWrap--status-failed,
   .drawflow-node.WorkflowGraph__nodeWrap--status-error,
   .drawflow-node.WorkflowGraph__nodeWrap--status-rejected,
-  .drawflow-node.WorkflowGraph__nodeWrap--status-blocked { border-color: #f44336; }
+  .drawflow-node.WorkflowGraph__nodeWrap--status-stopped { border-color: #f44336; }
+  .drawflow-node.WorkflowGraph__nodeWrap--status-blocked { border-color: #ef6c00; }
+  .drawflow-node.WorkflowGraph__nodeWrap--status-canceled { border-color: #616161; }
+  .drawflow-node.WorkflowGraph__nodeWrap--status-skipped { border-color: #9e9e9e; }
 
   // Active node — Concourse-style: glowing pulse + moving diagonal stripes.
   .drawflow-node.WorkflowGraph__nodeWrap--status-running,
@@ -792,5 +820,6 @@ export default {
   .connection.WorkflowGraph__conn--on_success .main-path { stroke: #4caf50; }
   .connection.WorkflowGraph__conn--on_failure .main-path { stroke: #f44336; }
   .connection.WorkflowGraph__conn--always .main-path { stroke: #9e9e9e; }
+  .connection.WorkflowGraph__conn--expression .main-path { stroke: #7e57c2; }
 }
 </style>

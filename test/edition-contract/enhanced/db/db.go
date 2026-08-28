@@ -14,10 +14,12 @@ import (
 )
 
 const (
-	MaxWorkflowNodes       = 200
-	MaxWorkflowEdges       = 1000
-	maxWorkflowNameLength  = 255
-	maxWorkflowLabelLength = 255
+	MaxWorkflowNodes           = 200
+	MaxWorkflowEdges           = 1000
+	DefaultWorkflowParallelism = 4
+	MaxWorkflowParallelism     = 32
+	maxWorkflowNameLength      = 255
+	maxWorkflowLabelLength     = 255
 )
 
 func NormalizeWorkflowTemplate(workflow coreDB.WorkflowTemplate) coreDB.WorkflowTemplate {
@@ -25,12 +27,19 @@ func NormalizeWorkflowTemplate(workflow coreDB.WorkflowTemplate) coreDB.Workflow
 	if workflow.DefinitionVersion == 0 {
 		workflow.DefinitionVersion = coreDB.WorkflowDefinitionVersion
 	}
+	if workflow.MaxParallelTasks == 0 {
+		workflow.MaxParallelTasks = DefaultWorkflowParallelism
+	}
 	nextEdgeID := -1
 	usedEdgeIDs := make(map[int]struct{}, len(workflow.Edges))
 	for index := range workflow.Edges {
 		edge := &workflow.Edges[index]
 		if edge.Condition == "" {
 			edge.Condition = coreDB.WorkflowEdgeOnSuccess
+		}
+		edge.Expression = strings.TrimSpace(edge.Expression)
+		if edge.Expression != "" {
+			edge.Condition = coreDB.WorkflowEdgeExpression
 		}
 		edge.Label = strings.TrimSpace(edge.Label)
 		if edge.ID == 0 {
@@ -53,13 +62,32 @@ func NormalizeWorkflowTemplate(workflow coreDB.WorkflowTemplate) coreDB.Workflow
 		if node.ConvergenceMode == "" {
 			node.ConvergenceMode = coreDB.WorkflowConvergenceAll
 		}
+		if node.JoinMode == "" {
+			node.JoinMode = node.EffectiveJoinMode()
+		}
 		node.DisplayName = strings.TrimSpace(node.DisplayName)
 	}
 	return workflow
 }
 
-func ValidateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, workflow coreDB.WorkflowTemplate) (coreDB.WorkflowValidationResult, error) {
+func PrepareWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, workflow coreDB.WorkflowTemplate) (coreDB.WorkflowTemplate, coreDB.WorkflowValidationResult, error) {
 	workflow = NormalizeWorkflowTemplate(workflow)
+	conditionIssues := compileWorkflowConditions(&workflow)
+	result, err := validateWorkflowTemplate(store, workflow)
+	if err != nil {
+		return coreDB.WorkflowTemplate{}, coreDB.WorkflowValidationResult{}, err
+	}
+	result.Issues = append(result.Issues, conditionIssues...)
+	result.Valid = len(result.Issues) == 0
+	return workflow, result, nil
+}
+
+func ValidateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, workflow coreDB.WorkflowTemplate) (coreDB.WorkflowValidationResult, error) {
+	_, result, err := PrepareWorkflowTemplate(store, workflow)
+	return result, err
+}
+
+func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, workflow coreDB.WorkflowTemplate) (coreDB.WorkflowValidationResult, error) {
 	issues := make([]coreDB.WorkflowValidationIssue, 0)
 	add := func(code, message, path string, nodeID, edgeID *int) {
 		issues = append(issues, coreDB.WorkflowValidationIssue{
@@ -73,6 +101,9 @@ func ValidateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 	}
 	if workflow.DefinitionVersion != coreDB.WorkflowDefinitionVersion {
 		add("WORKFLOW_SCHEMA_UNSUPPORTED", "Workflow definition version is not supported.", "definition_version", nil, nil)
+	}
+	if workflow.MaxParallelTasks < 1 || workflow.MaxParallelTasks > MaxWorkflowParallelism {
+		add("WORKFLOW_PARALLELISM_INVALID", fmt.Sprintf("Workflow parallelism must be between 1 and %d.", MaxWorkflowParallelism), "max_parallel_tasks", nil, nil)
 	}
 	if len(workflow.Nodes) == 0 {
 		add("WORKFLOW_NODES_REQUIRED", "At least one workflow node is required.", "nodes", nil, nil)
@@ -102,6 +133,9 @@ func ValidateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 			executable[id] = struct{}{}
 			if err := node.ConvergenceMode.Validate(); err != nil {
 				add("WORKFLOW_CONVERGENCE_INVALID", "Workflow convergence mode is invalid.", path+".convergence_mode", &id, nil)
+			}
+			if err := node.EffectiveJoinMode().Validate(); err != nil {
+				add("WORKFLOW_JOIN_MODE_INVALID", "Workflow join mode is invalid.", path+".join_mode", &id, nil)
 			}
 		}
 		if len(node.DisplayName) > maxWorkflowLabelLength {
@@ -214,6 +248,49 @@ func ValidateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 	return coreDB.WorkflowValidationResult{Valid: len(issues) == 0, Issues: issues}, nil
 }
 
+func compileWorkflowConditions(workflow *coreDB.WorkflowTemplate) []coreDB.WorkflowValidationIssue {
+	issues := make([]coreDB.WorkflowValidationIssue, 0)
+	for index := range workflow.Edges {
+		edge := &workflow.Edges[index]
+		expression := edge.Expression
+		if expression == "" {
+			switch edge.Condition {
+			case coreDB.WorkflowEdgeOnSuccess:
+				expression = `result.status == "succeeded"`
+			case coreDB.WorkflowEdgeOnFailure:
+				expression = `result.status == "failed" || result.status == "canceled" || result.status == "stopped"`
+			case coreDB.WorkflowEdgeAlways:
+				expression = "true"
+			case coreDB.WorkflowEdgeExpression:
+				issues = append(issues, workflowConditionIssue(index, edge.ID, "Condition expression is required."))
+				continue
+			default:
+				continue
+			}
+		}
+		program, err := CompileWorkflowCondition(expression)
+		if err != nil {
+			issues = append(issues, workflowConditionIssue(index, edge.ID, err.Error()))
+			continue
+		}
+		encoded, err := json.Marshal(program)
+		if err != nil {
+			issues = append(issues, workflowConditionIssue(index, edge.ID, "Condition program could not be stored."))
+			continue
+		}
+		edge.ConditionProgram = program
+		edge.ConditionProgramJSON = string(encoded)
+	}
+	return issues
+}
+
+func workflowConditionIssue(index, edgeID int, message string) coreDB.WorkflowValidationIssue {
+	return coreDB.WorkflowValidationIssue{
+		Code: "WORKFLOW_EDGE_EXPRESSION_INVALID", Message: message,
+		Path: fmt.Sprintf("edges[%d].condition_expression", index), EdgeID: &edgeID,
+	}
+}
+
 func hasCycle(adjacency map[int][]int, nodes map[int]struct{}) bool {
 	state := make(map[int]uint8, len(nodes))
 	var visit func(int) bool
@@ -242,7 +319,16 @@ func hasCycle(adjacency map[int][]int, nodes map[int]struct{}) bool {
 }
 
 func WorkflowConditionMatches(status coreDB.WorkflowRunStatus, condition coreDB.WorkflowEdgeCondition) bool {
-	return false
+	switch condition {
+	case coreDB.WorkflowEdgeAlways:
+		return true
+	case coreDB.WorkflowEdgeOnSuccess:
+		return status == coreDB.WorkflowRunSucceeded || status == coreDB.WorkflowRunSuccess
+	case coreDB.WorkflowEdgeOnFailure:
+		return status == coreDB.WorkflowRunFailed || status == coreDB.WorkflowRunCanceled || status == coreDB.WorkflowRunStopped
+	default:
+		return false
+	}
 }
 
 func WorkflowRootNode(workflow coreDB.WorkflowTemplate) (coreDB.WorkflowNode, error) {
@@ -271,8 +357,7 @@ func WorkflowRootNode(workflow coreDB.WorkflowTemplate) (coreDB.WorkflowNode, er
 }
 
 // BuildWorkflowRunSnapshot freezes the definition and every referenced task
-// template before any task is created. Slice 031 deliberately accepts only a
-// linear pair of task nodes connected by one on-success edge.
+// template before any task is created.
 func BuildWorkflowRunSnapshot(
 	workflow coreDB.WorkflowTemplate,
 	templates map[int]coreDB.Template,
@@ -280,13 +365,17 @@ func BuildWorkflowRunSnapshot(
 	correlationID string,
 	now time.Time,
 ) (coreDB.WorkflowRun, error) {
+	workflow = NormalizeWorkflowTemplate(workflow)
+	if issues := compileWorkflowConditions(&workflow); len(issues) > 0 {
+		return coreDB.WorkflowRun{}, common_errors.NewValidationError(issues[0].Message)
+	}
 	if actorUserID <= 0 {
 		return coreDB.WorkflowRun{}, common_errors.NewValidationError("workflow run actor is required")
 	}
 	if strings.TrimSpace(correlationID) == "" {
 		return coreDB.WorkflowRun{}, common_errors.NewValidationError("workflow run correlation ID is required")
 	}
-	if err := validateLinearWorkflow(workflow); err != nil {
+	if err := validateRunnableWorkflow(workflow); err != nil {
 		return coreDB.WorkflowRun{}, err
 	}
 	definitionJSON, err := json.Marshal(workflow)
@@ -299,7 +388,7 @@ func BuildWorkflowRunSnapshot(
 		DefinitionVersion: workflow.DefinitionVersion, DefinitionRevision: workflow.Revision,
 		CorrelationID: correlationID, DefinitionSnapshotJSON: string(definitionJSON),
 		DefinitionSnapshot: workflow, Created: now, Start: &now,
-		Nodes: make([]coreDB.WorkflowRunNode, 0, 2),
+		Nodes: make([]coreDB.WorkflowRunNode, 0, len(workflow.Nodes)),
 	}
 	for _, node := range workflow.Nodes {
 		if node.EffectiveKind() == coreDB.WorkflowNodeNoteKind {
@@ -322,30 +411,30 @@ func BuildWorkflowRunSnapshot(
 	return run, nil
 }
 
-func validateLinearWorkflow(workflow coreDB.WorkflowTemplate) error {
-	executable := make([]coreDB.WorkflowNode, 0, 2)
+func validateRunnableWorkflow(workflow coreDB.WorkflowTemplate) error {
+	executable := 0
 	for _, node := range workflow.Nodes {
 		if node.EffectiveKind() == coreDB.WorkflowNodeNoteKind {
 			continue
 		}
 		if node.EffectiveKind() != coreDB.WorkflowNodeTaskKind {
-			return common_errors.NewValidationError("linear workflow runs support task nodes only")
+			return common_errors.NewValidationError("workflow runs support task nodes only")
 		}
-		executable = append(executable, node)
+		executable++
 	}
-	if len(executable) != 2 || len(workflow.Edges) != 1 {
-		return common_errors.NewValidationError("linear workflow runs require exactly two task nodes and one edge")
+	if executable == 0 {
+		return common_errors.NewValidationError("workflow run requires at least one task node")
 	}
-	edge := workflow.Edges[0]
-	if edge.Condition != coreDB.WorkflowEdgeOnSuccess || edge.SourceNodeID == edge.DestinationNodeID {
-		return common_errors.NewValidationError("linear workflow runs require one on-success dependency")
+	if workflow.MaxParallelTasks < 1 || workflow.MaxParallelTasks > MaxWorkflowParallelism {
+		return common_errors.NewValidationError("workflow parallelism is invalid")
 	}
-	ids := map[int]struct{}{executable[0].ID: {}, executable[1].ID: {}}
-	if _, ok := ids[edge.SourceNodeID]; !ok {
-		return common_errors.NewValidationError("linear workflow edge source is invalid")
+	for _, edge := range workflow.Edges {
+		if edge.ConditionProgram.Version != workflowConditionProgramVersion || len(edge.ConditionProgram.Instructions) == 0 {
+			return common_errors.NewValidationError("workflow edge condition program is unavailable")
+		}
 	}
-	if _, ok := ids[edge.DestinationNodeID]; !ok {
-		return common_errors.NewValidationError("linear workflow edge destination is invalid")
+	if _, err := WorkflowRootNode(workflow); err != nil {
+		return err
 	}
 	return nil
 }
@@ -359,7 +448,7 @@ func WorkflowRunNodeStatusFromTaskStatus(status task_logger.TaskStatus) coreDB.W
 	case task_logger.TaskSuccessStatus:
 		return coreDB.WorkflowRunNodeSucceeded
 	case task_logger.TaskStoppedStatus:
-		return coreDB.WorkflowRunNodeStopped
+		return coreDB.WorkflowRunNodeCanceled
 	case task_logger.TaskFailStatus, task_logger.TaskRejected:
 		return coreDB.WorkflowRunNodeFailed
 	default:

@@ -2,6 +2,7 @@ package sql
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -81,9 +82,9 @@ func (d *WorkflowStoreImpl) CreateWorkflowTemplate(workflow db.WorkflowTemplate)
 	workflow.DefinitionVersion = db.WorkflowDefinitionVersion
 	workflow.Revision = 1
 	workflow.ID, err = d.insertTx(tx,
-		"insert into project__workflow_template(project_id, name, description, start_version, definition_version, revision) values (?, ?, ?, ?, ?, ?)",
+		"insert into project__workflow_template(project_id, name, description, start_version, definition_version, revision, max_parallel_tasks) values (?, ?, ?, ?, ?, ?, ?)",
 		workflow.ProjectID, workflow.Name, workflow.Description, workflow.StartVersion,
-		workflow.DefinitionVersion, workflow.Revision,
+		workflow.DefinitionVersion, workflow.Revision, workflow.MaxParallelTasks,
 	)
 	if err != nil {
 		return db.WorkflowTemplate{}, err
@@ -114,8 +115,8 @@ func (d *WorkflowStoreImpl) UpdateWorkflowTemplate(workflow db.WorkflowTemplate)
 		return db.WorkflowTemplate{}, pro_interfaces.ErrWorkflowRevisionConflict
 	}
 	result, err := tx.Exec(d.connection.PrepareQuery(
-		"update project__workflow_template set name=?, description=?, start_version=?, definition_version=?, revision=revision+1 where project_id=? and id=? and revision=?"),
-		workflow.Name, workflow.Description, workflow.StartVersion, workflow.DefinitionVersion,
+		"update project__workflow_template set name=?, description=?, start_version=?, definition_version=?, max_parallel_tasks=?, revision=revision+1 where project_id=? and id=? and revision=?"),
+		workflow.Name, workflow.Description, workflow.StartVersion, workflow.DefinitionVersion, workflow.MaxParallelTasks,
 		workflow.ProjectID, workflow.ID, workflow.Revision,
 	)
 	if err != nil {
@@ -173,7 +174,7 @@ func (d *WorkflowStoreImpl) selectWorkflowTemplateTx(tx *gorp.Transaction, proje
 
 func (d *WorkflowStoreImpl) loadWorkflowGraph(tx *gorp.Transaction, workflow *db.WorkflowTemplate) error {
 	nodeQuery := d.connection.PrepareQuery(
-		"select id, workflow_template_id, template_id, kind, convergence_mode, approval_timeout, approval_message, task_params_id, note, position_x, position_y, display_name from project__workflow_node where workflow_template_id=? order by id")
+		"select id, workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, task_params_id, note, position_x, position_y, display_name from project__workflow_node where workflow_template_id=? order by id")
 	edgeQuery := d.connection.PrepareQuery(
 		"select * from project__workflow_edge where workflow_template_id=? order by id")
 	var err error
@@ -192,6 +193,14 @@ func (d *WorkflowStoreImpl) loadWorkflowGraph(tx *gorp.Transaction, workflow *db
 	}
 	if err != nil {
 		return err
+	}
+	for index := range workflow.Edges {
+		if workflow.Edges[index].ConditionProgramJSON == "" {
+			continue
+		}
+		if err = json.Unmarshal([]byte(workflow.Edges[index].ConditionProgramJSON), &workflow.Edges[index].ConditionProgram); err != nil {
+			return fmt.Errorf("decode workflow edge condition program: %w", err)
+		}
 	}
 	for index := range workflow.Nodes {
 		if workflow.Nodes[index].TaskParamsID == nil {
@@ -247,8 +256,8 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 		}
 		if _, exists := existingNodes[clientID]; exists && clientID > 0 {
 			if _, err := tx.Exec(d.connection.PrepareQuery(
-				"update project__workflow_node set template_id=?, kind=?, convergence_mode=?, approval_timeout=?, approval_message=?, task_params_id=?, note=?, position_x=?, position_y=?, display_name=? where workflow_template_id=? and id=?"),
-				node.TemplateID, node.Kind, node.ConvergenceMode, node.ApprovalTimeout, node.ApprovalMessage,
+				"update project__workflow_node set template_id=?, kind=?, convergence_mode=?, join_mode=?, approval_timeout=?, approval_message=?, task_params_id=?, note=?, position_x=?, position_y=?, display_name=? where workflow_template_id=? and id=?"),
+				node.TemplateID, node.Kind, node.ConvergenceMode, node.JoinMode, node.ApprovalTimeout, node.ApprovalMessage,
 				node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName,
 				workflow.ID, clientID,
 			); err != nil {
@@ -268,8 +277,8 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 			return fmt.Errorf("workflow node %d does not belong to workflow %d", clientID, workflow.ID)
 		}
 		newID, err := d.insertTx(tx,
-			"insert into project__workflow_node(workflow_template_id, template_id, kind, convergence_mode, approval_timeout, approval_message, task_params_id, note, position_x, position_y, display_name) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			workflow.ID, node.TemplateID, node.Kind, node.ConvergenceMode, node.ApprovalTimeout,
+			"insert into project__workflow_node(workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, task_params_id, note, position_x, position_y, display_name) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			workflow.ID, node.TemplateID, node.Kind, node.ConvergenceMode, node.JoinMode, node.ApprovalTimeout,
 			node.ApprovalMessage, node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName,
 		)
 		if err != nil {
@@ -293,8 +302,8 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 		}
 		if _, exists := existingEdges[clientID]; exists && clientID > 0 {
 			if _, err := tx.Exec(d.connection.PrepareQuery(
-				"update project__workflow_edge set source_node_id=?, destination_node_id=?, condition=?, label=? where workflow_template_id=? and id=?"),
-				edge.SourceNodeID, edge.DestinationNodeID, edge.Condition, edge.Label, workflow.ID, clientID,
+				"update project__workflow_edge set source_node_id=?, destination_node_id=?, condition=?, label=?, condition_expression=?, condition_program=? where workflow_template_id=? and id=?"),
+				edge.SourceNodeID, edge.DestinationNodeID, edge.Condition, edge.Label, edge.Expression, edge.ConditionProgramJSON, workflow.ID, clientID,
 			); err != nil {
 				return err
 			}
@@ -305,8 +314,8 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 			return fmt.Errorf("workflow edge %d does not belong to workflow %d", clientID, workflow.ID)
 		}
 		newID, err := d.insertTx(tx,
-			"insert into project__workflow_edge(workflow_template_id, source_node_id, destination_node_id, condition, label) values (?, ?, ?, ?, ?)",
-			workflow.ID, edge.SourceNodeID, edge.DestinationNodeID, edge.Condition, edge.Label,
+			"insert into project__workflow_edge(workflow_template_id, source_node_id, destination_node_id, condition, label, condition_expression, condition_program) values (?, ?, ?, ?, ?, ?, ?)",
+			workflow.ID, edge.SourceNodeID, edge.DestinationNodeID, edge.Condition, edge.Label, edge.Expression, edge.ConditionProgramJSON,
 		)
 		if err != nil {
 			return err

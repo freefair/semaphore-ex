@@ -36,6 +36,33 @@ describe('workflow editor authoring lifecycle', () => {
     expect(context.dirty).to.equal(false);
     expect(context.graphKey).to.equal(5);
     expect(WorkflowEditor.methods.getNewItem().definition_version).to.equal(1);
+    expect(WorkflowEditor.methods.getNewItem().max_parallel_tasks).to.equal(4);
+  });
+
+  it('defaults and preserves conditional workflow authoring fields', () => {
+    const prepared = WorkflowEditor.methods.prepareItem({
+      name: 'Conditional',
+      nodes: [
+        {
+          id: 1, kind: 'task', convergence_mode: 'any', template_id: 7,
+        },
+        {
+          id: 2, kind: 'task', template_id: 8, join_mode: 'all-complete',
+        },
+      ],
+      edges: [{
+        id: 3,
+        source_node_id: 1,
+        destination_node_id: 2,
+        condition: 'expression',
+        condition_expression: 'result.successful',
+      }],
+    });
+
+    expect(prepared.max_parallel_tasks).to.equal(4);
+    expect(prepared.nodes[0].join_mode).to.equal('any-successful');
+    expect(prepared.nodes[1].join_mode).to.equal('all-complete');
+    expect(prepared.edges[0].condition_expression).to.equal('result.successful');
   });
 
   it('uses the authoritative validation endpoint and retains located issues', async () => {
@@ -207,5 +234,50 @@ describe('workflow editor authoring lifecycle', () => {
 
     expect(WorkflowGraph.methods.nextNodeId.call(context)).to.equal(-2);
     expect(WorkflowGraph.methods.nextEdgeId.call(context)).to.equal(-4);
+  });
+
+  it('round-trips a condition expression through the existing graph model', () => {
+    const context = {
+      editor: {
+        export: () => ({
+          drawflow: {
+            Home: {
+              data: {
+                1: {
+                  data: { nodeId: 11, node: { kind: 'task', template_id: 7 } },
+                  pos_x: 10,
+                  pos_y: 20,
+                  outputs: { output_1: { connections: [{ node: '2' }] } },
+                },
+                2: {
+                  data: { nodeId: 12, node: { kind: 'task', template_id: 8 } },
+                  pos_x: 30,
+                  pos_y: 40,
+                  outputs: { output_1: { connections: [] } },
+                },
+              },
+            },
+          },
+        }),
+      },
+      edgeMetadata: {
+        '11->12': {
+          id: 21,
+          condition: 'expression',
+          condition_expression: 'result.summary.failed_hosts == 0',
+          label: 'clean',
+        },
+      },
+      condKey: WorkflowGraph.methods.condKey,
+      stripPosition: WorkflowGraph.methods.stripPosition,
+    };
+
+    const model = WorkflowGraph.methods.exportModel.call(context);
+
+    expect(model.edges[0]).to.include({
+      condition: 'expression',
+      condition_expression: 'result.summary.failed_hosts == 0',
+      label: 'clean',
+    });
   });
 });

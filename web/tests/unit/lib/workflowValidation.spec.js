@@ -73,4 +73,36 @@ describe('workflow definition validation', () => {
     expect(codes).to.include('WORKFLOW_SELF_EDGE');
     expect(codes).to.include('WORKFLOW_DISCONNECTED');
   });
+
+  it('validates parallelism, join modes, and required condition expressions', () => {
+    const workflow = validWorkflow();
+    workflow.max_parallel_tasks = 33;
+    workflow.nodes[1].join_mode = 'sometimes';
+    workflow.edges[0].condition = 'expression';
+    workflow.edges[0].condition_expression = '   ';
+
+    const issues = validateWorkflowDefinition(workflow, [10]);
+    const codes = issues.map((entry) => entry.code);
+
+    expect(codes).to.include.members([
+      'WORKFLOW_PARALLELISM_INVALID',
+      'WORKFLOW_JOIN_MODE_INVALID',
+      'WORKFLOW_EDGE_EXPRESSION_REQUIRED',
+    ]);
+    expect(issues.find((entry) => entry.code === 'WORKFLOW_PARALLELISM_INVALID').path)
+      .to.equal('max_parallel_tasks');
+    expect(issues.find((entry) => entry.code === 'WORKFLOW_JOIN_MODE_INVALID').path)
+      .to.equal('nodes[1].join_mode');
+    expect(issues.find((entry) => entry.code === 'WORKFLOW_EDGE_EXPRESSION_REQUIRED').path)
+      .to.equal('edges[0].condition_expression');
+  });
+
+  it('rejects an explicit zero parallelism instead of applying the omitted-field default', () => {
+    const workflow = validWorkflow();
+    workflow.max_parallel_tasks = 0;
+
+    const issues = validateWorkflowDefinition(workflow, [10]);
+
+    expect(issues.map((entry) => entry.code)).to.include('WORKFLOW_PARALLELISM_INVALID');
+  });
 });

@@ -1,11 +1,13 @@
 package sql
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
 	"github.com/semaphoreui/semaphore/db"
 	coresql "github.com/semaphoreui/semaphore/db/sql"
+	workflowDB "github.com/semaphoreui/semaphore/pro/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,6 +17,16 @@ func TestWorkflowDefinitionRoundTripPreservesGraphIDsAndLayout(t *testing.T) {
 	store, repository, projectID := workflowRepositoryFixture(t)
 	defer store.Close()
 	workflow := repositoryWorkflow(projectID)
+	workflow.MaxParallelTasks = 3
+	workflow.Nodes[1].JoinMode = db.WorkflowJoinAllComplete
+	workflow.Edges[0].Condition = db.WorkflowEdgeExpression
+	workflow.Edges[0].Expression = `result.summary.failed_hosts == 0`
+	program, err := workflowDB.CompileWorkflowCondition(workflow.Edges[0].Expression)
+	require.NoError(t, err)
+	encodedProgram, err := json.Marshal(program)
+	require.NoError(t, err)
+	workflow.Edges[0].ConditionProgram = program
+	workflow.Edges[0].ConditionProgramJSON = string(encodedProgram)
 
 	created, err := repository.CreateWorkflowTemplate(workflow)
 	require.NoError(t, err)
@@ -42,6 +54,11 @@ func TestWorkflowDefinitionRoundTripPreservesGraphIDsAndLayout(t *testing.T) {
 	assert.Equal(t, 321, reloaded.Nodes[0].PositionX)
 	assert.Equal(t, 654, reloaded.Nodes[0].PositionY)
 	assert.Equal(t, "promote", reloaded.Edges[0].Label)
+	assert.Equal(t, 3, reloaded.MaxParallelTasks)
+	assert.Equal(t, db.WorkflowJoinAllComplete, reloaded.Nodes[1].JoinMode)
+	assert.Equal(t, db.WorkflowEdgeExpression, reloaded.Edges[0].Condition)
+	assert.Equal(t, `result.summary.failed_hosts == 0`, reloaded.Edges[0].Expression)
+	assert.Equal(t, program, reloaded.Edges[0].ConditionProgram)
 	assert.Equal(t, nodeIDs, []int{reloaded.Nodes[0].ID, reloaded.Nodes[1].ID})
 	assert.Equal(t, edgeID, reloaded.Edges[0].ID)
 }

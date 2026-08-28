@@ -28,8 +28,8 @@ func (s *workflowDefinitionService) Get(projectID int, workflowID int) (db.Workf
 
 func (s *workflowDefinitionService) Validate(projectID int, workflow db.WorkflowTemplate) (db.WorkflowValidationResult, error) {
 	workflow.ProjectID = projectID
-	workflow = workflowDB.NormalizeWorkflowTemplate(workflow)
-	return workflowDB.ValidateWorkflowTemplate(s.validationStore, workflow)
+	_, result, err := workflowDB.PrepareWorkflowTemplate(s.validationStore, workflow)
+	return result, err
 }
 
 func (s *workflowDefinitionService) Create(
@@ -39,8 +39,7 @@ func (s *workflowDefinitionService) Create(
 	workflow.ID = 0
 	workflow.ProjectID = projectID
 	workflow.Revision = 0
-	workflow = workflowDB.NormalizeWorkflowTemplate(workflow)
-	result, err := workflowDB.ValidateWorkflowTemplate(s.validationStore, workflow)
+	workflow, result, err := workflowDB.PrepareWorkflowTemplate(s.validationStore, workflow)
 	if err != nil {
 		return db.WorkflowTemplate{}, db.WorkflowValidationResult{}, err
 	}
@@ -58,8 +57,7 @@ func (s *workflowDefinitionService) Update(
 ) (db.WorkflowTemplate, db.WorkflowValidationResult, error) {
 	workflow.ID = workflowID
 	workflow.ProjectID = projectID
-	workflow = workflowDB.NormalizeWorkflowTemplate(workflow)
-	result, err := workflowDB.ValidateWorkflowTemplate(s.validationStore, workflow)
+	workflow, result, err := workflowDB.PrepareWorkflowTemplate(s.validationStore, workflow)
 	if err != nil {
 		return db.WorkflowTemplate{}, db.WorkflowValidationResult{}, err
 	}

@@ -74,9 +74,9 @@ func (d *WorkflowStoreImpl) getWorkflowRun(query string, args ...any) (db.Workfl
 
 func (d *WorkflowStoreImpl) GetActiveWorkflowRuns() ([]db.WorkflowRun, error) {
 	var runs []db.WorkflowRun
-	query := "select * from project__workflow_run where status not in (?, ?, ?, ?, ?) order by id"
+	query := "select * from project__workflow_run where status not in (?, ?, ?, ?, ?, ?) order by id"
 	if _, err := d.connection.SelectAll(&runs, query,
-		db.WorkflowRunSucceeded, db.WorkflowRunSuccess, db.WorkflowRunFailed, db.WorkflowRunStopped, db.WorkflowRunBlocked); err != nil {
+		db.WorkflowRunSucceeded, db.WorkflowRunSuccess, db.WorkflowRunFailed, db.WorkflowRunStopped, db.WorkflowRunCanceled, db.WorkflowRunBlocked); err != nil {
 		return nil, err
 	}
 	for index := range runs {
@@ -122,9 +122,9 @@ func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (db.WorkflowRu
 		node.ProjectID = run.ProjectID
 		node.WorkflowRunID = run.ID
 		node.ID, err = d.insertTx(tx,
-			"insert into project__workflow_run_node(project_id, workflow_run_id, workflow_node_id, template_id, status, task_id, template_snapshot, created, queued, start, end, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"insert into project__workflow_run_node(project_id, workflow_run_id, workflow_node_id, template_id, status, task_id, template_snapshot, result, created, queued, start, end, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			node.ProjectID, node.WorkflowRunID, node.WorkflowNodeID, node.TemplateID, node.Status,
-			node.TaskID, node.TemplateSnapshotJSON, node.Created, node.Queued, node.Start, node.End, node.Reason,
+			node.TaskID, node.TemplateSnapshotJSON, node.ResultJSON, node.Created, node.Queued, node.Start, node.End, node.Reason,
 		)
 		if err != nil {
 			return db.WorkflowRun{}, err
@@ -246,6 +246,7 @@ func (d *WorkflowStoreImpl) UpdateWorkflowRunNodeFromTask(
 	taskID int,
 	status db.WorkflowRunNodeStatus,
 	reason string,
+	resultJSON string,
 	at time.Time,
 ) (bool, error) {
 	if status == db.WorkflowRunNodePending || status == db.WorkflowRunNodeBlocked {
@@ -260,9 +261,33 @@ func (d *WorkflowStoreImpl) UpdateWorkflowRunNodeFromTask(
 		end = at
 	}
 	result, err := d.connection.Exec(
-		"update project__workflow_run_node set status=?, reason=?, start=coalesce(start, ?), end=coalesce(end, ?) where project_id=? and workflow_run_id=? and workflow_node_id=? and task_id=? and status not in (?, ?, ?, ?)",
-		status, reason, start, end, projectID, runID, nodeID, taskID,
-		db.WorkflowRunNodeSucceeded, db.WorkflowRunNodeFailed, db.WorkflowRunNodeStopped, db.WorkflowRunNodeBlocked,
+		"update project__workflow_run_node set status=?, reason=?, result=?, start=coalesce(start, ?), end=coalesce(end, ?) where project_id=? and workflow_run_id=? and workflow_node_id=? and task_id=? and status not in (?, ?, ?, ?, ?, ?)",
+		status, reason, resultJSON, start, end, projectID, runID, nodeID, taskID,
+		db.WorkflowRunNodeSucceeded, db.WorkflowRunNodeFailed, db.WorkflowRunNodeStopped, db.WorkflowRunNodeCanceled, db.WorkflowRunNodeBlocked, db.WorkflowRunNodeSkipped,
+	)
+	if err != nil {
+		return false, err
+	}
+	updated, err := result.RowsAffected()
+	return updated == 1, err
+}
+
+func (d *WorkflowStoreImpl) FinalizeWorkflowRunNode(
+	projectID int,
+	runID int,
+	nodeID int,
+	status db.WorkflowRunNodeStatus,
+	reason string,
+	resultJSON string,
+	at time.Time,
+) (bool, error) {
+	if status != db.WorkflowRunNodeSkipped && status != db.WorkflowRunNodeBlocked && status != db.WorkflowRunNodeCanceled {
+		return false, fmt.Errorf("workflow planner cannot finalize node as %s", status)
+	}
+	result, err := d.connection.Exec(
+		"update project__workflow_run_node set status=?, reason=?, result=?, end=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status in (?, ?) and task_id is null",
+		status, reason, resultJSON, at, projectID, runID, nodeID,
+		db.WorkflowRunNodePending, db.WorkflowRunNodeQueued,
 	)
 	if err != nil {
 		return false, err
@@ -305,11 +330,15 @@ func (d *WorkflowStoreImpl) loadWorkflowRun(run *db.WorkflowRun) error {
 }
 
 func decodeWorkflowRunNode(node *db.WorkflowRunNode) error {
-	if node.TemplateSnapshotJSON == "" {
-		return nil
+	if node.TemplateSnapshotJSON != "" {
+		if err := json.Unmarshal([]byte(node.TemplateSnapshotJSON), &node.TemplateSnapshot); err != nil {
+			return fmt.Errorf("decode workflow template snapshot: %w", err)
+		}
 	}
-	if err := json.Unmarshal([]byte(node.TemplateSnapshotJSON), &node.TemplateSnapshot); err != nil {
-		return fmt.Errorf("decode workflow template snapshot: %w", err)
+	if node.ResultJSON != "" && node.ResultJSON != "{}" {
+		if err := json.Unmarshal([]byte(node.ResultJSON), &node.Result); err != nil {
+			return fmt.Errorf("decode workflow node result: %w", err)
+		}
 	}
 	return nil
 }

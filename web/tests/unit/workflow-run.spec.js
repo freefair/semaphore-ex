@@ -14,12 +14,14 @@ describe('linear workflow run dashboard', () => {
     axios.get = originalGet;
   });
 
-  it('maps legacy task states without hiding a blocked workflow node', () => {
+  it('maps task states without hiding distinct blocked, skipped, or canceled nodes', () => {
     const context = {
       details: {
         nodes: [
           { node: { id: 11 }, status: 'succeeded', task: { id: 101, status: 'success' } },
           { node: { id: 12 }, status: 'blocked' },
+          { node: { id: 13 }, status: 'skipped' },
+          { node: { id: 14 }, status: 'canceled' },
         ],
       },
       normalizeNodeStatus: WorkflowRun.methods.normalizeNodeStatus,
@@ -28,10 +30,31 @@ describe('linear workflow run dashboard', () => {
     expect(WorkflowRun.computed.nodeStatuses.call(context)).to.deep.equal({
       11: 'success',
       12: 'blocked',
+      13: 'skipped',
+      14: 'canceled',
     });
     expect(WorkflowRuns.methods.statusColor('succeeded')).to.equal('success');
     expect(WorkflowRuns.methods.statusColor('blocked')).to.equal('error');
     expect(WorkflowRuns.methods.statusColor('queued')).to.equal('primary');
+  });
+
+  it('reports compact active-node progress against the frozen workflow bound', () => {
+    const context = {
+      workflow: { max_parallel_tasks: 3 },
+      details: {
+        nodes: [
+          { status: 'queued' },
+          { status: 'running' },
+          { status: 'skipped' },
+          { status: 'succeeded' },
+        ],
+      },
+    };
+
+    expect(WorkflowRun.computed.parallelProgress.call(context)).to.deep.equal({
+      active: 2,
+      max: 3,
+    });
   });
 
   it('loads the immutable dashboard contract without fetching the edited live workflow', async () => {

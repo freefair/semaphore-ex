@@ -55,6 +55,65 @@ func TestWorkflowDefinitionServiceNormalizesBeforeCreate(t *testing.T) {
 	assert.Equal(t, db.WorkflowDefinitionVersion, created.DefinitionVersion)
 	assert.Equal(t, db.WorkflowNodeTaskKind, created.Nodes[0].Kind)
 	assert.Equal(t, db.WorkflowConvergenceAll, created.Nodes[0].ConvergenceMode)
+	assert.Equal(t, 4, created.MaxParallelTasks)
+}
+
+func TestWorkflowDefinitionServiceCompilesConditionsBeforePersistence(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	defer store.Close()
+	project, err := store.CreateProject(db.Project{Name: "Condition service test"})
+	require.NoError(t, err)
+	templateID := insertWorkflowTestTemplate(t, store, project.ID)
+	repository := workflowSQL.NewWorkflowStore(store.GetConnection())
+	service := NewWorkflowDefinitionService(repository, store)
+	workflow := db.WorkflowTemplate{
+		Name: "Conditional",
+		Nodes: []db.WorkflowNode{
+			{ID: -1, TemplateID: templateID},
+			{ID: -2, TemplateID: templateID, JoinMode: db.WorkflowJoinAnySuccessful},
+		},
+		Edges: []db.WorkflowEdge{{
+			ID: -1, SourceNodeID: -1, DestinationNodeID: -2,
+			Condition: db.WorkflowEdgeExpression, Expression: `result.summary.failed_hosts == 0`,
+		}},
+	}
+
+	created, validation, err := service.Create(project.ID, workflow)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	require.NotEmpty(t, created.Edges[0].ConditionProgramJSON)
+	assert.Equal(t, 1, created.Edges[0].ConditionProgram.Version)
+	reloaded, err := repository.GetWorkflowTemplate(project.ID, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created.Edges[0].ConditionProgram, reloaded.Edges[0].ConditionProgram)
+	assert.Equal(t, db.WorkflowJoinAnySuccessful, reloaded.Nodes[1].JoinMode)
+}
+
+func TestWorkflowDefinitionServiceRejectsMalformedConditionAndParallelismLimit(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	defer store.Close()
+	project, err := store.CreateProject(db.Project{Name: "Invalid condition service test"})
+	require.NoError(t, err)
+	templateID := insertWorkflowTestTemplate(t, store, project.ID)
+	repository := workflowSQL.NewWorkflowStore(store.GetConnection())
+	service := NewWorkflowDefinitionService(repository, store)
+
+	_, validation, err := service.Create(project.ID, db.WorkflowTemplate{
+		Name: "Unsafe", MaxParallelTasks: 33,
+		Nodes: []db.WorkflowNode{{ID: -1, TemplateID: templateID}, {ID: -2, TemplateID: templateID}},
+		Edges: []db.WorkflowEdge{{
+			ID: -1, SourceNodeID: -1, DestinationNodeID: -2,
+			Condition: db.WorkflowEdgeExpression, Expression: `result.secret == "value"`,
+		}},
+	})
+
+	require.NoError(t, err)
+	assert.False(t, validation.Valid)
+	assert.Contains(t, workflowServiceIssueCodes(validation), "WORKFLOW_EDGE_EXPRESSION_INVALID")
+	assert.Contains(t, workflowServiceIssueCodes(validation), "WORKFLOW_PARALLELISM_INVALID")
+	stored, err := repository.GetWorkflowTemplates(project.ID, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	assert.Empty(t, stored)
 }
 
 func insertWorkflowTestTemplate(t *testing.T, store *coresql.SqlDb, projectID int) int {
