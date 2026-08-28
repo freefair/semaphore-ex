@@ -1550,12 +1550,6 @@ definitions:
       correlation_id:
         type: string
         maxLength: 64
-      definition:
-        $ref: "#/definitions/WorkflowTemplate"
-      nodes:
-        type: array
-        items:
-          $ref: "#/definitions/WorkflowRunNode"
       created:
         type: string
         format: date-time
@@ -1568,6 +1562,16 @@ definitions:
       root_task_id:
         type: integer
 
+  WorkflowRunDefinition:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowRunDefinition"
+  WorkflowRunDefinitionNode:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowRunDefinitionNode"
+  WorkflowRunDefinitionEdge:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowRunDefinitionEdge"
+  WorkflowRunTemplate:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowRunTemplate"
+  WorkflowRunTask:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowRunTask"
   WorkflowRunNode:
     $ref: "./api-docs-ex.yml#/definitions/WorkflowRunNode"
   WorkflowApproval:
@@ -1597,14 +1601,14 @@ definitions:
     type: object
     properties:
       node:
-        $ref: "#/definitions/WorkflowNode"
+        $ref: "#/definitions/WorkflowRunDefinitionNode"
       status:
         type: string
         enum: [pending, queued, running, succeeded, failed, stopped, blocked]
       reason:
         type: string
       task:
-        $ref: "#/definitions/Task"
+        $ref: "#/definitions/WorkflowRunTask"
       approval:
         $ref: "#/definitions/WorkflowApproval"
 
@@ -1614,11 +1618,11 @@ definitions:
       run:
         $ref: "#/definitions/WorkflowRun"
       workflow:
-        $ref: "#/definitions/WorkflowTemplate"
+        $ref: "#/definitions/WorkflowRunDefinition"
       templates:
         type: array
         items:
-          $ref: "#/definitions/Template"
+          $ref: "#/definitions/WorkflowRunTemplate"
       nodes:
         type: array
         items:
