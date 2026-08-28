@@ -1,0 +1,21 @@
+services:
+  openldap:
+    image: bitnamilegacy/openldap:2.6.10-debian-12-r4@sha256:966fd39ed25813890e9bd57dac56def163bbcfe64967e0bae59ab018d505bd93
+    hostname: localhost
+    environment:
+      LDAP_ROOT: dc=example,dc=test
+      LDAP_ADMIN_USERNAME: admin
+      LDAP_ADMIN_PASSWORD_FILE: /run/secrets/admin-password
+      LDAP_ALLOW_ANON_BINDING: "no"
+      LDAP_CUSTOM_LDIF_DIR: /ldifs
+      LDAP_ENABLE_TLS: "yes"
+      LDAP_REQUIRE_TLS: "yes"
+      LDAP_TLS_CERT_FILE: /certs/server.crt
+      LDAP_TLS_KEY_FILE: /certs/server.key
+      LDAP_TLS_CA_FILE: /certs/ca.crt
+    ports:
+      - "127.0.0.1::1636"
+    volumes:
+      - "${SEMAPHORE_LDAP_CERT_DIR:?required}:/certs:ro"
+      - "${SEMAPHORE_LDAP_LDIF_DIR:?required}:/ldifs:ro"
+      - "${SEMAPHORE_LDAP_SECRET_DIR:?required}:/run/secrets:ro"

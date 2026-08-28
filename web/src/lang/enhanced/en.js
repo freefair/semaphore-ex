@@ -39,6 +39,10 @@ export default {
   active: 'Active',
   resume: 'Resume',
   loadMore: 'Load more',
+  ldapProviderUnavailable: 'The selected LDAP provider is currently unavailable. Use the local recovery login or try again later.',
+  ldapLoginThrottled: 'Too many failed LDAP login attempts. Wait five minutes before trying again.',
+  ldapIdentityCollision: 'This directory identity conflicts with an existing account. Ask an administrator to link it explicitly.',
+  ldapProviderDisabled: 'The selected LDAP provider is not enabled for login.',
   projectRunnerRegistrationHint:
     'The runner will be created inactive. Its one-time registration token is shown '
     + 'once after creation and expires in 1 hour.',

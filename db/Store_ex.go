@@ -27,3 +27,21 @@ type TOTPRepository interface {
 	GetTOTPCapabilityTransitions() ([]TOTPCapabilityTransition, error)
 	CountRecoverableTOTPAdmins(excludeUserID int) (int, error)
 }
+
+// LDAPRepository persists provider configuration, rollout selection,
+// readiness, transitions, and authentication throttling without credentials.
+type LDAPRepository interface {
+	GetLDAPProvider(providerID string) (LDAPProvider, error)
+	GetLDAPProviders() ([]LDAPProvider, error)
+	SaveLDAPProvider(provider LDAPProvider) error
+	SaveLDAPReadiness(providerID string, status string, code string, checkedAt time.Time,
+		recoveryAdminUserID *int, expectedConfigVersion int) error
+	ConfigureLDAPProvider(providerID string, state string, selectedUserIDs []int, actorID int, changedAt time.Time, readinessMaxAge time.Duration) error
+	GetLDAPSelectedUsers(providerID string) ([]int, error)
+	GetLDAPLinkedUserIDs(providerID string) ([]int, error)
+	IsLDAPUserSelected(providerID string, userID int) (bool, error)
+	GetLDAPCapabilityTransitions(providerID string) ([]LDAPCapabilityTransition, error)
+	GetLDAPAuthAttempt(providerID string, subjectHash string) (LDAPAuthAttempt, error)
+	RecordLDAPAuthFailure(providerID string, subjectHash string, now time.Time, window time.Duration, maxFailures int, blockFor time.Duration) (LDAPAuthAttempt, error)
+	ClearLDAPAuthFailures(providerID string, subjectHash string) error
+}

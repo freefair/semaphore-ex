@@ -21,6 +21,8 @@ const (
 	CapabilityProjectRunners CapabilityID = "project_runners"
 	// CapabilityTOTP gates the enhanced TOTP lifecycle and rollout policy.
 	CapabilityTOTP CapabilityID = "totp"
+	// CapabilityLDAP gates the enhanced LDAP identity lifecycle.
+	CapabilityLDAP CapabilityID = "ldap"
 )
 
 // LimitID identifies one numeric limit in a capability decision.

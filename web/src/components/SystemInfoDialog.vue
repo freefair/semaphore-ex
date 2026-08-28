@@ -165,6 +165,11 @@
           </v-card>
         </template>
 
+        <template v-if="ldapDecision && ldapDecision.state !== 'unavailable'">
+          <v-subheader class="px-0 mt-2">LDAP authentication</v-subheader>
+          <LdapCapabilityPanel />
+        </template>
+
         <v-subheader class="px-0 mt-2">Structured file logs</v-subheader>
         <v-card
           v-if="structuredLogs"
@@ -608,8 +613,10 @@
 import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/system-info-dialog';
 
 import axios from 'axios';
+import LdapCapabilityPanel from '@/components/LdapCapabilityPanel.vue';
 
 export default {
+  components: { LdapCapabilityPanel },
   props: {
     value: Boolean,
     systemInfo: Object,

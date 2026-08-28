@@ -8,6 +8,9 @@ export const enhancedComputed = {
   totpDecision() {
     return findCapabilityDecision(this.systemInfo, 'totp');
   },
+  ldapDecision() {
+    return findCapabilityDecision(this.systemInfo, 'ldap');
+  },
   structuredLogs() {
     return this.info?.structured_logs || null;
   },

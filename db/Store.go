@@ -158,6 +158,7 @@ var ErrNotFound = errors.New("no rows in result set")
 // ErrTOTPReadiness reports that a transactional TOTP mutation would remove
 // the final recovery administrator or enable an unenforceable required policy.
 var ErrTOTPReadiness = errors.New("TOTP administrator recovery is not ready")
+var ErrLDAPReadiness = errors.New("LDAP local administrator recovery is not ready")
 var ErrInvalidOperation = errors.New("invalid operation")
 
 type TaskStatUnit string
@@ -620,6 +621,7 @@ type Store interface {
 	RoleRepository
 	CapabilityRepository
 	TOTPRepository
+	LDAPRepository
 	AuditWebhookRepository
 }
 

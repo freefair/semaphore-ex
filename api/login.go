@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/go-ldap/ldap/v3"
 	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
@@ -28,126 +26,6 @@ import (
 	"text/template"
 	"time"
 )
-
-func convertEntryToMap(entity *ldap.Entry) map[string]any {
-	res := map[string]any{}
-	for _, attr := range entity.Attributes {
-		if len(attr.Values) == 0 {
-			continue
-		}
-		res[attr.Name] = attr.Values[0]
-	}
-
-	return res
-}
-
-func tryFindLDAPUser(provider util.LdapProvider, username, password string) (*db.User, string, error) {
-	var l *ldap.Conn
-	var err error
-	if provider.NeedTLS {
-		// Verify the LDAP server certificate by default so a network attacker
-		// cannot impersonate the server to capture the bind credentials or a
-		// user's cleartext password. Verification can be disabled per provider
-		// via tls_skip_verify (default false) for trusted networks with
-		// self-signed certificates.
-		l, err = ldap.DialTLS("tcp", provider.Server, &tls.Config{
-			InsecureSkipVerify: provider.TLSSkipVerify, //nolint:gosec // opt-in via tls_skip_verify, defaults to false
-		})
-	} else {
-		l, err = ldap.Dial("tcp", provider.Server)
-	}
-
-	if err != nil {
-		return nil, "", err
-	}
-	defer l.Close() //nolint:errcheck
-
-	// First bind with a read only user
-	if err = l.Bind(provider.BindDN, provider.BindPassword); err != nil {
-		return nil, "", err
-	}
-
-	mappings := provider.GetMappings()
-
-	// Filter for the given username
-	searchRequest := ldap.NewSearchRequest(
-		provider.SearchDN,
-		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		fmt.Sprintf(provider.SearchFilter, ldap.EscapeFilter(username)),
-		[]string{mappings.DN},
-		nil,
-	)
-
-	sr, err := l.Search(searchRequest)
-	if err != nil {
-		return nil, "", err
-	}
-
-	if len(sr.Entries) < 1 {
-		return nil, "", nil
-	}
-
-	if len(sr.Entries) > 1 {
-		return nil, "", fmt.Errorf("too many entries returned")
-	}
-
-	// Bind as the user
-	userDN := sr.Entries[0].DN
-	if err = l.Bind(userDN, password); err != nil {
-		return nil, "", err
-	}
-
-	// Second time bind as read only user
-	if err = l.Bind(provider.BindDN, provider.BindPassword); err != nil {
-		return nil, "", err
-	}
-
-	// Get user info
-	searchRequest = ldap.NewSearchRequest(
-		provider.SearchDN,
-		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		fmt.Sprintf(provider.SearchFilter, ldap.EscapeFilter(username)),
-		[]string{mappings.DN, mappings.Mail, mappings.UID, mappings.CN},
-		nil,
-	)
-
-	sr, err = l.Search(searchRequest)
-	if err != nil {
-		return nil, "", err
-	}
-
-	if len(sr.Entries) <= 0 {
-		return nil, "", fmt.Errorf("ldap search returned no entries")
-	}
-
-	entry := convertEntryToMap(sr.Entries[0])
-
-	prepareClaims(entry)
-
-	claims, err := parseClaims(entry, mappings)
-	if err != nil {
-		return nil, "", err
-	}
-
-	ldapUser := db.User{
-		Username: strings.ToLower(claims.username),
-		Created:  tz.Now(),
-		Name:     claims.name,
-		Email:    claims.email,
-		External: true,
-		Alert:    false,
-	}
-
-	err = db.ValidateUser(ldapUser)
-	if err != nil {
-		jsonBytes, _ := json.Marshal(ldapUser)
-		log.Error("LDAP returned incorrect user data: " + string(jsonBytes))
-		return nil, "", err
-	}
-
-	log.Info("User " + ldapUser.Name + " with email " + ldapUser.Email + " authorized via LDAP correctly")
-	return &ldapUser, userDN, nil
-}
 
 // createSession creates session for passed user and stores session details
 // in cookies.
@@ -316,6 +194,7 @@ type loginMetadata struct {
 	OidcProviders     []loginMetadataOidcProvider `json:"oidc_providers"`
 	LdapProviders     []loginMetadataLdapProvider `json:"ldap_providers"`
 	LoginWithPassword bool                        `json:"login_with_password"`
+	LocalRecoveryOnly bool                        `json:"local_recovery_only"`
 	LoginWithLdap     bool                        `json:"login_with_ldap"`
 	AuthMethods       LoginAuthMethods            `json:"auth_methods"`
 }
