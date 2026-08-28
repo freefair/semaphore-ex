@@ -133,15 +133,21 @@ type WorkflowDelay struct {
 type WorkflowRunStatus string
 
 const (
-	WorkflowRunRunning  WorkflowRunStatus = "running"
-	WorkflowRunApproval WorkflowRunStatus = "approval"
-	WorkflowRunSuccess  WorkflowRunStatus = "success"
-	WorkflowRunStopped  WorkflowRunStatus = "stopped"
-	WorkflowRunFailed   WorkflowRunStatus = "failed"
+	WorkflowRunPending   WorkflowRunStatus = "pending"
+	WorkflowRunQueued    WorkflowRunStatus = "queued"
+	WorkflowRunRunning   WorkflowRunStatus = "running"
+	WorkflowRunApproval  WorkflowRunStatus = "approval"
+	WorkflowRunSucceeded WorkflowRunStatus = "succeeded"
+	// WorkflowRunSuccess is retained for reading runs created by an older
+	// enhanced implementation. New runs use WorkflowRunSucceeded.
+	WorkflowRunSuccess WorkflowRunStatus = "success"
+	WorkflowRunStopped WorkflowRunStatus = "stopped"
+	WorkflowRunFailed  WorkflowRunStatus = "failed"
+	WorkflowRunBlocked WorkflowRunStatus = "blocked"
 )
 
 func (status WorkflowRunStatus) IsFinished() bool {
-	return status == WorkflowRunSuccess || status == WorkflowRunStopped || status == WorkflowRunFailed
+	return status == WorkflowRunSucceeded || status == WorkflowRunSuccess || status == WorkflowRunStopped || status == WorkflowRunFailed || status == WorkflowRunBlocked
 }
 
 type WorkflowRun struct {
@@ -151,13 +157,63 @@ type WorkflowRun struct {
 	WorkflowTemplateID int `db:"workflow_template_id" json:"workflow_template_id" backup:"workflow_template_id"`
 
 	Status WorkflowRunStatus `db:"status" json:"status" backup:"status"`
+	Reason string            `db:"reason" json:"reason,omitempty" backup:"reason"`
 
 	Version *string `db:"version" json:"version,omitempty" backup:"version"`
 
-	Start *time.Time `db:"start" json:"start,omitempty" backup:"start"`
-	End   *time.Time `db:"end" json:"end,omitempty" backup:"end"`
+	ActorUserID        int    `db:"actor_user_id" json:"actor_user_id" backup:"actor_user_id"`
+	DefinitionVersion  int    `db:"definition_version" json:"definition_version" backup:"definition_version"`
+	DefinitionRevision int    `db:"definition_revision" json:"definition_revision" backup:"definition_revision"`
+	CorrelationID      string `db:"correlation_id" json:"correlation_id" backup:"correlation_id"`
+
+	DefinitionSnapshotJSON string            `db:"definition_snapshot" json:"-" backup:"definition_snapshot"`
+	DefinitionSnapshot     WorkflowTemplate  `db:"-" json:"definition" backup:"-"`
+	Nodes                  []WorkflowRunNode `db:"-" json:"nodes" backup:"-"`
+
+	Created time.Time  `db:"created" json:"created" backup:"created"`
+	Start   *time.Time `db:"start" json:"start,omitempty" backup:"start"`
+	End     *time.Time `db:"end" json:"end,omitempty" backup:"end"`
 
 	RootTaskID *int `db:"root_task_id" json:"root_task_id,omitempty" backup:"root_task_id"`
+}
+
+type WorkflowRunNodeStatus string
+
+const (
+	WorkflowRunNodePending   WorkflowRunNodeStatus = "pending"
+	WorkflowRunNodeQueued    WorkflowRunNodeStatus = "queued"
+	WorkflowRunNodeRunning   WorkflowRunNodeStatus = "running"
+	WorkflowRunNodeSucceeded WorkflowRunNodeStatus = "succeeded"
+	WorkflowRunNodeFailed    WorkflowRunNodeStatus = "failed"
+	WorkflowRunNodeStopped   WorkflowRunNodeStatus = "stopped"
+	WorkflowRunNodeBlocked   WorkflowRunNodeStatus = "blocked"
+)
+
+func (status WorkflowRunNodeStatus) IsFinished() bool {
+	return status == WorkflowRunNodeSucceeded || status == WorkflowRunNodeFailed || status == WorkflowRunNodeStopped || status == WorkflowRunNodeBlocked
+}
+
+// WorkflowRunNode is the durable execution state for one immutable workflow
+// node snapshot. workflow_node_id is the stable definition ID; the serialized
+// template keeps execution independent from later template edits.
+type WorkflowRunNode struct {
+	ID             int `db:"id" json:"id" backup:"-"`
+	ProjectID      int `db:"project_id" json:"project_id" backup:"-"`
+	WorkflowRunID  int `db:"workflow_run_id" json:"workflow_run_id" backup:"-"`
+	WorkflowNodeID int `db:"workflow_node_id" json:"workflow_node_id" backup:"workflow_node_id"`
+	TemplateID     int `db:"template_id" json:"template_id" backup:"template_id"`
+
+	Status WorkflowRunNodeStatus `db:"status" json:"status" backup:"status"`
+	TaskID *int                  `db:"task_id" json:"task_id,omitempty" backup:"task_id"`
+	Reason string                `db:"reason" json:"reason,omitempty" backup:"reason"`
+
+	TemplateSnapshotJSON string   `db:"template_snapshot" json:"-" backup:"template_snapshot"`
+	TemplateSnapshot     Template `db:"-" json:"template" backup:"-"`
+
+	Created time.Time  `db:"created" json:"created" backup:"created"`
+	Queued  *time.Time `db:"queued" json:"queued,omitempty" backup:"queued"`
+	Start   *time.Time `db:"start" json:"start,omitempty" backup:"start"`
+	End     *time.Time `db:"end" json:"end,omitempty" backup:"end"`
 }
 
 type WorkflowApprovalStatus string

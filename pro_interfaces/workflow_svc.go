@@ -8,7 +8,7 @@ import "github.com/semaphoreui/semaphore/db"
 // (pro/services/server/workflow_svc.go); the licensed build provides the real
 // implementation (pro_impl/services/server/workflow_svc.go).
 type WorkflowService interface {
-	StartWorkflow(workflow db.WorkflowTemplate, user *db.User) (db.WorkflowRun, error)
+	StartWorkflow(workflow db.WorkflowTemplate, user *db.User, correlationID string) (db.WorkflowRun, error)
 	ProgressWorkflowRun(projectID int, runID int, user *db.User) error
 	// StopWorkflowRun stops a non-finished run: it signals every in-flight task
 	// of the run to stop and marks the run as stopped (terminal).
@@ -24,6 +24,7 @@ type WorkflowService interface {
 // avoiding an import of (and a cycle with) the services/tasks package.
 type WorkflowTaskEnqueuer interface {
 	AddTask(task db.Task, userID *int, username string, projectID int, needAlias bool) (db.Task, error)
+	AddWorkflowTask(task db.Task, template db.Template, userID *int, username string, projectID int, needAlias bool) (db.Task, error)
 	// StopTasksByWorkflowRun stops every active (queued or running) task that
 	// belongs to the given workflow run. forceStop kills running tasks
 	// immediately instead of letting them stop gracefully.

@@ -1060,6 +1060,41 @@ func (p *TaskPool) AddTask(
 	projectID int,
 	needAlias bool,
 ) (newTask db.Task, err error) {
+	return p.addTask(taskObj, nil, userID, username, projectID, needAlias)
+}
+
+// AddWorkflowTask creates a normal task while freezing the template selected
+// by the workflow run snapshot. The rest of task validation, persistence,
+// placement, queueing, logging, and completion remains the standard TaskPool
+// path.
+func (p *TaskPool) AddWorkflowTask(
+	taskObj db.Task,
+	template db.Template,
+	userID *int,
+	username string,
+	projectID int,
+	needAlias bool,
+) (newTask db.Task, err error) {
+	if template.ID <= 0 || template.ID != taskObj.TemplateID || template.ProjectID != projectID {
+		return db.Task{}, fmt.Errorf("workflow task template snapshot does not match the task")
+	}
+	snapshot, err := json.Marshal(template)
+	if err != nil {
+		return db.Task{}, fmt.Errorf("encode workflow task template snapshot: %w", err)
+	}
+	encoded := string(snapshot)
+	taskObj.WorkflowTemplateSnapshot = &encoded
+	return p.addTask(taskObj, &template, userID, username, projectID, needAlias)
+}
+
+func (p *TaskPool) addTask(
+	taskObj db.Task,
+	templateSnapshot *db.Template,
+	userID *int,
+	username string,
+	projectID int,
+	needAlias bool,
+) (newTask db.Task, err error) {
 	taskObj.Created = tz.Now()
 	taskObj.Status = task_logger.TaskWaitingStatus
 	taskObj.UserID = userID
@@ -1067,9 +1102,14 @@ func (p *TaskPool) AddTask(
 	extraSecretVars := taskObj.Secret
 	taskObj.Secret = ""
 
-	tpl, err := p.store.GetTemplate(projectID, taskObj.TemplateID)
-	if err != nil {
-		return
+	var tpl db.Template
+	if templateSnapshot == nil {
+		tpl, err = p.store.GetTemplate(projectID, taskObj.TemplateID)
+		if err != nil {
+			return
+		}
+	} else {
+		tpl = *templateSnapshot
 	}
 
 	requestedImage, err := tpl.ResolveExecutorImage()

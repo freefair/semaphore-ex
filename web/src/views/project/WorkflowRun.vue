@@ -11,6 +11,9 @@
           <span v-if="details && details.run.version" class="text--secondary">
             · {{ details.run.version }}
           </span>
+          <span v-if="details && elapsedTime" class="text--secondary">
+            · {{ elapsedTime }}
+          </span>
         </span>
       </v-toolbar-title>
 
@@ -63,6 +66,15 @@
           class="ma-0"
           icon="mdi-alert-outline"
         >{{ $t('workflowArtifactsRemoteRunnerWarning') }}</v-alert>
+
+        <v-alert
+          v-if="details.run.reason"
+          type="error"
+          dense
+          text
+          tile
+          class="ma-0"
+        >{{ details.run.reason }}</v-alert>
 
         <div class="WorkflowRun__graph">
           <WorkflowGraph
@@ -166,6 +178,7 @@ import { getErrorMessage } from '@/lib/error';
 import PermissionsCheck from '@/components/PermissionsCheck';
 import WorkflowGraph from '@/components/WorkflowGraph.vue';
 import { USER_PERMISSIONS } from '@/lib/constants';
+import socket from '@/socket';
 
 export default {
   components: { WorkflowGraph },
@@ -179,6 +192,7 @@ export default {
       workflow: null,
       templates: [],
       pollHandle: null,
+      socketListenerId: null,
       stopping: false,
       USER_PERMISSIONS,
     };
@@ -197,8 +211,7 @@ export default {
     // blocked on an approval) and the user may run project tasks.
     canStopRun() {
       if (!this.details) return false;
-      const status = this.details.run.status;
-      return (status === 'running' || status === 'approval')
+      return this.isActiveRunStatus(this.details.run.status)
         && this.can(USER_PERMISSIONS.runProjectTasks);
     },
     hasRemoteRunnerNodes() {
@@ -211,9 +224,9 @@ export default {
     nodeStatuses() {
       const map = {};
       (this.details?.nodes || []).forEach((n) => {
-        if (n.task) map[n.node.id] = n.task.status;
-        else if (n.approval) map[n.node.id] = n.approval.status;
-        else if (n.delay) map[n.node.id] = n.delay.status;
+        const status = n.status || (n.task && n.task.status)
+          || (n.approval && n.approval.status) || (n.delay && n.delay.status);
+        if (status) map[n.node.id] = this.normalizeNodeStatus(status);
       });
       return map;
     },
@@ -231,12 +244,18 @@ export default {
         .filter((n) => n.approval && n.approval.status === 'pending')
         .map((n) => ({ nodeId: n.node.id, message: n.node.approval_message }));
     },
+    elapsedTime() {
+      if (!this.details) return '';
+      const { run } = this.details;
+      return this.formatElapsed(run.start || run.created, run.end);
+    },
   },
   async created() {
+    this.socketListenerId = socket.addListener((data) => this.onWebsocketDataReceived(data));
     await this.loadData();
     this.pollHandle = setInterval(() => {
       const status = this.details && this.details.run.status;
-      if (status === 'running' || status === 'approval') {
+      if (this.isActiveRunStatus(status)) {
         this.loadData();
       } else if (this.pollHandle) {
         clearInterval(this.pollHandle);
@@ -246,6 +265,7 @@ export default {
   },
   beforeDestroy() {
     if (this.pollHandle) clearInterval(this.pollHandle);
+    socket.removeListener(this.socketListenerId);
   },
   methods: {
     showDrawer() {
@@ -260,7 +280,7 @@ export default {
       }
     },
     statusColor(status) {
-      switch (status) {
+      switch (this.normalizeNodeStatus(status)) {
         case 'success':
         case 'approved':
           return 'success';
@@ -277,6 +297,32 @@ export default {
         default:
           return 'grey';
       }
+    },
+    normalizeNodeStatus(status) {
+      switch (status) {
+        case 'succeeded': return 'success';
+        case 'queued': return 'waiting';
+        default: return status;
+      }
+    },
+    isActiveRunStatus(status) {
+      return ['pending', 'queued', 'running', 'approval'].includes(status);
+    },
+    formatElapsed(start, end) {
+      if (!start) return '';
+      const finishedAt = new Date(end || Date.now()).getTime();
+      const duration = Math.max(0, finishedAt - new Date(start).getTime());
+      const totalSeconds = Math.floor(duration / 1000);
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+    },
+    onWebsocketDataReceived(data) {
+      if (data.type !== 'update' || data.project_id !== this.projectId) return;
+      const belongsToRun = (this.details?.nodes || []).some(
+        (node) => node.task && node.task.id === data.task_id,
+      );
+      if (belongsToRun) this.loadData();
     },
     zoomIn() {
       if (this.$refs.graph) this.$refs.graph.zoomIn();
@@ -319,16 +365,12 @@ export default {
     },
     async loadData() {
       try {
-        const [details, workflow, templates] = await Promise.all([
-          axios.get(
-            `/api/project/${this.projectId}/workflows/${this.workflowId}/runs/${this.runId}`,
-          ),
-          axios.get(`/api/project/${this.projectId}/workflows/${this.workflowId}`),
-          axios.get(`/api/project/${this.projectId}/templates`),
-        ]);
+        const details = await axios.get(
+          `/api/project/${this.projectId}/workflows/${this.workflowId}/runs/${this.runId}`,
+        );
         this.details = details.data;
-        this.workflow = workflow.data;
-        this.templates = templates.data || [];
+        this.workflow = details.data.workflow;
+        this.templates = details.data.templates || [];
       } catch (err) {
         EventBus.$emit('i-snackbar', {
           color: 'error',

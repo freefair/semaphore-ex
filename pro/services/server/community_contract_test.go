@@ -40,7 +40,7 @@ func TestCommunityLogWriterHasNoSideEffects(t *testing.T) {
 func TestCommunityWorkflowServiceReturnsEmptyResults(t *testing.T) {
 	service := NewWorkflowService(nil, nil, nil, nil)
 
-	run, err := service.StartWorkflow(db.WorkflowTemplate{}, nil)
+	run, err := service.StartWorkflow(db.WorkflowTemplate{}, nil, "")
 	require.NoError(t, err)
 	assert.Equal(t, db.WorkflowRun{}, run)
 	artifacts, err := service.GetWorkflowRunArtifacts(1, 2, nil)

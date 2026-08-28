@@ -20,5 +20,8 @@ func NewWorkflowStore(store db.Store) db.WorkflowManager {
 	if !ok {
 		return sql.NewWorkflowStore(nil)
 	}
-	return sql.NewWorkflowStore(connectionStore.GetConnection())
+	taskStore, _ := store.(interface {
+		GetWorkflowRunTasks(projectID int, runID int, params db.RetrieveQueryParams) ([]db.TaskWithTpl, error)
+	})
+	return sql.NewWorkflowStore(connectionStore.GetConnection(), taskStore)
 }

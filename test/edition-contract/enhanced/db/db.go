@@ -2,11 +2,15 @@
 package db
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	coreDB "github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/common_errors"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
 )
 
 const (
@@ -264,4 +268,101 @@ func WorkflowRootNode(workflow coreDB.WorkflowTemplate) (coreDB.WorkflowNode, er
 		return coreDB.WorkflowNode{}, errors.New("workflow has no root node")
 	}
 	return *root, nil
+}
+
+// BuildWorkflowRunSnapshot freezes the definition and every referenced task
+// template before any task is created. Slice 031 deliberately accepts only a
+// linear pair of task nodes connected by one on-success edge.
+func BuildWorkflowRunSnapshot(
+	workflow coreDB.WorkflowTemplate,
+	templates map[int]coreDB.Template,
+	actorUserID int,
+	correlationID string,
+	now time.Time,
+) (coreDB.WorkflowRun, error) {
+	if actorUserID <= 0 {
+		return coreDB.WorkflowRun{}, common_errors.NewValidationError("workflow run actor is required")
+	}
+	if strings.TrimSpace(correlationID) == "" {
+		return coreDB.WorkflowRun{}, common_errors.NewValidationError("workflow run correlation ID is required")
+	}
+	if err := validateLinearWorkflow(workflow); err != nil {
+		return coreDB.WorkflowRun{}, err
+	}
+	definitionJSON, err := json.Marshal(workflow)
+	if err != nil {
+		return coreDB.WorkflowRun{}, fmt.Errorf("snapshot workflow definition: %w", err)
+	}
+	run := coreDB.WorkflowRun{
+		ProjectID: workflow.ProjectID, WorkflowTemplateID: workflow.ID,
+		Status: coreDB.WorkflowRunPending, ActorUserID: actorUserID,
+		DefinitionVersion: workflow.DefinitionVersion, DefinitionRevision: workflow.Revision,
+		CorrelationID: correlationID, DefinitionSnapshotJSON: string(definitionJSON),
+		DefinitionSnapshot: workflow, Created: now, Start: &now,
+		Nodes: make([]coreDB.WorkflowRunNode, 0, 2),
+	}
+	for _, node := range workflow.Nodes {
+		if node.EffectiveKind() == coreDB.WorkflowNodeNoteKind {
+			continue
+		}
+		template, ok := templates[node.TemplateID]
+		if !ok || template.ID == 0 || template.ProjectID != workflow.ProjectID {
+			return coreDB.WorkflowRun{}, common_errors.NewValidationError("workflow task template snapshot is unavailable")
+		}
+		templateJSON, marshalErr := json.Marshal(template)
+		if marshalErr != nil {
+			return coreDB.WorkflowRun{}, fmt.Errorf("snapshot workflow task template: %w", marshalErr)
+		}
+		run.Nodes = append(run.Nodes, coreDB.WorkflowRunNode{
+			ProjectID: workflow.ProjectID, WorkflowNodeID: node.ID, TemplateID: node.TemplateID,
+			Status: coreDB.WorkflowRunNodePending, TemplateSnapshotJSON: string(templateJSON),
+			TemplateSnapshot: template, Created: now,
+		})
+	}
+	return run, nil
+}
+
+func validateLinearWorkflow(workflow coreDB.WorkflowTemplate) error {
+	executable := make([]coreDB.WorkflowNode, 0, 2)
+	for _, node := range workflow.Nodes {
+		if node.EffectiveKind() == coreDB.WorkflowNodeNoteKind {
+			continue
+		}
+		if node.EffectiveKind() != coreDB.WorkflowNodeTaskKind {
+			return common_errors.NewValidationError("linear workflow runs support task nodes only")
+		}
+		executable = append(executable, node)
+	}
+	if len(executable) != 2 || len(workflow.Edges) != 1 {
+		return common_errors.NewValidationError("linear workflow runs require exactly two task nodes and one edge")
+	}
+	edge := workflow.Edges[0]
+	if edge.Condition != coreDB.WorkflowEdgeOnSuccess || edge.SourceNodeID == edge.DestinationNodeID {
+		return common_errors.NewValidationError("linear workflow runs require one on-success dependency")
+	}
+	ids := map[int]struct{}{executable[0].ID: {}, executable[1].ID: {}}
+	if _, ok := ids[edge.SourceNodeID]; !ok {
+		return common_errors.NewValidationError("linear workflow edge source is invalid")
+	}
+	if _, ok := ids[edge.DestinationNodeID]; !ok {
+		return common_errors.NewValidationError("linear workflow edge destination is invalid")
+	}
+	return nil
+}
+
+func WorkflowRunNodeStatusFromTaskStatus(status task_logger.TaskStatus) coreDB.WorkflowRunNodeStatus {
+	switch status {
+	case task_logger.TaskWaitingStatus, task_logger.TaskStartingStatus, task_logger.TaskWaitingConfirmation, task_logger.TaskConfirmed:
+		return coreDB.WorkflowRunNodeQueued
+	case task_logger.TaskRunningStatus, task_logger.TaskStoppingStatus:
+		return coreDB.WorkflowRunNodeRunning
+	case task_logger.TaskSuccessStatus:
+		return coreDB.WorkflowRunNodeSucceeded
+	case task_logger.TaskStoppedStatus:
+		return coreDB.WorkflowRunNodeStopped
+	case task_logger.TaskFailStatus, task_logger.TaskRejected:
+		return coreDB.WorkflowRunNodeFailed
+	default:
+		return coreDB.WorkflowRunNodePending
+	}
 }

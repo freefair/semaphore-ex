@@ -1,6 +1,8 @@
 package sql
 
 import (
+	"time"
+
 	"github.com/semaphoreui/semaphore/db"
 )
 
@@ -49,6 +51,14 @@ func (d *WorkflowStoreImpl) GetWorkflowRunByID(projectID int, runID int) (res db
 	return
 }
 
+func (d *WorkflowStoreImpl) GetWorkflowRunByCorrelationID(projectID int, workflowTemplateID int, correlationID string) (res db.WorkflowRun, err error) {
+	return
+}
+
+func (d *WorkflowStoreImpl) GetWorkflowRunNodeTask(projectID int, runID int, nodeID int) (res db.Task, err error) {
+	return
+}
+
 func (d *WorkflowStoreImpl) GetActiveWorkflowRuns() (res []db.WorkflowRun, err error) {
 	return
 }
@@ -58,6 +68,26 @@ func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (res db.Workfl
 }
 
 func (d *WorkflowStoreImpl) UpdateWorkflowRun(run db.WorkflowRun) (err error) {
+	return
+}
+
+func (d *WorkflowStoreImpl) GetWorkflowRunNode(projectID int, runID int, nodeID int) (res db.WorkflowRunNode, err error) {
+	return
+}
+
+func (d *WorkflowStoreImpl) ClaimWorkflowRunNode(projectID int, runID int, nodeID int, queuedAt time.Time) (ok bool, err error) {
+	return
+}
+
+func (d *WorkflowStoreImpl) AttachWorkflowRunNodeTask(projectID int, runID int, nodeID int, taskID int) (ok bool, err error) {
+	return
+}
+
+func (d *WorkflowStoreImpl) UpdateWorkflowRunNodeFromTask(projectID int, runID int, nodeID int, taskID int, status db.WorkflowRunNodeStatus, reason string, at time.Time) (ok bool, err error) {
+	return
+}
+
+func (d *WorkflowStoreImpl) BlockWorkflowRunNode(projectID int, runID int, nodeID int, reason string, at time.Time) (ok bool, err error) {
 	return
 }
 
