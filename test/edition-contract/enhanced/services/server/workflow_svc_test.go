@@ -1,8 +1,10 @@
 package server
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -12,6 +14,7 @@ import (
 	workflowDB "github.com/semaphoreui/semaphore/pro/db"
 	workflowSQL "github.com/semaphoreui/semaphore/pro/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -267,6 +270,187 @@ func TestWorkflowServiceKeepsIndependentReadyNodesWithinParallelismBound(t *test
 	assert.Len(t, fixture.enqueuer.tasks, 3, "the second branch starts only after the first completes")
 }
 
+func TestWorkflowServiceCapturesAndInjectsTypedWorkflowArtifacts(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	configureWorkflowArtifactEncryption(t)
+	workflow := createArtifactWorkflow(t, &fixture)
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "artifact-consumption")
+	require.NoError(t, err)
+	producer := workflowRunNodeNamed(t, run, "Producer")
+	require.NotNil(t, producer.TaskID)
+	producerTask, err := fixture.store.GetTask(fixture.projectID, *producer.TaskID)
+	require.NoError(t, err)
+
+	require.NoError(t, fixture.service.HandleWorkflowTaskOutputs(producerTask, map[string]json.RawMessage{
+		"release": json.RawMessage(`"release-1"`),
+		"token":   json.RawMessage(`"top-secret"`),
+	}))
+	stored, err := fixture.repository.GetWorkflowRunArtifacts(fixture.projectID, run.ID)
+	require.NoError(t, err)
+	require.Len(t, stored, 2)
+	assert.Equal(t, `"release-1"`, stored[0].ValueJSON)
+	assert.Empty(t, stored[1].ValueJSON)
+	assert.NotEmpty(t, stored[1].EncryptedValue)
+	assert.NotContains(t, stored[1].EncryptedValue, "top-secret")
+	metadata, err := fixture.service.GetWorkflowRunArtifacts(fixture.projectID, run.ID, nil)
+	require.NoError(t, err)
+	require.Len(t, metadata, 2)
+	encodedMetadata, err := json.Marshal(metadata)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encodedMetadata), "release-1")
+	assert.NotContains(t, string(encodedMetadata), "top-secret")
+	assert.NotContains(t, string(encodedMetadata), "encrypted_value")
+	assert.True(t, metadata[1].Sensitive)
+	_, err = fixture.service.GetWorkflowRunArtifacts(fixture.projectID+1, run.ID, nil)
+	assert.ErrorIs(t, err, db.ErrNotFound)
+
+	producerTask = finishWorkflowTask(t, fixture.store, producer, task_logger.TaskSuccessStatus, "")
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(producerTask))
+	run = loadWorkflowRun(t, &fixture, run.ID)
+	consumer := workflowRunNodeNamed(t, run, "Consumer")
+	assert.Equal(t, db.WorkflowRunNodeQueued, consumer.Status)
+	require.Len(t, fixture.enqueuer.tasks, 2)
+	consumerTask := fixture.enqueuer.tasks[1]
+	plain, err := decodeWorkflowArtifactObject(consumerTask.Environment)
+	require.NoError(t, err)
+	secret, err := decodeWorkflowArtifactObject(consumerTask.Secret)
+	require.NoError(t, err)
+	assert.JSONEq(t, `"release-1"`, string(plain["release_name"]))
+	assert.JSONEq(t, `"top-secret"`, string(secret["deployment_token"]))
+	require.Len(t, consumer.ArtifactInputs, 2)
+	for _, input := range consumer.ArtifactInputs {
+		assert.Equal(t, db.WorkflowArtifactAvailable, input.Availability)
+		assert.NotEmpty(t, input.ReferenceFingerprint)
+		encoded, marshalErr := json.Marshal(input)
+		require.NoError(t, marshalErr)
+		assert.NotContains(t, string(encoded), "release-1")
+		assert.NotContains(t, string(encoded), "top-secret")
+	}
+}
+
+func TestWorkflowServiceFailsSuccessfulProducerWithInvalidDeclaredOutput(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	configureWorkflowArtifactEncryption(t)
+	workflow := createArtifactWorkflow(t, &fixture)
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "invalid-artifact")
+	require.NoError(t, err)
+	producer := workflowRunNodeNamed(t, run, "Producer")
+	producerTask, err := fixture.store.GetTask(fixture.projectID, *producer.TaskID)
+	require.NoError(t, err)
+	require.NoError(t, fixture.service.HandleWorkflowTaskOutputs(producerTask, map[string]json.RawMessage{
+		"release": json.RawMessage(`123`),
+		"token":   json.RawMessage(`"top-secret"`),
+	}))
+
+	producerTask = finishWorkflowTask(t, fixture.store, producer, task_logger.TaskSuccessStatus, "")
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(producerTask))
+	run = loadWorkflowRun(t, &fixture, run.ID)
+	assert.Equal(t, db.WorkflowRunFailed, run.Status)
+	assert.Equal(t, db.WorkflowRunNodeFailed, workflowRunNodeNamed(t, run, "Producer").Status)
+	assert.Contains(t, run.Reason, `Workflow output "release" is invalid`)
+	assert.Equal(t, db.WorkflowRunNodeSkipped, workflowRunNodeNamed(t, run, "Consumer").Status)
+	assert.Len(t, fixture.enqueuer.tasks, 1)
+}
+
+func TestWorkflowServiceRejectsSensitiveOutputWithoutEncryption(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	previous := util.Config.AccessKeyEncryption
+	util.Config.AccessKeyEncryption = ""
+	t.Cleanup(func() { util.Config.AccessKeyEncryption = previous })
+	workflow := createArtifactWorkflow(t, &fixture)
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "unencrypted-artifact")
+	require.NoError(t, err)
+	producer := workflowRunNodeNamed(t, run, "Producer")
+	producerTask, err := fixture.store.GetTask(fixture.projectID, *producer.TaskID)
+	require.NoError(t, err)
+
+	err = fixture.service.HandleWorkflowTaskOutputs(producerTask, map[string]json.RawMessage{
+		"release": json.RawMessage(`"release-1"`), "token": json.RawMessage(`"must-not-persist"`),
+	})
+	require.ErrorContains(t, err, "require access-key encryption")
+	stored, getErr := fixture.repository.GetWorkflowRunArtifacts(fixture.projectID, run.ID)
+	require.NoError(t, getErr)
+	assert.Empty(t, stored)
+}
+
+func TestWorkflowServiceResolvesOnlyLatestProducerAttempt(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	configureWorkflowArtifactEncryption(t)
+	workflow := createArtifactWorkflow(t, &fixture)
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "artifact-retry")
+	require.NoError(t, err)
+	producer := workflowRunNodeNamed(t, run, "Producer")
+	producerTask, err := fixture.store.GetTask(fixture.projectID, *producer.TaskID)
+	require.NoError(t, err)
+	require.NoError(t, fixture.service.HandleWorkflowTaskOutputs(producerTask, map[string]json.RawMessage{
+		"release": json.RawMessage(`"release-1"`), "token": json.RawMessage(`"token-1"`),
+	}))
+	_, err = fixture.store.Sql().Exec("update task set assignment_generation=1 where id=?", producerTask.ID)
+	require.NoError(t, err)
+	producerTask, err = fixture.store.GetTask(fixture.projectID, producerTask.ID)
+	require.NoError(t, err)
+	require.NoError(t, fixture.service.HandleWorkflowTaskOutputs(producerTask, map[string]json.RawMessage{
+		"release": json.RawMessage(`"release-2"`), "token": json.RawMessage(`"token-2"`),
+	}))
+	producerTask.Status = task_logger.TaskSuccessStatus
+	require.NoError(t, fixture.store.UpdateTask(producerTask))
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(producerTask))
+
+	require.Len(t, fixture.enqueuer.tasks, 2)
+	consumerTask := fixture.enqueuer.tasks[1]
+	plain, err := decodeWorkflowArtifactObject(consumerTask.Environment)
+	require.NoError(t, err)
+	secret, err := decodeWorkflowArtifactObject(consumerTask.Secret)
+	require.NoError(t, err)
+	assert.JSONEq(t, `"release-2"`, string(plain["release_name"]))
+	assert.JSONEq(t, `"token-2"`, string(secret["deployment_token"]))
+	assert.NotContains(t, consumerTask.Environment, "release-1")
+	assert.NotContains(t, consumerTask.Secret, "token-1")
+}
+
+func TestWorkflowServiceHandlesSkippedArtifactProducerByRequirement(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		required       bool
+		expectedStatus db.WorkflowRunNodeStatus
+		expectedTasks  int
+	}{
+		{name: "required input blocks consumer", required: true, expectedStatus: db.WorkflowRunNodeBlocked, expectedTasks: 1},
+		{name: "optional input lets consumer run", required: false, expectedStatus: db.WorkflowRunNodeQueued, expectedTasks: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkflowServiceFixture(t)
+			defer fixture.store.Close()
+			workflow := createSkippedArtifactWorkflow(t, &fixture, test.required)
+			run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "skipped-artifact-"+test.name)
+			require.NoError(t, err)
+			root := workflowRunNodeNamed(t, run, "Root")
+			rootTask := finishWorkflowTask(t, fixture.store, root, task_logger.TaskSuccessStatus, "")
+			require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(rootTask))
+
+			run = loadWorkflowRun(t, &fixture, run.ID)
+			assert.Equal(t, db.WorkflowRunNodeSkipped, workflowRunNodeNamed(t, run, "Skipped producer").Status)
+			consumer := workflowRunNodeNamed(t, run, "Consumer")
+			assert.Equal(t, test.expectedStatus, consumer.Status)
+			assert.Len(t, fixture.enqueuer.tasks, test.expectedTasks)
+			require.Len(t, consumer.ArtifactInputs, 1)
+			assert.Equal(t, db.WorkflowArtifactUnavailable, consumer.ArtifactInputs[0].Availability)
+			assert.Nil(t, consumer.ArtifactInputs[0].ProducerTaskID)
+			assert.NotEmpty(t, consumer.ArtifactInputs[0].ReferenceFingerprint)
+			if test.required {
+				assert.Contains(t, consumer.Reason, "Required workflow inputs are unavailable")
+				assert.Equal(t, db.WorkflowRunBlocked, run.Status)
+			} else {
+				assert.NotContains(t, fixture.enqueuer.tasks[1].Environment, "release_name")
+			}
+		})
+	}
+}
+
 func TestWorkflowReconcilerCanStopBeforeStart(t *testing.T) {
 	reconciler := NewWorkflowReconciler(nil, nil)
 	reconciler.Stop()
@@ -364,6 +548,83 @@ func newWorkflowServiceFixture(t *testing.T) workflowServiceFixture {
 		service: NewWorkflowService(repository, store, enqueuer, nil), enqueuer: enqueuer,
 		projectID: project.ID, user: user, workflow: workflow, first: first, second: second,
 	}
+}
+
+func configureWorkflowArtifactEncryption(t *testing.T) {
+	t.Helper()
+	previous := util.Config.AccessKeyEncryption
+	util.Config.AccessKeyEncryption = base64.StdEncoding.EncodeToString([]byte(strings.Repeat("w", 32)))
+	t.Cleanup(func() { util.Config.AccessKeyEncryption = previous })
+}
+
+func createArtifactWorkflow(t *testing.T, fixture *workflowServiceFixture) db.WorkflowTemplate {
+	t.Helper()
+	raw := db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Artifact workflow", DefinitionVersion: db.WorkflowDefinitionVersion,
+		Nodes: []db.WorkflowNode{
+			{
+				ID: -1, TemplateID: fixture.first.ID, DisplayName: "Producer",
+				ArtifactOutputs: []db.WorkflowArtifactDeclaration{
+					{Name: "release", Schema: db.WorkflowArtifactSchema{Type: db.WorkflowArtifactString}, MaxBytes: 128},
+					{Name: "token", Schema: db.WorkflowArtifactSchema{Type: db.WorkflowArtifactString}, Sensitive: true, MaxBytes: 128},
+				},
+			},
+			{
+				ID: -2, TemplateID: fixture.second.ID, DisplayName: "Consumer",
+				ArtifactInputs: []db.WorkflowArtifactReference{
+					{Name: "release_name", SourceNodeID: -1, Output: "release", Required: true},
+					{Name: "deployment_token", SourceNodeID: -1, Output: "token", Required: true},
+				},
+			},
+		},
+		Edges: []db.WorkflowEdge{{
+			ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess,
+		}},
+	}
+	prepared, validation, err := workflowDB.PrepareWorkflowTemplate(fixture.store, raw)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	created, err := fixture.repository.CreateWorkflowTemplate(prepared)
+	require.NoError(t, err)
+	return created
+}
+
+func createSkippedArtifactWorkflow(t *testing.T, fixture *workflowServiceFixture, required bool) db.WorkflowTemplate {
+	t.Helper()
+	producer, err := fixture.store.CreateTemplate(db.Template{
+		ProjectID: fixture.projectID, RepositoryID: fixture.first.RepositoryID,
+		Name: "Skipped producer", Playbook: "skipped-producer.yml",
+	})
+	require.NoError(t, err)
+	raw := db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Skipped artifact producer", DefinitionVersion: db.WorkflowDefinitionVersion,
+		Nodes: []db.WorkflowNode{
+			{ID: -1, TemplateID: fixture.first.ID, DisplayName: "Root"},
+			{
+				ID: -2, TemplateID: producer.ID, DisplayName: "Skipped producer",
+				ArtifactOutputs: []db.WorkflowArtifactDeclaration{{
+					Name: "release", Schema: db.WorkflowArtifactSchema{Type: db.WorkflowArtifactString}, MaxBytes: 128,
+				}},
+			},
+			{
+				ID: -3, TemplateID: fixture.second.ID, DisplayName: "Consumer", JoinMode: db.WorkflowJoinAllComplete,
+				ArtifactInputs: []db.WorkflowArtifactReference{{
+					Name: "release_name", SourceNodeID: -2, Output: "release", Required: required,
+				}},
+			},
+		},
+		Edges: []db.WorkflowEdge{
+			{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnFailure},
+			{ID: -2, SourceNodeID: -2, DestinationNodeID: -3, Condition: db.WorkflowEdgeAlways},
+			{ID: -3, SourceNodeID: -1, DestinationNodeID: -3, Condition: db.WorkflowEdgeAlways},
+		},
+	}
+	prepared, validation, err := workflowDB.PrepareWorkflowTemplate(fixture.store, raw)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	created, err := fixture.repository.CreateWorkflowTemplate(prepared)
+	require.NoError(t, err)
+	return created
 }
 
 func finishWorkflowTask(

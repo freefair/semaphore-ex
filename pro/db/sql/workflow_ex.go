@@ -36,3 +36,15 @@ func (d *WorkflowStoreImpl) FinalizeWorkflowRunNode(projectID int, runID int, no
 func (d *WorkflowStoreImpl) BlockWorkflowRunNode(projectID int, runID int, nodeID int, reason string, at time.Time) (ok bool, err error) {
 	return
 }
+
+func (d *WorkflowStoreImpl) UpdateWorkflowRunNodeArtifactInputs(projectID int, runID int, nodeID int, inputsJSON string) (ok bool, err error) {
+	return
+}
+
+func (d *WorkflowStoreImpl) ReplaceWorkflowTaskArtifacts(projectID int, runID int, nodeID int, taskID int, attempt int, artifacts []db.WorkflowArtifact) (err error) {
+	return
+}
+
+func (d *WorkflowStoreImpl) GetWorkflowRunArtifacts(projectID int, runID int) (res []db.WorkflowArtifact, err error) {
+	return
+}

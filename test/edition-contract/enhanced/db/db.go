@@ -65,6 +65,18 @@ func NormalizeWorkflowTemplate(workflow coreDB.WorkflowTemplate) coreDB.Workflow
 		if node.JoinMode == "" {
 			node.JoinMode = node.EffectiveJoinMode()
 		}
+		for outputIndex := range node.ArtifactOutputs {
+			output := &node.ArtifactOutputs[outputIndex]
+			output.Name = strings.TrimSpace(output.Name)
+			if output.MaxBytes == 0 {
+				output.MaxBytes = coreDB.DefaultWorkflowArtifactMaxBytes
+			}
+		}
+		for inputIndex := range node.ArtifactInputs {
+			input := &node.ArtifactInputs[inputIndex]
+			input.Name = strings.TrimSpace(input.Name)
+			input.Output = strings.TrimSpace(input.Output)
+		}
 		node.DisplayName = strings.TrimSpace(node.DisplayName)
 	}
 	return workflow
@@ -73,13 +85,43 @@ func NormalizeWorkflowTemplate(workflow coreDB.WorkflowTemplate) coreDB.Workflow
 func PrepareWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, workflow coreDB.WorkflowTemplate) (coreDB.WorkflowTemplate, coreDB.WorkflowValidationResult, error) {
 	workflow = NormalizeWorkflowTemplate(workflow)
 	conditionIssues := compileWorkflowConditions(&workflow)
+	artifactIssues := prepareWorkflowArtifactMetadata(&workflow)
 	result, err := validateWorkflowTemplate(store, workflow)
 	if err != nil {
 		return coreDB.WorkflowTemplate{}, coreDB.WorkflowValidationResult{}, err
 	}
 	result.Issues = append(result.Issues, conditionIssues...)
+	result.Issues = append(result.Issues, artifactIssues...)
 	result.Valid = len(result.Issues) == 0
 	return workflow, result, nil
+}
+
+func prepareWorkflowArtifactMetadata(workflow *coreDB.WorkflowTemplate) []coreDB.WorkflowValidationIssue {
+	issues := coreDB.ValidateWorkflowArtifactGraph(*workflow)
+	for index := range workflow.Nodes {
+		node := &workflow.Nodes[index]
+		outputs, err := json.Marshal(node.ArtifactOutputs)
+		if err != nil {
+			id := node.ID
+			issues = append(issues, coreDB.WorkflowValidationIssue{
+				Code: "WORKFLOW_ARTIFACT_OUTPUT_INVALID", Message: "Workflow artifact outputs could not be stored.",
+				Path: fmt.Sprintf("nodes[%d].artifact_outputs", index), NodeID: &id,
+			})
+		} else {
+			node.ArtifactOutputsJSON = string(outputs)
+		}
+		inputs, err := json.Marshal(node.ArtifactInputs)
+		if err != nil {
+			id := node.ID
+			issues = append(issues, coreDB.WorkflowValidationIssue{
+				Code: "WORKFLOW_ARTIFACT_INPUT_INVALID", Message: "Workflow artifact inputs could not be stored.",
+				Path: fmt.Sprintf("nodes[%d].artifact_inputs", index), NodeID: &id,
+			})
+		} else {
+			node.ArtifactInputsJSON = string(inputs)
+		}
+	}
+	return issues
 }
 
 func ValidateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, workflow coreDB.WorkflowTemplate) (coreDB.WorkflowValidationResult, error) {

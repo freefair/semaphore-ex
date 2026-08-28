@@ -31,6 +31,19 @@ func (t *TaskRunner) LogWithTime(now time.Time, msg string) {
 	if t.Template.App == db.AppAnsible {
 		event, recognized, err := stage_parsers.ParseTaskSummaryEvent(msg)
 		if recognized {
+			if err == nil && event.Kind == db.TaskSummaryEventWorkflowOutputs {
+				if t.pool.workflowService == nil {
+					err = errors.New("workflow output service is not configured")
+				} else {
+					err = t.pool.workflowService.HandleWorkflowTaskOutputs(t.Task, event.Outputs)
+				}
+				if err != nil {
+					log.WithError(err).WithFields(log.Fields{
+						"context": "workflow_artifacts", "project_id": t.Task.ProjectID, "task_id": t.Task.ID,
+					}).Warn("failed to capture structured workflow outputs")
+				}
+				return
+			}
 			if err == nil {
 				if t.pool.ansibleTaskRepo == nil {
 					err = errors.New("task summary repository is not configured")

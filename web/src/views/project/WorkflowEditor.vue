@@ -396,6 +396,154 @@
               </v-card-text>
             </v-card>
 
+            <template v-if="editingNode.kind === 'task'">
+              <div
+                class="d-flex align-center mb-2"
+                data-testid="workflow-artifact-outputs"
+              >
+                <span class="text-subtitle-2">{{ $t('workflowArtifactOutputs') }}</span>
+                <v-spacer />
+                <v-btn
+                  icon
+                  small
+                  :title="$t('workflowArtifactAddOutput')"
+                  :disabled="!canManage"
+                  @click="addArtifactOutput"
+                >
+                  <v-icon small>mdi-plus</v-icon>
+                </v-btn>
+              </div>
+
+              <v-card
+                v-for="(output, index) in editingNode.artifact_outputs"
+                :key="`artifact-output-${index}`"
+                outlined
+                class="pa-2 mb-2"
+              >
+                <div class="d-flex align-start">
+                  <v-text-field
+                    v-model="output.name"
+                    :label="$t('workflowArtifactName')"
+                    :disabled="!canManage"
+                    dense
+                    hide-details="auto"
+                    class="mr-1"
+                    @input="applyNodeEdit"
+                  />
+                  <v-btn
+                    icon
+                    small
+                    :title="$t('workflowArtifactRemoveOutput')"
+                    :disabled="!canManage"
+                    @click="removeArtifactOutput(index)"
+                  >
+                    <v-icon small>mdi-close</v-icon>
+                  </v-btn>
+                </div>
+                <v-select
+                  :value="output.schema.type"
+                  :items="artifactOutputTypes"
+                  item-value="value"
+                  item-text="text"
+                  :label="$t('workflowArtifactSchema')"
+                  :disabled="!canManage"
+                  dense
+                  hide-details="auto"
+                  @change="setArtifactOutputType(index, $event)"
+                />
+                <v-text-field
+                  v-model.number="output.max_bytes"
+                  type="number"
+                  min="1"
+                  max="65536"
+                  :label="$t('workflowArtifactMaxBytes')"
+                  :disabled="!canManage"
+                  dense
+                  hide-details="auto"
+                  @input="applyNodeEdit"
+                />
+                <v-switch
+                  v-model="output.sensitive"
+                  :label="$t('workflowArtifactSensitive')"
+                  :disabled="!canManage"
+                  dense
+                  hide-details
+                  class="mt-1"
+                  @change="applyNodeEdit"
+                />
+              </v-card>
+
+              <div
+                class="d-flex align-center mt-4 mb-2"
+                data-testid="workflow-artifact-inputs"
+              >
+                <span class="text-subtitle-2">{{ $t('workflowArtifactInputs') }}</span>
+                <v-spacer />
+                <v-btn
+                  icon
+                  small
+                  :title="$t('workflowArtifactAddInput')"
+                  :disabled="!canManage || reachableArtifactOutputs.length === 0"
+                  @click="addArtifactInput"
+                >
+                  <v-icon small>mdi-plus</v-icon>
+                </v-btn>
+              </div>
+
+              <div
+                v-if="reachableArtifactOutputs.length === 0"
+                class="text-caption text--secondary mb-3"
+              >{{ $t('workflowArtifactNoReachableOutputs') }}</div>
+
+              <v-card
+                v-for="(input, index) in editingNode.artifact_inputs"
+                :key="`artifact-input-${index}`"
+                outlined
+                class="pa-2 mb-2"
+              >
+                <div class="d-flex align-start">
+                  <v-text-field
+                    v-model="input.name"
+                    :label="$t('workflowArtifactInputName')"
+                    :disabled="!canManage"
+                    dense
+                    hide-details="auto"
+                    class="mr-1"
+                    @input="applyNodeEdit"
+                  />
+                  <v-btn
+                    icon
+                    small
+                    :title="$t('workflowArtifactRemoveInput')"
+                    :disabled="!canManage"
+                    @click="removeArtifactInput(index)"
+                  >
+                    <v-icon small>mdi-close</v-icon>
+                  </v-btn>
+                </div>
+                <v-select
+                  :value="artifactReferenceKey(input)"
+                  :items="reachableArtifactOutputs"
+                  item-value="value"
+                  item-text="text"
+                  :label="$t('workflowArtifactSource')"
+                  :disabled="!canManage"
+                  dense
+                  hide-details="auto"
+                  @change="setArtifactReference(index, $event)"
+                />
+                <v-switch
+                  v-model="input.required"
+                  :label="$t('workflowArtifactRequired')"
+                  :disabled="!canManage"
+                  dense
+                  hide-details
+                  class="mt-1"
+                  @change="applyNodeEdit"
+                />
+              </v-card>
+            </template>
+
             <template v-if="editingNode.kind === 'approval'">
               <v-text-field
                 v-model.number="editingNode.approval_timeout"
@@ -675,6 +823,8 @@ export default {
       if (clone && clone.task_params === undefined) {
         clone.task_params = (clone.kind || 'task') === 'task' ? {} : null;
       }
+      if (clone && !Array.isArray(clone.artifact_outputs)) clone.artifact_outputs = [];
+      if (clone && !Array.isArray(clone.artifact_inputs)) clone.artifact_inputs = [];
       this.editingNode = clone;
     },
     onConnectionSelected(edge) {
@@ -691,6 +841,8 @@ export default {
       if (kind === 'approval' || kind === 'delay') {
         this.editingNode.template_id = null;
         this.editingNode.task_params = null;
+        this.editingNode.artifact_outputs = [];
+        this.editingNode.artifact_inputs = [];
       }
       if (kind !== 'approval') {
         this.editingNode.approval_timeout = null;

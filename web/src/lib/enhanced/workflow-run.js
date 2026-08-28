@@ -12,9 +12,33 @@ export const enhancedComputed = {
     ).length;
     return { active, max };
   },
+  resolvedArtifactInputs() {
+    if (!this.details) return [];
+    return (this.details.nodes || []).flatMap((entry) => (
+      (entry.artifact_inputs || []).map((input) => ({
+        ...input,
+        consumer_node_id: entry.node.id,
+      }))
+    ));
+  },
+  artifactMetadataCount() {
+    return this.artifacts.length + this.resolvedArtifactInputs.length;
+  },
 };
 
 export const enhancedMethods = {
+  artifactAvailabilityColor(availability) {
+    if (availability === 'available') return 'success';
+    if (availability === 'invalid') return 'error';
+    return 'grey';
+  },
+  schemaSummary(schema) {
+    return JSON.stringify(schema || {});
+  },
+  nodeLabel(nodeId) {
+    const node = (this.workflow?.nodes || []).find((entry) => entry.id === nodeId);
+    return node?.display_name ? `#${nodeId} ${node.display_name}` : `#${nodeId}`;
+  },
   normalizeNodeStatus(status) {
     switch (status) {
       case 'succeeded': return 'success';

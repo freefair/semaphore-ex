@@ -65,6 +65,89 @@ describe('workflow editor authoring lifecycle', () => {
     expect(prepared.edges[0].condition_expression).to.equal('result.successful');
   });
 
+  it('preserves typed artifact declarations and limits references to reachable predecessors', () => {
+    const item = WorkflowEditor.methods.prepareItem({
+      name: 'Artifacts',
+      nodes: [
+        {
+          id: 1,
+          kind: 'task',
+          template_id: 7,
+          display_name: 'Build',
+          artifact_outputs: [{
+            name: 'image_tag',
+            schema: { type: 'string' },
+            sensitive: false,
+            max_bytes: 128,
+          }],
+        },
+        {
+          id: 2, kind: 'task', template_id: 8, display_name: 'Test',
+        },
+        {
+          id: 3, kind: 'task', template_id: 9, display_name: 'Deploy',
+        },
+        {
+          id: 4,
+          kind: 'task',
+          template_id: 10,
+          display_name: 'Unrelated',
+          artifact_outputs: [{
+            name: 'unrelated',
+            schema: { type: 'boolean' },
+            sensitive: false,
+            max_bytes: 8,
+          }],
+        },
+      ],
+      edges: [
+        { id: 11, source_node_id: 1, destination_node_id: 2 },
+        { id: 12, source_node_id: 2, destination_node_id: 3 },
+      ],
+    });
+    const context = { item, editingNode: item.nodes[2] };
+
+    expect(item.nodes[1].artifact_outputs).to.deep.equal([]);
+    expect(item.nodes[1].artifact_inputs).to.deep.equal([]);
+    expect(WorkflowEditor.computed.reachableArtifactOutputs.call(context)).to.deep.equal([{
+      value: '1:image_tag',
+      sourceNodeId: 1,
+      output: 'image_tag',
+      text: '#1 Build · image_tag (string)',
+    }]);
+  });
+
+  it('adds bounded declarations and references without changing the graph surface', () => {
+    let updates = 0;
+    const source = {
+      value: '1:image_tag', sourceNodeId: 1, output: 'image_tag', text: 'image_tag',
+    };
+    const context = {
+      editingNode: { artifact_outputs: [], artifact_inputs: [] },
+      reachableArtifactOutputs: [source],
+      applyNodeEdit() { updates += 1; },
+      $set(target, key, value) { Object.assign(target, { [key]: value }); },
+    };
+
+    WorkflowEditor.methods.addArtifactOutput.call(context);
+    WorkflowEditor.methods.setArtifactOutputType.call(context, 0, 'array');
+    WorkflowEditor.methods.addArtifactInput.call(context);
+
+    expect(context.editingNode.artifact_outputs[0]).to.deep.equal({
+      name: '',
+      schema: { type: 'array', items: { type: 'string' } },
+      sensitive: false,
+      max_bytes: 16384,
+    });
+    expect(context.editingNode.artifact_inputs[0]).to.deep.equal({
+      name: 'image_tag',
+      source_node_id: 1,
+      output: 'image_tag',
+      required: true,
+    });
+    expect(updates).to.equal(3);
+  });
+
   it('uses the authoritative validation endpoint and retains located issues', async () => {
     let request;
     axios.post = async (url, data) => {

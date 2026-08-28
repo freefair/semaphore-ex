@@ -43,6 +43,9 @@ func ParseTaskSummaryEvent(line string) (db.TaskSummaryEvent, bool, error) {
 	}
 
 	payload := strings.TrimSpace(strings.TrimPrefix(line, taskSummaryLinePrefix))
+	if len(payload) > db.MaxWorkflowArtifactEventBytes {
+		return db.TaskSummaryEvent{}, true, errors.New("structured task result exceeds the supported size")
+	}
 	var event db.TaskSummaryEvent
 	if err := json.Unmarshal([]byte(payload), &event); err != nil {
 		return db.TaskSummaryEvent{}, true, fmt.Errorf("decode task summary event: %w", err)
@@ -64,7 +67,8 @@ func ParseTaskSummaryEvent(line string) (db.TaskSummaryEvent, bool, error) {
 		return db.TaskSummaryEvent{}, true, errors.New("task summary event_id is required")
 	}
 	if event.Kind != db.TaskSummaryEventResult && event.Kind != db.TaskSummaryEventHost &&
-		event.Kind != db.TaskSummaryEventComplete && event.Kind != db.TaskSummaryEventFailure {
+		event.Kind != db.TaskSummaryEventComplete && event.Kind != db.TaskSummaryEventFailure &&
+		event.Kind != db.TaskSummaryEventWorkflowOutputs {
 		return db.TaskSummaryEvent{}, true, fmt.Errorf("unsupported task summary event kind %q", event.Kind)
 	}
 	if (event.Kind == db.TaskSummaryEventResult || event.Kind == db.TaskSummaryEventHost) && event.Host == "" {
@@ -78,6 +82,19 @@ func ParseTaskSummaryEvent(line string) (db.TaskSummaryEvent, bool, error) {
 	}
 	if event.Kind == db.TaskSummaryEventHost && !validHostStatus(event.Status) {
 		return db.TaskSummaryEvent{}, true, fmt.Errorf("unsupported host summary status %q", event.Status)
+	}
+	if event.Kind == db.TaskSummaryEventWorkflowOutputs {
+		if len(event.Outputs) > db.MaxWorkflowArtifactsPerNode {
+			return db.TaskSummaryEvent{}, true, errors.New("structured workflow output count exceeds the supported limit")
+		}
+		for name, raw := range event.Outputs {
+			if err := db.ValidateWorkflowArtifactName(name); err != nil {
+				return db.TaskSummaryEvent{}, true, err
+			}
+			if len(raw) > db.MaxWorkflowArtifactBytes {
+				return db.TaskSummaryEvent{}, true, fmt.Errorf("structured workflow output %q exceeds the supported size", name)
+			}
+		}
 	}
 	return event, true, nil
 }
@@ -354,6 +371,11 @@ class CallbackModule(CallbackBase):
         self._result(result, "skipped")
 
     def v2_playbook_on_stats(self, stats):
+        custom = getattr(stats, "custom", {}) or {}
+        run_stats = custom.get("_run", {}) or {}
+        outputs = run_stats.get("semaphore_workflow_outputs")
+        if isinstance(outputs, dict):
+            self._emit({"event": "workflow_outputs", "event_id": "run:outputs", "outputs": outputs})
         hosts = sorted(stats.processed.keys())
         for host in hosts:
             summary = stats.summarize(host)

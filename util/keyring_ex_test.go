@@ -17,3 +17,8 @@ func TestKeyset_OptionEncryptionEnabledRequiresAnActiveKey(t *testing.T) {
 	Config = mustKeyset(t, keysCfg(map[string]string{"b": keyB}, "", "b"), "", "")
 	assert.True(t, Config.OptionEncryptionEnabled(), "a dedicated option key protects option values")
 }
+
+func TestAccessKeyEncryptionEnabledRequiresActiveKey(t *testing.T) {
+	assert.False(t, (&ConfigType{}).AccessKeyEncryptionEnabled())
+	assert.True(t, (&ConfigType{AccessKeyEncryption: genKey(0x42)}).AccessKeyEncryptionEnabled())
+}

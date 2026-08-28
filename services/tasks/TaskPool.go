@@ -149,10 +149,9 @@ func (p *TaskPool) HandleWorkflowTaskCompletion(task db.Task) error {
 	return p.workflowService.HandleWorkflowTaskCompletion(task)
 }
 
-// GetWorkflowRunArtifacts returns the merged upstream artifacts for a workflow
-// run, delegating to the workflow service. Returns an empty map when no service
-// is wired.
-func (p *TaskPool) GetWorkflowRunArtifacts(projectID int, runID int, currentTaskID *int) (map[string]any, error) {
+// GetWorkflowRunArtifacts returns value-free metadata for the current producer
+// attempts in a workflow run. It returns no metadata when no service is wired.
+func (p *TaskPool) GetWorkflowRunArtifacts(projectID int, runID int, currentTaskID *int) ([]db.WorkflowArtifactMetadata, error) {
 	if p.workflowService == nil {
 		return nil, nil
 	}
