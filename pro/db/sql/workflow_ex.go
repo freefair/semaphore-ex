@@ -25,7 +25,11 @@ func (d *WorkflowStoreImpl) AttachWorkflowRunNodeTask(projectID int, runID int, 
 	return
 }
 
-func (d *WorkflowStoreImpl) UpdateWorkflowRunNodeFromTask(projectID int, runID int, nodeID int, taskID int, status db.WorkflowRunNodeStatus, reason string, at time.Time) (ok bool, err error) {
+func (d *WorkflowStoreImpl) UpdateWorkflowRunNodeFromTask(projectID int, runID int, nodeID int, taskID int, status db.WorkflowRunNodeStatus, reason string, resultJSON string, at time.Time) (ok bool, err error) {
+	return
+}
+
+func (d *WorkflowStoreImpl) FinalizeWorkflowRunNode(projectID int, runID int, nodeID int, status db.WorkflowRunNodeStatus, reason string, resultJSON string, at time.Time) (ok bool, err error) {
 	return
 }
 

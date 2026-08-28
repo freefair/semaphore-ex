@@ -4,6 +4,13 @@ import { getErrorMessage } from '@/lib/error';
 import { validateWorkflowDefinition, WORKFLOW_DEFINITION_VERSION } from '@/lib/workflowValidation';
 
 export const enhancedComputed = {
+  joinOptions() {
+    return [
+      { value: 'all-successful', text: this.$t('workflowJoinAllSuccessful') },
+      { value: 'all-complete', text: this.$t('workflowJoinAllComplete') },
+      { value: 'any-successful', text: this.$t('workflowJoinAnySuccessful') },
+    ];
+  },
   clientIssues() {
     return validateWorkflowDefinition(
       this.item,
@@ -21,19 +28,26 @@ export const enhancedMethods = {
       ...value,
       definition_version: value.definition_version || WORKFLOW_DEFINITION_VERSION,
       revision: value.revision || 0,
+      max_parallel_tasks: value.max_parallel_tasks ?? 4,
       nodes: Array.isArray(value.nodes) ? value.nodes : [],
       edges: Array.isArray(value.edges) ? value.edges : [],
     };
-    item.nodes = item.nodes.map((node) => ({
-      kind: 'task',
-      convergence_mode: 'all',
-      position_x: 0,
-      position_y: 0,
-      display_name: '',
-      ...node,
-    }));
+    item.nodes = item.nodes.map((node) => {
+      const convergence = node.convergence_mode || 'all';
+      return {
+        kind: 'task',
+        position_x: 0,
+        position_y: 0,
+        display_name: '',
+        ...node,
+        convergence_mode: convergence,
+        join_mode: node.join_mode
+            || (convergence === 'any' ? 'any-successful' : 'all-successful'),
+      };
+    });
     item.edges = item.edges.map((edge) => ({
       condition: 'on_success',
+      condition_expression: '',
       label: '',
       ...edge,
     }));
@@ -49,6 +63,13 @@ export const enhancedMethods = {
     this.validationIssues = [];
     this.validationState = 'idle';
     this.conflict = null;
+  },
+  onEdgeConditionChanged() {
+    if (!this.editingEdge) return;
+    if (this.editingEdge.condition !== 'expression') {
+      this.editingEdge.condition_expression = '';
+    }
+    this.applyEdgeEdit();
   },
   markDirty() {
     this.dirty = true;

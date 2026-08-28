@@ -4,6 +4,14 @@ export const enhancedComputed = {
     const { run } = this.details;
     return this.formatElapsed(run.start || run.created, run.end);
   },
+  parallelProgress() {
+    const max = this.workflow?.max_parallel_tasks;
+    if (!max || !this.details) return null;
+    const active = (this.details.nodes || []).filter(
+      (node) => ['queued', 'running'].includes(node.status),
+    ).length;
+    return { active, max };
+  },
 };
 
 export const enhancedMethods = {

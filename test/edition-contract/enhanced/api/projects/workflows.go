@@ -35,6 +35,7 @@ type workflowRunNodeDetails struct {
 	Node   workflowRunNodeView      `json:"node"`
 	Status db.WorkflowRunNodeStatus `json:"status"`
 	Reason string                   `json:"reason,omitempty"`
+	Result *db.WorkflowNodeResult   `json:"result,omitempty"`
 	Task   *workflowRunTaskView     `json:"task,omitempty"`
 }
 
@@ -60,6 +61,7 @@ type workflowRunDefinitionView struct {
 	Name              string                `json:"name"`
 	DefinitionVersion int                   `json:"definition_version"`
 	Revision          int                   `json:"revision"`
+	MaxParallelTasks  int                   `json:"max_parallel_tasks"`
 	Nodes             []workflowRunNodeView `json:"nodes"`
 	Edges             []workflowRunEdgeView `json:"edges"`
 }
@@ -70,6 +72,7 @@ type workflowRunNodeView struct {
 	DisplayName     string                     `json:"display_name,omitempty"`
 	Kind            db.WorkflowNodeKind        `json:"kind,omitempty"`
 	ConvergenceMode db.WorkflowConvergenceMode `json:"convergence_mode,omitempty"`
+	JoinMode        db.WorkflowJoinMode        `json:"join_mode,omitempty"`
 	ApprovalTimeout *int                       `json:"approval_timeout,omitempty"`
 	ApprovalMessage *string                    `json:"approval_message,omitempty"`
 	Note            *string                    `json:"note,omitempty"`
@@ -82,6 +85,7 @@ type workflowRunEdgeView struct {
 	SourceNodeID      int                      `json:"source_node_id"`
 	DestinationNodeID int                      `json:"destination_node_id"`
 	Condition         db.WorkflowEdgeCondition `json:"condition"`
+	Expression        string                   `json:"condition_expression,omitempty"`
 	Label             string                   `json:"label,omitempty"`
 }
 
@@ -326,6 +330,10 @@ func (c *workflowController) workflowRunDetails(run db.WorkflowRun) (workflowRun
 			continue
 		}
 		detail := workflowRunNodeDetails{Node: newWorkflowRunNodeView(node), Status: state.Status, Reason: state.Reason}
+		if state.ResultJSON != "" && state.ResultJSON != "{}" {
+			result := state.Result
+			detail.Result = &result
+		}
 		if task, taskExists := tasksByNode[node.ID]; taskExists {
 			detail.Task = &workflowRunTaskView{
 				ID: task.ID, Status: task.Status,
@@ -371,13 +379,14 @@ func newWorkflowRunDefinitionView(workflow db.WorkflowTemplate) workflowRunDefin
 		edges[index] = workflowRunEdgeView{
 			ID: edge.ID, SourceNodeID: edge.SourceNodeID,
 			DestinationNodeID: edge.DestinationNodeID,
-			Condition:         edge.Condition, Label: edge.Label,
+			Condition:         edge.Condition, Expression: edge.Expression, Label: edge.Label,
 		}
 	}
 	return workflowRunDefinitionView{
 		ID: workflow.ID, Name: workflow.Name,
 		DefinitionVersion: workflow.DefinitionVersion, Revision: workflow.Revision,
-		Nodes: nodes, Edges: edges,
+		MaxParallelTasks: workflow.MaxParallelTasks,
+		Nodes:            nodes, Edges: edges,
 	}
 }
 
@@ -388,6 +397,7 @@ func newWorkflowRunNodeView(node db.WorkflowNode) workflowRunNodeView {
 		DisplayName:     node.DisplayName,
 		Kind:            node.Kind,
 		ConvergenceMode: node.ConvergenceMode,
+		JoinMode:        node.JoinMode,
 		ApprovalTimeout: node.ApprovalTimeout,
 		ApprovalMessage: node.ApprovalMessage,
 		Note:            node.Note,

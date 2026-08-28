@@ -65,19 +65,21 @@ func TestWorkflowRunRepositoryPersistsImmutableSnapshotAndConditionalNodeState(t
 	}, 0)
 	require.Error(t, err, "one run attempt must not create two tasks for one node")
 
-	updated, err := repository.UpdateWorkflowRunNodeFromTask(projectID, created.ID, rootNodeID, task.ID, db.WorkflowRunNodeRunning, "", now.Add(3*time.Second))
+	updated, err := repository.UpdateWorkflowRunNodeFromTask(projectID, created.ID, rootNodeID, task.ID, db.WorkflowRunNodeRunning, "", "{}", now.Add(3*time.Second))
 	require.NoError(t, err)
 	assert.True(t, updated)
-	updated, err = repository.UpdateWorkflowRunNodeFromTask(projectID, created.ID, rootNodeID, task.ID, db.WorkflowRunNodeSucceeded, "", now.Add(4*time.Second))
+	updated, err = repository.UpdateWorkflowRunNodeFromTask(projectID, created.ID, rootNodeID, task.ID, db.WorkflowRunNodeSucceeded, "", `{"status":"succeeded","successful":true}`, now.Add(4*time.Second))
 	require.NoError(t, err)
 	assert.True(t, updated)
-	updated, err = repository.UpdateWorkflowRunNodeFromTask(projectID, created.ID, rootNodeID, task.ID, db.WorkflowRunNodeFailed, "late duplicate", now.Add(5*time.Second))
+	updated, err = repository.UpdateWorkflowRunNodeFromTask(projectID, created.ID, rootNodeID, task.ID, db.WorkflowRunNodeFailed, "late duplicate", `{"status":"failed","successful":false}`, now.Add(5*time.Second))
 	require.NoError(t, err)
 	assert.False(t, updated)
 
 	node, err := repository.GetWorkflowRunNode(projectID, created.ID, rootNodeID)
 	require.NoError(t, err)
 	assert.Equal(t, db.WorkflowRunNodeSucceeded, node.Status)
+	assert.Equal(t, db.WorkflowRunNodeSucceeded, node.Result.Status)
+	assert.True(t, node.Result.Successful)
 	require.NotNil(t, node.Start)
 	require.NotNil(t, node.End)
 
@@ -85,6 +87,24 @@ func TestWorkflowRunRepositoryPersistsImmutableSnapshotAndConditionalNodeState(t
 	assert.ErrorIs(t, err, db.ErrNotFound)
 	_, err = repository.GetWorkflowRunNode(projectID+1, created.ID, rootNodeID)
 	assert.ErrorIs(t, err, db.ErrNotFound)
+
+	dependentNodeID := workflow.Nodes[1].ID
+	finalized, err := repository.FinalizeWorkflowRunNode(
+		projectID, created.ID, dependentNodeID, db.WorkflowRunNodeSkipped,
+		"condition did not match", `{"status":"skipped","successful":false}`, now.Add(6*time.Second),
+	)
+	require.NoError(t, err)
+	assert.True(t, finalized)
+	finalized, err = repository.FinalizeWorkflowRunNode(
+		projectID, created.ID, dependentNodeID, db.WorkflowRunNodeBlocked,
+		"late duplicate", `{"status":"blocked","successful":false}`, now.Add(7*time.Second),
+	)
+	require.NoError(t, err)
+	assert.False(t, finalized)
+	dependent, err := repository.GetWorkflowRunNode(projectID, created.ID, dependentNodeID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowRunNodeSkipped, dependent.Status)
+	assert.Equal(t, db.WorkflowRunNodeSkipped, dependent.Result.Status)
 }
 
 func TestWorkflowRunRepositoryDeduplicatesCorrelationAndRollsBackNodes(t *testing.T) {
@@ -113,6 +133,13 @@ func TestWorkflowRunRepositoryDeduplicatesCorrelationAndRollsBackNodes(t *testin
 	require.Error(t, err)
 	_, err = repository.GetWorkflowRunByCorrelationID(projectID, workflow.ID, "rollback")
 	assert.True(t, errors.Is(err, db.ErrNotFound))
+}
+
+func TestDecodeWorkflowRunNodeLoadsResultWithoutTemplateSnapshot(t *testing.T) {
+	node := db.WorkflowRunNode{ResultJSON: `{"status":"skipped","successful":false}`}
+	require.NoError(t, decodeWorkflowRunNode(&node))
+	assert.Equal(t, db.WorkflowRunNodeSkipped, node.Result.Status)
+	assert.False(t, node.Result.Successful)
 }
 
 func workflowRunResources(t *testing.T, store interface {

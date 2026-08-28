@@ -23,7 +23,8 @@ type WorkflowManager interface {
 	GetWorkflowRunNode(projectID int, runID int, nodeID int) (WorkflowRunNode, error)
 	ClaimWorkflowRunNode(projectID int, runID int, nodeID int, queuedAt time.Time) (bool, error)
 	AttachWorkflowRunNodeTask(projectID int, runID int, nodeID int, taskID int) (bool, error)
-	UpdateWorkflowRunNodeFromTask(projectID int, runID int, nodeID int, taskID int, status WorkflowRunNodeStatus, reason string, at time.Time) (bool, error)
+	UpdateWorkflowRunNodeFromTask(projectID int, runID int, nodeID int, taskID int, status WorkflowRunNodeStatus, reason string, resultJSON string, at time.Time) (bool, error)
+	FinalizeWorkflowRunNode(projectID int, runID int, nodeID int, status WorkflowRunNodeStatus, reason string, resultJSON string, at time.Time) (bool, error)
 	BlockWorkflowRunNode(projectID int, runID int, nodeID int, reason string, at time.Time) (bool, error)
 
 	UpdateWorkflowRunStatusUnless(run WorkflowRun, excluded []WorkflowRunStatus) (bool, error)

@@ -8,9 +8,10 @@ import (
 type WorkflowEdgeCondition string
 
 const (
-	WorkflowEdgeOnSuccess WorkflowEdgeCondition = "on_success"
-	WorkflowEdgeOnFailure WorkflowEdgeCondition = "on_failure"
-	WorkflowEdgeAlways    WorkflowEdgeCondition = "always"
+	WorkflowEdgeOnSuccess  WorkflowEdgeCondition = "on_success"
+	WorkflowEdgeOnFailure  WorkflowEdgeCondition = "on_failure"
+	WorkflowEdgeAlways     WorkflowEdgeCondition = "always"
+	WorkflowEdgeExpression WorkflowEdgeCondition = "expression"
 )
 
 type WorkflowNodeKind string
@@ -43,6 +44,7 @@ type WorkflowTemplate struct {
 	// incremented after every successful update and is the optimistic-lock token.
 	DefinitionVersion int `db:"definition_version" json:"definition_version" backup:"definition_version"`
 	Revision          int `db:"revision" json:"revision" backup:"revision"`
+	MaxParallelTasks  int `db:"max_parallel_tasks" json:"max_parallel_tasks" backup:"max_parallel_tasks"`
 
 	Nodes []WorkflowNode `db:"-" bolt:"include" json:"nodes" backup:"-"`
 	Edges []WorkflowEdge `db:"-" bolt:"include" json:"edges" backup:"edges"`
@@ -59,6 +61,7 @@ type WorkflowNode struct {
 	DisplayName     string                  `db:"display_name" json:"display_name,omitempty" backup:"display_name"`
 	Kind            WorkflowNodeKind        `db:"kind" json:"kind,omitempty" backup:"kind"`
 	ConvergenceMode WorkflowConvergenceMode `db:"convergence_mode" json:"convergence_mode,omitempty" backup:"convergence_mode"`
+	JoinMode        WorkflowJoinMode        `db:"join_mode" json:"join_mode,omitempty" backup:"join_mode"`
 	ApprovalTimeout *int                    `db:"approval_timeout" json:"approval_timeout,omitempty" backup:"approval_timeout"`
 	ApprovalMessage *string                 `db:"approval_message" json:"approval_message,omitempty" backup:"approval_message"`
 
@@ -79,8 +82,11 @@ type WorkflowEdge struct {
 	SourceNodeID       int `db:"source_node_id" json:"source_node_id" backup:"source_node_id"`
 	DestinationNodeID  int `db:"destination_node_id" json:"destination_node_id" backup:"destination_node_id"`
 
-	Condition WorkflowEdgeCondition `db:"condition" json:"condition" backup:"condition"`
-	Label     string                `db:"label" json:"label,omitempty" backup:"label"`
+	Condition            WorkflowEdgeCondition    `db:"condition" json:"condition" backup:"condition"`
+	Label                string                   `db:"label" json:"label,omitempty" backup:"label"`
+	Expression           string                   `db:"condition_expression" json:"condition_expression,omitempty" backup:"condition_expression"`
+	ConditionProgramJSON string                   `db:"condition_program" json:"-" backup:"condition_program"`
+	ConditionProgram     WorkflowConditionProgram `db:"-" json:"condition_program,omitempty" backup:"-"`
 }
 
 type WorkflowDelayStatus string
@@ -122,14 +128,15 @@ const (
 	WorkflowRunSucceeded WorkflowRunStatus = "succeeded"
 	// WorkflowRunSuccess is retained for reading runs created by an older
 	// enhanced implementation. New runs use WorkflowRunSucceeded.
-	WorkflowRunSuccess WorkflowRunStatus = "success"
-	WorkflowRunStopped WorkflowRunStatus = "stopped"
-	WorkflowRunFailed  WorkflowRunStatus = "failed"
-	WorkflowRunBlocked WorkflowRunStatus = "blocked"
+	WorkflowRunSuccess  WorkflowRunStatus = "success"
+	WorkflowRunStopped  WorkflowRunStatus = "stopped"
+	WorkflowRunCanceled WorkflowRunStatus = "canceled"
+	WorkflowRunFailed   WorkflowRunStatus = "failed"
+	WorkflowRunBlocked  WorkflowRunStatus = "blocked"
 )
 
 func (status WorkflowRunStatus) IsFinished() bool {
-	return status == WorkflowRunSucceeded || status == WorkflowRunSuccess || status == WorkflowRunStopped || status == WorkflowRunFailed || status == WorkflowRunBlocked
+	return status == WorkflowRunSucceeded || status == WorkflowRunSuccess || status == WorkflowRunStopped || status == WorkflowRunCanceled || status == WorkflowRunFailed || status == WorkflowRunBlocked
 }
 
 type WorkflowRun struct {
@@ -181,7 +188,7 @@ type WorkflowApproval struct {
 
 func (condition WorkflowEdgeCondition) Validate() error {
 	switch condition {
-	case WorkflowEdgeOnSuccess, WorkflowEdgeOnFailure, WorkflowEdgeAlways:
+	case WorkflowEdgeOnSuccess, WorkflowEdgeOnFailure, WorkflowEdgeAlways, WorkflowEdgeExpression:
 		return nil
 	default:
 		return common_errors.NewValidationError("workflow edge condition is invalid")

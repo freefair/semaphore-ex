@@ -9,6 +9,7 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	coresql "github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	workflowDB "github.com/semaphoreui/semaphore/pro/db"
 	workflowSQL "github.com/semaphoreui/semaphore/pro/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/stretchr/testify/assert"
@@ -65,7 +66,7 @@ func TestWorkflowServiceRunsTwoNodesInOrderFromImmutableSnapshot(t *testing.T) {
 	assert.Len(t, fixture.enqueuer.tasks, 2)
 }
 
-func TestWorkflowServiceBlocksDependentNodeAfterFirstFailure(t *testing.T) {
+func TestWorkflowServiceSkipsUnselectedDependentNodeAfterFirstFailure(t *testing.T) {
 	fixture := newWorkflowServiceFixture(t)
 	defer fixture.store.Close()
 
@@ -82,7 +83,7 @@ func TestWorkflowServiceBlocksDependentNodeAfterFirstFailure(t *testing.T) {
 	assert.Equal(t, db.WorkflowRunFailed, failed.Status)
 	assert.Equal(t, "first task failed", failed.Reason)
 	assert.Equal(t, db.WorkflowRunNodeFailed, failed.Nodes[0].Status)
-	assert.Equal(t, db.WorkflowRunNodeBlocked, failed.Nodes[1].Status)
+	assert.Equal(t, db.WorkflowRunNodeSkipped, failed.Nodes[1].Status)
 	assert.Len(t, fixture.enqueuer.tasks, 1, "the dependent task must never be created after a root failure")
 }
 
@@ -99,6 +100,171 @@ func TestWorkflowServiceRecoversAnEnqueueRetryWithoutDuplicatingTask(t *testing.
 	restartedService := NewWorkflowService(fixture.repository, fixture.store, fixture.enqueuer, nil)
 	require.NoError(t, restartedService.ProgressWorkflowRun(fixture.projectID, run.ID, nil))
 	assert.Len(t, fixture.enqueuer.tasks, 1)
+}
+
+func TestWorkflowServiceRunsDiamondForEveryJoinMode(t *testing.T) {
+	tests := []struct {
+		name              string
+		joinMode          db.WorkflowJoinMode
+		leftStatus        task_logger.TaskStatus
+		rightStatus       task_logger.TaskStatus
+		joinBeforeRight   bool
+		expectedRunStatus db.WorkflowRunStatus
+		expectedJoin      db.WorkflowRunNodeStatus
+	}{
+		{
+			name: "all successful blocks the join after a branch failure", joinMode: db.WorkflowJoinAllSuccessful,
+			leftStatus: task_logger.TaskSuccessStatus, rightStatus: task_logger.TaskFailStatus,
+			expectedRunStatus: db.WorkflowRunFailed, expectedJoin: db.WorkflowRunNodeBlocked,
+		},
+		{
+			name: "all complete runs the join after a branch failure", joinMode: db.WorkflowJoinAllComplete,
+			leftStatus: task_logger.TaskSuccessStatus, rightStatus: task_logger.TaskFailStatus,
+			expectedRunStatus: db.WorkflowRunFailed, expectedJoin: db.WorkflowRunNodeSucceeded,
+		},
+		{
+			name: "any successful starts the join while another branch is active", joinMode: db.WorkflowJoinAnySuccessful,
+			leftStatus: task_logger.TaskSuccessStatus, rightStatus: task_logger.TaskSuccessStatus,
+			joinBeforeRight: true, expectedRunStatus: db.WorkflowRunSucceeded, expectedJoin: db.WorkflowRunNodeSucceeded,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkflowServiceFixture(t)
+			defer fixture.store.Close()
+			workflow := createDiamondWorkflow(t, &fixture, test.joinMode, 2, db.WorkflowEdgeAlways)
+
+			run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "diamond-"+string(test.joinMode))
+			require.NoError(t, err)
+			require.Len(t, fixture.enqueuer.tasks, 1)
+			rootTask := finishWorkflowTask(t, fixture.store, workflowRunNodeNamed(t, run, "Root"), task_logger.TaskSuccessStatus, "")
+			require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(rootTask))
+
+			run = loadWorkflowRun(t, &fixture, run.ID)
+			assert.Equal(t, db.WorkflowRunNodeQueued, workflowRunNodeNamed(t, run, "Left").Status)
+			assert.Equal(t, db.WorkflowRunNodeQueued, workflowRunNodeNamed(t, run, "Right").Status)
+			require.Len(t, fixture.enqueuer.tasks, 3, "both independent branches must be enqueued")
+
+			leftTask := finishWorkflowTask(t, fixture.store, workflowRunNodeNamed(t, run, "Left"), test.leftStatus, workflowTaskMessage(test.leftStatus, "left failed"))
+			require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(leftTask))
+			run = loadWorkflowRun(t, &fixture, run.ID)
+			if test.joinBeforeRight {
+				assert.Equal(t, db.WorkflowRunNodeQueued, workflowRunNodeNamed(t, run, "Join").Status)
+				require.Len(t, fixture.enqueuer.tasks, 4)
+			} else {
+				assert.Equal(t, db.WorkflowRunNodePending, workflowRunNodeNamed(t, run, "Join").Status)
+			}
+
+			rightTask := finishWorkflowTask(t, fixture.store, workflowRunNodeNamed(t, run, "Right"), test.rightStatus, workflowTaskMessage(test.rightStatus, "right failed"))
+			require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(rightTask))
+			run = loadWorkflowRun(t, &fixture, run.ID)
+			join := workflowRunNodeNamed(t, run, "Join")
+			if join.Status == db.WorkflowRunNodeQueued {
+				joinTask := finishWorkflowTask(t, fixture.store, join, task_logger.TaskSuccessStatus, "")
+				require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(joinTask))
+				run = loadWorkflowRun(t, &fixture, run.ID)
+				join = workflowRunNodeNamed(t, run, "Join")
+			}
+			assert.Equal(t, test.expectedRunStatus, run.Status)
+			assert.Equal(t, test.expectedJoin, join.Status)
+			assert.LessOrEqual(t, len(fixture.enqueuer.tasks), 4)
+		})
+	}
+}
+
+func TestWorkflowServiceConcurrentPredecessorCompletionEnqueuesJoinOnce(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	workflow := createDiamondWorkflow(t, &fixture, db.WorkflowJoinAllSuccessful, 2, db.WorkflowEdgeAlways)
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "simultaneous-diamond")
+	require.NoError(t, err)
+	rootTask := finishWorkflowTask(t, fixture.store, workflowRunNodeNamed(t, run, "Root"), task_logger.TaskSuccessStatus, "")
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(rootTask))
+	run = loadWorkflowRun(t, &fixture, run.ID)
+	leftTask := finishWorkflowTask(t, fixture.store, workflowRunNodeNamed(t, run, "Left"), task_logger.TaskSuccessStatus, "")
+	rightTask := finishWorkflowTask(t, fixture.store, workflowRunNodeNamed(t, run, "Right"), task_logger.TaskSuccessStatus, "")
+
+	errors := make(chan error, 2)
+	var wait sync.WaitGroup
+	wait.Add(2)
+	for _, task := range []db.Task{leftTask, rightTask} {
+		task := task
+		go func() {
+			defer wait.Done()
+			errors <- fixture.service.HandleWorkflowTaskCompletion(task)
+		}()
+	}
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		require.NoError(t, err)
+	}
+
+	run = loadWorkflowRun(t, &fixture, run.ID)
+	assert.Equal(t, db.WorkflowRunNodeQueued, workflowRunNodeNamed(t, run, "Join").Status)
+	assert.Len(t, fixture.enqueuer.tasks, 4, "the ready join must be enqueued at most once")
+}
+
+func TestWorkflowServiceHonorsParallelismBoundAndJoinsSelectedBranch(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	workflow := createDiamondWorkflow(t, &fixture, db.WorkflowJoinAllSuccessful, 1, db.WorkflowEdgeExpression)
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "bounded-conditional-diamond")
+	require.NoError(t, err)
+	rootTask := finishWorkflowTask(t, fixture.store, workflowRunNodeNamed(t, run, "Root"), task_logger.TaskSuccessStatus, "")
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(rootTask))
+
+	run = loadWorkflowRun(t, &fixture, run.ID)
+	left := workflowRunNodeNamed(t, run, "Left")
+	right := workflowRunNodeNamed(t, run, "Right")
+	assert.Equal(t, db.WorkflowRunNodeQueued, left.Status)
+	assert.Equal(t, db.WorkflowRunNodeSkipped, right.Status)
+	assert.Len(t, fixture.enqueuer.tasks, 2, "parallelism one allows only one active branch")
+
+	leftTask := finishWorkflowTask(t, fixture.store, left, task_logger.TaskSuccessStatus, "")
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(leftTask))
+	run = loadWorkflowRun(t, &fixture, run.ID)
+	join := workflowRunNodeNamed(t, run, "Join")
+	assert.Equal(t, db.WorkflowRunNodeQueued, join.Status, "a skipped branch must not poison the selected join")
+	assert.Len(t, fixture.enqueuer.tasks, 3)
+
+	joinTask := finishWorkflowTask(t, fixture.store, join, task_logger.TaskSuccessStatus, "")
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(joinTask))
+	run = loadWorkflowRun(t, &fixture, run.ID)
+	assert.Equal(t, db.WorkflowRunSucceeded, run.Status)
+}
+
+func TestWorkflowServiceKeepsIndependentReadyNodesWithinParallelismBound(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	workflow := createDiamondWorkflow(t, &fixture, db.WorkflowJoinAllSuccessful, 1, db.WorkflowEdgeAlways)
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "parallelism-one-diamond")
+	require.NoError(t, err)
+	rootTask := finishWorkflowTask(t, fixture.store, workflowRunNodeNamed(t, run, "Root"), task_logger.TaskSuccessStatus, "")
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(rootTask))
+
+	run = loadWorkflowRun(t, &fixture, run.ID)
+	branches := []db.WorkflowRunNode{workflowRunNodeNamed(t, run, "Left"), workflowRunNodeNamed(t, run, "Right")}
+	queued := make([]db.WorkflowRunNode, 0, 1)
+	pending := 0
+	for _, branch := range branches {
+		if branch.Status == db.WorkflowRunNodeQueued {
+			queued = append(queued, branch)
+		}
+		if branch.Status == db.WorkflowRunNodePending {
+			pending++
+		}
+	}
+	require.Len(t, queued, 1)
+	assert.Equal(t, 1, pending)
+	assert.Len(t, fixture.enqueuer.tasks, 2)
+
+	firstBranchTask := finishWorkflowTask(t, fixture.store, queued[0], task_logger.TaskSuccessStatus, "")
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(firstBranchTask))
+	run = loadWorkflowRun(t, &fixture, run.ID)
+	assert.Equal(t, 1, workflowActiveNodeCount(run))
+	assert.Len(t, fixture.enqueuer.tasks, 3, "the second branch starts only after the first completes")
 }
 
 func TestWorkflowReconcilerCanStopBeforeStart(t *testing.T) {
@@ -218,6 +384,7 @@ func finishWorkflowTask(
 }
 
 type workflowTestEnqueuer struct {
+	mutex           sync.Mutex
 	store           *coresql.SqlDb
 	tasks           []db.Task
 	templates       []db.Template
@@ -242,6 +409,8 @@ func (e *workflowTestEnqueuer) AddWorkflowTask(
 	projectID int,
 	needAlias bool,
 ) (db.Task, error) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
 	templateJSON, err := json.Marshal(template)
 	if err != nil {
 		return db.Task{}, err
@@ -264,3 +433,94 @@ func (e *workflowTestEnqueuer) AddWorkflowTask(
 }
 
 func (e *workflowTestEnqueuer) StopTasksByWorkflowRun(projectID int, runID int, forceStop bool) {}
+
+func createDiamondWorkflow(
+	t *testing.T,
+	fixture *workflowServiceFixture,
+	joinMode db.WorkflowJoinMode,
+	maxParallel int,
+	rightCondition db.WorkflowEdgeCondition,
+) db.WorkflowTemplate {
+	t.Helper()
+	left, err := fixture.store.CreateTemplate(db.Template{
+		ProjectID: fixture.projectID, RepositoryID: fixture.first.RepositoryID, Name: "Left", Playbook: "left.yml",
+	})
+	require.NoError(t, err)
+	right, err := fixture.store.CreateTemplate(db.Template{
+		ProjectID: fixture.projectID, RepositoryID: fixture.first.RepositoryID, Name: "Right", Playbook: "right.yml",
+	})
+	require.NoError(t, err)
+	join, err := fixture.store.CreateTemplate(db.Template{
+		ProjectID: fixture.projectID, RepositoryID: fixture.first.RepositoryID, Name: "Join", Playbook: "join.yml",
+	})
+	require.NoError(t, err)
+	rightExpression := ""
+	if rightCondition == db.WorkflowEdgeExpression {
+		rightExpression = `result.status == "failed"`
+	}
+	raw := db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Diamond", DefinitionVersion: db.WorkflowDefinitionVersion,
+		MaxParallelTasks: maxParallel,
+		Nodes: []db.WorkflowNode{
+			{ID: -1, TemplateID: fixture.first.ID, DisplayName: "Root"},
+			{ID: -2, TemplateID: left.ID, DisplayName: "Left"},
+			{ID: -3, TemplateID: right.ID, DisplayName: "Right"},
+			{ID: -4, TemplateID: join.ID, DisplayName: "Join", JoinMode: joinMode},
+		},
+		Edges: []db.WorkflowEdge{
+			{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeAlways},
+			{ID: -2, SourceNodeID: -1, DestinationNodeID: -3, Condition: rightCondition, Expression: rightExpression},
+			{ID: -3, SourceNodeID: -2, DestinationNodeID: -4, Condition: db.WorkflowEdgeAlways},
+			{ID: -4, SourceNodeID: -3, DestinationNodeID: -4, Condition: db.WorkflowEdgeAlways},
+		},
+	}
+	prepared, validation, err := workflowDB.PrepareWorkflowTemplate(fixture.store, raw)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	created, err := fixture.repository.CreateWorkflowTemplate(prepared)
+	require.NoError(t, err)
+	return created
+}
+
+func loadWorkflowRun(t *testing.T, fixture *workflowServiceFixture, runID int) db.WorkflowRun {
+	t.Helper()
+	run, err := fixture.repository.GetWorkflowRunByID(fixture.projectID, runID)
+	require.NoError(t, err)
+	return run
+}
+
+func workflowRunNodeNamed(t *testing.T, run db.WorkflowRun, name string) db.WorkflowRunNode {
+	t.Helper()
+	nodeID := 0
+	for _, node := range run.DefinitionSnapshot.Nodes {
+		if node.DisplayName == name {
+			nodeID = node.ID
+			break
+		}
+	}
+	require.NotZero(t, nodeID, "workflow definition node %q is missing", name)
+	for _, node := range run.Nodes {
+		if node.WorkflowNodeID == nodeID {
+			return node
+		}
+	}
+	require.FailNow(t, "workflow run node is missing", name)
+	return db.WorkflowRunNode{}
+}
+
+func workflowTaskMessage(status task_logger.TaskStatus, message string) string {
+	if status == task_logger.TaskFailStatus || status == task_logger.TaskRejected || status == task_logger.TaskStoppedStatus {
+		return message
+	}
+	return ""
+}
+
+func workflowActiveNodeCount(run db.WorkflowRun) int {
+	active := 0
+	for _, node := range run.Nodes {
+		if node.Status == db.WorkflowRunNodeQueued || node.Status == db.WorkflowRunNodeRunning {
+			active++
+		}
+	}
+	return active
+}

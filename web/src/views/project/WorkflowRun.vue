@@ -26,6 +26,14 @@
         class="mr-3"
       >{{ details.run.status }}</v-chip>
 
+      <v-chip
+        v-if="parallelProgress"
+        small
+        outlined
+        class="mr-3"
+        data-testid="workflow-parallel-progress"
+      >{{ $t('workflowParallelProgress', parallelProgress) }}</v-chip>
+
       <v-btn
         v-if="canStopRun"
         color="error"
@@ -288,6 +296,11 @@ export default {
         case 'stopped':
         case 'rejected':
           return 'error';
+        case 'blocked':
+          return 'warning';
+        case 'canceled':
+        case 'skipped':
+          return 'grey';
         case 'running':
         case 'pending':
           return 'primary';

@@ -1,6 +1,7 @@
 export const WORKFLOW_DEFINITION_VERSION = 1;
 export const WORKFLOW_NODE_LIMIT = 200;
 export const WORKFLOW_EDGE_LIMIT = 1000;
+export const WORKFLOW_MAX_PARALLEL_TASKS = 32;
 
 function issue(code, messageKey, path, nodeId = null, edgeId = null, args = {}) {
   return {
@@ -33,6 +34,19 @@ export function validateWorkflowDefinition(workflow, templateIds = []) {
   if (version !== WORKFLOW_DEFINITION_VERSION) {
     issues.push(issue('WORKFLOW_SCHEMA_UNSUPPORTED', 'workflowErrorSchemaUnsupported', 'definition_version'));
   }
+  const maxParallelTasks = workflow?.max_parallel_tasks ?? 4;
+  if (!Number.isInteger(maxParallelTasks)
+      || maxParallelTasks < 1
+      || maxParallelTasks > WORKFLOW_MAX_PARALLEL_TASKS) {
+    issues.push(issue(
+      'WORKFLOW_PARALLELISM_INVALID',
+      'workflowErrorParallelism',
+      'max_parallel_tasks',
+      null,
+      null,
+      { count: WORKFLOW_MAX_PARALLEL_TASKS },
+    ));
+  }
   if (nodes.length === 0) {
     issues.push(issue('WORKFLOW_NODES_REQUIRED', 'workflowErrorNoNodes', 'nodes'));
   }
@@ -58,6 +72,17 @@ export function validateWorkflowDefinition(workflow, templateIds = []) {
       issues.push(issue('WORKFLOW_NODE_KIND_INVALID', 'workflowErrorNodeKindInvalid', `${path}.kind`, node.id));
     }
     if (kind !== 'note') executable.add(node.id);
+    const joinMode = node.join_mode
+      || ((node.convergence_mode || 'all') === 'any' ? 'any-successful' : 'all-successful');
+    if (kind !== 'note'
+        && !['all-successful', 'all-complete', 'any-successful'].includes(joinMode)) {
+      issues.push(issue(
+        'WORKFLOW_JOIN_MODE_INVALID',
+        'workflowErrorJoinMode',
+        `${path}.join_mode`,
+        node.id,
+      ));
+    }
     if (kind === 'task') {
       if (!node.template_id) {
         issues.push(issue('WORKFLOW_TEMPLATE_REQUIRED', 'workflowErrorTaskNeedsTemplate', `${path}.template_id`, node.id));
@@ -85,6 +110,25 @@ export function validateWorkflowDefinition(workflow, templateIds = []) {
       issues.push(issue('WORKFLOW_EDGE_ID_DUPLICATE', 'workflowErrorEdgeIdDuplicate', `${path}.id`, null, edge.id));
     }
     edgeIds.add(edge.id);
+    const condition = edge.condition || 'on_success';
+    if (!['on_success', 'on_failure', 'always', 'expression'].includes(condition)) {
+      issues.push(issue(
+        'WORKFLOW_EDGE_CONDITION_INVALID',
+        'workflowEdgeConditionRequired',
+        `${path}.condition`,
+        null,
+        edge.id,
+      ));
+    }
+    if (condition === 'expression' && !edge.condition_expression?.trim()) {
+      issues.push(issue(
+        'WORKFLOW_EDGE_EXPRESSION_REQUIRED',
+        'workflowErrorConditionExpressionRequired',
+        `${path}.condition_expression`,
+        null,
+        edge.id,
+      ));
+    }
     const sourceExists = byId.has(edge.source_node_id);
     const destinationExists = byId.has(edge.destination_node_id);
     if (!sourceExists) {

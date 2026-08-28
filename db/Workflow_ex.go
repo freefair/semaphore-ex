@@ -1,8 +1,59 @@
 package db
 
 import (
+	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"time"
 )
+
+type WorkflowJoinMode string
+
+const (
+	WorkflowJoinAllSuccessful WorkflowJoinMode = "all-successful"
+	WorkflowJoinAllComplete   WorkflowJoinMode = "all-complete"
+	WorkflowJoinAnySuccessful WorkflowJoinMode = "any-successful"
+)
+
+type WorkflowConditionValueType string
+
+const (
+	WorkflowConditionBoolean WorkflowConditionValueType = "boolean"
+	WorkflowConditionInteger WorkflowConditionValueType = "integer"
+	WorkflowConditionString  WorkflowConditionValueType = "string"
+)
+
+// WorkflowConditionInstruction is one typed operation in the persisted
+// condition stack program. It contains values only; it cannot call code or
+// address resources outside the allow-listed workflow result fields.
+type WorkflowConditionInstruction struct {
+	Operation    string                     `json:"operation"`
+	ValueType    WorkflowConditionValueType `json:"value_type,omitempty"`
+	Field        string                     `json:"field,omitempty"`
+	BooleanValue *bool                      `json:"boolean_value,omitempty"`
+	IntegerValue *int64                     `json:"integer_value,omitempty"`
+	StringValue  *string                    `json:"string_value,omitempty"`
+}
+
+type WorkflowConditionProgram struct {
+	Version      int                            `json:"version"`
+	Instructions []WorkflowConditionInstruction `json:"instructions"`
+}
+
+type WorkflowNodeResultSummary struct {
+	State         TaskSummaryState `json:"state"`
+	ExpectedHosts int              `json:"expected_hosts"`
+	TotalHosts    int              `json:"total_hosts"`
+	OkHosts       int              `json:"ok_hosts"`
+	FailedHosts   int              `json:"failed_hosts"`
+}
+
+// WorkflowNodeResult is the immutable, deliberately narrow condition input.
+// Diagnostics, host names, task arguments, secrets, and arbitrary artifacts
+// are excluded from this contract.
+type WorkflowNodeResult struct {
+	Status     WorkflowRunNodeStatus      `json:"status"`
+	Successful bool                       `json:"successful"`
+	Summary    *WorkflowNodeResultSummary `json:"summary,omitempty"`
+}
 
 const WorkflowDefinitionVersion = 1
 
@@ -30,11 +81,13 @@ const (
 	WorkflowRunNodeSucceeded WorkflowRunNodeStatus = "succeeded"
 	WorkflowRunNodeFailed    WorkflowRunNodeStatus = "failed"
 	WorkflowRunNodeStopped   WorkflowRunNodeStatus = "stopped"
+	WorkflowRunNodeCanceled  WorkflowRunNodeStatus = "canceled"
 	WorkflowRunNodeBlocked   WorkflowRunNodeStatus = "blocked"
+	WorkflowRunNodeSkipped   WorkflowRunNodeStatus = "skipped"
 )
 
 func (status WorkflowRunNodeStatus) IsFinished() bool {
-	return status == WorkflowRunNodeSucceeded || status == WorkflowRunNodeFailed || status == WorkflowRunNodeStopped || status == WorkflowRunNodeBlocked
+	return status == WorkflowRunNodeSucceeded || status == WorkflowRunNodeFailed || status == WorkflowRunNodeStopped || status == WorkflowRunNodeCanceled || status == WorkflowRunNodeBlocked || status == WorkflowRunNodeSkipped
 }
 
 // WorkflowRunNode is the durable execution state for one immutable workflow
@@ -51,11 +104,38 @@ type WorkflowRunNode struct {
 	TaskID *int                  `db:"task_id" json:"task_id,omitempty" backup:"task_id"`
 	Reason string                `db:"reason" json:"reason,omitempty" backup:"reason"`
 
-	TemplateSnapshotJSON string   `db:"template_snapshot" json:"-" backup:"template_snapshot"`
-	TemplateSnapshot     Template `db:"-" json:"template" backup:"-"`
+	TemplateSnapshotJSON string             `db:"template_snapshot" json:"-" backup:"template_snapshot"`
+	TemplateSnapshot     Template           `db:"-" json:"template" backup:"-"`
+	ResultJSON           string             `db:"result" json:"-" backup:"result"`
+	Result               WorkflowNodeResult `db:"-" json:"result,omitempty" backup:"-"`
 
 	Created time.Time  `db:"created" json:"created" backup:"created"`
 	Queued  *time.Time `db:"queued" json:"queued,omitempty" backup:"queued"`
 	Start   *time.Time `db:"start" json:"start,omitempty" backup:"start"`
 	End     *time.Time `db:"end" json:"end,omitempty" backup:"end"`
+}
+
+func (mode WorkflowJoinMode) Validate() error {
+	switch mode {
+	case WorkflowJoinAllSuccessful, WorkflowJoinAllComplete, WorkflowJoinAnySuccessful:
+		return nil
+	default:
+		return common_errors.NewValidationError("workflow node join mode is invalid")
+	}
+}
+
+func (node WorkflowNode) EffectiveJoinMode() WorkflowJoinMode {
+	if node.JoinMode != "" {
+		return node.JoinMode
+	}
+	if node.EffectiveConvergenceMode() == WorkflowConvergenceAny {
+		return WorkflowJoinAnySuccessful
+	}
+	return WorkflowJoinAllSuccessful
+}
+
+// WorkflowNodeResultStore exposes only the sanitized, persisted summary used
+// to freeze allow-listed condition inputs when a workflow task finishes.
+type WorkflowNodeResultStore interface {
+	GetTaskSummary(projectID int, taskID int) (TaskSummary, error)
 }

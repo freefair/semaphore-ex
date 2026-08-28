@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -18,6 +19,7 @@ const workflowReconcileInterval = 2 * time.Second
 type workflowService struct {
 	repository      db.WorkflowManager
 	templateStore   db.WorkflowTemplateValidationStore
+	resultStore     db.WorkflowNodeResultStore
 	enqueuer        pro_interfaces.WorkflowTaskEnqueuer
 	locker          pro_interfaces.WorkflowRunLocker
 	localRunLocks   workflowLocalLocks
@@ -42,8 +44,10 @@ func NewWorkflowService(
 	enqueuer pro_interfaces.WorkflowTaskEnqueuer,
 	locker pro_interfaces.WorkflowRunLocker,
 ) pro_interfaces.WorkflowService {
+	resultStore, _ := templateStore.(db.WorkflowNodeResultStore)
 	return &workflowService{
-		repository: repository, templateStore: templateStore, enqueuer: enqueuer, locker: locker,
+		repository: repository, templateStore: templateStore, resultStore: resultStore,
+		enqueuer: enqueuer, locker: locker,
 	}
 }
 
@@ -111,51 +115,79 @@ func (s *workflowService) ProgressWorkflowRun(projectID int, runID int, user *db
 		if err != nil {
 			return err
 		}
-		root, dependent, err := linearRunNodes(run)
+		return s.progressReadyWorkflowNodes(run, user)
+	})
+}
+
+func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *db.User) error {
+	for iteration := 0; iteration <= len(run.Nodes); iteration++ {
+		decisions, active, err := planWorkflowNodes(run)
 		if err != nil {
 			return err
 		}
-		switch root.Status {
-		case db.WorkflowRunNodePending:
-			return s.enqueueWorkflowNode(run, root, user, true)
-		case db.WorkflowRunNodeQueued:
-			if root.TaskID == nil {
-				return s.enqueueWorkflowNode(run, root, user, true)
+		changed := false
+		for _, decision := range decisions {
+			if decision.kind != workflowNodeSkipped && decision.kind != workflowNodeBlocked {
+				continue
 			}
-			return s.setRunStatus(run, db.WorkflowRunQueued, "", nil)
-		case db.WorkflowRunNodeRunning:
-			return s.setRunStatus(run, db.WorkflowRunRunning, "", nil)
-		case db.WorkflowRunNodeFailed:
-			if _, err = s.repository.BlockWorkflowRunNode(projectID, runID, dependent.WorkflowNodeID, "Blocked because the preceding task failed.", tz.Now()); err != nil {
+			status := db.WorkflowRunNodeSkipped
+			if decision.kind == workflowNodeBlocked {
+				status = db.WorkflowRunNodeBlocked
+			}
+			resultJSON, err := marshalWorkflowNodeResult(db.WorkflowNodeResult{
+				Status: status, Successful: status == db.WorkflowRunNodeSucceeded,
+			})
+			if err != nil {
 				return err
 			}
-			return s.finishRun(run, db.WorkflowRunFailed, taskFailureReason(root))
-		case db.WorkflowRunNodeStopped:
-			if _, err = s.repository.BlockWorkflowRunNode(projectID, runID, dependent.WorkflowNodeID, "Blocked because the preceding task stopped.", tz.Now()); err != nil {
+			updated, err := s.repository.FinalizeWorkflowRunNode(
+				run.ProjectID, run.ID, decision.node.WorkflowNodeID, status,
+				decision.reason, resultJSON, tz.Now(),
+			)
+			if err != nil {
 				return err
 			}
-			return s.finishRun(run, db.WorkflowRunStopped, taskFailureReason(root))
-		case db.WorkflowRunNodeSucceeded:
-			switch dependent.Status {
-			case db.WorkflowRunNodePending:
-				return s.enqueueWorkflowNode(run, dependent, user, false)
-			case db.WorkflowRunNodeQueued:
-				if dependent.TaskID == nil {
-					return s.enqueueWorkflowNode(run, dependent, user, false)
-				}
-				return s.setRunStatus(run, db.WorkflowRunQueued, "", nil)
-			case db.WorkflowRunNodeRunning:
-				return s.setRunStatus(run, db.WorkflowRunRunning, "", nil)
-			case db.WorkflowRunNodeSucceeded:
-				return s.finishRun(run, db.WorkflowRunSucceeded, "")
-			case db.WorkflowRunNodeFailed:
-				return s.finishRun(run, db.WorkflowRunFailed, taskFailureReason(dependent))
-			case db.WorkflowRunNodeStopped:
-				return s.finishRun(run, db.WorkflowRunStopped, taskFailureReason(dependent))
-			}
+			changed = changed || updated
 		}
-		return nil
-	})
+
+		slots := run.DefinitionSnapshot.MaxParallelTasks - active
+		if slots < 0 {
+			slots = 0
+		}
+		root, rootErr := workflowDB.WorkflowRootNode(run.DefinitionSnapshot)
+		if rootErr != nil {
+			return rootErr
+		}
+		for _, decision := range decisions {
+			if decision.kind != workflowNodeReady || slots == 0 {
+				continue
+			}
+			if err := s.enqueueWorkflowNode(run, decision.node, user, decision.node.WorkflowNodeID == root.ID); err != nil {
+				return err
+			}
+			slots--
+		}
+
+		current, err := s.repository.GetWorkflowRunByID(run.ProjectID, run.ID)
+		if err != nil {
+			return err
+		}
+		if status, reason, terminal := workflowRunTerminalStatus(current); terminal {
+			return s.finishRun(current, status, reason)
+		}
+		if !changed {
+			status := db.WorkflowRunQueued
+			for _, node := range current.Nodes {
+				if node.Status == db.WorkflowRunNodeRunning {
+					status = db.WorkflowRunRunning
+					break
+				}
+			}
+			return s.setRunStatus(current, status, "", nil)
+		}
+		run = current
+	}
+	return fmt.Errorf("workflow readiness did not converge")
 }
 
 func (s *workflowService) StopWorkflowRun(projectID int, runID int, user *db.User) (db.WorkflowRun, error) {
@@ -168,13 +200,24 @@ func (s *workflowService) StopWorkflowRun(projectID int, runID int, user *db.Use
 	}
 	s.enqueuer.StopTasksByWorkflowRun(projectID, runID, true)
 	for _, node := range run.Nodes {
-		if node.TaskID == nil && !node.Status.IsFinished() {
-			if _, blockErr := s.repository.BlockWorkflowRunNode(projectID, runID, node.WorkflowNodeID, "Blocked because the workflow was stopped.", tz.Now()); blockErr != nil {
-				return db.WorkflowRun{}, blockErr
+		if node.Status.IsFinished() {
+			continue
+		}
+		resultJSON, marshalErr := marshalWorkflowNodeResult(db.WorkflowNodeResult{Status: db.WorkflowRunNodeCanceled})
+		if marshalErr != nil {
+			return db.WorkflowRun{}, marshalErr
+		}
+		if node.TaskID == nil {
+			if _, cancelErr := s.repository.FinalizeWorkflowRunNode(projectID, runID, node.WorkflowNodeID, db.WorkflowRunNodeCanceled, "Canceled because the workflow was stopped.", resultJSON, tz.Now()); cancelErr != nil {
+				return db.WorkflowRun{}, cancelErr
+			}
+		} else {
+			if _, cancelErr := s.repository.UpdateWorkflowRunNodeFromTask(projectID, runID, node.WorkflowNodeID, *node.TaskID, db.WorkflowRunNodeCanceled, "Canceled because the workflow was stopped.", resultJSON, tz.Now()); cancelErr != nil {
+				return db.WorkflowRun{}, cancelErr
 			}
 		}
 	}
-	if err = s.finishRun(run, db.WorkflowRunStopped, "Stopped by user."); err != nil {
+	if err = s.finishRun(run, db.WorkflowRunCanceled, "Canceled by user."); err != nil {
 		return db.WorkflowRun{}, err
 	}
 	return s.repository.GetWorkflowRunByID(projectID, runID)
@@ -186,11 +229,15 @@ func (s *workflowService) HandleWorkflowTaskCompletion(task db.Task) error {
 	}
 	status := workflowDB.WorkflowRunNodeStatusFromTaskStatus(task.Status)
 	reason := ""
-	if status == db.WorkflowRunNodeFailed || status == db.WorkflowRunNodeStopped {
+	if status == db.WorkflowRunNodeFailed || status == db.WorkflowRunNodeCanceled || status == db.WorkflowRunNodeStopped {
 		reason = task.Message
 	}
+	resultJSON, err := s.workflowNodeResultJSON(task, status)
+	if err != nil {
+		return err
+	}
 	if _, err := s.repository.UpdateWorkflowRunNodeFromTask(
-		task.ProjectID, *task.WorkflowRunID, *task.WorkflowNodeID, task.ID, status, reason, tz.Now(),
+		task.ProjectID, *task.WorkflowRunID, *task.WorkflowNodeID, task.ID, status, reason, resultJSON, tz.Now(),
 	); err != nil {
 		return err
 	}
@@ -221,16 +268,45 @@ func (s *workflowService) syncWorkflowTaskStates(run db.WorkflowRun) error {
 		}
 		status := workflowDB.WorkflowRunNodeStatusFromTaskStatus(task.Status)
 		reason := ""
-		if status == db.WorkflowRunNodeFailed || status == db.WorkflowRunNodeStopped {
+		if status == db.WorkflowRunNodeFailed || status == db.WorkflowRunNodeCanceled || status == db.WorkflowRunNodeStopped {
 			reason = task.Message
 		}
+		resultJSON, resultErr := s.workflowNodeResultJSON(task, status)
+		if resultErr != nil {
+			return resultErr
+		}
 		if _, err = s.repository.UpdateWorkflowRunNodeFromTask(
-			run.ProjectID, run.ID, node.WorkflowNodeID, task.ID, status, reason, tz.Now(),
+			run.ProjectID, run.ID, node.WorkflowNodeID, task.ID, status, reason, resultJSON, tz.Now(),
 		); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (s *workflowService) workflowNodeResultJSON(task db.Task, status db.WorkflowRunNodeStatus) (string, error) {
+	result := db.WorkflowNodeResult{Status: status, Successful: status == db.WorkflowRunNodeSucceeded}
+	if s.resultStore != nil {
+		summary, err := s.resultStore.GetTaskSummary(task.ProjectID, task.ID)
+		if err != nil && !errors.Is(err, db.ErrNotFound) {
+			return "", fmt.Errorf("load workflow task summary: %w", err)
+		}
+		if err == nil {
+			result.Summary = &db.WorkflowNodeResultSummary{
+				State: summary.State, ExpectedHosts: summary.ExpectedHosts, TotalHosts: summary.TotalHosts,
+				OkHosts: summary.OkHosts, FailedHosts: summary.FailedHosts,
+			}
+		}
+	}
+	return marshalWorkflowNodeResult(result)
+}
+
+func marshalWorkflowNodeResult(result db.WorkflowNodeResult) (string, error) {
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return "", fmt.Errorf("encode workflow node result: %w", err)
+	}
+	return string(encoded), nil
 }
 
 func (s *workflowService) enqueueWorkflowNode(
@@ -326,28 +402,8 @@ func (s *workflowService) finishRun(run db.WorkflowRun, status db.WorkflowRunSta
 
 func terminalWorkflowRunStatuses() []db.WorkflowRunStatus {
 	return []db.WorkflowRunStatus{
-		db.WorkflowRunSucceeded, db.WorkflowRunSuccess, db.WorkflowRunFailed, db.WorkflowRunStopped, db.WorkflowRunBlocked,
+		db.WorkflowRunSucceeded, db.WorkflowRunSuccess, db.WorkflowRunFailed, db.WorkflowRunStopped, db.WorkflowRunCanceled, db.WorkflowRunBlocked,
 	}
-}
-
-func linearRunNodes(run db.WorkflowRun) (db.WorkflowRunNode, db.WorkflowRunNode, error) {
-	if len(run.DefinitionSnapshot.Edges) != 1 {
-		return db.WorkflowRunNode{}, db.WorkflowRunNode{}, errors.New("workflow run snapshot is not linear")
-	}
-	edge := run.DefinitionSnapshot.Edges[0]
-	var root, dependent *db.WorkflowRunNode
-	for index := range run.Nodes {
-		switch run.Nodes[index].WorkflowNodeID {
-		case edge.SourceNodeID:
-			root = &run.Nodes[index]
-		case edge.DestinationNodeID:
-			dependent = &run.Nodes[index]
-		}
-	}
-	if root == nil || dependent == nil {
-		return db.WorkflowRunNode{}, db.WorkflowRunNode{}, errors.New("workflow run node snapshot is incomplete")
-	}
-	return *root, *dependent, nil
 }
 
 func workflowDefinitionNode(workflow db.WorkflowTemplate, nodeID int) (db.WorkflowNode, error) {
