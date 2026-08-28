@@ -28,14 +28,15 @@ type totpServiceStub struct {
 	recoverError   error
 	verifiedCode   string
 	recoveryCode   string
+	requirementErr error
 }
 
 func (*totpServiceStub) Initialize(context.Context) error { return nil }
 func (*totpServiceStub) Status(context.Context, int) (pro_interfaces.TOTPStatus, error) {
 	return pro_interfaces.TOTPStatus{CapabilityState: pro_interfaces.CapabilityStateOptional}, nil
 }
-func (*totpServiceStub) SessionRequirement(context.Context, int) (pro_interfaces.TOTPSessionRequirement, error) {
-	return pro_interfaces.TOTPSessionNone, nil
+func (s *totpServiceStub) SessionRequirement(context.Context, int) (pro_interfaces.TOTPSessionRequirement, error) {
+	return pro_interfaces.TOTPSessionNone, s.requirementErr
 }
 func (s *totpServiceStub) BeginEnrollment(
 	_ context.Context,
@@ -162,6 +163,18 @@ func TestWriteTOTPErrorReturnsStableSecurityStatuses(t *testing.T) {
 		assert.Equal(t, test.status, recorder.Code)
 		assert.Contains(t, recorder.Body.String(), test.code)
 	}
+}
+
+func TestCreateSessionFailsClosedWhenTOTPIsUnavailable(t *testing.T) {
+	service := &totpServiceStub{requirementErr: pro_interfaces.ErrTOTPUnavailable}
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	recorder := httptest.NewRecorder()
+
+	created := createSession(recorder, request, db.User{ID: 7}, false, service)
+
+	assert.False(t, created)
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "TOTP_UNAVAILABLE")
 }
 
 func TestTOTPControllerRecordsAllowlistedSecurityAudit(t *testing.T) {

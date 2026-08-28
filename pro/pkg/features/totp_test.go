@@ -16,7 +16,9 @@ import (
 func TestCommunityTOTPRequirementFailsClosedForExistingEnrollment(t *testing.T) {
 	store := sqldb.InitConfigCreateTestStore()
 	defer store.Close()
-	util.Config.Mfa = &util.MultifactorAuthConfig{Totp: &util.TotpConfig{Enabled: true}}
+	previousMFA := util.Config.Mfa
+	t.Cleanup(func() { util.Config.Mfa = previousMFA })
+	util.Config.Mfa = &util.MultifactorAuthConfig{Totp: &util.TotpConfig{Enabled: false}}
 	user, err := store.CreateUser(db.UserWithPwd{Pwd: "long-enough-password", User: db.User{
 		Username: "legacy-totp", Name: "Legacy TOTP", Email: "legacy-totp@example.test",
 	}})
@@ -30,7 +32,13 @@ func TestCommunityTOTPRequirementFailsClosedForExistingEnrollment(t *testing.T) 
 	require.NoError(t, err)
 
 	service := NewTOTPService(store, NewCapabilityProvider(store))
-	_, err = service.SessionRequirement(context.Background(), user.ID)
+	requirement, err := service.SessionRequirement(context.Background(), user.ID)
+	assert.Equal(t, pro_interfaces.TOTPSessionNone, requirement)
+	assert.ErrorIs(t, err, pro_interfaces.ErrTOTPUnavailable)
+
+	util.Config.Mfa = nil
+	requirement, err = service.SessionRequirement(context.Background(), user.ID)
+	assert.Equal(t, pro_interfaces.TOTPSessionNone, requirement)
 	assert.ErrorIs(t, err, pro_interfaces.ErrTOTPUnavailable)
 }
 

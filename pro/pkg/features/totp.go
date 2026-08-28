@@ -7,7 +7,6 @@ import (
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
-	"github.com/semaphoreui/semaphore/util"
 )
 
 type communityTOTPService struct {
@@ -29,9 +28,6 @@ func (s *communityTOTPService) SessionRequirement(
 	_ context.Context,
 	userID int,
 ) (pro_interfaces.TOTPSessionRequirement, error) {
-	if util.Config.Mfa == nil || util.Config.Mfa.Totp == nil || !util.Config.Mfa.Totp.Enabled {
-		return pro_interfaces.TOTPSessionNone, nil
-	}
 	_, err := s.repository.GetTOTP(userID)
 	if errors.Is(err, db.ErrNotFound) {
 		return pro_interfaces.TOTPSessionNone, nil
@@ -39,8 +35,8 @@ func (s *communityTOTPService) SessionRequirement(
 	if err != nil {
 		return pro_interfaces.TOTPSessionNone, err
 	}
-	// The Community module cannot verify an enhanced TOTP challenge. Refuse
-	// to issue a password-only session for a previously protected account.
+	// Community cannot verify any persisted TOTP enrollment. Refuse to issue
+	// a password-only session regardless of the legacy rollout switch.
 	return pro_interfaces.TOTPSessionNone, pro_interfaces.ErrTOTPUnavailable
 }
 
