@@ -14,6 +14,10 @@ export function capabilityStateColor(state) {
     expired: 'warning',
     read_only: 'info',
     insufficient_permission: 'error',
+    shadow: 'info',
+    optional: 'success',
+    required_selected: 'warning',
+    required: 'error',
   };
   return colors[state] || 'grey';
 }

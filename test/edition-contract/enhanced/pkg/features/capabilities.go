@@ -58,9 +58,52 @@ func (p *capabilityProvider) Resolve(
 	if err != nil {
 		return pro_interfaces.CapabilitySnapshot{}, err
 	}
+	totpDecision, err := p.resolveTOTPDecision(request)
+	if err != nil {
+		return pro_interfaces.CapabilitySnapshot{}, err
+	}
 	return pro_interfaces.NewCapabilitySnapshot(request, []pro_interfaces.CapabilityDecision{
-		decision, projectRunners, runtimeSecrets,
+		decision, projectRunners, runtimeSecrets, totpDecision,
 	}), nil
+}
+
+func (p *capabilityProvider) resolveTOTPDecision(
+	request pro_interfaces.CapabilityRequest,
+) (pro_interfaces.CapabilityDecision, error) {
+	config, err := p.repository.GetCapabilityConfig(string(pro_interfaces.CapabilityTOTP))
+	if errors.Is(err, db.ErrNotFound) {
+		config = db.CapabilityConfig{
+			CapabilityID: string(pro_interfaces.CapabilityTOTP),
+			State:        string(pro_interfaces.CapabilityStateDisabled),
+		}
+	} else if err != nil {
+		return pro_interfaces.CapabilityDecision{}, fmt.Errorf("load TOTP capability: %w", err)
+	}
+	state := pro_interfaces.CapabilityState(config.State)
+	access := []pro_interfaces.CapabilityAccess{
+		pro_interfaces.CapabilityAccessRead,
+		pro_interfaces.CapabilityAccessWrite,
+		pro_interfaces.CapabilityAccessExecute,
+	}
+	reason := pro_interfaces.CapabilityReasonCode(state)
+	switch state {
+	case pro_interfaces.CapabilityStateDisabled:
+		access = []pro_interfaces.CapabilityAccess{pro_interfaces.CapabilityAccessRead}
+		reason = pro_interfaces.CapabilityReasonDisabledByAdmin
+	case pro_interfaces.CapabilityStateShadow:
+		reason = pro_interfaces.CapabilityReasonShadow
+	case pro_interfaces.CapabilityStateOptional:
+		reason = pro_interfaces.CapabilityReasonOptional
+	case pro_interfaces.CapabilityStateRequiredSelected:
+		reason = pro_interfaces.CapabilityReasonRequiredSelected
+	case pro_interfaces.CapabilityStateRequired:
+		reason = pro_interfaces.CapabilityReasonRequired
+	default:
+		return pro_interfaces.CapabilityDecision{}, fmt.Errorf("unsupported stored TOTP capability state %q", config.State)
+	}
+	return pro_interfaces.NewCapabilityDecision(
+		pro_interfaces.CapabilityTOTP, state, reason, access, nil,
+	), nil
 }
 
 func (p *capabilityProvider) Configure(

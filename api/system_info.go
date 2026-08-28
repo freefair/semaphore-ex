@@ -2,14 +2,13 @@ package api
 
 import (
 	"errors"
-	"net/http"
-
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	proFeatures "github.com/semaphoreui/semaphore/pro/pkg/features"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
+	"net/http"
 )
 
 type SystemInfoController struct {
@@ -61,11 +60,7 @@ func (c *SystemInfoController) GetSystemInfo(w http.ResponseWriter, r *http.Requ
 
 	var authMethods LoginAuthMethods
 
-	if util.Config.Mfa.Totp.Enabled {
-		authMethods.Totp = &LoginTotpAuthMethod{
-			AllowRecovery: util.Config.Mfa.Totp.AllowRecovery,
-		}
-	}
+	authMethods.Totp = totpAuthMethod(capabilities)
 
 	if util.Config.Mfa.Email.Enabled {
 		authMethods.Email = &LoginEmailAuthMethod{}

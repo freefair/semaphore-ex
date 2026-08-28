@@ -19,6 +19,8 @@ const (
 	CapabilityLifecycleTest CapabilityID = "lifecycle_test"
 	// CapabilityProjectRunners gates project-scoped runner inventory and registration.
 	CapabilityProjectRunners CapabilityID = "project_runners"
+	// CapabilityTOTP gates the enhanced TOTP lifecycle and rollout policy.
+	CapabilityTOTP CapabilityID = "totp"
 )
 
 // LimitID identifies one numeric limit in a capability decision.
@@ -39,6 +41,10 @@ const (
 	CapabilityStateExpired                CapabilityState = "expired"
 	CapabilityStateReadOnly               CapabilityState = "read_only"
 	CapabilityStateInsufficientPermission CapabilityState = "insufficient_permission"
+	CapabilityStateShadow                 CapabilityState = "shadow"
+	CapabilityStateOptional               CapabilityState = "optional"
+	CapabilityStateRequiredSelected       CapabilityState = "required_selected"
+	CapabilityStateRequired               CapabilityState = "required"
 )
 
 // CapabilityReasonCode is a stable machine-readable explanation of a state.
@@ -51,6 +57,10 @@ const (
 	CapabilityReasonEntitlementExpired     CapabilityReasonCode = "entitlement_expired"
 	CapabilityReasonReadOnly               CapabilityReasonCode = "read_only"
 	CapabilityReasonInsufficientPermission CapabilityReasonCode = "insufficient_permission"
+	CapabilityReasonShadow                 CapabilityReasonCode = "shadow"
+	CapabilityReasonOptional               CapabilityReasonCode = "optional"
+	CapabilityReasonRequiredSelected       CapabilityReasonCode = "required_selected"
+	CapabilityReasonRequired               CapabilityReasonCode = "required"
 )
 
 // CapabilityAccess is an operation that a decision may permit.

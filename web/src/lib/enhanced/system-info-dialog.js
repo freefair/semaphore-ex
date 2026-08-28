@@ -1,8 +1,12 @@
+import axios from 'axios';
 import { capabilityStateColor, findCapabilityDecision } from '@/lib/capabilities';
 
 export const enhancedComputed = {
   lifecycleDecision() {
     return findCapabilityDecision(this.systemInfo, 'lifecycle_test');
+  },
+  totpDecision() {
+    return findCapabilityDecision(this.systemInfo, 'totp');
   },
   structuredLogs() {
     return this.info?.structured_logs || null;
@@ -14,6 +18,35 @@ export const enhancedComputed = {
 
 export const enhancedMethods = {
   capabilityStateColor,
+  async loadTotpRollout() {
+    if (!this.totpDecision || this.totpDecision.state === 'unavailable') return;
+    this.totpRolloutError = null;
+    try {
+      const [configuration, users, transitions] = await Promise.all([
+        axios.get('/api/capabilities/totp'),
+        axios.get('/api/users'),
+        axios.get('/api/capabilities/totp/transitions'),
+      ]);
+      this.totpRollout = configuration.data;
+      this.totpUsers = (users.data || []).filter((user) => !user.external);
+      this.totpTransitions = transitions.data || [];
+    } catch (error) {
+      this.totpRolloutError = error.response?.data?.error || error.message;
+    }
+  },
+  async saveTotpRollout() {
+    this.totpRolloutSaving = true;
+    this.totpRolloutError = null;
+    try {
+      await axios.put('/api/capabilities/totp', this.totpRollout);
+      await this.loadTotpRollout();
+      this.$emit('totp-rollout-updated');
+    } catch (error) {
+      this.totpRolloutError = error.response?.data?.error || error.message;
+    } finally {
+      this.totpRolloutSaving = false;
+    }
+  },
   structuredLogStateColor(state) {
     return {
       healthy: 'success',

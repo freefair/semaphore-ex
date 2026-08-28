@@ -125,76 +125,18 @@
           <v-btn color="primary" @click="passwordDialog = true">Change password</v-btn>
         </div>
 
-        <div :class="{ 'pt-10': canChangePassword }" v-if="authMethods.totp">
-          <div class="title mb-2">Two-factor authentication</div>
-
-          <v-switch
-            class="mt-0"
-            v-model="totpEnabled"
-            label="Time-based one-time password"
-          ></v-switch>
-
-          <v-card
-            class="pt-2 mt-1"
-            style="background: var(--highlighted-card-bg-color)"
-            v-if="totpQrUrl"
-          >
-            <div
-              style="
-                position: absolute;
-                background: var(--highlighted-card-bg-color);
-                width: 28px;
-                height: 28px;
-                transform: rotate(45deg);
-                left: calc(50% - 14px);
-                top: -14px;
-                border-radius: 0;
-              "
-            ></div>
-
-            <v-card-text>
-              <img
-                :src="totpQrUrl"
-                style="
-                  width: 100%;
-                  aspect-ratio: 1;
-                  border-radius: 4px;
-                  display: block;
-                  margin: 0 auto 10px auto;
-                  border: 10px solid white;
-                  background-color: white;
-                "
-                alt="QR code"
-              />
-
-              <div
-                v-if="authMethods.totp.allow_recovery && item.totp && item.totp.recovery_code"
-                class="mt-5 pb-3"
-              >
-                <div class="subtitle-1 mb-2">Recovery code</div>
-                <div style="position: relative">
-                  <code style="font-size: 18px; background-color: #e03755">
-                    {{ item.totp.recovery_code }}
-                  </code>
-
-                  <CopyClipboardButton
-                    style="position: absolute; right: -4px; top: -12px"
-                    :text="item.totp.recovery_code"
-                    large
-                    color="white"
-                  />
-                </div>
-              </div>
-            </v-card-text>
-          </v-card>
-        </div>
+        <TotpEnrollmentPanel
+          v-if="authMethods.totp && !isNew"
+          :class="{ 'pt-10': canChangePassword }"
+          :item-id="itemId"
+          :is-self="isSelf"
+        />
 
         <div
           v-if="!isNew"
           :class="{
             'pt-10': canChangePassword || authMethods.totp,
           }"
-          :style="{ marginTop: (!authMethods.totp || totpEnabled) ? 0 : '-30px' }"
         >
           <template v-if="identities.length > 0">
             <div class="title mb-2">Linked accounts</div>
@@ -301,10 +243,10 @@ import ItemFormBase from '@/components/ItemFormBase';
 import axios from 'axios';
 import EditDialog from '@/components/EditDialog.vue';
 import ChangePasswordForm from '@/components/ChangePasswordForm.vue';
-import CopyClipboardButton from '@/components/CopyClipboardButton.vue';
+import TotpEnrollmentPanel from '@/components/TotpEnrollmentPanel.vue';
 
 export default {
-  components: { CopyClipboardButton, ChangePasswordForm, EditDialog },
+  components: { TotpEnrollmentPanel, ChangePasswordForm, EditDialog },
   props: {
     isAdmin: Boolean,
     isSelf: Boolean,
@@ -317,9 +259,6 @@ export default {
   data() {
     return {
       passwordDialog: null,
-      totpEnabled: false,
-      totpQrUrl: null,
-
       identities: [],
       oidcProviders: [],
       ldapProviders: [],
@@ -342,34 +281,6 @@ export default {
       }
     },
 
-    async totpEnabled(val) {
-      if (val) {
-        if (this.item.totp == null) {
-          this.item.totp = (
-            await axios({
-              method: 'post',
-              url: `/api/users/${this.itemId}/2fas/totp`,
-              responseType: 'json',
-            })
-          ).data;
-
-          // let baseURI = document.baseURI;
-          // if (baseURI.endsWith('/')) {
-          //   baseURI = baseURI.substring(0, baseURI.length - 1);
-          // }
-
-          this.totpQrUrl = `${document.baseURI}api/users/${this.itemId}/2fas/totp/${this.item.totp.id}/qr`;
-        }
-      } else if (this.item.totp != null) {
-        await axios({
-          method: 'delete',
-          url: `/api/users/${this.itemId}/2fas/totp/${this.item.totp.id}`,
-          responseType: 'json',
-        });
-        this.item.totp = null;
-        this.totpQrUrl = null;
-      }
-    },
   },
 
   computed: {
@@ -400,14 +311,6 @@ export default {
 
   methods: {
     afterLoadData() {
-      if (this.item.totp == null) {
-        this.totpEnabled = false;
-        this.totpQrUrl = null;
-      } else {
-        this.totpEnabled = true;
-        this.totpQrUrl = `${document.baseURI}api/users/${this.itemId}/2fas/totp/${this.item.totp.id}/qr`;
-      }
-
       if (!this.isNew) {
         this.loadIdentities();
         this.loadAuthMetadata();

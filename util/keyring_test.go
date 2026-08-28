@@ -3,15 +3,14 @@ package util
 import (
 	"bytes"
 	"encoding/base64"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // genKey returns a valid base64-encoded 32-byte AES key whose bytes are all b.

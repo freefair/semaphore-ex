@@ -5,15 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/semaphoreui/semaphore/pkg/common_errors"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	log "github.com/sirupsen/logrus"
 	"reflect"
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/semaphoreui/semaphore/pkg/common_errors"
-	"github.com/semaphoreui/semaphore/pkg/task_logger"
-
-	log "github.com/sirupsen/logrus"
 )
 
 const databaseTimeFormat = "2006-01-02T15:04:05:99Z"
@@ -156,6 +154,10 @@ type ObjectProps struct {
 }
 
 var ErrNotFound = errors.New("no rows in result set")
+
+// ErrTOTPReadiness reports that a transactional TOTP mutation would remove
+// the final recovery administrator or enable an unenforceable required policy.
+var ErrTOTPReadiness = errors.New("TOTP administrator recovery is not ready")
 var ErrInvalidOperation = errors.New("invalid operation")
 
 type TaskStatUnit string
@@ -222,8 +224,6 @@ type UserManager interface {
 	UpdateUser(user UserWithPwd) error
 	ImportUser(user UserWithPwd) (User, error)
 	SetUserPassword(userID int, password string) error
-	AddTotpVerification(userID int, url string, recoveryHash string) (UserTotp, error)
-	DeleteTotpVerification(userID int, totpID int) error
 	AddEmailOtpVerification(userID int, code string) (UserEmailOtp, error)
 	DeleteEmailOtpVerification(userID int, totpID int) error
 	IncrementEmailOtpAttempts(userID int) error
@@ -619,6 +619,7 @@ type Store interface {
 	SecretSyncRepository
 	RoleRepository
 	CapabilityRepository
+	TOTPRepository
 	AuditWebhookRepository
 }
 

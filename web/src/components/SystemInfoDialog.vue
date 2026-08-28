@@ -96,6 +96,75 @@
           </v-card>
         </template>
 
+        <template v-if="totpDecision && totpDecision.state !== 'unavailable'">
+          <v-subheader class="px-0 mt-2">TOTP rollout</v-subheader>
+          <v-card
+            data-testid="totp-rollout"
+            style="background: var(--highlighted-card-bg-color)"
+          >
+            <v-card-text>
+              <v-alert v-if="totpRolloutError" type="error" dense outlined>
+                {{ totpRolloutError }}
+              </v-alert>
+              <v-select
+                v-model="totpRollout.state"
+                data-testid="totp-rollout-state"
+                :items="totpRolloutStates"
+                label="Lifecycle state"
+                outlined
+                dense
+              />
+              <v-select
+                v-if="totpRollout.state === 'required_selected'"
+                v-model="totpRollout.selected_user_ids"
+                data-testid="totp-selected-users"
+                :items="totpUsers"
+                item-text="username"
+                item-value="id"
+                label="Users required to enroll"
+                multiple
+                chips
+                outlined
+                dense
+              />
+              <v-alert
+                v-if="totpRollout.state === 'required'"
+                type="warning"
+                dense
+                outlined
+              >
+                Required mode is accepted only when every user can enroll and at least one local
+                administrator has acknowledged unused recovery codes.
+              </v-alert>
+              <v-btn
+                data-testid="totp-rollout-save"
+                color="primary"
+                :loading="totpRolloutSaving"
+                @click="saveTotpRollout"
+              >
+                Apply TOTP rollout
+              </v-btn>
+
+              <v-simple-table v-if="totpTransitions.length" dense class="mt-4">
+                <thead>
+                  <tr>
+                    <th>Transition</th>
+                    <th>Actor</th>
+                    <th>Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="transition in totpTransitions.slice(0, 8)" :key="transition.id">
+                    <td>{{ transition.from_state }} → {{ transition.to_state }}</td>
+                    <td>{{ transition.actor_id }}</td>
+                    <td>{{ new Date(transition.created).toLocaleString() }}</td>
+                  </tr>
+                </tbody>
+              </v-simple-table>
+            </v-card-text>
+          </v-card>
+        </template>
+
         <v-subheader class="px-0 mt-2">Structured file logs</v-subheader>
         <v-card
           v-if="structuredLogs"
@@ -552,6 +621,18 @@ export default {
       info: null,
       loading: false,
       error: null,
+      totpRollout: { state: 'disabled', selected_user_ids: [] },
+      totpRolloutStates: [
+        { text: 'Disabled', value: 'disabled' },
+        { text: 'Shadow', value: 'shadow' },
+        { text: 'Optional', value: 'optional' },
+        { text: 'Required for selected users', value: 'required_selected' },
+        { text: 'Required for everyone', value: 'required' },
+      ],
+      totpUsers: [],
+      totpTransitions: [],
+      totpRolloutSaving: false,
+      totpRolloutError: null,
     };
   },
 
@@ -591,6 +672,7 @@ export default {
             responseType: 'json',
           })
         ).data;
+        await this.loadTotpRollout();
       } catch (err) {
         this.error = err.response?.data?.message || err.message || 'Failed to load system info';
       } finally {

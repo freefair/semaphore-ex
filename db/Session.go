@@ -8,6 +8,7 @@ const (
 	SessionVerificationNone SessionVerificationMethod = iota
 	SessionVerificationTotp
 	SessionVerificationEmail
+	SessionVerificationTotpEnrollment
 )
 
 // Session is a connection to the API

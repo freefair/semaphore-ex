@@ -1,10 +1,9 @@
 package db
 
 import (
-	"time"
-
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pkg/tz"
+	"time"
 )
 
 // User is the model for an entity which has access to the API
@@ -25,12 +24,17 @@ type User struct {
 }
 
 type UserTotp struct {
-	ID           int       `db:"id" json:"id"`
-	Created      time.Time `db:"created" json:"created"`
-	UserID       int       `db:"user_id" json:"user_id"`
-	URL          string    `db:"url" json:"url"`
-	RecoveryHash string    `db:"recovery_hash" json:"-"`
-	RecoveryCode string    `db:"-" json:"recovery_code,omitempty"`
+	ID                     int        `db:"id" json:"id"`
+	Created                time.Time  `db:"created" json:"created"`
+	UserID                 int        `db:"user_id" json:"user_id"`
+	URL                    string     `db:"url" json:"-"`
+	RecoveryHash           string     `db:"recovery_hash" json:"-"`
+	EncryptedSecret        string     `db:"encrypted_secret" json:"-"`
+	State                  string     `db:"state" json:"state"`
+	ConfirmedAt            *time.Time `db:"confirmed_at" json:"confirmed_at,omitempty"`
+	RecoveryAcknowledgedAt *time.Time `db:"recovery_acknowledged_at" json:"recovery_acknowledged_at,omitempty"`
+	ExpiresAt              *time.Time `db:"expires_at" json:"expires_at,omitempty"`
+	LastUsedStep           *int64     `db:"last_used_step" json:"-"`
 }
 
 type UserEmailOtp struct {
