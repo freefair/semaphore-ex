@@ -53,6 +53,15 @@ func (c *UserController) GetUser(w http.ResponseWriter, r *http.Request) {
 // linkLdapIdentity attaches an LDAP identity to the current account.
 // Proof of ownership is a successful bind with the user's own LDAP credentials.
 func linkLdapIdentity(w http.ResponseWriter, r *http.Request) {
+	linkLdapIdentityWithService(nil, nil, w, r)
+}
+
+func linkLdapIdentityWithService(
+	service pro_interfaces.LDAPService,
+	audit pro_interfaces.AuditServiceFacade,
+	w http.ResponseWriter,
+	r *http.Request,
+) {
 	currentUser := helpers.GetFromContext(r, "user").(*db.User)
 
 	var creds struct {
@@ -68,14 +77,31 @@ func linkLdapIdentity(w http.ResponseWriter, r *http.Request) {
 	if providerID == "" {
 		providerID = "ldap"
 	}
+	if service != nil {
+		err := service.Link(r.Context(), pro_interfaces.LDAPLinkRequest{
+			ActorID: currentUser.ID, ProviderID: providerID,
+			Username: creds.Username, Password: creds.Password, Now: tz.Now(),
+		})
+		if !errors.Is(err, pro_interfaces.ErrLDAPUnavailable) {
+			outcome, reason := ldapAuditReason(err)
+			recordLDAPAudit(audit, r, &currentUser.ID,
+				pro_interfaces.AuditActionLDAPLink, outcome, reason)
+			if err != nil {
+				writeLDAPError(w, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
 
-	provider, ok := util.Config.GetLdapProvider(providerID)
-	if !ok {
+	ldapUser, userDN, err := authenticateLegacyLDAPProfile(
+		r.Context(), providerID, creds.Username, creds.Password,
+	)
+	if errors.Is(err, pro_interfaces.ErrLDAPProviderNotFound) {
 		helpers.WriteErrorStatus(w, "LDAP provider not found", http.StatusBadRequest)
 		return
 	}
-
-	ldapUser, userDN, err := tryFindLDAPUser(provider, creds.Username, creds.Password)
 	if err != nil || ldapUser == nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		return

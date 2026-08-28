@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -21,137 +20,17 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/tz"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/go-ldap/ldap/v3"
 	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/random"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	identityServices "github.com/semaphoreui/semaphore/services/identity"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/oauth2"
 )
-
-func convertEntryToMap(entity *ldap.Entry) map[string]any {
-	res := map[string]any{}
-	for _, attr := range entity.Attributes {
-		if len(attr.Values) == 0 {
-			continue
-		}
-		res[attr.Name] = attr.Values[0]
-	}
-
-	return res
-}
-
-func tryFindLDAPUser(provider util.LdapProvider, username, password string) (*db.User, string, error) {
-	var l *ldap.Conn
-	var err error
-	if provider.NeedTLS {
-		// Verify the LDAP server certificate by default so a network attacker
-		// cannot impersonate the server to capture the bind credentials or a
-		// user's cleartext password. Verification can be disabled per provider
-		// via tls_skip_verify (default false) for trusted networks with
-		// self-signed certificates.
-		l, err = ldap.DialTLS("tcp", provider.Server, &tls.Config{
-			InsecureSkipVerify: provider.TLSSkipVerify, //nolint:gosec // opt-in via tls_skip_verify, defaults to false
-		})
-	} else {
-		l, err = ldap.Dial("tcp", provider.Server)
-	}
-
-	if err != nil {
-		return nil, "", err
-	}
-	defer l.Close() //nolint:errcheck
-
-	// First bind with a read only user
-	if err = l.Bind(provider.BindDN, provider.BindPassword); err != nil {
-		return nil, "", err
-	}
-
-	mappings := provider.GetMappings()
-
-	// Filter for the given username
-	searchRequest := ldap.NewSearchRequest(
-		provider.SearchDN,
-		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		fmt.Sprintf(provider.SearchFilter, ldap.EscapeFilter(username)),
-		[]string{mappings.DN},
-		nil,
-	)
-
-	sr, err := l.Search(searchRequest)
-	if err != nil {
-		return nil, "", err
-	}
-
-	if len(sr.Entries) < 1 {
-		return nil, "", nil
-	}
-
-	if len(sr.Entries) > 1 {
-		return nil, "", fmt.Errorf("too many entries returned")
-	}
-
-	// Bind as the user
-	userDN := sr.Entries[0].DN
-	if err = l.Bind(userDN, password); err != nil {
-		return nil, "", err
-	}
-
-	// Second time bind as read only user
-	if err = l.Bind(provider.BindDN, provider.BindPassword); err != nil {
-		return nil, "", err
-	}
-
-	// Get user info
-	searchRequest = ldap.NewSearchRequest(
-		provider.SearchDN,
-		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		fmt.Sprintf(provider.SearchFilter, ldap.EscapeFilter(username)),
-		[]string{mappings.DN, mappings.Mail, mappings.UID, mappings.CN},
-		nil,
-	)
-
-	sr, err = l.Search(searchRequest)
-	if err != nil {
-		return nil, "", err
-	}
-
-	if len(sr.Entries) <= 0 {
-		return nil, "", fmt.Errorf("ldap search returned no entries")
-	}
-
-	entry := convertEntryToMap(sr.Entries[0])
-
-	prepareClaims(entry)
-
-	claims, err := parseClaims(entry, mappings)
-	if err != nil {
-		return nil, "", err
-	}
-
-	ldapUser := db.User{
-		Username: strings.ToLower(claims.username),
-		Created:  tz.Now(),
-		Name:     claims.name,
-		Email:    claims.email,
-		External: true,
-		Alert:    false,
-	}
-
-	err = db.ValidateUser(ldapUser)
-	if err != nil {
-		jsonBytes, _ := json.Marshal(ldapUser)
-		log.Error("LDAP returned incorrect user data: " + string(jsonBytes))
-		return nil, "", err
-	}
-
-	log.Info("User " + ldapUser.Name + " with email " + ldapUser.Email + " authorized via LDAP correctly")
-	return &ldapUser, userDN, nil
-}
 
 // createSession creates session for passed user and stores session details
 // in cookies.
@@ -320,6 +199,7 @@ type loginMetadata struct {
 	OidcProviders     []loginMetadataOidcProvider `json:"oidc_providers"`
 	LdapProviders     []loginMetadataLdapProvider `json:"ldap_providers"`
 	LoginWithPassword bool                        `json:"login_with_password"`
+	LocalRecoveryOnly bool                        `json:"local_recovery_only"`
 	LoginWithLdap     bool                        `json:"login_with_ldap"`
 	AuthMethods       LoginAuthMethods            `json:"auth_methods"`
 }
@@ -334,27 +214,50 @@ func loginWithTOTPService(
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
+	loginWithIdentityServices(totpService, nil, nil, w, r)
+}
+
+func loginWithIdentityServices(
+	totpService pro_interfaces.TOTPService,
+	ldapService pro_interfaces.LDAPService,
+	audit pro_interfaces.AuditServiceFacade,
+	w http.ResponseWriter,
+	r *http.Request,
+) {
 	if r.Method == "GET" {
 		config := &loginMetadata{
 			OidcProviders:     make([]loginMetadataOidcProvider, len(util.Config.OidcProviders)),
 			LoginWithPassword: !util.Config.PasswordLoginDisable,
 		}
 
-		ldapProviders := util.Config.ActiveLdapProviders()
-		config.LdapProviders = make([]loginMetadataLdapProvider, 0, len(ldapProviders))
-		for _, entry := range ldapProviders {
-			name := entry.Provider.DisplayName
-			if name == "" {
-				name = entry.ID
-			}
-			config.LdapProviders = append(config.LdapProviders, loginMetadataLdapProvider{
-				ID:    entry.ID,
-				Name:  name,
-				Color: entry.Provider.Color,
-				Icon:  entry.Provider.Icon,
-			})
+		managedProviders, managed, managedErr := managedLDAPProviders(r.Context(), ldapService)
+		if managedErr != nil {
+			writeLDAPError(w, managedErr)
+			return
 		}
-		config.LoginWithLdap = len(ldapProviders) > 0
+		if managed {
+			config.LdapProviders = make([]loginMetadataLdapProvider, 0, len(managedProviders))
+			for _, provider := range managedProviders {
+				config.LdapProviders = append(config.LdapProviders, loginMetadataLdapProvider{
+					ID: provider.ID, Name: provider.Name,
+				})
+			}
+			config.LoginWithPassword = !util.Config.PasswordLoginDisable || len(managedProviders) > 0
+			config.LocalRecoveryOnly = util.Config.PasswordLoginDisable && len(managedProviders) > 0
+		} else {
+			ldapProviders := util.Config.ActiveLdapProviders()
+			config.LdapProviders = make([]loginMetadataLdapProvider, 0, len(ldapProviders))
+			for _, entry := range ldapProviders {
+				name := entry.Provider.DisplayName
+				if name == "" {
+					name = entry.ID
+				}
+				config.LdapProviders = append(config.LdapProviders, loginMetadataLdapProvider{
+					ID: entry.ID, Name: name, Color: entry.Provider.Color, Icon: entry.Provider.Icon,
+				})
+			}
+		}
+		config.LoginWithLdap = len(config.LdapProviders) > 0
 
 		i := 0
 
@@ -407,7 +310,12 @@ func loginWithTOTPService(
 
 	switch login.Method {
 	case "password":
-		if util.Config.PasswordLoginDisable {
+		allowed, allowErr := passwordLoginAllowed(r.Context(), ldapService, login.Auth)
+		if allowErr != nil {
+			writeLDAPError(w, allowErr)
+			return
+		}
+		if !allowed {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -418,54 +326,49 @@ func loginWithTOTPService(
 		if providerID == "" {
 			providerID = "ldap"
 		}
-		provider, ok := util.Config.GetLdapProvider(providerID)
-		if !ok {
+		if ldapService != nil {
+			user, err = ldapService.Authenticate(r.Context(), pro_interfaces.LDAPAuthenticationRequest{
+				ProviderID: providerID, Username: login.Auth, Password: login.Password, Now: tz.Now(),
+			})
+			if !errors.Is(err, pro_interfaces.ErrLDAPUnavailable) {
+				outcome, reason := ldapAuditReason(err)
+				var actorID *int
+				if err == nil {
+					actorID = &user.ID
+				}
+				recordLDAPAudit(audit, r, actorID, pro_interfaces.AuditActionLDAPLogin, outcome, reason)
+				if err != nil {
+					writeLDAPError(w, err)
+					return
+				}
+				break
+			}
+		}
+		if _, ok := util.Config.GetLdapProvider(providerID); !ok {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-
-		var ldapUser *db.User
-		var ldapUserDN string
-		ldapUser, ldapUserDN, err = tryFindLDAPUser(provider, login.Auth, login.Password)
-		if err != nil || ldapUser == nil {
-			if err != nil {
-				log.WithError(err).WithFields(log.Fields{
-					"context":  "ldap",
-					"provider": providerID,
-					"auth":     login.Auth,
-				}).Warn("Failed to find user in LDAP")
-			}
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		user, err = loginByLDAP(helpers.Store(r), *ldapUser, ldapUserDN, providerID)
+		user, err = loginByLegacyLDAP(r.Context(), helpers.Store(r), providerID, login.Auth, login.Password)
 
 	default:
-		// Legacy clients without the method field: previous behavior —
-		// try the legacy flat LDAP first, fall back to password.
-		var ldapUser *db.User
-		var ldapUserDN string
-
-		if legacy, ok := util.Config.GetLdapProvider("ldap"); ok {
-			ldapUser, ldapUserDN, err = tryFindLDAPUser(legacy, login.Auth, login.Password)
-			if err != nil {
-				log.WithError(err).WithFields(log.Fields{
-					"context": "ldap",
-					"auth":    login.Auth,
-				}).Warn("Failed to find user in LDAP")
-				w.WriteHeader(http.StatusUnauthorized)
+		_, managed, managedErr := managedLDAPProviders(r.Context(), ldapService)
+		if managedErr != nil {
+			writeLDAPError(w, managedErr)
+			return
+		}
+		if managed {
+			allowed, allowErr := passwordLoginAllowed(r.Context(), ldapService, login.Auth)
+			if allowErr != nil {
+				writeLDAPError(w, allowErr)
 				return
 			}
-		}
-
-		if ldapUser == nil {
-			if util.Config.PasswordLoginDisable {
+			if !allowed {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
 			user, err = loginByPassword(helpers.Store(r), login.Auth, login.Password)
 		} else {
-			user, err = loginByLDAP(helpers.Store(r), *ldapUser, ldapUserDN, "ldap")
+			user, err = loginLegacyCompatible(r.Context(), helpers.Store(r), login.Auth, login.Password)
 		}
 	}
 
@@ -491,6 +394,120 @@ func loginWithTOTPService(
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func managedLDAPProviders(
+	ctx context.Context,
+	service pro_interfaces.LDAPService,
+) ([]pro_interfaces.LDAPLoginProvider, bool, error) {
+	if service == nil {
+		return nil, false, nil
+	}
+	providers, err := service.LoginProviders(ctx)
+	if errors.Is(err, pro_interfaces.ErrLDAPUnavailable) {
+		return nil, false, nil
+	}
+	return providers, true, err
+}
+
+func passwordLoginAllowed(
+	ctx context.Context,
+	service pro_interfaces.LDAPService,
+	login string,
+) (bool, error) {
+	if !util.Config.PasswordLoginDisable {
+		return true, nil
+	}
+	if service == nil {
+		return false, nil
+	}
+	allowed, err := service.AllowLocalRecovery(ctx, login)
+	if errors.Is(err, pro_interfaces.ErrLDAPUnavailable) {
+		return false, nil
+	}
+	return allowed, err
+}
+
+func loginByLegacyLDAP(
+	ctx context.Context,
+	store db.Store,
+	providerID string,
+	auth string,
+	password string,
+) (db.User, error) {
+	ldapUser, externalID, err := authenticateLegacyLDAPProfile(ctx, providerID, auth, password)
+	if err != nil || ldapUser == nil {
+		if err != nil {
+			log.WithError(err).WithFields(log.Fields{
+				"context": "ldap", "provider": providerID,
+			}).Warn("Failed to authenticate against legacy LDAP provider")
+		}
+		return db.User{}, db.ErrNotFound
+	}
+	return loginByLDAP(store, *ldapUser, externalID, providerID)
+}
+
+func authenticateLegacyLDAPProfile(
+	ctx context.Context,
+	providerID string,
+	auth string,
+	password string,
+) (*db.User, string, error) {
+	provider, ok := util.Config.GetLdapProvider(providerID)
+	if !ok {
+		return nil, "", pro_interfaces.ErrLDAPProviderNotFound
+	}
+	mappings := provider.GetMappings()
+	client := identityServices.NewLegacyLDAPClient()
+	result, err := client.Authenticate(ctx, pro_interfaces.LegacyLDAPClientRequest{
+		Configuration: pro_interfaces.LegacyLDAPClientConfiguration{
+			Server: provider.Server, TLS: provider.NeedTLS, TLSSkipVerify: provider.TLSSkipVerify,
+			BindDN: provider.BindDN, BindPassword: provider.BindPassword,
+			SearchBaseDN: provider.SearchDN, SearchFilter: provider.SearchFilter,
+			Attributes: []string{mappings.DN, mappings.Mail, mappings.UID, mappings.CN},
+		},
+		Username: auth, Credential: password,
+	})
+	if err != nil || result == nil {
+		return nil, "", err
+	}
+	prepareClaims(result.Attributes)
+	claims, err := parseClaims(result.Attributes, mappings)
+	if err != nil {
+		return nil, "", err
+	}
+	ldapUser := db.User{
+		Username: strings.ToLower(claims.username), Created: tz.Now(), Name: claims.name,
+		Email: claims.email, External: true,
+	}
+	if err = db.ValidateUser(ldapUser); err != nil {
+		return nil, "", err
+	}
+	return &ldapUser, result.ExternalID, nil
+}
+
+func loginLegacyCompatible(
+	ctx context.Context,
+	store db.Store,
+	auth string,
+	password string,
+) (db.User, error) {
+	if _, ok := util.Config.GetLdapProvider("ldap"); ok {
+		ldapUser, externalID, err := authenticateLegacyLDAPProfile(ctx, "ldap", auth, password)
+		if err != nil {
+			log.WithError(err).WithFields(log.Fields{
+				"context": "ldap", "provider": "ldap",
+			}).Warn("Failed to authenticate against legacy LDAP provider")
+			return db.User{}, db.ErrNotFound
+		}
+		if ldapUser != nil {
+			return loginByLDAP(store, *ldapUser, externalID, "ldap")
+		}
+	}
+	if util.Config.PasswordLoginDisable {
+		return db.User{}, db.ErrNotFound
+	}
+	return loginByPassword(store, auth, password)
 }
 
 // logout handles the user logout process by expiring the current session

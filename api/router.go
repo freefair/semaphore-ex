@@ -19,6 +19,7 @@ import (
 	proFeatures "github.com/semaphoreui/semaphore/pro/pkg/features"
 	auditServices "github.com/semaphoreui/semaphore/services/audit"
 	capabilityServices "github.com/semaphoreui/semaphore/services/capabilities"
+	identityServices "github.com/semaphoreui/semaphore/services/identity"
 	"github.com/semaphoreui/semaphore/services/server"
 	taskServices "github.com/semaphoreui/semaphore/services/tasks"
 
@@ -113,6 +114,10 @@ func Route(
 	if err := totpService.Initialize(context.Background()); err != nil {
 		log.WithError(err).Panic("failed to initialize TOTP lifecycle service")
 	}
+	ldapService := proFeatures.NewLDAPService(store, capabilityProvider, identityServices.NewLDAPClient())
+	if err := ldapService.Initialize(context.Background()); err != nil {
+		log.WithError(err).Panic("failed to initialize LDAP lifecycle service")
+	}
 	secretStorageController := projects.NewSecretStorageController(store, secretStorageService, capabilityProvider)
 	repositoryController := projects.NewRepositoryController(accessKeyInstallationService)
 	keyController := projects.NewKeyController(accessKeyService)
@@ -141,6 +146,7 @@ func Route(
 	projectRunnerController := proProjects.NewProjectRunnerController(subscriptionService, runnerService, capabilityProvider, auditFacade)
 	capabilityController := NewCapabilityController(capabilityFacade, auditFacade)
 	totpController := NewTOTPController(totpService, auditFacade)
+	ldapController := NewLDAPController(ldapService, auditFacade)
 
 	r := mux.NewRouter()
 	r.NotFoundHandler = http.HandlerFunc(servePublic)
@@ -180,7 +186,7 @@ func Route(
 	publicAPIRouter.Use(StoreMiddleware, JSONMiddleware)
 
 	publicAPIRouter.HandleFunc("/auth/login", func(w http.ResponseWriter, r *http.Request) {
-		loginWithTOTPService(totpService, w, r)
+		loginWithIdentityServices(totpService, ldapService, auditFacade, w, r)
 	}).Methods("GET", "POST")
 	totpSessionAPI := publicAPIRouter.NewRoute().Subrouter()
 	totpSessionAPI.Use(csrfProtectionMiddleware)
@@ -283,7 +289,9 @@ func Route(
 	tokenAPI.HandleFunc("/tokens/{token_id}", deleteAPIToken).Methods("DELETE")
 	tokenAPI.Path("/options").HandlerFunc(getUserOptions).Methods("GET", "HEAD")
 	tokenAPI.Path("/options").HandlerFunc(setUserOption).Methods("POST")
-	tokenAPI.Path("/identities/ldap").HandlerFunc(linkLdapIdentity).Methods("POST")
+	tokenAPI.Path("/identities/ldap").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		linkLdapIdentityWithService(ldapService, auditFacade, w, r)
+	}).Methods("POST")
 
 	adminAPI := authenticatedAPI.NewRoute().Subrouter()
 	adminAPI.Use(EnhancedAdminAuditMiddleware(auditFacade), adminMiddleware)
@@ -295,6 +303,11 @@ func Route(
 	adminAPI.Path("/capabilities/totp").HandlerFunc(totpController.Configure).Methods("PUT")
 	adminAPI.Path("/capabilities/totp").HandlerFunc(totpController.Configuration).Methods("GET", "HEAD")
 	adminAPI.Path("/capabilities/totp/transitions").HandlerFunc(totpController.Transitions).Methods("GET", "HEAD")
+	adminAPI.Path("/capabilities/ldap").HandlerFunc(ldapController.Providers).Methods("GET", "HEAD")
+	adminAPI.Path("/capabilities/ldap").HandlerFunc(ldapController.Configure).Methods("PUT")
+	adminAPI.Path("/capabilities/ldap/test").HandlerFunc(ldapController.Test).Methods("POST")
+	adminAPI.Path("/capabilities/ldap/state").HandlerFunc(ldapController.SetState).Methods("PUT")
+	adminAPI.Path("/capabilities/ldap/transitions").HandlerFunc(ldapController.Transitions).Methods("GET", "HEAD")
 	adminAPI.Path("/audit-webhook").HandlerFunc(auditWebhookController.GetConfiguration).Methods("GET", "HEAD")
 	adminAPI.Path("/audit-webhook").HandlerFunc(auditWebhookController.Configure).Methods("PUT")
 	adminAPI.Path("/audit-webhook/test").HandlerFunc(auditWebhookController.TestDelivery).Methods("POST")

@@ -71,6 +71,32 @@ func TestCapabilityLifecyclePreservesDataAndGuardsWorkers(t *testing.T) {
 	}
 }
 
+func TestLDAPCapabilityIsAvailableInEnhancedEdition(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	defer store.Close()
+	provider := NewCapabilityProvider(store)
+
+	snapshot, err := provider.Resolve(context.Background(), pro_interfaces.CapabilityRequest{
+		UserID: 7, IsAdmin: true, At: time.Unix(1_700_000_000, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("resolve enhanced capabilities: %v", err)
+	}
+	decision := snapshot.Decision(pro_interfaces.CapabilityLDAP)
+	if decision.State() != pro_interfaces.CapabilityStateActive {
+		t.Fatalf("LDAP capability state = %q, want active", decision.State())
+	}
+	for _, access := range []pro_interfaces.CapabilityAccess{
+		pro_interfaces.CapabilityAccessRead,
+		pro_interfaces.CapabilityAccessWrite,
+		pro_interfaces.CapabilityAccessExecute,
+	} {
+		if !decision.Allows(access) {
+			t.Fatalf("LDAP capability must allow %q", access)
+		}
+	}
+}
+
 func TestProviderDistinguishesReadOnlyExpiredAndPermissionStates(t *testing.T) {
 	store := sqldb.InitConfigCreateTestStore()
 	defer store.Close()

@@ -254,6 +254,16 @@
                 </v-btn>
               </v-btn-toggle>
 
+              <v-alert
+                v-if="localRecoveryOnly && activeLoginTab && !activeLoginTab.ldap"
+                data-testid="auth-local-recovery"
+                type="info"
+                dense
+                outlined
+              >
+                Password login is restricted to the tested local recovery administrator.
+              </v-alert>
+
               <div v-if="(activeLoginTab && activeLoginTab.ldap) || loginWithPassword">
                 <v-text-field
                   v-model="username"
@@ -413,6 +423,7 @@ export default {
 
       oidcProviders: [],
       loginWithPassword: null,
+      localRecoveryOnly: false,
       authMethods: {},
 
       ldapProviders: [],
@@ -560,6 +571,7 @@ export default {
       }).then((resp) => {
         this.oidcProviders = resp.data.oidc_providers;
         this.loginWithPassword = resp.data.login_with_password;
+        this.localRecoveryOnly = Boolean(resp.data.local_recovery_only);
         this.authMethods = resp.data.auth_methods || {};
         this.ldapProviders = resp.data.ldap_providers || [];
       });
@@ -736,14 +748,23 @@ export default {
         this.redirectAfterLogin();
         // document.location = document.baseURI + window.location.search;
       } catch (err) {
-        if (err.response.status === 401) {
+        if (err.response?.status === 401) {
           this.signInError = this.$t('incorrectUsrPwd');
         } else {
-          this.signInError = getErrorMessage(err);
+          this.signInError = this.authenticationErrorMessage(err);
         }
       } finally {
         this.signInProcess = false;
       }
+    },
+
+    authenticationErrorMessage(error) {
+      const code = error.response?.data?.error;
+      if (code === 'LDAP_PROVIDER_UNAVAILABLE') return this.$t('ldapProviderUnavailable');
+      if (code === 'LDAP_THROTTLED') return this.$t('ldapLoginThrottled');
+      if (code === 'LDAP_IDENTITY_COLLISION') return this.$t('ldapIdentityCollision');
+      if (code === 'LDAP_DISABLED') return this.$t('ldapProviderDisabled');
+      return getErrorMessage(error);
     },
 
     async oidcSignIn(provider) {

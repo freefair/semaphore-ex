@@ -160,6 +160,7 @@ var ErrNotFound = errors.New("no rows in result set")
 // ErrTOTPReadiness reports that a transactional TOTP mutation would remove
 // the final recovery administrator or enable an unenforceable required policy.
 var ErrTOTPReadiness = errors.New("TOTP administrator recovery is not ready")
+var ErrLDAPReadiness = errors.New("LDAP local administrator recovery is not ready")
 var ErrInvalidOperation = errors.New("invalid operation")
 
 type TaskStatUnit string
@@ -259,6 +260,24 @@ type TOTPRepository interface {
 	ConfigureTOTP(state string, selectedUserIDs []int, actorID int, changedAt time.Time) error
 	GetTOTPCapabilityTransitions() ([]TOTPCapabilityTransition, error)
 	CountRecoverableTOTPAdmins(excludeUserID int) (int, error)
+}
+
+// LDAPRepository persists provider configuration, rollout selection,
+// readiness, transitions, and authentication throttling without credentials.
+type LDAPRepository interface {
+	GetLDAPProvider(providerID string) (LDAPProvider, error)
+	GetLDAPProviders() ([]LDAPProvider, error)
+	SaveLDAPProvider(provider LDAPProvider) error
+	SaveLDAPReadiness(providerID string, status string, code string, checkedAt time.Time,
+		recoveryAdminUserID *int, expectedConfigVersion int) error
+	ConfigureLDAPProvider(providerID string, state string, selectedUserIDs []int, actorID int, changedAt time.Time, readinessMaxAge time.Duration) error
+	GetLDAPSelectedUsers(providerID string) ([]int, error)
+	GetLDAPLinkedUserIDs(providerID string) ([]int, error)
+	IsLDAPUserSelected(providerID string, userID int) (bool, error)
+	GetLDAPCapabilityTransitions(providerID string) ([]LDAPCapabilityTransition, error)
+	GetLDAPAuthAttempt(providerID string, subjectHash string) (LDAPAuthAttempt, error)
+	RecordLDAPAuthFailure(providerID string, subjectHash string, now time.Time, window time.Duration, maxFailures int, blockFor time.Duration) (LDAPAuthAttempt, error)
+	ClearLDAPAuthFailures(providerID string, subjectHash string) error
 }
 
 // ProjectStore handles project-related operations
@@ -646,6 +665,7 @@ type Store interface {
 	RoleRepository
 	CapabilityRepository
 	TOTPRepository
+	LDAPRepository
 	AuditWebhookRepository
 }
 

@@ -118,6 +118,15 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	})
 	require.NoError(t, err)
 	require.NotZero(t, created.ID)
+	require.NoError(t, store.SaveLDAPProvider(db.LDAPProvider{
+		ID: "matrix-ldap", DisplayName: "Matrix LDAP", State: "shadow",
+		ServerURL: "ldaps://ldap.example.test:636", TLSMode: "ldaps", TrustMode: "system",
+		BindDN: "cn=reader,dc=example,dc=test", EncryptedBindPassword: "encrypted-fixture",
+		SearchBaseDN: "ou=people,dc=example,dc=test", UserFilter: "(uid={{username}})",
+		IdentityAttribute: "entryUUID", UsernameAttribute: "uid",
+		NameAttribute: "cn", EmailAttribute: "mail", ReadinessStatus: "untested",
+		ReadinessCode: "matrix", Created: now, Updated: now,
+	}))
 
 	store.Close()
 	store = CreateDb(config.Dialect)
@@ -127,8 +136,11 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	require.NoError(t, err)
 	persistedRecords, err := store.GetCapabilityTestRecords()
 	require.NoError(t, err)
+	persistedLDAP, err := store.GetLDAPProvider("matrix-ldap")
+	require.NoError(t, err)
 	restartPreserved := persistedConfig.State == "active" &&
-		len(persistedRecords) == 1 && persistedRecords[0].Value == "restart-preserved"
+		len(persistedRecords) == 1 && persistedRecords[0].Value == "restart-preserved" &&
+		persistedLDAP.State == "shadow" && persistedLDAP.ServerURL == "ldaps://ldap.example.test:636"
 
 	return migrationMatrixReport{
 		RollbackVersion:                         fixture.Version,
@@ -246,7 +258,7 @@ func captureCapabilitySchema(t testing.TB, store *SqlDb) []migrationSemanticColu
 	var columns []migrationSemanticColumn
 	switch store.GetDialect() {
 	case util.DbDriverSQLite:
-		for _, table := range []string{"capability_config", "capability_test_record"} {
+		for _, table := range enhancedMigrationTables() {
 			rows, err := store.Sql().Db.QueryContext(context.Background(), "pragma table_info("+table+")")
 			require.NoError(t, err)
 			for rows.Next() {
@@ -266,7 +278,9 @@ func captureCapabilitySchema(t testing.TB, store *SqlDb) []migrationSemanticColu
 		rows, err := store.Sql().Db.QueryContext(context.Background(), `
 			select table_name, column_name, data_type, is_nullable, column_key
 			from information_schema.columns
-			where table_schema=database() and table_name in ('capability_config', 'capability_test_record')`)
+			where table_schema=database() and table_name in (
+				'capability_config', 'capability_test_record', 'ldap_provider',
+				'ldap_provider_selected_user', 'ldap_auth_attempt', 'ldap_capability_transition')`)
 		require.NoError(t, err)
 		columns = scanInformationSchema(t, rows)
 	case util.DbDriverPostgres:
@@ -282,7 +296,9 @@ func captureCapabilitySchema(t testing.TB, store *SqlDb) []migrationSemanticColu
 				) then 'PRI' else '' end
 			from information_schema.columns c
 			where c.table_schema=current_schema()
-				and c.table_name in ('capability_config', 'capability_test_record')`)
+				and c.table_name in (
+					'capability_config', 'capability_test_record', 'ldap_provider',
+					'ldap_provider_selected_user', 'ldap_auth_attempt', 'ldap_capability_transition')`)
 		require.NoError(t, err)
 		columns = scanInformationSchema(t, rows)
 	default:
@@ -339,14 +355,59 @@ func assertCapabilitySchema(t testing.TB, actual []migrationSemanticColumn) {
 		{Table: "capability_test_record", Name: "id", Type: "integer", PrimaryKey: true},
 		{Table: "capability_test_record", Name: "source", Type: "text"},
 		{Table: "capability_test_record", Name: "value", Type: "text"},
+		{Table: "ldap_auth_attempt", Name: "blocked_until", Type: "datetime", Nullable: true},
+		{Table: "ldap_auth_attempt", Name: "failure_count", Type: "integer"},
+		{Table: "ldap_auth_attempt", Name: "provider_id", Type: "text", PrimaryKey: true},
+		{Table: "ldap_auth_attempt", Name: "subject_hash", Type: "text", PrimaryKey: true},
+		{Table: "ldap_auth_attempt", Name: "updated", Type: "datetime"},
+		{Table: "ldap_auth_attempt", Name: "window_started", Type: "datetime"},
+		{Table: "ldap_capability_transition", Name: "actor_id", Type: "integer"},
+		{Table: "ldap_capability_transition", Name: "created", Type: "datetime"},
+		{Table: "ldap_capability_transition", Name: "from_state", Type: "text"},
+		{Table: "ldap_capability_transition", Name: "id", Type: "integer", PrimaryKey: true},
+		{Table: "ldap_capability_transition", Name: "provider_id", Type: "text"},
+		{Table: "ldap_capability_transition", Name: "to_state", Type: "text"},
+		{Table: "ldap_provider", Name: "bind_dn", Type: "text"},
+		{Table: "ldap_provider", Name: "ca_pem", Type: "text"},
+		{Table: "ldap_provider", Name: "config_version", Type: "integer"},
+		{Table: "ldap_provider", Name: "created", Type: "datetime"},
+		{Table: "ldap_provider", Name: "display_name", Type: "text"},
+		{Table: "ldap_provider", Name: "email_attribute", Type: "text"},
+		{Table: "ldap_provider", Name: "encrypted_bind_password", Type: "text"},
+		{Table: "ldap_provider", Name: "id", Type: "text", PrimaryKey: true},
+		{Table: "ldap_provider", Name: "identity_attribute", Type: "text"},
+		{Table: "ldap_provider", Name: "name_attribute", Type: "text"},
+		{Table: "ldap_provider", Name: "readiness_checked_at", Type: "datetime", Nullable: true},
+		{Table: "ldap_provider", Name: "readiness_code", Type: "text"},
+		{Table: "ldap_provider", Name: "readiness_status", Type: "text"},
+		{Table: "ldap_provider", Name: "recovery_admin_user_id", Type: "integer", Nullable: true},
+		{Table: "ldap_provider", Name: "recovery_checked_at", Type: "datetime", Nullable: true},
+		{Table: "ldap_provider", Name: "search_base_dn", Type: "text"},
+		{Table: "ldap_provider", Name: "server_url", Type: "text"},
+		{Table: "ldap_provider", Name: "state", Type: "text"},
+		{Table: "ldap_provider", Name: "tls_mode", Type: "text"},
+		{Table: "ldap_provider", Name: "trust_mode", Type: "text"},
+		{Table: "ldap_provider", Name: "updated", Type: "datetime"},
+		{Table: "ldap_provider", Name: "user_filter", Type: "text"},
+		{Table: "ldap_provider", Name: "username_attribute", Type: "text"},
+		{Table: "ldap_provider_selected_user", Name: "created", Type: "datetime"},
+		{Table: "ldap_provider_selected_user", Name: "provider_id", Type: "text", PrimaryKey: true},
+		{Table: "ldap_provider_selected_user", Name: "user_id", Type: "integer", PrimaryKey: true},
 	}
 	assert.Equal(t, expected, actual)
 }
 
 func assertCapabilityTablesAbsent(t testing.TB, store *SqlDb) {
 	t.Helper()
-	for _, table := range []string{"capability_config", "capability_test_record"} {
+	for _, table := range enhancedMigrationTables() {
 		_, err := store.Sql().Db.ExecContext(context.Background(), fmt.Sprintf("select count(1) from %s", table))
 		assert.Error(t, err)
+	}
+}
+
+func enhancedMigrationTables() []string {
+	return []string{
+		"capability_config", "capability_test_record", "ldap_provider",
+		"ldap_provider_selected_user", "ldap_auth_attempt", "ldap_capability_transition",
 	}
 }

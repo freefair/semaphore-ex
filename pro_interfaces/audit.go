@@ -44,6 +44,10 @@ const (
 	AuditActionTOTPRecover          AuditAction = "totp_recover"
 	AuditActionTOTPReset            AuditAction = "totp_reset"
 	AuditActionTOTPRollout          AuditAction = "totp_rollout"
+	AuditActionLDAPConfigure        AuditAction = "ldap_configure"
+	AuditActionLDAPTest             AuditAction = "ldap_test"
+	AuditActionLDAPLogin            AuditAction = "ldap_login"
+	AuditActionLDAPLink             AuditAction = "ldap_link"
 )
 
 type AuditTargetType string
@@ -70,20 +74,22 @@ const (
 )
 
 const (
-	AuditReasonUnauthenticated   = "unauthenticated"
-	AuditReasonCrossOrigin       = "cross_origin"
-	AuditReasonProviderError     = "provider_error"
-	AuditReasonInvalidInput      = "invalid_input"
-	AuditReasonOperationError    = "operation_error"
-	AuditReasonActiveAssignments = "active_assignments"
-	AuditReasonEnrollmentPending = "enrollment_pending"
-	AuditReasonEnrollmentActive  = "enrollment_active"
-	AuditReasonInvalidCode       = "invalid_code"
-	AuditReasonReplay            = "replay"
-	AuditReasonThrottled         = "throttled"
-	AuditReasonRecoveryUsed      = "recovery_used"
-	AuditReasonReset             = "reset"
-	AuditReasonReadiness         = "readiness"
+	AuditReasonUnauthenticated        = "unauthenticated"
+	AuditReasonCrossOrigin            = "cross_origin"
+	AuditReasonProviderError          = "provider_error"
+	AuditReasonInvalidInput           = "invalid_input"
+	AuditReasonOperationError         = "operation_error"
+	AuditReasonActiveAssignments      = "active_assignments"
+	AuditReasonEnrollmentPending      = "enrollment_pending"
+	AuditReasonEnrollmentActive       = "enrollment_active"
+	AuditReasonInvalidCode            = "invalid_code"
+	AuditReasonReplay                 = "replay"
+	AuditReasonThrottled              = "throttled"
+	AuditReasonRecoveryUsed           = "recovery_used"
+	AuditReasonReset                  = "reset"
+	AuditReasonReadiness              = "readiness"
+	AuditReasonLDAPInvalidCredentials = "ldap_invalid_credentials"
+	AuditReasonLDAPPolicy             = "ldap_policy"
 )
 
 type DependencyID string
@@ -201,7 +207,7 @@ func validAuditTarget(event AuditEvent) bool {
 
 func validCapabilityAuditTarget(targetID string) bool {
 	switch CapabilityID(targetID) {
-	case CapabilityLifecycleTest, CapabilityRuntimeSecrets, CapabilityTOTP:
+	case CapabilityLifecycleTest, CapabilityRuntimeSecrets, CapabilityTOTP, CapabilityLDAP:
 		return true
 	default:
 		return false
@@ -214,6 +220,7 @@ func validAuditReason(reason string) bool {
 		AuditReasonActiveAssignments, AuditReasonEnrollmentPending, AuditReasonEnrollmentActive,
 		AuditReasonInvalidCode, AuditReasonReplay, AuditReasonThrottled,
 		AuditReasonRecoveryUsed, AuditReasonReset, AuditReasonReadiness,
+		AuditReasonLDAPInvalidCredentials, AuditReasonLDAPPolicy,
 		string(CapabilityReasonActive), string(CapabilityReasonProviderUnavailable),
 		string(CapabilityReasonDisabledByAdmin), string(CapabilityReasonEntitlementExpired),
 		string(CapabilityReasonReadOnly), string(CapabilityReasonInsufficientPermission),
@@ -396,7 +403,8 @@ func validAuditAction(action AuditAction) bool {
 		AuditActionWebhookPause, AuditActionWebhookResume,
 		AuditActionTOTPEnrollBegin, AuditActionTOTPEnrollConfirm,
 		AuditActionTOTPRecoveryAck, AuditActionTOTPChallenge,
-		AuditActionTOTPRecover, AuditActionTOTPReset, AuditActionTOTPRollout:
+		AuditActionTOTPRecover, AuditActionTOTPReset, AuditActionTOTPRollout,
+		AuditActionLDAPConfigure, AuditActionLDAPTest, AuditActionLDAPLogin, AuditActionLDAPLink:
 		return true
 	default:
 		return false

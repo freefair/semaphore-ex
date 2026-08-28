@@ -165,6 +165,11 @@
           </v-card>
         </template>
 
+        <template v-if="ldapDecision && ldapDecision.state !== 'unavailable'">
+          <v-subheader class="px-0 mt-2">LDAP authentication</v-subheader>
+          <LdapCapabilityPanel />
+        </template>
+
         <v-subheader class="px-0 mt-2">Structured file logs</v-subheader>
         <v-card
           v-if="structuredLogs"
@@ -606,9 +611,11 @@
 
 <script>
 import axios from 'axios';
+import LdapCapabilityPanel from '@/components/LdapCapabilityPanel.vue';
 import { capabilityStateColor, findCapabilityDecision } from '@/lib/capabilities';
 
 export default {
+  components: { LdapCapabilityPanel },
   props: {
     value: Boolean,
     systemInfo: Object,
@@ -655,6 +662,10 @@ export default {
 
     totpDecision() {
       return findCapabilityDecision(this.systemInfo, 'totp');
+    },
+
+    ldapDecision() {
+      return findCapabilityDecision(this.systemInfo, 'ldap');
     },
 
     structuredLogs() {
