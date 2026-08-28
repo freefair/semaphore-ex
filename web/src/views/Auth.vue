@@ -149,96 +149,11 @@
               </div>
             </div>
 
-            <div v-else-if="screen === 'enrollment'" data-testid="auth-totp-enrollment">
-              <v-alert type="warning" dense outlined>
-                Your administrator requires TOTP before this account can continue.
-              </v-alert>
-
-              <template v-if="!enrollmentCeremony">
-                <v-text-field
-                  v-model="enrollmentReauthentication"
-                  data-testid="auth-totp-reauthentication"
-                  label="Confirm your password"
-                  type="password"
-                  autocomplete="current-password"
-                  outlined
-                  dense
-                />
-                <v-btn
-                  data-testid="auth-totp-begin"
-                  block
-                  color="primary"
-                  :loading="signInProcess"
-                  :disabled="!enrollmentReauthentication"
-                  @click="beginRequiredEnrollment"
-                >
-                  Generate enrollment codes
-                </v-btn>
-              </template>
-
-              <template v-else>
-                <p>Scan this QR code with an authenticator app.</p>
-                <img
-                  data-testid="auth-totp-qr"
-                  :src="requiredEnrollmentQrUrl"
-                  class="auth-totp-qr"
-                  alt="TOTP enrollment QR code"
-                />
-
-                <div class="subtitle-1 mt-5 mb-2">Single-use recovery codes</div>
-                <p>Store all codes. They cannot be displayed again.</p>
-                <div class="auth-recovery-grid" data-testid="auth-totp-recovery-codes">
-                  <code v-for="code in enrollmentCeremony.recovery_codes" :key="code">
-                    {{ code }}
-                  </code>
-                </div>
-
-                <template v-if="enrollmentStage === 'confirm'">
-                  <v-text-field
-                    v-model="enrollmentCode"
-                    data-testid="auth-totp-confirm-code"
-                    class="mt-5"
-                    label="Six-digit code"
-                    inputmode="numeric"
-                    maxlength="6"
-                    outlined
-                    dense
-                  />
-                  <v-btn
-                    data-testid="auth-totp-confirm"
-                    block
-                    color="primary"
-                    :loading="signInProcess"
-                    :disabled="enrollmentCode.length !== 6"
-                    @click="confirmRequiredEnrollment"
-                  >
-                    Verify code
-                  </v-btn>
-                </template>
-
-                <template v-else>
-                  <v-checkbox
-                    v-model="enrollmentRecoveryStored"
-                    data-testid="auth-totp-recovery-ack-checkbox"
-                    label="I stored these recovery codes"
-                  />
-                  <v-btn
-                    data-testid="auth-totp-recovery-ack"
-                    block
-                    color="primary"
-                    :loading="signInProcess"
-                    :disabled="!enrollmentRecoveryStored"
-                    @click="acknowledgeRequiredRecovery"
-                  >
-                    Activate and continue
-                  </v-btn>
-                </template>
-              </template>
-
-              <div class="text-center pt-6">
-                <a @click="signOut()">{{ $t('Return to login') }}</a>
-              </div>
-            </div>
+            <TotpRequiredEnrollment
+              v-else-if="screen === 'enrollment'"
+              @complete="redirectAfterLogin"
+              @cancel="signOut"
+            />
 
             <div v-else>
               <v-btn-toggle
@@ -403,13 +318,15 @@
 }
 </style>
 <script>
-import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/auth';
+import enhancedMethods from '@/lib/enhanced/auth';
 
 import axios from 'axios';
 import { getErrorMessage } from '@/lib/error';
 import EventBus from '@/event-bus';
+import TotpRequiredEnrollment from '@/components/TotpRequiredEnrollment.vue';
 
 export default {
+  components: { TotpRequiredEnrollment },
   data() {
     return {
       signInFormValid: false,
@@ -437,12 +354,6 @@ export default {
       verificationMethod: null,
       recoveryCode: null,
       verificationEmailSending: false,
-
-      enrollmentCeremony: null,
-      enrollmentReauthentication: '',
-      enrollmentCode: '',
-      enrollmentRecoveryStored: false,
-      enrollmentStage: 'confirm',
     };
   },
 
@@ -471,7 +382,6 @@ export default {
   },
 
   computed: {
-    ...enhancedComputed,
     isPortal() {
       return process.env.VUE_APP_BUILD_TYPE === 'pro_portal';
     },
@@ -488,12 +398,10 @@ export default {
     activeLoginTab() {
       return this.loginTabs[this.loginTab] || this.loginTabs[0];
     },
-
   },
 
   methods: {
     ...enhancedMethods,
-
     async resendEmailVerification() {
       if (this.verificationEmailSending) {
         return;
@@ -747,26 +655,3 @@ export default {
   },
 };
 </script>
-
-<style scoped>
-.auth-totp-qr {
-  width: min(100%, 280px);
-  display: block;
-  margin: 0 auto;
-  border: 10px solid white;
-  border-radius: 4px;
-  background: white;
-}
-
-.auth-recovery-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.auth-recovery-grid code {
-  padding: 7px;
-  text-align: center;
-  user-select: all;
-}
-</style>

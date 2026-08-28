@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import TemplateForm from '@/components/TemplateForm.vue';
-import TaskDetails from '@/components/TaskDetails.vue';
+import TaskRunnerDetails from '@/components/TaskRunnerDetails.vue';
 
 describe('runner tag placement', () => {
   it('normalizes template tags and preserves the legacy first tag', async () => {
@@ -22,10 +22,10 @@ describe('runner tag placement', () => {
   });
 
   it('distinguishes selected placement from an actionable rejection', () => {
-    const selected = TaskDetails.computed.placementRejected.call({
+    const selected = TaskRunnerDetails.computed.placementRejected.call({
       placementDecision: { selected_runner_id: 7 },
     });
-    const rejected = TaskDetails.computed.placementRejected.call({
+    const rejected = TaskRunnerDetails.computed.placementRejected.call({
       placementDecision: {
         selected_runner_id: null,
         reason: 'all matching runners are offline',
