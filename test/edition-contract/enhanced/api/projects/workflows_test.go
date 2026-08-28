@@ -10,6 +10,7 @@ import (
 
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -249,10 +250,14 @@ func TestWorkflowRunControllerStartStatusListStopAndArtifacts(t *testing.T) {
 	run := db.WorkflowRun{
 		ID: 91, ProjectID: 7, WorkflowTemplateID: workflow.ID, ActorUserID: 12,
 		Status: db.WorkflowRunQueued, DefinitionRevision: 3,
-		DefinitionSnapshot: db.WorkflowTemplate{ID: 41, ProjectID: 7, Name: "Original snapshot", Revision: 3},
+		DefinitionSnapshot: db.WorkflowTemplate{
+			ID: 41, ProjectID: 7, Name: "Original snapshot", Revision: 3,
+			Nodes: []db.WorkflowNode{{ID: 201, TemplateID: 51, DisplayName: "Deploy"}},
+		},
 		Nodes: []db.WorkflowRunNode{{
 			ID: 101, ProjectID: 7, WorkflowRunID: 91, WorkflowNodeID: 201,
 			TemplateID: 51, Status: db.WorkflowRunNodeQueued, TaskID: &taskID,
+			TemplateSnapshot: db.Template{ID: 51, Name: "Deploy template"},
 		}},
 	}
 	service := &workflowServiceStub{run: run, artifacts: map[string]any{}}
@@ -287,7 +292,7 @@ func TestWorkflowRunControllerStartStatusListStopAndArtifacts(t *testing.T) {
 	assert.Equal(t, 1, service.progressCalls)
 	assert.Contains(t, statusRecorder.Body.String(), `"workflow":{"id":41`, "the status API must return the frozen definition")
 	assert.Contains(t, statusRecorder.Body.String(), `"name":"Original snapshot"`)
-	assert.Contains(t, statusRecorder.Body.String(), `"task_id":301`)
+	assert.Contains(t, statusRecorder.Body.String(), `"task":{"id":301`)
 
 	stopRecorder := httptest.NewRecorder()
 	controller.StopWorkflowRun(stopRecorder, workflowRunRequest(http.MethodPost, "/api/project/7/workflows/41/runs/91/stop", workflow, run))
@@ -312,6 +317,91 @@ func TestWorkflowRunControllerRejectsOversizedIdempotencyKey(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 	assert.Empty(t, service.correlationIDs)
+}
+
+func TestWorkflowRunResponsesExposeOnlyRunPresentationData(t *testing.T) {
+	taskArguments := "sensitive-task-arguments"
+	vaultScript := "sensitive-vault-script"
+	usedRunnerID := 88
+	usedRunnerName := "runner-east"
+	workflowNodeID := 201
+	taskID := 301
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7, Name: "Edited live definition", Revision: 4}
+	run := db.WorkflowRun{
+		ID: 91, ProjectID: 7, WorkflowTemplateID: workflow.ID, ActorUserID: 12,
+		Status: db.WorkflowRunRunning, DefinitionVersion: 1, DefinitionRevision: 3,
+		CorrelationID: "deploy-once",
+		DefinitionSnapshot: db.WorkflowTemplate{
+			ID: 41, ProjectID: 7, Name: "Original snapshot", DefinitionVersion: 1, Revision: 3,
+			Nodes: []db.WorkflowNode{{
+				ID: workflowNodeID, WorkflowTemplateID: 41, TemplateID: 51,
+				DisplayName: "Deploy application", Kind: db.WorkflowNodeTaskKind,
+				PositionX: 120, PositionY: 240,
+				TaskParams: &db.TaskParams{
+					Environment: "sensitive-workflow-environment",
+					Arguments:   &taskArguments,
+				},
+			}},
+			Edges: []db.WorkflowEdge{},
+		},
+		Nodes: []db.WorkflowRunNode{{
+			ID: 101, ProjectID: 7, WorkflowRunID: 91, WorkflowNodeID: workflowNodeID,
+			TemplateID: 51, Status: db.WorkflowRunNodeRunning, TaskID: &taskID,
+			TemplateSnapshot: db.Template{
+				ID: 51, ProjectID: 7, Name: "Deploy template", Playbook: "sensitive-playbook.yml",
+				Vaults: []db.TemplateVault{{Type: db.TemplateVaultScript, Script: &vaultScript}},
+			},
+		}},
+	}
+	service := &workflowServiceStub{run: run}
+	manager := &workflowManagerStub{
+		runs: []db.WorkflowRun{run}, run: run,
+		tasks: []db.TaskWithTpl{{
+			Task: db.Task{
+				ID: taskID, ProjectID: 7, WorkflowNodeID: &workflowNodeID,
+				Status:      task_logger.TaskRunningStatus,
+				Environment: "sensitive-task-environment", Arguments: &taskArguments,
+			},
+			UsedRunnerID: &usedRunnerID, UsedRunnerName: &usedRunnerName,
+		}},
+	}
+	controller := NewWorkflowController(service, manager, &workflowDefinitionServiceStub{})
+
+	responses := map[string]*httptest.ResponseRecorder{}
+
+	startRequest := workflowRequest(http.MethodPost, "/api/project/7/workflows/41/run", nil, &workflow)
+	startRequest.Header.Set("Idempotency-Key", "deploy-once")
+	responses["start"] = httptest.NewRecorder()
+	controller.RunWorkflow(responses["start"], startRequest)
+
+	responses["list"] = httptest.NewRecorder()
+	controller.GetWorkflowRuns(responses["list"], workflowRequest(http.MethodGet, "/api/project/7/workflows/41/runs", nil, &workflow))
+
+	responses["details"] = httptest.NewRecorder()
+	controller.GetWorkflowRun(responses["details"], workflowRunRequest(http.MethodGet, "/api/project/7/workflows/41/runs/91", workflow, run))
+
+	responses["stop"] = httptest.NewRecorder()
+	controller.StopWorkflowRun(responses["stop"], workflowRunRequest(http.MethodPost, "/api/project/7/workflows/41/runs/91/stop", workflow, run))
+
+	for name, recorder := range responses {
+		t.Run(name, func(t *testing.T) {
+			require.Contains(t, []int{http.StatusOK, http.StatusCreated}, recorder.Code, recorder.Body.String())
+			body := recorder.Body.String()
+			assert.NotContains(t, body, "sensitive-workflow-environment")
+			assert.NotContains(t, body, "sensitive-task-arguments")
+			assert.NotContains(t, body, "sensitive-vault-script")
+			assert.NotContains(t, body, "sensitive-playbook.yml")
+			assert.NotContains(t, body, "sensitive-task-environment")
+		})
+	}
+
+	details := responses["details"].Body.String()
+	assert.Contains(t, details, `"name":"Original snapshot"`)
+	assert.Contains(t, details, `"display_name":"Deploy application"`)
+	assert.Contains(t, details, `"name":"Deploy template"`)
+	assert.Contains(t, details, `"id":301`)
+	assert.Contains(t, details, `"status":"running"`)
+	assert.Contains(t, details, `"used_runner_id":88`)
 }
 
 func workflowRequest(method, target string, body any, workflow *db.WorkflowTemplate) *http.Request {

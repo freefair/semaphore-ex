@@ -1760,12 +1760,6 @@ definitions:
       correlation_id:
         type: string
         maxLength: 64
-      definition:
-        $ref: "#/definitions/WorkflowTemplate"
-      nodes:
-        type: array
-        items:
-          $ref: "#/definitions/WorkflowRunNode"
       created:
         type: string
         format: date-time
@@ -1777,6 +1771,90 @@ definitions:
         format: date-time
       root_task_id:
         type: integer
+
+  WorkflowRunDefinition:
+    type: object
+    description: Immutable graph presentation data for a workflow run; execution and resource configuration is not exposed.
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+      definition_version:
+        type: integer
+      revision:
+        type: integer
+      nodes:
+        type: array
+        items:
+          $ref: "#/definitions/WorkflowRunDefinitionNode"
+      edges:
+        type: array
+        items:
+          $ref: "#/definitions/WorkflowRunDefinitionEdge"
+
+  WorkflowRunDefinitionNode:
+    type: object
+    properties:
+      id:
+        type: integer
+      template_id:
+        type: integer
+      display_name:
+        type: string
+      kind:
+        type: string
+        enum: [task, approval, note]
+      convergence_mode:
+        type: string
+        enum: [all, any]
+      approval_timeout:
+        type: integer
+      approval_message:
+        type: string
+      note:
+        type: string
+      position_x:
+        type: integer
+      position_y:
+        type: integer
+
+  WorkflowRunDefinitionEdge:
+    type: object
+    properties:
+      id:
+        type: integer
+      source_node_id:
+        type: integer
+      destination_node_id:
+        type: integer
+      condition:
+        type: string
+        enum: [on_success, on_failure, always]
+      label:
+        type: string
+
+  WorkflowRunTemplate:
+    type: object
+    description: Template identity needed to label the immutable run graph.
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+
+  WorkflowRunTask:
+    type: object
+    description: Task identity and status needed by the workflow run view.
+    properties:
+      id:
+        type: integer
+      status:
+        type: string
+      used_runner_id:
+        type: integer
+      used_runner_name:
+        type: string
 
   WorkflowRunNode:
     type: object
@@ -1840,14 +1918,14 @@ definitions:
     type: object
     properties:
       node:
-        $ref: "#/definitions/WorkflowNode"
+        $ref: "#/definitions/WorkflowRunDefinitionNode"
       status:
         type: string
         enum: [pending, queued, running, succeeded, failed, stopped, blocked]
       reason:
         type: string
       task:
-        $ref: "#/definitions/Task"
+        $ref: "#/definitions/WorkflowRunTask"
       approval:
         $ref: "#/definitions/WorkflowApproval"
 
@@ -1857,11 +1935,11 @@ definitions:
       run:
         $ref: "#/definitions/WorkflowRun"
       workflow:
-        $ref: "#/definitions/WorkflowTemplate"
+        $ref: "#/definitions/WorkflowRunDefinition"
       templates:
         type: array
         items:
-          $ref: "#/definitions/Template"
+          $ref: "#/definitions/WorkflowRunTemplate"
       nodes:
         type: array
         items:

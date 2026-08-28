@@ -5,11 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pkg/random"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
 
@@ -23,17 +25,76 @@ type workflowController struct {
 }
 
 type workflowRunDetails struct {
-	Run       db.WorkflowRun           `json:"run"`
-	Workflow  db.WorkflowTemplate      `json:"workflow"`
-	Templates []db.Template            `json:"templates"`
-	Nodes     []workflowRunNodeDetails `json:"nodes"`
+	Run       workflowRunView           `json:"run"`
+	Workflow  workflowRunDefinitionView `json:"workflow"`
+	Templates []workflowRunTemplateView `json:"templates"`
+	Nodes     []workflowRunNodeDetails  `json:"nodes"`
 }
 
 type workflowRunNodeDetails struct {
-	Node   db.WorkflowNode          `json:"node"`
+	Node   workflowRunNodeView      `json:"node"`
 	Status db.WorkflowRunNodeStatus `json:"status"`
 	Reason string                   `json:"reason,omitempty"`
-	Task   *db.TaskWithTpl          `json:"task,omitempty"`
+	Task   *workflowRunTaskView     `json:"task,omitempty"`
+}
+
+type workflowRunView struct {
+	ID                 int                  `json:"id"`
+	ProjectID          int                  `json:"project_id"`
+	WorkflowTemplateID int                  `json:"workflow_template_id"`
+	Status             db.WorkflowRunStatus `json:"status"`
+	Reason             string               `json:"reason,omitempty"`
+	Version            *string              `json:"version,omitempty"`
+	ActorUserID        int                  `json:"actor_user_id"`
+	DefinitionVersion  int                  `json:"definition_version"`
+	DefinitionRevision int                  `json:"definition_revision"`
+	CorrelationID      string               `json:"correlation_id"`
+	Created            time.Time            `json:"created"`
+	Start              *time.Time           `json:"start,omitempty"`
+	End                *time.Time           `json:"end,omitempty"`
+	RootTaskID         *int                 `json:"root_task_id,omitempty"`
+}
+
+type workflowRunDefinitionView struct {
+	ID                int                   `json:"id"`
+	Name              string                `json:"name"`
+	DefinitionVersion int                   `json:"definition_version"`
+	Revision          int                   `json:"revision"`
+	Nodes             []workflowRunNodeView `json:"nodes"`
+	Edges             []workflowRunEdgeView `json:"edges"`
+}
+
+type workflowRunNodeView struct {
+	ID              int                        `json:"id"`
+	TemplateID      int                        `json:"template_id,omitempty"`
+	DisplayName     string                     `json:"display_name,omitempty"`
+	Kind            db.WorkflowNodeKind        `json:"kind,omitempty"`
+	ConvergenceMode db.WorkflowConvergenceMode `json:"convergence_mode,omitempty"`
+	ApprovalTimeout *int                       `json:"approval_timeout,omitempty"`
+	ApprovalMessage *string                    `json:"approval_message,omitempty"`
+	Note            *string                    `json:"note,omitempty"`
+	PositionX       int                        `json:"position_x"`
+	PositionY       int                        `json:"position_y"`
+}
+
+type workflowRunEdgeView struct {
+	ID                int                      `json:"id"`
+	SourceNodeID      int                      `json:"source_node_id"`
+	DestinationNodeID int                      `json:"destination_node_id"`
+	Condition         db.WorkflowEdgeCondition `json:"condition"`
+	Label             string                   `json:"label,omitempty"`
+}
+
+type workflowRunTemplateView struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+type workflowRunTaskView struct {
+	ID             int                    `json:"id"`
+	Status         task_logger.TaskStatus `json:"status"`
+	UsedRunnerID   *int                   `json:"used_runner_id,omitempty"`
+	UsedRunnerName *string                `json:"used_runner_name,omitempty"`
 }
 
 var _ pro_interfaces.WorkflowController = (*workflowController)(nil)
@@ -189,7 +250,7 @@ func (c *workflowController) RunWorkflow(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.Header().Set("Idempotency-Key", correlationID)
-	helpers.WriteJSON(w, http.StatusCreated, run)
+	helpers.WriteJSON(w, http.StatusCreated, newWorkflowRunView(run))
 }
 
 func (c *workflowController) StopWorkflowRun(w http.ResponseWriter, r *http.Request) {
@@ -200,7 +261,7 @@ func (c *workflowController) StopWorkflowRun(w http.ResponseWriter, r *http.Requ
 		helpers.WriteError(w, err)
 		return
 	}
-	helpers.WriteJSON(w, http.StatusOK, stopped)
+	helpers.WriteJSON(w, http.StatusOK, newWorkflowRunView(stopped))
 }
 
 func (c *workflowController) GetWorkflowRuns(w http.ResponseWriter, r *http.Request) {
@@ -211,7 +272,11 @@ func (c *workflowController) GetWorkflowRuns(w http.ResponseWriter, r *http.Requ
 		helpers.WriteError(w, err)
 		return
 	}
-	helpers.WriteJSON(w, http.StatusOK, runs)
+	result := make([]workflowRunView, len(runs))
+	for index := range runs {
+		result[index] = newWorkflowRunView(runs[index])
+	}
+	helpers.WriteJSON(w, http.StatusOK, result)
 }
 
 func (c *workflowController) GetWorkflowRun(w http.ResponseWriter, r *http.Request) {
@@ -247,10 +312,12 @@ func (c *workflowController) workflowRunDetails(run db.WorkflowRun) (workflowRun
 		}
 	}
 	statesByNode := make(map[int]db.WorkflowRunNode, len(run.Nodes))
-	templates := make([]db.Template, 0, len(run.Nodes))
+	templates := make([]workflowRunTemplateView, 0, len(run.Nodes))
 	for _, node := range run.Nodes {
 		statesByNode[node.WorkflowNodeID] = node
-		templates = append(templates, node.TemplateSnapshot)
+		templates = append(templates, workflowRunTemplateView{
+			ID: node.TemplateSnapshot.ID, Name: node.TemplateSnapshot.Name,
+		})
 	}
 	nodes := make([]workflowRunNodeDetails, 0, len(run.DefinitionSnapshot.Nodes))
 	for _, node := range run.DefinitionSnapshot.Nodes {
@@ -258,16 +325,75 @@ func (c *workflowController) workflowRunDetails(run db.WorkflowRun) (workflowRun
 		if !exists {
 			continue
 		}
-		detail := workflowRunNodeDetails{Node: node, Status: state.Status, Reason: state.Reason}
+		detail := workflowRunNodeDetails{Node: newWorkflowRunNodeView(node), Status: state.Status, Reason: state.Reason}
 		if task, taskExists := tasksByNode[node.ID]; taskExists {
-			taskCopy := task
-			detail.Task = &taskCopy
+			detail.Task = &workflowRunTaskView{
+				ID: task.ID, Status: task.Status,
+				UsedRunnerID: task.UsedRunnerID, UsedRunnerName: task.UsedRunnerName,
+			}
 		}
 		nodes = append(nodes, detail)
 	}
 	return workflowRunDetails{
-		Run: run, Workflow: run.DefinitionSnapshot, Templates: templates, Nodes: nodes,
+		Run:       newWorkflowRunView(run),
+		Workflow:  newWorkflowRunDefinitionView(run.DefinitionSnapshot),
+		Templates: templates,
+		Nodes:     nodes,
 	}, nil
+}
+
+func newWorkflowRunView(run db.WorkflowRun) workflowRunView {
+	return workflowRunView{
+		ID:                 run.ID,
+		ProjectID:          run.ProjectID,
+		WorkflowTemplateID: run.WorkflowTemplateID,
+		Status:             run.Status,
+		Reason:             run.Reason,
+		Version:            run.Version,
+		ActorUserID:        run.ActorUserID,
+		DefinitionVersion:  run.DefinitionVersion,
+		DefinitionRevision: run.DefinitionRevision,
+		CorrelationID:      run.CorrelationID,
+		Created:            run.Created,
+		Start:              run.Start,
+		End:                run.End,
+		RootTaskID:         run.RootTaskID,
+	}
+}
+
+func newWorkflowRunDefinitionView(workflow db.WorkflowTemplate) workflowRunDefinitionView {
+	nodes := make([]workflowRunNodeView, len(workflow.Nodes))
+	for index := range workflow.Nodes {
+		nodes[index] = newWorkflowRunNodeView(workflow.Nodes[index])
+	}
+	edges := make([]workflowRunEdgeView, len(workflow.Edges))
+	for index, edge := range workflow.Edges {
+		edges[index] = workflowRunEdgeView{
+			ID: edge.ID, SourceNodeID: edge.SourceNodeID,
+			DestinationNodeID: edge.DestinationNodeID,
+			Condition:         edge.Condition, Label: edge.Label,
+		}
+	}
+	return workflowRunDefinitionView{
+		ID: workflow.ID, Name: workflow.Name,
+		DefinitionVersion: workflow.DefinitionVersion, Revision: workflow.Revision,
+		Nodes: nodes, Edges: edges,
+	}
+}
+
+func newWorkflowRunNodeView(node db.WorkflowNode) workflowRunNodeView {
+	return workflowRunNodeView{
+		ID:              node.ID,
+		TemplateID:      node.TemplateID,
+		DisplayName:     node.DisplayName,
+		Kind:            node.Kind,
+		ConvergenceMode: node.ConvergenceMode,
+		ApprovalTimeout: node.ApprovalTimeout,
+		ApprovalMessage: node.ApprovalMessage,
+		Note:            node.Note,
+		PositionX:       node.PositionX,
+		PositionY:       node.PositionY,
+	}
 }
 
 func (c *workflowController) GetWorkflowRunArtifacts(w http.ResponseWriter, r *http.Request) {
