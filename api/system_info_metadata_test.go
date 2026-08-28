@@ -48,7 +48,7 @@ func TestSystemInfoEditionMetadataJSON(t *testing.T) {
 		"boltdb_used":false,
 		"jwt":{"enabled":false},
 		"edition":"enhanced",
-		"contract_version":"1.11.0",
+		"contract_version":"1.12.0",
 		"implementation_version":"enhanced-revision",
 		"core_revision":"core-revision",
 		"enhanced_revision":"enhanced-revision",
@@ -70,4 +70,21 @@ func TestSystemInfoOmitsCommunityEnhancedRevision(t *testing.T) {
 	encoded, err := json.Marshal(SystemInfo{Edition: pro_interfaces.EditionCommunity})
 	require.NoError(t, err)
 	assert.NotContains(t, string(encoded), "enhanced_revision")
+}
+
+func TestTOTPAuthMethodComesFromCapabilitySnapshot(t *testing.T) {
+	request := pro_interfaces.CapabilityRequest{At: time.Now().UTC()}
+	decision := func(state pro_interfaces.CapabilityState) pro_interfaces.CapabilitySnapshot {
+		return pro_interfaces.NewCapabilitySnapshot(request, []pro_interfaces.CapabilityDecision{
+			pro_interfaces.NewCapabilityDecision(
+				pro_interfaces.CapabilityTOTP, state, pro_interfaces.CapabilityReasonCode(state), nil, nil,
+			),
+		})
+	}
+
+	assert.Nil(t, totpAuthMethod(decision(pro_interfaces.CapabilityStateUnavailable)))
+	assert.Nil(t, totpAuthMethod(decision(pro_interfaces.CapabilityStateDisabled)))
+	assert.Nil(t, totpAuthMethod(decision(pro_interfaces.CapabilityStateShadow)))
+	assert.NotNil(t, totpAuthMethod(decision(pro_interfaces.CapabilityStateOptional)))
+	assert.True(t, totpAuthMethod(decision(pro_interfaces.CapabilityStateRequired)).AllowRecovery)
 }

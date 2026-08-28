@@ -10,7 +10,10 @@ import (
 )
 
 func (d *SqlDb) SetSessionVerificationMethod(userID int, sessionID int, verificationMethod db.SessionVerificationMethod) error {
-	return nil
+	return validateMutationResult(d.exec(
+		"update session set verification_method=?, verified=false where id=? and user_id=? and expired=false",
+		verificationMethod, sessionID, userID,
+	))
 }
 
 func (d *SqlDb) VerifySession(userID int, sessionID int) error {

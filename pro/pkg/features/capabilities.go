@@ -28,6 +28,7 @@ func (p *communityCapabilityProvider) Resolve(
 		[]pro_interfaces.CapabilityDecision{
 			communityUnavailableDecision(pro_interfaces.CapabilityLifecycleTest),
 			communityUnavailableDecision(pro_interfaces.CapabilityRuntimeSecrets),
+			communityUnavailableDecision(pro_interfaces.CapabilityTOTP),
 		},
 	), nil
 }

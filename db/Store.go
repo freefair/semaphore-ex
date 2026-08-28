@@ -156,6 +156,10 @@ type ObjectProps struct {
 }
 
 var ErrNotFound = errors.New("no rows in result set")
+
+// ErrTOTPReadiness reports that a transactional TOTP mutation would remove
+// the final recovery administrator or enable an unenforceable required policy.
+var ErrTOTPReadiness = errors.New("TOTP administrator recovery is not ready")
 var ErrInvalidOperation = errors.New("invalid operation")
 
 type TaskStatUnit string
@@ -222,8 +226,6 @@ type UserManager interface {
 	UpdateUser(user UserWithPwd) error
 	ImportUser(user UserWithPwd) (User, error)
 	SetUserPassword(userID int, password string) error
-	AddTotpVerification(userID int, url string, recoveryHash string) (UserTotp, error)
-	DeleteTotpVerification(userID int, totpID int) error
 	AddEmailOtpVerification(userID int, code string) (UserEmailOtp, error)
 	DeleteEmailOtpVerification(userID int, totpID int) error
 	IncrementEmailOtpAttempts(userID int) error
@@ -233,6 +235,30 @@ type UserManager interface {
 
 	GetNodeCount() (int, error)
 	GetUiCount() (int, error)
+}
+
+// TOTPRepository is the durable authority for enrollment state, one-time
+// consumption, throttling, rollout selection, and transition history.
+type TOTPRepository interface {
+	GetTOTP(userID int) (UserTotp, error)
+	GetLegacyTOTPs() ([]UserTotp, error)
+	UpdateLegacyTOTPSecret(userID int, totpID int, encryptedSecret string, migratedAt time.Time) error
+	CreateTOTPEnrollment(enrollment UserTotp, recoveryCodeHashes []string) (UserTotp, error)
+	ConfirmTOTPEnrollment(userID int, totpID int, step int64, confirmedAt time.Time) (bool, error)
+	ActivateTOTPEnrollmentAndRevokeSessions(userID int, totpID int, currentSessionID int, acknowledgedAt time.Time) (bool, error)
+	ResetTOTPEnrollmentAndRevokeSessions(userID int, totpID int) error
+	ForceResetTOTPEnrollmentAndRevokeSessions(userID int, totpID int) error
+	GetUnusedTOTPRecoveryCodes(userID int, totpID int) ([]TOTPRecoveryCode, error)
+	ConsumeTOTPRecoveryCode(userID int, totpID int, recoveryCodeID int, consumedAt time.Time) (bool, error)
+	ConsumeTOTPStep(userID int, totpID int, step int64) (bool, error)
+	GetTOTPAttempt(userID int) (TOTPAttempt, error)
+	RecordTOTPFailure(userID int, now time.Time, window time.Duration, maxFailures int, blockFor time.Duration) (TOTPAttempt, error)
+	ClearTOTPFailures(userID int) error
+	IsTOTPUserSelected(userID int) (bool, error)
+	GetTOTPSelectedUsers() ([]int, error)
+	ConfigureTOTP(state string, selectedUserIDs []int, actorID int, changedAt time.Time) error
+	GetTOTPCapabilityTransitions() ([]TOTPCapabilityTransition, error)
+	CountRecoverableTOTPAdmins(excludeUserID int) (int, error)
 }
 
 // ProjectStore handles project-related operations
@@ -619,6 +645,7 @@ type Store interface {
 	SecretSyncRepository
 	RoleRepository
 	CapabilityRepository
+	TOTPRepository
 	AuditWebhookRepository
 }
 

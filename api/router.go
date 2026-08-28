@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"fmt"
 	"net/http"
@@ -108,6 +109,10 @@ func Route(
 	integrationController := NewIntegrationController(store, integrationService)
 	environmentController := projects.NewEnvironmentController(store, encryptionService, accessKeyService, environmentService, secretStorageService)
 	capabilityProvider := proFeatures.NewCapabilityProvider(store)
+	totpService := proFeatures.NewTOTPService(store, capabilityProvider)
+	if err := totpService.Initialize(context.Background()); err != nil {
+		log.WithError(err).Panic("failed to initialize TOTP lifecycle service")
+	}
 	secretStorageController := projects.NewSecretStorageController(store, secretStorageService, capabilityProvider)
 	repositoryController := projects.NewRepositoryController(accessKeyInstallationService)
 	keyController := projects.NewKeyController(accessKeyService)
@@ -135,6 +140,7 @@ func Route(
 	auditWebhookController := NewAuditWebhookController(auditWebhookService, auditFacade)
 	projectRunnerController := proProjects.NewProjectRunnerController(subscriptionService, runnerService, capabilityProvider, auditFacade)
 	capabilityController := NewCapabilityController(capabilityFacade, auditFacade)
+	totpController := NewTOTPController(totpService, auditFacade)
 
 	r := mux.NewRouter()
 	r.NotFoundHandler = http.HandlerFunc(servePublic)
@@ -173,14 +179,26 @@ func Route(
 	publicAPIRouter := r.PathPrefix(webPath + "api").Subrouter()
 	publicAPIRouter.Use(StoreMiddleware, JSONMiddleware)
 
-	publicAPIRouter.HandleFunc("/auth/login", login).Methods("GET", "POST")
-	publicAPIRouter.HandleFunc("/auth/verify", verifySession).Methods("POST")
-	publicAPIRouter.HandleFunc("/auth/recovery", recoverySession).Methods("POST")
+	publicAPIRouter.HandleFunc("/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		loginWithTOTPService(totpService, w, r)
+	}).Methods("GET", "POST")
+	totpSessionAPI := publicAPIRouter.NewRoute().Subrouter()
+	totpSessionAPI.Use(csrfProtectionMiddleware)
+	totpSessionAPI.HandleFunc("/auth/verify", totpController.VerifySession).Methods("POST")
+	totpSessionAPI.HandleFunc("/auth/recovery", totpController.RecoverSession).Methods("POST")
+	totpSessionAPI.HandleFunc("/auth/totp/enroll", totpController.BeginSessionEnrollment).Methods("POST")
+	totpSessionAPI.HandleFunc("/auth/totp/enroll/{totp_id}/qr", totpController.SessionQR).Methods("GET")
+	totpSessionAPI.HandleFunc("/auth/totp/enroll/{totp_id}/confirm", totpController.ConfirmSessionEnrollment).Methods("POST")
+	totpSessionAPI.HandleFunc("/auth/totp/enroll/{totp_id}/recovery-codes/acknowledge", totpController.AcknowledgeSessionRecoveryCodes).Methods("POST")
 
 	publicAPIRouter.HandleFunc("/auth/logout", logout).Methods("POST")
 	publicAPIRouter.HandleFunc("/auth/oidc/{provider}/login", oidcLogin).Methods("GET", "POST")
-	publicAPIRouter.HandleFunc("/auth/oidc/{provider}/redirect", oidcRedirect).Methods("GET")
-	publicAPIRouter.HandleFunc("/auth/oidc/{provider}/redirect/{redirect_path:.*}", oidcRedirect).Methods("GET")
+	publicAPIRouter.HandleFunc("/auth/oidc/{provider}/redirect", func(w http.ResponseWriter, r *http.Request) {
+		oidcRedirectWithTOTPService(totpService, w, r)
+	}).Methods("GET")
+	publicAPIRouter.HandleFunc("/auth/oidc/{provider}/redirect/{redirect_path:.*}", func(w http.ResponseWriter, r *http.Request) {
+		oidcRedirectWithTOTPService(totpService, w, r)
+	}).Methods("GET")
 
 	internalAPI := publicAPIRouter.PathPrefix("/internal").Subrouter()
 	internalAPI.HandleFunc("/runners", runners.RegisterRunner).Methods("POST")
@@ -274,6 +292,9 @@ func Route(
 	adminAPI.Path("/admin/info").HandlerFunc(getAdminInfo).Methods("GET", "HEAD")
 	adminAPI.Path("/capabilities/lifecycle-test").HandlerFunc(capabilityController.Configure).Methods("PUT")
 	adminAPI.Path("/capabilities/runtime-secrets").HandlerFunc(capabilityController.ConfigureRuntimeSecrets).Methods("PUT")
+	adminAPI.Path("/capabilities/totp").HandlerFunc(totpController.Configure).Methods("PUT")
+	adminAPI.Path("/capabilities/totp").HandlerFunc(totpController.Configuration).Methods("GET", "HEAD")
+	adminAPI.Path("/capabilities/totp/transitions").HandlerFunc(totpController.Transitions).Methods("GET", "HEAD")
 	adminAPI.Path("/audit-webhook").HandlerFunc(auditWebhookController.GetConfiguration).Methods("GET", "HEAD")
 	adminAPI.Path("/audit-webhook").HandlerFunc(auditWebhookController.Configure).Methods("PUT")
 	adminAPI.Path("/audit-webhook/test").HandlerFunc(auditWebhookController.TestDelivery).Methods("POST")
@@ -334,9 +355,12 @@ func Route(
 	userPasswordAPI := authenticatedAPI.PathPrefix("/users/{user_id}").Subrouter()
 	userPasswordAPI.Use(usersController.GetUserMiddleware)
 	userPasswordAPI.Path("/password").HandlerFunc(usersController.UpdateUserPassword).Methods("POST")
-	userPasswordAPI.Path("/2fas/totp").HandlerFunc(usersController.EnableTotp).Methods("POST")
-	userPasswordAPI.Path("/2fas/totp/{totp_id}/qr").HandlerFunc(usersController.TotpQr).Methods("GET")
-	userPasswordAPI.Path("/2fas/totp/{totp_id}").HandlerFunc(usersController.DisableTotp).Methods("DELETE")
+	userPasswordAPI.Path("/2fas/totp").HandlerFunc(totpController.Status).Methods("GET", "HEAD")
+	userPasswordAPI.Path("/2fas/totp").HandlerFunc(totpController.BeginEnrollment).Methods("POST")
+	userPasswordAPI.Path("/2fas/totp/{totp_id}/qr").HandlerFunc(totpController.QR).Methods("GET")
+	userPasswordAPI.Path("/2fas/totp/{totp_id}/confirm").HandlerFunc(totpController.ConfirmEnrollment).Methods("POST")
+	userPasswordAPI.Path("/2fas/totp/{totp_id}/recovery-codes/acknowledge").HandlerFunc(totpController.AcknowledgeRecoveryCodes).Methods("POST")
+	userPasswordAPI.Path("/2fas/totp/{totp_id}").HandlerFunc(totpController.Reset).Methods("DELETE")
 	userPasswordAPI.Path("/identities").HandlerFunc(usersController.GetUserIdentities).Methods("GET", "HEAD")
 	userPasswordAPI.Path("/identities/{type}/{provider}").HandlerFunc(usersController.DeleteUserIdentity).Methods("DELETE")
 

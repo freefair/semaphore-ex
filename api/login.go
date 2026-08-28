@@ -26,6 +26,7 @@ import (
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/random"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
@@ -154,17 +155,49 @@ func tryFindLDAPUser(provider util.LdapProvider, username, password string) (*db
 
 // createSession creates session for passed user and stores session details
 // in cookies.
-func createSession(w http.ResponseWriter, r *http.Request, user db.User, oidc bool) {
+func createSession(
+	w http.ResponseWriter,
+	r *http.Request,
+	user db.User,
+	oidc bool,
+	totpService pro_interfaces.TOTPService,
+) bool {
 	var err error
 	var verificationMethod db.SessionVerificationMethod
 	verified := false
 
-	switch {
-	case user.Totp != nil && util.Config.Mfa.Totp.Enabled:
-		verificationMethod = db.SessionVerificationTotp
-	default:
-		verificationMethod = db.SessionVerificationNone
-		verified = true
+	if totpService != nil {
+		requirement, requirementErr := totpService.SessionRequirement(r.Context(), user.ID)
+		if requirementErr != nil {
+			log.WithError(requirementErr).WithField("user_id", user.ID).Error("Failed to resolve TOTP session requirement")
+			if errors.Is(requirementErr, pro_interfaces.ErrTOTPUnavailable) {
+				helpers.WriteErrorStatus(w, "TOTP_UNAVAILABLE", http.StatusForbidden)
+				return false
+			}
+			if errors.Is(requirementErr, pro_interfaces.ErrTOTPForbidden) {
+				helpers.WriteErrorStatus(w, "TOTP_POLICY_UNSATISFIED", http.StatusForbidden)
+				return false
+			}
+			helpers.WriteErrorStatus(w, "Failed to resolve authentication policy", http.StatusInternalServerError)
+			return false
+		}
+		switch requirement {
+		case pro_interfaces.TOTPSessionChallenge:
+			verificationMethod = db.SessionVerificationTotp
+		case pro_interfaces.TOTPSessionEnroll:
+			verificationMethod = db.SessionVerificationTotpEnrollment
+		default:
+			verificationMethod = db.SessionVerificationNone
+			verified = true
+		}
+	} else {
+		switch {
+		case user.Totp != nil && util.Config.Mfa.Totp.Enabled:
+			verificationMethod = db.SessionVerificationTotp
+		default:
+			verificationMethod = db.SessionVerificationNone
+			verified = true
+		}
 	}
 
 	newSession, err := helpers.Store(r).CreateSession(db.Session{
@@ -184,7 +217,7 @@ func createSession(w http.ResponseWriter, r *http.Request, user db.User, oidc bo
 			"context": "session",
 		}).Error("Failed to create session")
 		helpers.WriteErrorStatus(w, "Failed to create session", http.StatusInternalServerError)
-		return
+		return false
 	}
 
 	encoded, err := util.Cookie.Encode("semaphore", map[string]any{
@@ -197,7 +230,7 @@ func createSession(w http.ResponseWriter, r *http.Request, user db.User, oidc bo
 			"context": "session",
 		}).Error("Failed to encode session cookie")
 		helpers.WriteErrorStatus(w, "Failed to create session", http.StatusInternalServerError)
-		return
+		return false
 	}
 
 	http.SetCookie(w, &http.Cookie{
@@ -214,6 +247,7 @@ func createSession(w http.ResponseWriter, r *http.Request, user db.User, oidc bo
 		// it can still be used without TLS inside private networks.
 		Secure: isSecureWebHost(),
 	})
+	return true
 }
 
 // isSecureWebHost reports whether Semaphore's public web host uses HTTPS, in
@@ -292,6 +326,14 @@ type loginMetadata struct {
 
 // nolint: gocyclo
 func login(w http.ResponseWriter, r *http.Request) {
+	loginWithTOTPService(nil, w, r)
+}
+
+func loginWithTOTPService(
+	totpService pro_interfaces.TOTPService,
+	w http.ResponseWriter,
+	r *http.Request,
+) {
 	if r.Method == "GET" {
 		config := &loginMetadata{
 			OidcProviders:     make([]loginMetadataOidcProvider, len(util.Config.OidcProviders)),
@@ -332,7 +374,13 @@ func login(w http.ResponseWriter, r *http.Request) {
 			return a.Order < b.Order
 		})
 
-		if util.Config.Mfa.Totp.Enabled {
+		if totpService != nil {
+			status, statusErr := totpService.Status(r.Context(), 0)
+			if statusErr == nil && status.CapabilityState != pro_interfaces.CapabilityStateDisabled &&
+				status.CapabilityState != pro_interfaces.CapabilityStateShadow {
+				config.AuthMethods.Totp = &LoginTotpAuthMethod{AllowRecovery: true}
+			}
+		} else if util.Config.Mfa.Totp.Enabled {
 			config.AuthMethods.Totp = &LoginTotpAuthMethod{
 				AllowRecovery: util.Config.Mfa.Totp.AllowRecovery,
 			}
@@ -438,7 +486,9 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	createSession(w, r, user, false)
+	if !createSession(w, r, user, false, totpService) {
+		return
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -843,6 +893,14 @@ func oidcSuccessRedirectURL(webHost string, redirectPath string) (string, error)
 }
 
 func oidcRedirect(w http.ResponseWriter, r *http.Request) {
+	oidcRedirectWithTOTPService(nil, w, r)
+}
+
+func oidcRedirectWithTOTPService(
+	totpService pro_interfaces.TOTPService,
+	w http.ResponseWriter,
+	r *http.Request,
+) {
 	pid := mux.Vars(r)["provider"]
 	oauthState, err := r.Cookie("oauthstate")
 
@@ -1006,7 +1064,9 @@ func oidcRedirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	createSession(w, r, user, true)
+	if !createSession(w, r, user, true, totpService) {
+		return
+	}
 
 	config, ok := util.Config.OidcProviders[pid]
 	if !ok {

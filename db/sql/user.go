@@ -328,39 +328,6 @@ func (d *SqlDb) GetAllAdmins() (users []db.User, err error) {
 	return
 }
 
-func (d *SqlDb) AddTotpVerification(userID int, url string, recoveryHash string) (totp db.UserTotp, err error) {
-
-	totp.UserID = userID
-	totp.URL = url
-	totp.RecoveryHash = recoveryHash
-	totp.Created = db.GetParsedTime(tz.Now())
-
-	res, err := d.exec(
-		"insert into user__totp (user_id, url, recovery_hash, created) values (?, ?, ?, ?)",
-		totp.UserID,
-		totp.URL,
-		totp.RecoveryHash,
-		totp.Created)
-
-	if err != nil {
-		return
-	}
-
-	id, err := res.LastInsertId()
-	if err != nil {
-		return
-	}
-
-	totp.ID = int(id)
-
-	return
-}
-
-func (d *SqlDb) DeleteTotpVerification(userID int, totpID int) error {
-	_, err := d.exec("delete from user__totp where user_id=? and id = ?", userID, totpID)
-	return err
-}
-
 func (d *SqlDb) insertEmailOtp(userID int, code string) (totp db.UserEmailOtp, err error) {
 
 	totp.UserID = userID

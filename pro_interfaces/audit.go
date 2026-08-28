@@ -37,6 +37,13 @@ const (
 	AuditActionWebhookTest          AuditAction = "audit_webhook_test"
 	AuditActionWebhookPause         AuditAction = "audit_webhook_pause"
 	AuditActionWebhookResume        AuditAction = "audit_webhook_resume"
+	AuditActionTOTPEnrollBegin      AuditAction = "totp_enroll_begin"
+	AuditActionTOTPEnrollConfirm    AuditAction = "totp_enroll_confirm"
+	AuditActionTOTPRecoveryAck      AuditAction = "totp_recovery_acknowledge"
+	AuditActionTOTPChallenge        AuditAction = "totp_challenge"
+	AuditActionTOTPRecover          AuditAction = "totp_recover"
+	AuditActionTOTPReset            AuditAction = "totp_reset"
+	AuditActionTOTPRollout          AuditAction = "totp_rollout"
 )
 
 type AuditTargetType string
@@ -69,6 +76,14 @@ const (
 	AuditReasonInvalidInput      = "invalid_input"
 	AuditReasonOperationError    = "operation_error"
 	AuditReasonActiveAssignments = "active_assignments"
+	AuditReasonEnrollmentPending = "enrollment_pending"
+	AuditReasonEnrollmentActive  = "enrollment_active"
+	AuditReasonInvalidCode       = "invalid_code"
+	AuditReasonReplay            = "replay"
+	AuditReasonThrottled         = "throttled"
+	AuditReasonRecoveryUsed      = "recovery_used"
+	AuditReasonReset             = "reset"
+	AuditReasonReadiness         = "readiness"
 )
 
 type DependencyID string
@@ -160,7 +175,7 @@ func (e AuditEvent) Validate() error {
 func validAuditTarget(event AuditEvent) bool {
 	switch event.TargetType {
 	case AuditTargetCapability:
-		return event.ProjectID == nil && event.TargetID == string(CapabilityLifecycleTest)
+		return event.ProjectID == nil && validCapabilityAuditTarget(event.TargetID)
 	case AuditTargetProjectRunner:
 		if !projectRunnerTargetPattern.MatchString(event.TargetID) {
 			return false
@@ -184,13 +199,26 @@ func validAuditTarget(event AuditEvent) bool {
 	}
 }
 
+func validCapabilityAuditTarget(targetID string) bool {
+	switch CapabilityID(targetID) {
+	case CapabilityLifecycleTest, CapabilityRuntimeSecrets, CapabilityTOTP:
+		return true
+	default:
+		return false
+	}
+}
+
 func validAuditReason(reason string) bool {
 	switch reason {
 	case AuditReasonUnauthenticated, AuditReasonCrossOrigin, AuditReasonProviderError, AuditReasonInvalidInput, AuditReasonOperationError,
-		AuditReasonActiveAssignments,
+		AuditReasonActiveAssignments, AuditReasonEnrollmentPending, AuditReasonEnrollmentActive,
+		AuditReasonInvalidCode, AuditReasonReplay, AuditReasonThrottled,
+		AuditReasonRecoveryUsed, AuditReasonReset, AuditReasonReadiness,
 		string(CapabilityReasonActive), string(CapabilityReasonProviderUnavailable),
 		string(CapabilityReasonDisabledByAdmin), string(CapabilityReasonEntitlementExpired),
-		string(CapabilityReasonReadOnly), string(CapabilityReasonInsufficientPermission):
+		string(CapabilityReasonReadOnly), string(CapabilityReasonInsufficientPermission),
+		string(CapabilityReasonShadow), string(CapabilityReasonOptional),
+		string(CapabilityReasonRequiredSelected), string(CapabilityReasonRequired):
 		return true
 	default:
 		return false
@@ -365,7 +393,10 @@ func validAuditAction(action AuditAction) bool {
 		AuditActionProjectRunnerUpdate, AuditActionProjectRunnerActive,
 		AuditActionProjectRunnerDelete, AuditActionProjectRunnerCache,
 		AuditActionWebhookRead, AuditActionWebhookConfigure, AuditActionWebhookTest,
-		AuditActionWebhookPause, AuditActionWebhookResume:
+		AuditActionWebhookPause, AuditActionWebhookResume,
+		AuditActionTOTPEnrollBegin, AuditActionTOTPEnrollConfirm,
+		AuditActionTOTPRecoveryAck, AuditActionTOTPChallenge,
+		AuditActionTOTPRecover, AuditActionTOTPReset, AuditActionTOTPRollout:
 		return true
 	default:
 		return false

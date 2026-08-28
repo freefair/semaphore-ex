@@ -120,6 +120,7 @@
     <SystemInfoDialog
       v-model="systemInfoDialog"
       :system-info="systemInfo"
+      @totp-rollout-updated="loadUserInfo"
       v-if="user && user.admin"
     />
 

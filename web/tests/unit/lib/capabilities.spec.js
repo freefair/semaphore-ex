@@ -19,6 +19,10 @@ describe('capability presentation', () => {
     expect(capabilityStateColor('expired')).to.equal('warning');
     expect(capabilityStateColor('read_only')).to.equal('info');
     expect(capabilityStateColor('insufficient_permission')).to.equal('error');
+    expect(capabilityStateColor('shadow')).to.equal('info');
+    expect(capabilityStateColor('optional')).to.equal('success');
+    expect(capabilityStateColor('required_selected')).to.equal('warning');
+    expect(capabilityStateColor('required')).to.equal('error');
   });
 
   it('returns no decision when the server did not provide one', () => {

@@ -61,11 +61,7 @@ func (c *SystemInfoController) GetSystemInfo(w http.ResponseWriter, r *http.Requ
 
 	var authMethods LoginAuthMethods
 
-	if util.Config.Mfa.Totp.Enabled {
-		authMethods.Totp = &LoginTotpAuthMethod{
-			AllowRecovery: util.Config.Mfa.Totp.AllowRecovery,
-		}
-	}
+	authMethods.Totp = totpAuthMethod(capabilities)
 
 	if util.Config.Mfa.Email.Enabled {
 		authMethods.Email = &LoginEmailAuthMethod{}
@@ -137,4 +133,15 @@ func (c *SystemInfoController) GetSystemInfo(w http.ResponseWriter, r *http.Requ
 	}
 
 	helpers.WriteJSON(w, http.StatusOK, body)
+}
+
+func totpAuthMethod(snapshot pro_interfaces.CapabilitySnapshot) *LoginTotpAuthMethod {
+	switch snapshot.Decision(pro_interfaces.CapabilityTOTP).State() {
+	case pro_interfaces.CapabilityStateDisabled,
+		pro_interfaces.CapabilityStateShadow,
+		pro_interfaces.CapabilityStateUnavailable:
+		return nil
+	default:
+		return &LoginTotpAuthMethod{AllowRecovery: true}
+	}
 }

@@ -94,6 +94,14 @@ func (conf *ConfigType) EncryptOption(plaintext []byte) (string, error) {
 	return ks.encrypt(plaintext, id)
 }
 
+// OptionEncryptionEnabled reports whether option values are protected by an
+// active option key or its access-key fallback. Without either key,
+// EncryptOption only base64-encodes values for legacy compatibility.
+func (conf *ConfigType) OptionEncryptionEnabled() bool {
+	ks := conf.currentKeyset()
+	return ks.optionID != "" || ks.accessID != ""
+}
+
 func (k *keyset) encrypt(plaintext []byte, id string) (string, error) {
 	ct, err := EncryptAESGCM(plaintext, k.byID[id]) // byID[""] == "" => passthrough
 	if err != nil {
