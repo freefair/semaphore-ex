@@ -74,15 +74,18 @@ export default {
     statusColor(status) {
       switch (status) {
         case 'success':
+        case 'succeeded':
         case 'approved':
           return 'success';
         case 'failed':
         case 'error':
         case 'stopped':
+        case 'blocked':
         case 'rejected':
           return 'error';
         case 'running':
         case 'pending':
+        case 'queued':
           return 'primary';
         case 'approval':
           return 'warning';

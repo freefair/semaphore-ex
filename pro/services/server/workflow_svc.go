@@ -24,7 +24,7 @@ func NewWorkflowReconciler(_ db.WorkflowManager, _ pro_interfaces.WorkflowServic
 	return nil
 }
 
-func (s *workflowService) StartWorkflow(workflow db.WorkflowTemplate, user *db.User) (db.WorkflowRun, error) {
+func (s *workflowService) StartWorkflow(workflow db.WorkflowTemplate, user *db.User, correlationID string) (db.WorkflowRun, error) {
 	return db.WorkflowRun{}, nil
 }
 

@@ -16,6 +16,4 @@ var (
 	NewAzureKvAccessKeyDeserializer = community.NewAzureKvAccessKeyDeserializer
 	NewDvlsAccessKeyDeserializer    = community.NewDvlsAccessKeyDeserializer
 	NewSubscriptionService          = community.NewSubscriptionService
-	NewWorkflowReconciler           = community.NewWorkflowReconciler
-	NewWorkflowService              = community.NewWorkflowService
 )

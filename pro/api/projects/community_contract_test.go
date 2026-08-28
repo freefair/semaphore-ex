@@ -12,7 +12,7 @@ import (
 func TestCommunityProjectCollectionsAreEmpty(t *testing.T) {
 	runnerController := NewProjectRunnerController(nil, nil, nil, nil)
 	terraformController := NewTerraformInventoryController(nil)
-	workflowController := NewWorkflowController(nil, nil)
+	workflowController := NewWorkflowController(nil, nil, nil)
 
 	handlers := map[string]http.HandlerFunc{
 		"runners":            runnerController.GetRunners,
@@ -37,7 +37,7 @@ func TestCommunityProjectCollectionsAreEmpty(t *testing.T) {
 func TestCommunityProjectResourcesAreNotFound(t *testing.T) {
 	runnerController := NewProjectRunnerController(nil, nil, nil, nil)
 	terraformController := NewTerraformInventoryController(nil)
-	workflowController := NewWorkflowController(nil, nil)
+	workflowController := NewWorkflowController(nil, nil, nil)
 
 	handlers := map[string]http.HandlerFunc{
 		"add runner":                runnerController.AddRunner,

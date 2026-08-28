@@ -80,6 +80,9 @@ type Task struct {
 	BuildTaskID    *int   `db:"build_task_id" json:"build_task_id,omitempty"`
 	WorkflowRunID  *int   `db:"workflow_run_id" json:"workflow_run_id,omitempty"`
 	WorkflowNodeID *int   `db:"workflow_node_id" json:"workflow_node_id,omitempty"`
+	// WorkflowTemplateSnapshot freezes the referenced template for workflow
+	// tasks so a later template edit cannot change queued or restarted work.
+	WorkflowTemplateSnapshot *string `db:"workflow_template_snapshot" json:"-"`
 	// Version is a build version.
 	// This field available only for Build tasks.
 	Version *string `db:"version" json:"version,omitempty"`

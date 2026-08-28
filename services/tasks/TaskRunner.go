@@ -463,9 +463,19 @@ func (t *TaskRunner) populateDetails() error {
 	// get template
 	var err error
 
-	t.Template, err = t.pool.store.GetTemplate(t.Task.ProjectID, t.Task.TemplateID)
-	if err != nil {
-		return t.prepareError(err, "Template not found!")
+	if t.Task.WorkflowTemplateSnapshot != nil {
+		err = json.Unmarshal([]byte(*t.Task.WorkflowTemplateSnapshot), &t.Template)
+		if err != nil || t.Template.ID != t.Task.TemplateID || t.Template.ProjectID != t.Task.ProjectID {
+			if err == nil {
+				err = errors.New("workflow template snapshot identity does not match task")
+			}
+			return t.prepareError(err, "Workflow template snapshot is invalid!")
+		}
+	} else {
+		t.Template, err = t.pool.store.GetTemplate(t.Task.ProjectID, t.Task.TemplateID)
+		if err != nil {
+			return t.prepareError(err, "Template not found!")
+		}
 	}
 
 	// get project alert setting

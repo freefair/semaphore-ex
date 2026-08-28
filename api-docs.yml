@@ -851,6 +851,12 @@ definitions:
       resolved_executor_image:
         type: string
         description: Immutable credential-free image delivered to the selected runner
+      workflow_run_id:
+        type: integer
+        description: Workflow run that created this task
+      workflow_node_id:
+        type: integer
+        description: Immutable workflow definition node represented by this task
       inventory_id:
         type: integer
       params:
@@ -1453,6 +1459,8 @@ definitions:
         type: integer
       template_id:
         type: integer
+      display_name:
+        type: string
       kind:
         type: string
         enum: [task, approval, note, delay]
@@ -1467,6 +1475,12 @@ definitions:
         type: integer
         minimum: 1
         description: Number of seconds to wait before continuing (delay kind only).
+      note:
+        type: string
+      position_x:
+        type: integer
+      position_y:
+        type: integer
       task_params:
         $ref: '#/definitions/TaskPrams'
 
@@ -1496,6 +1510,12 @@ definitions:
         type: string
       description:
         type: string
+      start_version:
+        type: string
+      definition_version:
+        type: integer
+      revision:
+        type: integer
       nodes:
         type: array
         items:
@@ -1516,7 +1536,29 @@ definitions:
         type: integer
       status:
         type: string
-        enum: [running, success, failed, approval]
+        enum: [pending, queued, running, approval, succeeded, success, stopped, failed, blocked]
+      reason:
+        type: string
+      version:
+        type: string
+      actor_user_id:
+        type: integer
+      definition_version:
+        type: integer
+      definition_revision:
+        type: integer
+      correlation_id:
+        type: string
+        maxLength: 64
+      definition:
+        $ref: "#/definitions/WorkflowTemplate"
+      nodes:
+        type: array
+        items:
+          $ref: "#/definitions/WorkflowRunNode"
+      created:
+        type: string
+        format: date-time
       start:
         type: string
         format: date-time
@@ -1526,6 +1568,8 @@ definitions:
       root_task_id:
         type: integer
 
+  WorkflowRunNode:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowRunNode"
   WorkflowApproval:
     type: object
     properties:
@@ -1554,6 +1598,11 @@ definitions:
     properties:
       node:
         $ref: "#/definitions/WorkflowNode"
+      status:
+        type: string
+        enum: [pending, queued, running, succeeded, failed, stopped, blocked]
+      reason:
+        type: string
       task:
         $ref: "#/definitions/Task"
       approval:
@@ -1564,6 +1613,12 @@ definitions:
     properties:
       run:
         $ref: "#/definitions/WorkflowRun"
+      workflow:
+        $ref: "#/definitions/WorkflowTemplate"
+      templates:
+        type: array
+        items:
+          $ref: "#/definitions/Template"
       nodes:
         type: array
         items:
@@ -3289,9 +3344,20 @@ paths:
       tags:
         - workflow
       summary: Run workflow
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          type: string
+          maxLength: 64
+          description: Reuses the same workflow attempt when repeated for this workflow
       responses:
         201:
           description: workflow run created
+          headers:
+            Idempotency-Key:
+              type: string
+              description: Correlation key used for this workflow attempt
           schema:
             $ref: "#/definitions/WorkflowRun"
 
@@ -3326,6 +3392,8 @@ paths:
           schema:
             $ref: "#/definitions/WorkflowRunDetails"
 
+  /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/stop:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1runs~1{run_id}~1stop"
   /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/approvals:
     parameters:
       - $ref: "#/parameters/project_id"

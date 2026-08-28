@@ -115,15 +115,21 @@ type WorkflowDelay struct {
 type WorkflowRunStatus string
 
 const (
-	WorkflowRunRunning  WorkflowRunStatus = "running"
-	WorkflowRunApproval WorkflowRunStatus = "approval"
-	WorkflowRunSuccess  WorkflowRunStatus = "success"
-	WorkflowRunStopped  WorkflowRunStatus = "stopped"
-	WorkflowRunFailed   WorkflowRunStatus = "failed"
+	WorkflowRunPending   WorkflowRunStatus = "pending"
+	WorkflowRunQueued    WorkflowRunStatus = "queued"
+	WorkflowRunRunning   WorkflowRunStatus = "running"
+	WorkflowRunApproval  WorkflowRunStatus = "approval"
+	WorkflowRunSucceeded WorkflowRunStatus = "succeeded"
+	// WorkflowRunSuccess is retained for reading runs created by an older
+	// enhanced implementation. New runs use WorkflowRunSucceeded.
+	WorkflowRunSuccess WorkflowRunStatus = "success"
+	WorkflowRunStopped WorkflowRunStatus = "stopped"
+	WorkflowRunFailed  WorkflowRunStatus = "failed"
+	WorkflowRunBlocked WorkflowRunStatus = "blocked"
 )
 
 func (status WorkflowRunStatus) IsFinished() bool {
-	return status == WorkflowRunSuccess || status == WorkflowRunStopped || status == WorkflowRunFailed
+	return status == WorkflowRunSucceeded || status == WorkflowRunSuccess || status == WorkflowRunStopped || status == WorkflowRunFailed || status == WorkflowRunBlocked
 }
 
 type WorkflowRun struct {
@@ -133,11 +139,22 @@ type WorkflowRun struct {
 	WorkflowTemplateID int `db:"workflow_template_id" json:"workflow_template_id" backup:"workflow_template_id"`
 
 	Status WorkflowRunStatus `db:"status" json:"status" backup:"status"`
+	Reason string            `db:"reason" json:"reason,omitempty" backup:"reason"`
 
 	Version *string `db:"version" json:"version,omitempty" backup:"version"`
 
-	Start *time.Time `db:"start" json:"start,omitempty" backup:"start"`
-	End   *time.Time `db:"end" json:"end,omitempty" backup:"end"`
+	ActorUserID        int    `db:"actor_user_id" json:"actor_user_id" backup:"actor_user_id"`
+	DefinitionVersion  int    `db:"definition_version" json:"definition_version" backup:"definition_version"`
+	DefinitionRevision int    `db:"definition_revision" json:"definition_revision" backup:"definition_revision"`
+	CorrelationID      string `db:"correlation_id" json:"correlation_id" backup:"correlation_id"`
+
+	DefinitionSnapshotJSON string            `db:"definition_snapshot" json:"-" backup:"definition_snapshot"`
+	DefinitionSnapshot     WorkflowTemplate  `db:"-" json:"definition" backup:"-"`
+	Nodes                  []WorkflowRunNode `db:"-" json:"nodes" backup:"-"`
+
+	Created time.Time  `db:"created" json:"created" backup:"created"`
+	Start   *time.Time `db:"start" json:"start,omitempty" backup:"start"`
+	End     *time.Time `db:"end" json:"end,omitempty" backup:"end"`
 
 	RootTaskID *int `db:"root_task_id" json:"root_task_id,omitempty" backup:"root_task_id"`
 }

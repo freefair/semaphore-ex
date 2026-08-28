@@ -691,7 +691,7 @@ export default {
     border-radius: 8px;
     color: #fff;
     &--success, &--approved { background: #4caf50; }
-    &--failed, &--error, &--stopped, &--rejected { background: #f44336; }
+    &--failed, &--error, &--stopped, &--rejected, &--blocked { background: #f44336; }
     &--running, &--pending, &--waiting { background: #2196f3; }
   }
 
@@ -733,7 +733,8 @@ export default {
   .drawflow-node.WorkflowGraph__nodeWrap--status-success { border-color: #4caf50; }
   .drawflow-node.WorkflowGraph__nodeWrap--status-failed,
   .drawflow-node.WorkflowGraph__nodeWrap--status-error,
-  .drawflow-node.WorkflowGraph__nodeWrap--status-rejected { border-color: #f44336; }
+  .drawflow-node.WorkflowGraph__nodeWrap--status-rejected,
+  .drawflow-node.WorkflowGraph__nodeWrap--status-blocked { border-color: #f44336; }
 
   // Active node — Concourse-style: glowing pulse + moving diagonal stripes.
   .drawflow-node.WorkflowGraph__nodeWrap--status-running,

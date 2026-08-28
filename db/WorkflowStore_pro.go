@@ -1,5 +1,7 @@
 package db
 
+import "time"
+
 type WorkflowManager interface {
 	GetWorkflowRunTasks(projectID int, runID int, params RetrieveQueryParams) ([]TaskWithTpl, error)
 
@@ -12,10 +14,17 @@ type WorkflowManager interface {
 	GetWorkflowRuns(projectID int, workflowTemplateID int, params RetrieveQueryParams) ([]WorkflowRun, error)
 	GetWorkflowRun(projectID int, workflowTemplateID int, runID int) (WorkflowRun, error)
 	GetWorkflowRunByID(projectID int, runID int) (WorkflowRun, error)
+	GetWorkflowRunByCorrelationID(projectID int, workflowTemplateID int, correlationID string) (WorkflowRun, error)
+	GetWorkflowRunNodeTask(projectID int, runID int, nodeID int) (Task, error)
 
 	GetActiveWorkflowRuns() ([]WorkflowRun, error)
 	CreateWorkflowRun(run WorkflowRun) (WorkflowRun, error)
 	UpdateWorkflowRun(run WorkflowRun) error
+	GetWorkflowRunNode(projectID int, runID int, nodeID int) (WorkflowRunNode, error)
+	ClaimWorkflowRunNode(projectID int, runID int, nodeID int, queuedAt time.Time) (bool, error)
+	AttachWorkflowRunNodeTask(projectID int, runID int, nodeID int, taskID int) (bool, error)
+	UpdateWorkflowRunNodeFromTask(projectID int, runID int, nodeID int, taskID int, status WorkflowRunNodeStatus, reason string, at time.Time) (bool, error)
+	BlockWorkflowRunNode(projectID int, runID int, nodeID int, reason string, at time.Time) (bool, error)
 
 	UpdateWorkflowRunStatusUnless(run WorkflowRun, excluded []WorkflowRunStatus) (bool, error)
 

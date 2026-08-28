@@ -25,6 +25,54 @@ type workflowDefinitionServiceStub struct {
 	calls      int
 }
 
+type workflowServiceStub struct {
+	pro_interfaces.WorkflowService
+	run            db.WorkflowRun
+	correlationIDs []string
+	progressCalls  int
+	stopCalls      int
+	artifacts      map[string]any
+}
+
+func (s *workflowServiceStub) StartWorkflow(_ db.WorkflowTemplate, _ *db.User, correlationID string) (db.WorkflowRun, error) {
+	s.correlationIDs = append(s.correlationIDs, correlationID)
+	s.run.CorrelationID = correlationID
+	return s.run, nil
+}
+
+func (s *workflowServiceStub) ProgressWorkflowRun(_ int, _ int, _ *db.User) error {
+	s.progressCalls++
+	return nil
+}
+
+func (s *workflowServiceStub) StopWorkflowRun(_ int, _ int, _ *db.User) (db.WorkflowRun, error) {
+	s.stopCalls++
+	return s.run, nil
+}
+
+func (s *workflowServiceStub) GetWorkflowRunArtifacts(_ int, _ int, _ *int) (map[string]any, error) {
+	return s.artifacts, nil
+}
+
+type workflowManagerStub struct {
+	db.WorkflowManager
+	runs  []db.WorkflowRun
+	run   db.WorkflowRun
+	tasks []db.TaskWithTpl
+}
+
+func (s *workflowManagerStub) GetWorkflowRuns(_ int, _ int, _ db.RetrieveQueryParams) ([]db.WorkflowRun, error) {
+	return s.runs, nil
+}
+
+func (s *workflowManagerStub) GetWorkflowRun(_ int, _ int, _ int) (db.WorkflowRun, error) {
+	return s.run, nil
+}
+
+func (s *workflowManagerStub) GetWorkflowRunTasks(_ int, _ int, _ db.RetrieveQueryParams) ([]db.TaskWithTpl, error) {
+	return s.tasks, nil
+}
+
 func (s *workflowDefinitionServiceStub) List(_ int, _ db.RetrieveQueryParams) ([]db.WorkflowTemplate, error) {
 	return s.workflows, nil
 }
@@ -195,6 +243,77 @@ func TestWorkflowControllerAcceptsMaximumShapeWithinBodyLimit(t *testing.T) {
 	assert.Equal(t, 1, service.calls)
 }
 
+func TestWorkflowRunControllerStartStatusListStopAndArtifacts(t *testing.T) {
+	taskID := 301
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7, Name: "Edited live definition", Revision: 4}
+	run := db.WorkflowRun{
+		ID: 91, ProjectID: 7, WorkflowTemplateID: workflow.ID, ActorUserID: 12,
+		Status: db.WorkflowRunQueued, DefinitionRevision: 3,
+		DefinitionSnapshot: db.WorkflowTemplate{ID: 41, ProjectID: 7, Name: "Original snapshot", Revision: 3},
+		Nodes: []db.WorkflowRunNode{{
+			ID: 101, ProjectID: 7, WorkflowRunID: 91, WorkflowNodeID: 201,
+			TemplateID: 51, Status: db.WorkflowRunNodeQueued, TaskID: &taskID,
+		}},
+	}
+	service := &workflowServiceStub{run: run, artifacts: map[string]any{}}
+	workflowNodeID := 201
+	manager := &workflowManagerStub{
+		runs: []db.WorkflowRun{run}, run: run,
+		tasks: []db.TaskWithTpl{{Task: db.Task{ID: taskID, ProjectID: 7, WorkflowNodeID: &workflowNodeID}}},
+	}
+	controller := NewWorkflowController(service, manager, &workflowDefinitionServiceStub{})
+
+	start := workflowRequest(http.MethodPost, "/api/project/7/workflows/41/run", nil, &workflow)
+	start.Header.Set("Idempotency-Key", "deploy-once")
+	startRecorder := httptest.NewRecorder()
+	controller.RunWorkflow(startRecorder, start)
+	assert.Equal(t, http.StatusCreated, startRecorder.Code, startRecorder.Body.String())
+	assert.Equal(t, "deploy-once", startRecorder.Header().Get("Idempotency-Key"))
+	assert.Contains(t, startRecorder.Body.String(), `"correlation_id":"deploy-once"`)
+
+	duplicateRecorder := httptest.NewRecorder()
+	controller.RunWorkflow(duplicateRecorder, start)
+	assert.Equal(t, http.StatusCreated, duplicateRecorder.Code)
+	assert.Equal(t, []string{"deploy-once", "deploy-once"}, service.correlationIDs)
+
+	listRecorder := httptest.NewRecorder()
+	controller.GetWorkflowRuns(listRecorder, workflowRequest(http.MethodGet, "/api/project/7/workflows/41/runs", nil, &workflow))
+	assert.Equal(t, http.StatusOK, listRecorder.Code)
+	assert.Contains(t, listRecorder.Body.String(), `"id":91`)
+
+	statusRecorder := httptest.NewRecorder()
+	controller.GetWorkflowRun(statusRecorder, workflowRunRequest(http.MethodGet, "/api/project/7/workflows/41/runs/91", workflow, run))
+	assert.Equal(t, http.StatusOK, statusRecorder.Code)
+	assert.Equal(t, 1, service.progressCalls)
+	assert.Contains(t, statusRecorder.Body.String(), `"workflow":{"id":41`, "the status API must return the frozen definition")
+	assert.Contains(t, statusRecorder.Body.String(), `"name":"Original snapshot"`)
+	assert.Contains(t, statusRecorder.Body.String(), `"task_id":301`)
+
+	stopRecorder := httptest.NewRecorder()
+	controller.StopWorkflowRun(stopRecorder, workflowRunRequest(http.MethodPost, "/api/project/7/workflows/41/runs/91/stop", workflow, run))
+	assert.Equal(t, http.StatusOK, stopRecorder.Code)
+	assert.Equal(t, 1, service.stopCalls)
+
+	artifactsRecorder := httptest.NewRecorder()
+	controller.GetWorkflowRunArtifacts(artifactsRecorder, workflowRunRequest(http.MethodGet, "/api/project/7/workflows/41/runs/91/artifacts", workflow, run))
+	assert.Equal(t, http.StatusOK, artifactsRecorder.Code)
+	assert.JSONEq(t, `{}`, artifactsRecorder.Body.String())
+}
+
+func TestWorkflowRunControllerRejectsOversizedIdempotencyKey(t *testing.T) {
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7}
+	service := &workflowServiceStub{}
+	controller := NewWorkflowController(service, &workflowManagerStub{}, &workflowDefinitionServiceStub{})
+	request := workflowRequest(http.MethodPost, "/api/project/7/workflows/41/run", nil, &workflow)
+	request.Header.Set("Idempotency-Key", strings.Repeat("a", workflowRunCorrelationIDLimit+1))
+	recorder := httptest.NewRecorder()
+
+	controller.RunWorkflow(recorder, request)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.Empty(t, service.correlationIDs)
+}
+
 func workflowRequest(method, target string, body any, workflow *db.WorkflowTemplate) *http.Request {
 	var data []byte
 	if body != nil {
@@ -203,6 +322,7 @@ func workflowRequest(method, target string, body any, workflow *db.WorkflowTempl
 	request := httptest.NewRequest(method, target, bytes.NewReader(data))
 	request.Header.Set("Content-Type", "application/json")
 	request = helpers.SetContextValue(request, "project", db.Project{ID: 7, Name: "Project"})
+	request = helpers.SetContextValue(request, "user", &db.User{ID: 12, Username: "workflow-user"})
 	if workflow != nil {
 		request = helpers.SetContextValue(request, "workflow", *workflow)
 	}
@@ -213,8 +333,14 @@ func workflowRawRequest(method, target string, body []byte, workflow *db.Workflo
 	request := httptest.NewRequest(method, target, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	request = helpers.SetContextValue(request, "project", db.Project{ID: 7, Name: "Project"})
+	request = helpers.SetContextValue(request, "user", &db.User{ID: 12, Username: "workflow-user"})
 	if workflow != nil {
 		request = helpers.SetContextValue(request, "workflow", *workflow)
 	}
 	return request
+}
+
+func workflowRunRequest(method, target string, workflow db.WorkflowTemplate, run db.WorkflowRun) *http.Request {
+	request := workflowRequest(method, target, nil, &workflow)
+	return helpers.SetContextValue(request, "workflow_run", run)
 }

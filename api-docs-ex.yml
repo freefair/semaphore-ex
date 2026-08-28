@@ -237,7 +237,62 @@ definitions:
       next_cursor:
         type: integer
         x-nullable: true
+  WorkflowRunNode:
+    type: object
+    properties:
+      id:
+        type: integer
+      project_id:
+        type: integer
+      workflow_run_id:
+        type: integer
+      workflow_node_id:
+        type: integer
+      template_id:
+        type: integer
+      status:
+        type: string
+        enum:
+        - pending
+        - queued
+        - running
+        - succeeded
+        - failed
+        - stopped
+        - blocked
+      task_id:
+        type: integer
+      reason:
+        type: string
+      template:
+        $ref: ./api-docs.yml#/definitions/Template
+      created:
+        type: string
+        format: date-time
+      queued:
+        type: string
+        format: date-time
+      start:
+        type: string
+        format: date-time
+      end:
+        type: string
+        format: date-time
 paths:
+  /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/stop:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/workflow_id
+    - $ref: ./api-docs.yml#/parameters/run_id
+    post:
+      tags:
+      - workflow
+      summary: Stop an active workflow run
+      responses:
+        200:
+          description: workflow run stopped
+          schema:
+            $ref: ./api-docs.yml#/definitions/WorkflowRun
   /project/{project_id}/tasks/{task_id}/runner-attempts:
     parameters:
     - $ref: ./api-docs.yml#/parameters/project_id
