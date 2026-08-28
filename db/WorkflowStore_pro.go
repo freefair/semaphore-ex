@@ -26,6 +26,9 @@ type WorkflowManager interface {
 	UpdateWorkflowRunNodeFromTask(projectID int, runID int, nodeID int, taskID int, status WorkflowRunNodeStatus, reason string, resultJSON string, at time.Time) (bool, error)
 	FinalizeWorkflowRunNode(projectID int, runID int, nodeID int, status WorkflowRunNodeStatus, reason string, resultJSON string, at time.Time) (bool, error)
 	BlockWorkflowRunNode(projectID int, runID int, nodeID int, reason string, at time.Time) (bool, error)
+	UpdateWorkflowRunNodeArtifactInputs(projectID int, runID int, nodeID int, inputsJSON string) (bool, error)
+	ReplaceWorkflowTaskArtifacts(projectID int, runID int, nodeID int, taskID int, attempt int, artifacts []WorkflowArtifact) error
+	GetWorkflowRunArtifacts(projectID int, runID int) ([]WorkflowArtifact, error)
 
 	UpdateWorkflowRunStatusUnless(run WorkflowRun, excluded []WorkflowRunStatus) (bool, error)
 

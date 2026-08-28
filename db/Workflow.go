@@ -119,6 +119,11 @@ type WorkflowNode struct {
 	TaskParamsID *int        `db:"task_params_id" json:"-" backup:"-"`
 	TaskParams   *TaskParams `db:"-" json:"task_params,omitempty" backup:"task_params"`
 
+	ArtifactOutputsJSON string                        `db:"artifact_outputs" json:"-" backup:"artifact_outputs"`
+	ArtifactInputsJSON  string                        `db:"artifact_inputs" json:"-" backup:"artifact_inputs"`
+	ArtifactOutputs     []WorkflowArtifactDeclaration `db:"-" json:"artifact_outputs,omitempty" backup:"-"`
+	ArtifactInputs      []WorkflowArtifactReference   `db:"-" json:"artifact_inputs,omitempty" backup:"-"`
+
 	Note         *string `db:"note" json:"note,omitempty" backup:"note"`
 	DelaySeconds *int    `db:"delay_seconds" json:"delay_seconds,omitempty" backup:"delay_seconds"`
 
@@ -266,10 +271,12 @@ type WorkflowRunNode struct {
 	TaskID *int                  `db:"task_id" json:"task_id,omitempty" backup:"task_id"`
 	Reason string                `db:"reason" json:"reason,omitempty" backup:"reason"`
 
-	TemplateSnapshotJSON string             `db:"template_snapshot" json:"-" backup:"template_snapshot"`
-	TemplateSnapshot     Template           `db:"-" json:"template" backup:"-"`
-	ResultJSON           string             `db:"result" json:"-" backup:"result"`
-	Result               WorkflowNodeResult `db:"-" json:"result,omitempty" backup:"-"`
+	TemplateSnapshotJSON string                          `db:"template_snapshot" json:"-" backup:"template_snapshot"`
+	TemplateSnapshot     Template                        `db:"-" json:"template" backup:"-"`
+	ResultJSON           string                          `db:"result" json:"-" backup:"result"`
+	Result               WorkflowNodeResult              `db:"-" json:"result,omitempty" backup:"-"`
+	ArtifactInputsJSON   string                          `db:"artifact_inputs" json:"-" backup:"artifact_inputs"`
+	ArtifactInputs       []WorkflowArtifactInputSnapshot `db:"-" json:"artifact_inputs,omitempty" backup:"-"`
 
 	Created time.Time  `db:"created" json:"created" backup:"created"`
 	Queued  *time.Time `db:"queued" json:"queued,omitempty" backup:"queued"`

@@ -121,10 +121,13 @@ func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (db.WorkflowRu
 		node := &run.Nodes[index]
 		node.ProjectID = run.ProjectID
 		node.WorkflowRunID = run.ID
+		if node.ArtifactInputsJSON == "" {
+			node.ArtifactInputsJSON = "[]"
+		}
 		node.ID, err = d.insertTx(tx,
-			"insert into project__workflow_run_node(project_id, workflow_run_id, workflow_node_id, template_id, status, task_id, template_snapshot, result, created, queued, start, end, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"insert into project__workflow_run_node(project_id, workflow_run_id, workflow_node_id, template_id, status, task_id, template_snapshot, result, artifact_inputs, created, queued, start, end, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			node.ProjectID, node.WorkflowRunID, node.WorkflowNodeID, node.TemplateID, node.Status,
-			node.TaskID, node.TemplateSnapshotJSON, node.ResultJSON, node.Created, node.Queued, node.Start, node.End, node.Reason,
+			node.TaskID, node.TemplateSnapshotJSON, node.ResultJSON, node.ArtifactInputsJSON, node.Created, node.Queued, node.Start, node.End, node.Reason,
 		)
 		if err != nil {
 			return db.WorkflowRun{}, err
@@ -309,6 +312,172 @@ func (d *WorkflowStoreImpl) BlockWorkflowRunNode(projectID int, runID int, nodeI
 	return updated == 1, err
 }
 
+func (d *WorkflowStoreImpl) UpdateWorkflowRunNodeArtifactInputs(projectID int, runID int, nodeID int, inputsJSON string) (bool, error) {
+	var inputs []db.WorkflowArtifactInputSnapshot
+	if err := json.Unmarshal([]byte(inputsJSON), &inputs); err != nil {
+		return false, fmt.Errorf("decode workflow artifact input snapshot: %w", err)
+	}
+	canonical, err := json.Marshal(inputs)
+	if err != nil {
+		return false, fmt.Errorf("encode workflow artifact input snapshot: %w", err)
+	}
+	result, err := d.connection.Exec(
+		"update project__workflow_run_node set artifact_inputs=? where project_id=? and workflow_run_id=? and workflow_node_id=? and task_id is null and status in (?, ?)",
+		string(canonical), projectID, runID, nodeID, db.WorkflowRunNodePending, db.WorkflowRunNodeQueued,
+	)
+	if err != nil {
+		return false, err
+	}
+	updated, err := result.RowsAffected()
+	return updated == 1, err
+}
+
+func (d *WorkflowStoreImpl) ReplaceWorkflowTaskArtifacts(
+	projectID int,
+	runID int,
+	nodeID int,
+	taskID int,
+	attempt int,
+	artifacts []db.WorkflowArtifact,
+) error {
+	if attempt < 0 {
+		return errors.New("workflow artifact attempt must not be negative")
+	}
+	if len(artifacts) > db.MaxWorkflowArtifactsPerNode {
+		return fmt.Errorf("workflow task produced more than %d declared artifacts", db.MaxWorkflowArtifactsPerNode)
+	}
+	prepared := make([]db.WorkflowArtifact, len(artifacts))
+	seen := make(map[string]struct{}, len(artifacts))
+	for index, artifact := range artifacts {
+		if _, duplicate := seen[artifact.Name]; duplicate {
+			return fmt.Errorf("workflow artifact %q is duplicated", artifact.Name)
+		}
+		seen[artifact.Name] = struct{}{}
+		if err := validateStoredWorkflowArtifact(&artifact); err != nil {
+			return fmt.Errorf("workflow artifact %q: %w", artifact.Name, err)
+		}
+		artifact.ProjectID = projectID
+		artifact.WorkflowRunID = runID
+		artifact.WorkflowNodeID = nodeID
+		artifact.TaskID = taskID
+		artifact.Attempt = attempt
+		prepared[index] = artifact
+	}
+	tx, err := d.connection.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var boundTasks int64
+	boundTasks, err = tx.SelectInt(d.connection.PrepareQuery(
+		"select count(*) from task where id=? and project_id=? and workflow_run_id=? and workflow_node_id=? and assignment_generation=? and exists (select 1 from project__workflow_run_node where project_id=? and workflow_run_id=? and workflow_node_id=?)"),
+		taskID, projectID, runID, nodeID, attempt, projectID, runID, nodeID,
+	)
+	if err != nil {
+		return err
+	}
+	if boundTasks != 1 {
+		return db.ErrNotFound
+	}
+	if _, err = tx.Exec(d.connection.PrepareQuery(
+		"delete from project__workflow_artifact where project_id=? and workflow_run_id=? and workflow_node_id=? and task_id=? and attempt=?"),
+		projectID, runID, nodeID, taskID, attempt,
+	); err != nil {
+		return err
+	}
+	for index := range prepared {
+		artifact := &prepared[index]
+		artifact.ID, err = d.insertTx(tx,
+			"insert into project__workflow_artifact(project_id, workflow_run_id, workflow_node_id, task_id, attempt, name, schema, sensitive, availability, size_bytes, reference_fingerprint, diagnostic, value_json, encrypted_value) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			artifact.ProjectID, artifact.WorkflowRunID, artifact.WorkflowNodeID, artifact.TaskID, artifact.Attempt,
+			artifact.Name, artifact.SchemaJSON, artifact.Sensitive, artifact.Availability, artifact.SizeBytes,
+			artifact.Fingerprint, artifact.Diagnostic, nullableWorkflowArtifactValue(artifact.ValueJSON), nullableWorkflowArtifactValue(artifact.EncryptedValue),
+		)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (d *WorkflowStoreImpl) GetWorkflowRunArtifacts(projectID int, runID int) ([]db.WorkflowArtifact, error) {
+	var artifacts []db.WorkflowArtifact
+	if _, err := d.connection.SelectAll(&artifacts,
+		"select id, project_id, workflow_run_id, workflow_node_id, task_id, attempt, name, schema, sensitive, availability, size_bytes, reference_fingerprint, diagnostic, coalesce(value_json, '') as value_json, coalesce(encrypted_value, '') as encrypted_value from project__workflow_artifact where project_id=? and workflow_run_id=? order by workflow_node_id, task_id, attempt, name",
+		projectID, runID,
+	); err != nil {
+		return nil, err
+	}
+	for index := range artifacts {
+		if err := json.Unmarshal([]byte(artifacts[index].SchemaJSON), &artifacts[index].Schema); err != nil {
+			return nil, fmt.Errorf("decode workflow artifact schema: %w", err)
+		}
+	}
+	return artifacts, nil
+}
+
+func validateStoredWorkflowArtifact(artifact *db.WorkflowArtifact) error {
+	if len(artifact.Diagnostic) > db.MaxWorkflowArtifactDiagnostic {
+		return fmt.Errorf("diagnostic exceeds %d bytes", db.MaxWorkflowArtifactDiagnostic)
+	}
+	if artifact.SizeBytes < 0 || artifact.SizeBytes > db.MaxWorkflowArtifactObservedBytes {
+		return errors.New("size is outside the supported range")
+	}
+	if len(artifact.Fingerprint) == 0 || len(artifact.Fingerprint) > 80 {
+		return errors.New("reference fingerprint is invalid")
+	}
+	declaration := db.WorkflowArtifactDeclaration{
+		Name: artifact.Name, Schema: artifact.Schema, MaxBytes: db.MaxWorkflowArtifactBytes,
+	}
+	if err := declaration.Validate(); err != nil {
+		return err
+	}
+	schemaJSON, err := json.Marshal(artifact.Schema)
+	if err != nil {
+		return fmt.Errorf("encode schema: %w", err)
+	}
+	artifact.SchemaJSON = string(schemaJSON)
+	switch artifact.Availability {
+	case db.WorkflowArtifactAvailable:
+		if artifact.SizeBytes < 1 || artifact.SizeBytes > db.MaxWorkflowArtifactBytes {
+			return errors.New("available value size is outside the supported range")
+		}
+		if artifact.Sensitive {
+			if artifact.EncryptedValue == "" || artifact.ValueJSON != "" {
+				return errors.New("available sensitive value must contain ciphertext only")
+			}
+		} else {
+			if artifact.ValueJSON == "" || artifact.EncryptedValue != "" || !json.Valid([]byte(artifact.ValueJSON)) {
+				return errors.New("available value must contain valid plaintext JSON only")
+			}
+			if artifact.SizeBytes != len(artifact.ValueJSON) {
+				return errors.New("available plaintext size does not match stored JSON")
+			}
+		}
+	case db.WorkflowArtifactUnavailable:
+		if artifact.SizeBytes != 0 {
+			return errors.New("unavailable value size must be zero")
+		}
+		if artifact.ValueJSON != "" || artifact.EncryptedValue != "" {
+			return errors.New("unavailable value must not be stored")
+		}
+	case db.WorkflowArtifactInvalid:
+		if artifact.ValueJSON != "" || artifact.EncryptedValue != "" {
+			return errors.New("invalid value must not be stored")
+		}
+	default:
+		return errors.New("availability is invalid")
+	}
+	return nil
+}
+
+func nullableWorkflowArtifactValue(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
 func (d *WorkflowStoreImpl) loadWorkflowRun(run *db.WorkflowRun) error {
 	if run.DefinitionSnapshotJSON != "" {
 		if err := json.Unmarshal([]byte(run.DefinitionSnapshotJSON), &run.DefinitionSnapshot); err != nil {
@@ -338,6 +507,11 @@ func decodeWorkflowRunNode(node *db.WorkflowRunNode) error {
 	if node.ResultJSON != "" && node.ResultJSON != "{}" {
 		if err := json.Unmarshal([]byte(node.ResultJSON), &node.Result); err != nil {
 			return fmt.Errorf("decode workflow node result: %w", err)
+		}
+	}
+	if node.ArtifactInputsJSON != "" {
+		if err := json.Unmarshal([]byte(node.ArtifactInputsJSON), &node.ArtifactInputs); err != nil {
+			return fmt.Errorf("decode workflow artifact input snapshot: %w", err)
 		}
 	}
 	return nil

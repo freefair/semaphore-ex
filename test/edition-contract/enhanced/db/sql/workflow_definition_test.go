@@ -115,6 +115,41 @@ func TestWorkflowDefinitionRepositoryEnforcesProjectIsolation(t *testing.T) {
 	assert.Equal(t, created.ID, reloaded.ID)
 }
 
+func TestWorkflowDefinitionRoundTripRemapsArtifactReferences(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	workflow := db.WorkflowTemplate{
+		ProjectID: projectID, Name: "Artifact pipeline", DefinitionVersion: db.WorkflowDefinitionVersion,
+		Nodes: []db.WorkflowNode{
+			{
+				ID: -1, TemplateID: 100,
+				ArtifactOutputs: []db.WorkflowArtifactDeclaration{{
+					Name: "release", MaxBytes: 128,
+					Schema: db.WorkflowArtifactSchema{Type: db.WorkflowArtifactString},
+				}},
+			},
+			{
+				ID: -2, TemplateID: 101,
+				ArtifactInputs: []db.WorkflowArtifactReference{{
+					Name: "release_name", SourceNodeID: -1, Output: "release", Required: true,
+				}},
+			},
+		},
+		Edges: []db.WorkflowEdge{{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess}},
+	}
+
+	created, err := repository.CreateWorkflowTemplate(workflow)
+	require.NoError(t, err)
+	reloaded, err := repository.GetWorkflowTemplate(projectID, created.ID)
+	require.NoError(t, err)
+	require.Len(t, reloaded.Nodes, 2)
+	require.Len(t, reloaded.Nodes[0].ArtifactOutputs, 1)
+	require.Len(t, reloaded.Nodes[1].ArtifactInputs, 1)
+	assert.Equal(t, "release", reloaded.Nodes[0].ArtifactOutputs[0].Name)
+	assert.Equal(t, reloaded.Nodes[0].ID, reloaded.Nodes[1].ArtifactInputs[0].SourceNodeID)
+	assert.NotContains(t, reloaded.Nodes[0].ArtifactOutputsJSON, "release-1")
+}
+
 func workflowRepositoryFixture(t *testing.T) (*coresql.SqlDb, *WorkflowStoreImpl, int) {
 	t.Helper()
 	store := coresql.InitConfigCreateTestStore()

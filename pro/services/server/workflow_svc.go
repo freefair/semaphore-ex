@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/json"
+
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
@@ -44,6 +46,10 @@ func (s *workflowService) HandleWorkflowTaskCompletion(task db.Task) error {
 	return nil
 }
 
-func (s *workflowService) GetWorkflowRunArtifacts(projectID int, runID int, currentTaskID *int) (map[string]any, error) {
-	return map[string]any{}, nil
+func (s *workflowService) HandleWorkflowTaskOutputs(task db.Task, outputs map[string]json.RawMessage) error {
+	return nil
+}
+
+func (s *workflowService) GetWorkflowRunArtifacts(projectID int, runID int, currentTaskID *int) ([]db.WorkflowArtifactMetadata, error) {
+	return []db.WorkflowArtifactMetadata{}, nil
 }

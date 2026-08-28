@@ -280,7 +280,8 @@ func captureCapabilitySchema(t testing.TB, store *SqlDb) []migrationSemanticColu
 			from information_schema.columns
 			where table_schema=database() and table_name in (
 				'capability_config', 'capability_test_record', 'ldap_provider',
-				'ldap_provider_selected_user', 'ldap_auth_attempt', 'ldap_capability_transition')`)
+				'ldap_provider_selected_user', 'ldap_auth_attempt', 'ldap_capability_transition',
+				'project__workflow_artifact')`)
 		require.NoError(t, err)
 		columns = scanInformationSchema(t, rows)
 	case util.DbDriverPostgres:
@@ -298,7 +299,8 @@ func captureCapabilitySchema(t testing.TB, store *SqlDb) []migrationSemanticColu
 			where c.table_schema=current_schema()
 				and c.table_name in (
 					'capability_config', 'capability_test_record', 'ldap_provider',
-					'ldap_provider_selected_user', 'ldap_auth_attempt', 'ldap_capability_transition')`)
+					'ldap_provider_selected_user', 'ldap_auth_attempt', 'ldap_capability_transition',
+					'project__workflow_artifact')`)
 		require.NoError(t, err)
 		columns = scanInformationSchema(t, rows)
 	default:
@@ -393,6 +395,21 @@ func assertCapabilitySchema(t testing.TB, actual []migrationSemanticColumn) {
 		{Table: "ldap_provider_selected_user", Name: "created", Type: "datetime"},
 		{Table: "ldap_provider_selected_user", Name: "provider_id", Type: "text", PrimaryKey: true},
 		{Table: "ldap_provider_selected_user", Name: "user_id", Type: "integer", PrimaryKey: true},
+		{Table: "project__workflow_artifact", Name: "attempt", Type: "integer"},
+		{Table: "project__workflow_artifact", Name: "availability", Type: "text"},
+		{Table: "project__workflow_artifact", Name: "diagnostic", Type: "text"},
+		{Table: "project__workflow_artifact", Name: "encrypted_value", Type: "text", Nullable: true},
+		{Table: "project__workflow_artifact", Name: "id", Type: "integer", PrimaryKey: true},
+		{Table: "project__workflow_artifact", Name: "name", Type: "text"},
+		{Table: "project__workflow_artifact", Name: "project_id", Type: "integer"},
+		{Table: "project__workflow_artifact", Name: "reference_fingerprint", Type: "text"},
+		{Table: "project__workflow_artifact", Name: "schema", Type: "text"},
+		{Table: "project__workflow_artifact", Name: "sensitive", Type: "integer"},
+		{Table: "project__workflow_artifact", Name: "size_bytes", Type: "integer"},
+		{Table: "project__workflow_artifact", Name: "task_id", Type: "integer"},
+		{Table: "project__workflow_artifact", Name: "value_json", Type: "text", Nullable: true},
+		{Table: "project__workflow_artifact", Name: "workflow_node_id", Type: "integer"},
+		{Table: "project__workflow_artifact", Name: "workflow_run_id", Type: "integer"},
 	}
 	assert.Equal(t, expected, actual)
 }
@@ -409,5 +426,6 @@ func enhancedMigrationTables() []string {
 	return []string{
 		"capability_config", "capability_test_record", "ldap_provider",
 		"ldap_provider_selected_user", "ldap_auth_attempt", "ldap_capability_transition",
+		"project__workflow_artifact",
 	}
 }

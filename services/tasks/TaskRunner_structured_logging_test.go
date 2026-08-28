@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -59,6 +60,31 @@ func (w *resultLogWriterStub) WriteResult(result any) error {
 	return nil
 }
 
+type workflowOutputServiceStub struct {
+	task    db.Task
+	outputs map[string]json.RawMessage
+}
+
+func (*workflowOutputServiceStub) StartWorkflow(db.WorkflowTemplate, *db.User, string) (db.WorkflowRun, error) {
+	return db.WorkflowRun{}, nil
+}
+func (*workflowOutputServiceStub) ProgressWorkflowRun(int, int, *db.User) error { return nil }
+func (*workflowOutputServiceStub) StopWorkflowRun(int, int, *db.User) (db.WorkflowRun, error) {
+	return db.WorkflowRun{}, nil
+}
+func (*workflowOutputServiceStub) ResolveWorkflowApproval(int, int, int, int, db.WorkflowApprovalStatus, *db.User) (db.WorkflowApproval, error) {
+	return db.WorkflowApproval{}, nil
+}
+func (s *workflowOutputServiceStub) HandleWorkflowTaskOutputs(task db.Task, outputs map[string]json.RawMessage) error {
+	s.task = task
+	s.outputs = outputs
+	return nil
+}
+func (*workflowOutputServiceStub) HandleWorkflowTaskCompletion(db.Task) error { return nil }
+func (*workflowOutputServiceStub) GetWorkflowRunArtifacts(int, int, *int) ([]db.WorkflowArtifactMetadata, error) {
+	return []db.WorkflowArtifactMetadata{}, nil
+}
+
 func TestTaskRunnerExportsParsedAnsibleResultToStructuredLog(t *testing.T) {
 	repository := &taskSummaryRepositoryStub{}
 	writer := &resultLogWriterStub{}
@@ -82,4 +108,21 @@ func TestTaskRunnerExportsParsedAnsibleResultToStructuredLog(t *testing.T) {
 	assert.Equal(t, "host-web", record.CorrelationID)
 	assert.Equal(t, string(db.TaskSummaryEventHost), record.EventType)
 	assert.Equal(t, repository.event, record.Result)
+}
+
+func TestTaskRunnerRoutesWorkflowOutputsWithoutLoggingValues(t *testing.T) {
+	repository := &taskSummaryRepositoryStub{}
+	writer := &resultLogWriterStub{}
+	workflow := &workflowOutputServiceStub{}
+	pool := &TaskPool{ansibleTaskRepo: repository, logWriteService: writer, workflowService: workflow}
+	runner := &TaskRunner{
+		pool: pool, Task: db.Task{ID: 11, ProjectID: 22}, Template: db.Template{App: db.AppAnsible},
+	}
+
+	runner.LogWithTime(time.Now(), `SEMAPHORE_TASK_RESULT {"version":1,"event":"workflow_outputs","event_id":"run:outputs","outputs":{"token":"must-stay-private"}}`)
+
+	assert.Equal(t, 11, workflow.task.ID)
+	assert.JSONEq(t, `"must-stay-private"`, string(workflow.outputs["token"]))
+	assert.Empty(t, repository.event.EventID, "workflow values must not enter task-summary persistence")
+	assert.Nil(t, writer.result, "workflow values must not enter the structured result log")
 }

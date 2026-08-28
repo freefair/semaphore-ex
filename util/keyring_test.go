@@ -441,3 +441,8 @@ func TestEncryptionConfigGetters(t *testing.T) {
 		assert.Equal(t, 15*time.Second, Config.EncryptionKeysPollInterval())
 	})
 }
+
+func TestAccessKeyEncryptionEnabledRequiresActiveKey(t *testing.T) {
+	assert.False(t, (&ConfigType{}).AccessKeyEncryptionEnabled())
+	assert.True(t, (&ConfigType{AccessKeyEncryption: genKey(0x42)}).AccessKeyEncryptionEnabled())
+}

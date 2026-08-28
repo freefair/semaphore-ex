@@ -61,6 +61,17 @@ describe('linear workflow run dashboard', () => {
     const requests = [];
     axios.get = async (url) => {
       requests.push(url);
+      if (url.endsWith('/artifacts')) {
+        return {
+          data: [{
+            workflow_node_id: 11,
+            name: 'deployment_token',
+            schema: { type: 'string' },
+            sensitive: true,
+            availability: 'available',
+          }],
+        };
+      }
       return {
         data: {
           run: { id: 91, status: 'queued' },
@@ -79,14 +90,53 @@ describe('linear workflow run dashboard', () => {
       details: null,
       workflow: null,
       templates: [],
+      artifacts: [],
       $t: (key) => key,
     };
 
     await WorkflowRun.methods.loadData.call(context);
 
-    expect(requests).to.deep.equal(['/api/project/7/workflows/41/runs/91']);
+    expect(requests).to.deep.equal([
+      '/api/project/7/workflows/41/runs/91',
+      '/api/project/7/workflows/41/runs/91/artifacts',
+    ]);
     expect(context.workflow.name).to.equal('Frozen');
     expect(context.templates[0].name).to.equal('Frozen template');
+    expect(context.artifacts[0]).to.include({
+      name: 'deployment_token', sensitive: true, availability: 'available',
+    });
+  });
+
+  it('flattens value-free resolved input provenance for the compact metadata panel', () => {
+    const context = {
+      details: {
+        nodes: [{
+          node: { id: 12 },
+          artifact_inputs: [{
+            name: 'token',
+            source_node_id: 11,
+            output: 'deployment_token',
+            required: true,
+            sensitive: true,
+            availability: 'available',
+            producer_task_id: 301,
+            producer_attempt: 2,
+          }],
+        }],
+      },
+    };
+
+    expect(WorkflowRun.computed.resolvedArtifactInputs.call(context)).to.deep.equal([{
+      name: 'token',
+      source_node_id: 11,
+      output: 'deployment_token',
+      required: true,
+      sensitive: true,
+      availability: 'available',
+      producer_task_id: 301,
+      producer_attempt: 2,
+      consumer_node_id: 12,
+    }]);
   });
 
   it('refreshes only when an existing task in this run changes', () => {

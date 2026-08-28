@@ -32,7 +32,7 @@ type workflowServiceStub struct {
 	correlationIDs []string
 	progressCalls  int
 	stopCalls      int
-	artifacts      map[string]any
+	artifacts      []db.WorkflowArtifactMetadata
 }
 
 func (s *workflowServiceStub) StartWorkflow(_ db.WorkflowTemplate, _ *db.User, correlationID string) (db.WorkflowRun, error) {
@@ -51,7 +51,11 @@ func (s *workflowServiceStub) StopWorkflowRun(_ int, _ int, _ *db.User) (db.Work
 	return s.run, nil
 }
 
-func (s *workflowServiceStub) GetWorkflowRunArtifacts(_ int, _ int, _ *int) (map[string]any, error) {
+func (s *workflowServiceStub) HandleWorkflowTaskOutputs(_ db.Task, _ map[string]json.RawMessage) error {
+	return nil
+}
+
+func (s *workflowServiceStub) GetWorkflowRunArtifacts(_ int, _ int, _ *int) ([]db.WorkflowArtifactMetadata, error) {
 	return s.artifacts, nil
 }
 
@@ -260,7 +264,7 @@ func TestWorkflowRunControllerStartStatusListStopAndArtifacts(t *testing.T) {
 			TemplateSnapshot: db.Template{ID: 51, Name: "Deploy template"},
 		}},
 	}
-	service := &workflowServiceStub{run: run, artifacts: map[string]any{}}
+	service := &workflowServiceStub{run: run, artifacts: []db.WorkflowArtifactMetadata{}}
 	workflowNodeID := 201
 	manager := &workflowManagerStub{
 		runs: []db.WorkflowRun{run}, run: run,
@@ -302,7 +306,7 @@ func TestWorkflowRunControllerStartStatusListStopAndArtifacts(t *testing.T) {
 	artifactsRecorder := httptest.NewRecorder()
 	controller.GetWorkflowRunArtifacts(artifactsRecorder, workflowRunRequest(http.MethodGet, "/api/project/7/workflows/41/runs/91/artifacts", workflow, run))
 	assert.Equal(t, http.StatusOK, artifactsRecorder.Code)
-	assert.JSONEq(t, `{}`, artifactsRecorder.Body.String())
+	assert.JSONEq(t, `[]`, artifactsRecorder.Body.String())
 }
 
 func TestWorkflowRunControllerRejectsOversizedIdempotencyKey(t *testing.T) {
@@ -317,6 +321,34 @@ func TestWorkflowRunControllerRejectsOversizedIdempotencyKey(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 	assert.Empty(t, service.correlationIDs)
+}
+
+func TestWorkflowRunArtifactsEndpointReturnsValueFreeMetadata(t *testing.T) {
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7}
+	run := db.WorkflowRun{ID: 91, ProjectID: 7, WorkflowTemplateID: 41}
+	taskID := 301
+	attempt := 2
+	service := &workflowServiceStub{artifacts: []db.WorkflowArtifactMetadata{{
+		WorkflowNodeID: 11, Name: "deployment_token",
+		Schema: db.WorkflowArtifactSchema{Type: db.WorkflowArtifactString}, Sensitive: true,
+		Availability: db.WorkflowArtifactAvailable, SizeBytes: 12,
+		Fingerprint: "sha256:metadata-only", ProducerTaskID: &taskID, ProducerAttempt: &attempt,
+	}}}
+	controller := NewWorkflowController(service, &workflowManagerStub{}, &workflowDefinitionServiceStub{})
+	recorder := httptest.NewRecorder()
+
+	controller.GetWorkflowRunArtifacts(
+		recorder,
+		workflowRunRequest(http.MethodGet, "/api/project/7/workflows/41/runs/91/artifacts", workflow, run),
+	)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"name":"deployment_token"`)
+	assert.Contains(t, recorder.Body.String(), `"sensitive":true`)
+	assert.Contains(t, recorder.Body.String(), `"availability":"available"`)
+	assert.NotContains(t, recorder.Body.String(), "value_json")
+	assert.NotContains(t, recorder.Body.String(), "encrypted_value")
+	assert.NotContains(t, recorder.Body.String(), "ciphertext")
 }
 
 func TestWorkflowRunControllerExposesConditionalPresentationFields(t *testing.T) {

@@ -83,6 +83,12 @@ func (conf *ConfigType) EncryptAccessSecret(plaintext []byte) (string, error) {
 	return ks.encrypt(plaintext, ks.accessID)
 }
 
+// AccessKeyEncryptionEnabled reports whether access-key and task-secret values
+// are protected by an active encryption key rather than legacy passthrough.
+func (conf *ConfigType) AccessKeyEncryptionEnabled() bool {
+	return conf.currentKeyset().accessID != ""
+}
+
 // EncryptOption encrypts plaintext with the active option key, falling back to the
 // access key when no separate option key is configured.
 func (conf *ConfigType) EncryptOption(plaintext []byte) (string, error) {

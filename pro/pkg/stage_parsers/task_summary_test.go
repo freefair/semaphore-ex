@@ -2,6 +2,7 @@ package stage_parsers
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -91,4 +92,33 @@ func TestTaskSummaryCollectionFailureOutput_IsPersistableAndRedacted(t *testing.
 	assert.Equal(t, db.TaskSummaryEventFailure, event.Kind)
 	assert.NotContains(t, event.Error, "super-secret")
 	assert.Contains(t, event.Error, "callback setup failed")
+}
+
+func TestParseTaskSummaryEvent_PreservesBoundedWorkflowOutputs(t *testing.T) {
+	event, recognized, err := ParseTaskSummaryEvent(
+		`SEMAPHORE_TASK_RESULT {"version":1,"event":"workflow_outputs","event_id":"run:outputs","outputs":{"release":"r1","count":2}}`,
+	)
+	require.NoError(t, err)
+	assert.True(t, recognized)
+	assert.Equal(t, db.TaskSummaryEventWorkflowOutputs, event.Kind)
+	assert.JSONEq(t, `"r1"`, string(event.Outputs["release"]))
+	assert.JSONEq(t, `2`, string(event.Outputs["count"]))
+}
+
+func TestParseTaskSummaryEvent_RejectsOversizedWorkflowOutputWithoutEchoingValue(t *testing.T) {
+	secretValue := strings.Repeat("secret-value", 7000)
+	payload, err := json.Marshal(db.TaskSummaryEvent{
+		Version: db.TaskSummarySchemaVersion, Kind: db.TaskSummaryEventWorkflowOutputs,
+		EventID: "run:outputs", Outputs: map[string]json.RawMessage{"release": json.RawMessage(`"` + secretValue + `"`)},
+	})
+	require.NoError(t, err)
+	_, recognized, err := ParseTaskSummaryEvent(taskSummaryLinePrefix + string(payload))
+	require.Error(t, err)
+	assert.True(t, recognized)
+	assert.NotContains(t, err.Error(), "secret-value")
+}
+
+func TestTaskSummaryCallback_ExtractsOnlyExplicitWorkflowOutputStats(t *testing.T) {
+	assert.Contains(t, ansibleTaskSummaryCallback, `run_stats.get("semaphore_workflow_outputs")`)
+	assert.Contains(t, ansibleTaskSummaryCallback, `"event": "workflow_outputs"`)
 }

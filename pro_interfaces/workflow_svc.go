@@ -1,6 +1,10 @@
 package pro_interfaces
 
-import "github.com/semaphoreui/semaphore/db"
+import (
+	"encoding/json"
+
+	"github.com/semaphoreui/semaphore/db"
+)
 
 // WorkflowService orchestrates workflow runs: starting a run, progressing it as
 // upstream tasks finish, resolving approvals and merging run artifacts. It is a
@@ -14,8 +18,9 @@ type WorkflowService interface {
 	// of the run to stop and marks the run as stopped (terminal).
 	StopWorkflowRun(projectID int, runID int, user *db.User) (db.WorkflowRun, error)
 	ResolveWorkflowApproval(projectID int, workflowID int, runID int, nodeID int, status db.WorkflowApprovalStatus, user *db.User) (db.WorkflowApproval, error)
+	HandleWorkflowTaskOutputs(task db.Task, outputs map[string]json.RawMessage) error
 	HandleWorkflowTaskCompletion(task db.Task) error
-	GetWorkflowRunArtifacts(projectID int, runID int, currentTaskID *int) (map[string]any, error)
+	GetWorkflowRunArtifacts(projectID int, runID int, currentTaskID *int) ([]db.WorkflowArtifactMetadata, error)
 }
 
 // WorkflowTaskEnqueuer is the slice of the task pool the workflow service needs

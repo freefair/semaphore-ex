@@ -66,16 +66,6 @@
     <div class="WorkflowRun__body">
       <template v-if="details != null">
         <v-alert
-          v-if="hasRemoteRunnerNodes"
-          type="warning"
-          dense
-          text
-          tile
-          class="ma-0"
-          icon="mdi-alert-outline"
-        >{{ $t('workflowArtifactsRemoteRunnerWarning') }}</v-alert>
-
-        <v-alert
           v-if="details.run.reason"
           type="error"
           dense
@@ -127,6 +117,107 @@
             </v-card>
           </div>
         </div>
+
+        <v-expansion-panels
+          v-if="artifactMetadataCount > 0"
+          accordion
+          flat
+          tile
+          class="WorkflowRun__artifactPanel"
+          data-testid="workflow-artifact-metadata"
+        >
+          <v-expansion-panel>
+            <v-expansion-panel-header class="py-2">
+              {{ $t('workflowArtifactRunMetadata') }} ({{ artifactMetadataCount }})
+            </v-expansion-panel-header>
+            <v-expansion-panel-content>
+              <div class="WorkflowRun__artifactContent">
+                <section v-if="artifacts.length > 0">
+                  <div class="text-subtitle-2 mb-1">
+                    {{ $t('workflowArtifactOutputs') }}
+                  </div>
+                  <v-list dense class="py-0">
+                    <v-list-item
+                      v-for="artifact in artifacts"
+                      :key="`artifact-${artifact.workflow_node_id}-${artifact.name}`"
+                      class="px-0"
+                    >
+                      <v-list-item-content>
+                        <v-list-item-title class="WorkflowRun__artifactTitle">
+                          <strong>{{ artifact.name }}</strong>
+                          <span class="text--secondary">
+                            · {{ nodeLabel(artifact.workflow_node_id) }}
+                          </span>
+                          <v-chip
+                            x-small
+                            class="ml-2"
+                            :color="artifactAvailabilityColor(artifact.availability)"
+                          >{{ artifact.availability }}</v-chip>
+                        </v-list-item-title>
+                        <v-list-item-subtitle class="WorkflowRun__artifactDetail">
+                          {{ schemaSummary(artifact.schema) }}
+                          <span v-if="artifact.sensitive">
+                            · {{ $t('workflowArtifactSensitiveRedacted') }}
+                          </span>
+                          <span v-else>· {{ $t('workflowArtifactNotSensitive') }}</span>
+                          <span v-if="artifact.producer_task_id">
+                            · {{ $t('workflowArtifactProducer', {
+                              task: artifact.producer_task_id,
+                              attempt: artifact.producer_attempt,
+                            }) }}
+                          </span>
+                          <span v-if="artifact.diagnostic"> · {{ artifact.diagnostic }}</span>
+                        </v-list-item-subtitle>
+                      </v-list-item-content>
+                    </v-list-item>
+                  </v-list>
+                </section>
+
+                <section v-if="resolvedArtifactInputs.length > 0">
+                  <div class="text-subtitle-2 mb-1">
+                    {{ $t('workflowArtifactInputs') }}
+                  </div>
+                  <v-list dense class="py-0">
+                    <v-list-item
+                      v-for="input in resolvedArtifactInputs"
+                      :key="`artifact-input-${input.consumer_node_id}-${input.name}`"
+                      class="px-0"
+                    >
+                      <v-list-item-content>
+                        <v-list-item-title class="WorkflowRun__artifactTitle">
+                          <strong>{{ input.name }}</strong>
+                          <span class="text--secondary">
+                            · {{ nodeLabel(input.consumer_node_id) }} ←
+                            {{ nodeLabel(input.source_node_id) }}.{{ input.output }}
+                          </span>
+                          <v-chip
+                            x-small
+                            class="ml-2"
+                            :color="artifactAvailabilityColor(input.availability)"
+                          >{{ input.availability }}</v-chip>
+                        </v-list-item-title>
+                        <v-list-item-subtitle class="WorkflowRun__artifactDetail">
+                          {{ input.required
+                            ? $t('workflowArtifactRequired')
+                            : $t('workflowArtifactOptional') }}
+                          <span v-if="input.sensitive">
+                            · {{ $t('workflowArtifactSensitiveRedacted') }}
+                          </span>
+                          <span v-if="input.producer_task_id">
+                            · {{ $t('workflowArtifactProducer', {
+                              task: input.producer_task_id,
+                              attempt: input.producer_attempt,
+                            }) }}
+                          </span>
+                        </v-list-item-subtitle>
+                      </v-list-item-content>
+                    </v-list-item>
+                  </v-list>
+                </section>
+              </div>
+            </v-expansion-panel-content>
+          </v-expansion-panel>
+        </v-expansion-panels>
       </template>
 
       <div v-else class="pa-4 text-center">
@@ -176,6 +267,22 @@
     font-size: 13px;
     word-break: break-word;
   }
+
+  &__artifactPanel {
+    flex: 0 0 auto;
+    border-top: 1px solid rgba(127, 127, 127, 0.2);
+  }
+
+  &__artifactContent {
+    max-height: 260px;
+    overflow-y: auto;
+  }
+
+  &__artifactTitle,
+  &__artifactDetail {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 </style>
 
@@ -199,6 +306,7 @@ export default {
       details: null,
       workflow: null,
       templates: [],
+      artifacts: [],
       pollHandle: null,
       socketListenerId: null,
       stopping: false,
@@ -221,12 +329,6 @@ export default {
       if (!this.details) return false;
       return this.isActiveRunStatus(this.details.run.status)
         && this.can(USER_PERMISSIONS.runProjectTasks);
-    },
-    hasRemoteRunnerNodes() {
-      if (!this.details) return false;
-      return (this.details.nodes || []).some(
-        (n) => n.task && n.task.used_runner_id != null,
-      );
     },
     // node.id -> raw run status, used by the graph for color + active animation.
     nodeStatuses() {
@@ -264,6 +366,18 @@ export default {
         (node) => ['queued', 'running'].includes(node.status),
       ).length;
       return { active, max };
+    },
+    resolvedArtifactInputs() {
+      if (!this.details) return [];
+      return (this.details.nodes || []).flatMap((entry) => (
+        (entry.artifact_inputs || []).map((input) => ({
+          ...input,
+          consumer_node_id: entry.node.id,
+        }))
+      ));
+    },
+    artifactMetadataCount() {
+      return this.artifacts.length + this.resolvedArtifactInputs.length;
     },
   },
   async created() {
@@ -318,6 +432,18 @@ export default {
         default:
           return 'grey';
       }
+    },
+    artifactAvailabilityColor(availability) {
+      if (availability === 'available') return 'success';
+      if (availability === 'invalid') return 'error';
+      return 'grey';
+    },
+    schemaSummary(schema) {
+      return JSON.stringify(schema || {});
+    },
+    nodeLabel(nodeId) {
+      const node = (this.workflow?.nodes || []).find((entry) => entry.id === nodeId);
+      return node?.display_name ? `#${nodeId} ${node.display_name}` : `#${nodeId}`;
     },
     normalizeNodeStatus(status) {
       switch (status) {
@@ -386,12 +512,15 @@ export default {
     },
     async loadData() {
       try {
-        const details = await axios.get(
-          `/api/project/${this.projectId}/workflows/${this.workflowId}/runs/${this.runId}`,
-        );
+        const base = `/api/project/${this.projectId}/workflows/${this.workflowId}/runs/${this.runId}`;
+        const [details, artifacts] = await Promise.all([
+          axios.get(base),
+          axios.get(`${base}/artifacts`),
+        ]);
         this.details = details.data;
         this.workflow = details.data.workflow;
         this.templates = details.data.templates || [];
+        this.artifacts = artifacts.data || [];
       } catch (err) {
         EventBus.$emit('i-snackbar', {
           color: 'error',

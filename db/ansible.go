@@ -1,6 +1,9 @@
 package db
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const TaskSummarySchemaVersion = 1
 
@@ -17,33 +20,35 @@ const (
 type TaskSummaryEventKind string
 
 const (
-	TaskSummaryEventResult   TaskSummaryEventKind = "task_result"
-	TaskSummaryEventHost     TaskSummaryEventKind = "host_summary"
-	TaskSummaryEventComplete TaskSummaryEventKind = "run_complete"
-	TaskSummaryEventFailure  TaskSummaryEventKind = "collection_error"
+	TaskSummaryEventResult          TaskSummaryEventKind = "task_result"
+	TaskSummaryEventHost            TaskSummaryEventKind = "host_summary"
+	TaskSummaryEventComplete        TaskSummaryEventKind = "run_complete"
+	TaskSummaryEventFailure         TaskSummaryEventKind = "collection_error"
+	TaskSummaryEventWorkflowOutputs TaskSummaryEventKind = "workflow_outputs"
 )
 
 type TaskSummaryEvent struct {
-	Version       int                  `json:"version"`
-	Kind          TaskSummaryEventKind `json:"event"`
-	EventID       string               `json:"event_id"`
-	PlayID        string               `json:"play_id,omitempty"`
-	StageID       string               `json:"stage_id,omitempty"`
-	Stage         string               `json:"stage,omitempty"`
-	Host          string               `json:"host,omitempty"`
-	Status        string               `json:"status,omitempty"`
-	Changed       int                  `json:"changed,omitempty"`
-	Failed        int                  `json:"failed,omitempty"`
-	Ignored       int                  `json:"ignored,omitempty"`
-	Ok            int                  `json:"ok,omitempty"`
-	Rescued       int                  `json:"rescued,omitempty"`
-	Skipped       int                  `json:"skipped,omitempty"`
-	Unreachable   int                  `json:"unreachable,omitempty"`
-	ExpectedHosts int                  `json:"expected_hosts,omitempty"`
-	Started       *time.Time           `json:"started_at,omitempty"`
-	Ended         *time.Time           `json:"ended_at,omitempty"`
-	DurationMS    int64                `json:"duration_ms,omitempty"`
-	Error         string               `json:"error,omitempty"`
+	Version       int                        `json:"version"`
+	Kind          TaskSummaryEventKind       `json:"event"`
+	EventID       string                     `json:"event_id"`
+	PlayID        string                     `json:"play_id,omitempty"`
+	StageID       string                     `json:"stage_id,omitempty"`
+	Stage         string                     `json:"stage,omitempty"`
+	Host          string                     `json:"host,omitempty"`
+	Status        string                     `json:"status,omitempty"`
+	Changed       int                        `json:"changed,omitempty"`
+	Failed        int                        `json:"failed,omitempty"`
+	Ignored       int                        `json:"ignored,omitempty"`
+	Ok            int                        `json:"ok,omitempty"`
+	Rescued       int                        `json:"rescued,omitempty"`
+	Skipped       int                        `json:"skipped,omitempty"`
+	Unreachable   int                        `json:"unreachable,omitempty"`
+	ExpectedHosts int                        `json:"expected_hosts,omitempty"`
+	Started       *time.Time                 `json:"started_at,omitempty"`
+	Ended         *time.Time                 `json:"ended_at,omitempty"`
+	DurationMS    int64                      `json:"duration_ms,omitempty"`
+	Error         string                     `json:"error,omitempty"`
+	Outputs       map[string]json.RawMessage `json:"outputs,omitempty"`
 }
 
 type TaskSummary struct {

@@ -32,11 +32,12 @@ type workflowRunDetails struct {
 }
 
 type workflowRunNodeDetails struct {
-	Node   workflowRunNodeView      `json:"node"`
-	Status db.WorkflowRunNodeStatus `json:"status"`
-	Reason string                   `json:"reason,omitempty"`
-	Result *db.WorkflowNodeResult   `json:"result,omitempty"`
-	Task   *workflowRunTaskView     `json:"task,omitempty"`
+	Node           workflowRunNodeView                `json:"node"`
+	Status         db.WorkflowRunNodeStatus           `json:"status"`
+	Reason         string                             `json:"reason,omitempty"`
+	Result         *db.WorkflowNodeResult             `json:"result,omitempty"`
+	ArtifactInputs []db.WorkflowArtifactInputSnapshot `json:"artifact_inputs,omitempty"`
+	Task           *workflowRunTaskView               `json:"task,omitempty"`
 }
 
 type workflowRunView struct {
@@ -67,17 +68,19 @@ type workflowRunDefinitionView struct {
 }
 
 type workflowRunNodeView struct {
-	ID              int                        `json:"id"`
-	TemplateID      int                        `json:"template_id,omitempty"`
-	DisplayName     string                     `json:"display_name,omitempty"`
-	Kind            db.WorkflowNodeKind        `json:"kind,omitempty"`
-	ConvergenceMode db.WorkflowConvergenceMode `json:"convergence_mode,omitempty"`
-	JoinMode        db.WorkflowJoinMode        `json:"join_mode,omitempty"`
-	ApprovalTimeout *int                       `json:"approval_timeout,omitempty"`
-	ApprovalMessage *string                    `json:"approval_message,omitempty"`
-	Note            *string                    `json:"note,omitempty"`
-	PositionX       int                        `json:"position_x"`
-	PositionY       int                        `json:"position_y"`
+	ID              int                              `json:"id"`
+	TemplateID      int                              `json:"template_id,omitempty"`
+	DisplayName     string                           `json:"display_name,omitempty"`
+	Kind            db.WorkflowNodeKind              `json:"kind,omitempty"`
+	ConvergenceMode db.WorkflowConvergenceMode       `json:"convergence_mode,omitempty"`
+	JoinMode        db.WorkflowJoinMode              `json:"join_mode,omitempty"`
+	ApprovalTimeout *int                             `json:"approval_timeout,omitempty"`
+	ApprovalMessage *string                          `json:"approval_message,omitempty"`
+	Note            *string                          `json:"note,omitempty"`
+	PositionX       int                              `json:"position_x"`
+	PositionY       int                              `json:"position_y"`
+	ArtifactOutputs []db.WorkflowArtifactDeclaration `json:"artifact_outputs,omitempty"`
+	ArtifactInputs  []db.WorkflowArtifactReference   `json:"artifact_inputs,omitempty"`
 }
 
 type workflowRunEdgeView struct {
@@ -329,7 +332,10 @@ func (c *workflowController) workflowRunDetails(run db.WorkflowRun) (workflowRun
 		if !exists {
 			continue
 		}
-		detail := workflowRunNodeDetails{Node: newWorkflowRunNodeView(node), Status: state.Status, Reason: state.Reason}
+		detail := workflowRunNodeDetails{
+			Node: newWorkflowRunNodeView(node), Status: state.Status, Reason: state.Reason,
+			ArtifactInputs: state.ArtifactInputs,
+		}
 		if state.ResultJSON != "" && state.ResultJSON != "{}" {
 			result := state.Result
 			detail.Result = &result
@@ -403,6 +409,8 @@ func newWorkflowRunNodeView(node db.WorkflowNode) workflowRunNodeView {
 		Note:            node.Note,
 		PositionX:       node.PositionX,
 		PositionY:       node.PositionY,
+		ArtifactOutputs: node.ArtifactOutputs,
+		ArtifactInputs:  node.ArtifactInputs,
 	}
 }
 

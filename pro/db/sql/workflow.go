@@ -95,6 +95,18 @@ func (d *WorkflowStoreImpl) BlockWorkflowRunNode(projectID int, runID int, nodeI
 	return
 }
 
+func (d *WorkflowStoreImpl) UpdateWorkflowRunNodeArtifactInputs(projectID int, runID int, nodeID int, inputsJSON string) (ok bool, err error) {
+	return
+}
+
+func (d *WorkflowStoreImpl) ReplaceWorkflowTaskArtifacts(projectID int, runID int, nodeID int, taskID int, attempt int, artifacts []db.WorkflowArtifact) (err error) {
+	return
+}
+
+func (d *WorkflowStoreImpl) GetWorkflowRunArtifacts(projectID int, runID int) (res []db.WorkflowArtifact, err error) {
+	return
+}
+
 func (d *WorkflowStoreImpl) UpdateWorkflowRunStatusUnless(run db.WorkflowRun, excluded []db.WorkflowRunStatus) (ok bool, err error) {
 	return
 }

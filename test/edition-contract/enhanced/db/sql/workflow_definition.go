@@ -174,7 +174,7 @@ func (d *WorkflowStoreImpl) selectWorkflowTemplateTx(tx *gorp.Transaction, proje
 
 func (d *WorkflowStoreImpl) loadWorkflowGraph(tx *gorp.Transaction, workflow *db.WorkflowTemplate) error {
 	nodeQuery := d.connection.PrepareQuery(
-		"select id, workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, task_params_id, note, position_x, position_y, display_name from project__workflow_node where workflow_template_id=? order by id")
+		"select id, workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, task_params_id, note, position_x, position_y, display_name, artifact_outputs, artifact_inputs from project__workflow_node where workflow_template_id=? order by id")
 	edgeQuery := d.connection.PrepareQuery(
 		"select * from project__workflow_edge where workflow_template_id=? order by id")
 	var err error
@@ -203,6 +203,9 @@ func (d *WorkflowStoreImpl) loadWorkflowGraph(tx *gorp.Transaction, workflow *db
 		}
 	}
 	for index := range workflow.Nodes {
+		if err = decodeWorkflowArtifactDefinition(&workflow.Nodes[index]); err != nil {
+			return err
+		}
 		if workflow.Nodes[index].TaskParamsID == nil {
 			continue
 		}
@@ -288,6 +291,26 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 		node.ID = newID
 		keptNodes[newID] = struct{}{}
 	}
+	for index := range workflow.Nodes {
+		node := &workflow.Nodes[index]
+		for inputIndex := range node.ArtifactInputs {
+			if mapped, exists := nodeIDMap[node.ArtifactInputs[inputIndex].SourceNodeID]; exists {
+				node.ArtifactInputs[inputIndex].SourceNodeID = mapped
+			}
+		}
+		outputsJSON, inputsJSON, err := encodeWorkflowArtifactDefinition(*node)
+		if err != nil {
+			return err
+		}
+		node.ArtifactOutputsJSON = outputsJSON
+		node.ArtifactInputsJSON = inputsJSON
+		if _, err = tx.Exec(d.connection.PrepareQuery(
+			"update project__workflow_node set artifact_outputs=?, artifact_inputs=? where workflow_template_id=? and id=?"),
+			outputsJSON, inputsJSON, workflow.ID, node.ID,
+		); err != nil {
+			return err
+		}
+	}
 
 	keptEdges := make(map[int]struct{}, len(workflow.Edges))
 	for index := range workflow.Edges {
@@ -346,6 +369,32 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 				"delete from project__task_params where project_id=? and id=?"), workflow.ProjectID, *node.TaskParamsID); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func encodeWorkflowArtifactDefinition(node db.WorkflowNode) (string, string, error) {
+	outputs, err := json.Marshal(node.ArtifactOutputs)
+	if err != nil {
+		return "", "", fmt.Errorf("encode workflow artifact outputs: %w", err)
+	}
+	inputs, err := json.Marshal(node.ArtifactInputs)
+	if err != nil {
+		return "", "", fmt.Errorf("encode workflow artifact inputs: %w", err)
+	}
+	return string(outputs), string(inputs), nil
+}
+
+func decodeWorkflowArtifactDefinition(node *db.WorkflowNode) error {
+	if node.ArtifactOutputsJSON != "" {
+		if err := json.Unmarshal([]byte(node.ArtifactOutputsJSON), &node.ArtifactOutputs); err != nil {
+			return fmt.Errorf("decode workflow artifact outputs: %w", err)
+		}
+	}
+	if node.ArtifactInputsJSON != "" {
+		if err := json.Unmarshal([]byte(node.ArtifactInputsJSON), &node.ArtifactInputs); err != nil {
+			return fmt.Errorf("decode workflow artifact inputs: %w", err)
 		}
 	}
 	return nil

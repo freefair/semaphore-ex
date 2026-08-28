@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -140,6 +141,102 @@ func TestDecodeWorkflowRunNodeLoadsResultWithoutTemplateSnapshot(t *testing.T) {
 	require.NoError(t, decodeWorkflowRunNode(&node))
 	assert.Equal(t, db.WorkflowRunNodeSkipped, node.Result.Status)
 	assert.False(t, node.Result.Successful)
+}
+
+func TestWorkflowArtifactRepositoryBindsValuesToRunTaskAndAttempt(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	user, templateOne, templateTwo := workflowRunResources(t, store, projectID)
+	now := time.Date(2026, 8, 28, 16, 0, 0, 0, time.UTC)
+	workflowDefinition := linearRepositoryWorkflow(projectID, templateOne.ID, templateTwo.ID)
+	workflowDefinition.Nodes[0].ArtifactOutputs = []db.WorkflowArtifactDeclaration{
+		{Name: "release", Schema: db.WorkflowArtifactSchema{Type: db.WorkflowArtifactString}, MaxBytes: 128},
+		{Name: "token", Schema: db.WorkflowArtifactSchema{Type: db.WorkflowArtifactString}, Sensitive: true, MaxBytes: 128},
+	}
+	workflowDefinition.Nodes[1].ArtifactInputs = []db.WorkflowArtifactReference{
+		{Name: "release_name", SourceNodeID: -1, Output: "release", Required: true},
+	}
+	workflow, err := repository.CreateWorkflowTemplate(workflowDefinition)
+	require.NoError(t, err)
+	run, err := workflowDB.BuildWorkflowRunSnapshot(workflow, map[int]db.Template{
+		templateOne.ID: templateOne, templateTwo.ID: templateTwo,
+	}, user.ID, "artifacts", now)
+	require.NoError(t, err)
+	run, err = repository.CreateWorkflowRun(run)
+	require.NoError(t, err)
+	producerNodeID := workflow.Nodes[0].ID
+	consumerNodeID := workflow.Nodes[1].ID
+
+	snapshot := []db.WorkflowArtifactInputSnapshot{{
+		Name: "release_name", SourceNodeID: producerNodeID, Output: "release", Required: true,
+		Availability: db.WorkflowArtifactAvailable, ReferenceFingerprint: "sha256:metadata-only",
+	}}
+	snapshotJSON, err := json.Marshal(snapshot)
+	require.NoError(t, err)
+	updated, err := repository.UpdateWorkflowRunNodeArtifactInputs(projectID, run.ID, consumerNodeID, string(snapshotJSON))
+	require.NoError(t, err)
+	assert.True(t, updated)
+	consumer, err := repository.GetWorkflowRunNode(projectID, run.ID, consumerNodeID)
+	require.NoError(t, err)
+	require.Len(t, consumer.ArtifactInputs, 1)
+	assert.Equal(t, "sha256:metadata-only", consumer.ArtifactInputs[0].ReferenceFingerprint)
+
+	task, err := store.CreateTask(db.Task{
+		ProjectID: projectID, TemplateID: templateOne.ID, Status: task_logger.TaskWaitingStatus,
+		WorkflowRunID: &run.ID, WorkflowNodeID: &producerNodeID,
+	}, 0)
+	require.NoError(t, err)
+	artifacts := []db.WorkflowArtifact{
+		{
+			Name: "release", Schema: db.WorkflowArtifactSchema{Type: db.WorkflowArtifactString},
+			Availability: db.WorkflowArtifactAvailable, SizeBytes: len(`"release-1"`),
+			Fingerprint: "sha256:release-attempt-0", ValueJSON: `"release-1"`,
+		},
+		{
+			Name: "token", Schema: db.WorkflowArtifactSchema{Type: db.WorkflowArtifactString}, Sensitive: true,
+			Availability: db.WorkflowArtifactAvailable, SizeBytes: 12,
+			Fingerprint: "sha256:token-attempt-0", EncryptedValue: "encrypted-token",
+		},
+	}
+	require.NoError(t, repository.ReplaceWorkflowTaskArtifacts(projectID, run.ID, producerNodeID, task.ID, 0, artifacts))
+	stored, err := repository.GetWorkflowRunArtifacts(projectID, run.ID)
+	require.NoError(t, err)
+	require.Len(t, stored, 2)
+	assert.Equal(t, `"release-1"`, stored[0].ValueJSON)
+	assert.Empty(t, stored[1].ValueJSON)
+	assert.Equal(t, "encrypted-token", stored[1].EncryptedValue)
+
+	_, err = store.Sql().Exec("update task set assignment_generation=1 where id=?", task.ID)
+	require.NoError(t, err)
+	retry := artifacts[:1]
+	retry[0].ValueJSON = `"release-2"`
+	retry[0].SizeBytes = len(retry[0].ValueJSON)
+	retry[0].Fingerprint = "sha256:release-attempt-1"
+	require.NoError(t, repository.ReplaceWorkflowTaskArtifacts(projectID, run.ID, producerNodeID, task.ID, 1, retry))
+	stored, err = repository.GetWorkflowRunArtifacts(projectID, run.ID)
+	require.NoError(t, err)
+	require.Len(t, stored, 3)
+	assert.Equal(t, 0, stored[0].Attempt)
+	assert.Equal(t, 0, stored[1].Attempt)
+	assert.Equal(t, 1, stored[2].Attempt)
+	assert.Equal(t, `"release-2"`, stored[2].ValueJSON)
+
+	invalid := retry[0]
+	invalid.Sensitive = true
+	invalid.EncryptedValue = ""
+	err = repository.ReplaceWorkflowTaskArtifacts(projectID, run.ID, producerNodeID, task.ID, 1, []db.WorkflowArtifact{invalid})
+	require.ErrorContains(t, err, "ciphertext only")
+	stored, err = repository.GetWorkflowRunArtifacts(projectID, run.ID)
+	require.NoError(t, err)
+	require.Len(t, stored, 3, "validation failure must not erase the previous attempt")
+
+	foreign, err := repository.GetWorkflowRunArtifacts(projectID+1, run.ID)
+	require.NoError(t, err)
+	assert.Empty(t, foreign)
+	assert.ErrorIs(t,
+		repository.ReplaceWorkflowTaskArtifacts(projectID+1, run.ID, producerNodeID, task.ID, 1, retry),
+		db.ErrNotFound,
+	)
 }
 
 func workflowRunResources(t *testing.T, store interface {
