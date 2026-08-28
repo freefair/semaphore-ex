@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/json"
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"time"
 )
@@ -110,11 +111,21 @@ type WorkflowRunNode struct {
 	Result               WorkflowNodeResult              `db:"-" json:"result,omitempty" backup:"-"`
 	ArtifactInputsJSON   string                          `db:"artifact_inputs" json:"-" backup:"artifact_inputs"`
 	ArtifactInputs       []WorkflowArtifactInputSnapshot `db:"-" json:"artifact_inputs,omitempty" backup:"-"`
+	OverrideSnapshotJSON string                          `db:"override_snapshot" json:"-" backup:"override_snapshot"`
+	OverrideSnapshot     WorkflowNodeOverride            `db:"-" json:"overrides,omitempty" backup:"-"`
 
 	Created time.Time  `db:"created" json:"created" backup:"created"`
 	Queued  *time.Time `db:"queued" json:"queued,omitempty" backup:"queued"`
 	Start   *time.Time `db:"start" json:"start,omitempty" backup:"start"`
 	End     *time.Time `db:"end" json:"end,omitempty" backup:"end"`
+}
+
+// WorkflowRunInput contains the two value sources used by the start service.
+// TriggerValues is internal-only; direct run API callers supply UserValues.
+type WorkflowRunInput struct {
+	TriggerValues map[string]json.RawMessage   `json:"-"`
+	UserValues    map[string]json.RawMessage   `json:"parameters,omitempty"`
+	NodeOverrides map[int]WorkflowNodeOverride `json:"node_overrides,omitempty"`
 }
 
 func (mode WorkflowJoinMode) Validate() error {
@@ -134,6 +145,14 @@ func (node WorkflowNode) EffectiveJoinMode() WorkflowJoinMode {
 		return WorkflowJoinAnySuccessful
 	}
 	return WorkflowJoinAllSuccessful
+}
+
+// WorkflowParameterValidationStore resolves every project-scoped resource a
+// workflow parameter or node override is allowed to reference.
+type WorkflowParameterValidationStore interface {
+	GetInventory(projectID int, inventoryID int) (Inventory, error)
+	GetEnvironment(projectID int, environmentID int) (Environment, error)
+	GetAccessKey(projectID int, accessKeyID int) (AccessKey, error)
 }
 
 // WorkflowNodeResultStore exposes only the sanitized, persisted summary used

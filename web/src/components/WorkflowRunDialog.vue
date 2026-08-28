@@ -1,0 +1,324 @@
+<template>
+  <v-dialog :value="value" max-width="720" scrollable @input="$emit('input', $event)">
+    <v-card data-testid="workflow-run-inputs">
+      <v-card-title>{{ $t('workflowRunInputs') }}</v-card-title>
+      <v-card-text>
+        <v-alert v-for="error in errors" :key="error" type="error" dense text>
+          {{ error }}
+        </v-alert>
+
+        <template v-if="parameters.length">
+          <div class="text-subtitle-2 mb-2">{{ $t('workflowParameters') }}</div>
+          <template v-for="parameter in parameters">
+            <v-text-field
+              v-if="parameter.type === 'string'"
+              :key="parameter.name"
+              v-model="values[parameter.name]"
+              :label="parameterLabel(parameter)"
+              :hint="parameterHint(parameter)"
+              persistent-hint
+              clearable
+              outlined
+              dense
+            />
+            <v-text-field
+              v-else-if="parameter.type === 'integer'"
+              :key="parameter.name"
+              v-model.number="values[parameter.name]"
+              type="number"
+              :min="parameter.minimum"
+              :max="parameter.maximum"
+              :label="parameterLabel(parameter)"
+              :hint="parameterHint(parameter)"
+              persistent-hint
+              clearable
+              outlined
+              dense
+            />
+            <v-select
+              v-else-if="parameter.type === 'boolean'"
+              :key="parameter.name"
+              v-model="values[parameter.name]"
+              :items="booleanOptions"
+              item-value="value"
+              item-text="text"
+              :label="parameterLabel(parameter)"
+              :hint="parameterHint(parameter)"
+              persistent-hint
+              clearable
+              outlined
+              dense
+            />
+            <v-select
+              v-else-if="parameter.type === 'enumeration'"
+              :key="parameter.name"
+              v-model="values[parameter.name]"
+              :items="parameter.options || []"
+              :label="parameterLabel(parameter)"
+              :hint="parameterHint(parameter)"
+              persistent-hint
+              clearable
+              outlined
+              dense
+            />
+            <v-select
+              v-else-if="parameter.type === 'secret_reference'"
+              :key="parameter.name"
+              v-model="values[parameter.name]"
+              :items="parameter.secret_options || []"
+              item-value="access_key_id"
+              item-text="label"
+              :label="parameterLabel(parameter)"
+              :hint="parameterHint(parameter)"
+              persistent-hint
+              clearable
+              outlined
+              dense
+            />
+          </template>
+        </template>
+
+        <template v-if="configurableNodes.length">
+          <div class="text-subtitle-2 mt-3 mb-2">{{ $t('workflowNodeOverrides') }}</div>
+          <v-card
+            v-for="node in configurableNodes"
+            :key="`run-node-${node.id}`"
+            outlined
+            class="pa-3 mb-3"
+          >
+            <div class="text-body-2 font-weight-medium mb-2">
+              #{{ node.id }} {{ node.display_name }}
+            </div>
+            <v-select
+              v-if="node.override_policy.inventory_ids.length"
+              v-model="nodeValues[node.id].inventory_id"
+              :items="allowedInventories(node)"
+              item-value="id"
+              item-text="name"
+              :label="$t('inventory')"
+              clearable
+              outlined
+              dense
+            />
+            <v-select
+              v-if="node.override_policy.environment_ids.length"
+              v-model="nodeValues[node.id].environment_ids"
+              :items="allowedEnvironments(node)"
+              item-value="id"
+              item-text="name"
+              :label="$t('environment')"
+              multiple
+              chips
+              small-chips
+              clearable
+              outlined
+              dense
+            />
+            <v-text-field
+              v-if="node.override_policy.allow_arguments"
+              v-model="nodeValues[node.id].arguments"
+              :label="$t('workflowArgumentsOverride')"
+              :hint="$t('workflowArgumentsOverrideHint')"
+              persistent-hint
+              clearable
+              outlined
+              dense
+            />
+            <v-text-field
+              v-if="node.override_policy.allow_branch"
+              v-model="nodeValues[node.id].git_branch"
+              :label="$t('branch')"
+              clearable
+              outlined
+              dense
+            />
+          </v-card>
+        </template>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn text :disabled="loading" @click="$emit('input', false)">
+          {{ $t('cancel') }}
+        </v-btn>
+        <v-btn color="primary" :loading="loading" :disabled="errors.length > 0" @click="submit">
+          {{ $t('run') }}
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+</template>
+
+<script>
+import axios from 'axios';
+import EventBus from '@/event-bus';
+import { getErrorMessage } from '@/lib/error';
+
+const NODE_OVERRIDE_FIELDS = ['inventory_id', 'environment_ids', 'arguments', 'git_branch'];
+const stringByteLength = (value) => new TextEncoder().encode(String(value)).length;
+
+export default {
+  props: {
+    value: Boolean,
+    workflow: { type: Object, required: true },
+    projectId: { type: Number, required: true },
+    loading: Boolean,
+  },
+  data() {
+    return {
+      values: {},
+      nodeValues: {},
+      inventories: [],
+      environments: [],
+    };
+  },
+  computed: {
+    parameters() {
+      return this.workflow.parameters || [];
+    },
+    configurableNodes() {
+      return (this.workflow.nodes || []).filter((node) => {
+        const policy = node.override_policy || {};
+        return (policy.inventory_ids || []).length
+          || (policy.environment_ids || []).length
+          || policy.allow_arguments
+          || policy.allow_branch;
+      }).map((node) => ({
+        ...node,
+        override_policy: {
+          inventory_ids: [], environment_ids: [], ...node.override_policy,
+        },
+      }));
+    },
+    booleanOptions() {
+      return [
+        { value: true, text: this.$t('yes') },
+        { value: false, text: this.$t('workflowBooleanFalse') },
+      ];
+    },
+    errors() {
+      const errors = [];
+      this.parameters.forEach((parameter) => {
+        const value = this.values[parameter.name];
+        const missing = value === undefined || value === null
+          || (value === '' && parameter.type !== 'string');
+        const hasDefault = parameter.default !== undefined && parameter.default !== null;
+        if (parameter.required && missing && !hasDefault) {
+          errors.push(this.$t('workflowParameterRequired', { name: parameter.name }));
+          return;
+        }
+        if (missing) return;
+        if (parameter.type === 'string'
+          && ((parameter.min_length && stringByteLength(value) < parameter.min_length)
+            || (parameter.max_length && stringByteLength(value) > parameter.max_length))) {
+          errors.push(this.$t('workflowParameterStringBounds', { name: parameter.name }));
+        }
+        if (parameter.type === 'integer'
+          && (!Number.isSafeInteger(Number(value))
+            || (parameter.minimum != null && Number(value) < parameter.minimum)
+            || (parameter.maximum != null && Number(value) > parameter.maximum))) {
+          errors.push(this.$t('workflowParameterIntegerBounds', { name: parameter.name }));
+        }
+      });
+      return errors;
+    },
+  },
+  watch: {
+    value: {
+      immediate: true,
+      handler(open) {
+        if (open) this.reset();
+      },
+    },
+  },
+  async created() {
+    try {
+      const [inventories, environments] = await Promise.all([
+        axios.get(`/api/project/${this.projectId}/inventory`),
+        axios.get(`/api/project/${this.projectId}/environment`),
+      ]);
+      this.inventories = inventories.data || [];
+      this.environments = environments.data || [];
+    } catch (err) {
+      EventBus.$emit('i-snackbar', { color: 'error', text: getErrorMessage(err) });
+    }
+  },
+  methods: {
+    stringByteLength,
+    reset() {
+      this.values = this.parameters.reduce((values, parameter) => ({
+        ...values, [parameter.name]: undefined,
+      }), {});
+      this.nodeValues = this.configurableNodes.reduce((values, node) => ({
+        ...values,
+        [node.id]: {
+          inventory_id: undefined,
+          environment_ids: undefined,
+          arguments: undefined,
+          git_branch: undefined,
+        },
+      }), {});
+    },
+    parameterLabel(parameter) {
+      return `${parameter.name}${parameter.required ? ' *' : ''}`;
+    },
+    parameterHint(parameter) {
+      const parts = [];
+      if (parameter.description) parts.push(parameter.description);
+      if (parameter.default !== undefined && parameter.default !== null) {
+        const value = parameter.type === 'secret_reference'
+          ? this.$t('workflowSecretReferenceDefault')
+          : JSON.stringify(parameter.default);
+        parts.push(this.$t('workflowDefaultHint', { value }));
+      }
+      return parts.join(' · ');
+    },
+    allowedInventories(node) {
+      const ids = node.override_policy.inventory_ids;
+      return ids.map((id) => this.inventories.find((entry) => entry.id === id)
+        || { id, name: `#${id}` });
+    },
+    allowedEnvironments(node) {
+      const ids = node.override_policy.environment_ids;
+      return ids.map((id) => this.environments.find((entry) => entry.id === id)
+        || { id, name: `#${id}` });
+    },
+    buildPayload() {
+      const parameters = {};
+      (this.workflow.parameters || []).forEach((parameter) => {
+        const value = this.values[parameter.name];
+        if (value === undefined || value === null
+          || (value === '' && parameter.type !== 'string')) return;
+        parameters[parameter.name] = parameter.type === 'secret_reference'
+          ? { access_key_id: value }
+          : value;
+      });
+      const nodeOverrides = {};
+      (this.workflow.nodes || []).forEach((node) => {
+        const policy = node.override_policy || {};
+        const values = this.nodeValues[node.id] || {};
+        const override = {};
+        NODE_OVERRIDE_FIELDS.forEach((field) => {
+          const value = values[field];
+          if (value === undefined || value === null || value === '') return;
+          if (field === 'inventory_id' && !(policy.inventory_ids || []).includes(value)) return;
+          if (field === 'environment_ids'
+            && (!Array.isArray(value)
+              || value.some((id) => !(policy.environment_ids || []).includes(id)))) return;
+          if (field === 'arguments' && !policy.allow_arguments) return;
+          if (field === 'git_branch' && !policy.allow_branch) return;
+          override[field] = value;
+        });
+        if (Object.keys(override).length) nodeOverrides[node.id] = override;
+      });
+      const payload = {};
+      if (Object.keys(parameters).length) payload.parameters = parameters;
+      if (Object.keys(nodeOverrides).length) payload.node_overrides = nodeOverrides;
+      return payload;
+    },
+    submit() {
+      if (this.errors.length) return;
+      this.$emit('start', this.buildPayload());
+    },
+  },
+};
+</script>

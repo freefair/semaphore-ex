@@ -63,6 +63,7 @@ export const enhancedMethods = {
       definition_version: value.definition_version || WORKFLOW_DEFINITION_VERSION,
       revision: value.revision || 0,
       max_parallel_tasks: value.max_parallel_tasks ?? 4,
+      parameters: Array.isArray(value.parameters) ? value.parameters : [],
       nodes: Array.isArray(value.nodes) ? value.nodes : [],
       edges: Array.isArray(value.edges) ? value.edges : [],
     };
@@ -79,6 +80,7 @@ export const enhancedMethods = {
             || (convergence === 'any' ? 'any-successful' : 'all-successful'),
         artifact_outputs: Array.isArray(node.artifact_outputs) ? node.artifact_outputs : [],
         artifact_inputs: Array.isArray(node.artifact_inputs) ? node.artifact_inputs : [],
+        override_policy: node.override_policy || {},
       };
     });
     item.edges = item.edges.map((edge) => ({

@@ -46,6 +46,9 @@ type WorkflowTemplate struct {
 	Revision          int `db:"revision" json:"revision" backup:"revision"`
 	MaxParallelTasks  int `db:"max_parallel_tasks" json:"max_parallel_tasks" backup:"max_parallel_tasks"`
 
+	ParameterDefinitionsJSON string                         `db:"parameter_definitions" json:"-" backup:"parameter_definitions"`
+	ParameterDefinitions     []WorkflowParameterDeclaration `db:"-" json:"parameters,omitempty" backup:"-"`
+
 	Nodes []WorkflowNode `db:"-" bolt:"include" json:"nodes" backup:"-"`
 	Edges []WorkflowEdge `db:"-" bolt:"include" json:"edges" backup:"edges"`
 
@@ -72,6 +75,9 @@ type WorkflowNode struct {
 	ArtifactInputsJSON  string                        `db:"artifact_inputs" json:"-" backup:"artifact_inputs"`
 	ArtifactOutputs     []WorkflowArtifactDeclaration `db:"-" json:"artifact_outputs,omitempty" backup:"-"`
 	ArtifactInputs      []WorkflowArtifactReference   `db:"-" json:"artifact_inputs,omitempty" backup:"-"`
+
+	OverridePolicyJSON string                     `db:"override_policy" json:"-" backup:"override_policy"`
+	OverridePolicy     WorkflowNodeOverridePolicy `db:"-" json:"override_policy,omitempty" backup:"-"`
 
 	Note         *string `db:"note" json:"note,omitempty" backup:"note"`
 	DelaySeconds *int    `db:"delay_seconds" json:"delay_seconds,omitempty" backup:"delay_seconds"`
@@ -160,9 +166,11 @@ type WorkflowRun struct {
 	DefinitionRevision int    `db:"definition_revision" json:"definition_revision" backup:"definition_revision"`
 	CorrelationID      string `db:"correlation_id" json:"correlation_id" backup:"correlation_id"`
 
-	DefinitionSnapshotJSON string            `db:"definition_snapshot" json:"-" backup:"definition_snapshot"`
-	DefinitionSnapshot     WorkflowTemplate  `db:"-" json:"definition" backup:"-"`
-	Nodes                  []WorkflowRunNode `db:"-" json:"nodes" backup:"-"`
+	DefinitionSnapshotJSON string                               `db:"definition_snapshot" json:"-" backup:"definition_snapshot"`
+	DefinitionSnapshot     WorkflowTemplate                     `db:"-" json:"definition" backup:"-"`
+	ParameterSnapshotJSON  string                               `db:"parameter_snapshot" json:"-" backup:"parameter_snapshot"`
+	ParameterSnapshot      map[string]WorkflowParameterSnapshot `db:"-" json:"parameters,omitempty" backup:"-"`
+	Nodes                  []WorkflowRunNode                    `db:"-" json:"nodes" backup:"-"`
 
 	Created time.Time  `db:"created" json:"created" backup:"created"`
 	Start   *time.Time `db:"start" json:"start,omitempty" backup:"start"`

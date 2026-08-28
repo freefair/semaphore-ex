@@ -9,6 +9,13 @@
       v-model="deleteDialog"
       @yes="remove()"
     />
+    <WorkflowRunDialog
+      v-model="runDialog"
+      :workflow="item"
+      :project-id="projectId"
+      :loading="starting"
+      @start="runWorkflow"
+    />
 
     <v-toolbar flat>
       <v-app-bar-nav-icon @click="showDrawer()"></v-app-bar-nav-icon>
@@ -68,17 +75,21 @@
 </template>
 
 <script>
+import enhancedMethods from '@/lib/enhanced/workflow-view';
+
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
 import YesNoDialog from '@/components/YesNoDialog.vue';
 import PermissionsCheck from '@/components/PermissionsCheck';
 import ProjectMixin from '@/components/ProjectMixin';
+import WorkflowRunDialog from '@/components/WorkflowRunDialog.vue';
 import { USER_PERMISSIONS } from '@/lib/constants';
 
 export default {
   components: {
     YesNoDialog,
+    WorkflowRunDialog,
   },
 
   mixins: [PermissionsCheck, ProjectMixin],
@@ -91,6 +102,8 @@ export default {
     return {
       item: null,
       deleteDialog: null,
+      runDialog: false,
+      starting: false,
       USER_PERMISSIONS,
     };
   },
@@ -120,15 +133,22 @@ export default {
   },
 
   methods: {
+    ...enhancedMethods,
     showDrawer() {
       EventBus.$emit('i-show-drawer');
     },
 
-    async runWorkflow() {
+    async runWorkflow(payload) {
+      if (payload === undefined && this.hasRunInputs(this.item)) {
+        this.runDialog = true;
+        return;
+      }
+      this.starting = true;
       try {
         const run = (await axios({
           method: 'post',
           url: `/api/project/${this.projectId}/workflows/${this.itemId}/run`,
+          data: payload || {},
           responseType: 'json',
         })).data;
 
@@ -137,6 +157,7 @@ export default {
           text: this.$t('workflowRunStarted'),
         });
 
+        this.runDialog = false;
         await this.$router.push(
           `/project/${this.projectId}/workflows/${this.itemId}/runs/${run.id}`,
         );
@@ -145,6 +166,8 @@ export default {
           color: 'error',
           text: getErrorMessage(err),
         });
+      } finally {
+        this.starting = false;
       }
     },
 

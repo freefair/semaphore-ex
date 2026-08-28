@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"sync"
 	"time"
 
@@ -20,13 +21,15 @@ import (
 const workflowReconcileInterval = 2 * time.Second
 
 type workflowService struct {
-	repository      db.WorkflowManager
-	templateStore   db.WorkflowTemplateValidationStore
-	resultStore     db.WorkflowNodeResultStore
-	enqueuer        pro_interfaces.WorkflowTaskEnqueuer
-	locker          pro_interfaces.WorkflowRunLocker
-	localRunLocks   workflowLocalLocks
-	localStartLocks workflowLocalLocks
+	repository       db.WorkflowManager
+	templateStore    db.WorkflowTemplateValidationStore
+	resultStore      db.WorkflowNodeResultStore
+	enqueuer         pro_interfaces.WorkflowTaskEnqueuer
+	locker           pro_interfaces.WorkflowRunLocker
+	resourceStore    db.WorkflowParameterValidationStore
+	credentialReader pro_interfaces.WorkflowCredentialReader
+	localRunLocks    workflowLocalLocks
+	localStartLocks  workflowLocalLocks
 }
 
 type workflowLocalLock struct {
@@ -46,10 +49,17 @@ func NewWorkflowService(
 	templateStore db.WorkflowTemplateValidationStore,
 	enqueuer pro_interfaces.WorkflowTaskEnqueuer,
 	locker pro_interfaces.WorkflowRunLocker,
+	credentialReaders ...pro_interfaces.WorkflowCredentialReader,
 ) pro_interfaces.WorkflowService {
 	resultStore, _ := templateStore.(db.WorkflowNodeResultStore)
+	resourceStore, _ := templateStore.(db.WorkflowParameterValidationStore)
+	var credentialReader pro_interfaces.WorkflowCredentialReader
+	if len(credentialReaders) > 0 {
+		credentialReader = credentialReaders[0]
+	}
 	return &workflowService{
 		repository: repository, templateStore: templateStore, resultStore: resultStore,
+		resourceStore: resourceStore, credentialReader: credentialReader,
 		enqueuer: enqueuer, locker: locker,
 	}
 }
@@ -58,6 +68,7 @@ func (s *workflowService) StartWorkflow(
 	workflow db.WorkflowTemplate,
 	user *db.User,
 	correlationID string,
+	inputs ...db.WorkflowRunInput,
 ) (db.WorkflowRun, error) {
 	if user == nil || user.ID <= 0 {
 		return db.WorkflowRun{}, common_errors.NewValidationError("workflow run actor is required")
@@ -86,9 +97,15 @@ func (s *workflowService) StartWorkflow(
 			}
 			templates[node.TemplateID] = template
 		}
-		snapshot, buildErr := workflowDB.BuildWorkflowRunSnapshot(workflow, templates, user.ID, correlationID, tz.Now())
+		snapshot, buildErr := workflowDB.BuildWorkflowRunSnapshot(workflow, templates, user.ID, correlationID, tz.Now(), inputs...)
 		if buildErr != nil {
 			return buildErr
+		}
+		if validateErr := s.validateWorkflowRunResources(snapshot); validateErr != nil {
+			return validateErr
+		}
+		if validateErr := s.validateWorkflowParameterReferences(snapshot); validateErr != nil {
+			return validateErr
 		}
 		result, err = s.repository.CreateWorkflowRun(snapshot)
 		if err != nil {
@@ -524,6 +541,10 @@ func (s *workflowService) enqueueWorkflowNode(
 	}
 	task.WorkflowRunID = &run.ID
 	task.WorkflowNodeID = &node.WorkflowNodeID
+	applyWorkflowNodeOverride(&task, node.OverrideSnapshot)
+	if err := s.applyWorkflowRunParameters(run, definitionNode.OverridePolicy, &task); err != nil {
+		return err
+	}
 	blocked, err := s.resolveWorkflowTaskInputs(run, node, definitionNode, &task)
 	if err != nil {
 		return err
@@ -552,6 +573,167 @@ func (s *workflowService) enqueueWorkflowNode(
 		return enqueueErr
 	}
 	return nil
+}
+
+func applyWorkflowNodeOverride(task *db.Task, override db.WorkflowNodeOverride) {
+	if override.InventoryID != nil {
+		value := *override.InventoryID
+		task.InventoryID = &value
+	}
+	if override.Arguments != nil {
+		value := *override.Arguments
+		task.Arguments = &value
+	}
+	if override.GitBranch != nil {
+		value := *override.GitBranch
+		task.GitBranch = &value
+	}
+}
+
+func (s *workflowService) validateWorkflowRunResources(run db.WorkflowRun) error {
+	for _, node := range run.Nodes {
+		override := node.OverrideSnapshot
+		if override.InventoryID == nil && override.EnvironmentIDs == nil {
+			continue
+		}
+		if s.resourceStore == nil {
+			return common_errors.NewValidationError("workflow node override resources are unavailable")
+		}
+		if override.InventoryID != nil {
+			inventory, err := s.resourceStore.GetInventory(run.ProjectID, *override.InventoryID)
+			if errors.Is(err, db.ErrNotFound) || err == nil &&
+				(inventory.ID != *override.InventoryID || inventory.ProjectID != run.ProjectID) {
+				return common_errors.NewValidationError(fmt.Sprintf(
+					"workflow node %d inventory override is unavailable", node.WorkflowNodeID,
+				))
+			}
+			if err != nil {
+				return fmt.Errorf("validate workflow inventory override: %w", err)
+			}
+		}
+		if override.EnvironmentIDs != nil {
+			for _, environmentID := range *override.EnvironmentIDs {
+				environment, err := s.resourceStore.GetEnvironment(run.ProjectID, environmentID)
+				if errors.Is(err, db.ErrNotFound) || err == nil &&
+					(environment.ID != environmentID || environment.ProjectID != run.ProjectID) {
+					return common_errors.NewValidationError(fmt.Sprintf(
+						"workflow node %d environment override is unavailable", node.WorkflowNodeID,
+					))
+				}
+				if err != nil {
+					return fmt.Errorf("validate workflow environment override: %w", err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (s *workflowService) validateWorkflowParameterReferences(run db.WorkflowRun) error {
+	for _, name := range sortedWorkflowParameterNames(run.ParameterSnapshot) {
+		snapshot := run.ParameterSnapshot[name]
+		if snapshot.SecretReference == nil {
+			continue
+		}
+		if _, err := s.workflowParameterAccessKey(run.ProjectID, *snapshot.SecretReference); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *workflowService) applyWorkflowRunParameters(
+	run db.WorkflowRun,
+	policy db.WorkflowNodeOverridePolicy,
+	task *db.Task,
+) error {
+	nodePlain, err := decodeWorkflowArtifactObject(task.Environment)
+	if err != nil {
+		return fmt.Errorf("decode workflow node environment override: %w", err)
+	}
+	nodeSecret, err := decodeWorkflowArtifactObject(task.Secret)
+	if err != nil {
+		return fmt.Errorf("decode workflow node secret override: %w", err)
+	}
+	plain := make(map[string]json.RawMessage, len(run.ParameterSnapshot)+len(nodePlain))
+	secret := make(map[string]json.RawMessage, len(run.ParameterSnapshot)+len(nodeSecret))
+	for _, name := range sortedWorkflowParameterNames(run.ParameterSnapshot) {
+		snapshot := run.ParameterSnapshot[name]
+		if snapshot.SecretReference == nil {
+			plain[name] = append(json.RawMessage(nil), snapshot.Value...)
+			continue
+		}
+		if !workflowStringContains(policy.CredentialParameters, name) {
+			continue
+		}
+		key, keyErr := s.workflowParameterAccessKey(run.ProjectID, *snapshot.SecretReference)
+		if keyErr != nil {
+			return keyErr
+		}
+		if s.credentialReader == nil {
+			return errors.New("workflow secret references cannot be resolved")
+		}
+		if err = s.credentialReader.DeserializeSecret(&key); err != nil {
+			return errors.New("workflow secret reference could not be resolved")
+		}
+		if key.String == "" {
+			return errors.New("workflow secret reference is empty")
+		}
+		encoded, marshalErr := json.Marshal(key.String)
+		key.String = ""
+		if marshalErr != nil {
+			return errors.New("workflow secret reference could not be encoded")
+		}
+		secret[name] = encoded
+	}
+	// Existing node TaskParams are the final definition-level override and
+	// therefore win over workflow defaults, trigger values, and user values.
+	for name, value := range nodePlain {
+		plain[name] = value
+		delete(secret, name)
+	}
+	for name, value := range nodeSecret {
+		secret[name] = value
+		delete(plain, name)
+	}
+	task.Environment, err = encodeWorkflowArtifactObject(plain)
+	if err != nil {
+		return err
+	}
+	task.Secret, err = encodeWorkflowArtifactObject(secret)
+	return err
+}
+
+func workflowStringContains(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *workflowService) workflowParameterAccessKey(
+	projectID int,
+	reference db.WorkflowSecretReference,
+) (db.AccessKey, error) {
+	if s.resourceStore == nil || reference.AccessKeyID <= 0 {
+		return db.AccessKey{}, errors.New("workflow secret reference is unavailable")
+	}
+	key, err := s.resourceStore.GetAccessKey(projectID, reference.AccessKeyID)
+	if err != nil || key.ProjectID == nil || *key.ProjectID != projectID || key.Type != db.AccessKeyString || key.Owner != db.AccessKeyShared {
+		return db.AccessKey{}, errors.New("workflow secret reference is unavailable")
+	}
+	return key, nil
+}
+
+func sortedWorkflowParameterNames(values map[string]db.WorkflowParameterSnapshot) []string {
+	result := make([]string, 0, len(values))
+	for name := range values {
+		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func (s *workflowService) resolveWorkflowTaskInputs(

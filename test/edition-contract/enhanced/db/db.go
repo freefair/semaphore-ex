@@ -24,6 +24,14 @@ const (
 
 func NormalizeWorkflowTemplate(workflow coreDB.WorkflowTemplate) coreDB.WorkflowTemplate {
 	workflow.Name = strings.TrimSpace(workflow.Name)
+	for index := range workflow.ParameterDefinitions {
+		parameter := &workflow.ParameterDefinitions[index]
+		parameter.Name = strings.TrimSpace(parameter.Name)
+		parameter.Description = strings.TrimSpace(parameter.Description)
+		for optionIndex := range parameter.SecretOptions {
+			parameter.SecretOptions[optionIndex].Label = strings.TrimSpace(parameter.SecretOptions[optionIndex].Label)
+		}
+	}
 	if workflow.DefinitionVersion == 0 {
 		workflow.DefinitionVersion = coreDB.WorkflowDefinitionVersion
 	}
@@ -86,14 +94,54 @@ func PrepareWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, workf
 	workflow = NormalizeWorkflowTemplate(workflow)
 	conditionIssues := compileWorkflowConditions(&workflow)
 	artifactIssues := prepareWorkflowArtifactMetadata(&workflow)
+	parameterIssues := prepareWorkflowParameterMetadata(&workflow)
 	result, err := validateWorkflowTemplate(store, workflow)
 	if err != nil {
 		return coreDB.WorkflowTemplate{}, coreDB.WorkflowValidationResult{}, err
 	}
 	result.Issues = append(result.Issues, conditionIssues...)
 	result.Issues = append(result.Issues, artifactIssues...)
+	result.Issues = append(result.Issues, parameterIssues...)
 	result.Valid = len(result.Issues) == 0
 	return workflow, result, nil
+}
+
+func prepareWorkflowParameterMetadata(workflow *coreDB.WorkflowTemplate) []coreDB.WorkflowValidationIssue {
+	issues := make([]coreDB.WorkflowValidationIssue, 0)
+	if err := coreDB.ValidateWorkflowParameterDeclarations(workflow.ParameterDefinitions); err != nil {
+		issues = append(issues, coreDB.WorkflowValidationIssue{
+			Code: "WORKFLOW_PARAMETERS_INVALID", Message: err.Error(), Path: "parameters",
+		})
+	}
+	encoded, err := json.Marshal(workflow.ParameterDefinitions)
+	if err != nil {
+		issues = append(issues, coreDB.WorkflowValidationIssue{
+			Code: "WORKFLOW_PARAMETERS_INVALID", Message: "Workflow parameters could not be stored.", Path: "parameters",
+		})
+	} else {
+		workflow.ParameterDefinitionsJSON = string(encoded)
+	}
+	for index := range workflow.Nodes {
+		node := &workflow.Nodes[index]
+		if err := coreDB.ValidateWorkflowNodeOverridePolicy(node.OverridePolicy); err != nil {
+			id := node.ID
+			issues = append(issues, coreDB.WorkflowValidationIssue{
+				Code: "WORKFLOW_NODE_OVERRIDE_POLICY_INVALID", Message: err.Error(),
+				Path: fmt.Sprintf("nodes[%d].override_policy", index), NodeID: &id,
+			})
+		}
+		encoded, err := json.Marshal(node.OverridePolicy)
+		if err != nil {
+			id := node.ID
+			issues = append(issues, coreDB.WorkflowValidationIssue{
+				Code: "WORKFLOW_NODE_OVERRIDE_POLICY_INVALID", Message: "Workflow node override policy could not be stored.",
+				Path: fmt.Sprintf("nodes[%d].override_policy", index), NodeID: &id,
+			})
+		} else {
+			node.OverridePolicyJSON = string(encoded)
+		}
+	}
+	return issues
 }
 
 func prepareWorkflowArtifactMetadata(workflow *coreDB.WorkflowTemplate) []coreDB.WorkflowValidationIssue {
@@ -159,6 +207,29 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 
 	nodes := make(map[int]coreDB.WorkflowNode, len(workflow.Nodes))
 	executable := make(map[int]struct{}, len(workflow.Nodes))
+	resourceStore, hasResourceStore := store.(coreDB.WorkflowParameterValidationStore)
+	requiresParameterResources := false
+	parameterTypes := make(map[string]coreDB.WorkflowParameterType, len(workflow.ParameterDefinitions))
+	for _, parameter := range workflow.ParameterDefinitions {
+		requiresParameterResources = requiresParameterResources || len(parameter.SecretOptions) > 0
+		parameterTypes[parameter.Name] = parameter.Type
+	}
+	if requiresParameterResources && !hasResourceStore {
+		add("WORKFLOW_PARAMETER_RESOURCES_UNAVAILABLE", "Workflow parameter resources cannot be validated.", "parameters", nil, nil)
+	}
+	if hasResourceStore {
+		for parameterIndex, parameter := range workflow.ParameterDefinitions {
+			for optionIndex, option := range parameter.SecretOptions {
+				key, err := resourceStore.GetAccessKey(workflow.ProjectID, option.AccessKeyID)
+				if errors.Is(err, coreDB.ErrNotFound) || err == nil && (key.Type != coreDB.AccessKeyString || key.Owner != coreDB.AccessKeyShared) {
+					add("WORKFLOW_PARAMETER_SECRET_NOT_APPROVED", "Secret reference is not an approved string credential in this project.",
+						fmt.Sprintf("parameters[%d].secret_options[%d]", parameterIndex, optionIndex), nil, nil)
+				} else if err != nil {
+					return coreDB.WorkflowValidationResult{}, fmt.Errorf("validate workflow secret reference: %w", err)
+				}
+			}
+		}
+	}
 	for index, node := range workflow.Nodes {
 		id := node.ID
 		path := fmt.Sprintf("nodes[%d]", index)
@@ -185,14 +256,61 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 		}
 		switch node.EffectiveKind() {
 		case coreDB.WorkflowNodeTaskKind:
+			for optionIndex, name := range node.OverridePolicy.CredentialParameters {
+				if parameterTypes[name] != coreDB.WorkflowParameterSecretReference {
+					add("WORKFLOW_NODE_CREDENTIAL_PARAMETER_INVALID", "Approved credential must reference a secret-reference workflow parameter.", fmt.Sprintf("%s.override_policy.credential_parameters[%d]", path, optionIndex), &id, nil)
+				}
+			}
+			var template coreDB.Template
+			templateAvailable := false
 			if node.TemplateID <= 0 {
 				add("WORKFLOW_TEMPLATE_REQUIRED", "Task nodes require a template.", path+".template_id", &id, nil)
 			} else if store != nil {
-				_, err := store.GetTemplate(workflow.ProjectID, node.TemplateID)
+				var err error
+				template, err = store.GetTemplate(workflow.ProjectID, node.TemplateID)
 				if errors.Is(err, coreDB.ErrNotFound) {
 					add("WORKFLOW_TEMPLATE_NOT_IN_PROJECT", "Template is not available in this project.", path+".template_id", &id, nil)
 				} else if err != nil {
 					return coreDB.WorkflowValidationResult{}, fmt.Errorf("validate workflow template reference: %w", err)
+				} else {
+					templateAvailable = true
+				}
+			}
+			if templateAvailable {
+				if len(node.OverridePolicy.InventoryIDs) > 0 {
+					allowed, err := template.CanOverrideInventory()
+					if err != nil {
+						return coreDB.WorkflowValidationResult{}, fmt.Errorf("validate workflow inventory override policy: %w", err)
+					}
+					if !allowed {
+						add("WORKFLOW_NODE_INVENTORY_OVERRIDE_FORBIDDEN", "The task template does not allow inventory overrides.", path+".override_policy.inventory_ids", &id, nil)
+					}
+				}
+				if node.OverridePolicy.AllowArguments && !template.AllowOverrideArgsInTask {
+					add("WORKFLOW_NODE_ARGUMENTS_OVERRIDE_FORBIDDEN", "The task template does not allow argument overrides.", path+".override_policy.allow_arguments", &id, nil)
+				}
+				if node.OverridePolicy.AllowBranch && !template.AllowOverrideBranchInTask {
+					add("WORKFLOW_NODE_BRANCH_OVERRIDE_FORBIDDEN", "The task template does not allow branch overrides.", path+".override_policy.allow_branch", &id, nil)
+				}
+			}
+			if len(node.OverridePolicy.InventoryIDs) > 0 || len(node.OverridePolicy.EnvironmentIDs) > 0 {
+				if !hasResourceStore {
+					add("WORKFLOW_NODE_OVERRIDE_RESOURCES_UNAVAILABLE", "Workflow node override resources cannot be validated.", path+".override_policy", &id, nil)
+				} else {
+					for optionIndex, inventoryID := range node.OverridePolicy.InventoryIDs {
+						if _, err := resourceStore.GetInventory(workflow.ProjectID, inventoryID); errors.Is(err, coreDB.ErrNotFound) {
+							add("WORKFLOW_NODE_INVENTORY_NOT_IN_PROJECT", "Approved inventory is not available in this project.", fmt.Sprintf("%s.override_policy.inventory_ids[%d]", path, optionIndex), &id, nil)
+						} else if err != nil {
+							return coreDB.WorkflowValidationResult{}, fmt.Errorf("validate workflow inventory reference: %w", err)
+						}
+					}
+					for optionIndex, environmentID := range node.OverridePolicy.EnvironmentIDs {
+						if _, err := resourceStore.GetEnvironment(workflow.ProjectID, environmentID); errors.Is(err, coreDB.ErrNotFound) {
+							add("WORKFLOW_NODE_ENVIRONMENT_NOT_IN_PROJECT", "Approved environment is not available in this project.", fmt.Sprintf("%s.override_policy.environment_ids[%d]", path, optionIndex), &id, nil)
+						} else if err != nil {
+							return coreDB.WorkflowValidationResult{}, fmt.Errorf("validate workflow environment reference: %w", err)
+						}
+					}
 				}
 			}
 		case coreDB.WorkflowNodeApprovalKind:
@@ -406,6 +524,7 @@ func BuildWorkflowRunSnapshot(
 	actorUserID int,
 	correlationID string,
 	now time.Time,
+	inputs ...coreDB.WorkflowRunInput,
 ) (coreDB.WorkflowRun, error) {
 	workflow = NormalizeWorkflowTemplate(workflow)
 	if issues := compileWorkflowConditions(&workflow); len(issues) > 0 {
@@ -420,6 +539,32 @@ func BuildWorkflowRunSnapshot(
 	if err := validateRunnableWorkflow(workflow); err != nil {
 		return coreDB.WorkflowRun{}, err
 	}
+	var input coreDB.WorkflowRunInput
+	if len(inputs) > 1 {
+		return coreDB.WorkflowRun{}, common_errors.NewValidationError("workflow run input is invalid")
+	}
+	if len(inputs) == 1 {
+		input = inputs[0]
+	}
+	parameterSnapshot, err := coreDB.ResolveWorkflowParameters(
+		workflow.ParameterDefinitions, input.TriggerValues, input.UserValues,
+	)
+	if err != nil {
+		return coreDB.WorkflowRun{}, common_errors.NewValidationError(err.Error())
+	}
+	parameterJSON, err := json.Marshal(parameterSnapshot)
+	if err != nil {
+		return coreDB.WorkflowRun{}, fmt.Errorf("snapshot workflow parameters: %w", err)
+	}
+	definitionNodes := make(map[int]coreDB.WorkflowNode, len(workflow.Nodes))
+	for _, node := range workflow.Nodes {
+		definitionNodes[node.ID] = node
+	}
+	for nodeID := range input.NodeOverrides {
+		if _, exists := definitionNodes[nodeID]; !exists {
+			return coreDB.WorkflowRun{}, common_errors.NewValidationError(fmt.Sprintf("workflow node override %d is unknown", nodeID))
+		}
+	}
 	definitionJSON, err := json.Marshal(workflow)
 	if err != nil {
 		return coreDB.WorkflowRun{}, fmt.Errorf("snapshot workflow definition: %w", err)
@@ -429,7 +574,8 @@ func BuildWorkflowRunSnapshot(
 		Status: coreDB.WorkflowRunPending, ActorUserID: actorUserID,
 		DefinitionVersion: workflow.DefinitionVersion, DefinitionRevision: workflow.Revision,
 		CorrelationID: correlationID, DefinitionSnapshotJSON: string(definitionJSON),
-		DefinitionSnapshot: workflow, Created: now, Start: &now,
+		DefinitionSnapshot: workflow, ParameterSnapshotJSON: string(parameterJSON), ParameterSnapshot: parameterSnapshot,
+		Created: now, Start: &now,
 		Nodes: make([]coreDB.WorkflowRunNode, 0, len(workflow.Nodes)),
 	}
 	for _, node := range workflow.Nodes {
@@ -440,14 +586,25 @@ func BuildWorkflowRunSnapshot(
 		if !ok || template.ID == 0 || template.ProjectID != workflow.ProjectID {
 			return coreDB.WorkflowRun{}, common_errors.NewValidationError("workflow task template snapshot is unavailable")
 		}
+		override := input.NodeOverrides[node.ID]
+		if err := coreDB.ValidateWorkflowNodeOverride(node.OverridePolicy, override); err != nil {
+			return coreDB.WorkflowRun{}, common_errors.NewValidationError(fmt.Sprintf("workflow node %d override: %s", node.ID, err.Error()))
+		}
+		if override.EnvironmentIDs != nil {
+			template.EnvironmentIDs = append([]int(nil), (*override.EnvironmentIDs)...)
+		}
 		templateJSON, marshalErr := json.Marshal(template)
 		if marshalErr != nil {
 			return coreDB.WorkflowRun{}, fmt.Errorf("snapshot workflow task template: %w", marshalErr)
 		}
+		overrideJSON, marshalErr := json.Marshal(override)
+		if marshalErr != nil {
+			return coreDB.WorkflowRun{}, fmt.Errorf("snapshot workflow node override: %w", marshalErr)
+		}
 		run.Nodes = append(run.Nodes, coreDB.WorkflowRunNode{
 			ProjectID: workflow.ProjectID, WorkflowNodeID: node.ID, TemplateID: node.TemplateID,
 			Status: coreDB.WorkflowRunNodePending, TemplateSnapshotJSON: string(templateJSON),
-			TemplateSnapshot: template, Created: now,
+			TemplateSnapshot: template, OverrideSnapshotJSON: string(overrideJSON), OverrideSnapshot: override, Created: now,
 		})
 	}
 	return run, nil

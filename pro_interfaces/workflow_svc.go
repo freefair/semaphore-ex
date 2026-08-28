@@ -2,7 +2,6 @@ package pro_interfaces
 
 import (
 	"encoding/json"
-
 	"github.com/semaphoreui/semaphore/db"
 )
 
@@ -12,7 +11,7 @@ import (
 // (pro/services/server/workflow_svc.go); the licensed build provides the real
 // implementation (pro_impl/services/server/workflow_svc.go).
 type WorkflowService interface {
-	StartWorkflow(workflow db.WorkflowTemplate, user *db.User, correlationID string) (db.WorkflowRun, error)
+	StartWorkflow(workflow db.WorkflowTemplate, user *db.User, correlationID string, input ...db.WorkflowRunInput) (db.WorkflowRun, error)
 	ProgressWorkflowRun(projectID int, runID int, user *db.User) error
 	// StopWorkflowRun stops a non-finished run: it signals every in-flight task
 	// of the run to stop and marks the run as stopped (terminal).

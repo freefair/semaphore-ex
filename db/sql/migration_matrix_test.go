@@ -85,12 +85,14 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	require.NoError(t, db.Migrate(store, nil))
 	freshSchema := captureCapabilitySchema(t, store)
 	assertCapabilitySchema(t, freshSchema)
+	assertWorkflowParameterColumns(t, store, true)
 
 	user, err := store.CreateUserWithoutPassword(fixture.User)
 	require.NoError(t, err)
 
 	require.NoError(t, db.Rollback(store, fixture.Version))
 	assertCapabilityTablesAbsent(t, store)
+	assertWorkflowParameterColumns(t, store, false)
 
 	legacyUser, err := store.GetUser(user.ID)
 	require.NoError(t, err)
@@ -99,6 +101,7 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	require.NoError(t, db.Migrate(store, nil))
 	upgradedSchema := captureCapabilitySchema(t, store)
 	assertCapabilitySchema(t, upgradedSchema)
+	assertWorkflowParameterColumns(t, store, true)
 	assert.Equal(t, freshSchema, upgradedSchema)
 
 	upgradedUser, err := store.GetUser(user.ID)
@@ -148,6 +151,54 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 		UpgradedSchema:                          upgradedSchema,
 		CommunityDataSurvivedRollbackAndUpgrade: communityDataSurvived,
 		RestartPreservedEnhancedData:            restartPreserved,
+	}
+}
+
+func assertWorkflowParameterColumns(t testing.TB, store *SqlDb, expected bool) {
+	t.Helper()
+	tables := map[string]string{
+		"project__workflow_template": "parameter_definitions",
+		"project__workflow_node":     "override_policy",
+		"project__workflow_run":      "parameter_snapshot",
+		"project__workflow_run_node": "override_snapshot",
+	}
+	for table, column := range tables {
+		found := false
+		switch store.GetDialect() {
+		case util.DbDriverSQLite:
+			rows, err := store.Sql().Db.QueryContext(context.Background(), "pragma table_info("+table+")")
+			require.NoError(t, err)
+			for rows.Next() {
+				var cid, notNull, primaryKey int
+				var name, columnType string
+				var defaultValue sql.NullString
+				require.NoError(t, rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey))
+				if name == column {
+					found = true
+					assert.Equal(t, 1, notNull)
+					assert.Equal(t, "text", normalizeMigrationType(columnType))
+				}
+			}
+			require.NoError(t, rows.Err())
+			require.NoError(t, rows.Close())
+		case util.DbDriverMySQL:
+			var count int
+			require.NoError(t, store.Sql().Db.QueryRowContext(context.Background(), `
+				select count(*) from information_schema.columns
+				where table_schema=database() and table_name=? and column_name=?
+					and data_type in ('text', 'longtext') and is_nullable='NO'`, table, column).Scan(&count))
+			found = count == 1
+		case util.DbDriverPostgres:
+			var count int
+			require.NoError(t, store.Sql().Db.QueryRowContext(context.Background(), `
+				select count(*) from information_schema.columns
+				where table_schema=current_schema() and table_name=$1 and column_name=$2
+					and data_type='text' and is_nullable='NO'`, table, column).Scan(&count))
+			found = count == 1
+		default:
+			t.Fatalf("unsupported migration matrix dialect %q", store.GetDialect())
+		}
+		assert.Equalf(t, expected, found, "%s.%s presence", table, column)
 	}
 }
 

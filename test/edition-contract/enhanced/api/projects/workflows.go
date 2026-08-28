@@ -3,6 +3,7 @@ package projects
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 
 const workflowDefinitionBodyLimit int64 = 8 * 1024 * 1024
 const workflowRunCorrelationIDLimit = 64
+const workflowRunBodyLimit int64 = 256 * 1024
 
 type workflowController struct {
 	definitionService pro_interfaces.WorkflowDefinitionService
@@ -37,34 +39,37 @@ type workflowRunNodeDetails struct {
 	Reason         string                             `json:"reason,omitempty"`
 	Result         *db.WorkflowNodeResult             `json:"result,omitempty"`
 	ArtifactInputs []db.WorkflowArtifactInputSnapshot `json:"artifact_inputs,omitempty"`
+	Overrides      db.WorkflowNodeOverride            `json:"overrides,omitempty"`
 	Task           *workflowRunTaskView               `json:"task,omitempty"`
 }
 
 type workflowRunView struct {
-	ID                 int                  `json:"id"`
-	ProjectID          int                  `json:"project_id"`
-	WorkflowTemplateID int                  `json:"workflow_template_id"`
-	Status             db.WorkflowRunStatus `json:"status"`
-	Reason             string               `json:"reason,omitempty"`
-	Version            *string              `json:"version,omitempty"`
-	ActorUserID        int                  `json:"actor_user_id"`
-	DefinitionVersion  int                  `json:"definition_version"`
-	DefinitionRevision int                  `json:"definition_revision"`
-	CorrelationID      string               `json:"correlation_id"`
-	Created            time.Time            `json:"created"`
-	Start              *time.Time           `json:"start,omitempty"`
-	End                *time.Time           `json:"end,omitempty"`
-	RootTaskID         *int                 `json:"root_task_id,omitempty"`
+	ID                 int                                     `json:"id"`
+	ProjectID          int                                     `json:"project_id"`
+	WorkflowTemplateID int                                     `json:"workflow_template_id"`
+	Status             db.WorkflowRunStatus                    `json:"status"`
+	Reason             string                                  `json:"reason,omitempty"`
+	Version            *string                                 `json:"version,omitempty"`
+	ActorUserID        int                                     `json:"actor_user_id"`
+	DefinitionVersion  int                                     `json:"definition_version"`
+	DefinitionRevision int                                     `json:"definition_revision"`
+	CorrelationID      string                                  `json:"correlation_id"`
+	Created            time.Time                               `json:"created"`
+	Start              *time.Time                              `json:"start,omitempty"`
+	End                *time.Time                              `json:"end,omitempty"`
+	RootTaskID         *int                                    `json:"root_task_id,omitempty"`
+	Parameters         map[string]db.WorkflowParameterSnapshot `json:"parameters,omitempty"`
 }
 
 type workflowRunDefinitionView struct {
-	ID                int                   `json:"id"`
-	Name              string                `json:"name"`
-	DefinitionVersion int                   `json:"definition_version"`
-	Revision          int                   `json:"revision"`
-	MaxParallelTasks  int                   `json:"max_parallel_tasks"`
-	Nodes             []workflowRunNodeView `json:"nodes"`
-	Edges             []workflowRunEdgeView `json:"edges"`
+	ID                int                               `json:"id"`
+	Name              string                            `json:"name"`
+	DefinitionVersion int                               `json:"definition_version"`
+	Revision          int                               `json:"revision"`
+	MaxParallelTasks  int                               `json:"max_parallel_tasks"`
+	Parameters        []db.WorkflowParameterDeclaration `json:"parameters,omitempty"`
+	Nodes             []workflowRunNodeView             `json:"nodes"`
+	Edges             []workflowRunEdgeView             `json:"edges"`
 }
 
 type workflowRunNodeView struct {
@@ -81,6 +86,7 @@ type workflowRunNodeView struct {
 	PositionY       int                              `json:"position_y"`
 	ArtifactOutputs []db.WorkflowArtifactDeclaration `json:"artifact_outputs,omitempty"`
 	ArtifactInputs  []db.WorkflowArtifactReference   `json:"artifact_inputs,omitempty"`
+	OverridePolicy  db.WorkflowNodeOverridePolicy    `json:"override_policy,omitempty"`
 }
 
 type workflowRunEdgeView struct {
@@ -186,7 +192,9 @@ func (c *workflowController) UpdateWorkflow(w http.ResponseWriter, r *http.Reque
 
 func bindWorkflowDefinition(w http.ResponseWriter, r *http.Request, workflow *db.WorkflowTemplate) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, workflowDefinitionBodyLimit)
-	if err := json.NewDecoder(r.Body).Decode(workflow); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(workflow); err != nil {
 		var sizeError *http.MaxBytesError
 		if errors.As(err, &sizeError) {
 			helpers.WriteJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
@@ -195,6 +203,10 @@ func bindWorkflowDefinition(w http.ResponseWriter, r *http.Request, workflow *db
 			})
 			return false
 		}
+		w.WriteHeader(http.StatusBadRequest)
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		w.WriteHeader(http.StatusBadRequest)
 		return false
 	}
@@ -240,6 +252,19 @@ func writeWorkflowError(
 
 func (c *workflowController) RunWorkflow(w http.ResponseWriter, r *http.Request) {
 	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
+	input := db.WorkflowRunInput{}
+	if r.Body != nil {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, workflowRunBodyLimit))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil && !errors.Is(err, io.EOF) {
+			helpers.WriteError(w, common_errors.NewValidationError("workflow run input is invalid"))
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			helpers.WriteError(w, common_errors.NewValidationError("workflow run input is invalid"))
+			return
+		}
+	}
 	correlationID := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if correlationID == "" {
 		correlationID = helpers.CorrelationID(r.Context())
@@ -251,7 +276,7 @@ func (c *workflowController) RunWorkflow(w http.ResponseWriter, r *http.Request)
 		helpers.WriteError(w, common_errors.NewValidationError("workflow run idempotency key must not exceed 64 characters"))
 		return
 	}
-	run, err := c.workflowService.StartWorkflow(workflow, helpers.UserFromContext(r), correlationID)
+	run, err := c.workflowService.StartWorkflow(workflow, helpers.UserFromContext(r), correlationID, input)
 	if err != nil {
 		helpers.WriteError(w, err)
 		return
@@ -334,7 +359,7 @@ func (c *workflowController) workflowRunDetails(run db.WorkflowRun) (workflowRun
 		}
 		detail := workflowRunNodeDetails{
 			Node: newWorkflowRunNodeView(node), Status: state.Status, Reason: state.Reason,
-			ArtifactInputs: state.ArtifactInputs,
+			ArtifactInputs: state.ArtifactInputs, Overrides: state.OverrideSnapshot,
 		}
 		if state.ResultJSON != "" && state.ResultJSON != "{}" {
 			result := state.Result
@@ -372,6 +397,7 @@ func newWorkflowRunView(run db.WorkflowRun) workflowRunView {
 		Start:              run.Start,
 		End:                run.End,
 		RootTaskID:         run.RootTaskID,
+		Parameters:         run.ParameterSnapshot,
 	}
 }
 
@@ -392,6 +418,7 @@ func newWorkflowRunDefinitionView(workflow db.WorkflowTemplate) workflowRunDefin
 		ID: workflow.ID, Name: workflow.Name,
 		DefinitionVersion: workflow.DefinitionVersion, Revision: workflow.Revision,
 		MaxParallelTasks: workflow.MaxParallelTasks,
+		Parameters:       workflow.ParameterDefinitions,
 		Nodes:            nodes, Edges: edges,
 	}
 }
@@ -411,6 +438,7 @@ func newWorkflowRunNodeView(node db.WorkflowNode) workflowRunNodeView {
 		PositionY:       node.PositionY,
 		ArtifactOutputs: node.ArtifactOutputs,
 		ArtifactInputs:  node.ArtifactInputs,
+		OverridePolicy:  node.OverridePolicy,
 	}
 }
 

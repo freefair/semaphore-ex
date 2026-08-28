@@ -12,6 +12,16 @@ import (
 	"github.com/semaphoreui/semaphore/util"
 )
 
+func decodeWorkflowParameterDefinitions(workflow *db.WorkflowTemplate) error {
+	if workflow.ParameterDefinitionsJSON == "" {
+		workflow.ParameterDefinitionsJSON = "[]"
+	}
+	if err := json.Unmarshal([]byte(workflow.ParameterDefinitionsJSON), &workflow.ParameterDefinitions); err != nil {
+		return fmt.Errorf("decode workflow parameter definitions: %w", err)
+	}
+	return nil
+}
+
 func (d *WorkflowStoreImpl) GetWorkflowTemplates(projectID int, params db.RetrieveQueryParams) ([]db.WorkflowTemplate, error) {
 	if d.connection == nil {
 		return nil, db.ErrNotFound
@@ -48,6 +58,9 @@ func (d *WorkflowStoreImpl) GetWorkflowTemplates(projectID int, params db.Retrie
 		return nil, err
 	}
 	for index := range workflows {
+		if err := decodeWorkflowParameterDefinitions(&workflows[index]); err != nil {
+			return nil, err
+		}
 		if err := d.loadWorkflowGraph(nil, &workflows[index]); err != nil {
 			return nil, err
 		}
@@ -62,6 +75,9 @@ func (d *WorkflowStoreImpl) GetWorkflowTemplate(projectID int, workflowID int) (
 	var workflow db.WorkflowTemplate
 	if err := d.connection.SelectOne(&workflow,
 		"select * from project__workflow_template where project_id=? and id=?", projectID, workflowID); err != nil {
+		return db.WorkflowTemplate{}, err
+	}
+	if err := decodeWorkflowParameterDefinitions(&workflow); err != nil {
 		return db.WorkflowTemplate{}, err
 	}
 	if err := d.loadWorkflowGraph(nil, &workflow); err != nil {
@@ -82,9 +98,9 @@ func (d *WorkflowStoreImpl) CreateWorkflowTemplate(workflow db.WorkflowTemplate)
 	workflow.DefinitionVersion = db.WorkflowDefinitionVersion
 	workflow.Revision = 1
 	workflow.ID, err = d.insertTx(tx,
-		"insert into project__workflow_template(project_id, name, description, start_version, definition_version, revision, max_parallel_tasks) values (?, ?, ?, ?, ?, ?, ?)",
+		"insert into project__workflow_template(project_id, name, description, start_version, definition_version, revision, max_parallel_tasks, parameter_definitions) values (?, ?, ?, ?, ?, ?, ?, ?)",
 		workflow.ProjectID, workflow.Name, workflow.Description, workflow.StartVersion,
-		workflow.DefinitionVersion, workflow.Revision, workflow.MaxParallelTasks,
+		workflow.DefinitionVersion, workflow.Revision, workflow.MaxParallelTasks, workflow.ParameterDefinitionsJSON,
 	)
 	if err != nil {
 		return db.WorkflowTemplate{}, err
@@ -115,8 +131,8 @@ func (d *WorkflowStoreImpl) UpdateWorkflowTemplate(workflow db.WorkflowTemplate)
 		return db.WorkflowTemplate{}, pro_interfaces.ErrWorkflowRevisionConflict
 	}
 	result, err := tx.Exec(d.connection.PrepareQuery(
-		"update project__workflow_template set name=?, description=?, start_version=?, definition_version=?, max_parallel_tasks=?, revision=revision+1 where project_id=? and id=? and revision=?"),
-		workflow.Name, workflow.Description, workflow.StartVersion, workflow.DefinitionVersion, workflow.MaxParallelTasks,
+		"update project__workflow_template set name=?, description=?, start_version=?, definition_version=?, max_parallel_tasks=?, parameter_definitions=?, revision=revision+1 where project_id=? and id=? and revision=?"),
+		workflow.Name, workflow.Description, workflow.StartVersion, workflow.DefinitionVersion, workflow.MaxParallelTasks, workflow.ParameterDefinitionsJSON,
 		workflow.ProjectID, workflow.ID, workflow.Revision,
 	)
 	if err != nil {
@@ -169,12 +185,15 @@ func (d *WorkflowStoreImpl) selectWorkflowTemplateTx(tx *gorp.Transaction, proje
 	if errors.Is(err, sql.ErrNoRows) {
 		err = db.ErrNotFound
 	}
+	if err == nil {
+		err = decodeWorkflowParameterDefinitions(&workflow)
+	}
 	return workflow, err
 }
 
 func (d *WorkflowStoreImpl) loadWorkflowGraph(tx *gorp.Transaction, workflow *db.WorkflowTemplate) error {
 	nodeQuery := d.connection.PrepareQuery(
-		"select id, workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, task_params_id, note, position_x, position_y, display_name, artifact_outputs, artifact_inputs from project__workflow_node where workflow_template_id=? order by id")
+		"select id, workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, task_params_id, note, position_x, position_y, display_name, artifact_outputs, artifact_inputs, override_policy from project__workflow_node where workflow_template_id=? order by id")
 	edgeQuery := d.connection.PrepareQuery(
 		"select * from project__workflow_edge where workflow_template_id=? order by id")
 	var err error
@@ -205,6 +224,11 @@ func (d *WorkflowStoreImpl) loadWorkflowGraph(tx *gorp.Transaction, workflow *db
 	for index := range workflow.Nodes {
 		if err = decodeWorkflowArtifactDefinition(&workflow.Nodes[index]); err != nil {
 			return err
+		}
+		if workflow.Nodes[index].OverridePolicyJSON != "" {
+			if err = json.Unmarshal([]byte(workflow.Nodes[index].OverridePolicyJSON), &workflow.Nodes[index].OverridePolicy); err != nil {
+				return fmt.Errorf("decode workflow node override policy: %w", err)
+			}
 		}
 		if workflow.Nodes[index].TaskParamsID == nil {
 			continue
@@ -259,9 +283,9 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 		}
 		if _, exists := existingNodes[clientID]; exists && clientID > 0 {
 			if _, err := tx.Exec(d.connection.PrepareQuery(
-				"update project__workflow_node set template_id=?, kind=?, convergence_mode=?, join_mode=?, approval_timeout=?, approval_message=?, task_params_id=?, note=?, position_x=?, position_y=?, display_name=? where workflow_template_id=? and id=?"),
+				"update project__workflow_node set template_id=?, kind=?, convergence_mode=?, join_mode=?, approval_timeout=?, approval_message=?, task_params_id=?, note=?, position_x=?, position_y=?, display_name=?, override_policy=? where workflow_template_id=? and id=?"),
 				node.TemplateID, node.Kind, node.ConvergenceMode, node.JoinMode, node.ApprovalTimeout, node.ApprovalMessage,
-				node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName,
+				node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, node.OverridePolicyJSON,
 				workflow.ID, clientID,
 			); err != nil {
 				return err
@@ -280,9 +304,9 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 			return fmt.Errorf("workflow node %d does not belong to workflow %d", clientID, workflow.ID)
 		}
 		newID, err := d.insertTx(tx,
-			"insert into project__workflow_node(workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, task_params_id, note, position_x, position_y, display_name) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"insert into project__workflow_node(workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, task_params_id, note, position_x, position_y, display_name, override_policy) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			workflow.ID, node.TemplateID, node.Kind, node.ConvergenceMode, node.JoinMode, node.ApprovalTimeout,
-			node.ApprovalMessage, node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName,
+			node.ApprovalMessage, node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, node.OverridePolicyJSON,
 		)
 		if err != nil {
 			return err

@@ -154,7 +154,7 @@ func runService() {
 	// enqueuer), then inject the service back into the pool. The run locker is
 	// Redis-backed in HA mode (cluster-wide progression locks) and nil
 	// otherwise, which makes the service fall back to its in-process locker.
-	workflowService := proServer.NewWorkflowService(workflowStore, store, &taskPool, proHA.NewWorkflowRunLocker())
+	workflowService := proServer.NewWorkflowService(workflowStore, store, &taskPool, proHA.NewWorkflowRunLocker(), encryptionService)
 	workflowDefinitionService := proServer.NewWorkflowDefinitionService(workflowStore, store)
 	taskPool.SetWorkflowService(workflowService)
 

@@ -125,6 +125,12 @@
                 dense
                 @input="markDirty"
               />
+              <WorkflowParameterEditor
+                v-model="item.parameters"
+                :project-id="projectId"
+                :disabled="!canManage"
+                @input="markDirty"
+              />
             </div>
 
             <v-divider />
@@ -396,6 +402,16 @@
               </v-card-text>
             </v-card>
 
+            <WorkflowNodeOverridePolicyEditor
+              v-if="editingNode.kind === 'task' && editingNodeTemplate"
+              v-model="editingNode.override_policy"
+              :project-id="projectId"
+              :template="editingNodeTemplate"
+              :parameters="item.parameters"
+              :disabled="!canManage"
+              @input="applyNodeEdit"
+            />
+
             <template v-if="editingNode.kind === 'task'">
               <div
                 class="d-flex align-center mb-2"
@@ -644,6 +660,8 @@ import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
 import TaskParamsForm from '@/components/TaskParamsForm.vue';
 import WorkflowGraph from '@/components/WorkflowGraph.vue';
+import WorkflowNodeOverridePolicyEditor from '@/components/WorkflowNodeOverridePolicyEditor.vue';
+import WorkflowParameterEditor from '@/components/WorkflowParameterEditor.vue';
 import ProjectMixin from '@/components/ProjectMixin';
 import PermissionsCheck from '@/components/PermissionsCheck';
 import { USER_PERMISSIONS } from '@/lib/constants';
@@ -651,7 +669,12 @@ import { layoutWorkflowNodes, needsAutoLayout } from '@/lib/workflowLayout';
 import { WORKFLOW_DEFINITION_VERSION } from '@/lib/workflowValidation';
 
 export default {
-  components: { TaskParamsForm, WorkflowGraph },
+  components: {
+    TaskParamsForm,
+    WorkflowGraph,
+    WorkflowNodeOverridePolicyEditor,
+    WorkflowParameterEditor,
+  },
   mixins: [ProjectMixin, PermissionsCheck],
   props: {
     projectId: Number,
@@ -753,6 +776,7 @@ export default {
         definition_version: WORKFLOW_DEFINITION_VERSION,
         revision: 0,
         max_parallel_tasks: 4,
+        parameters: [],
         nodes: [],
         edges: [],
       };
@@ -825,6 +849,7 @@ export default {
       }
       if (clone && !Array.isArray(clone.artifact_outputs)) clone.artifact_outputs = [];
       if (clone && !Array.isArray(clone.artifact_inputs)) clone.artifact_inputs = [];
+      if (clone && !clone.override_policy) clone.override_policy = {};
       this.editingNode = clone;
     },
     onConnectionSelected(edge) {
