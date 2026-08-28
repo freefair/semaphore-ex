@@ -1,10 +1,10 @@
 import { expect } from 'chai';
-import SystemInfoDialog from '@/components/SystemInfoDialog.vue';
+import EnhancedSystemInfoPanel from '@/components/EnhancedSystemInfoPanel.vue';
 
 describe('structured file log diagnostics', () => {
   it('maps every writer state to an explicit visual treatment', () => {
-    const color = SystemInfoDialog.methods.structuredLogStateColor;
-    const text = SystemInfoDialog.methods.structuredLogStateText;
+    const color = EnhancedSystemInfoPanel.methods.structuredLogStateColor;
+    const text = EnhancedSystemInfoPanel.methods.structuredLogStateText;
 
     expect(color('healthy')).to.equal('success');
     expect(color('disabled')).to.equal('grey');
@@ -22,26 +22,28 @@ describe('structured file log diagnostics', () => {
       queue_capacity: 16,
       dropped_records: 4,
     };
-    expect(SystemInfoDialog.computed.structuredLogs.call({
-      info: { structured_logs: diagnostics },
+    expect(EnhancedSystemInfoPanel.computed.structuredLogs.call({
+      diagnostics: { structured_logs: diagnostics },
     })).to.equal(diagnostics);
-    expect(SystemInfoDialog.computed.structuredLogs.call({ info: {} })).to.equal(null);
+    expect(
+      EnhancedSystemInfoPanel.computed.structuredLogs.call({ diagnostics: {} }),
+    ).to.equal(null);
   });
 
   it('formats effective retention and incomplete flush information', () => {
-    expect(SystemInfoDialog.methods.structuredLogRetention({
+    expect(EnhancedSystemInfoPanel.methods.structuredLogRetention({
       max_size_megabytes: 10,
       max_age_days: 7,
       max_backups: 3,
       compress: true,
     })).to.equal('10 MB · 7 days · 3 backups · gzip');
-    expect(SystemInfoDialog.methods.structuredLogRetention({
+    expect(EnhancedSystemInfoPanel.methods.structuredLogRetention({
       max_size_megabytes: 1,
       max_age_days: 1,
       max_backups: 1,
       compress: false,
     })).to.equal('1 MB · 1 day · 1 backup');
-    expect(SystemInfoDialog.methods.structuredLogRetention({})).to.equal('unlimited');
-    expect(SystemInfoDialog.methods.formatStructuredLogTime(null)).to.equal('Never');
+    expect(EnhancedSystemInfoPanel.methods.structuredLogRetention({})).to.equal('unlimited');
+    expect(EnhancedSystemInfoPanel.methods.formatStructuredLogTime(null)).to.equal('Never');
   });
 });

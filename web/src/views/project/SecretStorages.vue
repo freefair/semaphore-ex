@@ -7,83 +7,14 @@
       v-model="itemRefsDialog"
     />
 
-    <v-dialog v-model="syncHistoryDialog" max-width="900" scrollable>
-      <v-card>
-        <v-card-title class="d-flex align-center">
-          Synchronization history
-          <v-spacer />
-          <v-btn icon aria-label="Close synchronization history" @click="syncHistoryDialog = false">
-            <v-icon>mdi-close</v-icon>
-          </v-btn>
-        </v-card-title>
-        <v-card-subtitle v-if="syncHistoryStorage">
-          {{ syncHistoryStorage.name }} · Secret values are never included
-        </v-card-subtitle>
-        <v-card-text>
-          <v-progress-linear v-if="syncHistoryLoading" indeterminate color="primary" />
-          <v-alert v-else-if="syncHistoryError" type="error" text>
-            {{ syncHistoryError }}
-            <v-btn text color="primary" @click="openSyncHistory(syncHistoryStorage)">Retry</v-btn>
-          </v-alert>
-          <v-alert v-else-if="syncHistory.length === 0" type="info" text>
-            No synchronization has been attempted yet.
-          </v-alert>
-          <v-expansion-panels v-else accordion>
-            <v-expansion-panel v-for="operation in syncHistory" :key="operation.id">
-              <v-expansion-panel-header>
-                <div class="sync-operation-summary">
-                  <v-chip small :color="syncStatusColor(operation.status)" dark>
-                    {{ operation.status }}
-                  </v-chip>
-                  <span>{{ formatTimestamp(operation.finished_at || operation.created_at) }}</span>
-                  <span>
-                    {{ operation.changed_count }} changed · {{ operation.skipped_count }} skipped ·
-                    {{ operation.conflict_count }} conflicts
-                  </span>
-                </div>
-              </v-expansion-panel-header>
-              <v-expansion-panel-content>
-                <v-alert v-if="operation.error_category" dense text type="warning">
-                  {{ formatCapabilityValue(operation.error_category) }}
-                </v-alert>
-                <v-simple-table dense>
-                  <thead>
-                    <tr>
-                      <th>Status</th>
-                      <th>Semaphore key</th>
-                      <th>Remote reference</th>
-                      <th>Version</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      v-for="outcome in operation.outcomes"
-                      :key="`${operation.id}-${outcome.mapping_id}`"
-                    >
-                      <td>{{ outcome.status }}</td>
-                      <td>{{ keyName(outcome.access_key_id) }}</td>
-                      <td>
-                        <code>{{ outcome.mount }}/{{ outcome.path }}#{{ outcome.field }}</code>
-                      </td>
-                      <td>{{ outcome.remote_version || '—' }}</td>
-                    </tr>
-                  </tbody>
-                </v-simple-table>
-                <v-btn
-                  v-if="operation.status === 'conflict'"
-                  class="mt-4"
-                  color="warning"
-                  :disabled="!runtimeCanWrite || syncInProgress"
-                  @click="syncItem(syncHistoryStorage.id, operation.id)"
-                >
-                  Confirm overwrite of observed versions
-                </v-btn>
-              </v-expansion-panel-content>
-            </v-expansion-panel>
-          </v-expansion-panels>
-        </v-card-text>
-      </v-card>
-    </v-dialog>
+    <SecretStorageSyncHistoryDialog
+      ref="syncHistory"
+      :project-id="projectId"
+      :keys="localKeys"
+      :can-resolve="runtimeCanWrite"
+      :resolving="syncInProgress"
+      @resolve="syncItem($event.storageId, $event.operationId)"
+    />
 
     <YesNoDialog
       :title="$t('deleteStorage')"
@@ -397,21 +328,17 @@
 import axios from 'axios';
 import ItemListPageBase from '@/components/ItemListPageBase';
 import SecretStorageForm from '@/components/SecretStorageForm.vue';
+import SecretStorageSyncHistoryDialog from '@/components/SecretStorageSyncHistoryDialog.vue';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
 import { findCapabilityDecision } from '@/lib/capabilities';
 
 export default {
-  components: { SecretStorageForm },
+  components: { SecretStorageForm, SecretStorageSyncHistoryDialog },
   mixins: [ItemListPageBase],
   data() {
     return {
       itemType: 'vault',
-      syncHistoryDialog: false,
-      syncHistoryLoading: false,
-      syncHistoryError: '',
-      syncHistory: [],
-      syncHistoryStorage: null,
       syncInProgress: false,
       localKeys: [],
     };
@@ -453,10 +380,6 @@ export default {
   methods: {
     async beforeLoadItems() {
       this.localKeys = await this.loadProjectResources('keys');
-    },
-
-    keyName(accessKeyId) {
-      return this.localKeys.find((key) => key.id === accessKeyId)?.name || `#${accessKeyId}`;
     },
 
     formatCapabilityValue(value) {
@@ -511,37 +434,8 @@ export default {
       }
     },
 
-    async openSyncHistory(storage) {
-      if (!storage) {
-        return;
-      }
-      this.syncHistoryStorage = storage;
-      this.syncHistoryDialog = true;
-      this.syncHistoryLoading = true;
-      this.syncHistoryError = '';
-      try {
-        this.syncHistory = (
-          await axios.get(
-            `/api/project/${this.projectId}/secret_storages/${storage.id}/sync/history?limit=25`,
-          )
-        ).data;
-      } catch (err) {
-        this.syncHistoryError = getErrorMessage(err);
-      } finally {
-        this.syncHistoryLoading = false;
-      }
-    },
-
-    syncStatusColor(status) {
-      return (
-        {
-          succeeded: 'success',
-          conflict: 'warning',
-          failed: 'error',
-          running: 'info',
-          pending: 'info',
-        }[status] || 'grey'
-      );
+    openSyncHistory(storage) {
+      this.$refs.syncHistory.open(storage);
     },
 
     formatTimestamp(value) {

@@ -1,8 +1,8 @@
 import { expect } from 'chai';
 import axios from 'axios';
 import TotpEnrollmentPanel from '@/components/TotpEnrollmentPanel.vue';
-import SystemInfoDialog from '@/components/SystemInfoDialog.vue';
-import Auth from '@/views/Auth.vue';
+import TotpRequiredEnrollment from '@/components/TotpRequiredEnrollment.vue';
+import EnhancedSystemInfoPanel from '@/components/EnhancedSystemInfoPanel.vue';
 import { capabilityStateColor } from '@/lib/capabilities';
 
 describe('TOTP lifecycle UI contracts', () => {
@@ -78,20 +78,20 @@ describe('TOTP lifecycle UI contracts', () => {
       return { data: {} };
     };
     const context = {
-      enrollmentCeremony: null,
-      enrollmentReauthentication: 'proof',
-      enrollmentCode: '654321',
-      enrollmentRecoveryStored: true,
-      enrollmentStage: 'confirm',
-      async runEnrollment(operation) { await operation(); },
-      redirectAfterLogin() { this.redirected = true; },
+      ceremony: null,
+      reauthentication: 'proof',
+      passcode: '654321',
+      recoveryStored: true,
+      stage: 'confirm',
+      async run(operation) { await operation(); },
+      $emit(event) { if (event === 'complete') this.completed = true; },
     };
 
-    await Auth.methods.beginRequiredEnrollment.call(context);
-    await Auth.methods.confirmRequiredEnrollment.call(context);
-    expect(context.enrollmentStage).to.equal('acknowledge');
-    await Auth.methods.acknowledgeRequiredRecovery.call(context);
-    expect(context.redirected).to.equal(true);
+    await TotpRequiredEnrollment.methods.beginEnrollment.call(context);
+    await TotpRequiredEnrollment.methods.confirmEnrollment.call(context);
+    expect(context.stage).to.equal('acknowledge');
+    await TotpRequiredEnrollment.methods.acknowledgeRecovery.call(context);
+    expect(context.completed).to.equal(true);
     expect(requests.map(({ url }) => url)).to.deep.equal([
       '/api/auth/totp/enroll',
       '/api/auth/totp/enroll/23/confirm',
@@ -119,11 +119,11 @@ describe('TOTP lifecycle UI contracts', () => {
     };
     const emitted = [];
     context.$emit = (event) => emitted.push(event);
-    context.loadTotpRollout = SystemInfoDialog.methods.loadTotpRollout.bind(context);
+    context.loadTotpRollout = EnhancedSystemInfoPanel.methods.loadTotpRollout.bind(context);
 
     await context.loadTotpRollout();
     expect(context.totpRollout.selected_user_ids).to.deep.equal([4]);
-    await SystemInfoDialog.methods.saveTotpRollout.call(context);
+    await EnhancedSystemInfoPanel.methods.saveTotpRollout.call(context);
     expect(saved.url).to.equal('/api/capabilities/totp');
     expect(saved.data.state).to.equal('required_selected');
     expect(emitted).to.deep.equal(['totp-rollout-updated']);

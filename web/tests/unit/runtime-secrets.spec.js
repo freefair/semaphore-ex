@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import EnvironmentForm from '@/components/EnvironmentForm.vue';
 import KeyForm from '@/components/KeyForm.vue';
 import SecretStorageForm from '@/components/SecretStorageForm.vue';
+import SecretStorageSyncHistoryDialog from '@/components/SecretStorageSyncHistoryDialog.vue';
 import SecretStorageSyncOptionsForm from '@/components/SecretStorageSyncOptionsForm.vue';
 import SecretStorages from '@/views/project/SecretStorages.vue';
 
@@ -120,10 +121,12 @@ describe('runtime secret provider component contracts', () => {
     expect(emitted[0].event).to.equal('input');
 
     const historyContext = {
-      localKeys: [{ id: 7, name: 'Deployment key' }],
+      keys: [{ id: 7, name: 'Deployment key' }],
     };
-    expect(SecretStorages.methods.keyName.call(historyContext, 7)).to.equal('Deployment key');
-    expect(SecretStorages.methods.keyName.call(historyContext, 8)).to.equal('#8');
+    expect(SecretStorageSyncHistoryDialog.methods.keyName.call(historyContext, 7)).to.equal(
+      'Deployment key',
+    );
+    expect(SecretStorageSyncHistoryDialog.methods.keyName.call(historyContext, 8)).to.equal('#8');
 
     const headers = SecretStorages.methods.getHeaders.call({
       $i18n: { t: (value) => value },
