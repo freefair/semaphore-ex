@@ -139,6 +139,33 @@ describe('linear workflow run dashboard', () => {
     }]);
   });
 
+  it('counts effective parameters and node overrides for the compact audit panel', () => {
+    const details = {
+      run: {
+        parameters: {
+          region: { type: 'string', value: 'eu', source: 'user' },
+          token: {
+            type: 'secret_reference',
+            secret_reference: { access_key_id: 41 },
+            reference_fingerprint: 'sha256:abc',
+          },
+        },
+      },
+      nodes: [
+        { node: { id: 11 }, overrides: { inventory_id: 5 } },
+        { node: { id: 12 }, overrides: {} },
+      ],
+    };
+    const parameterEntries = Object.entries(details.run.parameters)
+      .map(([name, snapshot]) => ({ name, snapshot }));
+    const overrideEntries = details.nodes
+      .filter((entry) => Object.keys(entry.overrides).length)
+      .map((entry) => ({ nodeId: entry.node.id, overrides: entry.overrides }));
+
+    expect(parameterEntries).to.have.length(2);
+    expect(overrideEntries).to.have.length(1);
+  });
+
   it('refreshes only when an existing task in this run changes', () => {
     let reloads = 0;
     const context = {

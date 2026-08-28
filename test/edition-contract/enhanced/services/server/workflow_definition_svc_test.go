@@ -116,6 +116,56 @@ func TestWorkflowDefinitionServiceRejectsMalformedConditionAndParallelismLimit(t
 	assert.Empty(t, stored)
 }
 
+func TestWorkflowDefinitionServiceRejectsUnapprovedParameterAndOverrideResources(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	defer store.Close()
+	project, err := store.CreateProject(db.Project{Name: "Resource validation"})
+	require.NoError(t, err)
+	otherProject, err := store.CreateProject(db.Project{Name: "Other project"})
+	require.NoError(t, err)
+	templateID := insertWorkflowTestTemplate(t, store, project.ID)
+	foreignKey, err := store.CreateAccessKey(db.AccessKey{
+		ProjectID: &otherProject.ID, Name: "Foreign secret", Type: db.AccessKeyString, Owner: db.AccessKeyShared,
+	})
+	require.NoError(t, err)
+	foreignInventory, err := store.CreateInventory(db.Inventory{
+		ProjectID: otherProject.ID, Name: "Foreign inventory", Type: db.InventoryStatic, Inventory: "localhost",
+	})
+	require.NoError(t, err)
+	foreignEnvironment, err := store.CreateEnvironment(db.Environment{
+		ProjectID: otherProject.ID, Name: "Foreign environment", JSON: `{}`,
+	})
+	require.NoError(t, err)
+	repository := workflowSQL.NewWorkflowStore(store.GetConnection())
+	service := NewWorkflowDefinitionService(repository, store)
+
+	_, validation, err := service.Create(project.ID, db.WorkflowTemplate{
+		Name: "Invalid resources",
+		ParameterDefinitions: []db.WorkflowParameterDeclaration{{
+			Name: "token", Type: db.WorkflowParameterSecretReference,
+			SecretOptions: []db.WorkflowSecretOption{{AccessKeyID: foreignKey.ID}},
+		}},
+		Nodes: []db.WorkflowNode{{
+			ID: -1, TemplateID: templateID,
+			OverridePolicy: db.WorkflowNodeOverridePolicy{
+				InventoryIDs: []int{foreignInventory.ID}, EnvironmentIDs: []int{foreignEnvironment.ID},
+				CredentialParameters: []string{"missing_token"}, AllowArguments: true, AllowBranch: true,
+			},
+		}},
+	})
+
+	require.NoError(t, err)
+	assert.False(t, validation.Valid)
+	codes := workflowServiceIssueCodes(validation)
+	assert.Contains(t, codes, "WORKFLOW_PARAMETER_SECRET_NOT_APPROVED")
+	assert.Contains(t, codes, "WORKFLOW_NODE_INVENTORY_OVERRIDE_FORBIDDEN")
+	assert.Contains(t, codes, "WORKFLOW_NODE_ARGUMENTS_OVERRIDE_FORBIDDEN")
+	assert.Contains(t, codes, "WORKFLOW_NODE_BRANCH_OVERRIDE_FORBIDDEN")
+	assert.Contains(t, codes, "WORKFLOW_NODE_INVENTORY_NOT_IN_PROJECT")
+	assert.Contains(t, codes, "WORKFLOW_NODE_ENVIRONMENT_NOT_IN_PROJECT")
+	assert.Contains(t, codes, "WORKFLOW_NODE_CREDENTIAL_PARAMETER_INVALID")
+}
+
 func insertWorkflowTestTemplate(t *testing.T, store *coresql.SqlDb, projectID int) int {
 	t.Helper()
 	keyResult, err := store.GetConnection().Exec(

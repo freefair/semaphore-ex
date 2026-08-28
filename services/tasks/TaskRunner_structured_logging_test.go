@@ -65,7 +65,7 @@ type workflowOutputServiceStub struct {
 	outputs map[string]json.RawMessage
 }
 
-func (*workflowOutputServiceStub) StartWorkflow(db.WorkflowTemplate, *db.User, string) (db.WorkflowRun, error) {
+func (*workflowOutputServiceStub) StartWorkflow(db.WorkflowTemplate, *db.User, string, ...db.WorkflowRunInput) (db.WorkflowRun, error) {
 	return db.WorkflowRun{}, nil
 }
 func (*workflowOutputServiceStub) ProgressWorkflowRun(int, int, *db.User) error { return nil }

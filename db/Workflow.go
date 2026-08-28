@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
@@ -97,6 +98,9 @@ type WorkflowTemplate struct {
 	Revision          int `db:"revision" json:"revision" backup:"revision"`
 	MaxParallelTasks  int `db:"max_parallel_tasks" json:"max_parallel_tasks" backup:"max_parallel_tasks"`
 
+	ParameterDefinitionsJSON string                         `db:"parameter_definitions" json:"-" backup:"parameter_definitions"`
+	ParameterDefinitions     []WorkflowParameterDeclaration `db:"-" json:"parameters,omitempty" backup:"-"`
+
 	Nodes []WorkflowNode `db:"-" bolt:"include" json:"nodes" backup:"-"`
 	Edges []WorkflowEdge `db:"-" bolt:"include" json:"edges" backup:"edges"`
 
@@ -123,6 +127,9 @@ type WorkflowNode struct {
 	ArtifactInputsJSON  string                        `db:"artifact_inputs" json:"-" backup:"artifact_inputs"`
 	ArtifactOutputs     []WorkflowArtifactDeclaration `db:"-" json:"artifact_outputs,omitempty" backup:"-"`
 	ArtifactInputs      []WorkflowArtifactReference   `db:"-" json:"artifact_inputs,omitempty" backup:"-"`
+
+	OverridePolicyJSON string                     `db:"override_policy" json:"-" backup:"override_policy"`
+	OverridePolicy     WorkflowNodeOverridePolicy `db:"-" json:"override_policy,omitempty" backup:"-"`
 
 	Note         *string `db:"note" json:"note,omitempty" backup:"note"`
 	DelaySeconds *int    `db:"delay_seconds" json:"delay_seconds,omitempty" backup:"delay_seconds"`
@@ -228,9 +235,11 @@ type WorkflowRun struct {
 	DefinitionRevision int    `db:"definition_revision" json:"definition_revision" backup:"definition_revision"`
 	CorrelationID      string `db:"correlation_id" json:"correlation_id" backup:"correlation_id"`
 
-	DefinitionSnapshotJSON string            `db:"definition_snapshot" json:"-" backup:"definition_snapshot"`
-	DefinitionSnapshot     WorkflowTemplate  `db:"-" json:"definition" backup:"-"`
-	Nodes                  []WorkflowRunNode `db:"-" json:"nodes" backup:"-"`
+	DefinitionSnapshotJSON string                               `db:"definition_snapshot" json:"-" backup:"definition_snapshot"`
+	DefinitionSnapshot     WorkflowTemplate                     `db:"-" json:"definition" backup:"-"`
+	ParameterSnapshotJSON  string                               `db:"parameter_snapshot" json:"-" backup:"parameter_snapshot"`
+	ParameterSnapshot      map[string]WorkflowParameterSnapshot `db:"-" json:"parameters,omitempty" backup:"-"`
+	Nodes                  []WorkflowRunNode                    `db:"-" json:"nodes" backup:"-"`
 
 	Created time.Time  `db:"created" json:"created" backup:"created"`
 	Start   *time.Time `db:"start" json:"start,omitempty" backup:"start"`
@@ -277,11 +286,21 @@ type WorkflowRunNode struct {
 	Result               WorkflowNodeResult              `db:"-" json:"result,omitempty" backup:"-"`
 	ArtifactInputsJSON   string                          `db:"artifact_inputs" json:"-" backup:"artifact_inputs"`
 	ArtifactInputs       []WorkflowArtifactInputSnapshot `db:"-" json:"artifact_inputs,omitempty" backup:"-"`
+	OverrideSnapshotJSON string                          `db:"override_snapshot" json:"-" backup:"override_snapshot"`
+	OverrideSnapshot     WorkflowNodeOverride            `db:"-" json:"overrides,omitempty" backup:"-"`
 
 	Created time.Time  `db:"created" json:"created" backup:"created"`
 	Queued  *time.Time `db:"queued" json:"queued,omitempty" backup:"queued"`
 	Start   *time.Time `db:"start" json:"start,omitempty" backup:"start"`
 	End     *time.Time `db:"end" json:"end,omitempty" backup:"end"`
+}
+
+// WorkflowRunInput contains the two value sources used by the start service.
+// TriggerValues is internal-only; direct run API callers supply UserValues.
+type WorkflowRunInput struct {
+	TriggerValues map[string]json.RawMessage   `json:"-"`
+	UserValues    map[string]json.RawMessage   `json:"parameters,omitempty"`
+	NodeOverrides map[int]WorkflowNodeOverride `json:"node_overrides,omitempty"`
 }
 
 type WorkflowApprovalStatus string
@@ -381,6 +400,14 @@ func (status WorkflowApprovalStatus) Validate() error {
 // validate against a minimal mock instead of a full store.
 type WorkflowTemplateValidationStore interface {
 	GetTemplate(projectID int, templateID int) (Template, error)
+}
+
+// WorkflowParameterValidationStore resolves every project-scoped resource a
+// workflow parameter or node override is allowed to reference.
+type WorkflowParameterValidationStore interface {
+	GetInventory(projectID int, inventoryID int) (Inventory, error)
+	GetEnvironment(projectID int, environmentID int) (Environment, error)
+	GetAccessKey(projectID int, accessKeyID int) (AccessKey, error)
 }
 
 // WorkflowNodeResultStore exposes only the sanitized, persisted summary used

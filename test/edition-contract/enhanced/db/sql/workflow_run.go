@@ -104,10 +104,10 @@ func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (db.WorkflowRu
 		}
 	}()
 	run.ID, err = d.insertTx(tx,
-		"insert into project__workflow_run(project_id, workflow_template_id, status, version, start, end, root_task_id, actor_user_id, definition_version, definition_revision, definition_snapshot, correlation_id, created, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"insert into project__workflow_run(project_id, workflow_template_id, status, version, start, end, root_task_id, actor_user_id, definition_version, definition_revision, definition_snapshot, parameter_snapshot, correlation_id, created, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		run.ProjectID, run.WorkflowTemplateID, run.Status, run.Version, run.Start, run.End, run.RootTaskID,
 		run.ActorUserID, run.DefinitionVersion, run.DefinitionRevision, run.DefinitionSnapshotJSON,
-		run.CorrelationID, run.Created, run.Reason,
+		run.ParameterSnapshotJSON, run.CorrelationID, run.Created, run.Reason,
 	)
 	if err != nil {
 		_ = tx.Rollback()
@@ -124,10 +124,13 @@ func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (db.WorkflowRu
 		if node.ArtifactInputsJSON == "" {
 			node.ArtifactInputsJSON = "[]"
 		}
+		if node.OverrideSnapshotJSON == "" {
+			node.OverrideSnapshotJSON = "{}"
+		}
 		node.ID, err = d.insertTx(tx,
-			"insert into project__workflow_run_node(project_id, workflow_run_id, workflow_node_id, template_id, status, task_id, template_snapshot, result, artifact_inputs, created, queued, start, end, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"insert into project__workflow_run_node(project_id, workflow_run_id, workflow_node_id, template_id, status, task_id, template_snapshot, result, artifact_inputs, override_snapshot, created, queued, start, end, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			node.ProjectID, node.WorkflowRunID, node.WorkflowNodeID, node.TemplateID, node.Status,
-			node.TaskID, node.TemplateSnapshotJSON, node.ResultJSON, node.ArtifactInputsJSON, node.Created, node.Queued, node.Start, node.End, node.Reason,
+			node.TaskID, node.TemplateSnapshotJSON, node.ResultJSON, node.ArtifactInputsJSON, node.OverrideSnapshotJSON, node.Created, node.Queued, node.Start, node.End, node.Reason,
 		)
 		if err != nil {
 			return db.WorkflowRun{}, err
@@ -484,6 +487,11 @@ func (d *WorkflowStoreImpl) loadWorkflowRun(run *db.WorkflowRun) error {
 			return fmt.Errorf("decode workflow definition snapshot: %w", err)
 		}
 	}
+	if run.ParameterSnapshotJSON != "" {
+		if err := json.Unmarshal([]byte(run.ParameterSnapshotJSON), &run.ParameterSnapshot); err != nil {
+			return fmt.Errorf("decode workflow parameter snapshot: %w", err)
+		}
+	}
 	if _, err := d.connection.SelectAll(&run.Nodes,
 		"select * from project__workflow_run_node where project_id=? and workflow_run_id=? order by id",
 		run.ProjectID, run.ID,
@@ -512,6 +520,11 @@ func decodeWorkflowRunNode(node *db.WorkflowRunNode) error {
 	if node.ArtifactInputsJSON != "" {
 		if err := json.Unmarshal([]byte(node.ArtifactInputsJSON), &node.ArtifactInputs); err != nil {
 			return fmt.Errorf("decode workflow artifact input snapshot: %w", err)
+		}
+	}
+	if node.OverrideSnapshotJSON != "" {
+		if err := json.Unmarshal([]byte(node.OverrideSnapshotJSON), &node.OverrideSnapshot); err != nil {
+			return fmt.Errorf("decode workflow node override snapshot: %w", err)
 		}
 	}
 	return nil

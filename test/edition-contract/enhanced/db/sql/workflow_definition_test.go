@@ -63,6 +63,35 @@ func TestWorkflowDefinitionRoundTripPreservesGraphIDsAndLayout(t *testing.T) {
 	assert.Equal(t, edgeID, reloaded.Edges[0].ID)
 }
 
+func TestWorkflowDefinitionRoundTripPreservesParametersAndOverridePolicy(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	workflow := repositoryWorkflow(projectID)
+	workflow.ParameterDefinitions = []db.WorkflowParameterDeclaration{{
+		Name: "region", Type: db.WorkflowParameterEnumeration,
+		Options: []string{"eu", "us"}, Default: json.RawMessage(`"eu"`),
+	}}
+	parameterJSON, err := json.Marshal(workflow.ParameterDefinitions)
+	require.NoError(t, err)
+	workflow.ParameterDefinitionsJSON = string(parameterJSON)
+	workflow.Nodes[0].OverridePolicy = db.WorkflowNodeOverridePolicy{
+		InventoryIDs: []int{11, 12}, EnvironmentIDs: []int{21}, AllowArguments: true,
+	}
+	policyJSON, err := json.Marshal(workflow.Nodes[0].OverridePolicy)
+	require.NoError(t, err)
+	workflow.Nodes[0].OverridePolicyJSON = string(policyJSON)
+
+	created, err := repository.CreateWorkflowTemplate(workflow)
+	require.NoError(t, err)
+	reloaded, err := repository.GetWorkflowTemplate(projectID, created.ID)
+	require.NoError(t, err)
+	require.Len(t, reloaded.ParameterDefinitions, 1)
+	assert.Equal(t, "region", reloaded.ParameterDefinitions[0].Name)
+	assert.Equal(t, []int{11, 12}, reloaded.Nodes[0].OverridePolicy.InventoryIDs)
+	assert.Equal(t, []int{21}, reloaded.Nodes[0].OverridePolicy.EnvironmentIDs)
+	assert.True(t, reloaded.Nodes[0].OverridePolicy.AllowArguments)
+}
+
 func TestWorkflowDefinitionUpdateRejectsStaleRevisionWithoutOverwrite(t *testing.T) {
 	store, repository, projectID := workflowRepositoryFixture(t)
 	defer store.Close()

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -67,6 +68,287 @@ func TestWorkflowServiceRunsTwoNodesInOrderFromImmutableSnapshot(t *testing.T) {
 	assert.NotNil(t, completed.End)
 	assert.Equal(t, db.WorkflowRunNodeSucceeded, completed.Nodes[1].Status)
 	assert.Len(t, fixture.enqueuer.tasks, 2)
+}
+
+func TestWorkflowRunParametersAndNodeOverridesMapToFrozenTaskInputs(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	fixture.first.AllowOverrideArgsInTask = true
+	require.NoError(t, fixture.store.UpdateTemplate(fixture.first))
+	credential, err := fixture.store.CreateAccessKey(db.AccessKey{
+		ProjectID: &fixture.projectID, Name: "Deployment token", Type: db.AccessKeyString,
+		Owner: db.AccessKeyShared,
+	})
+	require.NoError(t, err)
+	raw := db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Parameterized", DefinitionVersion: db.WorkflowDefinitionVersion,
+		ParameterDefinitions: []db.WorkflowParameterDeclaration{
+			{Name: "region", Type: db.WorkflowParameterString, Default: json.RawMessage(`"eu"`)},
+			{Name: "replicas", Type: db.WorkflowParameterInteger, Required: true},
+			{Name: "token", Type: db.WorkflowParameterSecretReference, Required: true,
+				SecretOptions: []db.WorkflowSecretOption{{AccessKeyID: credential.ID, Label: "Deployment token"}}},
+		},
+		Nodes: []db.WorkflowNode{{
+			ID: -1, TemplateID: fixture.first.ID, DisplayName: "Deploy",
+			TaskParams: &db.TaskParams{Environment: `{"region":"node"}`},
+			OverridePolicy: db.WorkflowNodeOverridePolicy{
+				AllowArguments: true, CredentialParameters: []string{"token"},
+			},
+		}},
+	}
+	prepared, validation, err := workflowDB.PrepareWorkflowTemplate(fixture.store, raw)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	workflow, err := fixture.repository.CreateWorkflowTemplate(prepared)
+	require.NoError(t, err)
+	arguments := `["--check"]`
+	reader := &workflowCredentialReaderStub{value: "resolved-secret"}
+	service := NewWorkflowService(fixture.repository, fixture.store, fixture.enqueuer, nil, reader)
+	run, err := service.StartWorkflow(workflow, &fixture.user, "parameterized", db.WorkflowRunInput{
+		TriggerValues: map[string]json.RawMessage{"region": json.RawMessage(`"trigger"`)},
+		UserValues: map[string]json.RawMessage{
+			"region": json.RawMessage(`"user"`), "replicas": json.RawMessage(`3`),
+			"token": json.RawMessage(fmt.Sprintf(`{"access_key_id":%d}`, credential.ID)),
+		},
+		NodeOverrides: map[int]db.WorkflowNodeOverride{
+			workflow.Nodes[0].ID: {Arguments: &arguments},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, fixture.enqueuer.inputTasks, 1)
+	inputTask := fixture.enqueuer.inputTasks[0]
+	assert.JSONEq(t, `{"region":"node","replicas":3}`, inputTask.Environment,
+		"definition-level node environment must win over run values")
+	assert.JSONEq(t, `{"token":"resolved-secret"}`, inputTask.Secret)
+	require.NotNil(t, inputTask.Arguments)
+	assert.Equal(t, arguments, *inputTask.Arguments)
+	assert.Equal(t, 1, reader.calls)
+
+	persisted, err := fixture.store.GetTask(fixture.projectID, fixture.enqueuer.tasks[0].ID)
+	require.NoError(t, err)
+	assert.Empty(t, persisted.Secret)
+	assert.NotContains(t, persisted.Environment, "resolved-secret")
+	assert.NotContains(t, run.ParameterSnapshotJSON, "resolved-secret")
+	assert.NotEmpty(t, run.ParameterSnapshot["token"].ReferenceFingerprint)
+}
+
+func TestWorkflowSecretParameterIsNotInjectedWithoutNodeApproval(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	credential, err := fixture.store.CreateAccessKey(db.AccessKey{
+		ProjectID: &fixture.projectID, Name: "Scoped token", Type: db.AccessKeyString,
+		Owner: db.AccessKeyShared,
+	})
+	require.NoError(t, err)
+	prepared, validation, err := workflowDB.PrepareWorkflowTemplate(fixture.store, db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Scoped secret", DefinitionVersion: db.WorkflowDefinitionVersion,
+		ParameterDefinitions: []db.WorkflowParameterDeclaration{{
+			Name: "token", Type: db.WorkflowParameterSecretReference, Required: true,
+			SecretOptions: []db.WorkflowSecretOption{{AccessKeyID: credential.ID}},
+		}},
+		Nodes: []db.WorkflowNode{{ID: -1, TemplateID: fixture.first.ID}},
+	})
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	workflow, err := fixture.repository.CreateWorkflowTemplate(prepared)
+	require.NoError(t, err)
+	reader := &workflowCredentialReaderStub{value: "must-not-leak"}
+	service := NewWorkflowService(fixture.repository, fixture.store, fixture.enqueuer, nil, reader)
+	_, err = service.StartWorkflow(workflow, &fixture.user, "scoped-secret", db.WorkflowRunInput{
+		UserValues: map[string]json.RawMessage{
+			"token": json.RawMessage(fmt.Sprintf(`{"access_key_id":%d}`, credential.ID)),
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, fixture.enqueuer.inputTasks, 1)
+	assert.Empty(t, fixture.enqueuer.inputTasks[0].Secret)
+	assert.Zero(t, reader.calls)
+}
+
+func TestWorkflowRunRejectsPlaintextAndForbiddenNodeOverrides(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	credential, err := fixture.store.CreateAccessKey(db.AccessKey{
+		ProjectID: &fixture.projectID, Name: "Deployment token", Type: db.AccessKeyString,
+		Owner: db.AccessKeyShared,
+	})
+	require.NoError(t, err)
+	raw := db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Restricted", DefinitionVersion: db.WorkflowDefinitionVersion,
+		ParameterDefinitions: []db.WorkflowParameterDeclaration{{
+			Name: "token", Type: db.WorkflowParameterSecretReference,
+			SecretOptions: []db.WorkflowSecretOption{{AccessKeyID: credential.ID}},
+		}},
+		Nodes: []db.WorkflowNode{{ID: -1, TemplateID: fixture.first.ID}},
+	}
+	prepared, validation, err := workflowDB.PrepareWorkflowTemplate(fixture.store, raw)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	workflow, err := fixture.repository.CreateWorkflowTemplate(prepared)
+	require.NoError(t, err)
+	reader := &workflowCredentialReaderStub{value: "must-not-be-used"}
+	service := NewWorkflowService(fixture.repository, fixture.store, fixture.enqueuer, nil, reader)
+
+	_, err = service.StartWorkflow(workflow, &fixture.user, "plaintext", db.WorkflowRunInput{
+		UserValues: map[string]json.RawMessage{"token": json.RawMessage(`"plaintext"`)},
+	})
+	require.Error(t, err)
+	branch := "main"
+	_, err = service.StartWorkflow(workflow, &fixture.user, "forbidden-branch", db.WorkflowRunInput{
+		NodeOverrides: map[int]db.WorkflowNodeOverride{workflow.Nodes[0].ID: {GitBranch: &branch}},
+	})
+	require.Error(t, err)
+	assert.Zero(t, reader.calls)
+	assert.Empty(t, fixture.enqueuer.tasks)
+}
+
+func TestWorkflowRunAppliesApprovedResourceAndTemplateOverrides(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	defaultInventory, err := fixture.store.CreateInventory(db.Inventory{
+		ProjectID: fixture.projectID, Name: "Default", Type: db.InventoryStatic, Inventory: "localhost",
+	})
+	require.NoError(t, err)
+	approvedInventory, err := fixture.store.CreateInventory(db.Inventory{
+		ProjectID: fixture.projectID, Name: "Approved", Type: db.InventoryStatic, Inventory: "localhost",
+	})
+	require.NoError(t, err)
+	defaultEnvironment, err := fixture.store.CreateEnvironment(db.Environment{
+		ProjectID: fixture.projectID, Name: "Default", JSON: `{}`, ENV: nil,
+	})
+	require.NoError(t, err)
+	approvedEnvironment, err := fixture.store.CreateEnvironment(db.Environment{
+		ProjectID: fixture.projectID, Name: "Approved", JSON: `{}`, ENV: nil,
+	})
+	require.NoError(t, err)
+	fixture.first.InventoryID = &defaultInventory.ID
+	fixture.first.EnvironmentIDs = []int{defaultEnvironment.ID}
+	fixture.first.TaskParams = db.MapStringAnyField{"allow_override_inventory": true}
+	fixture.first.AllowOverrideArgsInTask = true
+	fixture.first.AllowOverrideBranchInTask = true
+	require.NoError(t, fixture.store.UpdateTemplate(fixture.first))
+
+	raw := db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Approved overrides", DefinitionVersion: db.WorkflowDefinitionVersion,
+		Nodes: []db.WorkflowNode{{
+			ID: -1, TemplateID: fixture.first.ID,
+			OverridePolicy: db.WorkflowNodeOverridePolicy{
+				InventoryIDs: []int{approvedInventory.ID}, EnvironmentIDs: []int{approvedEnvironment.ID},
+				AllowArguments: true, AllowBranch: true,
+			},
+		}},
+	}
+	prepared, validation, err := workflowDB.PrepareWorkflowTemplate(fixture.store, raw)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	workflow, err := fixture.repository.CreateWorkflowTemplate(prepared)
+	require.NoError(t, err)
+	arguments, branch := `["--check"]`, "release"
+	environmentIDs := []int{approvedEnvironment.ID}
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "approved-overrides", db.WorkflowRunInput{
+		NodeOverrides: map[int]db.WorkflowNodeOverride{workflow.Nodes[0].ID: {
+			InventoryID: &approvedInventory.ID, EnvironmentIDs: &environmentIDs,
+			Arguments: &arguments, GitBranch: &branch,
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, fixture.enqueuer.inputTasks, 1)
+	require.Len(t, fixture.enqueuer.templates, 1)
+	require.NotNil(t, fixture.enqueuer.inputTasks[0].InventoryID)
+	assert.Equal(t, approvedInventory.ID, *fixture.enqueuer.inputTasks[0].InventoryID)
+	require.NotNil(t, fixture.enqueuer.inputTasks[0].Arguments)
+	assert.Equal(t, arguments, *fixture.enqueuer.inputTasks[0].Arguments)
+	require.NotNil(t, fixture.enqueuer.inputTasks[0].GitBranch)
+	assert.Equal(t, branch, *fixture.enqueuer.inputTasks[0].GitBranch)
+	assert.Equal(t, []int{approvedEnvironment.ID}, fixture.enqueuer.templates[0].EnvironmentIDs)
+	assert.Equal(t, []int{approvedEnvironment.ID}, run.Nodes[0].TemplateSnapshot.EnvironmentIDs)
+	assert.Equal(t, []int{approvedEnvironment.ID}, *run.Nodes[0].OverrideSnapshot.EnvironmentIDs)
+}
+
+func TestWorkflowRunRejectsDeletedApprovedResourceBeforePersistingRun(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	inventory, err := fixture.store.CreateInventory(db.Inventory{
+		ProjectID: fixture.projectID, Name: "Ephemeral", Type: db.InventoryStatic, Inventory: "localhost",
+	})
+	require.NoError(t, err)
+	fixture.first.TaskParams = db.MapStringAnyField{"allow_override_inventory": true}
+	require.NoError(t, fixture.store.UpdateTemplate(fixture.first))
+	prepared, validation, err := workflowDB.PrepareWorkflowTemplate(fixture.store, db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Deleted resource", DefinitionVersion: db.WorkflowDefinitionVersion,
+		Nodes: []db.WorkflowNode{{
+			ID: -1, TemplateID: fixture.first.ID,
+			OverridePolicy: db.WorkflowNodeOverridePolicy{InventoryIDs: []int{inventory.ID}},
+		}},
+	})
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	workflow, err := fixture.repository.CreateWorkflowTemplate(prepared)
+	require.NoError(t, err)
+	require.NoError(t, fixture.store.DeleteInventory(fixture.projectID, inventory.ID))
+
+	_, err = fixture.service.StartWorkflow(workflow, &fixture.user, "deleted-resource", db.WorkflowRunInput{
+		NodeOverrides: map[int]db.WorkflowNodeOverride{
+			workflow.Nodes[0].ID: {InventoryID: &inventory.ID},
+		},
+	})
+	require.Error(t, err)
+	runs, listErr := fixture.repository.GetWorkflowRuns(
+		fixture.projectID, workflow.ID, db.RetrieveQueryParams{},
+	)
+	require.NoError(t, listErr)
+	assert.Empty(t, runs, "invalid runtime resources must fail before the run snapshot is persisted")
+	assert.Empty(t, fixture.enqueuer.tasks)
+}
+
+func TestWorkflowRunResolvesSecretReferencesAtEachTaskDispatch(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	credential, err := fixture.store.CreateAccessKey(db.AccessKey{
+		ProjectID: &fixture.projectID, Name: "Rotating token", Type: db.AccessKeyString, Owner: db.AccessKeyShared,
+	})
+	require.NoError(t, err)
+	raw := db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Rotating secret", DefinitionVersion: db.WorkflowDefinitionVersion,
+		ParameterDefinitions: []db.WorkflowParameterDeclaration{{
+			Name: "token", Type: db.WorkflowParameterSecretReference, Required: true,
+			SecretOptions: []db.WorkflowSecretOption{{AccessKeyID: credential.ID, Label: "Rotating token"}},
+		}},
+		Nodes: []db.WorkflowNode{
+			{ID: -1, TemplateID: fixture.first.ID, OverridePolicy: db.WorkflowNodeOverridePolicy{CredentialParameters: []string{"token"}}},
+			{ID: -2, TemplateID: fixture.second.ID, OverridePolicy: db.WorkflowNodeOverridePolicy{CredentialParameters: []string{"token"}}},
+		},
+		Edges: []db.WorkflowEdge{{
+			ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess,
+		}},
+	}
+	prepared, validation, err := workflowDB.PrepareWorkflowTemplate(fixture.store, raw)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	workflow, err := fixture.repository.CreateWorkflowTemplate(prepared)
+	require.NoError(t, err)
+	reader := &workflowCredentialReaderStub{values: []string{"first-version", "rotated-version"}}
+	service := NewWorkflowService(fixture.repository, fixture.store, fixture.enqueuer, nil, reader)
+	run, err := service.StartWorkflow(workflow, &fixture.user, "rotating-secret", db.WorkflowRunInput{
+		UserValues: map[string]json.RawMessage{
+			"token": json.RawMessage(fmt.Sprintf(`{"access_key_id":%d}`, credential.ID)),
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, fixture.enqueuer.inputTasks, 1)
+	assert.JSONEq(t, `{"token":"first-version"}`, fixture.enqueuer.inputTasks[0].Secret)
+
+	rootTask := finishWorkflowTask(t, fixture.store, run.Nodes[0], task_logger.TaskSuccessStatus, "")
+	require.NoError(t, service.HandleWorkflowTaskCompletion(rootTask))
+	require.Len(t, fixture.enqueuer.inputTasks, 2)
+	assert.JSONEq(t, `{"token":"rotated-version"}`, fixture.enqueuer.inputTasks[1].Secret)
+	assert.Equal(t, 2, reader.calls)
+
+	persisted, err := fixture.repository.GetWorkflowRunByID(fixture.projectID, run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, credential.ID, persisted.ParameterSnapshot["token"].SecretReference.AccessKeyID)
+	assert.NotContains(t, persisted.ParameterSnapshotJSON, "first-version")
+	assert.NotContains(t, persisted.ParameterSnapshotJSON, "rotated-version")
 }
 
 func TestWorkflowServiceSkipsUnselectedDependentNodeAfterFirstFailure(t *testing.T) {
@@ -648,6 +930,7 @@ type workflowTestEnqueuer struct {
 	mutex           sync.Mutex
 	store           *coresql.SqlDb
 	tasks           []db.Task
+	inputTasks      []db.Task
 	templates       []db.Template
 	failAfterCreate bool
 }
@@ -672,6 +955,7 @@ func (e *workflowTestEnqueuer) AddWorkflowTask(
 ) (db.Task, error) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
+	e.inputTasks = append(e.inputTasks, task)
 	templateJSON, err := json.Marshal(template)
 	if err != nil {
 		return db.Task{}, err
@@ -691,6 +975,22 @@ func (e *workflowTestEnqueuer) AddWorkflowTask(
 		return created, errors.New("simulated enqueue interruption")
 	}
 	return created, nil
+}
+
+type workflowCredentialReaderStub struct {
+	value  string
+	values []string
+	calls  int
+}
+
+func (r *workflowCredentialReaderStub) DeserializeSecret(key *db.AccessKey) error {
+	r.calls++
+	if len(r.values) >= r.calls {
+		key.String = r.values[r.calls-1]
+	} else {
+		key.String = r.value
+	}
+	return nil
 }
 
 func (e *workflowTestEnqueuer) StopTasksByWorkflowRun(projectID int, runID int, forceStop bool) {}

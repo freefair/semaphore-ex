@@ -12,7 +12,7 @@ import (
 // (pro/services/server/workflow_svc.go); the licensed build provides the real
 // implementation (pro_impl/services/server/workflow_svc.go).
 type WorkflowService interface {
-	StartWorkflow(workflow db.WorkflowTemplate, user *db.User, correlationID string) (db.WorkflowRun, error)
+	StartWorkflow(workflow db.WorkflowTemplate, user *db.User, correlationID string, input ...db.WorkflowRunInput) (db.WorkflowRun, error)
 	ProgressWorkflowRun(projectID int, runID int, user *db.User) error
 	// StopWorkflowRun stops a non-finished run: it signals every in-flight task
 	// of the run to stop and marks the run as stopped (terminal).
@@ -34,6 +34,12 @@ type WorkflowTaskEnqueuer interface {
 	// belongs to the given workflow run. forceStop kills running tasks
 	// immediately instead of letting them stop gracefully.
 	StopTasksByWorkflowRun(projectID int, runID int, forceStop bool)
+}
+
+// WorkflowCredentialReader resolves an approved AccessKey immediately before
+// a workflow task is created. Implementations must keep the value write-only.
+type WorkflowCredentialReader interface {
+	DeserializeSecret(key *db.AccessKey) error
 }
 
 // WorkflowRunLocker provides cluster-wide mutual exclusion for workflow run

@@ -30,13 +30,17 @@ type workflowServiceStub struct {
 	pro_interfaces.WorkflowService
 	run            db.WorkflowRun
 	correlationIDs []string
+	inputs         []db.WorkflowRunInput
 	progressCalls  int
 	stopCalls      int
 	artifacts      []db.WorkflowArtifactMetadata
 }
 
-func (s *workflowServiceStub) StartWorkflow(_ db.WorkflowTemplate, _ *db.User, correlationID string) (db.WorkflowRun, error) {
+func (s *workflowServiceStub) StartWorkflow(_ db.WorkflowTemplate, _ *db.User, correlationID string, input ...db.WorkflowRunInput) (db.WorkflowRun, error) {
 	s.correlationIDs = append(s.correlationIDs, correlationID)
+	if len(input) > 0 {
+		s.inputs = append(s.inputs, input[0])
+	}
 	s.run.CorrelationID = correlationID
 	return s.run, nil
 }
@@ -323,6 +327,44 @@ func TestWorkflowRunControllerRejectsOversizedIdempotencyKey(t *testing.T) {
 	assert.Empty(t, service.correlationIDs)
 }
 
+func TestWorkflowRunControllerBindsOnlyAllowListedStartInput(t *testing.T) {
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7}
+	service := &workflowServiceStub{run: db.WorkflowRun{ID: 91}}
+	controller := NewWorkflowController(service, &workflowManagerStub{}, &workflowDefinitionServiceStub{})
+	request := workflowRawRequest(http.MethodPost, "/api/project/7/workflows/41/run", []byte(`{
+		"parameters":{"region":"eu"},
+		"node_overrides":{"201":{"inventory_id":11,"arguments":"[\"--check\"]"}}
+	}`), &workflow)
+	recorder := httptest.NewRecorder()
+
+	controller.RunWorkflow(recorder, request)
+
+	assert.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+	require.Len(t, service.inputs, 1)
+	assert.JSONEq(t, `"eu"`, string(service.inputs[0].UserValues["region"]))
+	require.NotNil(t, service.inputs[0].NodeOverrides[201].InventoryID)
+	assert.Equal(t, 11, *service.inputs[0].NodeOverrides[201].InventoryID)
+	assert.Empty(t, service.inputs[0].TriggerValues, "direct API callers cannot spoof trigger values")
+}
+
+func TestWorkflowRunControllerRejectsUnknownOrTriggerOverrideFields(t *testing.T) {
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7}
+	for _, body := range []string{
+		`{"trigger_values":{"region":"eu"}}`,
+		`{"node_overrides":{"201":{"playbook":"unsafe.yml"}}}`,
+		`{"unknown":true}`,
+	} {
+		service := &workflowServiceStub{}
+		controller := NewWorkflowController(service, &workflowManagerStub{}, &workflowDefinitionServiceStub{})
+		recorder := httptest.NewRecorder()
+		controller.RunWorkflow(recorder, workflowRawRequest(
+			http.MethodPost, "/api/project/7/workflows/41/run", []byte(body), &workflow,
+		))
+		assert.Equal(t, http.StatusBadRequest, recorder.Code, body)
+		assert.Empty(t, service.inputs)
+	}
+}
+
 func TestWorkflowRunArtifactsEndpointReturnsValueFreeMetadata(t *testing.T) {
 	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7}
 	run := db.WorkflowRun{ID: 91, ProjectID: 7, WorkflowTemplateID: 41}
@@ -349,6 +391,26 @@ func TestWorkflowRunArtifactsEndpointReturnsValueFreeMetadata(t *testing.T) {
 	assert.NotContains(t, recorder.Body.String(), "value_json")
 	assert.NotContains(t, recorder.Body.String(), "encrypted_value")
 	assert.NotContains(t, recorder.Body.String(), "ciphertext")
+}
+
+func TestWorkflowRunResponseExposesEffectiveValuesAndValueFreeSecretAudit(t *testing.T) {
+	reference := db.WorkflowSecretReference{AccessKeyID: 41}
+	run := db.WorkflowRun{
+		ID: 91, ProjectID: 7, WorkflowTemplateID: 41,
+		ParameterSnapshot: map[string]db.WorkflowParameterSnapshot{
+			"region": {Name: "region", Type: db.WorkflowParameterString, Source: db.WorkflowParameterSourceUser, Value: json.RawMessage(`"eu"`)},
+			"token": {Name: "token", Type: db.WorkflowParameterSecretReference, Source: db.WorkflowParameterSourceUser,
+				SecretReference: &reference, ReferenceFingerprint: reference.Fingerprint()},
+		},
+	}
+	encoded, err := json.Marshal(newWorkflowRunView(run))
+	require.NoError(t, err)
+	response := string(encoded)
+	assert.Contains(t, response, `"value":"eu"`)
+	assert.Contains(t, response, `"access_key_id":41`)
+	assert.Contains(t, response, `"reference_fingerprint":"sha256:`)
+	assert.NotContains(t, response, "deployment-secret")
+	assert.NotContains(t, response, "ciphertext")
 }
 
 func TestWorkflowRunControllerExposesConditionalPresentationFields(t *testing.T) {

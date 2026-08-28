@@ -16,7 +16,7 @@ type workflowService struct{}
 
 var _ pro_interfaces.WorkflowService = (*workflowService)(nil)
 
-func NewWorkflowService(workflowRepo db.WorkflowManager, templateReceiver db.WorkflowTemplateValidationStore, enqueuer pro_interfaces.WorkflowTaskEnqueuer, locker pro_interfaces.WorkflowRunLocker) pro_interfaces.WorkflowService {
+func NewWorkflowService(workflowRepo db.WorkflowManager, templateReceiver db.WorkflowTemplateValidationStore, enqueuer pro_interfaces.WorkflowTaskEnqueuer, locker pro_interfaces.WorkflowRunLocker, credentialReaders ...pro_interfaces.WorkflowCredentialReader) pro_interfaces.WorkflowService {
 	return &workflowService{}
 }
 
@@ -26,7 +26,7 @@ func NewWorkflowReconciler(_ db.WorkflowManager, _ pro_interfaces.WorkflowServic
 	return nil
 }
 
-func (s *workflowService) StartWorkflow(workflow db.WorkflowTemplate, user *db.User, correlationID string) (db.WorkflowRun, error) {
+func (s *workflowService) StartWorkflow(workflow db.WorkflowTemplate, user *db.User, correlationID string, input ...db.WorkflowRunInput) (db.WorkflowRun, error) {
 	return db.WorkflowRun{}, nil
 }
 

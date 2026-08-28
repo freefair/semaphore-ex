@@ -9,6 +9,13 @@
       v-model="deleteDialog"
       @yes="remove()"
     />
+    <WorkflowRunDialog
+      v-model="runDialog"
+      :workflow="item"
+      :project-id="projectId"
+      :loading="starting"
+      @start="runWorkflow"
+    />
 
     <v-toolbar flat>
       <v-app-bar-nav-icon @click="showDrawer()"></v-app-bar-nav-icon>
@@ -74,11 +81,13 @@ import { getErrorMessage } from '@/lib/error';
 import YesNoDialog from '@/components/YesNoDialog.vue';
 import PermissionsCheck from '@/components/PermissionsCheck';
 import ProjectMixin from '@/components/ProjectMixin';
+import WorkflowRunDialog from '@/components/WorkflowRunDialog.vue';
 import { USER_PERMISSIONS } from '@/lib/constants';
 
 export default {
   components: {
     YesNoDialog,
+    WorkflowRunDialog,
   },
 
   mixins: [PermissionsCheck, ProjectMixin],
@@ -91,6 +100,8 @@ export default {
     return {
       item: null,
       deleteDialog: null,
+      runDialog: false,
+      starting: false,
       USER_PERMISSIONS,
     };
   },
@@ -124,11 +135,28 @@ export default {
       EventBus.$emit('i-show-drawer');
     },
 
-    async runWorkflow() {
+    hasRunInputs(workflow) {
+      return (workflow.parameters || []).length > 0
+        || (workflow.nodes || []).some((node) => {
+          const policy = node.override_policy || {};
+          return (policy.inventory_ids || []).length
+            || (policy.environment_ids || []).length
+            || policy.allow_arguments
+            || policy.allow_branch;
+        });
+    },
+
+    async runWorkflow(payload) {
+      if (payload === undefined && this.hasRunInputs(this.item)) {
+        this.runDialog = true;
+        return;
+      }
+      this.starting = true;
       try {
         const run = (await axios({
           method: 'post',
           url: `/api/project/${this.projectId}/workflows/${this.itemId}/run`,
+          data: payload || {},
           responseType: 'json',
         })).data;
 
@@ -137,6 +165,7 @@ export default {
           text: this.$t('workflowRunStarted'),
         });
 
+        this.runDialog = false;
         await this.$router.push(
           `/project/${this.projectId}/workflows/${this.itemId}/runs/${run.id}`,
         );
@@ -145,6 +174,8 @@ export default {
           color: 'error',
           text: getErrorMessage(err),
         });
+      } finally {
+        this.starting = false;
       }
     },
 

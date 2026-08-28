@@ -125,6 +125,12 @@
                 dense
                 @input="markDirty"
               />
+              <WorkflowParameterEditor
+                v-model="item.parameters"
+                :project-id="projectId"
+                :disabled="!canManage"
+                @input="markDirty"
+              />
             </div>
 
             <v-divider />
@@ -396,6 +402,16 @@
               </v-card-text>
             </v-card>
 
+            <WorkflowNodeOverridePolicyEditor
+              v-if="editingNode.kind === 'task' && editingNodeTemplate"
+              v-model="editingNode.override_policy"
+              :project-id="projectId"
+              :template="editingNodeTemplate"
+              :parameters="item.parameters"
+              :disabled="!canManage"
+              @input="applyNodeEdit"
+            />
+
             <template v-if="editingNode.kind === 'task'">
               <div
                 class="d-flex align-center mb-2"
@@ -642,6 +658,8 @@ import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
 import TaskParamsForm from '@/components/TaskParamsForm.vue';
 import WorkflowGraph from '@/components/WorkflowGraph.vue';
+import WorkflowNodeOverridePolicyEditor from '@/components/WorkflowNodeOverridePolicyEditor.vue';
+import WorkflowParameterEditor from '@/components/WorkflowParameterEditor.vue';
 import ProjectMixin from '@/components/ProjectMixin';
 import PermissionsCheck from '@/components/PermissionsCheck';
 import { USER_PERMISSIONS } from '@/lib/constants';
@@ -652,7 +670,12 @@ import {
 } from '@/lib/workflowValidation';
 
 export default {
-  components: { TaskParamsForm, WorkflowGraph },
+  components: {
+    TaskParamsForm,
+    WorkflowGraph,
+    WorkflowNodeOverridePolicyEditor,
+    WorkflowParameterEditor,
+  },
   mixins: [ProjectMixin, PermissionsCheck],
   props: {
     projectId: Number,
@@ -799,6 +822,7 @@ export default {
         definition_version: WORKFLOW_DEFINITION_VERSION,
         revision: 0,
         max_parallel_tasks: 4,
+        parameters: [],
         nodes: [],
         edges: [],
       };
@@ -812,6 +836,7 @@ export default {
         definition_version: value.definition_version || WORKFLOW_DEFINITION_VERSION,
         revision: value.revision || 0,
         max_parallel_tasks: value.max_parallel_tasks ?? 4,
+        parameters: Array.isArray(value.parameters) ? value.parameters : [],
         nodes: Array.isArray(value.nodes) ? value.nodes : [],
         edges: Array.isArray(value.edges) ? value.edges : [],
       };
@@ -828,6 +853,7 @@ export default {
             || (convergence === 'any' ? 'any-successful' : 'all-successful'),
           artifact_outputs: Array.isArray(node.artifact_outputs) ? node.artifact_outputs : [],
           artifact_inputs: Array.isArray(node.artifact_inputs) ? node.artifact_inputs : [],
+          override_policy: node.override_policy || {},
         };
       });
       item.edges = item.edges.map((edge) => ({
@@ -917,6 +943,7 @@ export default {
       }
       if (clone && !Array.isArray(clone.artifact_outputs)) clone.artifact_outputs = [];
       if (clone && !Array.isArray(clone.artifact_inputs)) clone.artifact_inputs = [];
+      if (clone && !clone.override_policy) clone.override_policy = {};
       this.editingNode = clone;
     },
     onConnectionSelected(edge) {

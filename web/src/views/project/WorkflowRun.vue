@@ -118,6 +118,8 @@
           </div>
         </div>
 
+        <WorkflowParameterAudit :details="details" />
+
         <v-expansion-panels
           v-if="artifactMetadataCount > 0"
           accordion
@@ -292,11 +294,12 @@ import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
 import PermissionsCheck from '@/components/PermissionsCheck';
 import WorkflowGraph from '@/components/WorkflowGraph.vue';
+import WorkflowParameterAudit from '@/components/WorkflowParameterAudit.vue';
 import { USER_PERMISSIONS } from '@/lib/constants';
 import socket from '@/socket';
 
 export default {
-  components: { WorkflowGraph },
+  components: { WorkflowGraph, WorkflowParameterAudit },
   mixins: [PermissionsCheck],
   props: {
     projectId: Number,

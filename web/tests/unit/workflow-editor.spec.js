@@ -37,6 +37,7 @@ describe('workflow editor authoring lifecycle', () => {
     expect(context.graphKey).to.equal(5);
     expect(WorkflowEditor.methods.getNewItem().definition_version).to.equal(1);
     expect(WorkflowEditor.methods.getNewItem().max_parallel_tasks).to.equal(4);
+    expect(WorkflowEditor.methods.getNewItem().parameters).to.deep.equal([]);
   });
 
   it('defaults and preserves conditional workflow authoring fields', () => {
@@ -60,6 +61,8 @@ describe('workflow editor authoring lifecycle', () => {
     });
 
     expect(prepared.max_parallel_tasks).to.equal(4);
+    expect(prepared.parameters).to.deep.equal([]);
+    expect(prepared.nodes[0].override_policy).to.deep.equal({});
     expect(prepared.nodes[0].join_mode).to.equal('any-successful');
     expect(prepared.nodes[1].join_mode).to.equal('all-complete');
     expect(prepared.edges[0].condition_expression).to.equal('result.successful');

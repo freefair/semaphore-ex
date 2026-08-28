@@ -12,6 +12,14 @@
       v-model="deleteItemDialog"
       @yes="deleteItem(itemId)"
     />
+    <WorkflowRunDialog
+      v-if="selectedWorkflow"
+      v-model="runDialog"
+      :workflow="selectedWorkflow"
+      :project-id="projectId"
+      :loading="starting"
+      @start="startSelectedWorkflow"
+    />
 
     <v-toolbar flat>
       <v-app-bar-nav-icon @click="showDrawer()"></v-app-bar-nav-icon>
@@ -153,10 +161,12 @@ import TableSettingsSheet from '@/components/TableSettingsSheet.vue';
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
+import WorkflowRunDialog from '@/components/WorkflowRunDialog.vue';
 
 export default {
   components: {
     TableSettingsSheet,
+    WorkflowRunDialog,
   },
   mixins: [ItemListPageBase],
 
@@ -167,6 +177,9 @@ export default {
       openedItems: [],
       runs: {},
       runsLoading: {},
+      selectedWorkflow: null,
+      runDialog: false,
+      starting: false,
     };
   },
 
@@ -281,17 +294,40 @@ export default {
       return 'i-workflow';
     },
 
-    async runWorkflow(workflow) {
+    hasRunInputs(workflow) {
+      return (workflow.parameters || []).length > 0
+        || (workflow.nodes || []).some((node) => {
+          const policy = node.override_policy || {};
+          return (policy.inventory_ids || []).length
+            || (policy.environment_ids || []).length
+            || policy.allow_arguments
+            || policy.allow_branch;
+        });
+    },
+
+    startSelectedWorkflow(payload) {
+      return this.runWorkflow(this.selectedWorkflow, payload);
+    },
+
+    async runWorkflow(workflow, payload) {
+      if (payload === undefined && this.hasRunInputs(workflow)) {
+        this.selectedWorkflow = workflow;
+        this.runDialog = true;
+        return;
+      }
+      this.starting = true;
       try {
         const run = (await axios({
           method: 'post',
           url: `/api/project/${this.projectId}/workflows/${workflow.id}/run`,
+          data: payload || {},
           responseType: 'json',
         })).data;
         EventBus.$emit('i-snackbar', {
           color: 'success',
           text: this.$t('workflowRunStarted'),
         });
+        this.runDialog = false;
         this.$router.push(
           `/project/${this.projectId}/workflows/${workflow.id}/runs/${run.id}`,
         );
@@ -300,6 +336,8 @@ export default {
           color: 'error',
           text: getErrorMessage(err),
         });
+      } finally {
+        this.starting = false;
       }
     },
   },

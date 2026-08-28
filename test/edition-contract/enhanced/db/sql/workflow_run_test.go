@@ -108,6 +108,53 @@ func TestWorkflowRunRepositoryPersistsImmutableSnapshotAndConditionalNodeState(t
 	assert.Equal(t, db.WorkflowRunNodeSkipped, dependent.Result.Status)
 }
 
+func TestWorkflowRunRepositoryPersistsImmutableParameterAndOverrideSnapshots(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	user, templateOne, templateTwo := workflowRunResources(t, store, projectID)
+	now := time.Date(2026, 8, 28, 17, 0, 0, 0, time.UTC)
+	definition := linearRepositoryWorkflow(projectID, templateOne.ID, templateTwo.ID)
+	definition.ParameterDefinitions = []db.WorkflowParameterDeclaration{{
+		Name: "region", Type: db.WorkflowParameterString, Default: json.RawMessage(`"eu"`),
+	}}
+	parameterJSON, err := json.Marshal(definition.ParameterDefinitions)
+	require.NoError(t, err)
+	definition.ParameterDefinitionsJSON = string(parameterJSON)
+	definition.Nodes[0].OverridePolicy = db.WorkflowNodeOverridePolicy{AllowArguments: true}
+	policyJSON, err := json.Marshal(definition.Nodes[0].OverridePolicy)
+	require.NoError(t, err)
+	definition.Nodes[0].OverridePolicyJSON = string(policyJSON)
+	workflow, err := repository.CreateWorkflowTemplate(definition)
+	require.NoError(t, err)
+	arguments := `["--check"]`
+	run, err := workflowDB.BuildWorkflowRunSnapshot(workflow, map[int]db.Template{
+		templateOne.ID: templateOne, templateTwo.ID: templateTwo,
+	}, user.ID, "parameter-snapshot", now, db.WorkflowRunInput{
+		UserValues: map[string]json.RawMessage{"region": json.RawMessage(`"us"`)},
+		NodeOverrides: map[int]db.WorkflowNodeOverride{
+			workflow.Nodes[0].ID: {Arguments: &arguments},
+		},
+	})
+	require.NoError(t, err)
+	created, err := repository.CreateWorkflowRun(run)
+	require.NoError(t, err)
+
+	workflow.ParameterDefinitions[0].Default = json.RawMessage(`"changed"`)
+	updatedDefinitions, err := json.Marshal(workflow.ParameterDefinitions)
+	require.NoError(t, err)
+	workflow.ParameterDefinitionsJSON = string(updatedDefinitions)
+	_, err = repository.UpdateWorkflowTemplate(workflow)
+	require.NoError(t, err)
+
+	reloaded, err := repository.GetWorkflowRun(projectID, workflow.ID, created.ID)
+	require.NoError(t, err)
+	assert.JSONEq(t, `"us"`, string(reloaded.ParameterSnapshot["region"].Value))
+	assert.Equal(t, db.WorkflowParameterSourceUser, reloaded.ParameterSnapshot["region"].Source)
+	require.NotNil(t, reloaded.Nodes[0].OverrideSnapshot.Arguments)
+	assert.Equal(t, arguments, *reloaded.Nodes[0].OverrideSnapshot.Arguments)
+	assert.JSONEq(t, `"eu"`, string(reloaded.DefinitionSnapshot.ParameterDefinitions[0].Default))
+}
+
 func TestWorkflowRunRepositoryDeduplicatesCorrelationAndRollsBackNodes(t *testing.T) {
 	store, repository, projectID := workflowRepositoryFixture(t)
 	defer store.Close()
