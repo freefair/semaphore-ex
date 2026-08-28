@@ -11,6 +11,7 @@ import (
 type WorkflowController interface {
 	GetWorkflows(w http.ResponseWriter, r *http.Request)
 	AddWorkflow(w http.ResponseWriter, r *http.Request)
+	ValidateWorkflow(w http.ResponseWriter, r *http.Request)
 	GetWorkflow(w http.ResponseWriter, r *http.Request)
 	UpdateWorkflow(w http.ResponseWriter, r *http.Request)
 	RemoveWorkflow(w http.ResponseWriter, r *http.Request)

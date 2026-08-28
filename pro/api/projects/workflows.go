@@ -17,7 +17,7 @@ type workflowController struct{}
 
 var _ pro_interfaces.WorkflowController = (*workflowController)(nil)
 
-func NewWorkflowController(svc pro_interfaces.WorkflowService, workflowRepo db.WorkflowManager) pro_interfaces.WorkflowController {
+func NewWorkflowController(_ pro_interfaces.WorkflowService, _ db.WorkflowManager, _ pro_interfaces.WorkflowDefinitionService) pro_interfaces.WorkflowController {
 	return &workflowController{}
 }
 
@@ -26,6 +26,10 @@ func (c *workflowController) GetWorkflows(w http.ResponseWriter, r *http.Request
 }
 
 func (c *workflowController) AddWorkflow(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+
+func (c *workflowController) ValidateWorkflow(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
 

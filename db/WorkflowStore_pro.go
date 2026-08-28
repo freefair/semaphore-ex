@@ -6,7 +6,7 @@ type WorkflowManager interface {
 	GetWorkflowTemplates(projectID int, params RetrieveQueryParams) ([]WorkflowTemplate, error)
 	GetWorkflowTemplate(projectID int, workflowID int) (WorkflowTemplate, error)
 	CreateWorkflowTemplate(workflow WorkflowTemplate) (WorkflowTemplate, error)
-	UpdateWorkflowTemplate(workflow WorkflowTemplate) error
+	UpdateWorkflowTemplate(workflow WorkflowTemplate) (WorkflowTemplate, error)
 	DeleteWorkflowTemplate(projectID int, workflowID int) error
 
 	GetWorkflowRuns(projectID int, workflowTemplateID int, params RetrieveQueryParams) ([]WorkflowRun, error)

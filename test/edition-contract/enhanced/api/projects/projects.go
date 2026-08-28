@@ -26,7 +26,6 @@ type ProjectRunnerControllerImpl struct {
 
 var (
 	NewTerraformInventoryController = community.NewTerraformInventoryController
-	NewWorkflowController           = community.NewWorkflowController
 )
 
 func NewProjectRunnerController(
