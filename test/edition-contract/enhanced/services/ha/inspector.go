@@ -14,7 +14,8 @@ type managedClusterInspector struct {
 	requirements      pro_interfaces.ClusterCompatibilityRequirements
 	self              pro_interfaces.ClusterNodeIdentity
 	coordinatorHealth pro_interfaces.ClusterCoordinatorHealthSource
-	drainer           pro_interfaces.OrphanCleaner
+	workflowHealth    pro_interfaces.WorkflowProgressionHealthSource
+	drainers          []pro_interfaces.ClusterDrainer
 	drainMu           sync.Mutex
 }
 
@@ -66,26 +67,54 @@ func (i *managedClusterInspector) RedisInfo() (pro_interfaces.RedisInfo, error) 
 }
 
 func (i *managedClusterInspector) CoordinatorHealth() pro_interfaces.ClusterCoordinatorHealth {
+	var health pro_interfaces.ClusterCoordinatorHealth
 	if i.coordinatorHealth == nil {
-		return pro_interfaces.ClusterCoordinatorHealth{SQLAuthoritative: true, LiveEvents: "unavailable"}
+		health = pro_interfaces.ClusterCoordinatorHealth{SQLAuthoritative: true, LiveEvents: "unavailable"}
+	} else {
+		health = i.coordinatorHealth.CoordinatorHealth()
 	}
-	return i.coordinatorHealth.CoordinatorHealth()
+	if i.workflowHealth != nil {
+		if workflow, err := i.workflowHealth.WorkflowProgressionHealth(); err == nil {
+			health.WorkflowProgression = &workflow
+		}
+	}
+	return health
 }
 
 func (i *managedClusterInspector) SetNodeDraining(bootID string, draining bool) error {
 	i.drainMu.Lock()
 	defer i.drainMu.Unlock()
 	self := bootID == i.self.BootID
-	if self && draining && i.drainer != nil {
-		if err := i.drainer.Drain(); err != nil {
-			return err
+	drained := make([]pro_interfaces.ClusterDrainer, 0, len(i.drainers))
+	resumeDrained := func() {
+		for index := len(drained) - 1; index >= 0; index-- {
+			drained[index].Resume()
+		}
+	}
+	if self && draining {
+		for _, drainer := range i.drainers {
+			if drainer == nil {
+				continue
+			}
+			if err := drainer.Drain(); err != nil {
+				resumeDrained()
+				return err
+			}
+			drained = append(drained, drainer)
 		}
 	}
 	if err := i.repository.SetClusterNodeDraining(bootID, draining); err != nil {
+		if self && draining {
+			resumeDrained()
+		}
 		return err
 	}
-	if self && !draining && i.drainer != nil {
-		i.drainer.Resume()
+	if self && !draining {
+		for _, drainer := range i.drainers {
+			if drainer != nil {
+				drainer.Resume()
+			}
+		}
 	}
 	return nil
 }

@@ -26,12 +26,31 @@ type NodeRegistry = community.NodeRegistry
 type OrphanCleaner = community.OrphanCleaner
 type ClusterInspector = community.ClusterInspector
 
-var NewWorkflowRunLocker = community.NewWorkflowRunLocker
-
 var clusterIdentityState struct {
 	sync.Mutex
 	nodeID   string
 	identity pro_interfaces.ClusterNodeIdentity
+}
+
+func NewWorkflowRunLocker(store db.Store) pro_interfaces.WorkflowRunLocker {
+	if !util.HAEnabled() || util.Config.HA == nil || util.Config.HA.NodeID == "" {
+		return nil
+	}
+	connectionStore, ok := store.(interface {
+		GetConnection() *coresql.SqlDbConnection
+	})
+	if !ok {
+		return nil
+	}
+	identity, err := clusterIdentity(util.Config.HA.NodeID)
+	if err != nil {
+		return nil
+	}
+	return NewManagedWorkflowRunLocker(
+		clusterSQL.NewWorkflowReconciliationStore(connectionStore.GetConnection()),
+		identity.BootID,
+		15*time.Second,
+	)
 }
 
 // NewScheduleDeduplicator binds the core scheduler only to durable SQL lease
@@ -189,7 +208,7 @@ func NewNodeRegistry(store db.Store) NodeRegistry {
 	)
 }
 
-func NewClusterInspector(store db.Store, drainers ...OrphanCleaner) ClusterInspector {
+func NewClusterInspector(store db.Store, drainers ...pro_interfaces.ClusterDrainer) ClusterInspector {
 	if !util.HAEnabled() || util.Config.HA == nil || util.Config.HA.NodeID == "" || util.Config.HA.Redis == nil || util.Config.HA.Redis.Addr == "" {
 		return nil
 	}
@@ -221,8 +240,12 @@ func NewClusterInspector(store db.Store, drainers ...OrphanCleaner) ClusterInspe
 		redisClient,
 	)
 	inspector.coordinatorHealth = coordinatorHealthFor(util.Config.HA.NodeID)
-	if len(drainers) > 0 {
-		inspector.drainer = drainers[0]
+	inspector.drainers = append(inspector.drainers, drainers...)
+	for _, drainer := range drainers {
+		if source, ok := drainer.(pro_interfaces.WorkflowProgressionHealthSource); ok {
+			inspector.workflowHealth = source
+			break
+		}
 	}
 	return inspector
 }

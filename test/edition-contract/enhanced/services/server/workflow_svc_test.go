@@ -1121,7 +1121,7 @@ func TestWorkflowServiceSerializesAndReleasesLocalLocks(t *testing.T) {
 	for range calls {
 		go func() {
 			defer wait.Done()
-			errors <- service.withRunLock(1, 1, func() error {
+			errors <- service.withRunLock(1, 1, func(_ *pro_interfaces.WorkflowReconciliationLease) error {
 				completed++
 				return nil
 			})
@@ -1139,6 +1139,170 @@ func TestWorkflowServiceSerializesAndReleasesLocalLocks(t *testing.T) {
 		require.NoError(t, service.withStartLock(1, workflowID, func() error { return nil }))
 	}
 	assertWorkflowLockTableEmpty(t, &service.localStartLocks)
+}
+
+func TestConcurrentWorkflowReconcilersConvergeFromSQLWithoutDuplicateTask(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	ownership := workflowSQL.NewWorkflowReconciliationStore(fixture.store.GetConnection())
+	serviceA := NewWorkflowService(
+		fixture.repository, fixture.store, fixture.enqueuer,
+		&workflowSQLTestLocker{repository: ownership, ownerBootID: "boot-a"},
+	)
+	serviceB := NewWorkflowService(
+		fixture.repository, fixture.store, fixture.enqueuer,
+		&workflowSQLTestLocker{repository: ownership, ownerBootID: "boot-b"},
+	)
+	run, err := serviceA.StartWorkflow(fixture.workflow, &fixture.user, "ha-sql-replay")
+	require.NoError(t, err)
+	require.Len(t, fixture.enqueuer.tasks, 1)
+	completedTask := fixture.enqueuer.tasks[0]
+	completedTask.Status = task_logger.TaskSuccessStatus
+	now := time.Now().UTC()
+	completedTask.End = &now
+	require.NoError(t, fixture.store.UpdateTask(completedTask))
+
+	var wait sync.WaitGroup
+	errors := make(chan error, 2)
+	wait.Add(2)
+	go func() {
+		defer wait.Done()
+		_, reconcileErr := serviceA.ReconcileWorkflowRun(fixture.projectID, run.ID)
+		errors <- reconcileErr
+	}()
+	go func() {
+		defer wait.Done()
+		errors <- serviceB.HandleWorkflowTaskCompletion(completedTask)
+	}()
+	wait.Wait()
+	close(errors)
+	for reconcileErr := range errors {
+		require.NoError(t, reconcileErr)
+	}
+	_, err = serviceB.ReconcileWorkflowRun(fixture.projectID, run.ID)
+	require.NoError(t, err)
+
+	fixture.enqueuer.mutex.Lock()
+	createdTasks := append([]db.Task(nil), fixture.enqueuer.tasks...)
+	fixture.enqueuer.mutex.Unlock()
+	require.Len(t, createdTasks, 2, "lost or duplicated live events must still produce one downstream logical task")
+	assert.NotEqual(t, createdTasks[0].ID, createdTasks[1].ID)
+	reloaded := loadWorkflowRun(t, &fixture, run.ID)
+	assert.True(t, reloaded.ReconciliationOwnership.Recovered)
+	assert.GreaterOrEqual(t, reloaded.ReconciliationOwnership.TransferCount, 1)
+}
+
+func TestWorkflowOwnershipTransferReplaysBranchJoinExactlyOnce(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	workflow := createDiamondWorkflow(t, &fixture, db.WorkflowJoinAllComplete, 3, db.WorkflowEdgeAlways)
+	serviceA, serviceB := workflowHATestServices(&fixture)
+
+	run, err := serviceA.StartWorkflow(workflow, &fixture.user, "ha-branch-join")
+	require.NoError(t, err)
+	root := finishWorkflowTask(t, fixture.store, run.Nodes[0], task_logger.TaskSuccessStatus, "")
+	require.NoError(t, serviceB.HandleWorkflowTaskCompletion(root))
+	running := loadWorkflowRun(t, &fixture, run.ID)
+	left := workflowRunNodeNamed(t, running, "Left")
+	right := workflowRunNodeNamed(t, running, "Right")
+	leftTask := finishWorkflowTask(t, fixture.store, left, task_logger.TaskSuccessStatus, "")
+	rightTask := finishWorkflowTask(t, fixture.store, right, task_logger.TaskSuccessStatus, "")
+
+	require.NoError(t, serviceA.HandleWorkflowTaskCompletion(leftTask))
+	require.NoError(t, serviceB.HandleWorkflowTaskCompletion(rightTask))
+	require.NoError(t, serviceA.ProgressWorkflowRun(fixture.projectID, run.ID, nil))
+
+	joined := loadWorkflowRun(t, &fixture, run.ID)
+	join := workflowRunNodeNamed(t, joined, "Join")
+	require.NotNil(t, join.TaskID)
+	fixture.enqueuer.mutex.Lock()
+	createdTasks := append([]db.Task(nil), fixture.enqueuer.tasks...)
+	fixture.enqueuer.mutex.Unlock()
+	assert.Len(t, createdTasks, 4, "branch replay must create one root, two branches, and one join task")
+	assert.True(t, joined.ReconciliationOwnership.Recovered)
+}
+
+func TestWorkflowOwnershipTransferReplaysApprovalDecisionExactlyOnce(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	workflow, err := fixture.repository.CreateWorkflowTemplate(db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "HA approval", DefinitionVersion: db.WorkflowDefinitionVersion,
+		Nodes: []db.WorkflowNode{
+			{ID: -1, TemplateID: fixture.first.ID, DisplayName: "Prepare"},
+			{ID: -2, Kind: db.WorkflowNodeApprovalKind, DisplayName: "Approve"},
+			{ID: -3, TemplateID: fixture.second.ID, DisplayName: "Deploy"},
+		},
+		Edges: []db.WorkflowEdge{
+			{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess},
+			{ID: -2, SourceNodeID: -2, DestinationNodeID: -3, Condition: db.WorkflowEdgeOnSuccess},
+		},
+	})
+	require.NoError(t, err)
+	serviceA, serviceB := workflowHATestServices(&fixture)
+
+	run, err := serviceA.StartWorkflow(workflow, &fixture.user, "ha-approval-replay")
+	require.NoError(t, err)
+	root := finishWorkflowTask(t, fixture.store, run.Nodes[0], task_logger.TaskSuccessStatus, "")
+	require.NoError(t, serviceB.HandleWorkflowTaskCompletion(root))
+	approval, err := fixture.repository.GetWorkflowApproval(fixture.projectID, run.ID, workflow.Nodes[1].ID)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	approval.Status = db.WorkflowApprovalApproved
+	approval.Resolved = &now
+	approval.ResolvedByUserID = &fixture.user.ID
+	approval.DecisionSource = db.WorkflowApprovalDecisionSourceUser
+	resolved, err := fixture.repository.ResolveWorkflowApprovalIfPending(approval)
+	require.NoError(t, err)
+	require.True(t, resolved, "the approval fact must be durable before reconciliation wakes")
+
+	_, err = serviceA.ReconcileWorkflowRun(fixture.projectID, run.ID)
+	require.NoError(t, err)
+	_, err = serviceB.ReconcileWorkflowRun(fixture.projectID, run.ID)
+	require.NoError(t, err)
+
+	resumed := loadWorkflowRun(t, &fixture, run.ID)
+	deploy := workflowRunNodeNamed(t, resumed, "Deploy")
+	require.NotNil(t, deploy.TaskID)
+	fixture.enqueuer.mutex.Lock()
+	createdTasks := append([]db.Task(nil), fixture.enqueuer.tasks...)
+	fixture.enqueuer.mutex.Unlock()
+	assert.Len(t, createdTasks, 2, "approval replay must create one prepare and one deploy task")
+	assert.True(t, resumed.ReconciliationOwnership.Recovered)
+}
+
+func TestWorkflowOwnershipTransferReplaysStopWithoutDownstreamTask(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	serviceA, serviceB := workflowHATestServices(&fixture)
+
+	run, err := serviceA.StartWorkflow(fixture.workflow, &fixture.user, "ha-stop-replay")
+	require.NoError(t, err)
+	_, err = serviceA.RequestWorkflowRunStop(fixture.projectID, run.ID, &fixture.user)
+	require.NoError(t, err)
+	_, err = serviceB.ReconcileWorkflowRun(fixture.projectID, run.ID)
+	require.NoError(t, err)
+	_, err = serviceA.ReconcileWorkflowRun(fixture.projectID, run.ID)
+	require.NoError(t, err)
+
+	stopped := loadWorkflowRun(t, &fixture, run.ID)
+	assert.Equal(t, db.WorkflowRunCanceled, stopped.Status)
+	assert.Equal(t, db.WorkflowRunDesiredStopped, stopped.DesiredState)
+	fixture.enqueuer.mutex.Lock()
+	createdTasks := append([]db.Task(nil), fixture.enqueuer.tasks...)
+	fixture.enqueuer.mutex.Unlock()
+	assert.Len(t, createdTasks, 1, "stop replay must not create the pending downstream task")
+	assert.True(t, stopped.ReconciliationOwnership.Recovered)
+}
+
+func workflowHATestServices(fixture *workflowServiceFixture) (pro_interfaces.WorkflowService, pro_interfaces.WorkflowService) {
+	ownership := workflowSQL.NewWorkflowReconciliationStore(fixture.store.GetConnection())
+	return NewWorkflowService(
+			fixture.repository, fixture.store, fixture.enqueuer,
+			&workflowSQLTestLocker{repository: ownership, ownerBootID: "boot-a"},
+		), NewWorkflowService(
+			fixture.repository, fixture.store, fixture.enqueuer,
+			&workflowSQLTestLocker{repository: ownership, ownerBootID: "boot-b"},
+		)
 }
 
 func assertWorkflowLockTableEmpty(t *testing.T, locks *workflowLocalLocks) {
@@ -1377,6 +1541,66 @@ func (e *workflowTestEnqueuer) AddWorkflowTask(
 	}
 	return created, nil
 }
+
+func (e *workflowTestEnqueuer) AddWorkflowTaskFenced(
+	task db.Task,
+	template db.Template,
+	userID *int,
+	username string,
+	projectID int,
+	needAlias bool,
+	lease pro_interfaces.WorkflowReconciliationLease,
+) (db.Task, error) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	e.inputTasks = append(e.inputTasks, task)
+	templateJSON, err := json.Marshal(template)
+	if err != nil {
+		return db.Task{}, err
+	}
+	snapshot := string(templateJSON)
+	task.ProjectID = projectID
+	task.Status = task_logger.TaskWaitingStatus
+	task.WorkflowTemplateSnapshot = &snapshot
+	created, err := e.store.CreateWorkflowTaskFenced(task, 0, lease)
+	if err != nil {
+		return db.Task{}, err
+	}
+	e.tasks = append(e.tasks, created)
+	e.templates = append(e.templates, template)
+	return created, nil
+}
+
+type workflowSQLTestLocker struct {
+	repository  pro_interfaces.WorkflowReconciliationRepository
+	ownerBootID string
+}
+
+func (l *workflowSQLTestLocker) TryLockRun(projectID int, runID int) (pro_interfaces.WorkflowReconciliationLease, func(), bool, error) {
+	lease, claimed, err := l.repository.ClaimWorkflowReconciliation(projectID, runID, l.ownerBootID, time.Minute)
+	if err != nil || !claimed {
+		return lease, nil, false, err
+	}
+	return lease, func() { _, _ = l.repository.ReleaseWorkflowReconciliation(lease) }, true, nil
+}
+
+func (*workflowSQLTestLocker) TryLockStart(int, int) (func(), bool) {
+	return func() {}, true
+}
+
+func (l *workflowSQLTestLocker) RecordReconciled(lease pro_interfaces.WorkflowReconciliationLease) error {
+	recorded, err := l.repository.RecordWorkflowReconciled(lease)
+	if err != nil {
+		return err
+	}
+	if !recorded {
+		return errors.New("stale workflow reconciliation owner")
+	}
+	return nil
+}
+
+func (*workflowSQLTestLocker) Drain() error { return nil }
+func (*workflowSQLTestLocker) Resume()      {}
 
 type workflowCredentialReaderStub struct {
 	value  string

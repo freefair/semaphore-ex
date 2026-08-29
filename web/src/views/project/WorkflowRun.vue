@@ -104,6 +104,17 @@
             error: details.run.reconciliation_last_error,
           }) }}
         </v-alert>
+        <v-alert
+          v-if="reconciliationOwnership && reconciliationOwnership.recovered"
+          type="info"
+          dense
+          text
+          tile
+          class="ma-0"
+          data-testid="workflow-ha-ownership-transfer"
+        >
+          {{ workflowOwnershipSummary(reconciliationOwnership) }}
+        </v-alert>
 
         <div class="WorkflowRun__graph">
           <WorkflowGraph
@@ -424,6 +435,9 @@ export default {
     reconciliationQuarantined() {
       return this.details?.run?.reconciliation_state === 'quarantined';
     },
+    reconciliationOwnership() {
+      return this.details?.run?.reconciliation_ownership || null;
+    },
     // node.id -> raw run status, used by the graph for color + active animation.
     nodeStatuses() {
       const map = {};
@@ -500,6 +514,13 @@ export default {
     socket.removeListener(this.socketListenerId);
   },
   methods: {
+    workflowOwnershipSummary(ownership) {
+      return this.$t('workflowReconciliationOwnershipTransferred', {
+        owner: (ownership.owner_boot_id || '').slice(0, 8),
+        transfers: ownership.transfer_count || 0,
+        lag: ownership.reconciliation_lag_seconds || 0,
+      });
+    },
     showDrawer() {
       EventBus.$emit('i-show-drawer');
     },

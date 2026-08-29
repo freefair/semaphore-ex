@@ -23,5 +23,5 @@ func NewOrphanCleaner(_ db.Store, _ *tasks.TaskPool) OrphanCleaner      { return
 func NewTaskExecutionEvidenceRecorder(_ db.Store) db.TaskExecutionEvidenceRecorder {
 	return nil
 }
-func NewClusterInspector(_ db.Store, _ ...OrphanCleaner) ClusterInspector { return nil }
-func NewWorkflowRunLocker() pro_interfaces.WorkflowRunLocker              { return nil }
+func NewClusterInspector(_ db.Store, _ ...pro_interfaces.ClusterDrainer) ClusterInspector { return nil }
+func NewWorkflowRunLocker(_ db.Store) pro_interfaces.WorkflowRunLocker                    { return nil }

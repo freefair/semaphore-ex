@@ -87,6 +87,7 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	assertCapabilitySchema(t, freshSchema)
 	assertWorkflowParameterColumns(t, store, true)
 	assertWorkflowTriggerSchema(t, store, true)
+	assertWorkflowProgressionSchema(t, store, true)
 
 	user, err := store.CreateUserWithoutPassword(fixture.User)
 	require.NoError(t, err)
@@ -95,6 +96,7 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	assertCapabilityTablesAbsent(t, store)
 	assertWorkflowParameterColumns(t, store, false)
 	assertWorkflowTriggerSchema(t, store, false)
+	assertWorkflowProgressionSchema(t, store, false)
 
 	legacyUser, err := store.GetUser(user.ID)
 	require.NoError(t, err)
@@ -105,6 +107,7 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	assertCapabilitySchema(t, upgradedSchema)
 	assertWorkflowParameterColumns(t, store, true)
 	assertWorkflowTriggerSchema(t, store, true)
+	assertWorkflowProgressionSchema(t, store, true)
 	assert.Equal(t, freshSchema, upgradedSchema)
 
 	upgradedUser, err := store.GetUser(user.ID)
@@ -247,6 +250,48 @@ func assertWorkflowTriggerSchema(t testing.TB, store *SqlDb, expected bool) {
 		t.Fatalf("unsupported migration matrix dialect %q", store.GetDialect())
 	}
 	assert.Equal(t, expected, foundColumn, "project__workflow_run.trigger_snapshot presence")
+}
+
+func assertWorkflowProgressionSchema(t testing.TB, store *SqlDb, expected bool) {
+	t.Helper()
+	tables := matrixUserTables(t, store)
+	assert.Equal(t, expected, containsString(tables, "cluster__workflow_reconciliation"), "workflow ownership table presence")
+	foundColumn := false
+	switch store.GetDialect() {
+	case util.DbDriverSQLite:
+		rows, err := store.Sql().Db.QueryContext(context.Background(), "pragma table_info(project__workflow_run_node)")
+		require.NoError(t, err)
+		for rows.Next() {
+			var cid, notNull, primaryKey int
+			var name, columnType string
+			var defaultValue sql.NullString
+			require.NoError(t, rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey))
+			if name == "progression_fencing_token" {
+				foundColumn = true
+				assert.Equal(t, 1, notNull)
+				assert.Equal(t, "integer", normalizeMigrationType(columnType))
+			}
+		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, rows.Close())
+	case util.DbDriverMySQL:
+		var count int
+		require.NoError(t, store.Sql().Db.QueryRowContext(context.Background(), `
+			select count(*) from information_schema.columns
+			where table_schema=database() and table_name='project__workflow_run_node'
+				and column_name='progression_fencing_token' and data_type='bigint' and is_nullable='NO'`).Scan(&count))
+		foundColumn = count == 1
+	case util.DbDriverPostgres:
+		var count int
+		require.NoError(t, store.Sql().Db.QueryRowContext(context.Background(), `
+			select count(*) from information_schema.columns
+			where table_schema=current_schema() and table_name='project__workflow_run_node'
+				and column_name='progression_fencing_token' and data_type='bigint' and is_nullable='NO'`).Scan(&count))
+		foundColumn = count == 1
+	default:
+		t.Fatalf("unsupported migration matrix dialect %q", store.GetDialect())
+	}
+	assert.Equal(t, expected, foundColumn, "project__workflow_run_node.progression_fencing_token presence")
 }
 
 func containsString(values []string, wanted string) bool {

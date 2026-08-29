@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -1103,6 +1104,27 @@ func (p *TaskPool) AddWorkflowTask(
 	return p.addTask(taskObj, &template, userID, username, projectID, needAlias)
 }
 
+func (p *TaskPool) AddWorkflowTaskFenced(
+	taskObj db.Task,
+	template db.Template,
+	userID *int,
+	username string,
+	projectID int,
+	needAlias bool,
+	lease pro_interfaces.WorkflowReconciliationLease,
+) (newTask db.Task, err error) {
+	if template.ID <= 0 || template.ID != taskObj.TemplateID || template.ProjectID != projectID {
+		return db.Task{}, fmt.Errorf("workflow task template snapshot does not match the task")
+	}
+	snapshot, err := json.Marshal(template)
+	if err != nil {
+		return db.Task{}, fmt.Errorf("encode workflow task template snapshot: %w", err)
+	}
+	encoded := string(snapshot)
+	taskObj.WorkflowTemplateSnapshot = &encoded
+	return p.addTask(taskObj, &template, userID, username, projectID, needAlias, &lease)
+}
+
 func (p *TaskPool) addTask(
 	taskObj db.Task,
 	templateSnapshot *db.Template,
@@ -1110,6 +1132,7 @@ func (p *TaskPool) addTask(
 	username string,
 	projectID int,
 	needAlias bool,
+	workflowLease ...*pro_interfaces.WorkflowReconciliationLease,
 ) (newTask db.Task, err error) {
 	taskObj.Created = tz.Now()
 	taskObj.Status = task_logger.TaskWaitingStatus
@@ -1178,7 +1201,17 @@ func (p *TaskPool) addTask(
 		}
 	}
 
-	newTask, err = p.store.CreateTask(taskObj, util.Config.MaxTasksPerTemplate)
+	if len(workflowLease) > 0 && workflowLease[0] != nil {
+		creator, ok := p.store.(interface {
+			CreateWorkflowTaskFenced(db.Task, int, pro_interfaces.WorkflowReconciliationLease) (db.Task, error)
+		})
+		if !ok {
+			return db.Task{}, errors.New("workflow task fencing is unavailable")
+		}
+		newTask, err = creator.CreateWorkflowTaskFenced(taskObj, util.Config.MaxTasksPerTemplate, *workflowLease[0])
+	} else {
+		newTask, err = p.store.CreateTask(taskObj, util.Config.MaxTasksPerTemplate)
+	}
 	if err != nil {
 		return
 	}

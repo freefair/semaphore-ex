@@ -229,6 +229,25 @@ describe('linear workflow run dashboard', () => {
     expect(retryContext.retryingReconciliation).to.equal(false);
   });
 
+  it('summarizes an HA ownership transfer without exposing workflow values', () => {
+    const ownership = {
+      owned: true,
+      owner_boot_id: 'boot-b-12345678',
+      previous_owner_boot_id: 'boot-a-87654321',
+      transfer_count: 2,
+      reconciliation_lag_seconds: 1,
+      recovered: true,
+    };
+    expect(WorkflowRun.computed.reconciliationOwnership.call({
+      details: { run: { reconciliation_ownership: ownership } },
+    })).to.equal(ownership);
+    const context = { $t: (key, values) => ({ key, values }) };
+    expect(WorkflowRun.methods.workflowOwnershipSummary.call(context, ownership)).to.deep.equal({
+      key: 'workflowReconciliationOwnershipTransferred',
+      values: { owner: 'boot-b-1', transfers: 2, lag: 1 },
+    });
+  });
+
   it('labels durable stopping and recovery states without changing task-node status mapping', () => {
     const context = { $t: (key) => key };
     expect(WorkflowRun.methods.runStatusLabel.call(context, 'stopping')).to.equal('workflowRunStopping');

@@ -40,4 +40,16 @@ describe('cluster dashboard node states', () => {
     );
     expect(Cluster.methods.coordinatorStateColor({ live_events: 'degraded' })).to.equal('warning');
   });
+
+  it('summarizes SQL-authoritative workflow progression health in the existing header', () => {
+    const context = { $t: (key, values) => ({ key, values }) };
+    expect(Cluster.methods.workflowProgressionLabel.call(context, {
+      current_ownerships: 3,
+      transfer_count: 4,
+      max_lag_seconds: 2,
+    })).to.deep.equal({
+      key: 'clusterWorkflowProgressionSummary',
+      values: { owners: 3, transfers: 4, lag: 2 },
+    });
+  });
 });

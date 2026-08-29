@@ -1,6 +1,7 @@
 package ha
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -389,7 +390,7 @@ func TestManagedClusterInspectorDrainsSelfBeforePersistingDrainState(t *testing.
 	inspector := NewManagedClusterInspector(repository, unavailableHeartbeatStore{},
 		pro_interfaces.ClusterCompatibilityRequirements{},
 		pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-a"})
-	inspector.drainer = drainer
+	inspector.drainers = []pro_interfaces.ClusterDrainer{drainer}
 
 	require.NoError(t, inspector.SetNodeDraining("boot-a", true))
 	assert.True(t, drainer.drained)
@@ -418,7 +419,7 @@ func TestManagedClusterInspectorSerializesConcurrentDrainTransitions(t *testing.
 	inspector := NewManagedClusterInspector(repository, unavailableHeartbeatStore{},
 		pro_interfaces.ClusterCompatibilityRequirements{},
 		pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-a"})
-	inspector.drainer = drainer
+	inspector.drainers = []pro_interfaces.ClusterDrainer{drainer}
 
 	drained := make(chan error, 1)
 	go func() { drained <- inspector.SetNodeDraining("boot-a", true) }()
@@ -438,11 +439,65 @@ func TestManagedClusterInspectorSerializesConcurrentDrainTransitions(t *testing.
 	assert.False(t, baseRepository.nodes[0].Draining)
 }
 
+func TestManagedClusterInspectorResumesEarlierWorkersAfterCompositeDrainFailure(t *testing.T) {
+	first := &failingClusterDrainer{}
+	second := &failingClusterDrainer{drainErr: errors.New("drain failed")}
+	inspector := &managedClusterInspector{
+		self:     pro_interfaces.ClusterNodeIdentity{BootID: "boot-a"},
+		drainers: []pro_interfaces.ClusterDrainer{first, second},
+	}
+
+	require.Error(t, inspector.SetNodeDraining("boot-a", true))
+	assert.True(t, first.drained)
+	assert.True(t, first.resumed)
+}
+
+func TestManagedClusterInspectorResumesWorkersAfterPersistedDrainFailure(t *testing.T) {
+	drainer := &failingClusterDrainer{}
+	repository := &failingDrainClusterNodeRepository{
+		clusterNodeRepositoryFake: &clusterNodeRepositoryFake{},
+	}
+	inspector := &managedClusterInspector{
+		repository: repository,
+		self:       pro_interfaces.ClusterNodeIdentity{BootID: "boot-a"},
+		drainers:   []pro_interfaces.ClusterDrainer{drainer},
+	}
+
+	require.Error(t, inspector.SetNodeDraining("boot-a", true))
+	assert.True(t, drainer.resumed)
+}
+
 type orphanCleanerDrainerFake struct {
 	repository        *clusterNodeRepositoryFake
 	drained           bool
 	resumed           bool
 	sawPersistedDrain bool
+}
+
+type failingClusterDrainer struct {
+	drainErr error
+	drained  bool
+	resumed  bool
+}
+
+func (d *failingClusterDrainer) Drain() error {
+	if d.drainErr != nil {
+		return d.drainErr
+	}
+	d.drained = true
+	return nil
+}
+
+func (d *failingClusterDrainer) Resume() {
+	d.resumed = true
+}
+
+type failingDrainClusterNodeRepository struct {
+	*clusterNodeRepositoryFake
+}
+
+func (r *failingDrainClusterNodeRepository) SetClusterNodeDraining(string, bool) error {
+	return errors.New("persist drain failed")
 }
 
 func (*orphanCleanerDrainerFake) Start() {}
