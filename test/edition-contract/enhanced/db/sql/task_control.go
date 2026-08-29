@@ -15,6 +15,7 @@ type TaskControlStore struct {
 }
 
 var _ pro_interfaces.TaskControlLeaseRepository = (*TaskControlStore)(nil)
+var _ coredb.TaskExecutionEvidenceRecorder = (*TaskControlStore)(nil)
 
 func NewTaskControlStore(connection *coresql.SqlDbConnection) *TaskControlStore {
 	return &TaskControlStore{connection: connection}
@@ -123,6 +124,66 @@ func (s *TaskControlStore) ReleaseTaskControlLease(lease pro_interfaces.TaskCont
 	return updated == 1, err
 }
 
+// RecordTaskExecutionSnapshot persists a complete, value-free runner snapshot.
+// Every controlled execution omitted by the runner is marked absent in the
+// same transaction, so recovery never observes a partially applied snapshot.
+func (s *TaskControlStore) RecordTaskExecutionSnapshot(runnerID int, evidence []coredb.TaskExecutionEvidence) error {
+	if s.connection == nil {
+		return errors.New("task control database connection is required")
+	}
+	if runnerID <= 0 {
+		return errors.New("runner identity is invalid")
+	}
+	if evidence == nil {
+		return errors.New("runner execution snapshot must be complete")
+	}
+	seen := make(map[[2]int]struct{}, len(evidence))
+	for _, item := range evidence {
+		if item.TaskID <= 0 || item.Generation <= 0 {
+			return errors.New("runner execution evidence identity is invalid")
+		}
+		if item.State != coredb.TaskExecutionEvidenceRunning && item.State != coredb.TaskExecutionEvidenceTerminal {
+			return errors.New("runner execution evidence state is invalid")
+		}
+		key := [2]int{item.TaskID, item.Generation}
+		if _, duplicate := seen[key]; duplicate {
+			return errors.New("runner execution evidence is duplicated")
+		}
+		seen[key] = struct{}{}
+	}
+
+	tx, err := s.connection.Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = s.connection.ExecTx(tx,
+		"update cluster__task_control set last_evidence_state=?, last_observed_at=CURRENT_TIMESTAMP, updated=CURRENT_TIMESTAMP where runner_id=?",
+		coredb.TaskExecutionEvidenceAbsent, runnerID,
+	); err != nil {
+		return err
+	}
+	for _, item := range evidence {
+		if _, err = s.connection.ExecTx(tx,
+			"update cluster__task_control set last_evidence_state=?, last_observed_at=CURRENT_TIMESTAMP, updated=CURRENT_TIMESTAMP where task_id=? and runner_id=? and assignment_generation=?",
+			item.State, item.TaskID, runnerID, item.Generation,
+		); err != nil {
+			return err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
 func (s *TaskControlStore) renew(record taskControlRecord, expiresAt string, ttlSeconds int64) (bool, error) {
 	result, err := s.connection.Exec(
 		"update cluster__task_control set lease_expires_at="+expiresAt+", updated=CURRENT_TIMESTAMP where task_id=? and owner_boot_id=? and fencing_token=? and runner_id=? and assignment_generation=? and execution_stable_id=? and lease_expires_at>CURRENT_TIMESTAMP",
@@ -172,6 +233,7 @@ type taskControlRecord struct {
 	RunnerID             int        `db:"runner_id"`
 	AssignmentGeneration int        `db:"assignment_generation"`
 	ExecutionStableID    string     `db:"execution_stable_id"`
+	LastEvidenceState    *string    `db:"last_evidence_state"`
 	LastObservedAt       *time.Time `db:"last_observed_at"`
 	Created              time.Time  `db:"created"`
 	Updated              time.Time  `db:"updated"`

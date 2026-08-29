@@ -17,6 +17,7 @@ import (
 	proApi "github.com/semaphoreui/semaphore/pro/api"
 	proProjects "github.com/semaphoreui/semaphore/pro/api/projects"
 	proFeatures "github.com/semaphoreui/semaphore/pro/pkg/features"
+	proHA "github.com/semaphoreui/semaphore/pro/services/ha"
 	auditServices "github.com/semaphoreui/semaphore/services/audit"
 	capabilityServices "github.com/semaphoreui/semaphore/services/capabilities"
 	identityServices "github.com/semaphoreui/semaphore/services/identity"
@@ -107,7 +108,9 @@ func Route(
 ) *mux.Router {
 
 	projectController := &projects.ProjectController{ProjectService: projectService}
-	runnerController := runners.NewRunnerController(store, taskPool, encryptionService, jwtSigner)
+	runnerController := runners.NewRunnerController(
+		store, taskPool, encryptionService, jwtSigner, proHA.NewTaskExecutionEvidenceRecorder(store),
+	)
 	jwksController := NewJwksController(jwtSigner)
 	integrationController := NewIntegrationController(store, integrationService)
 	environmentController := projects.NewEnvironmentController(store, encryptionService, accessKeyService, environmentService, secretStorageService)

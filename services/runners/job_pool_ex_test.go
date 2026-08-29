@@ -81,6 +81,31 @@ func TestJobProgressWireKeepsLegacyKeysWhileAddingGeneration(t *testing.T) {
 	assert.True(t, hasLegacyLogsKey)
 }
 
+func TestJobPoolSendProgressMarksAnEmptyKnownJobsSnapshotAsComplete(t *testing.T) {
+	prevCfg := util.Config
+	t.Cleanup(func() { util.Config = prevCfg })
+
+	received := make(chan map[string]json.RawMessage, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var progress map[string]json.RawMessage
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&progress))
+		received <- progress
+		_ = json.NewEncoder(w).Encode(RunnerProgressResponse{})
+	}))
+	t.Cleanup(srv.Close)
+	util.Config = &util.ConfigType{
+		WebHost: srv.URL,
+		Runner: &util.RunnerConfig{
+			Token: "test-token", Executor: &util.ExecutorConfig{}, Connection: &util.RunnerConnectionConfig{},
+		},
+	}
+
+	pool := NewJobPool(nil)
+	require.True(t, pool.sendProgress())
+	payload := <-received
+	assert.JSONEq(t, `[]`, string(payload["KnownJobs"]))
+}
+
 func TestJobPool_DuplicatePollDoesNotQueueAssignmentTwice(t *testing.T) {
 	prevCfg := util.Config
 	t.Cleanup(func() { util.Config = prevCfg })

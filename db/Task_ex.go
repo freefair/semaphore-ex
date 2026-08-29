@@ -32,3 +32,28 @@ type RunnerAttempt struct {
 	RequestedExecutorImage *string              `db:"requested_executor_image" json:"requested_executor_image,omitempty"`
 	ResolvedExecutorImage  *string              `db:"resolved_executor_image" json:"resolved_executor_image,omitempty"`
 }
+
+// TaskExecutionEvidenceState is a value-free observation from a complete
+// runner snapshot. Unknown must never be treated as evidence of absence.
+type TaskExecutionEvidenceState string
+
+const (
+	TaskExecutionEvidenceRunning  TaskExecutionEvidenceState = "running"
+	TaskExecutionEvidenceTerminal TaskExecutionEvidenceState = "terminal"
+	TaskExecutionEvidenceAbsent   TaskExecutionEvidenceState = "absent"
+	TaskExecutionEvidenceUnknown  TaskExecutionEvidenceState = "unknown"
+)
+
+// TaskExecutionEvidence identifies one runner execution generation without
+// carrying task output, secrets, or executor metadata.
+type TaskExecutionEvidence struct {
+	TaskID     int                        `json:"task_id"`
+	Generation int                        `json:"generation"`
+	State      TaskExecutionEvidenceState `json:"state"`
+}
+
+// TaskExecutionEvidenceRecorder is an optional store capability. Community
+// stores need not implement it; HA code uses it only when available.
+type TaskExecutionEvidenceRecorder interface {
+	RecordTaskExecutionSnapshot(runnerID int, evidence []TaskExecutionEvidence) error
+}
