@@ -189,6 +189,8 @@ type WorkflowRun struct {
 	End     *time.Time `db:"end" json:"end,omitempty" backup:"end"`
 
 	RootTaskID *int `db:"root_task_id" json:"root_task_id,omitempty" backup:"root_task_id"`
+
+	ReconciliationOwnership *WorkflowReconciliationDiagnostics `db:"-" json:"reconciliation_ownership,omitempty" backup:"-"`
 }
 
 type WorkflowApprovalStatus string

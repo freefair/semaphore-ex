@@ -6,6 +6,9 @@ export const enhancedComputed = {
   reconciliationQuarantined() {
     return this.details?.run?.reconciliation_state === 'quarantined';
   },
+  reconciliationOwnership() {
+    return this.details?.run?.reconciliation_ownership || null;
+  },
   resolvedApprovals() {
     return (this.details?.approvals || [])
       .filter((approval) => approval.status !== 'pending')
@@ -39,6 +42,13 @@ export const enhancedComputed = {
 };
 
 export const enhancedMethods = {
+  workflowOwnershipSummary(ownership) {
+    return this.$t('workflowReconciliationOwnershipTransferred', {
+      owner: (ownership.owner_boot_id || '').slice(0, 8),
+      transfers: ownership.transfer_count || 0,
+      lag: ownership.reconciliation_lag_seconds || 0,
+    });
+  },
   runStatusLabel(status) {
     const labels = {
       stopping: this.$t('workflowRunStopping'),

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
 
 func (d *WorkflowStoreImpl) GetWorkflowRunTasks(projectID int, runID int, params db.RetrieveQueryParams) ([]db.TaskWithTpl, error) {
@@ -86,6 +87,47 @@ func (d *WorkflowStoreImpl) GetActiveWorkflowRuns() ([]db.WorkflowRun, error) {
 		}
 	}
 	return runs, nil
+}
+
+func (d *WorkflowStoreImpl) GetActiveWorkflowRunsFair() ([]db.WorkflowRun, error) {
+	var runs []db.WorkflowRun
+	query := "select * from project__workflow_run where status not in (?, ?, ?, ?, ?, ?) and reconciliation_state<>? and (reconciliation_next_retry_at is null or reconciliation_next_retry_at<=CURRENT_TIMESTAMP) order by project_id, id"
+	if _, err := d.connection.SelectAll(&runs, query,
+		db.WorkflowRunSucceeded, db.WorkflowRunSuccess, db.WorkflowRunFailed, db.WorkflowRunStopped, db.WorkflowRunCanceled, db.WorkflowRunBlocked,
+		db.WorkflowRunReconciliationQuarantined); err != nil {
+		return nil, err
+	}
+	runs = fairWorkflowRunOrder(runs)
+	for index := range runs {
+		if err := d.loadWorkflowRun(&runs[index]); err != nil {
+			return nil, err
+		}
+	}
+	return runs, nil
+}
+
+func fairWorkflowRunOrder(runs []db.WorkflowRun) []db.WorkflowRun {
+	if len(runs) < 2 {
+		return append([]db.WorkflowRun(nil), runs...)
+	}
+	projects := make([]int, 0)
+	byProject := make(map[int][]db.WorkflowRun)
+	for _, run := range runs {
+		if _, exists := byProject[run.ProjectID]; !exists {
+			projects = append(projects, run.ProjectID)
+		}
+		byProject[run.ProjectID] = append(byProject[run.ProjectID], run)
+	}
+	ordered := make([]db.WorkflowRun, 0, len(runs))
+	for offset := 0; len(ordered) < len(runs); offset++ {
+		for _, projectID := range projects {
+			projectRuns := byProject[projectID]
+			if offset < len(projectRuns) {
+				ordered = append(ordered, projectRuns[offset])
+			}
+		}
+	}
+	return ordered
 }
 
 func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (db.WorkflowRun, error) {
@@ -414,6 +456,160 @@ func (d *WorkflowStoreImpl) ClaimWorkflowRunNode(projectID int, runID int, nodeI
 	return updated == 1, err
 }
 
+func (d *WorkflowStoreImpl) ClaimWorkflowRunNodeFenced(lease pro_interfaces.WorkflowReconciliationLease, nodeID int, queuedAt time.Time) (bool, error) {
+	if lease.ProjectID <= 0 || lease.WorkflowRunID <= 0 || lease.OwnerBootID == "" || lease.FencingToken <= 0 || nodeID <= 0 {
+		return false, errors.New("workflow reconciliation lease is invalid")
+	}
+	result, err := d.connection.Exec(
+		"update project__workflow_run_node set status=?, queued=coalesce(queued, ?), progression_fencing_token=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status in (?, ?) and task_id is null and exists (select 1 from project__workflow_run where project_id=? and id=? and desired_state=?) and exists (select 1 from cluster__workflow_reconciliation where project_id=? and workflow_run_id=? and owner_boot_id=? and fencing_token=? and lease_expires_at>CURRENT_TIMESTAMP)",
+		db.WorkflowRunNodeQueued, queuedAt, lease.FencingToken,
+		lease.ProjectID, lease.WorkflowRunID, nodeID, db.WorkflowRunNodePending, db.WorkflowRunNodeQueued,
+		lease.ProjectID, lease.WorkflowRunID, db.WorkflowRunDesiredRunning,
+		lease.ProjectID, lease.WorkflowRunID, lease.OwnerBootID, lease.FencingToken,
+	)
+	if err != nil {
+		return false, err
+	}
+	updated, err := result.RowsAffected()
+	return updated == 1, err
+}
+
+func (d *WorkflowStoreImpl) FinalizeWorkflowRunNodeFenced(
+	lease pro_interfaces.WorkflowReconciliationLease,
+	nodeID int,
+	status db.WorkflowRunNodeStatus,
+	reason string,
+	resultJSON string,
+	at time.Time,
+) (bool, error) {
+	if status != db.WorkflowRunNodeSkipped && status != db.WorkflowRunNodeBlocked && status != db.WorkflowRunNodeCanceled {
+		return false, fmt.Errorf("workflow planner cannot finalize node as %s", status)
+	}
+	result, err := d.connection.Exec(
+		"update project__workflow_run_node set status=?, reason=?, result=?, end=?, progression_fencing_token=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status in (?, ?) and task_id is null and exists (select 1 from cluster__workflow_reconciliation where project_id=? and workflow_run_id=? and owner_boot_id=? and fencing_token=? and lease_expires_at>CURRENT_TIMESTAMP)",
+		status, reason, resultJSON, at, lease.FencingToken,
+		lease.ProjectID, lease.WorkflowRunID, nodeID, db.WorkflowRunNodePending, db.WorkflowRunNodeQueued,
+		lease.ProjectID, lease.WorkflowRunID, lease.OwnerBootID, lease.FencingToken,
+	)
+	if err != nil {
+		return false, err
+	}
+	updated, err := result.RowsAffected()
+	return updated == 1, err
+}
+
+func (d *WorkflowStoreImpl) OpenWorkflowApprovalFenced(lease pro_interfaces.WorkflowReconciliationLease, approval db.WorkflowApproval) (db.WorkflowApproval, bool, error) {
+	if err := validateWorkflowApprovalForOpen(approval); err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	if approval.ProjectID != lease.ProjectID || approval.WorkflowRunID != lease.WorkflowRunID {
+		return db.WorkflowApproval{}, false, errors.New("workflow approval reconciliation ownership is invalid")
+	}
+	tx, err := d.connection.Begin()
+	if err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := d.connection.ExecTx(tx,
+		"update cluster__workflow_reconciliation set operation_sequence=operation_sequence+1, updated=CURRENT_TIMESTAMP where project_id=? and workflow_run_id=? and owner_boot_id=? and fencing_token=? and lease_expires_at>CURRENT_TIMESTAMP",
+		lease.ProjectID, lease.WorkflowRunID, lease.OwnerBootID, lease.FencingToken,
+	)
+	if err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	if updated != 1 {
+		return db.WorkflowApproval{}, false, errors.New("stale workflow reconciliation owner")
+	}
+	result, err = d.connection.ExecTx(tx, d.connection.PrepareQuery(
+		"update project__workflow_run_node set status=?, queued=?, progression_fencing_token=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null and exists (select 1 from project__workflow_run where project_id=? and id=? and desired_state=?)"),
+		db.WorkflowRunNodeApproval, approval.Created, lease.FencingToken,
+		approval.ProjectID, approval.WorkflowRunID, approval.WorkflowNodeID, db.WorkflowRunNodePending,
+		approval.ProjectID, approval.WorkflowRunID, db.WorkflowRunDesiredRunning,
+	)
+	if err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	updated, err = result.RowsAffected()
+	if err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	if updated == 0 {
+		_ = tx.Rollback()
+		existing, getErr := d.GetWorkflowApproval(approval.ProjectID, approval.WorkflowRunID, approval.WorkflowNodeID)
+		if getErr == nil {
+			return existing, false, nil
+		}
+		if errors.Is(getErr, db.ErrNotFound) {
+			return db.WorkflowApproval{}, false, nil
+		}
+		return db.WorkflowApproval{}, false, getErr
+	}
+	approval.ID, err = d.insertTx(tx,
+		"insert into project__workflow_approval(project_id, workflow_run_id, workflow_node_id, status, created, resolved, resolved_by_user_id, deadline, prompt, eligible_permission, separation_of_duties, request_actor_user_id, timeout_outcome, decision_comment, decision_source, correlation_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		approval.ProjectID, approval.WorkflowRunID, approval.WorkflowNodeID, approval.Status, approval.Created,
+		approval.Resolved, approval.ResolvedByUserID, approval.Deadline, approval.Prompt, approval.EligiblePermission,
+		approval.SeparationOfDuties, approval.RequestActorUserID, approval.TimeoutOutcome, approval.DecisionComment,
+		approval.DecisionSource, approval.CorrelationID,
+	)
+	if err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	return approval, true, nil
+}
+
+func (d *WorkflowStoreImpl) FinalizeWorkflowRunApprovalNodeFenced(
+	lease pro_interfaces.WorkflowReconciliationLease,
+	nodeID int,
+	status db.WorkflowRunNodeStatus,
+	reason string,
+	resultJSON string,
+	at time.Time,
+) (bool, error) {
+	if status != db.WorkflowRunNodeSucceeded && status != db.WorkflowRunNodeBlocked && status != db.WorkflowRunNodeCanceled {
+		return false, fmt.Errorf("workflow approval cannot finalize node as %s", status)
+	}
+	result, err := d.connection.Exec(
+		"update project__workflow_run_node set status=?, reason=?, result=?, end=?, progression_fencing_token=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null and exists (select 1 from cluster__workflow_reconciliation where project_id=? and workflow_run_id=? and owner_boot_id=? and fencing_token=? and lease_expires_at>CURRENT_TIMESTAMP)",
+		status, reason, resultJSON, at, lease.FencingToken,
+		lease.ProjectID, lease.WorkflowRunID, nodeID, db.WorkflowRunNodeApproval,
+		lease.ProjectID, lease.WorkflowRunID, lease.OwnerBootID, lease.FencingToken,
+	)
+	if err != nil {
+		return false, err
+	}
+	updated, err := result.RowsAffected()
+	return updated == 1, err
+}
+
+func (d *WorkflowStoreImpl) UpdateWorkflowRunStatusUnlessFenced(lease pro_interfaces.WorkflowReconciliationLease, run db.WorkflowRun, excluded []db.WorkflowRunStatus) (bool, error) {
+	if len(excluded) == 0 {
+		return false, errors.New("workflow run status exclusion is required")
+	}
+	placeholders := make([]string, len(excluded))
+	args := []any{run.Status, run.Reason, run.Start, run.End, run.RootTaskID, run.ProjectID, run.ID}
+	for index, status := range excluded {
+		placeholders[index] = "?"
+		args = append(args, status)
+	}
+	args = append(args, lease.ProjectID, lease.WorkflowRunID, lease.OwnerBootID, lease.FencingToken)
+	result, err := d.connection.Exec(
+		"update project__workflow_run set status=?, reason=?, start=?, end=?, root_task_id=? where project_id=? and id=? and status not in ("+strings.Join(placeholders, ",")+") and exists (select 1 from cluster__workflow_reconciliation where project_id=? and workflow_run_id=? and owner_boot_id=? and fencing_token=? and lease_expires_at>CURRENT_TIMESTAMP)",
+		args...,
+	)
+	if err != nil {
+		return false, err
+	}
+	updated, err := result.RowsAffected()
+	return updated == 1, err
+}
+
 func (d *WorkflowStoreImpl) AttachWorkflowRunNodeTask(projectID int, runID int, nodeID int, taskID int) (bool, error) {
 	result, err := d.connection.Exec(
 		"update project__workflow_run_node set task_id=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null and exists (select 1 from task where id=? and project_id=? and workflow_run_id=? and workflow_node_id=?)",
@@ -689,6 +885,13 @@ func (d *WorkflowStoreImpl) loadWorkflowRun(run *db.WorkflowRun) error {
 		if err := decodeWorkflowRunNode(&run.Nodes[index]); err != nil {
 			return err
 		}
+	}
+	diagnostics, found, err := NewWorkflowReconciliationStore(d.connection).GetWorkflowReconciliationDiagnostics(run.ProjectID, run.ID)
+	if err != nil {
+		return err
+	}
+	if found {
+		run.ReconciliationOwnership = &diagnostics
 	}
 	return nil
 }

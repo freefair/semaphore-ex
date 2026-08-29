@@ -45,12 +45,15 @@ type WorkflowTaskEnqueuer interface {
 // node progresses a given run at a time. The lock is an optimization, not a
 // correctness guarantee — conditional DB updates remain the source of truth.
 type WorkflowRunLocker interface {
-	// TryLockRun acquires the progression lock for a run. Returns ok=false
-	// when another holder owns it; release must be called when ok.
-	TryLockRun(projectID int, runID int) (release func(), ok bool)
+	// TryLockRun acquires durable progression ownership for a run. Returns
+	// ok=false when another holder owns it; release must be called when ok.
+	TryLockRun(projectID int, runID int) (lease WorkflowReconciliationLease, release func(), ok bool, err error)
 	// TryLockStart acquires a short-lived lock serializing run creation per
 	// workflow template (run version minting). Returns ok=false on contention.
 	TryLockStart(projectID int, templateID int) (release func(), ok bool)
+	RecordReconciled(lease WorkflowReconciliationLease) error
+	Drain() error
+	Resume()
 }
 
 // WorkflowReconciler periodically progresses every non-terminal workflow run

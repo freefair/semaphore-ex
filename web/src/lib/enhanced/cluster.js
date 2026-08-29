@@ -35,4 +35,11 @@ export const enhancedMethods = {
     if (coordinator.live_events === 'degraded') return 'warning';
     return 'grey';
   },
+  workflowProgressionLabel(progression) {
+    return this.$t('clusterWorkflowProgressionSummary', {
+      owners: progression.current_ownerships || 0,
+      transfers: progression.transfer_count || 0,
+      lag: progression.max_lag_seconds || 0,
+    });
+  },
 };

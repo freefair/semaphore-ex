@@ -89,6 +89,23 @@ const (
 	WorkflowRunReconciliationQuarantined WorkflowRunReconciliationState = "quarantined"
 )
 
+// WorkflowReconciliationDiagnostics is value-free HA ownership context. It
+// deliberately contains no workflow inputs, task arguments, or credentials.
+type WorkflowReconciliationDiagnostics struct {
+	Owned                    bool       `json:"owned"`
+	OwnerBootID              string     `json:"owner_boot_id"`
+	PreviousOwnerBootID      string     `json:"previous_owner_boot_id,omitempty"`
+	FencingToken             int64      `json:"fencing_token"`
+	LeaseExpiresAt           time.Time  `json:"lease_expires_at"`
+	AcquiredAt               time.Time  `json:"acquired_at"`
+	OwnershipTransferredAt   *time.Time `json:"ownership_transferred_at,omitempty"`
+	TransferCount            int        `json:"transfer_count"`
+	LastReconciledAt         *time.Time `json:"last_reconciled_at,omitempty"`
+	LeaseAgeSeconds          int64      `json:"lease_age_seconds"`
+	ReconciliationLagSeconds int64      `json:"reconciliation_lag_seconds"`
+	Recovered                bool       `json:"recovered"`
+}
+
 type WorkflowRunNodeStatus string
 
 const (
@@ -121,6 +138,9 @@ type WorkflowRunNode struct {
 	Status WorkflowRunNodeStatus `db:"status" json:"status" backup:"status"`
 	TaskID *int                  `db:"task_id" json:"task_id,omitempty" backup:"task_id"`
 	Reason string                `db:"reason" json:"reason,omitempty" backup:"reason"`
+	// ProgressionFencingToken binds task and approval attempt creation to the
+	// workflow reconciliation owner that claimed this node.
+	ProgressionFencingToken int64 `db:"progression_fencing_token" json:"-" backup:"-"`
 
 	TemplateSnapshotJSON string                          `db:"template_snapshot" json:"-" backup:"template_snapshot"`
 	TemplateSnapshot     Template                        `db:"-" json:"template" backup:"-"`

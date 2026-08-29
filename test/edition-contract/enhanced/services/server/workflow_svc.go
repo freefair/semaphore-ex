@@ -30,6 +30,7 @@ type workflowService struct {
 	resultStore      db.WorkflowNodeResultStore
 	enqueuer         pro_interfaces.WorkflowTaskEnqueuer
 	locker           pro_interfaces.WorkflowRunLocker
+	progressionStore pro_interfaces.WorkflowProgressionRepository
 	resourceStore    db.WorkflowParameterValidationStore
 	approvalIdentity pro_interfaces.WorkflowApprovalIdentityStore
 	credentialReader pro_interfaces.WorkflowCredentialReader
@@ -59,6 +60,7 @@ func NewWorkflowService(
 	resultStore, _ := templateStore.(db.WorkflowNodeResultStore)
 	resourceStore, _ := templateStore.(db.WorkflowParameterValidationStore)
 	approvalIdentity, _ := templateStore.(pro_interfaces.WorkflowApprovalIdentityStore)
+	progressionStore, _ := repository.(pro_interfaces.WorkflowProgressionRepository)
 	var credentialReader pro_interfaces.WorkflowCredentialReader
 	if len(credentialReaders) > 0 {
 		credentialReader = credentialReaders[0]
@@ -66,7 +68,7 @@ func NewWorkflowService(
 	return &workflowService{
 		repository: repository, templateStore: templateStore, resultStore: resultStore,
 		resourceStore: resourceStore, approvalIdentity: approvalIdentity, credentialReader: credentialReader,
-		enqueuer: enqueuer, locker: locker,
+		enqueuer: enqueuer, locker: locker, progressionStore: progressionStore,
 	}
 }
 
@@ -126,7 +128,7 @@ func (s *workflowService) StartWorkflow(
 }
 
 func (s *workflowService) ProgressWorkflowRun(projectID int, runID int, user *db.User) error {
-	return s.withRunLock(projectID, runID, func() error {
+	return s.withRunLock(projectID, runID, func(lease *pro_interfaces.WorkflowReconciliationLease) error {
 		run, err := s.repository.GetWorkflowRunByID(projectID, runID)
 		if err != nil {
 			return err
@@ -135,7 +137,7 @@ func (s *workflowService) ProgressWorkflowRun(projectID int, runID int, user *db
 			return nil
 		}
 		if run.DesiredState == db.WorkflowRunDesiredStopping {
-			_, err = s.stopWorkflowRunNow(run)
+			_, err = s.stopWorkflowRunNow(run, lease)
 			return err
 		}
 		if err = s.syncWorkflowTaskStates(run); err != nil {
@@ -145,13 +147,13 @@ func (s *workflowService) ProgressWorkflowRun(projectID int, runID int, user *db
 		if err != nil {
 			return err
 		}
-		return s.progressReadyWorkflowNodes(run, user)
+		return s.progressReadyWorkflowNodes(run, user, lease)
 	})
 }
 
-func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *db.User) error {
+func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *db.User, lease *pro_interfaces.WorkflowReconciliationLease) error {
 	for iteration := 0; iteration <= len(run.Nodes); iteration++ {
-		approvalChanged, err := s.reconcileWorkflowApprovals(run)
+		approvalChanged, err := s.reconcileWorkflowApprovals(run, lease)
 		if err != nil {
 			return err
 		}
@@ -180,9 +182,8 @@ func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *d
 			if err != nil {
 				return err
 			}
-			updated, err := s.repository.FinalizeWorkflowRunNode(
-				run.ProjectID, run.ID, decision.node.WorkflowNodeID, status,
-				decision.reason, resultJSON, tz.Now(),
+			updated, err := s.finalizeWorkflowRunNode(
+				run, decision.node.WorkflowNodeID, status, decision.reason, resultJSON, tz.Now(), lease,
 			)
 			if err != nil {
 				return err
@@ -207,7 +208,7 @@ func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *d
 				return definitionErr
 			}
 			if definitionNode.EffectiveKind() == db.WorkflowNodeApprovalKind {
-				opened, openErr := s.openWorkflowApproval(run, definitionNode)
+				opened, openErr := s.openWorkflowApproval(run, definitionNode, lease)
 				if openErr != nil {
 					return openErr
 				}
@@ -217,7 +218,7 @@ func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *d
 			if slots == 0 {
 				continue
 			}
-			if err := s.enqueueWorkflowNode(run, decision.node, user, decision.node.WorkflowNodeID == root.ID); err != nil {
+			if err := s.enqueueWorkflowNode(run, decision.node, user, decision.node.WorkflowNodeID == root.ID, lease); err != nil {
 				return err
 			}
 			slots--
@@ -228,7 +229,7 @@ func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *d
 			return err
 		}
 		if status, reason, terminal := workflowRunTerminalStatus(current); terminal {
-			return s.finishRun(current, status, reason)
+			return s.finishRun(current, status, reason, lease)
 		}
 		if !changed {
 			status := db.WorkflowRunQueued
@@ -242,7 +243,7 @@ func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *d
 					break
 				}
 			}
-			return s.setRunStatus(current, status, "", nil)
+			return s.setRunStatus(current, status, "", nil, lease)
 		}
 		run = current
 	}
@@ -272,13 +273,13 @@ func (s *workflowService) RequestWorkflowRunStop(projectID int, runID int, _ *db
 
 func (s *workflowService) ReconcileWorkflowRun(projectID int, runID int) (db.WorkflowRun, error) {
 	var result db.WorkflowRun
-	err := s.withRunLock(projectID, runID, func() error {
+	err := s.withRunLock(projectID, runID, func(lease *pro_interfaces.WorkflowReconciliationLease) error {
 		run, err := s.repository.GetWorkflowRunByID(projectID, runID)
 		if err != nil {
 			return err
 		}
 		if run.DesiredState == db.WorkflowRunDesiredStopping {
-			result, err = s.stopWorkflowRunNow(run)
+			result, err = s.stopWorkflowRunNow(run, lease)
 			return err
 		}
 		if run.Status.IsFinished() {
@@ -292,7 +293,7 @@ func (s *workflowService) ReconcileWorkflowRun(projectID int, runID int) (db.Wor
 		if err != nil {
 			return err
 		}
-		if err = s.progressReadyWorkflowNodes(run, nil); err != nil {
+		if err = s.progressReadyWorkflowNodes(run, nil, lease); err != nil {
 			return err
 		}
 		result, err = s.repository.GetWorkflowRunByID(projectID, runID)
@@ -320,7 +321,7 @@ func (s *workflowService) ReconcileWorkflowRun(projectID int, runID int) (db.Wor
 
 func (s *workflowService) RetryWorkflowRunReconciliation(projectID int, runID int, _ *db.User) (db.WorkflowRun, error) {
 	var result db.WorkflowRun
-	err := s.withRunLock(projectID, runID, func() error {
+	err := s.withRunLock(projectID, runID, func(_ *pro_interfaces.WorkflowReconciliationLease) error {
 		run, err := s.repository.GetWorkflowRunByID(projectID, runID)
 		if err != nil {
 			return err
@@ -343,7 +344,7 @@ func (s *workflowService) RetryWorkflowRunReconciliation(projectID int, runID in
 	return result, err
 }
 
-func (s *workflowService) stopWorkflowRunNow(run db.WorkflowRun) (db.WorkflowRun, error) {
+func (s *workflowService) stopWorkflowRunNow(run db.WorkflowRun, lease *pro_interfaces.WorkflowReconciliationLease) (db.WorkflowRun, error) {
 	projectID, runID := run.ProjectID, run.ID
 	now := tz.Now()
 	approvals, err := s.repository.GetWorkflowApprovals(projectID, runID)
@@ -372,11 +373,11 @@ func (s *workflowService) stopWorkflowRunNow(run db.WorkflowRun) (db.WorkflowRun
 			return db.WorkflowRun{}, marshalErr
 		}
 		if node.Status == db.WorkflowRunNodeApproval {
-			if _, cancelErr := s.repository.FinalizeWorkflowRunApprovalNode(projectID, runID, node.WorkflowNodeID, db.WorkflowRunNodeCanceled, "Canceled because the workflow was stopped.", resultJSON, now); cancelErr != nil {
+			if _, cancelErr := s.finalizeWorkflowRunApprovalNode(run, node.WorkflowNodeID, db.WorkflowRunNodeCanceled, "Canceled because the workflow was stopped.", resultJSON, now, lease); cancelErr != nil {
 				return db.WorkflowRun{}, cancelErr
 			}
 		} else if node.TaskID == nil {
-			if _, cancelErr := s.repository.FinalizeWorkflowRunNode(projectID, runID, node.WorkflowNodeID, db.WorkflowRunNodeCanceled, "Canceled because the workflow was stopped.", resultJSON, now); cancelErr != nil {
+			if _, cancelErr := s.finalizeWorkflowRunNode(run, node.WorkflowNodeID, db.WorkflowRunNodeCanceled, "Canceled because the workflow was stopped.", resultJSON, now, lease); cancelErr != nil {
 				return db.WorkflowRun{}, cancelErr
 			}
 		} else {
@@ -386,7 +387,7 @@ func (s *workflowService) stopWorkflowRunNow(run db.WorkflowRun) (db.WorkflowRun
 		}
 	}
 	run.DesiredState = db.WorkflowRunDesiredStopped
-	if err = s.finishRun(run, db.WorkflowRunCanceled, "Canceled by user."); err != nil {
+	if err = s.finishRun(run, db.WorkflowRunCanceled, "Canceled by user.", lease); err != nil {
 		return db.WorkflowRun{}, err
 	}
 	stopped, err := s.repository.GetWorkflowRunByID(projectID, runID)
@@ -540,7 +541,7 @@ func (s *workflowService) ResolveWorkflowApproval(
 	return s.repository.GetWorkflowApproval(projectID, runID, nodeID)
 }
 
-func (s *workflowService) openWorkflowApproval(run db.WorkflowRun, node db.WorkflowNode) (bool, error) {
+func (s *workflowService) openWorkflowApproval(run db.WorkflowRun, node db.WorkflowNode, lease *pro_interfaces.WorkflowReconciliationLease) (bool, error) {
 	now := tz.Now()
 	prompt := "Approval required."
 	if node.ApprovalMessage != nil && *node.ApprovalMessage != "" {
@@ -558,11 +559,20 @@ func (s *workflowService) openWorkflowApproval(run db.WorkflowRun, node db.Workf
 		RequestActorUserID: run.ActorUserID, TimeoutOutcome: node.EffectiveApprovalTimeoutOutcome(),
 		CorrelationID: fmt.Sprintf("%s:approval:%d", run.CorrelationID, node.ID),
 	}
-	_, opened, err := s.repository.OpenWorkflowApproval(approval)
+	var opened bool
+	var err error
+	if lease != nil {
+		if s.progressionStore == nil {
+			return false, errors.New("workflow progression fencing is unavailable")
+		}
+		_, opened, err = s.progressionStore.OpenWorkflowApprovalFenced(*lease, approval)
+	} else {
+		_, opened, err = s.repository.OpenWorkflowApproval(approval)
+	}
 	return opened, err
 }
 
-func (s *workflowService) reconcileWorkflowApprovals(run db.WorkflowRun) (bool, error) {
+func (s *workflowService) reconcileWorkflowApprovals(run db.WorkflowRun, lease *pro_interfaces.WorkflowReconciliationLease) (bool, error) {
 	approvals, err := s.repository.GetWorkflowApprovals(run.ProjectID, run.ID)
 	if err != nil {
 		return false, err
@@ -592,7 +602,7 @@ func (s *workflowService) reconcileWorkflowApprovals(run db.WorkflowRun) (bool, 
 		if marshalErr != nil {
 			return false, marshalErr
 		}
-		finalized, finalizeErr := s.repository.FinalizeWorkflowRunApprovalNode(run.ProjectID, run.ID, approval.WorkflowNodeID, status, reason, resultJSON, now)
+		finalized, finalizeErr := s.finalizeWorkflowRunApprovalNode(run, approval.WorkflowNodeID, status, reason, resultJSON, now, lease)
 		if finalizeErr != nil {
 			return false, finalizeErr
 		}
@@ -833,10 +843,20 @@ func (s *workflowService) enqueueWorkflowNode(
 	node db.WorkflowRunNode,
 	user *db.User,
 	root bool,
+	lease *pro_interfaces.WorkflowReconciliationLease,
 ) error {
 	now := tz.Now()
-	if node.Status == db.WorkflowRunNodePending {
-		claimed, err := s.repository.ClaimWorkflowRunNode(run.ProjectID, run.ID, node.WorkflowNodeID, now)
+	if node.Status == db.WorkflowRunNodePending || lease != nil && node.Status == db.WorkflowRunNodeQueued && node.TaskID == nil {
+		var claimed bool
+		var err error
+		if lease != nil {
+			if s.progressionStore == nil {
+				return errors.New("workflow progression fencing is unavailable")
+			}
+			claimed, err = s.progressionStore.ClaimWorkflowRunNodeFenced(*lease, node.WorkflowNodeID, now)
+		} else {
+			claimed, err = s.repository.ClaimWorkflowRunNode(run.ProjectID, run.ID, node.WorkflowNodeID, now)
+		}
 		if err != nil {
 			return err
 		}
@@ -846,7 +866,7 @@ func (s *workflowService) enqueueWorkflowNode(
 	}
 	existing, err := s.repository.GetWorkflowRunNodeTask(run.ProjectID, run.ID, node.WorkflowNodeID)
 	if err == nil {
-		return s.attachWorkflowTask(run, node, existing, root)
+		return s.attachWorkflowTask(run, node, existing, root, lease)
 	}
 	if !errors.Is(err, db.ErrNotFound) {
 		return err
@@ -877,18 +897,31 @@ func (s *workflowService) enqueueWorkflowNode(
 	if user != nil && user.ID == actorID {
 		username = user.Username
 	}
-	created, enqueueErr := s.enqueuer.AddWorkflowTask(
-		task, node.TemplateSnapshot, &actorID, username, run.ProjectID, node.TemplateSnapshot.App.NeedTaskAlias(),
-	)
+	var created db.Task
+	var enqueueErr error
+	if lease != nil {
+		fencedEnqueuer, ok := s.enqueuer.(pro_interfaces.WorkflowTaskFencedEnqueuer)
+		if !ok {
+			return errors.New("workflow task fencing is unavailable")
+		}
+		created, enqueueErr = fencedEnqueuer.AddWorkflowTaskFenced(
+			task, node.TemplateSnapshot, &actorID, username, run.ProjectID,
+			node.TemplateSnapshot.App.NeedTaskAlias(), *lease,
+		)
+	} else {
+		created, enqueueErr = s.enqueuer.AddWorkflowTask(
+			task, node.TemplateSnapshot, &actorID, username, run.ProjectID, node.TemplateSnapshot.App.NeedTaskAlias(),
+		)
+	}
 	if created.ID > 0 {
-		if attachErr := s.attachWorkflowTask(run, node, created, root); attachErr != nil {
+		if attachErr := s.attachWorkflowTask(run, node, created, root, lease); attachErr != nil {
 			return attachErr
 		}
 	}
 	if enqueueErr != nil {
 		existing, getErr := s.repository.GetWorkflowRunNodeTask(run.ProjectID, run.ID, node.WorkflowNodeID)
 		if getErr == nil {
-			return s.attachWorkflowTask(run, node, existing, root)
+			return s.attachWorkflowTask(run, node, existing, root, lease)
 		}
 		return enqueueErr
 	}
@@ -1259,7 +1292,7 @@ func boundedWorkflowArtifactDiagnostic(value string) string {
 	return value[:db.MaxWorkflowArtifactDiagnostic]
 }
 
-func (s *workflowService) attachWorkflowTask(run db.WorkflowRun, node db.WorkflowRunNode, task db.Task, root bool) error {
+func (s *workflowService) attachWorkflowTask(run db.WorkflowRun, node db.WorkflowRunNode, task db.Task, root bool, leases ...*pro_interfaces.WorkflowReconciliationLease) error {
 	attached, err := s.repository.AttachWorkflowRunNodeTask(run.ProjectID, run.ID, node.WorkflowNodeID, task.ID)
 	if err != nil {
 		return err
@@ -1278,20 +1311,51 @@ func (s *workflowService) attachWorkflowTask(run db.WorkflowRun, node db.Workflo
 			return err
 		}
 	}
-	return s.setRunStatus(run, db.WorkflowRunQueued, "", nil)
+	var lease *pro_interfaces.WorkflowReconciliationLease
+	if len(leases) > 0 {
+		lease = leases[0]
+	}
+	return s.setRunStatus(run, db.WorkflowRunQueued, "", nil, lease)
 }
 
-func (s *workflowService) setRunStatus(run db.WorkflowRun, status db.WorkflowRunStatus, reason string, end *time.Time) error {
+func (s *workflowService) setRunStatus(run db.WorkflowRun, status db.WorkflowRunStatus, reason string, end *time.Time, leases ...*pro_interfaces.WorkflowReconciliationLease) error {
 	run.Status = status
 	run.Reason = reason
 	run.End = end
+	if len(leases) > 0 && leases[0] != nil {
+		if s.progressionStore == nil {
+			return errors.New("workflow progression fencing is unavailable")
+		}
+		_, err := s.progressionStore.UpdateWorkflowRunStatusUnlessFenced(*leases[0], run, terminalWorkflowRunStatuses())
+		return err
+	}
 	_, err := s.repository.UpdateWorkflowRunStatusUnless(run, terminalWorkflowRunStatuses())
 	return err
 }
 
-func (s *workflowService) finishRun(run db.WorkflowRun, status db.WorkflowRunStatus, reason string) error {
+func (s *workflowService) finishRun(run db.WorkflowRun, status db.WorkflowRunStatus, reason string, leases ...*pro_interfaces.WorkflowReconciliationLease) error {
 	now := tz.Now()
-	return s.setRunStatus(run, status, reason, &now)
+	return s.setRunStatus(run, status, reason, &now, leases...)
+}
+
+func (s *workflowService) finalizeWorkflowRunNode(run db.WorkflowRun, nodeID int, status db.WorkflowRunNodeStatus, reason string, resultJSON string, at time.Time, lease *pro_interfaces.WorkflowReconciliationLease) (bool, error) {
+	if lease != nil {
+		if s.progressionStore == nil {
+			return false, errors.New("workflow progression fencing is unavailable")
+		}
+		return s.progressionStore.FinalizeWorkflowRunNodeFenced(*lease, nodeID, status, reason, resultJSON, at)
+	}
+	return s.repository.FinalizeWorkflowRunNode(run.ProjectID, run.ID, nodeID, status, reason, resultJSON, at)
+}
+
+func (s *workflowService) finalizeWorkflowRunApprovalNode(run db.WorkflowRun, nodeID int, status db.WorkflowRunNodeStatus, reason string, resultJSON string, at time.Time, lease *pro_interfaces.WorkflowReconciliationLease) (bool, error) {
+	if lease != nil {
+		if s.progressionStore == nil {
+			return false, errors.New("workflow progression fencing is unavailable")
+		}
+		return s.progressionStore.FinalizeWorkflowRunApprovalNodeFenced(*lease, nodeID, status, reason, resultJSON, at)
+	}
+	return s.repository.FinalizeWorkflowRunApprovalNode(run.ProjectID, run.ID, nodeID, status, reason, resultJSON, at)
 }
 
 func terminalWorkflowRunStatuses() []db.WorkflowRunStatus {
@@ -1316,16 +1380,29 @@ func taskFailureReason(node db.WorkflowRunNode) string {
 	return fmt.Sprintf("Workflow node %d ended with status %s.", node.WorkflowNodeID, node.Status)
 }
 
-func (s *workflowService) withRunLock(projectID, runID int, action func() error) error {
+func (s *workflowService) withRunLock(projectID, runID int, action func(*pro_interfaces.WorkflowReconciliationLease) error) error {
+	var lease *pro_interfaces.WorkflowReconciliationLease
 	if s.locker != nil {
-		release, ok := s.locker.TryLockRun(projectID, runID)
+		claimed, release, ok, err := s.locker.TryLockRun(projectID, runID)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			return nil
 		}
 		defer release()
+		lease = &claimed
 	}
 	key := fmt.Sprintf("%d:%d", projectID, runID)
-	return s.localRunLocks.withLock(key, action)
+	return s.localRunLocks.withLock(key, func() error {
+		if err := action(lease); err != nil {
+			return err
+		}
+		if lease != nil {
+			return s.locker.RecordReconciled(*lease)
+		}
+		return nil
+	})
 }
 
 func (s *workflowService) withStartLock(projectID, workflowID int, action func() error) error {
@@ -1405,7 +1482,13 @@ func (r *workflowReconciler) Stop() {
 }
 
 func (r *workflowReconciler) reconcile() {
-	runs, err := r.repository.GetActiveWorkflowRuns()
+	var runs []db.WorkflowRun
+	var err error
+	if fairScanner, ok := r.repository.(pro_interfaces.WorkflowRunFairScanner); ok {
+		runs, err = fairScanner.GetActiveWorkflowRunsFair()
+	} else {
+		runs, err = r.repository.GetActiveWorkflowRuns()
+	}
 	if err != nil {
 		return
 	}

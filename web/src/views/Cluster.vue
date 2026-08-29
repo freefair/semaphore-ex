@@ -113,6 +113,15 @@
           >
             {{ $t('clusterLiveEvents') }}: {{ coordinatorState(status.coordinator) }}
           </v-chip>
+          <v-chip
+            v-if="status.coordinator && status.coordinator.workflow_progression"
+            x-small
+            outlined
+            class="ml-1"
+            data-testid="cluster-workflow-progression"
+          >
+            {{ workflowProgressionLabel(status.coordinator.workflow_progression) }}
+          </v-chip>
         </v-card-title>
         <v-data-table :headers="nodeHeaders" :items="status.nodes || []" :items-per-page="20" dense>
           <template v-slot:item.node_id="{ item }">

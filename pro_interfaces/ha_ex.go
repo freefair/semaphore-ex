@@ -314,6 +314,14 @@ func EvaluateClusterNodeCompatibility(node ClusterNodeRegistration, required Clu
 	return ClusterNodeCompatibility{State: ClusterNodeCompatible, Ready: true}
 }
 
+// ClusterDrainer is the common lifecycle boundary for HA ownership workers.
+// Drain prevents new claims and waits for in-flight transitions to release
+// their durable leases before the node is marked draining.
+type ClusterDrainer interface {
+	Drain() error
+	Resume()
+}
+
 type TaskRecoveryDiagnostics struct {
 	Controlled             bool                 `json:"controlled"`
 	OwnerBootID            string               `json:"owner_boot_id"`
@@ -335,10 +343,23 @@ type TaskRecoveryDiagnostics struct {
 }
 
 type ClusterCoordinatorHealth struct {
-	SQLAuthoritative bool      `json:"sql_authoritative"`
-	LiveEvents       string    `json:"live_events"`
-	Reason           string    `json:"reason,omitempty"`
-	ObservedAt       time.Time `json:"observed_at"`
+	SQLAuthoritative    bool                       `json:"sql_authoritative"`
+	LiveEvents          string                     `json:"live_events"`
+	Reason              string                     `json:"reason,omitempty"`
+	ObservedAt          time.Time                  `json:"observed_at"`
+	WorkflowProgression *WorkflowProgressionHealth `json:"workflow_progression,omitempty"`
+}
+
+type WorkflowProgressionHealth struct {
+	CurrentOwnerships int       `json:"current_ownerships"`
+	ExpiredOwnerships int       `json:"expired_ownerships"`
+	TransferCount     int       `json:"transfer_count"`
+	MaxLagSeconds     int64     `json:"max_lag_seconds"`
+	ObservedAt        time.Time `json:"observed_at"`
+}
+
+type WorkflowProgressionHealthSource interface {
+	WorkflowProgressionHealth() (WorkflowProgressionHealth, error)
 }
 
 type ClusterCoordinatorHealthSource interface {

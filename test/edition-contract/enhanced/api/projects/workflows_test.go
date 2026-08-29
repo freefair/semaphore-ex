@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
@@ -436,6 +437,30 @@ func TestWorkflowRunResponseExposesEffectiveValuesAndValueFreeSecretAudit(t *tes
 	assert.Contains(t, response, `"reference_fingerprint":"sha256:`)
 	assert.NotContains(t, response, "deployment-secret")
 	assert.NotContains(t, response, "ciphertext")
+}
+
+func TestWorkflowRunResponseExposesValueFreeHAReconciliationDiagnostics(t *testing.T) {
+	transferredAt := time.Date(2026, 8, 29, 16, 0, 0, 0, time.UTC)
+	run := db.WorkflowRun{
+		ID: 91, ProjectID: 7, WorkflowTemplateID: 41,
+		ReconciliationOwnership: &db.WorkflowReconciliationDiagnostics{
+			Owned: true, OwnerBootID: "boot-b", PreviousOwnerBootID: "boot-a", FencingToken: 4,
+			LeaseExpiresAt: transferredAt.Add(time.Minute), AcquiredAt: transferredAt,
+			OwnershipTransferredAt: &transferredAt, TransferCount: 2,
+			LeaseAgeSeconds: 7, ReconciliationLagSeconds: 1, Recovered: true,
+		},
+	}
+	encoded, err := json.Marshal(newWorkflowRunView(run))
+	require.NoError(t, err)
+	response := string(encoded)
+	assert.Contains(t, response, `"owner_boot_id":"boot-b"`)
+	assert.Contains(t, response, `"previous_owner_boot_id":"boot-a"`)
+	assert.Contains(t, response, `"fencing_token":4`)
+	assert.Contains(t, response, `"reconciliation_lag_seconds":1`)
+	assert.Contains(t, response, `"recovered":true`)
+	assert.NotContains(t, response, "parameter_snapshot")
+	assert.NotContains(t, response, "credential")
+	assert.NotContains(t, response, "secret")
 }
 
 func TestWorkflowRunControllerExposesConditionalPresentationFields(t *testing.T) {

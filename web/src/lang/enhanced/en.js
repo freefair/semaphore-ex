@@ -185,6 +185,8 @@ export default {
   workflowRetryReconciliation: 'Retry recovery',
   workflowReconciliationQuarantined: 'Recovery paused after {attempts} failed attempts: {error}',
   workflowReconciliationRecovering: 'Recovering workflow state',
+  workflowReconciliationOwnershipTransferred: 'Workflow ownership recovered on {owner} after {transfers} transfer(s); reconciliation lag {lag}s.',
+  clusterWorkflowProgressionSummary: 'Workflows: {owners} owned · {transfers} transfers · {lag}s lag',
   workflowRunStopping: 'Stopping',
   workflowRunStopped: 'Stopped',
   workflowArtifactOutputs: 'Workflow outputs',

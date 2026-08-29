@@ -151,9 +151,10 @@ func runService() {
 	// task through the pool; the pool calls back into it when a workflow task
 	// finishes. Wire the cycle: pool first, then service (with the pool as its
 	// enqueuer), then inject the service back into the pool. The run locker is
-	// Redis-backed in HA mode (cluster-wide progression locks) and nil
+	// SQL-backed in HA mode (cluster-wide progression ownership) and nil
 	// otherwise, which makes the service fall back to its in-process locker.
-	workflowService := proServer.NewWorkflowService(workflowStore, store, &taskPool, proHA.NewWorkflowRunLocker(), encryptionService)
+	workflowRunLocker := proHA.NewWorkflowRunLocker(store)
+	workflowService := proServer.NewWorkflowService(workflowStore, store, &taskPool, workflowRunLocker, encryptionService)
 	workflowDefinitionService := proServer.NewWorkflowDefinitionService(workflowStore, store)
 	workflowTriggerService := proServer.NewWorkflowTriggerService(
 		workflowTriggerStore, workflowStore, workflowService, store, capabilityProvider,
@@ -202,7 +203,7 @@ func runService() {
 	// Cluster inspector powers the admin Cluster Dashboard. It is nil when HA
 	// is disabled; the dashboard then falls back to the local task pool. The
 	// instance is injected per-request below.
-	clusterInspector := proHA.NewClusterInspector(store, orphanCleaner)
+	clusterInspector := proHA.NewClusterInspector(store, orphanCleaner, workflowRunLocker)
 
 	if dedup := proHA.NewScheduleDeduplicator(store); dedup != nil {
 		schedulePool.SetDeduplicator(dedup)

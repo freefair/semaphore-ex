@@ -61,6 +61,7 @@ type workflowRunView struct {
 	ReconciliationLastError     string                                  `json:"reconciliation_last_error,omitempty"`
 	ReconciliationNextRetryAt   *time.Time                              `json:"reconciliation_next_retry_at,omitempty"`
 	ReconciliationQuarantinedAt *time.Time                              `json:"reconciliation_quarantined_at,omitempty"`
+	ReconciliationOwnership     *db.WorkflowReconciliationDiagnostics   `json:"reconciliation_ownership,omitempty"`
 	Created                     time.Time                               `json:"created"`
 	Start                       *time.Time                              `json:"start,omitempty"`
 	End                         *time.Time                              `json:"end,omitempty"`
@@ -426,6 +427,7 @@ func newWorkflowRunView(run db.WorkflowRun) workflowRunView {
 		ReconciliationLastError:     run.ReconciliationLastError,
 		ReconciliationNextRetryAt:   run.ReconciliationNextRetryAt,
 		ReconciliationQuarantinedAt: run.ReconciliationQuarantinedAt,
+		ReconciliationOwnership:     run.ReconciliationOwnership,
 		Created:                     run.Created,
 		Start:                       run.Start,
 		End:                         run.End,

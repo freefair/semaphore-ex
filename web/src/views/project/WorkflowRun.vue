@@ -104,6 +104,17 @@
             error: details.run.reconciliation_last_error,
           }) }}
         </v-alert>
+        <v-alert
+          v-if="reconciliationOwnership && reconciliationOwnership.recovered"
+          type="info"
+          dense
+          text
+          tile
+          class="ma-0"
+          data-testid="workflow-ha-ownership-transfer"
+        >
+          {{ workflowOwnershipSummary(reconciliationOwnership) }}
+        </v-alert>
 
         <div class="WorkflowRun__graph">
           <WorkflowGraph
