@@ -23,6 +23,9 @@ const (
 	CapabilityTOTP CapabilityID = "totp"
 	// CapabilityLDAP gates the enhanced LDAP identity lifecycle.
 	CapabilityLDAP CapabilityID = "ldap"
+	// CapabilityWorkflowTriggers gates trigger management and every background
+	// or credential-authenticated workflow-start entry point.
+	CapabilityWorkflowTriggers CapabilityID = "workflow_triggers"
 )
 
 // LimitID identifies one numeric limit in a capability decision.

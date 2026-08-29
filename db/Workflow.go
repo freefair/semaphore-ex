@@ -170,6 +170,8 @@ type WorkflowRun struct {
 	DefinitionSnapshot     WorkflowTemplate                     `db:"-" json:"definition" backup:"-"`
 	ParameterSnapshotJSON  string                               `db:"parameter_snapshot" json:"-" backup:"parameter_snapshot"`
 	ParameterSnapshot      map[string]WorkflowParameterSnapshot `db:"-" json:"parameters,omitempty" backup:"-"`
+	TriggerSnapshotJSON    string                               `db:"trigger_snapshot" json:"-" backup:"trigger_snapshot"`
+	TriggerSnapshot        WorkflowTriggerSnapshot              `db:"-" json:"trigger,omitempty" backup:"-"`
 	Nodes                  []WorkflowRunNode                    `db:"-" json:"nodes" backup:"-"`
 
 	Created time.Time  `db:"created" json:"created" backup:"created"`

@@ -16,6 +16,13 @@
       :loading="starting"
       @start="runWorkflow"
     />
+    <WorkflowTriggersDialog
+      v-if="triggersAvailable"
+      v-model="triggerDialog"
+      :project-id="projectId"
+      :workflow="item"
+      :system-info="systemInfo"
+    />
 
     <v-toolbar flat>
       <v-app-bar-nav-icon @click="showDrawer()"></v-app-bar-nav-icon>
@@ -31,6 +38,16 @@
       </v-toolbar-title>
 
       <v-spacer></v-spacer>
+
+      <v-btn
+        v-if="triggersAvailable && canUpdate"
+        icon
+        :title="$t('workflowTriggers')"
+        data-testid="workflow-triggers-open"
+        @click="triggerDialog = true"
+      >
+        <v-icon>mdi-lightning-bolt</v-icon>
+      </v-btn>
 
       <v-btn
         v-if="canRun"
@@ -75,7 +92,7 @@
 </template>
 
 <script>
-import enhancedMethods from '@/lib/enhanced/workflow-view';
+import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/workflow-view';
 
 import axios from 'axios';
 import EventBus from '@/event-bus';
@@ -84,18 +101,22 @@ import YesNoDialog from '@/components/YesNoDialog.vue';
 import PermissionsCheck from '@/components/PermissionsCheck';
 import ProjectMixin from '@/components/ProjectMixin';
 import WorkflowRunDialog from '@/components/WorkflowRunDialog.vue';
+import WorkflowTriggersDialog from '@/components/WorkflowTriggersDialog.vue';
+
 import { USER_PERMISSIONS } from '@/lib/constants';
 
 export default {
   components: {
     YesNoDialog,
     WorkflowRunDialog,
+    WorkflowTriggersDialog,
   },
 
   mixins: [PermissionsCheck, ProjectMixin],
 
   props: {
     projectId: Number,
+    systemInfo: Object,
   },
 
   data() {
@@ -104,11 +125,13 @@ export default {
       deleteDialog: null,
       runDialog: false,
       starting: false,
+      triggerDialog: false,
       USER_PERMISSIONS,
     };
   },
 
   computed: {
+    ...enhancedComputed,
     canRun() {
       return this.can(USER_PERMISSIONS.runProjectTasks);
     },

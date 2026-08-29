@@ -14,6 +14,8 @@ type WorkflowStoreImpl struct {
 	workflowTaskStore workflowRunTaskStore
 }
 
+var _ db.WorkflowTriggerManager = (*WorkflowStoreImpl)(nil)
+
 type workflowRunTaskStore interface {
 	GetWorkflowRunTasks(projectID int, runID int, params db.RetrieveQueryParams) ([]db.TaskWithTpl, error)
 }

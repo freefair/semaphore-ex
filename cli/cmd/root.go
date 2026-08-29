@@ -103,6 +103,7 @@ func runService() {
 	terraformStore := proFactory.NewTerraformStore(store)
 	ansibleTaskRepo := proFactory.NewAnsibleTaskRepository(store)
 	workflowStore := proFactory.NewWorkflowStore(store)
+	workflowTriggerStore := proFactory.NewWorkflowTriggerStore(store)
 
 	projectService := server.NewProjectService(store, store)
 	capabilityProvider := proFeatures.NewCapabilityProvider(store)
@@ -156,7 +157,15 @@ func runService() {
 	// otherwise, which makes the service fall back to its in-process locker.
 	workflowService := proServer.NewWorkflowService(workflowStore, store, &taskPool, proHA.NewWorkflowRunLocker(), encryptionService)
 	workflowDefinitionService := proServer.NewWorkflowDefinitionService(workflowStore, store)
+	workflowTriggerService := proServer.NewWorkflowTriggerService(
+		workflowTriggerStore, workflowStore, workflowService, store, capabilityProvider,
+	)
 	taskPool.SetWorkflowService(workflowService)
+	workflowTriggerScheduler := proServer.NewWorkflowTriggerScheduler(workflowTriggerStore, workflowTriggerService)
+	if workflowTriggerScheduler != nil {
+		workflowTriggerScheduler.Start()
+		defer workflowTriggerScheduler.Stop()
+	}
 
 	schedulePool := schedules.CreateSchedulePool(
 		store,
@@ -270,6 +279,7 @@ func runService() {
 		runnerService,
 		workflowService,
 		workflowDefinitionService,
+		workflowTriggerService,
 		logWriteService,
 		auditWebhookService,
 		appMetrics,

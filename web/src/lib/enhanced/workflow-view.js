@@ -1,4 +1,15 @@
-const enhancedMethods = {
+import { findCapabilityDecision } from '@/lib/capabilities';
+
+export const enhancedComputed = {
+  triggerDecision() {
+    return findCapabilityDecision(this.systemInfo, 'workflow_triggers');
+  },
+  triggersAvailable() {
+    return Boolean(this.triggerDecision?.access?.includes('read'));
+  },
+};
+
+export const enhancedMethods = {
   hasRunInputs(workflow) {
     return (workflow.parameters || []).length > 0
         || (workflow.nodes || []).some((node) => {
@@ -10,5 +21,3 @@ const enhancedMethods = {
         });
   },
 };
-
-export default enhancedMethods;

@@ -103,11 +103,14 @@ func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (db.WorkflowRu
 			_ = tx.Rollback()
 		}
 	}()
+	if run.TriggerSnapshotJSON == "" {
+		run.TriggerSnapshotJSON = "{}"
+	}
 	run.ID, err = d.insertTx(tx,
-		"insert into project__workflow_run(project_id, workflow_template_id, status, version, start, end, root_task_id, actor_user_id, definition_version, definition_revision, definition_snapshot, parameter_snapshot, correlation_id, created, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"insert into project__workflow_run(project_id, workflow_template_id, status, version, start, end, root_task_id, actor_user_id, definition_version, definition_revision, definition_snapshot, parameter_snapshot, trigger_snapshot, correlation_id, created, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		run.ProjectID, run.WorkflowTemplateID, run.Status, run.Version, run.Start, run.End, run.RootTaskID,
 		run.ActorUserID, run.DefinitionVersion, run.DefinitionRevision, run.DefinitionSnapshotJSON,
-		run.ParameterSnapshotJSON, run.CorrelationID, run.Created, run.Reason,
+		run.ParameterSnapshotJSON, run.TriggerSnapshotJSON, run.CorrelationID, run.Created, run.Reason,
 	)
 	if err != nil {
 		_ = tx.Rollback()
@@ -490,6 +493,11 @@ func (d *WorkflowStoreImpl) loadWorkflowRun(run *db.WorkflowRun) error {
 	if run.ParameterSnapshotJSON != "" {
 		if err := json.Unmarshal([]byte(run.ParameterSnapshotJSON), &run.ParameterSnapshot); err != nil {
 			return fmt.Errorf("decode workflow parameter snapshot: %w", err)
+		}
+	}
+	if run.TriggerSnapshotJSON != "" && run.TriggerSnapshotJSON != "{}" {
+		if err := json.Unmarshal([]byte(run.TriggerSnapshotJSON), &run.TriggerSnapshot); err != nil {
+			return fmt.Errorf("decode workflow trigger snapshot: %w", err)
 		}
 	}
 	if _, err := d.connection.SelectAll(&run.Nodes,

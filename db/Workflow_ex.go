@@ -123,9 +123,10 @@ type WorkflowRunNode struct {
 // WorkflowRunInput contains the two value sources used by the start service.
 // TriggerValues is internal-only; direct run API callers supply UserValues.
 type WorkflowRunInput struct {
-	TriggerValues map[string]json.RawMessage   `json:"-"`
-	UserValues    map[string]json.RawMessage   `json:"parameters,omitempty"`
-	NodeOverrides map[int]WorkflowNodeOverride `json:"node_overrides,omitempty"`
+	TriggerValues   map[string]json.RawMessage   `json:"-"`
+	UserValues      map[string]json.RawMessage   `json:"parameters,omitempty"`
+	NodeOverrides   map[int]WorkflowNodeOverride `json:"node_overrides,omitempty"`
+	TriggerSnapshot *WorkflowTriggerSnapshot     `json:"-"`
 }
 
 func (mode WorkflowJoinMode) Validate() error {
