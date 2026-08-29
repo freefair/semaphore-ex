@@ -128,6 +128,7 @@ func NewOrphanCleaner(store db.Store, pool *tasks.TaskPool) OrphanCleaner {
 	heartbeats := NewRedisHeartbeatStore(NewGoRedisHeartbeatClient(redis.NewClient(redisOptions)), defaultClusterHeartbeatPrefix)
 	repository := clusterSQL.NewClusterNodeStore(connection)
 	requirements := pro_interfaces.ClusterCompatibilityRequirements{
+		Edition:         util.BuildEdition,
 		ProtocolVersion: clusterProtocolVersion, SchemaVersion: currentSchemaVersion(connection.GetDialect()),
 		RequiredCapabilities: []string{"cluster-dashboard"},
 	}
@@ -232,6 +233,7 @@ func NewClusterInspector(store db.Store, drainers ...pro_interfaces.ClusterDrain
 		clusterSQL.NewClusterNodeStore(connection),
 		NewRedisHeartbeatStore(redisClient, defaultClusterHeartbeatPrefix),
 		pro_interfaces.ClusterCompatibilityRequirements{
+			Edition:              util.BuildEdition,
 			ProtocolVersion:      clusterProtocolVersion,
 			SchemaVersion:        currentSchemaVersion(connection.GetDialect()),
 			RequiredCapabilities: []string{"cluster-dashboard"},

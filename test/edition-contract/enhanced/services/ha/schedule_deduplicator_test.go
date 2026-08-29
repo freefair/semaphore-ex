@@ -1,6 +1,7 @@
 package ha
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -14,9 +15,9 @@ func TestManagedScheduleDeduplicatorMapsCoreOccurrenceToFencedSQLLease(t *testin
 	repository := &scheduleLeaseRepositoryFake{}
 	deduplicator := NewManagedScheduleDeduplicator(repository, "boot-a")
 	occurrence := schedules.ScheduleOccurrence{
-		ScheduleID:  42,
-		Revision:    "schedule-revision-a",
-		IntendedAt:  time.Date(2026, 8, 29, 12, 34, 0, 0, time.UTC),
+		ScheduleID: 42,
+		Revision:   "schedule-revision-a",
+		IntendedAt: time.Date(2026, 8, 29, 12, 34, 0, 0, time.UTC),
 	}
 
 	lease, acquired, err := deduplicator.ClaimScheduleOccurrence(occurrence)
@@ -37,7 +38,42 @@ func TestManagedScheduleDeduplicatorMapsCoreOccurrenceToFencedSQLLease(t *testin
 	assert.True(t, released)
 }
 
+func TestManagedScheduleDeduplicatorDrainWaitsForActiveLeaseAndRejectsNewClaims(t *testing.T) {
+	deduplicator := NewManagedScheduleDeduplicator(&scheduleLeaseRepositoryFake{}, "boot-a")
+	drainer := deduplicator.(pro_interfaces.ClusterDrainer)
+	lease, acquired, err := deduplicator.ClaimScheduleOccurrence(schedules.ScheduleOccurrence{
+		ScheduleID: 42, Revision: "schedule-revision-a", IntendedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	require.True(t, acquired)
+
+	drained := make(chan error, 1)
+	go func() { drained <- drainer.Drain() }()
+	select {
+	case <-drained:
+		t.Fatal("drain completed while a schedule transition was active")
+	case <-time.After(25 * time.Millisecond):
+	}
+	_, err = lease.Complete(7)
+	require.NoError(t, err)
+	require.NoError(t, <-drained)
+
+	_, acquired, err = deduplicator.ClaimScheduleOccurrence(schedules.ScheduleOccurrence{
+		ScheduleID: 43, Revision: "schedule-revision-b", IntendedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	assert.False(t, acquired)
+	drainer.Resume()
+	lease, acquired, err = deduplicator.ClaimScheduleOccurrence(schedules.ScheduleOccurrence{
+		ScheduleID: 43, Revision: "schedule-revision-b", IntendedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	assert.True(t, acquired)
+	_, _ = lease.Release()
+}
+
 type scheduleLeaseRepositoryFake struct {
+	mu                sync.Mutex
 	claimedOccurrence pro_interfaces.ScheduleOccurrence
 	claimedOwner      string
 }

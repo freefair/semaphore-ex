@@ -132,6 +132,54 @@ func TestRunnerAssignmentGenerationRejectsLateSameRunnerCompletion(t *testing.T)
 	assert.NotNil(t, attempts[1].EndedAt)
 }
 
+func TestClaimTaskStartRejectsStaleRecoveredDispatcher(t *testing.T) {
+	store, projectID, runner, task := createRunnerAttemptFixture(t)
+	now := time.Now().UTC()
+	first, assigned, err := store.AssignTaskRunner(
+		projectID, task.ID, runner.ID, runner.Name, now,
+	)
+	require.NoError(t, err)
+	require.True(t, assigned)
+	requeued := first
+	requeued.Status = task_logger.TaskWaitingStatus
+	requeued.RunnerID = nil
+	requeued.RunnerAssignedAt = nil
+	updated, err := store.UpdateTaskRunner(
+		requeued, first.Status, runner.ID, first.AssignmentGeneration,
+		db.RunnerAttemptRequeued, "recovery proved the execution absent", now.Add(time.Second),
+	)
+	require.NoError(t, err)
+	require.True(t, updated)
+
+	started, claimed, err := store.ClaimTaskStart(
+		projectID, task.ID, requeued.AssignmentGeneration,
+	)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	assert.Equal(t, task_logger.TaskStartingStatus, started.Status)
+	second, assigned, err := store.AssignTaskRunner(
+		projectID, task.ID, runner.ID, runner.Name, now.Add(2*time.Second),
+	)
+	require.NoError(t, err)
+	require.True(t, assigned)
+	require.Equal(t, 2, second.AssignmentGeneration)
+
+	_, claimed, err = store.ClaimTaskStart(
+		projectID, task.ID, requeued.AssignmentGeneration,
+	)
+	require.NoError(t, err)
+	assert.False(t, claimed, "a stale server must not reset the winning assignment")
+
+	persisted, err := store.GetTask(projectID, task.ID)
+	require.NoError(t, err)
+	require.NotNil(t, persisted.RunnerID)
+	assert.Equal(t, runner.ID, *persisted.RunnerID)
+	assert.Equal(t, 2, persisted.AssignmentGeneration)
+	attempts, err := store.GetTaskRunnerAttempts(projectID, task.ID)
+	require.NoError(t, err)
+	require.Len(t, attempts, 2)
+}
+
 func TestAssignTaskRunnerAllowsOnlyOneConcurrentAssignment(t *testing.T) {
 	store, projectID, runner, task := createRunnerAttemptFixture(t)
 	secondRunner, err := store.CreateRunner(db.Runner{

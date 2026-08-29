@@ -149,7 +149,18 @@ func setupTestSchedulePool(t *testing.T) (*SchedulePool, db.Store) {
 		pool.Destroy()
 	})
 
-	return &pool, store
+	return pool, store
+}
+
+func TestCreateSchedulePoolKeepsOneIdentityForScheduledJobsAndDeduplicator(t *testing.T) {
+	pool, _ := setupTestSchedulePool(t)
+	dedup := newMockDeduplicator()
+
+	pool.SetDeduplicator(dedup)
+	runner := CreateScheduleRunner(1, 1, pool, &mockEncryptionService{}, &mockAccessKeyInstaller{})
+
+	assert.Same(t, pool, runner.pool)
+	assert.Same(t, dedup, runner.pool.dedup)
 }
 
 // TestSetDeduplicator verifies that SetDeduplicator properly configures the deduplicator

@@ -96,6 +96,29 @@ func TestWorkflowTriggerServiceRetriesFailedScheduledOccurrenceWithoutSecondRun(
 	assert.Equal(t, 2, fixture.starter.calls)
 }
 
+func TestWorkflowTriggerSchedulerDrainRejectsNewRunsUntilResume(t *testing.T) {
+	fixture := newWorkflowTriggerServiceFixture(t)
+	created, err := fixture.service.Create(context.Background(), fixture.projectID, fixture.workflow.ID, db.WorkflowTrigger{
+		Name: "Nightly", Type: db.WorkflowTriggerSchedule, Enabled: true, CronFormat: "0 1 * * *",
+		InputMappings: []db.WorkflowTriggerInputMapping{{
+			Parameter: "region", Source: db.WorkflowTriggerInputFixed, Value: json.RawMessage(`"eu"`),
+		}},
+	}, &fixture.actor)
+	require.NoError(t, err)
+	require.NotZero(t, created.Trigger.ID)
+	scheduler := NewWorkflowTriggerScheduler(fixture.repository, fixture.service)
+	drainer, ok := scheduler.(pro_interfaces.ClusterDrainer)
+	require.True(t, ok)
+	require.NoError(t, drainer.Drain())
+
+	scheduledAt := time.Date(2026, 8, 29, 1, 0, 0, 0, time.UTC)
+	scheduler.RunOnce(context.Background(), scheduledAt)
+	assert.Zero(t, fixture.starter.calls)
+	drainer.Resume()
+	scheduler.RunOnce(context.Background(), scheduledAt)
+	assert.Equal(t, 1, fixture.starter.calls)
+}
+
 func TestWorkflowTriggerServiceEnforcesCapabilityAndCurrentProjectPermission(t *testing.T) {
 	fixture := newWorkflowTriggerServiceFixture(t)
 	fixture.identity.member.Role = db.ProjectGuest

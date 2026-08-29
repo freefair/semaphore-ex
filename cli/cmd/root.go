@@ -23,6 +23,7 @@ import (
 	proHA "github.com/semaphoreui/semaphore/pro/services/ha"
 	proServer "github.com/semaphoreui/semaphore/pro/services/server"
 	proTasks "github.com/semaphoreui/semaphore/pro/services/tasks"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/schedules"
 	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/services/tasks"
@@ -255,14 +256,24 @@ func runService() {
 		defer orphanCleaner.Stop()
 	}
 
-	// Cluster inspector powers the admin Cluster Dashboard. It is nil when HA
-	// is disabled; the dashboard then falls back to the local task pool. The
-	// instance is injected per-request below.
-	clusterInspector := proHA.NewClusterInspector(store, orphanCleaner, workflowRunLocker)
-
-	if dedup := proHA.NewScheduleDeduplicator(store); dedup != nil {
+	// Stop new scheduled starts before relinquishing task and workflow owners.
+	// SetNodeDraining waits for every in-flight transition before persisting the
+	// draining state that removes this node from coordinated work readiness.
+	dedup := proHA.NewScheduleDeduplicator(store)
+	if dedup != nil {
 		schedulePool.SetDeduplicator(dedup)
 	}
+	drainers := []pro_interfaces.ClusterDrainer{orphanCleaner, workflowRunLocker}
+	if drainer, ok := workflowTriggerScheduler.(pro_interfaces.ClusterDrainer); ok {
+		drainers = append([]pro_interfaces.ClusterDrainer{drainer}, drainers...)
+	}
+	if drainer, ok := dedup.(pro_interfaces.ClusterDrainer); ok {
+		drainers = append([]pro_interfaces.ClusterDrainer{drainer}, drainers...)
+	}
+
+	// Cluster inspector powers the admin Cluster Dashboard and the public
+	// load-balancer readiness endpoint. It is nil when HA is disabled.
+	clusterInspector := proHA.NewClusterInspector(store, drainers...)
 
 	// Each process holds its own in-memory cron table. Schedule CRUD handlers only
 	// call Refresh on the node that served the HTTP request, so other HA nodes

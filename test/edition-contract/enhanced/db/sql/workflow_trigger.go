@@ -301,8 +301,8 @@ func (d *WorkflowStoreImpl) DeleteExpiredWorkflowTriggerInvocations(before time.
 func (d *WorkflowStoreImpl) GetActiveWorkflowScheduleTriggers() ([]db.WorkflowTrigger, error) {
 	var triggers []db.WorkflowTrigger
 	if _, err := d.connection.SelectAll(&triggers,
-		"select * from project__workflow_trigger where type=? and enabled=? order by id",
-		db.WorkflowTriggerSchedule, true,
+		"select * from project__workflow_trigger where type=? and enabled=1 order by id",
+		db.WorkflowTriggerSchedule,
 	); err != nil {
 		return nil, err
 	}

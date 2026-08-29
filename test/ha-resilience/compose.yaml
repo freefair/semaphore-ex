@@ -1,0 +1,125 @@
+x-server-environment: &server-environment
+  SEMAPHORE_DB_DIALECT: postgres
+  SEMAPHORE_DB_HOST: postgres:5432
+  SEMAPHORE_DB_USER: semaphore
+  SEMAPHORE_DB_PASS: ${SEMAPHORE_HA_DB_PASSWORD:?required}
+  SEMAPHORE_DB: semaphore
+  SEMAPHORE_ADMIN: admin
+  SEMAPHORE_ADMIN_PASSWORD: ${SEMAPHORE_HA_ADMIN_PASSWORD:?required}
+  SEMAPHORE_ADMIN_NAME: HA Resilience Admin
+  SEMAPHORE_ADMIN_EMAIL: ha-resilience@example.invalid
+  SEMAPHORE_ACCESS_KEY_ENCRYPTION: ${SEMAPHORE_HA_ENCRYPTION_KEY:?required}
+  SEMAPHORE_WEB_ROOT: http://proxy:8080
+  SEMAPHORE_USE_REMOTE_RUNNER: "true"
+  SEMAPHORE_RUNNER_REGISTRATION_TOKEN: ${SEMAPHORE_HA_RUNNER_REGISTRATION_TOKEN:?required}
+  SEMAPHORE_HA_ENABLED: "true"
+  SEMAPHORE_HA_REDIS_ADDR: redis:6379
+  SEMAPHORE_LOG_LEVEL: info
+
+x-server-healthcheck: &server-healthcheck
+  test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:3000/api/ready"]
+  interval: 2s
+  timeout: 2s
+  retries: 45
+  start_period: 10s
+
+services:
+  postgres:
+    image: postgres@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b
+    environment:
+      POSTGRES_DB: semaphore
+      POSTGRES_USER: semaphore
+      POSTGRES_PASSWORD: ${SEMAPHORE_HA_DB_PASSWORD:?required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U semaphore -d semaphore"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  server-a:
+    image: ${SEMAPHORE_HA_SERVER_A_IMAGE:?required}
+    environment:
+      <<: *server-environment
+      SEMAPHORE_HA_NODE_ID: server-a
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck: *server-healthcheck
+    ports:
+      - "127.0.0.1::3000"
+    volumes:
+      - server-config:/etc/semaphore
+      - server-a-data:/var/lib/semaphore
+
+  server-b:
+    image: ${SEMAPHORE_HA_SERVER_B_IMAGE:?required}
+    environment:
+      <<: *server-environment
+      SEMAPHORE_HA_NODE_ID: server-b
+    depends_on:
+      server-a:
+        condition: service_healthy
+    healthcheck: *server-healthcheck
+    ports:
+      - "127.0.0.1::3000"
+    volumes:
+      - server-config:/etc/semaphore
+      - server-b-data:/var/lib/semaphore
+
+  proxy:
+    image: nginx@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913
+    depends_on:
+      server-a:
+        condition: service_healthy
+      server-b:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1::8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/api/ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  runner:
+    image: ${SEMAPHORE_HA_RUNNER_IMAGE:?required}
+    environment:
+      SEMAPHORE_WEB_ROOT: http://proxy:8080
+      SEMAPHORE_RUNNER_REGISTRATION_TOKEN: ${SEMAPHORE_HA_RUNNER_REGISTRATION_TOKEN:?required}
+      SEMAPHORE_RUNNER_TOKEN_FILE: /var/lib/semaphore/runner_token.txt
+      SEMAPHORE_RUNNER_NAME: ha-resilience-runner
+      SEMAPHORE_RUNNER_ENABLED: "true"
+      SEMAPHORE_RUNNER_MAX_PARALLEL_TASKS: "1"
+      SEMAPHORE_RUNNER_EXECUTOR: '{"type":"local"}'
+    command: ["/usr/local/bin/semaphore", "runner", "start", "--no-config", "--register"]
+    depends_on:
+      proxy:
+        condition: service_healthy
+    volumes:
+      - runner-data:/var/lib/semaphore
+
+networks:
+  default:
+    name: ${SEMAPHORE_HA_NETWORK:?required}
+
+volumes:
+  postgres-data:
+  server-config:
+  server-a-data:
+  server-b-data:
+  runner-data:

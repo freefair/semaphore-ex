@@ -1,0 +1,37 @@
+ARG BASE_IMAGE=semaphore-enhanced-server:ha-candidate
+
+FROM node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS frontend-builder
+
+WORKDIR /src/semaphore/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN VUE_APP_BUILD_TYPE=pro_selfhosted \
+    VUE_APP_EDITION=enhanced \
+    VUE_APP_SOURCE_MAP_MODE=none \
+    VUE_APP_OUTPUT_DIR=/out/public \
+    npm run build
+
+FROM golang:1.26.5-alpine3.24@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS fixture-builder
+
+WORKDIR /src/semaphore
+COPY . .
+COPY --from=frontend-builder /out/public ./api/public
+
+ARG FIXTURE_VERSION=ha-skew-old
+ARG FIXTURE_BUILD=ha-skew-old-build
+
+RUN test -f pro_impl/go.mod && \
+    go work init . ./pro_impl && \
+    CGO_ENABLED=0 go build -trimpath -buildvcs=false -tags netgo \
+      -ldflags "-s -w \
+        -X github.com/semaphoreui/semaphore/util.Ver=${FIXTURE_VERSION} \
+        -X github.com/semaphoreui/semaphore/util.Commit=${FIXTURE_BUILD} \
+        -X github.com/semaphoreui/semaphore/util.Date=1970-01-01T00:00:00Z \
+        -X github.com/semaphoreui/semaphore/util.BuildEdition=enhanced \
+        -X github.com/semaphoreui/semaphore/util.EditionImplementation=ha-skew-fixture" \
+      -o /out/semaphore ./cli
+
+FROM ${BASE_IMAGE}
+
+COPY --from=fixture-builder /out/semaphore /usr/local/bin/semaphore

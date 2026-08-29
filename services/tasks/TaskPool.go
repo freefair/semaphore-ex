@@ -495,6 +495,18 @@ func (p *TaskPool) onTaskStop(t *TaskRunner) {
 	}
 }
 
+// discardSupersededTask removes a stale dispatcher's local bookkeeping after
+// another server won the SQL start claim. It deliberately does not release the
+// task-control lifecycle: that lifecycle belongs to the winning assignment.
+func (p *TaskPool) discardSupersededTask(t *TaskRunner) {
+	p.state.RemoveActive(t.Task.ProjectID, t.Task.ID)
+	p.state.DeleteRunning(t.Task.ID)
+	p.state.DeleteClaim(t.Task.ID)
+	if t.Alias != "" {
+		p.state.DeleteAlias(t.Alias)
+	}
+}
+
 // FinalizeRemoteTask completes a remote (runner) task once it has reached a
 // terminal status. It runs the finish webhook (when a runner is provided),
 // queues any autorun child templates, and releases the task's pool/Redis state
