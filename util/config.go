@@ -413,7 +413,7 @@ type HARedisConfig struct {
 
 type HAConfig struct {
 	Enabled bool           `json:"enabled" env:"SEMAPHORE_HA_ENABLED"`
-	NodeID  string         `json:"node_id,omitempty" env:"SEMAPHORE_HA_NODE_ID"` // auto-generated if empty
+	NodeID  string         `json:"node_id,omitempty" env:"SEMAPHORE_HA_NODE_ID"` // required stable operator-managed identity
 	Redis   *HARedisConfig `json:"redis,omitempty"`
 }
 

@@ -26,6 +26,7 @@ func GetFeatures(_ *db.User, _ string) pro_interfaces.Features {
 		TaskSummary:             true,
 		SecretStorages:          true,
 		SecretStorageManagement: true,
+		HighAvailability:        true,
 		Workflows:               true,
 		DockerExecutor:          true,
 	}

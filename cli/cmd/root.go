@@ -133,8 +133,6 @@ func watchRuntimeConfigurationReload(debugFilter *debuglog.Manager, source debug
 func runService() {
 	store, configPath := createStoreWithMigrationVersionAndConfigPath("root", nil, nil)
 
-	// Initialize HA node identity before components expose per-instance diagnostics.
-	util.InitHANodeID()
 	filterSource := newDebugFilterSource(configPath)
 	debugFilterSpec, debugFilterErr := filterSource.Load()
 	loadedAt := time.Now().UTC()
@@ -239,7 +237,7 @@ func runService() {
 	// 2. Schedule deduplication: only one node fires each schedule occurrence
 	// 3. WebSocket broadcaster: real-time events reach clients on all nodes
 	// 4. Orphan cleaner: tasks from dead nodes are marked as failed
-	if nodeRegistry := proHA.NewNodeRegistry(); nodeRegistry != nil {
+	if nodeRegistry := proHA.NewNodeRegistry(store); nodeRegistry != nil {
 		if err := nodeRegistry.Start(); err != nil {
 			log.WithError(err).Fatal("failed to start HA node registry")
 		}
@@ -250,7 +248,7 @@ func runService() {
 	// Cluster inspector powers the admin Cluster Dashboard. It is nil when HA
 	// is disabled; the dashboard then falls back to the local task pool. The
 	// instance is injected per-request below.
-	clusterInspector := proHA.NewClusterInspector()
+	clusterInspector := proHA.NewClusterInspector(store)
 
 	if dedup := proHA.NewScheduleDeduplicator(); dedup != nil {
 		schedulePool.SetDeduplicator(dedup)

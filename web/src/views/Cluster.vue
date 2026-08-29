@@ -49,7 +49,7 @@
       <v-btn
         color="error"
         @click="openClearDialog()"
-        :disabled="!features.high_availability || !status.ha_enabled"
+        :disabled="!canClearClusterTasks"
       >
         <v-icon left>mdi-delete-sweep</v-icon>
         {{ $t('clearTasksFromRedis') }}
@@ -84,15 +84,35 @@
     <div class="pa-4">
       <!-- Nodes -->
       <v-card v-if="status && status.nodes" class="mb-4" outlined>
-        <v-card-title class="subtitle-1">{{ $t('nodes') }}</v-card-title>
+        <v-card-title class="subtitle-1">
+          {{ $t('nodes') }}
+          <v-spacer />
+          <v-chip v-if="status.health" x-small class="mr-1" color="success">
+            {{ $t('clusterNodeReady') }}: {{ status.health.ready }}
+          </v-chip>
+          <v-chip v-if="status.health && status.health.stale" x-small class="mr-1" color="warning">
+            {{ $t('clusterNodeStale') }}: {{ status.health.stale }}
+          </v-chip>
+          <v-chip
+            v-if="status.health && status.health.incompatible"
+            x-small
+            class="mr-1"
+            color="error"
+          >
+            {{ $t('clusterNodeIncompatible') }}: {{ status.health.incompatible }}
+          </v-chip>
+          <v-chip v-if="status.health && status.health.draining" x-small color="grey">
+            {{ $t('clusterNodeDraining') }}: {{ status.health.draining }}
+          </v-chip>
+        </v-card-title>
         <v-data-table :headers="nodeHeaders" :items="status.nodes" :items-per-page="20" dense>
           <template v-slot:item.node_id="{ item }">
             <code>{{ item.node_id }}</code>
             <v-chip v-if="item.is_self" x-small class="ml-2">{{ $t('thisNode') }}</v-chip>
           </template>
           <template v-slot:item.alive="{ item }">
-            <v-chip x-small :color="item.alive ? 'success' : 'error'" dark>
-              {{ item.alive ? $t('alive') : $t('dead') }}
+            <v-chip x-small :color="nodeStateColor(item)" dark>
+              {{ nodeState(item) }}
             </v-chip>
           </template>
           <template v-slot:item.last_heartbeat="{ item }">
@@ -100,6 +120,9 @@
           </template>
           <template v-slot:item.started_at="{ item }">
             {{ formatTime(item.started_at) }}
+          </template>
+          <template v-slot:item.version="{ item }">
+            {{ nodeVersion(item) }}
           </template>
         </v-data-table>
       </v-card>
@@ -230,6 +253,12 @@ export default {
       return Object.values(this.clearScope).some((v) => v);
     },
 
+    canClearClusterTasks() {
+      return Boolean(
+        this.features && this.features.high_availability && this.status && this.status.ha_enabled,
+      );
+    },
+
     nodeHeaders() {
       return [
         { text: this.$t('nodeId'), value: 'node_id' },
@@ -309,6 +338,27 @@ export default {
         return '—';
       }
       return new Date(value).toLocaleString();
+    },
+
+    nodeState(node) {
+      if (node.ready) return this.$t('clusterNodeReady');
+      if (!node.alive || node.compatibility_state === 'stale') return this.$t('clusterNodeStale');
+      if (node.compatibility_state === 'draining') return this.$t('clusterNodeDraining');
+      return this.$t('clusterNodeIncompatible');
+    },
+
+    nodeStateColor(node) {
+      if (node.ready) return 'success';
+      if (!node.alive || node.compatibility_state === 'stale') return 'warning';
+      if (node.compatibility_state === 'draining') return 'grey';
+      return 'error';
+    },
+
+    nodeVersion(node) {
+      if (!node.version || node.version === 'undefined' || node.version.startsWith('undefined-')) {
+        return '—';
+      }
+      return node.version;
     },
 
     async reload() {
