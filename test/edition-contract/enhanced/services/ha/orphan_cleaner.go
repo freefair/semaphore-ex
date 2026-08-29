@@ -29,13 +29,16 @@ type managedOrphanCleaner struct {
 	leaseTTL       time.Duration
 	maxEvidenceAge time.Duration
 
-	mu       sync.Mutex
-	leases   map[int]pro_interfaces.TaskControlLease
-	draining bool
-	stop     chan struct{}
-	done     chan struct{}
-	start    sync.Once
-	shutdown sync.Once
+	mu              sync.Mutex
+	cond            *sync.Cond
+	inflight        int
+	leases          map[int]pro_interfaces.TaskControlLease
+	draining        bool
+	drainInProgress bool
+	stop            chan struct{}
+	done            chan struct{}
+	start           sync.Once
+	shutdown        sync.Once
 }
 
 var _ pro_interfaces.OrphanCleaner = (*managedOrphanCleaner)(nil)
@@ -49,11 +52,13 @@ func NewManagedOrphanCleaner(
 	leaseTTL time.Duration,
 	maxEvidenceAge time.Duration,
 ) *managedOrphanCleaner {
-	return &managedOrphanCleaner{
+	cleaner := &managedOrphanCleaner{
 		repository: repository, pool: pool, ownerBootID: ownerBootID, ready: ready,
 		interval: interval, leaseTTL: leaseTTL, maxEvidenceAge: maxEvidenceAge,
 		leases: make(map[int]pro_interfaces.TaskControlLease), stop: make(chan struct{}), done: make(chan struct{}),
 	}
+	cleaner.cond = sync.NewCond(&cleaner.mu)
+	return cleaner
 }
 
 func (c *managedOrphanCleaner) Start() {
@@ -73,13 +78,38 @@ func (c *managedOrphanCleaner) Stop() {
 
 func (c *managedOrphanCleaner) Drain() error {
 	c.mu.Lock()
+	if c.cond == nil {
+		c.cond = sync.NewCond(&c.mu)
+	}
+	for c.drainInProgress {
+		c.cond.Wait()
+	}
+	if c.draining {
+		c.mu.Unlock()
+		return nil
+	}
 	c.draining = true
+	c.drainInProgress = true
+	for c.inflight > 0 {
+		c.cond.Wait()
+	}
 	c.mu.Unlock()
-	return c.releaseAll()
+	err := c.releaseAll()
+	c.mu.Lock()
+	c.drainInProgress = false
+	c.cond.Broadcast()
+	c.mu.Unlock()
+	return err
 }
 
 func (c *managedOrphanCleaner) Resume() {
 	c.mu.Lock()
+	if c.cond == nil {
+		c.cond = sync.NewCond(&c.mu)
+	}
+	for c.drainInProgress {
+		c.cond.Wait()
+	}
 	c.draining = false
 	c.mu.Unlock()
 }
@@ -110,6 +140,10 @@ func (c *managedOrphanCleaner) TaskRecoveryDiagnostics(taskID int) (pro_interfac
 }
 
 func (c *managedOrphanCleaner) RetryTaskRecovery(taskID int) error {
+	if !c.beginOperation() {
+		return errors.New("task control owner is draining")
+	}
+	defer c.endOperation()
 	c.mu.Lock()
 	lease, tracked := c.leases[taskID]
 	c.mu.Unlock()
@@ -134,18 +168,16 @@ func (c *managedOrphanCleaner) RetryTaskRecovery(taskID int) error {
 }
 
 func (c *managedOrphanCleaner) RegisterTaskControl(task db.Task) error {
+	if !c.beginOperation() {
+		return errors.New("task control owner is draining")
+	}
+	defer c.endOperation()
 	if task.RunnerID == nil {
 		return errors.New("task control requires a runner assignment")
 	}
 	execution, err := pro_interfaces.NewTaskExecutionIdentity(task.ID, *task.RunnerID, task.AssignmentGeneration)
 	if err != nil {
 		return err
-	}
-	c.mu.Lock()
-	draining := c.draining
-	c.mu.Unlock()
-	if draining {
-		return errors.New("task control owner is draining")
 	}
 	ready, err := c.ready()
 	if err != nil {
@@ -166,6 +198,10 @@ func (c *managedOrphanCleaner) RegisterTaskControl(task db.Task) error {
 }
 
 func (c *managedOrphanCleaner) ReleaseTaskControl(taskID int) {
+	if !c.beginOperation() {
+		return
+	}
+	defer c.endOperation()
 	c.mu.Lock()
 	lease, exists := c.leases[taskID]
 	delete(c.leases, taskID)
@@ -193,12 +229,10 @@ func (c *managedOrphanCleaner) run() {
 }
 
 func (c *managedOrphanCleaner) tick() {
-	c.mu.Lock()
-	draining := c.draining
-	c.mu.Unlock()
-	if draining {
+	if !c.beginOperation() {
 		return
 	}
+	defer c.endOperation()
 	ready, err := c.ready()
 	if err != nil || !ready {
 		if releaseErr := c.releaseAll(); releaseErr != nil {
@@ -265,6 +299,10 @@ func (c *managedOrphanCleaner) claimExpired() {
 }
 
 func (c *managedOrphanCleaner) recover(lease pro_interfaces.TaskControlLease) {
+	if !c.beginOperation() {
+		return
+	}
+	defer c.endOperation()
 	_ = c.recoverLease(lease, false)
 }
 
@@ -414,6 +452,25 @@ func (c *managedOrphanCleaner) track(lease pro_interfaces.TaskControlLease) {
 func (c *managedOrphanCleaner) forget(taskID int) {
 	c.mu.Lock()
 	delete(c.leases, taskID)
+	c.mu.Unlock()
+}
+
+func (c *managedOrphanCleaner) beginOperation() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.draining {
+		return false
+	}
+	c.inflight++
+	return true
+}
+
+func (c *managedOrphanCleaner) endOperation() {
+	c.mu.Lock()
+	c.inflight--
+	if c.inflight == 0 && c.cond != nil {
+		c.cond.Broadcast()
+	}
 	c.mu.Unlock()
 }
 
