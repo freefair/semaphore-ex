@@ -470,7 +470,8 @@ func (p *JobPool) sendProgress() (ok bool) {
 	url := util.Config.WebHost + "/api/internal/runners"
 
 	body := RunnerProgress{
-		Jobs: nil,
+		Jobs:      nil,
+		KnownJobs: nil,
 	}
 
 	for id, j := range p.snapshotRunningJobs() {
@@ -483,6 +484,9 @@ func (p *JobPool) sendProgress() (ok bool) {
 			LogRecords: logRecords,
 			Status:     status,
 			Commit:     commit,
+		})
+		body.KnownJobs = append(body.KnownJobs, JobState{
+			ID: id, Generation: j.generation, Status: status,
 		})
 
 		log.WithFields(log.Fields{

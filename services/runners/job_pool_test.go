@@ -327,6 +327,9 @@ func TestJobPool_SendProgressIncludesAssignmentGeneration(t *testing.T) {
 	require.Len(t, progress.Jobs, 1)
 	assert.Equal(t, 23, progress.Jobs[0].ID)
 	assert.Equal(t, 7, progress.Jobs[0].Generation)
+	require.Len(t, progress.KnownJobs, 1)
+	assert.Equal(t, 23, progress.KnownJobs[0].ID)
+	assert.Equal(t, 7, progress.KnownJobs[0].Generation)
 }
 
 func TestJobProgressWireKeepsLegacyKeysWhileAddingGeneration(t *testing.T) {

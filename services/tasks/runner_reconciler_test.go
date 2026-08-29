@@ -8,6 +8,7 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,6 +19,35 @@ type reconcilerStoreStub struct {
 	db.Store
 	globalRunnerErr error
 	updateTaskErr   error
+}
+
+func TestApplyOrphanRecoveryOnlyReplacesExecutionWhenEvidenceProvesItAbsent(t *testing.T) {
+	setupReconcilerConfig(t)
+	store := sql.InitConfigCreateTestStore()
+	state := NewMemoryTaskStateStore()
+	pool := newReconcilerTestPool(store, state)
+	task, _ := createReconcilerTestTask(t, store, task_logger.TaskStartingStatus, nil)
+	tsk := &TaskRunner{Task: task, pool: &pool}
+	state.SetRunning(tsk)
+
+	pool.ApplyOrphanRecovery(tsk, pro_interfaces.TaskRecoveryAssessment{Decision: pro_interfaces.TaskRecoveryObserve})
+	assert.Equal(t, task_logger.TaskStartingStatus, tsk.Task.Status)
+	assert.NotNil(t, tsk.Task.RunnerID)
+
+	pool.ApplyOrphanRecovery(tsk, pro_interfaces.TaskRecoveryAssessment{Decision: pro_interfaces.TaskRecoveryQuarantine, Reason: "runner query timed out"})
+	assert.Equal(t, task_logger.TaskStartingStatus, tsk.Task.Status)
+	assert.Contains(t, tsk.Task.RecoveryReason, "quarantined")
+	assert.Equal(t, 0, state.QueueLen())
+
+	pool.ApplyOrphanRecovery(tsk, pro_interfaces.TaskRecoveryAssessment{Decision: pro_interfaces.TaskRecoveryRecover, SafeReplacement: true, Reason: "execution absent"})
+	assert.Equal(t, task_logger.TaskWaitingStatus, tsk.Task.Status)
+	assert.Nil(t, tsk.Task.RunnerID)
+	assert.Equal(t, 1, state.QueueLen())
+	row, err := store.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task_logger.TaskWaitingStatus, row.Status)
+	assert.Nil(t, row.RunnerID)
+	assert.Nil(t, row.RunnerSnapshotID)
 }
 
 func (s *reconcilerStoreStub) GetGlobalRunner(runnerID int) (db.Runner, error) {
