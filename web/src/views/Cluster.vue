@@ -83,7 +83,7 @@
 
     <div class="pa-4">
       <!-- Nodes -->
-      <v-card v-if="status && status.nodes" class="mb-4" outlined>
+      <v-card v-if="status && (status.nodes || status.coordinator)" class="mb-4" outlined>
         <v-card-title class="subtitle-1">
           {{ $t('nodes') }}
           <v-spacer />
@@ -114,7 +114,7 @@
             {{ $t('clusterLiveEvents') }}: {{ coordinatorState(status.coordinator) }}
           </v-chip>
         </v-card-title>
-        <v-data-table :headers="nodeHeaders" :items="status.nodes" :items-per-page="20" dense>
+        <v-data-table :headers="nodeHeaders" :items="status.nodes || []" :items-per-page="20" dense>
           <template v-slot:item.node_id="{ item }">
             <code>{{ item.node_id }}</code>
             <v-chip v-if="item.is_self" x-small class="ml-2">{{ $t('thisNode') }}</v-chip>

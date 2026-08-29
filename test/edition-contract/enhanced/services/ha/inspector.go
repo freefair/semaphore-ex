@@ -39,11 +39,8 @@ func (i *managedClusterInspector) Nodes() ([]pro_interfaces.NodeInfo, error) {
 	result := make([]pro_interfaces.NodeInfo, 0, len(nodes))
 	for _, node := range nodes {
 		alive, observedAt, livenessErr := i.heartbeats.IsLive(context.Background(), node.ClusterNodeIdentity)
-		if livenessErr != nil {
-			return nil, livenessErr
-		}
 		compatibility := pro_interfaces.EvaluateClusterNodeCompatibility(node, i.requirements)
-		if !alive {
+		if livenessErr != nil || !alive {
 			compatibility = pro_interfaces.ClusterNodeCompatibility{State: pro_interfaces.ClusterNodeStale, Reason: "redis heartbeat expired"}
 		}
 		result = append(result, pro_interfaces.NodeInfo{

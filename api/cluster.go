@@ -80,6 +80,7 @@ func getClusterStatus(w http.ResponseWriter, r *http.Request) {
 
 	if redisInfo, err := ci.RedisInfo(); err != nil {
 		log.WithError(err).Error("cluster: failed to read redis info")
+		body["redis"] = redisInfo
 	} else {
 		body["redis"] = redisInfo
 	}

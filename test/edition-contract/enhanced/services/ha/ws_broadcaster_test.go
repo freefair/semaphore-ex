@@ -94,6 +94,29 @@ func TestManagedWSBroadcasterReportsDegradedAndHealthyLiveEventTransport(t *test
 	failed.Stop()
 }
 
+func TestGoRedisEventTransportReportsDegradedAfterRedisDisconnect(t *testing.T) {
+	server := miniredis.RunT(t)
+	health := newLiveEventHealth()
+	broadcaster := NewManagedWSBroadcaster(
+		NewGoRedisEventTransport(redis.NewClient(&redis.Options{Addr: server.Addr()})),
+		"boot-a",
+		func(int, []byte) {},
+		health,
+	)
+	broadcaster.Start()
+	t.Cleanup(broadcaster.Stop)
+	select {
+	case <-broadcaster.ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected broadcaster readiness")
+	}
+
+	server.Close()
+	require.Eventually(t, func() bool {
+		return health.CoordinatorHealth().LiveEvents == "degraded"
+	}, 10*time.Second, 20*time.Millisecond)
+}
+
 func TestManagedWSBroadcasterCanRestartWithoutClosingTheNewLifecycleChannels(t *testing.T) {
 	transport := &subscribingEventTransportFake{messages: make(chan []byte)}
 	broadcaster := NewManagedWSBroadcaster(transport, "boot-a", func(int, []byte) {})

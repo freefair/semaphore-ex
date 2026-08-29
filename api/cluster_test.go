@@ -117,6 +117,26 @@ func TestGetClusterStatusAggregatesReadyStaleIncompatibleAndDrainingNodes(t *tes
 	assert.Equal(t, float64(1), health["draining"])
 }
 
+func TestGetClusterStatusKeepsCoordinatorAndDisconnectedRedisVisibleDuringOutage(t *testing.T) {
+	if util.Config == nil {
+		util.Config = &util.ConfigType{}
+	}
+	util.Config.HA = &util.HAConfig{Enabled: true}
+	inspector := clusterInspectorRedisOutageFake{}
+	req := httptest.NewRequest(http.MethodGet, "/api/cluster", nil)
+	req = helpers.SetContextValue(req, "cluster_inspector", inspector)
+	w := httptest.NewRecorder()
+
+	getClusterStatus(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "degraded", body["coordinator"].(map[string]any)["live_events"])
+	assert.Equal(t, false, body["redis"].(map[string]any)["connected"])
+	assert.Equal(t, "127.0.0.1:16341", body["redis"].(map[string]any)["addr"])
+}
+
 func TestGetClusterNodeReturnsOnlyTheRequestedBootIdentity(t *testing.T) {
 	if util.Config == nil {
 		util.Config = &util.ConfigType{}
@@ -260,6 +280,22 @@ type clusterInspectorFake struct {
 	drainedBootID string
 	draining      bool
 }
+
+type clusterInspectorRedisOutageFake struct{}
+
+func (clusterInspectorRedisOutageFake) Nodes() ([]pro_interfaces.NodeInfo, error) {
+	return []pro_interfaces.NodeInfo{{NodeID: "node-a", Alive: false, CompatibilityState: pro_interfaces.ClusterNodeStale}}, nil
+}
+
+func (clusterInspectorRedisOutageFake) RedisInfo() (pro_interfaces.RedisInfo, error) {
+	return pro_interfaces.RedisInfo{Addr: "127.0.0.1:16341", Connected: false}, assert.AnError
+}
+
+func (clusterInspectorRedisOutageFake) CoordinatorHealth() pro_interfaces.ClusterCoordinatorHealth {
+	return pro_interfaces.ClusterCoordinatorHealth{SQLAuthoritative: true, LiveEvents: "degraded"}
+}
+
+func (clusterInspectorRedisOutageFake) SetNodeDraining(string, bool) error { return nil }
 
 func (f clusterInspectorFake) Nodes() ([]pro_interfaces.NodeInfo, error) { return f.nodes, nil }
 func (clusterInspectorFake) RedisInfo() (pro_interfaces.RedisInfo, error) {
