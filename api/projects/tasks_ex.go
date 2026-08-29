@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -43,6 +44,44 @@ func (c *TaskController) GetTaskRunnerAttempts(w http.ResponseWriter, r *http.Re
 		return
 	}
 	helpers.WriteJSON(w, http.StatusOK, attempts)
+}
+
+func taskRecoveryManager(r *http.Request) pro_interfaces.OrphanCleaner {
+	manager, _ := helpers.GetFromContext(r, "task_recovery_manager").(pro_interfaces.OrphanCleaner)
+	return manager
+}
+
+func (c *TaskController) GetTaskRecoveryDiagnostics(w http.ResponseWriter, r *http.Request) {
+	manager := taskRecoveryManager(r)
+	if manager == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	task := helpers.GetFromContext(r, "task").(db.Task)
+	diagnostics, found, err := manager.TaskRecoveryDiagnostics(task.ID)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	if !found {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, diagnostics)
+}
+
+func (c *TaskController) RetryTaskRecovery(w http.ResponseWriter, r *http.Request) {
+	manager := taskRecoveryManager(r)
+	if manager == nil {
+		helpers.WriteErrorStatus(w, "HA task recovery is unavailable", http.StatusNotFound)
+		return
+	}
+	task := helpers.GetFromContext(r, "task").(db.Task)
+	if err := manager.RetryTaskRecovery(task.ID); err != nil {
+		helpers.WriteErrorStatus(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (c *TaskController) GetTaskSummary(w http.ResponseWriter, r *http.Request) {

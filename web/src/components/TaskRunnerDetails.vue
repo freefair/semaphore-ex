@@ -11,6 +11,76 @@
     </v-alert>
 
     <v-alert
+      v-if="recoveryDiagnostics"
+      :type="recoveryDiagnostics.quarantined ? 'warning' : 'info'"
+      outlined
+      class="mb-4 TaskRunnerDetails__recoveryAlert"
+      data-testid="task-recovery-diagnostics"
+    >
+      <div class="TaskRunnerDetails__recoveryHeader">
+        <strong>HA task recovery</strong>
+        <v-chip
+          v-if="recoveryDiagnostics.recovery_decision"
+          small
+          label
+          :color="recoveryDecisionColor(recoveryDiagnostics.recovery_decision)"
+          text-color="white"
+        >
+          {{ recoveryDiagnostics.recovery_decision }}
+        </v-chip>
+      </div>
+      <div class="TaskRunnerDetails__recoveryGrid mt-2">
+        <div><strong>Owner:</strong> <code>{{ recoveryDiagnostics.owner_boot_id }}</code></div>
+        <div v-if="recoveryDiagnostics.previous_owner_boot_id">
+          <strong>Previous owner:</strong>
+          <code>{{ recoveryDiagnostics.previous_owner_boot_id }}</code>
+        </div>
+        <div><strong>Fence:</strong> {{ recoveryDiagnostics.fencing_token }}</div>
+        <div>
+          <strong>Execution:</strong>
+          runner #{{ recoveryDiagnostics.runner_id }}, attempt
+          #{{ recoveryDiagnostics.assignment_generation }}
+        </div>
+        <div>
+          <strong>Evidence:</strong> {{ recoveryDiagnostics.evidence_state }}
+          <span v-if="recoveryDiagnostics.evidence_terminal_status">
+            · {{ recoveryDiagnostics.evidence_terminal_status }}
+          </span>
+        </div>
+        <div v-if="recoveryDiagnostics.evidence_observed_at">
+          <strong>Observed:</strong>
+          {{ recoveryDiagnostics.evidence_observed_at | formatDate }}
+        </div>
+      </div>
+      <div v-if="recoveryDiagnostics.recovery_reason" class="mt-2">
+        {{ recoveryDiagnostics.recovery_reason }}
+      </div>
+      <v-btn
+        v-if="recoveryDiagnostics.safe_action === 'retry_recovery'"
+        class="mt-3"
+        color="warning"
+        small
+        :loading="retryingRecovery"
+        @click="retryTaskRecovery"
+      >
+        Retry safe recovery check
+      </v-btn>
+      <div v-if="recoveryActionError" class="mt-2 error--text">
+        {{ recoveryActionError }}
+      </div>
+    </v-alert>
+
+    <v-alert
+      v-else-if="item.recovery_reason && recoveryDiagnosticsError"
+      type="error"
+      dense
+      text
+      class="mb-4"
+    >
+      {{ recoveryDiagnosticsError }}
+    </v-alert>
+
+    <v-alert
       v-if="placementDecision"
       :type="placementRejected ? 'warning' : 'info'"
       outlined
@@ -137,6 +207,10 @@ export default {
     return {
       runnerAttempts: [],
       runnerAttemptsError: null,
+      recoveryDiagnostics: null,
+      recoveryDiagnosticsError: null,
+      recoveryActionError: null,
+      retryingRecovery: false,
       loadedTaskId: null,
       loadedTaskStatus: null,
       loadedAssignmentGeneration: null,
@@ -191,6 +265,13 @@ export default {
         stopped: 'grey darken-1',
       }[outcome] || 'grey';
     },
+    recoveryDecisionColor(decision) {
+      return {
+        observe: 'info',
+        recover: 'success',
+        quarantine: 'warning',
+      }[decision] || 'grey';
+    },
     async loadRunnerAttempts() {
       const taskId = this.item?.id;
       const revision = this.loadRevision + 1;
@@ -208,9 +289,40 @@ export default {
         this.runnerAttempts = [];
         this.runnerAttemptsError = 'Runner attempt history could not be loaded.';
       }
+      await this.loadTaskRecoveryDiagnostics(taskId, revision);
       this.loadedTaskId = taskId;
       this.loadedTaskStatus = this.item?.status;
       this.loadedAssignmentGeneration = this.item?.assignment_generation;
+    },
+    async loadTaskRecoveryDiagnostics(taskId, revision) {
+      try {
+        const { data } = await axios.get(
+          `/api/project/${this.projectId}/tasks/${taskId}/recovery`,
+        );
+        if (this.item?.id !== taskId || this.loadRevision !== revision) return;
+        this.recoveryDiagnostics = data?.controlled ? data : null;
+        this.recoveryDiagnosticsError = null;
+      } catch {
+        if (this.item?.id !== taskId || this.loadRevision !== revision) return;
+        this.recoveryDiagnostics = null;
+        this.recoveryDiagnosticsError = 'HA task recovery diagnostics could not be loaded.';
+      }
+    },
+    async retryTaskRecovery() {
+      if (this.item?.id == null || this.retryingRecovery) return;
+      this.retryingRecovery = true;
+      this.recoveryActionError = null;
+      try {
+        await axios.post(
+          `/api/project/${this.projectId}/tasks/${this.item.id}/retry-recovery`,
+        );
+        await this.loadRunnerAttempts();
+      } catch (error) {
+        this.recoveryActionError = error?.response?.data?.error
+          || 'The safe recovery check could not be retried.';
+      } finally {
+        this.retryingRecovery = false;
+      }
     },
   },
 };
@@ -250,10 +362,37 @@ export default {
   margin-top: 8px;
 }
 
+.TaskRunnerDetails__recoveryHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.TaskRunnerDetails__recoveryGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 16px;
+
+  code {
+    overflow-wrap: anywhere;
+  }
+}
+
 @media (max-width: 600px) {
   .TaskRunnerDetails__attempt {
     grid-template-columns: 1fr;
     gap: 8px;
   }
+
+  .TaskRunnerDetails__recoveryGrid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
+
+<style>
+.TaskRunnerDetails__recoveryAlert .v-alert__content {
+  min-width: 0;
 }
 </style>

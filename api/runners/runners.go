@@ -374,22 +374,20 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 
 	taskPool := c.taskPool
 
+	var executionEvidence []db.TaskExecutionEvidence
+	var err error
 	if body.KnownJobs != nil {
-		evidence, err := taskExecutionEvidenceFromSnapshot(body.KnownJobs)
+		executionEvidence, err = taskExecutionEvidenceFromSnapshot(body.KnownJobs)
 		if err != nil {
 			helpers.WriteErrorStatus(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if c.taskExecutionEvidenceSink != nil {
-			if err = c.taskExecutionEvidenceSink.RecordTaskExecutionSnapshot(runner.ID, evidence); err != nil {
-				log.WithError(err).WithField("runner_id", runner.ID).Error("failed to persist runner execution evidence")
-				helpers.WriteErrorStatus(w, "Failed to persist runner execution evidence", http.StatusInternalServerError)
-				return
-			}
-		}
 	}
 
 	if body.Jobs == nil {
+		if body.KnownJobs != nil && !c.persistTaskExecutionEvidence(w, runner.ID, executionEvidence) {
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -496,6 +494,9 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			runner := runner
 			go taskPool.FinalizeRemoteTask(tsk, &runner)
 		}
+	}
+	if body.KnownJobs != nil && !c.persistTaskExecutionEvidence(w, runner.ID, executionEvidence) {
+		return
 	}
 
 	helpers.WriteJSON(w, http.StatusOK, response)

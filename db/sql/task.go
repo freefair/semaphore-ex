@@ -2,12 +2,11 @@ package sql
 
 import (
 	"encoding/json"
-	"math/rand"
-	"time"
-
 	"github.com/Masterminds/squirrel"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"math/rand"
+	"time"
 )
 
 func (d *SqlDb) CreateTaskStage(stage db.TaskStage) (res db.TaskStage, err error) {

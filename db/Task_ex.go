@@ -1,6 +1,7 @@
 package db
 
 import (
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"time"
 )
 
@@ -50,6 +51,7 @@ type TaskExecutionEvidence struct {
 	TaskID     int                        `json:"task_id"`
 	Generation int                        `json:"generation"`
 	State      TaskExecutionEvidenceState `json:"state"`
+	Status     task_logger.TaskStatus     `json:"status,omitempty"`
 }
 
 // TaskExecutionEvidenceRecorder is an optional store capability. Community

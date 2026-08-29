@@ -18,6 +18,19 @@ func (p *TaskPool) SetExecutorImageCapabilityResolver(resolver func(*db.User) bo
 	p.executorImageAvailable = resolver
 }
 
+// SetTaskControlLifecycle installs the optional Enhanced HA ownership port.
+// Community and single-node builds leave it nil.
+func (p *TaskPool) SetTaskControlLifecycle(lifecycle TaskControlLifecycle) {
+	p.taskControlLifecycle = lifecycle
+}
+
+// GetOwnedRunningTasks returns only work whose task-state claim belongs to
+// this process. Enhanced HA uses it to backfill durable task controls during
+// rolling upgrades without claiming another node's shared running work.
+func (p *TaskPool) GetOwnedRunningTasks() []*TaskRunner {
+	return p.state.OwnedRunningRange()
+}
+
 func (p *TaskPool) writeStructuredDebug(record pro_interfaces.DebugLogRecord) {
 	debugWriter, ok := p.logWriteService.(pro_interfaces.DebugLogService)
 	if !ok {

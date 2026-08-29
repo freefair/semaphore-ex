@@ -194,6 +194,11 @@ func (t *RemoteJob) Run(username string, incomingVersion *string, alias string) 
 		tsk.Task.RecoveryReason = assignedTask.RecoveryReason
 		tsk.Task.PlacementDecision = assignedTask.PlacementDecision
 		t.taskPool.state.UpdateRuntimeFields(tsk)
+		if t.taskPool.taskControlLifecycle != nil {
+			if err = t.taskPool.taskControlLifecycle.RegisterTaskControl(tsk.Task); err != nil {
+				return err
+			}
+		}
 
 		// Capacity is reserved before an external webhook can start work. If the
 		// webhook fails, TaskRunner.run marks this assigned attempt failed, which

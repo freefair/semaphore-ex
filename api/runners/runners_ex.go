@@ -2,9 +2,24 @@ package runners
 
 import (
 	"errors"
+	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/services/runners"
+	log "github.com/sirupsen/logrus"
+	"net/http"
 )
+
+func (c *RunnerController) persistTaskExecutionEvidence(w http.ResponseWriter, runnerID int, evidence []db.TaskExecutionEvidence) bool {
+	if c.taskExecutionEvidenceSink == nil {
+		return true
+	}
+	if err := c.taskExecutionEvidenceSink.RecordTaskExecutionSnapshot(runnerID, evidence); err != nil {
+		log.WithError(err).WithField("runner_id", runnerID).Error("failed to persist runner execution evidence")
+		helpers.WriteErrorStatus(w, "Failed to persist runner execution evidence", http.StatusInternalServerError)
+		return false
+	}
+	return true
+}
 
 func taskExecutionEvidenceFromSnapshot(snapshot []runners.JobState) ([]db.TaskExecutionEvidence, error) {
 	evidence := make([]db.TaskExecutionEvidence, 0, len(snapshot))
@@ -23,7 +38,7 @@ func taskExecutionEvidenceFromSnapshot(snapshot []runners.JobState) ([]db.TaskEx
 			state = db.TaskExecutionEvidenceTerminal
 		}
 		evidence = append(evidence, db.TaskExecutionEvidence{
-			TaskID: job.ID, Generation: job.Generation, State: state,
+			TaskID: job.ID, Generation: job.Generation, State: state, Status: job.Status,
 		})
 	}
 	return evidence, nil

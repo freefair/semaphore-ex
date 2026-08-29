@@ -1,0 +1,9 @@
+alter table `task` drop column `task_control_fencing_token`;
+alter table `cluster__task_control` drop column `last_recovery_at`;
+alter table `cluster__task_control` drop column `last_recovery_safe_replacement`;
+alter table `cluster__task_control` drop column `last_recovery_reason`;
+alter table `cluster__task_control` drop column `last_recovery_decision`;
+alter table `cluster__task_control` drop column `assignment_revoked_at`;
+alter table `cluster__task_control` drop column `ownership_transferred_at`;
+alter table `cluster__task_control` drop column `previous_owner_boot_id`;
+alter table `cluster__task_control` drop column `last_evidence_status`;

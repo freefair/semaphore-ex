@@ -13,6 +13,7 @@ type managedClusterInspector struct {
 	requirements      pro_interfaces.ClusterCompatibilityRequirements
 	self              pro_interfaces.ClusterNodeIdentity
 	coordinatorHealth pro_interfaces.ClusterCoordinatorHealthSource
+	drainer           pro_interfaces.OrphanCleaner
 }
 
 var _ pro_interfaces.ClusterInspector = (*managedClusterInspector)(nil)
@@ -70,5 +71,17 @@ func (i *managedClusterInspector) CoordinatorHealth() pro_interfaces.ClusterCoor
 }
 
 func (i *managedClusterInspector) SetNodeDraining(bootID string, draining bool) error {
-	return i.repository.SetClusterNodeDraining(bootID, draining)
+	self := bootID == i.self.BootID
+	if self && draining && i.drainer != nil {
+		if err := i.drainer.Drain(); err != nil {
+			return err
+		}
+	}
+	if err := i.repository.SetClusterNodeDraining(bootID, draining); err != nil {
+		return err
+	}
+	if self && !draining && i.drainer != nil {
+		i.drainer.Resume()
+	}
+	return nil
 }

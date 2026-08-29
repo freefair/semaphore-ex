@@ -15,11 +15,15 @@ type NodeRegistry interface {
 	NodeID() string
 }
 
-// OrphanCleaner periodically detects tasks whose owning node has died and
-// marks them as failed so they do not remain stuck in "running" forever.
+// OrphanCleaner transfers expired task controls, evaluates stable runner
+// evidence, and either observes, reconciles, or quarantines the execution.
 type OrphanCleaner interface {
 	Start()
 	Stop()
+	Drain() error
+	Resume()
+	TaskRecoveryDiagnostics(taskID int) (TaskRecoveryDiagnostics, bool, error)
+	RetryTaskRecovery(taskID int) error
 }
 
 // ClusterInspector is the read surface for the Cluster Dashboard. It exposes

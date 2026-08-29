@@ -104,6 +104,19 @@ type TaskExecutionIdentity struct {
 	StableID   string `json:"stable_id"`
 }
 
+// NewTaskExecutionIdentity derives the same non-secret execution identity on
+// every node. Assignment generation prevents a recovered replacement from
+// sharing identity with the execution it supersedes.
+func NewTaskExecutionIdentity(taskID int, runnerID int, generation int) (TaskExecutionIdentity, error) {
+	if taskID <= 0 || runnerID <= 0 || generation <= 0 {
+		return TaskExecutionIdentity{}, errors.New("task, runner, and assignment generation are required")
+	}
+	return TaskExecutionIdentity{
+		RunnerID: runnerID, Generation: generation,
+		StableID: fmt.Sprintf("runner:%d:task:%d:generation:%d", runnerID, taskID, generation),
+	}, nil
+}
+
 // TaskControlLease identifies the server process currently responsible for
 // reconciling a task. FencingToken increases on every expired-owner takeover
 // so a former owner cannot persist a recovery decision after replacement.
@@ -139,8 +152,9 @@ const (
 // observation. Reason is an operator-safe diagnostic; it must not contain
 // executor output or credentials.
 type TaskExecutionEvidence struct {
-	State  TaskExecutionState `json:"state"`
-	Reason string             `json:"reason,omitempty"`
+	State          TaskExecutionState `json:"state"`
+	TerminalStatus string             `json:"terminal_status,omitempty"`
+	Reason         string             `json:"reason,omitempty"`
 }
 
 type TaskRecoveryDecision string
@@ -157,6 +171,8 @@ const (
 type TaskRecoveryAssessment struct {
 	Decision        TaskRecoveryDecision `json:"decision"`
 	SafeReplacement bool                 `json:"safe_replacement"`
+	EvidenceState   TaskExecutionState   `json:"evidence_state"`
+	TerminalStatus  string               `json:"terminal_status,omitempty"`
 	Reason          string               `json:"reason"`
 }
 
@@ -166,16 +182,43 @@ type TaskRecoveryAssessment struct {
 func DecideTaskRecovery(_ TaskControlLease, evidence TaskExecutionEvidence) TaskRecoveryAssessment {
 	switch evidence.State {
 	case TaskExecutionRunning:
-		return TaskRecoveryAssessment{Decision: TaskRecoveryObserve, Reason: "original execution is still running"}
-	case TaskExecutionTerminal, TaskExecutionAbsent:
-		return TaskRecoveryAssessment{Decision: TaskRecoveryRecover, SafeReplacement: true, Reason: "original execution is absent or terminal"}
+		return TaskRecoveryAssessment{Decision: TaskRecoveryObserve, EvidenceState: evidence.State, Reason: "original execution is still running"}
+	case TaskExecutionAbsent:
+		return TaskRecoveryAssessment{Decision: TaskRecoveryRecover, SafeReplacement: true, EvidenceState: evidence.State, Reason: "original execution is absent"}
+	case TaskExecutionTerminal:
+		return TaskRecoveryAssessment{Decision: TaskRecoveryRecover, EvidenceState: evidence.State, TerminalStatus: evidence.TerminalStatus, Reason: "original execution reported a terminal result"}
 	default:
 		reason := strings.TrimSpace(evidence.Reason)
 		if reason == "" {
 			reason = "execution evidence is unavailable"
 		}
-		return TaskRecoveryAssessment{Decision: TaskRecoveryQuarantine, Reason: reason}
+		return TaskRecoveryAssessment{Decision: TaskRecoveryQuarantine, EvidenceState: evidence.State, Reason: reason}
 	}
+}
+
+// TaskControlRecoveryRecord is the SQL-authoritative recovery snapshot for one
+// controlled execution. DatabaseNow and all observation timestamps originate
+// from the database server rather than a node's local clock.
+type TaskControlRecoveryRecord struct {
+	Lease                  TaskControlLease        `json:"lease"`
+	PreviousOwnerBootID    string                  `json:"previous_owner_boot_id,omitempty"`
+	OwnershipTransferredAt *time.Time              `json:"ownership_transferred_at,omitempty"`
+	Evidence               TaskExecutionEvidence   `json:"evidence"`
+	EvidenceObservedAt     *time.Time              `json:"evidence_observed_at,omitempty"`
+	AssignmentRevokedAt    *time.Time              `json:"assignment_revoked_at,omitempty"`
+	LastAssessment         *TaskRecoveryAssessment `json:"last_assessment,omitempty"`
+	RecoveryDecidedAt      *time.Time              `json:"recovery_decided_at,omitempty"`
+	DatabaseNow            time.Time               `json:"database_now"`
+}
+
+// TaskControlRecoveryRepository extends task-control leases with the evidence
+// and fenced diagnostic writes needed by an orphan recovery worker.
+type TaskControlRecoveryRepository interface {
+	TaskControlLeaseRepository
+	ListExpiredTaskControls(limit int) ([]TaskControlRecoveryRecord, error)
+	GetTaskControlRecovery(taskID int) (TaskControlRecoveryRecord, bool, error)
+	RecordTaskAssignmentRevoked(lease TaskControlLease) (bool, error)
+	RecordTaskRecoveryDecision(lease TaskControlLease, assessment TaskRecoveryAssessment) (bool, error)
 }
 
 // ClusterHeartbeatRedisClient is the narrow Redis dependency of the cluster
@@ -269,6 +312,26 @@ func EvaluateClusterNodeCompatibility(node ClusterNodeRegistration, required Clu
 		return ClusterNodeCompatibility{State: ClusterNodeDraining, Reason: "node is draining"}
 	}
 	return ClusterNodeCompatibility{State: ClusterNodeCompatible, Ready: true}
+}
+
+type TaskRecoveryDiagnostics struct {
+	Controlled             bool                 `json:"controlled"`
+	OwnerBootID            string               `json:"owner_boot_id"`
+	PreviousOwnerBootID    string               `json:"previous_owner_boot_id,omitempty"`
+	FencingToken           int64                `json:"fencing_token"`
+	LeaseExpiresAt         time.Time            `json:"lease_expires_at"`
+	OwnershipTransferredAt *time.Time           `json:"ownership_transferred_at,omitempty"`
+	RunnerID               int                  `json:"runner_id"`
+	AssignmentGeneration   int                  `json:"assignment_generation"`
+	EvidenceState          TaskExecutionState   `json:"evidence_state"`
+	EvidenceTerminalStatus string               `json:"evidence_terminal_status,omitempty"`
+	EvidenceObservedAt     *time.Time           `json:"evidence_observed_at,omitempty"`
+	AssignmentRevokedAt    *time.Time           `json:"assignment_revoked_at,omitempty"`
+	RecoveryDecision       TaskRecoveryDecision `json:"recovery_decision,omitempty"`
+	RecoveryReason         string               `json:"recovery_reason,omitempty"`
+	RecoveryDecidedAt      *time.Time           `json:"recovery_decided_at,omitempty"`
+	Quarantined            bool                 `json:"quarantined"`
+	SafeAction             string               `json:"safe_action,omitempty"`
 }
 
 type ClusterCoordinatorHealth struct {

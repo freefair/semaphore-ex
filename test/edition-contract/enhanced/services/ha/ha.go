@@ -2,6 +2,7 @@
 package ha
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	clusterSQL "github.com/semaphoreui/semaphore/pro/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/schedules"
+	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 )
 
@@ -24,10 +26,7 @@ type NodeRegistry = community.NodeRegistry
 type OrphanCleaner = community.OrphanCleaner
 type ClusterInspector = community.ClusterInspector
 
-var (
-	NewOrphanCleaner     = community.NewOrphanCleaner
-	NewWorkflowRunLocker = community.NewWorkflowRunLocker
-)
+var NewWorkflowRunLocker = community.NewWorkflowRunLocker
 
 var clusterIdentityState struct {
 	sync.Mutex
@@ -88,6 +87,62 @@ func NewTaskExecutionEvidenceRecorder(store db.Store) db.TaskExecutionEvidenceRe
 	return clusterSQL.NewTaskControlStore(connectionStore.GetConnection())
 }
 
+func NewOrphanCleaner(store db.Store, pool *tasks.TaskPool) OrphanCleaner {
+	if !util.HAEnabled() || pool == nil || util.Config.HA == nil || util.Config.HA.NodeID == "" || util.Config.HA.Redis == nil || util.Config.HA.Redis.Addr == "" {
+		return nil
+	}
+	connectionStore, ok := store.(interface {
+		GetConnection() *coresql.SqlDbConnection
+	})
+	if !ok {
+		return nil
+	}
+	identity, err := clusterIdentity(util.Config.HA.NodeID)
+	if err != nil {
+		return nil
+	}
+	redisOptions, err := redisOptionsForHA(util.Config.HA.Redis)
+	if err != nil {
+		return nil
+	}
+	connection := connectionStore.GetConnection()
+	heartbeats := NewRedisHeartbeatStore(NewGoRedisHeartbeatClient(redis.NewClient(redisOptions)), defaultClusterHeartbeatPrefix)
+	repository := clusterSQL.NewClusterNodeStore(connection)
+	requirements := pro_interfaces.ClusterCompatibilityRequirements{
+		ProtocolVersion: clusterProtocolVersion, SchemaVersion: currentSchemaVersion(connection.GetDialect()),
+		RequiredCapabilities: []string{"cluster-dashboard"},
+	}
+	readiness := func() (bool, error) {
+		nodes, registrationErr := repository.ListClusterNodes()
+		if registrationErr != nil {
+			return false, registrationErr
+		}
+		var registration pro_interfaces.ClusterNodeRegistration
+		found := false
+		for _, node := range nodes {
+			if node.BootID == identity.BootID {
+				registration = node
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false, nil
+		}
+		live, _, heartbeatErr := heartbeats.IsLive(context.Background(), identity)
+		if heartbeatErr != nil || !live {
+			return false, heartbeatErr
+		}
+		return pro_interfaces.EvaluateClusterNodeCompatibility(registration, requirements).Ready, nil
+	}
+	cleaner := NewManagedOrphanCleaner(
+		clusterSQL.NewTaskControlStore(connection), pool, identity.BootID, readiness,
+		5*time.Second, 20*time.Second, 30*time.Second,
+	)
+	pool.SetTaskControlLifecycle(cleaner)
+	return cleaner
+}
+
 const clusterProtocolVersion = 1
 
 // NewNodeRegistry enables durable cluster membership only when HA has an
@@ -134,7 +189,7 @@ func NewNodeRegistry(store db.Store) NodeRegistry {
 	)
 }
 
-func NewClusterInspector(store db.Store) ClusterInspector {
+func NewClusterInspector(store db.Store, drainers ...OrphanCleaner) ClusterInspector {
 	if !util.HAEnabled() || util.Config.HA == nil || util.Config.HA.NodeID == "" || util.Config.HA.Redis == nil || util.Config.HA.Redis.Addr == "" {
 		return nil
 	}
@@ -166,6 +221,9 @@ func NewClusterInspector(store db.Store) ClusterInspector {
 		redisClient,
 	)
 	inspector.coordinatorHealth = coordinatorHealthFor(util.Config.HA.NodeID)
+	if len(drainers) > 0 {
+		inspector.drainer = drainers[0]
+	}
 	return inspector
 }
 

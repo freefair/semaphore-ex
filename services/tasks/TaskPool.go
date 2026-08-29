@@ -78,6 +78,7 @@ type TaskPool struct {
 	// when a workflow task finishes. nil in tests / before wiring.
 	workflowService        pro_interfaces.WorkflowService
 	executorImageAvailable func(*db.User) bool
+	taskControlLifecycle   TaskControlLifecycle
 	// stop signals the background loops started by Run to exit. Closing it (via
 	// Stop) terminates the runner-task reconcile loop and Run's own select.
 	// Channels are used rather than sync.WaitGroup/sync.Once because TaskPool is
@@ -448,6 +449,9 @@ func (p *TaskPool) onTaskRun(t *TaskRunner) {
 }
 
 func (p *TaskPool) onTaskStop(t *TaskRunner) {
+	if p.taskControlLifecycle != nil {
+		p.taskControlLifecycle.ReleaseTaskControl(t.Task.ID)
+	}
 	p.state.RemoveActive(t.Task.ProjectID, t.Task.ID)
 	p.state.DeleteRunning(t.Task.ID)
 	p.state.DeleteClaim(t.Task.ID)
