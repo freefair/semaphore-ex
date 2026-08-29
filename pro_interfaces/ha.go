@@ -30,6 +30,9 @@ type ClusterInspector interface {
 	Nodes() ([]NodeInfo, error)
 	// RedisInfo returns Redis server / keyspace stats and a key-group breakdown.
 	RedisInfo() (RedisInfo, error)
+	// CoordinatorHealth reports the live-event transport separately from SQL,
+	// which remains authoritative during a Redis degradation.
+	CoordinatorHealth() ClusterCoordinatorHealth
 	SetNodeDraining(bootID string, draining bool) error
 }
 

@@ -7,11 +7,12 @@ import (
 )
 
 type managedClusterInspector struct {
-	repository   pro_interfaces.ClusterNodeRepository
-	heartbeats   pro_interfaces.ClusterHeartbeatStore
-	diagnostics  pro_interfaces.ClusterRedisDiagnosticsClient
-	requirements pro_interfaces.ClusterCompatibilityRequirements
-	self         pro_interfaces.ClusterNodeIdentity
+	repository        pro_interfaces.ClusterNodeRepository
+	heartbeats        pro_interfaces.ClusterHeartbeatStore
+	diagnostics       pro_interfaces.ClusterRedisDiagnosticsClient
+	requirements      pro_interfaces.ClusterCompatibilityRequirements
+	self              pro_interfaces.ClusterNodeIdentity
+	coordinatorHealth pro_interfaces.ClusterCoordinatorHealthSource
 }
 
 var _ pro_interfaces.ClusterInspector = (*managedClusterInspector)(nil)
@@ -22,7 +23,7 @@ func NewManagedClusterInspector(
 	requirements pro_interfaces.ClusterCompatibilityRequirements,
 	self pro_interfaces.ClusterNodeIdentity,
 	diagnostics ...pro_interfaces.ClusterRedisDiagnosticsClient,
-) pro_interfaces.ClusterInspector {
+) *managedClusterInspector {
 	inspector := &managedClusterInspector{repository: repository, heartbeats: heartbeats, requirements: requirements, self: self}
 	if len(diagnostics) > 0 {
 		inspector.diagnostics = diagnostics[0]
@@ -62,6 +63,13 @@ func (i *managedClusterInspector) RedisInfo() (pro_interfaces.RedisInfo, error) 
 		return pro_interfaces.RedisInfo{Connected: false, KeyGroups: map[string]int{}}, nil
 	}
 	return i.diagnostics.RedisDiagnostics(context.Background())
+}
+
+func (i *managedClusterInspector) CoordinatorHealth() pro_interfaces.ClusterCoordinatorHealth {
+	if i.coordinatorHealth == nil {
+		return pro_interfaces.ClusterCoordinatorHealth{SQLAuthoritative: true, LiveEvents: "unavailable"}
+	}
+	return i.coordinatorHealth.CoordinatorHealth()
 }
 
 func (i *managedClusterInspector) SetNodeDraining(bootID string, draining bool) error {

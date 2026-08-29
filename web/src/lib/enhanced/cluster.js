@@ -25,4 +25,14 @@ export const enhancedMethods = {
     }
     return node.version;
   },
+  coordinatorState(coordinator) {
+    if (coordinator.live_events === 'healthy') return this.$t('clusterLiveEventsHealthy');
+    if (coordinator.live_events === 'degraded') return this.$t('clusterLiveEventsDegraded');
+    return this.$t('clusterLiveEventsUnavailable');
+  },
+  coordinatorStateColor(coordinator) {
+    if (coordinator.live_events === 'healthy') return 'success';
+    if (coordinator.live_events === 'degraded') return 'warning';
+    return 'grey';
+  },
 };

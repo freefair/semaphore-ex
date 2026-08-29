@@ -3,8 +3,10 @@ package pro_interfaces
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -29,6 +31,68 @@ func NewClusterNodeIdentity(nodeID string) (ClusterNodeIdentity, error) {
 		return ClusterNodeIdentity{}, err
 	}
 	return ClusterNodeIdentity{NodeID: nodeID, BootID: hex.EncodeToString(bootBytes)}, nil
+}
+
+// ScheduleOccurrenceKey returns a stable, non-secret identity for one
+// intended schedule fire. The schedule revision prevents an edited schedule
+// from sharing a claim with a prior definition, while UTC normalization makes
+// every node derive the same key for the same instant.
+func ScheduleOccurrenceKey(scheduleID int, revision string, intendedAt time.Time) (string, error) {
+	if scheduleID <= 0 {
+		return "", errors.New("schedule id is required")
+	}
+	revision = strings.TrimSpace(revision)
+	if revision == "" {
+		return "", errors.New("schedule revision is required")
+	}
+	if intendedAt.IsZero() {
+		return "", errors.New("schedule intended fire instant is required")
+	}
+	value := fmt.Sprintf("%d\x00%s\x00%s", scheduleID, revision, intendedAt.UTC().Format(time.RFC3339Nano))
+	digest := sha256.Sum256([]byte("semaphore-schedule-occurrence:v1\x00" + value))
+	return "sco_" + hex.EncodeToString(digest[:])[:60], nil
+}
+
+// ScheduleOccurrence identifies a single intended fire of one version of a
+// schedule. Its key is durable and safe to use as a SQL uniqueness boundary.
+type ScheduleOccurrence struct {
+	Key        string    `json:"key"`
+	ScheduleID int       `json:"schedule_id"`
+	Revision   string    `json:"revision"`
+	IntendedAt time.Time `json:"intended_at"`
+}
+
+func NewScheduleOccurrence(scheduleID int, revision string, intendedAt time.Time) (ScheduleOccurrence, error) {
+	key, err := ScheduleOccurrenceKey(scheduleID, revision, intendedAt)
+	if err != nil {
+		return ScheduleOccurrence{}, err
+	}
+	return ScheduleOccurrence{
+		Key:        key,
+		ScheduleID: scheduleID,
+		Revision:   strings.TrimSpace(revision),
+		IntendedAt: intendedAt.UTC(),
+	}, nil
+}
+
+// ScheduleOccurrenceLease is a fenced, renewable ownership record. A caller
+// must present its exact owner boot identity and fencing token for every
+// follow-up action, so an expired owner cannot act after a successor claims
+// the same occurrence.
+type ScheduleOccurrenceLease struct {
+	Occurrence   ScheduleOccurrence `json:"occurrence"`
+	OwnerBootID  string             `json:"owner_boot_id"`
+	FencingToken int64              `json:"fencing_token"`
+	ExpiresAt    time.Time          `json:"expires_at"`
+}
+
+// ScheduleOccurrenceLeaseRepository persists the SQL authority for schedule
+// claims. Redis may wake nodes but must never replace these CAS decisions.
+type ScheduleOccurrenceLeaseRepository interface {
+	ClaimScheduleOccurrence(occurrence ScheduleOccurrence, ownerBootID string, ttl time.Duration) (ScheduleOccurrenceLease, bool, error)
+	IsCurrentScheduleLease(lease ScheduleOccurrenceLease) (bool, error)
+	CompleteScheduleOccurrence(lease ScheduleOccurrenceLease, taskID int) (bool, error)
+	ReleaseScheduleOccurrenceLease(lease ScheduleOccurrenceLease) (bool, error)
 }
 
 // ClusterHeartbeatRedisClient is the narrow Redis dependency of the cluster
@@ -122,4 +186,15 @@ func EvaluateClusterNodeCompatibility(node ClusterNodeRegistration, required Clu
 		return ClusterNodeCompatibility{State: ClusterNodeDraining, Reason: "node is draining"}
 	}
 	return ClusterNodeCompatibility{State: ClusterNodeCompatible, Ready: true}
+}
+
+type ClusterCoordinatorHealth struct {
+	SQLAuthoritative bool      `json:"sql_authoritative"`
+	LiveEvents       string    `json:"live_events"`
+	Reason           string    `json:"reason,omitempty"`
+	ObservedAt       time.Time `json:"observed_at"`
+}
+
+type ClusterCoordinatorHealthSource interface {
+	CoordinatorHealth() ClusterCoordinatorHealth
 }

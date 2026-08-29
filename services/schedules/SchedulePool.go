@@ -1,18 +1,16 @@
 package schedules
 
 import (
-	"sync"
-	"time"
-
-	"github.com/semaphoreui/semaphore/pkg/common_errors"
-	"github.com/semaphoreui/semaphore/services/server"
-	"github.com/semaphoreui/semaphore/util"
-
 	"github.com/robfig/cron/v3"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db_lib"
+	"github.com/semaphoreui/semaphore/pkg/common_errors"
+	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/services/tasks"
+	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
+	"sync"
+	"time"
 )
 
 type ScheduleRunner struct {
@@ -135,19 +133,42 @@ func (r ScheduleRunner) Run() {
 		return
 	}
 
-	// In HA mode, ensure only one node fires this schedule occurrence.
-	if r.pool.dedup != nil && !r.pool.dedup.TryLockExecution(r.scheduleID) {
-		log.WithFields(log.Fields{
-			"project_id":  r.projectID,
-			"schedule_id": r.scheduleID,
-		}).Debug("schedule already executed by another node")
-		// For one-time schedules the winning node deactivates/deletes
-		// the schedule in the DB after execution. Refresh so this
-		// node's cron picks up that change and drops the stale entry.
-		if scheduleType == db.ScheduleTypeRunAt {
-			r.pool.Refresh()
+	var lease ScheduleExecutionLease
+	var occurrence ScheduleOccurrence
+	if r.pool.dedup != nil {
+		intendedAt := time.Now().UTC().Truncate(time.Minute)
+		if scheduleType == db.ScheduleTypeRunAt && schedule.RunAt != nil {
+			intendedAt = schedule.RunAt.UTC()
 		}
-		return
+		occurrence, err = NewScheduleOccurrence(schedule, intendedAt)
+		if err != nil {
+			log.WithError(err).WithField("schedule_id", schedule.ID).Error("invalid schedule occurrence")
+			return
+		}
+		claimed, acquired, claimErr := r.pool.dedup.ClaimScheduleOccurrence(occurrence)
+		if claimErr != nil {
+			log.WithError(claimErr).WithField("schedule_id", schedule.ID).Error("failed to claim schedule occurrence")
+			return
+		}
+		if !acquired {
+			log.WithFields(log.Fields{
+				"project_id":  schedule.ProjectID,
+				"schedule_id": schedule.ID,
+				"occurrence":  occurrence.Revision,
+			}).Debug("schedule occurrence already claimed by another node")
+			if scheduleType == db.ScheduleTypeRunAt {
+				r.pool.Refresh()
+			}
+			return
+		}
+		lease = claimed
+		current, currentErr := lease.IsCurrent()
+		if currentErr != nil || !current {
+			if currentErr != nil {
+				log.WithError(currentErr).WithField("schedule_id", schedule.ID).Error("failed to re-check schedule lease")
+			}
+			return
+		}
 	}
 
 	var task db.Task
@@ -160,8 +181,12 @@ func (r ScheduleRunner) Run() {
 		}
 	}
 	task.ScheduleID = &schedule.ID
+	if lease != nil {
+		occurrenceKey := lease.OccurrenceKey()
+		task.ScheduleOccurrenceKey = &occurrenceKey
+	}
 
-	_, err = r.pool.taskPool.AddTask(
+	createdTask, err := r.pool.taskPool.AddTask(
 		task,
 		nil,
 		"",
@@ -170,12 +195,23 @@ func (r ScheduleRunner) Run() {
 	)
 
 	if err != nil {
+		if lease != nil {
+			_, _ = lease.Release()
+		}
 		log.WithError(err).WithFields(log.Fields{
 			"context":     common_errors.GetErrorContext(),
 			"project_id":  schedule.ProjectID,
 			"schedule_id": schedule.ID,
 			"template_id": schedule.TemplateID,
 		}).Error("failed to add task")
+	} else if lease != nil {
+		completed, completeErr := lease.Complete(createdTask.ID)
+		if completeErr != nil || !completed {
+			log.WithError(completeErr).WithFields(log.Fields{
+				"schedule_id": schedule.ID,
+				"task_id":     createdTask.ID,
+			}).Error("failed to complete schedule occurrence")
+		}
 	}
 
 	// For "RunAt" schedules, the schedule should only trigger once at the specified time and be deactivated afterwards.
@@ -186,49 +222,11 @@ func (r ScheduleRunner) Run() {
 	}
 }
 
-// ScheduleDeduplicator prevents the same schedule from being executed on
-// multiple nodes simultaneously in an HA cluster. When configured, each
-// ScheduleRunner calls TryLockExecution before creating a task.
-//
-// The deduplication lock is intended to cover a *single execution attempt*
-// of a schedule occurrence: a node should acquire the lock immediately
-// before creating a task and release it once the attempt has either
-// completed or failed. Implementations are free to choose the underlying
-// mechanism (in‑memory, database, distributed store, etc.), but they should
-// be robust to node failures and process restarts (for example by using
-// leases with automatic expiry).
-//
-// Callers MUST treat the lock as advisory and best‑effort: if the
-// implementation becomes unavailable or releases the lock early, at‑most‑once
-// execution across the cluster is not guaranteed.
+// ScheduleDeduplicator claims one intended schedule fire through durable
+// authority. Redis can wake a node, but the implementation must keep
+// correctness in SQL and expose a fenced lease for the final re-check.
 type ScheduleDeduplicator interface {
-	// TryLockExecution attempts to acquire an execution lock for the given
-	// schedule occurrence.
-	//
-	// Lock duration:
-	//   - The lock is expected to remain held for the duration of the current
-	//     schedule execution attempt (from just before task creation until
-	//     the attempt finishes or fails).
-	//   - Implementations will typically release the lock explicitly when the
-	//     attempt ends and/or rely on a lease with automatic expiry to avoid
-	//     permanent deadlocks.
-	//
-	// Timeouts and crash behavior:
-	//   - If the node that acquired the lock crashes or loses connectivity,
-	//     the behavior is implementation‑specific. Recommended practice is to
-	//     use a finite TTL/lease so that the lock eventually expires and
-	//     future executions can proceed.
-	//
-	// Idempotency:
-	//   - TryLockExecution may be called multiple times for the same
-	//     scheduleID (for example, after retries or rescheduling). The
-	//     implementation SHOULD behave idempotently such that, for a single
-	//     schedule occurrence, at most one call across the cluster returns
-	//     true.
-	//
-	// Returns true if this node successfully acquired the lock and should
-	// execute the schedule, and false otherwise.
-	TryLockExecution(scheduleID int) bool
+	ClaimScheduleOccurrence(occurrence ScheduleOccurrence) (ScheduleExecutionLease, bool, error)
 }
 
 type SchedulePool struct {

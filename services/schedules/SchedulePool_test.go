@@ -1,10 +1,6 @@
 package schedules
 
 import (
-	"sync"
-	"testing"
-	"time"
-
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pkg/ssh"
@@ -12,6 +8,9 @@ import (
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
+	"sync"
+	"testing"
+	"time"
 )
 
 // mockEncryptionService is a test implementation of AccessKeyEncryptionService
@@ -88,13 +87,6 @@ func newMockDeduplicator() *mockDeduplicator {
 	}
 }
 
-func (m *mockDeduplicator) TryLockExecution(scheduleID int) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.lockAttempts[scheduleID]++
-	return m.allowExecution[scheduleID]
-}
-
 func (m *mockDeduplicator) setAllowExecution(scheduleID int, allow bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -167,40 +159,4 @@ func TestScheduleExecutesNormallyWithoutDeduplicator(t *testing.T) {
 
 	// Verify that the deduplicator is nil (schedule would execute normally)
 	assert.Nil(t, pool.dedup, "deduplicator should be nil, allowing normal execution")
-}
-
-// TestScheduleSkippedWhenTryLockExecutionReturnsFalse verifies schedules are skipped when TryLockExecution returns false
-func TestScheduleSkippedWhenTryLockExecutionReturnsFalse(t *testing.T) {
-	pool, _ := setupTestSchedulePool(t)
-
-	// Set up deduplicator to deny execution
-	dedup := newMockDeduplicator()
-	scheduleID := 123
-	dedup.setAllowExecution(scheduleID, false)
-	pool.SetDeduplicator(dedup)
-
-	// Simulate the deduplication check that happens in ScheduleRunner.Run()
-	shouldSkip := pool.dedup != nil && !pool.dedup.TryLockExecution(scheduleID)
-
-	// Verify the deduplicator was called and returned false
-	assert.True(t, shouldSkip, "schedule should be skipped when TryLockExecution returns false")
-	assert.Equal(t, 1, dedup.getLockAttempts(scheduleID), "TryLockExecution should be called once")
-}
-
-// TestScheduleProceedsWhenTryLockExecutionReturnsTrue verifies schedules proceed when TryLockExecution returns true
-func TestScheduleProceedsWhenTryLockExecutionReturnsTrue(t *testing.T) {
-	pool, _ := setupTestSchedulePool(t)
-
-	// Set up deduplicator to allow execution
-	dedup := newMockDeduplicator()
-	scheduleID := 456
-	dedup.setAllowExecution(scheduleID, true)
-	pool.SetDeduplicator(dedup)
-
-	// Simulate the deduplication check that happens in ScheduleRunner.Run()
-	shouldSkip := pool.dedup != nil && !pool.dedup.TryLockExecution(scheduleID)
-
-	// Verify the deduplicator was called and returned true (schedule proceeds)
-	assert.False(t, shouldSkip, "schedule should proceed when TryLockExecution returns true")
-	assert.Equal(t, 1, dedup.getLockAttempts(scheduleID), "TryLockExecution should be called once")
 }

@@ -47,6 +47,10 @@ export default {
   clusterNodeStale: 'Stale',
   clusterNodeIncompatible: 'Incompatible',
   clusterNodeDraining: 'Draining',
+  clusterLiveEvents: 'Live events',
+  clusterLiveEventsHealthy: 'Healthy',
+  clusterLiveEventsDegraded: 'Degraded',
+  clusterLiveEventsUnavailable: 'Unavailable',
   projectRunnerRegistrationHint:
     'The runner will be created inactive. Its one-time registration token is shown '
     + 'once after creation and expires in 1 hour.',

@@ -104,6 +104,15 @@
           <v-chip v-if="status.health && status.health.draining" x-small color="grey">
             {{ $t('clusterNodeDraining') }}: {{ status.health.draining }}
           </v-chip>
+          <v-chip
+            v-if="status.coordinator"
+            x-small
+            class="ml-1"
+            :color="coordinatorStateColor(status.coordinator)"
+            dark
+          >
+            {{ $t('clusterLiveEvents') }}: {{ coordinatorState(status.coordinator) }}
+          </v-chip>
         </v-card-title>
         <v-data-table :headers="nodeHeaders" :items="status.nodes" :items-per-page="20" dense>
           <template v-slot:item.node_id="{ item }">

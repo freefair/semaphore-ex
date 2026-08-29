@@ -29,4 +29,15 @@ describe('cluster dashboard node states', () => {
       }),
     ).to.equal(true);
   });
+
+  it('keeps Redis live-event degradation separate from the SQL-authoritative cluster state', () => {
+    const context = { $t: (key) => key };
+    expect(Cluster.methods.coordinatorState.call(context, { live_events: 'healthy' })).to.equal(
+      'clusterLiveEventsHealthy',
+    );
+    expect(Cluster.methods.coordinatorState.call(context, { live_events: 'degraded' })).to.equal(
+      'clusterLiveEventsDegraded',
+    );
+    expect(Cluster.methods.coordinatorStateColor({ live_events: 'degraded' })).to.equal('warning');
+  });
 });

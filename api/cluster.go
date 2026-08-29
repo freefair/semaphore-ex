@@ -63,6 +63,7 @@ func getClusterStatus(w http.ResponseWriter, r *http.Request) {
 	} else {
 		body["redis"] = redisInfo
 	}
+	body["coordinator"] = ci.CoordinatorHealth()
 
 	helpers.WriteJSON(w, http.StatusOK, body)
 }
