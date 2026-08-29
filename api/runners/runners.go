@@ -54,19 +54,24 @@ func RunnerMiddleware(next http.Handler) http.Handler {
 }
 
 type RunnerController struct {
-	runnerRepo        db.RunnerManager
-	taskPool          *tasks.TaskPool
-	encryptionService server.AccessKeyEncryptionService
-	signer            jwt.Signer
+	runnerRepo                db.RunnerManager
+	taskPool                  *tasks.TaskPool
+	encryptionService         server.AccessKeyEncryptionService
+	signer                    jwt.Signer
+	taskExecutionEvidenceSink db.TaskExecutionEvidenceRecorder
 }
 
-func NewRunnerController(runnerRepo db.RunnerManager, taskPool *tasks.TaskPool, encryptionService server.AccessKeyEncryptionService, signer jwt.Signer) *RunnerController {
-	return &RunnerController{
+func NewRunnerController(runnerRepo db.RunnerManager, taskPool *tasks.TaskPool, encryptionService server.AccessKeyEncryptionService, signer jwt.Signer, evidenceSinks ...db.TaskExecutionEvidenceRecorder) *RunnerController {
+	controller := &RunnerController{
 		runnerRepo:        runnerRepo,
 		taskPool:          taskPool,
 		encryptionService: encryptionService,
 		signer:            signer,
 	}
+	if len(evidenceSinks) > 0 {
+		controller.taskExecutionEvidenceSink = evidenceSinks[0]
+	}
+	return controller
 }
 
 func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
@@ -370,6 +375,21 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 
 	taskPool := c.taskPool
 
+	if body.KnownJobs != nil {
+		evidence, err := taskExecutionEvidenceFromSnapshot(body.KnownJobs)
+		if err != nil {
+			helpers.WriteErrorStatus(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if c.taskExecutionEvidenceSink != nil {
+			if err = c.taskExecutionEvidenceSink.RecordTaskExecutionSnapshot(runner.ID, evidence); err != nil {
+				log.WithError(err).WithField("runner_id", runner.ID).Error("failed to persist runner execution evidence")
+				helpers.WriteErrorStatus(w, "Failed to persist runner execution evidence", http.StatusInternalServerError)
+				return
+			}
+		}
+	}
+
 	if body.Jobs == nil {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -480,6 +500,29 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 	}
 
 	helpers.WriteJSON(w, http.StatusOK, response)
+}
+
+func taskExecutionEvidenceFromSnapshot(snapshot []runners.JobState) ([]db.TaskExecutionEvidence, error) {
+	evidence := make([]db.TaskExecutionEvidence, 0, len(snapshot))
+	seen := make(map[[2]int]struct{}, len(snapshot))
+	for _, job := range snapshot {
+		if job.ID <= 0 || job.Generation <= 0 || !job.Status.IsValid() {
+			return nil, errors.New("Invalid runner execution snapshot")
+		}
+		key := [2]int{job.ID, job.Generation}
+		if _, duplicate := seen[key]; duplicate {
+			return nil, errors.New("Invalid runner execution snapshot")
+		}
+		seen[key] = struct{}{}
+		state := db.TaskExecutionEvidenceRunning
+		if job.Status.IsFinished() {
+			state = db.TaskExecutionEvidenceTerminal
+		}
+		evidence = append(evidence, db.TaskExecutionEvidence{
+			TaskID: job.ID, Generation: job.Generation, State: state,
+		})
+	}
+	return evidence, nil
 }
 
 // normalizeReportedGeneration keeps rolling upgrades compatible without

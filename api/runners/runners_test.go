@@ -385,6 +385,58 @@ func decodeProgressResponse(t *testing.T, w *httptest.ResponseRecorder) runners.
 	return res
 }
 
+type taskExecutionEvidenceRecorderSpy struct {
+	calls    int
+	runnerID int
+	evidence []db.TaskExecutionEvidence
+}
+
+func (s *taskExecutionEvidenceRecorderSpy) RecordTaskExecutionSnapshot(runnerID int, evidence []db.TaskExecutionEvidence) error {
+	s.calls++
+	s.runnerID = runnerID
+	s.evidence = append([]db.TaskExecutionEvidence(nil), evidence...)
+	return nil
+}
+
+func TestUpdateRunnerRecordsOnlyExplicitCompleteExecutionSnapshots(t *testing.T) {
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	pool := tasks.CreateTaskPool(store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, nil, nil, nil)
+	recorder := &taskExecutionEvidenceRecorderSpy{}
+	controller := NewRunnerController(store, &pool, nil, nil, recorder)
+	runner := db.Runner{ID: 7}
+
+	explicit := newProgressRequest(t, store, runner, runners.RunnerProgress{
+		KnownJobs: []runners.JobState{{
+			ID: 41, Generation: 3, Status: task_logger.TaskRunningStatus,
+		}},
+	})
+	explicitResponse := httptest.NewRecorder()
+	controller.UpdateRunner(explicitResponse, explicit)
+	require.Equal(t, http.StatusNoContent, explicitResponse.Code)
+	assert.Equal(t, 1, recorder.calls)
+	assert.Equal(t, runner.ID, recorder.runnerID)
+	assert.Equal(t, []db.TaskExecutionEvidence{{
+		TaskID: 41, Generation: 3, State: db.TaskExecutionEvidenceRunning,
+	}}, recorder.evidence)
+
+	legacy := newProgressRequest(t, store, runner, runners.RunnerProgress{})
+	legacyResponse := httptest.NewRecorder()
+	controller.UpdateRunner(legacyResponse, legacy)
+	require.Equal(t, http.StatusNoContent, legacyResponse.Code)
+	assert.Equal(t, 1, recorder.calls, "a missing KnownJobs field is unknown, not an empty snapshot")
+
+	invalid := newProgressRequest(t, store, runner, runners.RunnerProgress{
+		KnownJobs: []runners.JobState{{
+			ID: 41, Generation: 0, Status: task_logger.TaskRunningStatus,
+		}},
+	})
+	invalidResponse := httptest.NewRecorder()
+	controller.UpdateRunner(invalidResponse, invalid)
+	require.Equal(t, http.StatusBadRequest, invalidResponse.Code)
+	assert.Equal(t, 1, recorder.calls)
+}
+
 func TestNormalizeReportedGenerationAllowsOnlyLegacyFirstAssignment(t *testing.T) {
 	assert.Equal(t, 1, normalizeReportedGeneration(0, 1))
 	assert.Equal(t, 0, normalizeReportedGeneration(0, 2))

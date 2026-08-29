@@ -75,6 +75,19 @@ func NewWSBroadcaster(store db.Store) sockets.Broadcaster {
 	return NewManagedWSBroadcaster(NewGoRedisEventTransport(redis.NewClient(options)), identity.BootID, sockets.LocalBroadcast, coordinatorHealthFor(util.Config.HA.NodeID))
 }
 
+func NewTaskExecutionEvidenceRecorder(store db.Store) db.TaskExecutionEvidenceRecorder {
+	if !util.HAEnabled() {
+		return nil
+	}
+	connectionStore, ok := store.(interface {
+		GetConnection() *coresql.SqlDbConnection
+	})
+	if !ok {
+		return nil
+	}
+	return clusterSQL.NewTaskControlStore(connectionStore.GetConnection())
+}
+
 const clusterProtocolVersion = 1
 
 // NewNodeRegistry enables durable cluster membership only when HA has an

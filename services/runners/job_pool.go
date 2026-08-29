@@ -471,7 +471,7 @@ func (p *JobPool) sendProgress() (ok bool) {
 
 	body := RunnerProgress{
 		Jobs:      nil,
-		KnownJobs: nil,
+		KnownJobs: make([]JobState, 0),
 	}
 
 	for id, j := range p.snapshotRunningJobs() {

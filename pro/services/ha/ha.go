@@ -19,5 +19,8 @@ func NewNodeRegistry(_ db.Store) NodeRegistry                           { return
 func NewScheduleDeduplicator(_ db.Store) schedules.ScheduleDeduplicator { return nil }
 func NewWSBroadcaster(_ db.Store) sockets.Broadcaster                   { return nil }
 func NewOrphanCleaner(_ db.Store) OrphanCleaner                         { return nil }
-func NewClusterInspector(_ db.Store) ClusterInspector                   { return nil }
-func NewWorkflowRunLocker() pro_interfaces.WorkflowRunLocker            { return nil }
+func NewTaskExecutionEvidenceRecorder(_ db.Store) db.TaskExecutionEvidenceRecorder {
+	return nil
+}
+func NewClusterInspector(_ db.Store) ClusterInspector        { return nil }
+func NewWorkflowRunLocker() pro_interfaces.WorkflowRunLocker { return nil }
