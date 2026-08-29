@@ -1,4 +1,11 @@
+import axios from 'axios';
+import EventBus from '@/event-bus';
+import { getErrorMessage } from '@/lib/error';
+
 export const enhancedComputed = {
+  reconciliationQuarantined() {
+    return this.details?.run?.reconciliation_state === 'quarantined';
+  },
   resolvedApprovals() {
     return (this.details?.approvals || [])
       .filter((approval) => approval.status !== 'pending')
@@ -32,6 +39,13 @@ export const enhancedComputed = {
 };
 
 export const enhancedMethods = {
+  runStatusLabel(status) {
+    const labels = {
+      stopping: this.$t('workflowRunStopping'),
+      canceled: this.$t('workflowRunStopped'),
+    };
+    return labels[status] || status;
+  },
   artifactAvailabilityColor(availability) {
     if (availability === 'available') return 'success';
     if (availability === 'invalid') return 'error';
@@ -52,7 +66,7 @@ export const enhancedMethods = {
     }
   },
   isActiveRunStatus(status) {
-    return ['pending', 'queued', 'running', 'approval'].includes(status);
+    return ['pending', 'queued', 'running', 'approval', 'stopping'].includes(status);
   },
   formatElapsed(start, end) {
     if (!start) return '';
@@ -69,6 +83,22 @@ export const enhancedMethods = {
       (node) => node.task && node.task.id === data.task_id,
     );
     if (belongsToRun) this.loadData();
+  },
+  async retryReconciliation() {
+    this.retryingReconciliation = true;
+    try {
+      await axios.post(
+        `/api/project/${this.projectId}/workflows/${this.workflowId}/runs/${this.runId}/retry-reconcile`,
+      );
+      await this.loadData();
+    } catch (err) {
+      EventBus.$emit('i-snackbar', {
+        color: 'error',
+        text: getErrorMessage(err),
+      });
+    } finally {
+      this.retryingReconciliation = false;
+    }
   },
   approvalStatusLabel(status) {
     const labels = {

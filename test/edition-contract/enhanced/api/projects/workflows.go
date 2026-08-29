@@ -45,22 +45,28 @@ type workflowRunNodeDetails struct {
 }
 
 type workflowRunView struct {
-	ID                 int                                     `json:"id"`
-	ProjectID          int                                     `json:"project_id"`
-	WorkflowTemplateID int                                     `json:"workflow_template_id"`
-	Status             db.WorkflowRunStatus                    `json:"status"`
-	Reason             string                                  `json:"reason,omitempty"`
-	Version            *string                                 `json:"version,omitempty"`
-	ActorUserID        int                                     `json:"actor_user_id"`
-	DefinitionVersion  int                                     `json:"definition_version"`
-	DefinitionRevision int                                     `json:"definition_revision"`
-	CorrelationID      string                                  `json:"correlation_id"`
-	Created            time.Time                               `json:"created"`
-	Start              *time.Time                              `json:"start,omitempty"`
-	End                *time.Time                              `json:"end,omitempty"`
-	RootTaskID         *int                                    `json:"root_task_id,omitempty"`
-	Parameters         map[string]db.WorkflowParameterSnapshot `json:"parameters,omitempty"`
-	Trigger            *db.WorkflowTriggerSnapshot             `json:"trigger,omitempty"`
+	ID                          int                                     `json:"id"`
+	ProjectID                   int                                     `json:"project_id"`
+	WorkflowTemplateID          int                                     `json:"workflow_template_id"`
+	Status                      db.WorkflowRunStatus                    `json:"status"`
+	Reason                      string                                  `json:"reason,omitempty"`
+	Version                     *string                                 `json:"version,omitempty"`
+	ActorUserID                 int                                     `json:"actor_user_id"`
+	DefinitionVersion           int                                     `json:"definition_version"`
+	DefinitionRevision          int                                     `json:"definition_revision"`
+	CorrelationID               string                                  `json:"correlation_id"`
+	DesiredState                db.WorkflowRunDesiredState              `json:"desired_state"`
+	ReconciliationState         db.WorkflowRunReconciliationState       `json:"reconciliation_state"`
+	ReconciliationAttempts      int                                     `json:"reconciliation_attempts"`
+	ReconciliationLastError     string                                  `json:"reconciliation_last_error,omitempty"`
+	ReconciliationNextRetryAt   *time.Time                              `json:"reconciliation_next_retry_at,omitempty"`
+	ReconciliationQuarantinedAt *time.Time                              `json:"reconciliation_quarantined_at,omitempty"`
+	Created                     time.Time                               `json:"created"`
+	Start                       *time.Time                              `json:"start,omitempty"`
+	End                         *time.Time                              `json:"end,omitempty"`
+	RootTaskID                  *int                                    `json:"root_task_id,omitempty"`
+	Parameters                  map[string]db.WorkflowParameterSnapshot `json:"parameters,omitempty"`
+	Trigger                     *db.WorkflowTriggerSnapshot             `json:"trigger,omitempty"`
 }
 
 type workflowRunDefinitionView struct {
@@ -301,6 +307,17 @@ func (c *workflowController) StopWorkflowRun(w http.ResponseWriter, r *http.Requ
 	helpers.WriteJSON(w, http.StatusOK, newWorkflowRunView(stopped))
 }
 
+func (c *workflowController) RetryWorkflowRunReconciliation(w http.ResponseWriter, r *http.Request) {
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	run := helpers.GetFromContext(r, "workflow_run").(db.WorkflowRun)
+	retried, err := c.workflowService.RetryWorkflowRunReconciliation(project.ID, run.ID, helpers.UserFromContext(r))
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, newWorkflowRunView(retried))
+}
+
 func (c *workflowController) GetWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
@@ -393,21 +410,27 @@ func (c *workflowController) workflowRunDetails(run db.WorkflowRun) (workflowRun
 
 func newWorkflowRunView(run db.WorkflowRun) workflowRunView {
 	view := workflowRunView{
-		ID:                 run.ID,
-		ProjectID:          run.ProjectID,
-		WorkflowTemplateID: run.WorkflowTemplateID,
-		Status:             run.Status,
-		Reason:             run.Reason,
-		Version:            run.Version,
-		ActorUserID:        run.ActorUserID,
-		DefinitionVersion:  run.DefinitionVersion,
-		DefinitionRevision: run.DefinitionRevision,
-		CorrelationID:      run.CorrelationID,
-		Created:            run.Created,
-		Start:              run.Start,
-		End:                run.End,
-		RootTaskID:         run.RootTaskID,
-		Parameters:         run.ParameterSnapshot,
+		ID:                          run.ID,
+		ProjectID:                   run.ProjectID,
+		WorkflowTemplateID:          run.WorkflowTemplateID,
+		Status:                      run.Status,
+		Reason:                      run.Reason,
+		Version:                     run.Version,
+		ActorUserID:                 run.ActorUserID,
+		DefinitionVersion:           run.DefinitionVersion,
+		DefinitionRevision:          run.DefinitionRevision,
+		CorrelationID:               run.CorrelationID,
+		DesiredState:                run.DesiredState,
+		ReconciliationState:         run.ReconciliationState,
+		ReconciliationAttempts:      run.ReconciliationAttempts,
+		ReconciliationLastError:     run.ReconciliationLastError,
+		ReconciliationNextRetryAt:   run.ReconciliationNextRetryAt,
+		ReconciliationQuarantinedAt: run.ReconciliationQuarantinedAt,
+		Created:                     run.Created,
+		Start:                       run.Start,
+		End:                         run.End,
+		RootTaskID:                  run.RootTaskID,
+		Parameters:                  run.ParameterSnapshot,
 	}
 	if run.TriggerSnapshot.ID > 0 {
 		trigger := run.TriggerSnapshot

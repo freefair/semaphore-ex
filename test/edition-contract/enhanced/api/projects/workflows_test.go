@@ -34,6 +34,7 @@ type workflowServiceStub struct {
 	inputs         []db.WorkflowRunInput
 	progressCalls  int
 	stopCalls      int
+	retryCalls     int
 	artifacts      []db.WorkflowArtifactMetadata
 	approval       db.WorkflowApproval
 	approvalErr    error
@@ -57,6 +58,11 @@ func (s *workflowServiceStub) ProgressWorkflowRun(_ int, _ int, _ *db.User) erro
 
 func (s *workflowServiceStub) StopWorkflowRun(_ int, _ int, _ *db.User) (db.WorkflowRun, error) {
 	s.stopCalls++
+	return s.run, nil
+}
+
+func (s *workflowServiceStub) RetryWorkflowRunReconciliation(_ int, _ int, _ *db.User) (db.WorkflowRun, error) {
+	s.retryCalls++
 	return s.run, nil
 }
 
@@ -609,6 +615,17 @@ func TestWorkflowApprovalControllerListsEligibilityFilteredInbox(t *testing.T) {
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), `"workflow_template_id":41`)
 	assert.Contains(t, recorder.Body.String(), `"workflow_name":"Deploy"`)
+}
+
+func TestWorkflowControllerRetriesQuarantinedReconciliation(t *testing.T) {
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7}
+	run := db.WorkflowRun{ID: 91, ProjectID: 7, WorkflowTemplateID: 41, ReconciliationState: db.WorkflowRunReconciliationQuarantined}
+	service := &workflowServiceStub{run: run}
+	controller := NewWorkflowController(service, &workflowManagerStub{}, &workflowDefinitionServiceStub{})
+	recorder := httptest.NewRecorder()
+	controller.RetryWorkflowRunReconciliation(recorder, workflowRunRequest(http.MethodPost, "/api/project/7/workflows/41/runs/91/retry-reconcile", workflow, run))
+	assert.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Equal(t, 1, service.retryCalls)
 }
 
 func workflowRequest(method, target string, body any, workflow *db.WorkflowTemplate) *http.Request {

@@ -20,6 +20,8 @@ type WorkflowManager interface {
 	GetActiveWorkflowRuns() ([]WorkflowRun, error)
 	CreateWorkflowRun(run WorkflowRun) (WorkflowRun, error)
 	UpdateWorkflowRun(run WorkflowRun) error
+	UpdateWorkflowRunReconciliation(run WorkflowRun) error
+	RequestWorkflowRunStop(projectID int, runID int) (bool, error)
 	GetWorkflowRunNode(projectID int, runID int, nodeID int) (WorkflowRunNode, error)
 	ClaimWorkflowRunNode(projectID int, runID int, nodeID int, queuedAt time.Time) (bool, error)
 	AttachWorkflowRunNodeTask(projectID int, runID int, nodeID int, taskID int) (bool, error)

@@ -193,7 +193,48 @@ describe('linear workflow run dashboard', () => {
     const elapsed = WorkflowRun.methods.formatElapsed(start, end);
     expect(elapsed).to.equal('1m 5s');
     expect(WorkflowRun.methods.isActiveRunStatus('queued')).to.equal(true);
+    expect(WorkflowRun.methods.isActiveRunStatus('stopping')).to.equal(true);
     expect(WorkflowRun.methods.isActiveRunStatus('succeeded')).to.equal(false);
+  });
+
+  it('shows and retries a quarantined reconciliation through the existing run toolbar', async () => {
+    const context = {
+      details: {
+        run: {
+          reconciliation_state: 'quarantined',
+          reconciliation_attempts: 3,
+          reconciliation_last_error: 'temporary database failure',
+        },
+      },
+      can: () => true,
+      USER_PERMISSIONS: { runProjectTasks: 1 },
+    };
+    expect(WorkflowRun.computed.reconciliationQuarantined.call(context)).to.equal(true);
+
+    const requests = [];
+    const originalPost = axios.post;
+    axios.post = async (url) => { requests.push(url); return { data: {} }; };
+    const retryContext = {
+      projectId: 7,
+      workflowId: 41,
+      runId: 91,
+      retryingReconciliation: false,
+      loadData: async () => {},
+      $t: (key) => key,
+    };
+    await WorkflowRun.methods.retryReconciliation.call(retryContext);
+    axios.post = originalPost;
+
+    expect(requests).to.deep.equal(['/api/project/7/workflows/41/runs/91/retry-reconcile']);
+    expect(retryContext.retryingReconciliation).to.equal(false);
+  });
+
+  it('labels durable stopping and recovery states without changing task-node status mapping', () => {
+    const context = { $t: (key) => key };
+    expect(WorkflowRun.methods.runStatusLabel.call(context, 'stopping')).to.equal('workflowRunStopping');
+    expect(WorkflowRun.methods.runStatusLabel.call(context, 'canceled')).to.equal('workflowRunStopped');
+    expect(WorkflowRun.methods.runStatusLabel.call(context, 'running')).to.equal('running');
+    expect(WorkflowRun.methods.statusColor.call({ normalizeNodeStatus: (value) => value }, 'stopping')).to.equal('warning');
   });
 
   it('renders approval state from immutable request snapshots and sends bounded user decisions', async () => {

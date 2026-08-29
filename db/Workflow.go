@@ -139,6 +139,7 @@ const (
 	WorkflowRunQueued    WorkflowRunStatus = "queued"
 	WorkflowRunRunning   WorkflowRunStatus = "running"
 	WorkflowRunApproval  WorkflowRunStatus = "approval"
+	WorkflowRunStopping  WorkflowRunStatus = "stopping"
 	WorkflowRunSucceeded WorkflowRunStatus = "succeeded"
 	// WorkflowRunSuccess is retained for reading runs created by an older
 	// enhanced implementation. New runs use WorkflowRunSucceeded.
@@ -159,8 +160,14 @@ type WorkflowRun struct {
 	ProjectID          int `db:"project_id" json:"project_id" backup:"-"`
 	WorkflowTemplateID int `db:"workflow_template_id" json:"workflow_template_id" backup:"workflow_template_id"`
 
-	Status WorkflowRunStatus `db:"status" json:"status" backup:"status"`
-	Reason string            `db:"reason" json:"reason,omitempty" backup:"reason"`
+	Status                      WorkflowRunStatus              `db:"status" json:"status" backup:"status"`
+	DesiredState                WorkflowRunDesiredState        `db:"desired_state" json:"desired_state" backup:"desired_state"`
+	ReconciliationState         WorkflowRunReconciliationState `db:"reconciliation_state" json:"reconciliation_state" backup:"reconciliation_state"`
+	ReconciliationAttempts      int                            `db:"reconciliation_attempts" json:"reconciliation_attempts" backup:"reconciliation_attempts"`
+	ReconciliationLastError     string                         `db:"reconciliation_last_error" json:"reconciliation_last_error,omitempty" backup:"reconciliation_last_error"`
+	ReconciliationNextRetryAt   *time.Time                     `db:"reconciliation_next_retry_at" json:"reconciliation_next_retry_at,omitempty" backup:"reconciliation_next_retry_at"`
+	ReconciliationQuarantinedAt *time.Time                     `db:"reconciliation_quarantined_at" json:"reconciliation_quarantined_at,omitempty" backup:"reconciliation_quarantined_at"`
+	Reason                      string                         `db:"reason" json:"reason,omitempty" backup:"reason"`
 
 	Version *string `db:"version" json:"version,omitempty" backup:"version"`
 

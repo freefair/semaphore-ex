@@ -73,6 +73,22 @@ type WorkflowValidationResult struct {
 	Issues []WorkflowValidationIssue `json:"issues"`
 }
 
+type WorkflowRunDesiredState string
+
+const (
+	WorkflowRunDesiredRunning  WorkflowRunDesiredState = "running"
+	WorkflowRunDesiredStopping WorkflowRunDesiredState = "stopping"
+	WorkflowRunDesiredStopped  WorkflowRunDesiredState = "stopped"
+)
+
+type WorkflowRunReconciliationState string
+
+const (
+	WorkflowRunReconciliationHealthy     WorkflowRunReconciliationState = "healthy"
+	WorkflowRunReconciliationRecovering  WorkflowRunReconciliationState = "recovering"
+	WorkflowRunReconciliationQuarantined WorkflowRunReconciliationState = "quarantined"
+)
+
 type WorkflowRunNodeStatus string
 
 const (

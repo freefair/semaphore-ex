@@ -108,6 +108,27 @@ func TestWorkflowRunRepositoryPersistsImmutableSnapshotAndConditionalNodeState(t
 	assert.Equal(t, db.WorkflowRunNodeSkipped, dependent.Result.Status)
 }
 
+func TestWorkflowRunRepositoryDoesNotClaimNodesAfterDurableStopRequest(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	user, templateOne, templateTwo := workflowRunResources(t, store, projectID)
+	workflow, err := repository.CreateWorkflowTemplate(linearRepositoryWorkflow(projectID, templateOne.ID, templateTwo.ID))
+	require.NoError(t, err)
+	run, err := workflowDB.BuildWorkflowRunSnapshot(workflow, map[int]db.Template{
+		templateOne.ID: templateOne, templateTwo.ID: templateTwo,
+	}, user.ID, "stop-before-claim", time.Now())
+	require.NoError(t, err)
+	run, err = repository.CreateWorkflowRun(run)
+	require.NoError(t, err)
+
+	requested, err := repository.RequestWorkflowRunStop(projectID, run.ID)
+	require.NoError(t, err)
+	assert.True(t, requested)
+	claimed, err := repository.ClaimWorkflowRunNode(projectID, run.ID, workflow.Nodes[0].ID, time.Now())
+	require.NoError(t, err)
+	assert.False(t, claimed)
+}
+
 func TestWorkflowRunRepositoryPersistsImmutableParameterAndOverrideSnapshots(t *testing.T) {
 	store, repository, projectID := workflowRepositoryFixture(t)
 	defer store.Close()
@@ -210,6 +231,37 @@ func TestWorkflowRunRepositoryDeduplicatesCorrelationAndRollsBackNodes(t *testin
 	require.Error(t, err)
 	_, err = repository.GetWorkflowRunByCorrelationID(projectID, workflow.ID, "rollback")
 	assert.True(t, errors.Is(err, db.ErrNotFound))
+}
+
+func TestWorkflowRunRepositorySkipsQuarantinedRunsUntilManualRetry(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	user, templateOne, templateTwo := workflowRunResources(t, store, projectID)
+	workflow, err := repository.CreateWorkflowTemplate(linearRepositoryWorkflow(projectID, templateOne.ID, templateTwo.ID))
+	require.NoError(t, err)
+	run, err := workflowDB.BuildWorkflowRunSnapshot(workflow, map[int]db.Template{
+		templateOne.ID: templateOne, templateTwo.ID: templateTwo,
+	}, user.ID, "quarantined-run", time.Now().UTC())
+	require.NoError(t, err)
+	created, err := repository.CreateWorkflowRun(run)
+	require.NoError(t, err)
+	created.ReconciliationState = db.WorkflowRunReconciliationQuarantined
+	created.ReconciliationAttempts = 3
+	now := time.Now().UTC()
+	created.ReconciliationQuarantinedAt = &now
+	require.NoError(t, repository.UpdateWorkflowRun(created))
+
+	active, err := repository.GetActiveWorkflowRuns()
+	require.NoError(t, err)
+	assert.Empty(t, active)
+	created.ReconciliationState = db.WorkflowRunReconciliationRecovering
+	created.ReconciliationAttempts = 0
+	created.ReconciliationQuarantinedAt = nil
+	require.NoError(t, repository.UpdateWorkflowRun(created))
+	active, err = repository.GetActiveWorkflowRuns()
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	assert.Equal(t, created.ID, active[0].ID)
 }
 
 func TestDecodeWorkflowRunNodeLoadsResultWithoutTemplateSnapshot(t *testing.T) {

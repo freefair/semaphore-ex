@@ -24,7 +24,13 @@
         :color="statusColor(details.run.status)"
         small
         class="mr-3"
-      >{{ details.run.status }}</v-chip>
+      >{{ runStatusLabel(details.run.status) }}</v-chip>
+      <v-chip
+        v-if="details && details.run.reconciliation_state === 'recovering'"
+        small
+        color="warning"
+        class="mr-3"
+      >{{ $t('workflowReconciliationRecovering') }}</v-chip>
 
       <v-chip
         v-if="parallelProgress"
@@ -45,6 +51,18 @@
       >
         <v-icon left small>mdi-stop</v-icon>
         {{ $t('stop') }}
+      </v-btn>
+      <v-btn
+        v-if="reconciliationQuarantined && canResolveApprovals"
+        color="warning"
+        small
+        outlined
+        class="mr-3"
+        :loading="retryingReconciliation"
+        @click="retryReconciliation()"
+      >
+        <v-icon left small>mdi-reload-alert</v-icon>
+        {{ $t('workflowRetryReconciliation') }}
       </v-btn>
 
       <v-btn icon :title="$t('workflowToolbarZoomOut')" @click="zoomOut()">
@@ -73,6 +91,19 @@
           tile
           class="ma-0"
         >{{ details.run.reason }}</v-alert>
+        <v-alert
+          v-if="reconciliationQuarantined"
+          type="warning"
+          dense
+          text
+          tile
+          class="ma-0"
+        >
+          {{ $t('workflowReconciliationQuarantined', {
+            attempts: details.run.reconciliation_attempts,
+            error: details.run.reconciliation_last_error,
+          }) }}
+        </v-alert>
 
         <div class="WorkflowRun__graph">
           <WorkflowGraph
@@ -370,6 +401,7 @@ export default {
       pollHandle: null,
       socketListenerId: null,
       stopping: false,
+      retryingReconciliation: false,
       approvalComments: {},
       USER_PERMISSIONS,
     };
@@ -469,6 +501,7 @@ export default {
         case 'pending':
           return 'primary';
         case 'approval':
+        case 'stopping':
           return 'warning';
         default:
           return 'grey';
