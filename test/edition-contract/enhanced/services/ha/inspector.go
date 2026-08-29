@@ -2,6 +2,7 @@ package ha
 
 import (
 	"context"
+	"sync"
 
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
@@ -14,6 +15,7 @@ type managedClusterInspector struct {
 	self              pro_interfaces.ClusterNodeIdentity
 	coordinatorHealth pro_interfaces.ClusterCoordinatorHealthSource
 	drainer           pro_interfaces.OrphanCleaner
+	drainMu           sync.Mutex
 }
 
 var _ pro_interfaces.ClusterInspector = (*managedClusterInspector)(nil)
@@ -71,6 +73,8 @@ func (i *managedClusterInspector) CoordinatorHealth() pro_interfaces.ClusterCoor
 }
 
 func (i *managedClusterInspector) SetNodeDraining(bootID string, draining bool) error {
+	i.drainMu.Lock()
+	defer i.drainMu.Unlock()
 	self := bootID == i.self.BootID
 	if self && draining && i.drainer != nil {
 		if err := i.drainer.Drain(); err != nil {

@@ -1,6 +1,7 @@
 package ha
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +20,70 @@ type orphanCleanerPoolFake struct {
 	owned       bool
 	revocations int
 	assessments []pro_interfaces.TaskRecoveryAssessment
+}
+
+type blockingTaskControlRepository struct {
+	pro_interfaces.TaskControlRecoveryRepository
+	claimStarted chan struct{}
+	allowClaim   chan struct{}
+}
+
+type blockingTaskControlReleaseRepository struct {
+	pro_interfaces.TaskControlRecoveryRepository
+	releaseStarted sync.Once
+	releaseSignal  chan struct{}
+	allowRelease   chan struct{}
+}
+
+type blockingOrphanCleanerDrainer struct {
+	drainStarted chan struct{}
+	allowDrain   chan struct{}
+	resumed      chan struct{}
+}
+
+type signalingClusterNodeRepository struct {
+	pro_interfaces.ClusterNodeRepository
+	base            *clusterNodeRepositoryFake
+	resumePersisted chan struct{}
+}
+
+func (r *blockingTaskControlRepository) ClaimTaskControl(taskID int, execution pro_interfaces.TaskExecutionIdentity, owner string, ttl time.Duration) (pro_interfaces.TaskControlLease, bool, error) {
+	close(r.claimStarted)
+	<-r.allowClaim
+	return r.TaskControlRecoveryRepository.ClaimTaskControl(taskID, execution, owner, ttl)
+}
+
+func (r *blockingTaskControlReleaseRepository) ClaimTaskControl(taskID int, execution pro_interfaces.TaskExecutionIdentity, owner string, ttl time.Duration) (pro_interfaces.TaskControlLease, bool, error) {
+	return pro_interfaces.TaskControlLease{
+		TaskID: taskID, OwnerBootID: owner, FencingToken: 1,
+		Execution: execution, ExpiresAt: time.Now().Add(ttl),
+	}, true, nil
+}
+
+func (r *blockingTaskControlReleaseRepository) ReleaseTaskControlLease(pro_interfaces.TaskControlLease) (bool, error) {
+	r.releaseStarted.Do(func() { close(r.releaseSignal) })
+	<-r.allowRelease
+	return true, nil
+}
+
+func (*blockingOrphanCleanerDrainer) Start() {}
+func (*blockingOrphanCleanerDrainer) Stop()  {}
+func (d *blockingOrphanCleanerDrainer) Drain() error {
+	close(d.drainStarted)
+	<-d.allowDrain
+	return nil
+}
+func (d *blockingOrphanCleanerDrainer) Resume() { close(d.resumed) }
+func (*blockingOrphanCleanerDrainer) TaskRecoveryDiagnostics(int) (pro_interfaces.TaskRecoveryDiagnostics, bool, error) {
+	return pro_interfaces.TaskRecoveryDiagnostics{}, false, nil
+}
+func (*blockingOrphanCleanerDrainer) RetryTaskRecovery(int) error { return nil }
+
+func (r *signalingClusterNodeRepository) SetClusterNodeDraining(bootID string, draining bool) error {
+	if !draining {
+		close(r.resumePersisted)
+	}
+	return r.base.SetClusterNodeDraining(bootID, draining)
 }
 
 func (f *orphanCleanerPoolFake) GetOwnedRunningTasks() []*tasks.TaskRunner {
@@ -64,6 +129,77 @@ func TestManagedOrphanCleanerRelinquishesOwnershipWhenReadinessIsLost(t *testing
 	current, err := repository.IsCurrentTaskControlLease(record.Lease)
 	require.NoError(t, err)
 	assert.False(t, current)
+}
+
+func TestManagedOrphanCleanerDrainWaitsForInflightTaskControlClaim(t *testing.T) {
+	database := coresql.InitConfigCreateTestStore()
+	t.Cleanup(database.Close)
+	baseRepository := clusterSQL.NewTaskControlStore(database.GetConnection())
+	repository := &blockingTaskControlRepository{
+		TaskControlRecoveryRepository: baseRepository,
+		claimStarted:                  make(chan struct{}),
+		allowClaim:                    make(chan struct{}),
+	}
+	cleaner := NewManagedOrphanCleaner(repository, &orphanCleanerPoolFake{}, "boot-a", func() (bool, error) {
+		return true, nil
+	}, time.Hour, time.Minute, time.Minute)
+	runnerID := 7
+	task := coredb.Task{ID: 17, RunnerID: &runnerID, AssignmentGeneration: 2}
+	registered := make(chan error, 1)
+	go func() { registered <- cleaner.RegisterTaskControl(task) }()
+	<-repository.claimStarted
+
+	drained := make(chan error, 1)
+	go func() { drained <- cleaner.Drain() }()
+	select {
+	case err := <-drained:
+		require.NoError(t, err)
+		t.Fatal("drain returned before the in-flight ownership claim settled")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(repository.allowClaim)
+	require.NoError(t, <-registered)
+	require.NoError(t, <-drained)
+	recovery, found, err := baseRepository.GetTaskControlRecovery(task.ID)
+	require.NoError(t, err)
+	require.True(t, found)
+	current, err := baseRepository.IsCurrentTaskControlLease(recovery.Lease)
+	require.NoError(t, err)
+	assert.False(t, current)
+}
+
+func TestManagedOrphanCleanerResumeWaitsForDrainReleaseBoundary(t *testing.T) {
+	repository := &blockingTaskControlReleaseRepository{
+		releaseSignal: make(chan struct{}),
+		allowRelease:  make(chan struct{}),
+	}
+	cleaner := NewManagedOrphanCleaner(repository, &orphanCleanerPoolFake{}, "boot-a", func() (bool, error) {
+		return true, nil
+	}, time.Hour, time.Minute, time.Minute)
+	runnerID := 7
+	require.NoError(t, cleaner.RegisterTaskControl(coredb.Task{
+		ID: 17, RunnerID: &runnerID, AssignmentGeneration: 2,
+	}))
+
+	drained := make(chan error, 1)
+	go func() { drained <- cleaner.Drain() }()
+	<-repository.releaseSignal
+
+	resumed := make(chan struct{})
+	go func() {
+		cleaner.Resume()
+		close(resumed)
+	}()
+	select {
+	case <-resumed:
+		t.Fatal("resume returned before drain finished releasing owned task controls")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(repository.allowRelease)
+	require.NoError(t, <-drained)
+	<-resumed
 }
 
 func TestManagedOrphanCleanerWaitsForPostRevocationAbsenceBeforeReplacement(t *testing.T) {
@@ -263,6 +399,43 @@ func TestManagedClusterInspectorDrainsSelfBeforePersistingDrainState(t *testing.
 	require.NoError(t, inspector.SetNodeDraining("boot-a", false))
 	assert.True(t, drainer.resumed)
 	assert.False(t, repository.nodes[0].Draining)
+}
+
+func TestManagedClusterInspectorSerializesConcurrentDrainTransitions(t *testing.T) {
+	baseRepository := &clusterNodeRepositoryFake{nodes: []pro_interfaces.ClusterNodeRegistration{{
+		ClusterNodeIdentity: pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-a"},
+	}}}
+	repository := &signalingClusterNodeRepository{
+		ClusterNodeRepository: baseRepository,
+		base:                  baseRepository,
+		resumePersisted:       make(chan struct{}),
+	}
+	drainer := &blockingOrphanCleanerDrainer{
+		drainStarted: make(chan struct{}),
+		allowDrain:   make(chan struct{}),
+		resumed:      make(chan struct{}),
+	}
+	inspector := NewManagedClusterInspector(repository, unavailableHeartbeatStore{},
+		pro_interfaces.ClusterCompatibilityRequirements{},
+		pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-a"})
+	inspector.drainer = drainer
+
+	drained := make(chan error, 1)
+	go func() { drained <- inspector.SetNodeDraining("boot-a", true) }()
+	<-drainer.drainStarted
+	resumed := make(chan error, 1)
+	go func() { resumed <- inspector.SetNodeDraining("boot-a", false) }()
+	select {
+	case <-repository.resumePersisted:
+		t.Fatal("resume transition overtook the in-flight drain transition")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(drainer.allowDrain)
+	require.NoError(t, <-drained)
+	require.NoError(t, <-resumed)
+	<-repository.resumePersisted
+	assert.False(t, baseRepository.nodes[0].Draining)
 }
 
 type orphanCleanerDrainerFake struct {
