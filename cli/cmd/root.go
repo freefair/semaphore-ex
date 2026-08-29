@@ -250,9 +250,8 @@ func runService() {
 	// instance is injected per-request below.
 	clusterInspector := proHA.NewClusterInspector(store)
 
-	if dedup := proHA.NewScheduleDeduplicator(); dedup != nil {
+	if dedup := proHA.NewScheduleDeduplicator(store); dedup != nil {
 		schedulePool.SetDeduplicator(dedup)
-		secretStorageSyncScheduler.SetTickDeduplicator(dedup)
 	}
 
 	// Each process holds its own in-memory cron table. Schedule CRUD handlers only
@@ -302,7 +301,7 @@ func runService() {
 	// channel is being consumed when LocalBroadcast is called.
 	go sockets.StartWS()
 
-	if wsBroadcaster := proHA.NewWSBroadcaster(); wsBroadcaster != nil {
+	if wsBroadcaster := proHA.NewWSBroadcaster(store); wsBroadcaster != nil {
 		sockets.SetBroadcaster(wsBroadcaster)
 		wsBroadcaster.Start()
 		defer wsBroadcaster.Stop()

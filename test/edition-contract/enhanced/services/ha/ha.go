@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/semaphoreui/semaphore/api/sockets"
 	community "github.com/semaphoreui/semaphore/community-pro/services/ha"
 	"github.com/semaphoreui/semaphore/db"
 	coresql "github.com/semaphoreui/semaphore/db/sql"
 	clusterSQL "github.com/semaphoreui/semaphore/pro/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/schedules"
 	"github.com/semaphoreui/semaphore/util"
 )
 
@@ -23,16 +25,54 @@ type OrphanCleaner = community.OrphanCleaner
 type ClusterInspector = community.ClusterInspector
 
 var (
-	NewScheduleDeduplicator = community.NewScheduleDeduplicator
-	NewWSBroadcaster        = community.NewWSBroadcaster
-	NewOrphanCleaner        = community.NewOrphanCleaner
-	NewWorkflowRunLocker    = community.NewWorkflowRunLocker
+	NewOrphanCleaner     = community.NewOrphanCleaner
+	NewWorkflowRunLocker = community.NewWorkflowRunLocker
 )
 
 var clusterIdentityState struct {
 	sync.Mutex
 	nodeID   string
 	identity pro_interfaces.ClusterNodeIdentity
+}
+
+// NewScheduleDeduplicator binds the core scheduler only to durable SQL lease
+// operations. A missing HA configuration remains unavailable; NewNodeRegistry
+// turns the same configuration error into a startup failure before scheduling.
+func NewScheduleDeduplicator(store db.Store) schedules.ScheduleDeduplicator {
+	if !util.HAEnabled() || util.Config.HA == nil || util.Config.HA.NodeID == "" {
+		return nil
+	}
+	connectionStore, ok := store.(interface {
+		GetConnection() *coresql.SqlDbConnection
+	})
+	if !ok {
+		return nil
+	}
+	identity, err := clusterIdentity(util.Config.HA.NodeID)
+	if err != nil {
+		return nil
+	}
+	return NewManagedScheduleDeduplicator(clusterSQL.NewScheduleCoordinatorStore(connectionStore.GetConnection()), identity.BootID)
+}
+
+func NewWSBroadcaster(store db.Store) sockets.Broadcaster {
+	if !util.HAEnabled() || util.Config.HA == nil || util.Config.HA.NodeID == "" || util.Config.HA.Redis == nil || util.Config.HA.Redis.Addr == "" {
+		return nil
+	}
+	if _, ok := store.(interface {
+		GetConnection() *coresql.SqlDbConnection
+	}); !ok {
+		return nil
+	}
+	identity, err := clusterIdentity(util.Config.HA.NodeID)
+	if err != nil {
+		return nil
+	}
+	options, err := redisOptionsForHA(util.Config.HA.Redis)
+	if err != nil {
+		return nil
+	}
+	return NewManagedWSBroadcaster(NewGoRedisEventTransport(redis.NewClient(options)), identity.BootID, sockets.LocalBroadcast, coordinatorHealthFor(util.Config.HA.NodeID))
 }
 
 const clusterProtocolVersion = 1
@@ -101,7 +141,7 @@ func NewClusterInspector(store db.Store) ClusterInspector {
 	}
 	connection := connectionStore.GetConnection()
 	redisClient := NewGoRedisHeartbeatClient(redis.NewClient(redisOptions))
-	return NewManagedClusterInspector(
+	inspector := NewManagedClusterInspector(
 		clusterSQL.NewClusterNodeStore(connection),
 		NewRedisHeartbeatStore(redisClient, defaultClusterHeartbeatPrefix),
 		pro_interfaces.ClusterCompatibilityRequirements{
@@ -112,6 +152,8 @@ func NewClusterInspector(store db.Store) ClusterInspector {
 		identity,
 		redisClient,
 	)
+	inspector.coordinatorHealth = coordinatorHealthFor(util.Config.HA.NodeID)
+	return inspector
 }
 
 func clusterIdentity(nodeID string) (pro_interfaces.ClusterNodeIdentity, error) {

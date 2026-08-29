@@ -1,6 +1,9 @@
 package pro_interfaces
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestNewClusterNodeIdentitySeparatesStableAndBootIdentities(t *testing.T) {
 	first, err := NewClusterNodeIdentity("node-a")
@@ -46,5 +49,27 @@ func TestEvaluateClusterNodeCompatibilityRequiresProtocolSchemaAndCapabilities(t
 	}, ClusterCompatibilityRequirements{ProtocolVersion: 1, SchemaVersion: "2.20.23"})
 	if incompatible.State != ClusterNodeIncompatibleSchema || incompatible.Ready {
 		t.Fatalf("expected incompatible non-ready node, got %#v", incompatible)
+	}
+}
+
+func TestScheduleOccurrenceKeyBindsRevisionAndUTCInstant(t *testing.T) {
+	at := time.Date(2026, 8, 29, 12, 34, 56, 0, time.UTC)
+	first, err := ScheduleOccurrenceKey(42, "revision-a", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameInstant, err := ScheduleOccurrenceKey(42, "revision-a", at.In(time.FixedZone("offset", 2*60*60)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != sameInstant {
+		t.Fatalf("expected UTC-normalized occurrence key, got %q and %q", first, sameInstant)
+	}
+	changedRevision, err := ScheduleOccurrenceKey(42, "revision-b", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changedRevision == first {
+		t.Fatal("expected revision change to create a distinct occurrence key")
 	}
 }

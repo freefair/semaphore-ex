@@ -266,6 +266,10 @@ func (clusterInspectorFake) RedisInfo() (pro_interfaces.RedisInfo, error) {
 	return pro_interfaces.RedisInfo{}, nil
 }
 
+func (clusterInspectorFake) CoordinatorHealth() pro_interfaces.ClusterCoordinatorHealth {
+	return pro_interfaces.ClusterCoordinatorHealth{SQLAuthoritative: true, LiveEvents: "healthy"}
+}
+
 func (f *clusterInspectorFake) SetNodeDraining(bootID string, draining bool) error {
 	f.drainedBootID = bootID
 	f.draining = draining

@@ -56,6 +56,10 @@ type Task struct {
 	UserID        *int `db:"user_id" json:"user_id,omitempty"`
 	IntegrationID *int `db:"integration_id" json:"integration_id,omitempty"`
 	ScheduleID    *int `db:"schedule_id" json:"schedule_id,omitempty"`
+	// ScheduleOccurrenceKey binds an HA schedule task to exactly one intended
+	// fire. It is internal because operators inspect occurrence history through
+	// the coordinator rather than task API payloads.
+	ScheduleOccurrenceKey *string `db:"schedule_occurrence_key" json:"-"`
 	// RunnerID is set while a task is assigned to a remote runner (cleared when the task finishes).
 	// Used so runner progress API can authorize updates on any HA node.
 	RunnerID               *int                     `db:"runner_id" json:"-"`
