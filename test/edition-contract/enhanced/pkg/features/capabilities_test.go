@@ -97,6 +97,12 @@ func TestLDAPCapabilityIsAvailableInEnhancedEdition(t *testing.T) {
 	}
 }
 
+func TestEnhancedFeatureSetIncludesHighAvailability(t *testing.T) {
+	if !GetFeatures(nil, "").HighAvailability {
+		t.Fatal("enhanced cluster dashboard must not remain behind the enterprise-only capability gate")
+	}
+}
+
 func TestProviderDistinguishesReadOnlyExpiredAndPermissionStates(t *testing.T) {
 	store := sqldb.InitConfigCreateTestStore()
 	defer store.Close()

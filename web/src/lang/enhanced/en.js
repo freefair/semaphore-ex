@@ -43,6 +43,10 @@ export default {
   ldapLoginThrottled: 'Too many failed LDAP login attempts. Wait five minutes before trying again.',
   ldapIdentityCollision: 'This directory identity conflicts with an existing account. Ask an administrator to link it explicitly.',
   ldapProviderDisabled: 'The selected LDAP provider is not enabled for login.',
+  clusterNodeReady: 'Ready',
+  clusterNodeStale: 'Stale',
+  clusterNodeIncompatible: 'Incompatible',
+  clusterNodeDraining: 'Draining',
   projectRunnerRegistrationHint:
     'The runner will be created inactive. Its one-time registration token is shown '
     + 'once after creation and expires in 1 hour.',

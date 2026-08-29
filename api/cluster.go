@@ -2,13 +2,12 @@ package api
 
 import (
 	"encoding/json"
-	"net/http"
-
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	taskServices "github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
+	"net/http"
 )
 
 // clusterInspectorFromContext returns the ClusterInspector injected by the
@@ -56,6 +55,7 @@ func getClusterStatus(w http.ResponseWriter, r *http.Request) {
 		log.WithError(err).Error("cluster: failed to list nodes")
 	} else {
 		body["nodes"] = nodes
+		body["health"] = summarizeClusterHealth(nodes)
 	}
 
 	if redisInfo, err := ci.RedisInfo(); err != nil {

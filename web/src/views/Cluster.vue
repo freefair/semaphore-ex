@@ -49,7 +49,7 @@
       <v-btn
         color="error"
         @click="openClearDialog()"
-        :disabled="!features.high_availability || !status.ha_enabled"
+        :disabled="!canClearClusterTasks"
       >
         <v-icon left>mdi-delete-sweep</v-icon>
         {{ $t('clearTasksFromRedis') }}
@@ -84,15 +84,35 @@
     <div class="pa-4">
       <!-- Nodes -->
       <v-card v-if="status && status.nodes" class="mb-4" outlined>
-        <v-card-title class="subtitle-1">{{ $t('nodes') }}</v-card-title>
+        <v-card-title class="subtitle-1">
+          {{ $t('nodes') }}
+          <v-spacer />
+          <v-chip v-if="status.health" x-small class="mr-1" color="success">
+            {{ $t('clusterNodeReady') }}: {{ status.health.ready }}
+          </v-chip>
+          <v-chip v-if="status.health && status.health.stale" x-small class="mr-1" color="warning">
+            {{ $t('clusterNodeStale') }}: {{ status.health.stale }}
+          </v-chip>
+          <v-chip
+            v-if="status.health && status.health.incompatible"
+            x-small
+            class="mr-1"
+            color="error"
+          >
+            {{ $t('clusterNodeIncompatible') }}: {{ status.health.incompatible }}
+          </v-chip>
+          <v-chip v-if="status.health && status.health.draining" x-small color="grey">
+            {{ $t('clusterNodeDraining') }}: {{ status.health.draining }}
+          </v-chip>
+        </v-card-title>
         <v-data-table :headers="nodeHeaders" :items="status.nodes" :items-per-page="20" dense>
           <template v-slot:item.node_id="{ item }">
             <code>{{ item.node_id }}</code>
             <v-chip v-if="item.is_self" x-small class="ml-2">{{ $t('thisNode') }}</v-chip>
           </template>
           <template v-slot:item.alive="{ item }">
-            <v-chip x-small :color="item.alive ? 'success' : 'error'" dark>
-              {{ item.alive ? $t('alive') : $t('dead') }}
+            <v-chip x-small :color="nodeStateColor(item)" dark>
+              {{ nodeState(item) }}
             </v-chip>
           </template>
           <template v-slot:item.last_heartbeat="{ item }">
@@ -100,6 +120,9 @@
           </template>
           <template v-slot:item.started_at="{ item }">
             {{ formatTime(item.started_at) }}
+          </template>
+          <template v-slot:item.version="{ item }">
+            {{ nodeVersion(item) }}
           </template>
         </v-data-table>
       </v-card>
@@ -189,6 +212,8 @@
 </template>
 
 <script>
+import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/cluster';
+
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import RedisMemoryChart from '@/components/RedisMemoryChart.vue';
@@ -226,6 +251,7 @@ export default {
   },
 
   computed: {
+    ...enhancedComputed,
     isAnyGroupSelected() {
       return Object.values(this.clearScope).some((v) => v);
     },
@@ -300,6 +326,7 @@ export default {
   },
 
   methods: {
+    ...enhancedMethods,
     async returnToProjects() {
       EventBus.$emit('i-open-last-project');
     },

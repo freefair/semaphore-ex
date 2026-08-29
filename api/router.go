@@ -323,6 +323,9 @@ func Route(
 	adminAPI.Path("/audit-webhook/deliveries").HandlerFunc(auditWebhookController.History).Methods("GET", "HEAD")
 
 	adminAPI.Path("/cluster").HandlerFunc(getClusterStatus).Methods("GET", "HEAD")
+	adminAPI.Path("/cluster/nodes").HandlerFunc(getClusterNodes).Methods("GET", "HEAD")
+	adminAPI.Path("/cluster/nodes/{boot_id}").HandlerFunc(getClusterNode).Methods("GET", "HEAD")
+	adminAPI.Path("/cluster/nodes/{boot_id}/draining").HandlerFunc(setClusterNodeDraining).Methods("POST")
 	adminAPI.Path("/cluster/tasks").HandlerFunc(getClusterTasks).Methods("GET", "HEAD")
 	adminAPI.Path("/cluster/tasks").HandlerFunc(clearClusterTasks).Methods("DELETE")
 
