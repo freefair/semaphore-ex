@@ -36,7 +36,7 @@ func (s *workflowService) StopWorkflowRun(projectID int, runID int, user *db.Use
 	return db.WorkflowRun{}, nil
 }
 
-func (s *workflowService) ResolveWorkflowApproval(projectID int, workflowID int, runID int, nodeID int, status db.WorkflowApprovalStatus, user *db.User) (db.WorkflowApproval, error) {
+func (s *workflowService) ResolveWorkflowApproval(projectID int, workflowID int, runID int, nodeID int, decision db.WorkflowApprovalDecision, user *db.User) (db.WorkflowApproval, error) {
 	return db.WorkflowApproval{}, nil
 }
 

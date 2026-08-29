@@ -35,8 +35,9 @@ type WorkflowManager interface {
 	SetWorkflowRunRootTask(projectID int, runID int, taskID int) (bool, error)
 
 	GetWorkflowApprovals(projectID int, runID int) ([]WorkflowApproval, error)
+	GetPendingWorkflowApprovals(projectID int) ([]WorkflowApproval, error)
 	GetWorkflowApproval(projectID int, runID int, nodeID int) (WorkflowApproval, error)
-	CreateWorkflowApproval(approval WorkflowApproval) (WorkflowApproval, error)
+	OpenWorkflowApproval(approval WorkflowApproval) (WorkflowApproval, bool, error)
 	UpdateWorkflowApproval(approval WorkflowApproval) error
 	ResolveWorkflowApprovalIfPending(approval WorkflowApproval) (bool, error)
 
@@ -46,4 +47,5 @@ type WorkflowManager interface {
 	UpdateWorkflowDelay(delay WorkflowDelay) error
 	ResolveWorkflowDelayIfWaiting(delay WorkflowDelay) (bool, error)
 	GetExpiredWorkflowDelays() ([]WorkflowDelay, error)
+	FinalizeWorkflowRunApprovalNode(projectID int, runID int, nodeID int, status WorkflowRunNodeStatus, reason string, resultJSON string, at time.Time) (bool, error)
 }

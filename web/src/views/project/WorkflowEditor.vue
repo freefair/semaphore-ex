@@ -582,6 +582,41 @@
                 hide-details="auto"
                 @change="applyNodeEdit"
               />
+              <v-select
+                v-model="editingNode.approval_permission"
+                :items="approvalPermissionOptions"
+                item-value="value"
+                item-text="text"
+                :label="$t('workflowApprovalPermission')"
+                :disabled="!canManage"
+                outlined
+                dense
+                hide-details="auto"
+                class="mb-2"
+                @change="applyNodeEdit"
+              />
+              <v-select
+                v-model="editingNode.approval_timeout_outcome"
+                :items="approvalTimeoutOutcomeOptions"
+                item-value="value"
+                item-text="text"
+                :label="$t('workflowApprovalTimeoutOutcome')"
+                :disabled="!canManage"
+                outlined
+                dense
+                hide-details="auto"
+                class="mb-2"
+                @change="applyNodeEdit"
+              />
+              <v-switch
+                v-model="editingNode.approval_separation_of_duties"
+                :label="$t('workflowApprovalSeparationOfDuties')"
+                :disabled="!canManage"
+                dense
+                hide-details
+                class="mt-0"
+                @change="applyNodeEdit"
+              />
             </template>
             <template v-if="editingNode.kind === 'delay'">
               <v-text-field
@@ -869,9 +904,16 @@ export default {
         this.editingNode.artifact_outputs = [];
         this.editingNode.artifact_inputs = [];
       }
-      if (kind !== 'approval') {
+      if (kind === 'approval') {
+        this.editingNode.approval_permission = USER_PERMISSIONS.runProjectTasks;
+        this.editingNode.approval_timeout_outcome = 'reject';
+        this.editingNode.approval_separation_of_duties = false;
+      } else {
         this.editingNode.approval_timeout = null;
         this.editingNode.approval_message = null;
+        this.editingNode.approval_permission = null;
+        this.editingNode.approval_timeout_outcome = null;
+        this.editingNode.approval_separation_of_duties = false;
       }
       if (kind !== 'delay') {
         this.editingNode.delay_seconds = null;

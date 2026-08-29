@@ -1,6 +1,7 @@
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
+import { USER_PERMISSIONS } from '@/lib/constants';
 import { validateWorkflowDefinition, WORKFLOW_DEFINITION_VERSION } from '@/lib/workflowValidation';
 
 export const enhancedComputed = {
@@ -9,6 +10,20 @@ export const enhancedComputed = {
       { value: 'all-successful', text: this.$t('workflowJoinAllSuccessful') },
       { value: 'all-complete', text: this.$t('workflowJoinAllComplete') },
       { value: 'any-successful', text: this.$t('workflowJoinAnySuccessful') },
+    ];
+  },
+  approvalPermissionOptions() {
+    return [
+      { value: USER_PERMISSIONS.runProjectTasks, text: this.$t('workflowApprovalPermissionRunTasks') },
+      { value: USER_PERMISSIONS.updateProject, text: this.$t('workflowApprovalPermissionUpdateProject') },
+      { value: USER_PERMISSIONS.manageProjectResources, text: this.$t('workflowApprovalPermissionManageResources') },
+      { value: USER_PERMISSIONS.manageProjectUsers, text: this.$t('workflowApprovalPermissionManageUsers') },
+    ];
+  },
+  approvalTimeoutOutcomeOptions() {
+    return [
+      { value: 'reject', text: this.$t('workflowApprovalTimeoutReject') },
+      { value: 'approve', text: this.$t('workflowApprovalTimeoutApprove') },
     ];
   },
   artifactOutputTypes() {
@@ -81,6 +96,13 @@ export const enhancedMethods = {
         artifact_outputs: Array.isArray(node.artifact_outputs) ? node.artifact_outputs : [],
         artifact_inputs: Array.isArray(node.artifact_inputs) ? node.artifact_inputs : [],
         override_policy: node.override_policy || {},
+        approval_permission: node.kind === 'approval'
+          ? (node.approval_permission || USER_PERMISSIONS.runProjectTasks)
+          : node.approval_permission,
+        approval_timeout_outcome: node.kind === 'approval'
+          ? (node.approval_timeout_outcome || 'reject')
+          : node.approval_timeout_outcome,
+        approval_separation_of_duties: node.approval_separation_of_duties || false,
       };
     });
     item.edges = item.edges.map((edge) => ({

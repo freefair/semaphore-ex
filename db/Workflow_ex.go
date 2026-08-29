@@ -79,6 +79,7 @@ const (
 	WorkflowRunNodePending   WorkflowRunNodeStatus = "pending"
 	WorkflowRunNodeQueued    WorkflowRunNodeStatus = "queued"
 	WorkflowRunNodeRunning   WorkflowRunNodeStatus = "running"
+	WorkflowRunNodeApproval  WorkflowRunNodeStatus = "approval"
 	WorkflowRunNodeSucceeded WorkflowRunNodeStatus = "succeeded"
 	WorkflowRunNodeFailed    WorkflowRunNodeStatus = "failed"
 	WorkflowRunNodeStopped   WorkflowRunNodeStatus = "stopped"
@@ -129,6 +130,31 @@ type WorkflowRunInput struct {
 	TriggerSnapshot *WorkflowTriggerSnapshot     `json:"-"`
 }
 
+type WorkflowApprovalTimeoutOutcome string
+
+const (
+	WorkflowApprovalTimeoutReject  WorkflowApprovalTimeoutOutcome = "reject"
+	WorkflowApprovalTimeoutApprove WorkflowApprovalTimeoutOutcome = "approve"
+)
+
+type WorkflowApprovalDecisionSource string
+
+const (
+	WorkflowApprovalDecisionSourceUser    WorkflowApprovalDecisionSource = "user"
+	WorkflowApprovalDecisionSourceTimeout WorkflowApprovalDecisionSource = "timeout"
+	WorkflowApprovalDecisionSourceCancel  WorkflowApprovalDecisionSource = "cancel"
+)
+
+const MaxWorkflowApprovalPromptBytes = 2048
+
+const MaxWorkflowApprovalCommentBytes = 1024
+
+type WorkflowApprovalDecision struct {
+	Status  WorkflowApprovalStatus         `json:"status"`
+	Comment string                         `json:"comment,omitempty"`
+	Source  WorkflowApprovalDecisionSource `json:"source"`
+}
+
 func (mode WorkflowJoinMode) Validate() error {
 	switch mode {
 	case WorkflowJoinAllSuccessful, WorkflowJoinAllComplete, WorkflowJoinAnySuccessful:
@@ -146,6 +172,42 @@ func (node WorkflowNode) EffectiveJoinMode() WorkflowJoinMode {
 		return WorkflowJoinAnySuccessful
 	}
 	return WorkflowJoinAllSuccessful
+}
+
+func (node WorkflowNode) EffectiveApprovalPermission() ProjectUserPermission {
+	if node.ApprovalPermission == 0 {
+		return CanRunProjectTasks
+	}
+	return node.ApprovalPermission
+}
+
+func (node WorkflowNode) EffectiveApprovalTimeoutOutcome() WorkflowApprovalTimeoutOutcome {
+	if node.ApprovalTimeoutOutcome == "" {
+		return WorkflowApprovalTimeoutReject
+	}
+	return node.ApprovalTimeoutOutcome
+}
+
+func (outcome WorkflowApprovalTimeoutOutcome) Validate() error {
+	switch outcome {
+	case WorkflowApprovalTimeoutReject, WorkflowApprovalTimeoutApprove:
+		return nil
+	default:
+		return common_errors.NewValidationError("workflow approval timeout outcome is invalid")
+	}
+}
+
+func (decision WorkflowApprovalDecision) Validate() error {
+	if decision.Status != WorkflowApprovalApproved && decision.Status != WorkflowApprovalRejected {
+		return common_errors.NewValidationError("workflow approval decision status is invalid")
+	}
+	if decision.Source != WorkflowApprovalDecisionSourceUser {
+		return common_errors.NewValidationError("workflow approval decision source is invalid")
+	}
+	if len(decision.Comment) > MaxWorkflowApprovalCommentBytes {
+		return common_errors.NewValidationError("workflow approval comment is too long")
+	}
+	return nil
 }
 
 // WorkflowParameterValidationStore resolves every project-scoped resource a

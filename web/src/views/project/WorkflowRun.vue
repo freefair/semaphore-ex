@@ -88,7 +88,7 @@
           />
 
           <div
-            v-if="canResolveApprovals && pendingApprovals.length"
+            v-if="pendingApprovals.length || resolvedApprovals.length"
             class="WorkflowRun__approvals"
           >
             <v-card
@@ -99,21 +99,50 @@
             >
               <div class="WorkflowRun__approvalText">
                 <strong>#{{ a.nodeId }}</strong>
-                <span class="ml-2">{{ a.message || $t('workflowApprovalPending') }}</span>
+                <span class="ml-2">{{ a.prompt || $t('workflowApprovalPending') }}</span>
+                <span v-if="a.deadline" class="text-caption ml-2">
+                  {{ $t('workflowApprovalDeadline', { value: formatDate(a.deadline) }) }}
+                </span>
               </div>
+              <v-text-field
+                v-if="canResolveApprovals"
+                v-model="approvalComments[a.nodeId]"
+                :label="$t('workflowApprovalComment')"
+                maxlength="1024"
+                dense
+                hide-details
+                class="ml-3 WorkflowRun__approvalComment"
+              />
               <v-spacer />
               <v-btn
+                v-if="canResolveApprovals"
                 small
                 color="success"
                 class="ml-3"
                 @click="resolveApproval(a.nodeId, 'approved')"
               >{{ $t('workflowApprove') }}</v-btn>
               <v-btn
+                v-if="canResolveApprovals"
                 small
                 color="error"
                 class="ml-2"
                 @click="resolveApproval(a.nodeId, 'rejected')"
               >{{ $t('workflowReject') }}</v-btn>
+            </v-card>
+            <v-card
+              v-for="a in resolvedApprovals"
+              :key="`approval-${a.nodeId}`"
+              class="WorkflowRun__approval px-3 py-2"
+              outlined
+            >
+              <div class="WorkflowRun__approvalText">
+                <strong>#{{ a.nodeId }}</strong>
+                <span class="ml-2">{{ a.prompt || $t('workflowApprovalPending') }}</span>
+                <span class="ml-2 text-caption">{{ approvalStatusLabel(a.status) }}</span>
+                <span v-if="a.resolved_by_user_id" class="ml-2 text-caption">
+                  {{ $t('workflowApprovalDecidedBy', { id: a.resolved_by_user_id }) }}
+                </span>
+              </div>
             </v-card>
           </div>
         </div>
@@ -270,6 +299,10 @@
     word-break: break-word;
   }
 
+  &__approvalComment {
+    min-width: 180px;
+  }
+
   &__artifactPanel {
     flex: 0 0 auto;
     border-top: 1px solid rgba(127, 127, 127, 0.2);
@@ -284,6 +317,28 @@
   &__artifactDetail {
     white-space: normal;
     overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 600px) {
+  .WorkflowRun {
+    &__approvals {
+      left: 12px;
+      right: 12px;
+      transform: none;
+      max-width: none;
+    }
+
+    &__approval {
+      align-items: stretch;
+      flex-wrap: wrap;
+    }
+
+    &__approvalComment {
+      min-width: 100%;
+      margin-left: 0 !important;
+      margin-top: 8px;
+    }
   }
 }
 </style>
@@ -315,6 +370,7 @@ export default {
       pollHandle: null,
       socketListenerId: null,
       stopping: false,
+      approvalComments: {},
       USER_PERMISSIONS,
     };
   },
@@ -339,9 +395,12 @@ export default {
     // node.id -> raw run status, used by the graph for color + active animation.
     nodeStatuses() {
       const map = {};
+      const approvals = new Map(
+        (this.details?.approvals || []).map((approval) => [approval.workflow_node_id, approval]),
+      );
       (this.details?.nodes || []).forEach((n) => {
         const status = n.status || (n.task && n.task.status)
-          || (n.approval && n.approval.status) || (n.delay && n.delay.status);
+          || approvals.get(n.node.id)?.status || (n.delay && n.delay.status);
         if (status) map[n.node.id] = this.normalizeNodeStatus(status);
       });
       return map;
@@ -356,9 +415,9 @@ export default {
       return map;
     },
     pendingApprovals() {
-      return (this.details?.nodes || [])
-        .filter((n) => n.approval && n.approval.status === 'pending')
-        .map((n) => ({ nodeId: n.node.id, message: n.node.approval_message }));
+      return (this.details?.approvals || [])
+        .filter((approval) => approval.status === 'pending')
+        .map((approval) => ({ ...approval, nodeId: approval.workflow_node_id }));
     },
   },
   async created() {
@@ -444,7 +503,7 @@ export default {
       try {
         await axios.post(
           `/api/project/${this.projectId}/workflows/${this.workflowId}/runs/${this.runId}/approvals/${nodeId}`,
-          { status },
+          { status, comment: this.approvalComments[nodeId] || '', source: 'user' },
         );
         await this.loadData();
       } catch (err) {

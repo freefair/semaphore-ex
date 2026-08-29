@@ -27,6 +27,7 @@ type workflowService struct {
 	enqueuer         pro_interfaces.WorkflowTaskEnqueuer
 	locker           pro_interfaces.WorkflowRunLocker
 	resourceStore    db.WorkflowParameterValidationStore
+	approvalIdentity pro_interfaces.WorkflowApprovalIdentityStore
 	credentialReader pro_interfaces.WorkflowCredentialReader
 	localRunLocks    workflowLocalLocks
 	localStartLocks  workflowLocalLocks
@@ -53,13 +54,14 @@ func NewWorkflowService(
 ) pro_interfaces.WorkflowService {
 	resultStore, _ := templateStore.(db.WorkflowNodeResultStore)
 	resourceStore, _ := templateStore.(db.WorkflowParameterValidationStore)
+	approvalIdentity, _ := templateStore.(pro_interfaces.WorkflowApprovalIdentityStore)
 	var credentialReader pro_interfaces.WorkflowCredentialReader
 	if len(credentialReaders) > 0 {
 		credentialReader = credentialReaders[0]
 	}
 	return &workflowService{
 		repository: repository, templateStore: templateStore, resultStore: resultStore,
-		resourceStore: resourceStore, credentialReader: credentialReader,
+		resourceStore: resourceStore, approvalIdentity: approvalIdentity, credentialReader: credentialReader,
 		enqueuer: enqueuer, locker: locker,
 	}
 }
@@ -88,7 +90,7 @@ func (s *workflowService) StartWorkflow(
 		}
 		templates := make(map[int]db.Template, len(workflow.Nodes))
 		for _, node := range workflow.Nodes {
-			if node.EffectiveKind() == db.WorkflowNodeNoteKind {
+			if node.EffectiveKind() != db.WorkflowNodeTaskKind {
 				continue
 			}
 			template, getErr := s.templateStore.GetTemplate(workflow.ProjectID, node.TemplateID)
@@ -141,11 +143,21 @@ func (s *workflowService) ProgressWorkflowRun(projectID int, runID int, user *db
 
 func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *db.User) error {
 	for iteration := 0; iteration <= len(run.Nodes); iteration++ {
+		approvalChanged, err := s.reconcileWorkflowApprovals(run)
+		if err != nil {
+			return err
+		}
+		if approvalChanged {
+			run, err = s.repository.GetWorkflowRunByID(run.ProjectID, run.ID)
+			if err != nil {
+				return err
+			}
+		}
 		decisions, active, err := planWorkflowNodes(run)
 		if err != nil {
 			return err
 		}
-		changed := false
+		changed := approvalChanged
 		for _, decision := range decisions {
 			if decision.kind != workflowNodeSkipped && decision.kind != workflowNodeBlocked {
 				continue
@@ -179,7 +191,22 @@ func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *d
 			return rootErr
 		}
 		for _, decision := range decisions {
-			if decision.kind != workflowNodeReady || slots == 0 {
+			if decision.kind != workflowNodeReady {
+				continue
+			}
+			definitionNode, definitionErr := workflowDefinitionNode(run.DefinitionSnapshot, decision.node.WorkflowNodeID)
+			if definitionErr != nil {
+				return definitionErr
+			}
+			if definitionNode.EffectiveKind() == db.WorkflowNodeApprovalKind {
+				opened, openErr := s.openWorkflowApproval(run, definitionNode)
+				if openErr != nil {
+					return openErr
+				}
+				changed = changed || opened
+				continue
+			}
+			if slots == 0 {
 				continue
 			}
 			if err := s.enqueueWorkflowNode(run, decision.node, user, decision.node.WorkflowNodeID == root.ID); err != nil {
@@ -198,6 +225,10 @@ func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *d
 		if !changed {
 			status := db.WorkflowRunQueued
 			for _, node := range current.Nodes {
+				if node.Status == db.WorkflowRunNodeApproval {
+					status = db.WorkflowRunApproval
+					break
+				}
 				if node.Status == db.WorkflowRunNodeRunning {
 					status = db.WorkflowRunRunning
 					break
@@ -218,6 +249,23 @@ func (s *workflowService) StopWorkflowRun(projectID int, runID int, user *db.Use
 	if run.Status.IsFinished() {
 		return run, nil
 	}
+	now := tz.Now()
+	approvals, err := s.repository.GetWorkflowApprovals(projectID, runID)
+	if err != nil {
+		return db.WorkflowRun{}, err
+	}
+	for _, approval := range approvals {
+		if approval.Status != db.WorkflowApprovalPending {
+			continue
+		}
+		approval.Status = db.WorkflowApprovalCanceled
+		approval.DecisionSource = db.WorkflowApprovalDecisionSourceCancel
+		approval.Resolved = &now
+		approval.ResolvedByUserID = nil
+		if _, resolveErr := s.repository.ResolveWorkflowApprovalIfPending(approval); resolveErr != nil {
+			return db.WorkflowRun{}, resolveErr
+		}
+	}
 	s.enqueuer.StopTasksByWorkflowRun(projectID, runID, true)
 	for _, node := range run.Nodes {
 		if node.Status.IsFinished() {
@@ -227,12 +275,16 @@ func (s *workflowService) StopWorkflowRun(projectID int, runID int, user *db.Use
 		if marshalErr != nil {
 			return db.WorkflowRun{}, marshalErr
 		}
-		if node.TaskID == nil {
-			if _, cancelErr := s.repository.FinalizeWorkflowRunNode(projectID, runID, node.WorkflowNodeID, db.WorkflowRunNodeCanceled, "Canceled because the workflow was stopped.", resultJSON, tz.Now()); cancelErr != nil {
+		if node.Status == db.WorkflowRunNodeApproval {
+			if _, cancelErr := s.repository.FinalizeWorkflowRunApprovalNode(projectID, runID, node.WorkflowNodeID, db.WorkflowRunNodeCanceled, "Canceled because the workflow was stopped.", resultJSON, now); cancelErr != nil {
+				return db.WorkflowRun{}, cancelErr
+			}
+		} else if node.TaskID == nil {
+			if _, cancelErr := s.repository.FinalizeWorkflowRunNode(projectID, runID, node.WorkflowNodeID, db.WorkflowRunNodeCanceled, "Canceled because the workflow was stopped.", resultJSON, now); cancelErr != nil {
 				return db.WorkflowRun{}, cancelErr
 			}
 		} else {
-			if _, cancelErr := s.repository.UpdateWorkflowRunNodeFromTask(projectID, runID, node.WorkflowNodeID, *node.TaskID, db.WorkflowRunNodeCanceled, "Canceled because the workflow was stopped.", resultJSON, tz.Now()); cancelErr != nil {
+			if _, cancelErr := s.repository.UpdateWorkflowRunNodeFromTask(projectID, runID, node.WorkflowNodeID, *node.TaskID, db.WorkflowRunNodeCanceled, "Canceled because the workflow was stopped.", resultJSON, now); cancelErr != nil {
 				return db.WorkflowRun{}, cancelErr
 			}
 		}
@@ -241,6 +293,23 @@ func (s *workflowService) StopWorkflowRun(projectID int, runID int, user *db.Use
 		return db.WorkflowRun{}, err
 	}
 	return s.repository.GetWorkflowRunByID(projectID, runID)
+}
+
+func (s *workflowService) GetWorkflowApprovalInbox(projectID int, user *db.User) ([]db.WorkflowApproval, error) {
+	if user == nil || user.ID <= 0 {
+		return nil, common_errors.NewValidationError("workflow approval actor is required")
+	}
+	approvals, err := s.repository.GetPendingWorkflowApprovals(projectID)
+	if err != nil {
+		return nil, err
+	}
+	inbox := make([]db.WorkflowApproval, 0, len(approvals))
+	for _, approval := range approvals {
+		if err = s.authorizeWorkflowApproval(projectID, approval, user); err == nil {
+			inbox = append(inbox, approval)
+		}
+	}
+	return inbox, nil
 }
 
 func (s *workflowService) HandleWorkflowTaskCompletion(task db.Task) error {
@@ -320,9 +389,155 @@ func (s *workflowService) HandleWorkflowTaskOutputs(task db.Task, outputs map[st
 }
 
 func (s *workflowService) ResolveWorkflowApproval(
-	int, int, int, int, db.WorkflowApprovalStatus, *db.User,
+	projectID int,
+	workflowID int,
+	runID int,
+	nodeID int,
+	decision db.WorkflowApprovalDecision,
+	user *db.User,
 ) (db.WorkflowApproval, error) {
-	return db.WorkflowApproval{}, common_errors.NewValidationError("workflow approvals are not enabled")
+	if err := decision.Validate(); err != nil {
+		return db.WorkflowApproval{}, err
+	}
+	if user == nil || user.ID <= 0 {
+		return db.WorkflowApproval{}, common_errors.NewValidationError("workflow approval actor is required")
+	}
+	run, err := s.repository.GetWorkflowRun(projectID, workflowID, runID)
+	if err != nil {
+		return db.WorkflowApproval{}, err
+	}
+	approval, err := s.repository.GetWorkflowApproval(projectID, run.ID, nodeID)
+	if err != nil {
+		return db.WorkflowApproval{}, err
+	}
+	if approval.Status != db.WorkflowApprovalPending {
+		return db.WorkflowApproval{}, common_errors.NewValidationError("workflow approval is already resolved")
+	}
+	if err = s.authorizeWorkflowApproval(projectID, approval, user); err != nil {
+		return db.WorkflowApproval{}, err
+	}
+	now := tz.Now()
+	approval.Status = decision.Status
+	approval.DecisionComment = decision.Comment
+	approval.DecisionSource = decision.Source
+	approval.Resolved = &now
+	approval.ResolvedByUserID = &user.ID
+	resolved, err := s.repository.ResolveWorkflowApprovalIfPending(approval)
+	if err != nil {
+		return db.WorkflowApproval{}, err
+	}
+	if !resolved {
+		return db.WorkflowApproval{}, common_errors.NewValidationError("workflow approval is already resolved")
+	}
+	if err = s.ProgressWorkflowRun(projectID, runID, user); err != nil {
+		return db.WorkflowApproval{}, err
+	}
+	return s.repository.GetWorkflowApproval(projectID, runID, nodeID)
+}
+
+func (s *workflowService) openWorkflowApproval(run db.WorkflowRun, node db.WorkflowNode) (bool, error) {
+	now := tz.Now()
+	prompt := "Approval required."
+	if node.ApprovalMessage != nil && *node.ApprovalMessage != "" {
+		prompt = *node.ApprovalMessage
+	}
+	var deadline *time.Time
+	if node.ApprovalTimeout != nil {
+		value := now.Add(time.Duration(*node.ApprovalTimeout) * time.Second)
+		deadline = &value
+	}
+	approval := db.WorkflowApproval{
+		ProjectID: run.ProjectID, WorkflowRunID: run.ID, WorkflowNodeID: node.ID,
+		Status: db.WorkflowApprovalPending, Created: now, Deadline: deadline, Prompt: prompt,
+		EligiblePermission: node.EffectiveApprovalPermission(), SeparationOfDuties: node.ApprovalSeparationOfDuties,
+		RequestActorUserID: run.ActorUserID, TimeoutOutcome: node.EffectiveApprovalTimeoutOutcome(),
+		CorrelationID: fmt.Sprintf("%s:approval:%d", run.CorrelationID, node.ID),
+	}
+	_, opened, err := s.repository.OpenWorkflowApproval(approval)
+	return opened, err
+}
+
+func (s *workflowService) reconcileWorkflowApprovals(run db.WorkflowRun) (bool, error) {
+	approvals, err := s.repository.GetWorkflowApprovals(run.ProjectID, run.ID)
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	now := tz.Now()
+	for _, approval := range approvals {
+		if approval.Status == db.WorkflowApprovalPending && approval.Deadline != nil && !approval.Deadline.After(now) {
+			approval.Status = db.WorkflowApprovalExpired
+			approval.DecisionSource = db.WorkflowApprovalDecisionSourceTimeout
+			approval.Resolved = &now
+			approval.ResolvedByUserID = nil
+			resolved, resolveErr := s.repository.ResolveWorkflowApprovalIfPending(approval)
+			if resolveErr != nil {
+				return false, resolveErr
+			}
+			if resolved {
+				changed = true
+				approval.Status = db.WorkflowApprovalExpired
+			}
+		}
+		if approval.Status == db.WorkflowApprovalPending {
+			continue
+		}
+		status, reason := workflowApprovalNodeOutcome(approval)
+		resultJSON, marshalErr := marshalWorkflowNodeResult(db.WorkflowNodeResult{Status: status, Successful: status == db.WorkflowRunNodeSucceeded})
+		if marshalErr != nil {
+			return false, marshalErr
+		}
+		finalized, finalizeErr := s.repository.FinalizeWorkflowRunApprovalNode(run.ProjectID, run.ID, approval.WorkflowNodeID, status, reason, resultJSON, now)
+		if finalizeErr != nil {
+			return false, finalizeErr
+		}
+		changed = changed || finalized
+	}
+	return changed, nil
+}
+
+func workflowApprovalNodeOutcome(approval db.WorkflowApproval) (db.WorkflowRunNodeStatus, string) {
+	switch approval.Status {
+	case db.WorkflowApprovalApproved:
+		return db.WorkflowRunNodeSucceeded, "Approved."
+	case db.WorkflowApprovalExpired:
+		if approval.TimeoutOutcome == db.WorkflowApprovalTimeoutApprove {
+			return db.WorkflowRunNodeSucceeded, "Approved by timeout outcome."
+		}
+		return db.WorkflowRunNodeBlocked, "Approval expired."
+	case db.WorkflowApprovalCanceled:
+		return db.WorkflowRunNodeCanceled, "Approval canceled."
+	default:
+		return db.WorkflowRunNodeBlocked, "Approval rejected."
+	}
+}
+
+func (s *workflowService) authorizeWorkflowApproval(projectID int, approval db.WorkflowApproval, user *db.User) error {
+	if approval.SeparationOfDuties && approval.RequestActorUserID == user.ID {
+		return common_errors.NewValidationError("workflow approval cannot be self-approved")
+	}
+	if user.Admin {
+		return nil
+	}
+	if s.approvalIdentity == nil {
+		return errors.New("workflow approval identity store is unavailable")
+	}
+	member, err := s.approvalIdentity.GetProjectUser(projectID, user.ID)
+	if err != nil {
+		return common_errors.NewValidationError("workflow approval actor is not eligible")
+	}
+	permissions := member.Role.GetPermissions()
+	if !member.Role.IsValid() {
+		role, roleErr := s.approvalIdentity.GetProjectOrGlobalRoleBySlug(projectID, string(member.Role))
+		if roleErr != nil {
+			return common_errors.NewValidationError("workflow approval actor is not eligible")
+		}
+		permissions = role.Permissions
+	}
+	if permissions&approval.EligiblePermission != approval.EligiblePermission {
+		return common_errors.NewValidationError("workflow approval actor is not eligible")
+	}
+	return nil
 }
 
 func (s *workflowService) GetWorkflowRunArtifacts(projectID int, runID int, _ *int) ([]db.WorkflowArtifactMetadata, error) {

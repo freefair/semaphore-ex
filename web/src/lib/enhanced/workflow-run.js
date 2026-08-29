@@ -1,4 +1,9 @@
 export const enhancedComputed = {
+  resolvedApprovals() {
+    return (this.details?.approvals || [])
+      .filter((approval) => approval.status !== 'pending')
+      .map((approval) => ({ ...approval, nodeId: approval.workflow_node_id }));
+  },
   elapsedTime() {
     if (!this.details) return '';
     const { run } = this.details;
@@ -64,5 +69,17 @@ export const enhancedMethods = {
       (node) => node.task && node.task.id === data.task_id,
     );
     if (belongsToRun) this.loadData();
+  },
+  approvalStatusLabel(status) {
+    const labels = {
+      approved: this.$t('workflowApprovalApproved'),
+      rejected: this.$t('workflowApprovalRejected'),
+      expired: this.$t('workflowApprovalExpired'),
+      canceled: this.$t('workflowApprovalCanceled'),
+    };
+    return labels[status] || status;
+  },
+  formatDate(value) {
+    return value ? new Date(value).toLocaleString() : '';
   },
 };

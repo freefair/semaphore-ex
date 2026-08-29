@@ -235,7 +235,10 @@ func (s *workflowTriggerStarter) ProgressWorkflowRun(int, int, *db.User) error {
 func (s *workflowTriggerStarter) StopWorkflowRun(int, int, *db.User) (db.WorkflowRun, error) {
 	return db.WorkflowRun{}, nil
 }
-func (s *workflowTriggerStarter) ResolveWorkflowApproval(int, int, int, int, db.WorkflowApprovalStatus, *db.User) (db.WorkflowApproval, error) {
+func (s *workflowTriggerStarter) GetWorkflowApprovalInbox(int, *db.User) ([]db.WorkflowApproval, error) {
+	return nil, nil
+}
+func (s *workflowTriggerStarter) ResolveWorkflowApproval(int, int, int, int, db.WorkflowApprovalDecision, *db.User) (db.WorkflowApproval, error) {
 	return db.WorkflowApproval{}, nil
 }
 func (s *workflowTriggerStarter) HandleWorkflowTaskOutputs(db.Task, map[string]json.RawMessage) error {

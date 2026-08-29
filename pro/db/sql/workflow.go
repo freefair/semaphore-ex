@@ -77,10 +77,6 @@ func (d *WorkflowStoreImpl) GetWorkflowApproval(projectID int, runID int, nodeID
 	return
 }
 
-func (d *WorkflowStoreImpl) CreateWorkflowApproval(approval db.WorkflowApproval) (res db.WorkflowApproval, err error) {
-	return
-}
-
 func (d *WorkflowStoreImpl) UpdateWorkflowApproval(approval db.WorkflowApproval) (err error) {
 	return
 }

@@ -193,7 +193,7 @@ func (d *WorkflowStoreImpl) selectWorkflowTemplateTx(tx *gorp.Transaction, proje
 
 func (d *WorkflowStoreImpl) loadWorkflowGraph(tx *gorp.Transaction, workflow *db.WorkflowTemplate) error {
 	nodeQuery := d.connection.PrepareQuery(
-		"select id, workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, task_params_id, note, position_x, position_y, display_name, artifact_outputs, artifact_inputs, override_policy from project__workflow_node where workflow_template_id=? order by id")
+		"select id, workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, approval_permission, approval_timeout_outcome, approval_separation_of_duties, task_params_id, note, position_x, position_y, display_name, artifact_outputs, artifact_inputs, override_policy from project__workflow_node where workflow_template_id=? order by id")
 	edgeQuery := d.connection.PrepareQuery(
 		"select * from project__workflow_edge where workflow_template_id=? order by id")
 	var err error
@@ -283,8 +283,9 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 		}
 		if _, exists := existingNodes[clientID]; exists && clientID > 0 {
 			if _, err := tx.Exec(d.connection.PrepareQuery(
-				"update project__workflow_node set template_id=?, kind=?, convergence_mode=?, join_mode=?, approval_timeout=?, approval_message=?, task_params_id=?, note=?, position_x=?, position_y=?, display_name=?, override_policy=? where workflow_template_id=? and id=?"),
+				"update project__workflow_node set template_id=?, kind=?, convergence_mode=?, join_mode=?, approval_timeout=?, approval_message=?, approval_permission=?, approval_timeout_outcome=?, approval_separation_of_duties=?, task_params_id=?, note=?, position_x=?, position_y=?, display_name=?, override_policy=? where workflow_template_id=? and id=?"),
 				node.TemplateID, node.Kind, node.ConvergenceMode, node.JoinMode, node.ApprovalTimeout, node.ApprovalMessage,
+				node.ApprovalPermission, node.ApprovalTimeoutOutcome, node.ApprovalSeparationOfDuties,
 				node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, node.OverridePolicyJSON,
 				workflow.ID, clientID,
 			); err != nil {
@@ -304,9 +305,10 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 			return fmt.Errorf("workflow node %d does not belong to workflow %d", clientID, workflow.ID)
 		}
 		newID, err := d.insertTx(tx,
-			"insert into project__workflow_node(workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, task_params_id, note, position_x, position_y, display_name, override_policy) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"insert into project__workflow_node(workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, approval_permission, approval_timeout_outcome, approval_separation_of_duties, task_params_id, note, position_x, position_y, display_name, override_policy) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			workflow.ID, node.TemplateID, node.Kind, node.ConvergenceMode, node.JoinMode, node.ApprovalTimeout,
-			node.ApprovalMessage, node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, node.OverridePolicyJSON,
+			node.ApprovalMessage, node.ApprovalPermission, node.ApprovalTimeoutOutcome, node.ApprovalSeparationOfDuties,
+			node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, node.OverridePolicyJSON,
 		)
 		if err != nil {
 			return err

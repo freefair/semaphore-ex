@@ -1,3 +1,7 @@
+import axios from 'axios';
+import EventBus from '@/event-bus';
+import { getErrorMessage } from '@/lib/error';
+
 const enhancedMethods = {
   hasRunInputs(workflow) {
     return (workflow.parameters || []).length > 0
@@ -11,6 +15,25 @@ const enhancedMethods = {
   },
   startSelectedWorkflow(payload) {
     return this.runWorkflow(this.selectedWorkflow, payload);
+  },
+  async openApprovalInbox() {
+    this.approvalInboxDialog = true;
+    this.approvalInboxLoading = true;
+    try {
+      this.approvalInbox = (await axios.get(
+        `/api/project/${this.projectId}/workflow-approvals`,
+      )).data || [];
+    } catch (err) {
+      EventBus.$emit('i-snackbar', { color: 'error', text: getErrorMessage(err) });
+    } finally {
+      this.approvalInboxLoading = false;
+    }
+  },
+  openApprovalRun(approval) {
+    this.approvalInboxDialog = false;
+    this.$router.push(
+      `/project/${this.projectId}/workflows/${approval.workflow_template_id}/runs/${approval.workflow_run_id}`,
+    );
   },
 };
 

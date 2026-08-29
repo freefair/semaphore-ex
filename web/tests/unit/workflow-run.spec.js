@@ -195,4 +195,51 @@ describe('linear workflow run dashboard', () => {
     expect(WorkflowRun.methods.isActiveRunStatus('queued')).to.equal(true);
     expect(WorkflowRun.methods.isActiveRunStatus('succeeded')).to.equal(false);
   });
+
+  it('renders approval state from immutable request snapshots and sends bounded user decisions', async () => {
+    const context = {
+      details: {
+        nodes: [{ node: { id: 21 }, status: 'approval' }],
+        approvals: [
+          {
+            workflow_node_id: 21,
+            status: 'pending',
+            prompt: 'Deploy?',
+            deadline: '2026-08-29T12:00:00Z',
+          },
+          { workflow_node_id: 22, status: 'expired', prompt: 'Older deploy' },
+        ],
+      },
+      normalizeNodeStatus: WorkflowRun.methods.normalizeNodeStatus,
+    };
+
+    expect(WorkflowRun.computed.nodeStatuses.call(context)).to.deep.equal({ 21: 'approval' });
+    const pendingApproval = WorkflowRun.computed.pendingApprovals.call(context)
+      .find((approval) => approval.nodeId === 21);
+    expect(pendingApproval)
+      .to.include({ status: 'pending', prompt: 'Deploy?' });
+    const resolvedApproval = WorkflowRun.computed.resolvedApprovals.call(context)
+      .find((approval) => approval.nodeId === 22);
+    expect(resolvedApproval)
+      .to.include({ status: 'expired', prompt: 'Older deploy' });
+
+    const requests = [];
+    const originalPost = axios.post;
+    axios.post = async (url, payload) => { requests.push({ url, payload }); return { data: {} }; };
+    const decisionContext = {
+      projectId: 7,
+      workflowId: 41,
+      runId: 91,
+      approvalComments: { 21: 'Reviewed' },
+      loadData: async () => {},
+      $t: (key) => key,
+    };
+    await WorkflowRun.methods.resolveApproval.call(decisionContext, 21, 'approved');
+    axios.post = originalPost;
+
+    expect(requests).to.deep.equal([{
+      url: '/api/project/7/workflows/41/runs/91/approvals/21',
+      payload: { status: 'approved', comment: 'Reviewed', source: 'user' },
+    }]);
+  });
 });

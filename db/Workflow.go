@@ -60,13 +60,16 @@ type WorkflowNode struct {
 
 	WorkflowTemplateID int `db:"workflow_template_id" json:"workflow_template_id" backup:"-"`
 
-	TemplateID      int                     `db:"template_id" json:"template_id,omitempty" backup:"-"`
-	DisplayName     string                  `db:"display_name" json:"display_name,omitempty" backup:"display_name"`
-	Kind            WorkflowNodeKind        `db:"kind" json:"kind,omitempty" backup:"kind"`
-	ConvergenceMode WorkflowConvergenceMode `db:"convergence_mode" json:"convergence_mode,omitempty" backup:"convergence_mode"`
-	JoinMode        WorkflowJoinMode        `db:"join_mode" json:"join_mode,omitempty" backup:"join_mode"`
-	ApprovalTimeout *int                    `db:"approval_timeout" json:"approval_timeout,omitempty" backup:"approval_timeout"`
-	ApprovalMessage *string                 `db:"approval_message" json:"approval_message,omitempty" backup:"approval_message"`
+	TemplateID                 int                            `db:"template_id" json:"template_id,omitempty" backup:"-"`
+	DisplayName                string                         `db:"display_name" json:"display_name,omitempty" backup:"display_name"`
+	Kind                       WorkflowNodeKind               `db:"kind" json:"kind,omitempty" backup:"kind"`
+	ConvergenceMode            WorkflowConvergenceMode        `db:"convergence_mode" json:"convergence_mode,omitempty" backup:"convergence_mode"`
+	JoinMode                   WorkflowJoinMode               `db:"join_mode" json:"join_mode,omitempty" backup:"join_mode"`
+	ApprovalTimeout            *int                           `db:"approval_timeout" json:"approval_timeout,omitempty" backup:"approval_timeout"`
+	ApprovalMessage            *string                        `db:"approval_message" json:"approval_message,omitempty" backup:"approval_message"`
+	ApprovalPermission         ProjectUserPermission          `db:"approval_permission" json:"approval_permission,omitempty" backup:"approval_permission"`
+	ApprovalTimeoutOutcome     WorkflowApprovalTimeoutOutcome `db:"approval_timeout_outcome" json:"approval_timeout_outcome,omitempty" backup:"approval_timeout_outcome"`
+	ApprovalSeparationOfDuties bool                           `db:"approval_separation_of_duties" json:"approval_separation_of_duties,omitempty" backup:"approval_separation_of_duties"`
 
 	TaskParamsID *int        `db:"task_params_id" json:"-" backup:"-"`
 	TaskParams   *TaskParams `db:"-" json:"task_params,omitempty" backup:"task_params"`
@@ -187,18 +190,31 @@ const (
 	WorkflowApprovalPending  WorkflowApprovalStatus = "pending"
 	WorkflowApprovalApproved WorkflowApprovalStatus = "approved"
 	WorkflowApprovalRejected WorkflowApprovalStatus = "rejected"
+	WorkflowApprovalExpired  WorkflowApprovalStatus = "expired"
+	WorkflowApprovalCanceled WorkflowApprovalStatus = "canceled"
 )
 
 type WorkflowApproval struct {
 	ID int `db:"id" json:"id" backup:"-"`
 
-	ProjectID        int                    `db:"project_id" json:"project_id" backup:"-"`
-	WorkflowRunID    int                    `db:"workflow_run_id" json:"workflow_run_id" backup:"workflow_run_id"`
-	WorkflowNodeID   int                    `db:"workflow_node_id" json:"workflow_node_id" backup:"workflow_node_id"`
-	Status           WorkflowApprovalStatus `db:"status" json:"status" backup:"status"`
-	Created          time.Time              `db:"created" json:"created" backup:"created"`
-	Resolved         *time.Time             `db:"resolved" json:"resolved,omitempty" backup:"resolved"`
-	ResolvedByUserID *int                   `db:"resolved_by_user_id" json:"resolved_by_user_id,omitempty" backup:"resolved_by_user_id"`
+	ProjectID          int                            `db:"project_id" json:"project_id" backup:"-"`
+	WorkflowTemplateID int                            `db:"workflow_template_id" json:"workflow_template_id,omitempty" backup:"-"`
+	WorkflowName       string                         `db:"workflow_name" json:"workflow_name,omitempty" backup:"-"`
+	WorkflowRunID      int                            `db:"workflow_run_id" json:"workflow_run_id" backup:"workflow_run_id"`
+	WorkflowNodeID     int                            `db:"workflow_node_id" json:"workflow_node_id" backup:"workflow_node_id"`
+	Status             WorkflowApprovalStatus         `db:"status" json:"status" backup:"status"`
+	Created            time.Time                      `db:"created" json:"created" backup:"created"`
+	Resolved           *time.Time                     `db:"resolved" json:"resolved,omitempty" backup:"resolved"`
+	ResolvedByUserID   *int                           `db:"resolved_by_user_id" json:"resolved_by_user_id,omitempty" backup:"resolved_by_user_id"`
+	Deadline           *time.Time                     `db:"deadline" json:"deadline,omitempty" backup:"deadline"`
+	Prompt             string                         `db:"prompt" json:"prompt" backup:"prompt"`
+	EligiblePermission ProjectUserPermission          `db:"eligible_permission" json:"eligible_permission" backup:"eligible_permission"`
+	SeparationOfDuties bool                           `db:"separation_of_duties" json:"separation_of_duties" backup:"separation_of_duties"`
+	RequestActorUserID int                            `db:"request_actor_user_id" json:"request_actor_user_id" backup:"request_actor_user_id"`
+	TimeoutOutcome     WorkflowApprovalTimeoutOutcome `db:"timeout_outcome" json:"timeout_outcome" backup:"timeout_outcome"`
+	DecisionComment    string                         `db:"decision_comment" json:"decision_comment,omitempty" backup:"decision_comment"`
+	DecisionSource     WorkflowApprovalDecisionSource `db:"decision_source" json:"decision_source,omitempty" backup:"decision_source"`
+	CorrelationID      string                         `db:"correlation_id" json:"correlation_id" backup:"correlation_id"`
 }
 
 func (condition WorkflowEdgeCondition) Validate() error {
@@ -247,7 +263,7 @@ func (node WorkflowNode) EffectiveConvergenceMode() WorkflowConvergenceMode {
 
 func (status WorkflowApprovalStatus) Validate() error {
 	switch status {
-	case WorkflowApprovalPending, WorkflowApprovalApproved, WorkflowApprovalRejected:
+	case WorkflowApprovalPending, WorkflowApprovalApproved, WorkflowApprovalRejected, WorkflowApprovalExpired, WorkflowApprovalCanceled:
 		return nil
 	default:
 		return common_errors.NewValidationError("workflow approval status is invalid")

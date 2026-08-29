@@ -609,6 +609,10 @@ func Route(
 	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}/test", workflowTriggerController.TestTrigger).Methods("POST")
 	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}/history", workflowTriggerController.GetTriggerHistory).Methods("GET", "HEAD")
 
+	projectWorkflowApprovalInboxAPI := authenticatedAPI.PathPrefix("/project/{project_id}/workflow-approvals").Subrouter()
+	projectWorkflowApprovalInboxAPI.Use(projects.ProjectMiddleware)
+	projectWorkflowApprovalInboxAPI.HandleFunc("", workflowController.GetWorkflowApprovalInbox).Methods("GET", "HEAD")
+
 	projectWorkflowRunAPI := authenticatedAPI.PathPrefix("/project/{project_id}/workflows").Subrouter()
 	projectWorkflowRunAPI.Use(projects.ProjectMiddleware, workflowMiddlewareController.WorkflowsMiddleware, projects.GetMustCanMiddleware(db.CanRunProjectTasks))
 	projectWorkflowRunAPI.HandleFunc("/{workflow_id}/run", workflowController.RunWorkflow).Methods("POST")

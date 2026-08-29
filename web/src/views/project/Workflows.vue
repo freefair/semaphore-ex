@@ -20,6 +20,30 @@
       :loading="starting"
       @start="startSelectedWorkflow"
     />
+    <v-dialog v-model="approvalInboxDialog" max-width="720">
+      <v-card data-testid="workflow-approval-inbox">
+        <v-card-title>{{ $t('workflowApprovalInbox') }}</v-card-title>
+        <v-progress-linear v-if="approvalInboxLoading" indeterminate color="primary" />
+        <v-list v-else-if="approvalInbox.length > 0" two-line>
+          <v-list-item
+            v-for="approval in approvalInbox"
+            :key="approval.id"
+            @click="openApprovalRun(approval)"
+          >
+            <v-list-item-content>
+              <v-list-item-title>
+                {{ approval.workflow_name || $t('workflowRun') }} #{{ approval.workflow_run_id }}
+              </v-list-item-title>
+              <v-list-item-subtitle>{{ approval.prompt }}</v-list-item-subtitle>
+            </v-list-item-content>
+            <v-list-item-action v-if="approval.deadline">
+              <span class="text-caption">{{ approval.deadline | formatDate }}</span>
+            </v-list-item-action>
+          </v-list-item>
+        </v-list>
+        <v-card-text v-else>{{ $t('workflowApprovalInboxEmpty') }}</v-card-text>
+      </v-card>
+    </v-dialog>
 
     <v-toolbar flat>
       <v-app-bar-nav-icon @click="showDrawer()"></v-app-bar-nav-icon>
@@ -27,6 +51,16 @@
         {{ $t('workflows') }}
       </v-toolbar-title>
       <v-spacer></v-spacer>
+
+      <v-btn
+        v-if="can(USER_PERMISSIONS.runProjectTasks)"
+        text
+        class="mr-1"
+        @click="openApprovalInbox()"
+      >
+        <v-icon left small>mdi-account-check</v-icon>
+        {{ $t('workflowApprovalInbox') }}
+      </v-btn>
 
       <v-btn
         color="primary"
@@ -182,6 +216,9 @@ export default {
       selectedWorkflow: null,
       runDialog: false,
       starting: false,
+      approvalInboxDialog: false,
+      approvalInboxLoading: false,
+      approvalInbox: [],
     };
   },
 

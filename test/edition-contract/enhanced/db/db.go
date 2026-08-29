@@ -73,6 +73,15 @@ func NormalizeWorkflowTemplate(workflow coreDB.WorkflowTemplate) coreDB.Workflow
 		if node.JoinMode == "" {
 			node.JoinMode = node.EffectiveJoinMode()
 		}
+		if node.Kind == coreDB.WorkflowNodeApprovalKind {
+			node.ApprovalMessage = trimWorkflowApprovalMessage(node.ApprovalMessage)
+			if node.ApprovalPermission == 0 {
+				node.ApprovalPermission = coreDB.CanRunProjectTasks
+			}
+			if node.ApprovalTimeoutOutcome == "" {
+				node.ApprovalTimeoutOutcome = coreDB.WorkflowApprovalTimeoutReject
+			}
+		}
 		for outputIndex := range node.ArtifactOutputs {
 			output := &node.ArtifactOutputs[outputIndex]
 			output.Name = strings.TrimSpace(output.Name)
@@ -320,6 +329,16 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 			if node.ApprovalTimeout != nil && *node.ApprovalTimeout <= 0 {
 				add("WORKFLOW_APPROVAL_TIMEOUT_INVALID", "Approval timeout must be positive.", path+".approval_timeout", &id, nil)
 			}
+			if len(stringValue(node.ApprovalMessage)) > coreDB.MaxWorkflowApprovalPromptBytes {
+				add("WORKFLOW_APPROVAL_MESSAGE_TOO_LONG", "Approval message is too long.", path+".approval_message", &id, nil)
+			}
+			permission := node.EffectiveApprovalPermission()
+			if !validWorkflowApprovalPermission(permission) {
+				add("WORKFLOW_APPROVAL_PERMISSION_INVALID", "Approval permission must be one supported project permission.", path+".approval_permission", &id, nil)
+			}
+			if err := node.EffectiveApprovalTimeoutOutcome().Validate(); err != nil {
+				add("WORKFLOW_APPROVAL_TIMEOUT_OUTCOME_INVALID", "Approval timeout outcome is invalid.", path+".approval_timeout_outcome", &id, nil)
+			}
 		case coreDB.WorkflowNodeNoteKind:
 			if node.TemplateID != 0 {
 				add("WORKFLOW_NOTE_TEMPLATE_FORBIDDEN", "Note nodes cannot reference a template.", path+".template_id", &id, nil)
@@ -406,6 +425,33 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 	}
 
 	return coreDB.WorkflowValidationResult{Valid: len(issues) == 0, Issues: issues}, nil
+}
+
+func trimWorkflowApprovalMessage(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	return &trimmed
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func validWorkflowApprovalPermission(permission coreDB.ProjectUserPermission) bool {
+	switch permission {
+	case coreDB.CanRunProjectTasks,
+		coreDB.CanUpdateProject,
+		coreDB.CanManageProjectResources,
+		coreDB.CanManageProjectUsers:
+		return true
+	default:
+		return false
+	}
 }
 
 func compileWorkflowConditions(workflow *coreDB.WorkflowTemplate) []coreDB.WorkflowValidationIssue {
@@ -593,9 +639,13 @@ func BuildWorkflowRunSnapshot(
 		if node.EffectiveKind() == coreDB.WorkflowNodeNoteKind {
 			continue
 		}
-		template, ok := templates[node.TemplateID]
-		if !ok || template.ID == 0 || template.ProjectID != workflow.ProjectID {
-			return coreDB.WorkflowRun{}, common_errors.NewValidationError("workflow task template snapshot is unavailable")
+		var template coreDB.Template
+		if node.EffectiveKind() == coreDB.WorkflowNodeTaskKind {
+			var ok bool
+			template, ok = templates[node.TemplateID]
+			if !ok || template.ID == 0 || template.ProjectID != workflow.ProjectID {
+				return coreDB.WorkflowRun{}, common_errors.NewValidationError("workflow task template snapshot is unavailable")
+			}
 		}
 		override := input.NodeOverrides[node.ID]
 		if err := coreDB.ValidateWorkflowNodeOverride(node.OverridePolicy, override); err != nil {
@@ -627,8 +677,8 @@ func validateRunnableWorkflow(workflow coreDB.WorkflowTemplate) error {
 		if node.EffectiveKind() == coreDB.WorkflowNodeNoteKind {
 			continue
 		}
-		if node.EffectiveKind() != coreDB.WorkflowNodeTaskKind {
-			return common_errors.NewValidationError("workflow runs support task nodes only")
+		if node.EffectiveKind() != coreDB.WorkflowNodeTaskKind && node.EffectiveKind() != coreDB.WorkflowNodeApprovalKind {
+			return common_errors.NewValidationError("workflow run node kind is invalid")
 		}
 		executable++
 	}

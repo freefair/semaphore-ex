@@ -48,3 +48,15 @@ func (d *WorkflowStoreImpl) ReplaceWorkflowTaskArtifacts(projectID int, runID in
 func (d *WorkflowStoreImpl) GetWorkflowRunArtifacts(projectID int, runID int) (res []db.WorkflowArtifact, err error) {
 	return
 }
+
+func (d *WorkflowStoreImpl) GetPendingWorkflowApprovals(projectID int) (res []db.WorkflowApproval, err error) {
+	return
+}
+
+func (d *WorkflowStoreImpl) OpenWorkflowApproval(approval db.WorkflowApproval) (res db.WorkflowApproval, opened bool, err error) {
+	return
+}
+
+func (d *WorkflowStoreImpl) FinalizeWorkflowRunApprovalNode(projectID int, runID int, nodeID int, status db.WorkflowRunNodeStatus, reason string, resultJSON string, at time.Time) (ok bool, err error) {
+	return
+}
