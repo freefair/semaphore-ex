@@ -72,6 +72,15 @@ func (*workflowOutputServiceStub) ProgressWorkflowRun(int, int, *db.User) error 
 func (*workflowOutputServiceStub) StopWorkflowRun(int, int, *db.User) (db.WorkflowRun, error) {
 	return db.WorkflowRun{}, nil
 }
+func (*workflowOutputServiceStub) RequestWorkflowRunStop(int, int, *db.User) (db.WorkflowRun, error) {
+	return db.WorkflowRun{}, nil
+}
+func (*workflowOutputServiceStub) ReconcileWorkflowRun(int, int) (db.WorkflowRun, error) {
+	return db.WorkflowRun{}, nil
+}
+func (*workflowOutputServiceStub) RetryWorkflowRunReconciliation(int, int, *db.User) (db.WorkflowRun, error) {
+	return db.WorkflowRun{}, nil
+}
 func (*workflowOutputServiceStub) GetWorkflowApprovalInbox(int, *db.User) ([]db.WorkflowApproval, error) {
 	return []db.WorkflowApproval{}, nil
 }

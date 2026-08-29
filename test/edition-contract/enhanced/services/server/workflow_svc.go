@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
@@ -19,6 +21,8 @@ import (
 )
 
 const workflowReconcileInterval = 2 * time.Second
+const workflowReconcileQuarantineAfter = 3
+const maxWorkflowReconciliationErrorBytes = 512
 
 type workflowService struct {
 	repository       db.WorkflowManager
@@ -129,6 +133,10 @@ func (s *workflowService) ProgressWorkflowRun(projectID int, runID int, user *db
 		}
 		if run.Status.IsFinished() {
 			return nil
+		}
+		if run.DesiredState == db.WorkflowRunDesiredStopping {
+			_, err = s.stopWorkflowRunNow(run)
+			return err
 		}
 		if err = s.syncWorkflowTaskStates(run); err != nil {
 			return err
@@ -242,6 +250,13 @@ func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *d
 }
 
 func (s *workflowService) StopWorkflowRun(projectID int, runID int, user *db.User) (db.WorkflowRun, error) {
+	if _, err := s.RequestWorkflowRunStop(projectID, runID, user); err != nil {
+		return db.WorkflowRun{}, err
+	}
+	return s.ReconcileWorkflowRun(projectID, runID)
+}
+
+func (s *workflowService) RequestWorkflowRunStop(projectID int, runID int, _ *db.User) (db.WorkflowRun, error) {
 	run, err := s.repository.GetWorkflowRunByID(projectID, runID)
 	if err != nil {
 		return db.WorkflowRun{}, err
@@ -249,6 +264,87 @@ func (s *workflowService) StopWorkflowRun(projectID int, runID int, user *db.Use
 	if run.Status.IsFinished() {
 		return run, nil
 	}
+	if _, err = s.repository.RequestWorkflowRunStop(projectID, runID); err != nil {
+		return db.WorkflowRun{}, err
+	}
+	return s.repository.GetWorkflowRunByID(projectID, runID)
+}
+
+func (s *workflowService) ReconcileWorkflowRun(projectID int, runID int) (db.WorkflowRun, error) {
+	var result db.WorkflowRun
+	err := s.withRunLock(projectID, runID, func() error {
+		run, err := s.repository.GetWorkflowRunByID(projectID, runID)
+		if err != nil {
+			return err
+		}
+		if run.DesiredState == db.WorkflowRunDesiredStopping {
+			result, err = s.stopWorkflowRunNow(run)
+			return err
+		}
+		if run.Status.IsFinished() {
+			result = run
+			return nil
+		}
+		if err = s.syncWorkflowTaskStates(run); err != nil {
+			return err
+		}
+		run, err = s.repository.GetWorkflowRunByID(projectID, runID)
+		if err != nil {
+			return err
+		}
+		if err = s.progressReadyWorkflowNodes(run, nil); err != nil {
+			return err
+		}
+		result, err = s.repository.GetWorkflowRunByID(projectID, runID)
+		return err
+	})
+	if err != nil {
+		return db.WorkflowRun{}, err
+	}
+	if result.ID == 0 {
+		return result, nil
+	}
+	if result.ReconciliationState != db.WorkflowRunReconciliationHealthy || result.ReconciliationAttempts != 0 || result.ReconciliationLastError != "" || result.ReconciliationNextRetryAt != nil || result.ReconciliationQuarantinedAt != nil {
+		result.ReconciliationState = db.WorkflowRunReconciliationHealthy
+		result.ReconciliationAttempts = 0
+		result.ReconciliationLastError = ""
+		result.ReconciliationNextRetryAt = nil
+		result.ReconciliationQuarantinedAt = nil
+		if err = s.repository.UpdateWorkflowRunReconciliation(result); err != nil {
+			return db.WorkflowRun{}, err
+		}
+		return s.repository.GetWorkflowRunByID(projectID, runID)
+	}
+	return result, nil
+}
+
+func (s *workflowService) RetryWorkflowRunReconciliation(projectID int, runID int, _ *db.User) (db.WorkflowRun, error) {
+	var result db.WorkflowRun
+	err := s.withRunLock(projectID, runID, func() error {
+		run, err := s.repository.GetWorkflowRunByID(projectID, runID)
+		if err != nil {
+			return err
+		}
+		if run.Status.IsFinished() {
+			result = run
+			return nil
+		}
+		run.ReconciliationState = db.WorkflowRunReconciliationRecovering
+		run.ReconciliationAttempts = 0
+		run.ReconciliationLastError = ""
+		run.ReconciliationNextRetryAt = nil
+		run.ReconciliationQuarantinedAt = nil
+		if err = s.repository.UpdateWorkflowRunReconciliation(run); err != nil {
+			return err
+		}
+		result = run
+		return nil
+	})
+	return result, err
+}
+
+func (s *workflowService) stopWorkflowRunNow(run db.WorkflowRun) (db.WorkflowRun, error) {
+	projectID, runID := run.ProjectID, run.ID
 	now := tz.Now()
 	approvals, err := s.repository.GetWorkflowApprovals(projectID, runID)
 	if err != nil {
@@ -289,7 +385,16 @@ func (s *workflowService) StopWorkflowRun(projectID int, runID int, user *db.Use
 			}
 		}
 	}
+	run.DesiredState = db.WorkflowRunDesiredStopped
 	if err = s.finishRun(run, db.WorkflowRunCanceled, "Canceled by user."); err != nil {
+		return db.WorkflowRun{}, err
+	}
+	stopped, err := s.repository.GetWorkflowRunByID(projectID, runID)
+	if err != nil {
+		return db.WorkflowRun{}, err
+	}
+	stopped.DesiredState = db.WorkflowRunDesiredStopped
+	if err = s.repository.UpdateWorkflowRun(stopped); err != nil {
 		return db.WorkflowRun{}, err
 	}
 	return s.repository.GetWorkflowRunByID(projectID, runID)
@@ -1278,6 +1383,7 @@ func (r *workflowReconciler) Start() {
 	r.startOnce.Do(func() {
 		go func() {
 			defer close(r.done)
+			r.reconcile()
 			ticker := time.NewTicker(workflowReconcileInterval)
 			defer ticker.Stop()
 			for {
@@ -1304,6 +1410,41 @@ func (r *workflowReconciler) reconcile() {
 		return
 	}
 	for _, run := range runs {
-		_ = r.service.ProgressWorkflowRun(run.ProjectID, run.ID, nil)
+		if _, err = r.service.ReconcileWorkflowRun(run.ProjectID, run.ID); err != nil {
+			r.recordFailure(run, err)
+		}
 	}
+}
+
+func (r *workflowReconciler) recordFailure(run db.WorkflowRun, reconcileErr error) {
+	if run.ReconciliationState == db.WorkflowRunReconciliationQuarantined {
+		return
+	}
+	now := tz.Now()
+	run.ReconciliationAttempts++
+	run.ReconciliationLastError = boundedWorkflowReconciliationError(reconcileErr.Error())
+	if run.ReconciliationAttempts >= workflowReconcileQuarantineAfter {
+		run.ReconciliationState = db.WorkflowRunReconciliationQuarantined
+		run.ReconciliationQuarantinedAt = &now
+		run.ReconciliationNextRetryAt = nil
+	} else {
+		run.ReconciliationState = db.WorkflowRunReconciliationRecovering
+		delay := workflowReconcileInterval * time.Duration(1<<(run.ReconciliationAttempts-1))
+		next := now.Add(delay)
+		run.ReconciliationNextRetryAt = &next
+	}
+	_ = r.repository.UpdateWorkflowRunReconciliation(run)
+}
+
+func boundedWorkflowReconciliationError(value string) string {
+	value = strings.Join(strings.Fields(redactText(value)), " ")
+	if len(value) <= maxWorkflowReconciliationErrorBytes {
+		return value
+	}
+	value = value[:maxWorkflowReconciliationErrorBytes]
+	for !utf8.ValidString(value) {
+		_, size := utf8.DecodeLastRuneInString(value)
+		value = value[:len(value)-size]
+	}
+	return value
 }

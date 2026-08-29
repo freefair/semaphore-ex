@@ -24,7 +24,13 @@
         :color="statusColor(details.run.status)"
         small
         class="mr-3"
-      >{{ details.run.status }}</v-chip>
+      >{{ runStatusLabel(details.run.status) }}</v-chip>
+      <v-chip
+        v-if="details && details.run.reconciliation_state === 'recovering'"
+        small
+        color="warning"
+        class="mr-3"
+      >{{ $t('workflowReconciliationRecovering') }}</v-chip>
 
       <v-chip
         v-if="parallelProgress"
@@ -45,6 +51,18 @@
       >
         <v-icon left small>mdi-stop</v-icon>
         {{ $t('stop') }}
+      </v-btn>
+      <v-btn
+        v-if="reconciliationQuarantined && canResolveApprovals"
+        color="warning"
+        small
+        outlined
+        class="mr-3"
+        :loading="retryingReconciliation"
+        @click="retryReconciliation()"
+      >
+        <v-icon left small>mdi-reload-alert</v-icon>
+        {{ $t('workflowRetryReconciliation') }}
       </v-btn>
 
       <v-btn icon :title="$t('workflowToolbarZoomOut')" @click="zoomOut()">
@@ -73,6 +91,19 @@
           tile
           class="ma-0"
         >{{ details.run.reason }}</v-alert>
+        <v-alert
+          v-if="reconciliationQuarantined"
+          type="warning"
+          dense
+          text
+          tile
+          class="ma-0"
+        >
+          {{ $t('workflowReconciliationQuarantined', {
+            attempts: details.run.reconciliation_attempts,
+            error: details.run.reconciliation_last_error,
+          }) }}
+        </v-alert>
 
         <div class="WorkflowRun__graph">
           <WorkflowGraph
@@ -368,6 +399,7 @@ export default {
       pollHandle: null,
       socketListenerId: null,
       stopping: false,
+      retryingReconciliation: false,
       approvalComments: {},
       USER_PERMISSIONS,
     };
@@ -388,6 +420,9 @@ export default {
       if (!this.details) return false;
       return this.isActiveRunStatus(this.details.run.status)
         && this.can(USER_PERMISSIONS.runProjectTasks);
+    },
+    reconciliationQuarantined() {
+      return this.details?.run?.reconciliation_state === 'quarantined';
     },
     // node.id -> raw run status, used by the graph for color + active animation.
     nodeStatuses() {
@@ -495,10 +530,18 @@ export default {
         case 'pending':
           return 'primary';
         case 'approval':
+        case 'stopping':
           return 'warning';
         default:
           return 'grey';
       }
+    },
+    runStatusLabel(status) {
+      const labels = {
+        stopping: this.$t('workflowRunStopping'),
+        canceled: this.$t('workflowRunStopped'),
+      };
+      return labels[status] || status;
     },
     artifactAvailabilityColor(availability) {
       if (availability === 'available') return 'success';
@@ -520,7 +563,7 @@ export default {
       }
     },
     isActiveRunStatus(status) {
-      return ['pending', 'queued', 'running', 'approval'].includes(status);
+      return ['pending', 'queued', 'running', 'approval', 'stopping'].includes(status);
     },
     formatElapsed(start, end) {
       if (!start) return '';
@@ -561,6 +604,22 @@ export default {
         });
       } finally {
         this.stopping = false;
+      }
+    },
+    async retryReconciliation() {
+      this.retryingReconciliation = true;
+      try {
+        await axios.post(
+          `/api/project/${this.projectId}/workflows/${this.workflowId}/runs/${this.runId}/retry-reconcile`,
+        );
+        await this.loadData();
+      } catch (err) {
+        EventBus.$emit('i-snackbar', {
+          color: 'error',
+          text: getErrorMessage(err),
+        });
+      } finally {
+        this.retryingReconciliation = false;
       }
     },
     async resolveApproval(nodeId, status) {

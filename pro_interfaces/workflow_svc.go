@@ -17,6 +17,9 @@ type WorkflowService interface {
 	// StopWorkflowRun stops a non-finished run: it signals every in-flight task
 	// of the run to stop and marks the run as stopped (terminal).
 	StopWorkflowRun(projectID int, runID int, user *db.User) (db.WorkflowRun, error)
+	RequestWorkflowRunStop(projectID int, runID int, user *db.User) (db.WorkflowRun, error)
+	ReconcileWorkflowRun(projectID int, runID int) (db.WorkflowRun, error)
+	RetryWorkflowRunReconciliation(projectID int, runID int, user *db.User) (db.WorkflowRun, error)
 	GetWorkflowApprovalInbox(projectID int, user *db.User) ([]db.WorkflowApproval, error)
 	ResolveWorkflowApproval(projectID int, workflowID int, runID int, nodeID int, decision db.WorkflowApprovalDecision, user *db.User) (db.WorkflowApproval, error)
 	HandleWorkflowTaskOutputs(task db.Task, outputs map[string]json.RawMessage) error

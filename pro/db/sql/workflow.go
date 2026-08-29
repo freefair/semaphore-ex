@@ -71,6 +71,14 @@ func (d *WorkflowStoreImpl) UpdateWorkflowRun(run db.WorkflowRun) (err error) {
 	return
 }
 
+func (d *WorkflowStoreImpl) UpdateWorkflowRunReconciliation(run db.WorkflowRun) (err error) {
+	return
+}
+
+func (d *WorkflowStoreImpl) RequestWorkflowRunStop(projectID int, runID int) (ok bool, err error) {
+	return
+}
+
 func (d *WorkflowStoreImpl) GetWorkflowRunNode(projectID int, runID int, nodeID int) (res db.WorkflowRunNode, err error) {
 	return
 }

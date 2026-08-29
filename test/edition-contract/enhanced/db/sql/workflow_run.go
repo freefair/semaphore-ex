@@ -74,9 +74,10 @@ func (d *WorkflowStoreImpl) getWorkflowRun(query string, args ...any) (db.Workfl
 
 func (d *WorkflowStoreImpl) GetActiveWorkflowRuns() ([]db.WorkflowRun, error) {
 	var runs []db.WorkflowRun
-	query := "select * from project__workflow_run where status not in (?, ?, ?, ?, ?, ?) order by id"
+	query := "select * from project__workflow_run where status not in (?, ?, ?, ?, ?, ?) and reconciliation_state<>? and (reconciliation_next_retry_at is null or reconciliation_next_retry_at<=CURRENT_TIMESTAMP) order by id"
 	if _, err := d.connection.SelectAll(&runs, query,
-		db.WorkflowRunSucceeded, db.WorkflowRunSuccess, db.WorkflowRunFailed, db.WorkflowRunStopped, db.WorkflowRunCanceled, db.WorkflowRunBlocked); err != nil {
+		db.WorkflowRunSucceeded, db.WorkflowRunSuccess, db.WorkflowRunFailed, db.WorkflowRunStopped, db.WorkflowRunCanceled, db.WorkflowRunBlocked,
+		db.WorkflowRunReconciliationQuarantined); err != nil {
 		return nil, err
 	}
 	for index := range runs {
@@ -106,9 +107,15 @@ func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (db.WorkflowRu
 	if run.TriggerSnapshotJSON == "" {
 		run.TriggerSnapshotJSON = "{}"
 	}
+	if run.DesiredState == "" {
+		run.DesiredState = db.WorkflowRunDesiredRunning
+	}
+	if run.ReconciliationState == "" {
+		run.ReconciliationState = db.WorkflowRunReconciliationHealthy
+	}
 	run.ID, err = d.insertTx(tx,
-		"insert into project__workflow_run(project_id, workflow_template_id, status, version, start, end, root_task_id, actor_user_id, definition_version, definition_revision, definition_snapshot, parameter_snapshot, trigger_snapshot, correlation_id, created, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		run.ProjectID, run.WorkflowTemplateID, run.Status, run.Version, run.Start, run.End, run.RootTaskID,
+		"insert into project__workflow_run(project_id, workflow_template_id, status, desired_state, reconciliation_state, reconciliation_attempts, reconciliation_last_error, reconciliation_next_retry_at, reconciliation_quarantined_at, version, start, end, root_task_id, actor_user_id, definition_version, definition_revision, definition_snapshot, parameter_snapshot, trigger_snapshot, correlation_id, created, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		run.ProjectID, run.WorkflowTemplateID, run.Status, run.DesiredState, run.ReconciliationState, run.ReconciliationAttempts, run.ReconciliationLastError, run.ReconciliationNextRetryAt, run.ReconciliationQuarantinedAt, run.Version, run.Start, run.End, run.RootTaskID,
 		run.ActorUserID, run.DefinitionVersion, run.DefinitionRevision, run.DefinitionSnapshotJSON,
 		run.ParameterSnapshotJSON, run.TriggerSnapshotJSON, run.CorrelationID, run.Created, run.Reason,
 	)
@@ -148,8 +155,8 @@ func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (db.WorkflowRu
 
 func (d *WorkflowStoreImpl) UpdateWorkflowRun(run db.WorkflowRun) error {
 	result, err := d.connection.Exec(
-		"update project__workflow_run set status=?, reason=?, end=?, root_task_id=? where project_id=? and id=?",
-		run.Status, run.Reason, run.End, run.RootTaskID, run.ProjectID, run.ID,
+		"update project__workflow_run set status=?, desired_state=?, reconciliation_state=?, reconciliation_attempts=?, reconciliation_last_error=?, reconciliation_next_retry_at=?, reconciliation_quarantined_at=?, reason=?, end=?, root_task_id=? where project_id=? and id=?",
+		run.Status, run.DesiredState, run.ReconciliationState, run.ReconciliationAttempts, run.ReconciliationLastError, run.ReconciliationNextRetryAt, run.ReconciliationQuarantinedAt, run.Reason, run.End, run.RootTaskID, run.ProjectID, run.ID,
 	)
 	if err != nil {
 		return err
@@ -162,6 +169,40 @@ func (d *WorkflowStoreImpl) UpdateWorkflowRun(run db.WorkflowRun) error {
 		return db.ErrNotFound
 	}
 	return nil
+}
+
+// UpdateWorkflowRunReconciliation changes only scheduler-owned diagnostics so a
+// concurrently persisted user stop request cannot be reverted by a stale scan.
+func (d *WorkflowStoreImpl) UpdateWorkflowRunReconciliation(run db.WorkflowRun) error {
+	result, err := d.connection.Exec(
+		"update project__workflow_run set reconciliation_state=?, reconciliation_attempts=?, reconciliation_last_error=?, reconciliation_next_retry_at=?, reconciliation_quarantined_at=? where project_id=? and id=?",
+		run.ReconciliationState, run.ReconciliationAttempts, run.ReconciliationLastError, run.ReconciliationNextRetryAt, run.ReconciliationQuarantinedAt, run.ProjectID, run.ID,
+	)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return db.ErrNotFound
+	}
+	return nil
+}
+
+func (d *WorkflowStoreImpl) RequestWorkflowRunStop(projectID int, runID int) (bool, error) {
+	result, err := d.connection.Exec(
+		"update project__workflow_run set desired_state=?, status=? where project_id=? and id=? and status not in (?, ?, ?, ?, ?, ?) and desired_state<>?",
+		db.WorkflowRunDesiredStopping, db.WorkflowRunStopping, projectID, runID,
+		db.WorkflowRunSucceeded, db.WorkflowRunSuccess, db.WorkflowRunFailed, db.WorkflowRunStopped, db.WorkflowRunCanceled, db.WorkflowRunBlocked,
+		db.WorkflowRunDesiredStopped,
+	)
+	if err != nil {
+		return false, err
+	}
+	updated, err := result.RowsAffected()
+	return updated == 1, err
 }
 
 func (d *WorkflowStoreImpl) UpdateWorkflowRunStatusUnless(run db.WorkflowRun, excluded []db.WorkflowRunStatus) (bool, error) {
@@ -241,8 +282,9 @@ func (d *WorkflowStoreImpl) OpenWorkflowApproval(approval db.WorkflowApproval) (
 	}
 	defer func() { _ = tx.Rollback() }()
 	result, err := tx.Exec(d.connection.PrepareQuery(
-		"update project__workflow_run_node set status=?, queued=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null"),
+		"update project__workflow_run_node set status=?, queued=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null and exists (select 1 from project__workflow_run where project_id=? and id=? and desired_state=?)"),
 		db.WorkflowRunNodeApproval, approval.Created, approval.ProjectID, approval.WorkflowRunID, approval.WorkflowNodeID, db.WorkflowRunNodePending,
+		approval.ProjectID, approval.WorkflowRunID, db.WorkflowRunDesiredRunning,
 	)
 	if err != nil {
 		return db.WorkflowApproval{}, false, err
@@ -256,6 +298,9 @@ func (d *WorkflowStoreImpl) OpenWorkflowApproval(approval db.WorkflowApproval) (
 		existing, getErr := d.GetWorkflowApproval(approval.ProjectID, approval.WorkflowRunID, approval.WorkflowNodeID)
 		if getErr == nil {
 			return existing, false, nil
+		}
+		if errors.Is(getErr, db.ErrNotFound) {
+			return db.WorkflowApproval{}, false, nil
 		}
 		return db.WorkflowApproval{}, false, getErr
 	}
@@ -358,8 +403,9 @@ func (d *WorkflowStoreImpl) GetWorkflowRunNodeTask(projectID int, runID int, nod
 
 func (d *WorkflowStoreImpl) ClaimWorkflowRunNode(projectID int, runID int, nodeID int, queuedAt time.Time) (bool, error) {
 	result, err := d.connection.Exec(
-		"update project__workflow_run_node set status=?, queued=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null",
+		"update project__workflow_run_node set status=?, queued=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null and exists (select 1 from project__workflow_run where project_id=? and id=? and desired_state=?)",
 		db.WorkflowRunNodeQueued, queuedAt, projectID, runID, nodeID, db.WorkflowRunNodePending,
+		projectID, runID, db.WorkflowRunDesiredRunning,
 	)
 	if err != nil {
 		return false, err

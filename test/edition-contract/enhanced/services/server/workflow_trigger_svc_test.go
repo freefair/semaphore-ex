@@ -235,6 +235,15 @@ func (s *workflowTriggerStarter) ProgressWorkflowRun(int, int, *db.User) error {
 func (s *workflowTriggerStarter) StopWorkflowRun(int, int, *db.User) (db.WorkflowRun, error) {
 	return db.WorkflowRun{}, nil
 }
+func (s *workflowTriggerStarter) RequestWorkflowRunStop(int, int, *db.User) (db.WorkflowRun, error) {
+	return db.WorkflowRun{}, nil
+}
+func (s *workflowTriggerStarter) ReconcileWorkflowRun(int, int) (db.WorkflowRun, error) {
+	return db.WorkflowRun{}, nil
+}
+func (s *workflowTriggerStarter) RetryWorkflowRunReconciliation(int, int, *db.User) (db.WorkflowRun, error) {
+	return db.WorkflowRun{}, nil
+}
 func (s *workflowTriggerStarter) GetWorkflowApprovalInbox(int, *db.User) ([]db.WorkflowApproval, error) {
 	return nil, nil
 }

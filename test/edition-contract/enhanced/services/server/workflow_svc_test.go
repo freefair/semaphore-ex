@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	"github.com/semaphoreui/semaphore/db"
 	coresql "github.com/semaphoreui/semaphore/db/sql"
@@ -319,6 +321,43 @@ func TestWorkflowApprovalStopCancelsRequestAndApprovalNode(t *testing.T) {
 	assert.Nil(t, approval.ResolvedByUserID)
 	assert.Equal(t, db.WorkflowRunNodeCanceled, canceled.Nodes[1].Status)
 	assert.Equal(t, db.WorkflowRunNodeCanceled, canceled.Nodes[2].Status)
+}
+
+func TestWorkflowStopRequestPersistsDesiredStateBeforeReconciliation(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+
+	run, err := fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "durable-stop-request")
+	require.NoError(t, err)
+	requested, err := fixture.service.RequestWorkflowRunStop(fixture.projectID, run.ID, &fixture.user)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowRunDesiredStopping, requested.DesiredState)
+	assert.Equal(t, db.WorkflowRunStopping, requested.Status)
+
+	restartedService := NewWorkflowService(fixture.repository, fixture.store, fixture.enqueuer, nil)
+	recovered, err := restartedService.ReconcileWorkflowRun(fixture.projectID, run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowRunDesiredStopped, recovered.DesiredState)
+	assert.Equal(t, db.WorkflowRunCanceled, recovered.Status)
+	assert.Equal(t, db.WorkflowRunNodeCanceled, recovered.Nodes[0].Status)
+	assert.Len(t, fixture.enqueuer.tasks, 1, "a durable stop request must not create downstream tasks")
+}
+
+func TestWorkflowStopRequestPreventsCompletionCallbackFromPlanningDownstreamWork(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	run, err := fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "stop-callback-race")
+	require.NoError(t, err)
+	_, err = fixture.service.RequestWorkflowRunStop(fixture.projectID, run.ID, &fixture.user)
+	require.NoError(t, err)
+
+	require.NoError(t, fixture.service.ProgressWorkflowRun(fixture.projectID, run.ID, nil))
+	stopped, err := fixture.repository.GetWorkflowRunByID(fixture.projectID, run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowRunCanceled, stopped.Status)
+	assert.Equal(t, db.WorkflowRunNodeCanceled, stopped.Nodes[0].Status)
+	assert.Equal(t, db.WorkflowRunNodeCanceled, stopped.Nodes[1].Status)
+	assert.Len(t, fixture.enqueuer.tasks, 1)
 }
 
 func TestWorkflowRunParametersAndNodeOverridesMapToFrozenTaskInputs(t *testing.T) {
@@ -990,6 +1029,88 @@ func TestWorkflowReconcilerCanStopBeforeStart(t *testing.T) {
 	reconciler.Start()
 }
 
+func TestWorkflowReconcilerScansImmediatelyOnStart(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	_, err := fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "reconcile-on-start")
+	require.NoError(t, err)
+
+	signaled := &workflowReconcileSignalService{called: make(chan struct{}, 1)}
+	reconciler := NewWorkflowReconciler(fixture.repository, signaled)
+	reconciler.Start()
+	t.Cleanup(reconciler.Stop)
+
+	select {
+	case <-signaled.called:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("workflow reconciliation did not run immediately on start")
+	}
+}
+
+func TestWorkflowReconcilerQuarantinesRepeatedFailuresAndManualRetryClearsIt(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	run, err := fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "reconcile-quarantine")
+	require.NoError(t, err)
+	failing := &workflowReconcileFailingService{}
+	reconciler := NewWorkflowReconciler(fixture.repository, failing).(*workflowReconciler)
+	for attempt := 0; attempt < workflowReconcileQuarantineAfter; attempt++ {
+		reconciler.reconcile()
+		if attempt+1 < workflowReconcileQuarantineAfter {
+			_, err = fixture.store.Sql().Exec(
+				"update project__workflow_run set reconciliation_next_retry_at=CURRENT_TIMESTAMP where project_id=? and id=?",
+				fixture.projectID, run.ID,
+			)
+			require.NoError(t, err)
+		}
+	}
+
+	quarantined, err := fixture.repository.GetWorkflowRunByID(fixture.projectID, run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowRunReconciliationQuarantined, quarantined.ReconciliationState)
+	assert.NotNil(t, quarantined.ReconciliationQuarantinedAt)
+	assert.Equal(t, workflowReconcileQuarantineAfter, quarantined.ReconciliationAttempts)
+
+	retried, err := fixture.service.RetryWorkflowRunReconciliation(fixture.projectID, run.ID, &fixture.user)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowRunReconciliationRecovering, retried.ReconciliationState)
+	assert.Zero(t, retried.ReconciliationAttempts)
+	assert.Nil(t, retried.ReconciliationQuarantinedAt)
+}
+
+func TestWorkflowReconcilerFailureDoesNotOverwriteAConcurrentStopRequest(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	run, err := fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "reconcile-stop-race")
+	require.NoError(t, err)
+
+	staleRun, err := fixture.repository.GetWorkflowRunByID(fixture.projectID, run.ID)
+	require.NoError(t, err)
+	_, err = fixture.service.RequestWorkflowRunStop(fixture.projectID, run.ID, &fixture.user)
+	require.NoError(t, err)
+
+	reconciler := NewWorkflowReconciler(fixture.repository, nil).(*workflowReconciler)
+	reconciler.recordFailure(staleRun, errors.New("transient reconciliation failure"))
+
+	persisted, err := fixture.repository.GetWorkflowRunByID(fixture.projectID, run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowRunDesiredStopping, persisted.DesiredState)
+	assert.Equal(t, db.WorkflowRunStopping, persisted.Status)
+	assert.Equal(t, db.WorkflowRunReconciliationRecovering, persisted.ReconciliationState)
+}
+
+func TestWorkflowReconciliationDiagnosticPreservesValidUTF8WithinByteLimit(t *testing.T) {
+	diagnostic := boundedWorkflowReconciliationError(strings.Repeat("€", 171))
+	assert.LessOrEqual(t, len(diagnostic), maxWorkflowReconciliationErrorBytes)
+	assert.True(t, utf8.ValidString(diagnostic))
+}
+
+func TestWorkflowReconciliationDiagnosticRedactsSecretLikeErrors(t *testing.T) {
+	diagnostic := boundedWorkflowReconciliationError("reconcile remote secret=do-not-expose")
+	assert.Contains(t, diagnostic, "secret=[REDACTED]")
+	assert.NotContains(t, diagnostic, "do-not-expose")
+}
+
 func TestWorkflowServiceSerializesAndReleasesLocalLocks(t *testing.T) {
 	service := NewWorkflowService(nil, nil, nil, nil).(*workflowService)
 	const calls = 64
@@ -1192,6 +1313,27 @@ type workflowTestEnqueuer struct {
 	inputTasks      []db.Task
 	templates       []db.Template
 	failAfterCreate bool
+}
+
+type workflowReconcileFailingService struct {
+	pro_interfaces.WorkflowService
+}
+
+func (*workflowReconcileFailingService) ReconcileWorkflowRun(int, int) (db.WorkflowRun, error) {
+	return db.WorkflowRun{}, errors.New("transient reconciliation failure")
+}
+
+type workflowReconcileSignalService struct {
+	pro_interfaces.WorkflowService
+	called chan struct{}
+}
+
+func (s *workflowReconcileSignalService) ReconcileWorkflowRun(int, int) (db.WorkflowRun, error) {
+	select {
+	case s.called <- struct{}{}:
+	default:
+	}
+	return db.WorkflowRun{}, nil
 }
 
 func (e *workflowTestEnqueuer) AddTask(
