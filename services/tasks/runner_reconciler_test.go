@@ -226,6 +226,12 @@ func TestDecideRunnerTaskAction(t *testing.T) {
 			RunnerTaskKeep,
 		},
 		{
+			"runner restarted after original task start but before recovered assignment",
+			task_logger.TaskRunningStatus, ago(time.Hour), ago(5 * time.Minute),
+			&db.Runner{Touched: ago(time.Minute), StartedAt: ago(10 * time.Minute)},
+			RunnerTaskKeep,
+		},
+		{
 			"runner deleted, starting task",
 			task_logger.TaskStartingStatus, nil, ago(time.Minute),
 			nil,

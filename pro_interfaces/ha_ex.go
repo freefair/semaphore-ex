@@ -248,6 +248,7 @@ type ClusterNodeCompatibilityState string
 const (
 	ClusterNodeCompatible               ClusterNodeCompatibilityState = "compatible"
 	ClusterNodeDraining                 ClusterNodeCompatibilityState = "draining"
+	ClusterNodeIncompatibleEdition      ClusterNodeCompatibilityState = "incompatible_edition"
 	ClusterNodeIncompatibleSchema       ClusterNodeCompatibilityState = "incompatible_schema"
 	ClusterNodeIncompatibleProtocol     ClusterNodeCompatibilityState = "incompatible_protocol"
 	ClusterNodeIncompatibleCapabilities ClusterNodeCompatibilityState = "incompatible_capabilities"
@@ -270,6 +271,7 @@ type ClusterNodeRegistration struct {
 }
 
 type ClusterCompatibilityRequirements struct {
+	Edition              string
 	ProtocolVersion      int
 	SchemaVersion        string
 	RequiredCapabilities []string
@@ -293,6 +295,9 @@ type ClusterNodeRepository interface {
 // EvaluateClusterNodeCompatibility is deterministic and deliberately separate
 // from liveness: a Redis-live node can still be unsafe for coordinated work.
 func EvaluateClusterNodeCompatibility(node ClusterNodeRegistration, required ClusterCompatibilityRequirements) ClusterNodeCompatibility {
+	if required.Edition != "" && node.Edition != required.Edition {
+		return ClusterNodeCompatibility{State: ClusterNodeIncompatibleEdition, Reason: "cluster edition differs"}
+	}
 	if node.ProtocolVersion != required.ProtocolVersion {
 		return ClusterNodeCompatibility{State: ClusterNodeIncompatibleProtocol, Reason: "cluster protocol version differs"}
 	}
@@ -340,6 +345,34 @@ type TaskRecoveryDiagnostics struct {
 	RecoveryDecidedAt      *time.Time           `json:"recovery_decided_at,omitempty"`
 	Quarantined            bool                 `json:"quarantined"`
 	SafeAction             string               `json:"safe_action,omitempty"`
+}
+
+type ClusterServiceReadinessState string
+
+const (
+	ClusterServiceReady               ClusterServiceReadinessState = "ready"
+	ClusterServiceDegradedLiveEvents  ClusterServiceReadinessState = "degraded_live_events"
+	ClusterServiceRegistrationPending ClusterServiceReadinessState = "registration_pending"
+	ClusterServiceDatabaseUnavailable ClusterServiceReadinessState = "database_unavailable"
+)
+
+// ClusterServiceReadiness separates HTTP traffic readiness from coordinated
+// work readiness. A Redis outage degrades event delivery and ownership but
+// must not remove every SQL-capable API node from a load balancer.
+type ClusterServiceReadiness struct {
+	Ready                    bool                         `json:"ready"`
+	AcceptingCoordinatedWork bool                         `json:"accepting_coordinated_work"`
+	State                    ClusterServiceReadinessState `json:"state"`
+	Reason                   string                       `json:"reason,omitempty"`
+	NodeID                   string                       `json:"node_id,omitempty"`
+	BootID                   string                       `json:"boot_id,omitempty"`
+}
+
+// ClusterReadinessProvider is optional so the Community module and older
+// ClusterInspector implementations remain source-compatible. Enhanced HA
+// implementations expose it for the public load-balancer readiness endpoint.
+type ClusterReadinessProvider interface {
+	Readiness() ClusterServiceReadiness
 }
 
 type ClusterCoordinatorHealth struct {

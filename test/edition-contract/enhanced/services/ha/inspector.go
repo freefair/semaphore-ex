@@ -20,6 +20,7 @@ type managedClusterInspector struct {
 }
 
 var _ pro_interfaces.ClusterInspector = (*managedClusterInspector)(nil)
+var _ pro_interfaces.ClusterReadinessProvider = (*managedClusterInspector)(nil)
 
 func NewManagedClusterInspector(
 	repository pro_interfaces.ClusterNodeRepository,
@@ -79,6 +80,40 @@ func (i *managedClusterInspector) CoordinatorHealth() pro_interfaces.ClusterCoor
 		}
 	}
 	return health
+}
+
+func (i *managedClusterInspector) Readiness() pro_interfaces.ClusterServiceReadiness {
+	result := pro_interfaces.ClusterServiceReadiness{NodeID: i.self.NodeID, BootID: i.self.BootID}
+	nodes, err := i.repository.ListClusterNodes()
+	if err != nil {
+		result.State = pro_interfaces.ClusterServiceDatabaseUnavailable
+		result.Reason = "cluster registration database is unavailable"
+		return result
+	}
+	for _, node := range nodes {
+		if node.BootID != i.self.BootID {
+			continue
+		}
+		compatibility := pro_interfaces.EvaluateClusterNodeCompatibility(node, i.requirements)
+		if !compatibility.Ready {
+			result.State = pro_interfaces.ClusterServiceReadinessState(compatibility.State)
+			result.Reason = compatibility.Reason
+			return result
+		}
+		result.Ready = true
+		alive, _, heartbeatErr := i.heartbeats.IsLive(context.Background(), i.self)
+		if heartbeatErr != nil || !alive {
+			result.State = pro_interfaces.ClusterServiceDegradedLiveEvents
+			result.Reason = "redis heartbeat is unavailable; SQL API traffic remains available"
+			return result
+		}
+		result.AcceptingCoordinatedWork = true
+		result.State = pro_interfaces.ClusterServiceReady
+		return result
+	}
+	result.State = pro_interfaces.ClusterServiceRegistrationPending
+	result.Reason = "cluster registration is not visible yet"
+	return result
 }
 
 func (i *managedClusterInspector) SetNodeDraining(bootID string, draining bool) error {

@@ -123,9 +123,9 @@ tasks:
       IMPLEMENTATION_VERSION:
         sh: if [ "{{ .EDITION }}" = "enhanced" ]; then echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'; else echo 'community-1'; fi
       TAG:
-        sh: git name-rev --name-only --tags --no-undefined HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD
+        sh: if [ -n "${SEMAPHORE_SOURCE_TAG:-}" ]; then printf '%s\n' "${SEMAPHORE_SOURCE_TAG}"; else git name-rev --name-only --tags --no-undefined HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD; fi
       SHA:
-        sh: git log --pretty=format:'%h' -n 1
+        sh: if [ -n "${SEMAPHORE_SOURCE_SHA:-}" ]; then printf '%s\n' "${SEMAPHORE_SOURCE_SHA}"; else git log --pretty=format:'%h' -n 1; fi
       VERSION: "{{ if eq .GITHUB_REF_TYPE \"tag\" }}{{ .GITHUB_REF_NAME }}{{ else }}{{ .TAG }}{{ end }}"
       DATE: "{{ .SOURCE_DATE_EPOCH }}"
       IMPORT: "github.com/semaphoreui/semaphore"

@@ -32,7 +32,7 @@ func SchedulesMiddleware(next http.Handler) http.Handler {
 }
 
 func refreshSchedulePool(r *http.Request) {
-	pool := helpers.GetFromContext(r, "schedule_pool").(schedules.SchedulePool)
+	pool := helpers.GetFromContext(r, "schedule_pool").(*schedules.SchedulePool)
 	pool.Refresh()
 }
 

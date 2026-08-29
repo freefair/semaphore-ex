@@ -10,6 +10,51 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 )
 
+// ClaimTaskStart advances one queued task to starting only while its persisted
+// assignment generation is still the snapshot observed by the dispatcher.
+// SQL is the authority for this transition: node-local or degraded coordination
+// may expose the same queue entry to more than one server, but only one server
+// may proceed to runner assignment.
+func (d *SqlDb) ClaimTaskStart(
+	projectID int,
+	taskID int,
+	expectedGeneration int,
+) (task db.Task, started bool, err error) {
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return task, false, err
+	}
+	result, err := tx.Exec(d.PrepareQuery(
+		"update task set status=? where id=? and project_id=? and status=? "+
+			"and runner_id is null and assignment_generation=? and `end` is null"),
+		task_logger.TaskStartingStatus, taskID, projectID,
+		task_logger.TaskWaitingStatus, expectedGeneration,
+	)
+	if err != nil {
+		_ = tx.Rollback()
+		return task, false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		_ = tx.Rollback()
+		return task, false, err
+	}
+	if rows != 1 {
+		_ = tx.Rollback()
+		return task, false, nil
+	}
+	if err = tx.SelectOne(&task, d.PrepareQuery(
+		"select * from task where id=? and project_id=?"), taskID, projectID,
+	); err != nil {
+		_ = tx.Rollback()
+		return task, false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return task, false, err
+	}
+	return task, true, nil
+}
+
 func (d *SqlDb) AssignTaskRunner(
 	projectID int,
 	taskID int,

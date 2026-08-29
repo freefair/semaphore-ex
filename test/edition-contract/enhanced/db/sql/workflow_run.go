@@ -156,7 +156,7 @@ func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (db.WorkflowRu
 		run.ReconciliationState = db.WorkflowRunReconciliationHealthy
 	}
 	run.ID, err = d.insertTx(tx,
-		"insert into project__workflow_run(project_id, workflow_template_id, status, desired_state, reconciliation_state, reconciliation_attempts, reconciliation_last_error, reconciliation_next_retry_at, reconciliation_quarantined_at, version, start, end, root_task_id, actor_user_id, definition_version, definition_revision, definition_snapshot, parameter_snapshot, trigger_snapshot, correlation_id, created, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"insert into project__workflow_run(project_id, workflow_template_id, status, desired_state, reconciliation_state, reconciliation_attempts, reconciliation_last_error, reconciliation_next_retry_at, reconciliation_quarantined_at, version, start, `end`, root_task_id, actor_user_id, definition_version, definition_revision, definition_snapshot, parameter_snapshot, trigger_snapshot, correlation_id, created, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		run.ProjectID, run.WorkflowTemplateID, run.Status, run.DesiredState, run.ReconciliationState, run.ReconciliationAttempts, run.ReconciliationLastError, run.ReconciliationNextRetryAt, run.ReconciliationQuarantinedAt, run.Version, run.Start, run.End, run.RootTaskID,
 		run.ActorUserID, run.DefinitionVersion, run.DefinitionRevision, run.DefinitionSnapshotJSON,
 		run.ParameterSnapshotJSON, run.TriggerSnapshotJSON, run.CorrelationID, run.Created, run.Reason,
@@ -180,7 +180,7 @@ func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (db.WorkflowRu
 			node.OverrideSnapshotJSON = "{}"
 		}
 		node.ID, err = d.insertTx(tx,
-			"insert into project__workflow_run_node(project_id, workflow_run_id, workflow_node_id, template_id, status, task_id, template_snapshot, result, artifact_inputs, override_snapshot, created, queued, start, end, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"insert into project__workflow_run_node(project_id, workflow_run_id, workflow_node_id, template_id, status, task_id, template_snapshot, result, artifact_inputs, override_snapshot, created, queued, start, `end`, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			node.ProjectID, node.WorkflowRunID, node.WorkflowNodeID, node.TemplateID, node.Status,
 			node.TaskID, node.TemplateSnapshotJSON, node.ResultJSON, node.ArtifactInputsJSON, node.OverrideSnapshotJSON, node.Created, node.Queued, node.Start, node.End, node.Reason,
 		)
@@ -197,7 +197,7 @@ func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (db.WorkflowRu
 
 func (d *WorkflowStoreImpl) UpdateWorkflowRun(run db.WorkflowRun) error {
 	result, err := d.connection.Exec(
-		"update project__workflow_run set status=?, desired_state=?, reconciliation_state=?, reconciliation_attempts=?, reconciliation_last_error=?, reconciliation_next_retry_at=?, reconciliation_quarantined_at=?, reason=?, end=?, root_task_id=? where project_id=? and id=?",
+		"update project__workflow_run set status=?, desired_state=?, reconciliation_state=?, reconciliation_attempts=?, reconciliation_last_error=?, reconciliation_next_retry_at=?, reconciliation_quarantined_at=?, reason=?, `end`=?, root_task_id=? where project_id=? and id=?",
 		run.Status, run.DesiredState, run.ReconciliationState, run.ReconciliationAttempts, run.ReconciliationLastError, run.ReconciliationNextRetryAt, run.ReconciliationQuarantinedAt, run.Reason, run.End, run.RootTaskID, run.ProjectID, run.ID,
 	)
 	if err != nil {
@@ -248,7 +248,7 @@ func (d *WorkflowStoreImpl) RequestWorkflowRunStop(projectID int, runID int) (bo
 }
 
 func (d *WorkflowStoreImpl) UpdateWorkflowRunStatusUnless(run db.WorkflowRun, excluded []db.WorkflowRunStatus) (bool, error) {
-	query := "update project__workflow_run set status=?, reason=?, end=? where project_id=? and id=?"
+	query := "update project__workflow_run set status=?, reason=?, `end`=? where project_id=? and id=?"
 	args := []any{run.Status, run.Reason, run.End, run.ProjectID, run.ID}
 	if len(excluded) > 0 {
 		query += " and status not in (" + strings.TrimRight(strings.Repeat("?,", len(excluded)), ",") + ")"
@@ -350,7 +350,7 @@ func (d *WorkflowStoreImpl) OpenWorkflowApproval(approval db.WorkflowApproval) (
 		"insert into project__workflow_approval(project_id, workflow_run_id, workflow_node_id, status, created, resolved, resolved_by_user_id, deadline, prompt, eligible_permission, separation_of_duties, request_actor_user_id, timeout_outcome, decision_comment, decision_source, correlation_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		approval.ProjectID, approval.WorkflowRunID, approval.WorkflowNodeID, approval.Status, approval.Created,
 		approval.Resolved, approval.ResolvedByUserID, approval.Deadline, approval.Prompt, approval.EligiblePermission,
-		approval.SeparationOfDuties, approval.RequestActorUserID, approval.TimeoutOutcome, approval.DecisionComment,
+		sqlBool(approval.SeparationOfDuties), approval.RequestActorUserID, approval.TimeoutOutcome, approval.DecisionComment,
 		approval.DecisionSource, approval.CorrelationID,
 	)
 	if err != nil {
@@ -390,7 +390,7 @@ func (d *WorkflowStoreImpl) FinalizeWorkflowRunApprovalNode(projectID int, runID
 		return false, fmt.Errorf("workflow approval cannot finalize node as %s", status)
 	}
 	result, err := d.connection.Exec(
-		"update project__workflow_run_node set status=?, reason=?, result=?, end=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null",
+		"update project__workflow_run_node set status=?, reason=?, result=?, `end`=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null",
 		status, reason, resultJSON, at, projectID, runID, nodeID, db.WorkflowRunNodeApproval,
 	)
 	if err != nil {
@@ -486,7 +486,7 @@ func (d *WorkflowStoreImpl) FinalizeWorkflowRunNodeFenced(
 		return false, fmt.Errorf("workflow planner cannot finalize node as %s", status)
 	}
 	result, err := d.connection.Exec(
-		"update project__workflow_run_node set status=?, reason=?, result=?, end=?, progression_fencing_token=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status in (?, ?) and task_id is null and exists (select 1 from cluster__workflow_reconciliation where project_id=? and workflow_run_id=? and owner_boot_id=? and fencing_token=? and lease_expires_at>CURRENT_TIMESTAMP)",
+		"update project__workflow_run_node set status=?, reason=?, result=?, `end`=?, progression_fencing_token=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status in (?, ?) and task_id is null and exists (select 1 from cluster__workflow_reconciliation where project_id=? and workflow_run_id=? and owner_boot_id=? and fencing_token=? and lease_expires_at>CURRENT_TIMESTAMP)",
 		status, reason, resultJSON, at, lease.FencingToken,
 		lease.ProjectID, lease.WorkflowRunID, nodeID, db.WorkflowRunNodePending, db.WorkflowRunNodeQueued,
 		lease.ProjectID, lease.WorkflowRunID, lease.OwnerBootID, lease.FencingToken,
@@ -552,7 +552,7 @@ func (d *WorkflowStoreImpl) OpenWorkflowApprovalFenced(lease pro_interfaces.Work
 		"insert into project__workflow_approval(project_id, workflow_run_id, workflow_node_id, status, created, resolved, resolved_by_user_id, deadline, prompt, eligible_permission, separation_of_duties, request_actor_user_id, timeout_outcome, decision_comment, decision_source, correlation_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		approval.ProjectID, approval.WorkflowRunID, approval.WorkflowNodeID, approval.Status, approval.Created,
 		approval.Resolved, approval.ResolvedByUserID, approval.Deadline, approval.Prompt, approval.EligiblePermission,
-		approval.SeparationOfDuties, approval.RequestActorUserID, approval.TimeoutOutcome, approval.DecisionComment,
+		sqlBool(approval.SeparationOfDuties), approval.RequestActorUserID, approval.TimeoutOutcome, approval.DecisionComment,
 		approval.DecisionSource, approval.CorrelationID,
 	)
 	if err != nil {
@@ -576,7 +576,7 @@ func (d *WorkflowStoreImpl) FinalizeWorkflowRunApprovalNodeFenced(
 		return false, fmt.Errorf("workflow approval cannot finalize node as %s", status)
 	}
 	result, err := d.connection.Exec(
-		"update project__workflow_run_node set status=?, reason=?, result=?, end=?, progression_fencing_token=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null and exists (select 1 from cluster__workflow_reconciliation where project_id=? and workflow_run_id=? and owner_boot_id=? and fencing_token=? and lease_expires_at>CURRENT_TIMESTAMP)",
+		"update project__workflow_run_node set status=?, reason=?, result=?, `end`=?, progression_fencing_token=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null and exists (select 1 from cluster__workflow_reconciliation where project_id=? and workflow_run_id=? and owner_boot_id=? and fencing_token=? and lease_expires_at>CURRENT_TIMESTAMP)",
 		status, reason, resultJSON, at, lease.FencingToken,
 		lease.ProjectID, lease.WorkflowRunID, nodeID, db.WorkflowRunNodeApproval,
 		lease.ProjectID, lease.WorkflowRunID, lease.OwnerBootID, lease.FencingToken,
@@ -600,7 +600,7 @@ func (d *WorkflowStoreImpl) UpdateWorkflowRunStatusUnlessFenced(lease pro_interf
 	}
 	args = append(args, lease.ProjectID, lease.WorkflowRunID, lease.OwnerBootID, lease.FencingToken)
 	result, err := d.connection.Exec(
-		"update project__workflow_run set status=?, reason=?, start=?, end=?, root_task_id=? where project_id=? and id=? and status not in ("+strings.Join(placeholders, ",")+") and exists (select 1 from cluster__workflow_reconciliation where project_id=? and workflow_run_id=? and owner_boot_id=? and fencing_token=? and lease_expires_at>CURRENT_TIMESTAMP)",
+		"update project__workflow_run set status=?, reason=?, start=?, `end`=?, root_task_id=? where project_id=? and id=? and status not in ("+strings.Join(placeholders, ",")+") and exists (select 1 from cluster__workflow_reconciliation where project_id=? and workflow_run_id=? and owner_boot_id=? and fencing_token=? and lease_expires_at>CURRENT_TIMESTAMP)",
 		args...,
 	)
 	if err != nil {
@@ -645,7 +645,7 @@ func (d *WorkflowStoreImpl) UpdateWorkflowRunNodeFromTask(
 		end = at
 	}
 	result, err := d.connection.Exec(
-		"update project__workflow_run_node set status=?, reason=?, result=?, start=coalesce(start, ?), end=coalesce(end, ?) where project_id=? and workflow_run_id=? and workflow_node_id=? and task_id=? and status not in (?, ?, ?, ?, ?, ?)",
+		"update project__workflow_run_node set status=?, reason=?, result=?, start=coalesce(start, ?), `end`=coalesce(`end`, ?) where project_id=? and workflow_run_id=? and workflow_node_id=? and task_id=? and status not in (?, ?, ?, ?, ?, ?)",
 		status, reason, resultJSON, start, end, projectID, runID, nodeID, taskID,
 		db.WorkflowRunNodeSucceeded, db.WorkflowRunNodeFailed, db.WorkflowRunNodeStopped, db.WorkflowRunNodeCanceled, db.WorkflowRunNodeBlocked, db.WorkflowRunNodeSkipped,
 	)
@@ -669,7 +669,7 @@ func (d *WorkflowStoreImpl) FinalizeWorkflowRunNode(
 		return false, fmt.Errorf("workflow planner cannot finalize node as %s", status)
 	}
 	result, err := d.connection.Exec(
-		"update project__workflow_run_node set status=?, reason=?, result=?, end=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status in (?, ?) and task_id is null",
+		"update project__workflow_run_node set status=?, reason=?, result=?, `end`=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status in (?, ?) and task_id is null",
 		status, reason, resultJSON, at, projectID, runID, nodeID,
 		db.WorkflowRunNodePending, db.WorkflowRunNodeQueued,
 	)
@@ -682,7 +682,7 @@ func (d *WorkflowStoreImpl) FinalizeWorkflowRunNode(
 
 func (d *WorkflowStoreImpl) BlockWorkflowRunNode(projectID int, runID int, nodeID int, reason string, at time.Time) (bool, error) {
 	result, err := d.connection.Exec(
-		"update project__workflow_run_node set status=?, reason=?, end=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status in (?, ?) and task_id is null",
+		"update project__workflow_run_node set status=?, reason=?, `end`=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status in (?, ?) and task_id is null",
 		db.WorkflowRunNodeBlocked, reason, at, projectID, runID, nodeID,
 		db.WorkflowRunNodePending, db.WorkflowRunNodeQueued,
 	)

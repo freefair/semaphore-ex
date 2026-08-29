@@ -44,6 +44,18 @@ func (p *TaskPool) writeStructuredDebug(record pro_interfaces.DebugLogRecord) {
 	}
 }
 
+// discardSupersededTask removes a stale dispatcher's local bookkeeping after
+// another server won the SQL start claim. It deliberately does not release the
+// task-control lifecycle: that lifecycle belongs to the winning assignment.
+func (p *TaskPool) discardSupersededTask(t *TaskRunner) {
+	p.state.RemoveActive(t.Task.ProjectID, t.Task.ID)
+	p.state.DeleteRunning(t.Task.ID)
+	p.state.DeleteClaim(t.Task.ID)
+	if t.Alias != "" {
+		p.state.DeleteAlias(t.Alias)
+	}
+}
+
 // AddWorkflowTask creates a normal task while freezing the template selected
 // by the workflow run snapshot. The rest of task validation, persistence,
 // placement, queueing, logging, and completion remains the standard TaskPool

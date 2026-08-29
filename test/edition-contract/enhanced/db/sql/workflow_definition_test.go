@@ -63,6 +63,11 @@ func TestWorkflowDefinitionRoundTripPreservesGraphIDsAndLayout(t *testing.T) {
 	assert.Equal(t, edgeID, reloaded.Edges[0].ID)
 }
 
+func TestSQLBoolUsesPortableIntegerRepresentation(t *testing.T) {
+	assert.Equal(t, 0, sqlBool(false))
+	assert.Equal(t, 1, sqlBool(true))
+}
+
 func TestWorkflowDefinitionRoundTripPreservesParametersAndOverridePolicy(t *testing.T) {
 	store, repository, projectID := workflowRepositoryFixture(t)
 	defer store.Close()

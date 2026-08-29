@@ -22,6 +22,9 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG CORE_REVISION
 ARG ENHANCED_REVISION
+ARG SOURCE_DATE_EPOCH
+ARG SOURCE_TAG
+ARG SOURCE_SHA
 
 RUN if [ -n "$APP_BUILD_TYPE" ]; then \
       test -f pro_impl/go.mod && \
@@ -30,9 +33,31 @@ RUN if [ -n "$APP_BUILD_TYPE" ]; then \
 
 RUN --mount=type=cache,target=/go/pkg \
     --mount=type=cache,target=/root/.cache/go-build \
-    task deps:be APP_BUILD_TYPE=${APP_BUILD_TYPE} && \
-    task deps:fe && \
-    task build GOOS=${TARGETOS} GOARCH=${TARGETARCH} APP_BUILD_TYPE=${APP_BUILD_TYPE} CORE_REVISION=${CORE_REVISION} ENHANCED_REVISION=${ENHANCED_REVISION}
+    core_revision="${CORE_REVISION:-$(git rev-parse HEAD)}" && \
+    source_date_epoch="${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct HEAD)}" && \
+    source_tag="${SOURCE_TAG:-$(git name-rev --name-only --tags --no-undefined HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD)}" && \
+    source_sha="${SOURCE_SHA:-$(git log --pretty=format:%h -n 1)}" && \
+    task deps:be \
+      APP_BUILD_TYPE="${APP_BUILD_TYPE}" \
+      CORE_REVISION="${core_revision}" \
+      ENHANCED_REVISION="${ENHANCED_REVISION}" \
+      SOURCE_DATE_EPOCH="${source_date_epoch}" && \
+    task deps:fe \
+      CORE_REVISION="${core_revision}" \
+      SOURCE_DATE_EPOCH="${source_date_epoch}" && \
+    task build:fe \
+      APP_BUILD_TYPE="${APP_BUILD_TYPE}" \
+      CORE_REVISION="${core_revision}" \
+      SOURCE_DATE_EPOCH="${source_date_epoch}" && \
+    env SEMAPHORE_SOURCE_TAG="${source_tag}" SEMAPHORE_SOURCE_SHA="${source_sha}" task build:be \
+      GOOS="${TARGETOS}" \
+      GOARCH="${TARGETARCH}" \
+      APP_BUILD_TYPE="${APP_BUILD_TYPE}" \
+      CORE_REVISION="${core_revision}" \
+      ENHANCED_REVISION="${ENHANCED_REVISION}" \
+      SOURCE_DATE_EPOCH="${source_date_epoch}" \
+      TAG="${source_tag}" \
+      SHA="${source_sha}"
 
 # renovate: datasource=github-releases depName=opentofu/opentofu
 ENV OPENTOFU_VERSION=1.11.0

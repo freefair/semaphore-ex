@@ -17,12 +17,16 @@ type workflowTriggerScheduler struct {
 	repository db.WorkflowTriggerManager
 	service    pro_interfaces.WorkflowTriggerService
 
-	mutex  sync.Mutex
-	cancel context.CancelFunc
-	done   chan struct{}
+	mutex    sync.Mutex
+	changed  *sync.Cond
+	cancel   context.CancelFunc
+	done     chan struct{}
+	draining bool
+	inflight int
 }
 
 var _ pro_interfaces.WorkflowTriggerScheduler = (*workflowTriggerScheduler)(nil)
+var _ pro_interfaces.ClusterDrainer = (*workflowTriggerScheduler)(nil)
 
 func NewWorkflowTriggerScheduler(
 	repository db.WorkflowTriggerManager,
@@ -31,7 +35,9 @@ func NewWorkflowTriggerScheduler(
 	if repository == nil || service == nil {
 		return nil
 	}
-	return &workflowTriggerScheduler{repository: repository, service: service}
+	scheduler := &workflowTriggerScheduler{repository: repository, service: service}
+	scheduler.changed = sync.NewCond(&scheduler.mutex)
+	return scheduler
 }
 
 func (s *workflowTriggerScheduler) Start() {
@@ -76,6 +82,10 @@ func (s *workflowTriggerScheduler) run(ctx context.Context, done chan<- struct{}
 }
 
 func (s *workflowTriggerScheduler) RunOnce(ctx context.Context, at time.Time) {
+	if !s.beginRun() {
+		return
+	}
+	defer s.endRun()
 	if _, err := s.repository.DeleteExpiredWorkflowTriggerInvocations(at.UTC(), db.MaxWorkflowTriggerHistoryPage); err != nil {
 		log.WithError(err).Warn("failed to prune workflow trigger invocation history")
 	}
@@ -98,4 +108,38 @@ func (s *workflowTriggerScheduler) RunOnce(ctx context.Context, at time.Time) {
 			log.WithError(fireErr).WithField("workflow_trigger_id", trigger.ID).Error("scheduled workflow trigger failed")
 		}
 	}
+}
+
+func (s *workflowTriggerScheduler) Drain() error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.draining = true
+	for s.inflight > 0 {
+		s.changed.Wait()
+	}
+	return nil
+}
+
+func (s *workflowTriggerScheduler) Resume() {
+	s.mutex.Lock()
+	s.draining = false
+	s.changed.Broadcast()
+	s.mutex.Unlock()
+}
+
+func (s *workflowTriggerScheduler) beginRun() bool {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if s.draining {
+		return false
+	}
+	s.inflight++
+	return true
+}
+
+func (s *workflowTriggerScheduler) endRun() {
+	s.mutex.Lock()
+	s.inflight--
+	s.changed.Broadcast()
+	s.mutex.Unlock()
 }

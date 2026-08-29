@@ -2,6 +2,7 @@ package ha
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -172,6 +173,50 @@ func TestManagedClusterInspectorKeepsSQLMembershipVisibleWhenRedisIsUnavailable(
 	require.Len(t, nodes, 1)
 	assert.False(t, nodes[0].Alive)
 	assert.Equal(t, pro_interfaces.ClusterNodeStale, nodes[0].CompatibilityState)
+	readiness := inspector.Readiness()
+	assert.True(t, readiness.Ready)
+	assert.False(t, readiness.AcceptingCoordinatedWork)
+	assert.Equal(t, pro_interfaces.ClusterServiceDegradedLiveEvents, readiness.State)
+}
+
+func TestManagedClusterInspectorReadinessFailsClosedForDrainEditionAndDatabase(t *testing.T) {
+	identity := pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-a"}
+	requirements := pro_interfaces.ClusterCompatibilityRequirements{
+		Edition: "enhanced", ProtocolVersion: 1, SchemaVersion: "2.20.23",
+	}
+	for name, testCase := range map[string]struct {
+		repository    *clusterNodeRepositoryFake
+		expectedState pro_interfaces.ClusterServiceReadinessState
+	}{
+		"draining": {
+			repository: &clusterNodeRepositoryFake{nodes: []pro_interfaces.ClusterNodeRegistration{{
+				ClusterNodeIdentity: identity, Edition: "enhanced", ProtocolVersion: 1,
+				SchemaVersion: "2.20.23", Draining: true,
+			}}},
+			expectedState: pro_interfaces.ClusterServiceReadinessState(pro_interfaces.ClusterNodeDraining),
+		},
+		"edition": {
+			repository: &clusterNodeRepositoryFake{nodes: []pro_interfaces.ClusterNodeRegistration{{
+				ClusterNodeIdentity: identity, Edition: "community", ProtocolVersion: 1,
+				SchemaVersion: "2.20.23",
+			}}},
+			expectedState: pro_interfaces.ClusterServiceReadinessState(pro_interfaces.ClusterNodeIncompatibleEdition),
+		},
+		"database": {
+			repository:    &clusterNodeRepositoryFake{listErr: errors.New("database unavailable")},
+			expectedState: pro_interfaces.ClusterServiceDatabaseUnavailable,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			inspector := NewManagedClusterInspector(testCase.repository,
+				NewRedisHeartbeatStore(&heartbeatClientFake{exists: true}, "semaphore:cluster:node"),
+				requirements, identity)
+			readiness := inspector.Readiness()
+			assert.False(t, readiness.Ready)
+			assert.False(t, readiness.AcceptingCoordinatedWork)
+			assert.Equal(t, testCase.expectedState, readiness.State)
+		})
+	}
 }
 
 type unavailableHeartbeatStore struct{}
@@ -217,7 +262,8 @@ func (f *heartbeatClientFake) Delete(_ context.Context, key string) error {
 }
 
 type clusterNodeRepositoryFake struct {
-	nodes []pro_interfaces.ClusterNodeRegistration
+	nodes   []pro_interfaces.ClusterNodeRegistration
+	listErr error
 }
 
 func (f *clusterNodeRepositoryFake) UpsertClusterNode(node pro_interfaces.ClusterNodeRegistration) error {
@@ -232,6 +278,9 @@ func (f *clusterNodeRepositoryFake) UpsertClusterNode(node pro_interfaces.Cluste
 }
 
 func (f *clusterNodeRepositoryFake) ListClusterNodes() ([]pro_interfaces.ClusterNodeRegistration, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	return append([]pro_interfaces.ClusterNodeRegistration{}, f.nodes...), nil
 }
 

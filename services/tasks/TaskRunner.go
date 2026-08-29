@@ -167,8 +167,16 @@ func (t *TaskRunner) run() {
 	// finalized asynchronously when the runner reports completion (see
 	// TaskPool.FinalizeRemoteTask). In that case run() must not finalize it here.
 	handedOff := false
+	// superseded means another server won the SQL-authoritative waiting-to-starting
+	// transition. This stale queue entry must release only its local pool state;
+	// it must not finalize or rewrite the winning execution.
+	superseded := false
 
 	defer func() {
+		if superseded {
+			t.pool.discardSupersededTask(t)
+			return
+		}
 		if requeued {
 			// Task is being re-queued, don't mark as finished
 			log.Info("Task " + strconv.Itoa(t.Task.ID) + " re-queued (waiting for available runner)")
@@ -202,12 +210,32 @@ func (t *TaskRunner) run() {
 		return
 	}
 
-	t.SetStatus(task_logger.TaskStartingStatus)
+	startedTask, started, err := t.pool.store.ClaimTaskStart(
+		t.Task.ProjectID, t.Task.ID, t.Task.AssignmentGeneration,
+	)
+	if err != nil {
+		log.WithError(err).WithFields(log.Fields{
+			"task_id": t.Task.ID,
+			"context": "task_dispatch",
+		}).Error("Failed to claim queued task start")
+		t.pool.state.Enqueue(t)
+		requeued = true
+		return
+	}
+	if !started {
+		t.pool.refreshTaskStatusFromDB(t)
+		superseded = true
+		return
+	}
+	oldStatus := t.Task.Status
+	applyDBPersistedTaskSnapshot(&t.Task, startedTask)
+	t.pool.state.UpdateRuntimeFields(t)
+	t.publishStatus()
+	t.afterStatusChange(oldStatus, t.Task.Status)
 	t.createTaskEvent()
 
 	t.Log("Started task #" + strconv.Itoa(t.Task.ID) + " of template '" + t.Template.Name + "'\n")
 
-	var err error
 	var username string
 	var incomingVersion *string
 

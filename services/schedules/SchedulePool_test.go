@@ -131,7 +131,7 @@ func setupTestSchedulePool(t *testing.T) (*SchedulePool, db.Store) {
 		pool.Destroy()
 	})
 
-	return &pool, store
+	return pool, store
 }
 
 // TestSetDeduplicator verifies that SetDeduplicator properly configures the deduplicator

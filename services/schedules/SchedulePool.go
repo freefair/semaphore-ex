@@ -389,8 +389,8 @@ func CreateSchedulePool(
 	taskPool *tasks.TaskPool,
 	keyInstaller db_lib.AccessKeyInstaller,
 	encryptionService server.AccessKeyEncryptionService,
-) SchedulePool {
-	pool := SchedulePool{
+) *SchedulePool {
+	pool := &SchedulePool{
 		store:             store,
 		taskPool:          taskPool,
 		keyInstaller:      keyInstaller,

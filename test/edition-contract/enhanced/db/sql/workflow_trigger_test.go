@@ -71,6 +71,10 @@ func TestWorkflowTriggerRepositoryClaimsExternalAndScheduledInvocationsOnce(t *t
 		Created: now, Updated: now,
 	})
 	require.NoError(t, err)
+	activeSchedules, err := repository.GetActiveWorkflowScheduleTriggers()
+	require.NoError(t, err)
+	require.Len(t, activeSchedules, 1)
+	assert.Equal(t, scheduleTrigger.ID, activeSchedules[0].ID)
 	occurrence := db.WorkflowTriggerScheduleOccurrenceIdentity(scheduleTrigger.ID, scheduleTrigger.Revision, workflow.Revision, now)
 	scheduled := repositoryInvocation(t, scheduleTrigger, workflow, now)
 	scheduled.OccurrenceIdentity = &occurrence

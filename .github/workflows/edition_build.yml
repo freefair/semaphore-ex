@@ -137,6 +137,52 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  enhanced-ha-resilience:
+    name: Enhanced HA resilience contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout core
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            go.sum
+            test/edition-contract/enhanced/go.sum
+
+      - name: Verify HA harness contracts
+        run: go test ./test/ha-resilience/... -count=1
+
+      - name: Build Clean-room Enhanced HA images
+        run: ./test/ha-resilience/build-clean-room-images.sh
+
+      - name: Run required Enhanced HA fault gate
+        env:
+          SEMAPHORE_HA_SERVER_A_IMAGE: semaphore-enhanced-server:ha-skew-old
+          SEMAPHORE_HA_SERVER_B_IMAGE: semaphore-enhanced-server:ha-candidate
+          SEMAPHORE_HA_REPLACEMENT_IMAGE: semaphore-enhanced-server:ha-candidate
+          SEMAPHORE_HA_RUNNER_IMAGE: semaphore-enhanced-server:ha-candidate
+        run: ./test/ha-resilience/run.sh --report dist/ha-resilience/report.json
+
+      - name: Validate HA result
+        if: always()
+        run: jq --exit-status '.result == "passed"' dist/ha-resilience/report.json
+
+      - name: Upload Enhanced HA evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: enhanced-ha-resilience-${{ github.sha }}
+          path: dist/ha-resilience/report.json
+          if-no-files-found: error
+          retention-days: 14
+
   enhanced:
     name: Enhanced artifacts
     if: >-

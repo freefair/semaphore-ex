@@ -12,6 +12,13 @@ import (
 	"github.com/semaphoreui/semaphore/util"
 )
 
+func sqlBool(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
 func decodeWorkflowParameterDefinitions(workflow *db.WorkflowTemplate) error {
 	if workflow.ParameterDefinitionsJSON == "" {
 		workflow.ParameterDefinitionsJSON = "[]"
@@ -285,7 +292,7 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 			if _, err := tx.Exec(d.connection.PrepareQuery(
 				"update project__workflow_node set template_id=?, kind=?, convergence_mode=?, join_mode=?, approval_timeout=?, approval_message=?, approval_permission=?, approval_timeout_outcome=?, approval_separation_of_duties=?, task_params_id=?, note=?, position_x=?, position_y=?, display_name=?, override_policy=? where workflow_template_id=? and id=?"),
 				node.TemplateID, node.Kind, node.ConvergenceMode, node.JoinMode, node.ApprovalTimeout, node.ApprovalMessage,
-				node.ApprovalPermission, node.ApprovalTimeoutOutcome, node.ApprovalSeparationOfDuties,
+				node.ApprovalPermission, node.ApprovalTimeoutOutcome, sqlBool(node.ApprovalSeparationOfDuties),
 				node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, node.OverridePolicyJSON,
 				workflow.ID, clientID,
 			); err != nil {
@@ -307,7 +314,7 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 		newID, err := d.insertTx(tx,
 			"insert into project__workflow_node(workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, approval_permission, approval_timeout_outcome, approval_separation_of_duties, task_params_id, note, position_x, position_y, display_name, override_policy) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			workflow.ID, node.TemplateID, node.Kind, node.ConvergenceMode, node.JoinMode, node.ApprovalTimeout,
-			node.ApprovalMessage, node.ApprovalPermission, node.ApprovalTimeoutOutcome, node.ApprovalSeparationOfDuties,
+			node.ApprovalMessage, node.ApprovalPermission, node.ApprovalTimeoutOutcome, sqlBool(node.ApprovalSeparationOfDuties),
 			node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, node.OverridePolicyJSON,
 		)
 		if err != nil {

@@ -37,10 +37,11 @@ const (
 //     failed. A runner that reconnects within this window kept its in-memory
 //     job pool and simply continues; nothing is failed.
 //
-// A restarted runner (started_at newer than the task's start) provably lost
-// its job pool, so its running task is failed immediately — there is nothing
-// to wait for. Its starting tasks self-heal: the restarted runner re-pulls
-// them from NewJobs.
+// A runner process that started after the current assignment provably lost its
+// job pool, so its running task is failed immediately — there is nothing to
+// wait for. The generation-specific assignment time takes precedence over the
+// task's original start time after a safe HA requeue. Starting tasks self-heal:
+// the restarted runner re-pulls them from NewJobs.
 func DecideRunnerTaskAction(
 	status task_logger.TaskStatus,
 	taskStart *time.Time,
@@ -70,8 +71,12 @@ func DecideRunnerTaskAction(
 		return RunnerTaskFail, "runner no longer exists"
 	}
 
-	if (running || canceling) && runner.StartedAt != nil && taskStart != nil &&
-		runner.StartedAt.After(*taskStart) {
+	assignmentStart := taskStart
+	if runnerAssignedAt != nil {
+		assignmentStart = runnerAssignedAt
+	}
+	if (running || canceling) && runner.StartedAt != nil && assignmentStart != nil &&
+		runner.StartedAt.After(*assignmentStart) {
 		if canceling {
 			return RunnerTaskStop, "runner restarted during cancellation"
 		}
