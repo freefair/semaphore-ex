@@ -31,6 +31,7 @@ type workflowRunDetails struct {
 	Workflow  workflowRunDefinitionView `json:"workflow"`
 	Templates []workflowRunTemplateView `json:"templates"`
 	Nodes     []workflowRunNodeDetails  `json:"nodes"`
+	Approvals []db.WorkflowApproval     `json:"approvals"`
 }
 
 type workflowRunNodeDetails struct {
@@ -74,20 +75,23 @@ type workflowRunDefinitionView struct {
 }
 
 type workflowRunNodeView struct {
-	ID              int                              `json:"id"`
-	TemplateID      int                              `json:"template_id,omitempty"`
-	DisplayName     string                           `json:"display_name,omitempty"`
-	Kind            db.WorkflowNodeKind              `json:"kind,omitempty"`
-	ConvergenceMode db.WorkflowConvergenceMode       `json:"convergence_mode,omitempty"`
-	JoinMode        db.WorkflowJoinMode              `json:"join_mode,omitempty"`
-	ApprovalTimeout *int                             `json:"approval_timeout,omitempty"`
-	ApprovalMessage *string                          `json:"approval_message,omitempty"`
-	Note            *string                          `json:"note,omitempty"`
-	PositionX       int                              `json:"position_x"`
-	PositionY       int                              `json:"position_y"`
-	ArtifactOutputs []db.WorkflowArtifactDeclaration `json:"artifact_outputs,omitempty"`
-	ArtifactInputs  []db.WorkflowArtifactReference   `json:"artifact_inputs,omitempty"`
-	OverridePolicy  db.WorkflowNodeOverridePolicy    `json:"override_policy,omitempty"`
+	ID                         int                               `json:"id"`
+	TemplateID                 int                               `json:"template_id,omitempty"`
+	DisplayName                string                            `json:"display_name,omitempty"`
+	Kind                       db.WorkflowNodeKind               `json:"kind,omitempty"`
+	ConvergenceMode            db.WorkflowConvergenceMode        `json:"convergence_mode,omitempty"`
+	JoinMode                   db.WorkflowJoinMode               `json:"join_mode,omitempty"`
+	ApprovalTimeout            *int                              `json:"approval_timeout,omitempty"`
+	ApprovalMessage            *string                           `json:"approval_message,omitempty"`
+	ApprovalPermission         db.ProjectUserPermission          `json:"approval_permission,omitempty"`
+	ApprovalTimeoutOutcome     db.WorkflowApprovalTimeoutOutcome `json:"approval_timeout_outcome,omitempty"`
+	ApprovalSeparationOfDuties bool                              `json:"approval_separation_of_duties,omitempty"`
+	Note                       *string                           `json:"note,omitempty"`
+	PositionX                  int                               `json:"position_x"`
+	PositionY                  int                               `json:"position_y"`
+	ArtifactOutputs            []db.WorkflowArtifactDeclaration  `json:"artifact_outputs,omitempty"`
+	ArtifactInputs             []db.WorkflowArtifactReference    `json:"artifact_inputs,omitempty"`
+	OverridePolicy             db.WorkflowNodeOverridePolicy     `json:"override_policy,omitempty"`
 }
 
 type workflowRunEdgeView struct {
@@ -338,6 +342,10 @@ func (c *workflowController) workflowRunDetails(run db.WorkflowRun) (workflowRun
 	if err != nil {
 		return workflowRunDetails{}, err
 	}
+	approvals, err := c.workflowManager.GetWorkflowApprovals(run.ProjectID, run.ID)
+	if err != nil {
+		return workflowRunDetails{}, err
+	}
 	tasksByNode := make(map[int]db.TaskWithTpl, len(tasks))
 	for _, task := range tasks {
 		if task.WorkflowNodeID != nil {
@@ -379,6 +387,7 @@ func (c *workflowController) workflowRunDetails(run db.WorkflowRun) (workflowRun
 		Workflow:  newWorkflowRunDefinitionView(run.DefinitionSnapshot),
 		Templates: templates,
 		Nodes:     nodes,
+		Approvals: approvals,
 	}, nil
 }
 
@@ -431,20 +440,23 @@ func newWorkflowRunDefinitionView(workflow db.WorkflowTemplate) workflowRunDefin
 
 func newWorkflowRunNodeView(node db.WorkflowNode) workflowRunNodeView {
 	return workflowRunNodeView{
-		ID:              node.ID,
-		TemplateID:      node.TemplateID,
-		DisplayName:     node.DisplayName,
-		Kind:            node.Kind,
-		ConvergenceMode: node.ConvergenceMode,
-		JoinMode:        node.JoinMode,
-		ApprovalTimeout: node.ApprovalTimeout,
-		ApprovalMessage: node.ApprovalMessage,
-		Note:            node.Note,
-		PositionX:       node.PositionX,
-		PositionY:       node.PositionY,
-		ArtifactOutputs: node.ArtifactOutputs,
-		ArtifactInputs:  node.ArtifactInputs,
-		OverridePolicy:  node.OverridePolicy,
+		ID:                         node.ID,
+		TemplateID:                 node.TemplateID,
+		DisplayName:                node.DisplayName,
+		Kind:                       node.Kind,
+		ConvergenceMode:            node.ConvergenceMode,
+		JoinMode:                   node.JoinMode,
+		ApprovalTimeout:            node.ApprovalTimeout,
+		ApprovalMessage:            node.ApprovalMessage,
+		ApprovalPermission:         node.ApprovalPermission,
+		ApprovalTimeoutOutcome:     node.ApprovalTimeoutOutcome,
+		ApprovalSeparationOfDuties: node.ApprovalSeparationOfDuties,
+		Note:                       node.Note,
+		PositionX:                  node.PositionX,
+		PositionY:                  node.PositionY,
+		ArtifactOutputs:            node.ArtifactOutputs,
+		ArtifactInputs:             node.ArtifactInputs,
+		OverridePolicy:             node.OverridePolicy,
 	}
 }
 
@@ -459,10 +471,50 @@ func (c *workflowController) GetWorkflowRunArtifacts(w http.ResponseWriter, r *h
 	helpers.WriteJSON(w, http.StatusOK, artifacts)
 }
 
-func (c *workflowController) GetWorkflowApprovals(w http.ResponseWriter, _ *http.Request) {
-	helpers.WriteJSON(w, http.StatusOK, []struct{}{})
+func (c *workflowController) GetWorkflowApprovals(w http.ResponseWriter, r *http.Request) {
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	run := helpers.GetFromContext(r, "workflow_run").(db.WorkflowRun)
+	approvals, err := c.workflowManager.GetWorkflowApprovals(project.ID, run.ID)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, approvals)
 }
 
-func (c *workflowController) ResolveWorkflowApproval(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusNotFound)
+func (c *workflowController) GetWorkflowApprovalInbox(w http.ResponseWriter, r *http.Request) {
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	approvals, err := c.workflowService.GetWorkflowApprovalInbox(project.ID, helpers.UserFromContext(r))
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, approvals)
+}
+
+func (c *workflowController) ResolveWorkflowApproval(w http.ResponseWriter, r *http.Request) {
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
+	run := helpers.GetFromContext(r, "workflow_run").(db.WorkflowRun)
+	nodeID, err := helpers.GetIntParam("node_id", w, r)
+	if err != nil {
+		return
+	}
+	var input db.WorkflowApprovalDecision
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, workflowRunBodyLimit))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&input); err != nil {
+		helpers.WriteError(w, common_errors.NewValidationError("workflow approval decision is invalid"))
+		return
+	}
+	if err = decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		helpers.WriteError(w, common_errors.NewValidationError("workflow approval decision is invalid"))
+		return
+	}
+	approval, err := c.workflowService.ResolveWorkflowApproval(project.ID, workflow.ID, run.ID, nodeID, input, helpers.UserFromContext(r))
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, approval)
 }

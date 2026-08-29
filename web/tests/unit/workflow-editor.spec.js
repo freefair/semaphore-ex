@@ -50,6 +50,9 @@ describe('workflow editor authoring lifecycle', () => {
         {
           id: 2, kind: 'task', template_id: 8, join_mode: 'all-complete',
         },
+        {
+          id: 3, kind: 'approval', display_name: 'Review',
+        },
       ],
       edges: [{
         id: 3,
@@ -65,6 +68,11 @@ describe('workflow editor authoring lifecycle', () => {
     expect(prepared.nodes[0].override_policy).to.deep.equal({});
     expect(prepared.nodes[0].join_mode).to.equal('any-successful');
     expect(prepared.nodes[1].join_mode).to.equal('all-complete');
+    expect(prepared.nodes[2]).to.include({
+      approval_permission: 1,
+      approval_timeout_outcome: 'reject',
+      approval_separation_of_duties: false,
+    });
     expect(prepared.edges[0].condition_expression).to.equal('result.successful');
   });
 

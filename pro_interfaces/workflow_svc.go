@@ -17,10 +17,19 @@ type WorkflowService interface {
 	// StopWorkflowRun stops a non-finished run: it signals every in-flight task
 	// of the run to stop and marks the run as stopped (terminal).
 	StopWorkflowRun(projectID int, runID int, user *db.User) (db.WorkflowRun, error)
-	ResolveWorkflowApproval(projectID int, workflowID int, runID int, nodeID int, status db.WorkflowApprovalStatus, user *db.User) (db.WorkflowApproval, error)
+	GetWorkflowApprovalInbox(projectID int, user *db.User) ([]db.WorkflowApproval, error)
+	ResolveWorkflowApproval(projectID int, workflowID int, runID int, nodeID int, decision db.WorkflowApprovalDecision, user *db.User) (db.WorkflowApproval, error)
 	HandleWorkflowTaskOutputs(task db.Task, outputs map[string]json.RawMessage) error
 	HandleWorkflowTaskCompletion(task db.Task) error
 	GetWorkflowRunArtifacts(projectID int, runID int, currentTaskID *int) ([]db.WorkflowArtifactMetadata, error)
+}
+
+// WorkflowApprovalIdentityStore resolves the current project role used to
+// authorize an approval decision. The request itself snapshots the required
+// permission, so later definition edits cannot weaken the pending request.
+type WorkflowApprovalIdentityStore interface {
+	GetProjectUser(projectID int, userID int) (db.ProjectUser, error)
+	GetProjectOrGlobalRoleBySlug(projectID int, slug string) (db.Role, error)
 }
 
 // WorkflowTaskEnqueuer is the slice of the task pool the workflow service needs

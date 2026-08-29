@@ -70,6 +70,257 @@ func TestWorkflowServiceRunsTwoNodesInOrderFromImmutableSnapshot(t *testing.T) {
 	assert.Len(t, fixture.enqueuer.tasks, 2)
 }
 
+func TestWorkflowApprovalPausesThenResumesOnlyForEligibleNonRequester(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	require.NoError(t, ensureWorkflowApprovalMember(fixture.store, fixture.projectID, fixture.user.ID, db.ProjectOwner))
+	approver, err := fixture.store.CreateUserWithoutPassword(db.User{Username: "workflow-approver", Name: "Workflow Approver", Email: "workflow-approver@example.invalid"})
+	require.NoError(t, err)
+	require.NoError(t, ensureWorkflowApprovalMember(fixture.store, fixture.projectID, approver.ID, db.ProjectManager))
+
+	workflow, err := fixture.repository.CreateWorkflowTemplate(db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Approval", DefinitionVersion: db.WorkflowDefinitionVersion,
+		Nodes: []db.WorkflowNode{
+			{ID: -1, TemplateID: fixture.first.ID, DisplayName: "Prepare"},
+			{ID: -2, Kind: db.WorkflowNodeApprovalKind, DisplayName: "Approve", ApprovalSeparationOfDuties: true},
+			{ID: -3, TemplateID: fixture.second.ID, DisplayName: "Deploy"},
+		},
+		Edges: []db.WorkflowEdge{
+			{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess},
+			{ID: -2, SourceNodeID: -2, DestinationNodeID: -3, Condition: db.WorkflowEdgeOnSuccess},
+		},
+	})
+	require.NoError(t, err)
+
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "approval-pause")
+	require.NoError(t, err)
+	require.Len(t, fixture.enqueuer.tasks, 1)
+	root := finishWorkflowTask(t, fixture.store, run.Nodes[0], task_logger.TaskSuccessStatus, "")
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(root))
+
+	paused, err := fixture.repository.GetWorkflowRunByID(fixture.projectID, run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowRunApproval, paused.Status)
+	require.Len(t, fixture.enqueuer.tasks, 1, "downstream task must not exist before approval")
+	approvalNodeID := workflow.Nodes[1].ID
+	pending, err := fixture.repository.GetWorkflowApproval(fixture.projectID, run.ID, approvalNodeID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowApprovalPending, pending.Status)
+	assert.Equal(t, fixture.user.ID, pending.RequestActorUserID)
+	assert.True(t, pending.SeparationOfDuties)
+
+	_, err = fixture.service.ResolveWorkflowApproval(fixture.projectID, workflow.ID, run.ID, approvalNodeID, db.WorkflowApprovalDecision{
+		Status: db.WorkflowApprovalApproved, Source: db.WorkflowApprovalDecisionSourceUser,
+	}, &fixture.user)
+	require.ErrorContains(t, err, "cannot be self-approved")
+
+	resolved, err := fixture.service.ResolveWorkflowApproval(fixture.projectID, workflow.ID, run.ID, approvalNodeID, db.WorkflowApprovalDecision{
+		Status: db.WorkflowApprovalApproved, Comment: "Reviewed", Source: db.WorkflowApprovalDecisionSourceUser,
+	}, &approver)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowApprovalApproved, resolved.Status)
+	assert.Equal(t, approver.ID, *resolved.ResolvedByUserID)
+	assert.Equal(t, "Reviewed", resolved.DecisionComment)
+	assert.Len(t, fixture.enqueuer.tasks, 2, "approval must permit the downstream task")
+}
+
+func TestWorkflowApprovalInboxOnlyReturnsPendingRequestsTheActorMayResolve(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	require.NoError(t, ensureWorkflowApprovalMember(fixture.store, fixture.projectID, fixture.user.ID, db.ProjectOwner))
+	approver, err := fixture.store.CreateUserWithoutPassword(db.User{Username: "approval-inbox-user", Name: "Approval Inbox User", Email: "approval-inbox@example.invalid"})
+	require.NoError(t, err)
+	require.NoError(t, ensureWorkflowApprovalMember(fixture.store, fixture.projectID, approver.ID, db.ProjectManager))
+	workflow, err := fixture.repository.CreateWorkflowTemplate(db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Inbox", DefinitionVersion: db.WorkflowDefinitionVersion,
+		Nodes: []db.WorkflowNode{
+			{ID: -1, TemplateID: fixture.first.ID},
+			{ID: -2, Kind: db.WorkflowNodeApprovalKind, ApprovalSeparationOfDuties: true},
+		},
+		Edges: []db.WorkflowEdge{{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess}},
+	})
+	require.NoError(t, err)
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "approval-inbox")
+	require.NoError(t, err)
+	root := finishWorkflowTask(t, fixture.store, run.Nodes[0], task_logger.TaskSuccessStatus, "")
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(root))
+
+	requesterInbox, err := fixture.service.GetWorkflowApprovalInbox(fixture.projectID, &fixture.user)
+	require.NoError(t, err)
+	assert.Empty(t, requesterInbox)
+	approverInbox, err := fixture.service.GetWorkflowApprovalInbox(fixture.projectID, &approver)
+	require.NoError(t, err)
+	require.Len(t, approverInbox, 1)
+	assert.Equal(t, run.ID, approverInbox[0].WorkflowRunID)
+	assert.Equal(t, workflow.ID, approverInbox[0].WorkflowTemplateID)
+	assert.Equal(t, db.WorkflowApprovalPending, approverInbox[0].Status)
+}
+
+func TestWorkflowApprovalTimeoutExpiresAndBlocksDownstreamTask(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	require.NoError(t, ensureWorkflowApprovalMember(fixture.store, fixture.projectID, fixture.user.ID, db.ProjectOwner))
+	timeout := 60
+	workflow, err := fixture.repository.CreateWorkflowTemplate(db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Approval timeout", DefinitionVersion: db.WorkflowDefinitionVersion,
+		Nodes: []db.WorkflowNode{
+			{ID: -1, TemplateID: fixture.first.ID},
+			{ID: -2, Kind: db.WorkflowNodeApprovalKind, ApprovalTimeout: &timeout, ApprovalTimeoutOutcome: db.WorkflowApprovalTimeoutReject},
+			{ID: -3, TemplateID: fixture.second.ID},
+		},
+		Edges: []db.WorkflowEdge{
+			{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess},
+			{ID: -2, SourceNodeID: -2, DestinationNodeID: -3, Condition: db.WorkflowEdgeOnSuccess},
+		},
+	})
+	require.NoError(t, err)
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "approval-timeout")
+	require.NoError(t, err)
+	root := finishWorkflowTask(t, fixture.store, run.Nodes[0], task_logger.TaskSuccessStatus, "")
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(root))
+	approvalNodeID := workflow.Nodes[1].ID
+	_, err = fixture.store.Sql().Exec(
+		"update project__workflow_approval set deadline=CURRENT_TIMESTAMP where project_id=? and workflow_run_id=? and workflow_node_id=?",
+		fixture.projectID, run.ID, approvalNodeID,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, fixture.service.ProgressWorkflowRun(fixture.projectID, run.ID, nil))
+	expired, err := fixture.repository.GetWorkflowApproval(fixture.projectID, run.ID, approvalNodeID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowApprovalExpired, expired.Status)
+	assert.Equal(t, db.WorkflowApprovalDecisionSourceTimeout, expired.DecisionSource)
+	assert.NotNil(t, expired.Resolved)
+	assert.Nil(t, expired.ResolvedByUserID)
+	assert.Len(t, fixture.enqueuer.tasks, 1)
+	updatedRun, err := fixture.repository.GetWorkflowRunByID(fixture.projectID, run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowRunBlocked, updatedRun.Status)
+}
+
+func TestWorkflowApprovalTimeoutApproveResumesAfterServiceRestart(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	require.NoError(t, ensureWorkflowApprovalMember(fixture.store, fixture.projectID, fixture.user.ID, db.ProjectOwner))
+	timeout := 60
+	workflow, err := fixture.repository.CreateWorkflowTemplate(db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Approval timeout permits", DefinitionVersion: db.WorkflowDefinitionVersion,
+		Nodes: []db.WorkflowNode{
+			{ID: -1, TemplateID: fixture.first.ID},
+			{ID: -2, Kind: db.WorkflowNodeApprovalKind, ApprovalTimeout: &timeout, ApprovalTimeoutOutcome: db.WorkflowApprovalTimeoutApprove},
+			{ID: -3, TemplateID: fixture.second.ID},
+		},
+		Edges: []db.WorkflowEdge{
+			{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess},
+			{ID: -2, SourceNodeID: -2, DestinationNodeID: -3, Condition: db.WorkflowEdgeOnSuccess},
+		},
+	})
+	require.NoError(t, err)
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "approval-timeout-approve")
+	require.NoError(t, err)
+	root := finishWorkflowTask(t, fixture.store, run.Nodes[0], task_logger.TaskSuccessStatus, "")
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(root))
+	approvalNodeID := workflow.Nodes[1].ID
+	_, err = fixture.store.Sql().Exec(
+		"update project__workflow_approval set deadline=CURRENT_TIMESTAMP where project_id=? and workflow_run_id=? and workflow_node_id=?",
+		fixture.projectID, run.ID, approvalNodeID,
+	)
+	require.NoError(t, err)
+
+	restartedService := NewWorkflowService(fixture.repository, fixture.store, fixture.enqueuer, nil)
+	require.NoError(t, restartedService.ProgressWorkflowRun(fixture.projectID, run.ID, nil))
+	expired, err := fixture.repository.GetWorkflowApproval(fixture.projectID, run.ID, approvalNodeID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowApprovalExpired, expired.Status)
+	assert.Len(t, fixture.enqueuer.tasks, 2, "the persisted timeout outcome must resume downstream work after restart")
+	updatedRun, err := fixture.repository.GetWorkflowRunByID(fixture.projectID, run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowRunNodeQueued, updatedRun.Nodes[2].Status)
+}
+
+func TestWorkflowApprovalConcurrentDecisionsPersistExactlyOneTerminalOutcome(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	require.NoError(t, ensureWorkflowApprovalMember(fixture.store, fixture.projectID, fixture.user.ID, db.ProjectOwner))
+	workflow, err := fixture.repository.CreateWorkflowTemplate(db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Concurrent approval", DefinitionVersion: db.WorkflowDefinitionVersion,
+		Nodes: []db.WorkflowNode{
+			{ID: -1, TemplateID: fixture.first.ID},
+			{ID: -2, Kind: db.WorkflowNodeApprovalKind},
+		},
+		Edges: []db.WorkflowEdge{{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess}},
+	})
+	require.NoError(t, err)
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "approval-concurrent")
+	require.NoError(t, err)
+	root := finishWorkflowTask(t, fixture.store, run.Nodes[0], task_logger.TaskSuccessStatus, "")
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(root))
+
+	results := make(chan error, 2)
+	var wait sync.WaitGroup
+	for _, status := range []db.WorkflowApprovalStatus{db.WorkflowApprovalApproved, db.WorkflowApprovalRejected} {
+		status := status
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			_, resolveErr := fixture.service.ResolveWorkflowApproval(
+				fixture.projectID, workflow.ID, run.ID, workflow.Nodes[1].ID,
+				db.WorkflowApprovalDecision{Status: status, Source: db.WorkflowApprovalDecisionSourceUser}, &fixture.user,
+			)
+			results <- resolveErr
+		}()
+	}
+	wait.Wait()
+	close(results)
+	successfulDecisions := 0
+	for resolveErr := range results {
+		if resolveErr == nil {
+			successfulDecisions++
+		}
+	}
+	assert.Equal(t, 1, successfulDecisions)
+	persisted, err := fixture.repository.GetWorkflowApproval(fixture.projectID, run.ID, workflow.Nodes[1].ID)
+	require.NoError(t, err)
+	assert.Contains(t, []db.WorkflowApprovalStatus{db.WorkflowApprovalApproved, db.WorkflowApprovalRejected}, persisted.Status)
+	assert.Equal(t, db.WorkflowApprovalDecisionSourceUser, persisted.DecisionSource)
+	require.NotNil(t, persisted.ResolvedByUserID)
+	assert.Equal(t, fixture.user.ID, *persisted.ResolvedByUserID)
+}
+
+func TestWorkflowApprovalStopCancelsRequestAndApprovalNode(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	require.NoError(t, ensureWorkflowApprovalMember(fixture.store, fixture.projectID, fixture.user.ID, db.ProjectOwner))
+	workflow, err := fixture.repository.CreateWorkflowTemplate(db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Canceled approval", DefinitionVersion: db.WorkflowDefinitionVersion,
+		Nodes: []db.WorkflowNode{
+			{ID: -1, TemplateID: fixture.first.ID},
+			{ID: -2, Kind: db.WorkflowNodeApprovalKind},
+			{ID: -3, TemplateID: fixture.second.ID},
+		},
+		Edges: []db.WorkflowEdge{
+			{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess},
+			{ID: -2, SourceNodeID: -2, DestinationNodeID: -3, Condition: db.WorkflowEdgeOnSuccess},
+		},
+	})
+	require.NoError(t, err)
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "approval-stop")
+	require.NoError(t, err)
+	root := finishWorkflowTask(t, fixture.store, run.Nodes[0], task_logger.TaskSuccessStatus, "")
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(root))
+
+	canceled, err := fixture.service.StopWorkflowRun(fixture.projectID, run.ID, &fixture.user)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowRunCanceled, canceled.Status)
+	approval, err := fixture.repository.GetWorkflowApproval(fixture.projectID, run.ID, workflow.Nodes[1].ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowApprovalCanceled, approval.Status)
+	assert.Equal(t, db.WorkflowApprovalDecisionSourceCancel, approval.DecisionSource)
+	assert.Nil(t, approval.ResolvedByUserID)
+	assert.Equal(t, db.WorkflowRunNodeCanceled, canceled.Nodes[1].Status)
+	assert.Equal(t, db.WorkflowRunNodeCanceled, canceled.Nodes[2].Status)
+}
+
 func TestWorkflowRunParametersAndNodeOverridesMapToFrozenTaskInputs(t *testing.T) {
 	fixture := newWorkflowServiceFixture(t)
 	defer fixture.store.Close()
@@ -830,6 +1081,14 @@ func newWorkflowServiceFixture(t *testing.T) workflowServiceFixture {
 		service: NewWorkflowService(repository, store, enqueuer, nil), enqueuer: enqueuer,
 		projectID: project.ID, user: user, workflow: workflow, first: first, second: second,
 	}
+}
+
+func ensureWorkflowApprovalMember(store *coresql.SqlDb, projectID int, userID int, role db.ProjectUserRole) error {
+	if _, err := store.GetProjectUser(projectID, userID); err == nil {
+		return nil
+	}
+	_, err := store.CreateProjectUser(db.ProjectUser{ProjectID: projectID, UserID: userID, Role: role})
+	return err
 }
 
 func configureWorkflowArtifactEncryption(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
@@ -34,6 +35,10 @@ type workflowServiceStub struct {
 	progressCalls  int
 	stopCalls      int
 	artifacts      []db.WorkflowArtifactMetadata
+	approval       db.WorkflowApproval
+	approvalErr    error
+	decision       db.WorkflowApprovalDecision
+	inbox          []db.WorkflowApproval
 }
 
 func (s *workflowServiceStub) StartWorkflow(_ db.WorkflowTemplate, _ *db.User, correlationID string, input ...db.WorkflowRunInput) (db.WorkflowRun, error) {
@@ -55,6 +60,15 @@ func (s *workflowServiceStub) StopWorkflowRun(_ int, _ int, _ *db.User) (db.Work
 	return s.run, nil
 }
 
+func (s *workflowServiceStub) GetWorkflowApprovalInbox(_ int, _ *db.User) ([]db.WorkflowApproval, error) {
+	return s.inbox, nil
+}
+
+func (s *workflowServiceStub) ResolveWorkflowApproval(_ int, _ int, _ int, _ int, decision db.WorkflowApprovalDecision, _ *db.User) (db.WorkflowApproval, error) {
+	s.decision = decision
+	return s.approval, s.approvalErr
+}
+
 func (s *workflowServiceStub) HandleWorkflowTaskOutputs(_ db.Task, _ map[string]json.RawMessage) error {
 	return nil
 }
@@ -65,9 +79,10 @@ func (s *workflowServiceStub) GetWorkflowRunArtifacts(_ int, _ int, _ *int) ([]d
 
 type workflowManagerStub struct {
 	db.WorkflowManager
-	runs  []db.WorkflowRun
-	run   db.WorkflowRun
-	tasks []db.TaskWithTpl
+	runs      []db.WorkflowRun
+	run       db.WorkflowRun
+	tasks     []db.TaskWithTpl
+	approvals []db.WorkflowApproval
 }
 
 func (s *workflowManagerStub) GetWorkflowRuns(_ int, _ int, _ db.RetrieveQueryParams) ([]db.WorkflowRun, error) {
@@ -80,6 +95,10 @@ func (s *workflowManagerStub) GetWorkflowRun(_ int, _ int, _ int) (db.WorkflowRu
 
 func (s *workflowManagerStub) GetWorkflowRunTasks(_ int, _ int, _ db.RetrieveQueryParams) ([]db.TaskWithTpl, error) {
 	return s.tasks, nil
+}
+
+func (s *workflowManagerStub) GetWorkflowApprovals(_ int, _ int) ([]db.WorkflowApproval, error) {
+	return s.approvals, nil
 }
 
 func (s *workflowDefinitionServiceStub) List(_ int, _ db.RetrieveQueryParams) ([]db.WorkflowTemplate, error) {
@@ -542,6 +561,54 @@ func TestWorkflowRunResponsesExposeOnlyRunPresentationData(t *testing.T) {
 	assert.Contains(t, details, `"id":301`)
 	assert.Contains(t, details, `"status":"running"`)
 	assert.Contains(t, details, `"used_runner_id":88`)
+}
+
+func TestWorkflowApprovalControllerListsAndResolvesStrictDecision(t *testing.T) {
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7}
+	run := db.WorkflowRun{ID: 91, ProjectID: 7, WorkflowTemplateID: 41}
+	pending := db.WorkflowApproval{ID: 12, ProjectID: 7, WorkflowRunID: 91, WorkflowNodeID: 201, Status: db.WorkflowApprovalPending, Prompt: "Deploy?"}
+	resolved := pending
+	resolved.Status = db.WorkflowApprovalApproved
+	service := &workflowServiceStub{approval: resolved}
+	manager := &workflowManagerStub{approvals: []db.WorkflowApproval{pending}}
+	controller := NewWorkflowController(service, manager, &workflowDefinitionServiceStub{})
+
+	list := httptest.NewRecorder()
+	controller.GetWorkflowApprovals(list, workflowRunRequest(http.MethodGet, "/api/project/7/workflows/41/runs/91/approvals", workflow, run))
+	assert.Equal(t, http.StatusOK, list.Code)
+	assert.Contains(t, list.Body.String(), `"workflow_node_id":201`)
+	assert.Contains(t, list.Body.String(), `"status":"pending"`)
+
+	resolveRequest := workflowRawRequest(http.MethodPost, "/api/project/7/workflows/41/runs/91/approvals/201", []byte(`{"status":"approved","comment":"Reviewed","source":"user"}`), &workflow)
+	resolveRequest = helpers.SetContextValue(resolveRequest, "workflow_run", run)
+	resolveRequest = mux.SetURLVars(resolveRequest, map[string]string{"node_id": "201"})
+	resolve := httptest.NewRecorder()
+	controller.ResolveWorkflowApproval(resolve, resolveRequest)
+	assert.Equal(t, http.StatusOK, resolve.Code, resolve.Body.String())
+	assert.Equal(t, db.WorkflowApprovalApproved, service.decision.Status)
+	assert.Equal(t, "Reviewed", service.decision.Comment)
+
+	invalidRequest := workflowRawRequest(http.MethodPost, "/api/project/7/workflows/41/runs/91/approvals/201", []byte(`{"status":"approved","unexpected":true}`), &workflow)
+	invalidRequest = helpers.SetContextValue(invalidRequest, "workflow_run", run)
+	invalidRequest = mux.SetURLVars(invalidRequest, map[string]string{"node_id": "201"})
+	invalid := httptest.NewRecorder()
+	controller.ResolveWorkflowApproval(invalid, invalidRequest)
+	assert.Equal(t, http.StatusBadRequest, invalid.Code)
+}
+
+func TestWorkflowApprovalControllerListsEligibilityFilteredInbox(t *testing.T) {
+	pending := db.WorkflowApproval{
+		ID: 12, ProjectID: 7, WorkflowTemplateID: 41, WorkflowName: "Deploy",
+		WorkflowRunID: 91, WorkflowNodeID: 201, Status: db.WorkflowApprovalPending, Prompt: "Deploy?",
+	}
+	service := &workflowServiceStub{inbox: []db.WorkflowApproval{pending}}
+	controller := NewWorkflowController(service, &workflowManagerStub{}, &workflowDefinitionServiceStub{})
+
+	recorder := httptest.NewRecorder()
+	controller.GetWorkflowApprovalInbox(recorder, workflowRequest(http.MethodGet, "/api/project/7/workflow-approvals", nil, nil))
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"workflow_template_id":41`)
+	assert.Contains(t, recorder.Body.String(), `"workflow_name":"Deploy"`)
 }
 
 func workflowRequest(method, target string, body any, workflow *db.WorkflowTemplate) *http.Request {

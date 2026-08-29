@@ -119,11 +119,15 @@ func (d *WorkflowStoreImpl) GetWorkflowApprovals(projectID int, runID int) (res 
 	return
 }
 
+func (d *WorkflowStoreImpl) GetPendingWorkflowApprovals(projectID int) (res []db.WorkflowApproval, err error) {
+	return
+}
+
 func (d *WorkflowStoreImpl) GetWorkflowApproval(projectID int, runID int, nodeID int) (res db.WorkflowApproval, err error) {
 	return
 }
 
-func (d *WorkflowStoreImpl) CreateWorkflowApproval(approval db.WorkflowApproval) (res db.WorkflowApproval, err error) {
+func (d *WorkflowStoreImpl) OpenWorkflowApproval(approval db.WorkflowApproval) (res db.WorkflowApproval, opened bool, err error) {
 	return
 }
 
@@ -156,5 +160,9 @@ func (d *WorkflowStoreImpl) ResolveWorkflowDelayIfWaiting(delay db.WorkflowDelay
 }
 
 func (d *WorkflowStoreImpl) GetExpiredWorkflowDelays() (res []db.WorkflowDelay, err error) {
+	return
+}
+
+func (d *WorkflowStoreImpl) FinalizeWorkflowRunApprovalNode(projectID int, runID int, nodeID int, status db.WorkflowRunNodeStatus, reason string, resultJSON string, at time.Time) (ok bool, err error) {
 	return
 }

@@ -20,6 +20,7 @@ type WorkflowController interface {
 	GetWorkflowRuns(w http.ResponseWriter, r *http.Request)
 	GetWorkflowRun(w http.ResponseWriter, r *http.Request)
 	GetWorkflowRunArtifacts(w http.ResponseWriter, r *http.Request)
+	GetWorkflowApprovalInbox(w http.ResponseWriter, r *http.Request)
 	GetWorkflowApprovals(w http.ResponseWriter, r *http.Request)
 	ResolveWorkflowApproval(w http.ResponseWriter, r *http.Request)
 }

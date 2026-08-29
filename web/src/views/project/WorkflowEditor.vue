@@ -582,6 +582,41 @@
                 hide-details="auto"
                 @change="applyNodeEdit"
               />
+              <v-select
+                v-model="editingNode.approval_permission"
+                :items="approvalPermissionOptions"
+                item-value="value"
+                item-text="text"
+                :label="$t('workflowApprovalPermission')"
+                :disabled="!canManage"
+                outlined
+                dense
+                hide-details="auto"
+                class="mb-2"
+                @change="applyNodeEdit"
+              />
+              <v-select
+                v-model="editingNode.approval_timeout_outcome"
+                :items="approvalTimeoutOutcomeOptions"
+                item-value="value"
+                item-text="text"
+                :label="$t('workflowApprovalTimeoutOutcome')"
+                :disabled="!canManage"
+                outlined
+                dense
+                hide-details="auto"
+                class="mb-2"
+                @change="applyNodeEdit"
+              />
+              <v-switch
+                v-model="editingNode.approval_separation_of_duties"
+                :label="$t('workflowApprovalSeparationOfDuties')"
+                :disabled="!canManage"
+                dense
+                hide-details
+                class="mt-0"
+                @change="applyNodeEdit"
+              />
             </template>
             <template v-if="editingNode.kind === 'delay'">
               <v-text-field
@@ -737,6 +772,20 @@ export default {
         { value: 'any-successful', text: this.$t('workflowJoinAnySuccessful') },
       ];
     },
+    approvalPermissionOptions() {
+      return [
+        { value: USER_PERMISSIONS.runProjectTasks, text: this.$t('workflowApprovalPermissionRunTasks') },
+        { value: USER_PERMISSIONS.updateProject, text: this.$t('workflowApprovalPermissionUpdateProject') },
+        { value: USER_PERMISSIONS.manageProjectResources, text: this.$t('workflowApprovalPermissionManageResources') },
+        { value: USER_PERMISSIONS.manageProjectUsers, text: this.$t('workflowApprovalPermissionManageUsers') },
+      ];
+    },
+    approvalTimeoutOutcomeOptions() {
+      return [
+        { value: 'reject', text: this.$t('workflowApprovalTimeoutReject') },
+        { value: 'approve', text: this.$t('workflowApprovalTimeoutApprove') },
+      ];
+    },
     conditionOptions() {
       return [
         { value: 'on_success', text: this.$t('workflowConditionOnSuccess') },
@@ -854,6 +903,13 @@ export default {
           artifact_outputs: Array.isArray(node.artifact_outputs) ? node.artifact_outputs : [],
           artifact_inputs: Array.isArray(node.artifact_inputs) ? node.artifact_inputs : [],
           override_policy: node.override_policy || {},
+          approval_permission: node.kind === 'approval'
+            ? (node.approval_permission || USER_PERMISSIONS.runProjectTasks)
+            : node.approval_permission,
+          approval_timeout_outcome: node.kind === 'approval'
+            ? (node.approval_timeout_outcome || 'reject')
+            : node.approval_timeout_outcome,
+          approval_separation_of_duties: node.approval_separation_of_duties || false,
         };
       });
       item.edges = item.edges.map((edge) => ({
@@ -963,9 +1019,16 @@ export default {
         this.editingNode.artifact_outputs = [];
         this.editingNode.artifact_inputs = [];
       }
-      if (kind !== 'approval') {
+      if (kind === 'approval') {
+        this.editingNode.approval_permission = USER_PERMISSIONS.runProjectTasks;
+        this.editingNode.approval_timeout_outcome = 'reject';
+        this.editingNode.approval_separation_of_duties = false;
+      } else {
         this.editingNode.approval_timeout = null;
         this.editingNode.approval_message = null;
+        this.editingNode.approval_permission = null;
+        this.editingNode.approval_timeout_outcome = null;
+        this.editingNode.approval_separation_of_duties = false;
       }
       if (kind !== 'delay') {
         this.editingNode.delay_seconds = null;

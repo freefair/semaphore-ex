@@ -193,6 +193,139 @@ func (d *WorkflowStoreImpl) SetWorkflowRunRootTask(projectID int, runID int, tas
 	return updated == 1, err
 }
 
+func (d *WorkflowStoreImpl) GetWorkflowApprovals(projectID int, runID int) ([]db.WorkflowApproval, error) {
+	var approvals []db.WorkflowApproval
+	if _, err := d.connection.SelectAll(&approvals,
+		"select * from project__workflow_approval where project_id=? and workflow_run_id=? order by id",
+		projectID, runID,
+	); err != nil {
+		return nil, err
+	}
+	return approvals, nil
+}
+
+func (d *WorkflowStoreImpl) GetPendingWorkflowApprovals(projectID int) ([]db.WorkflowApproval, error) {
+	var approvals []db.WorkflowApproval
+	if _, err := d.connection.SelectAll(&approvals,
+		`select approval.*, workflow_run.workflow_template_id, workflow_template.name as workflow_name
+		 from project__workflow_approval approval
+		 join project__workflow_run workflow_run on workflow_run.id=approval.workflow_run_id and workflow_run.project_id=approval.project_id
+		 join project__workflow_template workflow_template on workflow_template.id=workflow_run.workflow_template_id and workflow_template.project_id=approval.project_id
+		 where approval.project_id=? and approval.status=? order by approval.deadline is null, approval.deadline, approval.id`,
+		projectID, db.WorkflowApprovalPending,
+	); err != nil {
+		return nil, err
+	}
+	return approvals, nil
+}
+
+func (d *WorkflowStoreImpl) GetWorkflowApproval(projectID int, runID int, nodeID int) (db.WorkflowApproval, error) {
+	var approval db.WorkflowApproval
+	err := d.connection.SelectOne(&approval,
+		"select * from project__workflow_approval where project_id=? and workflow_run_id=? and workflow_node_id=?",
+		projectID, runID, nodeID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return db.WorkflowApproval{}, db.ErrNotFound
+	}
+	return approval, err
+}
+
+func (d *WorkflowStoreImpl) OpenWorkflowApproval(approval db.WorkflowApproval) (db.WorkflowApproval, bool, error) {
+	if err := validateWorkflowApprovalForOpen(approval); err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	tx, err := d.connection.Begin()
+	if err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec(d.connection.PrepareQuery(
+		"update project__workflow_run_node set status=?, queued=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null"),
+		db.WorkflowRunNodeApproval, approval.Created, approval.ProjectID, approval.WorkflowRunID, approval.WorkflowNodeID, db.WorkflowRunNodePending,
+	)
+	if err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	if updated == 0 {
+		_ = tx.Rollback()
+		existing, getErr := d.GetWorkflowApproval(approval.ProjectID, approval.WorkflowRunID, approval.WorkflowNodeID)
+		if getErr == nil {
+			return existing, false, nil
+		}
+		return db.WorkflowApproval{}, false, getErr
+	}
+	approval.ID, err = d.insertTx(tx,
+		"insert into project__workflow_approval(project_id, workflow_run_id, workflow_node_id, status, created, resolved, resolved_by_user_id, deadline, prompt, eligible_permission, separation_of_duties, request_actor_user_id, timeout_outcome, decision_comment, decision_source, correlation_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		approval.ProjectID, approval.WorkflowRunID, approval.WorkflowNodeID, approval.Status, approval.Created,
+		approval.Resolved, approval.ResolvedByUserID, approval.Deadline, approval.Prompt, approval.EligiblePermission,
+		approval.SeparationOfDuties, approval.RequestActorUserID, approval.TimeoutOutcome, approval.DecisionComment,
+		approval.DecisionSource, approval.CorrelationID,
+	)
+	if err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	return approval, true, nil
+}
+
+func (d *WorkflowStoreImpl) UpdateWorkflowApproval(approval db.WorkflowApproval) error {
+	return errors.New("workflow approvals are immutable")
+}
+
+func (d *WorkflowStoreImpl) ResolveWorkflowApprovalIfPending(approval db.WorkflowApproval) (bool, error) {
+	if approval.Status != db.WorkflowApprovalApproved && approval.Status != db.WorkflowApprovalRejected && approval.Status != db.WorkflowApprovalExpired && approval.Status != db.WorkflowApprovalCanceled {
+		return false, errors.New("workflow approval terminal status is invalid")
+	}
+	if approval.Resolved == nil || len(approval.DecisionComment) > db.MaxWorkflowApprovalCommentBytes {
+		return false, errors.New("workflow approval decision is invalid")
+	}
+	result, err := d.connection.Exec(
+		"update project__workflow_approval set status=?, resolved=?, resolved_by_user_id=?, decision_comment=?, decision_source=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=?",
+		approval.Status, approval.Resolved, approval.ResolvedByUserID, approval.DecisionComment, approval.DecisionSource,
+		approval.ProjectID, approval.WorkflowRunID, approval.WorkflowNodeID, db.WorkflowApprovalPending,
+	)
+	if err != nil {
+		return false, err
+	}
+	updated, err := result.RowsAffected()
+	return updated == 1, err
+}
+
+func (d *WorkflowStoreImpl) FinalizeWorkflowRunApprovalNode(projectID int, runID int, nodeID int, status db.WorkflowRunNodeStatus, reason string, resultJSON string, at time.Time) (bool, error) {
+	if status != db.WorkflowRunNodeSucceeded && status != db.WorkflowRunNodeBlocked && status != db.WorkflowRunNodeCanceled {
+		return false, fmt.Errorf("workflow approval cannot finalize node as %s", status)
+	}
+	result, err := d.connection.Exec(
+		"update project__workflow_run_node set status=?, reason=?, result=?, end=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null",
+		status, reason, resultJSON, at, projectID, runID, nodeID, db.WorkflowRunNodeApproval,
+	)
+	if err != nil {
+		return false, err
+	}
+	updated, err := result.RowsAffected()
+	return updated == 1, err
+}
+
+func validateWorkflowApprovalForOpen(approval db.WorkflowApproval) error {
+	if approval.ProjectID <= 0 || approval.WorkflowRunID <= 0 || approval.WorkflowNodeID <= 0 || approval.RequestActorUserID <= 0 || approval.Status != db.WorkflowApprovalPending || approval.Created.IsZero() {
+		return errors.New("workflow approval ownership is invalid")
+	}
+	if len(approval.Prompt) > db.MaxWorkflowApprovalPromptBytes || approval.EligiblePermission == 0 || approval.TimeoutOutcome.Validate() != nil || approval.CorrelationID == "" {
+		return errors.New("workflow approval configuration is invalid")
+	}
+	if approval.Deadline != nil && !approval.Deadline.After(approval.Created) {
+		return errors.New("workflow approval deadline is invalid")
+	}
+	return nil
+}
+
 func (d *WorkflowStoreImpl) GetWorkflowRunNode(projectID int, runID int, nodeID int) (db.WorkflowRunNode, error) {
 	var node db.WorkflowRunNode
 	err := d.connection.SelectOne(&node,

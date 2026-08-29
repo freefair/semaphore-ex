@@ -65,6 +65,10 @@ func (c *workflowController) GetWorkflowRunArtifacts(w http.ResponseWriter, r *h
 	w.WriteHeader(http.StatusNotFound)
 }
 
+func (c *workflowController) GetWorkflowApprovalInbox(w http.ResponseWriter, r *http.Request) {
+	helpers.WriteJSON(w, http.StatusOK, []struct{}{})
+}
+
 func (c *workflowController) GetWorkflowApprovals(w http.ResponseWriter, r *http.Request) {
 	helpers.WriteJSON(w, http.StatusOK, []struct{}{})
 }
