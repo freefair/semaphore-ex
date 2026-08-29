@@ -95,6 +95,89 @@ type ScheduleOccurrenceLeaseRepository interface {
 	ReleaseScheduleOccurrenceLease(lease ScheduleOccurrenceLease) (bool, error)
 }
 
+// TaskExecutionIdentity is the executor or runner identity bound to one
+// dispatched task generation. Recovery may only act on evidence obtained for
+// this exact identity, never on a missed node or runner heartbeat alone.
+type TaskExecutionIdentity struct {
+	RunnerID   int    `json:"runner_id"`
+	Generation int    `json:"generation"`
+	StableID   string `json:"stable_id"`
+}
+
+// TaskControlLease identifies the server process currently responsible for
+// reconciling a task. FencingToken increases on every expired-owner takeover
+// so a former owner cannot persist a recovery decision after replacement.
+type TaskControlLease struct {
+	TaskID       int                   `json:"task_id"`
+	OwnerBootID  string                `json:"owner_boot_id"`
+	FencingToken int64                 `json:"fencing_token"`
+	ExpiresAt    time.Time             `json:"expires_at"`
+	Execution    TaskExecutionIdentity `json:"execution"`
+}
+
+// TaskControlLeaseRepository is the durable ownership boundary for HA task
+// reconciliation. Claim and renewal are server-time based; every mutation
+// after a claim must re-check the exact boot owner and fencing token.
+type TaskControlLeaseRepository interface {
+	ClaimTaskControl(taskID int, execution TaskExecutionIdentity, ownerBootID string, ttl time.Duration) (TaskControlLease, bool, error)
+	IsCurrentTaskControlLease(lease TaskControlLease) (bool, error)
+	ReleaseTaskControlLease(lease TaskControlLease) (bool, error)
+}
+
+// TaskExecutionState is the evidence returned by a runner or executor for a
+// stable execution identity. Unknown is intentionally not treated as absent.
+type TaskExecutionState string
+
+const (
+	TaskExecutionRunning  TaskExecutionState = "running"
+	TaskExecutionTerminal TaskExecutionState = "terminal"
+	TaskExecutionAbsent   TaskExecutionState = "absent"
+	TaskExecutionUnknown  TaskExecutionState = "unknown"
+)
+
+// TaskExecutionEvidence is an intentionally narrow, value-free recovery
+// observation. Reason is an operator-safe diagnostic; it must not contain
+// executor output or credentials.
+type TaskExecutionEvidence struct {
+	State  TaskExecutionState `json:"state"`
+	Reason string             `json:"reason,omitempty"`
+}
+
+type TaskRecoveryDecision string
+
+const (
+	TaskRecoveryObserve    TaskRecoveryDecision = "observe"
+	TaskRecoveryRecover    TaskRecoveryDecision = "recover"
+	TaskRecoveryQuarantine TaskRecoveryDecision = "quarantine"
+)
+
+// TaskRecoveryAssessment makes recovery conservative by construction. A
+// replacement is permitted only after evidence proves the exact prior
+// execution absent or terminal; unknown evidence is quarantined.
+type TaskRecoveryAssessment struct {
+	Decision        TaskRecoveryDecision `json:"decision"`
+	SafeReplacement bool                 `json:"safe_replacement"`
+	Reason          string               `json:"reason"`
+}
+
+// DecideTaskRecovery translates stable execution evidence into an action. It
+// does not claim or mutate a lease; callers must still use their current
+// fenced lease for any follow-up write.
+func DecideTaskRecovery(_ TaskControlLease, evidence TaskExecutionEvidence) TaskRecoveryAssessment {
+	switch evidence.State {
+	case TaskExecutionRunning:
+		return TaskRecoveryAssessment{Decision: TaskRecoveryObserve, Reason: "original execution is still running"}
+	case TaskExecutionTerminal, TaskExecutionAbsent:
+		return TaskRecoveryAssessment{Decision: TaskRecoveryRecover, SafeReplacement: true, Reason: "original execution is absent or terminal"}
+	default:
+		reason := strings.TrimSpace(evidence.Reason)
+		if reason == "" {
+			reason = "execution evidence is unavailable"
+		}
+		return TaskRecoveryAssessment{Decision: TaskRecoveryQuarantine, Reason: reason}
+	}
+}
+
 // ClusterHeartbeatRedisClient is the narrow Redis dependency of the cluster
 // registry. ServerTime is authoritative for observed timestamps and key TTLs
 // are authoritative for liveness.
