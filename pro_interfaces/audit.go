@@ -32,6 +32,12 @@ const (
 	AuditActionProjectRunnerActive  AuditAction = "project_runner_set_active"
 	AuditActionProjectRunnerDelete  AuditAction = "project_runner_delete"
 	AuditActionProjectRunnerCache   AuditAction = "project_runner_cache_clear"
+	AuditActionProjectRoleCreate    AuditAction = "project_role_create"
+	AuditActionProjectRoleUpdate    AuditAction = "project_role_update"
+	AuditActionProjectRoleDelete    AuditAction = "project_role_delete"
+	AuditActionProjectRoleAssign    AuditAction = "project_role_assign"
+	AuditActionProjectMemberAdd     AuditAction = "project_member_add"
+	AuditActionProjectMemberRemove  AuditAction = "project_member_remove"
 	AuditActionWebhookRead          AuditAction = "audit_webhook_read"
 	AuditActionWebhookConfigure     AuditAction = "audit_webhook_configure"
 	AuditActionWebhookTest          AuditAction = "audit_webhook_test"
@@ -53,9 +59,11 @@ const (
 type AuditTargetType string
 
 const (
-	AuditTargetCapability    AuditTargetType = "capability"
-	AuditTargetProjectRunner AuditTargetType = "project_runner"
-	AuditTargetWebhook       AuditTargetType = "audit_webhook"
+	AuditTargetCapability        AuditTargetType = "capability"
+	AuditTargetProjectRunner     AuditTargetType = "project_runner"
+	AuditTargetProjectRole       AuditTargetType = "project_role"
+	AuditTargetProjectMembership AuditTargetType = "project_membership"
+	AuditTargetWebhook           AuditTargetType = "audit_webhook"
 )
 
 type AuditOutcome string
@@ -132,6 +140,8 @@ var (
 	eventIDPattern             = regexp.MustCompile(`^[a-f0-9]{32}$`)
 	identifierPattern          = regexp.MustCompile(`^[a-z0-9_.:-]{1,64}$`)
 	projectRunnerTargetPattern = regexp.MustCompile(`^(?:project|runner):[1-9][0-9]*$`)
+	projectRoleTargetPattern   = regexp.MustCompile(`^(?:project:[1-9][0-9]*|role:[a-z0-9][a-z0-9_.-]{0,49})$`)
+	projectMemberTargetPattern = regexp.MustCompile(`^(?:project:[1-9][0-9]*|member:[1-9][0-9]*)$`)
 )
 
 // AuditEvent is the allowlisted payload shared by enhanced features. It has no
@@ -198,6 +208,10 @@ func validAuditTarget(event AuditEvent) bool {
 		}
 		targetProjectID, err := strconv.Atoi(strings.TrimPrefix(event.TargetID, "project:"))
 		return err == nil && targetProjectID == *event.ProjectID
+	case AuditTargetProjectRole:
+		return validScopedProjectAuditTarget(event, projectRoleTargetPattern)
+	case AuditTargetProjectMembership:
+		return validScopedProjectAuditTarget(event, projectMemberTargetPattern)
 	case AuditTargetWebhook:
 		return event.ProjectID == nil && event.TargetID == "audit_webhook"
 	default:
@@ -205,9 +219,27 @@ func validAuditTarget(event AuditEvent) bool {
 	}
 }
 
+func validScopedProjectAuditTarget(event AuditEvent, pattern *regexp.Regexp) bool {
+	if !pattern.MatchString(event.TargetID) {
+		return false
+	}
+	if event.ProjectID == nil {
+		return event.Outcome == AuditOutcomeDenied &&
+			(event.Reason == AuditReasonUnauthenticated || event.Reason == AuditReasonCrossOrigin)
+	}
+	if *event.ProjectID <= 0 {
+		return false
+	}
+	if !strings.HasPrefix(event.TargetID, "project:") {
+		return true
+	}
+	targetProjectID, err := strconv.Atoi(strings.TrimPrefix(event.TargetID, "project:"))
+	return err == nil && targetProjectID == *event.ProjectID
+}
+
 func validCapabilityAuditTarget(targetID string) bool {
 	switch CapabilityID(targetID) {
-	case CapabilityLifecycleTest, CapabilityRuntimeSecrets, CapabilityTOTP, CapabilityLDAP:
+	case CapabilityLifecycleTest, CapabilityRuntimeSecrets, CapabilityTOTP, CapabilityLDAP, CapabilityProjectRoles:
 		return true
 	default:
 		return false
@@ -399,6 +431,8 @@ func validAuditAction(action AuditAction) bool {
 		AuditActionProjectRunnerCreate, AuditActionProjectRunnerIssue,
 		AuditActionProjectRunnerUpdate, AuditActionProjectRunnerActive,
 		AuditActionProjectRunnerDelete, AuditActionProjectRunnerCache,
+		AuditActionProjectRoleCreate, AuditActionProjectRoleUpdate, AuditActionProjectRoleDelete,
+		AuditActionProjectRoleAssign, AuditActionProjectMemberAdd, AuditActionProjectMemberRemove,
 		AuditActionWebhookRead, AuditActionWebhookConfigure, AuditActionWebhookTest,
 		AuditActionWebhookPause, AuditActionWebhookResume,
 		AuditActionTOTPEnrollBegin, AuditActionTOTPEnrollConfirm,

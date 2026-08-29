@@ -30,6 +30,7 @@ func (p *communityCapabilityProvider) Resolve(
 			communityUnavailableDecision(pro_interfaces.CapabilityRuntimeSecrets),
 			communityUnavailableDecision(pro_interfaces.CapabilityTOTP),
 			communityUnavailableDecision(pro_interfaces.CapabilityLDAP),
+			communityUnavailableDecision(pro_interfaces.CapabilityProjectRoles),
 		},
 	), nil
 }

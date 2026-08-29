@@ -169,6 +169,35 @@ func TestAuditEventAcceptsBoundedProjectRunnerTarget(t *testing.T) {
 	assert.Error(t, event.Validate())
 }
 
+func TestAuditEventAcceptsScopedProjectRoleAndMembershipTargets(t *testing.T) {
+	projectID := 42
+	events := []AuditEvent{
+		{
+			CorrelationID: "0123456789abcdef0123456789abcdef",
+			ProjectID:     &projectID,
+			Action:        AuditActionProjectRoleUpdate,
+			TargetType:    AuditTargetProjectRole,
+			TargetID:      "role:role_0123456789abcdef0123456789abcdef",
+			Outcome:       AuditOutcomeAllowed,
+			Source:        AuditSourceAPI,
+			Reason:        string(CapabilityReasonActive),
+		},
+		{
+			CorrelationID: "fedcba9876543210fedcba9876543210",
+			ProjectID:     &projectID,
+			Action:        AuditActionProjectRoleAssign,
+			TargetType:    AuditTargetProjectMembership,
+			TargetID:      "member:7",
+			Outcome:       AuditOutcomeAllowed,
+			Source:        AuditSourceAPI,
+			Reason:        string(CapabilityReasonActive),
+		},
+	}
+	for _, event := range events {
+		require.NoError(t, event.Validate())
+	}
+}
+
 func TestAuditEventRequiresConsistentProjectScope(t *testing.T) {
 	projectID := 42
 	otherProjectID := 43

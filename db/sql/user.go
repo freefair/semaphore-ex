@@ -1,10 +1,12 @@
 package sql
 
 import (
+	stdsql "database/sql"
 	"errors"
 	"strings"
 
 	"github.com/Masterminds/squirrel"
+	"github.com/go-gorp/gorp/v3"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"golang.org/x/crypto/bcrypt"
@@ -125,11 +127,40 @@ func (d *SqlDb) SetUserPassword(userID int, password string) error {
 }
 
 func (d *SqlDb) CreateProjectUser(projectUser db.ProjectUser) (newProjectUser db.ProjectUser, err error) {
-	_, err = d.exec(
-		"insert into project__user (project_id, user_id, `role`) values (?, ?, ?)",
-		projectUser.ProjectID,
-		projectUser.UserID,
-		projectUser.Role)
+	hasProjectRoleIdentity, migrationErr := d.IsMigrationApplied(db.Migration{Version: "2.20.29"})
+	if migrationErr != nil {
+		return newProjectUser, migrationErr
+	}
+	if hasProjectRoleIdentity {
+		tx, beginErr := d.Sql().Begin()
+		if beginErr != nil {
+			return newProjectUser, beginErr
+		}
+		defer func() { _ = tx.Rollback() }()
+		if err = lockProjectRoleMutations(tx, d, projectUser.ProjectID); err != nil {
+			return newProjectUser, err
+		}
+		projectUser, err = normalizeProjectRoleAssignmentTx(tx, d, projectUser)
+		if err != nil {
+			return newProjectUser, err
+		}
+		_, err = tx.Exec(d.PrepareQuery(
+			"insert into project__user (project_id, user_id, `role`, role_id, revision) values (?, ?, ?, ?, ?)"),
+			projectUser.ProjectID,
+			projectUser.UserID,
+			projectUser.Role,
+			projectUser.RoleID,
+			projectUser.Revision)
+		if err == nil {
+			err = tx.Commit()
+		}
+	} else {
+		_, err = d.exec(
+			"insert into project__user (project_id, user_id, `role`) values (?, ?, ?)",
+			projectUser.ProjectID,
+			projectUser.UserID,
+			projectUser.Role)
+	}
 
 	if err != nil {
 		return
@@ -162,6 +193,14 @@ func (d *SqlDb) GetProjectUsers(projectID int, params db.RetrieveQueryParams) (u
 		From("project__user as pu").
 		LeftJoin("`user` as u on pu.user_id=u.id").
 		Where("pu.project_id=?", projectID)
+	hasProjectRoleIdentity, migrationErr := d.IsMigrationApplied(db.Migration{Version: "2.20.29"})
+	if migrationErr != nil {
+		err = migrationErr
+		return
+	}
+	if hasProjectRoleIdentity {
+		q = q.Columns("pu.role_id", "pu.revision")
+	}
 
 	sortDirection := "ASC"
 	if pp.SortInverted {
@@ -189,18 +228,214 @@ func (d *SqlDb) GetProjectUsers(projectID int, params db.RetrieveQueryParams) (u
 }
 
 func (d *SqlDb) UpdateProjectUser(projectUser db.ProjectUser) error {
-	_, err := d.exec(
-		"update `project__user` set role=? where user_id=? and project_id = ?",
-		projectUser.Role,
-		projectUser.UserID,
-		projectUser.ProjectID)
+	hasProjectRoleIdentity, err := d.IsMigrationApplied(db.Migration{Version: "2.20.29"})
+	if err != nil {
+		return err
+	}
+	if !hasProjectRoleIdentity {
+		_, err = d.exec(
+			"update `project__user` set role=? where user_id=? and project_id = ?",
+			projectUser.Role,
+			projectUser.UserID,
+			projectUser.ProjectID)
+		return err
+	}
 
-	return err
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = lockProjectRoleMutations(tx, d, projectUser.ProjectID); err != nil {
+		return err
+	}
+	var current db.ProjectUser
+	err = tx.SelectOne(&current, d.PrepareQuery(
+		"select * from project__user where project_id=? and user_id=?"),
+		projectUser.ProjectID, projectUser.UserID)
+	if errors.Is(err, stdsql.ErrNoRows) {
+		return db.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if projectUser.Revision <= 0 || projectUser.Revision != current.Revision {
+		return db.ErrProjectMembershipRevisionConflict
+	}
+	projectUser.Revision = current.Revision
+	projectUser, err = normalizeProjectRoleAssignmentTx(tx, d, projectUser)
+	if err != nil {
+		return err
+	}
+	currentPermissions, err := projectRoleAssignmentPermissionsTx(tx, d, current)
+	if err != nil {
+		return err
+	}
+	updatedPermissions, err := projectRoleAssignmentPermissionsTx(tx, d, projectUser)
+	if err != nil {
+		return err
+	}
+	if currentPermissions.Can(db.CanManageProjectUsers) && !updatedPermissions.Can(db.CanManageProjectUsers) {
+		if err = requireAnotherProjectAdministratorTx(tx, d, projectUser.ProjectID, projectUser.UserID); err != nil {
+			return err
+		}
+	}
+	result, err := tx.Exec(d.PrepareQuery(
+		`update project__user set role=?, role_id=?, revision=revision+1
+		 where project_id=? and user_id=? and revision=?`),
+		projectUser.Role, projectUser.RoleID, projectUser.ProjectID, projectUser.UserID, current.Revision)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return db.ErrProjectMembershipRevisionConflict
+	}
+	return tx.Commit()
 }
 
 func (d *SqlDb) DeleteProjectUser(projectID, userID int) error {
-	_, err := d.exec("delete from project__user where user_id=? and project_id=?", userID, projectID)
-	return err
+	hasProjectRoleIdentity, err := d.IsMigrationApplied(db.Migration{Version: "2.20.29"})
+	if err != nil {
+		return err
+	}
+	if !hasProjectRoleIdentity {
+		_, err = d.exec("delete from project__user where user_id=? and project_id=?", userID, projectID)
+		return err
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = lockProjectRoleMutations(tx, d, projectID); err != nil {
+		return err
+	}
+	var current db.ProjectUser
+	err = tx.SelectOne(&current, d.PrepareQuery(
+		"select * from project__user where project_id=? and user_id=?"), projectID, userID)
+	if errors.Is(err, stdsql.ErrNoRows) {
+		return db.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	permissions, err := projectRoleAssignmentPermissionsTx(tx, d, current)
+	if err != nil {
+		return err
+	}
+	if permissions.Can(db.CanManageProjectUsers) {
+		if err = requireAnotherProjectAdministratorTx(tx, d, projectID, userID); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(d.PrepareQuery(
+		"delete from project__user where user_id=? and project_id=?"), userID, projectID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func normalizeProjectRoleAssignmentTx(
+	tx *gorp.Transaction,
+	d *SqlDb,
+	assignment db.ProjectUser,
+) (db.ProjectUser, error) {
+	if assignment.Revision <= 0 {
+		assignment.Revision = 1
+	}
+	if assignment.RoleID != nil {
+		var role db.Role
+		err := tx.SelectOne(&role, d.PrepareQuery(
+			"select * from `role` where project_id=? and role_id=?"), assignment.ProjectID, *assignment.RoleID)
+		if errors.Is(err, stdsql.ErrNoRows) {
+			return db.ProjectUser{}, db.ErrNotFound
+		}
+		if err != nil {
+			return db.ProjectUser{}, err
+		}
+		assignment.Role = db.ProjectNone
+		return assignment, nil
+	}
+	if assignment.Role.IsValid() {
+		return assignment, nil
+	}
+	var role db.Role
+	err := tx.SelectOne(&role, d.PrepareQuery(
+		"select * from `role` where slug=? and (project_id=? or project_id is null)"),
+		assignment.Role, assignment.ProjectID)
+	if errors.Is(err, stdsql.ErrNoRows) {
+		return db.ProjectUser{}, db.ErrNotFound
+	}
+	if err != nil {
+		return db.ProjectUser{}, err
+	}
+	if role.ProjectID != nil {
+		assignment.Role = db.ProjectNone
+		assignment.RoleID = &role.ID
+	}
+	return assignment, nil
+}
+
+func projectRoleAssignmentPermissionsTx(
+	tx *gorp.Transaction,
+	d *SqlDb,
+	assignment db.ProjectUser,
+) (db.ProjectUserPermission, error) {
+	if assignment.RoleID == nil && assignment.Role.IsValid() {
+		return assignment.Role.GetPermissions(), nil
+	}
+	var role db.Role
+	var err error
+	if assignment.RoleID != nil {
+		err = tx.SelectOne(&role, d.PrepareQuery(
+			"select * from `role` where project_id=? and role_id=?"), assignment.ProjectID, *assignment.RoleID)
+	} else {
+		err = tx.SelectOne(&role, d.PrepareQuery(
+			"select * from `role` where slug=? and (project_id=? or project_id is null)"),
+			assignment.Role, assignment.ProjectID)
+	}
+	if errors.Is(err, stdsql.ErrNoRows) {
+		return 0, db.ErrNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+	return role.Permissions, nil
+}
+
+func requireAnotherProjectAdministratorTx(
+	tx *gorp.Transaction,
+	d *SqlDb,
+	projectID int,
+	excludedUserID int,
+) error {
+	query := "select count(1) " +
+		"from project__user pu " +
+		"where pu.project_id=? and pu.user_id<>? and (" +
+		"pu.role='owner' or exists (" +
+		"select 1 from `role` r " +
+		"where (r.project_id=pu.project_id or r.project_id is null) " +
+		"and ((pu.role_id is not null and r.role_id=pu.role_id) " +
+		"or (pu.role_id is null and r.slug=pu.role)) " +
+		"and (r.permissions & ?) = ?))"
+	count, err := tx.SelectInt(
+		d.PrepareQuery(query),
+		projectID,
+		excludedUserID,
+		db.CanManageProjectUsers,
+		db.CanManageProjectUsers,
+	)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return db.ErrLastProjectAdministrator
+	}
+	return nil
 }
 
 // GetUser retrieves a user from the database by ID

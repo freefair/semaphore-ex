@@ -1,12 +1,28 @@
 package db
 
-import "github.com/semaphoreui/semaphore/pkg/common_errors"
+import (
+	"errors"
+	"strings"
+
+	"github.com/semaphoreui/semaphore/pkg/common_errors"
+)
+
+type ProjectRoleID string
+
+var (
+	ErrProjectRoleRevisionConflict       = errors.New("project role revision conflict")
+	ErrProjectMembershipRevisionConflict = errors.New("project membership revision conflict")
+	ErrLastProjectAdministrator          = errors.New("project must retain an administrator")
+	ErrProjectRoleAssigned               = errors.New("project role is assigned")
+)
 
 type Role struct {
+	ID          ProjectRoleID         `db:"role_id" json:"id" backup:"-"`
 	Slug        string                `db:"slug" json:"slug" backup:"-"`
 	Name        string                `db:"name" json:"name"`
 	Permissions ProjectUserPermission `db:"permissions" json:"permissions"`
 	ProjectID   *int                  `db:"project_id" json:"project_id"`
+	Revision    int                   `db:"revision" json:"revision"`
 }
 
 func ValidateRole(role Role) error {
@@ -20,6 +36,29 @@ func ValidateRole(role Role) error {
 	// it shadow the built-in role and escalate the permissions of its members.
 	if ProjectUserRole(role.Slug).IsValid() {
 		return &common_errors.ValidationError{Message: "Role slug is reserved and cannot be used: " + role.Slug}
+	}
+	return nil
+}
+
+// ValidateProjectRole validates the Enhanced project-scoped role contract.
+// Slug remains an internal compatibility key; callers address roles by ID.
+func ValidateProjectRole(role Role) error {
+	if role.ProjectID == nil || *role.ProjectID <= 0 {
+		return &common_errors.ValidationError{Message: "Project role requires a project"}
+	}
+	if strings.TrimSpace(string(role.ID)) == "" {
+		return &common_errors.ValidationError{Message: "Project role ID cannot be empty"}
+	}
+	if strings.TrimSpace(role.Name) == "" {
+		return &common_errors.ValidationError{Message: "Role name cannot be empty"}
+	}
+	if role.Revision <= 0 {
+		return &common_errors.ValidationError{Message: "Project role revision must be positive"}
+	}
+	const knownPermissions = CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
+		CanManageProjectUsers | CanViewProjectResources
+	if role.Permissions&^knownPermissions != 0 {
+		return &common_errors.ValidationError{Message: "Project role contains unknown permissions"}
 	}
 	return nil
 }

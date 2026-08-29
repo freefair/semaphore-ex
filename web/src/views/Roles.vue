@@ -33,7 +33,7 @@
       <v-toolbar-title>{{ $t('Roles') }}</v-toolbar-title>
       <v-spacer></v-spacer>
       <v-btn
-        v-if="can(USER_PERMISSIONS.manageProjectResources)"
+        v-if="can(USER_PERMISSIONS.manageProjectUsers)"
         :disabled="!features.custom_roles_management"
         color="primary"
         @click="editItem('new')"
@@ -41,7 +41,12 @@
       >
     </v-toolbar>
 
-    <TeamMenu v-if="projectId" :project-id="projectId" :system-info="systemInfo" />
+    <TeamMenu
+      v-if="projectId"
+      :project-id="projectId"
+      :system-info="systemInfo"
+      :can-manage-roles="can(USER_PERMISSIONS.manageProjectUsers)"
+    />
 
     <v-divider style="margin-top: -1px" />
 
@@ -64,6 +69,15 @@
       </span>
     </v-alert>
 
+    <v-alert
+      v-else-if="!can(USER_PERMISSIONS.manageProjectUsers)"
+      text
+      type="warning"
+      class="PageAlert"
+    >
+      {{ $t('projectRolePermissionDenied') }}
+    </v-alert>
+
     <v-data-table
       :headers="headers"
       :items="items"
@@ -74,12 +88,12 @@
         <TemplatePermissionsChips class="py-1" :permissions="item.permissions" />
       </template>
       <template v-slot:item.actions="{ item }">
-        <div style="white-space: nowrap">
-          <v-btn icon class="mr-1" @click="askDeleteItem(item.slug)">
+        <div v-if="can(USER_PERMISSIONS.manageProjectUsers)" style="white-space: nowrap">
+          <v-btn icon class="mr-1" @click="askDeleteItem(item.id)">
             <v-icon>mdi-delete</v-icon>
           </v-btn>
 
-          <v-btn icon class="mr-1" @click="editItem(item.slug)">
+          <v-btn icon class="mr-1" @click="editItem(item.id)">
             <v-icon>mdi-pencil</v-icon>
           </v-btn>
         </div>
@@ -95,6 +109,7 @@ import EditDialog from '@/components/EditDialog.vue';
 import RoleForm from '@/components/EditRoleForm.vue';
 import TeamMenu from '@/components/TeamMenu.vue';
 import TemplatePermissionsChips from '@/components/TemplatePermissionsChips.vue';
+import { USER_PERMISSIONS } from '@/lib/constants';
 
 export default {
   mixins: [ItemListPageBase],
@@ -119,7 +134,7 @@ export default {
 
   computed: {
     IDFieldName() {
-      return 'slug';
+      return 'id';
     },
   },
 
@@ -130,6 +145,10 @@ export default {
   },
 
   methods: {
+    allowActions() {
+      return this.can(USER_PERMISSIONS.manageProjectUsers);
+    },
+
     getHeaders() {
       return [
         {
@@ -161,6 +180,18 @@ export default {
       return this.projectId
         ? `/api/project/${this.projectId}/roles/${this.itemId}`
         : `/api/roles/${this.itemId}`;
+    },
+
+    getDeleteItemUrl(item) {
+      return `${this.getSingleItemUrl()}?revision=${encodeURIComponent(item.revision)}`;
+    },
+
+    async loadItems() {
+      if (!this.can(USER_PERMISSIONS.manageProjectUsers)) {
+        this.items = [];
+        return;
+      }
+      this.items = await this.loadEndpoint(this.getItemsUrl());
     },
 
     getEventName() {

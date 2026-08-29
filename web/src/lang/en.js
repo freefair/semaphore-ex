@@ -562,6 +562,8 @@ export default {
   canRunProjectTasks: 'Can run project tasks',
   canUpdateProject: 'Can update project',
   canManageProjectResources: 'Can manage project resources',
+  canViewProjectResources: 'Can view project resources',
+  projectRolePermissionDenied: 'You do not have permission to manage project roles.',
   canManageProjectUsers: 'Can manage project users',
   newRole: 'New Role',
   editRole: 'Edit Role',

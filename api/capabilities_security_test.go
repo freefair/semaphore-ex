@@ -193,6 +193,83 @@ func TestProjectRunnerPermissionAuditDoesNotDuplicateDownstreamCapabilityDenial(
 	assert.Empty(t, auditRecorder.events)
 }
 
+func TestProjectRoleAndAssignmentMutationsAreAudited(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		vars       map[string]string
+		status     int
+		action     pro_interfaces.AuditAction
+		targetType pro_interfaces.AuditTargetType
+		targetID   string
+		outcome    pro_interfaces.AuditOutcome
+		reason     string
+	}{
+		{
+			name: "role update allowed", method: http.MethodPut,
+			path: "/api/project/12/roles/role_0123456789abcdef0123456789abcdef",
+			vars: map[string]string{
+				"project_id": "12", "role_id": "role_0123456789abcdef0123456789abcdef",
+			},
+			status: http.StatusOK, action: pro_interfaces.AuditActionProjectRoleUpdate,
+			targetType: pro_interfaces.AuditTargetProjectRole,
+			targetID:   "role:role_0123456789abcdef0123456789abcdef",
+			outcome:    pro_interfaces.AuditOutcomeAllowed,
+			reason:     string(pro_interfaces.CapabilityReasonActive),
+		},
+		{
+			name: "assignment denied", method: http.MethodPut,
+			path:   "/api/project/12/users/34",
+			vars:   map[string]string{"project_id": "12", "user_id": "34"},
+			status: http.StatusForbidden, action: pro_interfaces.AuditActionProjectRoleAssign,
+			targetType: pro_interfaces.AuditTargetProjectMembership, targetID: "member:34",
+			outcome: pro_interfaces.AuditOutcomeDenied,
+			reason:  string(pro_interfaces.CapabilityReasonInsufficientPermission),
+		},
+		{
+			name: "role delete conflict", method: http.MethodDelete,
+			path: "/api/project/12/roles/role_0123456789abcdef0123456789abcdef",
+			vars: map[string]string{
+				"project_id": "12", "role_id": "role_0123456789abcdef0123456789abcdef",
+			},
+			status: http.StatusConflict, action: pro_interfaces.AuditActionProjectRoleDelete,
+			targetType: pro_interfaces.AuditTargetProjectRole,
+			targetID:   "role:role_0123456789abcdef0123456789abcdef",
+			outcome:    pro_interfaces.AuditOutcomeFailure,
+			reason:     pro_interfaces.AuditReasonOperationError,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			auditRecorder := &auditRecorderStub{}
+			handler := helpers.CorrelationMiddleware(
+				EnhancedProjectPermissionAuditMiddleware(auditRecorder)(http.HandlerFunc(
+					func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(tt.status) },
+				)),
+			)
+			request := httptest.NewRequest(tt.method, tt.path, nil)
+			request = mux.SetURLVars(request, tt.vars)
+			request = helpers.SetContextValue(request, "user", &db.User{ID: 11})
+			request = helpers.SetContextValue(request, "permissions", db.CanManageProjectUsers)
+			request = helpers.SetContextValue(request, "project", db.Project{ID: 12})
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, request)
+
+			assert.Equal(t, tt.status, recorder.Code)
+			require.Len(t, auditRecorder.events, 1)
+			event := auditRecorder.events[0]
+			assert.Equal(t, tt.action, event.Action)
+			assert.Equal(t, tt.targetType, event.TargetType)
+			assert.Equal(t, tt.targetID, event.TargetID)
+			assert.Equal(t, tt.outcome, event.Outcome)
+			assert.Equal(t, tt.reason, event.Reason)
+			require.NoError(t, event.Validate())
+		})
+	}
+}
+
 func TestProjectRunnerLifecycleRoutesUseSpecificAuditActions(t *testing.T) {
 	tests := []struct {
 		method string

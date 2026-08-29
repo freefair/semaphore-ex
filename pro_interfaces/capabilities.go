@@ -26,6 +26,8 @@ const (
 	// CapabilityWorkflowTriggers gates trigger management and every background
 	// or credential-authenticated workflow-start entry point.
 	CapabilityWorkflowTriggers CapabilityID = "workflow_triggers"
+	// CapabilityProjectRoles gates project-scoped custom role management.
+	CapabilityProjectRoles CapabilityID = "project_roles"
 )
 
 // LimitID identifies one numeric limit in a capability decision.

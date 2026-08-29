@@ -5,13 +5,14 @@ import (
 
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
 
 type RolesController struct {
 	roleRepo db.RoleRepository
 }
 
-func NewRolesController(roleRepo db.RoleRepository) *RolesController {
+func NewRolesController(roleRepo db.RoleRepository, _ pro_interfaces.CapabilityProvider) *RolesController {
 	return &RolesController{
 		roleRepo: roleRepo,
 	}
@@ -43,6 +44,10 @@ func (c *RolesController) GetProjectRoles(w http.ResponseWriter, r *http.Request
 }
 
 func (c *RolesController) GetProjectAndGlobalRoles(w http.ResponseWriter, r *http.Request) {
+	helpers.WriteJSON(w, http.StatusOK, []string{})
+}
+
+func (c *RolesController) GetProjectPermissionCatalog(w http.ResponseWriter, r *http.Request) {
 	helpers.WriteJSON(w, http.StatusOK, []string{})
 }
 

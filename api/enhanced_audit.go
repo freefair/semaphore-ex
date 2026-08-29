@@ -98,18 +98,34 @@ func EnhancedProjectPermissionAuditMiddleware(audit pro_interfaces.AuditServiceF
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			descriptor, enhanced := enhancedAuditForRoute(r)
-			if !enhanced || descriptor.TargetType != pro_interfaces.AuditTargetProjectRunner || audit == nil ||
-				!projectPermissionDenied(r) {
+			if !enhanced || audit == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if descriptor.TargetType == pro_interfaces.AuditTargetProjectRunner && !projectPermissionDenied(r) {
 				next.ServeHTTP(w, r)
 				return
 			}
 			captured := &statusCapturingWriter{ResponseWriter: w}
 			next.ServeHTTP(captured, r)
-			if captured.status != http.StatusForbidden {
+			if descriptor.TargetType == pro_interfaces.AuditTargetProjectRunner && captured.status != http.StatusForbidden {
 				return
 			}
-			event := routeAuditEvent(r, descriptor, pro_interfaces.AuditOutcomeDenied,
-				string(pro_interfaces.CapabilityReasonInsufficientPermission))
+			status := captured.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			outcome := pro_interfaces.AuditOutcomeFailure
+			reason := pro_interfaces.AuditReasonOperationError
+			switch {
+			case status >= 200 && status < 300:
+				outcome = pro_interfaces.AuditOutcomeAllowed
+				reason = string(pro_interfaces.CapabilityReasonActive)
+			case status == http.StatusForbidden:
+				outcome = pro_interfaces.AuditOutcomeDenied
+				reason = string(pro_interfaces.CapabilityReasonInsufficientPermission)
+			}
+			event := routeAuditEvent(r, descriptor, outcome, reason)
 			if err := audit.Record(r.Context(), event); err != nil {
 				log.WithFields(event.SafeFields()).Error("Failed to store enhanced audit event")
 			}
@@ -164,6 +180,36 @@ func enhancedAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {
 		return enhancedAuditDescriptor{}, false
 	}
 	projectTarget := fmt.Sprintf("project:%d", projectID)
+	if strings.HasSuffix(path, "/roles") && method == http.MethodPost {
+		return projectRoleAuditDescriptor(
+			pro_interfaces.AuditActionProjectRoleCreate, projectTarget, projectID), true
+	}
+	if roleID := strings.TrimSpace(mux.Vars(r)["role_id"]); roleID != "" {
+		roleTarget := "role:" + roleID
+		switch method {
+		case http.MethodPut, http.MethodPost:
+			return projectRoleAuditDescriptor(
+				pro_interfaces.AuditActionProjectRoleUpdate, roleTarget, projectID), true
+		case http.MethodDelete:
+			return projectRoleAuditDescriptor(
+				pro_interfaces.AuditActionProjectRoleDelete, roleTarget, projectID), true
+		}
+	}
+	if strings.HasSuffix(path, "/users") && method == http.MethodPost {
+		return projectMembershipAuditDescriptor(
+			pro_interfaces.AuditActionProjectMemberAdd, projectTarget, projectID), true
+	}
+	if userID, ok := positiveMuxID(r, "user_id"); ok {
+		memberTarget := fmt.Sprintf("member:%d", userID)
+		switch method {
+		case http.MethodPut:
+			return projectMembershipAuditDescriptor(
+				pro_interfaces.AuditActionProjectRoleAssign, memberTarget, projectID), true
+		case http.MethodDelete:
+			return projectMembershipAuditDescriptor(
+				pro_interfaces.AuditActionProjectMemberRemove, memberTarget, projectID), true
+		}
+	}
 	if strings.HasSuffix(path, "/runners") {
 		switch method {
 		case http.MethodGet, http.MethodHead:
@@ -215,6 +261,20 @@ func capabilityAuditDescriptor(action pro_interfaces.AuditAction) enhancedAuditD
 func projectRunnerAuditDescriptor(action pro_interfaces.AuditAction, targetID string, projectID int) enhancedAuditDescriptor {
 	return enhancedAuditDescriptor{
 		Action: action, TargetType: pro_interfaces.AuditTargetProjectRunner,
+		TargetID: targetID, ProjectID: &projectID,
+	}
+}
+
+func projectRoleAuditDescriptor(action pro_interfaces.AuditAction, targetID string, projectID int) enhancedAuditDescriptor {
+	return enhancedAuditDescriptor{
+		Action: action, TargetType: pro_interfaces.AuditTargetProjectRole,
+		TargetID: targetID, ProjectID: &projectID,
+	}
+}
+
+func projectMembershipAuditDescriptor(action pro_interfaces.AuditAction, targetID string, projectID int) enhancedAuditDescriptor {
+	return enhancedAuditDescriptor{
+		Action: action, TargetType: pro_interfaces.AuditTargetProjectMembership,
 		TargetID: targetID, ProjectID: &projectID,
 	}
 }

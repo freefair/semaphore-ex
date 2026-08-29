@@ -166,7 +166,9 @@
                 <v-list-item-title class="app__project-selector-title">
                   {{ project.name }}
                 </v-list-item-title>
-                <v-list-item-subtitle>{{ userRole.role }}</v-list-item-subtitle>
+                <v-list-item-subtitle>
+                  {{ userRole.role_name || userRole.role }}
+                </v-list-item-subtitle>
               </v-list-item-content>
 
               <v-list-item-icon>
@@ -913,6 +915,7 @@ import TaskLogDialog from '@/components/TaskLogDialog.vue';
 import SystemInfoDialog from '@/components/SystemInfoDialog.vue';
 import delay from '@/lib/delay';
 import { isEnhancedEdition } from '@/lib/edition';
+import canViewProjectResources from '@/lib/project-permissions';
 
 const PROJECT_COLORS = ['red', 'blue', 'orange', 'green'];
 
@@ -1203,7 +1206,10 @@ export default {
 
       // Workflows is a Pro feature; hide the nav item unless it is licensed.
       const features = (this.systemInfo || {}).features || {};
-      return items.filter((it) => it.key !== 'workflows' || features.workflows);
+      return items.filter((item) => (
+        (item.key !== 'workflows' || features.workflows)
+        && (item.key !== 'repositories' || this.canViewProjectResources())
+      ));
     },
 
     pinnedNavItemsList() {
@@ -1375,6 +1381,10 @@ export default {
   },
 
   methods: {
+    canViewProjectResources() {
+      return canViewProjectResources(this.user, this.userRole);
+    },
+
     async onSubscriptionKeyUpdates() {
       EventBus.$emit('i-snackbar', {
         color: 'success',

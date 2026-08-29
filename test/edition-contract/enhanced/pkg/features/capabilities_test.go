@@ -97,6 +97,28 @@ func TestLDAPCapabilityIsAvailableInEnhancedEdition(t *testing.T) {
 	}
 }
 
+func TestProjectRolesCapabilityIsActiveInEnhancedEdition(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	defer store.Close()
+	provider := NewCapabilityProvider(store)
+
+	snapshot, err := provider.Resolve(context.Background(), pro_interfaces.CapabilityRequest{
+		UserID: 7, IsAdmin: true, At: time.Unix(1_700_000_000, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("resolve enhanced capabilities: %v", err)
+	}
+	decision := snapshot.Decision(pro_interfaces.CapabilityProjectRoles)
+	if decision.State() != pro_interfaces.CapabilityStateActive ||
+		!decision.Allows(pro_interfaces.CapabilityAccessRead) ||
+		!decision.Allows(pro_interfaces.CapabilityAccessWrite) {
+		t.Fatalf("project roles capability must allow read and write, got %q", decision.State())
+	}
+	if !GetFeatures(nil, "").CustomRolesManagement {
+		t.Fatal("enhanced feature set must expose custom project role management")
+	}
+}
+
 func TestEnhancedFeatureSetIncludesHighAvailability(t *testing.T) {
 	if !GetFeatures(nil, "").HighAvailability {
 		t.Fatal("enhanced cluster dashboard must not remain behind the enterprise-only capability gate")

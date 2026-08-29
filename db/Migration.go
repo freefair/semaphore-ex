@@ -162,6 +162,7 @@ func GetMigrations(dialect string) []Migration {
 		{Version: "2.20.26"},
 		{Version: "2.20.27"},
 		{Version: "2.20.28"},
+		{Version: "2.20.29"},
 		{Version: "2.20.66"},
 		{Version: "2.20.67"},
 	}

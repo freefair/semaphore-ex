@@ -632,11 +632,15 @@ type RoleRepository interface {
 	GetGlobalRoleBySlug(slug string) (Role, error)
 	GetProjectOrGlobalRoleBySlug(projectID int, slug string) (Role, error)
 	GetProjectRole(projectID int, slug string) (Role, error)
+	GetProjectRoleByID(projectID int, roleID ProjectRoleID) (Role, error)
 	GetProjectRoles(projectID int) ([]Role, error)
 	GetGlobalRoles() ([]Role, error)
 	UpdateRole(role Role) error
 	CreateRole(role Role) (Role, error)
 	DeleteRole(slug string) error
+	CreateProjectRole(role Role) (Role, error)
+	UpdateProjectRole(projectID int, role Role, expectedRevision int) (Role, error)
+	DeleteProjectRole(projectID int, roleID ProjectRoleID, expectedRevision int) error
 }
 
 // Store is the main interface that aggregates all specialized interfaces
