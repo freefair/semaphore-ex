@@ -155,6 +155,39 @@ func TestManagedClusterInspectorDoesNotPresentStaleOrIncompatibleNodesAsReady(t 
 	assert.Equal(t, pro_interfaces.ClusterNodeIncompatibleSchema, nodes[1].CompatibilityState)
 }
 
+func TestManagedClusterInspectorKeepsSQLMembershipVisibleWhenRedisIsUnavailable(t *testing.T) {
+	serverNow := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	repository := &clusterNodeRepositoryFake{nodes: []pro_interfaces.ClusterNodeRegistration{{
+		ClusterNodeIdentity: pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-a"},
+		ProtocolVersion:     1,
+		SchemaVersion:       "2.20.23",
+		LastSeenAt:          serverNow,
+	}}}
+	inspector := NewManagedClusterInspector(repository, unavailableHeartbeatStore{},
+		pro_interfaces.ClusterCompatibilityRequirements{ProtocolVersion: 1, SchemaVersion: "2.20.23"},
+		pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-a"})
+
+	nodes, err := inspector.Nodes()
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	assert.False(t, nodes[0].Alive)
+	assert.Equal(t, pro_interfaces.ClusterNodeStale, nodes[0].CompatibilityState)
+}
+
+type unavailableHeartbeatStore struct{}
+
+func (unavailableHeartbeatStore) Publish(context.Context, pro_interfaces.ClusterNodeIdentity, time.Duration) (time.Time, error) {
+	return time.Time{}, assert.AnError
+}
+
+func (unavailableHeartbeatStore) IsLive(context.Context, pro_interfaces.ClusterNodeIdentity) (bool, time.Time, error) {
+	return false, time.Time{}, assert.AnError
+}
+
+func (unavailableHeartbeatStore) Remove(context.Context, pro_interfaces.ClusterNodeIdentity) error {
+	return nil
+}
+
 type heartbeatClientFake struct {
 	serverTime time.Time
 	key        string

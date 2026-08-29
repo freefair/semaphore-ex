@@ -17,6 +17,7 @@ const (
 	maxClusterEventDedupe        = 1024
 	clusterEventReconnectMin     = 100 * time.Millisecond
 	clusterEventReconnectMax     = 5 * time.Second
+	clusterEventHealthCheckEvery = time.Second
 	clusterEventChannel          = "semaphore:cluster:events:v1"
 	clusterEventSubscriberBuffer = 128
 )
@@ -60,10 +61,16 @@ func (t *goRedisEventTransport) Subscribe(ctx context.Context) (<-chan []byte, f
 	go func() {
 		defer close(output)
 		defer closeSubscription()
+		healthCheck := time.NewTicker(clusterEventHealthCheckEvery)
+		defer healthCheck.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
+			case <-healthCheck.C:
+				if err := pubsub.Ping(ctx); err != nil {
+					return
+				}
 			case message, ok := <-messages:
 				if !ok {
 					return
