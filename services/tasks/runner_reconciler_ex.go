@@ -4,9 +4,61 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/tz"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 )
+
+// ApplyOrphanRecovery applies an evidence-derived recovery decision through
+// the existing runner CAS/finalization paths. The caller is responsible for
+// holding a current fenced task-control lease before invoking this method.
+func (p *TaskPool) ApplyOrphanRecovery(tsk *TaskRunner, assessment pro_interfaces.TaskRecoveryAssessment) {
+	if tsk == nil || tsk.Task.Status.IsFinished() {
+		return
+	}
+	switch assessment.Decision {
+	case pro_interfaces.TaskRecoveryObserve:
+		return
+	case pro_interfaces.TaskRecoveryQuarantine:
+		p.quarantineOrphanedTask(tsk, assessment.Reason)
+		return
+	case pro_interfaces.TaskRecoveryRecover:
+		if !assessment.SafeReplacement {
+			p.quarantineOrphanedTask(tsk, "recovery was not proven safe")
+			return
+		}
+		runnerID := runnerIDFromSnapshot(tsk.Task)
+		switch tsk.Task.Status {
+		case task_logger.TaskWaitingStatus, task_logger.TaskStartingStatus:
+			if runnerID == 0 {
+				p.requeueUndispatchedTask(tsk)
+				return
+			}
+			p.requeueTaskRunnerOffline(tsk, runnerID, assessment.Reason)
+		case task_logger.TaskStoppingStatus, task_logger.TaskRejected:
+			p.stopTaskRunnerLost(tsk, nil, assessment.Reason)
+		default:
+			p.failTaskRunnerLost(tsk, nil, assessment.Reason)
+		}
+	default:
+		p.quarantineOrphanedTask(tsk, "recovery decision is invalid")
+	}
+}
+
+func (p *TaskPool) quarantineOrphanedTask(tsk *TaskRunner, reason string) {
+	reason = "Recovery quarantined: " + reason
+	candidate := tsk.Task
+	candidate.RecoveryReason = reason
+	candidate.Message = reason
+	if err := p.store.UpdateTask(candidate); err != nil {
+		log.WithError(err).WithField("task_id", tsk.Task.ID).Error("failed to persist task recovery quarantine")
+		return
+	}
+	tsk.Task = candidate
+	p.state.UpdateRuntimeFields(tsk)
+	tsk.publishStatus()
+	tsk.Log(reason)
+}
 
 func runnerIDFromSnapshot(task db.Task) int {
 	if task.RunnerID != nil {

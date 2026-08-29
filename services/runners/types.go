@@ -48,7 +48,8 @@ type CommitInfo struct {
 }
 
 type RunnerProgress struct {
-	Jobs []JobProgress
+	Jobs      []JobProgress
+	KnownJobs []JobState
 }
 
 // RunnerProgressResponse is the server's reply to a progress report (PUT).
