@@ -1,12 +1,24 @@
 package db
 
-import "github.com/semaphoreui/semaphore/pkg/common_errors"
+import (
+	"errors"
+	"github.com/semaphoreui/semaphore/pkg/common_errors"
+)
+
+var (
+	ErrProjectRoleRevisionConflict       = errors.New("project role revision conflict")
+	ErrProjectMembershipRevisionConflict = errors.New("project membership revision conflict")
+	ErrLastProjectAdministrator          = errors.New("project must retain an administrator")
+	ErrProjectRoleAssigned               = errors.New("project role is assigned")
+)
 
 type Role struct {
+	ID          ProjectRoleID         `db:"role_id" json:"id" backup:"-"`
 	Slug        string                `db:"slug" json:"slug" backup:"-"`
 	Name        string                `db:"name" json:"name"`
 	Permissions ProjectUserPermission `db:"permissions" json:"permissions"`
 	ProjectID   *int                  `db:"project_id" json:"project_id"`
+	Revision    int                   `db:"revision" json:"revision"`
 }
 
 func ValidateRole(role Role) error {

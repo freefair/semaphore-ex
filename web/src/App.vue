@@ -166,7 +166,9 @@
                 <v-list-item-title class="app__project-selector-title">
                   {{ project.name }}
                 </v-list-item-title>
-                <v-list-item-subtitle>{{ userRole.role }}</v-list-item-subtitle>
+                <v-list-item-subtitle>
+                  {{ userRole.role_name || userRole.role }}
+                </v-list-item-subtitle>
               </v-list-item-content>
 
               <v-list-item-icon>
@@ -898,6 +900,8 @@
 </style>
 
 <script>
+import enhancedMethods from '@/lib/enhanced/app';
+
 import axios from 'axios';
 import { getErrorMessage } from '@/lib/error';
 import EditDialog from '@/components/EditDialog.vue';
@@ -1203,7 +1207,10 @@ export default {
 
       // Workflows is a Pro feature; hide the nav item unless it is licensed.
       const features = (this.systemInfo || {}).features || {};
-      return items.filter((it) => it.key !== 'workflows' || features.workflows);
+      return items.filter((item) => (
+        (item.key !== 'workflows' || features.workflows)
+        && (item.key !== 'repositories' || this.canViewProjectResources())
+      ));
     },
 
     pinnedNavItemsList() {
@@ -1375,6 +1382,8 @@ export default {
   },
 
   methods: {
+    ...enhancedMethods,
+
     async onSubscriptionKeyUpdates() {
       EventBus.$emit('i-snackbar', {
         color: 'success',

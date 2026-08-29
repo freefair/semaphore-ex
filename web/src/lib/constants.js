@@ -23,20 +23,25 @@ export const USER_PERMISSIONS = {
   updateProject: 2,
   manageProjectResources: 4,
   manageProjectUsers: 8,
+  viewProjectResources: 16,
 };
 
 export const USER_ROLES = [{
   slug: 'owner',
   name: 'Owner',
+  permissions: 31,
 }, {
   slug: 'manager',
   name: 'Manager',
+  permissions: 21,
 }, {
   slug: 'task_runner',
   name: 'Task Runner',
+  permissions: 17,
 }, {
   slug: 'guest',
   name: 'Guest',
+  permissions: 16,
 }];
 
 export const MATCHER_TYPE_TITLES = {
@@ -276,6 +281,11 @@ export const ROLE_PERMISSIONS = {
     permission: 8,
     label: 'canManageProjectUsers',
     color: 'red',
+    textColor: 'white',
+  }, {
+    permission: 16,
+    label: 'canViewProjectResources',
+    color: 'purple',
     textColor: 'white',
   }],
   template: [{

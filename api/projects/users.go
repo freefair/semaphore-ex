@@ -2,10 +2,9 @@ package projects
 
 import (
 	"fmt"
-	"net/http"
-
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"net/http"
 )
 
 // UserMiddleware ensures a user exists and loads it to the context
@@ -37,10 +36,13 @@ func UserMiddleware(next http.Handler) http.Handler {
 }
 
 type projUser struct {
-	ID       int                `json:"id"`
-	Username string             `json:"username"`
-	Name     string             `json:"name"`
-	Role     db.ProjectUserRole `json:"role"`
+	ID                   int                      `json:"id"`
+	Username             string                   `json:"username"`
+	Name                 string                   `json:"name"`
+	Role                 db.ProjectUserRole       `json:"role"`
+	RoleID               *db.ProjectRoleID        `json:"role_id,omitempty"`
+	Revision             int                      `json:"revision"`
+	EffectivePermissions db.ProjectUserPermission `json:"effective_permissions"`
 }
 
 // GetUsers returns all users in a project
@@ -63,11 +65,25 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 	var result = make([]projUser, 0)
 
 	for _, user := range users {
+		role := user.Role
+		permissions := role.GetPermissions()
+		if user.RoleID != nil {
+			customRole, roleErr := helpers.Store(r).GetProjectRoleByID(project.ID, *user.RoleID)
+			if roleErr != nil {
+				helpers.WriteError(w, roleErr)
+				return
+			}
+			role = db.ProjectUserRole(customRole.ID)
+			permissions = customRole.Permissions
+		}
 		result = append(result, projUser{
-			ID:       user.ID,
-			Name:     user.Name,
-			Username: user.Username,
-			Role:     user.Role,
+			ID:                   user.ID,
+			Name:                 user.Name,
+			Username:             user.Username,
+			Role:                 role,
+			RoleID:               user.RoleID,
+			Revision:             user.Revision,
+			EffectivePermissions: permissions,
 		})
 	}
 
@@ -78,26 +94,26 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 func AddUser(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	var projectUser struct {
-		UserID int                `json:"user_id" binding:"required"`
-		Role   db.ProjectUserRole `json:"role"`
+		UserID   int                `json:"user_id" binding:"required"`
+		Role     db.ProjectUserRole `json:"role"`
+		Revision int                `json:"revision"`
 	}
 
 	if !helpers.Bind(w, r, &projectUser) {
 		return
 	}
 
-	if !projectUser.Role.IsValid() {
-		_, err := helpers.Store(r).GetProjectOrGlobalRoleBySlug(project.ID, string(projectUser.Role))
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
+	role, roleID, ok := resolveProjectMembershipRole(w, r, project.ID, projectUser.Role)
+	if !ok {
+		return
 	}
 
 	_, err := helpers.Store(r).CreateProjectUser(db.ProjectUser{
 		ProjectID: project.ID,
 		UserID:    projectUser.UserID,
-		Role:      projectUser.Role,
+		Role:      role,
+		RoleID:    roleID,
+		Revision:  projectUser.Revision,
 	})
 
 	if err != nil {
@@ -130,7 +146,7 @@ func removeUser(targetUser db.User, w http.ResponseWriter, r *http.Request) {
 	err := helpers.Store(r).DeleteProjectUser(project.ID, targetUser.ID)
 
 	if err != nil {
-		helpers.WriteError(w, err)
+		writeProjectMembershipError(w, err)
 		return
 	}
 
@@ -169,29 +185,33 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var projectUser struct {
-		Role db.ProjectUserRole `json:"role"`
+		Role     db.ProjectUserRole `json:"role"`
+		Revision int                `json:"revision"`
 	}
 
 	if !helpers.Bind(w, r, &projectUser) {
 		return
 	}
+	if projectUser.Revision <= 0 {
+		helpers.WriteErrorStatus(w, "A positive membership revision is required", http.StatusBadRequest)
+		return
+	}
 
-	if !projectUser.Role.IsValid() {
-		_, err := helpers.Store(r).GetProjectOrGlobalRoleBySlug(project.ID, string(projectUser.Role))
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
+	role, roleID, ok := resolveProjectMembershipRole(w, r, project.ID, projectUser.Role)
+	if !ok {
+		return
 	}
 
 	err := helpers.Store(r).UpdateProjectUser(db.ProjectUser{
 		UserID:    targetUser.ID,
 		ProjectID: project.ID,
-		Role:      projectUser.Role,
+		Role:      role,
+		RoleID:    roleID,
+		Revision:  projectUser.Revision,
 	})
 
 	if err != nil {
-		helpers.WriteError(w, err)
+		writeProjectMembershipError(w, err)
 		return
 	}
 

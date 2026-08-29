@@ -39,7 +39,7 @@ func TestCommunityEmailVerificationIsForbidden(t *testing.T) {
 }
 
 func TestCommunityRoleResourcesAreNotFound(t *testing.T) {
-	controller := NewRolesController(nil)
+	controller := NewRolesController(nil, nil)
 	for name, handler := range map[string]http.HandlerFunc{
 		"get global":     controller.GetGlobalRole,
 		"add global":     controller.AddRole,
@@ -59,7 +59,7 @@ func TestCommunityRoleResourcesAreNotFound(t *testing.T) {
 }
 
 func TestCommunityRoleCollectionsAreEmpty(t *testing.T) {
-	controller := NewRolesController(nil)
+	controller := NewRolesController(nil, nil)
 	for name, handler := range map[string]http.HandlerFunc{
 		"global":  controller.GetRoles,
 		"project": controller.GetProjectRoles,

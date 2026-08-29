@@ -30,7 +30,11 @@
       </v-btn>
     </v-toolbar>
 
-    <TeamMenu :project-id="projectId" :system-info="systemInfo" />
+    <TeamMenu
+      :project-id="projectId"
+      :system-info="systemInfo"
+      :can-manage-roles="can(USER_PERMISSIONS.manageProjectUsers)"
+    />
 
     <v-divider style="margin-top: -1px;"/>
 

@@ -1,17 +1,17 @@
 package api
 
 import (
-	"net/http"
-
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"net/http"
 )
 
 type RolesController struct {
 	roleRepo db.RoleRepository
 }
 
-func NewRolesController(roleRepo db.RoleRepository) *RolesController {
+func NewRolesController(roleRepo db.RoleRepository, _ pro_interfaces.CapabilityProvider) *RolesController {
 	return &RolesController{
 		roleRepo: roleRepo,
 	}

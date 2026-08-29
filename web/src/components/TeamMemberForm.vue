@@ -54,7 +54,7 @@
       v-model="item.role"
       :label="$t('role')"
       :items="userRoles"
-      item-value="slug"
+      item-value="value"
       item-text="name"
       :rules="[v => !!v || $t('user_required')]"
       required
@@ -80,7 +80,10 @@ export default {
 
   computed: {
     userRoles() {
-      return [...USER_ROLES, ...(this.roles || [])];
+      return [...USER_ROLES, ...(this.roles || [])].map((role) => ({
+        ...role,
+        value: role.id || role.slug || role.value,
+      }));
     },
   },
 

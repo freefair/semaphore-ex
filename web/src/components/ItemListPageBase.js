@@ -72,6 +72,10 @@ export default {
       throw new Error('Not implemented');
     },
 
+    getDeleteItemUrl() {
+      return this.getSingleItemUrl();
+    },
+
     getHeaders() {
       throw new Error('Not implemented');
     },
@@ -121,7 +125,7 @@ export default {
 
         await axios({
           method: 'delete',
-          url: this.getSingleItemUrl(),
+          url: this.getDeleteItemUrl(item),
           responseType: 'json',
         });
 

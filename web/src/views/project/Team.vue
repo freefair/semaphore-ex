@@ -37,7 +37,12 @@
       </v-btn>
     </v-toolbar>
 
-    <TeamMenu v-if="isPro" :project-id="projectId" :system-info="systemInfo" />
+    <TeamMenu
+      v-if="isPro"
+      :project-id="projectId"
+      :system-info="systemInfo"
+      :can-manage-roles="can(USER_PERMISSIONS.manageProjectUsers)"
+    />
 
     <v-divider style="margin-top: -1px" />
 
@@ -50,18 +55,23 @@
       style="max-width: calc(var(--breakpoint-xl) - var(--nav-drawer-width) - 200px); margin: auto"
     >
       <template v-slot:item.role="{ item }">
-        <v-select
-          hide-details
-          v-model="item.role"
-          :items="userRoles"
-          item-value="slug"
-          item-text="name"
-          :style="{ width: '200px' }"
-          @change="updateProjectUser(item)"
-          v-if="can(USER_PERMISSIONS.manageProjectUsers)"
-          class="pt-0 mt-0"
-        />
-        <div v-else>{{ userRoles.find((r) => r.slug === item.role).name }}</div>
+        <div :style="{ width: '240px' }">
+          <v-select
+            hide-details
+            v-model="item.role"
+            :items="userRoles"
+            item-value="value"
+            item-text="name"
+            @change="updateProjectUser(item)"
+            v-if="can(USER_PERMISSIONS.manageProjectUsers)"
+            class="pt-0 mt-0"
+          />
+          <div v-else>{{ roleName(item.role) }}</div>
+          <TemplatePermissionsChips
+            class="mt-1"
+            :permissions="rolePermissions(item.role)"
+          />
+        </div>
       </template>
 
       <template v-slot:item.actions="{ item }">
@@ -75,14 +85,19 @@
   </div>
 </template>
 <script>
+import enhancedMethods from '@/lib/enhanced/team';
+
 import ItemListPageBase from '@/components/ItemListPageBase';
 import EditTeamMemberDialog from '@/components/EditTeamMemberDialog.vue';
 import axios from 'axios';
 import { USER_PERMISSIONS, USER_ROLES } from '@/lib/constants';
 import TeamMenu from '@/components/TeamMenu.vue';
+import TemplatePermissionsChips from '@/components/TemplatePermissionsChips.vue';
+import EventBus from '@/event-bus';
+import { getErrorMessage } from '@/lib/error';
 
 export default {
-  components: { TeamMenu, EditTeamMemberDialog },
+  components: { TeamMenu, EditTeamMemberDialog, TemplatePermissionsChips },
   mixins: [ItemListPageBase],
 
   props: {
@@ -97,7 +112,10 @@ export default {
 
   computed: {
     userRoles() {
-      return [...USER_ROLES, ...this.roles];
+      return [...USER_ROLES, ...this.roles].map((role) => ({
+        ...role,
+        value: role.id || role.slug,
+      }));
     },
 
     isPro() {
@@ -116,6 +134,8 @@ export default {
   },
 
   methods: {
+    ...enhancedMethods,
+
     openInvites() {
       if (this.systemInfo.teams.invites_enabled) {
         this.$router.push(`/project/${this.projectId}/invites`);
@@ -134,13 +154,21 @@ export default {
     },
 
     async updateProjectUser(user) {
-      await axios({
-        method: 'put',
-        url: `/api/project/${this.projectId}/users/${user.id}`,
-        responseType: 'json',
-        data: user,
-      });
-      await this.loadItems();
+      try {
+        await axios({
+          method: 'put',
+          url: `/api/project/${this.projectId}/users/${user.id}`,
+          responseType: 'json',
+          data: user,
+        });
+      } catch (err) {
+        EventBus.$emit('i-snackbar', {
+          color: 'error',
+          text: err.response?.data?.message || getErrorMessage(err),
+        });
+      } finally {
+        await this.loadItems();
+      }
     },
 
     allowActions() {

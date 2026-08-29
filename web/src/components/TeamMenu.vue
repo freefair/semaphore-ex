@@ -18,6 +18,7 @@
     </v-tab>
 
     <v-tab
+      v-if="canManageRoles"
       key="roles"
       :to="`/project/${projectId}/roles`"
       data-testid="team-roles"
@@ -33,6 +34,7 @@ export default {
   props: {
     projectId: Number,
     systemInfo: Object,
+    canManageRoles: Boolean,
   },
 
 };

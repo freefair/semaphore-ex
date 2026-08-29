@@ -48,7 +48,9 @@ type UserEmailOtp struct {
 const EmailOtpMaxAttempts = 5
 
 type UserWithProjectRole struct {
-	Role ProjectUserRole `db:"role" json:"role"`
+	Role     ProjectUserRole `db:"role" json:"role"`
+	RoleID   *ProjectRoleID  `db:"role_id" json:"role_id,omitempty"`
+	Revision int             `db:"revision" json:"revision"`
 	User
 }
 

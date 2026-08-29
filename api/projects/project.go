@@ -2,8 +2,6 @@ package projects
 
 import (
 	"errors"
-	"net/http"
-
 	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
@@ -11,6 +9,7 @@ import (
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
+	"net/http"
 )
 
 // ProjectMiddleware ensures a project exists and loads it to the context
@@ -40,18 +39,31 @@ func ProjectMiddleware(next http.Handler) http.Handler {
 		}
 
 		roleSlug := projectUser.Role
+		roleName := string(roleSlug)
 
 		permissions := roleSlug.GetPermissions()
+
+		if projectUser.RoleID != nil {
+			role, roleErr := helpers.Store(r).GetProjectRoleByID(projectID, *projectUser.RoleID)
+			if roleErr != nil {
+				helpers.WriteError(w, roleErr)
+				return
+			}
+			roleSlug = db.ProjectUserRole(role.ID)
+			roleName = role.Name
+			permissions = role.Permissions
+		}
 
 		// Built-in roles are defined in code and are the source of truth for their
 		// permissions. Only custom roles are resolved from the database, otherwise a
 		// project role sharing a built-in slug (e.g. "manager") could override the
 		// built-in permissions and escalate privileges.
-		if !roleSlug.IsValid() {
+		if projectUser.RoleID == nil && !roleSlug.IsValid() {
 			role, err := helpers.Store(r).GetProjectOrGlobalRoleBySlug(projectID, string(projectUser.Role))
 
 			if err == nil {
 				roleSlug = db.ProjectUserRole(role.Slug)
+				roleName = role.Name
 				permissions = role.Permissions
 			} else if !errors.Is(err, db.ErrNotFound) {
 				helpers.WriteError(w, err)
@@ -75,6 +87,7 @@ func ProjectMiddleware(next http.Handler) http.Handler {
 		}
 
 		r = helpers.SetContextValue(r, "projectUserRole", roleSlug)
+		r = helpers.SetContextValue(r, "projectUserRoleName", roleName)
 		r = helpers.SetContextValue(r, "permissions", permissions)
 		r = helpers.SetContextValue(r, "project", project)
 		next.ServeHTTP(w, r)
@@ -176,9 +189,11 @@ func GetProject(w http.ResponseWriter, r *http.Request) {
 func GetUserRole(w http.ResponseWriter, r *http.Request) {
 	var result struct {
 		Role        db.ProjectUserRole       `json:"role"`
+		RoleName    string                   `json:"role_name"`
 		Permissions db.ProjectUserPermission `json:"permissions"`
 	}
 	result.Role = helpers.GetFromContext(r, "projectUserRole").(db.ProjectUserRole)
+	result.RoleName, _ = helpers.GetFromContext(r, "projectUserRoleName").(string)
 	result.Permissions = helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
 	helpers.WriteJSON(w, http.StatusOK, result)
 }

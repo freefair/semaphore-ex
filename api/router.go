@@ -142,7 +142,7 @@ func Route(
 		taskPool.SetExecutorImageCapabilityResolver(executorImageResolver)
 	}
 	taskController := projects.NewTaskController(store, ansibleTaskRepo)
-	rolesController := proApi.NewRolesController(store)
+	rolesController := proApi.NewRolesController(store, capabilityProvider)
 	templateController := projects.NewTemplateController(store, store, executorImageResolver)
 	systemInfoController := NewSystemInfoController(subscriptionService)
 	capabilityTestService := proFeatures.NewCapabilityTestService(store)
@@ -433,9 +433,6 @@ func Route(
 	projectUserAPI.Path("/secret_storages").HandlerFunc(secretStorageController.GetSecretStorages).Methods("GET", "HEAD")
 	projectUserAPI.Path("/secret_storages").HandlerFunc(secretStorageController.Add).Methods("POST")
 
-	projectUserAPI.Path("/repositories").HandlerFunc(projects.GetRepositories).Methods("GET", "HEAD")
-	projectUserAPI.Path("/repositories").HandlerFunc(projects.AddRepository).Methods("POST")
-
 	projectUserAPI.Path("/inventory").HandlerFunc(projects.GetInventory).Methods("GET", "HEAD")
 	projectUserAPI.Path("/inventory").HandlerFunc(projects.AddInventory).Methods("POST")
 
@@ -483,14 +480,22 @@ func Route(
 	projectRunnersAPI.Path("/{runner_id}").HandlerFunc(projectRunnerController.DeleteRunner).Methods("DELETE")
 	projectRunnersAPI.Path("/{runner_id}/cache").HandlerFunc(projectRunnerController.ClearRunnerCache).Methods("DELETE")
 
-	projectUserAPI.Path("/roles").HandlerFunc(rolesController.GetProjectRoles).Methods("GET", "HEAD")
-	projectUserAPI.Path("/roles/all").HandlerFunc(rolesController.GetProjectAndGlobalRoles).Methods("GET", "HEAD")
-	projectUserAPI.Path("/roles").HandlerFunc(rolesController.AddProjectRole).Methods("POST")
+	projectRoleOptionsAPI := authenticatedAPI.PathPrefix("/project/{project_id}/roles").Subrouter()
+	projectRoleOptionsAPI.Use(projects.ProjectMiddleware)
+	projectRoleOptionsAPI.Path("/all").HandlerFunc(rolesController.GetProjectAndGlobalRoles).Methods("GET", "HEAD")
 
-	projectRolesAPI := projectUserAPI.PathPrefix("/roles").Subrouter()
-	projectRolesAPI.Path("/{role_slug}").HandlerFunc(rolesController.GetProjectRole).Methods("GET", "HEAD")
-	projectRolesAPI.Path("/{role_slug}").HandlerFunc(rolesController.UpdateProjectRole).Methods("PUT", "POST")
-	projectRolesAPI.Path("/{role_slug}").HandlerFunc(rolesController.DeleteProjectRole).Methods("DELETE")
+	projectRolesAPI := authenticatedAPI.PathPrefix("/project/{project_id}/roles").Subrouter()
+	projectRolesAPI.Use(
+		projects.ProjectMiddleware,
+		EnhancedProjectPermissionAuditMiddleware(auditFacade),
+		projects.GetMustHavePermissionMiddleware(db.CanManageProjectUsers),
+	)
+	projectRolesAPI.Path("").HandlerFunc(rolesController.GetProjectRoles).Methods("GET", "HEAD")
+	projectRolesAPI.Path("").HandlerFunc(rolesController.AddProjectRole).Methods("POST")
+	projectRolesAPI.Path("/permissions").HandlerFunc(rolesController.GetProjectPermissionCatalog).Methods("GET", "HEAD")
+	projectRolesAPI.Path("/{role_id}").HandlerFunc(rolesController.GetProjectRole).Methods("GET", "HEAD")
+	projectRolesAPI.Path("/{role_id}").HandlerFunc(rolesController.UpdateProjectRole).Methods("PUT", "POST")
+	projectRolesAPI.Path("/{role_id}").HandlerFunc(rolesController.DeleteProjectRole).Methods("DELETE")
 
 	//
 	// Updating and deleting project
@@ -511,7 +516,11 @@ func Route(
 	// Manage project users
 	projectAdminUsersAPI := authenticatedAPI.PathPrefix("/project/{project_id}").Subrouter()
 
-	projectAdminUsersAPI.Use(projects.ProjectMiddleware, projects.GetMustCanMiddleware(db.CanManageProjectUsers))
+	projectAdminUsersAPI.Use(
+		projects.ProjectMiddleware,
+		EnhancedProjectPermissionAuditMiddleware(auditFacade),
+		projects.GetMustCanMiddleware(db.CanManageProjectUsers),
+	)
 	projectAdminUsersAPI.Path("/users").HandlerFunc(projects.AddUser).Methods("POST")
 
 	projectUserManagement := projectAdminUsersAPI.PathPrefix("/users").Subrouter()
@@ -541,15 +550,20 @@ func Route(
 	projectSecretStorageManagement.HandleFunc("/{storage_id}/sync/history", secretStorageController.GetSyncHistory).Methods("GET", "HEAD")
 	projectSecretStorageManagement.HandleFunc("/{storage_id}/test", secretStorageController.TestConnection).Methods("POST")
 
-	projectRepoManagement := projectUserAPI.PathPrefix("/repositories").Subrouter()
+	projectRepositoriesAPI := projectUserAPI.PathPrefix("/repositories").Subrouter()
+	projectRepositoriesAPI.Use(projects.GetMustHavePermissionMiddleware(db.CanViewProjectResources))
+	projectRepositoriesAPI.Path("").HandlerFunc(projects.GetRepositories).Methods("GET", "HEAD")
+	projectRepositoriesAPI.Path("").HandlerFunc(projects.AddRepository).Methods("POST")
+
+	projectRepoManagement := projectRepositoriesAPI.PathPrefix("/{repository_id}").Subrouter()
 	projectRepoManagement.Use(projects.RepositoryMiddleware)
 
-	projectRepoManagement.HandleFunc("/{repository_id}", projects.GetRepositories).Methods("GET", "HEAD")
-	projectRepoManagement.HandleFunc("/{repository_id}/refs", projects.GetRepositoryRefs).Methods("GET", "HEAD")
-	projectRepoManagement.HandleFunc("/{repository_id}", projects.UpdateRepository).Methods("PUT")
-	projectRepoManagement.HandleFunc("/{repository_id}", projects.RemoveRepository).Methods("DELETE")
-	projectRepoManagement.HandleFunc("/{repository_id}/branches", repositoryController.GetRepositoryBranches).Methods("GET", "HEAD")
-	projectRepoManagement.HandleFunc("/{repository_id}/playbooks", repositoryController.GetRepositoryPlaybooks).Methods("GET", "HEAD")
+	projectRepoManagement.Path("").HandlerFunc(projects.GetRepositories).Methods("GET", "HEAD")
+	projectRepoManagement.Path("/refs").HandlerFunc(projects.GetRepositoryRefs).Methods("GET", "HEAD")
+	projectRepoManagement.Path("").HandlerFunc(projects.UpdateRepository).Methods("PUT")
+	projectRepoManagement.Path("").HandlerFunc(projects.RemoveRepository).Methods("DELETE")
+	projectRepoManagement.Path("/branches").HandlerFunc(repositoryController.GetRepositoryBranches).Methods("GET", "HEAD")
+	projectRepoManagement.Path("/playbooks").HandlerFunc(repositoryController.GetRepositoryPlaybooks).Methods("GET", "HEAD")
 
 	projectInventoryManagement := projectUserAPI.PathPrefix("/inventory").Subrouter()
 	projectInventoryManagement.Use(projects.InventoryMiddleware)

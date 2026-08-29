@@ -86,6 +86,8 @@ export default {
   runnerAssignmentConflict:
     'This runner still has unfinished task assignments: {assignments}. '
     + 'Wait for them to finish or stop them before changing the runner lifecycle.',
+  canViewProjectResources: 'Can view project resources',
+  projectRolePermissionDenied: 'You do not have permission to manage project roles.',
   lifecycleCapability: 'Lifecycle Test Capability',
   capabilityState: 'State',
   capabilityReason: 'Server Reason',
