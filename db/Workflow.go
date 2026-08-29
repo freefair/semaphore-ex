@@ -239,6 +239,8 @@ type WorkflowRun struct {
 	DefinitionSnapshot     WorkflowTemplate                     `db:"-" json:"definition" backup:"-"`
 	ParameterSnapshotJSON  string                               `db:"parameter_snapshot" json:"-" backup:"parameter_snapshot"`
 	ParameterSnapshot      map[string]WorkflowParameterSnapshot `db:"-" json:"parameters,omitempty" backup:"-"`
+	TriggerSnapshotJSON    string                               `db:"trigger_snapshot" json:"-" backup:"trigger_snapshot"`
+	TriggerSnapshot        WorkflowTriggerSnapshot              `db:"-" json:"trigger,omitempty" backup:"-"`
 	Nodes                  []WorkflowRunNode                    `db:"-" json:"nodes" backup:"-"`
 
 	Created time.Time  `db:"created" json:"created" backup:"created"`
@@ -298,9 +300,10 @@ type WorkflowRunNode struct {
 // WorkflowRunInput contains the two value sources used by the start service.
 // TriggerValues is internal-only; direct run API callers supply UserValues.
 type WorkflowRunInput struct {
-	TriggerValues map[string]json.RawMessage   `json:"-"`
-	UserValues    map[string]json.RawMessage   `json:"parameters,omitempty"`
-	NodeOverrides map[int]WorkflowNodeOverride `json:"node_overrides,omitempty"`
+	TriggerValues   map[string]json.RawMessage   `json:"-"`
+	UserValues      map[string]json.RawMessage   `json:"parameters,omitempty"`
+	NodeOverrides   map[int]WorkflowNodeOverride `json:"node_overrides,omitempty"`
+	TriggerSnapshot *WorkflowTriggerSnapshot     `json:"-"`
 }
 
 type WorkflowApprovalStatus string

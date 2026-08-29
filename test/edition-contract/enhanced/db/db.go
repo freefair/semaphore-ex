@@ -556,6 +556,16 @@ func BuildWorkflowRunSnapshot(
 	if err != nil {
 		return coreDB.WorkflowRun{}, fmt.Errorf("snapshot workflow parameters: %w", err)
 	}
+	triggerSnapshotJSON := "{}"
+	var triggerSnapshot coreDB.WorkflowTriggerSnapshot
+	if input.TriggerSnapshot != nil {
+		triggerSnapshot = *input.TriggerSnapshot
+		encodedTrigger, marshalErr := json.Marshal(triggerSnapshot)
+		if marshalErr != nil {
+			return coreDB.WorkflowRun{}, fmt.Errorf("snapshot workflow trigger: %w", marshalErr)
+		}
+		triggerSnapshotJSON = string(encodedTrigger)
+	}
 	definitionNodes := make(map[int]coreDB.WorkflowNode, len(workflow.Nodes))
 	for _, node := range workflow.Nodes {
 		definitionNodes[node.ID] = node
@@ -575,6 +585,7 @@ func BuildWorkflowRunSnapshot(
 		DefinitionVersion: workflow.DefinitionVersion, DefinitionRevision: workflow.Revision,
 		CorrelationID: correlationID, DefinitionSnapshotJSON: string(definitionJSON),
 		DefinitionSnapshot: workflow, ParameterSnapshotJSON: string(parameterJSON), ParameterSnapshot: parameterSnapshot,
+		TriggerSnapshotJSON: triggerSnapshotJSON, TriggerSnapshot: triggerSnapshot,
 		Created: now, Start: &now,
 		Nodes: make([]coreDB.WorkflowRunNode, 0, len(workflow.Nodes)),
 	}

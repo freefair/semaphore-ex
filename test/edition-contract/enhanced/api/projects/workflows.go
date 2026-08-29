@@ -59,6 +59,7 @@ type workflowRunView struct {
 	End                *time.Time                              `json:"end,omitempty"`
 	RootTaskID         *int                                    `json:"root_task_id,omitempty"`
 	Parameters         map[string]db.WorkflowParameterSnapshot `json:"parameters,omitempty"`
+	Trigger            *db.WorkflowTriggerSnapshot             `json:"trigger,omitempty"`
 }
 
 type workflowRunDefinitionView struct {
@@ -382,7 +383,7 @@ func (c *workflowController) workflowRunDetails(run db.WorkflowRun) (workflowRun
 }
 
 func newWorkflowRunView(run db.WorkflowRun) workflowRunView {
-	return workflowRunView{
+	view := workflowRunView{
 		ID:                 run.ID,
 		ProjectID:          run.ProjectID,
 		WorkflowTemplateID: run.WorkflowTemplateID,
@@ -399,6 +400,11 @@ func newWorkflowRunView(run db.WorkflowRun) workflowRunView {
 		RootTaskID:         run.RootTaskID,
 		Parameters:         run.ParameterSnapshot,
 	}
+	if run.TriggerSnapshot.ID > 0 {
+		trigger := run.TriggerSnapshot
+		view.Trigger = &trigger
+	}
+	return view
 }
 
 func newWorkflowRunDefinitionView(workflow db.WorkflowTemplate) workflowRunDefinitionView {

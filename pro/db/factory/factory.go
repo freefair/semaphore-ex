@@ -23,3 +23,7 @@ func NewAnsibleTaskRepository(store db.Store) db.AnsibleTaskRepository {
 func NewWorkflowStore(store db.Store) db.WorkflowManager {
 	return &sql.WorkflowStoreImpl{}
 }
+
+func NewWorkflowTriggerStore(db.Store) db.WorkflowTriggerManager {
+	return nil
+}

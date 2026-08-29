@@ -24,7 +24,7 @@ func TestMigrationRegistryOrderingAndDialectSelection(t *testing.T) {
 			migrations := GetMigrations(tt.dialect)
 			require.NotEmpty(t, migrations)
 			assert.Equal(t, tt.firstVersion, migrations[0].Version)
-			assert.Equal(t, "2.20.18", migrations[len(migrations)-1].Version)
+			assert.Equal(t, "2.20.19", migrations[len(migrations)-1].Version)
 
 			seen := make(map[string]struct{}, len(migrations))
 			for index, migration := range migrations {

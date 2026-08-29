@@ -155,6 +155,35 @@ func TestWorkflowRunRepositoryPersistsImmutableParameterAndOverrideSnapshots(t *
 	assert.JSONEq(t, `"eu"`, string(reloaded.DefinitionSnapshot.ParameterDefinitions[0].Default))
 }
 
+func TestWorkflowRunRepositoryPersistsTriggerSnapshot(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	user, templateOne, templateTwo := workflowRunResources(t, store, projectID)
+	now := time.Date(2026, 8, 28, 18, 0, 0, 0, time.UTC)
+	workflow, err := repository.CreateWorkflowTemplate(linearRepositoryWorkflow(
+		projectID, templateOne.ID, templateTwo.ID,
+	))
+	require.NoError(t, err)
+	scheduledAt := now.Add(-time.Minute)
+	trigger := db.WorkflowTriggerSnapshot{
+		ID: 17, Revision: 3, CredentialGeneration: 2,
+		Name: "Nightly deploy", Type: db.WorkflowTriggerSchedule,
+		OwnerUserID: user.ID, InvocationID: 29,
+		ScheduledAt: &scheduledAt, TriggeredAt: now,
+	}
+	run, err := workflowDB.BuildWorkflowRunSnapshot(workflow, map[int]db.Template{
+		templateOne.ID: templateOne, templateTwo.ID: templateTwo,
+	}, user.ID, "scheduled-occurrence", now, db.WorkflowRunInput{TriggerSnapshot: &trigger})
+	require.NoError(t, err)
+	created, err := repository.CreateWorkflowRun(run)
+	require.NoError(t, err)
+
+	reloaded, err := repository.GetWorkflowRun(projectID, workflow.ID, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, trigger, reloaded.TriggerSnapshot)
+	assert.NotContains(t, reloaded.TriggerSnapshotJSON, "credential_hash")
+}
+
 func TestWorkflowRunRepositoryDeduplicatesCorrelationAndRollsBackNodes(t *testing.T) {
 	store, repository, projectID := workflowRepositoryFixture(t)
 	defer store.Close()

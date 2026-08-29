@@ -100,6 +100,7 @@ func Route(
 	runnerService server.RunnerService,
 	workflowService pro_interfaces.WorkflowService,
 	workflowDefinitionService pro_interfaces.WorkflowDefinitionService,
+	workflowTriggerService pro_interfaces.WorkflowTriggerService,
 	logWriteService pro_interfaces.LogWriteService,
 	auditWebhookService pro_interfaces.AuditWebhookService,
 	appMetrics *metrics.Metrics,
@@ -126,6 +127,7 @@ func Route(
 	terraformController := proApi.NewTerraformController(encryptionService, terraformStore, store)
 	terraformInventoryController := proProjects.NewTerraformInventoryController(terraformStore)
 	workflowController := proProjects.NewWorkflowController(workflowService, workflowStore, workflowDefinitionService)
+	workflowTriggerController := proProjects.NewWorkflowTriggerController(workflowTriggerService)
 	workflowMiddlewareController := projects.NewWorkflowController(workflowStore)
 	backupController := projects.NewBackupController(workflowStore)
 	userController := NewUserController(subscriptionService)
@@ -220,6 +222,10 @@ func Route(
 	publicWebHookRouter.Use(StoreMiddleware, JSONMiddleware)
 	publicWebHookRouter.Path("/integrations/{integration_alias}").HandlerFunc(
 		integrationController.ReceiveIntegration).Methods("POST", "GET", "OPTIONS")
+	publicWebHookRouter.Path("/workflow-triggers/{project_id}/{workflow_id}/{trigger_id}/api").HandlerFunc(
+		workflowTriggerController.InvokeAPITrigger).Methods("POST")
+	publicWebHookRouter.Path("/workflow-triggers/{project_id}/{workflow_id}/{trigger_id}/webhook").HandlerFunc(
+		workflowTriggerController.InvokeWebhookTrigger).Methods("POST")
 
 	terraformWebhookRouter := publicWebHookRouter.PathPrefix("/terraform").Subrouter()
 	terraformWebhookRouter.Use(terraformController.TerraformInventoryAliasMiddleware)
@@ -593,6 +599,15 @@ func Route(
 	projectWorkflowManagement.HandleFunc("/{workflow_id}", workflowController.UpdateWorkflow).Methods("PUT")
 	projectWorkflowManagement.HandleFunc("/{workflow_id}", workflowController.RemoveWorkflow).Methods("DELETE")
 	projectWorkflowManagement.HandleFunc("/{workflow_id}", workflowController.GetWorkflow).Methods("GET")
+	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers", workflowTriggerController.GetTriggers).Methods("GET", "HEAD")
+	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers", workflowTriggerController.AddTrigger).Methods("POST")
+	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}", workflowTriggerController.GetTrigger).Methods("GET", "HEAD")
+	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}", workflowTriggerController.UpdateTrigger).Methods("PUT")
+	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}", workflowTriggerController.DeleteTrigger).Methods("DELETE")
+	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}/enabled", workflowTriggerController.SetTriggerEnabled).Methods("PUT")
+	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}/rotate", workflowTriggerController.RotateTriggerCredential).Methods("POST")
+	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}/test", workflowTriggerController.TestTrigger).Methods("POST")
+	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}/history", workflowTriggerController.GetTriggerHistory).Methods("GET", "HEAD")
 
 	projectWorkflowRunAPI := authenticatedAPI.PathPrefix("/project/{project_id}/workflows").Subrouter()
 	projectWorkflowRunAPI.Use(projects.ProjectMiddleware, workflowMiddlewareController.WorkflowsMiddleware, projects.GetMustCanMiddleware(db.CanRunProjectTasks))

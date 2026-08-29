@@ -25,3 +25,13 @@ func NewWorkflowStore(store db.Store) db.WorkflowManager {
 	})
 	return sql.NewWorkflowStore(connectionStore.GetConnection(), taskStore)
 }
+
+func NewWorkflowTriggerStore(store db.Store) db.WorkflowTriggerManager {
+	connectionStore, ok := store.(interface {
+		GetConnection() *coresql.SqlDbConnection
+	})
+	if !ok {
+		return nil
+	}
+	return sql.NewWorkflowStore(connectionStore.GetConnection())
+}
