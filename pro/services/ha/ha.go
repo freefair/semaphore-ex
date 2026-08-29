@@ -5,6 +5,7 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/schedules"
+	"github.com/semaphoreui/semaphore/services/tasks"
 )
 
 // These aliases keep the historical package API while making the shared
@@ -18,9 +19,9 @@ type ClusterInspector = pro_interfaces.ClusterInspector
 func NewNodeRegistry(_ db.Store) NodeRegistry                           { return nil }
 func NewScheduleDeduplicator(_ db.Store) schedules.ScheduleDeduplicator { return nil }
 func NewWSBroadcaster(_ db.Store) sockets.Broadcaster                   { return nil }
-func NewOrphanCleaner(_ db.Store) OrphanCleaner                         { return nil }
+func NewOrphanCleaner(_ db.Store, _ *tasks.TaskPool) OrphanCleaner      { return nil }
 func NewTaskExecutionEvidenceRecorder(_ db.Store) db.TaskExecutionEvidenceRecorder {
 	return nil
 }
-func NewClusterInspector(_ db.Store) ClusterInspector        { return nil }
-func NewWorkflowRunLocker() pro_interfaces.WorkflowRunLocker { return nil }
+func NewClusterInspector(_ db.Store, _ ...OrphanCleaner) ClusterInspector { return nil }
+func NewWorkflowRunLocker() pro_interfaces.WorkflowRunLocker              { return nil }

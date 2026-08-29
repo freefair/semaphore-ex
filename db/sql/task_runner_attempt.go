@@ -2,6 +2,7 @@ package sql
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -134,6 +135,39 @@ func (d *SqlDb) UpdateTaskRunner(
 	attemptReason string,
 	transitionedAt time.Time,
 ) (bool, error) {
+	return d.updateTaskRunner(task, expectedStatus, expectedRunnerID, expectedGeneration,
+		outcome, attemptReason, transitionedAt, nil)
+}
+
+// UpdateTaskRunnerFenced applies the task and attempt transition only while
+// the task row still carries the caller's current HA task-control fence.
+func (d *SqlDb) UpdateTaskRunnerFenced(
+	task db.Task,
+	expectedStatus task_logger.TaskStatus,
+	expectedRunnerID int,
+	expectedGeneration int,
+	expectedFencingToken int64,
+	outcome db.RunnerAttemptOutcome,
+	attemptReason string,
+	transitionedAt time.Time,
+) (bool, error) {
+	if expectedFencingToken <= 0 {
+		return false, errors.New("task recovery fencing token is invalid")
+	}
+	return d.updateTaskRunner(task, expectedStatus, expectedRunnerID, expectedGeneration,
+		outcome, attemptReason, transitionedAt, &expectedFencingToken)
+}
+
+func (d *SqlDb) updateTaskRunner(
+	task db.Task,
+	expectedStatus task_logger.TaskStatus,
+	expectedRunnerID int,
+	expectedGeneration int,
+	outcome db.RunnerAttemptOutcome,
+	attemptReason string,
+	transitionedAt time.Time,
+	expectedFencingToken *int64,
+) (bool, error) {
 	if err := task.PreUpdate(d.Sql()); err != nil {
 		return false, err
 	}
@@ -141,16 +175,22 @@ func (d *SqlDb) UpdateTaskRunner(
 	if err != nil {
 		return false, err
 	}
-	result, err := tx.Exec(d.PrepareQuery(
-		"update task set status=?, start=?, `end`=?, commit_hash=?, commit_message=?, runner_id=?, "+
-			"runner_id_snapshot=?, runner_name=?, runner_assigned_at=?, message=?, recovery_reason=?, placement_decision=? "+
-			"where id=? and project_id=? and status=? and assignment_generation=? "+
-			"and (runner_id=? or (runner_id is null and (runner_id_snapshot=? or assignment_generation=0)))"),
+	query :=
+		"update task set status=?, start=?, `end`=?, commit_hash=?, commit_message=?, runner_id=?, " +
+			"runner_id_snapshot=?, runner_name=?, runner_assigned_at=?, message=?, recovery_reason=?, placement_decision=? " +
+			"where id=? and project_id=? and status=? and assignment_generation=? " +
+			"and (runner_id=? or (runner_id is null and (runner_id_snapshot=? or assignment_generation=0)))"
+	args := []any{
 		task.Status, task.Start, task.End, task.CommitHash, task.CommitMessage, task.RunnerID,
 		task.RunnerSnapshotID, task.RunnerName, task.RunnerAssignedAt, task.Message, task.RecoveryReason,
 		task.PlacementDecision,
 		task.ID, task.ProjectID, expectedStatus, expectedGeneration, expectedRunnerID, expectedRunnerID,
-	)
+	}
+	if expectedFencingToken != nil {
+		query += " and task_control_fencing_token=?"
+		args = append(args, *expectedFencingToken)
+	}
+	result, err := tx.Exec(d.PrepareQuery(query), args...)
 	if err != nil {
 		_ = tx.Rollback()
 		return false, err

@@ -15,6 +15,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type taskControlLifecycleSpy struct {
+	registered atomic.Bool
+	released   atomic.Int32
+	err        error
+}
+
+func (s *taskControlLifecycleSpy) RegisterTaskControl(db.Task) error {
+	s.registered.Store(true)
+	return s.err
+}
+
+func (s *taskControlLifecycleSpy) ReleaseTaskControl(int) {
+	s.released.Add(1)
+}
+
 func createPlacementDispatchRunner(
 	t *testing.T,
 	store *sql.SqlDb,
@@ -74,6 +89,69 @@ func TestRemoteJobDoesNotCallWebhookBeforeCapacityClaim(t *testing.T) {
 
 	require.ErrorIs(t, err, ErrAllRunnersBusy)
 	assert.Zero(t, webhookCalls.Load(), "a runner may only be notified after capacity is reserved")
+}
+
+func TestRemoteJobRegistersTaskControlBeforeRunnerCanObserveAssignment(t *testing.T) {
+	setupReconcilerConfig(t)
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	state := NewMemoryTaskStateStore()
+	pool := newReconcilerTestPool(store, state)
+	lifecycle := &taskControlLifecycleSpy{}
+	pool.SetTaskControlLifecycle(lifecycle)
+
+	webhookObservedRegistration := atomic.Bool{}
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		webhookObservedRegistration.Store(lifecycle.registered.Load())
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(webhook.Close)
+
+	task := createReconcilerTestTaskNoRunner(t, store, task_logger.TaskStartingStatus)
+	runner := createPlacementDispatchRunner(t, store, &task.ProjectID, "controlled", nil)
+	runner.Webhook = webhook.URL
+	runner.IsDefault = true
+	require.NoError(t, store.UpdateRunner(runner))
+	tsk := &TaskRunner{Task: task, pool: &pool}
+	state.SetRunning(tsk)
+	job := RemoteJob{Task: task, taskPool: &pool}
+
+	require.NoError(t, job.Run("tester", nil, ""))
+	assert.True(t, lifecycle.registered.Load())
+	assert.True(t, webhookObservedRegistration.Load())
+
+	pool.onTaskStop(tsk)
+	assert.EqualValues(t, 1, lifecycle.released.Load())
+}
+
+func TestRemoteJobDoesNotNotifyRunnerWhenTaskControlRegistrationFails(t *testing.T) {
+	setupReconcilerConfig(t)
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	state := NewMemoryTaskStateStore()
+	pool := newReconcilerTestPool(store, state)
+	lifecycle := &taskControlLifecycleSpy{err: errors.New("task control unavailable")}
+	pool.SetTaskControlLifecycle(lifecycle)
+
+	var webhookCalls atomic.Int32
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		webhookCalls.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(webhook.Close)
+
+	task := createReconcilerTestTaskNoRunner(t, store, task_logger.TaskStartingStatus)
+	runner := createPlacementDispatchRunner(t, store, &task.ProjectID, "controlled", nil)
+	runner.Webhook = webhook.URL
+	runner.IsDefault = true
+	require.NoError(t, store.UpdateRunner(runner))
+	tsk := &TaskRunner{Task: task, pool: &pool}
+	state.SetRunning(tsk)
+	job := RemoteJob{Task: task, taskPool: &pool}
+
+	err := job.Run("tester", nil, "")
+	require.ErrorContains(t, err, "task control unavailable")
+	assert.Zero(t, webhookCalls.Load())
 }
 
 func TestRemoteJobPersistsDeterministicProjectPlacement(t *testing.T) {

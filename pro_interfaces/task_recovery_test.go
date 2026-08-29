@@ -18,7 +18,7 @@ func TestDecideTaskRecoveryRequiresExecutionEvidenceBeforeReplacement(t *testing
 	}{
 		{"running observes", TaskExecutionEvidence{State: TaskExecutionRunning}, TaskRecoveryObserve, false},
 		{"absent recovers", TaskExecutionEvidence{State: TaskExecutionAbsent}, TaskRecoveryRecover, true},
-		{"terminal recovers", TaskExecutionEvidence{State: TaskExecutionTerminal}, TaskRecoveryRecover, true},
+		{"terminal reconciles without replacement", TaskExecutionEvidence{State: TaskExecutionTerminal, TerminalStatus: "success"}, TaskRecoveryRecover, false},
 		{"unknown quarantines", TaskExecutionEvidence{State: TaskExecutionUnknown}, TaskRecoveryQuarantine, false},
 		{"invalid quarantines", TaskExecutionEvidence{State: "invalid"}, TaskRecoveryQuarantine, false},
 	} {
@@ -27,5 +27,26 @@ func TestDecideTaskRecoveryRequiresExecutionEvidenceBeforeReplacement(t *testing
 			assert.Equal(t, test.decision, assessment.Decision)
 			assert.Equal(t, test.replacement, assessment.SafeReplacement)
 		})
+	}
+}
+
+func TestNewTaskExecutionIdentityIsStableAndGenerationScoped(t *testing.T) {
+	first, err := NewTaskExecutionIdentity(41, 7, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewTaskExecutionIdentity(41, 7, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second || first.StableID != "runner:7:task:41:generation:3" {
+		t.Fatalf("unexpected stable execution identity: %#v %#v", first, second)
+	}
+	different, err := NewTaskExecutionIdentity(41, 7, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if different.StableID == first.StableID {
+		t.Fatal("a replacement generation reused the prior execution identity")
 	}
 }

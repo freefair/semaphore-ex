@@ -236,7 +236,7 @@ func runService() {
 	// 1. Node registry: heartbeat-based cluster membership
 	// 2. Schedule deduplication: only one node fires each schedule occurrence
 	// 3. WebSocket broadcaster: real-time events reach clients on all nodes
-	// 4. Orphan cleaner: tasks from dead nodes are marked as failed
+	// 4. Orphan cleaner: expired task controls are recovered from stable runner evidence
 	if nodeRegistry := proHA.NewNodeRegistry(store); nodeRegistry != nil {
 		if err := nodeRegistry.Start(); err != nil {
 			log.WithError(err).Fatal("failed to start HA node registry")
@@ -245,10 +245,19 @@ func runService() {
 		log.WithField("node_id", nodeRegistry.NodeID()).Info("HA active-active mode enabled")
 	}
 
+	// Task ownership is registered before runners can observe an assignment.
+	// The same component relinquishes every lease before this node is marked
+	// draining in the cluster registry.
+	orphanCleaner := proHA.NewOrphanCleaner(store, &taskPool)
+	if orphanCleaner != nil {
+		orphanCleaner.Start()
+		defer orphanCleaner.Stop()
+	}
+
 	// Cluster inspector powers the admin Cluster Dashboard. It is nil when HA
 	// is disabled; the dashboard then falls back to the local task pool. The
 	// instance is injected per-request below.
-	clusterInspector := proHA.NewClusterInspector(store)
+	clusterInspector := proHA.NewClusterInspector(store, orphanCleaner)
 
 	if dedup := proHA.NewScheduleDeduplicator(store); dedup != nil {
 		schedulePool.SetDeduplicator(dedup)
@@ -266,11 +275,6 @@ func runService() {
 				schedulePool.Refresh()
 			}
 		}()
-	}
-
-	if orphanCleaner := proHA.NewOrphanCleaner(store); orphanCleaner != nil {
-		orphanCleaner.Start()
-		defer orphanCleaner.Stop()
 	}
 
 	// The workflow reconciler periodically progresses non-terminal runs so
@@ -344,6 +348,7 @@ func runService() {
 			r = helpers.SetContextValue(r, "task_pool", &taskPool)
 			r = helpers.SetContextValue(r, "log_writer", logWriteService)
 			r = helpers.SetContextValue(r, "cluster_inspector", clusterInspector)
+			r = helpers.SetContextValue(r, "task_recovery_manager", orphanCleaner)
 
 			next.ServeHTTP(w, r)
 		})

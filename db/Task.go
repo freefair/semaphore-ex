@@ -62,15 +62,19 @@ type Task struct {
 	ScheduleOccurrenceKey *string `db:"schedule_occurrence_key" json:"-"`
 	// RunnerID is set while a task is assigned to a remote runner (cleared when the task finishes).
 	// Used so runner progress API can authorize updates on any HA node.
-	RunnerID               *int                     `db:"runner_id" json:"-"`
-	RunnerSnapshotID       *int                     `db:"runner_id_snapshot" json:"-"`
-	RunnerName             *string                  `db:"runner_name" json:"-"`
-	AssignmentGeneration   int                      `db:"assignment_generation" json:"assignment_generation,omitempty"`
-	RunnerAssignedAt       *time.Time               `db:"runner_assigned_at" json:"runner_assigned_at,omitempty"`
-	RecoveryReason         string                   `db:"recovery_reason" json:"recovery_reason,omitempty"`
-	PlacementDecision      *RunnerPlacementDecision `db:"placement_decision" json:"placement_decision,omitempty"`
-	RequestedExecutorImage *string                  `db:"requested_executor_image" json:"requested_executor_image,omitempty"`
-	ResolvedExecutorImage  *string                  `db:"resolved_executor_image" json:"resolved_executor_image,omitempty"`
+	RunnerID             *int    `db:"runner_id" json:"-"`
+	RunnerSnapshotID     *int    `db:"runner_id_snapshot" json:"-"`
+	RunnerName           *string `db:"runner_name" json:"-"`
+	AssignmentGeneration int     `db:"assignment_generation" json:"assignment_generation,omitempty"`
+	// TaskControlFencingToken is internal to HA recovery. Every recovery-only
+	// task mutation must match the token installed atomically by the current
+	// task-control owner.
+	TaskControlFencingToken int64                    `db:"task_control_fencing_token" json:"-"`
+	RunnerAssignedAt        *time.Time               `db:"runner_assigned_at" json:"runner_assigned_at,omitempty"`
+	RecoveryReason          string                   `db:"recovery_reason" json:"recovery_reason,omitempty"`
+	PlacementDecision       *RunnerPlacementDecision `db:"placement_decision" json:"placement_decision,omitempty"`
+	RequestedExecutorImage  *string                  `db:"requested_executor_image" json:"requested_executor_image,omitempty"`
+	ResolvedExecutorImage   *string                  `db:"resolved_executor_image" json:"resolved_executor_image,omitempty"`
 
 	Created time.Time  `db:"created" json:"created"`
 	Start   *time.Time `db:"start" json:"start,omitempty"`
@@ -150,6 +154,7 @@ type TaskExecutionEvidence struct {
 	TaskID     int                        `json:"task_id"`
 	Generation int                        `json:"generation"`
 	State      TaskExecutionEvidenceState `json:"state"`
+	Status     task_logger.TaskStatus     `json:"status,omitempty"`
 }
 
 // TaskExecutionEvidenceRecorder is an optional store capability. Community

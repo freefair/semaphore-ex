@@ -15,6 +15,7 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -312,4 +313,72 @@ func TestGetTaskReturnsRedactedPlacementDecision(t *testing.T) {
 	assert.Equal(t, float64(runnerID), placement["selected_runner_id"])
 	assert.NotContains(t, response.Body.String(), "token")
 	assert.NotContains(t, response.Body.String(), "webhook")
+}
+
+type taskRecoveryManagerFake struct {
+	diagnostics pro_interfaces.TaskRecoveryDiagnostics
+	retriedTask int
+	retryErr    error
+}
+
+func (*taskRecoveryManagerFake) Start()       {}
+func (*taskRecoveryManagerFake) Stop()        {}
+func (*taskRecoveryManagerFake) Drain() error { return nil }
+func (*taskRecoveryManagerFake) Resume()      {}
+func (f *taskRecoveryManagerFake) TaskRecoveryDiagnostics(int) (pro_interfaces.TaskRecoveryDiagnostics, bool, error) {
+	return f.diagnostics, true, nil
+}
+func (f *taskRecoveryManagerFake) RetryTaskRecovery(taskID int) error {
+	f.retriedTask = taskID
+	return f.retryErr
+}
+
+func TestTaskRecoveryDiagnosticsAreValueFreeAndRetryUsesScopedTask(t *testing.T) {
+	manager := &taskRecoveryManagerFake{diagnostics: pro_interfaces.TaskRecoveryDiagnostics{
+		Controlled: true, OwnerBootID: "boot-b", PreviousOwnerBootID: "boot-a",
+		FencingToken: 2, RunnerID: 7, AssignmentGeneration: 3,
+		EvidenceState:    pro_interfaces.TaskExecutionUnknown,
+		RecoveryDecision: pro_interfaces.TaskRecoveryQuarantine,
+		RecoveryReason:   "runner execution evidence is unavailable",
+		Quarantined:      true, SafeAction: "retry_recovery",
+	}}
+	task := db.Task{ID: 42, ProjectID: 3}
+	request := httptest.NewRequest(http.MethodGet, "/api/project/3/tasks/42/recovery", nil)
+	request = helpers.SetContextValue(request, "task", task)
+	request = helpers.SetContextValue(request, "task_recovery_manager", manager)
+	response := httptest.NewRecorder()
+	controller := NewTaskController(nil, nil)
+
+	controller.GetTaskRecoveryDiagnostics(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), `"previous_owner_boot_id":"boot-a"`)
+	assert.Contains(t, response.Body.String(), `"safe_action":"retry_recovery"`)
+	assert.NotContains(t, response.Body.String(), "execution_stable_id")
+	assert.NotContains(t, response.Body.String(), "output")
+
+	retry := httptest.NewRequest(http.MethodPost, "/api/project/3/tasks/42/retry-recovery", nil)
+	retry = helpers.SetContextValue(retry, "task", task)
+	retry = helpers.SetContextValue(retry, "task_recovery_manager", manager)
+	retryResponse := httptest.NewRecorder()
+	controller.RetryTaskRecovery(retryResponse, retry)
+	require.Equal(t, http.StatusNoContent, retryResponse.Code)
+	assert.Equal(t, 42, manager.retriedTask)
+}
+
+func TestTaskRecoveryEndpointsAreUnavailableWithoutEnhancedManager(t *testing.T) {
+	task := db.Task{ID: 42, ProjectID: 3}
+	request := httptest.NewRequest(http.MethodGet, "/api/project/3/tasks/42/recovery", nil)
+	request = helpers.SetContextValue(request, "task", task)
+	response := httptest.NewRecorder()
+	controller := NewTaskController(nil, nil)
+
+	controller.GetTaskRecoveryDiagnostics(response, request)
+	assert.Equal(t, http.StatusNoContent, response.Code)
+
+	retry := httptest.NewRequest(http.MethodPost, "/api/project/3/tasks/42/retry-recovery", nil)
+	retry = helpers.SetContextValue(retry, "task", task)
+	retryResponse := httptest.NewRecorder()
+	controller.RetryTaskRecovery(retryResponse, retry)
+	assert.Equal(t, http.StatusNotFound, retryResponse.Code)
 }

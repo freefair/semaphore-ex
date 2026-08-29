@@ -417,7 +417,7 @@ func TestUpdateRunnerRecordsOnlyExplicitCompleteExecutionSnapshots(t *testing.T)
 	assert.Equal(t, 1, recorder.calls)
 	assert.Equal(t, runner.ID, recorder.runnerID)
 	assert.Equal(t, []db.TaskExecutionEvidence{{
-		TaskID: 41, Generation: 3, State: db.TaskExecutionEvidenceRunning,
+		TaskID: 41, Generation: 3, State: db.TaskExecutionEvidenceRunning, Status: task_logger.TaskRunningStatus,
 	}}, recorder.evidence)
 
 	legacy := newProgressRequest(t, store, runner, runners.RunnerProgress{})

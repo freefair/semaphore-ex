@@ -82,6 +82,7 @@ type TaskPool struct {
 	// when a workflow task finishes. nil in tests / before wiring.
 	workflowService        pro_interfaces.WorkflowService
 	executorImageAvailable func(*db.User) bool
+	taskControlLifecycle   TaskControlLifecycle
 	// stop signals the background loops started by Run to exit. Closing it (via
 	// Stop) terminates the runner-task reconcile loop and Run's own select.
 	// Channels are used rather than sync.WaitGroup/sync.Once because TaskPool is
@@ -147,6 +148,12 @@ func (p *TaskPool) SetExecutorImageCapabilityResolver(resolver func(*db.User) bo
 	p.executorImageAvailable = resolver
 }
 
+// SetTaskControlLifecycle installs the optional Enhanced HA ownership port.
+// Community and single-node builds leave it nil.
+func (p *TaskPool) SetTaskControlLifecycle(lifecycle TaskControlLifecycle) {
+	p.taskControlLifecycle = lifecycle
+}
+
 // HandleWorkflowTaskCompletion notifies the workflow service that a task that
 // belongs to a workflow run has finished, so it can progress the run. It is a
 // thin delegator so the open task lifecycle (TaskRunner) need not know about the
@@ -178,6 +185,13 @@ func (p *TaskPool) GetNumberOfRunningTasksOfRunner(runnerID int) (res int) {
 
 func (p *TaskPool) GetRunningTasks() (res []*TaskRunner) {
 	return p.state.RunningRange()
+}
+
+// GetOwnedRunningTasks returns only work whose task-state claim belongs to
+// this process. Enhanced HA uses it to backfill durable task controls during
+// rolling upgrades without claiming another node's shared running work.
+func (p *TaskPool) GetOwnedRunningTasks() []*TaskRunner {
+	return p.state.OwnedRunningRange()
 }
 
 func (p *TaskPool) GetTask(id int) (task *TaskRunner, err error) {
@@ -469,6 +483,9 @@ func (p *TaskPool) onTaskRun(t *TaskRunner) {
 }
 
 func (p *TaskPool) onTaskStop(t *TaskRunner) {
+	if p.taskControlLifecycle != nil {
+		p.taskControlLifecycle.ReleaseTaskControl(t.Task.ID)
+	}
 	p.state.RemoveActive(t.Task.ProjectID, t.Task.ID)
 	p.state.DeleteRunning(t.Task.ID)
 	p.state.DeleteClaim(t.Task.ID)

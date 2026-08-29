@@ -405,6 +405,7 @@ func Route(
 	projectTaskStop.HandleFunc("/tasks/{task_id}/stop", taskController.StopTask).Methods("POST")
 	projectTaskStop.HandleFunc("/tasks/{task_id}/confirm", taskController.ConfirmTask).Methods("POST")
 	projectTaskStop.HandleFunc("/tasks/{task_id}/reject", taskController.RejectTask).Methods("POST")
+	projectTaskStop.HandleFunc("/tasks/{task_id}/retry-recovery", taskController.RetryTaskRecovery).Methods("POST")
 
 	//
 	// Project resources CRUD
@@ -639,6 +640,7 @@ func Route(
 	projectTaskManagement.HandleFunc("/{task_id}/output", taskController.GetTaskOutput).Methods("GET", "HEAD")
 	projectTaskManagement.HandleFunc("/{task_id}/raw_output", taskController.GetTaskRawOutput).Methods("GET", "HEAD")
 	projectTaskManagement.HandleFunc("/{task_id}/runner-attempts", taskController.GetTaskRunnerAttempts).Methods("GET", "HEAD")
+	projectTaskManagement.HandleFunc("/{task_id}/recovery", taskController.GetTaskRecoveryDiagnostics).Methods("GET", "HEAD")
 	projectTaskManagement.HandleFunc("/{task_id}", taskController.GetTask).Methods("GET", "HEAD")
 	projectTaskManagement.HandleFunc("/{task_id}", taskController.RemoveTask).Methods("DELETE")
 	projectTaskManagement.HandleFunc("/{task_id}/stages", taskController.GetTaskStages).Methods("GET", "HEAD")
