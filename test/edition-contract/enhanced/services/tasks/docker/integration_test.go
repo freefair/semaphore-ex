@@ -73,6 +73,30 @@ func TestDockerExecutorDisposableDaemonLifecycle(t *testing.T) {
 	})
 }
 
+func TestDockerClientSamplesDisposableContainerResources(t *testing.T) {
+	if os.Getenv("SEMAPHORE_TEST_DOCKER") != "1" {
+		t.Skip("set SEMAPHORE_TEST_DOCKER=1 to use the disposable Docker daemon")
+	}
+	client, err := newMobyClient(config{})
+	require.NoError(t, err)
+	realClient := client.(*mobyClient)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	name := fmt.Sprintf("semaphore-telemetry-stats-%d", time.Now().UnixNano())
+	created, err := realClient.client.ContainerCreate(ctx, moby.ContainerCreateOptions{Name: name, Config: &container.Config{Image: "nginx:alpine"}})
+	require.NoError(t, err)
+	defer func() {
+		_, _ = realClient.client.ContainerRemove(context.Background(), created.ID, moby.ContainerRemoveOptions{Force: true})
+	}()
+	_, err = realClient.client.ContainerStart(ctx, created.ID, moby.ContainerStartOptions{})
+	require.NoError(t, err)
+	usage, err := realClient.SampleContainerResources(ctx, created.ID)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, usage.CPUUsageNanoseconds, int64(0))
+	assert.GreaterOrEqual(t, usage.MemoryBytes, int64(0))
+	assert.GreaterOrEqual(t, usage.PIDs, int64(0))
+}
+
 func TestDockerReconciliationDisposableDaemonCases(t *testing.T) {
 	if os.Getenv("SEMAPHORE_TEST_DOCKER") != "1" {
 		t.Skip("set SEMAPHORE_TEST_DOCKER=1 to use the disposable Docker daemon")

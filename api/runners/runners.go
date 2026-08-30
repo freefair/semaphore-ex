@@ -11,6 +11,7 @@ import (
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/jwt"
+	"github.com/semaphoreui/semaphore/pkg/metrics"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/services/runners"
 	"github.com/semaphoreui/semaphore/services/server"
@@ -60,7 +61,12 @@ type RunnerController struct {
 	encryptionService         server.AccessKeyEncryptionService
 	signer                    jwt.Signer
 	taskExecutionEvidenceSink db.TaskExecutionEvidenceRecorder
+	metrics                   *metrics.Metrics
 }
+
+// SetMetrics is additive so existing runner-controller call sites retain their
+// evidence-sink contract while the API router wires the process metrics once.
+func (c *RunnerController) SetMetrics(appMetrics *metrics.Metrics) { c.metrics = appMetrics }
 
 func NewRunnerController(runnerRepo db.RunnerManager, taskPool *tasks.TaskPool, encryptionService server.AccessKeyEncryptionService, signer jwt.Signer, evidenceSinks ...db.TaskExecutionEvidenceRecorder) *RunnerController {
 	controller := &RunnerController{
@@ -430,6 +436,31 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 		})
 		return
 	}
+	var response runners.RunnerProgressResponse
+	if body.DockerTelemetry != nil {
+		if runner.EffectiveExecutorType() != db.RunnerExecutorDocker {
+			helpers.WriteErrorStatus(w, "Docker telemetry is not available for this runner", http.StatusBadRequest)
+			return
+		}
+		telemetryStore, ok := c.runnerRepo.(db.DockerTelemetryRepository)
+		if !ok {
+			helpers.WriteErrorStatus(w, "Docker telemetry storage is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		ack, accepted, telemetryErr := telemetryStore.IngestDockerTelemetry(runner.ID, r.Header.Get(runners.RunnerDockerSessionHeader), r.Header.Get(runners.RunnerDockerFenceHeader), *body.DockerTelemetry)
+		if telemetryErr != nil {
+			if errors.Is(telemetryErr, db.ErrDockerTelemetrySessionStale) || errors.Is(telemetryErr, db.ErrDockerTelemetrySequenceConflict) {
+				helpers.WriteErrorStatus(w, "Docker telemetry rejected", http.StatusConflict)
+			} else {
+				helpers.WriteErrorStatus(w, "Invalid Docker telemetry", http.StatusBadRequest)
+			}
+			return
+		}
+		response.DockerTelemetryAck = &ack
+		for _, event := range accepted {
+			c.metrics.RecordDockerTelemetry(event)
+		}
+	}
 	if runner.EffectiveExecutorType() == db.RunnerExecutorDocker && (len(body.DockerReconciliationObservations) > 0 || body.DockerReconciliationScanComplete != nil || len(body.DockerReconciliationOrphanCandidates) > 0 || len(body.DockerReconciliationQuarantines) > 0) {
 		sessionStore, ok := c.runnerRepo.(db.DockerReconciliationSessionRepository)
 		if !ok {
@@ -486,7 +517,6 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	var response runners.RunnerProgressResponse
 	if runner.EffectiveExecutorType() == db.RunnerExecutorDocker {
 		if remediationStore, ok := c.runnerRepo.(db.DockerReconciliationRepository); ok {
 			commands, commandErr := remediationStore.GetDockerReconciliationRemediationCommands(runner.ID, r.Header.Get(runners.RunnerDockerSessionHeader), r.Header.Get(runners.RunnerDockerFenceHeader), 100)
@@ -500,7 +530,7 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 		if body.KnownJobs != nil && !c.persistTaskExecutionEvidence(w, runner.ID, executionEvidence) {
 			return
 		}
-		if len(response.DockerReconciliationCommands) > 0 {
+		if len(response.DockerReconciliationCommands) > 0 || response.DockerTelemetryAck != nil {
 			helpers.WriteJSON(w, http.StatusOK, response)
 			return
 		}

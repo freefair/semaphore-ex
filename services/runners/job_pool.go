@@ -586,6 +586,12 @@ func (p *JobPool) sendProgress() (ok bool) {
 		}
 		body.DockerReconciliationRemediationResults = append(body.DockerReconciliationRemediationResults, p.dockerRemediationResults[:resultCount]...)
 		p.dockerPolicyMu.Unlock()
+		if reporter, ok := p.provider.(tasks.DockerTelemetryReporter); ok {
+			batch := reporter.PendingDockerTelemetry()
+			if len(batch.Events) > 0 {
+				body.DockerTelemetry = &batch
+			}
+		}
 	}
 
 	for id, j := range p.snapshotRunningJobs() {
@@ -686,6 +692,11 @@ func (p *JobPool) sendProgress() (ok bool) {
 			p.dockerRemediationResults = p.dockerRemediationResults[len(body.DockerReconciliationRemediationResults):]
 		}
 		p.dockerPolicyMu.Unlock()
+	}
+	if progressResp.DockerTelemetryAck != nil {
+		if reporter, reporterOK := p.provider.(tasks.DockerTelemetryReporter); reporterOK {
+			reporter.AcknowledgeDockerTelemetry(*progressResp.DockerTelemetryAck)
+		}
 	}
 
 	log.WithFields(log.Fields{

@@ -39,6 +39,10 @@ type DockerReconciliationSession struct {
 	TargetBoot      string `db:"target_boot" json:"target_boot"`
 	Ready           bool   `db:"scan_complete" json:"ready"`
 	HighestSequence int64  `db:"scan_highest_sequence" json:"highest_sequence"`
+	// TelemetryHighestSequence is the persisted acknowledgement cursor for the
+	// authenticated runner process. It lets a restarted runner resume the same
+	// fenced session without replaying sequence numbers from one.
+	TelemetryHighestSequence int64 `db:"telemetry_highest_sequence" json:"telemetry_highest_sequence"`
 	// ScanCursor is issued by the server and identifies the only target page
 	// the runner may submit next. It is protected by the session fence.
 	ScanCursor      int64                            `db:"scan_cursor" json:"scan_cursor"`

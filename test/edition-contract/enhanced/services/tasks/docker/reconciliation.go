@@ -50,8 +50,24 @@ func (p *Provider) ScanDockerReconciliation(ctx context.Context, session db.Dock
 		}
 		resources = append(resources, ManagedResource{Kind: ManagedContainer, ID: state.ID, Name: state.Name, Labels: state.Labels, Running: state.Running, StateKnown: true})
 	}
-	observations, complete, _, err := reduceDockerReconciliationScan(session, resources, time.Now().UTC())
-	return observations, complete, nil, err
+	observations, complete, candidates, err := reduceDockerReconciliationScan(session, resources, time.Now().UTC())
+	if err == nil {
+		p.recordReconciliationTelemetry(observations, candidates)
+	}
+	return observations, complete, candidates, err
+}
+
+func (p *Provider) recordReconciliationTelemetry(observations []db.DockerReconciliationObservation, candidates []db.DockerReconciliationOrphanCandidate) {
+	counts := make(map[db.DockerReconciliationState]int64)
+	for _, observation := range observations {
+		counts[observation.State]++
+	}
+	for state, count := range counts {
+		p.recordDockerTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryReconciliation, ReconciliationState: state, Count: count})
+	}
+	if len(candidates) > 0 {
+		p.recordDockerTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryOrphan, OrphanState: db.DockerTelemetryOrphanDetected, Count: int64(len(candidates))})
+	}
 }
 
 func reduceDockerReconciliationScan(session db.DockerReconciliationSession, resources []ManagedResource, observedAt time.Time) ([]db.DockerReconciliationObservation, db.DockerReconciliationScanComplete, []db.DockerReconciliationOrphanCandidate, error) {

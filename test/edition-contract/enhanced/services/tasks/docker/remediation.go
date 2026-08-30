@@ -14,6 +14,24 @@ import (
 // admin's fixed cleanup action. Every branch re-inspects the exact immutable
 // daemon identity; a changed identity or label is unresolved, never removed.
 func (p *Provider) RemediateDockerReconciliation(ctx context.Context, command db.DockerReconciliationRemediationCommand) db.DockerReconciliationRemediationResult {
+	result := p.remediateDockerReconciliation(ctx, command)
+	if command.Target == db.DockerReconciliationRemediationTargetCandidate {
+		state := db.DockerTelemetryOrphanUnresolved
+		if result.Status == db.DockerReconciliationRemediationSucceeded {
+			state = db.DockerTelemetryOrphanRemoved
+		}
+		p.recordDockerTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryOrphan, OrphanState: state, Count: 1})
+	} else if command.Target == db.DockerReconciliationRemediationTargetQuarantine {
+		state := db.DockerReconciliationQuarantine
+		if result.Status == db.DockerReconciliationRemediationSucceeded {
+			state = db.DockerReconciliationAbsent
+		}
+		p.recordDockerTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryReconciliation, ReconciliationState: state, Count: 1})
+	}
+	return result
+}
+
+func (p *Provider) remediateDockerReconciliation(ctx context.Context, command db.DockerReconciliationRemediationCommand) db.DockerReconciliationRemediationResult {
 	result := db.DockerReconciliationRemediationResult{CommandID: command.CommandID, Fingerprint: command.Fingerprint, Status: db.DockerReconciliationRemediationErrored, Evidence: db.DockerReconciliationEvidenceIdentityMismatch}
 	if command.Validate() != nil || command.RunnerID != p.effectiveRunnerID() || command.SessionID != p.DockerReconciliationSession().SessionID {
 		return result

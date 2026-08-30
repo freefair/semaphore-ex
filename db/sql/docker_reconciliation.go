@@ -44,7 +44,7 @@ func (d *SqlDb) OpenDockerReconciliationSession(authenticatedRunnerID int, resum
 		return session, err
 	}
 	if (db.DockerReconciliationSession{SessionID: resumeSessionID, Fence: resumeFence, RunnerID: authenticatedRunnerID, TargetBoot: "resume"}).ValidateCredentials() == nil {
-		query := "select session_id, runner_id, target_boot, scan_complete, scan_highest_sequence, scan_cursor from docker_reconciliation_session where session_id=? and runner_id=? and fence_hash=? and active=true"
+		query := "select session_id, runner_id, target_boot, scan_complete, scan_highest_sequence, telemetry_highest_sequence, scan_cursor from docker_reconciliation_session where session_id=? and runner_id=? and fence_hash=? and active=true"
 		err = tx.SelectOne(&session, d.PrepareQuery(query), resumeSessionID, authenticatedRunnerID, dockerReconciliationFenceHash(resumeFence))
 		if err == nil {
 			session.Fence = resumeFence
@@ -303,7 +303,7 @@ func (d *SqlDb) authenticatedDockerReconciliationSessionTx(tx *gorp.Transaction,
 	if !validDockerSessionCredentials(sessionID, fence) {
 		return session, db.ErrDockerReconciliationSessionStale
 	}
-	query := "select session_id,runner_id,target_boot,scan_complete,scan_highest_sequence,scan_cursor from docker_reconciliation_session where session_id=? and runner_id=? and fence_hash=?"
+	query := "select session_id,runner_id,target_boot,scan_complete,scan_highest_sequence,telemetry_highest_sequence,scan_cursor from docker_reconciliation_session where session_id=? and runner_id=? and fence_hash=?"
 	if activeOnly {
 		query += " and active=true"
 	}
@@ -322,6 +322,62 @@ func (d *SqlDb) authenticatedDockerReconciliationSessionTx(tx *gorp.Transaction,
 
 func validDockerSessionCredentials(sessionID string, fence string) bool {
 	return sessionID != "" && fence != "" && len(sessionID) <= 128 && len(fence) <= 128
+}
+
+// IngestDockerTelemetry commits a contiguous runner-process sequence before
+// returning the new facts to the API layer. A retry is acknowledged only when
+// its durable sequence fingerprint is byte-for-byte identical, which prevents
+// a stale runner from changing an already-accounted metric sample.
+func (d *SqlDb) IngestDockerTelemetry(authenticatedRunnerID int, sessionID string, fence string, batch db.DockerTelemetryBatch) (ack db.DockerTelemetryAck, accepted []db.DockerTelemetryEvent, err error) {
+	if authenticatedRunnerID <= 0 || batch.Validate() != nil {
+		return ack, nil, fmt.Errorf("invalid Docker telemetry batch")
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return ack, nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err = d.authenticatedDockerReconciliationSessionTx(tx, authenticatedRunnerID, sessionID, fence, true); err != nil {
+		return ack, nil, db.ErrDockerTelemetrySessionStale
+	}
+	var highest int64
+	if err = tx.SelectOne(&highest, d.PrepareQuery("select telemetry_highest_sequence from docker_reconciliation_session where session_id=? and runner_id=? and fence_hash=? and active=true"), sessionID, authenticatedRunnerID, dockerReconciliationFenceHash(fence)); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ack, nil, db.ErrDockerTelemetrySessionStale
+		}
+		return ack, nil, err
+	}
+	for _, event := range batch.Events {
+		fingerprint := event.Fingerprint()
+		if event.Sequence <= highest {
+			var stored string
+			if err = tx.SelectOne(&stored, d.PrepareQuery("select fingerprint from docker_telemetry_event where session_id=? and sequence=?"), sessionID, event.Sequence); err != nil || stored != fingerprint {
+				return ack, nil, db.ErrDockerTelemetrySequenceConflict
+			}
+			continue
+		}
+		if event.Sequence != highest+1 {
+			return ack, nil, db.ErrDockerTelemetrySequenceConflict
+		}
+		if _, err = tx.Exec(d.PrepareQuery("insert into docker_telemetry_event (session_id,sequence,fingerprint) values (?,?,?)"), sessionID, event.Sequence, fingerprint); err != nil {
+			return ack, nil, err
+		}
+		highest++
+		accepted = append(accepted, event)
+	}
+	if len(accepted) > 0 {
+		result, updateErr := tx.Exec(d.PrepareQuery("update docker_reconciliation_session set telemetry_highest_sequence=? where session_id=? and runner_id=? and fence_hash=? and active=true"), highest, sessionID, authenticatedRunnerID, dockerReconciliationFenceHash(fence))
+		if updateErr != nil {
+			return ack, nil, updateErr
+		}
+		if affected, affectedErr := result.RowsAffected(); affectedErr != nil || affected != 1 {
+			return ack, nil, db.ErrDockerTelemetrySessionStale
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return ack, nil, err
+	}
+	return db.DockerTelemetryAck{HighestSequence: highest}, accepted, nil
 }
 
 func dockerReconciliationScanTargetsTx(tx *gorp.Transaction, d *SqlDb, sessionID string) ([]db.DockerReconciliationScanTarget, error) {

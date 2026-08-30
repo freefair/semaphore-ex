@@ -71,6 +71,40 @@ func TestDockerReconciliationStoreCreatesOrdersAndReplays(t *testing.T) {
 	assert.ErrorIs(t, err, db.ErrNotFound)
 }
 
+func TestDockerTelemetrySessionFencesSequencesAndRetries(t *testing.T) {
+	store, _, runner, _ := createDockerReconciliationAttempt(t)
+	session, err := store.OpenDockerReconciliationSession(runner.ID, "", "")
+	require.NoError(t, err)
+	batch := db.DockerTelemetryBatch{Events: []db.DockerTelemetryEvent{
+		{Sequence: 1, Kind: db.DockerTelemetryResourceUsage, Role: db.DockerTelemetryRoleTask, CPUUsageNanoseconds: 12, MemoryBytes: 34, PIDs: 2},
+		{Sequence: 2, Kind: db.DockerTelemetryPolicyDenial, PolicyRule: db.DockerPolicyRuleImageDenied},
+	}}
+	ack, accepted, err := store.IngestDockerTelemetry(runner.ID, session.SessionID, session.Fence, batch)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), ack.HighestSequence)
+	assert.Len(t, accepted, 2)
+	ack, accepted, err = store.IngestDockerTelemetry(runner.ID, session.SessionID, session.Fence, batch)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), ack.HighestSequence)
+	assert.Empty(t, accepted, "a retry must not produce a second metric update")
+	resumed, err := store.OpenDockerReconciliationSession(runner.ID, session.SessionID, session.Fence)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), resumed.TelemetryHighestSequence)
+	ack, accepted, err = store.IngestDockerTelemetry(runner.ID, resumed.SessionID, resumed.Fence, db.DockerTelemetryBatch{Events: []db.DockerTelemetryEvent{{Sequence: 3, Kind: db.DockerTelemetryCleanupFailure, CleanupResource: db.DockerTelemetryCleanupTask}}})
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), ack.HighestSequence)
+	assert.Len(t, accepted, 1)
+	changed := batch
+	changed.Events = append([]db.DockerTelemetryEvent(nil), batch.Events...)
+	changed.Events[0].MemoryBytes = 999
+	_, _, err = store.IngestDockerTelemetry(runner.ID, session.SessionID, session.Fence, changed)
+	assert.ErrorIs(t, err, db.ErrDockerTelemetrySequenceConflict)
+	_, err = store.OpenDockerReconciliationSession(runner.ID, "forged", "forged")
+	require.NoError(t, err)
+	_, _, err = store.IngestDockerTelemetry(runner.ID, session.SessionID, session.Fence, batch)
+	assert.ErrorIs(t, err, db.ErrDockerTelemetrySessionStale)
+}
+
 func TestDockerReconciliationStoreFencesQuarantineUpdatesByOwnerAndRevision(t *testing.T) {
 	store, projectID, runner, task := createDockerReconciliationAttempt(t)
 	created, _, err := store.CreateDockerReconciliationObservation(runner.ID, dockerReconciliationObservation(runner.ID, projectID, task.ID, task.AssignmentGeneration, 1))

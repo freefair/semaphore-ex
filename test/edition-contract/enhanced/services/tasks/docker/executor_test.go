@@ -119,6 +119,27 @@ func TestDockerExecutorRunsFixedStagesInsideTaskScopedResources(t *testing.T) {
 	}, executor.ExecutorMetadata(), "cleanup must retain immutable task runtime identity")
 }
 
+func TestDockerExecutorEmitsBoundedImageAndResourceTelemetry(t *testing.T) {
+	client := &fakeDockerClient{execExitCodes: []int{0, 0}, resourceUsage: DockerResourceUsage{CPUUsageNanoseconds: 9, MemoryBytes: 10, PIDs: 1}}
+	cfg, err := effectiveConfig(util.RunnerDockerConfig{Image: "runner.example/job:stable", HelperImage: "runner.example/helper:stable"})
+	require.NoError(t, err)
+	var events []db.DockerTelemetryEvent
+	executor := newDockerExecutorForPlan(client, cfg, "boot", db.Task{ID: 88, ProjectID: 9}, db.Template{}, &recordingLogger{})
+	executor.recordTelemetry = func(event db.DockerTelemetryEvent) { events = append(events, event) }
+	plan := &tasks.ContainerTaskPlan{App: db.AppBash, Bundle: io.NopCloser(bytes.NewReader([]byte("bundle")))}
+	require.NoError(t, executor.runContainerPlan(context.Background(), plan))
+	imageRoles := make(map[db.DockerTelemetryRole]db.DockerTelemetryPullSource)
+	for _, event := range events {
+		if event.Kind == db.DockerTelemetryImagePull {
+			imageRoles[event.Role] = event.PullSource
+		}
+	}
+	assert.Equal(t, db.DockerTelemetryPullLocal, imageRoles[db.DockerTelemetryRoleHelper])
+	assert.Equal(t, db.DockerTelemetryPullLocal, imageRoles[db.DockerTelemetryRoleTask])
+	assert.Contains(t, events, db.DockerTelemetryEvent{Kind: db.DockerTelemetryResourceUsage, Role: db.DockerTelemetryRoleHelper, CPUUsageNanoseconds: 9, MemoryBytes: 10, PIDs: 1})
+	assert.Contains(t, events, db.DockerTelemetryEvent{Kind: db.DockerTelemetryResourceUsage, Role: db.DockerTelemetryRoleTask, CPUUsageNanoseconds: 9, MemoryBytes: 10, PIDs: 1})
+}
+
 func TestDockerExecutorCleansResourcesAfterStageFailure(t *testing.T) {
 	client := &fakeDockerClient{execExitCodes: []int{0, 17}}
 	config, err := effectiveConfig(util.RunnerDockerConfig{})
@@ -276,6 +297,8 @@ type fakeDockerClient struct {
 	removedVolumes            []string
 	managedResources          []ManagedResource
 	volumeReferenced          bool
+	resourceUsage             DockerResourceUsage
+	resourceUsageErr          error
 }
 
 func (c *fakeDockerClient) InspectContainer(_ context.Context, containerID string) (ContainerState, error) {
@@ -316,6 +339,81 @@ func TestDockerExecutorConfirmStopRequiresDaemonEvidence(t *testing.T) {
 			assert.Equal(t, tt.expected, executor.ConfirmStop(context.Background()))
 		})
 	}
+}
+
+func TestDockerTelemetryQueueRetainsUnacknowledgedTailAndResetsPerSession(t *testing.T) {
+	provider := &Provider{runnerID: 8, policy: db.DefaultDockerExecutionPolicy()}
+	first := db.DockerReconciliationSession{SessionID: "session-one", Fence: "fence-one", RunnerID: 8, TargetBoot: "boot-one"}
+	require.NoError(t, provider.ApplyDockerReconciliationSession(first))
+	provider.recordDockerTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryPolicyDenial, PolicyRule: db.DockerPolicyRuleImageDenied})
+	provider.recordDockerTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryCleanupFailure, CleanupResource: db.DockerTelemetryCleanupTask})
+	pending := provider.PendingDockerTelemetry()
+	require.Len(t, pending.Events, 2)
+	assert.Equal(t, int64(1), pending.Events[0].Sequence)
+	provider.AcknowledgeDockerTelemetry(db.DockerTelemetryAck{HighestSequence: 1})
+	pending = provider.PendingDockerTelemetry()
+	require.Len(t, pending.Events, 1, "unacknowledged tail must survive a partial response")
+	assert.Equal(t, int64(2), pending.Events[0].Sequence)
+	second := first
+	second.SessionID, second.Fence, second.TargetBoot, second.TelemetryHighestSequence = "session-two", "fence-two", "boot-two", 7
+	require.NoError(t, provider.ApplyDockerReconciliationSession(second))
+	assert.Empty(t, provider.PendingDockerTelemetry().Events, "a new authenticated session must not reuse old sequence values")
+	provider.recordDockerTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryOrphan, OrphanState: db.DockerTelemetryOrphanDetected, Count: 1})
+	pending = provider.PendingDockerTelemetry()
+	require.Len(t, pending.Events, 1)
+	assert.Equal(t, int64(8), pending.Events[0].Sequence)
+}
+
+func TestDockerTelemetryQueueBoundsOutageAndCoalescesQueueFullDrops(t *testing.T) {
+	provider := &Provider{runnerID: 8, policy: db.DefaultDockerExecutionPolicy()}
+	require.NoError(t, provider.ApplyDockerReconciliationSession(db.DockerReconciliationSession{SessionID: "queue-session", Fence: "queue-fence", RunnerID: 8, TargetBoot: "queue-boot"}))
+	for index := 0; index < 150; index++ {
+		provider.recordDockerTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryPolicyDenial, PolicyRule: db.DockerPolicyRuleImageDenied})
+	}
+	first := provider.PendingDockerTelemetry()
+	require.Len(t, first.Events, 100)
+	assert.Equal(t, int64(1), first.Events[0].Sequence)
+	assert.Equal(t, int64(100), first.Events[99].Sequence)
+	assert.Equal(t, first, provider.PendingDockerTelemetry(), "an outage retry must preserve the exact pending prefix")
+	provider.AcknowledgeDockerTelemetry(db.DockerTelemetryAck{HighestSequence: 1})
+	recovered := provider.PendingDockerTelemetry()
+	require.Len(t, recovered.Events, 100)
+	drop := recovered.Events[99]
+	assert.Equal(t, db.DockerTelemetryDrop, drop.Kind)
+	assert.Equal(t, db.DockerTelemetryDropQueueFull, drop.DropReason)
+	assert.Equal(t, int64(50), drop.Count)
+	assert.Equal(t, int64(101), drop.Sequence)
+	provider.AcknowledgeDockerTelemetry(db.DockerTelemetryAck{HighestSequence: 101})
+	provider.recordDockerTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryCleanupFailure, CleanupResource: db.DockerTelemetryCleanupTask})
+	tail := provider.PendingDockerTelemetry()
+	require.Len(t, tail.Events, 1)
+	assert.Equal(t, db.DockerTelemetryCleanupFailure, tail.Events[0].Kind)
+}
+
+func TestDockerTelemetryQueueSaturatesDropsAndSupportsConcurrentAppend(t *testing.T) {
+	provider := &Provider{runnerID: 8, policy: db.DefaultDockerExecutionPolicy()}
+	require.NoError(t, provider.ApplyDockerReconciliationSession(db.DockerReconciliationSession{SessionID: "saturated-session", Fence: "saturated-fence", RunnerID: 8, TargetBoot: "saturated-boot"}))
+	provider.telemetry = make([]db.DockerTelemetryEvent, 100)
+	for index := range provider.telemetry {
+		provider.telemetry[index] = db.DockerTelemetryEvent{Sequence: int64(index + 1), Kind: db.DockerTelemetryPolicyDenial, PolicyRule: db.DockerPolicyRuleImageDenied}
+	}
+	provider.telemetryNextSequence = 100
+	provider.telemetryDropped = maxDockerTelemetryDroppedCount - 1
+	var group sync.WaitGroup
+	for index := 0; index < 2; index++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			provider.recordDockerTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryCleanupFailure, CleanupResource: db.DockerTelemetryCleanupTask})
+		}()
+	}
+	group.Wait()
+	provider.AcknowledgeDockerTelemetry(db.DockerTelemetryAck{HighestSequence: 100})
+	pending := provider.PendingDockerTelemetry()
+	require.Len(t, pending.Events, 1)
+	assert.Equal(t, db.DockerTelemetryDrop, pending.Events[0].Kind)
+	assert.Equal(t, maxDockerTelemetryDroppedCount, pending.Events[0].Count)
+	assert.Equal(t, int64(101), pending.Events[0].Sequence)
 }
 
 func TestDockerRemediationReinspectsImmutableIdentityAndManagedLabels(t *testing.T) {
@@ -376,6 +474,10 @@ type stopCall struct {
 func (c *fakeDockerClient) ResolveImage(_ context.Context, image string, _ ImageRole, _ db.DockerExecutionPolicy) (ResolvedImage, error) {
 	c.images = append(c.images, imagePreparation{image: image, policy: PullIfNotPresent})
 	return ResolvedImage{RequestedReference: image, ResolvedReference: image, Digest: "@sha256:test", Source: "fake", SizeBytes: 1}, nil
+}
+
+func (c *fakeDockerClient) SampleContainerResources(context.Context, string) (DockerResourceUsage, error) {
+	return c.resourceUsage, c.resourceUsageErr
 }
 
 func (c *fakeDockerClient) CreateVolume(_ context.Context, _ string, _ map[string]string) (string, error) {
