@@ -152,6 +152,9 @@ func (p DockerExecutionPolicy) Validate() error {
 	if p.Revision < 0 || p.NanoCPUs <= 0 || p.MemoryBytes <= 0 || p.PidsLimit <= 0 || p.PullTimeoutSeconds <= 0 || p.MaxImageSizeBytes <= 0 {
 		return fmt.Errorf("Docker policy requires positive revision resources")
 	}
+	if !p.RequireDigest {
+		return fmt.Errorf("Docker policy requires immutable image digests")
+	}
 	if p.User != "65534:0" {
 		return fmt.Errorf("Docker policy user must be the fixed non-root identity 65534:0")
 	}
@@ -163,7 +166,7 @@ func (p DockerExecutionPolicy) Validate() error {
 		if err != nil || normalized == nil || *normalized != image {
 			return fmt.Errorf("Docker policy contains an invalid image allow-list entry")
 		}
-		if p.RequireDigest && !hasImmutableDockerDigest(image) {
+		if !hasImmutableDockerDigest(image) {
 			return fmt.Errorf("Docker policy requires digests in image allow-list entries")
 		}
 	}
@@ -213,7 +216,7 @@ func (p DockerExecutionPolicy) ValidateExecution(request DockerExecutionPolicyTe
 	if !slices.Contains(p.AllowedImages, request.Image) {
 		return DockerPolicyViolationError{Rule: DockerPolicyRuleImageDenied}
 	}
-	if p.RequireDigest && !hasImmutableDockerDigest(request.Image) {
+	if !hasImmutableDockerDigest(request.Image) {
 		return DockerPolicyViolationError{Rule: DockerPolicyRuleDigestRequired}
 	}
 	if !slices.Contains(p.AllowedNetworks, request.Network) {

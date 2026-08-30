@@ -76,4 +76,9 @@ func TestDockerExecutionPolicyRequiresSafeHelperNetworkAndFixedIdentity(t *testi
 	policy.AllowedImages = []string{allowedDigestImage}
 	policy.AllowedNetworks = []string{"none", "container:other"}
 	assert.ErrorContains(t, policy.Canonicalize(), "namespace")
+
+	policy = db.DefaultDockerExecutionPolicy()
+	policy.RequireDigest = false
+	policy.AllowedImages = []string{"registry.example.test/job:latest"}
+	assert.ErrorContains(t, policy.Canonicalize(), "immutable image digests")
 }
