@@ -12,4 +12,4 @@ Keep docs/docs/developer-guide/plans/pro-slices/STATUS.md up to date.
 
 ## Security Execution
 
-Run security scans, security-focused investigation, and security-fix verification through a dedicated `gpt-5.6-terra` sub-agent when delegation is available. The primary agent integrates the resulting evidence and runs non-security release gates.
+Run security scans, security-focused investigation, security-relevant implementation, security reviews, and security-fix verification through a dedicated `gpt-5.6-terra` sub-agent when delegation is available. The primary agent integrates the resulting evidence and runs non-security release gates.
