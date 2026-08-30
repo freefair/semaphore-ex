@@ -16,6 +16,7 @@ import (
 const dockerReconciliationObservationColumns = "id, revision, sequence, runner_id, runner_boot, task_id, project_id, generation, resource, container_id, container_name, state, reason, observed_at, quarantine_status, remediation, remediation_reason, quarantined_at, remediated_at"
 const dockerReconciliationStateColumns = "runner_id, runner_boot, project_id, task_id, generation, resource, revision, latest_sequence, container_id, container_name, state, reason, updated_at, quarantine_status, remediation, remediation_reason, quarantined_at, remediated_at"
 const dockerReconciliationScanPageSize = 100
+const dockerReconciliationRemediationCommandColumns = "command_id,session_id,runner_id,action,target,expected_revision,fingerprint,daemon_id,candidate_resource,candidate_session_id,candidate_identity,runner_boot,project_id,task_id,generation,resource,status"
 
 func dockerReconciliationFenceHash(fence string) string {
 	sum := sha256.Sum256([]byte(fence))
@@ -75,6 +76,12 @@ func (d *SqlDb) OpenDockerReconciliationSession(authenticatedRunnerID int, resum
 	}
 	session.RunnerID = authenticatedRunnerID
 	if _, err = tx.Exec(d.PrepareQuery("insert into docker_reconciliation_session (session_id,runner_id,fence_hash,target_boot,active,scan_complete,scan_cursor,created_at) values (?,?,?,?,true,false,0,?)"), session.SessionID, session.RunnerID, dockerReconciliationFenceHash(session.Fence), session.TargetBoot, time.Now().UTC()); err != nil {
+		return db.DockerReconciliationSession{}, err
+	}
+	// A process restart invalidates the previous delivery fence. Pending admin
+	// intent is rebound under the same runner lock so it is delivered to this
+	// authenticated session rather than being stranded on the retired one.
+	if _, err = tx.Exec(d.PrepareQuery("update docker_reconciliation_remediation_command set session_id=?,fence_hash=? where runner_id=? and status=?"), session.SessionID, dockerReconciliationFenceHash(session.Fence), session.RunnerID, db.DockerReconciliationRemediationPending); err != nil {
 		return db.DockerReconciliationSession{}, err
 	}
 	// Snapshot the prior target boots under the same runner lock. The snapshot is
@@ -527,11 +534,11 @@ func (d *SqlDb) RecordDockerReconciliationOrphanCandidates(runnerID int, session
 			continue
 		}
 		seen[fingerprint] = struct{}{}
-		query := "insert into docker_reconciliation_orphan_candidate (session_id,runner_id,resource,identifier,name,reason,fingerprint,observed_at) values (?,?,?,?,?,?,?,?) on conflict(session_id,fingerprint) do nothing"
+		query := "insert into docker_reconciliation_orphan_candidate (session_id,runner_id,resource,identifier,name,reason,fingerprint,identity,observed_at) values (?,?,?,?,?,?,?,?,?) on conflict(session_id,fingerprint) do nothing"
 		if d.GetDialect() == util.DbDriverMySQL {
-			query = "insert into docker_reconciliation_orphan_candidate (session_id,runner_id,resource,identifier,name,reason,fingerprint,observed_at) values (?,?,?,?,?,?,?,?) on duplicate key update fingerprint=fingerprint"
+			query = "insert into docker_reconciliation_orphan_candidate (session_id,runner_id,resource,identifier,name,reason,fingerprint,identity,observed_at) values (?,?,?,?,?,?,?,?,?) on duplicate key update fingerprint=fingerprint"
 		}
-		if _, err = tx.Exec(d.PrepareQuery(query), sessionID, runnerID, candidate.Resource, candidate.Identifier, candidate.Name, candidate.Reason, fingerprint, candidate.ObservedAt); err != nil {
+		if _, err = tx.Exec(d.PrepareQuery(query), sessionID, runnerID, candidate.Resource, candidate.Identifier, candidate.Name, candidate.Reason, fingerprint, candidate.Identity, candidate.ObservedAt); err != nil {
 			return err
 		}
 	}
@@ -539,9 +546,264 @@ func (d *SqlDb) RecordDockerReconciliationOrphanCandidates(runnerID int, session
 }
 
 func dockerReconciliationOrphanFingerprint(candidate db.DockerReconciliationOrphanCandidate) string {
-	value := string(candidate.Resource) + "\x00" + candidate.Identifier + "\x00" + candidate.Name + "\x00" + string(candidate.Reason)
+	value := string(candidate.Resource) + "\x00" + candidate.Identifier + "\x00" + candidate.Name + "\x00" + candidate.Identity + "\x00" + string(candidate.Reason)
 	sum := sha256.Sum256([]byte(value))
 	return fmt.Sprintf("%x", sum[:])
+}
+
+// GetDockerReconciliationCandidates exposes only the bounded candidate record
+// that was stored by the authenticated runner. It never asks the daemon for a
+// fresh inventory, so an administrator read cannot have side effects.
+func (d *SqlDb) GetDockerReconciliationCandidates(runnerID int, sessionID string, query db.DockerReconciliationCandidateQuery) ([]db.DockerReconciliationOrphanCandidate, error) {
+	if runnerID <= 0 || !validDockerSessionID(sessionID) || query.Validate() != nil {
+		return nil, db.ErrDockerReconciliationCoverageInvalid
+	}
+	values := make([]db.DockerReconciliationOrphanCandidate, 0, query.Limit)
+	_, err := d.Sql().Select(&values, d.PrepareQuery("select runner_id,resource,identifier,name,reason,fingerprint,identity,observed_at,revision,status,remediated_at from docker_reconciliation_orphan_candidate where runner_id=? and session_id=? and fingerprint>? order by fingerprint asc limit ?"), runnerID, sessionID, query.AfterFingerprint, query.Limit)
+	return values, err
+}
+
+func (d *SqlDb) GetDockerReconciliationPendingStates(owner db.DockerReconciliationOwner, query db.DockerReconciliationQuery) (page db.DockerReconciliationStatePage, err error) {
+	if owner.Validate() != nil || query.Validate() != nil {
+		return page, db.ErrDockerReconciliationCoverageInvalid
+	}
+	values := make([]db.DockerReconciliationStateRecord, 0, query.Limit+1)
+	_, err = d.Sql().Select(&values, d.PrepareQuery("select "+dockerReconciliationStateColumns+" from docker_reconciliation_state where runner_id=? and runner_boot=? and quarantine_status=? and latest_sequence>? order by latest_sequence asc limit ?"), owner.RunnerID, owner.RunnerBoot, db.DockerReconciliationQuarantinePending, query.AfterSequence, query.Limit+1)
+	if err != nil {
+		return page, err
+	}
+	if len(values) > query.Limit {
+		cursor := values[query.Limit-1].LatestSequence
+		page.NextCursor = &cursor
+		values = values[:query.Limit]
+	}
+	page.States = values
+	return page, nil
+}
+
+func (d *SqlDb) GetDockerReconciliationPendingCandidates(runnerID int, sessionID string, query db.DockerReconciliationCandidateQuery) (page db.DockerReconciliationCandidatePage, err error) {
+	if runnerID <= 0 || !validDockerSessionID(sessionID) || query.Validate() != nil {
+		return page, db.ErrDockerReconciliationCoverageInvalid
+	}
+	values := make([]db.DockerReconciliationOrphanCandidate, 0, query.Limit+1)
+	_, err = d.Sql().Select(&values, d.PrepareQuery("select runner_id,resource,identifier,name,reason,fingerprint,identity,observed_at,revision,status,remediated_at from docker_reconciliation_orphan_candidate where runner_id=? and session_id=? and status=? and fingerprint>? order by fingerprint asc limit ?"), runnerID, sessionID, db.DockerReconciliationCandidatePending, query.AfterFingerprint, query.Limit+1)
+	if err != nil {
+		return page, err
+	}
+	if len(values) > query.Limit {
+		cursor := values[query.Limit-1].Fingerprint
+		page.NextCursor = &cursor
+		values = values[:query.Limit]
+	}
+	page.Candidates = values
+	return page, nil
+}
+
+func validDockerSessionID(value string) bool {
+	return value != "" && len(value) <= 128 && strings.TrimSpace(value) == value
+}
+
+// RequestDockerReconciliationRemediation persists an admin's desired action.
+// It deliberately has no Docker client dependency: only a later authenticated
+// runner process can observe or alter daemon resources.
+func (d *SqlDb) RequestDockerReconciliationRemediation(runnerID int, request db.DockerReconciliationRemediationRequest) (command db.DockerReconciliationRemediationCommand, err error) {
+	if runnerID <= 0 || request.Validate() != nil || (request.Quarantine != nil && request.Quarantine.RunnerID != runnerID) {
+		return command, db.ErrDockerReconciliationCommandStale
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return command, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var existing db.DockerReconciliationRemediationCommand
+	err = tx.SelectOne(&existing, d.PrepareQuery("select "+dockerReconciliationRemediationCommandColumns+" from docker_reconciliation_remediation_command where runner_id=? and idempotency_key=?"), runnerID, request.IdempotencyKey)
+	if err == nil {
+		matches := existing.Action == request.Action && existing.Target == request.Target && existing.ExpectedRevision == request.ExpectedRevision
+		if request.Target == db.DockerReconciliationRemediationTargetQuarantine {
+			matches = matches && request.Quarantine != nil && existing.RunnerBoot == request.Quarantine.RunnerBoot && existing.ProjectID == request.Quarantine.ProjectID && existing.TaskID == request.Quarantine.TaskID && existing.Generation == request.Quarantine.Generation && existing.Resource == request.Quarantine.Resource
+			existing.Quarantine = &db.DockerReconciliationKey{DockerReconciliationOwner: db.DockerReconciliationOwner{RunnerID: runnerID, RunnerBoot: existing.RunnerBoot}, ProjectID: existing.ProjectID, TaskID: existing.TaskID, Generation: existing.Generation, Resource: existing.Resource}
+		} else {
+			matches = matches && existing.CandidateSessionID == request.SessionID && existing.Fingerprint == request.Fingerprint
+		}
+		if !matches {
+			return command, db.ErrDockerReconciliationImmutableMutation
+		}
+		return existing, tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return command, err
+	}
+	// Serialize active-session selection with OpenDockerReconciliationSession.
+	// Without this lock, a restart could retire the selected fence between this
+	// read and INSERT, leaving an accepted command undeliverable.
+	runnerQuery := "select id from runner where id=?"
+	if d.GetDialect() != util.DbDriverSQLite {
+		runnerQuery += " for update"
+	}
+	var lockedRunnerID int
+	if err = tx.SelectOne(&lockedRunnerID, d.PrepareQuery(runnerQuery), runnerID); err != nil {
+		return command, err
+	}
+	var session struct {
+		SessionID string `db:"session_id"`
+		FenceHash string `db:"fence_hash"`
+	}
+	err = tx.SelectOne(&session, d.PrepareQuery("select session_id,fence_hash from docker_reconciliation_session where runner_id=? and active=true"), runnerID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return command, db.ErrDockerReconciliationCommandStale
+		}
+		return command, err
+	}
+	command = db.DockerReconciliationRemediationCommand{SessionID: session.SessionID, RunnerID: runnerID, Action: request.Action, Target: request.Target, ExpectedRevision: request.ExpectedRevision, Status: db.DockerReconciliationRemediationPending}
+	if request.Target == db.DockerReconciliationRemediationTargetQuarantine {
+		var state db.DockerReconciliationStateRecord
+		if err = d.selectDockerReconciliationStateTx(tx, *request.Quarantine, &state); err != nil {
+			return command, db.ErrDockerReconciliationCommandStale
+		}
+		if state.Revision != request.ExpectedRevision || state.QuarantineStatus != db.DockerReconciliationQuarantinePending || state.ContainerID == "" {
+			return command, db.ErrDockerReconciliationCommandStale
+		}
+		command.Quarantine, command.DaemonID = request.Quarantine, state.ContainerID
+		command.Fingerprint = dockerRemediationFingerprint(command.Target, state.ContainerID, state.RunnerBoot, state.ProjectID, state.TaskID, state.Generation, string(state.Resource))
+	} else {
+		var candidate db.DockerReconciliationOrphanCandidate
+		err = tx.SelectOne(&candidate, d.PrepareQuery("select runner_id,resource,identifier,name,reason,fingerprint,identity,observed_at,revision,status,remediated_at from docker_reconciliation_orphan_candidate where runner_id=? and session_id=? and fingerprint=?"), runnerID, request.SessionID, request.Fingerprint)
+		if err != nil || candidate.Revision != request.ExpectedRevision || candidate.Status != db.DockerReconciliationCandidatePending || candidate.Identifier == "" || (candidate.Resource == db.DockerReconciliationCandidateVolume && !db.ValidDockerReconciliationOpaqueHash(candidate.Identity)) {
+			return command, db.ErrDockerReconciliationCommandStale
+		}
+		command.Fingerprint, command.DaemonID, command.CandidateResource, command.CandidateSessionID, command.CandidateIdentity = candidate.Fingerprint, candidate.Identifier, candidate.Resource, request.SessionID, candidate.Identity
+	}
+	command.CommandID, err = db.NewDockerReconciliationToken()
+	if err != nil {
+		return command, err
+	}
+	boot, projectID, taskID, generation, resource := "", 0, 0, 0, ""
+	if command.Quarantine != nil {
+		boot, projectID, taskID, generation, resource = command.Quarantine.RunnerBoot, command.Quarantine.ProjectID, command.Quarantine.TaskID, command.Quarantine.Generation, string(command.Quarantine.Resource)
+	}
+	// The runner lock prevents replacement on supported SQL engines; SQLite
+	// serializes writers. Recheck the exact active fence immediately before the
+	// insert so every accepted command has a current delivery session.
+	var activeSession struct {
+		SessionID string `db:"session_id"`
+		FenceHash string `db:"fence_hash"`
+	}
+	err = tx.SelectOne(&activeSession, d.PrepareQuery("select session_id,fence_hash from docker_reconciliation_session where runner_id=? and session_id=? and fence_hash=? and active=true"), runnerID, session.SessionID, session.FenceHash)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return command, db.ErrDockerReconciliationCommandStale
+		}
+		return command, err
+	}
+	_, err = tx.Exec(d.PrepareQuery("insert into docker_reconciliation_remediation_command (command_id,session_id,runner_id,fence_hash,idempotency_key,action,target,expected_revision,fingerprint,daemon_id,candidate_resource,candidate_session_id,candidate_identity,runner_boot,project_id,task_id,generation,resource,status,created_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"), command.CommandID, command.SessionID, runnerID, session.FenceHash, request.IdempotencyKey, command.Action, command.Target, command.ExpectedRevision, command.Fingerprint, command.DaemonID, command.CandidateResource, command.CandidateSessionID, command.CandidateIdentity, boot, projectID, taskID, generation, resource, command.Status, time.Now().UTC())
+	if err != nil {
+		return command, err
+	}
+	return command, tx.Commit()
+}
+
+func dockerRemediationFingerprint(target db.DockerReconciliationRemediationTarget, daemonID, boot string, projectID, taskID, generation int, resource string) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d\x00%d\x00%s", target, daemonID, boot, projectID, taskID, generation, resource)))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func (d *SqlDb) GetDockerReconciliationRemediationCommands(runnerID int, sessionID string, fence string, limit int) ([]db.DockerReconciliationRemediationCommand, error) {
+	if runnerID <= 0 || !validDockerSessionID(sessionID) || !validDockerSessionID(fence) || limit <= 0 || limit > dockerReconciliationScanPageSize {
+		return nil, db.ErrDockerReconciliationCommandStale
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err = d.authenticatedDockerReconciliationSessionTx(tx, runnerID, sessionID, fence, true); err != nil {
+		return nil, err
+	}
+	commands := make([]db.DockerReconciliationRemediationCommand, 0, limit)
+	_, err = tx.Select(&commands, d.PrepareQuery("select "+dockerReconciliationRemediationCommandColumns+" from docker_reconciliation_remediation_command where runner_id=? and session_id=? and status='pending' order by created_at,command_id limit ?"), runnerID, sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range commands {
+		if commands[i].Target == db.DockerReconciliationRemediationTargetQuarantine {
+			commands[i].Quarantine = &db.DockerReconciliationKey{DockerReconciliationOwner: db.DockerReconciliationOwner{RunnerID: runnerID, RunnerBoot: commands[i].RunnerBoot}, ProjectID: commands[i].ProjectID, TaskID: commands[i].TaskID, Generation: commands[i].Generation, Resource: commands[i].Resource}
+		}
+	}
+	return commands, tx.Commit()
+}
+
+// ReportDockerReconciliationRemediation accepts bounded runner evidence and,
+// for a successful removal only, resolves the exact revision-fenced target in
+// the same transaction. Replays are accepted only when they repeat the stored
+// result; cross-session and stale-session reports cannot reach the target.
+func (d *SqlDb) ReportDockerReconciliationRemediation(runnerID int, sessionID string, fence string, result db.DockerReconciliationRemediationResult) error {
+	if runnerID <= 0 || !validDockerSessionID(sessionID) || !validDockerSessionID(fence) || result.Validate() != nil {
+		return db.ErrDockerReconciliationCommandStale
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err = d.authenticatedDockerReconciliationSessionTx(tx, runnerID, sessionID, fence, true); err != nil {
+		return err
+	}
+	var command struct {
+		CommandID          string                                     `db:"command_id"`
+		Target             db.DockerReconciliationRemediationTarget   `db:"target"`
+		ExpectedRevision   int64                                      `db:"expected_revision"`
+		Fingerprint        string                                     `db:"fingerprint"`
+		Status             db.DockerReconciliationRemediationStatus   `db:"status"`
+		Evidence           db.DockerReconciliationRemediationEvidence `db:"evidence"`
+		RunnerBoot         string                                     `db:"runner_boot"`
+		ProjectID          int                                        `db:"project_id"`
+		TaskID             int                                        `db:"task_id"`
+		Generation         int                                        `db:"generation"`
+		Resource           db.DockerReconciliationResource            `db:"resource"`
+		CandidateSessionID string                                     `db:"candidate_session_id"`
+	}
+	err = tx.SelectOne(&command, d.PrepareQuery("select command_id,target,expected_revision,fingerprint,status,evidence,runner_boot,project_id,task_id,generation,resource,candidate_session_id from docker_reconciliation_remediation_command where command_id=? and runner_id=? and session_id=? and fence_hash=?"), result.CommandID, runnerID, sessionID, dockerReconciliationFenceHash(fence))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return db.ErrDockerReconciliationCommandStale
+		}
+		return err
+	}
+	if command.Fingerprint != result.Fingerprint {
+		return db.ErrDockerReconciliationCommandStale
+	}
+	if command.Status != db.DockerReconciliationRemediationPending {
+		if command.Status == result.Status && command.Evidence == result.Evidence {
+			return tx.Commit()
+		}
+		return db.ErrDockerReconciliationCommandStale
+	}
+	if result.Status == db.DockerReconciliationRemediationSucceeded {
+		now := time.Now().UTC()
+		if command.Target == db.DockerReconciliationRemediationTargetQuarantine {
+			updated, updateErr := tx.Exec(d.PrepareQuery("update docker_reconciliation_state set revision=revision+1, quarantine_status=?, remediation=?, remediated_at=?, updated_at=? where runner_id=? and runner_boot=? and project_id=? and task_id=? and generation=? and resource=? and revision=? and quarantine_status=?"), db.DockerReconciliationQuarantineRemediated, db.DockerReconciliationRemediationRemove, now, now, runnerID, command.RunnerBoot, command.ProjectID, command.TaskID, command.Generation, command.Resource, command.ExpectedRevision, db.DockerReconciliationQuarantinePending)
+			if updateErr != nil {
+				return updateErr
+			}
+			if count, countErr := updated.RowsAffected(); countErr != nil || count != 1 {
+				return db.ErrDockerReconciliationCommandStale
+			}
+		} else {
+			updated, updateErr := tx.Exec(d.PrepareQuery("update docker_reconciliation_orphan_candidate set revision=revision+1,status=?,remediated_at=? where runner_id=? and session_id=? and fingerprint=? and revision=? and status=?"), db.DockerReconciliationCandidateResolved, now, runnerID, command.CandidateSessionID, command.Fingerprint, command.ExpectedRevision, db.DockerReconciliationCandidatePending)
+			if updateErr != nil {
+				return updateErr
+			}
+			if count, countErr := updated.RowsAffected(); countErr != nil || count != 1 {
+				return db.ErrDockerReconciliationCommandStale
+			}
+		}
+	}
+	_, err = tx.Exec(d.PrepareQuery("update docker_reconciliation_remediation_command set status=?,evidence=?,reported_at=? where command_id=? and runner_id=? and session_id=? and fence_hash=? and status='pending'"), result.Status, result.Evidence, time.Now().UTC(), result.CommandID, runnerID, sessionID, dockerReconciliationFenceHash(fence))
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (d *SqlDb) appendDockerReconciliationObservationTx(tx *gorp.Transaction, runnerID int, observation db.DockerReconciliationObservation) error {

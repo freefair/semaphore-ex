@@ -3,6 +3,7 @@ package sql
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -97,6 +98,134 @@ func TestDockerReconciliationStoreFencesQuarantineUpdatesByOwnerAndRevision(t *t
 	assert.ErrorIs(t, err, db.ErrNotFound)
 }
 
+func TestDockerReconciliationRemediationCommandIsSessionAndRevisionFenced(t *testing.T) {
+	store, projectID, runner, task := createDockerReconciliationAttempt(t)
+	state, _, err := store.CreateDockerReconciliationObservation(runner.ID, dockerReconciliationObservation(runner.ID, projectID, task.ID, task.AssignmentGeneration, 1))
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	state.State, state.QuarantineStatus, state.Remediation, state.RemediationReason, state.QuarantinedAt = db.DockerReconciliationQuarantine, db.DockerReconciliationQuarantinePending, db.DockerReconciliationRemediationInspect, "stop_unconfirmed", &now
+	state, err = store.UpdateDockerReconciliationState(state, int(state.Revision))
+	require.NoError(t, err)
+	session, err := store.OpenDockerReconciliationSession(runner.ID, "", "")
+	require.NoError(t, err)
+	command, err := store.RequestDockerReconciliationRemediation(runner.ID, db.DockerReconciliationRemediationRequest{Action: db.DockerReconciliationRemediationRetryStopAndCleanup, IdempotencyKey: "retry-1", ExpectedRevision: state.Revision, Target: db.DockerReconciliationRemediationTargetQuarantine, Quarantine: ptrDockerKey(state.Key())})
+	require.NoError(t, err)
+	commands, err := store.GetDockerReconciliationRemediationCommands(runner.ID, session.SessionID, session.Fence, 10)
+	require.NoError(t, err)
+	require.Len(t, commands, 1)
+	assert.Equal(t, command.CommandID, commands[0].CommandID)
+	result := db.DockerReconciliationRemediationResult{CommandID: command.CommandID, Fingerprint: command.Fingerprint, Status: db.DockerReconciliationRemediationSucceeded, Evidence: db.DockerReconciliationEvidenceRemoved}
+	require.NoError(t, store.ReportDockerReconciliationRemediation(runner.ID, session.SessionID, session.Fence, result))
+	require.NoError(t, store.ReportDockerReconciliationRemediation(runner.ID, session.SessionID, session.Fence, result), "exact result replay is idempotent")
+	resolved, err := store.GetDockerReconciliationState(state.Key())
+	require.NoError(t, err)
+	assert.Equal(t, db.DockerReconciliationQuarantineRemediated, resolved.QuarantineStatus)
+	assert.ErrorIs(t, store.ReportDockerReconciliationRemediation(runner.ID+1, session.SessionID, session.Fence, result), db.ErrDockerReconciliationSessionStale)
+	_, err = store.RequestDockerReconciliationRemediation(runner.ID, db.DockerReconciliationRemediationRequest{Action: db.DockerReconciliationRemediationRetryStopAndCleanup, IdempotencyKey: "retry-stale", ExpectedRevision: state.Revision, Target: db.DockerReconciliationRemediationTargetQuarantine, Quarantine: ptrDockerKey(state.Key())})
+	assert.ErrorIs(t, err, db.ErrDockerReconciliationCommandStale)
+	// A retry after a lost 202 must return the original command even though its
+	// target is now resolved and its expected revision is stale.
+	replayed, err := store.RequestDockerReconciliationRemediation(runner.ID, db.DockerReconciliationRemediationRequest{Action: db.DockerReconciliationRemediationRetryStopAndCleanup, IdempotencyKey: "retry-1", ExpectedRevision: state.Revision, Target: db.DockerReconciliationRemediationTargetQuarantine, Quarantine: ptrDockerKey(state.Key())})
+	require.NoError(t, err)
+	assert.Equal(t, command.CommandID, replayed.CommandID)
+	_, err = store.RequestDockerReconciliationRemediation(runner.ID, db.DockerReconciliationRemediationRequest{Action: db.DockerReconciliationRemediationRetryStopAndCleanup, IdempotencyKey: "retry-1", ExpectedRevision: state.Revision + 1, Target: db.DockerReconciliationRemediationTargetQuarantine, Quarantine: ptrDockerKey(state.Key())})
+	assert.ErrorIs(t, err, db.ErrDockerReconciliationImmutableMutation)
+}
+
+func TestDockerReconciliationCandidateCommandRebindsToCurrentSession(t *testing.T) {
+	store, _, runner, _ := createDockerReconciliationAttempt(t)
+	oldSession, err := store.OpenDockerReconciliationSession(runner.ID, "", "")
+	require.NoError(t, err)
+	candidate := db.DockerReconciliationOrphanCandidate{Resource: db.DockerReconciliationCandidateContainer, Identifier: "immutable-container", Identity: "immutable-container", Name: "orphan", Reason: db.DockerReconciliationCandidateMalformed, ObservedAt: time.Now().UTC()}
+	require.NoError(t, store.RecordDockerReconciliationOrphanCandidates(runner.ID, oldSession.SessionID, oldSession.Fence, []db.DockerReconciliationOrphanCandidate{candidate}))
+	page, err := store.GetDockerReconciliationPendingCandidates(runner.ID, oldSession.SessionID, db.DockerReconciliationCandidateQuery{Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, page.Candidates, 1)
+	current, err := store.OpenDockerReconciliationSession(runner.ID, "forged", "forged")
+	require.NoError(t, err)
+	command, err := store.RequestDockerReconciliationRemediation(runner.ID, db.DockerReconciliationRemediationRequest{Action: db.DockerReconciliationRemediationRetryStopAndCleanup, IdempotencyKey: "candidate-retry", ExpectedRevision: page.Candidates[0].Revision, Target: db.DockerReconciliationRemediationTargetCandidate, SessionID: oldSession.SessionID, Fingerprint: page.Candidates[0].Fingerprint})
+	require.NoError(t, err)
+	assert.Equal(t, current.SessionID, command.SessionID)
+	assert.Equal(t, oldSession.SessionID, command.CandidateSessionID)
+	commands, err := store.GetDockerReconciliationRemediationCommands(runner.ID, current.SessionID, current.Fence, 1)
+	require.NoError(t, err)
+	require.Len(t, commands, 1)
+	require.NoError(t, store.ReportDockerReconciliationRemediation(runner.ID, current.SessionID, current.Fence, db.DockerReconciliationRemediationResult{CommandID: command.CommandID, Fingerprint: command.Fingerprint, Status: db.DockerReconciliationRemediationSucceeded, Evidence: db.DockerReconciliationEvidenceRemoved}))
+	resolved, err := store.GetDockerReconciliationCandidates(runner.ID, oldSession.SessionID, db.DockerReconciliationCandidateQuery{Limit: 1})
+	require.NoError(t, err)
+	assert.Equal(t, db.DockerReconciliationCandidateResolved, resolved[0].Status)
+}
+
+func TestDockerReconciliationPendingStatePagesSkipResolvedHistory(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	now := time.Now().UTC()
+	for _, row := range []struct {
+		sequence int64
+		status   db.DockerReconciliationQuarantineStatus
+	}{{1, db.DockerReconciliationQuarantineRemediated}, {2, db.DockerReconciliationQuarantinePending}, {3, db.DockerReconciliationQuarantinePending}} {
+		_, err := store.exec("insert into docker_reconciliation_state (runner_id,runner_boot,project_id,task_id,generation,resource,revision,latest_sequence,container_id,container_name,state,reason,updated_at,quarantine_status,remediation,remediation_reason,quarantined_at,remediated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", 77, "page-boot", 1, int(row.sequence), 1, db.DockerReconciliationResourceTask, 1, row.sequence, "container", "container", db.DockerReconciliationQuarantine, "", now, row.status, db.DockerReconciliationRemediationRemove, "cleanup", now, now)
+		require.NoError(t, err)
+	}
+	first, err := store.GetDockerReconciliationPendingStates(db.DockerReconciliationOwner{RunnerID: 77, RunnerBoot: "page-boot"}, db.DockerReconciliationQuery{Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, first.States, 1)
+	assert.Equal(t, int64(2), first.States[0].LatestSequence)
+	require.NotNil(t, first.NextCursor)
+	second, err := store.GetDockerReconciliationPendingStates(db.DockerReconciliationOwner{RunnerID: 77, RunnerBoot: "page-boot"}, db.DockerReconciliationQuery{AfterSequence: *first.NextCursor, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, second.States, 1)
+	assert.Equal(t, int64(3), second.States[0].LatestSequence)
+	assert.Nil(t, second.NextCursor)
+}
+
+func TestDockerRemediationRequestAndSessionRestartNeverStrandAcceptedCommand(t *testing.T) {
+	store, projectID, runner, task := createDockerReconciliationAttempt(t)
+	state, _, err := store.CreateDockerReconciliationObservation(runner.ID, dockerReconciliationObservation(runner.ID, projectID, task.ID, task.AssignmentGeneration, 1))
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	state.State, state.QuarantineStatus, state.Remediation, state.RemediationReason, state.QuarantinedAt = db.DockerReconciliationQuarantine, db.DockerReconciliationQuarantinePending, db.DockerReconciliationRemediationInspect, "stop_unconfirmed", &now
+	state, err = store.UpdateDockerReconciliationState(state, int(state.Revision))
+	require.NoError(t, err)
+	oldSession, err := store.OpenDockerReconciliationSession(runner.ID, "", "")
+	require.NoError(t, err)
+	request := db.DockerReconciliationRemediationRequest{Action: db.DockerReconciliationRemediationRetryStopAndCleanup, IdempotencyKey: "restart-race", ExpectedRevision: state.Revision, Target: db.DockerReconciliationRemediationTargetQuarantine, Quarantine: ptrDockerKey(state.Key())}
+
+	// Release both operations together. The runner-row lock makes the outcome
+	// equivalent to either serial order; after both commit the command must be
+	// bound to whichever session remains active.
+	start := make(chan struct{})
+	var wait sync.WaitGroup
+	var command db.DockerReconciliationRemediationCommand
+	var requestErr, restartErr error
+	var restarted db.DockerReconciliationSession
+	wait.Add(2)
+	go func() {
+		defer wait.Done()
+		<-start
+		command, requestErr = store.RequestDockerReconciliationRemediation(runner.ID, request)
+	}()
+	go func() {
+		defer wait.Done()
+		<-start
+		restarted, restartErr = store.OpenDockerReconciliationSession(runner.ID, "restart-forged", "restart-forged")
+	}()
+	close(start)
+	wait.Wait()
+	require.NoError(t, requestErr)
+	require.NoError(t, restartErr)
+	active, err := store.OpenDockerReconciliationSession(runner.ID, restarted.SessionID, restarted.Fence)
+	require.NoError(t, err)
+	commands, err := store.GetDockerReconciliationRemediationCommands(runner.ID, active.SessionID, active.Fence, 10)
+	require.NoError(t, err)
+	require.Len(t, commands, 1)
+	assert.Equal(t, command.CommandID, commands[0].CommandID)
+	assert.Equal(t, active.SessionID, commands[0].SessionID)
+	assert.NotEqual(t, oldSession.SessionID, active.SessionID)
+}
+
+func ptrDockerKey(value db.DockerReconciliationKey) *db.DockerReconciliationKey { return &value }
+
 func TestDockerReconciliationMigrationAddsAndRollsBackSchema(t *testing.T) {
 	legacy := "2.20.36"
 	store := InitConfigCreateTestStoreAt(&legacy)
@@ -105,6 +234,7 @@ func TestDockerReconciliationMigrationAddsAndRollsBackSchema(t *testing.T) {
 	require.NoError(t, db.Migrate(store, nil))
 	assert.Contains(t, sqliteTableNames(t, store), "docker_reconciliation_runner")
 	assert.Contains(t, sqliteTableNames(t, store), "docker_reconciliation_state")
+	assert.Contains(t, sqliteTableNames(t, store), "docker_reconciliation_remediation_command")
 	columns := sqliteColumnNames(t, store, "docker_reconciliation_observation")
 	for _, column := range []string{"revision", "quarantine_status", "remediation", "remediation_reason", "quarantined_at", "remediated_at"} {
 		assert.Contains(t, columns, column)
@@ -113,6 +243,7 @@ func TestDockerReconciliationMigrationAddsAndRollsBackSchema(t *testing.T) {
 	assert.NotContains(t, sqliteTableNames(t, store), "docker_reconciliation_observation")
 	assert.NotContains(t, sqliteTableNames(t, store), "docker_reconciliation_runner")
 	assert.NotContains(t, sqliteTableNames(t, store), "docker_reconciliation_state")
+	assert.NotContains(t, sqliteTableNames(t, store), "docker_reconciliation_remediation_command")
 }
 
 func TestDockerReconciliationMigrationPreparesForSupportedDialects(t *testing.T) {

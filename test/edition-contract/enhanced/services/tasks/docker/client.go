@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"maps"
@@ -66,6 +67,7 @@ type DockerClient interface {
 	ListManagedResources(context.Context, int) ([]ManagedResource, error)
 	RemoveContainer(context.Context, string) error
 	RemoveVolume(context.Context, string) error
+	VolumeReferenced(context.Context, string) (bool, error)
 }
 
 type ManagedResourceKind string
@@ -85,6 +87,10 @@ type ManagedResource struct {
 	Labels     map[string]string
 	Running    bool
 	StateKnown bool
+	// CreationIdentity is a stable, opaque daemon fingerprint. Docker volumes
+	// have no immutable object ID, so cleanup is permitted only when this value
+	// was available at discovery and still matches at execution.
+	CreationIdentity string
 }
 
 const (
@@ -423,17 +429,53 @@ func (c *mobyClient) ListManagedResources(ctx context.Context, runnerID int) ([]
 		if inspectErr != nil {
 			return nil, fmt.Errorf("inspecting managed Docker volume: %w", inspectErr)
 		}
-		resources = append(resources, ManagedResource{Kind: ManagedVolume, ID: inspected.Volume.Name, Name: inspected.Volume.Name, Labels: maps.Clone(inspected.Volume.Labels), StateKnown: true})
+		resources = append(resources, ManagedResource{Kind: ManagedVolume, ID: inspected.Volume.Name, Name: inspected.Volume.Name, Labels: maps.Clone(inspected.Volume.Labels), StateKnown: true, CreationIdentity: volumeCreationIdentity(inspected.Volume.Name, inspected.Volume.CreatedAt, inspected.Volume.Driver, inspected.Volume.Scope)})
 	}
 	return resources, nil
 }
 
+func volumeCreationIdentity(name string, createdAt string, driver string, scope string) string {
+	// A coarse CreatedAt timestamp cannot distinguish delete/recreate in the
+	// same second. Treat that daemon response as ambiguous and quarantine-only.
+	if name == "" || createdAt == "" || !strings.Contains(createdAt, ".") {
+		return ""
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil || parsed.Nanosecond() == 0 {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(name + "\x00" + createdAt + "\x00" + driver + "\x00" + scope))
+	return fmt.Sprintf("%x", sum[:])
+}
+
 func (c *mobyClient) RemoveContainer(ctx context.Context, containerID string) error {
-	_, err := c.client.ContainerRemove(ctx, containerID, moby.ContainerRemoveOptions{Force: true})
+	_, err := c.client.ContainerRemove(ctx, containerID, moby.ContainerRemoveOptions{Force: false})
 	return err
 }
 
 func (c *mobyClient) RemoveVolume(ctx context.Context, volume string) error {
-	_, err := c.client.VolumeRemove(ctx, volume, moby.VolumeRemoveOptions{Force: true})
+	_, err := c.client.VolumeRemove(ctx, volume, moby.VolumeRemoveOptions{Force: false})
 	return err
+}
+
+func (c *mobyClient) VolumeReferenced(ctx context.Context, volume string) (bool, error) {
+	containers, err := c.client.ContainerList(ctx, moby.ContainerListOptions{All: true})
+	if err != nil {
+		return false, err
+	}
+	for _, summary := range containers.Items {
+		inspected, inspectErr := c.client.ContainerInspect(ctx, summary.ID, moby.ContainerInspectOptions{})
+		if errdefs.IsNotFound(inspectErr) {
+			continue
+		}
+		if inspectErr != nil {
+			return false, inspectErr
+		}
+		for _, mount := range inspected.Container.Mounts {
+			if mount.Name == volume {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }

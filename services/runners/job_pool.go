@@ -93,6 +93,7 @@ type JobPool struct {
 	dockerReconciliationReady   bool
 	dockerReconciliationSession db.DockerReconciliationSession
 	dockerQuarantines           []db.DockerReconciliationStopQuarantine
+	dockerRemediationResults    []db.DockerReconciliationRemediationResult
 }
 
 // NewJobPool wires a runner-side job pool. The ExecutorProvider is materialised
@@ -506,6 +507,11 @@ func (p *JobPool) sendProgress() (ok bool) {
 			quarantineCount = maxDockerReconciliationQuarantinesPerProgress
 		}
 		body.DockerReconciliationQuarantines = append(body.DockerReconciliationQuarantines, p.dockerQuarantines[:quarantineCount]...)
+		resultCount := len(p.dockerRemediationResults)
+		if resultCount > maxDockerReconciliationQuarantinesPerProgress {
+			resultCount = maxDockerReconciliationQuarantinesPerProgress
+		}
+		body.DockerReconciliationRemediationResults = append(body.DockerReconciliationRemediationResults, p.dockerRemediationResults[:resultCount]...)
 		p.dockerPolicyMu.Unlock()
 	}
 
@@ -601,6 +607,13 @@ func (p *JobPool) sendProgress() (ok bool) {
 		}
 		p.dockerPolicyMu.Unlock()
 	}
+	if len(body.DockerReconciliationRemediationResults) > 0 {
+		p.dockerPolicyMu.Lock()
+		if len(p.dockerRemediationResults) >= len(body.DockerReconciliationRemediationResults) {
+			p.dockerRemediationResults = p.dockerRemediationResults[len(body.DockerReconciliationRemediationResults):]
+		}
+		p.dockerPolicyMu.Unlock()
+	}
 
 	log.WithFields(log.Fields{
 		"context":     "sending_progress",
@@ -635,6 +648,7 @@ func (p *JobPool) sendProgress() (ok bool) {
 	}
 
 	p.applyTerminatedJobs(progressResp.TerminatedJobs)
+	p.applyDockerRemediationCommands(progressResp.DockerReconciliationCommands)
 
 	return
 }
@@ -992,6 +1006,11 @@ func (p *JobPool) checkNewJobs() {
 			log.WithField("context", "checking_new_jobs").Warn("refusing Docker dispatch until reconciliation session installation succeeds")
 			return
 		}
+		// Commands from this poll are authenticated by its server-issued session
+		// and fence. Install that identity in both pool and provider before any
+		// command is evaluated; a startup/restart command must not be compared
+		// against the previous process session.
+		p.applyDockerRemediationCommands(response.DockerReconciliationCommands)
 	}
 
 	runningJobs := p.snapshotRunningJobs()

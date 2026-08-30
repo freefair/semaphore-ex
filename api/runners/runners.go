@@ -172,6 +172,14 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 		}
 		data.DockerPolicy = &policy
 		data.DockerReconciliationSession = &session
+		if remediationStore, remediationOK := c.runnerRepo.(db.DockerReconciliationRepository); remediationOK {
+			commands, commandErr := remediationStore.GetDockerReconciliationRemediationCommands(runner.ID, session.SessionID, session.Fence, 100)
+			if commandErr != nil {
+				helpers.WriteError(w, commandErr)
+				return
+			}
+			data.DockerReconciliationCommands = commands
+		}
 	}
 
 	if clearCache {
@@ -451,6 +459,19 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
+	if runner.EffectiveExecutorType() == db.RunnerExecutorDocker && len(body.DockerReconciliationRemediationResults) > 0 {
+		remediationStore, ok := c.runnerRepo.(db.DockerReconciliationRepository)
+		if !ok {
+			helpers.WriteErrorStatus(w, "Docker reconciliation storage is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		for _, result := range body.DockerReconciliationRemediationResults {
+			if err := remediationStore.ReportDockerReconciliationRemediation(runner.ID, r.Header.Get(runners.RunnerDockerSessionHeader), r.Header.Get(runners.RunnerDockerFenceHeader), result); err != nil {
+				helpers.WriteErrorStatus(w, "Docker reconciliation remediation result rejected", http.StatusConflict)
+				return
+			}
+		}
+	}
 
 	taskPool := c.taskPool
 
@@ -464,15 +485,27 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	var response runners.RunnerProgressResponse
+	if runner.EffectiveExecutorType() == db.RunnerExecutorDocker {
+		if remediationStore, ok := c.runnerRepo.(db.DockerReconciliationRepository); ok {
+			commands, commandErr := remediationStore.GetDockerReconciliationRemediationCommands(runner.ID, r.Header.Get(runners.RunnerDockerSessionHeader), r.Header.Get(runners.RunnerDockerFenceHeader), 100)
+			if commandErr == nil {
+				response.DockerReconciliationCommands = commands
+			}
+		}
+	}
+
 	if body.Jobs == nil {
 		if body.KnownJobs != nil && !c.persistTaskExecutionEvidence(w, runner.ID, executionEvidence) {
+			return
+		}
+		if len(response.DockerReconciliationCommands) > 0 {
+			helpers.WriteJSON(w, http.StatusOK, response)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-
-	var response runners.RunnerProgressResponse
 
 	for _, job := range body.Jobs {
 		tsk, err := taskPool.GetTask(job.ID)

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -34,7 +35,11 @@ func TestJobPool_CommonHeadersReportHealthMetadata(t *testing.T) {
 	assert.NotEmpty(t, request.Header.Get("X-Runner-Started-At"))
 }
 
-type dockerPolicyConsumerStub struct{ policy db.DockerExecutionPolicy }
+type dockerPolicyConsumerStub struct {
+	policy     db.DockerExecutionPolicy
+	session    db.DockerReconciliationSession
+	remediated []db.DockerReconciliationRemediationCommand
+}
 
 func (p *dockerPolicyConsumerStub) NewExecutor(db.Task, db.Template, db.Inventory, db.Repository, db.Environment, string) (tasks.Executor, error) {
 	return nil, nil
@@ -59,7 +64,8 @@ func (*dockerPolicyConsumerStub) ApplyDockerRunnerIdentity(runnerID int) error {
 	return nil
 }
 
-func (*dockerPolicyConsumerStub) ApplyDockerReconciliationSession(db.DockerReconciliationSession) error {
+func (p *dockerPolicyConsumerStub) ApplyDockerReconciliationSession(session db.DockerReconciliationSession) error {
+	p.session = session
 	return nil
 }
 
@@ -69,6 +75,15 @@ func (*dockerPolicyConsumerStub) DockerReconciliationSession() db.DockerReconcil
 
 func (*dockerPolicyConsumerStub) ScanDockerReconciliation(_ context.Context, session db.DockerReconciliationSession) ([]db.DockerReconciliationObservation, db.DockerReconciliationScanComplete, []db.DockerReconciliationOrphanCandidate, error) {
 	return nil, db.DockerReconciliationScanComplete{SessionID: session.SessionID, Fence: session.Fence}, []db.DockerReconciliationOrphanCandidate{{Resource: db.DockerReconciliationCandidateVolume, Identifier: "volume", Name: "volume", Reason: db.DockerReconciliationCandidateExtra, ObservedAt: time.Now().UTC()}}, nil
+}
+
+func (p *dockerPolicyConsumerStub) RemediateDockerReconciliation(_ context.Context, command db.DockerReconciliationRemediationCommand) db.DockerReconciliationRemediationResult {
+	p.remediated = append(p.remediated, command)
+	result := db.DockerReconciliationRemediationResult{CommandID: command.CommandID, Fingerprint: command.Fingerprint, Status: db.DockerReconciliationRemediationErrored, Evidence: db.DockerReconciliationEvidenceIdentityMismatch}
+	if command.SessionID == p.session.SessionID && command.RunnerID == p.session.RunnerID {
+		result.Status, result.Evidence = db.DockerReconciliationRemediationSucceeded, db.DockerReconciliationEvidenceAlreadyAbsent
+	}
+	return result
 }
 
 type denyingDockerPolicyProvider struct{ dockerPolicyConsumerStub }
@@ -111,6 +126,26 @@ func TestJobPoolSubmitsDockerScanBeforeDispatch(t *testing.T) {
 	assert.Equal(t, "scan-session", received.DockerReconciliationScanComplete.SessionID)
 	assert.Len(t, received.DockerReconciliationOrphanCandidates, 1)
 }
+
+func TestJobPoolInstallsPollSessionBeforeExecutingDockerRemediation(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
+	session := db.DockerReconciliationSession{SessionID: "fresh-session", Fence: "fresh-fence", RunnerID: 1, TargetBoot: "fresh-target", Ready: true}
+	command := db.DockerReconciliationRemediationCommand{CommandID: "command", SessionID: session.SessionID, RunnerID: 1, Action: db.DockerReconciliationRemediationRetryStopAndCleanup, Target: db.DockerReconciliationRemediationTargetCandidate, Fingerprint: strings.Repeat("a", 64), DaemonID: "candidate", CandidateResource: db.DockerReconciliationCandidateContainer}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(RunnerState{RunnerID: 1, DockerPolicy: ptrDockerPolicy(db.DefaultDockerExecutionPolicy()), DockerReconciliationSession: &session, DockerReconciliationCommands: []db.DockerReconciliationRemediationCommand{command}, AccessKeys: map[int]db.AccessKey{}}))
+	}))
+	t.Cleanup(server.Close)
+	util.Config = &util.ConfigType{WebHost: server.URL, Runner: &util.RunnerConfig{Token: "token", Executor: &util.ExecutorConfig{Type: util.ExecutorTypeDocker}, Connection: &util.RunnerConnectionConfig{}}}
+	provider := &dockerPolicyConsumerStub{}
+	pool := &JobPool{provider: provider, runningJobs: make(map[int]*runningJob), client: newHTTPClient(), startedAt: time.Now()}
+	pool.checkNewJobs()
+	require.Len(t, provider.remediated, 1)
+	require.Len(t, pool.dockerRemediationResults, 1)
+	assert.Equal(t, db.DockerReconciliationRemediationSucceeded, pool.dockerRemediationResults[0].Status)
+}
+
+func ptrDockerPolicy(value db.DockerExecutionPolicy) *db.DockerExecutionPolicy { return &value }
 
 func TestJobPoolRejectsQueuedDockerJobWithSupersededPolicySnapshot(t *testing.T) {
 	initConfig(t)

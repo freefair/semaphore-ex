@@ -202,7 +202,11 @@ func orphanCandidate(resource ManagedResource, reason db.DockerReconciliationCan
 	if !validManagedIdentity(name) {
 		name = ""
 	}
-	return db.DockerReconciliationOrphanCandidate{Resource: kind, Identifier: identifier, Name: name, Reason: reason, ObservedAt: observedAt}
+	identity := resource.ID
+	if resource.Kind == ManagedVolume {
+		identity = resource.CreationIdentity
+	}
+	return db.DockerReconciliationOrphanCandidate{Resource: kind, Identifier: identifier, Name: name, Identity: identity, Reason: reason, ObservedAt: observedAt}
 }
 
 func appendCandidate(candidates []db.DockerReconciliationOrphanCandidate, candidate db.DockerReconciliationOrphanCandidate) []db.DockerReconciliationOrphanCandidate {

@@ -82,6 +82,33 @@ func (p *JobPool) canDispatchQueuedJob(candidate *job) bool {
 	return ready && *candidate.dockerPolicyAck == acknowledged
 }
 
+func (p *JobPool) applyDockerRemediationCommands(commands []db.DockerReconciliationRemediationCommand) {
+	if len(commands) == 0 {
+		return
+	}
+	remediator, ok := p.provider.(tasks.DockerReconciliationRemediator)
+	if !ok {
+		return
+	}
+	for _, command := range commands {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		result := remediator.RemediateDockerReconciliation(ctx, command)
+		cancel()
+		p.dockerPolicyMu.Lock()
+		duplicate := false
+		for _, pending := range p.dockerRemediationResults {
+			if pending.CommandID == result.CommandID && pending.Fingerprint == result.Fingerprint {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			p.dockerRemediationResults = append(p.dockerRemediationResults, result)
+		}
+		p.dockerPolicyMu.Unlock()
+	}
+}
+
 // finishStoppedJob is the only runner-side stopped transition for an optional
 // Docker confirmer. A completed Run call is not daemon evidence: Docker must
 // confirm the named container stopped first.
