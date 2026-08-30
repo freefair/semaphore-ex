@@ -153,6 +153,28 @@
                   <strong>Executor image:</strong>
                   <code>{{ attempt.resolved_executor_image }}</code>
                 </div>
+                <div v-if="attempt.docker_requested_image" class="mt-1">
+                  <strong>Requested Docker image:</strong>
+                  <code>{{ attempt.docker_requested_image }}</code>
+                </div>
+                <div v-if="attempt.docker_resolved_image" class="mt-1">
+                  <strong>Resolved Docker digest:</strong>
+                  <code>{{ attempt.docker_resolved_image }}</code>
+                </div>
+                <div v-if="dockerPolicyReference(attempt)" class="mt-1">
+                  <strong>Docker policy:</strong>
+                  <code>{{ dockerPolicyReference(attempt) }}</code>
+                </div>
+                <div v-if="dockerResourceLimits(attempt)" class="mt-1">
+                  <strong>Docker limits:</strong> {{ dockerResourceLimits(attempt) }}
+                </div>
+                <div
+                  v-if="attempt.denial_rule_id"
+                  class="mt-1 error--text"
+                  data-testid="task-runner-attempt-denial"
+                >
+                  <strong>Policy denial:</strong> <code>{{ attempt.denial_rule_id }}</code>
+                </div>
               </div>
             </div>
           </v-card-text>
@@ -261,6 +283,28 @@ export default {
     },
     runnerAttemptExecutorLabel(attempt) {
       return attempt.executor_type || 'local';
+    },
+    dockerPolicyReference(attempt) {
+      if (!attempt?.docker_policy_revision && !attempt?.docker_policy_hash) return '';
+      const revision = attempt.docker_policy_revision
+        ? `revision ${attempt.docker_policy_revision}`
+        : 'revision not reported';
+      return attempt.docker_policy_hash
+        ? `${revision} · ${attempt.docker_policy_hash}`
+        : revision;
+    },
+    dockerResourceLimits(attempt) {
+      const limits = [];
+      if (attempt?.docker_nano_cpus) {
+        limits.push(`${Number(attempt.docker_nano_cpus) / 1_000_000_000} CPU`);
+      }
+      if (attempt?.docker_memory_bytes) {
+        limits.push(`${Math.round(Number(attempt.docker_memory_bytes) / 1024 / 1024)} MiB`);
+      }
+      if (attempt?.docker_pids_limit) {
+        limits.push(`${attempt.docker_pids_limit} PIDs`);
+      }
+      return limits.join(' · ');
     },
     runnerAttemptLabel(outcome) {
       return {
