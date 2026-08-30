@@ -28,6 +28,14 @@ describe('runner reconciliation task details', () => {
       docker_memory_bytes: 536870912,
       docker_pids_limit: 256,
     })).to.equal('1.5 CPU · 512 MiB · 256 PIDs');
+    expect(TaskRunnerDetails.methods.kubernetesLocation({
+      k8s_cluster_alias: 'qa-cluster',
+      k8s_namespace: 'semaphore-jobs',
+    })).to.equal('qa-cluster · semaphore-jobs');
+    expect(TaskRunnerDetails.methods.kubernetesRuntimeIdentity({
+      k8s_job_name: 'semaphore-task-41-3',
+      k8s_pod_name: 'semaphore-task-41-3-b7d9f',
+    })).to.equal('Job semaphore-task-41-3 · Pod semaphore-task-41-3-b7d9f');
     expect(TaskRunnerDetails.methods.recoveryDecisionColor('quarantine')).to.equal('warning');
     expect(TaskRunnerDetails.watch.item.deep).to.equal(true);
   });

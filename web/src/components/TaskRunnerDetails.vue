@@ -123,6 +123,23 @@
               <div>
                 <div><strong>Runner:</strong> {{ runnerAttemptIdentity(attempt) }}</div>
                 <div><strong>Executor:</strong> {{ runnerAttemptExecutorLabel(attempt) }}</div>
+                <div
+                  v-if="attempt.executor_type === 'k8s'"
+                  class="mt-1"
+                  data-testid="task-runner-attempt-k8s"
+                >
+                  <div><strong>Kubernetes:</strong> {{ kubernetesLocation(attempt) }}</div>
+                  <div v-if="kubernetesRuntimeIdentity(attempt)">
+                    <strong>Runtime:</strong> {{ kubernetesRuntimeIdentity(attempt) }}
+                  </div>
+                  <div v-if="attempt.k8s_lifecycle">
+                    <strong>Kubernetes lifecycle:</strong> {{ attempt.k8s_lifecycle }}
+                  </div>
+                  <div v-if="attempt.k8s_terminal_reason">
+                    <strong>Kubernetes terminal reason:</strong>
+                    {{ attempt.k8s_terminal_reason }}
+                  </div>
+                </div>
                 <div v-if="attempt.container_name" class="mt-1">
                   <strong>Container:</strong>
                   <code>{{ attempt.container_name }}</code>
@@ -283,6 +300,17 @@ export default {
     },
     runnerAttemptExecutorLabel(attempt) {
       return attempt.executor_type || 'local';
+    },
+    kubernetesLocation(attempt) {
+      return [attempt?.k8s_cluster_alias, attempt?.k8s_namespace]
+        .filter(Boolean)
+        .join(' · ');
+    },
+    kubernetesRuntimeIdentity(attempt) {
+      const identities = [];
+      if (attempt?.k8s_job_name) identities.push(`Job ${attempt.k8s_job_name}`);
+      if (attempt?.k8s_pod_name) identities.push(`Pod ${attempt.k8s_pod_name}`);
+      return identities.join(' · ');
     },
     dockerPolicyReference(attempt) {
       if (!attempt?.docker_policy_revision && !attempt?.docker_policy_hash) return '';
