@@ -9,3 +9,7 @@ The local QA server, database, and test data were created by Codex for this plan
 Keep enhanced-edition work upstream-compatible. Prefer implementing existing interfaces and extension seams; leave Community behavior and shared UI untouched wherever possible. UI changes must be the smallest integration needed for the selected slice and should reuse existing routes, views, and components instead of redesigning shared surfaces.
 
 Keep docs/docs/developer-guide/plans/pro-slices/STATUS.md up to date.
+
+## Security Execution
+
+Run security scans, security-focused investigation, and security-fix verification through a dedicated `gpt-5.6-terra` sub-agent when delegation is available. The primary agent integrates the resulting evidence and runs non-security release gates.
