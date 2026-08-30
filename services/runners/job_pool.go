@@ -968,6 +968,10 @@ func (p *JobPool) checkNewJobs() {
 		}).Error("failed to parse new jobs response from the server")
 		return
 	}
+	if err := p.applyRunnerIdentity(response.RunnerID); err != nil {
+		log.WithError(err).WithField("context", "checking_new_jobs").Error("refusing dispatch until runner identity installation succeeds")
+		return
+	}
 
 	log.WithFields(log.Fields{
 		"context":      "checking_new_jobs",

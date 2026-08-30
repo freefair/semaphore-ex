@@ -30,5 +30,6 @@ func GetFeatures(_ *db.User, _ string) pro_interfaces.Features {
 		Workflows:               true,
 		CustomRolesManagement:   true,
 		DockerExecutor:          true,
+		K8sExecutor:             true,
 	}
 }

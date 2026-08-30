@@ -125,6 +125,12 @@ func TestEnhancedFeatureSetIncludesHighAvailability(t *testing.T) {
 	}
 }
 
+func TestEnhancedFeatureSetIncludesKubernetesExecutor(t *testing.T) {
+	if !GetFeatures(nil, "").K8sExecutor {
+		t.Fatal("enhanced feature set must expose the Kubernetes executor")
+	}
+}
+
 func TestProviderDistinguishesReadOnlyExpiredAndPermissionStates(t *testing.T) {
 	store := sqldb.InitConfigCreateTestStore()
 	defer store.Close()

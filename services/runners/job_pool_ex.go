@@ -64,6 +64,14 @@ func (p *JobPool) applyDockerRunnerIdentity(runnerID int) error {
 	return consumer.ApplyDockerRunnerIdentity(runnerID)
 }
 
+func (p *JobPool) applyRunnerIdentity(runnerID int) error {
+	consumer, ok := p.provider.(tasks.RunnerIdentityConsumer)
+	if !ok {
+		return nil
+	}
+	return consumer.ApplyRunnerIdentity(runnerID)
+}
+
 func (p *JobPool) dockerDispatchReady() bool {
 	if resolveExecutorType(util.Config.Runner.Executor) != util.ExecutorTypeDocker {
 		return true

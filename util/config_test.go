@@ -536,6 +536,9 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if Config.GitSubmoduleJobs != 4 {
 		t.Error(errMsg)
 	}
+	k8sConfig := RunnerK8sConfig{}
+	require.NoError(t, loadDefaultsToObject(&k8sConfig))
+	assert.Equal(t, 3600, k8sConfig.ActiveDeadlineSeconds)
 }
 
 func ensureConfigValidationFailure(t *testing.T, attribute string, value any) {
