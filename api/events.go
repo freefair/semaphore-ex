@@ -47,3 +47,12 @@ func getLastEvents(w http.ResponseWriter, r *http.Request) {
 func getAllEvents(w http.ResponseWriter, r *http.Request) {
 	getEvents(w, r, 0)
 }
+
+func getGlobalAuditEvents(w http.ResponseWriter, r *http.Request) {
+	events, err := helpers.Store(r).GetAllEvents(db.RetrieveQueryParams{})
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, events)
+}

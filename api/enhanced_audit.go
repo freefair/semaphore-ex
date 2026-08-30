@@ -94,6 +94,42 @@ func EnhancedAdminAuditMiddleware(audit pro_interfaces.AuditServiceFacade) func(
 	}
 }
 
+// EnhancedGlobalPermissionAuditMiddleware records bounded delegated global
+// operations after explicit authorization has decided the request.
+func EnhancedGlobalPermissionAuditMiddleware(audit pro_interfaces.AuditServiceFacade) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			descriptor, enhanced := enhancedAuditForRoute(r)
+			if !enhanced || audit == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			captured := &statusCapturingWriter{ResponseWriter: w}
+			next.ServeHTTP(captured, r)
+			status := captured.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			outcome, reason := enhancedAuditOutcome(status)
+			event := routeAuditEvent(r, descriptor, outcome, reason)
+			if err := audit.Record(r.Context(), event); err != nil {
+				log.WithFields(event.SafeFields()).Error("Failed to store enhanced audit event")
+			}
+		})
+	}
+}
+
+func enhancedAuditOutcome(status int) (pro_interfaces.AuditOutcome, string) {
+	switch {
+	case status >= 200 && status < 300:
+		return pro_interfaces.AuditOutcomeAllowed, string(pro_interfaces.CapabilityReasonActive)
+	case status == http.StatusForbidden:
+		return pro_interfaces.AuditOutcomeDenied, string(pro_interfaces.CapabilityReasonInsufficientPermission)
+	default:
+		return pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonOperationError
+	}
+}
+
 func EnhancedProjectPermissionAuditMiddleware(audit pro_interfaces.AuditServiceFacade) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -177,9 +213,30 @@ func enhancedAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {
 	}
 	projectID, projectOK := positiveMuxID(r, "project_id")
 	if !projectOK {
-		return enhancedAuditDescriptor{}, false
+		return globalRoleAuditForRoute(r)
 	}
 	projectTarget := fmt.Sprintf("project:%d", projectID)
+	if templateID, ok := positiveMuxID(r, "template_id"); ok && strings.Contains(path, "/perms") {
+		if permID, hasPerm := positiveMuxID(r, "perm_id"); hasPerm {
+			targetID := fmt.Sprintf("template-role:%d", permID)
+			switch method {
+			case http.MethodPut:
+				return templateRoleAuditDescriptor(
+					pro_interfaces.AuditActionTemplateRoleUpdate, targetID, projectID,
+				), true
+			case http.MethodDelete:
+				return templateRoleAuditDescriptor(
+					pro_interfaces.AuditActionTemplateRoleDelete, targetID, projectID,
+				), true
+			}
+		}
+		if method == http.MethodPost {
+			return templateRoleAuditDescriptor(
+				pro_interfaces.AuditActionTemplateRoleCreate,
+				fmt.Sprintf("template:%d", templateID), projectID,
+			), true
+		}
+	}
 	if strings.HasSuffix(path, "/roles") && method == http.MethodPost {
 		return projectRoleAuditDescriptor(
 			pro_interfaces.AuditActionProjectRoleCreate, projectTarget, projectID), true
@@ -243,6 +300,210 @@ func enhancedAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {
 		}
 	}
 	return enhancedAuditDescriptor{}, false
+}
+
+func globalRoleAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {
+	method := r.Method
+	path := r.URL.Path
+	if strings.HasSuffix(path, "/audit/events") && (method == http.MethodGet || method == http.MethodHead) {
+		return globalAuditDescriptor(
+			pro_interfaces.AuditActionGlobalAuditRead,
+			pro_interfaces.AuditTargetGlobalAudit,
+			"events",
+		), true
+	}
+	if strings.HasSuffix(path, "/subscription") {
+		switch method {
+		case http.MethodGet, http.MethodHead:
+			return globalAuditDescriptor(
+				pro_interfaces.AuditActionGlobalSystemRead,
+				pro_interfaces.AuditTargetGlobalSystem,
+				"subscription",
+			), true
+		case http.MethodPost, http.MethodDelete:
+			return globalAuditDescriptor(
+				pro_interfaces.AuditActionGlobalSystemWrite,
+				pro_interfaces.AuditTargetGlobalSystem,
+				"subscription",
+			), true
+		}
+	}
+	if strings.HasSuffix(path, "/subscription/refresh") && method == http.MethodPost {
+		return globalAuditDescriptor(
+			pro_interfaces.AuditActionGlobalSystemWrite,
+			pro_interfaces.AuditTargetGlobalSystem,
+			"subscription",
+		), true
+	}
+	if strings.HasSuffix(path, "/options") {
+		switch method {
+		case http.MethodGet, http.MethodHead:
+			return globalAuditDescriptor(
+				pro_interfaces.AuditActionGlobalSystemRead,
+				pro_interfaces.AuditTargetGlobalSystem,
+				"options",
+			), true
+		case http.MethodPost:
+			return globalAuditDescriptor(
+				pro_interfaces.AuditActionGlobalSystemWrite,
+				pro_interfaces.AuditTargetGlobalSystem,
+				"options",
+			), true
+		}
+	}
+	if strings.HasSuffix(path, "/cache") && method == http.MethodDelete {
+		return globalAuditDescriptor(
+			pro_interfaces.AuditActionGlobalSystemWrite,
+			pro_interfaces.AuditTargetGlobalSystem,
+			"cache",
+		), true
+	}
+	if strings.HasSuffix(path, "/users") {
+		switch method {
+		case http.MethodGet, http.MethodHead:
+			return globalAuditDescriptor(
+				pro_interfaces.AuditActionGlobalUserRead,
+				pro_interfaces.AuditTargetGlobalUser,
+				"users",
+			), true
+		case http.MethodPost:
+			return globalAuditDescriptor(
+				pro_interfaces.AuditActionGlobalUserCreate,
+				pro_interfaces.AuditTargetGlobalUser,
+				"users",
+			), true
+		}
+	}
+	if userID, ok := positiveMuxID(r, "user_id"); ok && strings.Contains(path, "/global-permissions") &&
+		(method == http.MethodGet || method == http.MethodHead) {
+		return globalRoleAuditDescriptor(
+			pro_interfaces.AuditActionGlobalRoleRead,
+			pro_interfaces.AuditTargetGlobalRoleAssignment,
+			fmt.Sprintf("user:%d", userID),
+		), true
+	}
+	if userID, ok := positiveMuxID(r, "user_id"); ok && !strings.Contains(path, "/global-roles") &&
+		!strings.Contains(path, "/global-permissions") {
+		targetID := fmt.Sprintf("user:%d", userID)
+		if strings.HasSuffix(path, "/password") && method == http.MethodPost {
+			return globalAuditDescriptor(
+				pro_interfaces.AuditActionGlobalUserPassword,
+				pro_interfaces.AuditTargetGlobalUser,
+				targetID,
+			), true
+		}
+		switch method {
+		case http.MethodGet, http.MethodHead:
+			return globalAuditDescriptor(
+				pro_interfaces.AuditActionGlobalUserRead,
+				pro_interfaces.AuditTargetGlobalUser,
+				targetID,
+			), true
+		case http.MethodPut:
+			return globalAuditDescriptor(
+				pro_interfaces.AuditActionGlobalUserUpdate,
+				pro_interfaces.AuditTargetGlobalUser,
+				targetID,
+			), true
+		case http.MethodDelete:
+			return globalAuditDescriptor(
+				pro_interfaces.AuditActionGlobalUserDelete,
+				pro_interfaces.AuditTargetGlobalUser,
+				targetID,
+			), true
+		}
+	}
+	if strings.HasSuffix(path, "/roles") && method == http.MethodPost {
+		return globalRoleAuditDescriptor(
+			pro_interfaces.AuditActionGlobalRoleCreate,
+			pro_interfaces.AuditTargetGlobalRole,
+			"roles",
+		), true
+	}
+	if strings.HasSuffix(path, "/roles") || strings.HasSuffix(path, "/roles/permissions") {
+		if method == http.MethodGet || method == http.MethodHead {
+			return globalRoleAuditDescriptor(
+				pro_interfaces.AuditActionGlobalRoleRead,
+				pro_interfaces.AuditTargetGlobalRole,
+				"roles",
+			), true
+		}
+	}
+	if roleID := strings.TrimSpace(mux.Vars(r)["role_id"]); roleID != "" {
+		targetID := "role:" + roleID
+		switch method {
+		case http.MethodGet, http.MethodHead:
+			return globalRoleAuditDescriptor(
+				pro_interfaces.AuditActionGlobalRoleRead,
+				pro_interfaces.AuditTargetGlobalRole,
+				targetID,
+			), true
+		case http.MethodPut, http.MethodPost:
+			return globalRoleAuditDescriptor(
+				pro_interfaces.AuditActionGlobalRoleUpdate,
+				pro_interfaces.AuditTargetGlobalRole,
+				targetID,
+			), true
+		case http.MethodDelete:
+			return globalRoleAuditDescriptor(
+				pro_interfaces.AuditActionGlobalRoleDelete,
+				pro_interfaces.AuditTargetGlobalRole,
+				targetID,
+			), true
+		}
+	}
+	if !strings.Contains(path, "/global-roles") {
+		return enhancedAuditDescriptor{}, false
+	}
+	if assignmentID, ok := positiveMuxID(r, "assignment_id"); ok && method == http.MethodDelete {
+		return globalRoleAuditDescriptor(
+			pro_interfaces.AuditActionGlobalRoleUnassign,
+			pro_interfaces.AuditTargetGlobalRoleAssignment,
+			fmt.Sprintf("assignment:%d", assignmentID),
+		), true
+	}
+	if userID, ok := positiveMuxID(r, "user_id"); ok && (method == http.MethodGet || method == http.MethodHead) {
+		return globalRoleAuditDescriptor(
+			pro_interfaces.AuditActionGlobalRoleRead,
+			pro_interfaces.AuditTargetGlobalRoleAssignment,
+			fmt.Sprintf("user:%d", userID),
+		), true
+	}
+	if userID, ok := positiveMuxID(r, "user_id"); ok && method == http.MethodPost {
+		return globalRoleAuditDescriptor(
+			pro_interfaces.AuditActionGlobalRoleAssign,
+			pro_interfaces.AuditTargetGlobalRoleAssignment,
+			fmt.Sprintf("user:%d", userID),
+		), true
+	}
+	return enhancedAuditDescriptor{}, false
+}
+
+func globalAuditDescriptor(
+	action pro_interfaces.AuditAction,
+	targetType pro_interfaces.AuditTargetType,
+	targetID string,
+) enhancedAuditDescriptor {
+	return enhancedAuditDescriptor{Action: action, TargetType: targetType, TargetID: targetID}
+}
+
+func globalRoleAuditDescriptor(
+	action pro_interfaces.AuditAction,
+	targetType pro_interfaces.AuditTargetType,
+	targetID string,
+) enhancedAuditDescriptor {
+	return enhancedAuditDescriptor{Action: action, TargetType: targetType, TargetID: targetID}
+}
+
+func templateRoleAuditDescriptor(
+	action pro_interfaces.AuditAction,
+	targetID string,
+	projectID int,
+) enhancedAuditDescriptor {
+	return enhancedAuditDescriptor{
+		Action: action, TargetType: pro_interfaces.AuditTargetTemplateRole,
+		TargetID: targetID, ProjectID: &projectID,
+	}
 }
 
 func webhookAuditDescriptor(action pro_interfaces.AuditAction) enhancedAuditDescriptor {

@@ -12,14 +12,19 @@ import (
 func clearCache(w http.ResponseWriter, r *http.Request) {
 	currentUser := helpers.GetFromContext(r, "user").(*db.User)
 
-	if !currentUser.Admin {
+	allowed, err := hasGlobalPermission(r, currentUser, db.CanManageGlobalSystem)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	if !allowed {
 		helpers.WriteJSON(w, http.StatusForbidden, map[string]string{
-			"error": "User must be admin",
+			"error": "User must have global system management permission",
 		})
 		return
 	}
 
-	err := util.Config.ClearTmpDir()
+	err = util.Config.ClearTmpDir()
 	if err != nil {
 		log.Error(err)
 		helpers.WriteJSON(w, http.StatusInternalServerError, map[string]string{

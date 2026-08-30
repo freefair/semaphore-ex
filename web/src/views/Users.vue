@@ -15,7 +15,8 @@
           @error="onError"
           :need-save="needSave"
           :need-reset="needReset"
-          :is-admin="true"
+          :is-admin="isAdmin"
+          :can-manage-global-roles="canManageGlobalRoles"
           @hide-action-buttons="hideEditDialogButtons = true"
           @show-action-buttons="hideEditDialogButtons = false"
           :auth-methods="authMethods"
@@ -37,10 +38,16 @@
       </v-btn>
       <v-toolbar-title>{{ $t('users') }}</v-toolbar-title>
       <v-spacer></v-spacer>
-      <v-btn color="primary" @click="editItem('new')">{{ $t('newUser') }}</v-btn>
+      <v-btn v-if="canManageUsers" color="primary" @click="editItem('new')">
+        {{ $t('newUser') }}
+      </v-btn>
     </v-toolbar>
 
     <v-divider />
+
+    <v-alert v-if="!canManageUsers" text type="warning" class="PageAlert">
+      You cannot manage global users.
+    </v-alert>
 
     <v-data-table
       :headers="headers"
@@ -64,7 +71,7 @@
       </template>
 
       <template v-slot:item.actions="{ item }">
-        <div style="white-space: nowrap">
+        <div v-if="canManageUsers" style="white-space: nowrap">
           <v-btn icon class="mr-1" @click="askDeleteItem(item.id)">
             <v-icon>mdi-delete</v-icon>
           </v-btn>
@@ -83,6 +90,8 @@ import YesNoDialog from '@/components/YesNoDialog.vue';
 import ItemListPageBase from '@/components/ItemListPageBase';
 import EditDialog from '@/components/EditDialog.vue';
 import UserForm from '@/components/UserForm.vue';
+import { GLOBAL_PERMISSIONS } from '@/lib/constants';
+import { hasGlobalPermission } from '@/lib/role-permissions';
 
 export default {
   mixins: [ItemListPageBase],
@@ -104,7 +113,37 @@ export default {
     };
   },
 
+  computed: {
+    canManageUsers() {
+      return hasGlobalPermission(this.systemInfo, GLOBAL_PERMISSIONS.manageUsers, this.isAdmin);
+    },
+
+    canManageGlobalRoles() {
+      return hasGlobalPermission(this.systemInfo, GLOBAL_PERMISSIONS.manageRoles, this.isAdmin);
+    },
+  },
+
+  watch: {
+    canManageUsers() {
+      this.refreshHeaders();
+    },
+  },
+
+  created() {
+    this.refreshHeaders();
+  },
+
   methods: {
+    allowActions() {
+      return this.canManageUsers;
+    },
+
+    refreshHeaders() {
+      this.headers = this.getHeaders().filter(
+        (header) => this.canManageUsers || header.value !== 'actions',
+      );
+    },
+
     getHeaders() {
       return [
         {
@@ -155,6 +194,14 @@ export default {
 
     getEventName() {
       return 'i-user';
+    },
+
+    async loadItems() {
+      if (!this.canManageUsers) {
+        this.items = [];
+        return;
+      }
+      this.items = await this.loadEndpoint(this.getItemsUrl());
     },
   },
 };

@@ -401,17 +401,33 @@ export default {
     },
 
     async loadData() {
-      [
-        this.item,
-        this.inventory,
-        this.environment,
-        this.repositories,
-      ] = await Promise.all([
-        this.loadProjectResource('templates', this.itemId),
-        this.loadProjectResources('inventory'),
-        this.loadProjectResources('environment'),
-        this.loadProjectResources('repositories'),
-      ]);
+      try {
+        [
+          this.item,
+          this.inventory,
+          this.environment,
+          this.repositories,
+        ] = await Promise.all([
+          this.loadProjectResource('templates', this.itemId),
+          this.loadProjectResources('inventory'),
+          this.loadProjectResources('environment'),
+          this.loadProjectResources('repositories'),
+        ]);
+      } catch (err) {
+        if (err.response?.status !== 403) {
+          throw err;
+        }
+
+        EventBus.$emit('i-snackbar', {
+          color: 'error',
+          text: 'You do not have permission to view this template.',
+        });
+        await this.$router.replace({
+          path: this.viewId
+            ? `/project/${this.projectId}/views/${this.viewId}/templates`
+            : `/project/${this.projectId}/templates`,
+        });
+      }
     },
 
     async updateDescription() {

@@ -1,13 +1,16 @@
 package projects
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/semaphoreui/semaphore/util"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
 
 // TemplatesMiddleware ensures a template exists and loads it to the context
@@ -441,13 +444,18 @@ func (c *TemplateController) UpdateTemplatePerm(w http.ResponseWriter, r *http.R
 	perm.ProjectID = template.ProjectID
 	perm.TemplateID = template.ID
 
-	err := c.templateRepo.UpdateTemplateRole(perm)
-	if err != nil {
-		helpers.WriteError(w, err)
+	if perm.Revision <= 0 {
+		helpers.WriteErrorStatus(w, "A positive template permission revision is required", http.StatusBadRequest)
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	updated, err := c.templateRepo.UpdateTemplateRole(perm, perm.Revision)
+	if err != nil {
+		writeTemplateRoleError(w, err)
+		return
+	}
+
+	helpers.WriteJSON(w, http.StatusOK, updated)
 }
 
 func (c *TemplateController) DeleteTemplatePerm(w http.ResponseWriter, r *http.Request) {
@@ -457,9 +465,14 @@ func (c *TemplateController) DeleteTemplatePerm(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	err := c.templateRepo.DeleteTemplateRole(template.ProjectID, template.ID, permID)
+	revision, revisionErr := strconv.Atoi(r.URL.Query().Get("revision"))
+	if revisionErr != nil || revision <= 0 {
+		helpers.WriteErrorStatus(w, "A positive template permission revision is required", http.StatusBadRequest)
+		return
+	}
+	err := c.templateRepo.DeleteTemplateRole(template.ProjectID, template.ID, permID, revision)
 	if err != nil {
-		helpers.WriteError(w, err)
+		writeTemplateRoleError(w, err)
 		return
 	}
 
@@ -480,4 +493,77 @@ func (c *TemplateController) GetTemplatePerm(w http.ResponseWriter, r *http.Requ
 	}
 
 	helpers.WriteJSON(w, http.StatusOK, perm)
+}
+
+// GetEffectiveTemplatePermissions explains the current user's effective
+// template access without returning any unrelated role assignments.
+func (c *TemplateController) GetEffectiveTemplatePermissions(w http.ResponseWriter, r *http.Request) {
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	template := helpers.GetFromContext(r, "template").(db.Template)
+	user := helpers.UserFromContext(r)
+	permissionContext, err := c.templateRepo.GetTemplatePermissionContext(
+		project.ID, template.ID, user.ID,
+	)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+
+	projectGrant := &pro_interfaces.PermissionGrant{
+		Scope: pro_interfaces.PermissionScopeProject, RoleID: permissionContext.RoleID,
+		RoleName:    permissionContext.RoleName,
+		Permissions: projectPermissionIDs(permissionContext.ProjectPermissions),
+	}
+	var templateOverride *pro_interfaces.PermissionOverride
+	if permissionContext.Override != nil {
+		templateOverride = &pro_interfaces.PermissionOverride{
+			RoleID: permissionContext.RoleID, RoleName: permissionContext.RoleName,
+			Allow: templatePermissionIDs(permissionContext.Override.AllowedPermissions),
+			Deny:  templatePermissionIDs(permissionContext.Override.DeniedPermissions),
+		}
+	}
+
+	catalog := pro_interfaces.TemplatePermissionCatalog()
+	decisions := make([]pro_interfaces.EffectivePermissionDecision, 0, len(catalog))
+	for _, definition := range catalog {
+		decisions = append(decisions, pro_interfaces.EvaluatePermission(
+			pro_interfaces.PermissionEvaluationRequest{
+				Permission: definition.ID, Project: projectGrant, Template: templateOverride,
+			},
+		))
+	}
+	helpers.WriteJSON(w, http.StatusOK, pro_interfaces.EffectiveTemplatePermissions{
+		Permissions: permissionContext.EffectivePermissions,
+		Decisions:   decisions,
+	})
+}
+
+func projectPermissionIDs(permissions db.ProjectUserPermission) []pro_interfaces.PermissionID {
+	result := make([]pro_interfaces.PermissionID, 0)
+	for _, definition := range pro_interfaces.ProjectPermissionCatalog() {
+		if permissions.Can(definition.Permission) {
+			result = append(result, definition.ID)
+		}
+	}
+	return result
+}
+
+func templatePermissionIDs(permissions db.TemplatePermission) []pro_interfaces.PermissionID {
+	result := make([]pro_interfaces.PermissionID, 0)
+	for _, definition := range pro_interfaces.TemplatePermissionCatalog() {
+		if permissions.Can(db.TemplatePermission(definition.Permission)) {
+			result = append(result, definition.ID)
+		}
+	}
+	return result
+}
+
+func writeTemplateRoleError(w http.ResponseWriter, err error) {
+	if errors.Is(err, db.ErrTemplateRoleRevisionConflict) {
+		helpers.WriteJSON(w, http.StatusConflict, map[string]string{
+			"code": "TEMPLATE_ROLE_REVISION_CONFLICT", "message": err.Error(),
+		})
+		return
+	}
+	helpers.WriteError(w, err)
 }

@@ -9,13 +9,17 @@ import (
 )
 
 type RolesController struct {
-	roleRepo db.RoleRepository
+	store db.Store
 }
 
-func NewRolesController(roleRepo db.RoleRepository, _ pro_interfaces.CapabilityProvider) *RolesController {
+func NewRolesController(store db.Store, _ pro_interfaces.CapabilityProvider) *RolesController {
 	return &RolesController{
-		roleRepo: roleRepo,
+		store: store,
 	}
+}
+
+func (c *RolesController) GetGlobalPermissionCatalog(w http.ResponseWriter, r *http.Request) {
+	helpers.WriteJSON(w, http.StatusOK, []string{})
 }
 
 func (c *RolesController) GetGlobalRole(w http.ResponseWriter, r *http.Request) {
@@ -35,6 +39,22 @@ func (c *RolesController) UpdateRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *RolesController) DeleteRole(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+
+func (c *RolesController) GetGlobalRoleAssignments(w http.ResponseWriter, r *http.Request) {
+	helpers.WriteJSON(w, http.StatusOK, []string{})
+}
+
+func (c *RolesController) AddGlobalRoleAssignment(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+
+func (c *RolesController) DeleteGlobalRoleAssignment(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+
+func (c *RolesController) GetEffectiveGlobalPermissions(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
 

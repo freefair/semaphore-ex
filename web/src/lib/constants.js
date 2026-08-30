@@ -26,6 +26,13 @@ export const USER_PERMISSIONS = {
   viewProjectResources: 16,
 };
 
+export const GLOBAL_PERMISSIONS = {
+  manageUsers: 1,
+  manageRoles: 2,
+  manageSystem: 4,
+  readAudit: 8,
+};
+
 export const USER_ROLES = [{
   slug: 'owner',
   name: 'Owner',
@@ -288,15 +295,46 @@ export const ROLE_PERMISSIONS = {
     color: 'purple',
     textColor: 'white',
   }],
+  global: [{
+    permission: GLOBAL_PERMISSIONS.manageUsers,
+    label: 'Manage global users',
+    color: 'blue',
+    textColor: 'white',
+  }, {
+    permission: GLOBAL_PERMISSIONS.manageRoles,
+    label: 'Manage global roles',
+    color: 'purple',
+    textColor: 'white',
+  }, {
+    permission: GLOBAL_PERMISSIONS.manageSystem,
+    label: 'Manage system settings',
+    color: 'orange',
+    textColor: 'white',
+  }, {
+    permission: GLOBAL_PERMISSIONS.readAudit,
+    label: 'Read global audit log',
+    color: 'green',
+    textColor: 'white',
+  }],
   template: [{
     permission: 1,
-    label: 'Can run tasks',
+    label: 'Read template',
+    color: 'purple',
+    textColor: 'white',
+  }, {
+    permission: 2,
+    label: 'Run template',
     color: 'blue',
     textColor: 'white',
   }, {
     permission: 4,
-    label: 'Can update the template',
+    label: 'Edit template',
     color: 'orange',
+    textColor: 'white',
+  }, {
+    permission: 8,
+    label: 'Delete template',
+    color: 'red',
     textColor: 'white',
   }],
 };

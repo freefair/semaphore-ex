@@ -22,6 +22,7 @@
     <v-tabs v-model="tab">
       <v-tab key="settings">Settings</v-tab>
       <v-tab key="2fa" v-if="canChangePassword || authMethods.totp || !isNew"> Security</v-tab>
+      <v-tab key="global-roles" v-if="canManageGlobalRoles && !isNew">Global roles</v-tab>
     </v-tabs>
 
     <v-divider class="mb-6" style="margin-top: -1px" />
@@ -235,6 +236,93 @@
           </div>
         </div>
       </v-tab-item>
+
+      <v-tab-item key="global-roles" v-if="item != null && canManageGlobalRoles && !isNew">
+        <v-alert :value="globalRoleError" color="error" class="pb-2">
+          {{ globalRoleError }}
+        </v-alert>
+
+        <v-row align="center">
+          <v-col cols="12" sm="8">
+            <v-select
+              v-model="newGlobalRoleId"
+              :items="availableGlobalRoles"
+              item-value="id"
+              item-text="name"
+              label="Global role"
+              outlined
+              dense
+              hide-details
+              :disabled="globalRolesLoading"
+              data-testid="global-role-select"
+            />
+          </v-col>
+          <v-col cols="12" sm="4">
+            <v-btn
+              block
+              color="primary"
+              :disabled="!newGlobalRoleId || globalRolesLoading"
+              :loading="globalRolesLoading"
+              @click="addGlobalRoleAssignment()"
+            >
+              Assign
+            </v-btn>
+          </v-col>
+        </v-row>
+
+        <v-list v-if="globalRoleAssignments.length > 0" class="px-0">
+          <v-list-item
+            v-for="assignment in globalRoleAssignments"
+            :key="assignment.id"
+            class="px-0"
+          >
+            <v-list-item-content>
+              <v-list-item-title>{{ assignment.role_name }}</v-list-item-title>
+              <TemplatePermissionsChips
+                class="pt-1"
+                scope="global"
+                :permissions="assignment.global_permissions || 0"
+              />
+            </v-list-item-content>
+            <v-list-item-action>
+              <v-btn
+                icon
+                :disabled="globalRolesLoading"
+                :aria-label="`Remove ${assignment.role_name}`"
+                @click="removeGlobalRoleAssignment(assignment)"
+              >
+                <v-icon>mdi-delete</v-icon>
+              </v-btn>
+            </v-list-item-action>
+          </v-list-item>
+        </v-list>
+        <v-alert v-else text dense type="info" class="mt-4">
+          No global roles assigned.
+        </v-alert>
+
+        <v-subheader class="px-0 mt-4">Effective global permissions</v-subheader>
+        <v-list dense class="px-0">
+          <v-list-item
+            v-for="decision in effectiveGlobalPermissions.decisions || []"
+            :key="decision.permission"
+            class="px-0"
+          >
+            <v-list-item-icon class="mr-3">
+              <v-icon :color="decision.allowed ? 'success' : 'grey'">
+                {{ decision.allowed ? 'mdi-check-circle' : 'mdi-minus-circle-outline' }}
+              </v-icon>
+            </v-list-item-icon>
+            <v-list-item-content>
+              <v-list-item-title>
+                {{ globalPermissionDescription(decision.permission) }}
+              </v-list-item-title>
+              <v-list-item-subtitle>
+                {{ globalPermissionProvenance(decision) }}
+              </v-list-item-subtitle>
+            </v-list-item-content>
+          </v-list-item>
+        </v-list>
+      </v-tab-item>
     </v-tabs-items>
   </div>
 </template>
@@ -244,14 +332,22 @@ import axios from 'axios';
 import EditDialog from '@/components/EditDialog.vue';
 import ChangePasswordForm from '@/components/ChangePasswordForm.vue';
 import TotpEnrollmentPanel from '@/components/TotpEnrollmentPanel.vue';
+import TemplatePermissionsChips from '@/components/TemplatePermissionsChips.vue';
+import { getErrorMessage } from '@/lib/error';
 
 export default {
-  components: { TotpEnrollmentPanel, ChangePasswordForm, EditDialog },
+  components: {
+    TemplatePermissionsChips,
+    TotpEnrollmentPanel,
+    ChangePasswordForm,
+    EditDialog,
+  },
   props: {
     isAdmin: Boolean,
     isSelf: Boolean,
     authMethods: Object,
     LoginWithPassword: Boolean,
+    canManageGlobalRoles: Boolean,
   },
 
   mixins: [ItemFormBase],
@@ -267,6 +363,14 @@ export default {
       ldapPassword: '',
       linkingLdap: false,
       linkError: null,
+
+      globalRoles: [],
+      globalRoleAssignments: [],
+      globalPermissionCatalog: [],
+      effectiveGlobalPermissions: { permissions: 0, decisions: [] },
+      newGlobalRoleId: null,
+      globalRolesLoading: false,
+      globalRoleError: null,
 
       tab: null,
     };
@@ -307,14 +411,87 @@ export default {
         (provider) => !this.linkedProviders.has(`ldap:${provider.id}`),
       );
     },
+
+    availableGlobalRoles() {
+      const assigned = new Set(this.globalRoleAssignments.map(({ role_id: roleId }) => roleId));
+      return this.globalRoles.filter(({ id }) => !assigned.has(id));
+    },
   },
 
   methods: {
-    afterLoadData() {
+    async afterLoadData() {
       if (!this.isNew) {
         this.loadIdentities();
         this.loadAuthMetadata();
+        if (this.canManageGlobalRoles) {
+          await this.loadGlobalRoleData();
+        }
       }
+    },
+
+    async loadGlobalRoleData() {
+      this.globalRolesLoading = true;
+      this.globalRoleError = null;
+      try {
+        const [roles, assignments, effective, catalog] = await Promise.all([
+          axios.get('/api/roles'),
+          axios.get(`/api/users/${this.itemId}/global-roles`),
+          axios.get(`/api/users/${this.itemId}/global-permissions`),
+          axios.get('/api/roles/permissions'),
+        ]);
+        this.globalRoles = roles.data || [];
+        this.globalRoleAssignments = assignments.data || [];
+        this.effectiveGlobalPermissions = effective.data || { permissions: 0, decisions: [] };
+        this.globalPermissionCatalog = catalog.data || [];
+      } catch (error) {
+        this.globalRoleError = getErrorMessage(error);
+      } finally {
+        this.globalRolesLoading = false;
+      }
+    },
+
+    async addGlobalRoleAssignment() {
+      if (!this.newGlobalRoleId) return;
+      this.globalRolesLoading = true;
+      this.globalRoleError = null;
+      try {
+        await axios.post(`/api/users/${this.itemId}/global-roles`, {
+          role_id: this.newGlobalRoleId,
+        });
+        this.newGlobalRoleId = null;
+        await this.loadGlobalRoleData();
+      } catch (error) {
+        this.globalRoleError = getErrorMessage(error);
+        this.globalRolesLoading = false;
+      }
+    },
+
+    async removeGlobalRoleAssignment(assignment) {
+      this.globalRolesLoading = true;
+      this.globalRoleError = null;
+      try {
+        await axios.delete(
+          `/api/users/${this.itemId}/global-roles/${assignment.id}`
+          + `?revision=${encodeURIComponent(assignment.revision)}`,
+        );
+        await this.loadGlobalRoleData();
+      } catch (error) {
+        this.globalRoleError = getErrorMessage(error);
+        this.globalRolesLoading = false;
+      }
+    },
+
+    globalPermissionDescription(permission) {
+      const definition = this.globalPermissionCatalog.find(({ id }) => id === permission);
+      return definition ? definition.description : permission;
+    },
+
+    globalPermissionProvenance(decision) {
+      const provenance = decision.provenance || {};
+      if (decision.allowed && provenance.role_name) {
+        return `${provenance.effect} by ${provenance.role_name} (${provenance.scope})`;
+      }
+      return `Denied at ${provenance.scope || 'global'} scope`;
     },
 
     async loadIdentities() {

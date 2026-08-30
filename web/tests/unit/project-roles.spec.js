@@ -13,6 +13,7 @@ describe('custom project roles', () => {
       name: '',
       slug: '',
       permissions: 0,
+      global_permissions: 0,
     });
     expect(EditRoleForm.data()).to.have.nested.property(
       'permissions.canManageProjectUsers',
@@ -36,7 +37,7 @@ describe('custom project roles', () => {
   });
 
   it('uses backend catalog bits without a duplicated checkbox model', () => {
-    const context = { item: { permissions: 0 } };
+    const context = { item: { permissions: 0 }, projectId: 7 };
     EditRoleForm.methods.setPermission.call(
       context,
       USER_PERMISSIONS.viewProjectResources,

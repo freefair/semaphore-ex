@@ -305,9 +305,12 @@ func sqliteNeedsFkOff(dialect string, version string) bool {
 	return dialect == util.DbDriverSQLite && version == "2.19.14"
 }
 
-// TryRollbackMigration attempts to rollback the database to an earlier version if a rollback exists
-func (d *SqlDb) TryRollbackMigration(version db.Migration) {
-	var err error
+// TryRollbackMigration attempts to rollback the database to an earlier version if a rollback exists.
+func (d *SqlDb) TryRollbackMigration(version db.Migration) (err error) {
+	applied, err := d.IsMigrationApplied(version)
+	if err != nil {
+		return err
+	}
 
 	if sqliteNeedsFkOff(d.GetDialect(), version.Version) {
 		if _, err = d.exec("PRAGMA foreign_keys = OFF"); err != nil {
@@ -315,7 +318,7 @@ func (d *SqlDb) TryRollbackMigration(version db.Migration) {
 				"context": "migration",
 				"version": version.Version,
 			}).WithError(err).Fatal("failed to disable foreign_keys pragma before migration")
-			return
+			return err
 		}
 		defer func() {
 			if _, fkErr := d.exec("PRAGMA foreign_keys = ON"); fkErr != nil {
@@ -329,7 +332,7 @@ func (d *SqlDb) TryRollbackMigration(version db.Migration) {
 
 	tx, err := d.Sql().Begin()
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	defer func() {
@@ -350,10 +353,14 @@ func (d *SqlDb) TryRollbackMigration(version db.Migration) {
 	switch version.Version {
 	case "2.16.8":
 		err = migration_2_16_8{db: d}.PreRollback(tx)
+	case "2.20.30":
+		if applied {
+			err = d.preflightMigration22030Rollback(tx)
+		}
 	}
 
 	if err != nil {
-		return
+		return err
 	}
 
 	queries := getVersionSQL(d.GetDialect(), getVersionErrPath(version), false)
@@ -366,9 +373,41 @@ func (d *SqlDb) TryRollbackMigration(version db.Migration) {
 		}
 		if _, err = d.execTx(tx, q); err != nil {
 			fmt.Println(" [ROLLBACK] - Stopping")
-			return
+			return err
 		}
 	}
 
 	_, err = d.execTx(tx, "delete from migrations where version=?", version.Version)
+	return err
+}
+
+func (d *SqlDb) preflightMigration22030Rollback(tx *gorp.Transaction) error {
+	builtInAdministrators, err := tx.SelectInt(d.PrepareQuery(
+		"select count(1) from `user` where admin=true"))
+	if err != nil {
+		return err
+	}
+	delegatedAdministrators, err := tx.SelectInt(d.PrepareQuery(
+		"select count(distinct a.user_id) from user__global_role a "+
+			"join `role` r on r.role_id=a.role_id and r.project_id is null "+
+			"where (r.global_permissions & ?) = ?"),
+		db.CanManageGlobalRoles,
+		db.CanManageGlobalRoles,
+	)
+	if err != nil {
+		return err
+	}
+	if builtInAdministrators == 0 && delegatedAdministrators > 0 {
+		return db.ErrLastGlobalAdministrator
+	}
+
+	deniedTemplatePermissions, err := tx.SelectInt(d.PrepareQuery(
+		"select count(1) from project__template_role where denied_permissions<>0"))
+	if err != nil {
+		return err
+	}
+	if deniedTemplatePermissions > 0 {
+		return db.ErrInvalidOperation
+	}
+	return nil
 }

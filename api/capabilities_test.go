@@ -221,6 +221,35 @@ func TestCapabilityMiddlewareMapsLifecycleDenials(t *testing.T) {
 	}
 }
 
+func TestDelegatedProjectRolesMiddlewareFailsClosedAndKeepsBreakGlass(t *testing.T) {
+	facade := &capabilityFacadeStub{decision: pro_interfaces.NewCapabilityDecision(
+		pro_interfaces.CapabilityProjectRoles,
+		pro_interfaces.CapabilityStateUnavailable,
+		pro_interfaces.CapabilityReasonProviderUnavailable,
+		nil,
+		nil,
+	)}
+	controller := NewCapabilityController(facade, nil)
+	handler := controller.DelegatedProjectRolesSnapshotMiddleware(
+		controller.RequireDelegatedProjectRolesForRequest(http.HandlerFunc(
+			func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
+		)),
+	)
+
+	delegatedRequest := httptest.NewRequest(http.MethodPost, "/api/project/1/templates/1", nil)
+	delegatedRequest = helpers.SetContextValue(delegatedRequest, "user", &db.User{ID: 7})
+	delegatedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(delegatedResponse, delegatedRequest)
+	assert.Equal(t, http.StatusNotFound, delegatedResponse.Code)
+
+	adminRequest := httptest.NewRequest(http.MethodPost, "/api/project/1/templates/1", nil)
+	adminRequest = helpers.SetContextValue(adminRequest, "user", &db.User{ID: 8, Admin: true})
+	adminResponse := httptest.NewRecorder()
+	handler.ServeHTTP(adminResponse, adminRequest)
+	assert.Equal(t, http.StatusNoContent, adminResponse.Code)
+	assert.Equal(t, 1, facade.resolutionCount)
+}
+
 func TestCapabilityMiddlewareHidesResolutionError(t *testing.T) {
 	var logOutput bytes.Buffer
 	logger := log.StandardLogger()

@@ -14,7 +14,7 @@
           @error="onError"
           :need-save="needSave"
           :need-reset="needReset"
-          :is-admin="true"
+          :is-admin="isAdmin"
         />
       </template>
     </EditDialog>
@@ -33,7 +33,7 @@
       <v-toolbar-title>{{ $t('Roles') }}</v-toolbar-title>
       <v-spacer></v-spacer>
       <v-btn
-        v-if="can(USER_PERMISSIONS.manageProjectUsers)"
+        v-if="canManageRoles"
         :disabled="!features.custom_roles_management"
         color="primary"
         @click="editItem('new')"
@@ -45,7 +45,7 @@
       v-if="projectId"
       :project-id="projectId"
       :system-info="systemInfo"
-      :can-manage-roles="can(USER_PERMISSIONS.manageProjectUsers)"
+      :can-manage-roles="canManageRoles"
     />
 
     <v-divider style="margin-top: -1px" />
@@ -70,12 +70,12 @@
     </v-alert>
 
     <v-alert
-      v-else-if="!can(USER_PERMISSIONS.manageProjectUsers)"
+      v-else-if="!canManageRoles"
       text
       type="warning"
       class="PageAlert"
     >
-      {{ $t('projectRolePermissionDenied') }}
+      {{ projectId ? $t('projectRolePermissionDenied') : 'You cannot manage global roles.' }}
     </v-alert>
 
     <v-data-table
@@ -87,8 +87,15 @@
       <template v-slot:item.permissions="{ item }">
         <TemplatePermissionsChips class="py-1" :permissions="item.permissions" />
       </template>
+      <template v-slot:item.global_permissions="{ item }">
+        <TemplatePermissionsChips
+          class="py-1"
+          :permissions="item.global_permissions || 0"
+          scope="global"
+        />
+      </template>
       <template v-slot:item.actions="{ item }">
-        <div v-if="can(USER_PERMISSIONS.manageProjectUsers)" style="white-space: nowrap">
+        <div v-if="canManageRoles" style="white-space: nowrap">
           <v-btn icon class="mr-1" @click="askDeleteItem(item.id)">
             <v-icon>mdi-delete</v-icon>
           </v-btn>
@@ -109,7 +116,8 @@ import EditDialog from '@/components/EditDialog.vue';
 import RoleForm from '@/components/EditRoleForm.vue';
 import TeamMenu from '@/components/TeamMenu.vue';
 import TemplatePermissionsChips from '@/components/TemplatePermissionsChips.vue';
-import { USER_PERMISSIONS } from '@/lib/constants';
+import { GLOBAL_PERMISSIONS, USER_PERMISSIONS } from '@/lib/constants';
+import { hasGlobalPermission } from '@/lib/role-permissions';
 
 export default {
   mixins: [ItemListPageBase],
@@ -136,6 +144,11 @@ export default {
     IDFieldName() {
       return 'id';
     },
+
+    canManageRoles() {
+      if (this.projectId) return this.can(USER_PERMISSIONS.manageProjectUsers);
+      return hasGlobalPermission(this.systemInfo, GLOBAL_PERMISSIONS.manageRoles, this.isAdmin);
+    },
   },
 
   watch: {
@@ -146,19 +159,19 @@ export default {
 
   methods: {
     allowActions() {
-      return this.can(USER_PERMISSIONS.manageProjectUsers);
+      return this.canManageRoles;
     },
 
     getHeaders() {
-      return [
+      const headers = [
         {
           text: this.$i18n.t('name'),
           value: 'name',
           width: '50%',
         },
         {
-          text: this.$i18n.t('permissions'),
-          value: 'permissions',
+          text: this.projectId ? this.$i18n.t('permissions') : 'Global permissions',
+          value: this.projectId ? 'permissions' : 'global_permissions',
         },
         {
           text: this.$i18n.t('actions'),
@@ -166,6 +179,13 @@ export default {
           sortable: false,
         },
       ];
+      if (!this.projectId) {
+        headers.splice(2, 0, {
+          text: 'Legacy project permissions',
+          value: 'permissions',
+        });
+      }
+      return headers;
     },
 
     async returnToProjects() {
@@ -187,7 +207,7 @@ export default {
     },
 
     async loadItems() {
-      if (!this.can(USER_PERMISSIONS.manageProjectUsers)) {
+      if (!this.canManageRoles) {
         this.items = [];
         return;
       }

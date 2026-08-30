@@ -52,6 +52,72 @@ func (c *CapabilityController) SnapshotMiddleware(next http.Handler) http.Handle
 	})
 }
 
+// DelegatedProjectRolesSnapshotMiddleware resolves the project-roles
+// capability once for non-admin requests. A provider failure becomes an
+// unavailable snapshot so delegated access fails closed while ordinary
+// self-service and built-in break-glass paths retain their existing behavior.
+func (c *CapabilityController) DelegatedProjectRolesSnapshotMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request, ok := capabilityRequestFromHTTP(r)
+		if !ok {
+			helpers.WriteErrorStatus(w, "CAPABILITY_CONTEXT_ERROR", http.StatusInternalServerError)
+			return
+		}
+		if request.IsAdmin {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		snapshot, err := c.facade.Resolve(r.Context(), request)
+		if err != nil {
+			snapshot = pro_interfaces.NewCapabilitySnapshot(request, []pro_interfaces.CapabilityDecision{
+				pro_interfaces.NewCapabilityDecision(
+					pro_interfaces.CapabilityProjectRoles,
+					pro_interfaces.CapabilityStateUnavailable,
+					pro_interfaces.CapabilityReasonProviderUnavailable,
+					nil,
+					nil,
+				),
+			})
+		}
+		ctx := context.WithValue(r.Context(), capabilitySnapshotContextKey{}, snapshot)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// RequireDelegatedProjectRolesForRequest enforces the capability prerequisite
+// for template routes after their shared request snapshot has been resolved.
+func (c *CapabilityController) RequireDelegatedProjectRolesForRequest(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, ok := helpers.GetFromContext(r, "user").(*db.User)
+		if !ok || user == nil {
+			helpers.WriteErrorStatus(w, "CAPABILITY_CONTEXT_ERROR", http.StatusInternalServerError)
+			return
+		}
+		if user.Admin {
+			next.ServeHTTP(w, r)
+			return
+		}
+		snapshot, ok := capabilitySnapshotFromHTTP(r)
+		if !ok {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if err := snapshot.Require(pro_interfaces.CapabilityProjectRoles, capabilityAccessForMethod(r.Method)); err != nil {
+			writeCapabilityError(w, err)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func capabilityAccessForMethod(method string) pro_interfaces.CapabilityAccess {
+	if method == http.MethodGet || method == http.MethodHead {
+		return pro_interfaces.CapabilityAccessRead
+	}
+	return pro_interfaces.CapabilityAccessWrite
+}
+
 // Require rejects requests that lack the requested lifecycle-test access.
 func (c *CapabilityController) Require(access pro_interfaces.CapabilityAccess) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

@@ -77,41 +77,105 @@ func (d *SqlDb) ImportUser(user db.UserWithPwd) (newUser db.User, err error) {
 }
 
 func (d *SqlDb) DeleteUser(userID int) error {
-	res, err := d.exec("delete from `user` where id=?", userID)
-	return validateMutationResult(res, err)
+	hasGlobalRoles, err := d.IsMigrationApplied(db.Migration{Version: "2.20.30"})
+	if err != nil {
+		return err
+	}
+	if !hasGlobalRoles {
+		res, deleteErr := d.exec("delete from `user` where id=?", userID)
+		return validateMutationResult(res, deleteErr)
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = lockGlobalRoleMutations(tx, d); err != nil {
+		return err
+	}
+	effectiveAdmin, err := isEffectiveGlobalAdministratorTx(tx, d, userID)
+	if err != nil {
+		return err
+	}
+	if effectiveAdmin {
+		if err = requireGlobalAdministratorWithoutUserTx(tx, d, userID); err != nil {
+			return err
+		}
+	}
+	res, err := tx.Exec(d.PrepareQuery("delete from `user` where id=?"), userID)
+	if err = validateMutationResult(res, err); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (d *SqlDb) UpdateUser(user db.UserWithPwd) error {
+	var pwdHash []byte
 	var err error
-
 	if user.Pwd != "" {
-		var pwdHash []byte
 		pwdHash, err = bcrypt.GenerateFromPassword([]byte(user.Pwd), 11)
 		if err != nil {
 			return err
 		}
-		_, err = d.exec(
-			"update `user` set name=?, username=?, email=?, alert=?, admin=?, pro=?, password=? where id=?",
-			user.Name,
-			user.Username,
-			user.Email,
-			user.Alert,
-			user.Admin,
-			user.Pro,
-			string(pwdHash),
-			user.ID)
-	} else {
-		_, err = d.exec(
-			"update `user` set name=?, username=?, email=?, alert=?, admin=?, pro=? where id=?",
-			user.Name,
-			user.Username,
-			user.Email,
-			user.Alert,
-			user.Admin,
-			user.Pro,
-			user.ID)
 	}
 
+	hasGlobalRoles, err := d.IsMigrationApplied(db.Migration{Version: "2.20.30"})
+	if err != nil {
+		return err
+	}
+	if !hasGlobalRoles {
+		return d.updateUserFields(nil, user, pwdHash)
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = lockGlobalRoleMutations(tx, d); err != nil {
+		return err
+	}
+	var current db.User
+	err = tx.SelectOne(&current, d.PrepareQuery("select * from `user` where id=?"), user.ID)
+	if errors.Is(err, stdsql.ErrNoRows) {
+		return db.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if current.Admin && !user.Admin {
+		if err = requireGlobalAdministratorWithoutUserTx(tx, d, user.ID); err != nil {
+			return err
+		}
+	}
+	if err = d.updateUserFields(tx, user, pwdHash); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (d *SqlDb) updateUserFields(
+	tx interface {
+		Exec(string, ...any) (stdsql.Result, error)
+	},
+	user db.UserWithPwd,
+	pwdHash []byte,
+) error {
+	exec := d.exec
+	if tx != nil {
+		exec = func(query string, args ...any) (stdsql.Result, error) {
+			return tx.Exec(d.PrepareQuery(query), args...)
+		}
+	}
+	if len(pwdHash) > 0 {
+		_, err := exec(
+			"update `user` set name=?, username=?, email=?, alert=?, admin=?, pro=?, password=? where id=?",
+			user.Name, user.Username, user.Email, user.Alert, user.Admin, user.Pro,
+			string(pwdHash), user.ID)
+		return err
+	}
+	_, err := exec(
+		"update `user` set name=?, username=?, email=?, alert=?, admin=?, pro=? where id=?",
+		user.Name, user.Username, user.Email, user.Alert, user.Admin, user.Pro, user.ID)
 	return err
 }
 

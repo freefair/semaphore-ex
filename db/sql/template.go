@@ -277,15 +277,10 @@ func (d *SqlDb) getTemplates(
 	}
 
 	if userID != nil {
-		fields = append(fields, "ptr.permissions permissions")
+		fields = append(fields, "0 permissions")
 	}
 
 	q := sq.Select(fields...).From("project__template pt")
-
-	if userID != nil {
-		q = q.LeftJoin("project__user pu ON (pu.project_id = pt.project_id AND pu.user_id = ?)", *userID).
-			LeftJoin("project__template_role ptr ON (ptr.template_id = pt.id AND ptr.role_slug = pu.`role`)")
-	}
 
 	if filter.App != nil {
 		q = q.Where("pt.app=?", *filter.App)
@@ -412,6 +407,21 @@ func (d *SqlDb) getTemplates(
 			template.EnvironmentID = template.EnvironmentIDs[0]
 		}
 
+		if userID != nil {
+			var permissionContext db.TemplatePermissionContext
+			permissionContext, err = d.GetTemplatePermissionContext(projectID, template.ID, *userID)
+			if err != nil {
+				return
+			}
+			if !permissionContext.EffectivePermissions.Can(db.CanReadTemplate) {
+				continue
+			}
+			legacyPermissions := db.TemplatePermissionsToProject(
+				permissionContext.EffectivePermissions,
+			)
+			template.Permissions = &legacyPermissions
+		}
+
 		templates = append(templates, template)
 	}
 
@@ -480,64 +490,114 @@ func (d *SqlDb) GetTemplateRole(projectID int, templateID int, id int) (template
 }
 
 func (d *SqlDb) GetTemplatePermission(projectID int, templateID int, userID int) (perm db.ProjectUserPermission, err error) {
-	var projectUser db.ProjectUser
-	projectUser, err = d.GetProjectUser(projectID, userID)
+	context, err := d.GetTemplatePermissionContext(projectID, templateID, userID)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			err = nil // user not in project, no permissions
-		}
-		return
+		return 0, err
 	}
+	return db.TemplatePermissionsToProject(context.EffectivePermissions), nil
+}
 
-	perm = projectUser.Role.GetPermissions()
-
-	roleSlug := string(projectUser.Role)
-
-	// Only custom roles are resolved from the database; built-in roles use their
-	// own slug directly so a same-named custom role cannot shadow them.
-	if !projectUser.Role.IsValid() {
-		var role db.Role
-		role, err = d.GetProjectOrGlobalRoleBySlug(projectUser.ProjectID, string(projectUser.Role))
-
-		if errors.Is(err, db.ErrNotFound) {
-			err = nil
-			return
-		}
-
-		if err != nil {
-			return
-		}
-
-		roleSlug = role.Slug
-	}
-
-	query, args, err := sq.Select("permissions").
-		From("project__template_role").
-		Where("project_id = ?", projectID).
-		Where("template_id = ?", templateID).
-		Where("role_slug = ?", roleSlug).
-		ToSql()
-
+func (d *SqlDb) GetTemplatePermissionContext(
+	projectID int,
+	templateID int,
+	userID int,
+) (db.TemplatePermissionContext, error) {
+	user, err := d.GetUser(userID)
 	if err != nil {
-		return
+		return db.TemplatePermissionContext{}, err
+	}
+	if user.Admin {
+		return db.TemplatePermissionContext{
+			RoleID: "built_in_administrator", RoleName: "Administrator",
+			ProjectPermissions: db.ProjectOwner.GetPermissions(),
+			EffectivePermissions: db.CanReadTemplate | db.CanRunTemplate |
+				db.CanEditTemplate | db.CanDeleteTemplate,
+		}, nil
 	}
 
-	var templateRole db.TemplateRolePerm
-
-	err = d.selectOne(&templateRole, query, args...)
-
+	projectUser, err := d.GetProjectUser(projectID, userID)
 	if errors.Is(err, db.ErrNotFound) {
-		err = nil
-		return
+		return db.TemplatePermissionContext{}, nil
 	}
-
 	if err != nil {
-		return
+		return db.TemplatePermissionContext{}, err
 	}
 
-	perm |= templateRole.Permissions
+	roleID := string(projectUser.Role)
+	roleName := string(projectUser.Role)
+	roleSlug := string(projectUser.Role)
+	projectPermissions := projectUser.Role.GetPermissions()
+	var customRoleID *db.ProjectRoleID
+	if projectUser.RoleID != nil {
+		role, roleErr := d.GetProjectRoleByID(projectID, *projectUser.RoleID)
+		if roleErr != nil {
+			return db.TemplatePermissionContext{}, roleErr
+		}
+		roleID = string(role.ID)
+		roleName = role.Name
+		roleSlug = role.Slug
+		projectPermissions = role.Permissions
+		customRoleID = &role.ID
+	} else if !projectUser.Role.IsValid() {
+		role, roleErr := d.GetProjectOrGlobalRoleBySlug(projectID, string(projectUser.Role))
+		if errors.Is(roleErr, db.ErrNotFound) {
+			return db.TemplatePermissionContext{}, nil
+		}
+		if roleErr != nil {
+			return db.TemplatePermissionContext{}, roleErr
+		}
+		roleID = string(role.ID)
+		roleName = role.Name
+		roleSlug = role.Slug
+		projectPermissions = role.Permissions
+		if role.ProjectID != nil {
+			customRoleID = &role.ID
+		}
+	}
 
-	return
+	override, err := d.getTemplateRoleOverride(
+		projectID, templateID, roleSlug, customRoleID,
+	)
+	if err != nil && !errors.Is(err, db.ErrNotFound) {
+		return db.TemplatePermissionContext{}, err
+	}
+	var overridePtr *db.TemplateRolePerm
+	if err == nil {
+		overridePtr = &override
+	}
+	inherited := db.ProjectPermissionsToTemplate(projectPermissions)
+	return db.TemplatePermissionContext{
+		RoleID: roleID, RoleName: roleName, ProjectPermissions: projectPermissions,
+		EffectivePermissions: db.ApplyTemplatePermissionOverride(inherited, overridePtr),
+		Override:             overridePtr,
+	}, nil
+}
+
+func (d *SqlDb) getTemplateRoleOverride(
+	projectID int,
+	templateID int,
+	roleSlug string,
+	roleID *db.ProjectRoleID,
+) (db.TemplateRolePerm, error) {
+	var override db.TemplateRolePerm
+	if roleID != nil {
+		err := d.selectOne(
+			&override,
+			"select * from project__template_role where project_id=? and template_id=? and role_id=?",
+			projectID,
+			templateID,
+			*roleID,
+		)
+		return override, err
+	}
+	err := d.selectOne(
+		&override,
+		"select * from project__template_role where project_id=? and template_id=? and role_id is null and role_slug=?",
+		projectID,
+		templateID,
+		roleSlug,
+	)
+	return override, err
 }
 
 func (d *SqlDb) GetTemplateRoles(projectID int, templateID int) (roles []db.TemplateRolePerm, err error) {
@@ -555,13 +615,23 @@ func (d *SqlDb) GetTemplateRoles(projectID int, templateID int) (roles []db.Temp
 	return
 }
 func (d *SqlDb) CreateTemplateRole(role db.TemplateRolePerm) (newRole db.TemplateRolePerm, err error) {
+	role, err = d.normalizeTemplateRole(role)
+	if err != nil {
+		return db.TemplateRolePerm{}, err
+	}
 	insertID, err := d.insert(
 		"id",
-		"insert into project__template_role (project_id, template_id, role_slug, permissions) values (?, ?, ?, ?)",
+		"insert into project__template_role "+
+			"(project_id, template_id, role_slug, role_id, permissions, allowed_permissions, denied_permissions, revision) "+
+			"values (?, ?, ?, ?, ?, ?, ?, ?)",
 		role.ProjectID,
 		role.TemplateID,
 		role.RoleSlug,
-		role.Permissions)
+		role.RoleID,
+		role.Permissions,
+		role.AllowedPermissions,
+		role.DeniedPermissions,
+		role.Revision)
 
 	if err != nil {
 		return
@@ -571,18 +641,110 @@ func (d *SqlDb) CreateTemplateRole(role db.TemplateRolePerm) (newRole db.Templat
 	newRole.ID = insertID
 	return
 }
-func (d *SqlDb) DeleteTemplateRole(projectID int, templateID int, id int) error {
-	_, err := d.exec("delete from project__template_role where project_id=? and template_id=? and id=?", projectID, templateID, id)
-	return err
+func (d *SqlDb) DeleteTemplateRole(
+	projectID int,
+	templateID int,
+	id int,
+	expectedRevision int,
+) error {
+	if expectedRevision <= 0 {
+		return db.ErrTemplateRoleRevisionConflict
+	}
+	result, err := d.exec(
+		"delete from project__template_role where project_id=? and template_id=? and id=? and revision=?",
+		projectID, templateID, id, expectedRevision,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		if _, findErr := d.GetTemplateRole(projectID, templateID, id); errors.Is(findErr, db.ErrNotFound) {
+			return db.ErrNotFound
+		} else if findErr != nil {
+			return findErr
+		}
+		return db.ErrTemplateRoleRevisionConflict
+	}
+	return nil
 }
-func (d *SqlDb) UpdateTemplateRole(role db.TemplateRolePerm) error {
-	_, err := d.exec(
-		"update project__template_role set permissions=? "+
-			"where project_id=? and template_id=? and id=?",
+func (d *SqlDb) UpdateTemplateRole(
+	role db.TemplateRolePerm,
+	expectedRevision int,
+) (db.TemplateRolePerm, error) {
+	if expectedRevision <= 0 || role.Revision != expectedRevision {
+		return db.TemplateRolePerm{}, db.ErrTemplateRoleRevisionConflict
+	}
+	role, err := d.normalizeTemplateRole(role)
+	if err != nil {
+		return db.TemplateRolePerm{}, err
+	}
+	result, err := d.exec(
+		"update project__template_role set role_slug=?, role_id=?, permissions=?, "+
+			"allowed_permissions=?, denied_permissions=?, revision=revision+1 "+
+			"where project_id=? and template_id=? and id=? and revision=?",
+		role.RoleSlug,
+		role.RoleID,
 		role.Permissions,
+		role.AllowedPermissions,
+		role.DeniedPermissions,
 		role.ProjectID,
 		role.TemplateID,
-		role.ID)
+		role.ID,
+		expectedRevision,
+	)
+	if err != nil {
+		return db.TemplateRolePerm{}, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return db.TemplateRolePerm{}, err
+	}
+	if rows != 1 {
+		if _, findErr := d.GetTemplateRole(role.ProjectID, role.TemplateID, role.ID); errors.Is(findErr, db.ErrNotFound) {
+			return db.TemplateRolePerm{}, db.ErrNotFound
+		} else if findErr != nil {
+			return db.TemplateRolePerm{}, findErr
+		}
+		return db.TemplateRolePerm{}, db.ErrTemplateRoleRevisionConflict
+	}
+	return d.GetTemplateRole(role.ProjectID, role.TemplateID, role.ID)
+}
 
-	return err
+func (d *SqlDb) normalizeTemplateRole(
+	role db.TemplateRolePerm,
+) (db.TemplateRolePerm, error) {
+	if role.Revision <= 0 {
+		role.Revision = 1
+	}
+	if role.AllowedPermissions == 0 && role.DeniedPermissions == 0 && role.Permissions != 0 {
+		role.AllowedPermissions = db.ProjectPermissionsToTemplate(role.Permissions)
+	}
+	role.Permissions = db.TemplatePermissionsToProject(role.AllowedPermissions)
+	if role.RoleID != nil {
+		projectRole, err := d.GetProjectRoleByID(role.ProjectID, *role.RoleID)
+		if err != nil {
+			return db.TemplateRolePerm{}, err
+		}
+		role.RoleSlug = projectRole.Slug
+	} else {
+		roleRef := db.ProjectUserRole(role.RoleSlug)
+		if !roleRef.IsValid() {
+			resolved, err := d.GetProjectOrGlobalRoleBySlug(role.ProjectID, role.RoleSlug)
+			if err != nil {
+				return db.TemplateRolePerm{}, err
+			}
+			if resolved.ProjectID != nil {
+				role.RoleID = &resolved.ID
+			}
+			role.RoleSlug = resolved.Slug
+		}
+	}
+	if err := db.ValidateTemplateRolePerm(role); err != nil {
+		return db.TemplateRolePerm{}, err
+	}
+	return role, nil
 }
