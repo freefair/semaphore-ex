@@ -163,9 +163,11 @@ func (d *SqlDb) UpdateTaskRunnerAttemptMetadata(
 	metadata db.RunnerExecutorMetadata,
 ) (bool, error) {
 	result, err := d.exec(
-		"update task__runner_attempt set executor_type=?, container_id=?, container_name=?, docker_requested_image=?, docker_resolved_image=?, docker_policy_revision=?, docker_policy_hash=?, docker_nano_cpus=?, docker_memory_bytes=?, docker_pids_limit=?, denial_rule_id=? "+
+		"update task__runner_attempt set executor_type=?, container_id=?, container_name=?, docker_requested_image=?, docker_resolved_image=?, docker_policy_revision=?, docker_policy_hash=?, docker_nano_cpus=?, docker_memory_bytes=?, docker_pids_limit=?, denial_rule_id=?, "+
+			"k8s_cluster_alias=?, k8s_namespace=?, k8s_job_name=?, k8s_job_uid=?, k8s_pod_name=?, k8s_pod_uid=?, k8s_container_name=?, k8s_lifecycle=?, k8s_terminal_reason=? "+
 			"where project_id=? and task_id=? and generation=? and runner_id=? and ended_at is null",
 		metadata.ExecutorType, metadata.ContainerID, metadata.ContainerName, metadata.RequestedImage, metadata.ResolvedImage, metadata.PolicyRevision, metadata.PolicyHash, metadata.NanoCPUs, metadata.MemoryBytes, metadata.PidsLimit, metadata.DenialRuleID,
+		metadata.K8sClusterAlias, metadata.K8sNamespace, metadata.K8sJobName, metadata.K8sJobUID, metadata.K8sPodName, metadata.K8sPodUID, metadata.K8sContainerName, metadata.K8sLifecycle, metadata.K8sTerminalReason,
 		projectID, taskID, generation, runnerID,
 	)
 	if err != nil {

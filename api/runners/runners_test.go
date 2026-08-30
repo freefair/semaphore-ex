@@ -787,6 +787,73 @@ func TestUpdateRunnerPersistsBoundedDockerExecutorMetadata(t *testing.T) {
 	assert.Equal(t, metadata.ContainerName, attempts[0].ContainerName)
 }
 
+func TestUpdateRunnerPersistsBoundedKubernetesExecutorMetadata(t *testing.T) {
+	fixture := newRunnerMetadataAPIFixture(t)
+	_, err := fixture.store.Sql().Exec(fixture.store.PrepareQuery(
+		"update runner set executor_type=? where id=?"), db.RunnerExecutorK8s, fixture.runner.ID,
+	)
+	require.NoError(t, err)
+	_, err = fixture.store.Sql().Exec(fixture.store.PrepareQuery(
+		"update task__runner_attempt set executor_type=? where task_id=? and runner_id=?"),
+		db.RunnerExecutorK8s, fixture.task.ID, fixture.runner.ID,
+	)
+	require.NoError(t, err)
+	fixture.runner.ExecutorType = db.RunnerExecutorK8s
+	metadata := db.RunnerExecutorMetadata{
+		ExecutorType:    db.RunnerExecutorK8s,
+		RequestedImage:  "registry.example.test/semaphore/job@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ResolvedImage:   "registry.example.test/semaphore/job@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		K8sClusterAlias: "qa", K8sNamespace: "semaphore-jobs",
+		K8sJobName: "semaphore-task-41-3", K8sJobUID: "job-uid",
+		K8sPodName: "semaphore-task-41-3-pod", K8sPodUID: "pod-uid",
+		K8sContainerName: "task", K8sLifecycle: "running",
+	}
+	request := newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{Jobs: []runners.JobProgress{{
+		ID: fixture.task.ID, Generation: fixture.task.AssignmentGeneration,
+		Status: task_logger.TaskRunningStatus, ExecutorMetadata: &metadata,
+	}}})
+	response := httptest.NewRecorder()
+
+	fixture.controller.UpdateRunner(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	attempts, err := fixture.store.GetTaskRunnerAttempts(fixture.project.ID, fixture.task.ID)
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	assert.Equal(t, metadata.K8sJobUID, attempts[0].K8sJobUID)
+	assert.Equal(t, metadata.K8sPodUID, attempts[0].K8sPodUID)
+	assert.Equal(t, metadata.K8sLifecycle, attempts[0].K8sLifecycle)
+}
+
+func TestUpdateRunnerRejectsRawKubernetesTerminalReason(t *testing.T) {
+	fixture := newRunnerMetadataAPIFixture(t)
+	_, err := fixture.store.Sql().Exec(fixture.store.PrepareQuery("update runner set executor_type=? where id=?"), db.RunnerExecutorK8s, fixture.runner.ID)
+	require.NoError(t, err)
+	fixture.runner.ExecutorType = db.RunnerExecutorK8s
+	metadata := db.RunnerExecutorMetadata{
+		ExecutorType:    db.RunnerExecutorK8s,
+		RequestedImage:  "registry.example.test/semaphore/job@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ResolvedImage:   "registry.example.test/semaphore/job@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		K8sClusterAlias: "qa", K8sNamespace: "semaphore-jobs", K8sJobName: "semaphore-task-41-3",
+		K8sJobUID: "job-uid", K8sPodName: "semaphore-task-41-3-pod", K8sPodUID: "pod-uid",
+		K8sContainerName: "task", K8sLifecycle: "failed",
+		K8sTerminalReason: "raw Kubernetes message: token=must-not-persist",
+	}
+	request := newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{Jobs: []runners.JobProgress{{
+		ID: fixture.task.ID, Generation: fixture.task.AssignmentGeneration,
+		Status: task_logger.TaskFailStatus, ExecutorMetadata: &metadata,
+	}}})
+	response := httptest.NewRecorder()
+
+	fixture.controller.UpdateRunner(response, request)
+
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	attempts, err := fixture.store.GetTaskRunnerAttempts(fixture.project.ID, fixture.task.ID)
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	assert.Empty(t, attempts[0].K8sTerminalReason)
+}
+
 func TestUpdateRunnerPersistsDockerOrphanCandidateOutsideScanReadiness(t *testing.T) {
 	fixture := newRunnerMetadataAPIFixture(t)
 	session, err := fixture.store.OpenDockerReconciliationSession(fixture.runner.ID, "", "")

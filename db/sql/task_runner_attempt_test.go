@@ -341,6 +341,37 @@ func TestRunnerAttemptPersistsBoundedDockerRuntimeIdentity(t *testing.T) {
 	assert.Equal(t, metadata.ContainerName, attempts[0].ContainerName)
 }
 
+func TestRunnerAttemptPersistsBoundedKubernetesRuntimeIdentity(t *testing.T) {
+	store, projectID, runner, task := createRunnerAttemptFixture(t)
+	_, err := store.Sql().Exec(store.PrepareQuery(
+		"update runner set executor_type=? where id=?"), db.RunnerExecutorK8s, runner.ID,
+	)
+	require.NoError(t, err)
+
+	assigned, ok, err := store.AssignTaskRunner(projectID, task.ID, runner.ID, runner.Name, time.Now().UTC())
+	require.NoError(t, err)
+	require.True(t, ok)
+	metadata := db.RunnerExecutorMetadata{
+		ExecutorType: db.RunnerExecutorK8s, RequestedImage: executorMetadataDigestForSQL,
+		ResolvedImage: executorMetadataDigestForSQL, K8sClusterAlias: "qa", K8sNamespace: "semaphore-jobs",
+		K8sJobName: "semaphore-task-41-3", K8sJobUID: "job-uid", K8sPodName: "semaphore-task-41-3-pod",
+		K8sPodUID: "pod-uid", K8sContainerName: "task", K8sLifecycle: "running",
+	}
+
+	updated, err := store.UpdateTaskRunnerAttemptMetadata(projectID, task.ID, assigned.AssignmentGeneration, runner.ID, metadata)
+	require.NoError(t, err)
+	require.True(t, updated)
+	attempts, err := store.GetTaskRunnerAttempts(projectID, task.ID)
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	assert.Equal(t, metadata.K8sClusterAlias, attempts[0].K8sClusterAlias)
+	assert.Equal(t, metadata.K8sJobUID, attempts[0].K8sJobUID)
+	assert.Equal(t, metadata.K8sPodUID, attempts[0].K8sPodUID)
+	assert.Equal(t, metadata.K8sLifecycle, attempts[0].K8sLifecycle)
+}
+
+const executorMetadataDigestForSQL = "registry.example.test/semaphore/job@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 func assertOneConcurrentCapacityWinner(
 	t *testing.T,
 	store *SqlDb,
