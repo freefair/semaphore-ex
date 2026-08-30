@@ -34,6 +34,8 @@ type Provider struct {
 	client       DockerClient
 	keyInstaller db_lib.AccessKeyInstaller
 	runnerBoot   string
+	runnerID     int
+	session      db.DockerReconciliationSession
 	repoLock     *tasks.KeyLock
 	policyMu     sync.RWMutex
 	policy       db.DockerExecutionPolicy
@@ -80,10 +82,49 @@ func (p *Provider) DockerExecutionPolicyAcknowledgement() db.DockerExecutionPoli
 	return db.DockerExecutionPolicyAck{Revision: policy.Revision, Hash: policy.Hash}
 }
 
+func (p *Provider) ApplyDockerRunnerIdentity(runnerID int) error {
+	if runnerID <= 0 {
+		return fmt.Errorf("Docker runner identity is required")
+	}
+	p.policyMu.Lock()
+	p.runnerID = runnerID
+	p.policyMu.Unlock()
+	return nil
+}
+
+func (p *Provider) ApplyDockerReconciliationSession(session db.DockerReconciliationSession) error {
+	p.policyMu.Lock()
+	defer p.policyMu.Unlock()
+	if p.runnerID <= 0 || session.RunnerID != p.runnerID || session.ValidatePublic() != nil {
+		return fmt.Errorf("Docker reconciliation session is invalid")
+	}
+	p.session = session
+	p.runnerBoot = session.TargetBoot
+	return nil
+}
+
+func (p *Provider) DockerReconciliationSession() db.DockerReconciliationSession {
+	p.policyMu.RLock()
+	defer p.policyMu.RUnlock()
+	return p.session
+}
+
 func (p *Provider) effectivePolicy() db.DockerExecutionPolicy {
 	p.policyMu.RLock()
 	defer p.policyMu.RUnlock()
 	return p.policy
+}
+
+func (p *Provider) effectiveRunnerID() int {
+	p.policyMu.RLock()
+	defer p.policyMu.RUnlock()
+	return p.runnerID
+}
+
+func (p *Provider) effectiveRunnerIdentity() (string, int) {
+	p.policyMu.RLock()
+	defer p.policyMu.RUnlock()
+	return p.runnerBoot, p.runnerID
 }
 
 func runnerBootNonce() (string, error) {
@@ -118,16 +159,18 @@ func (p *Provider) NewExecutor(task db.Task, template db.Template, inventory db.
 		JWT:          jwt,
 		RepoLock:     p.repoLock,
 	}
+	runnerBoot, runnerID := p.effectiveRunnerIdentity()
 	return &DockerExecutor{
 		client:        p.client,
 		config:        p.config,
-		runnerBoot:    p.runnerBoot,
+		runnerBoot:    runnerBoot,
+		runnerID:      runnerID,
 		task:          task,
 		template:      template,
 		local:         local,
 		logger:        task_logger.NopLogger{},
 		status:        task_logger.TaskStartingStatus,
-		containerName: dockerTaskName(task.ID, p.runnerBoot),
+		containerName: dockerTaskName(task.ID, task.AssignmentGeneration, runnerBoot),
 		policy:        policy,
 	}, nil
 }
@@ -136,6 +179,7 @@ type DockerExecutor struct {
 	client     DockerClient
 	config     config
 	runnerBoot string
+	runnerID   int
 	task       db.Task
 	template   db.Template
 	local      *tasks.LocalExecutor
@@ -162,7 +206,7 @@ func newDockerExecutorForPlan(client DockerClient, cfg config, runnerBoot string
 	return &DockerExecutor{
 		client: client, config: cfg, runnerBoot: runnerBoot, task: task, template: template,
 		logger: logger, status: task_logger.TaskStartingStatus,
-		containerName: dockerTaskName(task.ID, runnerBoot),
+		containerName: dockerTaskName(task.ID, task.AssignmentGeneration, runnerBoot),
 		policy:        db.DefaultDockerExecutionPolicy(),
 	}
 }
@@ -258,7 +302,7 @@ func (e *DockerExecutor) runContainerPlan(ctx context.Context, plan *tasks.Conta
 	}
 
 	baseName := e.containerName
-	labels := e.labels("")
+	labels := e.labels("task")
 	volumeName, err := e.client.CreateVolume(runCtx, baseName+"-bundle", labels)
 	if err != nil {
 		if e.IsKilled() {
@@ -454,6 +498,14 @@ func (e *DockerExecutor) endRun(generation uint64) {
 }
 
 func (e *DockerExecutor) Kill() {
+	ctx, cancel := context.WithTimeout(context.Background(), e.config.cleanupGrace+10*time.Second)
+	defer cancel()
+	_ = e.requestStop(ctx)
+}
+
+// requestStop makes one best-effort stop request while retaining the daemon
+// error for ConfirmStop. Kill intentionally keeps its historical no-error API.
+func (e *DockerExecutor) requestStop(ctx context.Context) error {
 	e.mu.Lock()
 	e.killed = true
 	containerID := e.containerID
@@ -466,18 +518,47 @@ func (e *DockerExecutor) Kill() {
 		cancel()
 	}
 	if containerID == "" {
-		return
+		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), e.config.cleanupGrace+5*time.Second)
-	defer cancel()
 	if err := e.client.StopContainer(ctx, containerID, e.config.cleanupGrace); err != nil {
 		e.logger.Log("Docker task container did not stop gracefully; forcing termination")
-		killCtx, killCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer killCancel()
-		if killErr := e.client.KillContainer(killCtx, containerID); killErr != nil {
+		if killErr := e.client.KillContainer(ctx, containerID); killErr != nil {
 			e.logger.Log("Unable to force-stop the Docker task container")
+			return fmt.Errorf("stopping Docker task container: %w; force stop: %v", err, killErr)
 		}
+		return err
 	}
+	return nil
+}
+
+// ConfirmStop first requests cancellation, then asks the daemon for evidence
+// that the task container is gone or no longer running. A failed request is
+// deliberately not terminal: callers retain the task as stopping until a later
+// reconciliation proves it stopped or the server records a quarantine.
+func (e *DockerExecutor) ConfirmStop(ctx context.Context) tasks.StopConfirmation {
+	stopErr := e.requestStop(ctx)
+	containerID := e.currentContainerID()
+	if containerID == "" {
+		return tasks.StopConfirmed
+	}
+	state, err := e.client.InspectContainer(ctx, containerID)
+	if err != nil {
+		return tasks.StopQuarantined
+	}
+	if !state.Exists || !state.Running {
+		return tasks.StopConfirmed
+	}
+	if stopErr != nil {
+		return tasks.StopQuarantined
+	}
+	return tasks.StopPending
+}
+
+func (e *DockerExecutor) DockerCancellationQuarantine() db.DockerReconciliationStopQuarantine {
+	e.mu.Lock()
+	name := e.containerName
+	e.mu.Unlock()
+	return db.DockerReconciliationStopQuarantine{ProjectID: e.task.ProjectID, TaskID: e.task.ID, Generation: e.task.AssignmentGeneration, Resource: db.DockerReconciliationResourceTask, ContainerName: name, Reason: "daemon stop state could not be confirmed"}
 }
 
 func (e *DockerExecutor) ExecutorMetadata() db.RunnerExecutorMetadata {
@@ -540,10 +621,13 @@ func (e *DockerExecutor) cleanupDockerResources() {
 
 func (e *DockerExecutor) labels(resource string) map[string]string {
 	labels := map[string]string{
-		labelExecutor:   "docker",
-		labelTaskID:     strconv.Itoa(e.task.ID),
-		labelProjectID:  strconv.Itoa(e.task.ProjectID),
-		labelRunnerBoot: e.runnerBoot,
+		labelExecutor:                        "docker",
+		labelTaskID:                          strconv.Itoa(e.task.ID),
+		labelProjectID:                       strconv.Itoa(e.task.ProjectID),
+		"io.semaphore.managed":               "v1",
+		"io.semaphore.runner-id":             strconv.Itoa(e.runnerID),
+		"io.semaphore.assignment-generation": strconv.Itoa(e.task.AssignmentGeneration),
+		labelRunnerBoot:                      e.runnerBoot,
 	}
 	if resource != "" {
 		labels[labelResource] = resource
@@ -589,8 +673,8 @@ func policyExecutionRequest(policy db.DockerExecutionPolicy, image string, netwo
 	}
 }
 
-func dockerTaskName(taskID int, runnerBoot string) string {
-	return fmt.Sprintf("semaphore-task-%d-%s", taskID, runnerBoot)
+func dockerTaskName(taskID int, generation int, runnerBoot string) string {
+	return fmt.Sprintf("semaphore-task-%d-g%d-%s", taskID, generation, runnerBoot)
 }
 
 func (e *DockerExecutor) setHelperID(value string) {

@@ -18,6 +18,8 @@ const (
 	RunnerSecurityProtocolHeader     = "X-Runner-Security-Protocol"
 	RunnerDockerPolicyRevisionHeader = "X-Runner-Docker-Policy-Revision"
 	RunnerDockerPolicyHashHeader     = "X-Runner-Docker-Policy-Hash"
+	RunnerDockerSessionHeader        = "X-Runner-Docker-Session"
+	RunnerDockerFenceHeader          = "X-Runner-Docker-Fence"
 
 	maxRunnerReportTextBytes = 128
 	maxRunnerReportedLoad    = 100_000

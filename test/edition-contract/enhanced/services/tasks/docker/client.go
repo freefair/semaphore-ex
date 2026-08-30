@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -61,8 +62,45 @@ type DockerClient interface {
 	Exec(context.Context, string, []string, io.Writer, io.Writer) (int, error)
 	StopContainer(context.Context, string, time.Duration) error
 	KillContainer(context.Context, string) error
+	InspectContainer(context.Context, string) (ContainerState, error)
+	ListManagedResources(context.Context, int) ([]ManagedResource, error)
 	RemoveContainer(context.Context, string) error
 	RemoveVolume(context.Context, string) error
+}
+
+type ManagedResourceKind string
+
+const (
+	ManagedContainer ManagedResourceKind = "container"
+	ManagedVolume    ManagedResourceKind = "volume"
+)
+
+// ManagedResource is the narrow, bounded daemon view consumed by the
+// reconciliation parser. Raw Docker inspect payloads and errors never cross
+// this boundary.
+type ManagedResource struct {
+	Kind       ManagedResourceKind
+	ID         string
+	Name       string
+	Labels     map[string]string
+	Running    bool
+	StateKnown bool
+}
+
+const (
+	maxDockerReconciliationPageSize = 100
+	managedReconciliationTimeout    = 10 * time.Second
+)
+
+// ContainerState intentionally exposes only reconciliation evidence. Docker's
+// full inspect payload may include environment, mounts, and daemon details and
+// must never leave this package.
+type ContainerState struct {
+	Exists  bool
+	Running bool
+	ID      string
+	Name    string
+	Labels  map[string]string
 }
 
 type ImageRole string
@@ -335,6 +373,59 @@ func (c *mobyClient) StopContainer(ctx context.Context, containerID string, grac
 func (c *mobyClient) KillContainer(ctx context.Context, containerID string) error {
 	_, err := c.client.ContainerKill(ctx, containerID, moby.ContainerKillOptions{Signal: "SIGKILL"})
 	return err
+}
+
+func (c *mobyClient) InspectContainer(ctx context.Context, containerID string) (ContainerState, error) {
+	inspected, err := c.client.ContainerInspect(ctx, containerID, moby.ContainerInspectOptions{})
+	if errdefs.IsNotFound(err) {
+		return ContainerState{Exists: false}, nil
+	}
+	if err != nil {
+		return ContainerState{}, err
+	}
+	return ContainerState{Exists: true, Running: inspected.Container.State != nil && inspected.Container.State.Running, ID: inspected.Container.ID, Name: strings.TrimPrefix(inspected.Container.Name, "/"), Labels: maps.Clone(inspected.Container.Config.Labels)}, nil
+}
+
+func (c *mobyClient) ListManagedResources(ctx context.Context, runnerID int) ([]ManagedResource, error) {
+	if runnerID <= 0 {
+		return nil, fmt.Errorf("invalid Docker runner identity")
+	}
+	listCtx, cancel := context.WithTimeout(ctx, managedReconciliationTimeout)
+	defer cancel()
+	filter := make(moby.Filters).
+		Add("label", "io.semaphore.managed=v1").
+		Add("label", fmt.Sprintf("io.semaphore.runner-id=%d", runnerID))
+	containers, err := c.client.ContainerList(listCtx, moby.ContainerListOptions{All: true, Filters: filter})
+	if err != nil {
+		return nil, fmt.Errorf("listing managed Docker containers: %w", err)
+	}
+	volumes, err := c.client.VolumeList(listCtx, moby.VolumeListOptions{Filters: filter})
+	if err != nil {
+		return nil, fmt.Errorf("listing managed Docker volumes: %w", err)
+	}
+	resources := make([]ManagedResource, 0, len(containers.Items)+len(volumes.Items))
+	for _, summary := range containers.Items {
+		inspected, inspectErr := c.client.ContainerInspect(listCtx, summary.ID, moby.ContainerInspectOptions{})
+		if errdefs.IsNotFound(inspectErr) {
+			continue
+		}
+		if inspectErr != nil {
+			return nil, fmt.Errorf("inspecting managed Docker container: %w", inspectErr)
+		}
+		name := strings.TrimPrefix(inspected.Container.Name, "/")
+		resources = append(resources, ManagedResource{Kind: ManagedContainer, ID: inspected.Container.ID, Name: name, Labels: maps.Clone(inspected.Container.Config.Labels), Running: inspected.Container.State != nil && inspected.Container.State.Running, StateKnown: inspected.Container.State != nil})
+	}
+	for _, summary := range volumes.Items {
+		inspected, inspectErr := c.client.VolumeInspect(listCtx, summary.Name, moby.VolumeInspectOptions{})
+		if errdefs.IsNotFound(inspectErr) {
+			continue
+		}
+		if inspectErr != nil {
+			return nil, fmt.Errorf("inspecting managed Docker volume: %w", inspectErr)
+		}
+		resources = append(resources, ManagedResource{Kind: ManagedVolume, ID: inspected.Volume.Name, Name: inspected.Volume.Name, Labels: maps.Clone(inspected.Volume.Labels), StateKnown: true})
+	}
+	return resources, nil
 }
 
 func (c *mobyClient) RemoveContainer(ctx context.Context, containerID string) error {

@@ -786,6 +786,25 @@ func TestUpdateRunnerPersistsBoundedDockerExecutorMetadata(t *testing.T) {
 	assert.Equal(t, metadata.ContainerName, attempts[0].ContainerName)
 }
 
+func TestUpdateRunnerPersistsDockerOrphanCandidateOutsideScanReadiness(t *testing.T) {
+	fixture := newRunnerMetadataAPIFixture(t)
+	session, err := fixture.store.OpenDockerReconciliationSession(fixture.runner.ID, "", "")
+	require.NoError(t, err)
+	progress := runners.RunnerProgress{DockerReconciliationOrphanCandidates: []db.DockerReconciliationOrphanCandidate{{Resource: db.DockerReconciliationCandidateVolume, Identifier: "bundle-volume", Name: "bundle-volume", Reason: db.DockerReconciliationCandidateExtra, ObservedAt: time.Now().UTC()}}}
+	request := newProgressRequest(t, fixture.store, fixture.runner, progress)
+	request.Header.Set(runners.RunnerDockerSessionHeader, session.SessionID)
+	request.Header.Set(runners.RunnerDockerFenceHeader, session.Fence)
+	response := httptest.NewRecorder()
+	fixture.controller.UpdateRunner(response, request)
+	require.Equal(t, http.StatusNoContent, response.Code, response.Body.String())
+	count, err := fixture.store.Sql().SelectInt(fixture.store.PrepareQuery("select count(1) from docker_reconciliation_orphan_candidate where session_id=?"), session.SessionID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+	resumed, err := fixture.store.OpenDockerReconciliationSession(fixture.runner.ID, session.SessionID, session.Fence)
+	require.NoError(t, err)
+	assert.False(t, resumed.Ready, "orphan candidates cannot complete a reconciliation scan")
+}
+
 func TestUpdateRunnerRoundTripsOnlyAllowListedDockerDenialRuleID(t *testing.T) {
 	fixture := newRunnerMetadataAPIFixture(t)
 	valid := db.RunnerExecutorMetadata{ExecutorType: db.RunnerExecutorDocker, DenialRuleID: db.DockerPolicyRuleImageDenied}

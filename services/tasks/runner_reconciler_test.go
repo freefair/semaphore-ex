@@ -772,6 +772,29 @@ func TestStopTaskRunnerLost(t *testing.T) {
 	}
 }
 
+func TestStopTaskRunnerLostQuarantinesDockerWithoutDaemonEvidence(t *testing.T) {
+	setupReconcilerConfig(t)
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	state := NewMemoryTaskStateStore()
+	pool := newReconcilerTestPool(store, state)
+	now := time.Now()
+	newTask, runnerID := createReconcilerTestTask(t, store, task_logger.TaskStoppingStatus, &now)
+	tsk := &TaskRunner{Task: newTask, pool: &pool}
+	state.SetRunning(tsk)
+
+	pool.stopTaskRunnerLost(tsk, &db.Runner{ID: runnerID, ExecutorType: db.RunnerExecutorDocker}, "HA lost runner during cancellation")
+
+	assert.Equal(t, task_logger.TaskStoppingStatus, tsk.Task.Status)
+	assert.Nil(t, tsk.Task.End)
+	assert.Contains(t, tsk.Task.RecoveryReason, "quarantined")
+	stored, err := store.GetTaskByID(newTask.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task_logger.TaskStoppingStatus, stored.Status)
+	assert.Nil(t, stored.End)
+	assert.Empty(t, pool.queueEvents)
+}
+
 func TestReconcileRunnerTasks(t *testing.T) {
 	setupReconcilerConfig(t)
 

@@ -701,6 +701,7 @@ type Store interface {
 	ViewManager
 	RunnerManager
 	DockerExecutionPolicyRepository
+	DockerReconciliationRepository
 	EventManager
 	SecretStorageRepository
 	SecretSyncRepository
