@@ -2,6 +2,7 @@ package runners
 
 import (
 	"errors"
+	"fmt"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/jwt"
@@ -144,10 +145,21 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := runners.RunnerState{
+		RunnerID:   runner.ID,
 		AccessKeys: make(map[int]db.AccessKey),
 		ClearCache: clearCache,
 	}
 	if runner.EffectiveExecutorType() == db.RunnerExecutorDocker {
+		sessionStore, ok := c.runnerRepo.(db.DockerReconciliationSessionRepository)
+		if !ok {
+			helpers.WriteErrorStatus(w, "Docker reconciliation storage is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		session, sessionErr := sessionStore.OpenDockerReconciliationSession(runner.ID, r.Header.Get(runners.RunnerDockerSessionHeader), r.Header.Get(runners.RunnerDockerFenceHeader))
+		if sessionErr != nil {
+			helpers.WriteError(w, sessionErr)
+			return
+		}
 		policyStore, ok := c.runnerRepo.(db.DockerExecutionPolicyRepository)
 		if !ok {
 			helpers.WriteErrorStatus(w, "Docker policy storage is unavailable", http.StatusServiceUnavailable)
@@ -159,6 +171,7 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		data.DockerPolicy = &policy
+		data.DockerReconciliationSession = &session
 	}
 
 	if clearCache {
@@ -193,6 +206,9 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 // bad task does not abort the poll for the whole runner.
 func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Runner, data *runners.RunnerState) {
 	if runner.EffectiveExecutorType() == db.RunnerExecutorDocker {
+		if data.DockerReconciliationSession == nil || !data.DockerReconciliationSession.Ready {
+			return
+		}
 		policyStore, ok := c.runnerRepo.(db.DockerExecutionPolicyRepository)
 		if !ok {
 			return
@@ -296,6 +312,17 @@ func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Ru
 		c.taskPool.FinalizeRemoteTask(tsk, runner)
 		return
 	}
+	if runner.EffectiveExecutorType() == db.RunnerExecutorDocker {
+		sessionStore, ok := c.runnerRepo.(db.DockerReconciliationSessionRepository)
+		baseName := fmt.Sprintf("semaphore-task-%d-g%d-%s", tsk.Task.ID, tsk.Task.AssignmentGeneration, data.DockerReconciliationSession.TargetBoot)
+		targets := []db.DockerReconciliationScanTarget{
+			{TargetBoot: data.DockerReconciliationSession.TargetBoot, ProjectID: tsk.Task.ProjectID, TaskID: tsk.Task.ID, Generation: tsk.Task.AssignmentGeneration, Resource: db.DockerReconciliationResourceTask, ContainerName: baseName},
+			{TargetBoot: data.DockerReconciliationSession.TargetBoot, ProjectID: tsk.Task.ProjectID, TaskID: tsk.Task.ID, Generation: tsk.Task.AssignmentGeneration, Resource: db.DockerReconciliationResourceHelper, ContainerName: baseName + "-helper"},
+		}
+		if !ok || sessionStore.BindDockerReconciliationAttempts(runner.ID, *data.DockerReconciliationSession, targets) != nil {
+			return
+		}
+	}
 
 	maps.Copy(data.AccessKeys, taskKeys)
 	data.NewJobs = append(data.NewJobs, jobData)
@@ -393,6 +420,36 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			"error": "Invalid format",
 		})
 		return
+	}
+	if runner.EffectiveExecutorType() == db.RunnerExecutorDocker && (len(body.DockerReconciliationObservations) > 0 || body.DockerReconciliationScanComplete != nil || len(body.DockerReconciliationOrphanCandidates) > 0 || len(body.DockerReconciliationQuarantines) > 0) {
+		sessionStore, ok := c.runnerRepo.(db.DockerReconciliationSessionRepository)
+		if !ok {
+			helpers.WriteErrorStatus(w, "Docker reconciliation storage is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if body.DockerReconciliationScanComplete != nil {
+			complete := *body.DockerReconciliationScanComplete
+			complete.SessionID, complete.Fence = r.Header.Get(runners.RunnerDockerSessionHeader), r.Header.Get(runners.RunnerDockerFenceHeader)
+			if err := sessionStore.IngestDockerReconciliationScan(runner.ID, db.DockerReconciliationScan{SessionID: complete.SessionID, Fence: complete.Fence, Observations: body.DockerReconciliationObservations, Complete: complete}); err != nil {
+				helpers.WriteErrorStatus(w, "Docker reconciliation scan rejected", http.StatusConflict)
+				return
+			}
+		} else if len(body.DockerReconciliationObservations) > 0 {
+			helpers.WriteErrorStatus(w, "Docker reconciliation scan boundary is required", http.StatusBadRequest)
+			return
+		}
+		if len(body.DockerReconciliationOrphanCandidates) > 0 {
+			if err := sessionStore.RecordDockerReconciliationOrphanCandidates(runner.ID, r.Header.Get(runners.RunnerDockerSessionHeader), r.Header.Get(runners.RunnerDockerFenceHeader), body.DockerReconciliationOrphanCandidates); err != nil {
+				helpers.WriteErrorStatus(w, "Docker reconciliation orphan candidates rejected", http.StatusConflict)
+				return
+			}
+		}
+		for _, quarantine := range body.DockerReconciliationQuarantines {
+			if err := sessionStore.QuarantineDockerReconciliationAttempt(runner.ID, r.Header.Get(runners.RunnerDockerSessionHeader), r.Header.Get(runners.RunnerDockerFenceHeader), quarantine); err != nil {
+				helpers.WriteErrorStatus(w, "Docker reconciliation quarantine rejected", http.StatusConflict)
+				return
+			}
+		}
 	}
 
 	taskPool := c.taskPool

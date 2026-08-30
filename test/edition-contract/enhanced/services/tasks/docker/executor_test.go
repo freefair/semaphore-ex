@@ -106,7 +106,7 @@ func TestDockerExecutorRunsFixedStagesInsideTaskScopedResources(t *testing.T) {
 	assert.Equal(t, db.RunnerExecutorMetadata{
 		ExecutorType:   db.RunnerExecutorDocker,
 		ContainerID:    "task-2",
-		ContainerName:  "semaphore-task-42-boot-abc",
+		ContainerName:  "semaphore-task-42-g0-boot-abc",
 		RequestedImage: "project.example/job:frozen",
 		ResolvedImage:  "project.example/job:frozen",
 		PolicyHash:     db.DefaultDockerExecutionPolicy().Hash,
@@ -219,7 +219,7 @@ func TestDockerExecutorCleansTaskContainerCreatedBeforeCanceledCreateResponse(t 
 	require.NoError(t, <-done)
 	assert.Empty(t, client.execCommands, "a task with a canceled create response must never execute bootstrap")
 	assert.Equal(t,
-		[]string{"helper-1", "semaphore-task-15-boot-abc"},
+		[]string{"helper-1", "semaphore-task-15-g0-boot-abc"},
 		client.removedContainers,
 		"cleanup must remove the task by its runner-owned name when Docker lost its create response",
 	)
@@ -262,10 +262,60 @@ type fakeDockerClient struct {
 	taskCreateStarted         chan struct{}
 	taskCreateReturnsCanceled bool
 	stopErr                   error
+	inspectState              *ContainerState
+	inspectErr                error
+	inspectStates             map[string]ContainerState
+	inspectCalls              int
+	listCalls                 int
 	stops                     []stopCall
 	killedContainers          []string
 	removedContainers         []string
 	removedVolumes            []string
+}
+
+func (c *fakeDockerClient) InspectContainer(_ context.Context, containerID string) (ContainerState, error) {
+	c.inspectCalls++
+	if c.inspectErr != nil {
+		return ContainerState{}, c.inspectErr
+	}
+	if state, ok := c.inspectStates[containerID]; ok {
+		return state, nil
+	}
+	if c.inspectState != nil {
+		return *c.inspectState, nil
+	}
+	for _, killed := range c.killedContainers {
+		if killed == containerID {
+			return ContainerState{Exists: true, Running: false}, nil
+		}
+	}
+	return ContainerState{Exists: false}, nil
+}
+
+func TestDockerExecutorConfirmStopRequiresDaemonEvidence(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		stopErr    error
+		state      ContainerState
+		inspectErr error
+		expected   tasks.StopConfirmation
+	}{
+		{name: "non-running confirms", state: ContainerState{Exists: true, Running: false}, expected: tasks.StopConfirmed},
+		{name: "running remains pending", state: ContainerState{Exists: true, Running: true}, expected: tasks.StopPending},
+		{name: "daemon error quarantines", stopErr: errors.New("daemon unavailable"), inspectErr: errors.New("inspect unavailable"), expected: tasks.StopQuarantined},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &fakeDockerClient{stopErr: tt.stopErr, inspectErr: tt.inspectErr, inspectState: &tt.state}
+			executor := newDockerExecutorForPlan(client, config{cleanupGrace: time.Second}, "boot", db.Task{ID: 1, ProjectID: 1, AssignmentGeneration: 1}, db.Template{}, task_logger.NopLogger{})
+			executor.setContainerID("task")
+			assert.Equal(t, tt.expected, executor.ConfirmStop(context.Background()))
+		})
+	}
+}
+
+func (c *fakeDockerClient) ListManagedResources(context.Context, int) ([]ManagedResource, error) {
+	c.listCalls++
+	return nil, nil
 }
 
 type imagePreparation struct {

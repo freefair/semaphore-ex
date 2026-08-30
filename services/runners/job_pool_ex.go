@@ -1,12 +1,15 @@
 package runners
 
 import (
+	"context"
 	"fmt"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 	"net/url"
 	"strings"
+	"time"
 )
 
 func runnerTransportTrust(webHost string, conn *util.RunnerConnectionConfig) db.RunnerTransportTrust {
@@ -25,6 +28,8 @@ func runnerTransportTrust(webHost string, conn *util.RunnerConnectionConfig) db.
 	}
 	return db.RunnerTransportSystemCA
 }
+
+const maxDockerReconciliationQuarantinesPerProgress = 100
 
 func (p *JobPool) currentDockerPolicyAck() (db.DockerExecutionPolicyAck, bool) {
 	p.dockerPolicyMu.Lock()
@@ -51,12 +56,22 @@ func (p *JobPool) applyDockerPolicy(policy db.DockerExecutionPolicy) error {
 	return nil
 }
 
+func (p *JobPool) applyDockerRunnerIdentity(runnerID int) error {
+	consumer, ok := p.provider.(tasks.DockerRunnerIdentityConsumer)
+	if !ok {
+		return fmt.Errorf("Docker runner does not support server identity installation")
+	}
+	return consumer.ApplyDockerRunnerIdentity(runnerID)
+}
+
 func (p *JobPool) dockerDispatchReady() bool {
 	if resolveExecutorType(util.Config.Runner.Executor) != util.ExecutorTypeDocker {
 		return true
 	}
 	_, ready := p.currentDockerPolicyAck()
-	return ready
+	p.dockerPolicyMu.Lock()
+	defer p.dockerPolicyMu.Unlock()
+	return ready && p.dockerReconciliationReady
 }
 
 func (p *JobPool) canDispatchQueuedJob(candidate *job) bool {
@@ -65,4 +80,42 @@ func (p *JobPool) canDispatchQueuedJob(candidate *job) bool {
 	}
 	acknowledged, ready := p.currentDockerPolicyAck()
 	return ready && *candidate.dockerPolicyAck == acknowledged
+}
+
+// finishStoppedJob is the only runner-side stopped transition for an optional
+// Docker confirmer. A completed Run call is not daemon evidence: Docker must
+// confirm the named container stopped first.
+func (p *JobPool) finishStoppedJob(running *runningJob) {
+	stopper, ok := running.job.(tasks.ConfirmedStopper)
+	if !ok {
+		running.job.Kill()
+		running.SetStatus(task_logger.TaskStoppedStatus)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	confirmation := stopper.ConfirmStop(ctx)
+	cancel()
+	if confirmation == tasks.StopConfirmed {
+		running.SetStatus(task_logger.TaskStoppedStatus)
+		return
+	}
+	running.SetStatus(task_logger.TaskStoppingStatus)
+	if confirmation == tasks.StopQuarantined {
+		running.Log("Docker cancellation quarantined: daemon stop state could not be confirmed")
+		if reporter, ok := running.job.(tasks.DockerReconciliationQuarantineReporter); ok {
+			quarantine := reporter.DockerCancellationQuarantine()
+			p.dockerPolicyMu.Lock()
+			alreadyQueued := false
+			for _, queued := range p.dockerQuarantines {
+				if queued == quarantine {
+					alreadyQueued = true
+					break
+				}
+			}
+			if !alreadyQueued {
+				p.dockerQuarantines = append(p.dockerQuarantines, quarantine)
+			}
+			p.dockerPolicyMu.Unlock()
+		}
+	}
 }

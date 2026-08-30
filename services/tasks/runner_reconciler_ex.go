@@ -63,6 +63,9 @@ func (p *TaskPool) ApplyOrphanRecovery(
 			return p.applyFencedRecoveryTransition(store, tsk, lease, task_logger.TaskWaitingStatus,
 				db.RunnerAttemptActive, assessment.Reason, false, true)
 		case task_logger.TaskStoppingStatus, task_logger.TaskRejected:
+			if p.isDockerCancellation(tsk, nil) {
+				return p.quarantineOrphanedTask(store, tsk, lease, "Docker cancellation lacks confirmed stop evidence: "+assessment.Reason)
+			}
 			return p.applyFencedRecoveryTransition(store, tsk, lease, task_logger.TaskStoppedStatus,
 				db.RunnerAttemptStopped, assessment.Reason, true, false)
 		default:
@@ -269,6 +272,27 @@ func (p *TaskPool) stopTaskRunnerLost(tsk *TaskRunner, runner *db.Runner, reason
 	if tsk.Task.Status.IsFinished() {
 		return
 	}
+	if p.isDockerCancellation(tsk, runner) {
+		// HA has lost contact with the only process that can ask Docker for
+		// Stop/Inspect evidence. Do not turn cancellation into "stopped" on
+		// liveness inference alone; retain a durable, reportable quarantine.
+		oldStatus := tsk.Task.Status
+		candidate := tsk.Task
+		candidate.Message = "Docker cancellation quarantined: " + reason
+		candidate.RecoveryReason = candidate.Message
+		updated, err := p.store.UpdateTaskRunner(candidate, oldStatus, runnerIDFromSnapshot(tsk.Task), tsk.Task.AssignmentGeneration, db.RunnerAttemptActive, candidate.RecoveryReason, tz.Now())
+		if err != nil {
+			log.WithError(err).WithField("task_id", tsk.Task.ID).Error("failed to persist Docker cancellation quarantine")
+			return
+		}
+		if !updated {
+			return
+		}
+		tsk.Task = candidate
+		p.applyPersistedRunnerStatus(tsk, oldStatus)
+		tsk.Log(candidate.RecoveryReason)
+		return
+	}
 	oldStatus := tsk.Task.Status
 	candidate := tsk.Task
 	candidate.Status = task_logger.TaskStoppedStatus
@@ -293,4 +317,20 @@ func (p *TaskPool) stopTaskRunnerLost(tsk *TaskRunner, runner *db.Runner, reason
 	p.applyPersistedRunnerStatus(tsk, oldStatus)
 	tsk.Log("Runner cancellation completed: " + reason)
 	p.finalizeRemoteTaskLocked(tsk, runner)
+}
+
+func (p *TaskPool) isDockerCancellation(tsk *TaskRunner, runner *db.Runner) bool {
+	if runner != nil {
+		return runner.EffectiveExecutorType() == db.RunnerExecutorDocker
+	}
+	attempts, err := p.store.GetTaskRunnerAttempts(tsk.Task.ProjectID, tsk.Task.ID)
+	if err != nil {
+		return false
+	}
+	for _, attempt := range attempts {
+		if attempt.Generation == tsk.Task.AssignmentGeneration && attempt.RunnerID == runnerIDFromSnapshot(tsk.Task) {
+			return attempt.ExecutorType == db.RunnerExecutorDocker
+		}
+	}
+	return false
 }

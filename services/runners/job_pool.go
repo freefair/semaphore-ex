@@ -2,6 +2,7 @@ package runners
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -86,9 +87,12 @@ type JobPool struct {
 	// cycle (~2/sec) until the runner exhausts ephemeral ports (issue #3941).
 	client *http.Client
 
-	dockerPolicyMu    sync.Mutex
-	dockerPolicyAck   db.DockerExecutionPolicyAck
-	dockerPolicyReady bool
+	dockerPolicyMu              sync.Mutex
+	dockerPolicyAck             db.DockerExecutionPolicyAck
+	dockerPolicyReady           bool
+	dockerReconciliationReady   bool
+	dockerReconciliationSession db.DockerReconciliationSession
+	dockerQuarantines           []db.DockerReconciliationStopQuarantine
 }
 
 // NewJobPool wires a runner-side job pool. The ExecutorProvider is materialised
@@ -127,6 +131,15 @@ func (p *JobPool) setCommonHeaders(req *http.Request) {
 	if ack, ready := p.currentDockerPolicyAck(); ready {
 		req.Header.Set(RunnerDockerPolicyRevisionHeader, strconv.Itoa(ack.Revision))
 		req.Header.Set(RunnerDockerPolicyHashHeader, ack.Hash)
+	}
+	if resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeDocker {
+		p.dockerPolicyMu.Lock()
+		session := p.dockerReconciliationSession
+		p.dockerPolicyMu.Unlock()
+		if session.SessionID != "" {
+			req.Header.Set(RunnerDockerSessionHeader, session.SessionID)
+			req.Header.Set(RunnerDockerFenceHeader, session.Fence)
+		}
 	}
 }
 
@@ -385,7 +398,7 @@ func (p *JobPool) Run() {
 					running.Log("Unable to launch the application. Please contact your system administrator for assistance.")
 
 					if running.getStatus() == task_logger.TaskStoppingStatus {
-						running.SetStatus(task_logger.TaskStoppedStatus)
+						p.finishStoppedJob(running)
 					} else {
 						running.SetStatus(task_logger.TaskFailStatus)
 					}
@@ -402,7 +415,7 @@ func (p *JobPool) Run() {
 					}
 
 					if running.getStatus() == task_logger.TaskStoppingStatus {
-						running.SetStatus(task_logger.TaskStoppedStatus)
+						p.finishStoppedJob(running)
 					} else {
 						running.SetStatus(task_logger.TaskSuccessStatus)
 					}
@@ -464,9 +477,36 @@ func (p *JobPool) sendProgress() (ok bool) {
 
 	url := util.Config.WebHost + "/api/internal/runners"
 
-	body := RunnerProgress{
-		Jobs:      nil,
-		KnownJobs: make([]JobState, 0),
+	body := RunnerProgress{Jobs: nil, KnownJobs: make([]JobState, 0)}
+	if resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeDocker {
+		p.dockerPolicyMu.Lock()
+		session := p.dockerReconciliationSession
+		ready := p.dockerReconciliationReady
+		p.dockerPolicyMu.Unlock()
+		if session.SessionID != "" && !ready {
+			scanner, scannerOK := p.provider.(tasks.DockerReconciliationScanner)
+			if !scannerOK {
+				log.WithField("context", "sending_progress").Error("Docker provider has no reconciliation scanner")
+				return false
+			}
+			scanCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			observations, complete, candidates, scanErr := scanner.ScanDockerReconciliation(scanCtx, session)
+			cancel()
+			if scanErr != nil {
+				log.WithError(scanErr).WithField("context", "sending_progress").Error("Docker reconciliation scan failed; refusing dispatch")
+				return false
+			}
+			body.DockerReconciliationObservations = observations
+			body.DockerReconciliationScanComplete = &complete
+			body.DockerReconciliationOrphanCandidates = candidates
+		}
+		p.dockerPolicyMu.Lock()
+		quarantineCount := len(p.dockerQuarantines)
+		if quarantineCount > maxDockerReconciliationQuarantinesPerProgress {
+			quarantineCount = maxDockerReconciliationQuarantinesPerProgress
+		}
+		body.DockerReconciliationQuarantines = append(body.DockerReconciliationQuarantines, p.dockerQuarantines[:quarantineCount]...)
+		p.dockerPolicyMu.Unlock()
 	}
 
 	for id, j := range p.snapshotRunningJobs() {
@@ -547,6 +587,20 @@ func (p *JobPool) sendProgress() (ok bool) {
 	}
 
 	ok = true
+	if len(body.DockerReconciliationQuarantines) > 0 {
+		p.dockerPolicyMu.Lock()
+		exactPrefix := len(p.dockerQuarantines) >= len(body.DockerReconciliationQuarantines)
+		for index, sent := range body.DockerReconciliationQuarantines {
+			if !exactPrefix || p.dockerQuarantines[index] != sent {
+				exactPrefix = false
+				break
+			}
+		}
+		if exactPrefix {
+			p.dockerQuarantines = p.dockerQuarantines[len(body.DockerReconciliationQuarantines):]
+		}
+		p.dockerPolicyMu.Unlock()
+	}
 
 	log.WithFields(log.Fields{
 		"context":     "sending_progress",
@@ -603,8 +657,15 @@ func (p *JobPool) applyTerminatedJobs(taskIDs []int) {
 				"status":  string(j.getStatus()),
 			}).Warn("Server reported the task as terminated, emergency stopping the job")
 
-			j.job.Kill()
-			j.SetStatus(task_logger.TaskStoppedStatus)
+			if _, ok := j.job.(tasks.ConfirmedStopper); ok {
+				p.finishStoppedJob(j)
+			} else {
+				j.job.Kill()
+				j.SetStatus(task_logger.TaskStoppedStatus)
+			}
+		}
+		if !j.getStatus().IsFinished() {
+			continue
 		}
 
 		log.WithFields(log.Fields{
@@ -613,7 +674,9 @@ func (p *JobPool) applyTerminatedJobs(taskIDs []int) {
 			"status":  string(j.getStatus()),
 		}).Info("Task removed from running list")
 
-		p.deleteRunningJob(id)
+		if j.getStatus().IsFinished() {
+			p.deleteRunningJob(id)
+		}
 	}
 }
 
@@ -911,6 +974,25 @@ func (p *JobPool) checkNewJobs() {
 			return
 		}
 	}
+	if resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeDocker {
+		if err := p.applyDockerRunnerIdentity(response.RunnerID); err != nil {
+			log.WithError(err).WithField("context", "checking_new_jobs").Error("refusing Docker dispatch until runner identity installation succeeds")
+			return
+		}
+		if response.DockerReconciliationSession == nil {
+			log.WithField("context", "checking_new_jobs").Warn("refusing Docker dispatch until reconciliation session is present")
+			return
+		}
+		p.dockerPolicyMu.Lock()
+		p.dockerReconciliationReady = response.DockerReconciliationSession.Ready
+		p.dockerReconciliationSession = *response.DockerReconciliationSession
+		p.dockerPolicyMu.Unlock()
+		consumer, ok := p.provider.(tasks.DockerRunnerIdentityConsumer)
+		if !ok || consumer.ApplyDockerReconciliationSession(*response.DockerReconciliationSession) != nil {
+			log.WithField("context", "checking_new_jobs").Warn("refusing Docker dispatch until reconciliation session installation succeeds")
+			return
+		}
+	}
 
 	runningJobs := p.snapshotRunningJobs()
 
@@ -932,7 +1014,11 @@ func (p *JobPool) checkNewJobs() {
 				"task_id": currJob.ID,
 				"status":  string(status),
 			}).Debug("Killing job because it is stopping or stopped")
-			runJob.job.Kill()
+			if status == task_logger.TaskStoppingStatus {
+				p.finishStoppedJob(runJob)
+			} else {
+				runJob.job.Kill()
+			}
 		}
 
 		if status.IsFinished() {

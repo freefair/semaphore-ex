@@ -1,7 +1,9 @@
 package runners
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/services/tasks"
@@ -50,6 +52,25 @@ func (p *dockerPolicyConsumerStub) DockerExecutionPolicyAcknowledgement() db.Doc
 	return db.DockerExecutionPolicyAck{Revision: p.policy.Revision, Hash: p.policy.Hash}
 }
 
+func (*dockerPolicyConsumerStub) ApplyDockerRunnerIdentity(runnerID int) error {
+	if runnerID <= 0 {
+		return fmt.Errorf("runner id is required")
+	}
+	return nil
+}
+
+func (*dockerPolicyConsumerStub) ApplyDockerReconciliationSession(db.DockerReconciliationSession) error {
+	return nil
+}
+
+func (*dockerPolicyConsumerStub) DockerReconciliationSession() db.DockerReconciliationSession {
+	return db.DockerReconciliationSession{}
+}
+
+func (*dockerPolicyConsumerStub) ScanDockerReconciliation(_ context.Context, session db.DockerReconciliationSession) ([]db.DockerReconciliationObservation, db.DockerReconciliationScanComplete, []db.DockerReconciliationOrphanCandidate, error) {
+	return nil, db.DockerReconciliationScanComplete{SessionID: session.SessionID, Fence: session.Fence}, []db.DockerReconciliationOrphanCandidate{{Resource: db.DockerReconciliationCandidateVolume, Identifier: "volume", Name: "volume", Reason: db.DockerReconciliationCandidateExtra, ObservedAt: time.Now().UTC()}}, nil
+}
+
 type denyingDockerPolicyProvider struct{ dockerPolicyConsumerStub }
 
 func (p *denyingDockerPolicyProvider) NewExecutor(db.Task, db.Template, db.Inventory, db.Repository, db.Environment, string) (tasks.Executor, error) {
@@ -64,11 +85,31 @@ func TestJobPoolAcknowledgesDockerPolicyBeforeDispatch(t *testing.T) {
 	assert.False(t, pool.dockerDispatchReady())
 	policy := db.DefaultDockerExecutionPolicy()
 	require.NoError(t, pool.applyDockerPolicy(policy))
+	pool.dockerReconciliationReady = true
 	assert.True(t, pool.dockerDispatchReady())
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	pool.setCommonHeaders(request)
 	assert.Equal(t, "0", request.Header.Get(RunnerDockerPolicyRevisionHeader))
 	assert.Equal(t, policy.Hash, request.Header.Get(RunnerDockerPolicyHashHeader))
+}
+
+func TestJobPoolSubmitsDockerScanBeforeDispatch(t *testing.T) {
+	var received RunnerProgress
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "scan-session", r.Header.Get(RunnerDockerSessionHeader))
+		require.Equal(t, "scan-fence", r.Header.Get(RunnerDockerFenceHeader))
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
+	util.Config = &util.ConfigType{WebHost: server.URL, Runner: &util.RunnerConfig{Token: "test-token", Executor: &util.ExecutorConfig{Type: util.ExecutorTypeDocker}, Connection: &util.RunnerConnectionConfig{}}}
+	pool := &JobPool{provider: &dockerPolicyConsumerStub{}, runningJobs: make(map[int]*runningJob), startedAt: time.Now(), client: newHTTPClient(), dockerReconciliationSession: db.DockerReconciliationSession{SessionID: "scan-session", Fence: "scan-fence", RunnerID: 1, TargetBoot: "scan-target"}}
+	assert.True(t, pool.sendProgress())
+	require.NotNil(t, received.DockerReconciliationScanComplete)
+	assert.Equal(t, "scan-session", received.DockerReconciliationScanComplete.SessionID)
+	assert.Len(t, received.DockerReconciliationOrphanCandidates, 1)
 }
 
 func TestJobPoolRejectsQueuedDockerJobWithSupersededPolicySnapshot(t *testing.T) {
@@ -106,7 +147,7 @@ func TestJobPoolQueuesOneTerminalReportForDockerPolicyDenial(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		state := RunnerState{DockerPolicy: &policy}
+		state := RunnerState{RunnerID: 1, DockerPolicy: &policy, DockerReconciliationSession: &db.DockerReconciliationSession{SessionID: "test-session", Fence: "test-fence", RunnerID: 1, TargetBoot: "test-target", Ready: true}}
 		if !terminalReported {
 			state.NewJobs = []JobData{{Task: db.Task{ID: 81, ProjectID: 9, AssignmentGeneration: 3}}}
 		}
@@ -150,6 +191,115 @@ func TestJobPoolQueuesOneTerminalReportForDockerPolicyDenial(t *testing.T) {
 	mu.Unlock()
 	pool.checkNewJobs()
 	assert.Zero(t, pool.queueLen(), "the simulated server stops redelivery after terminal progress")
+}
+
+type confirmedStopExecutor struct {
+	*tasks.LocalExecutor
+	confirmation tasks.StopConfirmation
+	quarantine   db.DockerReconciliationStopQuarantine
+}
+
+type failingRoundTripper struct{}
+
+func (failingRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, fmt.Errorf("transport unavailable")
+}
+
+func (e *confirmedStopExecutor) ConfirmStop(context.Context) tasks.StopConfirmation {
+	return e.confirmation
+}
+
+func (e *confirmedStopExecutor) DockerCancellationQuarantine() db.DockerReconciliationStopQuarantine {
+	return e.quarantine
+}
+
+func TestJobPoolApplyTerminatedDockerJobRequiresConfirmedStop(t *testing.T) {
+	initConfig(t)
+	for _, tt := range []struct {
+		name         string
+		confirmation tasks.StopConfirmation
+		status       task_logger.TaskStatus
+		remaining    int
+	}{
+		{name: "confirmed", confirmation: tasks.StopConfirmed, status: task_logger.TaskStoppedStatus, remaining: 0},
+		{name: "daemon still running", confirmation: tasks.StopPending, status: task_logger.TaskStoppingStatus, remaining: 1},
+		{name: "daemon error quarantines", confirmation: tasks.StopQuarantined, status: task_logger.TaskStoppingStatus, remaining: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			pool := NewJobPool(nil)
+			executor := &confirmedStopExecutor{LocalExecutor: &tasks.LocalExecutor{Task: db.Task{ID: 7}}, confirmation: tt.confirmation, quarantine: db.DockerReconciliationStopQuarantine{ProjectID: 1, TaskID: 7, Generation: 1, Resource: db.DockerReconciliationResourceTask, ContainerName: "task-7", Reason: "daemon stop state could not be confirmed"}}
+			job := &runningJob{job: executor, status: task_logger.TaskRunningStatus}
+			executor.Logger = job
+			pool.addRunningJob(7, job)
+			pool.applyTerminatedJobs([]int{7})
+			assert.Equal(t, tt.status, job.getStatus())
+			assert.Equal(t, tt.remaining, pool.runningJobsCount())
+			if tt.confirmation == tasks.StopQuarantined {
+				_, logs, _, _ := job.getProgress()
+				require.NotEmpty(t, logs)
+				assert.Contains(t, logs[len(logs)-1].Message, "quarantined")
+				require.Len(t, pool.dockerQuarantines, 1)
+				pool.applyTerminatedJobs([]int{7})
+				assert.Len(t, pool.dockerQuarantines, 1)
+			}
+		})
+	}
+}
+
+func TestJobPoolBoundsAndAcknowledgesDockerQuarantineProgressPrefix(t *testing.T) {
+	initConfig(t)
+	util.Config.Runner.Token = "token"
+	util.Config.Runner.Executor.Type = util.ExecutorTypeDocker
+	pool := &JobPool{runningJobs: make(map[int]*runningJob), client: newHTTPClient()}
+	for index := 0; index < 101; index++ {
+		pool.dockerQuarantines = append(pool.dockerQuarantines, db.DockerReconciliationStopQuarantine{ProjectID: 1, TaskID: index + 1, Generation: 1, Resource: db.DockerReconciliationResourceTask, ContainerName: fmt.Sprintf("task-%d", index), Reason: "daemon stop state could not be confirmed"})
+	}
+	var received RunnerProgress
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		pool.dockerPolicyMu.Lock()
+		pool.dockerQuarantines = append(pool.dockerQuarantines, db.DockerReconciliationStopQuarantine{ProjectID: 1, TaskID: 999, Generation: 1, Resource: db.DockerReconciliationResourceTask, ContainerName: "concurrent", Reason: "daemon stop state could not be confirmed"})
+		pool.dockerPolicyMu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	util.Config.WebHost = server.URL
+	require.True(t, pool.sendProgress())
+	assert.Len(t, received.DockerReconciliationQuarantines, 100)
+	assert.Len(t, pool.dockerQuarantines, 2)
+	assert.Equal(t, 101, pool.dockerQuarantines[0].TaskID)
+	assert.Equal(t, 999, pool.dockerQuarantines[1].TaskID)
+	pool.finishStoppedJob(&runningJob{job: &confirmedStopExecutor{LocalExecutor: &tasks.LocalExecutor{Task: db.Task{ID: 101}}, confirmation: tasks.StopQuarantined, quarantine: pool.dockerQuarantines[0]}, status: task_logger.TaskStoppingStatus})
+	assert.Len(t, pool.dockerQuarantines, 2, "dedup keeps an already queued quarantine singular")
+}
+
+func TestJobPoolRetainsDockerQuarantinesAfterRejectedOrFailedProgress(t *testing.T) {
+	initConfig(t)
+	util.Config.Runner.Token = "token"
+	util.Config.Runner.Executor.Type = util.ExecutorTypeDocker
+	quarantine := db.DockerReconciliationStopQuarantine{ProjectID: 1, TaskID: 1, Generation: 1, Resource: db.DockerReconciliationResourceTask, ContainerName: "task-1", Reason: "daemon stop state could not be confirmed"}
+	for _, tc := range []struct {
+		name      string
+		host      func(t *testing.T) string
+		transport bool
+	}{
+		{name: "rejected", host: func(t *testing.T) string {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusConflict) }))
+			t.Cleanup(server.Close)
+			return server.URL
+		}},
+		{name: "transport error", host: func(*testing.T) string { return "http://runner.invalid" }, transport: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := &JobPool{runningJobs: make(map[int]*runningJob), client: newHTTPClient(), dockerQuarantines: []db.DockerReconciliationStopQuarantine{quarantine}}
+			if tc.transport {
+				pool.client = &http.Client{Transport: failingRoundTripper{}}
+			}
+			util.Config.WebHost = tc.host(t)
+			assert.False(t, pool.sendProgress())
+			assert.Equal(t, []db.DockerReconciliationStopQuarantine{quarantine}, pool.dockerQuarantines)
+		})
+	}
 }
 
 func TestJobPool_SendProgressIncludesAssignmentGeneration(t *testing.T) {

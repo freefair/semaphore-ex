@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"github.com/semaphoreui/semaphore/db"
 )
 
@@ -17,4 +18,43 @@ type ExecutorMetadataProvider interface {
 type DockerExecutionPolicyConsumer interface {
 	ApplyDockerExecutionPolicy(db.DockerExecutionPolicy) error
 	DockerExecutionPolicyAcknowledgement() db.DockerExecutionPolicyAck
+}
+
+// DockerRunnerIdentityConsumer receives the server-authenticated runner ID
+// before Docker work is accepted. It is deliberately separate from the policy
+// contract so non-Docker providers remain source-compatible.
+type DockerRunnerIdentityConsumer interface {
+	ApplyDockerRunnerIdentity(int) error
+	ApplyDockerReconciliationSession(db.DockerReconciliationSession) error
+	DockerReconciliationSession() db.DockerReconciliationSession
+}
+
+// DockerReconciliationScanner is implemented only by Docker providers. It
+// receives server-issued tuples and returns no daemon metadata beyond the
+// typed reconciliation observations accepted by the API batch boundary.
+type DockerReconciliationScanner interface {
+	ScanDockerReconciliation(context.Context, db.DockerReconciliationSession) ([]db.DockerReconciliationObservation, db.DockerReconciliationScanComplete, []db.DockerReconciliationOrphanCandidate, error)
+}
+
+// StopConfirmation is the only evidence the runner may use to turn a Docker
+// cancellation into a terminal task result. A context cancellation or a
+// successful stop request is not evidence: the daemon must confirm the
+// container is no longer running.
+type StopConfirmation string
+
+const (
+	StopPending     StopConfirmation = "pending"
+	StopConfirmed   StopConfirmation = "confirmed"
+	StopQuarantined StopConfirmation = "quarantined"
+)
+
+// ConfirmedStopper is an optional executor capability. It keeps the legacy
+// Job.Kill contract intact for local and Kubernetes executors while letting a
+// Docker executor prove (or explicitly quarantine) a cancellation.
+type ConfirmedStopper interface {
+	ConfirmStop(context.Context) StopConfirmation
+}
+
+type DockerReconciliationQuarantineReporter interface {
+	DockerCancellationQuarantine() db.DockerReconciliationStopQuarantine
 }
