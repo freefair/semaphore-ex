@@ -786,6 +786,32 @@ func TestUpdateRunnerPersistsBoundedDockerExecutorMetadata(t *testing.T) {
 	assert.Equal(t, metadata.ContainerName, attempts[0].ContainerName)
 }
 
+func TestUpdateRunnerRoundTripsOnlyAllowListedDockerDenialRuleID(t *testing.T) {
+	fixture := newRunnerMetadataAPIFixture(t)
+	valid := db.RunnerExecutorMetadata{ExecutorType: db.RunnerExecutorDocker, DenialRuleID: db.DockerPolicyRuleImageDenied}
+	request := newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{Jobs: []runners.JobProgress{{
+		ID: fixture.task.ID, Generation: fixture.task.AssignmentGeneration, Status: task_logger.TaskRunningStatus, ExecutorMetadata: &valid,
+	}}})
+	response := httptest.NewRecorder()
+	fixture.controller.UpdateRunner(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	attempts, err := fixture.store.GetTaskRunnerAttempts(fixture.project.ID, fixture.task.ID)
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	assert.Equal(t, db.DockerPolicyRuleImageDenied, attempts[0].DenialRuleID)
+
+	invalid := db.RunnerExecutorMetadata{ExecutorType: db.RunnerExecutorDocker, DenialRuleID: "daemon said: secret image path"}
+	request = newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{Jobs: []runners.JobProgress{{
+		ID: fixture.task.ID, Generation: fixture.task.AssignmentGeneration, Status: task_logger.TaskRunningStatus, ExecutorMetadata: &invalid,
+	}}})
+	response = httptest.NewRecorder()
+	fixture.controller.UpdateRunner(response, request)
+	assert.Equal(t, http.StatusBadRequest, response.Code)
+	attempts, err = fixture.store.GetTaskRunnerAttempts(fixture.project.ID, fixture.task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.DockerPolicyRuleImageDenied, attempts[0].DenialRuleID)
+}
+
 func TestUpdateRunnerRejectsExecutorMetadataForAnotherRunnerType(t *testing.T) {
 	fixture := newRunnerMetadataAPIFixture(t)
 	metadata := db.RunnerExecutorMetadata{

@@ -71,3 +71,19 @@ func TestParseHealthReportIncludesSecureModeMetadata(t *testing.T) {
 	_, err = ParseHealthReport(header)
 	assert.Error(t, err)
 }
+
+func TestParseHealthReportPersistsOnlyCompleteDockerPolicyAcknowledgement(t *testing.T) {
+	header := http.Header{}
+	header.Set(RunnerDockerPolicyRevisionHeader, "4")
+	header.Set(RunnerDockerPolicyHashHeader, strings.Repeat("a", 64))
+	report, err := ParseHealthReport(header)
+	require.NoError(t, err)
+	require.NotNil(t, report.DockerPolicyAck)
+	runner := db.Runner{}
+	report.Apply(&runner)
+	assert.Equal(t, 4, runner.DockerPolicyRevision)
+	assert.Equal(t, strings.Repeat("a", 64), runner.DockerPolicyHash)
+
+	_, err = ParseHealthReport(http.Header{RunnerDockerPolicyRevisionHeader: []string{"4"}})
+	assert.ErrorContains(t, err, "incomplete")
+}

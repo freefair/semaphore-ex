@@ -120,6 +120,9 @@ type Runner struct {
 
 	ExecutorType RunnerExecutorType `db:"executor_type" json:"executor_type" backup:"-"`
 
+	DockerPolicyRevision int    `db:"docker_policy_revision" json:"docker_policy_revision" backup:"-"`
+	DockerPolicyHash     string `db:"docker_policy_hash" json:"docker_policy_hash" backup:"-"`
+
 	PublicKey *string `db:"public_key" json:"-" backup:"-"`
 
 	RegistrationPolicy      RunnerRegistrationPolicy `db:"registration_policy" json:"registration_policy"`

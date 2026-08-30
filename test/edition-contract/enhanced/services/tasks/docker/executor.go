@@ -35,6 +35,8 @@ type Provider struct {
 	keyInstaller db_lib.AccessKeyInstaller
 	runnerBoot   string
 	repoLock     *tasks.KeyLock
+	policyMu     sync.RWMutex
+	policy       db.DockerExecutionPolicy
 }
 
 // NewProvider builds one long-lived Docker API client for the runner. The
@@ -60,7 +62,28 @@ func NewProvider(input util.RunnerDockerConfig, installers ...db_lib.AccessKeyIn
 	if err != nil {
 		return nil, err
 	}
-	return &Provider{config: cfg, client: client, keyInstaller: installer, runnerBoot: nonce, repoLock: &tasks.KeyLock{}}, nil
+	return &Provider{config: cfg, client: client, keyInstaller: installer, runnerBoot: nonce, repoLock: &tasks.KeyLock{}, policy: db.DefaultDockerExecutionPolicy()}, nil
+}
+
+func (p *Provider) ApplyDockerExecutionPolicy(policy db.DockerExecutionPolicy) error {
+	if err := policy.Canonicalize(); err != nil {
+		return err
+	}
+	p.policyMu.Lock()
+	p.policy = policy
+	p.policyMu.Unlock()
+	return nil
+}
+
+func (p *Provider) DockerExecutionPolicyAcknowledgement() db.DockerExecutionPolicyAck {
+	policy := p.effectivePolicy()
+	return db.DockerExecutionPolicyAck{Revision: policy.Revision, Hash: policy.Hash}
+}
+
+func (p *Provider) effectivePolicy() db.DockerExecutionPolicy {
+	p.policyMu.RLock()
+	defer p.policyMu.RUnlock()
+	return p.policy
 }
 
 func runnerBootNonce() (string, error) {
@@ -72,7 +95,15 @@ func runnerBootNonce() (string, error) {
 }
 
 func (p *Provider) NewExecutor(task db.Task, template db.Template, inventory db.Inventory, repository db.Repository, environment db.Environment, jwt string) (tasks.Executor, error) {
-	if _, err := p.config.taskImage(template); err != nil {
+	taskImage, err := p.config.taskImage(template)
+	if err != nil {
+		return nil, err
+	}
+	policy := p.effectivePolicy()
+	if err := policy.ValidateExecution(policyExecutionRequest(policy, p.config.helperImage, "none")); err != nil {
+		return nil, err
+	}
+	if err := policy.ValidateExecution(policyExecutionRequest(policy, taskImage, policy.Network)); err != nil {
 		return nil, err
 	}
 	local := &tasks.LocalExecutor{
@@ -97,6 +128,7 @@ func (p *Provider) NewExecutor(task db.Task, template db.Template, inventory db.
 		logger:        task_logger.NopLogger{},
 		status:        task_logger.TaskStartingStatus,
 		containerName: dockerTaskName(task.ID, p.runnerBoot),
+		policy:        policy,
 	}, nil
 }
 
@@ -121,6 +153,9 @@ type DockerExecutor struct {
 	reportedID    string
 	containerName string
 	volumeName    string
+	policy        db.DockerExecutionPolicy
+	helperImage   ResolvedImage
+	taskImage     ResolvedImage
 }
 
 func newDockerExecutorForPlan(client DockerClient, cfg config, runnerBoot string, task db.Task, template db.Template, logger task_logger.Logger) *DockerExecutor {
@@ -128,6 +163,7 @@ func newDockerExecutorForPlan(client DockerClient, cfg config, runnerBoot string
 		client: client, config: cfg, runnerBoot: runnerBoot, task: task, template: template,
 		logger: logger, status: task_logger.TaskStartingStatus,
 		containerName: dockerTaskName(task.ID, runnerBoot),
+		policy:        db.DefaultDockerExecutionPolicy(),
 	}
 }
 
@@ -199,21 +235,24 @@ func (e *DockerExecutor) runContainerPlan(ctx context.Context, plan *tasks.Conta
 	if err != nil {
 		return err
 	}
-	if err := e.client.PrepareImage(runCtx, e.config.helperImage, e.config.pullPolicy); err != nil {
+	helperImage, err := e.client.ResolveImage(runCtx, e.config.helperImage, ImageRoleHelper, e.policy)
+	if err != nil {
 		if e.IsKilled() {
 			return nil
 		}
-		return fmt.Errorf("preparing Docker helper image: %w", err)
+		return fmt.Errorf("resolving Docker helper image: %w", err)
 	}
 	if e.IsKilled() {
 		return nil
 	}
-	if err := e.client.PrepareImage(runCtx, taskImage, e.config.pullPolicy); err != nil {
+	resolvedTaskImage, err := e.client.ResolveImage(runCtx, taskImage, ImageRoleTask, e.policy)
+	if err != nil {
 		if e.IsKilled() {
 			return nil
 		}
-		return fmt.Errorf("preparing Docker task image: %w", err)
+		return fmt.Errorf("resolving Docker task image: %w", err)
 	}
+	e.setResolvedImages(helperImage, resolvedTaskImage)
 	if e.IsKilled() {
 		return nil
 	}
@@ -233,7 +272,7 @@ func (e *DockerExecutor) runContainerPlan(ctx context.Context, plan *tasks.Conta
 		return nil
 	}
 
-	helperID, err := e.client.CreateContainer(runCtx, e.containerSpec(baseName+"-helper", e.config.helperImage, volumeName, false, "helper"))
+	helperID, err := e.client.CreateContainer(runCtx, e.containerSpec(baseName+"-helper", helperImage.ResolvedReference, volumeName, false, "helper"))
 	if err != nil {
 		if e.IsKilled() {
 			e.setHelperID(baseName + "-helper")
@@ -274,7 +313,7 @@ func (e *DockerExecutor) runContainerPlan(ctx context.Context, plan *tasks.Conta
 		return nil
 	}
 
-	containerID, err := e.client.CreateContainer(runCtx, e.containerSpec(baseName, taskImage, volumeName, true, "task"))
+	containerID, err := e.client.CreateContainer(runCtx, e.containerSpec(baseName, resolvedTaskImage.ResolvedReference, volumeName, true, "task"))
 	if err != nil {
 		if e.IsKilled() {
 			e.setCleanupContainerID(baseName)
@@ -445,10 +484,24 @@ func (e *DockerExecutor) ExecutorMetadata() db.RunnerExecutorMetadata {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return db.RunnerExecutorMetadata{
-		ExecutorType:  db.RunnerExecutorDocker,
-		ContainerID:   e.reportedID,
-		ContainerName: e.containerName,
+		ExecutorType:   db.RunnerExecutorDocker,
+		ContainerID:    e.reportedID,
+		ContainerName:  e.containerName,
+		RequestedImage: e.taskImage.RequestedReference,
+		ResolvedImage:  e.taskImage.ResolvedReference,
+		PolicyRevision: e.policy.Revision,
+		PolicyHash:     e.policy.Hash,
+		NanoCPUs:       e.policy.NanoCPUs,
+		MemoryBytes:    e.policy.MemoryBytes,
+		PidsLimit:      e.policy.PidsLimit,
 	}
+}
+
+func (e *DockerExecutor) setResolvedImages(helper ResolvedImage, task ResolvedImage) {
+	e.mu.Lock()
+	e.helperImage = helper
+	e.taskImage = task
+	e.mu.Unlock()
 }
 
 func (e *DockerExecutor) Cleanup() {
@@ -500,25 +553,39 @@ func (e *DockerExecutor) labels(resource string) map[string]string {
 
 func (e *DockerExecutor) containerSpec(name string, image string, volumeName string, readOnly bool, resource string) ContainerSpec {
 	tmpfs := []string(nil)
-	network := "none"
-	privileged := false
+	network := e.policy.Network
 	if resource == "task" {
 		tmpfs = []string{"/workspace", "/tmp", "/home/semaphore"}
-		network = e.config.network
-		privileged = e.config.privileged
+	} else {
+		network = "none"
 	}
 	return ContainerSpec{
-		Name:         name,
-		Image:        image,
-		User:         "65534:0",
-		Command:      append([]string(nil), idleContainerCommand...),
-		Labels:       e.labels(resource),
-		Network:      network,
-		NanoCPUs:     e.config.nanoCPUs,
-		Memory:       e.config.memory,
-		Privileged:   privileged,
-		VolumeMounts: []VolumeMount{{Source: volumeName, Target: containerBundlePath, ReadOnly: readOnly}},
-		Tmpfs:        tmpfs,
+		Name:                name,
+		Image:               image,
+		User:                "65534:0",
+		Command:             append([]string(nil), idleContainerCommand...),
+		Labels:              e.labels(resource),
+		Network:             network,
+		NanoCPUs:            e.policy.NanoCPUs,
+		Memory:              e.policy.MemoryBytes,
+		PidsLimit:           e.policy.PidsLimit,
+		SeccompProfile:      e.policy.SeccompProfile,
+		AppArmorProfile:     e.policy.AppArmorProfile,
+		Privileged:          false,
+		ReadOnlyRootFS:      true,
+		NoNewPrivileges:     true,
+		DropAllCapabilities: true,
+		PrivateNamespaces:   true,
+		VolumeMounts:        []VolumeMount{{Source: volumeName, Target: containerBundlePath, ReadOnly: readOnly}},
+		Tmpfs:               tmpfs,
+	}
+}
+
+func policyExecutionRequest(policy db.DockerExecutionPolicy, image string, network string) db.DockerExecutionPolicyTestRequest {
+	return db.DockerExecutionPolicyTestRequest{
+		Image: image, Network: network, User: policy.User,
+		NanoCPUs: policy.NanoCPUs, MemoryBytes: policy.MemoryBytes, PidsLimit: policy.PidsLimit,
+		ReadOnlyRootFS: true,
 	}
 }
 

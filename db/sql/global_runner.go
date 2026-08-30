@@ -152,13 +152,15 @@ func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
 	}
 	if runner.ProjectID == nil {
 		_, err = d.exec(
-			"update `runner` set `touched`=?, `started_at`=?, `version`=?, `platform`=?, `current_load`=?, `executor_type`=?, `security_compliant`=?, `security_reason`=?, `security_remediation`=?, `transport_trust`=?, `security_protocol_version`=?, `security_checked_at`=? where id=?",
+			"update `runner` set `touched`=?, `started_at`=?, `version`=?, `platform`=?, `current_load`=?, `executor_type`=?, `docker_policy_revision`=?, `docker_policy_hash`=?, `security_compliant`=?, `security_reason`=?, `security_remediation`=?, `transport_trust`=?, `security_protocol_version`=?, `security_checked_at`=? where id=?",
 			touchedAt,
 			runner.StartedAt,
 			runner.Version,
 			runner.Platform,
 			runner.CurrentLoad,
 			runner.EffectiveExecutorType(),
+			runner.DockerPolicyRevision,
+			runner.DockerPolicyHash,
 			runner.SecurityCompliant,
 			runner.SecurityReason,
 			runner.SecurityRemediation,
@@ -170,13 +172,15 @@ func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
 	}
 
 	_, err = d.exec(
-		"update `runner` set `touched`=?, `started_at`=?, `version`=?, `platform`=?, `current_load`=?, `executor_type`=?, `security_compliant`=?, `security_reason`=?, `security_remediation`=?, `transport_trust`=?, `security_protocol_version`=?, `security_checked_at`=? where id=? and project_id=?",
+		"update `runner` set `touched`=?, `started_at`=?, `version`=?, `platform`=?, `current_load`=?, `executor_type`=?, `docker_policy_revision`=?, `docker_policy_hash`=?, `security_compliant`=?, `security_reason`=?, `security_remediation`=?, `transport_trust`=?, `security_protocol_version`=?, `security_checked_at`=? where id=? and project_id=?",
 		touchedAt,
 		runner.StartedAt,
 		runner.Version,
 		runner.Platform,
 		runner.CurrentLoad,
 		runner.EffectiveExecutorType(),
+		runner.DockerPolicyRevision,
+		runner.DockerPolicyHash,
 		runner.SecurityCompliant,
 		runner.SecurityReason,
 		runner.SecurityRemediation,

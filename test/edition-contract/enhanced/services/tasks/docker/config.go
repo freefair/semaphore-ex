@@ -54,7 +54,7 @@ func effectiveConfig(input util.RunnerDockerConfig) (config, error) {
 		result.helperImage = "semaphoreui/helper:latest"
 	}
 	if result.network == "" {
-		result.network = "bridge"
+		result.network = "none"
 	}
 	if result.pullPolicy == "" {
 		result.pullPolicy = PullIfNotPresent
@@ -79,6 +79,9 @@ func effectiveConfig(input util.RunnerDockerConfig) (config, error) {
 	}
 	if input.CPULimit < 0 {
 		return config{}, fmt.Errorf("Docker CPU limit must not be negative")
+	}
+	if input.Privileged {
+		return config{}, fmt.Errorf("Docker privileged execution is not supported")
 	}
 	result.nanoCPUs = int64(input.CPULimit * 1_000_000_000)
 	if input.MemoryLimit != "" {

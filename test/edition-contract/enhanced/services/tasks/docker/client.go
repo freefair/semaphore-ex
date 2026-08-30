@@ -6,13 +6,16 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/strslice"
 	moby "github.com/moby/moby/client"
+	"github.com/semaphoreui/semaphore/db"
 )
 
 const containerBundlePath = "/semaphore/bundle"
@@ -26,24 +29,31 @@ type VolumeMount struct {
 // ContainerSpec is deliberately narrower than Docker's create request. It has
 // no host-path, socket, device, capability, port, or task-controlled fields.
 type ContainerSpec struct {
-	Name         string
-	Image        string
-	User         string
-	Command      []string
-	Environment  []string
-	WorkingDir   string
-	Labels       map[string]string
-	Network      string
-	NanoCPUs     int64
-	Memory       int64
-	Privileged   bool
-	VolumeMounts []VolumeMount
-	BindMounts   []string
-	Tmpfs        []string
+	Name                string
+	Image               string
+	User                string
+	Command             []string
+	Environment         []string
+	WorkingDir          string
+	Labels              map[string]string
+	Network             string
+	NanoCPUs            int64
+	Memory              int64
+	Privileged          bool
+	ReadOnlyRootFS      bool
+	NoNewPrivileges     bool
+	DropAllCapabilities bool
+	PrivateNamespaces   bool
+	PidsLimit           int64
+	SeccompProfile      string
+	AppArmorProfile     string
+	VolumeMounts        []VolumeMount
+	BindMounts          []string
+	Tmpfs               []string
 }
 
 type DockerClient interface {
-	PrepareImage(context.Context, string, PullPolicy) error
+	ResolveImage(context.Context, string, ImageRole, db.DockerExecutionPolicy) (ResolvedImage, error)
 	CreateVolume(context.Context, string, map[string]string) (string, error)
 	CreateContainer(context.Context, ContainerSpec) (string, error)
 	StartContainer(context.Context, string) error
@@ -55,8 +65,24 @@ type DockerClient interface {
 	RemoveVolume(context.Context, string) error
 }
 
+type ImageRole string
+
+const (
+	ImageRoleHelper ImageRole = "helper"
+	ImageRoleTask   ImageRole = "task"
+)
+
+type ResolvedImage struct {
+	RequestedReference string
+	ResolvedReference  string
+	Digest             string
+	Source             string
+	SizeBytes          int64
+}
+
 type mobyClient struct {
-	client *moby.Client
+	client     *moby.Client
+	pullPolicy PullPolicy
 }
 
 func newMobyClient(cfg config) (DockerClient, error) {
@@ -77,28 +103,63 @@ func newMobyClient(cfg config) (DockerClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating Docker API client: %w", err)
 	}
-	return &mobyClient{client: client}, nil
+	return &mobyClient{client: client, pullPolicy: cfg.pullPolicy}, nil
 }
 
-func (c *mobyClient) PrepareImage(ctx context.Context, image string, policy PullPolicy) error {
-	switch policy {
-	case PullAlways:
-		return c.pullImage(ctx, image)
-	case PullIfNotPresent:
-		if _, err := c.client.ImageInspect(ctx, image); err == nil {
-			return nil
-		} else if !errdefs.IsNotFound(err) {
-			return fmt.Errorf("inspecting Docker image: %w", err)
-		}
-		return c.pullImage(ctx, image)
-	case PullNever:
-		if _, err := c.client.ImageInspect(ctx, image); err != nil {
-			return fmt.Errorf("Docker image %q is unavailable with pull policy never: %w", image, err)
-		}
-		return nil
-	default:
-		return fmt.Errorf("unsupported Docker pull policy %q", policy)
+func (c *mobyClient) ResolveImage(ctx context.Context, requested string, _ ImageRole, policy db.DockerExecutionPolicy) (ResolvedImage, error) {
+	if err := policy.Validate(); err != nil {
+		return ResolvedImage{}, err
 	}
+	pullCtx, cancel := context.WithTimeout(ctx, time.Duration(policy.PullTimeoutSeconds)*time.Second)
+	defer cancel()
+	source := "local"
+	switch c.pullPolicy {
+	case PullAlways:
+		if err := c.pullImage(pullCtx, requested); err != nil {
+			return ResolvedImage{}, err
+		}
+		source = "pulled"
+	case PullIfNotPresent:
+		if _, err := c.client.ImageInspect(pullCtx, requested); err == nil {
+			break
+		} else if !errdefs.IsNotFound(err) {
+			return ResolvedImage{}, fmt.Errorf("inspecting Docker image: %w", err)
+		}
+		if err := c.pullImage(pullCtx, requested); err != nil {
+			return ResolvedImage{}, err
+		}
+		source = "pulled"
+	case PullNever:
+		if _, err := c.client.ImageInspect(pullCtx, requested); err != nil {
+			return ResolvedImage{}, fmt.Errorf("Docker image is unavailable with pull policy never: %w", err)
+		}
+	default:
+		return ResolvedImage{}, fmt.Errorf("unsupported Docker pull policy %q", c.pullPolicy)
+	}
+	inspected, err := c.client.ImageInspect(pullCtx, requested)
+	if err != nil {
+		return ResolvedImage{}, fmt.Errorf("inspecting resolved Docker image: %w", err)
+	}
+	if inspected.Size <= 0 || inspected.Size > policy.MaxImageSizeBytes {
+		return ResolvedImage{}, db.DockerPolicyViolationError{Rule: db.DockerPolicyRuleResourceDenied}
+	}
+	for _, candidate := range inspected.RepoDigests {
+		if imageRepository(candidate) == imageRepository(requested) && slices.Contains(policy.AllowedImages, candidate) {
+			return ResolvedImage{RequestedReference: requested, ResolvedReference: candidate, Digest: candidate[strings.LastIndex(candidate, "@"):], Source: source, SizeBytes: inspected.Size}, nil
+		}
+	}
+	return ResolvedImage{}, db.DockerPolicyViolationError{Rule: db.DockerPolicyRuleImageDenied}
+}
+
+func imageRepository(reference string) string {
+	if at := strings.Index(reference, "@"); at >= 0 {
+		return reference[:at]
+	}
+	lastSlash := strings.LastIndex(reference, "/")
+	if colon := strings.LastIndex(reference, ":"); colon > lastSlash {
+		return reference[:colon]
+	}
+	return reference
 }
 
 func (c *mobyClient) pullImage(ctx context.Context, image string) error {
@@ -122,8 +183,8 @@ func (c *mobyClient) CreateVolume(ctx context.Context, name string, labels map[s
 }
 
 func (c *mobyClient) CreateContainer(ctx context.Context, spec ContainerSpec) (string, error) {
-	if len(spec.BindMounts) != 0 {
-		return "", fmt.Errorf("Docker task containers do not support host bind mounts")
+	if err := validateContainerSpec(spec); err != nil {
+		return "", err
 	}
 	mounts := make([]mount.Mount, len(spec.VolumeMounts))
 	for index, volume := range spec.VolumeMounts {
@@ -134,6 +195,7 @@ func (c *mobyClient) CreateContainer(ctx context.Context, spec ContainerSpec) (s
 		tmpfs[target] = "rw,nosuid,nodev,uid=65534,gid=0,mode=0750"
 	}
 	init := true
+	pidsLimit := spec.PidsLimit
 	result, err := c.client.ContainerCreate(ctx, moby.ContainerCreateOptions{
 		Name: spec.Name,
 		Config: &container.Config{
@@ -145,14 +207,23 @@ func (c *mobyClient) CreateContainer(ctx context.Context, spec ContainerSpec) (s
 			Labels:     spec.Labels,
 		},
 		HostConfig: &container.HostConfig{
-			NetworkMode: container.NetworkMode(spec.Network),
-			Privileged:  spec.Privileged,
-			Mounts:      mounts,
-			Tmpfs:       tmpfs,
-			Init:        &init,
+			NetworkMode:    container.NetworkMode(spec.Network),
+			Privileged:     false,
+			Mounts:         mounts,
+			Tmpfs:          tmpfs,
+			Init:           &init,
+			ReadonlyRootfs: spec.ReadOnlyRootFS,
+			SecurityOpt:    securityOptions(spec),
+			CapDrop:        strslice.StrSlice{"ALL"},
+			IpcMode:        container.IpcMode("private"),
+			// Empty is Docker's valid private default for PID, UTS, and user namespaces.
+			PidMode:    container.PidMode(""),
+			UTSMode:    container.UTSMode(""),
+			UsernsMode: container.UsernsMode(""),
 			Resources: container.Resources{
-				NanoCPUs: spec.NanoCPUs,
-				Memory:   spec.Memory,
+				NanoCPUs:  spec.NanoCPUs,
+				Memory:    spec.Memory,
+				PidsLimit: &pidsLimit,
 			},
 		},
 	})
@@ -160,6 +231,42 @@ func (c *mobyClient) CreateContainer(ctx context.Context, spec ContainerSpec) (s
 		return "", err
 	}
 	return result.ID, nil
+}
+
+func securityOptions(spec ContainerSpec) []string {
+	options := []string{"no-new-privileges:true"}
+	if spec.SeccompProfile != "" && spec.SeccompProfile != "default" {
+		options = append(options, "seccomp="+spec.SeccompProfile)
+	}
+	if spec.AppArmorProfile != "" && spec.AppArmorProfile != "docker-default" {
+		options = append(options, "apparmor="+spec.AppArmorProfile)
+	}
+	return options
+}
+
+func validateContainerSpec(spec ContainerSpec) error {
+	if spec.Privileged {
+		return db.DockerPolicyViolationError{Rule: db.DockerPolicyRulePrivilegeDenied}
+	}
+	if len(spec.BindMounts) != 0 {
+		return db.DockerPolicyViolationError{Rule: db.DockerPolicyRuleBindMountDenied}
+	}
+	if !spec.ReadOnlyRootFS {
+		return db.DockerPolicyViolationError{Rule: db.DockerPolicyRuleReadonlyRequired}
+	}
+	if !spec.NoNewPrivileges || !spec.DropAllCapabilities {
+		return db.DockerPolicyViolationError{Rule: db.DockerPolicyRuleCapabilityDenied}
+	}
+	if !spec.PrivateNamespaces || spec.Network == "host" || strings.HasPrefix(spec.Network, "container:") {
+		return db.DockerPolicyViolationError{Rule: db.DockerPolicyRuleNamespaceRequired}
+	}
+	if spec.User != "65534:0" {
+		return db.DockerPolicyViolationError{Rule: db.DockerPolicyRuleIdentityDenied}
+	}
+	if spec.NanoCPUs <= 0 || spec.Memory <= 0 || spec.PidsLimit <= 0 {
+		return db.DockerPolicyViolationError{Rule: db.DockerPolicyRuleResourceDenied}
+	}
+	return nil
 }
 
 func (c *mobyClient) StartContainer(ctx context.Context, containerID string) error {

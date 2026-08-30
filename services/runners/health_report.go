@@ -10,12 +10,14 @@ import (
 )
 
 const (
-	RunnerVersionHeader          = "X-Runner-Version"
-	RunnerPlatformHeader         = "X-Runner-Platform"
-	RunnerCurrentLoadHeader      = "X-Runner-Current-Load"
-	RunnerExecutorTypeHeader     = "X-Runner-Executor-Type"
-	RunnerTransportTrustHeader   = "X-Runner-Transport-Trust"
-	RunnerSecurityProtocolHeader = "X-Runner-Security-Protocol"
+	RunnerVersionHeader              = "X-Runner-Version"
+	RunnerPlatformHeader             = "X-Runner-Platform"
+	RunnerCurrentLoadHeader          = "X-Runner-Current-Load"
+	RunnerExecutorTypeHeader         = "X-Runner-Executor-Type"
+	RunnerTransportTrustHeader       = "X-Runner-Transport-Trust"
+	RunnerSecurityProtocolHeader     = "X-Runner-Security-Protocol"
+	RunnerDockerPolicyRevisionHeader = "X-Runner-Docker-Policy-Revision"
+	RunnerDockerPolicyHashHeader     = "X-Runner-Docker-Policy-Hash"
 
 	maxRunnerReportTextBytes = 128
 	maxRunnerReportedLoad    = 100_000
@@ -30,6 +32,7 @@ type HealthReport struct {
 	ExecutorType            *db.RunnerExecutorType
 	TransportTrust          *db.RunnerTransportTrust
 	SecurityProtocolVersion *int
+	DockerPolicyAck         *db.DockerExecutionPolicyAck
 }
 
 // ParseHealthReport validates the bounded metadata attached to a runner poll.
@@ -81,6 +84,27 @@ func ParseHealthReport(header http.Header) (HealthReport, error) {
 		}
 		report.SecurityProtocolVersion = &value
 	}
+	policyRevision, revisionPresent := header[RunnerDockerPolicyRevisionHeader]
+	policyHash, hashPresent := header[RunnerDockerPolicyHashHeader]
+	if revisionPresent != hashPresent {
+		return HealthReport{}, fmt.Errorf("Docker policy acknowledgement is incomplete")
+	}
+	if revisionPresent {
+		value, err := strconv.Atoi(strings.TrimSpace(strings.Join(policyRevision, ",")))
+		if err != nil || value < 0 {
+			return HealthReport{}, fmt.Errorf("%s must be a non-negative integer", RunnerDockerPolicyRevisionHeader)
+		}
+		hash := strings.TrimSpace(strings.Join(policyHash, ","))
+		if len(hash) != 64 {
+			return HealthReport{}, fmt.Errorf("%s must be a SHA-256 hash", RunnerDockerPolicyHashHeader)
+		}
+		for _, char := range hash {
+			if !(char >= '0' && char <= '9') && !(char >= 'a' && char <= 'f') {
+				return HealthReport{}, fmt.Errorf("%s must be a SHA-256 hash", RunnerDockerPolicyHashHeader)
+			}
+		}
+		report.DockerPolicyAck = &db.DockerExecutionPolicyAck{Revision: value, Hash: hash}
+	}
 	return report, nil
 }
 
@@ -94,6 +118,10 @@ func (report HealthReport) Apply(runner *db.Runner) {
 	}
 	if report.CurrentLoad != nil {
 		runner.CurrentLoad = *report.CurrentLoad
+	}
+	if report.DockerPolicyAck != nil {
+		runner.DockerPolicyRevision = report.DockerPolicyAck.Revision
+		runner.DockerPolicyHash = report.DockerPolicyAck.Hash
 	}
 	if report.ExecutorType != nil {
 		runner.ExecutorType = *report.ExecutorType
