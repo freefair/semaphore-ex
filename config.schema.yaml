@@ -441,6 +441,18 @@ $defs:
       username_claim:   { type: string, default: preferred_username }
       name_claim:       { type: string, default: preferred_username }
       email_claim:      { type: string, default: email }
+      group_claim_path:
+        type: string
+        description: Allow-listed dotted path to the scalar or string-array group claim used by enhanced role mapping.
+      group_claim_case_insensitive:
+        type: boolean
+        default: false
+        description: Normalize group claim values to lowercase before matching. Disabled by default.
+      group_claim_missing_policy:
+        type: string
+        enum: [preserve, clear]
+        default: preserve
+        description: Preserve managed access when the claim is absent, or clear only assignments owned by this provider.
       order:            { type: integer }
       return_via_state: { type: boolean, default: true }
       require_verified_email:

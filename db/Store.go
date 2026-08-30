@@ -291,6 +291,21 @@ type LDAPRepository interface {
 	GetLDAPGroupReconciliationHistory(providerID string, limit int) ([]LDAPGroupReconciliation, error)
 }
 
+// OIDCGroupMappingRepository persists only normalized allow-listed group
+// values and the resulting managed-role decisions. It never accepts tokens or
+// unrestricted OIDC claim documents.
+type OIDCGroupMappingRepository interface {
+	GetOIDCGroupMappings(providerID string) ([]OIDCGroupMapping, error)
+	SaveOIDCGroupMapping(mapping OIDCGroupMapping, expectedRevision int) (OIDCGroupMapping, error)
+	DeleteOIDCGroupMapping(providerID string, mappingID string, expectedRevision int) error
+	GetOIDCGroupMappingRevision(providerID string) (int, error)
+	GetOIDCGroupRoleAssignments(providerID string, userID int) ([]OIDCGroupRoleAssignment, error)
+	SaveOIDCGroupReconciliation(reconciliation OIDCGroupReconciliation) (OIDCGroupReconciliation, error)
+	ApplyOIDCGroupReconciliation(reconciliation OIDCGroupReconciliation,
+		additions []OIDCGroupAssignmentChange, removals []OIDCGroupAssignmentChange) (OIDCGroupReconciliation, error)
+	GetOIDCGroupReconciliationHistory(providerID string, limit int) ([]OIDCGroupReconciliation, error)
+}
+
 // ProjectStore handles project-related operations
 type ProjectStore interface {
 	GetProject(projectID int) (Project, error)
@@ -691,6 +706,7 @@ type Store interface {
 	CapabilityRepository
 	TOTPRepository
 	LDAPRepository
+	OIDCGroupMappingRepository
 	AuditWebhookRepository
 }
 

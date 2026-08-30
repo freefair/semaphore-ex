@@ -1,21 +1,24 @@
 package util
 
 type OidcProvider struct {
-	ClientID         string       `json:"client_id"`
-	ClientIDFile     string       `json:"client_id_file"`
-	ClientSecret     string       `json:"client_secret"`
-	ClientSecretFile string       `json:"client_secret_file"`
-	RedirectURL      string       `json:"redirect_url"`
-	Scopes           []string     `json:"scopes"`
-	DisplayName      string       `json:"display_name"`
-	Color            string       `json:"color"`
-	Icon             string       `json:"icon"`
-	AutoDiscovery    string       `json:"provider_url"`
-	Endpoint         oidcEndpoint `json:"endpoint"`
-	UsernameClaim    string       `json:"username_claim" default:"preferred_username"`
-	NameClaim        string       `json:"name_claim" default:"preferred_username"`
-	EmailClaim       string       `json:"email_claim" default:"email"`
-	Order            int          `json:"order"`
+	ClientID                  string       `json:"client_id"`
+	ClientIDFile              string       `json:"client_id_file"`
+	ClientSecret              string       `json:"client_secret"`
+	ClientSecretFile          string       `json:"client_secret_file"`
+	RedirectURL               string       `json:"redirect_url"`
+	Scopes                    []string     `json:"scopes"`
+	DisplayName               string       `json:"display_name"`
+	Color                     string       `json:"color"`
+	Icon                      string       `json:"icon"`
+	AutoDiscovery             string       `json:"provider_url"`
+	Endpoint                  oidcEndpoint `json:"endpoint"`
+	UsernameClaim             string       `json:"username_claim" default:"preferred_username"`
+	NameClaim                 string       `json:"name_claim" default:"preferred_username"`
+	EmailClaim                string       `json:"email_claim" default:"email"`
+	GroupClaimPath            string       `json:"group_claim_path,omitempty"`
+	GroupClaimCaseInsensitive bool         `json:"group_claim_case_insensitive,omitempty"`
+	GroupClaimMissingPolicy   string       `json:"group_claim_missing_policy,omitempty" default:"preserve"`
+	Order                     int          `json:"order"`
 
 	// ReturnViaState when true, passes the return path via the OAuth state parameter instead of the redirect URL path. This is useful for OAuth providers that have strict redirect URL validation.
 	ReturnViaState bool `json:"return_via_state" default:"true"`

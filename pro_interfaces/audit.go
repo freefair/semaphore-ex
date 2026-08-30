@@ -77,6 +77,10 @@ const (
 	AuditActionLDAPGroupPreview       AuditAction = "ldap_group_preview"
 	AuditActionLDAPGroupApply         AuditAction = "ldap_group_apply"
 	AuditActionLDAPGroupReconcile     AuditAction = "ldap_group_reconcile"
+	AuditActionOIDCGroupMappingRead   AuditAction = "oidc_group_mapping_read"
+	AuditActionOIDCGroupMappingWrite  AuditAction = "oidc_group_mapping_write"
+	AuditActionOIDCGroupMappingDelete AuditAction = "oidc_group_mapping_delete"
+	AuditActionOIDCGroupPreview       AuditAction = "oidc_group_preview"
 )
 
 type AuditTargetType string
@@ -94,6 +98,7 @@ const (
 	AuditTargetTemplateRole         AuditTargetType = "template_role"
 	AuditTargetWebhook              AuditTargetType = "audit_webhook"
 	AuditTargetLDAPGroupMapping     AuditTargetType = "ldap_group_mapping"
+	AuditTargetOIDCGroupMapping     AuditTargetType = "oidc_group_mapping"
 )
 
 type AuditOutcome string
@@ -128,6 +133,7 @@ const (
 	AuditReasonReadiness              = "readiness"
 	AuditReasonLDAPInvalidCredentials = "ldap_invalid_credentials"
 	AuditReasonLDAPPolicy             = "ldap_policy"
+	AuditReasonOIDCPolicy             = "oidc_policy"
 )
 
 type DependencyID string
@@ -178,6 +184,7 @@ var (
 	globalSystemTargetPattern     = regexp.MustCompile(`^(?:subscription|options|cache)$`)
 	templateRoleTargetPattern     = regexp.MustCompile(`^(?:template|template-role):[1-9][0-9]*$`)
 	ldapGroupTargetPattern        = regexp.MustCompile(`^(?:(?:entryuuid|objectguid|nsuniqueid|ipauniqueid):[0-9a-f-]{36}|provider:[a-z][a-z0-9_-]{0,63})$`)
+	oidcGroupTargetPattern        = regexp.MustCompile(`^provider:[a-z][a-z0-9_-]{0,63}$`)
 )
 
 // AuditEvent is the allowlisted payload shared by enhanced features. It has no
@@ -264,6 +271,8 @@ func validAuditTarget(event AuditEvent) bool {
 		return event.ProjectID == nil && event.TargetID == "audit_webhook"
 	case AuditTargetLDAPGroupMapping:
 		return event.ProjectID == nil && ldapGroupTargetPattern.MatchString(event.TargetID)
+	case AuditTargetOIDCGroupMapping:
+		return event.ProjectID == nil && oidcGroupTargetPattern.MatchString(event.TargetID)
 	default:
 		return false
 	}
@@ -302,7 +311,7 @@ func validAuditReason(reason string) bool {
 		AuditReasonActiveAssignments, AuditReasonEnrollmentPending, AuditReasonEnrollmentActive,
 		AuditReasonInvalidCode, AuditReasonReplay, AuditReasonThrottled,
 		AuditReasonRecoveryUsed, AuditReasonReset, AuditReasonReadiness,
-		AuditReasonLDAPInvalidCredentials, AuditReasonLDAPPolicy,
+		AuditReasonLDAPInvalidCredentials, AuditReasonLDAPPolicy, AuditReasonOIDCPolicy,
 		string(CapabilityReasonActive), string(CapabilityReasonProviderUnavailable),
 		string(CapabilityReasonDisabledByAdmin), string(CapabilityReasonEntitlementExpired),
 		string(CapabilityReasonReadOnly), string(CapabilityReasonInsufficientPermission),
@@ -498,6 +507,9 @@ func validAuditAction(action AuditAction) bool {
 		AuditActionLDAPGroupMappingRead, AuditActionLDAPGroupMappingWrite,
 		AuditActionLDAPGroupMappingDelete, AuditActionLDAPGroupPreview,
 		AuditActionLDAPGroupApply, AuditActionLDAPGroupReconcile:
+		return true
+	case AuditActionOIDCGroupMappingRead, AuditActionOIDCGroupMappingWrite,
+		AuditActionOIDCGroupMappingDelete, AuditActionOIDCGroupPreview:
 		return true
 	default:
 		return false

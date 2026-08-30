@@ -123,6 +123,7 @@ func Route(
 	if err := ldapService.Initialize(context.Background()); err != nil {
 		log.WithError(err).Panic("failed to initialize LDAP lifecycle service")
 	}
+	oidcGroupMappingService := proFeatures.NewOIDCGroupMappingService(store)
 	secretStorageController := projects.NewSecretStorageController(store, secretStorageService, capabilityProvider)
 	repositoryController := projects.NewRepositoryController(accessKeyInstallationService)
 	keyController := projects.NewKeyController(accessKeyService)
@@ -153,6 +154,7 @@ func Route(
 	capabilityController := NewCapabilityController(capabilityFacade, auditFacade)
 	totpController := NewTOTPController(totpService, auditFacade)
 	ldapController := NewLDAPController(ldapService, auditFacade)
+	oidcGroupMappingController := NewOIDCGroupMappingController(oidcGroupMappingService, auditFacade)
 
 	r := mux.NewRouter()
 	r.NotFoundHandler = http.HandlerFunc(servePublic)
@@ -210,10 +212,10 @@ func Route(
 	publicAPIRouter.HandleFunc("/auth/logout", logout).Methods("POST")
 	publicAPIRouter.HandleFunc("/auth/oidc/{provider}/login", oidcLogin).Methods("GET", "POST")
 	publicAPIRouter.HandleFunc("/auth/oidc/{provider}/redirect", func(w http.ResponseWriter, r *http.Request) {
-		oidcRedirectWithTOTPService(totpService, w, r)
+		oidcRedirectWithIdentityServices(totpService, oidcGroupMappingService, w, r)
 	}).Methods("GET")
 	publicAPIRouter.HandleFunc("/auth/oidc/{provider}/redirect/{redirect_path:.*}", func(w http.ResponseWriter, r *http.Request) {
-		oidcRedirectWithTOTPService(totpService, w, r)
+		oidcRedirectWithIdentityServices(totpService, oidcGroupMappingService, w, r)
 	}).Methods("GET")
 
 	internalAPI := publicAPIRouter.PathPrefix("/internal").Subrouter()
@@ -386,6 +388,13 @@ func Route(
 	adminAPI.Path("/capabilities/ldap/group-mappings/apply").HandlerFunc(ldapController.ApplyGroupPreview).Methods("POST")
 	adminAPI.Path("/capabilities/ldap/group-mappings/reconcile").HandlerFunc(ldapController.ReconcileGroupMappings).Methods("POST")
 	adminAPI.Path("/capabilities/ldap/group-mappings/history").HandlerFunc(ldapController.GroupReconciliationHistory).Methods("GET", "HEAD")
+	adminAPI.Path("/capabilities/oidc/group-mapping/providers").HandlerFunc(oidcGroupMappingController.Providers).Methods("GET", "HEAD")
+	adminAPI.Path("/capabilities/oidc/group-mappings").HandlerFunc(oidcGroupMappingController.GroupMappings).Methods("GET", "HEAD")
+	adminAPI.Path("/capabilities/oidc/group-mappings/{mapping_id}").HandlerFunc(oidcGroupMappingController.SaveGroupMapping).Methods("PUT")
+	adminAPI.Path("/capabilities/oidc/group-mappings/{mapping_id}").HandlerFunc(oidcGroupMappingController.DeleteGroupMapping).Methods("DELETE")
+	adminAPI.Path("/capabilities/oidc/group-mappings/preview").HandlerFunc(oidcGroupMappingController.PreviewGroupMappings).Methods("POST")
+	adminAPI.Path("/capabilities/oidc/group-mappings/history").HandlerFunc(oidcGroupMappingController.GroupReconciliationHistory).Methods("GET", "HEAD")
+	adminAPI.Path("/capabilities/oidc/group-mappings/assignments").HandlerFunc(oidcGroupMappingController.EffectiveGroupAssignments).Methods("GET", "HEAD")
 	adminAPI.Path("/audit-webhook").HandlerFunc(auditWebhookController.GetConfiguration).Methods("GET", "HEAD")
 	adminAPI.Path("/audit-webhook").HandlerFunc(auditWebhookController.Configure).Methods("PUT")
 	adminAPI.Path("/audit-webhook/test").HandlerFunc(auditWebhookController.TestDelivery).Methods("POST")
