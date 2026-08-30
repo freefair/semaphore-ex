@@ -199,6 +199,14 @@ func (p *JobPool) applyDockerRunnerIdentity(runnerID int) error {
 	return consumer.ApplyDockerRunnerIdentity(runnerID)
 }
 
+func (p *JobPool) applyRunnerIdentity(runnerID int) error {
+	consumer, ok := p.provider.(tasks.RunnerIdentityConsumer)
+	if !ok {
+		return nil
+	}
+	return consumer.ApplyRunnerIdentity(runnerID)
+}
+
 func (p *JobPool) dockerDispatchReady() bool {
 	if resolveExecutorType(util.Config.Runner.Executor) != util.ExecutorTypeDocker {
 		return true
@@ -1104,6 +1112,10 @@ func (p *JobPool) checkNewJobs() {
 		log.WithError(err).WithFields(log.Fields{
 			"context": "checking_new_jobs",
 		}).Error("failed to parse new jobs response from the server")
+		return
+	}
+	if err := p.applyRunnerIdentity(response.RunnerID); err != nil {
+		log.WithError(err).WithField("context", "checking_new_jobs").Error("refusing dispatch until runner identity installation succeeds")
 		return
 	}
 

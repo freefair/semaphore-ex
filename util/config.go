@@ -188,18 +188,27 @@ type RunnerK8sConfig struct {
 	// configuration is used (ServiceAccount token + CA cert mounted by Kubernetes).
 	KubeconfigPath string `json:"kubeconfig,omitempty" env:"SEMAPHORE_RUNNER_K8S_KUBECONFIG"`
 
+	// Context is the exact kubeconfig context selected by the runner operator.
+	// It is required whenever KubeconfigPath is set; current-context is never used.
+	Context string `json:"context,omitempty" env:"SEMAPHORE_RUNNER_K8S_CONTEXT"`
+
+	// ClusterAlias is a non-secret operator label shown in task diagnostics. It
+	// avoids exposing Kubernetes API addresses or kubeconfig contents.
+	ClusterAlias string `json:"cluster_alias,omitempty" env:"SEMAPHORE_RUNNER_K8S_CLUSTER_ALIAS"`
+
 	// Namespace is where ephemeral task Pods are created.
 	Namespace string `json:"namespace,omitempty" default:"semaphore" env:"SEMAPHORE_RUNNER_K8S_NAMESPACE"`
 
-	// Image is the default container image used for the build container of each
-	// task Pod. Templates may override this in a future phase.
-	Image string `json:"image,omitempty" default:"semaphoreui/job:latest" env:"SEMAPHORE_RUNNER_K8S_IMAGE"`
+	// Image is the default immutable container image used for task Jobs. The
+	// Kubernetes provider requires an OCI sha256 digest and has no mutable fallback.
+	Image string `json:"image,omitempty" env:"SEMAPHORE_RUNNER_K8S_IMAGE"`
 
-	// HelperImage is the image used for the git-clone init container (Phase 3+).
-	HelperImage string `json:"helper_image,omitempty" default:"semaphoreui/helper:latest" env:"SEMAPHORE_RUNNER_K8S_HELPER_IMAGE"`
+	// HelperImage is the immutable image used by the bundle extraction init container.
+	HelperImage string `json:"helper_image,omitempty" env:"SEMAPHORE_RUNNER_K8S_HELPER_IMAGE"`
 
-	// ServiceAccount that task Pods run under. Defaults to the namespace's default SA.
-	ServiceAccount string `json:"service_account,omitempty" default:"default" env:"SEMAPHORE_RUNNER_K8S_SERVICE_ACCOUNT"`
+	// ServiceAccount is the dedicated workload identity for task Pods. The
+	// provider rejects the namespace default service account and disables token mounting.
+	ServiceAccount string `json:"service_account,omitempty" env:"SEMAPHORE_RUNNER_K8S_SERVICE_ACCOUNT"`
 
 	// PullSecrets is a comma-separated list of imagePullSecrets attached to each Pod.
 	PullSecrets string `json:"pull_secrets,omitempty" env:"SEMAPHORE_RUNNER_K8S_PULL_SECRETS"`
@@ -210,6 +219,9 @@ type RunnerK8sConfig struct {
 
 	// CleanupGraceSeconds is the grace period when deleting Pods. Defaults to 30s.
 	CleanupGraceSeconds int `json:"cleanup_grace_seconds,omitempty" default:"30" env:"SEMAPHORE_RUNNER_K8S_CLEANUP_GRACE_SECONDS"`
+
+	// ActiveDeadlineSeconds bounds the complete Job lifetime, including image pulls.
+	ActiveDeadlineSeconds int `json:"active_deadline_seconds,omitempty" default:"3600" env:"SEMAPHORE_RUNNER_K8S_ACTIVE_DEADLINE_SECONDS"`
 }
 
 // RunnerDockerConfig holds runner-side configuration for the Docker executor. Each task

@@ -80,6 +80,13 @@ type ExecutorMetadataProvider interface {
 	ExecutorMetadata() db.RunnerExecutorMetadata
 }
 
+// RunnerIdentityConsumer receives the authenticated server-side runner ID before
+// any task executor is constructed. Remote resource labels can therefore bind to
+// the same runner identity used by assignment and progress APIs.
+type RunnerIdentityConsumer interface {
+	ApplyRunnerIdentity(int) error
+}
+
 // DockerExecutionPolicyConsumer is implemented only by Docker-backed providers.
 // The job pool uses it to atomically install the central server policy before it
 // accepts Docker work; other executor implementations remain unaffected.

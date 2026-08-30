@@ -3,6 +3,7 @@ package runners
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -122,6 +123,29 @@ type dockerPolicyConsumerStub struct {
 	policy     db.DockerExecutionPolicy
 	session    db.DockerReconciliationSession
 	remediated []db.DockerReconciliationRemediationCommand
+}
+
+type runnerIdentityConsumerStub struct {
+	dockerPolicyConsumerStub
+	runnerID int
+	err      error
+}
+
+func (p *runnerIdentityConsumerStub) ApplyRunnerIdentity(runnerID int) error {
+	p.runnerID = runnerID
+	return p.err
+}
+
+func TestJobPoolAppliesOptionalRunnerIdentityBeforeExecutorConstruction(t *testing.T) {
+	initConfig(t)
+	provider := &runnerIdentityConsumerStub{}
+	pool := NewJobPool(nil)
+	pool.provider = provider
+
+	require.NoError(t, pool.applyRunnerIdentity(41))
+	assert.Equal(t, 41, provider.runnerID)
+	provider.err = errors.New("identity rejected")
+	require.ErrorContains(t, pool.applyRunnerIdentity(42), "identity rejected")
 }
 
 func (p *dockerPolicyConsumerStub) NewExecutor(db.Task, db.Template, db.Inventory, db.Repository, db.Environment, string) (tasks.Executor, error) {
