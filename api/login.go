@@ -420,6 +420,7 @@ type claimResult struct {
 	name          string
 	email         string
 	emailVerified bool
+	groups        *pro_interfaces.OIDCGroupClaimSet
 }
 
 // emailVerifiedClaim reads the standard OIDC email_verified claim as a
@@ -545,7 +546,11 @@ func oidcEmailVerified(userInfo *oidc.UserInfo, provider util.OidcProvider) bool
 	return resolveEmailVerified(rawClaims, provider)
 }
 
-func claimOidcUserInfo(userInfo *oidc.UserInfo, provider util.OidcProvider) (res claimResult, err error) {
+func claimOidcUserInfo(
+	userInfo *oidc.UserInfo,
+	provider util.OidcProvider,
+	includeGroups bool,
+) (res claimResult, err error) {
 	claims := make(map[string]any)
 	if err = userInfo.Claims(&claims); err != nil {
 		return
@@ -556,10 +561,17 @@ func claimOidcUserInfo(userInfo *oidc.UserInfo, provider util.OidcProvider) (res
 	res, err = parseClaims(claims, &provider)
 	res.sub = userInfo.Subject
 	res.emailVerified = resolveEmailVerified(claims, provider)
+	if err == nil && includeGroups {
+		res.groups, err = parseOIDCGroupClaim(claims, provider)
+	}
 	return
 }
 
-func claimOidcToken(idToken *oidc.IDToken, provider util.OidcProvider) (res claimResult, err error) {
+func claimOidcToken(
+	idToken *oidc.IDToken,
+	provider util.OidcProvider,
+	includeGroups bool,
+) (res claimResult, err error) {
 	claims := make(map[string]any)
 	if err = idToken.Claims(&claims); err != nil {
 		return
@@ -570,6 +582,9 @@ func claimOidcToken(idToken *oidc.IDToken, provider util.OidcProvider) (res clai
 	res, err = parseClaims(claims, &provider)
 	res.sub = idToken.Subject
 	res.emailVerified = resolveEmailVerified(claims, provider)
+	if err == nil && includeGroups {
+		res.groups, err = parseOIDCGroupClaim(claims, provider)
+	}
 	return
 }
 
@@ -604,5 +619,5 @@ func oidcSuccessRedirectURL(webHost string, redirectPath string) (string, error)
 }
 
 func oidcRedirect(w http.ResponseWriter, r *http.Request) {
-	oidcRedirectWithTOTPService(nil, w, r)
+	oidcRedirectWithIdentityServices(nil, nil, w, r)
 }

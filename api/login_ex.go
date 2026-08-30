@@ -324,8 +324,46 @@ func loginLegacyCompatible(
 	return loginByPassword(store, auth, password)
 }
 
+func oidcGroupClaimConfiguration(provider util.OidcProvider) (pro_interfaces.OIDCGroupClaimConfiguration, bool, error) {
+	if strings.TrimSpace(provider.GroupClaimPath) == "" {
+		return pro_interfaces.OIDCGroupClaimConfiguration{}, false, nil
+	}
+	configuration := pro_interfaces.OIDCGroupClaimConfiguration{
+		Path: provider.GroupClaimPath, CaseInsensitive: provider.GroupClaimCaseInsensitive,
+		MissingClaimPolicy: pro_interfaces.OIDCMissingClaimPolicy(provider.GroupClaimMissingPolicy),
+	}
+	if err := pro_interfaces.NormalizeOIDCGroupClaimConfiguration(&configuration); err != nil {
+		return pro_interfaces.OIDCGroupClaimConfiguration{}, false, err
+	}
+	return configuration, true, nil
+}
+
+func parseOIDCGroupClaim(
+	claims map[string]any,
+	provider util.OidcProvider,
+) (*pro_interfaces.OIDCGroupClaimSet, error) {
+	configuration, configured, err := oidcGroupClaimConfiguration(provider)
+	if err != nil || !configured {
+		return nil, err
+	}
+	groupClaim, err := pro_interfaces.ParseOIDCGroupClaim(claims, configuration)
+	if err != nil {
+		return nil, err
+	}
+	return &groupClaim, nil
+}
+
 func oidcRedirectWithTOTPService(
 	totpService pro_interfaces.TOTPService,
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	oidcRedirectWithIdentityServices(totpService, nil, w, r)
+}
+
+func oidcRedirectWithIdentityServices(
+	totpService pro_interfaces.TOTPService,
+	oidcGroupMappingService pro_interfaces.OIDCGroupMappingService,
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
@@ -403,7 +441,7 @@ func oidcRedirectWithTOTPService(
 		idToken, err = verifier.Verify(ctx, rawIDToken)
 
 		if err == nil {
-			claims, err = claimOidcToken(idToken, provider)
+			claims, err = claimOidcToken(idToken, provider, !stateData.Link)
 		}
 	} else {
 		var userInfo *oidc.UserInfo
@@ -411,12 +449,18 @@ func oidcRedirectWithTOTPService(
 
 		if err == nil {
 			if userInfo.Email == "" {
-				claims, err = claimOidcUserInfo(userInfo, provider)
+				claims, err = claimOidcUserInfo(userInfo, provider, !stateData.Link)
 			} else {
 				claims.email = userInfo.Email
 				claims.name = userInfo.Profile
 				claims.sub = userInfo.Subject
 				claims.emailVerified = oidcEmailVerified(userInfo, provider)
+				if !stateData.Link {
+					var rawClaims map[string]any
+					if err = userInfo.Claims(&rawClaims); err == nil {
+						claims.groups, err = parseOIDCGroupClaim(rawClaims, provider)
+					}
+				}
 			}
 		}
 
@@ -490,6 +534,32 @@ func oidcRedirectWithTOTPService(
 		log.Error(err.Error())
 		http.Error(w, "OIDC sign-in failed: could not find or create the user account. Contact your administrator.", http.StatusInternalServerError)
 		return
+	}
+
+	if claims.groups != nil && oidcGroupMappingService != nil {
+		configuration, configured, configurationErr := oidcGroupClaimConfiguration(provider)
+		if configurationErr != nil {
+			log.WithError(configurationErr).WithFields(log.Fields{
+				"context": "oidc_group_mapping", "provider": pid,
+			}).Error("Invalid OIDC group mapping configuration")
+			http.Error(w, "OIDC sign-in failed: invalid group mapping configuration. Contact your administrator.", http.StatusInternalServerError)
+			return
+		}
+		if configured {
+			_, reconciliationErr := oidcGroupMappingService.ReconcileGroupMappings(
+				r.Context(), pro_interfaces.OIDCGroupPreviewRequest{
+					ProviderID: pid, Configuration: configuration, Claim: *claims.groups,
+					UserID: user.ID, Source: "login", Now: tz.Now(),
+				})
+			if reconciliationErr != nil && !errors.Is(reconciliationErr, pro_interfaces.ErrOIDCGroupMappingUnavailable) {
+				// The verified identity remains usable when policy application cannot
+				// complete. The service keeps the last known assignments and records
+				// a bounded failure for the next login retry.
+				log.WithError(reconciliationErr).WithFields(log.Fields{
+					"context": "oidc_group_mapping", "provider": pid, "user_id": user.ID,
+				}).Warn("OIDC group role reconciliation did not complete")
+			}
+		}
 	}
 
 	if !createSession(w, r, user, true, totpService) {

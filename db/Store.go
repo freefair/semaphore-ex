@@ -636,6 +636,7 @@ type Store interface {
 	CapabilityRepository
 	TOTPRepository
 	LDAPRepository
+	OIDCGroupMappingRepository
 	AuditWebhookRepository
 }
 

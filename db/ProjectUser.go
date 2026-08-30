@@ -41,6 +41,7 @@ type ProjectUser struct {
 	RoleID                       *ProjectRoleID  `db:"role_id" json:"role_id,omitempty"`
 	Revision                     int             `db:"revision" json:"revision"`
 	LDAPGroupManagedAssignmentID *int            `db:"ldap_group_managed_assignment_id" json:"-"`
+	OIDCGroupManagedAssignmentID *int            `db:"oidc_group_managed_assignment_id" json:"-"`
 }
 
 func (r ProjectUserRole) Can(permissions ProjectUserPermission) bool {

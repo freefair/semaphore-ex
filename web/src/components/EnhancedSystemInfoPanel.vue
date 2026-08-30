@@ -96,6 +96,8 @@
       <LdapCapabilityPanel />
     </template>
 
+    <OidcGroupMappingPanel />
+
     <v-subheader class="px-0 mt-2">Structured file logs</v-subheader>
     <v-card
       v-if="structuredLogs"
@@ -288,10 +290,11 @@
 <script>
 import axios from 'axios';
 import LdapCapabilityPanel from '@/components/LdapCapabilityPanel.vue';
+import OidcGroupMappingPanel from '@/components/OidcGroupMappingPanel.vue';
 import { capabilityStateColor, findCapabilityDecision } from '@/lib/capabilities';
 
 export default {
-  components: { LdapCapabilityPanel },
+  components: { LdapCapabilityPanel, OidcGroupMappingPanel },
   props: {
     diagnostics: Object,
     systemInfo: Object,

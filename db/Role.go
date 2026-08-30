@@ -18,6 +18,9 @@ var (
 	ErrLDAPGroupMappingRevisionConflict  = errors.New("LDAP group mapping revision conflict")
 	ErrLDAPGroupPreviewStale             = errors.New("LDAP group preview is stale")
 	ErrLDAPGroupMappingCollision         = errors.New("LDAP group mapping assignment collision")
+	ErrOIDCGroupMappingRevisionConflict  = errors.New("OIDC group mapping revision conflict")
+	ErrOIDCGroupPreviewStale             = errors.New("OIDC group mapping preview is stale")
+	ErrOIDCGroupMappingCollision         = errors.New("OIDC group mapping assignment collision")
 )
 
 type Role struct {
