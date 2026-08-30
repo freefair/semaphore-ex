@@ -80,7 +80,7 @@ func TestRunningJob_AckLogRecords(t *testing.T) {
 			pending := rj.ackLogRecords(tt.sent)
 			assert.Equal(t, tt.wantPending, pending)
 
-			_, logs, _ := rj.getProgress()
+			_, logs, _, _ := rj.getProgress()
 			assert.Len(t, logs, tt.wantPending)
 		})
 	}
@@ -114,14 +114,38 @@ func TestRunningJob_GetProgressReturnsCopy(t *testing.T) {
 	rj.Log("a")
 	rj.Log("b")
 
-	_, logs, _ := rj.getProgress()
+	_, logs, _, _ := rj.getProgress()
 	assert.Len(t, logs, 2)
 
 	// Mutating the returned slice must not corrupt the internal state.
 	logs[0].Message = "mutated"
 
-	_, logs2, _ := rj.getProgress()
+	_, logs2, _, _ := rj.getProgress()
 	assert.Equal(t, "a", logs2[0].Message)
+}
+
+func TestRunningJob_GetProgressIncludesBoundedExecutorMetadata(t *testing.T) {
+	rj := newTestRunningJob(1)
+	rj.job = &metadataExecutor{LocalExecutor: tasks.LocalExecutor{}}
+
+	_, _, _, metadata := rj.getProgress()
+
+	require.NotNil(t, metadata)
+	assert.Equal(t, db.RunnerExecutorDocker, metadata.ExecutorType)
+	assert.Equal(t, "abc123", metadata.ContainerID)
+	assert.Equal(t, "semaphore-task-1-boot", metadata.ContainerName)
+}
+
+type metadataExecutor struct {
+	tasks.LocalExecutor
+}
+
+func (*metadataExecutor) ExecutorMetadata() db.RunnerExecutorMetadata {
+	return db.RunnerExecutorMetadata{
+		ExecutorType:  db.RunnerExecutorDocker,
+		ContainerID:   "abc123",
+		ContainerName: "semaphore-task-1-boot",
+	}
 }
 
 // TestRunningJob_ConcurrentAccess hammers every mutator and reader of a single
@@ -159,7 +183,7 @@ func TestRunningJob_ConcurrentAccess(t *testing.T) {
 		spawn(func(i int) { rj.SetCommit(fmt.Sprintf("hash%d", i), "msg") })
 		spawn(func(i int) {
 			rj.getStatus()
-			_, logs, _ := rj.getProgress()
+			_, logs, _, _ := rj.getProgress()
 			if len(logs) > 0 {
 				rj.ackLogRecords(1)
 			}

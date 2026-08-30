@@ -4,12 +4,21 @@ import TaskRunnerDetails from '@/components/TaskRunnerDetails.vue';
 
 describe('runner reconciliation task details', () => {
   it('formats immutable runner attempts and their terminal outcome', () => {
-    const attempt = { runner_id: 7, runner_name: 'recovery runner', outcome: 'requeued' };
+    const attempt = {
+      runner_id: 7,
+      runner_name: 'recovery runner',
+      outcome: 'requeued',
+      executor_type: 'docker',
+      container_name: 'semaphore-task-41-boot',
+      container_id: 'abc123',
+    };
 
     expect(TaskRunnerDetails.methods.runnerAttemptIdentity(attempt))
       .to.equal('#7 — recovery runner');
     expect(TaskRunnerDetails.methods.runnerAttemptLabel(attempt.outcome)).to.equal('Requeued');
     expect(TaskRunnerDetails.methods.runnerAttemptColor(attempt.outcome)).to.equal('warning');
+    expect(TaskRunnerDetails.methods.runnerAttemptExecutorLabel(attempt)).to.equal('docker');
+    expect(TaskRunnerDetails.methods.runnerAttemptExecutorLabel({})).to.equal('local');
     expect(TaskRunnerDetails.methods.recoveryDecisionColor('quarantine')).to.equal('warning');
     expect(TaskRunnerDetails.watch.item.deep).to.equal(true);
   });

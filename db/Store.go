@@ -520,6 +520,7 @@ type TaskManager interface {
 	AssignTaskRunner(projectID int, taskID int, runnerID int, runnerName string, assignedAt time.Time, placement ...RunnerPlacementDecision) (Task, bool, error)
 	SetTaskRunnerPlacement(projectID int, taskID int, decision RunnerPlacementDecision) (bool, error)
 	UpdateTaskRunner(task Task, expectedStatus task_logger.TaskStatus, expectedRunnerID int, expectedGeneration int, outcome RunnerAttemptOutcome, attemptReason string, transitionedAt time.Time) (bool, error)
+	UpdateTaskRunnerAttemptMetadata(projectID int, taskID int, generation int, runnerID int, metadata RunnerExecutorMetadata) (bool, error)
 	GetTaskRunnerAttempts(projectID int, taskID int) ([]RunnerAttempt, error)
 	UpdateTaskArtifacts(projectID int, taskID int, artifacts *string) error
 	SetWaitingTasksToStopped(projectID int, templateID int) error

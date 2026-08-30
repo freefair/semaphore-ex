@@ -297,6 +297,50 @@ func TestRunnerAttemptPersistsRedactedPlacementDecision(t *testing.T) {
 	assert.Equal(t, image, *attempts[0].ResolvedExecutorImage)
 }
 
+func TestRunnerAttemptPersistsBoundedDockerRuntimeIdentity(t *testing.T) {
+	store, projectID, runner, task := createRunnerAttemptFixture(t)
+	_, err := store.Sql().Exec(store.PrepareQuery(
+		"update runner set executor_type=? where id=?"), db.RunnerExecutorDocker, runner.ID,
+	)
+	require.NoError(t, err)
+	runner.ExecutorType = db.RunnerExecutorDocker
+
+	assigned, ok, err := store.AssignTaskRunner(
+		projectID, task.ID, runner.ID, runner.Name, time.Now().UTC(),
+	)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	attempts, err := store.GetTaskRunnerAttempts(projectID, task.ID)
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	assert.Equal(t, db.RunnerExecutorDocker, attempts[0].ExecutorType)
+	assert.Empty(t, attempts[0].ContainerID)
+	assert.Empty(t, attempts[0].ContainerName)
+
+	metadata := db.RunnerExecutorMetadata{
+		ExecutorType:  db.RunnerExecutorDocker,
+		ContainerID:   "abc123",
+		ContainerName: "semaphore-task-42-boot",
+	}
+	updated, err := store.UpdateTaskRunnerAttemptMetadata(
+		projectID, task.ID, assigned.AssignmentGeneration+1, runner.ID, metadata,
+	)
+	require.NoError(t, err)
+	assert.False(t, updated, "a stale generation must not change another attempt")
+
+	updated, err = store.UpdateTaskRunnerAttemptMetadata(
+		projectID, task.ID, assigned.AssignmentGeneration, runner.ID, metadata,
+	)
+	require.NoError(t, err)
+	require.True(t, updated)
+	attempts, err = store.GetTaskRunnerAttempts(projectID, task.ID)
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	assert.Equal(t, metadata.ContainerID, attempts[0].ContainerID)
+	assert.Equal(t, metadata.ContainerName, attempts[0].ContainerName)
+}
+
 func assertOneConcurrentCapacityWinner(
 	t *testing.T,
 	store *SqlDb,

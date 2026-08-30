@@ -63,11 +63,12 @@ type RunnerProgressResponse struct {
 }
 
 type JobProgress struct {
-	ID         int
-	Generation int
-	Status     task_logger.TaskStatus
-	LogRecords []LogRecord
-	Commit     *CommitInfo
+	ID               int
+	Generation       int
+	Status           task_logger.TaskStatus
+	LogRecords       []LogRecord
+	Commit           *CommitInfo
+	ExecutorMetadata *db.RunnerExecutorMetadata `json:",omitempty"`
 }
 
 type RunnerRegistration struct {

@@ -32,7 +32,7 @@ func newExecutorProvider(executorCfg *util.ExecutorConfig, keyInstaller db_lib.A
 		if executorCfg != nil {
 			dockerCfg = executorCfg.Docker
 		}
-		return docker.NewProvider(dockerCfg)
+		return docker.NewProvider(dockerCfg, keyInstaller)
 	default:
 		return nil, fmt.Errorf("unknown runner executor type %q", resolveExecutorType(executorCfg))
 	}

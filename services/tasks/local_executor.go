@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -785,6 +786,10 @@ func (t *LocalExecutor) Run(username string, incomingVersion *string, alias stri
 // also performs the SetStatus(running) transition the legacy Run() did inline, since
 // callers driving the lifecycle manually still expect that signal to fire here.
 func (t *LocalExecutor) Prepare(username string, incomingVersion *string, alias string) (err error) {
+	return t.prepare(username, incomingVersion, alias, true)
+}
+
+func (t *LocalExecutor) prepare(username string, incomingVersion *string, alias string, installRequirements bool) (err error) {
 	if t.prepared {
 		return nil
 	}
@@ -861,7 +866,7 @@ func (t *LocalExecutor) Prepare(username string, incomingVersion *string, alias 
 				TplParams:       tplParams,
 				Params:          params,
 				Installer:       t.KeyInstaller,
-			}, initArgs)
+			}, initArgs, installRequirements)
 			if err != nil {
 				return err
 			}
@@ -871,7 +876,7 @@ func (t *LocalExecutor) Prepare(username string, incomingVersion *string, alias 
 				TplParams:       tplParams,
 				Params:          params,
 				Installer:       t.KeyInstaller,
-			})
+			}, installRequirements)
 			if err != nil {
 				return err
 			}
@@ -882,7 +887,7 @@ func (t *LocalExecutor) Prepare(username string, incomingVersion *string, alias 
 			TplParams:       tplParams,
 			Params:          params,
 			Installer:       t.KeyInstaller,
-		})
+		}, installRequirements)
 		if err != nil {
 			return err
 		}
@@ -992,7 +997,7 @@ func withEffectiveBranch(repository db.Repository, template db.Template, task db
 	return repository
 }
 
-func (t *LocalExecutor) prepareRun(installingArgs db_lib.LocalAppInstallingArgs) error {
+func (t *LocalExecutor) prepareRun(installingArgs db_lib.LocalAppInstallingArgs, installRequirements bool) error {
 
 	t.Log("Preparing: " + strconv.Itoa(t.Task.ID))
 
@@ -1033,9 +1038,11 @@ func (t *LocalExecutor) prepareRun(installingArgs db_lib.LocalAppInstallingArgs)
 		installingArgs.EnvironmentVars = append(installingArgs.EnvironmentVars, sshEnv)
 	}
 
-	if err := t.App.InstallRequirements(installingArgs); err != nil {
-		t.Log("Failed to install requirements: " + err.Error())
-		return err
+	if installRequirements {
+		if err := t.App.InstallRequirements(installingArgs); err != nil {
+			t.Log("Failed to install requirements: " + err.Error())
+			return err
+		}
 	}
 
 	if err := t.installVaultKeyFiles(); err != nil {
@@ -1046,7 +1053,7 @@ func (t *LocalExecutor) prepareRun(installingArgs db_lib.LocalAppInstallingArgs)
 	return nil
 }
 
-func (t *LocalExecutor) prepareRunTerraform(tfApp *db_lib.TerraformApp, installingArgs db_lib.LocalAppInstallingArgs, initArgs []string) error {
+func (t *LocalExecutor) prepareRunTerraform(tfApp *db_lib.TerraformApp, installingArgs db_lib.LocalAppInstallingArgs, initArgs []string, installRequirements bool) error {
 
 	t.Log("Preparing: " + strconv.Itoa(t.Task.ID))
 
@@ -1087,10 +1094,12 @@ func (t *LocalExecutor) prepareRunTerraform(tfApp *db_lib.TerraformApp, installi
 		installingArgs.EnvironmentVars = append(installingArgs.EnvironmentVars, sshEnv)
 	}
 
-	// Call Terraform-specific install with init args
-	if err := tfApp.InstallRequirementsWithInitArgs(installingArgs, initArgs); err != nil {
-		t.Log("Failed to install requirements: " + err.Error())
-		return err
+	if installRequirements {
+		// Call Terraform-specific install with init args.
+		if err := tfApp.InstallRequirementsWithInitArgs(installingArgs, initArgs); err != nil {
+			t.Log("Failed to install requirements: " + err.Error())
+			return err
+		}
 	}
 
 	if err := t.installVaultKeyFiles(); err != nil {
