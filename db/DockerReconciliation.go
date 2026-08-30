@@ -282,6 +282,49 @@ type DockerReconciliationCandidatePage struct {
 	NextCursor *string                               `json:"next_cursor,omitempty"`
 }
 
+// DockerReconciliationDiagnosticsQuery paginates the runner-wide pending
+// diagnostics feed. Cursor is an opaque server-produced keyset token; callers
+// cannot select a runner boot or a reconciliation session by guessing one.
+type DockerReconciliationDiagnosticsQuery struct {
+	Cursor string
+	Limit  int
+}
+
+func (q DockerReconciliationDiagnosticsQuery) Validate() error {
+	if q.Limit <= 0 || q.Limit > maxDockerReconciliationQueryLimit || len(q.Cursor) > 1024 {
+		return fmt.Errorf("invalid Docker reconciliation diagnostics query")
+	}
+	return nil
+}
+
+// DockerReconciliationDiagnosticRecord is an internal store projection. The
+// API maps it to a dedicated DTO so command/fence/identity fields never widen
+// the generic reconciliation JSON surface.
+type DockerReconciliationDiagnosticRecord struct {
+	Kind                 DockerReconciliationRemediationTarget `db:"kind"`
+	SortAt               time.Time                             `db:"sort_at"`
+	RunnerBoot           string                                `db:"runner_boot"`
+	ProjectID            int                                   `db:"project_id"`
+	TaskID               int                                   `db:"task_id"`
+	Generation           int                                   `db:"generation"`
+	Resource             DockerReconciliationResource          `db:"resource"`
+	Revision             int64                                 `db:"revision"`
+	State                DockerReconciliationState             `db:"state"`
+	Reason               string                                `db:"reason"`
+	ContainerName        string                                `db:"container_name"`
+	CandidateSessionID   string                                `db:"candidate_session_id"`
+	CandidateResource    DockerReconciliationCandidateResource `db:"candidate_resource"`
+	CandidateIdentifier  string                                `db:"candidate_identifier"`
+	CandidateName        string                                `db:"candidate_name"`
+	CandidateReason      DockerReconciliationCandidateReason   `db:"candidate_reason"`
+	CandidateFingerprint string                                `db:"candidate_fingerprint"`
+}
+
+type DockerReconciliationDiagnosticsPage struct {
+	Records    []DockerReconciliationDiagnosticRecord
+	NextCursor string
+}
+
 func (q DockerReconciliationCandidateQuery) Validate() error {
 	if q.Limit <= 0 || q.Limit > maxDockerReconciliationQueryLimit || len(q.AfterFingerprint) > 64 {
 		return fmt.Errorf("invalid Docker reconciliation candidate query")
@@ -635,6 +678,7 @@ type DockerReconciliationRepository interface {
 	GetDockerReconciliationCandidates(runnerID int, sessionID string, query DockerReconciliationCandidateQuery) ([]DockerReconciliationOrphanCandidate, error)
 	GetDockerReconciliationPendingStates(owner DockerReconciliationOwner, query DockerReconciliationQuery) (DockerReconciliationStatePage, error)
 	GetDockerReconciliationPendingCandidates(runnerID int, sessionID string, query DockerReconciliationCandidateQuery) (DockerReconciliationCandidatePage, error)
+	GetDockerReconciliationPendingDiagnostics(runnerID int, query DockerReconciliationDiagnosticsQuery) (DockerReconciliationDiagnosticsPage, error)
 	RequestDockerReconciliationRemediation(runnerID int, request DockerReconciliationRemediationRequest) (DockerReconciliationRemediationCommand, error)
 	GetDockerReconciliationRemediationCommands(authenticatedRunnerID int, sessionID string, fence string, limit int) ([]DockerReconciliationRemediationCommand, error)
 	ReportDockerReconciliationRemediation(authenticatedRunnerID int, sessionID string, fence string, result DockerReconciliationRemediationResult) error

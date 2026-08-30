@@ -427,6 +427,7 @@ func Route(
 	globalRunnersAPI.Path("/{runner_id}/cache").HandlerFunc(globalRunnerController.ClearRunnerCache).Methods("DELETE")
 	globalRunnersAPI.Path("/{runner_id}/docker-reconciliation/quarantines").HandlerFunc(globalRunnerController.GetDockerReconciliationQuarantines).Methods("GET", "HEAD")
 	globalRunnersAPI.Path("/{runner_id}/docker-reconciliation/candidates").HandlerFunc(globalRunnerController.GetDockerReconciliationCandidates).Methods("GET", "HEAD")
+	globalRunnersAPI.Path("/{runner_id}/docker-reconciliation/diagnostics").HandlerFunc(globalRunnerController.GetDockerReconciliationDiagnostics).Methods("GET", "HEAD")
 	globalRunnersAPI.Path("/{runner_id}/docker-reconciliation/remediation").HandlerFunc(globalRunnerController.RequestDockerReconciliationRemediation).Methods("POST")
 
 	appsAPI := adminAPI.PathPrefix("/apps").Subrouter()

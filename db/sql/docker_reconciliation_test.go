@@ -3,6 +3,7 @@ package sql
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -256,6 +257,40 @@ func TestDockerRemediationRequestAndSessionRestartNeverStrandAcceptedCommand(t *
 	assert.Equal(t, command.CommandID, commands[0].CommandID)
 	assert.Equal(t, active.SessionID, commands[0].SessionID)
 	assert.NotEqual(t, oldSession.SessionID, active.SessionID)
+}
+
+func TestDockerReconciliationDiagnosticsPageIncludesHistoricalPendingOnly(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	base := time.Now().UTC().Add(-time.Minute)
+	insertState := func(boot string, taskID int, at time.Time, status db.DockerReconciliationQuarantineStatus) {
+		_, err := store.exec("insert into docker_reconciliation_state (runner_id,runner_boot,project_id,task_id,generation,resource,revision,latest_sequence,container_id,container_name,state,reason,updated_at,quarantine_status,remediation,remediation_reason,quarantined_at,remediated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", 88, boot, 1, taskID, 1, db.DockerReconciliationResourceTask, 4, taskID, "daemon-id", "safe-name", db.DockerReconciliationQuarantine, "safe_reason", at, status, db.DockerReconciliationRemediationInspect, "safe_reason", at, nil)
+		require.NoError(t, err)
+	}
+	insertState("old-boot", 1, base.Add(time.Second), db.DockerReconciliationQuarantinePending)
+	insertState("resolved-boot", 2, base.Add(2*time.Second), db.DockerReconciliationQuarantineRemediated)
+	insertState("current-boot", 3, base.Add(4*time.Second), db.DockerReconciliationQuarantinePending)
+	_, err := store.exec("insert into docker_reconciliation_orphan_candidate (session_id,runner_id,resource,identifier,name,reason,fingerprint,identity,observed_at,revision,status) values (?,?,?,?,?,?,?,?,?,?,?)", "old-session", 88, db.DockerReconciliationCandidateContainer, "safe-id", "safe-name", db.DockerReconciliationCandidateMalformed, strings.Repeat("a", 64), strings.Repeat("b", 64), base.Add(3*time.Second), 5, db.DockerReconciliationCandidatePending)
+	require.NoError(t, err)
+	first, err := store.GetDockerReconciliationPendingDiagnostics(88, db.DockerReconciliationDiagnosticsQuery{Limit: 2})
+	require.NoError(t, err)
+	require.Len(t, first.Records, 2)
+	assert.Equal(t, db.DockerReconciliationRemediationTargetQuarantine, first.Records[0].Kind)
+	assert.Equal(t, "old-boot", first.Records[0].RunnerBoot)
+	assert.Equal(t, db.DockerReconciliationRemediationTargetCandidate, first.Records[1].Kind)
+	assert.Equal(t, "old-session", first.Records[1].CandidateSessionID)
+	require.NotEmpty(t, first.NextCursor)
+	second, err := store.GetDockerReconciliationPendingDiagnostics(88, db.DockerReconciliationDiagnosticsQuery{Cursor: first.NextCursor, Limit: 2})
+	require.NoError(t, err)
+	require.Len(t, second.Records, 1)
+	assert.Equal(t, "current-boot", second.Records[0].RunnerBoot)
+	assert.Empty(t, second.NextCursor)
+	for _, record := range append(first.Records, second.Records...) {
+		assert.NotEqual(t, "resolved-boot", record.RunnerBoot)
+	}
+	other, err := store.GetDockerReconciliationPendingDiagnostics(89, db.DockerReconciliationDiagnosticsQuery{Limit: 10})
+	require.NoError(t, err)
+	assert.Empty(t, other.Records)
 }
 
 func ptrDockerKey(value db.DockerReconciliationKey) *db.DockerReconciliationKey { return &value }
