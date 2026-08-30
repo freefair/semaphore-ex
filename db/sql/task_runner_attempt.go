@@ -163,9 +163,9 @@ func (d *SqlDb) UpdateTaskRunnerAttemptMetadata(
 	metadata db.RunnerExecutorMetadata,
 ) (bool, error) {
 	result, err := d.exec(
-		"update task__runner_attempt set executor_type=?, container_id=?, container_name=? "+
+		"update task__runner_attempt set executor_type=?, container_id=?, container_name=?, docker_requested_image=?, docker_resolved_image=?, docker_policy_revision=?, docker_policy_hash=?, docker_nano_cpus=?, docker_memory_bytes=?, docker_pids_limit=?, denial_rule_id=? "+
 			"where project_id=? and task_id=? and generation=? and runner_id=? and ended_at is null",
-		metadata.ExecutorType, metadata.ContainerID, metadata.ContainerName,
+		metadata.ExecutorType, metadata.ContainerID, metadata.ContainerName, metadata.RequestedImage, metadata.ResolvedImage, metadata.PolicyRevision, metadata.PolicyHash, metadata.NanoCPUs, metadata.MemoryBytes, metadata.PidsLimit, metadata.DenialRuleID,
 		projectID, taskID, generation, runnerID,
 	)
 	if err != nil {

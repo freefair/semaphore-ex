@@ -31,11 +31,13 @@ func TestDockerExecutorDisposableDaemonLifecycle(t *testing.T) {
 	client, err := newMobyClient(cfg)
 	require.NoError(t, err)
 	realClient := client.(*mobyClient)
+	policy := integrationDockerPolicy(t, realClient, "nginx:alpine")
 	runnerBoot := fmt.Sprintf("it-%d", time.Now().UnixNano())
 
 	t.Run("success and logs", func(t *testing.T) {
 		logger := &recordingLogger{}
 		executor := newDockerExecutorForPlan(client, cfg, runnerBoot, db.Task{ID: 501, ProjectID: 50}, db.Template{}, logger)
+		executor.policy = policy
 		plan := integrationTaskPlan(t, "echo docker-integration-success")
 
 		require.NoError(t, executor.runContainerPlan(context.Background(), plan))
@@ -45,6 +47,7 @@ func TestDockerExecutorDisposableDaemonLifecycle(t *testing.T) {
 
 	t.Run("nonzero result", func(t *testing.T) {
 		executor := newDockerExecutorForPlan(client, cfg, runnerBoot, db.Task{ID: 502, ProjectID: 50}, db.Template{}, &recordingLogger{})
+		executor.policy = policy
 		plan := integrationTaskPlan(t, "echo docker-integration-failure; exit 23")
 
 		err := executor.runContainerPlan(context.Background(), plan)
@@ -55,6 +58,7 @@ func TestDockerExecutorDisposableDaemonLifecycle(t *testing.T) {
 	t.Run("bounded cancellation", func(t *testing.T) {
 		logger := &recordingLogger{}
 		executor := newDockerExecutorForPlan(client, cfg, runnerBoot, db.Task{ID: 503, ProjectID: 50}, db.Template{}, logger)
+		executor.policy = policy
 		plan := integrationTaskPlan(t, "echo docker-integration-cancel-started; while :; do sleep 1; done")
 		done := make(chan error, 1)
 		go func() { done <- executor.runContainerPlan(context.Background(), plan) }()
@@ -64,6 +68,17 @@ func TestDockerExecutorDisposableDaemonLifecycle(t *testing.T) {
 		require.NoError(t, <-done)
 		assertDockerResourcesAbsent(t, realClient, runnerBoot)
 	})
+}
+
+func integrationDockerPolicy(t *testing.T, client *mobyClient, image string) db.DockerExecutionPolicy {
+	t.Helper()
+	inspected, err := client.client.ImageInspect(context.Background(), image)
+	require.NoError(t, err)
+	require.NotEmpty(t, inspected.RepoDigests)
+	policy := db.DefaultDockerExecutionPolicy()
+	policy.AllowedImages = []string{inspected.RepoDigests[0]}
+	require.NoError(t, policy.Canonicalize())
+	return policy
 }
 
 func integrationTaskPlan(t *testing.T, runCommand string) *tasks.ContainerTaskPlan {

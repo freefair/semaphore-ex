@@ -85,6 +85,10 @@ type JobPool struct {
 	// creating a client per request leaks one ESTABLISHED connection per poll
 	// cycle (~2/sec) until the runner exhausts ephemeral ports (issue #3941).
 	client *http.Client
+
+	dockerPolicyMu    sync.Mutex
+	dockerPolicyAck   db.DockerExecutionPolicyAck
+	dockerPolicyReady bool
 }
 
 // NewJobPool wires a runner-side job pool. The ExecutorProvider is materialised
@@ -120,6 +124,10 @@ func (p *JobPool) setCommonHeaders(req *http.Request) {
 	req.Header.Set(RunnerExecutorTypeHeader, string(resolveExecutorType(util.Config.Runner.Executor)))
 	req.Header.Set(RunnerTransportTrustHeader, string(runnerTransportTrust(util.Config.WebHost, util.Config.Runner.Connection)))
 	req.Header.Set(RunnerSecurityProtocolHeader, strconv.Itoa(db.CurrentSecureRunnerProtocol))
+	if ack, ready := p.currentDockerPolicyAck(); ready {
+		req.Header.Set(RunnerDockerPolicyRevisionHeader, strconv.Itoa(ack.Revision))
+		req.Header.Set(RunnerDockerPolicyHashHeader, ack.Hash)
+	}
 }
 
 // addRunningJob registers a running job under the lock.
@@ -323,6 +331,13 @@ func (p *JobPool) Run() {
 					"task_id": t.taskID,
 					"status":  "failed",
 				}).Info("Task dequeued")
+				break
+			}
+			if !p.canDispatchQueuedJob(t) {
+				log.WithFields(log.Fields{
+					"context": "job_running",
+					"task_id": t.taskID,
+				}).Info("Discarding queued Docker job with a superseded policy snapshot")
 				break
 			}
 
@@ -890,6 +905,12 @@ func (p *JobPool) checkNewJobs() {
 			}
 		}
 	}
+	if response.DockerPolicy != nil {
+		if err := p.applyDockerPolicy(*response.DockerPolicy); err != nil {
+			log.WithError(err).WithField("context", "checking_new_jobs").Error("refusing Docker dispatch until policy installation succeeds")
+			return
+		}
+	}
 
 	runningJobs := p.snapshotRunningJobs()
 
@@ -952,6 +973,10 @@ func (p *JobPool) checkNewJobs() {
 			return
 		}
 	}
+	if !p.dockerDispatchReady() {
+		log.WithField("context", "checking_new_jobs").Warn("refusing Docker work before the server policy acknowledgement")
+		return
+	}
 
 	for _, newJob := range response.NewJobs {
 		if p.getRunningJob(newJob.Task.ID) != nil {
@@ -987,12 +1012,16 @@ func (p *JobPool) checkNewJobs() {
 			executor, execErr = newExecutor(newJob, response.AccessKeys, p.provider)
 		}
 		if execErr != nil {
-			log.WithError(execErr).WithFields(log.Fields{
-				"context":    "checking_new_jobs",
-				"project_id": newJob.Task.ProjectID,
-				"task_id":    newJob.Task.ID,
-			}).Error("cannot construct executor for task")
-			continue
+			if policyRejection, isPolicyRejection := newDockerPolicyRejectionExecutor(execErr); isPolicyRejection {
+				executor = policyRejection
+			} else {
+				log.WithError(execErr).WithFields(log.Fields{
+					"context":    "checking_new_jobs",
+					"project_id": newJob.Task.ProjectID,
+					"task_id":    newJob.Task.ID,
+				}).Error("cannot construct executor for task")
+				continue
+			}
 		}
 
 		taskRunner := job{
@@ -1003,6 +1032,13 @@ func (p *JobPool) checkNewJobs() {
 			taskID:          newJob.Task.ID,
 			generation:      newJob.Task.AssignmentGeneration,
 			status:          newJob.Task.Status,
+		}
+		if resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeDocker {
+			ack, ready := p.currentDockerPolicyAck()
+			if !ready {
+				continue
+			}
+			taskRunner.dockerPolicyAck = &ack
 		}
 
 		p.enqueue(&taskRunner)

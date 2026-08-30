@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"strings"
 	"time"
 )
 
@@ -37,15 +38,31 @@ type RunnerAttempt struct {
 	ExecutorType           RunnerExecutorType   `db:"executor_type" json:"executor_type,omitempty"`
 	ContainerID            string               `db:"container_id" json:"container_id,omitempty"`
 	ContainerName          string               `db:"container_name" json:"container_name,omitempty"`
+	DockerRequestedImage   string               `db:"docker_requested_image" json:"docker_requested_image,omitempty"`
+	DockerResolvedImage    string               `db:"docker_resolved_image" json:"docker_resolved_image,omitempty"`
+	DockerPolicyRevision   int                  `db:"docker_policy_revision" json:"docker_policy_revision,omitempty"`
+	DockerPolicyHash       string               `db:"docker_policy_hash" json:"docker_policy_hash,omitempty"`
+	DockerNanoCPUs         int64                `db:"docker_nano_cpus" json:"docker_nano_cpus,omitempty"`
+	DockerMemoryBytes      int64                `db:"docker_memory_bytes" json:"docker_memory_bytes,omitempty"`
+	DockerPidsLimit        int64                `db:"docker_pids_limit" json:"docker_pids_limit,omitempty"`
+	DenialRuleID           string               `db:"denial_rule_id" json:"denial_rule_id,omitempty"`
 }
 
 // RunnerExecutorMetadata is the bounded runtime identity a runner may attach
 // to its current assignment. Task arguments, environment, labels, mounts, and
 // daemon details intentionally never cross this API boundary.
 type RunnerExecutorMetadata struct {
-	ExecutorType  RunnerExecutorType `json:"executor_type"`
-	ContainerID   string             `json:"container_id,omitempty"`
-	ContainerName string             `json:"container_name,omitempty"`
+	ExecutorType   RunnerExecutorType `json:"executor_type"`
+	ContainerID    string             `json:"container_id,omitempty"`
+	ContainerName  string             `json:"container_name,omitempty"`
+	RequestedImage string             `json:"requested_image,omitempty"`
+	ResolvedImage  string             `json:"resolved_image,omitempty"`
+	PolicyRevision int                `json:"policy_revision,omitempty"`
+	PolicyHash     string             `json:"policy_hash,omitempty"`
+	NanoCPUs       int64              `json:"nano_cpus,omitempty"`
+	MemoryBytes    int64              `json:"memory_bytes,omitempty"`
+	PidsLimit      int64              `json:"pids_limit,omitempty"`
+	DenialRuleID   string             `json:"denial_rule_id,omitempty"`
 }
 
 const MaxRunnerContainerIdentityLength = 128
@@ -66,6 +83,12 @@ func (m RunnerExecutorMetadata) Validate(expected RunnerExecutorType) error {
 		}
 		return nil
 	}
+	if m.DenialRuleID != "" {
+		if !IsDockerPolicyRuleID(m.DenialRuleID) || m.ContainerID != "" || m.ContainerName != "" {
+			return errors.New("Docker executor metadata contains an invalid denial rule")
+		}
+		return nil
+	}
 	if m.ContainerName == "" {
 		return errors.New("Docker executor metadata requires a container name")
 	}
@@ -80,6 +103,15 @@ func (m RunnerExecutorMetadata) Validate(expected RunnerExecutorType) error {
 			}
 			return fmt.Errorf("%s contains an unsupported character", field)
 		}
+	}
+	if m.ResolvedImage != "" && (m.RequestedImage == "" || !strings.Contains(m.ResolvedImage, "@sha256:")) {
+		return errors.New("Docker executor metadata requires requested and immutable resolved images")
+	}
+	if m.PolicyHash != "" && (len(m.PolicyHash) != 64 || m.PolicyRevision < 0) {
+		return errors.New("Docker executor metadata contains an invalid policy acknowledgement")
+	}
+	if m.ResolvedImage != "" && (m.NanoCPUs <= 0 || m.MemoryBytes <= 0 || m.PidsLimit <= 0) {
+		return errors.New("Docker executor metadata requires positive policy resource limits")
 	}
 	return nil
 }

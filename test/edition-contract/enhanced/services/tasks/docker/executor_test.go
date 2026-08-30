@@ -23,7 +23,7 @@ func TestEffectiveConfigAppliesDocumentedDefaultsAndValidatesInputs(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, "semaphoreui/job:latest", config.image)
 	assert.Equal(t, "semaphoreui/helper:latest", config.helperImage)
-	assert.Equal(t, "bridge", config.network)
+	assert.Equal(t, "none", config.network)
 	assert.Equal(t, PullIfNotPresent, config.pullPolicy)
 	assert.Equal(t, 2*time.Second, config.pollInterval)
 	assert.Equal(t, 30*time.Second, config.cleanupGrace)
@@ -73,9 +73,14 @@ func TestDockerExecutorRunsFixedStagesInsideTaskScopedResources(t *testing.T) {
 	assert.False(t, helper.VolumeMounts[0].ReadOnly)
 	assert.Equal(t, "project.example/job:frozen", task.Image)
 	assert.Equal(t, "65534:0", task.User)
-	assert.Equal(t, "runner-network", task.Network)
-	assert.Equal(t, int64(1_500_000_000), task.NanoCPUs)
+	assert.Equal(t, "none", task.Network)
+	assert.Equal(t, int64(1_000_000_000), task.NanoCPUs)
 	assert.Equal(t, int64(512*1024*1024), task.Memory)
+	assert.Equal(t, int64(256), task.PidsLimit)
+	assert.True(t, task.ReadOnlyRootFS)
+	assert.True(t, task.NoNewPrivileges)
+	assert.True(t, task.DropAllCapabilities)
+	assert.True(t, task.PrivateNamespaces)
 	assert.Empty(t, task.Environment)
 	assert.Empty(t, task.BindMounts)
 	assert.Contains(t, task.Tmpfs, "/workspace")
@@ -99,9 +104,15 @@ func TestDockerExecutorRunsFixedStagesInsideTaskScopedResources(t *testing.T) {
 	assert.Equal(t, []string{"volume-1"}, client.removedVolumes)
 	assert.Contains(t, logger.logs, "stage output")
 	assert.Equal(t, db.RunnerExecutorMetadata{
-		ExecutorType:  db.RunnerExecutorDocker,
-		ContainerID:   "task-2",
-		ContainerName: "semaphore-task-42-boot-abc",
+		ExecutorType:   db.RunnerExecutorDocker,
+		ContainerID:    "task-2",
+		ContainerName:  "semaphore-task-42-boot-abc",
+		RequestedImage: "project.example/job:frozen",
+		ResolvedImage:  "project.example/job:frozen",
+		PolicyHash:     db.DefaultDockerExecutionPolicy().Hash,
+		NanoCPUs:       1_000_000_000,
+		MemoryBytes:    512 * 1024 * 1024,
+		PidsLimit:      256,
 	}, executor.ExecutorMetadata(), "cleanup must retain immutable task runtime identity")
 }
 
@@ -267,9 +278,9 @@ type stopCall struct {
 	grace       time.Duration
 }
 
-func (c *fakeDockerClient) PrepareImage(_ context.Context, image string, policy PullPolicy) error {
-	c.images = append(c.images, imagePreparation{image: image, policy: policy})
-	return nil
+func (c *fakeDockerClient) ResolveImage(_ context.Context, image string, _ ImageRole, _ db.DockerExecutionPolicy) (ResolvedImage, error) {
+	c.images = append(c.images, imagePreparation{image: image, policy: PullIfNotPresent})
+	return ResolvedImage{RequestedReference: image, ResolvedReference: image, Digest: "@sha256:test", Source: "fake", SizeBytes: 1}, nil
 }
 
 func (c *fakeDockerClient) CreateVolume(_ context.Context, _ string, _ map[string]string) (string, error) {

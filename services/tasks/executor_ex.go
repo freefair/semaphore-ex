@@ -10,3 +10,11 @@ import (
 type ExecutorMetadataProvider interface {
 	ExecutorMetadata() db.RunnerExecutorMetadata
 }
+
+// DockerExecutionPolicyConsumer is implemented only by Docker-backed providers.
+// The job pool uses it to atomically install the central server policy before it
+// accepts Docker work; other executor implementations remain unaffected.
+type DockerExecutionPolicyConsumer interface {
+	ApplyDockerExecutionPolicy(db.DockerExecutionPolicy) error
+	DockerExecutionPolicyAcknowledgement() db.DockerExecutionPolicyAck
+}

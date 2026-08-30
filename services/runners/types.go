@@ -27,8 +27,9 @@ type RunnerState struct {
 	NewJobs     []JobData            `json:"new_jobs" binding:"required"`
 	AccessKeys  map[int]db.AccessKey `json:"access_keys" binding:"required"`
 
-	ClearCache          bool `json:"clear_cache,omitempty"`
-	CacheCleanProjectID *int `json:"cache_clean_project_id,omitempty"`
+	ClearCache          bool                      `json:"clear_cache,omitempty"`
+	CacheCleanProjectID *int                      `json:"cache_clean_project_id,omitempty"`
+	DockerPolicy        *db.DockerExecutionPolicy `json:"docker_policy,omitempty"`
 }
 
 type JobState struct {
@@ -109,4 +110,9 @@ type job struct {
 	taskID     int
 	generation int
 	status     task_logger.TaskStatus
+	// dockerPolicyAck captures the policy snapshot that was active while the
+	// Docker executor was constructed. It is checked again immediately before
+	// starting the queued job so an administrator policy revision cannot race
+	// ahead of dispatch.
+	dockerPolicyAck *db.DockerExecutionPolicyAck
 }

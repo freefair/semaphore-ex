@@ -630,6 +630,7 @@ type Store interface {
 	ScheduleManager
 	ViewManager
 	RunnerManager
+	DockerExecutionPolicyRepository
 	EventManager
 	SecretStorageRepository
 	SecretSyncRepository

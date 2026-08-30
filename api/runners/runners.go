@@ -147,6 +147,19 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 		AccessKeys: make(map[int]db.AccessKey),
 		ClearCache: clearCache,
 	}
+	if runner.EffectiveExecutorType() == db.RunnerExecutorDocker {
+		policyStore, ok := c.runnerRepo.(db.DockerExecutionPolicyRepository)
+		if !ok {
+			helpers.WriteErrorStatus(w, "Docker policy storage is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		policy, policyErr := policyStore.GetDockerExecutionPolicy()
+		if policyErr != nil {
+			helpers.WriteError(w, policyErr)
+			return
+		}
+		data.DockerPolicy = &policy
+	}
 
 	if clearCache {
 		data.CacheCleanProjectID = runner.ProjectID
@@ -179,6 +192,16 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 // fails and finalizes the task in place, leaving data untouched, so a single
 // bad task does not abort the poll for the whole runner.
 func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Runner, data *runners.RunnerState) {
+	if runner.EffectiveExecutorType() == db.RunnerExecutorDocker {
+		policyStore, ok := c.runnerRepo.(db.DockerExecutionPolicyRepository)
+		if !ok {
+			return
+		}
+		policy, policyErr := policyStore.GetDockerExecutionPolicy()
+		if policyErr != nil || !policy.MatchesAck(db.DockerExecutionPolicyAck{Revision: runner.DockerPolicyRevision, Hash: runner.DockerPolicyHash}) {
+			return
+		}
+	}
 	if tsk.Task.ResolvedExecutorImage != nil && !runner.SupportsExecutorImage() {
 		tsk.Log("Runner executor does not support the resolved image. Use a Docker or Kubernetes runner, or clear the template executor image.")
 		tsk.SetStatus(task_logger.TaskFailStatus)

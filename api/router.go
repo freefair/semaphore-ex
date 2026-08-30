@@ -412,6 +412,9 @@ func Route(
 	adminAPI.Path("/runners").HandlerFunc(globalRunnerController.GetRunners).Methods("GET", "HEAD")
 	adminAPI.Path("/runners").HandlerFunc(globalRunnerController.AddRunner).Methods("POST", "HEAD")
 	adminAPI.Path("/runner_tags").HandlerFunc(globalRunnerController.GetRunnerTags).Methods("GET", "HEAD")
+	adminAPI.Path("/runners/docker-policy").HandlerFunc(globalRunnerController.GetDockerExecutionPolicy).Methods("GET", "HEAD")
+	adminAPI.Path("/runners/docker-policy").HandlerFunc(globalRunnerController.UpdateDockerExecutionPolicy).Methods("PUT")
+	adminAPI.Path("/runners/docker-policy/test").HandlerFunc(globalRunnerController.TestDockerExecutionPolicy).Methods("POST")
 
 	globalRunnersAPI := adminAPI.PathPrefix("/runners").Subrouter()
 	globalRunnersAPI.Use(globalRunnerController.RunnerMiddleware)

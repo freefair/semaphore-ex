@@ -234,13 +234,15 @@ type RunnerDockerConfig struct {
 	// HelperImage is the image used for the transient git-clone container.
 	HelperImage string `json:"helper_image,omitempty" default:"semaphoreui/helper:latest" env:"SEMAPHORE_RUNNER_DOCKER_HELPER_IMAGE"`
 
-	// Network is the Docker network the build container joins. Defaults to "bridge".
+	// Network is retained for backward-compatible parsing. The centrally delivered
+	// Docker execution policy owns the effective network and defaults to "none".
 	Network string `json:"network,omitempty" default:"bridge" env:"SEMAPHORE_RUNNER_DOCKER_NETWORK"`
 
 	// PullPolicy controls image pulling: always, if-not-present or never.
 	PullPolicy string `json:"pull_policy,omitempty" default:"if-not-present" env:"SEMAPHORE_RUNNER_DOCKER_PULL_POLICY"`
 
-	// CPULimit, when > 0, caps the build container CPU (passed as --cpus).
+	// CPULimit is retained for backward-compatible parsing. The centrally delivered
+	// Docker execution policy owns effective CPU, memory, and PID limits.
 	CPULimit float64 `json:"cpu_limit,omitempty" env:"SEMAPHORE_RUNNER_DOCKER_CPU_LIMIT"`
 
 	// MemoryLimit, when non-empty, caps the build container memory (e.g. "2g").
