@@ -104,6 +104,12 @@ type DockerReconciliationScanner interface {
 	ScanDockerReconciliation(context.Context, db.DockerReconciliationSession) ([]db.DockerReconciliationObservation, db.DockerReconciliationScanComplete, []db.DockerReconciliationOrphanCandidate, error)
 }
 
+// DockerReconciliationRemediator is intentionally runner-local: the server
+// persists desired commands but never obtains Docker daemon access.
+type DockerReconciliationRemediator interface {
+	RemediateDockerReconciliation(context.Context, db.DockerReconciliationRemediationCommand) db.DockerReconciliationRemediationResult
+}
+
 // StopConfirmation is the only evidence the runner may use to turn a Docker
 // cancellation into a terminal task result. A context cancellation or a
 // successful stop request is not evidence: the daemon must confirm the

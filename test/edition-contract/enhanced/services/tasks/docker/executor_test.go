@@ -3,9 +3,12 @@ package docker
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -271,6 +274,8 @@ type fakeDockerClient struct {
 	killedContainers          []string
 	removedContainers         []string
 	removedVolumes            []string
+	managedResources          []ManagedResource
+	volumeReferenced          bool
 }
 
 func (c *fakeDockerClient) InspectContainer(_ context.Context, containerID string) (ContainerState, error) {
@@ -313,9 +318,49 @@ func TestDockerExecutorConfirmStopRequiresDaemonEvidence(t *testing.T) {
 	}
 }
 
+func TestDockerRemediationReinspectsImmutableIdentityAndManagedLabels(t *testing.T) {
+	key := db.DockerReconciliationKey{DockerReconciliationOwner: db.DockerReconciliationOwner{RunnerID: 8, RunnerBoot: "prior-boot"}, ProjectID: 3, TaskID: 5, Generation: 2, Resource: db.DockerReconciliationResourceTask}
+	command := db.DockerReconciliationRemediationCommand{CommandID: strings.Repeat("c", 64), SessionID: "current", RunnerID: 8, Action: db.DockerReconciliationRemediationRetryStopAndCleanup, Target: db.DockerReconciliationRemediationTargetQuarantine, DaemonID: "immutable-daemon-id", Quarantine: &key}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d\x00%d\x00%s", command.Target, command.DaemonID, key.RunnerBoot, key.ProjectID, key.TaskID, key.Generation, key.Resource)))
+	command.Fingerprint = fmt.Sprintf("%x", sum[:])
+	labels := map[string]string{"io.semaphore.managed": "v1", labelExecutor: "docker", "io.semaphore.runner-id": "8", labelRunnerBoot: "prior-boot", labelProjectID: "3", labelTaskID: "5", "io.semaphore.assignment-generation": "2", labelResource: "task"}
+	client := &fakeDockerClient{inspectStates: map[string]ContainerState{"immutable-daemon-id": {Exists: true, ID: "immutable-daemon-id", Labels: labels}}}
+	provider := &Provider{client: client, runnerID: 8, session: db.DockerReconciliationSession{SessionID: "current", RunnerID: 8, TargetBoot: "boot"}}
+	result := provider.RemediateDockerReconciliation(context.Background(), command)
+	assert.Equal(t, db.DockerReconciliationRemediationSucceeded, result.Status)
+	assert.Equal(t, []string{"immutable-daemon-id"}, client.removedContainers)
+
+	client = &fakeDockerClient{inspectStates: map[string]ContainerState{"immutable-daemon-id": {Exists: true, ID: "different-daemon-id", Labels: labels}}}
+	provider = &Provider{client: client, runnerID: 8, session: db.DockerReconciliationSession{SessionID: "current", RunnerID: 8, TargetBoot: "boot"}}
+	result = provider.RemediateDockerReconciliation(context.Background(), command)
+	assert.Equal(t, db.DockerReconciliationEvidenceIdentityMismatch, result.Evidence)
+	assert.Empty(t, client.removedContainers)
+}
+
+func TestDockerVolumeRemediationRejectsDeleteRecreateSameName(t *testing.T) {
+	labels := map[string]string{"io.semaphore.managed": "v1", labelExecutor: "docker", "io.semaphore.runner-id": "8"}
+	oldIdentity := volumeCreationIdentity("bundle", "2026-08-30T11:00:00.100000001Z", "local", "local")
+	newIdentity := volumeCreationIdentity("bundle", "2026-08-30T11:00:01.100000001Z", "local", "local")
+	require.NotEmpty(t, oldIdentity)
+	require.NotEqual(t, oldIdentity, newIdentity)
+	command := db.DockerReconciliationRemediationCommand{CommandID: strings.Repeat("d", 64), SessionID: "current", RunnerID: 8, Action: db.DockerReconciliationRemediationRetryStopAndCleanup, Target: db.DockerReconciliationRemediationTargetCandidate, Fingerprint: strings.Repeat("a", 64), DaemonID: "bundle", CandidateResource: db.DockerReconciliationCandidateVolume, CandidateIdentity: oldIdentity}
+	client := &fakeDockerClient{managedResources: []ManagedResource{{Kind: ManagedVolume, ID: "bundle", Name: "bundle", Labels: labels, CreationIdentity: oldIdentity}}}
+	provider := &Provider{client: client, runnerID: 8, session: db.DockerReconciliationSession{SessionID: "current", RunnerID: 8, TargetBoot: "boot"}}
+	result := provider.RemediateDockerReconciliation(context.Background(), command)
+	assert.Equal(t, db.DockerReconciliationRemediationSucceeded, result.Status)
+	assert.Equal(t, []string{"bundle"}, client.removedVolumes)
+
+	client = &fakeDockerClient{managedResources: []ManagedResource{{Kind: ManagedVolume, ID: "bundle", Name: "bundle", Labels: labels, CreationIdentity: newIdentity}}}
+	provider = &Provider{client: client, runnerID: 8, session: db.DockerReconciliationSession{SessionID: "current", RunnerID: 8, TargetBoot: "boot"}}
+	result = provider.RemediateDockerReconciliation(context.Background(), command)
+	assert.Equal(t, db.DockerReconciliationRemediationErrored, result.Status)
+	assert.Equal(t, db.DockerReconciliationEvidenceIdentityMismatch, result.Evidence)
+	assert.Empty(t, client.removedVolumes)
+}
+
 func (c *fakeDockerClient) ListManagedResources(context.Context, int) ([]ManagedResource, error) {
 	c.listCalls++
-	return nil, nil
+	return c.managedResources, nil
 }
 
 type imagePreparation struct {
@@ -413,6 +458,10 @@ func (c *fakeDockerClient) RemoveContainer(_ context.Context, containerID string
 func (c *fakeDockerClient) RemoveVolume(_ context.Context, volume string) error {
 	c.removedVolumes = append(c.removedVolumes, volume)
 	return nil
+}
+
+func (c *fakeDockerClient) VolumeReferenced(context.Context, string) (bool, error) {
+	return c.volumeReferenced, nil
 }
 
 type recordingLogger struct {

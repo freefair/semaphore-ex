@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -134,6 +135,14 @@ func TestDockerReconciliationDisposableDaemonCases(t *testing.T) {
 	require.NoError(t, err)
 	resources, err := client.ListManagedResources(ctx, runnerID)
 	require.NoError(t, err)
+	var discoveredVolume ManagedResource
+	for _, resource := range resources {
+		if resource.Kind == ManagedVolume && resource.Name == createdVolume {
+			discoveredVolume = resource
+			break
+		}
+	}
+	require.NotEmpty(t, discoveredVolume.Name)
 	session := db.DockerReconciliationSession{SessionID: "session", Fence: "fence", RunnerID: runnerID, TargetBoot: "next", ScanTargets: []db.DockerReconciliationScanTarget{running, exited, absent}}
 	observations, _, candidates, err := reduceDockerReconciliationScan(session, resources, time.Now().UTC())
 	require.NoError(t, err)
@@ -158,6 +167,32 @@ func TestDockerReconciliationDisposableDaemonCases(t *testing.T) {
 			assert.Equal(t, runningID, observation.ContainerID)
 		}
 	}
+	// A volume name is reusable. Delete and recreate the discovered name, then
+	// prove that a command carrying the prior creation fingerprint cannot remove
+	// the replacement (or any daemon that cannot provide a precise identity).
+	_, err = realClient.client.VolumeRemove(ctx, createdVolume, moby.VolumeRemoveOptions{Force: false})
+	require.NoError(t, err)
+	_, err = realClient.client.VolumeCreate(ctx, moby.VolumeCreateOptions{Name: createdVolume, Labels: labels(running)})
+	require.NoError(t, err)
+	pageProvider.session = session
+	volumeCommand := db.DockerReconciliationRemediationCommand{CommandID: strings.Repeat("c", 64), SessionID: session.SessionID, RunnerID: runnerID, Action: db.DockerReconciliationRemediationRetryStopAndCleanup, Target: db.DockerReconciliationRemediationTargetCandidate, Fingerprint: strings.Repeat("b", 64), DaemonID: createdVolume, CandidateResource: db.DockerReconciliationCandidateVolume, CandidateIdentity: discoveredVolume.CreationIdentity}
+	volumeResult := pageProvider.RemediateDockerReconciliation(ctx, volumeCommand)
+	assert.NotEqual(t, db.DockerReconciliationRemediationSucceeded, volumeResult.Status)
+	_, err = realClient.client.VolumeInspect(ctx, createdVolume, moby.VolumeInspectOptions{})
+	require.NoError(t, err)
+	// The remediation command uses the immutable daemon ID and the full managed
+	// tuple. This is a real disposable-daemon assertion that a running target is
+	// stopped and then removed only after identity/label reinspection.
+	remediationKey := db.DockerReconciliationKey{DockerReconciliationOwner: db.DockerReconciliationOwner{RunnerID: runnerID, RunnerBoot: running.TargetBoot}, ProjectID: running.ProjectID, TaskID: running.TaskID, Generation: running.Generation, Resource: running.Resource}
+	command := db.DockerReconciliationRemediationCommand{CommandID: strings.Repeat("d", 64), SessionID: session.SessionID, RunnerID: runnerID, Action: db.DockerReconciliationRemediationRetryStopAndCleanup, Target: db.DockerReconciliationRemediationTargetQuarantine, DaemonID: runningID, Quarantine: &remediationKey}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d\x00%d\x00%s", command.Target, command.DaemonID, running.TargetBoot, running.ProjectID, running.TaskID, running.Generation, running.Resource)))
+	command.Fingerprint = fmt.Sprintf("%x", sum[:])
+	pageProvider.session = session
+	result := pageProvider.RemediateDockerReconciliation(ctx, command)
+	assert.Equal(t, db.DockerReconciliationRemediationSucceeded, result.Status)
+	state, inspectErr := client.InspectContainer(ctx, runningID)
+	require.NoError(t, inspectErr)
+	assert.False(t, state.Exists)
 }
 
 func integrationDockerPolicy(t *testing.T, client *mobyClient, image string) db.DockerExecutionPolicy {

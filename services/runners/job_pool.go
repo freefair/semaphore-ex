@@ -113,6 +113,7 @@ type JobPool struct {
 	dockerReconciliationReady   bool
 	dockerReconciliationSession db.DockerReconciliationSession
 	dockerQuarantines           []db.DockerReconciliationStopQuarantine
+	dockerRemediationResults    []db.DockerReconciliationRemediationResult
 }
 
 const maxDockerReconciliationQuarantinesPerProgress = 100
@@ -579,6 +580,11 @@ func (p *JobPool) sendProgress() (ok bool) {
 			quarantineCount = maxDockerReconciliationQuarantinesPerProgress
 		}
 		body.DockerReconciliationQuarantines = append(body.DockerReconciliationQuarantines, p.dockerQuarantines[:quarantineCount]...)
+		resultCount := len(p.dockerRemediationResults)
+		if resultCount > maxDockerReconciliationQuarantinesPerProgress {
+			resultCount = maxDockerReconciliationQuarantinesPerProgress
+		}
+		body.DockerReconciliationRemediationResults = append(body.DockerReconciliationRemediationResults, p.dockerRemediationResults[:resultCount]...)
 		p.dockerPolicyMu.Unlock()
 	}
 
@@ -674,6 +680,13 @@ func (p *JobPool) sendProgress() (ok bool) {
 		}
 		p.dockerPolicyMu.Unlock()
 	}
+	if len(body.DockerReconciliationRemediationResults) > 0 {
+		p.dockerPolicyMu.Lock()
+		if len(p.dockerRemediationResults) >= len(body.DockerReconciliationRemediationResults) {
+			p.dockerRemediationResults = p.dockerRemediationResults[len(body.DockerReconciliationRemediationResults):]
+		}
+		p.dockerPolicyMu.Unlock()
+	}
 
 	log.WithFields(log.Fields{
 		"context":     "sending_progress",
@@ -708,8 +721,36 @@ func (p *JobPool) sendProgress() (ok bool) {
 	}
 
 	p.applyTerminatedJobs(progressResp.TerminatedJobs)
+	p.applyDockerRemediationCommands(progressResp.DockerReconciliationCommands)
 
 	return
+}
+
+func (p *JobPool) applyDockerRemediationCommands(commands []db.DockerReconciliationRemediationCommand) {
+	if len(commands) == 0 {
+		return
+	}
+	remediator, ok := p.provider.(tasks.DockerReconciliationRemediator)
+	if !ok {
+		return
+	}
+	for _, command := range commands {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		result := remediator.RemediateDockerReconciliation(ctx, command)
+		cancel()
+		p.dockerPolicyMu.Lock()
+		duplicate := false
+		for _, pending := range p.dockerRemediationResults {
+			if pending.CommandID == result.CommandID && pending.Fingerprint == result.Fingerprint {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			p.dockerRemediationResults = append(p.dockerRemediationResults, result)
+		}
+		p.dockerPolicyMu.Unlock()
+	}
 }
 
 // applyTerminatedJobs emergency-stops jobs the server no longer accepts
@@ -1103,6 +1144,11 @@ func (p *JobPool) checkNewJobs() {
 			log.WithField("context", "checking_new_jobs").Warn("refusing Docker dispatch until reconciliation session installation succeeds")
 			return
 		}
+		// Commands from this poll are authenticated by its server-issued session
+		// and fence. Install that identity in both pool and provider before any
+		// command is evaluated; a startup/restart command must not be compared
+		// against the previous process session.
+		p.applyDockerRemediationCommands(response.DockerReconciliationCommands)
 	}
 
 	runningJobs := p.snapshotRunningJobs()

@@ -28,10 +28,11 @@ type RunnerState struct {
 	NewJobs     []JobData            `json:"new_jobs" binding:"required"`
 	AccessKeys  map[int]db.AccessKey `json:"access_keys" binding:"required"`
 
-	ClearCache                  bool                            `json:"clear_cache,omitempty"`
-	CacheCleanProjectID         *int                            `json:"cache_clean_project_id,omitempty"`
-	DockerPolicy                *db.DockerExecutionPolicy       `json:"docker_policy,omitempty"`
-	DockerReconciliationSession *db.DockerReconciliationSession `json:"docker_reconciliation_session,omitempty"`
+	ClearCache                   bool                                        `json:"clear_cache,omitempty"`
+	CacheCleanProjectID          *int                                        `json:"cache_clean_project_id,omitempty"`
+	DockerPolicy                 *db.DockerExecutionPolicy                   `json:"docker_policy,omitempty"`
+	DockerReconciliationSession  *db.DockerReconciliationSession             `json:"docker_reconciliation_session,omitempty"`
+	DockerReconciliationCommands []db.DockerReconciliationRemediationCommand `json:"docker_reconciliation_commands,omitempty"`
 }
 
 type JobState struct {
@@ -51,12 +52,13 @@ type CommitInfo struct {
 }
 
 type RunnerProgress struct {
-	Jobs                                 []JobProgress
-	KnownJobs                            []JobState
-	DockerReconciliationObservations     []db.DockerReconciliationObservation     `json:"docker_reconciliation_observations,omitempty"`
-	DockerReconciliationScanComplete     *db.DockerReconciliationScanComplete     `json:"docker_reconciliation_scan_complete,omitempty"`
-	DockerReconciliationOrphanCandidates []db.DockerReconciliationOrphanCandidate `json:"docker_reconciliation_orphan_candidates,omitempty"`
-	DockerReconciliationQuarantines      []db.DockerReconciliationStopQuarantine  `json:"docker_reconciliation_quarantines,omitempty"`
+	Jobs                                   []JobProgress
+	KnownJobs                              []JobState
+	DockerReconciliationObservations       []db.DockerReconciliationObservation       `json:"docker_reconciliation_observations,omitempty"`
+	DockerReconciliationScanComplete       *db.DockerReconciliationScanComplete       `json:"docker_reconciliation_scan_complete,omitempty"`
+	DockerReconciliationOrphanCandidates   []db.DockerReconciliationOrphanCandidate   `json:"docker_reconciliation_orphan_candidates,omitempty"`
+	DockerReconciliationQuarantines        []db.DockerReconciliationStopQuarantine    `json:"docker_reconciliation_quarantines,omitempty"`
+	DockerReconciliationRemediationResults []db.DockerReconciliationRemediationResult `json:"docker_reconciliation_remediation_results,omitempty"`
 }
 
 // RunnerProgressResponse is the server's reply to a progress report (PUT).
@@ -66,7 +68,8 @@ type RunnerProgress struct {
 // body and old runners ignore the body, so the field is backward compatible
 // in both directions.
 type RunnerProgressResponse struct {
-	TerminatedJobs []int `json:"terminated_jobs,omitempty"`
+	TerminatedJobs               []int                                       `json:"terminated_jobs,omitempty"`
+	DockerReconciliationCommands []db.DockerReconciliationRemediationCommand `json:"docker_reconciliation_commands,omitempty"`
 }
 
 type JobProgress struct {

@@ -23,6 +23,7 @@ var (
 	ErrDockerReconciliationImmutableMutation = errors.New("Docker reconciliation immutable mutation")
 	ErrDockerReconciliationSessionStale      = errors.New("Docker reconciliation session is stale")
 	ErrDockerReconciliationCoverageInvalid   = errors.New("Docker reconciliation scan coverage is invalid")
+	ErrDockerReconciliationCommandStale      = errors.New("Docker reconciliation remediation command is stale")
 )
 
 const maxDockerReconciliationSessionTokenLength = 128
@@ -61,6 +62,17 @@ func (s DockerReconciliationSession) ValidateCredentials() error {
 
 func validDockerReconciliationToken(value string) bool {
 	return value != "" && strings.TrimSpace(value) == value && len(value) <= maxDockerReconciliationSessionTokenLength
+}
+
+// ValidDockerReconciliationOpaqueHash accepts only a canonical SHA-256
+// digest. It is used for volume creation identity and is safe to transport:
+// it contains no daemon creation metadata.
+func ValidDockerReconciliationOpaqueHash(value string) bool {
+	if len(value) != 64 || strings.ToLower(value) != value {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func NewDockerReconciliationToken() (string, error) {
@@ -210,16 +222,28 @@ const (
 // report. It intentionally carries no Docker labels or daemon error text.
 // Server-side authentication supplies RunnerID and session ownership.
 type DockerReconciliationOrphanCandidate struct {
-	RunnerID   int                                   `db:"runner_id" json:"runner_id,omitempty"`
-	Resource   DockerReconciliationCandidateResource `db:"resource" json:"resource"`
-	Identifier string                                `db:"identifier" json:"identifier"`
-	Name       string                                `db:"name" json:"name"`
-	Reason     DockerReconciliationCandidateReason   `db:"reason" json:"reason"`
-	ObservedAt time.Time                             `db:"observed_at" json:"observed_at"`
+	RunnerID     int                                   `db:"runner_id" json:"runner_id,omitempty"`
+	Resource     DockerReconciliationCandidateResource `db:"resource" json:"resource"`
+	Identifier   string                                `db:"identifier" json:"identifier"`
+	Name         string                                `db:"name" json:"name"`
+	Reason       DockerReconciliationCandidateReason   `db:"reason" json:"reason"`
+	Fingerprint  string                                `db:"fingerprint" json:"fingerprint"`
+	Identity     string                                `db:"identity" json:"identity,omitempty"`
+	ObservedAt   time.Time                             `db:"observed_at" json:"observed_at"`
+	Revision     int64                                 `db:"revision" json:"revision"`
+	Status       DockerReconciliationCandidateStatus   `db:"status" json:"status"`
+	RemediatedAt *time.Time                            `db:"remediated_at" json:"remediated_at,omitempty"`
 }
 
+type DockerReconciliationCandidateStatus string
+
+const (
+	DockerReconciliationCandidatePending  DockerReconciliationCandidateStatus = "pending"
+	DockerReconciliationCandidateResolved DockerReconciliationCandidateStatus = "resolved"
+)
+
 func (c DockerReconciliationOrphanCandidate) Validate() error {
-	if c.RunnerID < 0 || len(c.Identifier) == 0 || len(c.Identifier) > MaxRunnerContainerIdentityLength || len(c.Name) > MaxRunnerContainerIdentityLength || c.ObservedAt.IsZero() {
+	if c.RunnerID < 0 || len(c.Identifier) == 0 || len(c.Identifier) > MaxRunnerContainerIdentityLength || len(c.Name) > MaxRunnerContainerIdentityLength || len(c.Identity) > MaxRunnerContainerIdentityLength || c.ObservedAt.IsZero() {
 		return fmt.Errorf("invalid Docker reconciliation orphan candidate")
 	}
 	switch c.Resource {
@@ -233,6 +257,171 @@ func (c DockerReconciliationOrphanCandidate) Validate() error {
 	default:
 		return fmt.Errorf("invalid Docker reconciliation candidate reason")
 	}
+}
+
+// DockerReconciliationCandidateQuery is a stable, bounded page over the
+// immutable candidate fingerprint. Candidates are scoped to both a runner and
+// its authenticated reconciliation session; a similarly named object from a
+// later runner process can never be selected accidentally.
+type DockerReconciliationCandidateQuery struct {
+	AfterFingerprint string `json:"after_fingerprint,omitempty"`
+	Limit            int    `json:"limit"`
+}
+
+type DockerReconciliationStatePage struct {
+	States     []DockerReconciliationStateRecord `json:"states"`
+	NextCursor *int64                            `json:"next_cursor,omitempty"`
+}
+
+type DockerReconciliationCandidatePage struct {
+	Candidates []DockerReconciliationOrphanCandidate `json:"candidates"`
+	NextCursor *string                               `json:"next_cursor,omitempty"`
+}
+
+func (q DockerReconciliationCandidateQuery) Validate() error {
+	if q.Limit <= 0 || q.Limit > maxDockerReconciliationQueryLimit || len(q.AfterFingerprint) > 64 {
+		return fmt.Errorf("invalid Docker reconciliation candidate query")
+	}
+	return nil
+}
+
+type DockerReconciliationRemediationAction string
+
+const DockerReconciliationRemediationRetryStopAndCleanup DockerReconciliationRemediationAction = "retry_stop_and_cleanup"
+
+type DockerReconciliationRemediationTarget string
+
+const (
+	DockerReconciliationRemediationTargetQuarantine DockerReconciliationRemediationTarget = "quarantine"
+	DockerReconciliationRemediationTargetCandidate  DockerReconciliationRemediationTarget = "candidate"
+)
+
+type DockerReconciliationRemediationStatus string
+
+const (
+	DockerReconciliationRemediationPending   DockerReconciliationRemediationStatus = "pending"
+	DockerReconciliationRemediationSucceeded DockerReconciliationRemediationStatus = "succeeded"
+	DockerReconciliationRemediationErrored   DockerReconciliationRemediationStatus = "error"
+)
+
+// DockerReconciliationRemediationRequest is an admin intent only. It contains
+// no daemon endpoint or arbitrary operation: the runner later executes the
+// sole allow-listed action after independently re-inspecting the resource.
+type DockerReconciliationRemediationRequest struct {
+	Action           DockerReconciliationRemediationAction `json:"action"`
+	IdempotencyKey   string                                `json:"idempotency_key"`
+	ExpectedRevision int64                                 `json:"expected_revision"`
+	Target           DockerReconciliationRemediationTarget `json:"target"`
+	Quarantine       *DockerReconciliationKey              `json:"quarantine,omitempty"`
+	SessionID        string                                `json:"session_id,omitempty"`
+	Fingerprint      string                                `json:"fingerprint,omitempty"`
+}
+
+func (r DockerReconciliationRemediationRequest) Validate() error {
+	if r.Action != DockerReconciliationRemediationRetryStopAndCleanup || !validDockerReconciliationToken(r.IdempotencyKey) || r.ExpectedRevision <= 0 {
+		return fmt.Errorf("invalid Docker reconciliation remediation request")
+	}
+	switch r.Target {
+	case DockerReconciliationRemediationTargetQuarantine:
+		if r.Quarantine == nil || r.Quarantine.Validate() != nil || r.SessionID != "" || r.Fingerprint != "" {
+			return fmt.Errorf("invalid Docker reconciliation quarantine target")
+		}
+	case DockerReconciliationRemediationTargetCandidate:
+		if r.Quarantine != nil || !validDockerReconciliationToken(r.SessionID) || len(r.Fingerprint) != 64 {
+			return fmt.Errorf("invalid Docker reconciliation candidate target")
+		}
+	default:
+		return fmt.Errorf("invalid Docker reconciliation remediation target")
+	}
+	return nil
+}
+
+// DockerReconciliationRemediationCommand is a server-issued, session-fenced
+// work item. Fingerprint and DaemonID are immutable identity evidence; raw
+// Docker messages, labels, and inspect objects never cross the runner API.
+type DockerReconciliationRemediationCommand struct {
+	CommandID          string                                `db:"command_id" json:"command_id"`
+	SessionID          string                                `db:"session_id" json:"session_id"`
+	RunnerID           int                                   `db:"runner_id" json:"runner_id"`
+	Action             DockerReconciliationRemediationAction `db:"action" json:"action"`
+	Target             DockerReconciliationRemediationTarget `db:"target" json:"target"`
+	ExpectedRevision   int64                                 `db:"expected_revision" json:"expected_revision"`
+	Fingerprint        string                                `db:"fingerprint" json:"fingerprint"`
+	DaemonID           string                                `db:"daemon_id" json:"daemon_id"`
+	CandidateResource  DockerReconciliationCandidateResource `db:"candidate_resource" json:"candidate_resource,omitempty"`
+	CandidateSessionID string                                `db:"candidate_session_id" json:"-"`
+	CandidateIdentity  string                                `db:"candidate_identity" json:"candidate_identity,omitempty"`
+	RunnerBoot         string                                `db:"runner_boot" json:"-"`
+	ProjectID          int                                   `db:"project_id" json:"-"`
+	TaskID             int                                   `db:"task_id" json:"-"`
+	Generation         int                                   `db:"generation" json:"-"`
+	Resource           DockerReconciliationResource          `db:"resource" json:"-"`
+	Quarantine         *DockerReconciliationKey              `db:"-" json:"quarantine,omitempty"`
+	Status             DockerReconciliationRemediationStatus `db:"status" json:"status"`
+}
+
+func (c DockerReconciliationRemediationCommand) Validate() error {
+	if !validDockerReconciliationToken(c.CommandID) || !validDockerReconciliationToken(c.SessionID) || c.RunnerID <= 0 || c.Action != DockerReconciliationRemediationRetryStopAndCleanup || !ValidDockerReconciliationOpaqueHash(c.Fingerprint) || c.DaemonID == "" {
+		return fmt.Errorf("invalid Docker reconciliation remediation command")
+	}
+	switch c.Target {
+	case DockerReconciliationRemediationTargetQuarantine:
+		if c.Quarantine == nil || c.Quarantine.Validate() != nil {
+			return fmt.Errorf("invalid Docker reconciliation quarantine command")
+		}
+	case DockerReconciliationRemediationTargetCandidate:
+		switch c.CandidateResource {
+		case DockerReconciliationCandidateContainer:
+		case DockerReconciliationCandidateVolume:
+			if !ValidDockerReconciliationOpaqueHash(c.CandidateIdentity) {
+				return fmt.Errorf("invalid Docker volume remediation identity")
+			}
+		default:
+			return fmt.Errorf("invalid Docker reconciliation candidate command")
+		}
+	default:
+		return fmt.Errorf("invalid Docker reconciliation remediation command target")
+	}
+	return nil
+}
+
+type DockerReconciliationRemediationEvidence string
+
+const (
+	DockerReconciliationEvidenceRemoved           DockerReconciliationRemediationEvidence = "removed"
+	DockerReconciliationEvidenceAlreadyAbsent     DockerReconciliationRemediationEvidence = "already_absent"
+	DockerReconciliationEvidenceIdentityMismatch  DockerReconciliationRemediationEvidence = "identity_mismatch"
+	DockerReconciliationEvidenceStillRunning      DockerReconciliationRemediationEvidence = "still_running"
+	DockerReconciliationEvidenceVolumeInUse       DockerReconciliationRemediationEvidence = "volume_in_use"
+	DockerReconciliationEvidenceDaemonUnavailable DockerReconciliationRemediationEvidence = "daemon_unavailable"
+)
+
+type DockerReconciliationRemediationResult struct {
+	CommandID   string                                  `json:"command_id"`
+	Fingerprint string                                  `json:"fingerprint"`
+	Status      DockerReconciliationRemediationStatus   `json:"status"`
+	Evidence    DockerReconciliationRemediationEvidence `json:"evidence"`
+}
+
+func (r DockerReconciliationRemediationResult) Validate() error {
+	if !validDockerReconciliationToken(r.CommandID) || len(r.Fingerprint) != 64 {
+		return fmt.Errorf("invalid Docker reconciliation remediation result")
+	}
+	switch r.Status {
+	case DockerReconciliationRemediationSucceeded:
+		if r.Evidence != DockerReconciliationEvidenceRemoved && r.Evidence != DockerReconciliationEvidenceAlreadyAbsent {
+			return fmt.Errorf("invalid successful Docker remediation evidence")
+		}
+	case DockerReconciliationRemediationPending, DockerReconciliationRemediationErrored:
+		switch r.Evidence {
+		case DockerReconciliationEvidenceIdentityMismatch, DockerReconciliationEvidenceStillRunning, DockerReconciliationEvidenceVolumeInUse, DockerReconciliationEvidenceDaemonUnavailable:
+		default:
+			return fmt.Errorf("invalid unresolved Docker remediation evidence")
+		}
+	default:
+		return fmt.Errorf("invalid Docker reconciliation remediation result")
+	}
+	return nil
 }
 
 func (o DockerReconciliationOwner) Validate() error {
@@ -439,6 +628,12 @@ type DockerReconciliationRepository interface {
 	GetDockerReconciliationState(key DockerReconciliationKey) (DockerReconciliationStateRecord, error)
 	GetDockerReconciliationStates(owner DockerReconciliationOwner, query DockerReconciliationQuery) ([]DockerReconciliationStateRecord, error)
 	UpdateDockerReconciliationState(state DockerReconciliationStateRecord, expectedRevision int) (DockerReconciliationStateRecord, error)
+	GetDockerReconciliationCandidates(runnerID int, sessionID string, query DockerReconciliationCandidateQuery) ([]DockerReconciliationOrphanCandidate, error)
+	GetDockerReconciliationPendingStates(owner DockerReconciliationOwner, query DockerReconciliationQuery) (DockerReconciliationStatePage, error)
+	GetDockerReconciliationPendingCandidates(runnerID int, sessionID string, query DockerReconciliationCandidateQuery) (DockerReconciliationCandidatePage, error)
+	RequestDockerReconciliationRemediation(runnerID int, request DockerReconciliationRemediationRequest) (DockerReconciliationRemediationCommand, error)
+	GetDockerReconciliationRemediationCommands(authenticatedRunnerID int, sessionID string, fence string, limit int) ([]DockerReconciliationRemediationCommand, error)
+	ReportDockerReconciliationRemediation(authenticatedRunnerID int, sessionID string, fence string, result DockerReconciliationRemediationResult) error
 
 	// RecordDockerReconciliationObservation retains the initial append-only
 	// contract for callers that do not need the idempotency result.
