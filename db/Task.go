@@ -105,6 +105,12 @@ type Task struct {
 	Limit string `db:"-" json:"limit"`
 }
 
+var kubernetesTerminalReasons = map[string]struct{}{
+	"BackoffLimitExceeded": {}, "Canceled": {}, "CleanupFailed": {}, "ContainerCannotRun": {},
+	"DeadlineExceeded": {}, "Error": {}, "Evicted": {}, "FailedIndexes": {}, "NodeLost": {},
+	"NonZeroExit": {}, "OOMKilled": {}, "PodFailurePolicy": {}, "Shutdown": {},
+}
+
 func (task *Task) ExtractParams(target any) (err error) {
 	content, err := json.Marshal(task.Params)
 	if err != nil {

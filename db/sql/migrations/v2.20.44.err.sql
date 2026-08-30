@@ -1,0 +1,9 @@
+alter table `task__runner_attempt` drop column `k8s_terminal_reason`;
+alter table `task__runner_attempt` drop column `k8s_lifecycle`;
+alter table `task__runner_attempt` drop column `k8s_container_name`;
+alter table `task__runner_attempt` drop column `k8s_pod_uid`;
+alter table `task__runner_attempt` drop column `k8s_pod_name`;
+alter table `task__runner_attempt` drop column `k8s_job_uid`;
+alter table `task__runner_attempt` drop column `k8s_job_name`;
+alter table `task__runner_attempt` drop column `k8s_namespace`;
+alter table `task__runner_attempt` drop column `k8s_cluster_alias`;

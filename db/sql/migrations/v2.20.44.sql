@@ -1,0 +1,9 @@
+alter table `task__runner_attempt` add column `k8s_cluster_alias` varchar(128) not null default '';
+alter table `task__runner_attempt` add column `k8s_namespace` varchar(63) not null default '';
+alter table `task__runner_attempt` add column `k8s_job_name` varchar(63) not null default '';
+alter table `task__runner_attempt` add column `k8s_job_uid` varchar(128) not null default '';
+alter table `task__runner_attempt` add column `k8s_pod_name` varchar(63) not null default '';
+alter table `task__runner_attempt` add column `k8s_pod_uid` varchar(128) not null default '';
+alter table `task__runner_attempt` add column `k8s_container_name` varchar(63) not null default '';
+alter table `task__runner_attempt` add column `k8s_lifecycle` varchar(16) not null default '';
+alter table `task__runner_attempt` add column `k8s_terminal_reason` varchar(128) not null default '';

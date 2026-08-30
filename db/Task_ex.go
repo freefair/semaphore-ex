@@ -46,23 +46,41 @@ type RunnerAttempt struct {
 	DockerMemoryBytes      int64                `db:"docker_memory_bytes" json:"docker_memory_bytes,omitempty"`
 	DockerPidsLimit        int64                `db:"docker_pids_limit" json:"docker_pids_limit,omitempty"`
 	DenialRuleID           string               `db:"denial_rule_id" json:"denial_rule_id,omitempty"`
+	K8sClusterAlias        string               `db:"k8s_cluster_alias" json:"k8s_cluster_alias,omitempty"`
+	K8sNamespace           string               `db:"k8s_namespace" json:"k8s_namespace,omitempty"`
+	K8sJobName             string               `db:"k8s_job_name" json:"k8s_job_name,omitempty"`
+	K8sJobUID              string               `db:"k8s_job_uid" json:"k8s_job_uid,omitempty"`
+	K8sPodName             string               `db:"k8s_pod_name" json:"k8s_pod_name,omitempty"`
+	K8sPodUID              string               `db:"k8s_pod_uid" json:"k8s_pod_uid,omitempty"`
+	K8sContainerName       string               `db:"k8s_container_name" json:"k8s_container_name,omitempty"`
+	K8sLifecycle           string               `db:"k8s_lifecycle" json:"k8s_lifecycle,omitempty"`
+	K8sTerminalReason      string               `db:"k8s_terminal_reason" json:"k8s_terminal_reason,omitempty"`
 }
 
 // RunnerExecutorMetadata is the bounded runtime identity a runner may attach
 // to its current assignment. Task arguments, environment, labels, mounts, and
 // daemon details intentionally never cross this API boundary.
 type RunnerExecutorMetadata struct {
-	ExecutorType   RunnerExecutorType `json:"executor_type"`
-	ContainerID    string             `json:"container_id,omitempty"`
-	ContainerName  string             `json:"container_name,omitempty"`
-	RequestedImage string             `json:"requested_image,omitempty"`
-	ResolvedImage  string             `json:"resolved_image,omitempty"`
-	PolicyRevision int                `json:"policy_revision,omitempty"`
-	PolicyHash     string             `json:"policy_hash,omitempty"`
-	NanoCPUs       int64              `json:"nano_cpus,omitempty"`
-	MemoryBytes    int64              `json:"memory_bytes,omitempty"`
-	PidsLimit      int64              `json:"pids_limit,omitempty"`
-	DenialRuleID   string             `json:"denial_rule_id,omitempty"`
+	ExecutorType      RunnerExecutorType `json:"executor_type"`
+	ContainerID       string             `json:"container_id,omitempty"`
+	ContainerName     string             `json:"container_name,omitempty"`
+	RequestedImage    string             `json:"requested_image,omitempty"`
+	ResolvedImage     string             `json:"resolved_image,omitempty"`
+	PolicyRevision    int                `json:"policy_revision,omitempty"`
+	PolicyHash        string             `json:"policy_hash,omitempty"`
+	NanoCPUs          int64              `json:"nano_cpus,omitempty"`
+	MemoryBytes       int64              `json:"memory_bytes,omitempty"`
+	PidsLimit         int64              `json:"pids_limit,omitempty"`
+	DenialRuleID      string             `json:"denial_rule_id,omitempty"`
+	K8sClusterAlias   string             `json:"k8s_cluster_alias,omitempty"`
+	K8sNamespace      string             `json:"k8s_namespace,omitempty"`
+	K8sJobName        string             `json:"k8s_job_name,omitempty"`
+	K8sJobUID         string             `json:"k8s_job_uid,omitempty"`
+	K8sPodName        string             `json:"k8s_pod_name,omitempty"`
+	K8sPodUID         string             `json:"k8s_pod_uid,omitempty"`
+	K8sContainerName  string             `json:"k8s_container_name,omitempty"`
+	K8sLifecycle      string             `json:"k8s_lifecycle,omitempty"`
+	K8sTerminalReason string             `json:"k8s_terminal_reason,omitempty"`
 }
 
 const MaxRunnerContainerIdentityLength = 128
@@ -76,6 +94,9 @@ func (m RunnerExecutorMetadata) Validate(expected RunnerExecutorType) error {
 	}
 	if executorType != expected {
 		return fmt.Errorf("executor metadata type %q does not match runner type %q", executorType, expected)
+	}
+	if executorType == RunnerExecutorK8s {
+		return m.validateKubernetes()
 	}
 	if executorType != RunnerExecutorDocker {
 		if m.ContainerID != "" || m.ContainerName != "" {
@@ -114,6 +135,105 @@ func (m RunnerExecutorMetadata) Validate(expected RunnerExecutorType) error {
 		return errors.New("Docker executor metadata requires positive policy resource limits")
 	}
 	return nil
+}
+
+func (m RunnerExecutorMetadata) validateKubernetes() error {
+	if m.ContainerID != "" || m.ContainerName != "" || m.PolicyRevision != 0 || m.PolicyHash != "" ||
+		m.NanoCPUs != 0 || m.MemoryBytes != 0 || m.PidsLimit != 0 || m.DenialRuleID != "" {
+		return errors.New("Kubernetes executor metadata contains Docker-only fields")
+	}
+	if !safeExecutorIdentity(m.K8sClusterAlias, 128, false) {
+		return errors.New("Kubernetes executor metadata contains an invalid cluster alias")
+	}
+	if !safeDNSLabel(m.K8sNamespace) {
+		return errors.New("Kubernetes executor metadata contains an invalid namespace")
+	}
+	if m.K8sContainerName != "task" {
+		return errors.New("Kubernetes executor metadata contains an invalid main container")
+	}
+	if !immutableSHA256Image(m.RequestedImage) || m.ResolvedImage != m.RequestedImage {
+		return errors.New("Kubernetes executor metadata requires one immutable requested and resolved image")
+	}
+	switch m.K8sLifecycle {
+	case "starting":
+		if m.K8sJobName != "" || m.K8sJobUID != "" || m.K8sPodName != "" || m.K8sPodUID != "" || m.K8sTerminalReason != "" {
+			return errors.New("starting Kubernetes metadata cannot claim runtime identities")
+		}
+		return nil
+	case "pending":
+		if !safeDNSLabel(m.K8sJobName) || !safeExecutorIdentity(m.K8sJobUID, 128, false) || m.K8sPodName != "" || m.K8sPodUID != "" || m.K8sTerminalReason != "" {
+			return errors.New("pending Kubernetes metadata requires only a valid Job identity")
+		}
+		return nil
+	case "running", "succeeded", "failed", "canceling", "stopped":
+	default:
+		return errors.New("Kubernetes executor metadata contains an invalid lifecycle")
+	}
+	if !safeDNSLabel(m.K8sJobName) || !safeExecutorIdentity(m.K8sJobUID, 128, false) ||
+		!safeDNSLabel(m.K8sPodName) || !safeExecutorIdentity(m.K8sPodUID, 128, false) {
+		return errors.New("Kubernetes executor metadata requires valid Job and Pod identities")
+	}
+	_, allowedReason := kubernetesTerminalReasons[m.K8sTerminalReason]
+	switch m.K8sLifecycle {
+	case "running", "canceling", "succeeded":
+		if m.K8sTerminalReason != "" {
+			return errors.New("Kubernetes metadata lifecycle cannot contain a terminal reason")
+		}
+	case "failed":
+		if !allowedReason {
+			return errors.New("failed Kubernetes metadata requires an allow-listed terminal reason")
+		}
+	case "stopped":
+		if m.K8sTerminalReason != "Canceled" {
+			return errors.New("stopped Kubernetes metadata requires the canceled reason")
+		}
+	}
+	return nil
+}
+
+func immutableSHA256Image(value string) bool {
+	digest := strings.LastIndex(value, "@sha256:")
+	if digest <= 0 || len(value)-digest != len("@sha256:")+64 {
+		return false
+	}
+	for _, character := range value[digest+len("@sha256:"):] {
+		if character < '0' || character > '9' {
+			if character < 'a' || character > 'f' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func safeDNSLabel(value string) bool {
+	if len(value) == 0 || len(value) > 63 || value[0] == '-' || value[len(value)-1] == '-' {
+		return false
+	}
+	for _, character := range value {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func safeExecutorIdentity(value string, limit int, allowEmpty bool) bool {
+	if value == "" {
+		return allowEmpty
+	}
+	if len(value) > limit {
+		return false
+	}
+	for _, character := range value {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' || character == '.' || character == '_' || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // TaskExecutionEvidenceState is a value-free observation from a complete
