@@ -5,19 +5,22 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/util"
 )
 
 func TestApiPing(t *testing.T) {
-	util.Config = &util.ConfigType{
-		Debugging: &util.DebuggingConfig{},
-	}
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	util.Config.Debugging = &util.DebuggingConfig{}
 
 	req, _ := http.NewRequest("GET", "/api/ping", nil)
 	rr := httptest.NewRecorder()
 
 	r := Route(
-		nil,
+		store,
 		nil,
 		nil,
 		nil,

@@ -88,12 +88,13 @@ func (d *SqlDb) AssignTaskRunner(
 		return task, false, err
 	}
 	type capacityRow struct {
-		MaxParallelTasks int `db:"max_parallel_tasks"`
-		Assignments      int `db:"assignments"`
+		MaxParallelTasks int                   `db:"max_parallel_tasks"`
+		Assignments      int                   `db:"assignments"`
+		ExecutorType     db.RunnerExecutorType `db:"executor_type"`
 	}
 	var capacity capacityRow
 	capacityErr := tx.SelectOne(&capacity, d.PrepareQuery(
-		"select r.max_parallel_tasks, "+
+		"select r.max_parallel_tasks, r.executor_type, "+
 			"(select count(*) from task assigned where assigned.runner_id=r.id "+
 			"and assigned.status in (?, ?, ?, ?, ?, ?, ?)) as assignments "+
 			"from runner r where r.id=? and r.active=true and r.token != '' "+
@@ -139,11 +140,11 @@ func (d *SqlDb) AssignTaskRunner(
 	if _, err = tx.Exec(d.PrepareQuery(
 		"insert into task__runner_attempt "+
 			"(project_id, task_id, generation, runner_id, runner_name, assigned_at, outcome, "+
-			"requested_tags, match_mode, placement_reason, requested_executor_image, resolved_executor_image) "+
-			"values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+			"requested_tags, match_mode, placement_reason, requested_executor_image, resolved_executor_image, executor_type) "+
+			"values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
 		projectID, taskID, task.AssignmentGeneration, runnerID, runnerName, assignedAt,
 		db.RunnerAttemptActive, requestedTags, matchMode, placementReason,
-		task.RequestedExecutorImage, task.ResolvedExecutorImage,
+		task.RequestedExecutorImage, task.ResolvedExecutorImage, capacity.ExecutorType,
 	); err != nil {
 		_ = tx.Rollback()
 		return task, false, err
@@ -152,6 +153,26 @@ func (d *SqlDb) AssignTaskRunner(
 		return task, false, err
 	}
 	return task, true, nil
+}
+
+func (d *SqlDb) UpdateTaskRunnerAttemptMetadata(
+	projectID int,
+	taskID int,
+	generation int,
+	runnerID int,
+	metadata db.RunnerExecutorMetadata,
+) (bool, error) {
+	result, err := d.exec(
+		"update task__runner_attempt set executor_type=?, container_id=?, container_name=? "+
+			"where project_id=? and task_id=? and generation=? and runner_id=? and ended_at is null",
+		metadata.ExecutorType, metadata.ContainerID, metadata.ContainerName,
+		projectID, taskID, generation, runnerID,
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows == 1, err
 }
 
 func (d *SqlDb) SetTaskRunnerPlacement(

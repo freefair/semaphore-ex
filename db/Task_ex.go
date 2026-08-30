@@ -1,6 +1,8 @@
 package db
 
 import (
+	"errors"
+	"fmt"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"time"
 )
@@ -32,6 +34,54 @@ type RunnerAttempt struct {
 	PlacementReason        string               `db:"placement_reason" json:"placement_reason,omitempty"`
 	RequestedExecutorImage *string              `db:"requested_executor_image" json:"requested_executor_image,omitempty"`
 	ResolvedExecutorImage  *string              `db:"resolved_executor_image" json:"resolved_executor_image,omitempty"`
+	ExecutorType           RunnerExecutorType   `db:"executor_type" json:"executor_type,omitempty"`
+	ContainerID            string               `db:"container_id" json:"container_id,omitempty"`
+	ContainerName          string               `db:"container_name" json:"container_name,omitempty"`
+}
+
+// RunnerExecutorMetadata is the bounded runtime identity a runner may attach
+// to its current assignment. Task arguments, environment, labels, mounts, and
+// daemon details intentionally never cross this API boundary.
+type RunnerExecutorMetadata struct {
+	ExecutorType  RunnerExecutorType `json:"executor_type"`
+	ContainerID   string             `json:"container_id,omitempty"`
+	ContainerName string             `json:"container_name,omitempty"`
+}
+
+const MaxRunnerContainerIdentityLength = 128
+
+// Validate checks the small runner-owned identity contract before metadata is
+// persisted or shown to project users.
+func (m RunnerExecutorMetadata) Validate(expected RunnerExecutorType) error {
+	executorType, err := NormalizeRunnerExecutorType(m.ExecutorType)
+	if err != nil {
+		return err
+	}
+	if executorType != expected {
+		return fmt.Errorf("executor metadata type %q does not match runner type %q", executorType, expected)
+	}
+	if executorType != RunnerExecutorDocker {
+		if m.ContainerID != "" || m.ContainerName != "" {
+			return errors.New("container identity is only valid for Docker executor metadata")
+		}
+		return nil
+	}
+	if m.ContainerName == "" {
+		return errors.New("Docker executor metadata requires a container name")
+	}
+	for field, value := range map[string]string{"container ID": m.ContainerID, "container name": m.ContainerName} {
+		if len(value) > MaxRunnerContainerIdentityLength {
+			return fmt.Errorf("%s must contain at most %d bytes", field, MaxRunnerContainerIdentityLength)
+		}
+		for _, character := range value {
+			if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+				character >= '0' && character <= '9' || character == '.' || character == '_' || character == '-' {
+				continue
+			}
+			return fmt.Errorf("%s contains an unsupported character", field)
+		}
+	}
+	return nil
 }
 
 // TaskExecutionEvidenceState is a value-free observation from a complete

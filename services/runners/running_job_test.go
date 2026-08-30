@@ -2,16 +2,15 @@ package runners
 
 import (
 	"fmt"
-	"os/exec"
-	"sync"
-	"testing"
-	"time"
-
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"os/exec"
+	"sync"
+	"testing"
+	"time"
 )
 
 // newTestRunningJob wires a runningJob to a LocalJob whose Logger points back at
@@ -80,7 +79,7 @@ func TestRunningJob_AckLogRecords(t *testing.T) {
 			pending := rj.ackLogRecords(tt.sent)
 			assert.Equal(t, tt.wantPending, pending)
 
-			_, logs, _ := rj.getProgress()
+			_, logs, _, _ := rj.getProgress()
 			assert.Len(t, logs, tt.wantPending)
 		})
 	}
@@ -114,13 +113,13 @@ func TestRunningJob_GetProgressReturnsCopy(t *testing.T) {
 	rj.Log("a")
 	rj.Log("b")
 
-	_, logs, _ := rj.getProgress()
+	_, logs, _, _ := rj.getProgress()
 	assert.Len(t, logs, 2)
 
 	// Mutating the returned slice must not corrupt the internal state.
 	logs[0].Message = "mutated"
 
-	_, logs2, _ := rj.getProgress()
+	_, logs2, _, _ := rj.getProgress()
 	assert.Equal(t, "a", logs2[0].Message)
 }
 
@@ -159,7 +158,7 @@ func TestRunningJob_ConcurrentAccess(t *testing.T) {
 		spawn(func(i int) { rj.SetCommit(fmt.Sprintf("hash%d", i), "msg") })
 		spawn(func(i int) {
 			rj.getStatus()
-			_, logs, _ := rj.getProgress()
+			_, logs, _, _ := rj.getProgress()
 			if len(logs) > 0 {
 				rj.ackLogRecords(1)
 			}

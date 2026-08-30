@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
@@ -147,13 +148,17 @@ func (p *runningJob) getStatus() task_logger.TaskStatus {
 // getProgress atomically snapshots the data needed to report progress to the
 // server. The returned slice is a copy, so the caller can read it freely while
 // the job keeps appending records.
-func (p *runningJob) getProgress() (status task_logger.TaskStatus, logRecords []LogRecord, commit *CommitInfo) {
+func (p *runningJob) getProgress() (status task_logger.TaskStatus, logRecords []LogRecord, commit *CommitInfo, metadata *db.RunnerExecutorMetadata) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	status = p.status
 	logRecords = make([]LogRecord, len(p.logRecords))
 	copy(logRecords, p.logRecords)
 	commit = p.commit
+	if provider, ok := p.job.(tasks.ExecutorMetadataProvider); ok {
+		value := provider.ExecutorMetadata()
+		metadata = &value
+	}
 	return
 }
 

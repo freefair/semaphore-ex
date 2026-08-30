@@ -468,6 +468,26 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			response.TerminatedJobs = append(response.TerminatedJobs, job.ID)
 			continue
 		}
+		if job.ExecutorMetadata != nil {
+			if err := job.ExecutorMetadata.Validate(runner.EffectiveExecutorType()); err != nil {
+				helpers.WriteErrorStatus(w, "Invalid executor metadata", http.StatusBadRequest)
+				return
+			}
+			updated, err := helpers.Store(r).UpdateTaskRunnerAttemptMetadata(
+				tsk.Task.ProjectID, job.ID, reportedGeneration, runner.ID, *job.ExecutorMetadata,
+			)
+			if err != nil {
+				log.WithError(err).WithFields(log.Fields{
+					"task_id": job.ID, "runner_id": runner.ID, "context": "runner_executor_metadata",
+				}).Error("failed to persist runner executor metadata")
+				helpers.WriteErrorStatus(w, "Failed to persist executor metadata", http.StatusInternalServerError)
+				return
+			}
+			if !updated {
+				response.TerminatedJobs = append(response.TerminatedJobs, job.ID)
+				continue
+			}
+		}
 
 		var commitHash *string
 		var commitMessage string
@@ -475,8 +495,19 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			commitHash = &job.Commit.Hash
 			commitMessage = job.Commit.Message
 		}
+		// A graceful stop can race with an in-flight progress snapshot that was
+		// captured before the runner received the server's stopping state. Keep
+		// the server-owned stopping state and accept the snapshot so the runner
+		// remains tracked long enough to report its terminal stopped status while
+		// still persisting commit metadata carried by the snapshot.
+		inflightCancellationProgress := tsk.Task.Status == task_logger.TaskStoppingStatus &&
+			!job.Status.IsFinished()
+		acceptedStatus := job.Status
+		if inflightCancellationProgress {
+			acceptedStatus = task_logger.TaskStoppingStatus
+		}
 		if !tsk.ApplyRunnerProgress(
-			job.Status, runner.ID, reportedGeneration, commitHash, commitMessage,
+			acceptedStatus, runner.ID, reportedGeneration, commitHash, commitMessage,
 		) {
 			response.TerminatedJobs = append(response.TerminatedJobs, job.ID)
 			continue

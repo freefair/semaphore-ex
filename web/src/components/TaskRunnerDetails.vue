@@ -122,13 +122,25 @@
               </div>
               <div>
                 <div><strong>Runner:</strong> {{ runnerAttemptIdentity(attempt) }}</div>
+                <div><strong>Executor:</strong> {{ runnerAttemptExecutorLabel(attempt) }}</div>
+                <div v-if="attempt.container_name" class="mt-1">
+                  <strong>Container:</strong>
+                  <code>{{ attempt.container_name }}</code>
+                </div>
+                <div v-if="attempt.container_id" class="mt-1">
+                  <strong>Container ID:</strong>
+                  <code>{{ attempt.container_id }}</code>
+                </div>
+                <div class="mt-1">
+                  <strong>Lifecycle:</strong> {{ runnerAttemptLabel(attempt.outcome) }}
+                </div>
                 <div class="text--secondary">
                   Assigned {{ attempt.assigned_at | formatDate }}
                   <span v-if="attempt.ended_at"> · Ended {{ attempt.ended_at | formatDate }}</span>
                   <span v-else> · In progress</span>
                 </div>
                 <div v-if="attempt.reason" class="mt-1" data-testid="task-runner-attempt-reason">
-                  {{ attempt.reason }}
+                  <strong>Terminal reason:</strong> {{ attempt.reason }}
                 </div>
                 <div v-if="attempt.requested_tags?.length" class="mt-1">
                   <strong>Tag policy:</strong>
@@ -247,6 +259,9 @@ export default {
         ? `#${attempt.runner_id} — ${attempt.runner_name}`
         : `#${attempt.runner_id}`;
     },
+    runnerAttemptExecutorLabel(attempt) {
+      return attempt.executor_type || 'local';
+    },
     runnerAttemptLabel(outcome) {
       return {
         active: 'Active',
@@ -348,6 +363,10 @@ export default {
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+}
+
+.TaskRunnerDetails__attempt code {
+  overflow-wrap: anywhere;
 }
 
 .TaskRunnerDetails__placementEvaluation {

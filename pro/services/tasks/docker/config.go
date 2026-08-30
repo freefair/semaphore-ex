@@ -14,10 +14,11 @@ package docker
 import (
 	"errors"
 
+	"github.com/semaphoreui/semaphore/db_lib"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 )
 
-func NewProvider(_ util.RunnerDockerConfig) (tasks.ExecutorProvider, error) {
+func NewProvider(_ util.RunnerDockerConfig, _ ...db_lib.AccessKeyInstaller) (tasks.ExecutorProvider, error) {
 	return nil, errors.New("docker executor is only available in the proprietary build")
 }

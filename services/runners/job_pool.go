@@ -456,14 +456,15 @@ func (p *JobPool) sendProgress() (ok bool) {
 
 	for id, j := range p.snapshotRunningJobs() {
 
-		status, logRecords, commit := j.getProgress()
+		status, logRecords, commit, executorMetadata := j.getProgress()
 
 		body.Jobs = append(body.Jobs, JobProgress{
-			ID:         id,
-			Generation: j.generation,
-			LogRecords: logRecords,
-			Status:     status,
-			Commit:     commit,
+			ID:               id,
+			Generation:       j.generation,
+			LogRecords:       logRecords,
+			Status:           status,
+			Commit:           commit,
+			ExecutorMetadata: executorMetadata,
 		})
 		body.KnownJobs = append(body.KnownJobs, JobState{
 			ID: id, Generation: j.generation, Status: status,
