@@ -8,12 +8,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDockerExecutionPolicyStoreUsesRevisionFence(t *testing.T) {
+func TestDockerExecutionPolicyStoreReturnsFailClosedDefaultUntilFirstSave(t *testing.T) {
 	store := InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
+
+	count, err := store.Sql().SelectInt(store.PrepareQuery("select count(1) from docker_execution_policy"))
+	require.NoError(t, err)
+	assert.Zero(t, count)
+
 	initial, err := store.GetDockerExecutionPolicy()
 	require.NoError(t, err)
-	assert.Equal(t, 0, initial.Revision)
+	assert.Equal(t, db.DefaultDockerExecutionPolicy(), initial)
 
 	initial.AllowedImages = []string{"registry.example.test/job@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 	saved, err := store.SaveDockerExecutionPolicy(initial, initial.Revision)

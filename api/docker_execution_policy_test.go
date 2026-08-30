@@ -24,7 +24,7 @@ func TestDockerExecutionPolicyAdminEndpointsUseRevisionFence(t *testing.T) {
 	policy.AllowedImages = []string{"registry.example.test/job@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 	body, err := json.Marshal(policy)
 	require.NoError(t, err)
-	request := helpers.SetContextValue(httptest.NewRequest(http.MethodPut, "/api/admin/runners/docker-policy", bytes.NewReader(body)), "store", store)
+	request := helpers.SetContextValue(httptest.NewRequest(http.MethodPut, "/api/runners/docker-policy", bytes.NewReader(body)), "store", store)
 	recorder := httptest.NewRecorder()
 	controller.UpdateDockerExecutionPolicy(recorder, request)
 	require.Equal(t, http.StatusOK, recorder.Code)
@@ -34,16 +34,41 @@ func TestDockerExecutionPolicyAdminEndpointsUseRevisionFence(t *testing.T) {
 
 	staleBody, err := json.Marshal(policy)
 	require.NoError(t, err)
-	staleRequest := helpers.SetContextValue(httptest.NewRequest(http.MethodPut, "/api/admin/runners/docker-policy", bytes.NewReader(staleBody)), "store", store)
+	staleRequest := helpers.SetContextValue(httptest.NewRequest(http.MethodPut, "/api/runners/docker-policy", bytes.NewReader(staleBody)), "store", store)
 	staleRecorder := httptest.NewRecorder()
 	controller.UpdateDockerExecutionPolicy(staleRecorder, staleRequest)
 	assert.Equal(t, http.StatusConflict, staleRecorder.Code)
 
-	testRequest := helpers.SetContextValue(httptest.NewRequest(http.MethodPost, "/api/admin/runners/docker-policy/test", bytes.NewBufferString(`{"image":"registry.example.test/other@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","network":"none","user":"65534:0","nano_cpus":1000000000,"memory_bytes":536870912,"pids_limit":256,"read_only_rootfs":true}`)), "store", store)
+	mutablePolicy := db.DefaultDockerExecutionPolicy()
+	mutablePolicy.RequireDigest = false
+	mutablePolicy.AllowedImages = []string{"registry.example.test/job:latest"}
+	mutableBody, err := json.Marshal(mutablePolicy)
+	require.NoError(t, err)
+	mutableRequest := helpers.SetContextValue(httptest.NewRequest(http.MethodPut, "/api/runners/docker-policy", bytes.NewReader(mutableBody)), "store", store)
+	mutableRecorder := httptest.NewRecorder()
+	controller.UpdateDockerExecutionPolicy(mutableRecorder, mutableRequest)
+	assert.Equal(t, http.StatusBadRequest, mutableRecorder.Code)
+
+	testRequest := helpers.SetContextValue(httptest.NewRequest(http.MethodPost, "/api/runners/docker-policy/test", bytes.NewBufferString(`{"image":"registry.example.test/other@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","network":"none","user":"65534:0","nano_cpus":1000000000,"memory_bytes":536870912,"pids_limit":256,"read_only_rootfs":true}`)), "store", store)
 	testRecorder := httptest.NewRecorder()
 	controller.TestDockerExecutionPolicy(testRecorder, testRequest)
 	assert.Equal(t, http.StatusOK, testRecorder.Code)
 	assert.Contains(t, testRecorder.Body.String(), db.DockerPolicyRuleImageDenied)
+}
+
+func TestGetDockerExecutionPolicyReturnsFailClosedDefaultOnFreshStore(t *testing.T) {
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	controller := NewGlobalRunnerController(nil)
+
+	request := helpers.SetContextValue(httptest.NewRequest(http.MethodGet, "/api/runners/docker-policy", nil), "store", store)
+	recorder := httptest.NewRecorder()
+	controller.GetDockerExecutionPolicy(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var policy db.DockerExecutionPolicy
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &policy))
+	assert.Equal(t, db.DefaultDockerExecutionPolicy(), policy)
 }
 
 func TestDockerReconciliationQuarantineAPIUsesPendingCursorPage(t *testing.T) {
@@ -58,7 +83,7 @@ func TestDockerReconciliationQuarantineAPIUsesPendingCursorPage(t *testing.T) {
 		require.NoError(t, err)
 	}
 	controller := NewGlobalRunnerController(nil)
-	request := httptest.NewRequest(http.MethodGet, "/api/admin/runners/91/docker-reconciliation/quarantines?runner_boot=api-page-boot&limit=1", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/runners/91/docker-reconciliation/quarantines?runner_boot=api-page-boot&limit=1", nil)
 	request = helpers.SetContextValue(request, "store", store)
 	request = helpers.SetContextValue(request, "runner", &db.Runner{ID: 91})
 	recorder := httptest.NewRecorder()
@@ -93,7 +118,7 @@ func TestDockerReconciliationDiagnosticsAPIIsAdminOnlyAndRedactsInternals(t *tes
 	_, err = store.Sql().Exec(store.PrepareQuery("insert into docker_reconciliation_orphan_candidate (session_id,runner_id,resource,identifier,name,reason,fingerprint,identity,observed_at,revision,status) values (?,?,?,?,?,?,?,?,?,?,?)"), "historic-session", 92, db.DockerReconciliationCandidateContainer, "candidate-daemon-id", "safe-name", db.DockerReconciliationCandidateMalformed, strings.Repeat("a", 64), "secret-identity-hash", now.Add(time.Second), 2, db.DockerReconciliationCandidatePending)
 	require.NoError(t, err)
 	controller := NewGlobalRunnerController(nil)
-	request := httptest.NewRequest(http.MethodGet, "/api/admin/runners/92/docker-reconciliation/diagnostics?limit=10", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/runners/92/docker-reconciliation/diagnostics?limit=10", nil)
 	request = helpers.SetContextValue(request, "store", store)
 	request = helpers.SetContextValue(request, "runner", &db.Runner{ID: 92})
 	recorder := httptest.NewRecorder()
@@ -116,7 +141,7 @@ func TestDockerReconciliationDiagnosticsAPIIsAdminOnlyAndRedactsInternals(t *tes
 	assert.Equal(t, "historic-session", candidate.Remediation.Candidate.SessionID)
 	assert.Equal(t, strings.Repeat("a", 64), candidate.Remediation.Candidate.Fingerprint)
 
-	denied := helpers.SetContextValue(httptest.NewRequest(http.MethodGet, "/api/admin/runners/92/docker-reconciliation/diagnostics", nil), "store", store)
+	denied := helpers.SetContextValue(httptest.NewRequest(http.MethodGet, "/api/runners/92/docker-reconciliation/diagnostics", nil), "store", store)
 	denied = helpers.SetContextValue(denied, "runner", &db.Runner{ID: 92})
 	denied = helpers.SetContextValue(denied, "user", &db.User{ID: 12, Admin: false})
 	deniedRecorder := httptest.NewRecorder()
@@ -128,7 +153,7 @@ func TestDockerExecutionPolicyEndpointsRemainGlobalAdminOnly(t *testing.T) {
 	store := sql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
 	controller := NewGlobalRunnerController(nil)
-	request := httptest.NewRequest(http.MethodGet, "/api/admin/runners/docker-policy", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/runners/docker-policy", nil)
 	request = helpers.SetContextValue(request, "store", store)
 	request = helpers.SetContextValue(request, "user", &db.User{ID: 99, Admin: false})
 	recorder := httptest.NewRecorder()
