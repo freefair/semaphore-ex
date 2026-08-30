@@ -95,4 +95,179 @@ describe('project runner health and history', () => {
       axios.defaults.adapter = previousAdapter;
     }
   });
+
+  it('uses the existing health dialog for global Docker policy and diagnostics', async () => {
+    const calls = [];
+    const context = {
+      runner: { id: 12, project_id: null, executor_type: 'docker' },
+      dockerAdmin: true,
+      loading: false,
+      error: null,
+      health: { heartbeat_state: 'online' },
+      history: [{ task_id: 1 }],
+      loadDockerPolicy: async () => calls.push('policy'),
+      loadDockerDiagnostics: async (append) => calls.push(`diagnostics:${append}`),
+    };
+
+    await RunnerHealthDialog.methods.load.call(context);
+
+    expect(calls).to.deep.equal(['policy', 'diagnostics:false']);
+    expect(context.loading).to.equal(false);
+    expect(context.health).to.equal(null);
+    expect(context.history).to.deep.equal([]);
+    expect(RunnerHealthDialog.computed.dockerPolicyAcknowledged.call({
+      dockerPolicy: { revision: 4, hash: 'policy-hash' },
+      runner: { docker_policy_revision: 4, docker_policy_hash: 'policy-hash' },
+    })).to.equal(true);
+    expect(RunnerHealthDialog.computed.dialogTitle.call({
+      dockerAdmin: true,
+      $t: () => 'Runner health and history',
+    })).to.equal('Docker runner diagnostics');
+  });
+
+  it('loads Docker policy and diagnostics from the existing global runner API', async () => {
+    const previousAdapter = axios.defaults.adapter;
+    const requests = [];
+    axios.defaults.adapter = async (config) => {
+      requests.push(config);
+      return {
+        data: config.url.endsWith('/docker-policy')
+          ? { revision: 0, hash: 'policy-hash' }
+          : { diagnostics: [], next_cursor: null },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      };
+    };
+
+    try {
+      const context = {
+        runner: { id: 12 },
+        dockerPolicy: null,
+        dockerPolicyError: null,
+        dockerDiagnostics: [],
+        dockerDiagnosticsNextCursor: null,
+        dockerDiagnosticsError: null,
+      };
+
+      await RunnerHealthDialog.methods.loadDockerPolicy.call(context);
+      await RunnerHealthDialog.methods.loadDockerDiagnostics.call(context, false);
+
+      expect(requests.map(({ url }) => url)).to.deep.equal([
+        '/api/runners/docker-policy',
+        '/api/runners/12/docker-reconciliation/diagnostics',
+      ]);
+      expect(requests[1].params).to.deep.equal({ limit: 25 });
+      expect(context.dockerPolicy.revision).to.equal(0);
+      expect(context.dockerDiagnostics).to.deep.equal([]);
+    } finally {
+      axios.defaults.adapter = previousAdapter;
+    }
+  });
+
+  it('saves a bounded full Docker policy through the existing global runner API', async () => {
+    const previousAdapter = axios.defaults.adapter;
+    let request;
+    axios.defaults.adapter = async (config) => {
+      request = config;
+      return {
+        data: { revision: 5, hash: 'saved' },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      };
+    };
+
+    try {
+      const context = {
+        dockerPolicyDraft: {
+          revision: 4,
+          allowedImagesText: 'registry.test/task@sha256:abc\n\n registry.test/helper@sha256:def ',
+          allowed_images: [],
+          allowed_networks: ['none', 'internal'],
+          network: 'bridge',
+          require_digest: true,
+        },
+        savingDockerPolicy: false,
+        dockerPolicyError: null,
+        editingDockerPolicy: true,
+        dockerPolicy: null,
+      };
+
+      await RunnerHealthDialog.methods.saveDockerPolicy.call(context);
+
+      expect(request.method).to.equal('put');
+      expect(request.url).to.equal('/api/runners/docker-policy');
+      const payload = JSON.parse(request.data);
+      expect(payload.allowed_images).to.deep.equal([
+        'registry.test/task@sha256:abc',
+        'registry.test/helper@sha256:def',
+      ]);
+      expect(payload.allowed_networks).to.deep.equal(['none', 'internal', 'bridge']);
+      expect(payload).not.to.have.property('allowedImagesText');
+      expect(context.dockerPolicy.revision).to.equal(5);
+      expect(context.editingDockerPolicy).to.equal(false);
+    } finally {
+      axios.defaults.adapter = previousAdapter;
+    }
+  });
+
+  it('submits only the server-built Docker remediation target', async () => {
+    const previousAdapter = axios.defaults.adapter;
+    let request;
+    axios.defaults.adapter = async (config) => {
+      request = config;
+      return {
+        data: { status: 'pending' },
+        status: 202,
+        statusText: 'Accepted',
+        headers: {},
+        config,
+      };
+    };
+
+    try {
+      const diagnostic = {
+        type: 'candidate',
+        remediation: {
+          target: 'candidate',
+          expected_revision: 3,
+          candidate: { session_id: 'session-a', fingerprint: 'f'.repeat(64) },
+        },
+      };
+      const key = 'candidate:session-a:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+      let reloads = 0;
+      const context = {
+        runner: { id: 12 },
+        remediatingDockerDiagnostics: [],
+        dockerDiagnosticsError: null,
+        dockerRemediationKeys: { [key]: 'ui-stable-key' },
+        dockerDiagnosticKey: RunnerHealthDialog.methods.dockerDiagnosticKey,
+        dockerRemediationIdempotencyKey:
+          RunnerHealthDialog.methods.dockerRemediationIdempotencyKey,
+        loadDockerDiagnostics: async () => { reloads += 1; },
+        $set: (target, property, value) => Reflect.set(target, property, value),
+        $delete: (target, property) => Reflect.deleteProperty(target, property),
+      };
+
+      await RunnerHealthDialog.methods.requestDockerRemediation.call(context, diagnostic);
+
+      expect(request.url)
+        .to.equal('/api/runners/12/docker-reconciliation/remediation');
+      expect(JSON.parse(request.data)).to.deep.equal({
+        action: 'retry_stop_and_cleanup',
+        idempotency_key: 'ui-stable-key',
+        expected_revision: 3,
+        target: 'candidate',
+        session_id: 'session-a',
+        fingerprint: 'f'.repeat(64),
+      });
+      expect(reloads).to.equal(1);
+      expect(context.remediatingDockerDiagnostics).to.deep.equal([]);
+    } finally {
+      axios.defaults.adapter = previousAdapter;
+    }
+  });
 });

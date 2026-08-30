@@ -19,6 +19,15 @@ describe('runner reconciliation task details', () => {
     expect(TaskRunnerDetails.methods.runnerAttemptColor(attempt.outcome)).to.equal('warning');
     expect(TaskRunnerDetails.methods.runnerAttemptExecutorLabel(attempt)).to.equal('docker');
     expect(TaskRunnerDetails.methods.runnerAttemptExecutorLabel({})).to.equal('local');
+    expect(TaskRunnerDetails.methods.dockerPolicyReference({
+      docker_policy_revision: 7,
+      docker_policy_hash: 'sha256-policy',
+    })).to.equal('revision 7 · sha256-policy');
+    expect(TaskRunnerDetails.methods.dockerResourceLimits({
+      docker_nano_cpus: 1500000000,
+      docker_memory_bytes: 536870912,
+      docker_pids_limit: 256,
+    })).to.equal('1.5 CPU · 512 MiB · 256 PIDs');
     expect(TaskRunnerDetails.methods.recoveryDecisionColor('quarantine')).to.equal('warning');
     expect(TaskRunnerDetails.watch.item.deep).to.equal(true);
   });
