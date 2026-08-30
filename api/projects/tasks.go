@@ -191,12 +191,22 @@ func (c *TaskController) GetTaskPermissionsMiddleware(next http.Handler) http.Ha
 
 		permissions := helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
 
-		perm, err := c.store.GetTemplatePermission(project.ID, task.TemplateID, user.ID)
+		permissionContext, err := c.store.GetTemplatePermissionContext(
+			project.ID, task.TemplateID, user.ID,
+		)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if !permissionContext.EffectivePermissions.Can(db.CanRunTemplate) {
+			w.WriteHeader(http.StatusForbidden)
+			return
 		}
 
-		permissions |= perm
+		permissions = applyEffectiveTemplatePermissions(
+			permissions,
+			db.TemplatePermissionsToProject(permissionContext.EffectivePermissions),
+		)
 
 		r = helpers.SetContextValue(r, "permissions", permissions)
 		next.ServeHTTP(w, r)

@@ -16,26 +16,27 @@ type SystemInfoController struct {
 }
 
 type SystemInfo struct {
-	Version           string                            `json:"version"`
-	Ansible           string                            `json:"ansible"`
-	WebHost           string                            `json:"web_host"`
-	UseRemoteRunner   bool                              `json:"use_remote_runner"`
-	AuthMethods       LoginAuthMethods                  `json:"auth_methods"`
-	LoginWithPassword bool                              `json:"login_with_password"`
-	Features          pro_interfaces.Features           `json:"features"`
-	SubscriptionState string                            `json:"subscription_state"`
-	GitClient         string                            `json:"git_client"`
-	ScheduleTimezone  string                            `json:"schedule_timezone"`
-	Teams             *util.TeamsConfig                 `json:"teams"`
-	Roles             []db.Role                         `json:"roles"`
-	BoltdbUsed        bool                              `json:"boltdb_used"`
-	JWT               SystemInfoJWT                     `json:"jwt"`
-	Edition           pro_interfaces.Edition            `json:"edition"`
-	ContractVersion   string                            `json:"contract_version"`
-	Implementation    string                            `json:"implementation_version"`
-	CoreRevision      string                            `json:"core_revision"`
-	EnhancedRevision  string                            `json:"enhanced_revision,omitempty"`
-	Capabilities      pro_interfaces.CapabilitySnapshot `json:"capabilities"`
+	Version           string                                    `json:"version"`
+	Ansible           string                                    `json:"ansible"`
+	WebHost           string                                    `json:"web_host"`
+	UseRemoteRunner   bool                                      `json:"use_remote_runner"`
+	AuthMethods       LoginAuthMethods                          `json:"auth_methods"`
+	LoginWithPassword bool                                      `json:"login_with_password"`
+	Features          pro_interfaces.Features                   `json:"features"`
+	SubscriptionState string                                    `json:"subscription_state"`
+	GitClient         string                                    `json:"git_client"`
+	ScheduleTimezone  string                                    `json:"schedule_timezone"`
+	Teams             *util.TeamsConfig                         `json:"teams"`
+	Roles             []db.Role                                 `json:"roles"`
+	BoltdbUsed        bool                                      `json:"boltdb_used"`
+	JWT               SystemInfoJWT                             `json:"jwt"`
+	Edition           pro_interfaces.Edition                    `json:"edition"`
+	ContractVersion   string                                    `json:"contract_version"`
+	Implementation    string                                    `json:"implementation_version"`
+	CoreRevision      string                                    `json:"core_revision"`
+	EnhancedRevision  string                                    `json:"enhanced_revision,omitempty"`
+	Capabilities      pro_interfaces.CapabilitySnapshot         `json:"capabilities"`
+	GlobalPermissions pro_interfaces.EffectiveGlobalPermissions `json:"global_permissions"`
 }
 
 // SystemInfoJWT exposes the global JWT configuration for the WebUI.
@@ -81,6 +82,18 @@ func (c *SystemInfoController) GetSystemInfo(w http.ResponseWriter, r *http.Requ
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+	globalAssignments, err := helpers.Store(r).GetGlobalRoleAssignments(user.ID)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"context": "system_info",
+			"user_id": user.ID,
+		}).WithError(err).Error("Failed to get global role assignments")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	effectiveGlobalPermissions := pro_interfaces.ExplainEffectiveGlobalPermissions(
+		user.Admin, globalAssignments,
+	)
 
 	var plan string
 
@@ -123,12 +136,13 @@ func (c *SystemInfoController) GetSystemInfo(w http.ResponseWriter, r *http.Requ
 			Enabled: util.Config.JWT.Enabled,
 			MaxTTL:  util.Config.JWT.MaxTTL,
 		},
-		Edition:          pro_interfaces.Edition(util.BuildEdition),
-		ContractVersion:  pro_interfaces.CoreContractVersion,
-		Implementation:   util.EditionImplementation,
-		CoreRevision:     util.CoreRevision,
-		EnhancedRevision: util.EnhancedRevision,
-		Capabilities:     capabilities,
+		Edition:           pro_interfaces.Edition(util.BuildEdition),
+		ContractVersion:   pro_interfaces.CoreContractVersion,
+		Implementation:    util.EditionImplementation,
+		CoreRevision:      util.CoreRevision,
+		EnhancedRevision:  util.EnhancedRevision,
+		Capabilities:      capabilities,
+		GlobalPermissions: effectiveGlobalPermissions,
 	}
 
 	helpers.WriteJSON(w, http.StatusOK, body)

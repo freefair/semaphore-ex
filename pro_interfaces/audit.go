@@ -38,6 +38,23 @@ const (
 	AuditActionProjectRoleAssign    AuditAction = "project_role_assign"
 	AuditActionProjectMemberAdd     AuditAction = "project_member_add"
 	AuditActionProjectMemberRemove  AuditAction = "project_member_remove"
+	AuditActionGlobalRoleCreate     AuditAction = "global_role_create"
+	AuditActionGlobalRoleUpdate     AuditAction = "global_role_update"
+	AuditActionGlobalRoleDelete     AuditAction = "global_role_delete"
+	AuditActionGlobalRoleAssign     AuditAction = "global_role_assign"
+	AuditActionGlobalRoleUnassign   AuditAction = "global_role_unassign"
+	AuditActionGlobalRoleRead       AuditAction = "global_role_read"
+	AuditActionGlobalUserRead       AuditAction = "global_user_read"
+	AuditActionGlobalUserCreate     AuditAction = "global_user_create"
+	AuditActionGlobalUserUpdate     AuditAction = "global_user_update"
+	AuditActionGlobalUserDelete     AuditAction = "global_user_delete"
+	AuditActionGlobalUserPassword   AuditAction = "global_user_password_reset"
+	AuditActionGlobalSystemRead     AuditAction = "global_system_read"
+	AuditActionGlobalSystemWrite    AuditAction = "global_system_write"
+	AuditActionGlobalAuditRead      AuditAction = "global_audit_read"
+	AuditActionTemplateRoleCreate   AuditAction = "template_role_create"
+	AuditActionTemplateRoleUpdate   AuditAction = "template_role_update"
+	AuditActionTemplateRoleDelete   AuditAction = "template_role_delete"
 	AuditActionWebhookRead          AuditAction = "audit_webhook_read"
 	AuditActionWebhookConfigure     AuditAction = "audit_webhook_configure"
 	AuditActionWebhookTest          AuditAction = "audit_webhook_test"
@@ -59,11 +76,17 @@ const (
 type AuditTargetType string
 
 const (
-	AuditTargetCapability        AuditTargetType = "capability"
-	AuditTargetProjectRunner     AuditTargetType = "project_runner"
-	AuditTargetProjectRole       AuditTargetType = "project_role"
-	AuditTargetProjectMembership AuditTargetType = "project_membership"
-	AuditTargetWebhook           AuditTargetType = "audit_webhook"
+	AuditTargetCapability           AuditTargetType = "capability"
+	AuditTargetProjectRunner        AuditTargetType = "project_runner"
+	AuditTargetProjectRole          AuditTargetType = "project_role"
+	AuditTargetProjectMembership    AuditTargetType = "project_membership"
+	AuditTargetGlobalRole           AuditTargetType = "global_role"
+	AuditTargetGlobalRoleAssignment AuditTargetType = "global_role_assignment"
+	AuditTargetGlobalUser           AuditTargetType = "global_user"
+	AuditTargetGlobalSystem         AuditTargetType = "global_system"
+	AuditTargetGlobalAudit          AuditTargetType = "global_audit"
+	AuditTargetTemplateRole         AuditTargetType = "template_role"
+	AuditTargetWebhook              AuditTargetType = "audit_webhook"
 )
 
 type AuditOutcome string
@@ -136,12 +159,17 @@ const (
 )
 
 var (
-	correlationPattern         = regexp.MustCompile(`^(?:[a-f0-9]{32}|internal)$`)
-	eventIDPattern             = regexp.MustCompile(`^[a-f0-9]{32}$`)
-	identifierPattern          = regexp.MustCompile(`^[a-z0-9_.:-]{1,64}$`)
-	projectRunnerTargetPattern = regexp.MustCompile(`^(?:project|runner):[1-9][0-9]*$`)
-	projectRoleTargetPattern   = regexp.MustCompile(`^(?:project:[1-9][0-9]*|role:[a-z0-9][a-z0-9_.-]{0,49})$`)
-	projectMemberTargetPattern = regexp.MustCompile(`^(?:project:[1-9][0-9]*|member:[1-9][0-9]*)$`)
+	correlationPattern            = regexp.MustCompile(`^(?:[a-f0-9]{32}|internal)$`)
+	eventIDPattern                = regexp.MustCompile(`^[a-f0-9]{32}$`)
+	identifierPattern             = regexp.MustCompile(`^[a-z0-9_.:-]{1,64}$`)
+	projectRunnerTargetPattern    = regexp.MustCompile(`^(?:project|runner):[1-9][0-9]*$`)
+	projectRoleTargetPattern      = regexp.MustCompile(`^(?:project:[1-9][0-9]*|role:[a-z0-9][a-z0-9_.-]{0,49})$`)
+	projectMemberTargetPattern    = regexp.MustCompile(`^(?:project:[1-9][0-9]*|member:[1-9][0-9]*)$`)
+	globalRoleTargetPattern       = regexp.MustCompile(`^(?:roles|role:[a-z0-9][a-z0-9_.-]{0,49})$`)
+	globalAssignmentTargetPattern = regexp.MustCompile(`^(?:user|assignment):[1-9][0-9]*$`)
+	globalUserTargetPattern       = regexp.MustCompile(`^(?:users|user:[1-9][0-9]*)$`)
+	globalSystemTargetPattern     = regexp.MustCompile(`^(?:subscription|options|cache)$`)
+	templateRoleTargetPattern     = regexp.MustCompile(`^(?:template|template-role):[1-9][0-9]*$`)
 )
 
 // AuditEvent is the allowlisted payload shared by enhanced features. It has no
@@ -212,6 +240,18 @@ func validAuditTarget(event AuditEvent) bool {
 		return validScopedProjectAuditTarget(event, projectRoleTargetPattern)
 	case AuditTargetProjectMembership:
 		return validScopedProjectAuditTarget(event, projectMemberTargetPattern)
+	case AuditTargetGlobalRole:
+		return event.ProjectID == nil && globalRoleTargetPattern.MatchString(event.TargetID)
+	case AuditTargetGlobalRoleAssignment:
+		return event.ProjectID == nil && globalAssignmentTargetPattern.MatchString(event.TargetID)
+	case AuditTargetGlobalUser:
+		return event.ProjectID == nil && globalUserTargetPattern.MatchString(event.TargetID)
+	case AuditTargetGlobalSystem:
+		return event.ProjectID == nil && globalSystemTargetPattern.MatchString(event.TargetID)
+	case AuditTargetGlobalAudit:
+		return event.ProjectID == nil && event.TargetID == "events"
+	case AuditTargetTemplateRole:
+		return validScopedProjectAuditTarget(event, templateRoleTargetPattern)
 	case AuditTargetWebhook:
 		return event.ProjectID == nil && event.TargetID == "audit_webhook"
 	default:
@@ -433,6 +473,12 @@ func validAuditAction(action AuditAction) bool {
 		AuditActionProjectRunnerDelete, AuditActionProjectRunnerCache,
 		AuditActionProjectRoleCreate, AuditActionProjectRoleUpdate, AuditActionProjectRoleDelete,
 		AuditActionProjectRoleAssign, AuditActionProjectMemberAdd, AuditActionProjectMemberRemove,
+		AuditActionGlobalRoleCreate, AuditActionGlobalRoleUpdate, AuditActionGlobalRoleDelete,
+		AuditActionGlobalRoleAssign, AuditActionGlobalRoleUnassign, AuditActionGlobalRoleRead,
+		AuditActionGlobalUserRead, AuditActionGlobalUserCreate, AuditActionGlobalUserUpdate,
+		AuditActionGlobalUserDelete, AuditActionGlobalUserPassword,
+		AuditActionGlobalSystemRead, AuditActionGlobalSystemWrite, AuditActionGlobalAuditRead,
+		AuditActionTemplateRoleCreate, AuditActionTemplateRoleUpdate, AuditActionTemplateRoleDelete,
 		AuditActionWebhookRead, AuditActionWebhookConfigure, AuditActionWebhookTest,
 		AuditActionWebhookPause, AuditActionWebhookResume,
 		AuditActionTOTPEnrollBegin, AuditActionTOTPEnrollConfirm,

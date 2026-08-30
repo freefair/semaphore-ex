@@ -3,18 +3,15 @@ package sql
 import (
 	"bytes"
 	"fmt"
+	"github.com/go-gorp/gorp/v3"
+	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/tz"
+	"github.com/semaphoreui/semaphore/util"
+	log "github.com/sirupsen/logrus"
 	"path"
 	"regexp"
 	"strings"
-
 	"text/template"
-
-	"github.com/go-gorp/gorp/v3"
-	"github.com/semaphoreui/semaphore/pkg/tz"
-	"github.com/semaphoreui/semaphore/util"
-
-	"github.com/semaphoreui/semaphore/db"
-	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -305,9 +302,12 @@ func sqliteNeedsFkOff(dialect string, version string) bool {
 	return dialect == util.DbDriverSQLite && version == "2.19.14"
 }
 
-// TryRollbackMigration attempts to rollback the database to an earlier version if a rollback exists
-func (d *SqlDb) TryRollbackMigration(version db.Migration) {
-	var err error
+// TryRollbackMigration attempts to rollback the database to an earlier version if a rollback exists.
+func (d *SqlDb) TryRollbackMigration(version db.Migration) (err error) {
+	applied, err := d.IsMigrationApplied(version)
+	if err != nil {
+		return err
+	}
 
 	if sqliteNeedsFkOff(d.GetDialect(), version.Version) {
 		if _, err = d.exec("PRAGMA foreign_keys = OFF"); err != nil {
@@ -315,7 +315,7 @@ func (d *SqlDb) TryRollbackMigration(version db.Migration) {
 				"context": "migration",
 				"version": version.Version,
 			}).WithError(err).Fatal("failed to disable foreign_keys pragma before migration")
-			return
+			return err
 		}
 		defer func() {
 			if _, fkErr := d.exec("PRAGMA foreign_keys = ON"); fkErr != nil {
@@ -329,7 +329,7 @@ func (d *SqlDb) TryRollbackMigration(version db.Migration) {
 
 	tx, err := d.Sql().Begin()
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	defer func() {
@@ -350,10 +350,14 @@ func (d *SqlDb) TryRollbackMigration(version db.Migration) {
 	switch version.Version {
 	case "2.16.8":
 		err = migration_2_16_8{db: d}.PreRollback(tx)
+	case "2.20.30":
+		if applied {
+			err = d.preflightMigration22030Rollback(tx)
+		}
 	}
 
 	if err != nil {
-		return
+		return err
 	}
 
 	queries := getVersionSQL(d.GetDialect(), getVersionErrPath(version), false)
@@ -366,9 +370,10 @@ func (d *SqlDb) TryRollbackMigration(version db.Migration) {
 		}
 		if _, err = d.execTx(tx, q); err != nil {
 			fmt.Println(" [ROLLBACK] - Stopping")
-			return
+			return err
 		}
 	}
 
 	_, err = d.execTx(tx, "delete from migrations where version=?", version.Version)
+	return err
 }

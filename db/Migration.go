@@ -1,6 +1,7 @@
 package db
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -163,6 +164,7 @@ func GetMigrations(dialect string) []Migration {
 		{Version: "2.20.27"},
 		{Version: "2.20.28"},
 		{Version: "2.20.29"},
+		{Version: "2.20.30"},
 		{Version: "2.20.66"},
 		{Version: "2.20.67"},
 	}
@@ -278,7 +280,9 @@ func Rollback(d Store, targetVersion string) error {
 			continue
 		}
 
-		d.TryRollbackMigration(version)
+		if err = d.TryRollbackMigration(version); err != nil {
+			return err
+		}
 
 		didRun = true
 	}
@@ -311,7 +315,9 @@ func Migrate(d Store, targetVersion *string) error {
 		fmt.Printf("Executing migration %s (at %v)...\n", version.HumanoidVersion(), tz.Now())
 		if err := d.ApplyMigration(version); err != nil {
 			fmt.Printf("Rolling back %s (time: %v)...\n", version.HumanoidVersion(), tz.Now())
-			d.TryRollbackMigration(version)
+			if rollbackErr := d.TryRollbackMigration(version); rollbackErr != nil {
+				return errors.Join(err, rollbackErr)
+			}
 			return err
 		}
 	}

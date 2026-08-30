@@ -8,12 +8,12 @@ import (
 )
 
 type RolesController struct {
-	roleRepo db.RoleRepository
+	store db.Store
 }
 
-func NewRolesController(roleRepo db.RoleRepository, _ pro_interfaces.CapabilityProvider) *RolesController {
+func NewRolesController(store db.Store, _ pro_interfaces.CapabilityProvider) *RolesController {
 	return &RolesController{
-		roleRepo: roleRepo,
+		store: store,
 	}
 }
 

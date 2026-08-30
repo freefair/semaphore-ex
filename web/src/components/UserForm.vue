@@ -22,6 +22,7 @@
     <v-tabs v-model="tab">
       <v-tab key="settings">Settings</v-tab>
       <v-tab key="2fa" v-if="canChangePassword || authMethods.totp || !isNew"> Security</v-tab>
+      <v-tab key="global-roles" v-if="canManageGlobalRoles && !isNew">Global roles</v-tab>
     </v-tabs>
 
     <v-divider class="mb-6" style="margin-top: -1px" />
@@ -235,23 +236,119 @@
           </div>
         </div>
       </v-tab-item>
+
+      <v-tab-item key="global-roles" v-if="item != null && canManageGlobalRoles && !isNew">
+        <v-alert :value="globalRoleError" color="error" class="pb-2">
+          {{ globalRoleError }}
+        </v-alert>
+
+        <v-row align="center">
+          <v-col cols="12" sm="8">
+            <v-select
+              v-model="newGlobalRoleId"
+              :items="availableGlobalRoles"
+              item-value="id"
+              item-text="name"
+              label="Global role"
+              outlined
+              dense
+              hide-details
+              :disabled="globalRolesLoading"
+              data-testid="global-role-select"
+            />
+          </v-col>
+          <v-col cols="12" sm="4">
+            <v-btn
+              block
+              color="primary"
+              :disabled="!newGlobalRoleId || globalRolesLoading"
+              :loading="globalRolesLoading"
+              @click="addGlobalRoleAssignment()"
+            >
+              Assign
+            </v-btn>
+          </v-col>
+        </v-row>
+
+        <v-list v-if="globalRoleAssignments.length > 0" class="px-0">
+          <v-list-item
+            v-for="assignment in globalRoleAssignments"
+            :key="assignment.id"
+            class="px-0"
+          >
+            <v-list-item-content>
+              <v-list-item-title>{{ assignment.role_name }}</v-list-item-title>
+              <TemplatePermissionsChips
+                class="pt-1"
+                scope="global"
+                :permissions="assignment.global_permissions || 0"
+              />
+            </v-list-item-content>
+            <v-list-item-action>
+              <v-btn
+                icon
+                :disabled="globalRolesLoading"
+                :aria-label="`Remove ${assignment.role_name}`"
+                @click="removeGlobalRoleAssignment(assignment)"
+              >
+                <v-icon>mdi-delete</v-icon>
+              </v-btn>
+            </v-list-item-action>
+          </v-list-item>
+        </v-list>
+        <v-alert v-else text dense type="info" class="mt-4">
+          No global roles assigned.
+        </v-alert>
+
+        <v-subheader class="px-0 mt-4">Effective global permissions</v-subheader>
+        <v-list dense class="px-0">
+          <v-list-item
+            v-for="decision in effectiveGlobalPermissions.decisions || []"
+            :key="decision.permission"
+            class="px-0"
+          >
+            <v-list-item-icon class="mr-3">
+              <v-icon :color="decision.allowed ? 'success' : 'grey'">
+                {{ decision.allowed ? 'mdi-check-circle' : 'mdi-minus-circle-outline' }}
+              </v-icon>
+            </v-list-item-icon>
+            <v-list-item-content>
+              <v-list-item-title>
+                {{ globalPermissionDescription(decision.permission) }}
+              </v-list-item-title>
+              <v-list-item-subtitle>
+                {{ globalPermissionProvenance(decision) }}
+              </v-list-item-subtitle>
+            </v-list-item-content>
+          </v-list-item>
+        </v-list>
+      </v-tab-item>
     </v-tabs-items>
   </div>
 </template>
 <script>
+import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/user-form';
+
 import ItemFormBase from '@/components/ItemFormBase';
 import axios from 'axios';
 import EditDialog from '@/components/EditDialog.vue';
 import ChangePasswordForm from '@/components/ChangePasswordForm.vue';
 import TotpEnrollmentPanel from '@/components/TotpEnrollmentPanel.vue';
+import TemplatePermissionsChips from '@/components/TemplatePermissionsChips.vue';
 
 export default {
-  components: { TotpEnrollmentPanel, ChangePasswordForm, EditDialog },
+  components: {
+    TemplatePermissionsChips,
+    TotpEnrollmentPanel,
+    ChangePasswordForm,
+    EditDialog,
+  },
   props: {
     isAdmin: Boolean,
     isSelf: Boolean,
     authMethods: Object,
     LoginWithPassword: Boolean,
+    canManageGlobalRoles: Boolean,
   },
 
   mixins: [ItemFormBase],
@@ -267,6 +364,14 @@ export default {
       ldapPassword: '',
       linkingLdap: false,
       linkError: null,
+
+      globalRoles: [],
+      globalRoleAssignments: [],
+      globalPermissionCatalog: [],
+      effectiveGlobalPermissions: { permissions: 0, decisions: [] },
+      newGlobalRoleId: null,
+      globalRolesLoading: false,
+      globalRoleError: null,
 
       tab: null,
     };
@@ -284,6 +389,7 @@ export default {
   },
 
   computed: {
+    ...enhancedComputed,
     isPro() {
       return (process.env.VUE_APP_BUILD_TYPE || '').startsWith('pro_');
     },
@@ -307,13 +413,18 @@ export default {
         (provider) => !this.linkedProviders.has(`ldap:${provider.id}`),
       );
     },
+
   },
 
   methods: {
-    afterLoadData() {
+    ...enhancedMethods,
+    async afterLoadData() {
       if (!this.isNew) {
         this.loadIdentities();
         this.loadAuthMetadata();
+        if (this.canManageGlobalRoles) {
+          await this.loadGlobalRoleData();
+        }
       }
     },
 

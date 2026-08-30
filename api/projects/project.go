@@ -71,6 +71,7 @@ func ProjectMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
+		basePermissions := permissions
 		if helpers.HasParam("template_id", r) {
 			templateID, templateOk := helpers.GetIntParamOrAbort("template_id", w, r)
 			if !templateOk {
@@ -83,11 +84,12 @@ func ProjectMiddleware(next http.Handler) http.Handler {
 				return
 			}
 
-			permissions |= perm
+			permissions = applyEffectiveTemplatePermissions(permissions, perm)
 		}
 
 		r = helpers.SetContextValue(r, "projectUserRole", roleSlug)
 		r = helpers.SetContextValue(r, "projectUserRoleName", roleName)
+		r = helpers.SetContextValue(r, "basePermissions", basePermissions)
 		r = helpers.SetContextValue(r, "permissions", permissions)
 		r = helpers.SetContextValue(r, "project", project)
 		next.ServeHTTP(w, r)
@@ -99,6 +101,13 @@ func GetMustCanMiddleware(permissions db.ProjectUserPermission) mux.MiddlewareFu
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			me := helpers.GetFromContext(r, "user").(*db.User)
+			// Template child routes enforce their own independent action below this
+			// legacy broad-project guard. Applying the broad bit here would turn a
+			// run-only override into an unusable grant.
+			if helpers.HasParam("template_id", r) {
+				next.ServeHTTP(w, r)
+				return
+			}
 
 			userPerms := helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
 

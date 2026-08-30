@@ -10,15 +10,21 @@ var (
 	ErrProjectMembershipRevisionConflict = errors.New("project membership revision conflict")
 	ErrLastProjectAdministrator          = errors.New("project must retain an administrator")
 	ErrProjectRoleAssigned               = errors.New("project role is assigned")
+	ErrGlobalRoleRevisionConflict        = errors.New("global role revision conflict")
+	ErrGlobalRoleAssignmentConflict      = errors.New("global role assignment revision conflict")
+	ErrLastGlobalAdministrator           = errors.New("system must retain a global administrator")
+	ErrGlobalRoleAssigned                = errors.New("global role is assigned")
+	ErrTemplateRoleRevisionConflict      = errors.New("template role revision conflict")
 )
 
 type Role struct {
-	ID          ProjectRoleID         `db:"role_id" json:"id" backup:"-"`
-	Slug        string                `db:"slug" json:"slug" backup:"-"`
-	Name        string                `db:"name" json:"name"`
-	Permissions ProjectUserPermission `db:"permissions" json:"permissions"`
-	ProjectID   *int                  `db:"project_id" json:"project_id"`
-	Revision    int                   `db:"revision" json:"revision"`
+	ID                ProjectRoleID         `db:"role_id" json:"id" backup:"-"`
+	Slug              string                `db:"slug" json:"slug" backup:"-"`
+	Name              string                `db:"name" json:"name"`
+	Permissions       ProjectUserPermission `db:"permissions" json:"permissions"`
+	GlobalPermissions GlobalPermission      `db:"global_permissions" json:"global_permissions" backup:"-"`
+	ProjectID         *int                  `db:"project_id" json:"project_id"`
+	Revision          int                   `db:"revision" json:"revision"`
 }
 
 func ValidateRole(role Role) error {
@@ -37,9 +43,13 @@ func ValidateRole(role Role) error {
 }
 
 type TemplateRolePerm struct {
-	ID          int                   `db:"id" json:"id"`
-	RoleSlug    string                `db:"role_slug" json:"role_slug"`
-	TemplateID  int                   `db:"template_id" json:"template_id"`
-	ProjectID   int                   `db:"project_id" json:"project_id"`
-	Permissions ProjectUserPermission `db:"permissions" json:"permissions"`
+	ID                 int                   `db:"id" json:"id"`
+	RoleSlug           string                `db:"role_slug" json:"role_slug"`
+	RoleID             *ProjectRoleID        `db:"role_id" json:"role_id,omitempty"`
+	TemplateID         int                   `db:"template_id" json:"template_id"`
+	ProjectID          int                   `db:"project_id" json:"project_id"`
+	Permissions        ProjectUserPermission `db:"permissions" json:"permissions"`
+	AllowedPermissions TemplatePermission    `db:"allowed_permissions" json:"allowed_permissions"`
+	DeniedPermissions  TemplatePermission    `db:"denied_permissions" json:"denied_permissions"`
+	Revision           int                   `db:"revision" json:"revision"`
 }

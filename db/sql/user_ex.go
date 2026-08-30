@@ -7,6 +7,32 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 )
 
+func (d *SqlDb) updateUserFields(
+	tx interface {
+		Exec(string, ...any) (stdsql.Result, error)
+	},
+	user db.UserWithPwd,
+	pwdHash []byte,
+) error {
+	exec := d.exec
+	if tx != nil {
+		exec = func(query string, args ...any) (stdsql.Result, error) {
+			return tx.Exec(d.PrepareQuery(query), args...)
+		}
+	}
+	if len(pwdHash) > 0 {
+		_, err := exec(
+			"update `user` set name=?, username=?, email=?, alert=?, admin=?, pro=?, password=? where id=?",
+			user.Name, user.Username, user.Email, user.Alert, user.Admin, user.Pro,
+			string(pwdHash), user.ID)
+		return err
+	}
+	_, err := exec(
+		"update `user` set name=?, username=?, email=?, alert=?, admin=?, pro=? where id=?",
+		user.Name, user.Username, user.Email, user.Alert, user.Admin, user.Pro, user.ID)
+	return err
+}
+
 func normalizeProjectRoleAssignmentTx(
 	tx *gorp.Transaction,
 	d *SqlDb,

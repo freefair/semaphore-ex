@@ -15,7 +15,8 @@
           @error="onError"
           :need-save="needSave"
           :need-reset="needReset"
-          :is-admin="true"
+          :is-admin="isAdmin"
+          :can-manage-global-roles="canManageGlobalRoles"
           @hide-action-buttons="hideEditDialogButtons = true"
           @show-action-buttons="hideEditDialogButtons = false"
           :auth-methods="authMethods"
@@ -37,10 +38,16 @@
       </v-btn>
       <v-toolbar-title>{{ $t('users') }}</v-toolbar-title>
       <v-spacer></v-spacer>
-      <v-btn color="primary" @click="editItem('new')">{{ $t('newUser') }}</v-btn>
+      <v-btn v-if="canManageUsers" color="primary" @click="editItem('new')">
+        {{ $t('newUser') }}
+      </v-btn>
     </v-toolbar>
 
     <v-divider />
+
+    <v-alert v-if="!canManageUsers" text type="warning" class="PageAlert">
+      You cannot manage global users.
+    </v-alert>
 
     <v-data-table
       :headers="headers"
@@ -64,7 +71,7 @@
       </template>
 
       <template v-slot:item.actions="{ item }">
-        <div style="white-space: nowrap">
+        <div v-if="canManageUsers" style="white-space: nowrap">
           <v-btn icon class="mr-1" @click="askDeleteItem(item.id)">
             <v-icon>mdi-delete</v-icon>
           </v-btn>
@@ -78,6 +85,8 @@
   </div>
 </template>
 <script>
+import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/users';
+
 import EventBus from '@/event-bus';
 import YesNoDialog from '@/components/YesNoDialog.vue';
 import ItemListPageBase from '@/components/ItemListPageBase';
@@ -104,7 +113,24 @@ export default {
     };
   },
 
+  computed: {
+    ...enhancedComputed,
+
+  },
+
+  watch: {
+    canManageUsers() {
+      this.refreshHeaders();
+    },
+  },
+
+  created() {
+    this.refreshHeaders();
+  },
+
   methods: {
+    ...enhancedMethods,
+
     getHeaders() {
       return [
         {
@@ -156,6 +182,7 @@ export default {
     getEventName() {
       return 'i-user';
     },
+
   },
 };
 </script>

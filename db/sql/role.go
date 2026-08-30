@@ -32,7 +32,49 @@ func (d *SqlDb) UpdateRole(role db.Role) error {
 }
 
 func (d *SqlDb) CreateRole(role db.Role) (db.Role, error) {
-	_, err := d.insert(
+	hasScopedPermissions, err := d.IsMigrationApplied(db.Migration{Version: "2.20.30"})
+	if err != nil {
+		return role, err
+	}
+	hasRoleIdentity, err := d.IsMigrationApplied(db.Migration{Version: "2.20.29"})
+	if err != nil {
+		return role, err
+	}
+	if hasRoleIdentity {
+		if role.ID == "" {
+			role.ID = db.ProjectRoleID(role.Slug)
+		}
+		if role.Revision <= 0 {
+			role.Revision = 1
+		}
+		if hasScopedPermissions {
+			_, err = d.insert(
+				"",
+				"insert into `role` (role_id, slug, name, permissions, global_permissions, project_id, revision) values (?, ?, ?, ?, ?, ?, ?)",
+				role.ID,
+				role.Slug,
+				role.Name,
+				role.Permissions,
+				role.GlobalPermissions,
+				role.ProjectID,
+				role.Revision,
+			)
+			return role, err
+		}
+		_, err = d.insert(
+			"",
+			"insert into `role` (role_id, slug, name, permissions, project_id, revision) values (?, ?, ?, ?, ?, ?)",
+			role.ID,
+			role.Slug,
+			role.Name,
+			role.Permissions,
+			role.ProjectID,
+			role.Revision,
+		)
+		return role, err
+	}
+
+	_, err = d.insert(
 		"",
 		"insert into `role` (slug, name, permissions, project_id) values (?, ?, ?, ?)",
 		role.Slug,

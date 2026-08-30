@@ -3,16 +3,15 @@ package api
 import (
 	"crypto/subtle"
 	"errors"
-	"net/http"
-	"net/url"
-	"strings"
-	"time"
-
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
 )
 
 func getSession(r *http.Request) (*db.Session, bool) {

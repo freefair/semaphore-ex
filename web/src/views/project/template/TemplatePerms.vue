@@ -35,6 +35,7 @@
     </v-alert>
 
     <v-btn
+      v-if="allowActions()"
       :disabled="!features.custom_roles_management"
       color="primary"
       @click="editItem('new')"
@@ -54,11 +55,23 @@
       </template>
 
       <template v-slot:item.permissions="{ item }">
-        <TemplatePermissionsChips :permissions="item.permissions" scope="template" />
+        <div class="py-1">
+          <div class="caption text--secondary">Allow</div>
+          <TemplatePermissionsChips
+            :permissions="item.allowed_permissions || 0"
+            scope="template"
+          />
+          <div class="caption text--secondary mt-1">Deny</div>
+          <TemplatePermissionsChips
+            :permissions="item.denied_permissions || 0"
+            scope="template"
+            effect="deny"
+          />
+        </div>
       </template>
 
       <template v-slot:item.actions="{ item }">
-        <v-btn-toggle dense :value-comparator="() => false">
+        <v-btn-toggle v-if="allowActions()" dense :value-comparator="() => false">
           <v-btn @click="editItem(item.id)">
             <v-icon>mdi-pencil</v-icon>
           </v-btn>
@@ -68,16 +81,37 @@
         </v-btn-toggle>
       </template>
     </v-data-table>
+
+    <v-card v-if="effectivePermissions" outlined class="mt-4 mb-4">
+      <v-card-title class="subtitle-1">Your effective template permissions</v-card-title>
+      <v-card-text class="pt-0">
+        <div
+          v-for="decision in effectivePermissions.decisions || []"
+          :key="decision.permission"
+          class="d-flex align-center mb-2"
+        >
+          <v-icon small class="mr-2" :color="decision.allowed ? 'success' : 'grey'">
+            {{ decision.allowed ? 'mdi-check-circle' : 'mdi-minus-circle-outline' }}
+          </v-icon>
+          <span>
+            <strong>{{ permissionName(decision.permission) }}</strong>
+            — {{ permissionProvenance(decision) }}
+          </span>
+        </div>
+      </v-card-text>
+    </v-card>
   </div>
 </template>
 
 <script>
+import enhancedMethods from '@/lib/enhanced/template-perms';
+
 import ItemListPageBase from '@/components/ItemListPageBase';
 import EditTemplatePermissionDialog from '@/components/EditTemplatePermissionDialog.vue';
 import YesNoDialog from '@/components/YesNoDialog.vue';
 import TemplatePermissionsChips from '@/components/TemplatePermissionsChips.vue';
 import axios from 'axios';
-import { USER_PERMISSIONS } from '@/lib/constants';
+import { USER_PERMISSIONS, USER_ROLES } from '@/lib/constants';
 
 export default {
   components: {
@@ -100,7 +134,8 @@ export default {
   data() {
     return {
       USER_PERMISSIONS,
-      availableRoles: [],
+      availableRoles: [...USER_ROLES],
+      effectivePermissions: null,
     };
   },
 
@@ -110,17 +145,15 @@ export default {
     },
   },
 
-  async created() {
-    await this.loadRoles();
-  },
-
   methods: {
+    ...enhancedMethods,
+
     async loadRoles() {
       try {
         const response = await axios.get(
-          `/api/project/${this.template.project_id}/roles?mode=merge`,
+          `/api/project/${this.template.project_id}/roles/all`,
         );
-        this.availableRoles = response.data;
+        this.availableRoles = [...USER_ROLES, ...(response.data || [])];
       } catch (error) {
         // eslint-disable-next-line no-console
         console.error('Failed to load roles:', error);
@@ -148,7 +181,7 @@ export default {
     },
 
     allowActions() {
-      return true;
+      return this.can(USER_PERMISSIONS.manageProjectResources);
     },
 
     getHeaders() {
@@ -182,6 +215,7 @@ export default {
     getEventName() {
       return 'i-template-perms';
     },
+
   },
 };
 </script>

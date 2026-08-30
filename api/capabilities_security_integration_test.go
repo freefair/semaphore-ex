@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -100,4 +102,65 @@ func TestAnonymousMissingProjectDenialIsRetainedWithoutUserFeedExposure(t *testi
 	userEvents, err := store.GetUserEvents(user.ID, db.RetrieveQueryParams{})
 	require.NoError(t, err)
 	assert.Empty(t, userEvents)
+}
+
+func TestGlobalAndTemplateRoleMutationAuditPersistsWithoutRequestPayload(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	defer store.Close()
+	user, err := store.CreateUserWithoutPassword(db.User{
+		Username: "role-audit-persistence", Name: "Role audit persistence",
+		Email: "role-audit-persistence@example.test",
+	})
+	require.NoError(t, err)
+	project, err := store.CreateProject(db.Project{Name: "Role audit persistence project"})
+	require.NoError(t, err)
+	auditFacade := auditservice.NewServiceFacade(store, &integrationAuditWriter{}, metrics.NewMetrics())
+
+	globalHandler := helpers.CorrelationMiddleware(
+		EnhancedGlobalPermissionAuditMiddleware(auditFacade)(http.HandlerFunc(
+			func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) },
+		)),
+	)
+	globalRequest := httptest.NewRequest(
+		http.MethodPost, "/api/roles", bytes.NewBufferString(securityfixtures.TripwireValues[0]),
+	)
+	globalRequest = helpers.SetContextValue(globalRequest, "user", &user)
+	globalResponse := httptest.NewRecorder()
+	globalHandler.ServeHTTP(globalResponse, globalRequest)
+	assert.Equal(t, http.StatusCreated, globalResponse.Code)
+
+	templateHandler := helpers.CorrelationMiddleware(
+		EnhancedProjectPermissionAuditMiddleware(auditFacade)(http.HandlerFunc(
+			func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) },
+		)),
+	)
+	templateRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/project/1/templates/2/perms",
+		bytes.NewBufferString(securityfixtures.TripwireValues[0]),
+	)
+	templateRequest = mux.SetURLVars(templateRequest, map[string]string{
+		"project_id": strconv.Itoa(project.ID), "template_id": "2",
+	})
+	templateRequest = helpers.SetContextValue(templateRequest, "user", &user)
+	templateRequest = helpers.SetContextValue(
+		templateRequest, "permissions", db.CanManageProjectResources,
+	)
+	templateRequest = helpers.SetContextValue(templateRequest, "project", project)
+	templateResponse := httptest.NewRecorder()
+	templateHandler.ServeHTTP(templateResponse, templateRequest)
+	assert.Equal(t, http.StatusCreated, templateResponse.Code)
+
+	events, err := store.GetAllEvents(db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+	payloads := make([]string, 0, len(events))
+	for _, event := range events {
+		require.NotNil(t, event.Description)
+		payloads = append(payloads, *event.Description)
+	}
+	joined := strings.Join(payloads, "\n")
+	assert.Contains(t, joined, string(pro_interfaces.AuditActionGlobalRoleCreate))
+	assert.Contains(t, joined, string(pro_interfaces.AuditActionTemplateRoleCreate))
+	securityfixtures.AssertTripwiresAbsent(t, joined)
 }

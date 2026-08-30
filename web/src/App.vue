@@ -121,7 +121,7 @@
       v-model="systemInfoDialog"
       :system-info="systemInfo"
       @totp-rollout-updated="loadUserInfo"
-      v-if="user && user.admin"
+      v-if="user && canManageGlobalSystem"
     />
 
     <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="3000" top>
@@ -417,7 +417,7 @@
               <v-list-item
                 key="system-info"
                 data-testid="menu-system-info"
-                v-if="user.admin"
+                v-if="canManageGlobalSystem"
                 @click="systemInfoDialog = true"
               >
                 <v-list-item-icon>
@@ -441,7 +441,7 @@
 
               <v-list-item
                 key="subscription"
-                v-if="isPro && user.admin"
+                v-if="isPro && canManageGlobalSystem"
                 @click="subscriptionDialog = true"
               >
                 <v-list-item-icon>
@@ -461,7 +461,7 @@
 
               <v-divider />
 
-              <v-list-item key="runners" to="/runners" v-if="user.admin">
+              <v-list-item key="runners" to="/runners" v-if="canManageGlobalSystem">
                 <v-list-item-icon>
                   <v-icon>mdi-cogs</v-icon>
                 </v-list-item-icon>
@@ -471,7 +471,7 @@
                 </v-list-item-content>
               </v-list-item>
 
-              <v-list-item key="cluster" to="/cluster" v-if="user.admin">
+              <v-list-item key="cluster" to="/cluster" v-if="canManageGlobalSystem">
                 <v-list-item-icon>
                   <v-icon>mdi-server-network</v-icon>
                 </v-list-item-icon>
@@ -484,7 +484,7 @@
               <v-list-item
                 key="audit-webhooks"
                 to="/audit-webhooks"
-                v-if="isPro && user.admin"
+                v-if="isPro && canManageGlobalSystem"
                 data-testid="sidebar-audit-webhooks"
               >
                 <v-list-item-icon>
@@ -496,7 +496,7 @@
                 </v-list-item-content>
               </v-list-item>
 
-              <v-list-item key="tasks" to="/tasks" v-if="user.admin">
+              <v-list-item key="tasks" to="/tasks" v-if="canManageGlobalSystem">
                 <v-list-item-icon>
                   <v-icon>mdi-check-all</v-icon>
                 </v-list-item-icon>
@@ -506,7 +506,7 @@
                 </v-list-item-content>
               </v-list-item>
 
-              <v-list-item key="users" to="/users" v-if="user.admin">
+              <v-list-item key="users" to="/users" v-if="canManageGlobalUsers">
                 <v-list-item-icon>
                   <v-icon>mdi-account-multiple</v-icon>
                 </v-list-item-icon>
@@ -516,7 +516,7 @@
                 </v-list-item-content>
               </v-list-item>
 
-              <v-list-item key="roles" to="/roles" v-if="isPro && user.admin">
+              <v-list-item key="roles" to="/roles" v-if="isPro && canManageGlobalRoles">
                 <v-list-item-icon>
                   <v-icon>mdi-account-cog</v-icon>
                 </v-list-item-icon>
@@ -900,7 +900,7 @@
 </style>
 
 <script>
-import enhancedMethods from '@/lib/enhanced/app';
+import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/app';
 
 import axios from 'axios';
 import { getErrorMessage } from '@/lib/error';
@@ -1092,6 +1092,7 @@ export default {
   },
 
   computed: {
+    ...enhancedComputed,
     isPro() {
       return isEnhancedEdition(this.systemInfo?.edition, process.env.VUE_APP_EDITION);
     },

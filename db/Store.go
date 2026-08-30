@@ -202,7 +202,7 @@ type MigrationManager interface {
 	ApplyMigration(version Migration) error
 	// TryRollbackMigration attempts to roll back the database to an earlier version
 	// if a rollback exists
-	TryRollbackMigration(version Migration)
+	TryRollbackMigration(version Migration) error
 }
 
 // OptionsManager handles system options
@@ -279,10 +279,11 @@ type TemplateManager interface {
 	UpdateTemplateEnvironments(projectID int, templateID int, environmentIDs []int) error
 
 	GetTemplatePermission(projectID int, templateID int, userID int) (ProjectUserPermission, error)
+	GetTemplatePermissionContext(projectID int, templateID int, userID int) (TemplatePermissionContext, error)
 	GetTemplateRoles(projectID int, templateID int) ([]TemplateRolePerm, error)
 	CreateTemplateRole(role TemplateRolePerm) (TemplateRolePerm, error)
-	DeleteTemplateRole(projectID int, templateID int, permID int) error
-	UpdateTemplateRole(role TemplateRolePerm) error
+	DeleteTemplateRole(projectID int, templateID int, permID int, expectedRevision int) error
+	UpdateTemplateRole(role TemplateRolePerm, expectedRevision int) (TemplateRolePerm, error)
 	GetTemplateRole(projectID int, templateID int, permID int) (TemplateRolePerm, error)
 }
 
@@ -586,6 +587,7 @@ type SecretSyncRepository interface {
 
 type RoleRepository interface {
 	GetGlobalRoleBySlug(slug string) (Role, error)
+	GetGlobalRoleByID(roleID ProjectRoleID) (Role, error)
 	GetProjectOrGlobalRoleBySlug(projectID int, slug string) (Role, error)
 	GetProjectRole(projectID int, slug string) (Role, error)
 	GetProjectRoleByID(projectID int, roleID ProjectRoleID) (Role, error)
@@ -597,6 +599,13 @@ type RoleRepository interface {
 	CreateProjectRole(role Role) (Role, error)
 	UpdateProjectRole(projectID int, role Role, expectedRevision int) (Role, error)
 	DeleteProjectRole(projectID int, roleID ProjectRoleID, expectedRevision int) error
+	CreateGlobalRole(role Role) (Role, error)
+	UpdateGlobalRole(role Role, expectedRevision int) (Role, error)
+	DeleteGlobalRole(roleID ProjectRoleID, expectedRevision int) error
+	GetGlobalRoleAssignments(userID int) ([]GlobalRoleAssignment, error)
+	CreateGlobalRoleAssignment(assignment GlobalRoleAssignment) (GlobalRoleAssignment, error)
+	DeleteGlobalRoleAssignment(userID int, assignmentID int, expectedRevision int) error
+	GetEffectiveGlobalPermissions(userID int) (GlobalPermission, error)
 }
 
 // Store is the main interface that aggregates all specialized interfaces

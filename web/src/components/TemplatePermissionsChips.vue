@@ -6,7 +6,8 @@
       small
       :color="p.color"
       :text-color="p.textColor"
-    >{{ $t(p.label) }}</v-chip>
+      :outlined="effect === 'deny'"
+    >{{ permissionLabel(p.label) }}</v-chip>
 
     <span v-if="permissions === 0" class="text--secondary">
       &mdash;
@@ -15,6 +16,8 @@
 </template>
 
 <script>
+import enhancedMethods from '@/lib/enhanced/template-permissions-chips';
+
 import { ROLE_PERMISSIONS } from '@/lib/constants';
 
 export default {
@@ -27,11 +30,18 @@ export default {
       type: String,
       default: 'default',
     },
+    effect: {
+      type: String,
+      default: 'allow',
+    },
   },
   data() {
     return {
       ROLE_PERMISSIONS,
     };
+  },
+  methods: {
+    ...enhancedMethods,
   },
 };
 </script>

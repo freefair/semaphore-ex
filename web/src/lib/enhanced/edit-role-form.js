@@ -1,20 +1,22 @@
 const enhancedMethods = {
   hasPermission(permission) {
-    return (this.item.permissions & permission) === permission;
+    const field = this.projectId ? 'permissions' : 'global_permissions';
+    return ((this.item[field] || 0) & permission) === permission;
   },
   setPermission(permission, enabled) {
+    const field = this.projectId ? 'permissions' : 'global_permissions';
     if (enabled) {
-      this.item.permissions |= permission;
+      this.item[field] = (this.item[field] || 0) | permission;
     } else {
-      this.item.permissions &= ~permission;
+      this.item[field] = (this.item[field] || 0) & ~permission;
     }
   },
   async beforeLoadData() {
-    if (this.projectId) {
-      this.permissionCatalog = await this.loadEndpoint(
-        `/api/project/${this.projectId}/roles/permissions`,
-      );
-    }
+    this.permissionCatalog = await this.loadEndpoint(
+      this.projectId
+        ? `/api/project/${this.projectId}/roles/permissions`
+        : '/api/roles/permissions',
+    );
   },
 };
 

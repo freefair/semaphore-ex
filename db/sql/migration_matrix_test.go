@@ -88,6 +88,7 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	assertWorkflowParameterColumns(t, store, true)
 	assertWorkflowTriggerSchema(t, store, true)
 	assertWorkflowProgressionSchema(t, store, true)
+	assertGlobalTemplateRoleSchema(t, store, true)
 
 	user, err := store.CreateUserWithoutPassword(fixture.User)
 	require.NoError(t, err)
@@ -97,6 +98,7 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	assertWorkflowParameterColumns(t, store, false)
 	assertWorkflowTriggerSchema(t, store, false)
 	assertWorkflowProgressionSchema(t, store, false)
+	assertGlobalTemplateRoleSchema(t, store, false)
 
 	legacyUser, err := store.GetUser(user.ID)
 	require.NoError(t, err)
@@ -108,6 +110,7 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	assertWorkflowParameterColumns(t, store, true)
 	assertWorkflowTriggerSchema(t, store, true)
 	assertWorkflowProgressionSchema(t, store, true)
+	assertGlobalTemplateRoleSchema(t, store, true)
 	assert.Equal(t, freshSchema, upgradedSchema)
 
 	upgradedUser, err := store.GetUser(user.ID)
@@ -136,6 +139,15 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 		NameAttribute: "cn", EmailAttribute: "mail", ReadinessStatus: "untested",
 		ReadinessCode: "matrix", Created: now, Updated: now,
 	}))
+	matrixRole, err := store.CreateGlobalRole(db.Role{
+		ID: "matrix_global_role", Slug: "matrix_global_role", Name: "Matrix global role",
+		GlobalPermissions: db.CanReadGlobalAudit, Revision: 1,
+	})
+	require.NoError(t, err)
+	_, err = store.CreateGlobalRoleAssignment(db.GlobalRoleAssignment{
+		UserID: user.ID, RoleID: matrixRole.ID, Revision: 1,
+	})
+	require.NoError(t, err)
 
 	store.Close()
 	store = CreateDb(config.Dialect)
@@ -147,9 +159,13 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	require.NoError(t, err)
 	persistedLDAP, err := store.GetLDAPProvider("matrix-ldap")
 	require.NoError(t, err)
+	persistedGlobalAssignments, err := store.GetGlobalRoleAssignments(user.ID)
+	require.NoError(t, err)
 	restartPreserved := persistedConfig.State == "active" &&
 		len(persistedRecords) == 1 && persistedRecords[0].Value == "restart-preserved" &&
-		persistedLDAP.State == "shadow" && persistedLDAP.ServerURL == "ldaps://ldap.example.test:636"
+		persistedLDAP.State == "shadow" && persistedLDAP.ServerURL == "ldaps://ldap.example.test:636" &&
+		len(persistedGlobalAssignments) == 1 &&
+		persistedGlobalAssignments[0].RoleID == matrixRole.ID
 
 	return migrationMatrixReport{
 		RollbackVersion:                         fixture.Version,
@@ -158,6 +174,73 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 		CommunityDataSurvivedRollbackAndUpgrade: communityDataSurvived,
 		RestartPreservedEnhancedData:            restartPreserved,
 	}
+}
+
+func assertGlobalTemplateRoleSchema(t testing.TB, store *SqlDb, expected bool) {
+	t.Helper()
+	tables := matrixUserTables(t, store)
+	for _, table := range []string{"global_role_state", "user__global_role"} {
+		assert.Equalf(t, expected, containsString(tables, table), "%s presence", table)
+	}
+	for table, columns := range map[string][]string{
+		"role": {"global_permissions"},
+		"project__template_role": {
+			"role_id", "allowed_permissions", "denied_permissions", "revision",
+		},
+	} {
+		for _, column := range columns {
+			assert.Equalf(
+				t,
+				expected,
+				matrixColumnExists(t, store, table, column),
+				"%s.%s presence",
+				table,
+				column,
+			)
+		}
+	}
+}
+
+func matrixColumnExists(t testing.TB, store *SqlDb, table string, column string) bool {
+	t.Helper()
+	var count int
+	switch store.GetDialect() {
+	case util.DbDriverSQLite:
+		rows, err := store.Sql().Db.QueryContext(
+			context.Background(),
+			"pragma table_info("+table+")",
+		)
+		require.NoError(t, err)
+		defer rows.Close() //nolint:errcheck
+		for rows.Next() {
+			var cid, notNull, primaryKey int
+			var name, columnType string
+			var defaultValue sql.NullString
+			require.NoError(t, rows.Scan(
+				&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey,
+			))
+			if name == column {
+				return true
+			}
+		}
+		require.NoError(t, rows.Err())
+		return false
+	case util.DbDriverMySQL:
+		require.NoError(t, store.Sql().Db.QueryRowContext(context.Background(), `
+			select count(*) from information_schema.columns
+			where table_schema=database() and table_name=? and column_name=?`,
+			table, column,
+		).Scan(&count))
+	case util.DbDriverPostgres:
+		require.NoError(t, store.Sql().Db.QueryRowContext(context.Background(), `
+			select count(*) from information_schema.columns
+			where table_schema=current_schema() and table_name=$1 and column_name=$2`,
+			table, column,
+		).Scan(&count))
+	default:
+		t.Fatalf("unsupported migration matrix dialect %q", store.GetDialect())
+	}
+	return count == 1
 }
 
 func assertWorkflowParameterColumns(t testing.TB, store *SqlDb, expected bool) {

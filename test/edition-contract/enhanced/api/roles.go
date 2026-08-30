@@ -16,35 +16,230 @@ import (
 )
 
 type RolesController struct {
-	roleRepo           db.RoleRepository
+	store              db.Store
 	capabilityProvider pro_interfaces.CapabilityProvider
 }
 
 func NewRolesController(
-	roleRepo db.RoleRepository,
+	store db.Store,
 	capabilityProvider pro_interfaces.CapabilityProvider,
 ) *RolesController {
-	return &RolesController{roleRepo: roleRepo, capabilityProvider: capabilityProvider}
+	return &RolesController{store: store, capabilityProvider: capabilityProvider}
 }
 
-func (c *RolesController) GetGlobalRole(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusNotFound)
+func (c *RolesController) GetGlobalPermissionCatalog(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead) {
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, pro_interfaces.GlobalPermissionCatalog())
 }
 
-func (c *RolesController) GetRoles(w http.ResponseWriter, _ *http.Request) {
-	helpers.WriteJSON(w, http.StatusOK, []db.Role{})
+func (c *RolesController) GetGlobalRole(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead) {
+		return
+	}
+	roleID, ok := roleRequestID(w, r)
+	if !ok {
+		return
+	}
+	role, err := c.store.GetGlobalRoleByID(roleID)
+	if err != nil {
+		writeGlobalRoleError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, role)
 }
 
-func (c *RolesController) AddRole(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusNotFound)
+func (c *RolesController) GetRoles(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead) {
+		return
+	}
+	roles, err := c.store.GetGlobalRoles()
+	if err != nil {
+		writeGlobalRoleError(w, err)
+		return
+	}
+	if roles == nil {
+		roles = make([]db.Role, 0)
+	}
+	helpers.WriteJSON(w, http.StatusOK, roles)
 }
 
-func (c *RolesController) UpdateRole(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusNotFound)
+func (c *RolesController) AddRole(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessWrite) {
+		return
+	}
+	var input struct {
+		Name              string                   `json:"name"`
+		Permissions       db.ProjectUserPermission `json:"permissions"`
+		GlobalPermissions db.GlobalPermission      `json:"global_permissions"`
+	}
+	if !helpers.Bind(w, r, &input) {
+		return
+	}
+	roleID, err := newProjectRoleID()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	role, err := c.store.CreateGlobalRole(db.Role{
+		ID: roleID, Slug: string(roleID), Name: input.Name,
+		Permissions: input.Permissions, GlobalPermissions: input.GlobalPermissions,
+		Revision: 1,
+	})
+	if err != nil {
+		writeGlobalRoleError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusCreated, role)
 }
 
-func (c *RolesController) DeleteRole(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusNotFound)
+func (c *RolesController) UpdateRole(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessWrite) {
+		return
+	}
+	roleID, ok := roleRequestID(w, r)
+	if !ok {
+		return
+	}
+	var role db.Role
+	if !helpers.Bind(w, r, &role) {
+		return
+	}
+	if role.ID != "" && role.ID != roleID {
+		helpers.WriteErrorStatus(w, "Role ID cannot be changed", http.StatusBadRequest)
+		return
+	}
+	role.ID = roleID
+	role.ProjectID = nil
+	if role.Slug == "" {
+		role.Slug = string(roleID)
+	}
+	updated, err := c.store.UpdateGlobalRole(role, role.Revision)
+	if err != nil {
+		writeGlobalRoleError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, updated)
+}
+
+func (c *RolesController) DeleteRole(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessWrite) {
+		return
+	}
+	roleID, ok := roleRequestID(w, r)
+	if !ok {
+		return
+	}
+	revision, ok := positiveQueryInt(w, r, "revision", "A positive role revision is required")
+	if !ok {
+		return
+	}
+	if err := c.store.DeleteGlobalRole(roleID, revision); err != nil {
+		writeGlobalRoleError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (c *RolesController) GetGlobalRoleAssignments(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead) {
+		return
+	}
+	userID, ok := globalRoleRequestUserID(w, r)
+	if !ok || !c.requireExistingUser(w, userID) {
+		return
+	}
+	assignments, err := c.store.GetGlobalRoleAssignments(userID)
+	if err != nil {
+		writeGlobalRoleError(w, err)
+		return
+	}
+	if assignments == nil {
+		assignments = make([]db.GlobalRoleAssignment, 0)
+	}
+	helpers.WriteJSON(w, http.StatusOK, assignments)
+}
+
+func (c *RolesController) AddGlobalRoleAssignment(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessWrite) {
+		return
+	}
+	userID, ok := globalRoleRequestUserID(w, r)
+	if !ok {
+		return
+	}
+	var input struct {
+		RoleID db.ProjectRoleID `json:"role_id"`
+	}
+	if !helpers.Bind(w, r, &input) {
+		return
+	}
+	assignment, err := c.store.CreateGlobalRoleAssignment(db.GlobalRoleAssignment{
+		UserID: userID, RoleID: input.RoleID, Revision: 1,
+	})
+	if err != nil {
+		writeGlobalRoleError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusCreated, assignment)
+}
+
+func (c *RolesController) DeleteGlobalRoleAssignment(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessWrite) {
+		return
+	}
+	userID, ok := globalRoleRequestUserID(w, r)
+	if !ok {
+		return
+	}
+	assignmentID, err := strconv.Atoi(mux.Vars(r)["assignment_id"])
+	if err != nil || assignmentID <= 0 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	revision, ok := positiveQueryInt(
+		w, r, "revision", "A positive assignment revision is required",
+	)
+	if !ok {
+		return
+	}
+	if err = c.store.DeleteGlobalRoleAssignment(userID, assignmentID, revision); err != nil {
+		writeGlobalRoleError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (c *RolesController) GetEffectiveGlobalPermissions(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead) {
+		return
+	}
+	userID, ok := globalRoleRequestUserID(w, r)
+	if !ok {
+		return
+	}
+	user, err := c.store.GetUser(userID)
+	if err != nil {
+		writeGlobalRoleError(w, err)
+		return
+	}
+	permissions, err := c.store.GetEffectiveGlobalPermissions(userID)
+	if err != nil {
+		writeGlobalRoleError(w, err)
+		return
+	}
+	assignments, err := c.store.GetGlobalRoleAssignments(userID)
+	if err != nil {
+		writeGlobalRoleError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, pro_interfaces.EffectiveGlobalPermissions{
+		Permissions: permissions,
+		Decisions: pro_interfaces.ExplainEffectiveGlobalPermissions(
+			user.Admin, assignments,
+		).Decisions,
+	})
 }
 
 func (c *RolesController) GetProjectPermissionCatalog(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +257,7 @@ func (c *RolesController) GetProjectRoles(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	roles, err := c.roleRepo.GetProjectRoles(project.ID)
+	roles, err := c.store.GetProjectRoles(project.ID)
 	if err != nil {
 		helpers.WriteError(w, err)
 		return
@@ -99,7 +294,7 @@ func (c *RolesController) AddProjectRole(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	role, err := c.roleRepo.CreateProjectRole(db.Role{
+	role, err := c.store.CreateProjectRole(db.Role{
 		ID: roleID, Slug: string(roleID), Name: input.Name,
 		Permissions: input.Permissions, ProjectID: &project.ID, Revision: 1,
 	})
@@ -122,7 +317,7 @@ func (c *RolesController) GetProjectRole(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	role, err := c.roleRepo.GetProjectRoleByID(project.ID, roleID)
+	role, err := c.store.GetProjectRoleByID(project.ID, roleID)
 	if err != nil {
 		writeProjectRoleError(w, err)
 		return
@@ -152,7 +347,7 @@ func (c *RolesController) UpdateProjectRole(w http.ResponseWriter, r *http.Reque
 	}
 	role.ID = roleID
 	role.ProjectID = &project.ID
-	updated, err := c.roleRepo.UpdateProjectRole(project.ID, role, role.Revision)
+	updated, err := c.store.UpdateProjectRole(project.ID, role, role.Revision)
 	if err != nil {
 		writeProjectRoleError(w, err)
 		return
@@ -177,7 +372,7 @@ func (c *RolesController) DeleteProjectRole(w http.ResponseWriter, r *http.Reque
 		helpers.WriteErrorStatus(w, "A positive role revision is required", http.StatusBadRequest)
 		return
 	}
-	if err = c.roleRepo.DeleteProjectRole(project.ID, roleID, revision); err != nil {
+	if err = c.store.DeleteProjectRole(project.ID, roleID, revision); err != nil {
 		writeProjectRoleError(w, err)
 		return
 	}
@@ -217,6 +412,10 @@ func projectRoleRequestProject(w http.ResponseWriter, r *http.Request) (db.Proje
 }
 
 func projectRoleRequestID(w http.ResponseWriter, r *http.Request) (db.ProjectRoleID, bool) {
+	return roleRequestID(w, r)
+}
+
+func roleRequestID(w http.ResponseWriter, r *http.Request) (db.ProjectRoleID, bool) {
 	value := mux.Vars(r)["role_id"]
 	if value == "" {
 		value = mux.Vars(r)["role_slug"]
@@ -227,6 +426,65 @@ func projectRoleRequestID(w http.ResponseWriter, r *http.Request) (db.ProjectRol
 		return "", false
 	}
 	return db.ProjectRoleID(value), true
+}
+
+func globalRoleRequestUserID(w http.ResponseWriter, r *http.Request) (int, bool) {
+	userID, err := strconv.Atoi(mux.Vars(r)["user_id"])
+	if err != nil || userID <= 0 {
+		w.WriteHeader(http.StatusNotFound)
+		return 0, false
+	}
+	return userID, true
+}
+
+func positiveQueryInt(
+	w http.ResponseWriter,
+	r *http.Request,
+	name string,
+	message string,
+) (int, bool) {
+	value, err := strconv.Atoi(r.URL.Query().Get(name))
+	if err != nil || value <= 0 {
+		helpers.WriteErrorStatus(w, message, http.StatusBadRequest)
+		return 0, false
+	}
+	return value, true
+}
+
+func (c *RolesController) requireExistingUser(w http.ResponseWriter, userID int) bool {
+	if _, err := c.store.GetUser(userID); err != nil {
+		writeGlobalRoleError(w, err)
+		return false
+	}
+	return true
+}
+
+func writeGlobalRoleError(w http.ResponseWriter, err error) {
+	var capabilityDenied pro_interfaces.CapabilityDeniedError
+	switch {
+	case errors.As(err, &capabilityDenied):
+		w.WriteHeader(http.StatusForbidden)
+	case errors.Is(err, db.ErrNotFound):
+		w.WriteHeader(http.StatusNotFound)
+	case errors.Is(err, db.ErrGlobalRoleRevisionConflict):
+		helpers.WriteJSON(w, http.StatusConflict, map[string]string{
+			"code": "GLOBAL_ROLE_REVISION_CONFLICT", "message": err.Error(),
+		})
+	case errors.Is(err, db.ErrGlobalRoleAssignmentConflict):
+		helpers.WriteJSON(w, http.StatusConflict, map[string]string{
+			"code": "GLOBAL_ROLE_ASSIGNMENT_REVISION_CONFLICT", "message": err.Error(),
+		})
+	case errors.Is(err, db.ErrGlobalRoleAssigned):
+		helpers.WriteJSON(w, http.StatusConflict, map[string]string{
+			"code": "GLOBAL_ROLE_ASSIGNED", "message": err.Error(),
+		})
+	case errors.Is(err, db.ErrLastGlobalAdministrator):
+		helpers.WriteJSON(w, http.StatusConflict, map[string]string{
+			"code": "LAST_GLOBAL_ADMINISTRATOR", "message": err.Error(),
+		})
+	default:
+		helpers.WriteError(w, err)
+	}
 }
 
 func newProjectRoleID() (db.ProjectRoleID, error) {

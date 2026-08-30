@@ -10,9 +10,14 @@ import (
 func setOption(w http.ResponseWriter, r *http.Request) {
 	currentUser := helpers.GetFromContext(r, "user").(*db.User)
 
-	if !currentUser.Admin {
+	allowed, err := hasGlobalPermission(r, currentUser, db.CanManageGlobalSystem)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	if !allowed {
 		helpers.WriteJSON(w, http.StatusForbidden, map[string]string{
-			"error": "User must be admin",
+			"error": "User must have global system management permission",
 		})
 		return
 	}
@@ -22,7 +27,7 @@ func setOption(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := helpers.Store(r).SetOption(option.Key, option.Value)
+	err = helpers.Store(r).SetOption(option.Key, option.Value)
 	if err != nil {
 		helpers.WriteJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": "Can not set option",
@@ -36,9 +41,14 @@ func setOption(w http.ResponseWriter, r *http.Request) {
 func getOptions(w http.ResponseWriter, r *http.Request) {
 	currentUser := helpers.GetFromContext(r, "user").(*db.User)
 
-	if !currentUser.Admin {
+	allowed, err := hasGlobalPermission(r, currentUser, db.CanManageGlobalSystem)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	if !allowed {
 		helpers.WriteJSON(w, http.StatusForbidden, map[string]string{
-			"error": "User must be admin",
+			"error": "User must have global system management permission",
 		})
 		return
 	}

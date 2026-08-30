@@ -42,6 +42,7 @@ func TestSystemInfoEditionMetadataJSON(t *testing.T) {
 		"features":{"project_runners":false,"terraform_backend":false,"task_summary":false,"secret_storages":false,"secret_storage_management":false,"secret_storage_management_ex":false,"custom_roles_management":false,"high_availability":false,"workflows":false,"docker_executor":false,"k8s_executor":false},
 		"subscription_state":"",
 		"git_client":"",
+		"global_permissions":{"permissions":0,"decisions":null},
 		"schedule_timezone":"",
 		"teams":null,
 		"roles":null,

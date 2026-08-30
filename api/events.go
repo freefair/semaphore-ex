@@ -1,10 +1,9 @@
 package api
 
 import (
-	"net/http"
-
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"net/http"
 )
 
 // nolint: gocyclo

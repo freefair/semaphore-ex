@@ -34,9 +34,11 @@
       :hint="$t('slugHint')"
     ></v-text-field>
 
-    <v-subheader class="pl-0">{{ $t('permissions') }}</v-subheader>
+    <v-subheader class="pl-0">
+      {{ projectId ? $t('permissions') : 'Global permissions' }}
+    </v-subheader>
 
-    <template v-if="projectId">
+    <template v-if="permissionCatalog.length > 0">
       <v-checkbox
         v-for="definition in permissionCatalog"
         :key="definition.id"
@@ -49,6 +51,14 @@
     </template>
 
     <template v-else>
+      <v-alert text dense type="info">
+        No assignable permissions are available for this edition.
+      </v-alert>
+    </template>
+
+    <template v-if="!projectId">
+      <v-subheader class="pl-0">Legacy project permissions</v-subheader>
+
       <v-checkbox
         class="mt-0"
         v-model="permissions.canRunProjectTasks"
@@ -158,6 +168,7 @@ export default {
       };
       if (!this.projectId) {
         item.slug = '';
+        item.global_permissions = 0;
       }
       return item;
     },

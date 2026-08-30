@@ -132,6 +132,146 @@ func TestProjectRoleControllerFailsClosedWhenCapabilityIsUnavailable(t *testing.
 	assert.Equal(t, http.StatusForbidden, response.Code)
 }
 
+func TestGlobalRoleControllerCRUDCatalogAssignmentsAndProvenance(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	admin, err := store.CreateUserWithoutPassword(db.User{
+		Username: "global-role-api-admin", Name: "Global role API admin",
+		Email: "global-role-api-admin@example.test", Admin: true,
+	})
+	require.NoError(t, err)
+	target, err := store.CreateUserWithoutPassword(db.User{
+		Username: "global-role-api-target", Name: "Global role API target",
+		Email: "global-role-api-target@example.test",
+	})
+	require.NoError(t, err)
+	controller := NewRolesController(store, features.NewCapabilityProvider(store))
+
+	catalogResponse := serveGlobalRoleRequest(
+		t, store, admin, http.MethodGet, "/api/roles/permissions", nil, nil,
+		controller.GetGlobalPermissionCatalog,
+	)
+	assert.Equal(t, http.StatusOK, catalogResponse.Code)
+	var catalog []pro_interfaces.PermissionDefinition
+	require.NoError(t, json.Unmarshal(catalogResponse.Body.Bytes(), &catalog))
+	assert.Len(t, catalog, 4)
+	assert.Equal(t, pro_interfaces.PermissionScopeGlobal, catalog[0].Scope)
+
+	createResponse := serveGlobalRoleRequest(
+		t, store, admin, http.MethodPost, "/api/roles",
+		map[string]any{
+			"name":               "User auditor",
+			"global_permissions": db.CanManageGlobalUsers | db.CanReadGlobalAudit,
+		}, nil, controller.AddRole,
+	)
+	assert.Equal(t, http.StatusCreated, createResponse.Code)
+	var created db.Role
+	require.NoError(t, json.Unmarshal(createResponse.Body.Bytes(), &created))
+	assert.NotEmpty(t, created.ID)
+	assert.Nil(t, created.ProjectID)
+	assert.Equal(t, 1, created.Revision)
+
+	getResponse := serveGlobalRoleRequest(
+		t, store, admin, http.MethodGet, "/api/roles/"+string(created.ID), nil,
+		map[string]string{"role_id": string(created.ID)}, controller.GetGlobalRole,
+	)
+	assert.Equal(t, http.StatusOK, getResponse.Code)
+
+	updateResponse := serveGlobalRoleRequest(
+		t, store, admin, http.MethodPut, "/api/roles/"+string(created.ID),
+		map[string]any{
+			"id": created.ID, "name": "User manager and auditor",
+			"global_permissions": created.GlobalPermissions, "revision": created.Revision,
+		}, map[string]string{"role_id": string(created.ID)}, controller.UpdateRole,
+	)
+	assert.Equal(t, http.StatusOK, updateResponse.Code)
+	var updated db.Role
+	require.NoError(t, json.Unmarshal(updateResponse.Body.Bytes(), &updated))
+	assert.Equal(t, 2, updated.Revision)
+
+	staleUpdate := serveGlobalRoleRequest(
+		t, store, admin, http.MethodPut, "/api/roles/"+string(created.ID),
+		map[string]any{
+			"id": created.ID, "name": "Stale overwrite",
+			"global_permissions": created.GlobalPermissions, "revision": created.Revision,
+		}, map[string]string{"role_id": string(created.ID)}, controller.UpdateRole,
+	)
+	assert.Equal(t, http.StatusConflict, staleUpdate.Code)
+
+	assignmentResponse := serveGlobalRoleRequest(
+		t, store, admin, http.MethodPost,
+		"/api/users/"+strconv.Itoa(target.ID)+"/global-roles",
+		map[string]any{"role_id": created.ID},
+		map[string]string{"user_id": strconv.Itoa(target.ID)},
+		controller.AddGlobalRoleAssignment,
+	)
+	assert.Equal(t, http.StatusCreated, assignmentResponse.Code)
+	var assignment db.GlobalRoleAssignment
+	require.NoError(t, json.Unmarshal(assignmentResponse.Body.Bytes(), &assignment))
+	assert.Equal(t, target.ID, assignment.UserID)
+	assert.Equal(t, created.ID, assignment.RoleID)
+
+	listResponse := serveGlobalRoleRequest(
+		t, store, admin, http.MethodGet,
+		"/api/users/"+strconv.Itoa(target.ID)+"/global-roles", nil,
+		map[string]string{"user_id": strconv.Itoa(target.ID)},
+		controller.GetGlobalRoleAssignments,
+	)
+	assert.Equal(t, http.StatusOK, listResponse.Code)
+	var assignments []db.GlobalRoleAssignment
+	require.NoError(t, json.Unmarshal(listResponse.Body.Bytes(), &assignments))
+	assert.Len(t, assignments, 1)
+
+	effectiveResponse := serveGlobalRoleRequest(
+		t, store, admin, http.MethodGet,
+		"/api/users/"+strconv.Itoa(target.ID)+"/global-permissions", nil,
+		map[string]string{"user_id": strconv.Itoa(target.ID)},
+		controller.GetEffectiveGlobalPermissions,
+	)
+	assert.Equal(t, http.StatusOK, effectiveResponse.Code)
+	var effective pro_interfaces.EffectiveGlobalPermissions
+	require.NoError(t, json.Unmarshal(effectiveResponse.Body.Bytes(), &effective))
+	assert.True(t, effective.Permissions.Can(db.CanManageGlobalUsers))
+	assert.Len(t, effective.Decisions, 4)
+	assert.True(t, effective.Decisions[0].Allowed)
+	assert.Equal(t, string(created.ID), effective.Decisions[0].Provenance.RoleID)
+	assert.Empty(t, effective.Decisions[2].Provenance.RoleID)
+
+	staleDelete := serveGlobalRoleRequest(
+		t, store, admin, http.MethodDelete,
+		"/api/users/"+strconv.Itoa(target.ID)+"/global-roles/"+strconv.Itoa(assignment.ID)+"?revision=2",
+		nil, map[string]string{
+			"user_id": strconv.Itoa(target.ID), "assignment_id": strconv.Itoa(assignment.ID),
+		}, controller.DeleteGlobalRoleAssignment,
+	)
+	assert.Equal(t, http.StatusConflict, staleDelete.Code)
+
+	deleteAssignment := serveGlobalRoleRequest(
+		t, store, admin, http.MethodDelete,
+		"/api/users/"+strconv.Itoa(target.ID)+"/global-roles/"+strconv.Itoa(assignment.ID)+"?revision=1",
+		nil, map[string]string{
+			"user_id": strconv.Itoa(target.ID), "assignment_id": strconv.Itoa(assignment.ID),
+		}, controller.DeleteGlobalRoleAssignment,
+	)
+	assert.Equal(t, http.StatusNoContent, deleteAssignment.Code)
+
+	deleteRole := serveGlobalRoleRequest(
+		t, store, admin, http.MethodDelete,
+		"/api/roles/"+string(created.ID)+"?revision="+strconv.Itoa(updated.Revision), nil,
+		map[string]string{"role_id": string(created.ID)}, controller.DeleteRole,
+	)
+	assert.Equal(t, http.StatusNoContent, deleteRole.Code)
+}
+
+func TestGlobalRoleControllerFailsClosedWhenCapabilityIsUnavailable(t *testing.T) {
+	controller := NewRolesController(nil, deniedProjectRoleCapabilityProvider{})
+	response := serveGlobalRoleRequest(
+		t, nil, db.User{ID: 1}, http.MethodGet, "/api/roles/permissions", nil, nil,
+		controller.GetGlobalPermissionCatalog,
+	)
+	assert.Equal(t, http.StatusForbidden, response.Code)
+}
+
 func serveProjectRoleRequest(
 	t *testing.T,
 	project db.Project,
@@ -152,6 +292,33 @@ func serveProjectRoleRequest(
 	request.Header.Set("Content-Type", "application/json")
 	request = helpers.SetContextValue(request, "project", project)
 	request = helpers.SetContextValue(request, "user", &db.User{ID: 1})
+	request = mux.SetURLVars(request, vars)
+	response := httptest.NewRecorder()
+	handler(response, request)
+	return response
+}
+
+func serveGlobalRoleRequest(
+	t *testing.T,
+	store db.Store,
+	user db.User,
+	method string,
+	path string,
+	body any,
+	vars map[string]string,
+	handler http.HandlerFunc,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	var encoded []byte
+	var err error
+	if body != nil {
+		encoded, err = json.Marshal(body)
+		require.NoError(t, err)
+	}
+	request := httptest.NewRequest(method, path, bytes.NewReader(encoded))
+	request.Header.Set("Content-Type", "application/json")
+	request = helpers.SetContextValue(request, "store", store)
+	request = helpers.SetContextValue(request, "user", &user)
 	request = mux.SetURLVars(request, vars)
 	response := httptest.NewRecorder()
 	handler(response, request)

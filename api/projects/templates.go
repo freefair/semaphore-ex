@@ -5,6 +5,7 @@ import (
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"net/http"
+	"strconv"
 )
 
 // TemplatesMiddleware ensures a template exists and loads it to the context
@@ -265,13 +266,18 @@ func (c *TemplateController) UpdateTemplatePerm(w http.ResponseWriter, r *http.R
 	perm.ProjectID = template.ProjectID
 	perm.TemplateID = template.ID
 
-	err := c.templateRepo.UpdateTemplateRole(perm)
-	if err != nil {
-		helpers.WriteError(w, err)
+	if perm.Revision <= 0 {
+		helpers.WriteErrorStatus(w, "A positive template permission revision is required", http.StatusBadRequest)
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	updated, err := c.templateRepo.UpdateTemplateRole(perm, perm.Revision)
+	if err != nil {
+		writeTemplateRoleError(w, err)
+		return
+	}
+
+	helpers.WriteJSON(w, http.StatusOK, updated)
 }
 
 func (c *TemplateController) DeleteTemplatePerm(w http.ResponseWriter, r *http.Request) {
@@ -281,9 +287,14 @@ func (c *TemplateController) DeleteTemplatePerm(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	err := c.templateRepo.DeleteTemplateRole(template.ProjectID, template.ID, permID)
+	revision, revisionErr := strconv.Atoi(r.URL.Query().Get("revision"))
+	if revisionErr != nil || revision <= 0 {
+		helpers.WriteErrorStatus(w, "A positive template permission revision is required", http.StatusBadRequest)
+		return
+	}
+	err := c.templateRepo.DeleteTemplateRole(template.ProjectID, template.ID, permID, revision)
 	if err != nil {
-		helpers.WriteError(w, err)
+		writeTemplateRoleError(w, err)
 		return
 	}
 

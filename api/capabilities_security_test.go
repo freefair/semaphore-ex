@@ -270,6 +270,126 @@ func TestProjectRoleAndAssignmentMutationsAreAudited(t *testing.T) {
 	}
 }
 
+func TestGlobalAndTemplateRoleMutationsAreAudited(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		vars       map[string]string
+		status     int
+		action     pro_interfaces.AuditAction
+		targetType pro_interfaces.AuditTargetType
+		targetID   string
+		projectID  *int
+		global     bool
+	}{
+		{
+			name: "global role create", method: http.MethodPost, path: "/api/roles",
+			status: http.StatusCreated, action: pro_interfaces.AuditActionGlobalRoleCreate,
+			targetType: pro_interfaces.AuditTargetGlobalRole, targetID: "roles", global: true,
+		},
+		{
+			name: "global role assignment", method: http.MethodPost,
+			path: "/api/users/34/global-roles", vars: map[string]string{"user_id": "34"},
+			status: http.StatusCreated, action: pro_interfaces.AuditActionGlobalRoleAssign,
+			targetType: pro_interfaces.AuditTargetGlobalRoleAssignment,
+			targetID:   "user:34", global: true,
+		},
+		{
+			name: "global role assignment read", method: http.MethodGet,
+			path: "/api/users/34/global-roles", vars: map[string]string{"user_id": "34"},
+			status: http.StatusOK, action: pro_interfaces.AuditActionGlobalRoleRead,
+			targetType: pro_interfaces.AuditTargetGlobalRoleAssignment,
+			targetID:   "user:34", global: true,
+		},
+		{
+			name: "delegated user password reset", method: http.MethodPost,
+			path: "/api/users/34/password", vars: map[string]string{"user_id": "34"},
+			status: http.StatusNoContent, action: pro_interfaces.AuditActionGlobalUserPassword,
+			targetType: pro_interfaces.AuditTargetGlobalUser, targetID: "user:34", global: true,
+		},
+		{
+			name: "global audit read", method: http.MethodGet, path: "/api/audit/events",
+			status: http.StatusOK, action: pro_interfaces.AuditActionGlobalAuditRead,
+			targetType: pro_interfaces.AuditTargetGlobalAudit, targetID: "events", global: true,
+		},
+		{
+			name: "global role read", method: http.MethodGet, path: "/api/roles",
+			status: http.StatusOK, action: pro_interfaces.AuditActionGlobalRoleRead,
+			targetType: pro_interfaces.AuditTargetGlobalRole, targetID: "roles", global: true,
+		},
+		{
+			name: "delegated system mutation", method: http.MethodPost, path: "/api/options",
+			status: http.StatusOK, action: pro_interfaces.AuditActionGlobalSystemWrite,
+			targetType: pro_interfaces.AuditTargetGlobalSystem, targetID: "options", global: true,
+		},
+		{
+			name: "global role deletion conflict", method: http.MethodDelete,
+			path:   "/api/roles/role_0123456789abcdef0123456789abcdef",
+			vars:   map[string]string{"role_id": "role_0123456789abcdef0123456789abcdef"},
+			status: http.StatusConflict, action: pro_interfaces.AuditActionGlobalRoleDelete,
+			targetType: pro_interfaces.AuditTargetGlobalRole,
+			targetID:   "role:role_0123456789abcdef0123456789abcdef", global: true,
+		},
+		{
+			name: "template override create", method: http.MethodPost,
+			path:   "/api/project/12/templates/56/perms",
+			vars:   map[string]string{"project_id": "12", "template_id": "56"},
+			status: http.StatusCreated, action: pro_interfaces.AuditActionTemplateRoleCreate,
+			targetType: pro_interfaces.AuditTargetTemplateRole,
+			targetID:   "template:56", projectID: intPointer(12),
+		},
+		{
+			name: "template override update denied", method: http.MethodPut,
+			path: "/api/project/12/templates/56/perms/78",
+			vars: map[string]string{
+				"project_id": "12", "template_id": "56", "perm_id": "78",
+			},
+			status: http.StatusForbidden, action: pro_interfaces.AuditActionTemplateRoleUpdate,
+			targetType: pro_interfaces.AuditTargetTemplateRole,
+			targetID:   "template-role:78", projectID: intPointer(12),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			auditRecorder := &auditRecorderStub{}
+			var middleware func(http.Handler) http.Handler
+			if tt.global {
+				middleware = EnhancedGlobalPermissionAuditMiddleware(auditRecorder)
+			} else {
+				middleware = EnhancedProjectPermissionAuditMiddleware(auditRecorder)
+			}
+			handler := helpers.CorrelationMiddleware(middleware(http.HandlerFunc(
+				func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(tt.status) },
+			)))
+			request := httptest.NewRequest(tt.method, tt.path, nil)
+			request = mux.SetURLVars(request, tt.vars)
+			request = helpers.SetContextValue(request, "user", &db.User{ID: 11})
+			if tt.projectID != nil {
+				request = helpers.SetContextValue(request, "permissions", db.CanManageProjectResources)
+				request = helpers.SetContextValue(request, "project", db.Project{ID: *tt.projectID})
+			}
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			assert.Equal(t, tt.status, response.Code)
+			require.Len(t, auditRecorder.events, 1)
+			event := auditRecorder.events[0]
+			assert.Equal(t, tt.action, event.Action)
+			assert.Equal(t, tt.targetType, event.TargetType)
+			assert.Equal(t, tt.targetID, event.TargetID)
+			assert.Equal(t, tt.projectID, event.ProjectID)
+			require.NoError(t, event.Validate())
+		})
+	}
+}
+
+func intPointer(value int) *int {
+	return &value
+}
+
 func TestProjectRunnerLifecycleRoutesUseSpecificAuditActions(t *testing.T) {
 	tests := []struct {
 		method string

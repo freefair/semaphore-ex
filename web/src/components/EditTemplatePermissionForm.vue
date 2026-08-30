@@ -32,25 +32,31 @@
       </template>
     </v-select>
 
-    <v-subheader class="pl-0">{{ $t('permissions') }}</v-subheader>
+    <v-subheader class="pl-0">Template permissions</v-subheader>
 
-    <v-checkbox
+    <v-select
       v-for="p in ROLE_PERMISSIONS[scope]"
       :key="p.permission"
       class="mt-0"
-      v-model="permissions[p.permission]"
-      :label="$t(p.label)"
+      :label="permissionLabel(p.label)"
+      :items="permissionEffects"
+      :value="permissionEffect(p.permission)"
       :disabled="formSaving"
-    ></v-checkbox>
+      outlined
+      dense
+      @change="setPermissionEffect(p.permission, $event)"
+    ></v-select>
 
   </v-form>
 </template>
 
 <script>
+import enhancedMethods from '@/lib/enhanced/edit-template-permission-form';
+
 import ItemFormBase from '@/components/ItemFormBase';
 import axios from 'axios';
 import { getErrorMessage } from '@/lib/error';
-import { ROLE_PERMISSIONS } from '@/lib/constants';
+import { ROLE_PERMISSIONS, USER_ROLES } from '@/lib/constants';
 
 export default {
   mixins: [ItemFormBase],
@@ -67,47 +73,21 @@ export default {
     return {
       ROLE_PERMISSIONS,
       availableRoles: [],
-      permissions: {},
+      permissionEffects: [
+        { text: 'Inherit from project role', value: 'inherit' },
+        { text: 'Allow', value: 'allow' },
+        { text: 'Deny', value: 'deny' },
+      ],
     };
   },
 
-  async created() {
-    await this.loadRoles();
-    await this.loadData();
-  },
-
-  watch: {
-    // Watch permissions and update the item.permissions value
-    permissions: {
-      handler(newPermissions) {
-        if (!this.item) return;
-
-        this.item.permissions = Object.keys(newPermissions)
-          .filter((k) => newPermissions[k])
-          .reduce((res, k) => res | k, 0);
-      },
-      deep: true,
-    },
-
-    // Watch item.permissions and update checkboxes
-    'item.permissions': {
-      handler(newPermissions) {
-        if (newPermissions === undefined || newPermissions === null) return;
-
-        this.permissions = [1, 2, 4, 8].reduce((res, k) => ({
-          ...res,
-          [k]: !!(this.item.permissions & k),
-        }), {});
-      },
-      immediate: true,
-    },
-  },
-
   methods: {
+    ...enhancedMethods,
+
     async loadRoles() {
       try {
         const response = await axios.get(`/api/project/${this.projectId}/roles/all`);
-        this.availableRoles = response.data;
+        this.availableRoles = [...USER_ROLES, ...(response.data || [])];
       } catch (error) {
         this.formError = getErrorMessage(error);
       }
@@ -127,35 +107,28 @@ export default {
         template_id: parseInt(this.templateId, 10),
         project_id: this.projectId,
         permissions: 0,
+        allowed_permissions: 0,
+        denied_permissions: 0,
       };
     },
 
     beforeSave() {
-      // Ensure permissions are properly set before saving
       if (this.item) {
-        this.item.permissions = Object.keys(this.permissions)
-          .filter((k) => this.permissions[k])
-          .reduce((res, k) => res | k, 0);
-
         this.item.template_id = parseInt(this.templateId, 10);
         this.item.project_id = this.projectId;
       }
     },
 
     afterLoadData() {
-      // Initialize permissions checkboxes after loading data
-      if (this.item && this.item.permissions !== undefined) {
-        this.permissions = [1, 2, 4, 8].reduce((res, k) => ({
-          ...res,
-          [k]: !!(this.item.permissions & k),
-        }), {});
-      }
+      if (!this.item) return;
+      this.item.allowed_permissions = this.item.allowed_permissions || 0;
+      this.item.denied_permissions = this.item.denied_permissions || 0;
     },
 
     afterReset() {
-      // Reset permissions checkboxes
-      this.permissions = {};
+      this.formError = null;
     },
+
   },
 };
 </script>
