@@ -57,4 +57,32 @@ func (*communityLDAPService) Transitions(context.Context, string) ([]db.LDAPCapa
 	return nil, pro_interfaces.ErrLDAPUnavailable
 }
 
+func (*communityLDAPService) GroupMappings(context.Context, string) ([]pro_interfaces.LDAPGroupMapping, error) {
+	return nil, pro_interfaces.ErrLDAPUnavailable
+}
+
+func (*communityLDAPService) SaveGroupMapping(context.Context, pro_interfaces.LDAPGroupMappingRequest) (pro_interfaces.LDAPGroupMapping, error) {
+	return pro_interfaces.LDAPGroupMapping{}, pro_interfaces.ErrLDAPUnavailable
+}
+
+func (*communityLDAPService) DeleteGroupMapping(context.Context, pro_interfaces.LDAPGroupMappingDeleteRequest) error {
+	return pro_interfaces.ErrLDAPUnavailable
+}
+
+func (*communityLDAPService) PreviewGroupMappings(context.Context, pro_interfaces.LDAPGroupPreviewRequest) (pro_interfaces.LDAPGroupPreview, error) {
+	return pro_interfaces.LDAPGroupPreview{}, pro_interfaces.ErrLDAPUnavailable
+}
+
+func (*communityLDAPService) ApplyGroupPreview(context.Context, pro_interfaces.LDAPGroupApplyRequest) (pro_interfaces.LDAPGroupPreview, error) {
+	return pro_interfaces.LDAPGroupPreview{}, pro_interfaces.ErrLDAPUnavailable
+}
+
+func (*communityLDAPService) ReconcileGroupMappings(context.Context, pro_interfaces.LDAPGroupPreviewRequest) (pro_interfaces.LDAPGroupPreview, error) {
+	return pro_interfaces.LDAPGroupPreview{}, pro_interfaces.ErrLDAPUnavailable
+}
+
+func (*communityLDAPService) GroupReconciliationHistory(context.Context, string, int) ([]db.LDAPGroupReconciliation, error) {
+	return nil, pro_interfaces.ErrLDAPUnavailable
+}
+
 var _ pro_interfaces.LDAPService = (*communityLDAPService)(nil)

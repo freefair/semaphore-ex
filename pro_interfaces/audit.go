@@ -17,60 +17,66 @@ import (
 type AuditAction string
 
 const (
-	AuditActionCapabilityResolve    AuditAction = "capability_resolve"
-	AuditActionCapabilityRead       AuditAction = "capability_read"
-	AuditActionCapabilityWrite      AuditAction = "capability_write"
-	AuditActionCapabilityExecute    AuditAction = "capability_execute"
-	AuditActionCapabilityConfigure  AuditAction = "capability_configure"
-	AuditActionProjectRunnerList    AuditAction = "project_runner_list"
-	AuditActionProjectRunnerRead    AuditAction = "project_runner_read"
-	AuditActionProjectRunnerHealth  AuditAction = "project_runner_health"
-	AuditActionProjectRunnerHistory AuditAction = "project_runner_history"
-	AuditActionProjectRunnerCreate  AuditAction = "project_runner_create"
-	AuditActionProjectRunnerIssue   AuditAction = "project_runner_registration_issue"
-	AuditActionProjectRunnerUpdate  AuditAction = "project_runner_update"
-	AuditActionProjectRunnerActive  AuditAction = "project_runner_set_active"
-	AuditActionProjectRunnerDelete  AuditAction = "project_runner_delete"
-	AuditActionProjectRunnerCache   AuditAction = "project_runner_cache_clear"
-	AuditActionProjectRoleCreate    AuditAction = "project_role_create"
-	AuditActionProjectRoleUpdate    AuditAction = "project_role_update"
-	AuditActionProjectRoleDelete    AuditAction = "project_role_delete"
-	AuditActionProjectRoleAssign    AuditAction = "project_role_assign"
-	AuditActionProjectMemberAdd     AuditAction = "project_member_add"
-	AuditActionProjectMemberRemove  AuditAction = "project_member_remove"
-	AuditActionGlobalRoleCreate     AuditAction = "global_role_create"
-	AuditActionGlobalRoleUpdate     AuditAction = "global_role_update"
-	AuditActionGlobalRoleDelete     AuditAction = "global_role_delete"
-	AuditActionGlobalRoleAssign     AuditAction = "global_role_assign"
-	AuditActionGlobalRoleUnassign   AuditAction = "global_role_unassign"
-	AuditActionGlobalRoleRead       AuditAction = "global_role_read"
-	AuditActionGlobalUserRead       AuditAction = "global_user_read"
-	AuditActionGlobalUserCreate     AuditAction = "global_user_create"
-	AuditActionGlobalUserUpdate     AuditAction = "global_user_update"
-	AuditActionGlobalUserDelete     AuditAction = "global_user_delete"
-	AuditActionGlobalUserPassword   AuditAction = "global_user_password_reset"
-	AuditActionGlobalSystemRead     AuditAction = "global_system_read"
-	AuditActionGlobalSystemWrite    AuditAction = "global_system_write"
-	AuditActionGlobalAuditRead      AuditAction = "global_audit_read"
-	AuditActionTemplateRoleCreate   AuditAction = "template_role_create"
-	AuditActionTemplateRoleUpdate   AuditAction = "template_role_update"
-	AuditActionTemplateRoleDelete   AuditAction = "template_role_delete"
-	AuditActionWebhookRead          AuditAction = "audit_webhook_read"
-	AuditActionWebhookConfigure     AuditAction = "audit_webhook_configure"
-	AuditActionWebhookTest          AuditAction = "audit_webhook_test"
-	AuditActionWebhookPause         AuditAction = "audit_webhook_pause"
-	AuditActionWebhookResume        AuditAction = "audit_webhook_resume"
-	AuditActionTOTPEnrollBegin      AuditAction = "totp_enroll_begin"
-	AuditActionTOTPEnrollConfirm    AuditAction = "totp_enroll_confirm"
-	AuditActionTOTPRecoveryAck      AuditAction = "totp_recovery_acknowledge"
-	AuditActionTOTPChallenge        AuditAction = "totp_challenge"
-	AuditActionTOTPRecover          AuditAction = "totp_recover"
-	AuditActionTOTPReset            AuditAction = "totp_reset"
-	AuditActionTOTPRollout          AuditAction = "totp_rollout"
-	AuditActionLDAPConfigure        AuditAction = "ldap_configure"
-	AuditActionLDAPTest             AuditAction = "ldap_test"
-	AuditActionLDAPLogin            AuditAction = "ldap_login"
-	AuditActionLDAPLink             AuditAction = "ldap_link"
+	AuditActionCapabilityResolve      AuditAction = "capability_resolve"
+	AuditActionCapabilityRead         AuditAction = "capability_read"
+	AuditActionCapabilityWrite        AuditAction = "capability_write"
+	AuditActionCapabilityExecute      AuditAction = "capability_execute"
+	AuditActionCapabilityConfigure    AuditAction = "capability_configure"
+	AuditActionProjectRunnerList      AuditAction = "project_runner_list"
+	AuditActionProjectRunnerRead      AuditAction = "project_runner_read"
+	AuditActionProjectRunnerHealth    AuditAction = "project_runner_health"
+	AuditActionProjectRunnerHistory   AuditAction = "project_runner_history"
+	AuditActionProjectRunnerCreate    AuditAction = "project_runner_create"
+	AuditActionProjectRunnerIssue     AuditAction = "project_runner_registration_issue"
+	AuditActionProjectRunnerUpdate    AuditAction = "project_runner_update"
+	AuditActionProjectRunnerActive    AuditAction = "project_runner_set_active"
+	AuditActionProjectRunnerDelete    AuditAction = "project_runner_delete"
+	AuditActionProjectRunnerCache     AuditAction = "project_runner_cache_clear"
+	AuditActionProjectRoleCreate      AuditAction = "project_role_create"
+	AuditActionProjectRoleUpdate      AuditAction = "project_role_update"
+	AuditActionProjectRoleDelete      AuditAction = "project_role_delete"
+	AuditActionProjectRoleAssign      AuditAction = "project_role_assign"
+	AuditActionProjectMemberAdd       AuditAction = "project_member_add"
+	AuditActionProjectMemberRemove    AuditAction = "project_member_remove"
+	AuditActionGlobalRoleCreate       AuditAction = "global_role_create"
+	AuditActionGlobalRoleUpdate       AuditAction = "global_role_update"
+	AuditActionGlobalRoleDelete       AuditAction = "global_role_delete"
+	AuditActionGlobalRoleAssign       AuditAction = "global_role_assign"
+	AuditActionGlobalRoleUnassign     AuditAction = "global_role_unassign"
+	AuditActionGlobalRoleRead         AuditAction = "global_role_read"
+	AuditActionGlobalUserRead         AuditAction = "global_user_read"
+	AuditActionGlobalUserCreate       AuditAction = "global_user_create"
+	AuditActionGlobalUserUpdate       AuditAction = "global_user_update"
+	AuditActionGlobalUserDelete       AuditAction = "global_user_delete"
+	AuditActionGlobalUserPassword     AuditAction = "global_user_password_reset"
+	AuditActionGlobalSystemRead       AuditAction = "global_system_read"
+	AuditActionGlobalSystemWrite      AuditAction = "global_system_write"
+	AuditActionGlobalAuditRead        AuditAction = "global_audit_read"
+	AuditActionTemplateRoleCreate     AuditAction = "template_role_create"
+	AuditActionTemplateRoleUpdate     AuditAction = "template_role_update"
+	AuditActionTemplateRoleDelete     AuditAction = "template_role_delete"
+	AuditActionWebhookRead            AuditAction = "audit_webhook_read"
+	AuditActionWebhookConfigure       AuditAction = "audit_webhook_configure"
+	AuditActionWebhookTest            AuditAction = "audit_webhook_test"
+	AuditActionWebhookPause           AuditAction = "audit_webhook_pause"
+	AuditActionWebhookResume          AuditAction = "audit_webhook_resume"
+	AuditActionTOTPEnrollBegin        AuditAction = "totp_enroll_begin"
+	AuditActionTOTPEnrollConfirm      AuditAction = "totp_enroll_confirm"
+	AuditActionTOTPRecoveryAck        AuditAction = "totp_recovery_acknowledge"
+	AuditActionTOTPChallenge          AuditAction = "totp_challenge"
+	AuditActionTOTPRecover            AuditAction = "totp_recover"
+	AuditActionTOTPReset              AuditAction = "totp_reset"
+	AuditActionTOTPRollout            AuditAction = "totp_rollout"
+	AuditActionLDAPConfigure          AuditAction = "ldap_configure"
+	AuditActionLDAPTest               AuditAction = "ldap_test"
+	AuditActionLDAPLogin              AuditAction = "ldap_login"
+	AuditActionLDAPLink               AuditAction = "ldap_link"
+	AuditActionLDAPGroupMappingRead   AuditAction = "ldap_group_mapping_read"
+	AuditActionLDAPGroupMappingWrite  AuditAction = "ldap_group_mapping_write"
+	AuditActionLDAPGroupMappingDelete AuditAction = "ldap_group_mapping_delete"
+	AuditActionLDAPGroupPreview       AuditAction = "ldap_group_preview"
+	AuditActionLDAPGroupApply         AuditAction = "ldap_group_apply"
+	AuditActionLDAPGroupReconcile     AuditAction = "ldap_group_reconcile"
 )
 
 type AuditTargetType string
@@ -87,6 +93,7 @@ const (
 	AuditTargetGlobalAudit          AuditTargetType = "global_audit"
 	AuditTargetTemplateRole         AuditTargetType = "template_role"
 	AuditTargetWebhook              AuditTargetType = "audit_webhook"
+	AuditTargetLDAPGroupMapping     AuditTargetType = "ldap_group_mapping"
 )
 
 type AuditOutcome string
@@ -170,6 +177,7 @@ var (
 	globalUserTargetPattern       = regexp.MustCompile(`^(?:users|user:[1-9][0-9]*)$`)
 	globalSystemTargetPattern     = regexp.MustCompile(`^(?:subscription|options|cache)$`)
 	templateRoleTargetPattern     = regexp.MustCompile(`^(?:template|template-role):[1-9][0-9]*$`)
+	ldapGroupTargetPattern        = regexp.MustCompile(`^(?:(?:entryuuid|objectguid|nsuniqueid|ipauniqueid):[0-9a-f-]{36}|provider:[a-z][a-z0-9_-]{0,63})$`)
 )
 
 // AuditEvent is the allowlisted payload shared by enhanced features. It has no
@@ -254,6 +262,8 @@ func validAuditTarget(event AuditEvent) bool {
 		return validScopedProjectAuditTarget(event, templateRoleTargetPattern)
 	case AuditTargetWebhook:
 		return event.ProjectID == nil && event.TargetID == "audit_webhook"
+	case AuditTargetLDAPGroupMapping:
+		return event.ProjectID == nil && ldapGroupTargetPattern.MatchString(event.TargetID)
 	default:
 		return false
 	}
@@ -484,7 +494,10 @@ func validAuditAction(action AuditAction) bool {
 		AuditActionTOTPEnrollBegin, AuditActionTOTPEnrollConfirm,
 		AuditActionTOTPRecoveryAck, AuditActionTOTPChallenge,
 		AuditActionTOTPRecover, AuditActionTOTPReset, AuditActionTOTPRollout,
-		AuditActionLDAPConfigure, AuditActionLDAPTest, AuditActionLDAPLogin, AuditActionLDAPLink:
+		AuditActionLDAPConfigure, AuditActionLDAPTest, AuditActionLDAPLogin, AuditActionLDAPLink,
+		AuditActionLDAPGroupMappingRead, AuditActionLDAPGroupMappingWrite,
+		AuditActionLDAPGroupMappingDelete, AuditActionLDAPGroupPreview,
+		AuditActionLDAPGroupApply, AuditActionLDAPGroupReconcile:
 		return true
 	default:
 		return false

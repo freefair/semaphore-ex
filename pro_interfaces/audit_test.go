@@ -198,6 +198,17 @@ func TestAuditEventAcceptsScopedProjectRoleAndMembershipTargets(t *testing.T) {
 	}
 }
 
+func TestAuditEventAcceptsImmutableLDAPGroupTargets(t *testing.T) {
+	event := validAuditEventWithoutDeliveryMetadata()
+	event.Action = AuditActionLDAPGroupMappingWrite
+	event.TargetType = AuditTargetLDAPGroupMapping
+	event.TargetID = "entryuuid:40f1c82a-b773-4d41-a587-7c4cf7f3cd67"
+
+	assert.NoError(t, event.Validate())
+	event.TargetID = "cn=engineering,ou=groups,dc=example,dc=test"
+	assert.Error(t, event.Validate())
+}
+
 func TestAuditEventRequiresConsistentProjectScope(t *testing.T) {
 	projectID := 42
 	otherProjectID := 43

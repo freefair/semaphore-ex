@@ -278,6 +278,17 @@ type LDAPRepository interface {
 	GetLDAPAuthAttempt(providerID string, subjectHash string) (LDAPAuthAttempt, error)
 	RecordLDAPAuthFailure(providerID string, subjectHash string, now time.Time, window time.Duration, maxFailures int, blockFor time.Duration) (LDAPAuthAttempt, error)
 	ClearLDAPAuthFailures(providerID string, subjectHash string) error
+	GetLDAPGroupMappings(providerID string) ([]LDAPGroupMapping, error)
+	SaveLDAPGroupMapping(mapping LDAPGroupMapping, expectedRevision int) (LDAPGroupMapping, error)
+	DeleteLDAPGroupMapping(providerID string, mappingID string, expectedRevision int) error
+	GetLDAPGroupMappingRevision(providerID string) (int, error)
+	GetLDAPLinkedUsers(providerID string) ([]LDAPLinkedUser, error)
+	GetLDAPGroupRoleAssignments(providerID string) ([]LDAPGroupRoleAssignment, error)
+	SaveLDAPGroupReconciliation(reconciliation LDAPGroupReconciliation) (LDAPGroupReconciliation, error)
+	GetLDAPGroupPreview(providerID string, token string) (LDAPGroupReconciliation, error)
+	ApplyLDAPGroupPreview(reconciliation LDAPGroupReconciliation,
+		additions []LDAPGroupAssignmentChange, removals []LDAPGroupAssignmentChange) (LDAPGroupReconciliation, error)
+	GetLDAPGroupReconciliationHistory(providerID string, limit int) ([]LDAPGroupReconciliation, error)
 }
 
 // ProjectStore handles project-related operations

@@ -15,9 +15,12 @@ import (
 )
 
 type ldapClientStub struct {
-	result   pro_interfaces.LDAPClientResult
-	err      error
-	requests []pro_interfaces.LDAPClientRequest
+	result        pro_interfaces.LDAPClientResult
+	err           error
+	requests      []pro_interfaces.LDAPClientRequest
+	groupSnapshot pro_interfaces.LDAPGroupDirectorySnapshot
+	groupErr      error
+	groupRequests []pro_interfaces.LDAPClientConfiguration
 }
 
 func (c *ldapClientStub) Validate(pro_interfaces.LDAPClientConfiguration) error { return nil }
@@ -28,6 +31,14 @@ func (c *ldapClientStub) Authenticate(
 ) (pro_interfaces.LDAPClientResult, error) {
 	c.requests = append(c.requests, request)
 	return c.result, c.err
+}
+
+func (c *ldapClientStub) ReadGroupSnapshot(
+	_ context.Context,
+	configuration pro_interfaces.LDAPClientConfiguration,
+) (pro_interfaces.LDAPGroupDirectorySnapshot, error) {
+	c.groupRequests = append(c.groupRequests, configuration)
+	return c.groupSnapshot, c.groupErr
 }
 
 func TestLDAPConfigureStoresWriteOnlyEncryptedCredential(t *testing.T) {
@@ -263,6 +274,9 @@ func testLDAPProviderInput() pro_interfaces.LDAPProviderInput {
 		BindDN: "cn=bind,dc=example,dc=test", BindPassword: "bind-secret",
 		SearchBaseDN: "ou=users,dc=example,dc=test", UserFilter: "(uid={{username}})",
 		IdentityAttribute: "entryUUID", UsernameAttribute: "uid", NameAttribute: "cn", EmailAttribute: "mail",
+		GroupSearchBaseDN: "ou=groups,dc=example,dc=test",
+		GroupUserFilter:   "(objectClass=person)", GroupFilter: "(objectClass=groupOfNames)",
+		GroupIdentityAttribute: "entryUUID", GroupMemberAttribute: "member", GroupMaxDepth: 4,
 	}
 }
 
