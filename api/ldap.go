@@ -26,20 +26,26 @@ func NewLDAPController(
 }
 
 type ldapProviderBody struct {
-	ID                string                       `json:"id" binding:"required"`
-	DisplayName       string                       `json:"display_name" binding:"required"`
-	ServerURL         string                       `json:"server_url" binding:"required"`
-	TLSMode           pro_interfaces.LDAPTLSMode   `json:"tls_mode" binding:"required"`
-	TrustMode         pro_interfaces.LDAPTrustMode `json:"trust_mode" binding:"required"`
-	CAPEM             string                       `json:"ca_pem"`
-	BindDN            string                       `json:"bind_dn" binding:"required"`
-	BindPassword      string                       `json:"bind_password"`
-	SearchBaseDN      string                       `json:"search_base_dn" binding:"required"`
-	UserFilter        string                       `json:"user_filter" binding:"required"`
-	IdentityAttribute string                       `json:"identity_attribute" binding:"required"`
-	UsernameAttribute string                       `json:"username_attribute" binding:"required"`
-	NameAttribute     string                       `json:"name_attribute" binding:"required"`
-	EmailAttribute    string                       `json:"email_attribute" binding:"required"`
+	ID                     string                       `json:"id" binding:"required"`
+	DisplayName            string                       `json:"display_name" binding:"required"`
+	ServerURL              string                       `json:"server_url" binding:"required"`
+	TLSMode                pro_interfaces.LDAPTLSMode   `json:"tls_mode" binding:"required"`
+	TrustMode              pro_interfaces.LDAPTrustMode `json:"trust_mode" binding:"required"`
+	CAPEM                  string                       `json:"ca_pem"`
+	BindDN                 string                       `json:"bind_dn" binding:"required"`
+	BindPassword           string                       `json:"bind_password"`
+	SearchBaseDN           string                       `json:"search_base_dn" binding:"required"`
+	UserFilter             string                       `json:"user_filter" binding:"required"`
+	IdentityAttribute      string                       `json:"identity_attribute" binding:"required"`
+	UsernameAttribute      string                       `json:"username_attribute" binding:"required"`
+	NameAttribute          string                       `json:"name_attribute" binding:"required"`
+	EmailAttribute         string                       `json:"email_attribute" binding:"required"`
+	GroupSearchBaseDN      string                       `json:"group_search_base_dn"`
+	GroupUserFilter        string                       `json:"group_user_filter"`
+	GroupFilter            string                       `json:"group_filter"`
+	GroupIdentityAttribute string                       `json:"group_identity_attribute"`
+	GroupMemberAttribute   string                       `json:"group_member_attribute"`
+	GroupMaxDepth          int                          `json:"group_max_depth"`
 }
 
 func (c *LDAPController) Providers(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +74,9 @@ func (c *LDAPController) Configure(w http.ResponseWriter, r *http.Request) {
 			SearchBaseDN: body.SearchBaseDN, UserFilter: body.UserFilter,
 			IdentityAttribute: body.IdentityAttribute, UsernameAttribute: body.UsernameAttribute,
 			NameAttribute: body.NameAttribute, EmailAttribute: body.EmailAttribute,
+			GroupSearchBaseDN: body.GroupSearchBaseDN, GroupUserFilter: body.GroupUserFilter,
+			GroupFilter: body.GroupFilter, GroupIdentityAttribute: body.GroupIdentityAttribute,
+			GroupMemberAttribute: body.GroupMemberAttribute, GroupMaxDepth: body.GroupMaxDepth,
 		},
 	})
 	if err != nil {
@@ -261,6 +270,14 @@ func writeLDAPError(w http.ResponseWriter, err error) {
 		helpers.WriteErrorStatus(w, "LDAP_DISABLED", http.StatusForbidden)
 	case errors.Is(err, pro_interfaces.ErrLDAPForbidden):
 		helpers.WriteErrorStatus(w, "LDAP_FORBIDDEN", http.StatusForbidden)
+	case errors.Is(err, pro_interfaces.ErrLDAPGroupPreviewStale):
+		helpers.WriteErrorStatus(w, "LDAP_GROUP_PREVIEW_STALE", http.StatusConflict)
+	case errors.Is(err, pro_interfaces.ErrLDAPGroupMappingCollision):
+		helpers.WriteErrorStatus(w, "LDAP_GROUP_MAPPING_COLLISION", http.StatusConflict)
+	case errors.Is(err, pro_interfaces.ErrLDAPGroupProtectedAdministrator):
+		helpers.WriteErrorStatus(w, "LDAP_GROUP_PROTECTED_ADMINISTRATOR", http.StatusConflict)
+	case errors.Is(err, pro_interfaces.ErrLDAPGroupUnresolved):
+		helpers.WriteErrorStatus(w, "LDAP_GROUP_UNRESOLVED", http.StatusConflict)
 	case errors.Is(err, pro_interfaces.ErrLDAPProviderNotFound), errors.Is(err, db.ErrNotFound):
 		helpers.WriteErrorStatus(w, "LDAP_PROVIDER_NOT_FOUND", http.StatusNotFound)
 	case errors.Is(err, pro_interfaces.ErrLDAPUnavailable):

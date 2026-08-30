@@ -67,6 +67,12 @@ type LDAPProviderConfiguration struct {
 	UsernameAttribute      string        `json:"username_attribute"`
 	NameAttribute          string        `json:"name_attribute"`
 	EmailAttribute         string        `json:"email_attribute"`
+	GroupSearchBaseDN      string        `json:"group_search_base_dn,omitempty"`
+	GroupUserFilter        string        `json:"group_user_filter,omitempty"`
+	GroupFilter            string        `json:"group_filter,omitempty"`
+	GroupIdentityAttribute string        `json:"group_identity_attribute,omitempty"`
+	GroupMemberAttribute   string        `json:"group_member_attribute,omitempty"`
+	GroupMaxDepth          int           `json:"group_max_depth,omitempty"`
 	SelectedUserIDs        []int         `json:"selected_user_ids"`
 	EligibleUserIDs        []int         `json:"eligible_user_ids"`
 	RecoveryAdminUserID    *int          `json:"recovery_admin_user_id,omitempty"`
@@ -77,20 +83,26 @@ type LDAPProviderConfiguration struct {
 
 // LDAPProviderInput contains write-only secrets accepted by Configure.
 type LDAPProviderInput struct {
-	ID                string
-	DisplayName       string
-	ServerURL         string
-	TLSMode           LDAPTLSMode
-	TrustMode         LDAPTrustMode
-	CAPEM             string
-	BindDN            string
-	BindPassword      string
-	SearchBaseDN      string
-	UserFilter        string
-	IdentityAttribute string
-	UsernameAttribute string
-	NameAttribute     string
-	EmailAttribute    string
+	ID                     string
+	DisplayName            string
+	ServerURL              string
+	TLSMode                LDAPTLSMode
+	TrustMode              LDAPTrustMode
+	CAPEM                  string
+	BindDN                 string
+	BindPassword           string
+	SearchBaseDN           string
+	UserFilter             string
+	IdentityAttribute      string
+	UsernameAttribute      string
+	NameAttribute          string
+	EmailAttribute         string
+	GroupSearchBaseDN      string
+	GroupUserFilter        string
+	GroupFilter            string
+	GroupIdentityAttribute string
+	GroupMemberAttribute   string
+	GroupMaxDepth          int
 }
 
 type LDAPConfigureRequest struct {
@@ -144,18 +156,24 @@ type LDAPLoginProvider struct {
 
 // LDAPClientConfiguration contains decrypted material only for one outbound call.
 type LDAPClientConfiguration struct {
-	ServerURL         string
-	TLSMode           LDAPTLSMode
-	TrustMode         LDAPTrustMode
-	CAPEM             string
-	BindDN            string
-	BindPassword      string
-	SearchBaseDN      string
-	UserFilter        string
-	IdentityAttribute string
-	UsernameAttribute string
-	NameAttribute     string
-	EmailAttribute    string
+	ServerURL              string
+	TLSMode                LDAPTLSMode
+	TrustMode              LDAPTrustMode
+	CAPEM                  string
+	BindDN                 string
+	BindPassword           string
+	SearchBaseDN           string
+	UserFilter             string
+	IdentityAttribute      string
+	UsernameAttribute      string
+	NameAttribute          string
+	EmailAttribute         string
+	GroupSearchBaseDN      string
+	GroupUserFilter        string
+	GroupFilter            string
+	GroupIdentityAttribute string
+	GroupMemberAttribute   string
+	GroupMaxDepth          int
 }
 
 type LDAPClientRequest struct {
@@ -182,6 +200,49 @@ type LDAPIdentity struct {
 type LDAPClientResult struct {
 	Identity  LDAPIdentity
 	Readiness LDAPReadiness
+}
+
+// LDAPGroupDirectorySnapshot is a bounded, secret-free directory view used
+// for deterministic reconciliation. Revision changes with its content.
+type LDAPGroupDirectorySnapshot struct {
+	Revision         string              `json:"revision"`
+	CapturedAt       time.Time           `json:"captured_at"`
+	GroupExternalIDs []string            `json:"group_external_ids"`
+	Users            []LDAPDirectoryUser `json:"users"`
+}
+
+type LDAPGroupMappingRequest struct {
+	ActorID          int
+	ActorIsAdmin     bool
+	Mapping          LDAPGroupMapping
+	ExpectedRevision int
+	Now              time.Time
+}
+
+type LDAPGroupMappingDeleteRequest struct {
+	ActorID          int
+	ActorIsAdmin     bool
+	ProviderID       string
+	MappingID        string
+	ExpectedRevision int
+	Now              time.Time
+}
+
+type LDAPGroupPreviewRequest struct {
+	ActorID      *int
+	ActorIsAdmin bool
+	ProviderID   string
+	Source       string
+	UserID       *int
+	Now          time.Time
+}
+
+type LDAPGroupApplyRequest struct {
+	ActorID      int
+	ActorIsAdmin bool
+	ProviderID   string
+	Token        string
+	Now          time.Time
 }
 
 // LegacyLDAPClientConfiguration preserves the Community configuration shape
@@ -218,6 +279,7 @@ type LegacyLDAPClient interface {
 type LDAPClient interface {
 	Validate(LDAPClientConfiguration) error
 	Authenticate(context.Context, LDAPClientRequest) (LDAPClientResult, error)
+	ReadGroupSnapshot(context.Context, LDAPClientConfiguration) (LDAPGroupDirectorySnapshot, error)
 }
 
 // LDAPService is the framework-free enhanced LDAP identity boundary.
@@ -232,6 +294,13 @@ type LDAPService interface {
 	Test(context.Context, LDAPTestRequest) (LDAPReadiness, error)
 	SetState(context.Context, LDAPStateRequest) (LDAPProviderConfiguration, error)
 	Transitions(context.Context, string) ([]db.LDAPCapabilityTransition, error)
+	GroupMappings(context.Context, string) ([]LDAPGroupMapping, error)
+	SaveGroupMapping(context.Context, LDAPGroupMappingRequest) (LDAPGroupMapping, error)
+	DeleteGroupMapping(context.Context, LDAPGroupMappingDeleteRequest) error
+	PreviewGroupMappings(context.Context, LDAPGroupPreviewRequest) (LDAPGroupPreview, error)
+	ApplyGroupPreview(context.Context, LDAPGroupApplyRequest) (LDAPGroupPreview, error)
+	ReconcileGroupMappings(context.Context, LDAPGroupPreviewRequest) (LDAPGroupPreview, error)
+	GroupReconciliationHistory(context.Context, string, int) ([]db.LDAPGroupReconciliation, error)
 }
 
 var (
@@ -247,4 +316,8 @@ var (
 	ErrLDAPForbidden                       = errors.New("LDAP operation forbidden")
 	ErrLDAPReferral                        = errors.New("LDAP referral rejected")
 	ErrLDAPDuplicateIdentity               = errors.New("LDAP search returned duplicate identities")
+	ErrLDAPGroupPreviewStale               = errors.New("LDAP group preview is stale")
+	ErrLDAPGroupMappingCollision           = errors.New("LDAP group mapping collision")
+	ErrLDAPGroupProtectedAdministrator     = errors.New("LDAP group mapping would remove a protected administrator")
+	ErrLDAPGroupUnresolved                 = errors.New("LDAP group mapping contains unresolved directory items")
 )

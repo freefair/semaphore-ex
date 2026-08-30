@@ -7,17 +7,20 @@ describe('LDAP capability UI contracts', () => {
   let originalGet;
   let originalPost;
   let originalPut;
+  let originalDelete;
 
   beforeEach(() => {
     originalGet = axios.get;
     originalPost = axios.post;
     originalPut = axios.put;
+    originalDelete = axios.delete;
   });
 
   afterEach(() => {
     axios.get = originalGet;
     axios.post = originalPost;
     axios.put = originalPut;
+    axios.delete = originalDelete;
   });
 
   it('loads providers without creating readable bind secret state', async () => {
@@ -45,6 +48,7 @@ describe('LDAP capability UI contracts', () => {
       applyProvider: LdapCapabilityPanel.methods.applyProvider,
       selectProvider: LdapCapabilityPanel.methods.selectProvider,
       errorMessage: LdapCapabilityPanel.methods.errorMessage,
+      async loadGroupMappingData() { return undefined; },
     };
 
     await LdapCapabilityPanel.methods.load.call(context);
@@ -167,5 +171,104 @@ describe('LDAP capability UI contracts', () => {
     expect(LdapCapabilityPanel.methods.errorMessage({
       response: { data: { error: 'LDAP_INVALID_CREDENTIALS' } },
     })).to.equal('The directory credentials were rejected. Check the test username and password.');
+  });
+
+  it('saves immutable group mappings and clears stale preview state', async () => {
+    let request;
+    axios.put = async (url, data) => {
+      request = { url, data };
+      return { data: { id: 'engineering' } };
+    };
+    const context = {
+      selectedProviderID: 'corp',
+      mappingForm: {
+        id: 'engineering',
+        group_external_id: 'entryuuid:40f1c82a-b773-4d41-a587-7c4cf7f3cd67',
+        scope: 'project',
+        project_id: 9,
+        role_id: 'runner',
+        enabled: true,
+        expected_revision: 0,
+      },
+      mappingSaving: false,
+      groupPreview: { token: 'old' },
+      error: '',
+      emptyGroupMapping: LdapCapabilityPanel.methods.emptyGroupMapping,
+      resetMappingForm: LdapCapabilityPanel.methods.resetMappingForm,
+      errorMessage: LdapCapabilityPanel.methods.errorMessage,
+      async loadGroupMappingData() { return undefined; },
+    };
+
+    await LdapCapabilityPanel.methods.saveGroupMapping.call(context);
+
+    expect(request).to.deep.equal({
+      url: '/api/capabilities/ldap/group-mappings/engineering',
+      data: {
+        provider_id: 'corp',
+        group_external_id: 'entryuuid:40f1c82a-b773-4d41-a587-7c4cf7f3cd67',
+        target: { scope: 'project', role_id: 'runner', project_id: 9 },
+        enabled: true,
+        expected_revision: 0,
+      },
+    });
+    expect(context.groupPreview).to.equal(null);
+    expect(context.mappingForm.id).to.equal('');
+  });
+
+  it('previews and applies the exact fresh LDAP group diff', async () => {
+    const requests = [];
+    axios.post = async (url, data) => {
+      requests.push({ url, data });
+      return {
+        data: {
+          token: 'preview-1',
+          additions: [{ user_id: 12 }],
+          removals: [],
+          unresolved: [],
+          collisions: [],
+          protected_admin_violations: [],
+        },
+      };
+    };
+    const context = {
+      selectedProviderID: 'corp',
+      groupPreview: null,
+      groupPreviewLoading: false,
+      groupApplyLoading: false,
+      error: '',
+      normalizeGroupPreview: LdapCapabilityPanel.methods.normalizeGroupPreview,
+      errorMessage: LdapCapabilityPanel.methods.errorMessage,
+      async loadGroupHistory() { return undefined; },
+      async loadGroupMappingData() { return undefined; },
+    };
+
+    await LdapCapabilityPanel.methods.previewGroupMappings.call(context);
+    await LdapCapabilityPanel.methods.applyGroupPreview.call(context);
+
+    expect(requests).to.deep.equal([
+      { url: '/api/capabilities/ldap/group-mappings/preview', data: { provider_id: 'corp' } },
+      {
+        url: '/api/capabilities/ldap/group-mappings/apply',
+        data: { provider_id: 'corp', preview_token: 'preview-1' },
+      },
+    ]);
+    expect(context.groupPreview.additions).to.have.length(1);
+  });
+
+  it('blocks Apply when the preview contains unresolved or protected items', () => {
+    const canApply = LdapCapabilityPanel.computed.canApplyGroupPreview;
+    expect(canApply.call({
+      groupPreview: {
+        token: 'one',
+        unresolved: [{ external_id: 'missing' }],
+        collisions: [],
+        protected_admin_violations: [],
+      },
+    })).to.equal(false);
+    expect(canApply.call({
+      groupPreview: {
+        token: 'two', unresolved: [], collisions: [], protected_admin_violations: [],
+      },
+    })).to.equal(true);
   });
 });

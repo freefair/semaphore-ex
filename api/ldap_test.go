@@ -16,16 +16,23 @@ import (
 )
 
 type ldapServiceStub struct {
-	providers        []pro_interfaces.LDAPProviderConfiguration
-	loginProviders   []pro_interfaces.LDAPLoginProvider
-	user             db.User
-	err              error
-	configureRequest pro_interfaces.LDAPConfigureRequest
-	testRequest      pro_interfaces.LDAPTestRequest
-	stateRequest     pro_interfaces.LDAPStateRequest
-	authRequest      pro_interfaces.LDAPAuthenticationRequest
-	linkRequest      pro_interfaces.LDAPLinkRequest
-	recoveryAllowed  bool
+	providers           []pro_interfaces.LDAPProviderConfiguration
+	loginProviders      []pro_interfaces.LDAPLoginProvider
+	user                db.User
+	err                 error
+	configureRequest    pro_interfaces.LDAPConfigureRequest
+	testRequest         pro_interfaces.LDAPTestRequest
+	stateRequest        pro_interfaces.LDAPStateRequest
+	authRequest         pro_interfaces.LDAPAuthenticationRequest
+	linkRequest         pro_interfaces.LDAPLinkRequest
+	recoveryAllowed     bool
+	groupMappings       []pro_interfaces.LDAPGroupMapping
+	groupPreview        pro_interfaces.LDAPGroupPreview
+	groupHistory        []db.LDAPGroupReconciliation
+	groupSaveRequest    pro_interfaces.LDAPGroupMappingRequest
+	groupDeleteRequest  pro_interfaces.LDAPGroupMappingDeleteRequest
+	groupPreviewRequest pro_interfaces.LDAPGroupPreviewRequest
+	groupApplyRequest   pro_interfaces.LDAPGroupApplyRequest
 }
 
 func (*ldapServiceStub) Initialize(context.Context) error { return nil }
@@ -73,6 +80,32 @@ func (s *ldapServiceStub) SetState(
 }
 func (s *ldapServiceStub) Transitions(context.Context, string) ([]db.LDAPCapabilityTransition, error) {
 	return []db.LDAPCapabilityTransition{}, s.err
+}
+func (s *ldapServiceStub) GroupMappings(context.Context, string) ([]pro_interfaces.LDAPGroupMapping, error) {
+	return s.groupMappings, s.err
+}
+func (s *ldapServiceStub) SaveGroupMapping(_ context.Context, request pro_interfaces.LDAPGroupMappingRequest) (pro_interfaces.LDAPGroupMapping, error) {
+	s.groupSaveRequest = request
+	return request.Mapping, s.err
+}
+func (s *ldapServiceStub) DeleteGroupMapping(_ context.Context, request pro_interfaces.LDAPGroupMappingDeleteRequest) error {
+	s.groupDeleteRequest = request
+	return s.err
+}
+func (s *ldapServiceStub) PreviewGroupMappings(_ context.Context, request pro_interfaces.LDAPGroupPreviewRequest) (pro_interfaces.LDAPGroupPreview, error) {
+	s.groupPreviewRequest = request
+	return s.groupPreview, s.err
+}
+func (s *ldapServiceStub) ApplyGroupPreview(_ context.Context, request pro_interfaces.LDAPGroupApplyRequest) (pro_interfaces.LDAPGroupPreview, error) {
+	s.groupApplyRequest = request
+	return s.groupPreview, s.err
+}
+func (s *ldapServiceStub) ReconcileGroupMappings(_ context.Context, request pro_interfaces.LDAPGroupPreviewRequest) (pro_interfaces.LDAPGroupPreview, error) {
+	s.groupPreviewRequest = request
+	return s.groupPreview, s.err
+}
+func (s *ldapServiceStub) GroupReconciliationHistory(context.Context, string, int) ([]db.LDAPGroupReconciliation, error) {
+	return s.groupHistory, s.err
 }
 
 func TestLDAPControllerConfigureKeepsBindCredentialWriteOnly(t *testing.T) {

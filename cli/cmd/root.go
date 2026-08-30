@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"github.com/gorilla/handlers"
 	"github.com/semaphoreui/semaphore/api"
@@ -15,6 +16,7 @@ import (
 	proServer "github.com/semaphoreui/semaphore/pro/services/server"
 	proTasks "github.com/semaphoreui/semaphore/pro/services/tasks"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	identityServices "github.com/semaphoreui/semaphore/services/identity"
 	"github.com/semaphoreui/semaphore/services/schedules"
 	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/services/tasks"
@@ -118,6 +120,11 @@ func runService() {
 	accessKeyService := server.NewAccessKeyService(store, encryptionService, store, capabilityProvider)
 	secretStorageService := server.NewSecretStorageService(store, store, accessKeyService, encryptionService)
 	secretStorageSyncScheduler := server.NewSecretStorageSyncScheduler(store, secretStorageService)
+	ldapGroupService := proFeatures.NewLDAPService(store, capabilityProvider, identityServices.NewLDAPClient())
+	if err := ldapGroupService.Initialize(context.Background()); err != nil {
+		log.WithError(err).Panic("failed to initialize LDAP group reconciliation service")
+	}
+	ldapGroupScheduler := server.NewLDAPGroupReconciliationScheduler(ldapGroupService)
 	environmentService := server.NewEnvironmentService(store, encryptionService, store)
 	runnerService := server.NewRunnerService(store)
 	subscriptionService := proServer.NewSubscriptionService(store, store, store, terraformStore)
@@ -273,6 +280,8 @@ func runService() {
 
 	secretStorageSyncScheduler.Start()
 	defer secretStorageSyncScheduler.Stop()
+	ldapGroupScheduler.Start()
+	defer ldapGroupScheduler.Stop()
 
 	route := api.Route(
 		store,

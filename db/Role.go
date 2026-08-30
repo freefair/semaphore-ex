@@ -15,6 +15,9 @@ var (
 	ErrLastGlobalAdministrator           = errors.New("system must retain a global administrator")
 	ErrGlobalRoleAssigned                = errors.New("global role is assigned")
 	ErrTemplateRoleRevisionConflict      = errors.New("template role revision conflict")
+	ErrLDAPGroupMappingRevisionConflict  = errors.New("LDAP group mapping revision conflict")
+	ErrLDAPGroupPreviewStale             = errors.New("LDAP group preview is stale")
+	ErrLDAPGroupMappingCollision         = errors.New("LDAP group mapping assignment collision")
 )
 
 type Role struct {

@@ -154,6 +154,12 @@ func (s *ldapService) Authenticate(
 	if err = s.repository.ClearLDAPAuthFailures(provider.ID, subjectHash); err != nil {
 		return db.User{}, err
 	}
+	if mappings, mappingErr := s.repository.GetLDAPGroupMappings(provider.ID); mappingErr == nil && len(mappings) != 0 {
+		userID := user.ID
+		_, _ = s.ReconcileGroupMappings(ctx, pro_interfaces.LDAPGroupPreviewRequest{
+			ProviderID: provider.ID, Source: "login", UserID: &userID, Now: request.Now,
+		})
+	}
 	return user, nil
 }
 
@@ -307,7 +313,11 @@ func (s *ldapService) Configure(
 		BindDN: strings.TrimSpace(input.BindDN), SearchBaseDN: strings.TrimSpace(input.SearchBaseDN),
 		UserFilter: strings.TrimSpace(input.UserFilter), IdentityAttribute: strings.TrimSpace(input.IdentityAttribute),
 		UsernameAttribute: strings.TrimSpace(input.UsernameAttribute), NameAttribute: strings.TrimSpace(input.NameAttribute),
-		EmailAttribute:  strings.TrimSpace(input.EmailAttribute),
+		EmailAttribute:    strings.TrimSpace(input.EmailAttribute),
+		GroupSearchBaseDN: strings.TrimSpace(input.GroupSearchBaseDN),
+		GroupUserFilter:   strings.TrimSpace(input.GroupUserFilter), GroupFilter: strings.TrimSpace(input.GroupFilter),
+		GroupIdentityAttribute: strings.TrimSpace(input.GroupIdentityAttribute),
+		GroupMemberAttribute:   strings.TrimSpace(input.GroupMemberAttribute), GroupMaxDepth: input.GroupMaxDepth,
 		ReadinessStatus: string(pro_interfaces.LDAPReadinessUntested), ReadinessCode: "configuration_changed",
 		Created: created, Updated: request.Now,
 	}
@@ -519,6 +529,9 @@ func (s *ldapService) providerConfiguration(
 		SearchBaseDN: provider.SearchBaseDN, UserFilter: provider.UserFilter,
 		IdentityAttribute: provider.IdentityAttribute, UsernameAttribute: provider.UsernameAttribute,
 		NameAttribute: provider.NameAttribute, EmailAttribute: provider.EmailAttribute,
+		GroupSearchBaseDN: provider.GroupSearchBaseDN, GroupUserFilter: provider.GroupUserFilter,
+		GroupFilter: provider.GroupFilter, GroupIdentityAttribute: provider.GroupIdentityAttribute,
+		GroupMemberAttribute: provider.GroupMemberAttribute, GroupMaxDepth: provider.GroupMaxDepth,
 		SelectedUserIDs: selected, EligibleUserIDs: eligible,
 		RecoveryAdminUserID: provider.RecoveryAdminUserID,
 		Readiness:           readiness, Created: provider.Created, Updated: provider.Updated,
@@ -538,7 +551,10 @@ func (s *ldapService) clientConfiguration(
 		BindDN: provider.BindDN, SearchBaseDN: provider.SearchBaseDN,
 		UserFilter: provider.UserFilter, IdentityAttribute: provider.IdentityAttribute,
 		UsernameAttribute: provider.UsernameAttribute, NameAttribute: provider.NameAttribute,
-		EmailAttribute: provider.EmailAttribute,
+		EmailAttribute:    provider.EmailAttribute,
+		GroupSearchBaseDN: provider.GroupSearchBaseDN, GroupUserFilter: provider.GroupUserFilter,
+		GroupFilter: provider.GroupFilter, GroupIdentityAttribute: provider.GroupIdentityAttribute,
+		GroupMemberAttribute: provider.GroupMemberAttribute, GroupMaxDepth: provider.GroupMaxDepth,
 	}
 	configuration.BindPassword = string(secret)
 	return configuration, func() {
@@ -557,7 +573,10 @@ func clientConfigurationFromInput(
 		BindDN: strings.TrimSpace(input.BindDN), SearchBaseDN: strings.TrimSpace(input.SearchBaseDN),
 		UserFilter: strings.TrimSpace(input.UserFilter), IdentityAttribute: strings.TrimSpace(input.IdentityAttribute),
 		UsernameAttribute: strings.TrimSpace(input.UsernameAttribute), NameAttribute: strings.TrimSpace(input.NameAttribute),
-		EmailAttribute: strings.TrimSpace(input.EmailAttribute),
+		EmailAttribute:    strings.TrimSpace(input.EmailAttribute),
+		GroupSearchBaseDN: strings.TrimSpace(input.GroupSearchBaseDN), GroupUserFilter: strings.TrimSpace(input.GroupUserFilter),
+		GroupFilter: strings.TrimSpace(input.GroupFilter), GroupIdentityAttribute: strings.TrimSpace(input.GroupIdentityAttribute),
+		GroupMemberAttribute: strings.TrimSpace(input.GroupMemberAttribute), GroupMaxDepth: input.GroupMaxDepth,
 	}
 	configuration.BindPassword = bindSecret
 	return configuration

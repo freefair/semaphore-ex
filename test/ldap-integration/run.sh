@@ -107,7 +107,46 @@ chmod 0644 "$work_dir/certs/server.key"
     'objectClass: referral' \
     'objectClass: extensibleObject' \
     'ou: external' \
-    'ref: ldaps://untrusted.example.test/dc=outside'
+    'ref: ldaps://untrusted.example.test/dc=outside' \
+    '' \
+    'dn: ou=groups,dc=example,dc=test' \
+    'objectClass: top' \
+    'objectClass: organizationalUnit' \
+    'ou: groups' \
+    '' \
+    'dn: cn=stable-direct,ou=groups,dc=example,dc=test' \
+    'objectClass: top' \
+    'objectClass: groupOfNames' \
+    'cn: stable-direct' \
+    'member: uid=alice,ou=people,dc=example,dc=test' \
+    '' \
+    'dn: cn=nested-leaf,ou=groups,dc=example,dc=test' \
+    'objectClass: top' \
+    'objectClass: groupOfNames' \
+    'cn: nested-leaf' \
+    'member: uid=alice,ou=people,dc=example,dc=test' \
+    '' \
+    'dn: cn=nested-a,ou=groups,dc=example,dc=test' \
+    'objectClass: top' \
+    'objectClass: groupOfNames' \
+    'cn: nested-a' \
+    'member: cn=nested-leaf,ou=groups,dc=example,dc=test' \
+    'member: cn=nested-b,ou=groups,dc=example,dc=test' \
+    '' \
+    'dn: cn=nested-b,ou=groups,dc=example,dc=test' \
+    'objectClass: top' \
+    'objectClass: groupOfNames' \
+    'cn: nested-b' \
+    'member: cn=nested-a,ou=groups,dc=example,dc=test'
+
+  for index in {001..105}; do
+    printf '\n%s\n' "dn: cn=paging-$index,ou=groups,dc=example,dc=test"
+    printf '%s\n' \
+      'objectClass: top' \
+      'objectClass: groupOfNames'
+    printf '%s\n' "cn: paging-$index"
+    printf '%s\n' 'member: uid=duplicate-one,ou=duplicate-one,ou=people,dc=example,dc=test'
+  done
 } >"$work_dir/ldifs/10-integration.ldif"
 
 export SEMAPHORE_LDAP_CERT_DIR="$work_dir/certs"
@@ -149,6 +188,6 @@ export GOCACHE="$work_dir/go-cache"
   -run TestLDAPTLSIntegration -count=1)
 (cd -- "$repository_dir/test/edition-contract/enhanced" && \
   go test -tags=ldap_integration ./pkg/features \
-    -run TestLDAPLifecycleTLSOutageAndRecoveryIntegration -count=1)
+    -run 'TestLDAP.*Integration' -count=1)
 
 echo 'Disposable TLS LDAP integration passed.'
