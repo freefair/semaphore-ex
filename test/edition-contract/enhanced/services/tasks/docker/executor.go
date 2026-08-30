@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -30,15 +31,20 @@ const (
 var idleContainerCommand = []string{"/bin/sh", "-c", "trap 'exit 0' TERM INT; while :; do sleep 3600; done"}
 
 type Provider struct {
-	config       config
-	client       DockerClient
-	keyInstaller db_lib.AccessKeyInstaller
-	runnerBoot   string
-	runnerID     int
-	session      db.DockerReconciliationSession
-	repoLock     *tasks.KeyLock
-	policyMu     sync.RWMutex
-	policy       db.DockerExecutionPolicy
+	config                config
+	client                DockerClient
+	keyInstaller          db_lib.AccessKeyInstaller
+	runnerBoot            string
+	runnerID              int
+	session               db.DockerReconciliationSession
+	repoLock              *tasks.KeyLock
+	policyMu              sync.RWMutex
+	policy                db.DockerExecutionPolicy
+	telemetryMu           sync.Mutex
+	telemetrySessionID    string
+	telemetryNextSequence int64
+	telemetry             []db.DockerTelemetryEvent
+	telemetryDropped      int64
 }
 
 // NewProvider builds one long-lived Docker API client for the runner. The
@@ -100,7 +106,70 @@ func (p *Provider) ApplyDockerReconciliationSession(session db.DockerReconciliat
 	}
 	p.session = session
 	p.runnerBoot = session.TargetBoot
+	p.telemetryMu.Lock()
+	if p.telemetrySessionID != session.SessionID {
+		p.telemetrySessionID, p.telemetryNextSequence, p.telemetry, p.telemetryDropped = session.SessionID, session.TelemetryHighestSequence, nil, 0
+	}
+	p.telemetryMu.Unlock()
 	return nil
+}
+
+func (p *Provider) recordDockerTelemetry(event db.DockerTelemetryEvent) {
+	p.telemetryMu.Lock()
+	defer p.telemetryMu.Unlock()
+	if p.telemetrySessionID == "" {
+		return
+	}
+	p.flushDroppedTelemetryLocked()
+	if len(p.telemetry) >= maxDockerTelemetryQueueEvents {
+		if p.telemetryDropped < maxDockerTelemetryDroppedCount {
+			p.telemetryDropped++
+		}
+		return
+	}
+	event.Sequence = p.telemetryNextSequence + 1
+	if event.Validate() != nil {
+		return
+	}
+	p.telemetryNextSequence = event.Sequence
+	p.telemetry = append(p.telemetry, event)
+}
+
+const (
+	maxDockerTelemetryQueueEvents  = 100
+	maxDockerTelemetryDroppedCount = int64(1_000_000_000)
+)
+
+func (p *Provider) flushDroppedTelemetryLocked() {
+	if p.telemetryDropped == 0 || len(p.telemetry) >= maxDockerTelemetryQueueEvents {
+		return
+	}
+	event := db.DockerTelemetryEvent{Sequence: p.telemetryNextSequence + 1, Kind: db.DockerTelemetryDrop, DropReason: db.DockerTelemetryDropQueueFull, Count: p.telemetryDropped}
+	if event.Validate() != nil {
+		return
+	}
+	p.telemetryNextSequence = event.Sequence
+	p.telemetry = append(p.telemetry, event)
+	p.telemetryDropped = 0
+}
+
+func (p *Provider) PendingDockerTelemetry() db.DockerTelemetryBatch {
+	p.telemetryMu.Lock()
+	defer p.telemetryMu.Unlock()
+	count := len(p.telemetry)
+	if count > maxDockerTelemetryQueueEvents {
+		count = maxDockerTelemetryQueueEvents
+	}
+	return db.DockerTelemetryBatch{Events: append([]db.DockerTelemetryEvent(nil), p.telemetry[:count]...)}
+}
+
+func (p *Provider) AcknowledgeDockerTelemetry(ack db.DockerTelemetryAck) {
+	p.telemetryMu.Lock()
+	defer p.telemetryMu.Unlock()
+	for len(p.telemetry) > 0 && p.telemetry[0].Sequence <= ack.HighestSequence {
+		p.telemetry = p.telemetry[1:]
+	}
+	p.flushDroppedTelemetryLocked()
 }
 
 func (p *Provider) DockerReconciliationSession() db.DockerReconciliationSession {
@@ -142,9 +211,11 @@ func (p *Provider) NewExecutor(task db.Task, template db.Template, inventory db.
 	}
 	policy := p.effectivePolicy()
 	if err := policy.ValidateExecution(policyExecutionRequest(policy, p.config.helperImage, "none")); err != nil {
+		p.recordPolicyDenial(err)
 		return nil, err
 	}
 	if err := policy.ValidateExecution(policyExecutionRequest(policy, taskImage, policy.Network)); err != nil {
+		p.recordPolicyDenial(err)
 		return nil, err
 	}
 	local := &tasks.LocalExecutor{
@@ -161,18 +232,26 @@ func (p *Provider) NewExecutor(task db.Task, template db.Template, inventory db.
 	}
 	runnerBoot, runnerID := p.effectiveRunnerIdentity()
 	return &DockerExecutor{
-		client:        p.client,
-		config:        p.config,
-		runnerBoot:    runnerBoot,
-		runnerID:      runnerID,
-		task:          task,
-		template:      template,
-		local:         local,
-		logger:        task_logger.NopLogger{},
-		status:        task_logger.TaskStartingStatus,
-		containerName: dockerTaskName(task.ID, task.AssignmentGeneration, runnerBoot),
-		policy:        policy,
+		client:          p.client,
+		config:          p.config,
+		runnerBoot:      runnerBoot,
+		runnerID:        runnerID,
+		task:            task,
+		template:        template,
+		local:           local,
+		logger:          task_logger.NopLogger{},
+		status:          task_logger.TaskStartingStatus,
+		containerName:   dockerTaskName(task.ID, task.AssignmentGeneration, runnerBoot),
+		policy:          policy,
+		recordTelemetry: p.recordDockerTelemetry,
 	}, nil
+}
+
+func (p *Provider) recordPolicyDenial(err error) {
+	var violation db.DockerPolicyViolationError
+	if errors.As(err, &violation) {
+		p.recordDockerTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryPolicyDenial, PolicyRule: violation.Rule})
+	}
 }
 
 type DockerExecutor struct {
@@ -185,21 +264,22 @@ type DockerExecutor struct {
 	local      *tasks.LocalExecutor
 	logger     task_logger.Logger
 
-	mu            sync.Mutex
-	condition     *sync.Cond
-	status        task_logger.TaskStatus
-	killed        bool
-	runCancel     context.CancelFunc
-	runGeneration uint64
-	plan          *tasks.ContainerTaskPlan
-	helperID      string
-	containerID   string
-	reportedID    string
-	containerName string
-	volumeName    string
-	policy        db.DockerExecutionPolicy
-	helperImage   ResolvedImage
-	taskImage     ResolvedImage
+	mu              sync.Mutex
+	condition       *sync.Cond
+	status          task_logger.TaskStatus
+	killed          bool
+	runCancel       context.CancelFunc
+	runGeneration   uint64
+	plan            *tasks.ContainerTaskPlan
+	helperID        string
+	containerID     string
+	reportedID      string
+	containerName   string
+	volumeName      string
+	policy          db.DockerExecutionPolicy
+	helperImage     ResolvedImage
+	taskImage       ResolvedImage
+	recordTelemetry func(db.DockerTelemetryEvent)
 }
 
 func newDockerExecutorForPlan(client DockerClient, cfg config, runnerBoot string, task db.Task, template db.Template, logger task_logger.Logger) *DockerExecutor {
@@ -279,23 +359,29 @@ func (e *DockerExecutor) runContainerPlan(ctx context.Context, plan *tasks.Conta
 	if err != nil {
 		return err
 	}
+	helperStartedAt := time.Now()
 	helperImage, err := e.client.ResolveImage(runCtx, e.config.helperImage, ImageRoleHelper, e.policy)
 	if err != nil {
+		e.recordPolicyDenial(err)
 		if e.IsKilled() {
 			return nil
 		}
 		return fmt.Errorf("resolving Docker helper image: %w", err)
 	}
+	e.emitTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryImagePull, Role: db.DockerTelemetryRoleHelper, PullSource: telemetryPullSource(helperImage.Source), DurationMilliseconds: time.Since(helperStartedAt).Milliseconds()})
 	if e.IsKilled() {
 		return nil
 	}
+	taskStartedAt := time.Now()
 	resolvedTaskImage, err := e.client.ResolveImage(runCtx, taskImage, ImageRoleTask, e.policy)
 	if err != nil {
+		e.recordPolicyDenial(err)
 		if e.IsKilled() {
 			return nil
 		}
 		return fmt.Errorf("resolving Docker task image: %w", err)
 	}
+	e.emitTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryImagePull, Role: db.DockerTelemetryRoleTask, PullSource: telemetryPullSource(resolvedTaskImage.Source), DurationMilliseconds: time.Since(taskStartedAt).Milliseconds()})
 	e.setResolvedImages(helperImage, resolvedTaskImage)
 	if e.IsKilled() {
 		return nil
@@ -334,6 +420,7 @@ func (e *DockerExecutor) runContainerPlan(ctx context.Context, plan *tasks.Conta
 		}
 		return fmt.Errorf("starting Docker task helper: %w", err)
 	}
+	e.sampleContainerResources(runCtx, helperID, db.DockerTelemetryRoleHelper)
 	if e.IsKilled() {
 		return nil
 	}
@@ -375,6 +462,7 @@ func (e *DockerExecutor) runContainerPlan(ctx context.Context, plan *tasks.Conta
 		}
 		return fmt.Errorf("starting Docker task container: %w", err)
 	}
+	e.sampleContainerResources(runCtx, containerID, db.DockerTelemetryRoleTask)
 	if e.IsKilled() {
 		return nil
 	}
@@ -604,18 +692,54 @@ func (e *DockerExecutor) cleanupDockerResources() {
 	defer cancel()
 	if helperID != "" {
 		if err := e.client.RemoveContainer(ctx, helperID); err != nil {
+			e.emitTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryCleanupFailure, CleanupResource: db.DockerTelemetryCleanupHelper})
 			e.logger.Log("Unable to remove the Docker task helper container")
 		}
 	}
 	if containerID != "" {
 		if err := e.client.RemoveContainer(ctx, containerID); err != nil {
+			e.emitTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryCleanupFailure, CleanupResource: db.DockerTelemetryCleanupTask})
 			e.logger.Log("Unable to remove the Docker task container")
 		}
 	}
 	if volumeName != "" {
 		if err := e.client.RemoveVolume(ctx, volumeName); err != nil {
+			e.emitTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryCleanupFailure, CleanupResource: db.DockerTelemetryCleanupVolume})
 			e.logger.Log("Unable to remove the Docker task bundle volume")
 		}
+	}
+}
+
+func telemetryPullSource(source string) db.DockerTelemetryPullSource {
+	if source == string(db.DockerTelemetryPullPulled) {
+		return db.DockerTelemetryPullPulled
+	}
+	return db.DockerTelemetryPullLocal
+}
+
+func (e *DockerExecutor) emitTelemetry(event db.DockerTelemetryEvent) {
+	if e.recordTelemetry != nil {
+		e.recordTelemetry(event)
+	}
+}
+
+func (e *DockerExecutor) recordPolicyDenial(err error) {
+	var violation db.DockerPolicyViolationError
+	if errors.As(err, &violation) {
+		e.emitTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryPolicyDenial, PolicyRule: violation.Rule})
+	}
+}
+
+func (e *DockerExecutor) sampleContainerResources(ctx context.Context, containerID string, role db.DockerTelemetryRole) {
+	client, ok := e.client.(DockerStatsClient)
+	if !ok {
+		return
+	}
+	sampleCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	usage, err := client.SampleContainerResources(sampleCtx, containerID)
+	if err == nil {
+		e.emitTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryResourceUsage, Role: role, CPUUsageNanoseconds: usage.CPUUsageNanoseconds, MemoryBytes: usage.MemoryBytes, PIDs: usage.PIDs})
 	}
 }
 

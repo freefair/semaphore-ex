@@ -42,6 +42,14 @@ type DockerReconciliationRemediator interface {
 	RemediateDockerReconciliation(context.Context, db.DockerReconciliationRemediationCommand) db.DockerReconciliationRemediationResult
 }
 
+// DockerTelemetryReporter keeps runner-local telemetry durable in memory until
+// the server returns its session-fenced acknowledgement. Non-Docker providers
+// do not implement it and retain their existing progress behavior.
+type DockerTelemetryReporter interface {
+	PendingDockerTelemetry() db.DockerTelemetryBatch
+	AcknowledgeDockerTelemetry(db.DockerTelemetryAck)
+}
+
 // StopConfirmation is the only evidence the runner may use to turn a Docker
 // cancellation into a terminal task result. A context cancellation or a
 // successful stop request is not evidence: the daemon must confirm the

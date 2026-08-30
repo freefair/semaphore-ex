@@ -1,9 +1,38 @@
 package metrics
 
 import (
+	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"time"
 )
+
+// RecordDockerTelemetry accepts only db-validated events. All labels are
+// closed enums; no Docker object, runner, task, image, or error text can enter
+// the Prometheus label set.
+func (m *Metrics) RecordDockerTelemetry(event db.DockerTelemetryEvent) {
+	if m == nil || event.Validate() != nil {
+		return
+	}
+	switch event.Kind {
+	case db.DockerTelemetryResourceUsage:
+		role := string(event.Role)
+		m.dockerCPUUsage.WithLabelValues(role).Set(float64(event.CPUUsageNanoseconds))
+		m.dockerMemoryBytes.WithLabelValues(role).Set(float64(event.MemoryBytes))
+		m.dockerPIDs.WithLabelValues(role).Set(float64(event.PIDs))
+	case db.DockerTelemetryPolicyDenial:
+		m.dockerPolicyDenials.WithLabelValues(event.PolicyRule).Inc()
+	case db.DockerTelemetryImagePull:
+		m.dockerPullDuration.WithLabelValues(string(event.PullSource), string(event.Role)).Observe(float64(event.DurationMilliseconds) / 1000)
+	case db.DockerTelemetryCleanupFailure:
+		m.dockerCleanupFailed.WithLabelValues(string(event.CleanupResource)).Inc()
+	case db.DockerTelemetryReconciliation:
+		m.dockerReconciliation.WithLabelValues(string(event.ReconciliationState)).Add(float64(event.Count))
+	case db.DockerTelemetryOrphan:
+		m.dockerOrphans.WithLabelValues(string(event.OrphanState)).Add(float64(event.Count))
+	case db.DockerTelemetryDrop:
+		m.dockerTelemetryDrops.WithLabelValues(string(event.DropReason)).Add(float64(event.Count))
+	}
+}
 
 func (m *Metrics) RecordEnhancedAction(event pro_interfaces.AuditEvent) {
 	if m == nil || event.Validate() != nil {

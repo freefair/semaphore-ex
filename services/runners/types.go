@@ -59,6 +59,7 @@ type RunnerProgress struct {
 	DockerReconciliationOrphanCandidates   []db.DockerReconciliationOrphanCandidate   `json:"docker_reconciliation_orphan_candidates,omitempty"`
 	DockerReconciliationQuarantines        []db.DockerReconciliationStopQuarantine    `json:"docker_reconciliation_quarantines,omitempty"`
 	DockerReconciliationRemediationResults []db.DockerReconciliationRemediationResult `json:"docker_reconciliation_remediation_results,omitempty"`
+	DockerTelemetry                        *db.DockerTelemetryBatch                   `json:"docker_telemetry,omitempty"`
 }
 
 // RunnerProgressResponse is the server's reply to a progress report (PUT).
@@ -70,6 +71,7 @@ type RunnerProgress struct {
 type RunnerProgressResponse struct {
 	TerminatedJobs               []int                                       `json:"terminated_jobs,omitempty"`
 	DockerReconciliationCommands []db.DockerReconciliationRemediationCommand `json:"docker_reconciliation_commands,omitempty"`
+	DockerTelemetryAck           *db.DockerTelemetryAck                      `json:"docker_telemetry_ack,omitempty"`
 }
 
 type JobProgress struct {

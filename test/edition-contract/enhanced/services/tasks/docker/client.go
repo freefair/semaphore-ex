@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -68,6 +69,18 @@ type DockerClient interface {
 	RemoveContainer(context.Context, string) error
 	RemoveVolume(context.Context, string) error
 	VolumeReferenced(context.Context, string) (bool, error)
+}
+
+// DockerStatsClient is deliberately optional so Docker API implementations can
+// expose a safe one-shot sample without widening the task execution contract.
+type DockerStatsClient interface {
+	SampleContainerResources(context.Context, string) (DockerResourceUsage, error)
+}
+
+type DockerResourceUsage struct {
+	CPUUsageNanoseconds int64
+	MemoryBytes         int64
+	PIDs                int64
 }
 
 type ManagedResourceKind string
@@ -216,6 +229,22 @@ func (c *mobyClient) pullImage(ctx context.Context, image string) error {
 		return fmt.Errorf("pulling Docker image %q: %w", image, err)
 	}
 	return nil
+}
+
+func (c *mobyClient) SampleContainerResources(ctx context.Context, containerID string) (DockerResourceUsage, error) {
+	result, err := c.client.ContainerStats(ctx, containerID, moby.ContainerStatsOptions{Stream: false})
+	if err != nil {
+		return DockerResourceUsage{}, err
+	}
+	defer result.Body.Close() //nolint:errcheck
+	var stats container.StatsResponse
+	if err = json.NewDecoder(result.Body).Decode(&stats); err != nil {
+		return DockerResourceUsage{}, err
+	}
+	if stats.CPUStats.CPUUsage.TotalUsage > 1<<62 || stats.MemoryStats.Usage > 1<<50 || stats.PidsStats.Current > 1_000_000 {
+		return DockerResourceUsage{}, fmt.Errorf("Docker stats exceeds telemetry bounds")
+	}
+	return DockerResourceUsage{CPUUsageNanoseconds: int64(stats.CPUStats.CPUUsage.TotalUsage), MemoryBytes: int64(stats.MemoryStats.Usage), PIDs: int64(stats.PidsStats.Current)}, nil
 }
 
 func (c *mobyClient) CreateVolume(ctx context.Context, name string, labels map[string]string) (string, error) {

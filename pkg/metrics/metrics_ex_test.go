@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/test/securityfixtures"
 	"github.com/stretchr/testify/assert"
@@ -42,4 +43,25 @@ func TestMetricsEnhancedSignalsUseBoundedLabels(t *testing.T) {
 	assert.Contains(t, body, `semaphore_audit_webhook_permanent_failures_total 1`)
 	assert.Contains(t, body, `semaphore_audit_webhook_redaction_failures_total 1`)
 	securityfixtures.AssertTripwiresAbsent(t, body)
+}
+
+func TestMetricsDockerTelemetryUsesOnlyFixedLabels(t *testing.T) {
+	m := NewMetrics()
+	m.RecordDockerTelemetry(db.DockerTelemetryEvent{Sequence: 1, Kind: db.DockerTelemetryResourceUsage, Role: db.DockerTelemetryRoleTask, CPUUsageNanoseconds: 7, MemoryBytes: 8, PIDs: 2})
+	m.RecordDockerTelemetry(db.DockerTelemetryEvent{Sequence: 2, Kind: db.DockerTelemetryPolicyDenial, PolicyRule: db.DockerPolicyRuleImageDenied})
+	m.RecordDockerTelemetry(db.DockerTelemetryEvent{Sequence: 3, Kind: db.DockerTelemetryImagePull, Role: db.DockerTelemetryRoleHelper, PullSource: db.DockerTelemetryPullPulled, DurationMilliseconds: 100})
+	m.RecordDockerTelemetry(db.DockerTelemetryEvent{Sequence: 4, Kind: db.DockerTelemetryCleanupFailure, CleanupResource: db.DockerTelemetryCleanupVolume})
+	m.RecordDockerTelemetry(db.DockerTelemetryEvent{Sequence: 5, Kind: db.DockerTelemetryReconciliation, ReconciliationState: db.DockerReconciliationAbsent, Count: 2})
+	m.RecordDockerTelemetry(db.DockerTelemetryEvent{Sequence: 6, Kind: db.DockerTelemetryOrphan, OrphanState: db.DockerTelemetryOrphanDetected, Count: 1})
+	m.RecordDockerTelemetry(db.DockerTelemetryEvent{Sequence: 7, Kind: db.DockerTelemetryDrop, DropReason: db.DockerTelemetryDropQueueFull, Count: 4})
+	body := scrape(m)
+	assert.Contains(t, body, `semaphore_docker_resource_memory_bytes{role="task"} 8`)
+	assert.Contains(t, body, `semaphore_docker_policy_denials_total{rule="DOCKER_POLICY_IMAGE_DENIED"} 1`)
+	assert.Contains(t, body, `semaphore_docker_image_pull_duration_seconds_count{role="helper",source="pulled"} 1`)
+	assert.Contains(t, body, `semaphore_docker_cleanup_failures_total{resource="volume"} 1`)
+	assert.Contains(t, body, `semaphore_docker_reconciliation_total{state="absent"} 2`)
+	assert.Contains(t, body, `semaphore_docker_orphans_total{state="detected"} 1`)
+	assert.Contains(t, body, `semaphore_docker_telemetry_dropped_events_total{reason="queue_full"} 4`)
+	assert.NotContains(t, body, "container_id")
+	assert.NotContains(t, body, "image=")
 }

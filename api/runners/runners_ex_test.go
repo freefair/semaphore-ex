@@ -6,6 +6,7 @@ import (
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db/sql"
+	"github.com/semaphoreui/semaphore/pkg/metrics"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/services/runners"
@@ -568,6 +569,31 @@ func TestUpdateRunnerPersistsDockerOrphanCandidateOutsideScanReadiness(t *testin
 	resumed, err := fixture.store.OpenDockerReconciliationSession(fixture.runner.ID, session.SessionID, session.Fence)
 	require.NoError(t, err)
 	assert.False(t, resumed.Ready, "orphan candidates cannot complete a reconciliation scan")
+}
+
+func TestUpdateRunnerAcknowledgesDockerTelemetryOnlyOnce(t *testing.T) {
+	fixture := newRunnerMetadataAPIFixture(t)
+	appMetrics := metrics.NewMetrics()
+	fixture.controller.SetMetrics(appMetrics)
+	session, err := fixture.store.OpenDockerReconciliationSession(fixture.runner.ID, "", "")
+	require.NoError(t, err)
+	progress := runners.RunnerProgress{DockerTelemetry: &db.DockerTelemetryBatch{Events: []db.DockerTelemetryEvent{{Sequence: 1, Kind: db.DockerTelemetryPolicyDenial, PolicyRule: db.DockerPolicyRuleImageDenied}}}}
+	request := newProgressRequest(t, fixture.store, fixture.runner, progress)
+	request.Header.Set(runners.RunnerDockerSessionHeader, session.SessionID)
+	request.Header.Set(runners.RunnerDockerFenceHeader, session.Fence)
+	response := httptest.NewRecorder()
+	fixture.controller.UpdateRunner(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), `"highest_sequence":1`)
+	secondRequest := newProgressRequest(t, fixture.store, fixture.runner, progress)
+	secondRequest.Header.Set(runners.RunnerDockerSessionHeader, session.SessionID)
+	secondRequest.Header.Set(runners.RunnerDockerFenceHeader, session.Fence)
+	secondResponse := httptest.NewRecorder()
+	fixture.controller.UpdateRunner(secondResponse, secondRequest)
+	require.Equal(t, http.StatusOK, secondResponse.Code, secondResponse.Body.String())
+	metricResponse := httptest.NewRecorder()
+	appMetrics.ServeHTTP(metricResponse, httptest.NewRequest(http.MethodGet, "/api/metrics", nil))
+	assert.Contains(t, metricResponse.Body.String(), `semaphore_docker_policy_denials_total{rule="DOCKER_POLICY_IMAGE_DENIED"} 1`)
 }
 
 func TestUpdateRunnerRoundTripsOnlyAllowListedDockerDenialRuleID(t *testing.T) {

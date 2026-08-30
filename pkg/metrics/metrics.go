@@ -16,17 +16,26 @@ type Metrics struct {
 	tasksRunning prometheus.Gauge
 	tasksTotal   *prometheus.CounterVec
 
-	enhancedActions   *prometheus.CounterVec
-	dependencyHealthy *prometheus.GaugeVec
-	dependencyFailure *prometheus.CounterVec
-	dependencyLatency *prometheus.HistogramVec
-	queueDepth        *prometheus.GaugeVec
-	droppedRecords    *prometheus.CounterVec
-	auditWebhookAge   prometheus.Gauge
-	auditWebhookTries prometheus.Counter
-	auditWebhookOK    prometheus.Counter
-	auditWebhookDead  prometheus.Counter
-	auditWebhookDrops prometheus.Counter
+	enhancedActions      *prometheus.CounterVec
+	dependencyHealthy    *prometheus.GaugeVec
+	dependencyFailure    *prometheus.CounterVec
+	dependencyLatency    *prometheus.HistogramVec
+	queueDepth           *prometheus.GaugeVec
+	droppedRecords       *prometheus.CounterVec
+	auditWebhookAge      prometheus.Gauge
+	auditWebhookTries    prometheus.Counter
+	auditWebhookOK       prometheus.Counter
+	auditWebhookDead     prometheus.Counter
+	auditWebhookDrops    prometheus.Counter
+	dockerCPUUsage       *prometheus.GaugeVec
+	dockerMemoryBytes    *prometheus.GaugeVec
+	dockerPIDs           *prometheus.GaugeVec
+	dockerPolicyDenials  *prometheus.CounterVec
+	dockerPullDuration   *prometheus.HistogramVec
+	dockerCleanupFailed  *prometheus.CounterVec
+	dockerReconciliation *prometheus.CounterVec
+	dockerOrphans        *prometheus.CounterVec
+	dockerTelemetryDrops *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
@@ -91,6 +100,15 @@ func NewMetrics() *Metrics {
 		Name: "semaphore_audit_webhook_redaction_failures_total",
 		Help: "Total audit events rejected by the export allow-list.",
 	})
+	dockerCPUUsage := prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "semaphore_docker_resource_cpu_usage_nanoseconds", Help: "Last one-shot Docker CPU usage sample by fixed container role."}, []string{"role"})
+	dockerMemoryBytes := prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "semaphore_docker_resource_memory_bytes", Help: "Last one-shot Docker memory sample by fixed container role."}, []string{"role"})
+	dockerPIDs := prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "semaphore_docker_resource_pids", Help: "Last one-shot Docker PID sample by fixed container role."}, []string{"role"})
+	dockerPolicyDenials := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "semaphore_docker_policy_denials_total", Help: "Docker policy denials by allow-listed rule."}, []string{"rule"})
+	dockerPullDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "semaphore_docker_image_pull_duration_seconds", Help: "Docker image resolution duration by fixed pull source and role.", Buckets: prometheus.DefBuckets}, []string{"source", "role"})
+	dockerCleanupFailed := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "semaphore_docker_cleanup_failures_total", Help: "Docker cleanup failures by fixed resource role."}, []string{"resource"})
+	dockerReconciliation := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "semaphore_docker_reconciliation_total", Help: "Docker reconciliation observations by fixed state."}, []string{"state"})
+	dockerOrphans := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "semaphore_docker_orphans_total", Help: "Docker orphan lifecycle reports by fixed state."}, []string{"state"})
+	dockerTelemetryDrops := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "semaphore_docker_telemetry_dropped_events_total", Help: "Docker telemetry events dropped by the fixed runner queue reason."}, []string{"reason"})
 
 	registry.MustRegister(
 		tasksRunning,
@@ -106,6 +124,8 @@ func NewMetrics() *Metrics {
 		auditWebhookOK,
 		auditWebhookDead,
 		auditWebhookDrops,
+		dockerCPUUsage, dockerMemoryBytes, dockerPIDs, dockerPolicyDenials,
+		dockerPullDuration, dockerCleanupFailed, dockerReconciliation, dockerOrphans, dockerTelemetryDrops,
 	)
 	dependencyHealthy.WithLabelValues(string(pro_interfaces.DependencyAuditDatabase)).Set(1)
 	dependencyHealthy.WithLabelValues(string(pro_interfaces.DependencyAuditFile)).Set(1)
@@ -129,6 +149,10 @@ func NewMetrics() *Metrics {
 		auditWebhookOK:    auditWebhookOK,
 		auditWebhookDead:  auditWebhookDead,
 		auditWebhookDrops: auditWebhookDrops,
+		dockerCPUUsage:    dockerCPUUsage, dockerMemoryBytes: dockerMemoryBytes, dockerPIDs: dockerPIDs,
+		dockerPolicyDenials: dockerPolicyDenials, dockerPullDuration: dockerPullDuration,
+		dockerCleanupFailed: dockerCleanupFailed, dockerReconciliation: dockerReconciliation, dockerOrphans: dockerOrphans,
+		dockerTelemetryDrops: dockerTelemetryDrops,
 	}
 }
 

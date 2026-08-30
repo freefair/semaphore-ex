@@ -4,10 +4,15 @@ import (
 	"errors"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/metrics"
 	"github.com/semaphoreui/semaphore/services/runners"
 	log "github.com/sirupsen/logrus"
 	"net/http"
 )
+
+// SetMetrics is additive so existing runner-controller call sites retain their
+// evidence-sink contract while the API router wires the process metrics once.
+func (c *RunnerController) SetMetrics(appMetrics *metrics.Metrics) { c.metrics = appMetrics }
 
 func (c *RunnerController) persistTaskExecutionEvidence(w http.ResponseWriter, runnerID int, evidence []db.TaskExecutionEvidence) bool {
 	if c.taskExecutionEvidenceSink == nil {

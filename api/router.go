@@ -111,6 +111,7 @@ func Route(
 	runnerController := runners.NewRunnerController(
 		store, taskPool, encryptionService, jwtSigner, proHA.NewTaskExecutionEvidenceRecorder(store),
 	)
+	runnerController.SetMetrics(appMetrics)
 	jwksController := NewJwksController(jwtSigner)
 	integrationController := NewIntegrationController(store, integrationService)
 	environmentController := projects.NewEnvironmentController(store, encryptionService, accessKeyService, environmentService, secretStorageService)
