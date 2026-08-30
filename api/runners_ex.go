@@ -6,7 +6,52 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"net/http"
 	"strconv"
+	"time"
 )
+
+type dockerReconciliationDiagnosticsResponse struct {
+	Diagnostics []dockerReconciliationDiagnosticDTO `json:"diagnostics"`
+	NextCursor  string                              `json:"next_cursor,omitempty"`
+}
+
+// dockerReconciliationDiagnosticDTO is deliberately separate from db JSON.
+// It is the browser's safe, actionable view and excludes daemon identity,
+// labels, raw runner reasons, fences, and remediation command internals.
+type dockerReconciliationDiagnosticDTO struct {
+	Type        db.DockerReconciliationRemediationTarget `json:"type"`
+	ObservedAt  time.Time                                `json:"observed_at"`
+	Quarantine  *dockerReconciliationQuarantineDTO       `json:"quarantine,omitempty"`
+	Candidate   *dockerReconciliationCandidateDTO        `json:"candidate,omitempty"`
+	Remediation dockerReconciliationTargetDTO            `json:"remediation"`
+}
+
+type dockerReconciliationQuarantineDTO struct {
+	RunnerBoot    string                          `json:"runner_boot"`
+	ProjectID     int                             `json:"project_id"`
+	TaskID        int                             `json:"task_id"`
+	Generation    int                             `json:"generation"`
+	Resource      db.DockerReconciliationResource `json:"resource"`
+	State         db.DockerReconciliationState    `json:"state"`
+	ContainerName string                          `json:"container_name,omitempty"`
+}
+
+type dockerReconciliationCandidateDTO struct {
+	Resource db.DockerReconciliationCandidateResource `json:"resource"`
+	Name     string                                   `json:"name,omitempty"`
+	Reason   db.DockerReconciliationCandidateReason   `json:"reason"`
+}
+
+type dockerReconciliationTargetDTO struct {
+	ExpectedRevision int64                                    `json:"expected_revision"`
+	Target           db.DockerReconciliationRemediationTarget `json:"target"`
+	Quarantine       *db.DockerReconciliationKey              `json:"quarantine,omitempty"`
+	Candidate        *dockerReconciliationCandidateTargetDTO  `json:"candidate,omitempty"`
+}
+
+type dockerReconciliationCandidateTargetDTO struct {
+	SessionID   string `json:"session_id"`
+	Fingerprint string `json:"fingerprint"`
+}
 
 func dockerReconciliationPage(r *http.Request) (db.DockerReconciliationQuery, error) {
 	limit := 100
@@ -77,6 +122,43 @@ func (c *GlobalRunnerController) GetDockerReconciliationCandidates(w http.Respon
 		return
 	}
 	helpers.WriteJSON(w, http.StatusOK, page)
+}
+
+func (c *GlobalRunnerController) GetDockerReconciliationDiagnostics(w http.ResponseWriter, r *http.Request) {
+	runner := helpers.GetFromContext(r, "runner").(*db.Runner)
+	limit := 100
+	if value := r.URL.Query().Get("limit"); value != "" {
+		var err error
+		limit, err = strconv.Atoi(value)
+		if err != nil {
+			helpers.WriteErrorStatus(w, "invalid Docker reconciliation diagnostics page", http.StatusBadRequest)
+			return
+		}
+	}
+	store, ok := helpers.Store(r).(db.DockerReconciliationRepository)
+	if !ok {
+		helpers.WriteErrorStatus(w, "Docker reconciliation storage is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	page, err := store.GetDockerReconciliationPendingDiagnostics(runner.ID, db.DockerReconciliationDiagnosticsQuery{Cursor: r.URL.Query().Get("cursor"), Limit: limit})
+	if err != nil {
+		helpers.WriteErrorStatus(w, "invalid Docker reconciliation diagnostics page", http.StatusBadRequest)
+		return
+	}
+	response := dockerReconciliationDiagnosticsResponse{Diagnostics: make([]dockerReconciliationDiagnosticDTO, 0, len(page.Records)), NextCursor: page.NextCursor}
+	for _, record := range page.Records {
+		diagnostic := dockerReconciliationDiagnosticDTO{Type: record.Kind, ObservedAt: record.SortAt, Remediation: dockerReconciliationTargetDTO{ExpectedRevision: record.Revision, Target: record.Kind}}
+		if record.Kind == db.DockerReconciliationRemediationTargetQuarantine {
+			key := db.DockerReconciliationKey{DockerReconciliationOwner: db.DockerReconciliationOwner{RunnerID: runner.ID, RunnerBoot: record.RunnerBoot}, ProjectID: record.ProjectID, TaskID: record.TaskID, Generation: record.Generation, Resource: record.Resource}
+			diagnostic.Quarantine = &dockerReconciliationQuarantineDTO{RunnerBoot: record.RunnerBoot, ProjectID: record.ProjectID, TaskID: record.TaskID, Generation: record.Generation, Resource: record.Resource, State: record.State, ContainerName: record.ContainerName}
+			diagnostic.Remediation.Quarantine = &key
+		} else {
+			diagnostic.Candidate = &dockerReconciliationCandidateDTO{Resource: record.CandidateResource, Name: record.CandidateName, Reason: record.CandidateReason}
+			diagnostic.Remediation.Candidate = &dockerReconciliationCandidateTargetDTO{SessionID: record.CandidateSessionID, Fingerprint: record.CandidateFingerprint}
+		}
+		response.Diagnostics = append(response.Diagnostics, diagnostic)
+	}
+	helpers.WriteJSON(w, http.StatusOK, response)
 }
 
 func (c *GlobalRunnerController) RequestDockerReconciliationRemediation(w http.ResponseWriter, r *http.Request) {

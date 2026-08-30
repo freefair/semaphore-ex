@@ -3,6 +3,8 @@ package sql
 import (
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -652,6 +654,80 @@ func (d *SqlDb) GetDockerReconciliationPendingCandidates(runnerID int, sessionID
 		values = values[:query.Limit]
 	}
 	page.Candidates = values
+	return page, nil
+}
+
+type dockerReconciliationDiagnosticsCursor struct {
+	SortAt               time.Time                                `json:"t"`
+	Kind                 db.DockerReconciliationRemediationTarget `json:"k"`
+	RunnerBoot           string                                   `json:"b"`
+	ProjectID            int                                      `json:"p"`
+	TaskID               int                                      `json:"i"`
+	Generation           int                                      `json:"g"`
+	Resource             db.DockerReconciliationResource          `json:"r"`
+	CandidateSessionID   string                                   `json:"s"`
+	CandidateFingerprint string                                   `json:"f"`
+}
+
+func decodeDockerReconciliationDiagnosticsCursor(value string) (dockerReconciliationDiagnosticsCursor, error) {
+	if value == "" {
+		return dockerReconciliationDiagnosticsCursor{}, nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return dockerReconciliationDiagnosticsCursor{}, db.ErrDockerReconciliationCoverageInvalid
+	}
+	var cursor dockerReconciliationDiagnosticsCursor
+	if err = json.Unmarshal(decoded, &cursor); err != nil || cursor.SortAt.IsZero() || (cursor.Kind != db.DockerReconciliationRemediationTargetQuarantine && cursor.Kind != db.DockerReconciliationRemediationTargetCandidate) {
+		return dockerReconciliationDiagnosticsCursor{}, db.ErrDockerReconciliationCoverageInvalid
+	}
+	return cursor, nil
+}
+
+func encodeDockerReconciliationDiagnosticsCursor(record db.DockerReconciliationDiagnosticRecord) (string, error) {
+	value, err := json.Marshal(dockerReconciliationDiagnosticsCursor{SortAt: record.SortAt.UTC(), Kind: record.Kind, RunnerBoot: record.RunnerBoot, ProjectID: record.ProjectID, TaskID: record.TaskID, Generation: record.Generation, Resource: record.Resource, CandidateSessionID: record.CandidateSessionID, CandidateFingerprint: record.CandidateFingerprint})
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(value), nil
+}
+
+// GetDockerReconciliationPendingDiagnostics is the sole runner-wide browser
+// feed. Both branches filter pending state before UNION/LIMIT and are scoped by
+// runner_id, so historical boots and sessions are visible without allowing a
+// caller to expand another runner's diagnostics.
+func (d *SqlDb) GetDockerReconciliationPendingDiagnostics(runnerID int, query db.DockerReconciliationDiagnosticsQuery) (page db.DockerReconciliationDiagnosticsPage, err error) {
+	if runnerID <= 0 || query.Validate() != nil {
+		return page, db.ErrDockerReconciliationCoverageInvalid
+	}
+	cursor, err := decodeDockerReconciliationDiagnosticsCursor(query.Cursor)
+	if err != nil {
+		return page, err
+	}
+	base := "select kind,sort_at,runner_boot,project_id,task_id,generation,resource,revision,state,reason,container_name,candidate_session_id,candidate_resource,candidate_identifier,candidate_name,candidate_reason,candidate_fingerprint from (" +
+		"select 'quarantine' as kind,updated_at as sort_at,runner_boot,project_id,task_id,generation,resource,revision,state,reason,container_name,'' as candidate_session_id,'' as candidate_resource,'' as candidate_identifier,'' as candidate_name,'' as candidate_reason,'' as candidate_fingerprint from docker_reconciliation_state where runner_id=? and quarantine_status='pending' " +
+		"union all " +
+		"select 'candidate' as kind,observed_at as sort_at,'' as runner_boot,0 as project_id,0 as task_id,0 as generation,'' as resource,revision,'' as state,'' as reason,'' as container_name,session_id as candidate_session_id,resource as candidate_resource,identifier as candidate_identifier,name as candidate_name,reason as candidate_reason,fingerprint as candidate_fingerprint from docker_reconciliation_orphan_candidate where runner_id=? and status='pending'" +
+		") as docker_reconciliation_diagnostics"
+	args := []any{runnerID, runnerID}
+	if query.Cursor != "" {
+		base += " where (sort_at,kind,runner_boot,project_id,task_id,generation,resource,candidate_session_id,candidate_fingerprint) > (?,?,?,?,?,?,?,?,?)"
+		args = append(args, cursor.SortAt, cursor.Kind, cursor.RunnerBoot, cursor.ProjectID, cursor.TaskID, cursor.Generation, cursor.Resource, cursor.CandidateSessionID, cursor.CandidateFingerprint)
+	}
+	base += " order by sort_at,kind,runner_boot,project_id,task_id,generation,resource,candidate_session_id,candidate_fingerprint limit ?"
+	args = append(args, query.Limit+1)
+	values := make([]db.DockerReconciliationDiagnosticRecord, 0, query.Limit+1)
+	if _, err = d.Sql().Select(&values, d.PrepareQuery(base), args...); err != nil {
+		return page, err
+	}
+	if len(values) > query.Limit {
+		page.NextCursor, err = encodeDockerReconciliationDiagnosticsCursor(values[query.Limit-1])
+		if err != nil {
+			return page, err
+		}
+		values = values[:query.Limit]
+	}
+	page.Records = values
 	return page, nil
 }
 

@@ -84,6 +84,46 @@ func TestDockerRemediationCommandJSONPreservesOpaqueCandidateIdentity(t *testing
 	assert.Error(t, decoded.Validate())
 }
 
+func TestDockerReconciliationDiagnosticsAPIIsAdminOnlyAndRedactsInternals(t *testing.T) {
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	now := time.Now().UTC()
+	_, err := store.Sql().Exec(store.PrepareQuery("insert into docker_reconciliation_state (runner_id,runner_boot,project_id,task_id,generation,resource,revision,latest_sequence,container_id,container_name,state,reason,updated_at,quarantine_status,remediation,remediation_reason,quarantined_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"), 92, "historic-boot", 4, 5, 1, db.DockerReconciliationResourceTask, 7, 3, "secret-daemon-id", "safe-container", db.DockerReconciliationQuarantine, "raw daemon reason", now, db.DockerReconciliationQuarantinePending, db.DockerReconciliationRemediationInspect, "raw daemon reason", now)
+	require.NoError(t, err)
+	_, err = store.Sql().Exec(store.PrepareQuery("insert into docker_reconciliation_orphan_candidate (session_id,runner_id,resource,identifier,name,reason,fingerprint,identity,observed_at,revision,status) values (?,?,?,?,?,?,?,?,?,?,?)"), "historic-session", 92, db.DockerReconciliationCandidateContainer, "candidate-daemon-id", "safe-name", db.DockerReconciliationCandidateMalformed, strings.Repeat("a", 64), "secret-identity-hash", now.Add(time.Second), 2, db.DockerReconciliationCandidatePending)
+	require.NoError(t, err)
+	controller := NewGlobalRunnerController(nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/runners/92/docker-reconciliation/diagnostics?limit=10", nil)
+	request = helpers.SetContextValue(request, "store", store)
+	request = helpers.SetContextValue(request, "runner", &db.Runner{ID: 92})
+	recorder := httptest.NewRecorder()
+	controller.GetDockerReconciliationDiagnostics(recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	for _, forbidden := range []string{"secret-daemon-id", "candidate-daemon-id", "raw daemon reason", "secret-identity-hash", "fence", "labels", "command_id", "daemon_id", "candidate_identity", "identifier"} {
+		assert.NotContains(t, recorder.Body.String(), forbidden)
+	}
+	var response dockerReconciliationDiagnosticsResponse
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Len(t, response.Diagnostics, 2)
+	var candidate *dockerReconciliationDiagnosticDTO
+	for index := range response.Diagnostics {
+		if response.Diagnostics[index].Type == db.DockerReconciliationRemediationTargetCandidate {
+			candidate = &response.Diagnostics[index]
+		}
+	}
+	require.NotNil(t, candidate)
+	require.NotNil(t, candidate.Remediation.Candidate)
+	assert.Equal(t, "historic-session", candidate.Remediation.Candidate.SessionID)
+	assert.Equal(t, strings.Repeat("a", 64), candidate.Remediation.Candidate.Fingerprint)
+
+	denied := helpers.SetContextValue(httptest.NewRequest(http.MethodGet, "/api/admin/runners/92/docker-reconciliation/diagnostics", nil), "store", store)
+	denied = helpers.SetContextValue(denied, "runner", &db.Runner{ID: 92})
+	denied = helpers.SetContextValue(denied, "user", &db.User{ID: 12, Admin: false})
+	deniedRecorder := httptest.NewRecorder()
+	adminMiddleware(http.HandlerFunc(controller.GetDockerReconciliationDiagnostics)).ServeHTTP(deniedRecorder, denied)
+	assert.Equal(t, http.StatusForbidden, deniedRecorder.Code)
+}
+
 func TestDockerExecutionPolicyEndpointsRemainGlobalAdminOnly(t *testing.T) {
 	store := sql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
