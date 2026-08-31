@@ -84,6 +84,40 @@ func TestNotificationDispatcherRetriesWithoutChangingEventIdentity(t *testing.T)
 	_ = service
 }
 
+func TestNotificationDispatcherDispatchesAfterBlankCredentialEdit(t *testing.T) {
+	store := storeSql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	cipher := &testCipher{enabled: true}
+	service := NewGovernanceService(store, cipher).(*governanceService)
+	service.now = func() time.Time { return time.Date(2026, time.August, 31, 16, 0, 0, 0, time.UTC) }
+
+	credential := "test-secret"
+	created, err := service.CreateDestination(context.Background(), nil, destinationInput(&credential))
+	require.NoError(t, err)
+	updatedInput := destinationInput(nil)
+	updatedInput.Name = "renamed"
+	updated, err := service.UpdateDestination(context.Background(), nil, created.ID, created.Revision, updatedInput)
+	require.NoError(t, err)
+	assert.True(t, updated.CredentialConfigured)
+
+	delivery, err := service.EnqueueTestDelivery(context.Background(), nil, updated.ID)
+	require.NoError(t, err)
+	adapter := &dispatchAdapter{provider: "pagerduty"}
+	dispatcher := newNotificationDeliveryDispatcher(
+		store,
+		cipher,
+		func() time.Time { return notificationDispatchTestNow(delivery) },
+		func() float64 { return .5 },
+		adapter,
+	)
+	require.NoError(t, dispatcher.DispatchOnce(context.Background()))
+	delivered, err := store.GetNotificationDelivery(nil, delivery.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.NotificationDeliverySucceeded, delivered.Status)
+	require.Len(t, adapter.credentials, 1)
+	assert.Equal(t, credential, adapter.credentials[0])
+}
+
 func TestNotificationDispatcherRegistryRejectsDuplicateProviderNames(t *testing.T) {
 	store, _, cipher, _ := dispatchDeliveryFixture(t)
 	dispatcher := newNotificationDeliveryDispatcher(store, cipher, time.Now, func() float64 { return .5 })
