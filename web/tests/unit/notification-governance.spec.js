@@ -366,6 +366,99 @@ describe('notification governance', () => {
     expect(rules[0]('short')).to.equal('notificationPagerDutyKeyLength');
   });
 
+  it('submits typed Opsgenie configuration and preserves safe async metadata', async () => {
+    const payloads = [];
+    const apiKey = 'opsgenie-api-key';
+    axios.defaults.adapter = async (config) => {
+      payloads.push(JSON.parse(config.data));
+      return response({
+        id: 12,
+        revision: 1,
+        name: 'Opsgenie',
+        provider: 'opsgenie',
+        environment: 'production',
+        region: 'eu',
+        credential_configured: true,
+        opsgenie: {
+          priority: 'P2',
+          responders: [
+            { type: 'team', name: 'Operations' },
+            { type: 'user', username: 'oncall@example.com' },
+          ],
+        },
+        enabled: true,
+        paused: false,
+      });
+    };
+    const context = {
+      $refs: { destinationForm: { validate: () => true } },
+      $t: translate,
+      destinationSaving: false,
+      destinationDialog: true,
+      destinationForm: {
+        id: null,
+        revision: 0,
+        name: 'Opsgenie',
+        provider: 'opsgenie',
+        environment: 'production',
+        region: 'eu',
+        opsgeniePriority: 'P2',
+        opsgenieRespondersText: 'team:name:Operations\nuser:username:oncall@example.com',
+        credential: apiKey,
+        enabled: true,
+      },
+      destinations: [],
+      error: '',
+      upsertDestination: NotificationGovernance.methods.upsertDestination,
+      closeDestination: NotificationGovernance.methods.closeDestination,
+      handleError: NotificationGovernance.methods.handleError,
+    };
+
+    await NotificationGovernance.methods.saveDestination.call(context);
+
+    expect(payloads).to.deep.equal([{
+      name: 'Opsgenie',
+      provider: 'opsgenie',
+      environment: 'production',
+      region: 'eu',
+      enabled: true,
+      opsgenie: {
+        priority: 'P2',
+        responders: [
+          { type: 'team', name: 'Operations' },
+          { type: 'user', username: 'oncall@example.com' },
+        ],
+      },
+      credential: apiKey,
+    }]);
+    expect(JSON.stringify(context.destinations)).not.to.include(apiKey);
+
+    NotificationGovernance.methods.openDestination.call(context, context.destinations[0]);
+    expect(context.destinationForm.opsgeniePriority).to.equal('P2');
+    expect(context.destinationForm.opsgenieRespondersText).to.equal(
+      'team:name:Operations\nuser:username:oncall@example.com',
+    );
+    expect(context.destinationForm.credential).to.equal('');
+  });
+
+  it('validates Opsgenie keys and responder lines without accepting arbitrary config', () => {
+    const credentialRules = NotificationGovernance.computed.destinationCredentialRules.call({
+      destinationForm: { provider: 'opsgenie', credential: 'bad key' },
+      $t: translate,
+    });
+    const responderRules = NotificationGovernance.computed.opsgenieResponderRules.call({
+      destinationForm: { provider: 'opsgenie' },
+      $t: translate,
+    });
+
+    expect(credentialRules[0]('opsgenie-api-key')).to.equal(true);
+    expect(credentialRules[0]('bad key')).to.equal('notificationOpsgenieKeyInvalid');
+    expect(responderRules[0]('team:name:Operations\nuser:username:oncall@example.com')).to.equal(true);
+    expect(responderRules[0]('user:name:not-allowed')).to.equal('notificationOpsgenieRespondersInvalid');
+    expect(responderRules[0](Array(51).fill('team:name:Operations').join('\n')))
+      .to.equal('notificationOpsgenieRespondersInvalid');
+  });
+
   it('keeps delivery and routing-event pagination offsets independent', async () => {
     const requests = [];
     axios.defaults.adapter = async (config) => {

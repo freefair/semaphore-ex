@@ -69,10 +69,19 @@
                 <template v-slot:item.environment="{ item }">
                   <div>{{ item.environment }}</div>
                   <div
-                    v-if="item.provider === 'pagerduty' && item.region"
+                    v-if="['pagerduty', 'opsgenie'].includes(item.provider) && item.region"
                     class="text-caption text--secondary"
                   >
                     {{ $t('notificationRegion') }}: {{ providerRegionLabel(item.region) }}
+                  </div>
+                  <div
+                    v-if="item.provider === 'opsgenie' && item.opsgenie"
+                    class="text-caption text--secondary"
+                  >
+                    {{ $t('notificationOpsgeniePriority') }}:
+                    {{ item.opsgenie.priority || $t('notificationOpsgeniePriorityAutomatic') }}
+                    · {{ $t('notificationOpsgenieResponders') }}:
+                    {{ (item.opsgenie.responders || []).length }}
                   </div>
                 </template>
                 <template v-slot:item.actions="{ item }">
@@ -333,6 +342,12 @@
                   <div class="text-caption text--secondary notification-governance-incident-key">
                     {{ $t('notificationIncidentKey') }}: {{ item.incident_key }}
                   </div>
+                  <div
+                    v-if="item.provider_request_id"
+                    class="text-caption text--secondary notification-governance-incident-key"
+                  >
+                    {{ $t('notificationProviderRequestID') }}: {{ item.provider_request_id }}
+                  </div>
                 </template>
                 <template v-slot:item.status="{ item }">
                   <v-chip x-small dark :color="deliveryStatusColor(item.status)">
@@ -417,7 +432,7 @@
               :disabled="destinationSaving"
             />
             <v-select
-              v-if="destinationForm.provider.trim() === 'pagerduty'"
+              v-if="['pagerduty', 'opsgenie'].includes(destinationForm.provider.trim())"
               v-model="destinationForm.region"
               :items="providerRegionOptions"
               item-text="text"
@@ -428,6 +443,31 @@
               dense
               :disabled="destinationSaving"
               data-testid="notification-destination-region"
+            />
+            <v-select
+              v-if="destinationForm.provider.trim() === 'opsgenie'"
+              v-model="destinationForm.opsgeniePriority"
+              :items="opsgeniePriorityOptions"
+              item-text="text"
+              item-value="value"
+              :label="$t('notificationOpsgeniePriority')"
+              outlined
+              dense
+              :disabled="destinationSaving"
+              data-testid="notification-destination-opsgenie-priority"
+            />
+            <v-textarea
+              v-if="destinationForm.provider.trim() === 'opsgenie'"
+              v-model="destinationForm.opsgenieRespondersText"
+              :label="$t('notificationOpsgenieResponders')"
+              :hint="$t('notificationOpsgenieRespondersHint')"
+              :rules="opsgenieResponderRules"
+              persistent-hint
+              outlined
+              dense
+              rows="3"
+              :disabled="destinationSaving"
+              data-testid="notification-destination-opsgenie-responders"
             />
             <v-text-field
               v-model="destinationForm.credential"
@@ -545,6 +585,25 @@ import EventBus from '@/event-bus';
 const PAGE_SIZE = 25;
 const BASE_URL = '/api/notification-governance';
 
+const parseOpsgenieResponders = (value) => {
+  const lines = value.split('\n').map((line) => line.trim()).filter(Boolean);
+  if (lines.length > 50) return null;
+  return lines.reduce((responders, line) => {
+    if (responders === null) return null;
+    const match = /^(team|user|escalation|schedule):(id|name|username):([^\r\n]{1,256})$/.exec(line);
+    if (!match) return null;
+    const [, type, field, identity] = match;
+    if (identity.trim() !== identity
+      || (type === 'user' ? !['id', 'username'].includes(field) : !['id', 'name'].includes(field))) return null;
+    return [...responders, { type, [field]: identity }];
+  }, []);
+};
+
+const formatOpsgenieResponders = (responders = []) => responders.map((responder) => {
+  const field = ['id', 'name', 'username'].find((candidate) => responder[candidate]);
+  return field ? `${responder.type}:${field}:${responder[field]}` : '';
+}).filter(Boolean).join('\n');
+
 const newDestinationForm = () => ({
   id: null,
   revision: 0,
@@ -552,6 +611,8 @@ const newDestinationForm = () => ({
   provider: '',
   environment: '',
   region: 'us',
+  opsgeniePriority: '',
+  opsgenieRespondersText: '',
   credential: '',
   enabled: true,
 });
@@ -667,11 +728,27 @@ export default {
         { text: this.$t('notificationRegionEU'), value: 'eu' },
       ];
     },
-    destinationCredentialRules() {
-      if (this.destinationForm.provider.trim() !== 'pagerduty'
-        || this.destinationForm.credential === '') return [];
+    opsgeniePriorityOptions() {
       return [
-        (value) => value.length === 32 || this.$t('notificationPagerDutyKeyLength'),
+        { text: this.$t('notificationOpsgeniePriorityAutomatic'), value: '' },
+        ...['P1', 'P2', 'P3', 'P4', 'P5'].map((value) => ({ text: value, value })),
+      ];
+    },
+    destinationCredentialRules() {
+      if (this.destinationForm.credential === '') return [];
+      if (this.destinationForm.provider.trim() === 'pagerduty') {
+        return [(value) => value.length === 32 || this.$t('notificationPagerDutyKeyLength')];
+      }
+      if (this.destinationForm.provider.trim() === 'opsgenie') {
+        return [(value) => /^[\x21-\x7e]{1,256}$/.test(value) || this.$t('notificationOpsgenieKeyInvalid')];
+      }
+      return [];
+    },
+    opsgenieResponderRules() {
+      if (this.destinationForm.provider.trim() !== 'opsgenie') return [];
+      return [
+        (value) => parseOpsgenieResponders(value) !== null
+          || this.$t('notificationOpsgenieRespondersInvalid'),
       ];
     },
     sourceKindOptions() {
@@ -750,6 +827,8 @@ export default {
         provider: destination.provider,
         environment: destination.environment,
         region: destination.region || 'us',
+        opsgeniePriority: destination.opsgenie?.priority || '',
+        opsgenieRespondersText: formatOpsgenieResponders(destination.opsgenie?.responders),
         credential: '',
         enabled: !!destination.enabled,
       } : newDestinationForm();
@@ -772,11 +851,17 @@ export default {
           name: this.destinationForm.name.trim(),
           provider: this.destinationForm.provider.trim(),
           environment: this.destinationForm.environment.trim(),
-          region: this.destinationForm.provider.trim() === 'pagerduty'
+          region: ['pagerduty', 'opsgenie'].includes(this.destinationForm.provider.trim())
             ? this.destinationForm.region
             : '',
           enabled: this.destinationForm.enabled,
         };
+        if (this.destinationForm.provider.trim() === 'opsgenie') {
+          payload.opsgenie = {
+            priority: this.destinationForm.opsgeniePriority,
+            responders: parseOpsgenieResponders(this.destinationForm.opsgenieRespondersText),
+          };
+        }
         if (this.destinationForm.credential !== '') {
           payload.credential = this.destinationForm.credential;
         }
@@ -1057,6 +1142,7 @@ export default {
         destination_revision_changed: 'notificationReasonDestinationChanged',
         credential_unavailable: 'notificationReasonCredentialUnavailable',
         provider_unavailable: 'notificationReasonProviderUnavailable',
+        provider_pending: 'notificationReasonProviderPending',
         permanent_failure: 'notificationReasonPermanent',
       };
       return labels[reason] ? this.$t(labels[reason]) : '—';
