@@ -195,6 +195,10 @@ describe('linear workflow run dashboard', () => {
     expect(WorkflowRun.methods.isActiveRunStatus('queued')).to.equal(true);
     expect(WorkflowRun.methods.isActiveRunStatus('stopping')).to.equal(true);
     expect(WorkflowRun.methods.isActiveRunStatus('succeeded')).to.equal(false);
+    expect(WorkflowRun.computed.canStopRun.call({
+      details: { run: { status: 'queued' }, effective_access: { stop: true } },
+      isActiveRunStatus: WorkflowRun.methods.isActiveRunStatus,
+    })).to.equal(true);
   });
 
   it('shows and retries a quarantined reconciliation through the existing run toolbar', async () => {
@@ -205,11 +209,11 @@ describe('linear workflow run dashboard', () => {
           reconciliation_attempts: 3,
           reconciliation_last_error: 'temporary database failure',
         },
+        effective_access: { administer: true },
       },
-      can: () => true,
-      USER_PERMISSIONS: { runProjectTasks: 1 },
     };
     expect(WorkflowRun.computed.reconciliationQuarantined.call(context)).to.equal(true);
+    expect(WorkflowRun.computed.canAdminister.call(context)).to.equal(true);
 
     const requests = [];
     const originalPost = axios.post;
@@ -301,5 +305,50 @@ describe('linear workflow run dashboard', () => {
       url: '/api/project/7/workflows/41/runs/91/approvals/21',
       payload: { status: 'approved', comment: 'Reviewed', source: 'user' },
     }]);
+  });
+
+  it('does not refresh a terminally decided run after bounded approver access is revoked', async () => {
+    const originalPost = axios.post;
+    axios.post = async () => ({ data: { status: 'approved' } });
+    let loads = 0;
+    const routes = [];
+    const context = {
+      projectId: 7,
+      workflowId: 41,
+      runId: 91,
+      approvalComments: {},
+      loadData: async () => { loads += 1; },
+      $router: { push: (path) => routes.push(path) },
+      $t: (key) => key,
+    };
+
+    await WorkflowRun.methods.resolveApproval.call(context, 21, 'approved');
+    axios.post = originalPost;
+
+    expect(loads).to.equal(0);
+    expect(routes).to.deep.equal(['/project/7/workflows']);
+  });
+
+  it('does not refresh a nonterminal run after a bounded-only approver contributes', async () => {
+    const originalPost = axios.post;
+    axios.post = async () => ({ data: { status: 'pending' } });
+    let loads = 0;
+    const routes = [];
+    const context = {
+      projectId: 7,
+      workflowId: 41,
+      runId: 92,
+      details: { effective_access: { view: false } },
+      approvalComments: {},
+      loadData: async () => { loads += 1; },
+      $router: { push: (path) => routes.push(path) },
+      $t: (key) => key,
+    };
+
+    await WorkflowRun.methods.resolveApproval.call(context, 22, 'approved');
+    axios.post = originalPost;
+
+    expect(loads).to.equal(0);
+    expect(routes).to.deep.equal(['/project/7/workflows']);
   });
 });

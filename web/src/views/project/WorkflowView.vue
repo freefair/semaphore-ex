@@ -40,7 +40,7 @@
       <v-spacer></v-spacer>
 
       <v-btn
-        v-if="triggersAvailable && canUpdate"
+        v-if="triggersAvailable && canAdminister"
         icon
         :title="$t('workflowTriggers')"
         data-testid="workflow-triggers-open"
@@ -60,7 +60,7 @@
         {{ $t('run') }}
       </v-btn>
 
-      <v-btn icon color="error" @click="deleteDialog = true" v-if="canUpdate">
+      <v-btn icon color="error" @click="deleteDialog = true" v-if="canAdminister">
         <v-icon>mdi-delete</v-icon>
       </v-btn>
 
@@ -96,12 +96,10 @@ import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
 import YesNoDialog from '@/components/YesNoDialog.vue';
-import PermissionsCheck from '@/components/PermissionsCheck';
 import ProjectMixin from '@/components/ProjectMixin';
 import WorkflowRunDialog from '@/components/WorkflowRunDialog.vue';
 import WorkflowTriggersDialog from '@/components/WorkflowTriggersDialog.vue';
 import { findCapabilityDecision } from '@/lib/capabilities';
-import { USER_PERMISSIONS } from '@/lib/constants';
 
 export default {
   components: {
@@ -110,7 +108,7 @@ export default {
     WorkflowTriggersDialog,
   },
 
-  mixins: [PermissionsCheck, ProjectMixin],
+  mixins: [ProjectMixin],
 
   props: {
     projectId: Number,
@@ -124,17 +122,20 @@ export default {
       runDialog: false,
       starting: false,
       triggerDialog: false,
-      USER_PERMISSIONS,
     };
   },
 
   computed: {
     canRun() {
-      return this.can(USER_PERMISSIONS.runProjectTasks);
+      return Boolean(this.item?.effective_access?.start);
     },
 
     canUpdate() {
-      return this.can(USER_PERMISSIONS.manageProjectResources);
+      return Boolean(this.item?.effective_access?.edit);
+    },
+
+    canAdminister() {
+      return Boolean(this.item?.effective_access?.administer);
     },
 
     triggerDecision() {

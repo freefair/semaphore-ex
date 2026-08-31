@@ -53,7 +53,7 @@
         {{ $t('stop') }}
       </v-btn>
       <v-btn
-        v-if="reconciliationQuarantined && canResolveApprovals"
+        v-if="reconciliationQuarantined && canAdminister"
         color="warning"
         small
         outlined
@@ -145,9 +145,19 @@
                 <span v-if="a.deadline" class="text-caption ml-2">
                   {{ $t('workflowApprovalDeadline', { value: formatDate(a.deadline) }) }}
                 </span>
+                <span class="text-caption ml-2">
+                  {{ $t('workflowApprovalProgress', {
+                    count: a.contribution_count || 0,
+                    minimum: a.minimum_distinct_approvers || 1,
+                    mode: a.mode || 'any_of',
+                  }) }}
+                </span>
+                <span v-if="!a.eligible" class="text-caption text--secondary ml-2">
+                  {{ $t('workflowApprovalNotEligible') }}
+                </span>
               </div>
               <v-text-field
-                v-if="canResolveApprovals"
+                v-if="a.eligible"
                 v-model="approvalComments[a.nodeId]"
                 :label="$t('workflowApprovalComment')"
                 maxlength="1024"
@@ -157,14 +167,14 @@
               />
               <v-spacer />
               <v-btn
-                v-if="canResolveApprovals"
+                v-if="a.eligible"
                 small
                 color="success"
                 class="ml-3"
                 @click="resolveApproval(a.nodeId, 'approved')"
               >{{ $t('workflowApprove') }}</v-btn>
               <v-btn
-                v-if="canResolveApprovals"
+                v-if="a.eligible"
                 small
                 color="error"
                 class="ml-2"
@@ -389,15 +399,12 @@
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
-import PermissionsCheck from '@/components/PermissionsCheck';
 import WorkflowGraph from '@/components/WorkflowGraph.vue';
 import WorkflowParameterAudit from '@/components/WorkflowParameterAudit.vue';
-import { USER_PERMISSIONS } from '@/lib/constants';
 import socket from '@/socket';
 
 export default {
   components: { WorkflowGraph, WorkflowParameterAudit },
-  mixins: [PermissionsCheck],
   props: {
     projectId: Number,
   },
@@ -412,7 +419,6 @@ export default {
       stopping: false,
       retryingReconciliation: false,
       approvalComments: {},
-      USER_PERMISSIONS,
     };
   },
   computed: {
@@ -422,15 +428,15 @@ export default {
     runId() {
       return parseInt(this.$route.params.runId, 10);
     },
-    canResolveApprovals() {
-      return this.can(USER_PERMISSIONS.runProjectTasks);
+    canAdminister() {
+      return Boolean(this.details?.effective_access?.administer);
     },
     // A run can be stopped while it is still in progress (executing tasks or
     // blocked on an approval) and the user may run project tasks.
     canStopRun() {
       if (!this.details) return false;
       return this.isActiveRunStatus(this.details.run.status)
-        && this.can(USER_PERMISSIONS.runProjectTasks);
+        && Boolean(this.details.effective_access?.stop);
     },
     reconciliationQuarantined() {
       return this.details?.run?.reconciliation_state === 'quarantined';
@@ -645,10 +651,15 @@ export default {
     },
     async resolveApproval(nodeId, status) {
       try {
-        await axios.post(
+        const response = await axios.post(
           `/api/project/${this.projectId}/workflows/${this.workflowId}/runs/${this.runId}/approvals/${nodeId}`,
           { status, comment: this.approvalComments[nodeId] || '', source: 'user' },
         );
+        if ((response.data && response.data.status !== 'pending')
+          || this.details?.effective_access?.view === false) {
+          this.$router.push(`/project/${this.projectId}/workflows`);
+          return;
+        }
         await this.loadData();
       } catch (err) {
         EventBus.$emit('i-snackbar', {

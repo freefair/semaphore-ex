@@ -38,6 +38,11 @@ describe('workflow editor authoring lifecycle', () => {
     expect(WorkflowEditor.methods.getNewItem().definition_version).to.equal(1);
     expect(WorkflowEditor.methods.getNewItem().max_parallel_tasks).to.equal(4);
     expect(WorkflowEditor.methods.getNewItem().parameters).to.deep.equal([]);
+    expect(WorkflowEditor.methods.getNewItem().access_policy).to.deep.equal({
+      revision: 0,
+      view_role_ids: [],
+      start_role_ids: [],
+    });
   });
 
   it('defaults and preserves conditional workflow authoring fields', () => {
@@ -73,7 +78,34 @@ describe('workflow editor authoring lifecycle', () => {
       approval_timeout_outcome: 'reject',
       approval_separation_of_duties: false,
     });
+    expect(prepared.nodes[2].approval_role_policy).to.deep.equal({
+      revision: 0,
+      mode: 'any_of',
+      role_ids: [],
+      minimum_distinct_approvers: 1,
+      initiator_separation: false,
+    });
     expect(prepared.edges[0].condition_expression).to.equal('result.successful');
+  });
+
+  it('builds stable approval role references and strips response-only access data', () => {
+    const context = {
+      item: {
+        name: 'Deploy',
+        effective_access: { view: true, edit: true },
+        access_policy: { revision: 1, view_role_ids: [], start_role_ids: [] },
+      },
+      projectId: 7,
+      workflowRoleOptions: [
+        { value: 'builtin:owner', permissions: 1 },
+        { value: 'role:viewer', permissions: 32 },
+      ],
+      clone: WorkflowEditor.methods.clone,
+    };
+
+    const policy = WorkflowEditor.methods.defaultApprovalRolePolicy.call(context);
+    expect(policy.role_ids).to.deep.equal(['builtin:owner']);
+    expect(WorkflowEditor.methods.payload.call(context)).not.to.have.property('effective_access');
   });
 
   it('preserves typed artifact declarations and limits references to reachable predecessors', () => {
