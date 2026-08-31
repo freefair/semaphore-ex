@@ -139,6 +139,26 @@
                     <strong>Kubernetes terminal reason:</strong>
                     {{ attempt.k8s_terminal_reason }}
                   </div>
+                  <div v-if="kubernetesPolicyReference(attempt)">
+                    <strong>Kubernetes policy:</strong>
+                    <code>{{ kubernetesPolicyReference(attempt) }}</code>
+                  </div>
+                  <div v-if="kubernetesWorkloadPolicy(attempt)">
+                    <strong>Workload policy:</strong> {{ kubernetesWorkloadPolicy(attempt) }}
+                  </div>
+                  <div v-if="kubernetesResourceIdentities(attempt)">
+                    <strong>Managed objects:</strong> {{ kubernetesResourceIdentities(attempt) }}
+                  </div>
+                  <div v-if="attempt.k8s_retention_state">
+                    <strong>Retention:</strong> {{ kubernetesRetention(attempt) }}
+                  </div>
+                  <div
+                    v-if="attempt.k8s_denial_rule_id"
+                    class="error--text"
+                    data-testid="task-runner-attempt-k8s-denial"
+                  >
+                    <strong>Policy denial:</strong> <code>{{ attempt.k8s_denial_rule_id }}</code>
+                  </div>
                 </div>
                 <div v-if="attempt.container_name" class="mt-1">
                   <strong>Container:</strong>
@@ -311,6 +331,44 @@ export default {
       if (attempt?.k8s_job_name) identities.push(`Job ${attempt.k8s_job_name}`);
       if (attempt?.k8s_pod_name) identities.push(`Pod ${attempt.k8s_pod_name}`);
       return identities.join(' · ');
+    },
+    kubernetesPolicyReference(attempt) {
+      if (!attempt?.k8s_policy_revision && !attempt?.k8s_policy_hash) return '';
+      const revision = attempt.k8s_policy_revision
+        ? `revision ${attempt.k8s_policy_revision}`
+        : 'revision not reported';
+      return attempt.k8s_policy_hash
+        ? `${revision} · ${attempt.k8s_policy_hash}`
+        : revision;
+    },
+    kubernetesWorkloadPolicy(attempt) {
+      const values = [];
+      if (attempt?.k8s_service_account) values.push(`service account ${attempt.k8s_service_account}`);
+      if (attempt?.k8s_runtime_class) values.push(`runtime ${attempt.k8s_runtime_class}`);
+      if (attempt?.k8s_network_profile) {
+        const enforcement = attempt.k8s_network_enforcement
+          ? ` (${attempt.k8s_network_enforcement})`
+          : '';
+        values.push(`network ${attempt.k8s_network_profile}${enforcement}`);
+      }
+      if (attempt?.k8s_resource_policy_id) {
+        values.push(`resources ${attempt.k8s_resource_policy_id}`);
+      }
+      return values.join(' · ');
+    },
+    kubernetesResourceIdentities(attempt) {
+      const values = [];
+      if (attempt?.k8s_secret_name && attempt?.k8s_secret_uid) {
+        values.push(`Bundle ${attempt.k8s_secret_name} (${attempt.k8s_secret_uid})`);
+      }
+      if (attempt?.k8s_network_policy_name && attempt?.k8s_network_policy_uid) {
+        values.push(`NetworkPolicy ${attempt.k8s_network_policy_name} (${attempt.k8s_network_policy_uid})`);
+      }
+      return values.join(' · ');
+    },
+    kubernetesRetention(attempt) {
+      if (!attempt?.k8s_retention_deadline) return attempt?.k8s_retention_state || '';
+      return `${attempt.k8s_retention_state} · until ${attempt.k8s_retention_deadline}`;
     },
     dockerPolicyReference(attempt) {
       if (!attempt?.docker_policy_revision && !attempt?.docker_policy_hash) return '';

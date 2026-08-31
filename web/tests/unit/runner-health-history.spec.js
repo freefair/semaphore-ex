@@ -125,6 +125,108 @@ describe('project runner health and history', () => {
     })).to.equal('Docker runner diagnostics');
   });
 
+  it('uses the existing health dialog for global Kubernetes policy and remediation', async () => {
+    const calls = [];
+    const context = {
+      runner: { id: 14, project_id: null, executor_type: 'k8s' },
+      dockerAdmin: false,
+      kubernetesAdmin: true,
+      loading: false,
+      error: null,
+      health: { heartbeat_state: 'online' },
+      history: [{ task_id: 1 }],
+      loadKubernetesPolicy: async () => calls.push('policy'),
+      loadKubernetesDiagnostics: async () => calls.push('diagnostics'),
+    };
+
+    await RunnerHealthDialog.methods.load.call(context);
+
+    expect(calls).to.deep.equal(['policy', 'diagnostics']);
+    expect(context.loading).to.equal(false);
+    expect(context.health).to.equal(null);
+    expect(RunnerHealthDialog.computed.dialogTitle.call({
+      dockerAdmin: false,
+      kubernetesAdmin: true,
+      $t: () => 'Runner health and history',
+    })).to.equal('Kubernetes runner diagnostics');
+    expect(RunnerHealthDialog.computed.kubernetesPolicyAcknowledged.call({
+      kubernetesPolicy: { cluster_alias: 'qa', revision: 4, hash: 'policy-hash' },
+      runner: { k8s_cluster_alias: 'qa', k8s_policy_revision: 4, k8s_policy_hash: 'policy-hash' },
+    })).to.equal(true);
+  });
+
+  it('loads Kubernetes policy and submits only a server-built remediation descriptor', async () => {
+    const previousAdapter = axios.defaults.adapter;
+    const requests = [];
+    axios.defaults.adapter = async (config) => {
+      requests.push(config);
+      let data = { diagnostics: [] };
+      if (config.method === 'post') {
+        data = { status: 'pending' };
+      } else if (config.url.includes('/kubernetes-policies/')) {
+        data = { cluster_alias: 'qa', revision: 4, hash: 'policy-hash' };
+      }
+      return {
+        data,
+        status: config.method === 'post' ? 202 : 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      };
+    };
+
+    try {
+      const diagnostic = {
+        target: { project_id: 7, task_id: 41, generation: 3 },
+        state: 'observed',
+        remediation: {
+          action: 'garbage_collect_expired',
+          project_id: 7,
+          task_id: 41,
+          generation: 3,
+          expected_revision: 4,
+        },
+      };
+      const key = 'target:7:41:3';
+      const context = {
+        runner: { id: 14, k8s_cluster_alias: 'qa' },
+        kubernetesPolicy: null,
+        kubernetesPolicyError: null,
+        kubernetesDiagnostics: [],
+        kubernetesDiagnosticsError: null,
+        remediatingKubernetesDiagnostics: [],
+        kubernetesRemediationKeys: { [key]: 'ui-stable-key' },
+        kubernetesDiagnosticKey: RunnerHealthDialog.methods.kubernetesDiagnosticKey,
+        kubernetesRemediationIdempotencyKey:
+          RunnerHealthDialog.methods.kubernetesRemediationIdempotencyKey,
+        loadKubernetesDiagnostics: RunnerHealthDialog.methods.loadKubernetesDiagnostics,
+        $set: (target, property, value) => Reflect.set(target, property, value),
+        $delete: (target, property) => Reflect.deleteProperty(target, property),
+      };
+
+      await RunnerHealthDialog.methods.loadKubernetesPolicy.call(context);
+      await RunnerHealthDialog.methods.loadKubernetesDiagnostics.call(context);
+      await RunnerHealthDialog.methods.requestKubernetesRemediation.call(context, diagnostic);
+
+      expect(requests[0].url).to.equal('/api/runners/kubernetes-policies/qa');
+      expect(requests[1].url)
+        .to.equal('/api/runners/14/kubernetes-reconciliation/diagnostics');
+      expect(requests[2].url)
+        .to.equal('/api/runners/14/kubernetes-reconciliation/remediation');
+      expect(JSON.parse(requests[2].data)).to.deep.equal({
+        action: 'garbage_collect_expired',
+        project_id: 7,
+        task_id: 41,
+        generation: 3,
+        expected_revision: 4,
+        idempotency_key: 'ui-stable-key',
+      });
+      expect(context.remediatingKubernetesDiagnostics).to.deep.equal([]);
+    } finally {
+      axios.defaults.adapter = previousAdapter;
+    }
+  });
+
   it('loads Docker policy and diagnostics from the existing global runner API', async () => {
     const previousAdapter = axios.defaults.adapter;
     const requests = [];

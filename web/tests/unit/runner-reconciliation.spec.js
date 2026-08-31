@@ -36,6 +36,26 @@ describe('runner reconciliation task details', () => {
       k8s_job_name: 'semaphore-task-41-3',
       k8s_pod_name: 'semaphore-task-41-3-b7d9f',
     })).to.equal('Job semaphore-task-41-3 · Pod semaphore-task-41-3-b7d9f');
+    expect(TaskRunnerDetails.methods.kubernetesPolicyReference({
+      k8s_policy_revision: 4,
+      k8s_policy_hash: 'policy-hash',
+    })).to.equal('revision 4 · policy-hash');
+    expect(TaskRunnerDetails.methods.kubernetesWorkloadPolicy({
+      k8s_service_account: 'semaphore-task',
+      k8s_network_profile: 'deny-all',
+      k8s_network_enforcement: 'network-policy',
+      k8s_resource_policy_id: '4',
+    })).to.equal('service account semaphore-task · network deny-all (network-policy) · resources 4');
+    expect(TaskRunnerDetails.methods.kubernetesResourceIdentities({
+      k8s_secret_name: 'semaphore-bundle-41-3',
+      k8s_secret_uid: 'bundle-uid',
+      k8s_network_policy_name: 'semaphore-network-41-3',
+      k8s_network_policy_uid: 'network-uid',
+    })).to.equal('Bundle semaphore-bundle-41-3 (bundle-uid) · NetworkPolicy semaphore-network-41-3 (network-uid)');
+    expect(TaskRunnerDetails.methods.kubernetesRetention({
+      k8s_retention_state: 'terminal',
+      k8s_retention_deadline: '2026-08-31T12:00:00Z',
+    })).to.equal('terminal · until 2026-08-31T12:00:00Z');
     expect(TaskRunnerDetails.methods.recoveryDecisionColor('quarantine')).to.equal('warning');
     expect(TaskRunnerDetails.watch.item.deep).to.equal(true);
   });
