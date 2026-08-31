@@ -640,7 +640,8 @@ semaphore runner start --config ./config.runner.json</pre
 
           <v-btn
             v-if="item.project_id != null
-              || (projectId == null && isAdmin && item.executor_type === 'docker')"
+              || (projectId == null && isAdmin
+                && ['docker', 'k8s'].includes(item.executor_type))"
             :data-testid="`runner-health-${item.id}`"
             :aria-label="$t('runnerHealthAndHistory')"
             icon

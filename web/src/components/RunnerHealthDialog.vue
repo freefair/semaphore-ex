@@ -19,7 +19,7 @@
         <v-alert type="error" dense outlined>{{ error }}</v-alert>
       </v-card-text>
 
-      <v-card-text v-else-if="health || dockerAdmin" class="py-2 mb-4">
+      <v-card-text v-else-if="health || dockerAdmin || kubernetesAdmin" class="py-2 mb-4">
         <v-subheader v-if="health" class="px-0">{{ $t('runnerHealth') }}</v-subheader>
         <v-card
           v-if="health"
@@ -323,6 +323,105 @@
           </v-card>
         </template>
 
+        <template v-if="kubernetesAdmin">
+          <v-subheader class="px-0 mt-3">Kubernetes execution policy</v-subheader>
+          <v-card
+            data-testid="runner-kubernetes-policy-panel"
+            style="background: var(--highlighted-card-bg-color)"
+          >
+            <v-card-text>
+              <v-alert v-if="kubernetesPolicyError" type="error" dense text>
+                {{ kubernetesPolicyError }}
+              </v-alert>
+              <template v-if="kubernetesPolicy">
+                <div class="RunnerHealthDialog__dockerGrid">
+                  <div><strong>Cluster:</strong> {{ kubernetesPolicy.cluster_alias }}</div>
+                  <div><strong>Revision:</strong> {{ kubernetesPolicy.revision }}</div>
+                  <div>
+                    <strong>Runner acknowledgement:</strong>
+                    <v-chip
+                      small
+                      :color="kubernetesPolicyAcknowledged ? 'success' : 'warning'"
+                      :text-color="kubernetesPolicyAcknowledged ? 'white' : undefined"
+                      data-testid="runner-kubernetes-policy-ack"
+                    >
+                      {{ kubernetesPolicyAcknowledged ? 'Current' : 'Pending' }}
+                    </v-chip>
+                  </div>
+                  <div><strong>Namespace:</strong> {{ runner.k8s_namespace || '—' }}</div>
+                  <div>
+                    <strong>Network:</strong>
+                    {{ kubernetesPolicy.network_profile }}
+                    ({{ kubernetesPolicy.network_policy_enforcement }})
+                  </div>
+                  <div>
+                    <strong>Runtime class:</strong>
+                    {{ kubernetesPolicy.runtime_class || 'default' }}
+                  </div>
+                  <div><strong>Resources:</strong> {{ kubernetesPolicyLimits }}</div>
+                  <div>
+                    <strong>Terminal retention:</strong>
+                    {{ kubernetesPolicy.terminal_retention_seconds }} seconds
+                  </div>
+                </div>
+                <div class="mt-2">
+                  <strong>Allowed image digests:</strong>
+                  <div v-if="kubernetesPolicy.allowed_images?.length" class="mt-1">
+                    <code
+                      v-for="image in kubernetesPolicy.allowed_images"
+                      :key="image"
+                      class="RunnerHealthDialog__imageDigest"
+                    >{{ image }}</code>
+                  </div>
+                  <span v-else class="warning--text">
+                    No Kubernetes image is currently allowed.
+                  </span>
+                </div>
+              </template>
+            </v-card-text>
+          </v-card>
+
+          <v-subheader class="px-0 mt-3">Kubernetes reconciliation</v-subheader>
+          <v-card
+            data-testid="runner-kubernetes-diagnostics-panel"
+            style="background: var(--highlighted-card-bg-color)"
+          >
+            <v-card-text>
+              <v-alert v-if="kubernetesDiagnosticsError" type="error" dense text>
+                {{ kubernetesDiagnosticsError }}
+              </v-alert>
+              <div v-if="kubernetesDiagnostics.length">
+                <div
+                  v-for="diagnostic in kubernetesDiagnostics"
+                  :key="kubernetesDiagnosticKey(diagnostic)"
+                  class="RunnerHealthDialog__diagnostic"
+                  data-testid="runner-kubernetes-diagnostic"
+                >
+                  <div>
+                    <strong>{{ kubernetesDiagnosticTitle(diagnostic) }}</strong>
+                    <div class="text--secondary text-body-2">
+                      {{ diagnostic.reason || 'No additional detail' }}
+                    </div>
+                  </div>
+                  <v-btn
+                    v-if="diagnostic.remediation"
+                    small
+                    color="warning"
+                    :loading="remediatingKubernetesDiagnostics.includes(
+                      kubernetesDiagnosticKey(diagnostic)
+                    )"
+                    data-testid="runner-kubernetes-remediate"
+                    @click="requestKubernetesRemediation(diagnostic)"
+                  >
+                    Garbage collect expired objects
+                  </v-btn>
+                </div>
+              </div>
+              <div v-else class="text--secondary">No pending Kubernetes reconciliation.</div>
+            </v-card-text>
+          </v-card>
+        </template>
+
         <v-subheader v-if="projectId" class="px-0 mt-3">
           {{ $t('runnerAssignmentHistory') }}
         </v-subheader>
@@ -439,6 +538,12 @@ export default {
       dockerDiagnosticsError: null,
       remediatingDockerDiagnostics: [],
       dockerRemediationKeys: {},
+      kubernetesPolicy: null,
+      kubernetesPolicyError: null,
+      kubernetesDiagnostics: [],
+      kubernetesDiagnosticsError: null,
+      remediatingKubernetesDiagnostics: [],
+      kubernetesRemediationKeys: {},
     };
   },
 
@@ -458,8 +563,16 @@ export default {
         && this.runner?.executor_type === 'docker';
     },
 
+    kubernetesAdmin() {
+      return this.projectId == null
+        && this.runner?.project_id == null
+        && this.runner?.executor_type === 'k8s';
+    },
+
     dialogTitle() {
-      return this.dockerAdmin ? 'Docker runner diagnostics' : this.$t('runnerHealthAndHistory');
+      if (this.dockerAdmin) return 'Docker runner diagnostics';
+      if (this.kubernetesAdmin) return 'Kubernetes runner diagnostics';
+      return this.$t('runnerHealthAndHistory');
     },
 
     dockerPolicyAcknowledged() {
@@ -473,6 +586,21 @@ export default {
       const cpu = Number(this.dockerPolicy.nano_cpus || 0) / 1_000_000_000;
       const memory = Math.round(Number(this.dockerPolicy.memory_bytes || 0) / 1024 / 1024);
       return `${cpu} CPU · ${memory} MiB · ${this.dockerPolicy.pids_limit} PIDs`;
+    },
+
+    kubernetesPolicyAcknowledged() {
+      return this.kubernetesPolicy != null
+        && this.runner?.k8s_cluster_alias === this.kubernetesPolicy.cluster_alias
+        && this.runner?.k8s_policy_revision === this.kubernetesPolicy.revision
+        && this.runner?.k8s_policy_hash === this.kubernetesPolicy.hash;
+    },
+
+    kubernetesPolicyLimits() {
+      const resources = this.kubernetesPolicy?.resources;
+      if (!resources) return '—';
+      const requestMemory = Math.round(Number(resources.memory_request_bytes || 0) / 1024 / 1024);
+      const limitMemory = Math.round(Number(resources.memory_limit_bytes || 0) / 1024 / 1024);
+      return `${resources.cpu_request_milli}–${resources.cpu_limit_milli}m CPU · ${requestMemory}–${limitMemory} MiB`;
     },
 
     heartbeatColor() {
@@ -521,7 +649,7 @@ export default {
 
   methods: {
     async load() {
-      if (!this.runner || (!this.projectId && !this.dockerAdmin)) {
+      if (!this.runner || (!this.projectId && !this.dockerAdmin && !this.kubernetesAdmin)) {
         return;
       }
       this.loading = true;
@@ -535,6 +663,17 @@ export default {
           await Promise.all([
             this.loadDockerPolicy(),
             this.loadDockerDiagnostics(false),
+          ]);
+          return;
+        }
+        if (this.kubernetesAdmin) {
+          this.health = null;
+          this.history = [];
+          this.hasMore = false;
+          this.nextBefore = null;
+          await Promise.all([
+            this.loadKubernetesPolicy(),
+            this.loadKubernetesDiagnostics(),
           ]);
           return;
         }
@@ -678,6 +817,91 @@ export default {
         this.dockerDiagnosticsError = getErrorMessage(error);
       } finally {
         this.remediatingDockerDiagnostics = this.remediatingDockerDiagnostics
+          .filter((key) => key !== diagnosticKey);
+      }
+    },
+
+    async loadKubernetesPolicy() {
+      const alias = this.runner?.k8s_cluster_alias;
+      if (!alias) {
+        this.kubernetesPolicy = null;
+        this.kubernetesPolicyError = 'Runner has not reported a Kubernetes cluster alias.';
+        return;
+      }
+      this.kubernetesPolicyError = null;
+      try {
+        const { data } = await axios.get(
+          `/api/runners/kubernetes-policies/${encodeURIComponent(alias)}`,
+        );
+        this.kubernetesPolicy = data;
+      } catch (error) {
+        this.kubernetesPolicy = null;
+        this.kubernetesPolicyError = getErrorMessage(error);
+      }
+    },
+
+    async loadKubernetesDiagnostics() {
+      if (!this.runner) return;
+      this.kubernetesDiagnosticsError = null;
+      try {
+        const { data } = await axios.get(
+          `/api/runners/${this.runner.id}/kubernetes-reconciliation/diagnostics`,
+          { params: { limit: 100 } },
+        );
+        this.kubernetesDiagnostics = data.diagnostics || [];
+      } catch (error) {
+        this.kubernetesDiagnostics = [];
+        this.kubernetesDiagnosticsError = getErrorMessage(error);
+      }
+    },
+
+    kubernetesDiagnosticKey(diagnostic) {
+      if (diagnostic.target) {
+        return `target:${diagnostic.target.project_id}:${diagnostic.target.task_id}:${diagnostic.target.generation}`;
+      }
+      const candidate = diagnostic.candidate || {};
+      return `candidate:${candidate.resource}:${candidate.uid}`;
+    },
+
+    kubernetesDiagnosticTitle(diagnostic) {
+      if (diagnostic.target) {
+        return `Task #${diagnostic.target.task_id} · generation ${diagnostic.target.generation} · ${diagnostic.state}`;
+      }
+      const candidate = diagnostic.candidate || {};
+      return `${candidate.resource || 'resource'} · ${candidate.name || 'unnamed'} · ${diagnostic.state}`;
+    },
+
+    kubernetesRemediationIdempotencyKey(diagnostic) {
+      const diagnosticKey = this.kubernetesDiagnosticKey(diagnostic);
+      if (!this.kubernetesRemediationKeys[diagnosticKey]) {
+        const random = window.crypto?.randomUUID?.()
+          || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        this.$set(this.kubernetesRemediationKeys, diagnosticKey, `ui-${random}`);
+      }
+      return this.kubernetesRemediationKeys[diagnosticKey];
+    },
+
+    async requestKubernetesRemediation(diagnostic) {
+      const remediation = diagnostic.remediation;
+      if (!remediation) return;
+      const diagnosticKey = this.kubernetesDiagnosticKey(diagnostic);
+      if (this.remediatingKubernetesDiagnostics.includes(diagnosticKey)) return;
+      this.remediatingKubernetesDiagnostics.push(diagnosticKey);
+      this.kubernetesDiagnosticsError = null;
+      try {
+        await axios.post(
+          `/api/runners/${this.runner.id}/kubernetes-reconciliation/remediation`,
+          {
+            ...remediation,
+            idempotency_key: this.kubernetesRemediationIdempotencyKey(diagnostic),
+          },
+        );
+        this.$delete(this.kubernetesRemediationKeys, diagnosticKey);
+        await this.loadKubernetesDiagnostics();
+      } catch (error) {
+        this.kubernetesDiagnosticsError = getErrorMessage(error);
+      } finally {
+        this.remediatingKubernetesDiagnostics = this.remediatingKubernetesDiagnostics
           .filter((key) => key !== diagnosticKey);
       }
     },
