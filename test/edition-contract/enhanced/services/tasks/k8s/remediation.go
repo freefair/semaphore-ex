@@ -51,9 +51,12 @@ func (c *client) GarbageCollectKubernetesReconciliation(ctx context.Context, com
 		} else {
 			uid := job.UID
 			propagation := metav1.DeletePropagationForeground
+			started := time.Now()
 			if err := c.api.BatchV1().Jobs(c.config.namespace).Delete(ctx, job.Name, metav1.DeleteOptions{PropagationPolicy: &propagation, Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) {
+				c.recordAPICall(db.KubernetesTelemetryOperationDeleteJob, started, err)
 				return result
 			}
+			c.recordAPICall(db.KubernetesTelemetryOperationDeleteJob, started, nil)
 			removed = true
 			if !c.waitForGCPodsAbsent(ctx, target, labels) {
 				return result
@@ -66,9 +69,12 @@ func (c *client) GarbageCollectKubernetesReconciliation(ctx context.Context, com
 	}
 	if !policyMissing {
 		uid := policy.UID
+		started := time.Now()
 		if err := c.api.NetworkingV1().NetworkPolicies(c.config.namespace).Delete(ctx, policy.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) {
+			c.recordAPICall(db.KubernetesTelemetryOperationDeleteNetworkPolicy, started, err)
 			return result
 		}
+		c.recordAPICall(db.KubernetesTelemetryOperationDeleteNetworkPolicy, started, nil)
 		removed = true
 		if !c.waitForGCNetworkPolicyAbsent(ctx, target, labels) {
 			return result
@@ -80,9 +86,12 @@ func (c *client) GarbageCollectKubernetesReconciliation(ctx context.Context, com
 	}
 	if !secretMissing {
 		uid := secret.UID
+		started := time.Now()
 		if err := c.api.CoreV1().Secrets(c.config.namespace).Delete(ctx, secret.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) {
+			c.recordAPICall(db.KubernetesTelemetryOperationDeleteSecret, started, err)
 			return result
 		}
+		c.recordAPICall(db.KubernetesTelemetryOperationDeleteSecret, started, nil)
 		removed = true
 		if !c.waitForGCBundleSecretAbsent(ctx, target, labels) {
 			return result
@@ -102,7 +111,9 @@ func gcIdentityMatches(uid types.UID, labels, expected map[string]string, expect
 }
 
 func (c *client) currentGCJob(ctx context.Context, target db.KubernetesReconciliationTarget, labels map[string]string) (*batchv1.Job, bool, bool) {
+	started := time.Now()
 	job, err := c.api.BatchV1().Jobs(c.config.namespace).Get(ctx, target.JobName, metav1.GetOptions{})
+	c.recordAPICall(db.KubernetesTelemetryOperationGetJob, started, err)
 	if apierrors.IsNotFound(err) {
 		return nil, true, true
 	}
@@ -116,7 +127,9 @@ func (c *client) currentGCPod(ctx context.Context, target db.KubernetesReconcili
 	if target.PodUID == "" {
 		return nil, true, true
 	}
+	started := time.Now()
 	pod, err := c.api.CoreV1().Pods(c.config.namespace).Get(ctx, target.PodName, metav1.GetOptions{})
+	c.recordAPICall(db.KubernetesTelemetryOperationGetPod, started, err)
 	if apierrors.IsNotFound(err) {
 		return nil, true, true
 	}
@@ -127,7 +140,9 @@ func (c *client) currentGCPod(ctx context.Context, target db.KubernetesReconcili
 }
 
 func (c *client) currentGCNetworkPolicy(ctx context.Context, target db.KubernetesReconciliationTarget, labels map[string]string) (*networkingv1.NetworkPolicy, bool, bool) {
+	started := time.Now()
 	policy, err := c.api.NetworkingV1().NetworkPolicies(c.config.namespace).Get(ctx, target.NetworkPolicyName, metav1.GetOptions{})
+	c.recordAPICall(db.KubernetesTelemetryOperationDeleteNetworkPolicy, started, err)
 	if apierrors.IsNotFound(err) {
 		return nil, true, true
 	}
@@ -138,7 +153,9 @@ func (c *client) currentGCNetworkPolicy(ctx context.Context, target db.Kubernete
 }
 
 func (c *client) currentGCBundleSecret(ctx context.Context, target db.KubernetesReconciliationTarget, labels map[string]string) (*corev1.Secret, bool, bool) {
+	started := time.Now()
 	secret, err := c.api.CoreV1().Secrets(c.config.namespace).Get(ctx, target.SecretName, metav1.GetOptions{})
+	c.recordAPICall(db.KubernetesTelemetryOperationDeleteSecret, started, err)
 	if apierrors.IsNotFound(err) {
 		return nil, true, true
 	}

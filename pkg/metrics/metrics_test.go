@@ -80,6 +80,21 @@ func TestMetricsDockerTelemetryUsesOnlyFixedLabels(t *testing.T) {
 	assert.NotContains(t, body, "image=")
 }
 
+func TestMetricsKubernetesTelemetryUsesOnlyFixedLabels(t *testing.T) {
+	m := NewMetrics()
+	m.RecordKubernetesTelemetry(db.KubernetesTelemetryEvent{Sequence: 1, Kind: db.KubernetesTelemetryAPILatency, Operation: db.KubernetesTelemetryOperationCreateJob, DurationMilliseconds: 10})
+	m.RecordKubernetesTelemetry(db.KubernetesTelemetryEvent{Sequence: 2, Kind: db.KubernetesTelemetryDenial, PolicyRule: db.KubernetesPolicyRuleQuotaDenied})
+	m.RecordKubernetesTelemetry(db.KubernetesTelemetryEvent{Sequence: 3, Kind: db.KubernetesTelemetryCleanupFailure, CleanupResource: db.KubernetesTelemetryResourceSecret})
+	m.RecordKubernetesTelemetry(db.KubernetesTelemetryEvent{Sequence: 4, Kind: db.KubernetesTelemetryQuarantine, Count: 2})
+	body := scrape(m)
+	assert.Contains(t, body, `semaphore_kubernetes_api_latency_seconds_count{operation="create_job"} 1`)
+	assert.Contains(t, body, `semaphore_kubernetes_denials_total{rule="K8S_API_QUOTA_DENIED"} 1`)
+	assert.Contains(t, body, `semaphore_kubernetes_cleanup_failures_total{resource="secret"} 1`)
+	assert.Contains(t, body, `semaphore_kubernetes_quarantines_total 2`)
+	assert.NotContains(t, body, "namespace=")
+	assert.NotContains(t, body, "error=")
+}
+
 func TestMetrics_ServeHTTP(t *testing.T) {
 	m := NewMetrics()
 

@@ -39,6 +39,14 @@ type Metrics struct {
 	dockerReconciliation *prometheus.CounterVec
 	dockerOrphans        *prometheus.CounterVec
 	dockerTelemetryDrops *prometheus.CounterVec
+	kubernetesAPILatency *prometheus.HistogramVec
+	kubernetesReconnects *prometheus.CounterVec
+	kubernetesDenials    *prometheus.CounterVec
+	kubernetesCleanup    *prometheus.CounterVec
+	kubernetesReconcile  *prometheus.CounterVec
+	kubernetesOrphans    prometheus.Counter
+	kubernetesQuarantine prometheus.Counter
+	kubernetesDrops      *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
@@ -112,6 +120,14 @@ func NewMetrics() *Metrics {
 	dockerReconciliation := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "semaphore_docker_reconciliation_total", Help: "Docker reconciliation observations by fixed state."}, []string{"state"})
 	dockerOrphans := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "semaphore_docker_orphans_total", Help: "Docker orphan lifecycle reports by fixed state."}, []string{"state"})
 	dockerTelemetryDrops := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "semaphore_docker_telemetry_dropped_events_total", Help: "Docker telemetry events dropped by the fixed runner queue reason."}, []string{"reason"})
+	kubernetesAPILatency := prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "semaphore_kubernetes_api_latency_seconds", Help: "Kubernetes API latency by fixed namespaced operation.", Buckets: prometheus.DefBuckets}, []string{"operation"})
+	kubernetesReconnects := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "semaphore_kubernetes_reconnects_total", Help: "Kubernetes watch and log reconnects by fixed stream type."}, []string{"stream"})
+	kubernetesDenials := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "semaphore_kubernetes_denials_total", Help: "Kubernetes policy and API denials by stable rule."}, []string{"rule"})
+	kubernetesCleanup := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "semaphore_kubernetes_cleanup_failures_total", Help: "Kubernetes cleanup failures by fixed resource."}, []string{"resource"})
+	kubernetesReconcile := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "semaphore_kubernetes_reconciliation_total", Help: "Kubernetes reconciliation observations by fixed state."}, []string{"state"})
+	kubernetesOrphans := prometheus.NewCounter(prometheus.CounterOpts{Name: "semaphore_kubernetes_orphans_total", Help: "Kubernetes orphan candidates observed."})
+	kubernetesQuarantine := prometheus.NewCounter(prometheus.CounterOpts{Name: "semaphore_kubernetes_quarantines_total", Help: "Kubernetes reconciliation quarantines observed."})
+	kubernetesDrops := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "semaphore_kubernetes_telemetry_dropped_events_total", Help: "Kubernetes telemetry events dropped by fixed runner queue reason."}, []string{"reason"})
 
 	registry.MustRegister(
 		tasksRunning,
@@ -129,6 +145,7 @@ func NewMetrics() *Metrics {
 		auditWebhookDrops,
 		dockerCPUUsage, dockerMemoryBytes, dockerPIDs, dockerPolicyDenials,
 		dockerPullDuration, dockerCleanupFailed, dockerReconciliation, dockerOrphans, dockerTelemetryDrops,
+		kubernetesAPILatency, kubernetesReconnects, kubernetesDenials, kubernetesCleanup, kubernetesReconcile, kubernetesOrphans, kubernetesQuarantine, kubernetesDrops,
 	)
 	dependencyHealthy.WithLabelValues(string(pro_interfaces.DependencyAuditDatabase)).Set(1)
 	dependencyHealthy.WithLabelValues(string(pro_interfaces.DependencyAuditFile)).Set(1)
@@ -156,6 +173,36 @@ func NewMetrics() *Metrics {
 		dockerPolicyDenials: dockerPolicyDenials, dockerPullDuration: dockerPullDuration,
 		dockerCleanupFailed: dockerCleanupFailed, dockerReconciliation: dockerReconciliation, dockerOrphans: dockerOrphans,
 		dockerTelemetryDrops: dockerTelemetryDrops,
+		kubernetesAPILatency: kubernetesAPILatency, kubernetesReconnects: kubernetesReconnects, kubernetesDenials: kubernetesDenials,
+		kubernetesCleanup: kubernetesCleanup, kubernetesReconcile: kubernetesReconcile, kubernetesOrphans: kubernetesOrphans,
+		kubernetesQuarantine: kubernetesQuarantine, kubernetesDrops: kubernetesDrops,
+	}
+}
+
+// RecordKubernetesTelemetry exports only db-validated, bounded labels.
+func (m *Metrics) RecordKubernetesTelemetry(event db.KubernetesTelemetryEvent) {
+	if m == nil || event.Validate() != nil {
+		return
+	}
+	switch event.Kind {
+	case db.KubernetesTelemetryAPILatency:
+		m.kubernetesAPILatency.WithLabelValues(string(event.Operation)).Observe(float64(event.DurationMilliseconds) / 1000)
+	case db.KubernetesTelemetryWatchReconnect:
+		m.kubernetesReconnects.WithLabelValues("watch").Inc()
+	case db.KubernetesTelemetryLogReconnect:
+		m.kubernetesReconnects.WithLabelValues("logs").Inc()
+	case db.KubernetesTelemetryDenial:
+		m.kubernetesDenials.WithLabelValues(event.PolicyRule).Inc()
+	case db.KubernetesTelemetryCleanupFailure:
+		m.kubernetesCleanup.WithLabelValues(string(event.CleanupResource)).Inc()
+	case db.KubernetesTelemetryReconciliation:
+		m.kubernetesReconcile.WithLabelValues(string(event.ReconciliationState)).Add(float64(event.Count))
+	case db.KubernetesTelemetryOrphan:
+		m.kubernetesOrphans.Add(float64(event.Count))
+	case db.KubernetesTelemetryQuarantine:
+		m.kubernetesQuarantine.Add(float64(event.Count))
+	case db.KubernetesTelemetryDrop:
+		m.kubernetesDrops.WithLabelValues(string(event.DropReason)).Add(float64(event.Count))
 	}
 }
 

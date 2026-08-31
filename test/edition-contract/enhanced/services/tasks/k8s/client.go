@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -24,8 +25,22 @@ import (
 )
 
 type client struct {
-	config config
-	api    kubernetes.Interface
+	config          config
+	api             kubernetes.Interface
+	recordTelemetry func(db.KubernetesTelemetryEvent)
+}
+
+func (c *client) recordAPICall(operation db.KubernetesTelemetryOperation, started time.Time, err error) {
+	if c.recordTelemetry == nil {
+		return
+	}
+	c.recordTelemetry(db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryAPILatency, Operation: operation, DurationMilliseconds: time.Since(started).Milliseconds()})
+	if err != nil && !apierrors.IsNotFound(err) {
+		var violation db.KubernetesPolicyViolationError
+		if errors.As(kubernetesAPIError(err), &violation) {
+			c.recordTelemetry(db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryDenial, PolicyRule: violation.Rule})
+		}
+	}
 }
 
 func newKubernetesClient(cfg config) (KubernetesClient, error) {
@@ -53,6 +68,7 @@ func newKubernetesClient(cfg config) (KubernetesClient, error) {
 }
 
 func (c *client) CreateBundleSecret(ctx context.Context, spec BundleSecret) (ObjectIdentity, error) {
+	started := time.Now()
 	immutable := spec.Immutable
 	created, err := c.api.CoreV1().Secrets(c.config.namespace).Create(ctx, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: spec.Name, Namespace: c.config.namespace, Labels: cloneLabels(spec.Labels)},
@@ -61,8 +77,10 @@ func (c *client) CreateBundleSecret(ctx context.Context, spec BundleSecret) (Obj
 		Data:       map[string][]byte{bundleArchiveKey: append([]byte(nil), spec.Data...)},
 	}, metav1.CreateOptions{})
 	if err != nil {
+		c.recordAPICall(db.KubernetesTelemetryOperationCreateSecret, started, err)
 		return ObjectIdentity{}, kubernetesAPIError(err)
 	}
+	c.recordAPICall(db.KubernetesTelemetryOperationCreateSecret, started, nil)
 	if created.UID == "" {
 		return ObjectIdentity{}, fmt.Errorf("created Kubernetes Secret has no UID")
 	}
@@ -73,10 +91,13 @@ func (c *client) CreateNetworkPolicy(ctx context.Context, policy *networkingv1.N
 	if policy == nil || policy.Namespace != c.config.namespace {
 		return ObjectIdentity{}, fmt.Errorf("Kubernetes NetworkPolicy namespace does not match runner configuration")
 	}
+	started := time.Now()
 	created, err := c.api.NetworkingV1().NetworkPolicies(c.config.namespace).Create(ctx, policy, metav1.CreateOptions{})
 	if err != nil {
+		c.recordAPICall(db.KubernetesTelemetryOperationCreateNetworkPolicy, started, err)
 		return ObjectIdentity{}, kubernetesAPIError(err)
 	}
+	c.recordAPICall(db.KubernetesTelemetryOperationCreateNetworkPolicy, started, nil)
 	if created.UID == "" {
 		return ObjectIdentity{}, fmt.Errorf("created Kubernetes NetworkPolicy has no UID")
 	}
@@ -87,10 +108,13 @@ func (c *client) CreateJob(ctx context.Context, job *batchv1.Job) (ObjectIdentit
 	if job == nil || job.Namespace != c.config.namespace {
 		return ObjectIdentity{}, fmt.Errorf("Kubernetes Job namespace does not match runner configuration")
 	}
+	started := time.Now()
 	created, err := c.api.BatchV1().Jobs(c.config.namespace).Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {
+		c.recordAPICall(db.KubernetesTelemetryOperationCreateJob, started, err)
 		return ObjectIdentity{}, kubernetesAPIError(err)
 	}
+	c.recordAPICall(db.KubernetesTelemetryOperationCreateJob, started, nil)
 	if created.UID == "" {
 		return ObjectIdentity{}, fmt.Errorf("created Kubernetes Job has no UID")
 	}
@@ -101,7 +125,9 @@ func (c *client) DeleteNetworkPolicy(ctx context.Context, policy ObjectIdentity,
 	if policy.Name == "" || policy.UID == "" || len(expectedLabels) == 0 {
 		return fmt.Errorf("Kubernetes NetworkPolicy identity is incomplete")
 	}
+	started := time.Now()
 	current, err := c.api.NetworkingV1().NetworkPolicies(c.config.namespace).Get(ctx, policy.Name, metav1.GetOptions{})
+	c.recordAPICall(db.KubernetesTelemetryOperationDeleteNetworkPolicy, started, err)
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
@@ -112,11 +138,16 @@ func (c *client) DeleteNetworkPolicy(ctx context.Context, policy ObjectIdentity,
 		return fmt.Errorf("Kubernetes NetworkPolicy identity changed before deletion")
 	}
 	uid := policy.UID
+	started = time.Now()
 	if err := c.api.NetworkingV1().NetworkPolicies(c.config.namespace).Delete(ctx, policy.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) {
+		c.recordAPICall(db.KubernetesTelemetryOperationDeleteNetworkPolicy, started, err)
 		return kubernetesAPIError(err)
 	}
+	c.recordAPICall(db.KubernetesTelemetryOperationDeleteNetworkPolicy, started, nil)
 	return wait.PollUntilContextCancel(ctx, c.config.pollInterval, true, func(ctx context.Context) (bool, error) {
+		started := time.Now()
 		current, getErr := c.api.NetworkingV1().NetworkPolicies(c.config.namespace).Get(ctx, policy.Name, metav1.GetOptions{})
+		c.recordAPICall(db.KubernetesTelemetryOperationDeleteNetworkPolicy, started, getErr)
 		if apierrors.IsNotFound(getErr) {
 			return true, nil
 		}
@@ -133,7 +164,9 @@ func (c *client) DeleteNetworkPolicy(ctx context.Context, policy ObjectIdentity,
 func (c *client) WaitForTaskPod(ctx context.Context, job ObjectIdentity, expectedLabels map[string]string) (PodIdentity, error) {
 	selector := klabels.Set(expectedLabels).String()
 	for {
+		started := time.Now()
 		list, err := c.api.CoreV1().Pods(c.config.namespace).List(ctx, metav1.ListOptions{LabelSelector: selector, Limit: 10})
+		c.recordAPICall(db.KubernetesTelemetryOperationListPods, started, err)
 		if err != nil {
 			return PodIdentity{}, err
 		}
@@ -151,7 +184,9 @@ func (c *client) WaitForTaskPod(ctx context.Context, job ObjectIdentity, expecte
 				return identity, observeErr
 			}
 		}
+		started = time.Now()
 		stream, err := c.api.CoreV1().Pods(c.config.namespace).Watch(ctx, metav1.ListOptions{LabelSelector: selector, ResourceVersion: list.ResourceVersion})
+		c.recordAPICall(db.KubernetesTelemetryOperationWatchPods, started, err)
 		if err != nil {
 			return PodIdentity{}, err
 		}
@@ -173,14 +208,20 @@ func (c *client) WaitForTaskPod(ctx context.Context, job ObjectIdentity, expecte
 		if ctx.Err() != nil {
 			return PodIdentity{}, ctx.Err()
 		}
+		if c.recordTelemetry != nil {
+			c.recordTelemetry(db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryWatchReconnect, Operation: db.KubernetesTelemetryOperationWatchPods, Count: 1})
+		}
 	}
 }
 
 func (c *client) OpenPodLogs(ctx context.Context, pod PodIdentity, since *time.Time, follow bool) (io.ReadCloser, error) {
+	started := time.Now()
 	current, err := c.api.CoreV1().Pods(c.config.namespace).Get(ctx, pod.Name, metav1.GetOptions{})
 	if err != nil {
+		c.recordAPICall(db.KubernetesTelemetryOperationGetPod, started, err)
 		return nil, err
 	}
+	c.recordAPICall(db.KubernetesTelemetryOperationGetPod, started, nil)
 	if current.UID != pod.UID || taskRestartCount(current) != pod.RestartCount {
 		return nil, fmt.Errorf("Kubernetes task Pod identity changed before log streaming")
 	}
@@ -189,17 +230,22 @@ func (c *client) OpenPodLogs(ctx context.Context, pod PodIdentity, since *time.T
 		value := metav1.NewTime(since.UTC())
 		options.SinceTime = &value
 	}
+	started = time.Now()
 	stream, err := c.api.CoreV1().Pods(c.config.namespace).GetLogs(pod.Name, options).Stream(ctx)
 	if err != nil {
+		c.recordAPICall(db.KubernetesTelemetryOperationStreamPodLogs, started, err)
 		return nil, fmt.Errorf("opening Kubernetes task log stream: %w", err)
 	}
+	c.recordAPICall(db.KubernetesTelemetryOperationStreamPodLogs, started, nil)
 	return stream, nil
 }
 
 func (c *client) WaitForJob(ctx context.Context, job ObjectIdentity, pod PodIdentity) (JobResult, error) {
 	fieldSelector := fields.OneTermEqualSelector("metadata.name", job.Name).String()
 	for {
+		started := time.Now()
 		current, err := c.api.BatchV1().Jobs(c.config.namespace).Get(ctx, job.Name, metav1.GetOptions{})
+		c.recordAPICall(db.KubernetesTelemetryOperationGetJob, started, err)
 		if err != nil {
 			return JobResult{}, err
 		}
@@ -209,7 +255,9 @@ func (c *client) WaitForJob(ctx context.Context, job ObjectIdentity, pod PodIden
 		if jobTerminal(current) {
 			return c.jobResult(ctx, current, job, pod)
 		}
+		started = time.Now()
 		stream, err := c.api.BatchV1().Jobs(c.config.namespace).Watch(ctx, metav1.ListOptions{FieldSelector: fieldSelector, ResourceVersion: current.ResourceVersion})
+		c.recordAPICall(db.KubernetesTelemetryOperationWatchJobs, started, err)
 		if err != nil {
 			return JobResult{}, err
 		}
@@ -234,6 +282,9 @@ func (c *client) WaitForJob(ctx context.Context, job ObjectIdentity, pod PodIden
 		stream.Stop()
 		if ctx.Err() != nil {
 			return JobResult{}, ctx.Err()
+		}
+		if c.recordTelemetry != nil {
+			c.recordTelemetry(db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryWatchReconnect, Operation: db.KubernetesTelemetryOperationWatchJobs, Count: 1})
 		}
 	}
 }
@@ -275,16 +326,20 @@ func (c *client) DeleteJobForeground(ctx context.Context, job ObjectIdentity, po
 	uid := job.UID
 	graceSeconds := int64(grace.Seconds())
 	propagation := metav1.DeletePropagationForeground
+	started := time.Now()
 	err := c.api.BatchV1().Jobs(c.config.namespace).Delete(ctx, job.Name, metav1.DeleteOptions{
 		GracePeriodSeconds: &graceSeconds,
 		PropagationPolicy:  &propagation,
 		Preconditions:      &metav1.Preconditions{UID: &uid},
 	})
+	c.recordAPICall(db.KubernetesTelemetryOperationDeleteJob, started, err)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("foreground deleting Kubernetes Job: %w", err)
 	}
 	return wait.PollUntilContextCancel(ctx, c.config.pollInterval, true, func(ctx context.Context) (bool, error) {
+		started := time.Now()
 		currentJob, getErr := c.api.BatchV1().Jobs(c.config.namespace).Get(ctx, job.Name, metav1.GetOptions{})
+		c.recordAPICall(db.KubernetesTelemetryOperationGetJob, started, getErr)
 		if getErr == nil && currentJob.UID != job.UID {
 			return false, fmt.Errorf("Kubernetes Job name was reused during deletion")
 		}
@@ -294,7 +349,9 @@ func (c *client) DeleteJobForeground(ctx context.Context, job ObjectIdentity, po
 		jobGone := apierrors.IsNotFound(getErr)
 		podGone := pod.Name == ""
 		if !podGone {
+			started := time.Now()
 			currentPod, podErr := c.api.CoreV1().Pods(c.config.namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+			c.recordAPICall(db.KubernetesTelemetryOperationGetPod, started, podErr)
 			switch {
 			case podErr == nil && currentPod.UID != pod.UID:
 				return false, fmt.Errorf("Kubernetes Pod name was reused during deletion")
@@ -315,12 +372,16 @@ func (c *client) DeleteBundleSecret(ctx context.Context, secret ObjectIdentity) 
 		return fmt.Errorf("Kubernetes bundle Secret identity is incomplete")
 	}
 	uid := secret.UID
+	started := time.Now()
 	err := c.api.CoreV1().Secrets(c.config.namespace).Delete(ctx, secret.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}})
+	c.recordAPICall(db.KubernetesTelemetryOperationDeleteSecret, started, err)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("deleting Kubernetes task bundle Secret: %w", err)
 	}
 	return wait.PollUntilContextCancel(ctx, c.config.pollInterval, true, func(ctx context.Context) (bool, error) {
+		started := time.Now()
 		current, getErr := c.api.CoreV1().Secrets(c.config.namespace).Get(ctx, secret.Name, metav1.GetOptions{})
+		c.recordAPICall(db.KubernetesTelemetryOperationDeleteSecret, started, getErr)
 		if getErr == nil && current.UID != secret.UID {
 			return false, fmt.Errorf("Kubernetes Secret name was reused during deletion")
 		}

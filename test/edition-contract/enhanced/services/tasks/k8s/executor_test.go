@@ -273,6 +273,31 @@ func TestKubernetesExecutorRejectsOversizedBundleBeforeCreatingObjects(t *testin
 	assert.Empty(t, client.events)
 }
 
+func TestKubernetesTelemetryQueueFencesAcknowledgementsAndAccountsDrops(t *testing.T) {
+	provider := newProviderWithClient(config{clusterAlias: "qa", namespace: "semaphore-jobs"}, &fakeKubernetesClient{})
+	require.NoError(t, provider.ApplyRunnerIdentity(19))
+	first := db.KubernetesReconciliationSession{SessionID: "session-one", Fence: "fence-one", RunnerID: 19, ClusterAlias: "qa", Namespace: "semaphore-jobs"}
+	require.NoError(t, provider.ApplyKubernetesReconciliationSession(first))
+	for index := 0; index < 101; index++ {
+		provider.recordKubernetesTelemetry(db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryDenial, PolicyRule: db.KubernetesPolicyRuleRBACDenied})
+	}
+	pending := provider.PendingKubernetesTelemetry()
+	require.Len(t, pending.Events, 100)
+	provider.AcknowledgeKubernetesTelemetry(db.KubernetesTelemetryAck{SessionID: "stale", HighestSequence: 100})
+	assert.Equal(t, pending, provider.PendingKubernetesTelemetry(), "a wrong session acknowledgement cannot drop telemetry")
+	provider.AcknowledgeKubernetesTelemetry(db.KubernetesTelemetryAck{SessionID: first.SessionID, HighestSequence: 100})
+	recovered := provider.PendingKubernetesTelemetry()
+	require.Len(t, recovered.Events, 1)
+	assert.Equal(t, db.KubernetesTelemetryDrop, recovered.Events[0].Kind)
+	assert.Equal(t, int64(1), recovered.Events[0].Count)
+	second := first
+	second.SessionID, second.Fence, second.TelemetryHighestSequence = "session-two", "fence-two", 7
+	require.NoError(t, provider.ApplyKubernetesReconciliationSession(second))
+	assert.Empty(t, provider.PendingKubernetesTelemetry().Events)
+	provider.recordKubernetesTelemetry(db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryOrphan, Count: 1})
+	assert.Equal(t, int64(8), provider.PendingKubernetesTelemetry().Events[0].Sequence)
+}
+
 func indexOf(values []string, expected string) int {
 	for index, value := range values {
 		if value == expected {
