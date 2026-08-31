@@ -108,6 +108,14 @@ func TestNotificationGovernanceControllerStrictInputRedactsCredentialAndBoundsPa
 	assert.Equal(t, pro_interfaces.NotificationProviderRegionUS, service.createDestinationInput.Region)
 	assert.Nil(t, service.createDestinationScope)
 	assert.NotContains(t, response.Body.String(), credential)
+	response = httptest.NewRecorder()
+	controller.CreateGlobalDestination(response, httptest.NewRequest(http.MethodPost, "/api/notification-governance/destinations", strings.NewReader(`{"name":"ops","provider":"opsgenie","environment":"prod","region":"eu","credential":"`+credential+`","opsgenie":{"priority":"P2","responders":[{"type":"team","id":"team-1"}]},"enabled":true}`)))
+	require.Equal(t, http.StatusCreated, response.Code)
+	require.NotNil(t, service.createDestinationInput.Opsgenie)
+	assert.Equal(t, pro_interfaces.NotificationOpsgeniePriorityP2, service.createDestinationInput.Opsgenie.Priority)
+	require.Len(t, service.createDestinationInput.Opsgenie.Responders, 1)
+	assert.Equal(t, pro_interfaces.NotificationProviderRegionEU, service.createDestinationInput.Region)
+	assert.NotContains(t, response.Body.String(), credential)
 	service.err = pro_interfaces.ErrNotificationInvalidInput
 	invalidCredential := "not-a-routing-key"
 	response = httptest.NewRecorder()
@@ -118,6 +126,7 @@ func TestNotificationGovernanceControllerStrictInputRedactsCredentialAndBoundsPa
 
 	for _, body := range []string{
 		`{"name":"primary","provider":"pagerduty","unknown":true}`,
+		`{"name":"ops","provider":"opsgenie","region":"us","opsgenie":{"unknown":true}}`,
 		`{"name":"primary"} {}`,
 	} {
 		response = httptest.NewRecorder()
@@ -195,7 +204,8 @@ func TestNotificationGovernanceHistoryReturnsOnlyAllowListedEventProjection(t *t
 	service := &notificationGovernanceStub{history: []pro_interfaces.NotificationDeliveryDTO{{
 		ID: 3, EventID: "event-id", SourceKind: pro_interfaces.NotificationSourceTask, SourceID: "task:42",
 		LifecycleAction: pro_interfaces.NotificationLifecycleTrigger, Severity: pro_interfaces.NotificationSeverityError,
-		LastReason: db.NotificationDeliveryReasonTransport,
+		LastReason:        db.NotificationDeliveryReasonTransport,
+		ProviderRequestID: "request_1",
 	}}}
 	controller := NewNotificationGovernanceController(service)
 	response := httptest.NewRecorder()
@@ -206,6 +216,7 @@ func TestNotificationGovernanceHistoryReturnsOnlyAllowListedEventProjection(t *t
 	assert.Contains(t, response.Body.String(), `"lifecycle_action":"trigger"`)
 	assert.Contains(t, response.Body.String(), `"severity":"error"`)
 	assert.Contains(t, response.Body.String(), `"last_reason":"transport_error"`)
+	assert.Contains(t, response.Body.String(), `"provider_request_id":"request_1"`)
 	assert.NotContains(t, response.Body.String(), "details")
 	assert.NotContains(t, response.Body.String(), "credential")
 }

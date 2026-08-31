@@ -44,6 +44,7 @@ const (
 	NotificationDeliveryReasonCredentialUnavailable NotificationDeliveryReason = "credential_unavailable"
 	NotificationDeliveryReasonProviderUnavailable   NotificationDeliveryReason = "provider_unavailable"
 	NotificationDeliveryReasonPermanent             NotificationDeliveryReason = "permanent_failure"
+	NotificationDeliveryReasonProviderPending       NotificationDeliveryReason = "provider_pending"
 )
 
 // NotificationDestination stores only opaque provider selection and encrypted
@@ -56,6 +57,7 @@ type NotificationDestination struct {
 	Provider              string    `db:"provider" json:"provider"`
 	Environment           string    `db:"environment" json:"environment"`
 	Region                string    `db:"region" json:"region"`
+	ProviderConfig        string    `db:"provider_config" json:"-"`
 	EncryptedCredential   string    `db:"encrypted_credential" json:"-"`
 	CredentialConfigured  bool      `db:"credential_configured" json:"credential_configured"`
 	Enabled               bool      `db:"enabled" json:"enabled"`
@@ -113,6 +115,7 @@ type NotificationDelivery struct {
 	DestinationRegion                string                     `db:"destination_region" json:"destination_region"`
 	IncidentKey                      string                     `db:"incident_key" json:"incident_key"`
 	IdempotencyKey                   string                     `db:"idempotency_key" json:"idempotency_key"`
+	ProviderRequestID                string                     `db:"provider_request_id" json:"provider_request_id,omitempty"`
 	Status                           NotificationDeliveryStatus `db:"status" json:"status"`
 	Attempts                         int                        `db:"attempts" json:"attempts"`
 	NextAttempt                      time.Time                  `db:"next_attempt" json:"next_attempt"`
@@ -165,6 +168,7 @@ type NotificationRepository interface {
 	ReleaseNotificationDelivery(int, string, NotificationDeliveryReason, time.Time, time.Time) error
 	ResumePausedNotificationDeliveries(int, time.Time) error
 	RetryNotificationDelivery(int, int, int, time.Time) error
+	StoreNotificationDeliveryPending(int, string, string, time.Time, time.Time) error
 	GetNotificationDelivery(*int, int) (NotificationDelivery, error)
 	GetNotificationDeliveries(*int, RetrieveQueryParams) ([]NotificationDelivery, error)
 	GetNotificationEventHistory(*int, RetrieveQueryParams) ([]NotificationEventHistory, error)

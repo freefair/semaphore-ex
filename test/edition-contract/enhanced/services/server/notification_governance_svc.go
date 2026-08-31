@@ -7,8 +7,10 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"slices"
 	"strings"
@@ -61,9 +63,13 @@ func (s *governanceService) CreateDestination(ctx context.Context, projectID *in
 	if err != nil {
 		return pro_interfaces.NotificationDestinationDTO{}, err
 	}
+	providerConfig, err := canonicalProviderConfig(input)
+	if err != nil {
+		return pro_interfaces.NotificationDestinationDTO{}, err
+	}
 	destination, err := s.repository.CreateNotificationDestination(db.NotificationDestination{
 		ProjectID: projectID, Name: input.Name, Provider: input.Provider, Environment: input.Environment, Region: string(input.Region),
-		EncryptedCredential: credential, CredentialConfigured: configured, Enabled: input.Enabled,
+		ProviderConfig: providerConfig, EncryptedCredential: credential, CredentialConfigured: configured, Enabled: input.Enabled,
 	})
 	if err != nil {
 		return pro_interfaces.NotificationDestinationDTO{}, mapRepositoryError(err)
@@ -118,9 +124,13 @@ func (s *governanceService) UpdateDestination(ctx context.Context, projectID *in
 	if err != nil {
 		return pro_interfaces.NotificationDestinationDTO{}, err
 	}
+	providerConfig, err := canonicalProviderConfig(input)
+	if err != nil {
+		return pro_interfaces.NotificationDestinationDTO{}, err
+	}
 	updated, err := s.repository.UpdateNotificationDestination(db.NotificationDestination{
 		ID: id, ProjectID: projectID, Name: input.Name, Provider: input.Provider, Environment: input.Environment, Region: string(input.Region),
-		EncryptedCredential: credential, CredentialConfigured: configured, Enabled: input.Enabled, Paused: current.Paused,
+		ProviderConfig: providerConfig, EncryptedCredential: credential, CredentialConfigured: configured, Enabled: input.Enabled, Paused: current.Paused,
 		Revision: expectedRevision,
 	}, expectedRevision)
 	if err != nil {
@@ -465,14 +475,101 @@ func validateDestinationInput(projectID *int, input pro_interfaces.NotificationD
 		return pro_interfaces.ErrNotificationInvalidInput
 	}
 	if input.Provider == pagerDutyProviderName {
-		if !validPagerDutyRegion(input.Region) || input.Credential != nil && !validPagerDutyRoutingKey(*input.Credential) {
+		if input.Opsgenie != nil || !validPagerDutyRegion(input.Region) || input.Credential != nil && !validPagerDutyRoutingKey(*input.Credential) {
 			return pro_interfaces.ErrNotificationInvalidInput
 		}
 	}
-	if input.Provider != pagerDutyProviderName && input.Region != "" {
+	if input.Provider == opsgenieProviderName {
+		if !validOpsgenieRegion(input.Region) || input.Credential != nil && !validOpsgenieKey(*input.Credential) || !validOpsgenieConfiguration(input.Opsgenie) {
+			return pro_interfaces.ErrNotificationInvalidInput
+		}
+	}
+	if input.Provider != pagerDutyProviderName && input.Provider != opsgenieProviderName && (input.Region != "" || input.Opsgenie != nil) {
 		return pro_interfaces.ErrNotificationInvalidInput
 	}
 	return nil
+}
+
+func validOpsgenieRegion(region pro_interfaces.NotificationProviderRegion) bool {
+	return region == pro_interfaces.NotificationProviderRegionUS || region == pro_interfaces.NotificationProviderRegionEU
+}
+
+func validOpsgenieKey(value string) bool {
+	if len(value) == 0 || len(value) > opsgenieMaxCredentialBytes {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x21 || character > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+func validOpsgenieConfiguration(configuration *pro_interfaces.NotificationOpsgenieConfiguration) bool {
+	if configuration == nil {
+		return true
+	}
+	if configuration.Priority != "" && configuration.Priority != pro_interfaces.NotificationOpsgeniePriorityP1 && configuration.Priority != pro_interfaces.NotificationOpsgeniePriorityP2 && configuration.Priority != pro_interfaces.NotificationOpsgeniePriorityP3 && configuration.Priority != pro_interfaces.NotificationOpsgeniePriorityP4 && configuration.Priority != pro_interfaces.NotificationOpsgeniePriorityP5 || len(configuration.Responders) > 50 {
+		return false
+	}
+	for _, responder := range configuration.Responders {
+		count := 0
+		for _, value := range []string{responder.ID, responder.Name, responder.Username} {
+			if value != "" {
+				count++
+				if len(value) > 256 || strings.TrimSpace(value) != value {
+					return false
+				}
+			}
+		}
+		if count != 1 {
+			return false
+		}
+		switch responder.Type {
+		case pro_interfaces.NotificationOpsgenieResponderTeam, pro_interfaces.NotificationOpsgenieResponderEscalation, pro_interfaces.NotificationOpsgenieResponderSchedule:
+			if responder.Username != "" {
+				return false
+			}
+		case pro_interfaces.NotificationOpsgenieResponderUser:
+			if responder.Name != "" {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func canonicalProviderConfig(input pro_interfaces.NotificationDestinationInput) (string, error) {
+	if input.Provider != opsgenieProviderName {
+		return "", nil
+	}
+	if !validOpsgenieConfiguration(input.Opsgenie) {
+		return "", pro_interfaces.ErrNotificationInvalidInput
+	}
+	if input.Opsgenie == nil {
+		return "", nil
+	}
+	encoded, err := json.Marshal(input.Opsgenie)
+	if err != nil || len(encoded) > 16*1024 {
+		return "", pro_interfaces.ErrNotificationInvalidInput
+	}
+	return string(encoded), nil
+}
+
+func opsgenieConfiguration(value string) (*pro_interfaces.NotificationOpsgenieConfiguration, bool) {
+	if value == "" {
+		return nil, true
+	}
+	var configuration pro_interfaces.NotificationOpsgenieConfiguration
+	decoder := json.NewDecoder(strings.NewReader(value))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&configuration) != nil || decoder.Decode(&struct{}{}) != io.EOF || !validOpsgenieConfiguration(&configuration) {
+		return nil, false
+	}
+	return &configuration, true
 }
 
 func validPagerDutyRegion(region pro_interfaces.NotificationProviderRegion) bool {
@@ -564,9 +661,10 @@ func notificationActionsFromString(value string) []pro_interfaces.NotificationLi
 }
 
 func destinationDTO(destination db.NotificationDestination) pro_interfaces.NotificationDestinationDTO {
+	configuration, _ := opsgenieConfiguration(destination.ProviderConfig)
 	return pro_interfaces.NotificationDestinationDTO{
 		ID: destination.ID, ProjectID: destination.ProjectID, Name: destination.Name, Provider: destination.Provider, Environment: destination.Environment, Region: pro_interfaces.NotificationProviderRegion(destination.Region),
-		CredentialConfigured: destination.CredentialConfigured, Enabled: destination.Enabled, Paused: destination.Paused, Revision: destination.Revision,
+		CredentialConfigured: destination.CredentialConfigured, Opsgenie: configuration, Enabled: destination.Enabled, Paused: destination.Paused, Revision: destination.Revision,
 		CreatedAt: destination.Created, UpdatedAt: destination.Updated,
 	}
 }
@@ -583,7 +681,7 @@ func deliveryDTO(delivery db.NotificationDelivery) pro_interfaces.NotificationDe
 	return pro_interfaces.NotificationDeliveryDTO{
 		ID: delivery.ID, EventID: delivery.EventID, DestinationID: delivery.DestinationID, DestinationRevision: delivery.DestinationRevision,
 		DestinationName: delivery.DestinationName, DestinationProvider: delivery.DestinationProvider, DestinationEnvironment: delivery.DestinationEnvironment, DestinationRegion: pro_interfaces.NotificationProviderRegion(delivery.DestinationRegion),
-		IncidentKey: delivery.IncidentKey, IdempotencyKey: delivery.IdempotencyKey, Status: delivery.Status, Attempts: delivery.Attempts,
+		IncidentKey: delivery.IncidentKey, IdempotencyKey: delivery.IdempotencyKey, ProviderRequestID: delivery.ProviderRequestID, Status: delivery.Status, Attempts: delivery.Attempts,
 		NextAttempt: delivery.NextAttempt, LastReason: delivery.LastReason, CreatedAt: delivery.Created, UpdatedAt: delivery.Updated, DeliveredAt: delivery.DeliveredAt,
 		SourceKind: pro_interfaces.NotificationSourceKind(delivery.SourceKind), SourceID: delivery.SourceID,
 		LifecycleAction: pro_interfaces.NotificationLifecycleAction(delivery.LifecycleAction), Severity: pro_interfaces.NotificationSeverity(delivery.Severity), OccurredAt: delivery.OccurredAt,

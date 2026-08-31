@@ -82,6 +82,15 @@ func TestNotificationConfigurationRevisionMigrationIsPortableAndFailClosed(t *te
 	assert.Contains(t, rollback, "drop column `configuration_revision`")
 }
 
+func TestOpsgenieAsyncStateMigrationIsPortableAndReversible(t *testing.T) {
+	migration := strings.Join(getVersionSQL("mysql", "v2.20.54.sql", false), ";")
+	rollback := strings.Join(getVersionSQL("mysql", "v2.20.54.err.sql", true), ";")
+	assert.Contains(t, migration, "add column provider_config longtext not null default ''")
+	assert.Contains(t, migration, "add column provider_request_id varchar(128) not null default ''")
+	assert.Contains(t, rollback, "drop column provider_request_id")
+	assert.Contains(t, rollback, "drop column provider_config")
+}
+
 func TestNotificationMigrationKeepsLOBAndRollbackPortable(t *testing.T) {
 	migration := strings.Join(getVersionSQL("mysql", "v2.20.51.sql", false), ";")
 	rollback := strings.Join(getVersionSQL("mysql", "v2.20.51.err.sql", true), ";")
@@ -170,6 +179,28 @@ func TestNotificationOutboxIsIdempotentAndLeaseFenced(t *testing.T) {
 	assert.NotContains(t, string(encoded), "sealed:")
 	assert.Equal(t, db.NotificationDeliveryRetrying, history[0].Status)
 	assert.Equal(t, db.NotificationDeliveryReasonManualRetry, history[0].LastReason)
+}
+
+func TestNotificationPendingRequestIDIsLeaseFencedAndPersists(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	destination, err := store.CreateNotificationDestination(db.NotificationDestination{Name: "ops", Provider: "opsgenie", Region: "us", Enabled: true})
+	require.NoError(t, err)
+	event := notificationTestEvent(nil, strings.Repeat("f", 32), "system", "system:pending", "error", "trigger", db.NotificationRoutingRouted)
+	_, err = store.CreateNotificationEventWithRouting(event, []db.NotificationDelivery{{DestinationID: destination.ID, DestinationRevision: destination.Revision, DestinationConfigurationRevision: destination.ConfigurationRevision, DestinationName: destination.Name, DestinationProvider: destination.Provider, DestinationRegion: destination.Region}})
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	claimed, err := store.ClaimNotificationDeliveries(now.Add(time.Second), now.Add(time.Minute), 1)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.NoError(t, store.StoreNotificationDeliveryPending(claimed[0].ID, claimed[0].LeaseToken, "request_1", now.Add(time.Minute), now))
+	assert.ErrorIs(t, store.StoreNotificationDeliveryPending(claimed[0].ID, claimed[0].LeaseToken, "request_2", now.Add(time.Minute), now), db.ErrNotificationDeliveryNotClaimed)
+	history, err := store.GetNotificationDeliveries(nil, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	assert.Equal(t, "request_1", history[0].ProviderRequestID)
+	assert.Equal(t, db.NotificationDeliveryReasonProviderPending, history[0].LastReason)
+	assert.Equal(t, 1, history[0].Attempts)
 }
 
 func TestNotificationFilteredEventPersistsWithoutDelivery(t *testing.T) {

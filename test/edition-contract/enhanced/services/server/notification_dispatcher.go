@@ -52,7 +52,7 @@ type notificationDeliveryDispatcher struct {
 // PagerDuty adapter is registered before callers can start it; the Community
 // replacement keeps notification transport unavailable.
 func NewNotificationDispatcher(repository db.NotificationRepository) pro_interfaces.NotificationDeliveryDispatcher {
-	return newNotificationDeliveryDispatcher(repository, util.Config, time.Now, rand.Float64, NewPagerDutyAdapter())
+	return newNotificationDeliveryDispatcher(repository, util.Config, time.Now, rand.Float64, NewPagerDutyAdapter(), NewOpsgenieAdapter())
 }
 
 func newNotificationDeliveryDispatcher(
@@ -193,10 +193,14 @@ func (d *notificationDeliveryDispatcher) dispatchClaimed(ctx context.Context, cl
 	if eventErr != nil {
 		return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonConfiguration, now)
 	}
+	configuration, valid := opsgenieConfiguration(destination.ProviderConfig)
+	if !valid {
+		return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonConfiguration, now)
+	}
 	result := adapter.Dispatch(ctx, pro_interfaces.NotificationDispatchRequest{
 		Event: notificationEvent, DestinationID: destination.ID, Provider: destination.Provider,
 		Environment: destination.Environment, Region: pro_interfaces.NotificationProviderRegion(delivery.DestinationRegion), IncidentKey: delivery.IncidentKey,
-		IdempotencyKey: delivery.IdempotencyKey, Credential: credential,
+		IdempotencyKey: delivery.IdempotencyKey, Credential: credential, Opsgenie: configuration, ProviderRequestID: delivery.ProviderRequestID,
 	})
 	return d.applyResult(delivery, result, now)
 }
@@ -213,6 +217,11 @@ func (d *notificationDeliveryDispatcher) applyResult(delivery db.NotificationDel
 		return d.repository.MarkNotificationDeliverySucceeded(delivery.ID, delivery.LeaseToken, now)
 	case pro_interfaces.NotificationDispatchPermanent:
 		return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonPermanent, now)
+	case pro_interfaces.NotificationDispatchPending:
+		if delivery.Attempts+1 >= notificationDispatchMaxAttempts || !pro_interfaces.ValidNotificationProviderRequestID(result.RequestID) {
+			return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonAttemptsExhausted, now)
+		}
+		return d.repository.StoreNotificationDeliveryPending(delivery.ID, delivery.LeaseToken, result.RequestID, d.backoff(delivery.Attempts+1), now)
 	case pro_interfaces.NotificationDispatchTransient, pro_interfaces.NotificationDispatchRateLimited:
 		if delivery.Attempts+1 >= notificationDispatchMaxAttempts {
 			return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonAttemptsExhausted, now)

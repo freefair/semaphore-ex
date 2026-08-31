@@ -50,10 +50,11 @@ func (a *dispatchAdapter) Dispatch(ctx context.Context, request pro_interfaces.N
 	return result
 }
 
-func TestNewNotificationDispatcherRegistersOnlyPagerDutyAdapter(t *testing.T) {
+func TestNewNotificationDispatcherRegistersFixedPagerDutyAndOpsgenieAdapters(t *testing.T) {
 	dispatcher := NewNotificationDispatcher(nil).(*notificationDeliveryDispatcher)
-	require.Len(t, dispatcher.adapters, 1)
+	require.Len(t, dispatcher.adapters, 2)
 	assert.NotNil(t, dispatcher.adapters[pagerDutyProviderName])
+	assert.NotNil(t, dispatcher.adapters[opsgenieProviderName])
 }
 
 func TestNotificationDispatcherRetriesWithoutChangingEventIdentity(t *testing.T) {
@@ -314,6 +315,30 @@ func TestNotificationDispatcherExhaustsBoundedTransientAttempts(t *testing.T) {
 	assert.Equal(t, 0, retried.Attempts)
 	assert.Equal(t, delivery.EventID, retried.EventID)
 	assert.Equal(t, delivery.IncidentKey, retried.IncidentKey)
+}
+
+func TestNotificationDispatcherPersistsPendingRequestAcrossRestartAndManualRetryClearsIt(t *testing.T) {
+	store, service, cipher, delivery := dispatchDeliveryFixture(t)
+	now := notificationDispatchTestNow(delivery)
+	first := newNotificationDeliveryDispatcher(store, cipher, func() time.Time { return now }, func() float64 { return .5 }, &dispatchAdapter{provider: "pagerduty", results: []pro_interfaces.NotificationDispatchResult{{Outcome: pro_interfaces.NotificationDispatchPending, RequestID: "request_1"}}})
+	require.NoError(t, first.DispatchOnce(context.Background()))
+	pending, err := store.GetNotificationDelivery(nil, delivery.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "request_1", pending.ProviderRequestID)
+	assert.Equal(t, db.NotificationDeliveryReasonProviderPending, pending.LastReason)
+
+	secondAdapter := &dispatchAdapter{provider: "pagerduty", results: []pro_interfaces.NotificationDispatchResult{{Outcome: pro_interfaces.NotificationDispatchPermanent}}}
+	second := newNotificationDeliveryDispatcher(store, cipher, func() time.Time { return pending.NextAttempt.Add(time.Second) }, func() float64 { return .5 }, secondAdapter)
+	require.NoError(t, second.DispatchOnce(context.Background()))
+	require.Len(t, secondAdapter.requests, 1)
+	assert.Equal(t, "request_1", secondAdapter.requests[0].ProviderRequestID)
+	failed, err := store.GetNotificationDelivery(nil, delivery.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.NotificationDeliveryFailed, failed.Status)
+
+	retried, err := service.RetryDelivery(context.Background(), nil, delivery.ID)
+	require.NoError(t, err)
+	assert.Empty(t, retried.ProviderRequestID)
 }
 
 func TestNotificationDispatcherFencesReclaimedDeliveryAndCloseCancelsWorker(t *testing.T) {
