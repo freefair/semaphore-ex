@@ -73,6 +73,41 @@ const (
 	NotificationProviderRegionEU NotificationProviderRegion = "eu"
 )
 
+// NotificationOpsgeniePriority is deliberately limited to Alert API v2's
+// documented priority values. An empty value means the adapter maps severity.
+type NotificationOpsgeniePriority string
+
+const (
+	NotificationOpsgeniePriorityP1 NotificationOpsgeniePriority = "P1"
+	NotificationOpsgeniePriorityP2 NotificationOpsgeniePriority = "P2"
+	NotificationOpsgeniePriorityP3 NotificationOpsgeniePriority = "P3"
+	NotificationOpsgeniePriorityP4 NotificationOpsgeniePriority = "P4"
+	NotificationOpsgeniePriorityP5 NotificationOpsgeniePriority = "P5"
+)
+
+type NotificationOpsgenieResponderType string
+
+const (
+	NotificationOpsgenieResponderTeam       NotificationOpsgenieResponderType = "team"
+	NotificationOpsgenieResponderUser       NotificationOpsgenieResponderType = "user"
+	NotificationOpsgenieResponderEscalation NotificationOpsgenieResponderType = "escalation"
+	NotificationOpsgenieResponderSchedule   NotificationOpsgenieResponderType = "schedule"
+)
+
+// NotificationOpsgenieResponder has exactly one provider-recognized identity.
+// It is a typed configuration field, not an arbitrary provider payload.
+type NotificationOpsgenieResponder struct {
+	Type     NotificationOpsgenieResponderType `json:"type"`
+	ID       string                            `json:"id,omitempty"`
+	Name     string                            `json:"name,omitempty"`
+	Username string                            `json:"username,omitempty"`
+}
+
+type NotificationOpsgenieConfiguration struct {
+	Priority   NotificationOpsgeniePriority    `json:"priority,omitempty"`
+	Responders []NotificationOpsgenieResponder `json:"responders,omitempty"`
+}
+
 // NotificationSource is the immutable source identity for one lifecycle.
 // Source IDs are intentionally identifier-shaped and never include names,
 // message text, credentials, request content, or provider payloads.
@@ -127,27 +162,29 @@ type NotificationRoutingRule struct {
 // NotificationDestinationInput carries write-only provider credential material.
 // Credential is never represented in a DTO and is retained on update when nil.
 type NotificationDestinationInput struct {
-	Name        string                     `json:"name"`
-	Provider    string                     `json:"provider"`
-	Environment string                     `json:"environment"`
-	Region      NotificationProviderRegion `json:"region"`
-	Credential  *string                    `json:"credential,omitempty"`
-	Enabled     bool                       `json:"enabled"`
+	Name        string                             `json:"name"`
+	Provider    string                             `json:"provider"`
+	Environment string                             `json:"environment"`
+	Region      NotificationProviderRegion         `json:"region"`
+	Credential  *string                            `json:"credential,omitempty"`
+	Opsgenie    *NotificationOpsgenieConfiguration `json:"opsgenie,omitempty"`
+	Enabled     bool                               `json:"enabled"`
 }
 
 type NotificationDestinationDTO struct {
-	ID                   int                        `json:"id"`
-	ProjectID            *int                       `json:"project_id,omitempty"`
-	Name                 string                     `json:"name"`
-	Provider             string                     `json:"provider"`
-	Environment          string                     `json:"environment"`
-	Region               NotificationProviderRegion `json:"region"`
-	CredentialConfigured bool                       `json:"credential_configured"`
-	Enabled              bool                       `json:"enabled"`
-	Paused               bool                       `json:"paused"`
-	Revision             int                        `json:"revision"`
-	CreatedAt            time.Time                  `json:"created_at"`
-	UpdatedAt            time.Time                  `json:"updated_at"`
+	ID                   int                                `json:"id"`
+	ProjectID            *int                               `json:"project_id,omitempty"`
+	Name                 string                             `json:"name"`
+	Provider             string                             `json:"provider"`
+	Environment          string                             `json:"environment"`
+	Region               NotificationProviderRegion         `json:"region"`
+	CredentialConfigured bool                               `json:"credential_configured"`
+	Opsgenie             *NotificationOpsgenieConfiguration `json:"opsgenie,omitempty"`
+	Enabled              bool                               `json:"enabled"`
+	Paused               bool                               `json:"paused"`
+	Revision             int                                `json:"revision"`
+	CreatedAt            time.Time                          `json:"created_at"`
+	UpdatedAt            time.Time                          `json:"updated_at"`
 }
 
 type NotificationRuleInput struct {
@@ -189,6 +226,7 @@ type NotificationDeliveryDTO struct {
 	DestinationRegion      NotificationProviderRegion    `json:"destination_region"`
 	IncidentKey            string                        `json:"incident_key"`
 	IdempotencyKey         string                        `json:"idempotency_key"`
+	ProviderRequestID      string                        `json:"provider_request_id,omitempty"`
 	Status                 db.NotificationDeliveryStatus `json:"status"`
 	Attempts               int                           `json:"attempts"`
 	NextAttempt            time.Time                     `json:"next_attempt"`
@@ -224,14 +262,16 @@ type NotificationEventHistoryDTO struct {
 // delivery is in flight; implementations must never persist or log either
 // credential material or provider response content.
 type NotificationDispatchRequest struct {
-	Event          NotificationEvent
-	DestinationID  int
-	Provider       string
-	Environment    string
-	Region         NotificationProviderRegion
-	IncidentKey    string
-	IdempotencyKey string
-	Credential     []byte
+	Event             NotificationEvent
+	DestinationID     int
+	Provider          string
+	Environment       string
+	Region            NotificationProviderRegion
+	IncidentKey       string
+	IdempotencyKey    string
+	Credential        []byte
+	Opsgenie          *NotificationOpsgenieConfiguration
+	ProviderRequestID string
 }
 
 // NotificationDispatchOutcome deliberately carries no HTTP status, headers,
@@ -244,11 +284,27 @@ const (
 	NotificationDispatchTransient   NotificationDispatchOutcome = "transient_failure"
 	NotificationDispatchPermanent   NotificationDispatchOutcome = "permanent_failure"
 	NotificationDispatchRateLimited NotificationDispatchOutcome = "rate_limited"
+	NotificationDispatchPending     NotificationDispatchOutcome = "pending"
 )
 
 type NotificationDispatchResult struct {
 	Outcome    NotificationDispatchOutcome
 	RetryAfter time.Duration
+	RequestID  string
+}
+
+// ValidNotificationProviderRequestID bounds the safe asynchronous operation
+// identity shared by provider adapters and the durable dispatcher.
+func ValidNotificationProviderRequestID(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' || character == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // NotificationProviderAdapter is registered by later provider slices. Slice
