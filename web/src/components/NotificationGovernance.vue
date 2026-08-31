@@ -66,6 +66,15 @@
                 <template v-slot:item.credential_configured="{ item }">
                   {{ item.credential_configured ? $t('configured') : $t('notConfigured') }}
                 </template>
+                <template v-slot:item.environment="{ item }">
+                  <div>{{ item.environment }}</div>
+                  <div
+                    v-if="item.provider === 'pagerduty' && item.region"
+                    class="text-caption text--secondary"
+                  >
+                    {{ $t('notificationRegion') }}: {{ providerRegionLabel(item.region) }}
+                  </div>
+                </template>
                 <template v-slot:item.actions="{ item }">
                   <div class="notification-governance-row-actions">
                     <v-btn icon small :aria-label="$t('edit')" @click="openDestination(item)">
@@ -314,7 +323,16 @@
                 data-testid="notification-history"
               >
                 <template v-slot:item.destination_name="{ item }">
-                  {{ item.destination_name }}
+                  <div>{{ item.destination_name }}</div>
+                  <div class="text-caption text--secondary">
+                    {{ item.destination_environment }}
+                    <template v-if="item.destination_region">
+                      · {{ providerRegionLabel(item.destination_region) }}
+                    </template>
+                  </div>
+                  <div class="text-caption text--secondary notification-governance-incident-key">
+                    {{ $t('notificationIncidentKey') }}: {{ item.incident_key }}
+                  </div>
                 </template>
                 <template v-slot:item.status="{ item }">
                   <v-chip x-small dark :color="deliveryStatusColor(item.status)">
@@ -398,9 +416,23 @@
               dense
               :disabled="destinationSaving"
             />
+            <v-select
+              v-if="destinationForm.provider.trim() === 'pagerduty'"
+              v-model="destinationForm.region"
+              :items="providerRegionOptions"
+              item-text="text"
+              item-value="value"
+              :label="$t('notificationRegion')"
+              :rules="requiredRules"
+              outlined
+              dense
+              :disabled="destinationSaving"
+              data-testid="notification-destination-region"
+            />
             <v-text-field
               v-model="destinationForm.credential"
               :label="$t('notificationCredential')"
+              :rules="destinationCredentialRules"
               type="password"
               autocomplete="new-password"
               :hint="$t('notificationCredentialPreserved')"
@@ -519,6 +551,7 @@ const newDestinationForm = () => ({
   name: '',
   provider: '',
   environment: '',
+  region: 'us',
   credential: '',
   enabled: true,
 });
@@ -628,6 +661,19 @@ export default {
         value: destination.id,
       }));
     },
+    providerRegionOptions() {
+      return [
+        { text: this.$t('notificationRegionUS'), value: 'us' },
+        { text: this.$t('notificationRegionEU'), value: 'eu' },
+      ];
+    },
+    destinationCredentialRules() {
+      if (this.destinationForm.provider.trim() !== 'pagerduty'
+        || this.destinationForm.credential === '') return [];
+      return [
+        (value) => value.length === 32 || this.$t('notificationPagerDutyKeyLength'),
+      ];
+    },
     sourceKindOptions() {
       return ['task', 'workflow', 'approval', 'system'];
     },
@@ -703,6 +749,7 @@ export default {
         name: destination.name,
         provider: destination.provider,
         environment: destination.environment,
+        region: destination.region || 'us',
         credential: '',
         enabled: !!destination.enabled,
       } : newDestinationForm();
@@ -725,6 +772,9 @@ export default {
           name: this.destinationForm.name.trim(),
           provider: this.destinationForm.provider.trim(),
           environment: this.destinationForm.environment.trim(),
+          region: this.destinationForm.provider.trim() === 'pagerduty'
+            ? this.destinationForm.region
+            : '',
           enabled: this.destinationForm.enabled,
         };
         if (this.destinationForm.credential !== '') {
@@ -943,6 +993,11 @@ export default {
       const destination = this.destinations.find((item) => item.id === id);
       return destination ? destination.name : `#${id}`;
     },
+    providerRegionLabel(region) {
+      if (region === 'us') return this.$t('notificationRegionUS');
+      if (region === 'eu') return this.$t('notificationRegionEU');
+      return '—';
+    },
     canTest(destination) {
       return destination.enabled && !destination.paused && destination.credential_configured;
     },
@@ -1041,6 +1096,10 @@ export default {
   display: flex;
   justify-content: flex-end;
   min-width: 108px;
+}
+
+.notification-governance-incident-key {
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 720px) {
