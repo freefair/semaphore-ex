@@ -45,6 +45,9 @@ type Task struct {
 	ProjectID  int `db:"project_id" json:"project_id"`
 
 	Status task_logger.TaskStatus `db:"status" json:"status"`
+	// NotificationRevision advances only for an emitted terminal lifecycle
+	// transition, making source-event identity durable across retries.
+	NotificationRevision int `db:"notification_revision" json:"-"`
 
 	// override variables
 	Playbook    string  `db:"playbook" json:"playbook"`

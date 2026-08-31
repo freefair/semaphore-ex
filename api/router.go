@@ -112,6 +112,7 @@ func Route(
 	logWriteService pro_interfaces.LogWriteService,
 	auditWebhookService pro_interfaces.AuditWebhookService,
 	appMetrics *metrics.Metrics,
+	notificationGovernanceServices ...pro_interfaces.NotificationGovernanceServiceFacade,
 ) *mux.Router {
 
 	projectController := &projects.ProjectController{ProjectService: projectService}
@@ -163,6 +164,13 @@ func Route(
 	configureCrossProjectTemplateAudit(crossProjectTemplateController, auditFacade)
 	workflowAudit := EnhancedWorkflowDeniedAuditMiddleware(auditFacade)
 	auditWebhookController := NewAuditWebhookController(auditWebhookService, auditFacade)
+	var notificationGovernanceService pro_interfaces.NotificationGovernanceServiceFacade
+	if len(notificationGovernanceServices) > 0 && notificationGovernanceServices[0] != nil {
+		notificationGovernanceService = notificationGovernanceServices[0]
+	} else {
+		notificationGovernanceService = proServer.NewNotificationGovernanceService(store)
+	}
+	notificationGovernanceController := NewNotificationGovernanceController(notificationGovernanceService)
 	projectRunnerController := proProjects.NewProjectRunnerController(subscriptionService, runnerService, capabilityProvider, auditFacade)
 	capabilityController := NewCapabilityController(capabilityFacade, auditFacade)
 	totpController := NewTOTPController(totpService, auditFacade)
@@ -297,6 +305,26 @@ func Route(
 
 	delegatedProjectRolesSnapshot := capabilityController.DelegatedProjectRolesSnapshotMiddleware
 	globalSystemPermission := globalPermissionMiddleware(db.CanManageGlobalSystem)
+	globalNotificationManage := func(handler http.Handler) http.Handler {
+		return delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
+			globalPermissionMiddleware(db.CanManageGlobalSystem)(handler),
+		))
+	}
+	globalNotificationRead := func(handler http.Handler) http.Handler {
+		return delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
+			globalPermissionMiddleware(db.CanReadGlobalAudit)(handler),
+		))
+	}
+	projectNotificationManage := func(handler http.Handler) http.Handler {
+		return projects.ProjectMiddleware(EnhancedProjectPermissionAuditMiddleware(auditFacade)(
+			projects.GetMustHavePermissionMiddleware(db.CanManageProjectResources)(handler),
+		))
+	}
+	projectNotificationRead := func(handler http.Handler) http.Handler {
+		return projects.ProjectMiddleware(EnhancedProjectPermissionAuditMiddleware(auditFacade)(
+			projects.GetMustHavePermissionMiddleware(db.CanViewProjectResources)(handler),
+		))
+	}
 	authenticatedAPI.Path("/subscription").Handler(
 		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
 			globalSystemPermission(http.HandlerFunc(subscriptionController.Activate))))).Methods("POST")
@@ -319,6 +347,43 @@ func Route(
 		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
 			globalPermissionMiddleware(db.CanReadGlobalAudit)(http.HandlerFunc(getGlobalAuditEvents)))),
 	).Methods("GET", "HEAD")
+
+	// Notification governance is deliberately independent from the legacy
+	// project alert endpoint. Global and project scopes have separate route
+	// middleware, so numeric IDs cannot cross a tenant boundary.
+	authenticatedAPI.Path("/notification-governance/destinations").Handler(globalNotificationManage(http.HandlerFunc(notificationGovernanceController.ListGlobalDestinations))).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/notification-governance/destinations").Handler(globalNotificationManage(http.HandlerFunc(notificationGovernanceController.CreateGlobalDestination))).Methods("POST")
+	authenticatedAPI.Path("/notification-governance/destinations/{destination_id}").Handler(globalNotificationManage(http.HandlerFunc(notificationGovernanceController.GetGlobalDestination))).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/notification-governance/destinations/{destination_id}").Handler(globalNotificationManage(http.HandlerFunc(notificationGovernanceController.UpdateGlobalDestination))).Methods("PUT")
+	authenticatedAPI.Path("/notification-governance/destinations/{destination_id}").Handler(globalNotificationManage(http.HandlerFunc(notificationGovernanceController.DeleteGlobalDestination))).Methods("DELETE")
+	authenticatedAPI.Path("/notification-governance/destinations/{destination_id}/pause").Handler(globalNotificationManage(http.HandlerFunc(notificationGovernanceController.PauseGlobalDestination))).Methods("POST")
+	authenticatedAPI.Path("/notification-governance/destinations/{destination_id}/resume").Handler(globalNotificationManage(http.HandlerFunc(notificationGovernanceController.ResumeGlobalDestination))).Methods("POST")
+	authenticatedAPI.Path("/notification-governance/destinations/{destination_id}/test").Handler(globalNotificationManage(http.HandlerFunc(notificationGovernanceController.TestGlobalDestination))).Methods("POST")
+	authenticatedAPI.Path("/notification-governance/rules").Handler(globalNotificationManage(http.HandlerFunc(notificationGovernanceController.ListGlobalRules))).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/notification-governance/rules").Handler(globalNotificationManage(http.HandlerFunc(notificationGovernanceController.CreateGlobalRule))).Methods("POST")
+	authenticatedAPI.Path("/notification-governance/rules/{rule_id}").Handler(globalNotificationManage(http.HandlerFunc(notificationGovernanceController.UpdateGlobalRule))).Methods("PUT")
+	authenticatedAPI.Path("/notification-governance/rules/{rule_id}").Handler(globalNotificationManage(http.HandlerFunc(notificationGovernanceController.DeleteGlobalRule))).Methods("DELETE")
+	authenticatedAPI.Path("/notification-governance/routing/preview").Handler(globalNotificationRead(http.HandlerFunc(notificationGovernanceController.PreviewGlobalRouting))).Methods("POST")
+	authenticatedAPI.Path("/notification-governance/deliveries").Handler(globalNotificationRead(http.HandlerFunc(notificationGovernanceController.GlobalHistory))).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/notification-governance/events").Handler(globalNotificationRead(http.HandlerFunc(notificationGovernanceController.GlobalEventHistory))).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/notification-governance/deliveries/{delivery_id}/retry").Handler(globalNotificationManage(http.HandlerFunc(notificationGovernanceController.RetryGlobalDelivery))).Methods("POST")
+
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/destinations").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.ListProjectDestinations))).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/destinations").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.CreateProjectDestination))).Methods("POST")
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/destinations/{destination_id}").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.GetProjectDestination))).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/destinations/{destination_id}").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.UpdateProjectDestination))).Methods("PUT")
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/destinations/{destination_id}").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.DeleteProjectDestination))).Methods("DELETE")
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/destinations/{destination_id}/pause").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.PauseProjectDestination))).Methods("POST")
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/destinations/{destination_id}/resume").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.ResumeProjectDestination))).Methods("POST")
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/destinations/{destination_id}/test").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.TestProjectDestination))).Methods("POST")
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/rules").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.ListProjectRules))).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/rules").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.CreateProjectRule))).Methods("POST")
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/rules/{rule_id}").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.UpdateProjectRule))).Methods("PUT")
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/rules/{rule_id}").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.DeleteProjectRule))).Methods("DELETE")
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/routing/preview").Handler(projectNotificationRead(http.HandlerFunc(notificationGovernanceController.PreviewProjectRouting))).Methods("POST")
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/deliveries").Handler(projectNotificationRead(http.HandlerFunc(notificationGovernanceController.ProjectHistory))).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/events").Handler(projectNotificationRead(http.HandlerFunc(notificationGovernanceController.ProjectEventHistory))).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/project/{project_id}/notification-governance/deliveries/{delivery_id}/retry").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.RetryProjectDelivery))).Methods("POST")
 
 	authenticatedAPI.Path("/users").Handler(
 		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(

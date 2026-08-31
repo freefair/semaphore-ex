@@ -197,6 +197,14 @@ func runService() {
 			log.WithError(err).Error("failed to stop audit webhook service")
 		}
 	}()
+	notificationGovernanceService := proServer.NewNotificationGovernanceService(store)
+	notificationDispatcher := proServer.NewNotificationDispatcher(store)
+	notificationDispatcher.Start()
+	defer func() {
+		if err := notificationDispatcher.Close(); err != nil {
+			log.WithError(err).Error("failed to stop notification dispatcher")
+		}
+	}()
 
 	taskPool := tasks.CreateTaskPool(
 		store,
@@ -360,6 +368,7 @@ func runService() {
 		logWriteService,
 		auditWebhookService,
 		appMetrics,
+		notificationGovernanceService,
 	)
 
 	route.Use(func(next http.Handler) http.Handler {

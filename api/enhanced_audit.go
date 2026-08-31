@@ -272,6 +272,8 @@ func enhancedAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {
 	method := r.Method
 	path := r.URL.Path
 	switch {
+	case strings.Contains(path, "/notification-governance"):
+		return notificationGovernanceAuditDescriptor(r), true
 	case strings.HasSuffix(path, "/audit-webhook/deliveries") && (method == http.MethodGet || method == http.MethodHead):
 		return webhookAuditDescriptor(pro_interfaces.AuditActionWebhookRead), true
 	case strings.HasSuffix(path, "/audit-webhook/test") && method == http.MethodPost:
@@ -382,6 +384,21 @@ func enhancedAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {
 		}
 	}
 	return enhancedAuditDescriptor{}, false
+}
+
+func notificationGovernanceAuditDescriptor(r *http.Request) enhancedAuditDescriptor {
+	action := pro_interfaces.AuditActionCapabilityConfigure
+	switch {
+	case strings.HasSuffix(r.URL.Path, "/routing/preview"), strings.HasSuffix(r.URL.Path, "/deliveries"), strings.HasSuffix(r.URL.Path, "/events"):
+		action = pro_interfaces.AuditActionCapabilityRead
+	case strings.HasSuffix(r.URL.Path, "/test"), strings.HasSuffix(r.URL.Path, "/retry"):
+		action = pro_interfaces.AuditActionCapabilityExecute
+	}
+	projectID, scoped := positiveMuxID(r, "project_id")
+	if !scoped {
+		return enhancedAuditDescriptor{Action: action, TargetType: pro_interfaces.AuditTargetNotification, TargetID: "global"}
+	}
+	return enhancedAuditDescriptor{Action: action, TargetType: pro_interfaces.AuditTargetNotification, TargetID: fmt.Sprintf("project:%d", projectID), ProjectID: &projectID}
 }
 
 func globalRoleAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {

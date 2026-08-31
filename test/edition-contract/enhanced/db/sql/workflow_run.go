@@ -510,20 +510,64 @@ func (d *WorkflowStoreImpl) RequestWorkflowRunStop(projectID int, runID int) (bo
 }
 
 func (d *WorkflowStoreImpl) UpdateWorkflowRunStatusUnless(run db.WorkflowRun, excluded []db.WorkflowRunStatus) (bool, error) {
-	query := "update project__workflow_run set status=?, reason=?, `end`=? where project_id=? and id=?"
-	args := []any{run.Status, run.Reason, run.End, run.ProjectID, run.ID}
+	tx, err := d.connection.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var current db.WorkflowRun
+	if err = tx.SelectOne(&current, d.connection.PrepareQuery("select * from project__workflow_run where project_id=? and id=?"), run.ProjectID, run.ID); err != nil {
+		return false, err
+	}
+	query := "update project__workflow_run set status=?, reason=?, `end`=?"
+	args := []any{run.Status, run.Reason, run.End}
+	notify := current.Status != run.Status && run.Status.IsFinished()
+	if notify {
+		query += ", notification_revision=notification_revision+1"
+	}
+	query += " where project_id=? and id=?"
+	args = append(args, run.ProjectID, run.ID)
 	if len(excluded) > 0 {
 		query += " and status not in (" + strings.TrimRight(strings.Repeat("?,", len(excluded)), ",") + ")"
 		for _, status := range excluded {
 			args = append(args, status)
 		}
 	}
-	result, err := d.connection.Exec(query, args...)
+	result, err := d.connection.ExecTx(tx, d.connection.PrepareQuery(query), args...)
 	if err != nil {
 		return false, err
 	}
 	updated, err := result.RowsAffected()
-	return updated == 1, err
+	if err != nil || updated != 1 {
+		return updated == 1, err
+	}
+	if notify {
+		run.NotificationRevision = current.NotificationRevision + 1
+		if err = d.notificationRouter.RouteTx(tx, workflowTerminalNotification(run)); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit()
+}
+
+func workflowTerminalNotification(run db.WorkflowRun) pro_interfaces.NotificationEvent {
+	severity, action, status := pro_interfaces.NotificationSeverityWarning, pro_interfaces.NotificationLifecycleUpdate, "stopped"
+	switch run.Status {
+	case db.WorkflowRunSucceeded, db.WorkflowRunSuccess:
+		severity, action, status = pro_interfaces.NotificationSeverityInfo, pro_interfaces.NotificationLifecycleResolve, "succeeded"
+	case db.WorkflowRunFailed, db.WorkflowRunBlocked:
+		severity, action, status = pro_interfaces.NotificationSeverityError, pro_interfaces.NotificationLifecycleTrigger, string(run.Status)
+	case db.WorkflowRunCanceled, db.WorkflowRunStopped:
+		status = string(run.Status)
+	}
+	projectID, workflowID, runID := run.ProjectID, run.WorkflowTemplateID, run.ID
+	return pro_interfaces.NotificationEvent{
+		Scope: pro_interfaces.NotificationScopeProject, ProjectID: &projectID,
+		Source:      pro_interfaces.NotificationSource{Kind: pro_interfaces.NotificationSourceWorkflow, ID: fmt.Sprintf("workflow_run:%d", run.ID)},
+		LifecycleID: fmt.Sprintf("workflow:%d", run.WorkflowTemplateID), SourceRevision: run.NotificationRevision,
+		Severity: severity, LifecycleAction: action,
+		Details: pro_interfaces.NotificationDetails{WorkflowID: &workflowID, WorkflowRunID: &runID, Status: status},
+	}
 }
 
 func (d *WorkflowStoreImpl) SetWorkflowRunRootTask(projectID int, runID int, taskID int) (bool, error) {
@@ -631,10 +675,29 @@ func (d *WorkflowStoreImpl) OpenWorkflowApproval(approval db.WorkflowApproval) (
 	if err != nil {
 		return db.WorkflowApproval{}, false, err
 	}
+	var run db.WorkflowRun
+	if err = tx.SelectOne(&run, d.connection.PrepareQuery("select * from project__workflow_run where project_id=? and id=?"), approval.ProjectID, approval.WorkflowRunID); err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	approval.WorkflowTemplateID = run.WorkflowTemplateID
+	approval.NotificationRevision = 1
+	if _, err = d.connection.ExecTx(tx, d.connection.PrepareQuery("update project__workflow_approval set notification_revision=1 where id=?"), approval.ID); err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
+	if err = d.notificationRouter.RouteTx(tx, workflowApprovalNotification(approval, pro_interfaces.NotificationSeverityWarning, pro_interfaces.NotificationLifecycleTrigger, "pending")); err != nil {
+		return db.WorkflowApproval{}, false, err
+	}
 	if err = tx.Commit(); err != nil {
 		return db.WorkflowApproval{}, false, err
 	}
 	return approval, true, nil
+}
+
+func workflowApprovalNotification(approval db.WorkflowApproval, severity pro_interfaces.NotificationSeverity, action pro_interfaces.NotificationLifecycleAction, status string) pro_interfaces.NotificationEvent {
+	projectID, workflowID, runID, approvalID := approval.ProjectID, approval.WorkflowTemplateID, approval.WorkflowRunID, approval.ID
+	return pro_interfaces.NotificationEvent{Scope: pro_interfaces.NotificationScopeProject, ProjectID: &projectID,
+		Source: pro_interfaces.NotificationSource{Kind: pro_interfaces.NotificationSourceApproval, ID: fmt.Sprintf("approval:%d", approval.ID)}, LifecycleID: fmt.Sprintf("approval:%d", approval.ID), SourceRevision: approval.NotificationRevision,
+		Severity: severity, LifecycleAction: action, Details: pro_interfaces.NotificationDetails{WorkflowID: &workflowID, WorkflowRunID: &runID, ApprovalID: &approvalID, Status: status}}
 }
 
 func decodeWorkflowApprovalPolicy(approval *db.WorkflowApproval) error {
@@ -826,7 +889,7 @@ func finalizeWorkflowApprovalTx(
 	source db.WorkflowApprovalDecisionSource,
 ) error {
 	result, err := tx.Exec(d.connection.PrepareQuery(
-		"update project__workflow_approval set status=?, resolved=?, resolved_by_user_id=?, decision_comment=?, decision_source=? where id=? and status=?"),
+		"update project__workflow_approval set status=?, resolved=?, resolved_by_user_id=?, decision_comment=?, decision_source=?, notification_revision=notification_revision+1 where id=? and status=?"),
 		status, at, actorID, comment, source, approval.ID, db.WorkflowApprovalPending,
 	)
 	if err != nil {
@@ -836,9 +899,19 @@ func finalizeWorkflowApprovalTx(
 	if err != nil || updated != 1 {
 		return errors.New("workflow approval terminal transition conflict")
 	}
+	var workflowRun db.WorkflowRun
+	if err = tx.SelectOne(&workflowRun, d.connection.PrepareQuery("select * from project__workflow_run where project_id=? and id=?"), approval.ProjectID, approval.WorkflowRunID); err != nil {
+		return err
+	}
 	approval.Status, approval.Resolved, approval.ResolvedByUserID = status, &at, actorID
 	approval.DecisionComment, approval.DecisionSource = comment, source
-	return nil
+	approval.WorkflowTemplateID = workflowRun.WorkflowTemplateID
+	approval.NotificationRevision++
+	severity, action, notificationStatus := pro_interfaces.NotificationSeverityError, pro_interfaces.NotificationLifecycleUpdate, string(status)
+	if status == db.WorkflowApprovalApproved {
+		severity, action, notificationStatus = pro_interfaces.NotificationSeverityInfo, pro_interfaces.NotificationLifecycleResolve, "approved"
+	}
+	return d.notificationRouter.RouteTx(tx, workflowApprovalNotification(*approval, severity, action, notificationStatus))
 }
 
 func isWorkflowApprovalContributionDuplicate(err error) bool {
@@ -977,8 +1050,20 @@ func (d *WorkflowStoreImpl) ResolveWorkflowApprovalIfPending(approval db.Workflo
 	if approval.Resolved == nil || len(approval.DecisionComment) > db.MaxWorkflowApprovalCommentBytes {
 		return false, errors.New("workflow approval decision is invalid")
 	}
-	result, err := d.connection.Exec(
-		"update project__workflow_approval set status=?, resolved=?, resolved_by_user_id=?, decision_comment=?, decision_source=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=?",
+	tx, err := d.connection.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var current db.WorkflowApproval
+	if err = tx.SelectOne(&current, d.connection.PrepareQuery("select * from project__workflow_approval where project_id=? and workflow_run_id=? and workflow_node_id=? and status=?"), approval.ProjectID, approval.WorkflowRunID, approval.WorkflowNodeID, db.WorkflowApprovalPending); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	result, err := d.connection.ExecTx(tx, d.connection.PrepareQuery(
+		"update project__workflow_approval set status=?, resolved=?, resolved_by_user_id=?, decision_comment=?, decision_source=?, notification_revision=notification_revision+1 where project_id=? and workflow_run_id=? and workflow_node_id=? and status=?"),
 		approval.Status, approval.Resolved, approval.ResolvedByUserID, approval.DecisionComment, approval.DecisionSource,
 		approval.ProjectID, approval.WorkflowRunID, approval.WorkflowNodeID, db.WorkflowApprovalPending,
 	)
@@ -986,7 +1071,22 @@ func (d *WorkflowStoreImpl) ResolveWorkflowApprovalIfPending(approval db.Workflo
 		return false, err
 	}
 	updated, err := result.RowsAffected()
-	return updated == 1, err
+	if err != nil || updated != 1 {
+		return updated == 1, err
+	}
+	var workflowRun db.WorkflowRun
+	if err = tx.SelectOne(&workflowRun, d.connection.PrepareQuery("select * from project__workflow_run where project_id=? and id=?"), approval.ProjectID, approval.WorkflowRunID); err != nil {
+		return false, err
+	}
+	approval.ID, approval.WorkflowTemplateID, approval.NotificationRevision = current.ID, workflowRun.WorkflowTemplateID, current.NotificationRevision+1
+	severity, action, status := pro_interfaces.NotificationSeverityError, pro_interfaces.NotificationLifecycleUpdate, string(approval.Status)
+	if approval.Status == db.WorkflowApprovalApproved {
+		severity, action, status = pro_interfaces.NotificationSeverityInfo, pro_interfaces.NotificationLifecycleResolve, "approved"
+	}
+	if err = d.notificationRouter.RouteTx(tx, workflowApprovalNotification(approval, severity, action, status)); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 func (d *WorkflowStoreImpl) FinalizeWorkflowRunApprovalNode(projectID int, runID int, nodeID int, status db.WorkflowRunNodeStatus, reason string, resultJSON string, at time.Time) (bool, error) {
@@ -1199,6 +1299,16 @@ func (d *WorkflowStoreImpl) UpdateWorkflowRunStatusUnlessFenced(lease pro_interf
 	if len(excluded) == 0 {
 		return false, errors.New("workflow run status exclusion is required")
 	}
+	tx, err := d.connection.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var current db.WorkflowRun
+	if err = tx.SelectOne(&current, d.connection.PrepareQuery("select * from project__workflow_run where project_id=? and id=?"), run.ProjectID, run.ID); err != nil {
+		return false, err
+	}
+	notify := current.Status != run.Status && run.Status.IsFinished()
 	placeholders := make([]string, len(excluded))
 	args := []any{run.Status, run.Reason, run.Start, run.End, run.RootTaskID, run.ProjectID, run.ID}
 	for index, status := range excluded {
@@ -1206,15 +1316,28 @@ func (d *WorkflowStoreImpl) UpdateWorkflowRunStatusUnlessFenced(lease pro_interf
 		args = append(args, status)
 	}
 	args = append(args, lease.ProjectID, lease.WorkflowRunID, lease.OwnerBootID, lease.FencingToken)
-	result, err := d.connection.Exec(
-		"update project__workflow_run set status=?, reason=?, start=?, `end`=?, root_task_id=? where project_id=? and id=? and status not in ("+strings.Join(placeholders, ",")+") and exists (select 1 from cluster__workflow_reconciliation where project_id=? and workflow_run_id=? and owner_boot_id=? and fencing_token=? and lease_expires_at>CURRENT_TIMESTAMP)",
+	query := "update project__workflow_run set status=?, reason=?, start=?, `end`=?, root_task_id=?"
+	if notify {
+		query += ", notification_revision=notification_revision+1"
+	}
+	query += " where project_id=? and id=? and status not in (" + strings.Join(placeholders, ",") + ") and exists (select 1 from cluster__workflow_reconciliation where project_id=? and workflow_run_id=? and owner_boot_id=? and fencing_token=? and lease_expires_at>CURRENT_TIMESTAMP)"
+	result, err := d.connection.ExecTx(tx, d.connection.PrepareQuery(query),
 		args...,
 	)
 	if err != nil {
 		return false, err
 	}
 	updated, err := result.RowsAffected()
-	return updated == 1, err
+	if err != nil || updated != 1 {
+		return updated == 1, err
+	}
+	if notify {
+		run.NotificationRevision = current.NotificationRevision + 1
+		if err = d.notificationRouter.RouteTx(tx, workflowTerminalNotification(run)); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit()
 }
 
 func (d *WorkflowStoreImpl) AttachWorkflowRunNodeTask(projectID int, runID int, nodeID int, taskID int) (bool, error) {

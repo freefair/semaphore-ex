@@ -122,6 +122,7 @@ const (
 	AuditTargetWebhook              AuditTargetType = "audit_webhook"
 	AuditTargetLDAPGroupMapping     AuditTargetType = "ldap_group_mapping"
 	AuditTargetOIDCGroupMapping     AuditTargetType = "oidc_group_mapping"
+	AuditTargetNotification         AuditTargetType = "notification_governance"
 )
 
 const (
@@ -251,6 +252,7 @@ var (
 	workflowRunTargetPattern      = regexp.MustCompile(`^run:[1-9][0-9]*$`)
 	workflowApprovalTargetPattern = regexp.MustCompile(`^approval:[1-9][0-9]*$`)
 	workflowInboxTargetPattern    = regexp.MustCompile(`^project:[1-9][0-9]*$`)
+	notificationTargetPattern     = regexp.MustCompile(`^(?:global|project:[1-9][0-9]*)$`)
 	workflowRoleIDPattern         = regexp.MustCompile(`^(?:builtin:(?:owner|manager|task_runner|guest)|role:[a-z0-9][a-z0-9_-]{0,63})$`)
 )
 
@@ -384,6 +386,14 @@ func validAuditTarget(event AuditEvent) bool {
 		return event.ProjectID == nil && ldapGroupTargetPattern.MatchString(event.TargetID)
 	case AuditTargetOIDCGroupMapping:
 		return event.ProjectID == nil && oidcGroupTargetPattern.MatchString(event.TargetID)
+	case AuditTargetNotification:
+		if !notificationTargetPattern.MatchString(event.TargetID) {
+			return false
+		}
+		if event.ProjectID == nil {
+			return event.TargetID == "global"
+		}
+		return event.TargetID == "project:"+strconv.Itoa(*event.ProjectID)
 	case AuditTargetWorkflow:
 		return validScopedProjectAuditTarget(event, workflowTargetPattern)
 	case AuditTargetWorkflowRun:

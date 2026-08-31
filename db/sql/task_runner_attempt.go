@@ -244,11 +244,22 @@ func (d *SqlDb) updateTaskRunner(
 	if err != nil {
 		return false, err
 	}
-	query :=
-		"update task set status=?, start=?, `end`=?, commit_hash=?, commit_message=?, runner_id=?, " +
-			"runner_id_snapshot=?, runner_name=?, runner_assigned_at=?, message=?, recovery_reason=?, placement_decision=? " +
-			"where id=? and project_id=? and status=? and assignment_generation=? " +
-			"and (runner_id=? or (runner_id is null and (runner_id_snapshot=? or assignment_generation=0)))"
+	var current db.Task
+	if err = tx.SelectOne(&current, d.PrepareQuery("select * from task where id=? and project_id=?"), task.ID, task.ProjectID); err != nil {
+		_ = tx.Rollback()
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	notify := current.Status != task.Status && task.Status.IsFinished()
+	query := "update task set status=?, start=?, `end`=?, commit_hash=?, commit_message=?, runner_id=?, " +
+		"runner_id_snapshot=?, runner_name=?, runner_assigned_at=?, message=?, recovery_reason=?, placement_decision=?"
+	if notify {
+		query += ", notification_revision=notification_revision+1"
+	}
+	query += " where id=? and project_id=? and status=? and assignment_generation=? " +
+		"and (runner_id=? or (runner_id is null and (runner_id_snapshot=? or assignment_generation=0)))"
 	args := []any{
 		task.Status, task.Start, task.End, task.CommitHash, task.CommitMessage, task.RunnerID,
 		task.RunnerSnapshotID, task.RunnerName, task.RunnerAssignedAt, task.Message, task.RecoveryReason,
@@ -294,6 +305,13 @@ func (d *SqlDb) updateTaskRunner(
 			return false, fmt.Errorf(
 				"runner attempt %d for task %d was not active", expectedGeneration, task.ID,
 			)
+		}
+	}
+	if notify {
+		task.NotificationRevision = current.NotificationRevision + 1
+		if err = d.routeNotificationTx(tx, taskTerminalNotification(task)); err != nil {
+			_ = tx.Rollback()
+			return false, err
 		}
 	}
 	if err = tx.Commit(); err != nil {
