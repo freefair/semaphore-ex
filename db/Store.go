@@ -679,6 +679,13 @@ type RoleRepository interface {
 	GetEffectiveGlobalPermissions(userID int) (GlobalPermission, error)
 }
 
+// ProjectWorkflowRoleIdentityResolver resolves the single current project
+// role and assignment provenance for a workflow authorization decision. It
+// deliberately excludes global roles and legacy role-slug fallbacks.
+type ProjectWorkflowRoleIdentityResolver interface {
+	ResolveProjectWorkflowRoleIdentity(projectID int, userID int) (ProjectWorkflowRoleIdentity, error)
+}
+
 // Store is the main interface that aggregates all specialized interfaces
 type Store interface {
 	ConnectionManager

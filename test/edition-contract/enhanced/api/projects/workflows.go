@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
+	coreprojects "github.com/semaphoreui/semaphore/api/projects"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pkg/random"
@@ -27,11 +28,43 @@ type workflowController struct {
 }
 
 type workflowRunDetails struct {
-	Run       workflowRunView           `json:"run"`
-	Workflow  workflowRunDefinitionView `json:"workflow"`
-	Templates []workflowRunTemplateView `json:"templates"`
-	Nodes     []workflowRunNodeDetails  `json:"nodes"`
-	Approvals []db.WorkflowApproval     `json:"approvals"`
+	Run             workflowRunView             `json:"run"`
+	Workflow        workflowRunDefinitionView   `json:"workflow"`
+	Templates       []workflowRunTemplateView   `json:"templates"`
+	Nodes           []workflowRunNodeDetails    `json:"nodes"`
+	Approvals       []workflowApprovalView      `json:"approvals"`
+	EffectiveAccess workflowEffectiveAccessView `json:"effective_access"`
+}
+
+type workflowResponse struct {
+	db.WorkflowTemplate
+	EffectiveAccess workflowEffectiveAccessView `json:"effective_access"`
+}
+
+type workflowEffectiveAccessView struct {
+	View       bool `json:"view"`
+	Edit       bool `json:"edit"`
+	Start      bool `json:"start"`
+	Stop       bool `json:"stop"`
+	Administer bool `json:"administer"`
+}
+
+type workflowApprovalView struct {
+	db.WorkflowApproval
+	Eligible                 bool                        `json:"eligible"`
+	PolicyRevision           int                         `json:"policy_revision"`
+	ContributionCount        int                         `json:"contribution_count"`
+	MinimumDistinctApprovers int                         `json:"minimum_distinct_approvers"`
+	Mode                     db.WorkflowApprovalRoleMode `json:"mode"`
+}
+
+type workflowApprovalInboxView struct {
+	db.WorkflowApproval
+	Eligible                 bool                        `json:"eligible"`
+	PolicyRevision           int                         `json:"policy_revision"`
+	ContributionCount        int                         `json:"contribution_count"`
+	MinimumDistinctApprovers int                         `json:"minimum_distinct_approvers"`
+	Mode                     db.WorkflowApprovalRoleMode `json:"mode"`
 }
 
 type workflowRunNodeDetails struct {
@@ -138,12 +171,45 @@ func NewWorkflowController(
 
 func (c *workflowController) GetWorkflows(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
-	workflows, err := c.definitionService.List(project.ID, helpers.QueryParams(r.URL))
+	workflows, err := c.definitionService.List(project.ID, helpers.QueryParams(r.URL), helpers.UserFromContext(r))
 	if err != nil {
 		helpers.WriteError(w, err)
 		return
 	}
-	helpers.WriteJSON(w, http.StatusOK, workflows)
+	if userValue, found := helpers.GetOkFromContext(r, "user"); found {
+		user, valid := userValue.(*db.User)
+		if !valid || user == nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if !user.Admin {
+			storeValue, storeAvailable := helpers.GetOkFromContext(r, "store")
+			store, ok := storeValue.(pro_interfaces.WorkflowAuthorizationIdentityStore)
+			if !storeAvailable {
+				ok = false
+			}
+			if !ok {
+				// Unit-only controller invocations historically omit a store. Real
+				// routed requests always carry one and fail closed below.
+				if storeAvailable {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+			} else {
+				state, stateErr := pro_interfaces.ResolveWorkflowAuthorizationState(store, project.ID, user.ID)
+				if stateErr != nil {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				workflows = pro_interfaces.FilterWorkflowTemplatesByAccess(workflows, state.Identity, state.KnownRoles)
+			}
+		}
+	}
+	result := make([]workflowResponse, len(workflows))
+	for index := range workflows {
+		result[index] = workflowResponse{WorkflowTemplate: workflows[index], EffectiveAccess: workflowEffectiveAccess(r, workflows[index])}
+	}
+	helpers.WriteJSON(w, http.StatusOK, result)
 }
 
 func (c *workflowController) AddWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -152,9 +218,9 @@ func (c *workflowController) AddWorkflow(w http.ResponseWriter, r *http.Request)
 	if !bindWorkflowDefinition(w, r, &workflow) {
 		return
 	}
-	created, validation, err := c.definitionService.Create(project.ID, workflow)
+	created, validation, err := c.definitionService.Create(project.ID, workflow, helpers.UserFromContext(r))
 	if err != nil {
-		writeWorkflowError(w, err, c.definitionService, project.ID, 0)
+		writeWorkflowError(w, err, c.definitionService, project.ID, 0, helpers.UserFromContext(r))
 		return
 	}
 	if !validation.Valid {
@@ -170,7 +236,7 @@ func (c *workflowController) ValidateWorkflow(w http.ResponseWriter, r *http.Req
 	if !bindWorkflowDefinition(w, r, &workflow) {
 		return
 	}
-	result, err := c.definitionService.Validate(project.ID, workflow)
+	result, err := c.definitionService.Validate(project.ID, workflow, helpers.UserFromContext(r))
 	if err != nil {
 		helpers.WriteError(w, err)
 		return
@@ -180,7 +246,7 @@ func (c *workflowController) ValidateWorkflow(w http.ResponseWriter, r *http.Req
 
 func (c *workflowController) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
-	helpers.WriteJSON(w, http.StatusOK, workflow)
+	helpers.WriteJSON(w, http.StatusOK, workflowResponse{WorkflowTemplate: workflow, EffectiveAccess: workflowEffectiveAccess(r, workflow)})
 }
 
 func (c *workflowController) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -190,9 +256,9 @@ func (c *workflowController) UpdateWorkflow(w http.ResponseWriter, r *http.Reque
 	if !bindWorkflowDefinition(w, r, &workflow) {
 		return
 	}
-	updated, validation, err := c.definitionService.Update(project.ID, current.ID, workflow)
+	updated, validation, err := c.definitionService.Update(project.ID, current.ID, workflow, helpers.UserFromContext(r))
 	if err != nil {
-		writeWorkflowError(w, err, c.definitionService, project.ID, current.ID)
+		writeWorkflowError(w, err, c.definitionService, project.ID, current.ID, helpers.UserFromContext(r))
 		return
 	}
 	if !validation.Valid {
@@ -228,7 +294,7 @@ func bindWorkflowDefinition(w http.ResponseWriter, r *http.Request, workflow *db
 func (c *workflowController) RemoveWorkflow(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
-	if err := c.definitionService.Delete(project.ID, workflow.ID); err != nil {
+	if err := c.definitionService.Delete(project.ID, workflow.ID, helpers.UserFromContext(r)); err != nil {
 		helpers.WriteError(w, err)
 		return
 	}
@@ -247,13 +313,14 @@ func writeWorkflowError(
 	service pro_interfaces.WorkflowDefinitionService,
 	projectID int,
 	workflowID int,
+	actor *db.User,
 ) {
 	if errors.Is(err, pro_interfaces.ErrWorkflowRevisionConflict) {
 		response := map[string]any{
 			"code":    "WORKFLOW_REVISION_CONFLICT",
 			"message": "The workflow was changed by another editor. Reload the current definition before saving again.",
 		}
-		if current, getErr := service.Get(projectID, workflowID); getErr == nil {
+		if current, getErr := service.Get(projectID, workflowID, actor); getErr == nil {
 			response["current"] = current
 		}
 		helpers.WriteJSON(w, http.StatusConflict, response)
@@ -338,6 +405,10 @@ func (c *workflowController) GetWorkflowRun(w http.ResponseWriter, r *http.Reque
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
 	run := helpers.GetFromContext(r, "workflow_run").(db.WorkflowRun)
+	if !c.canReadWorkflowRun(r, run) {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 	if err := c.workflowService.ProgressWorkflowRun(project.ID, run.ID, helpers.UserFromContext(r)); err != nil {
 		helpers.WriteError(w, err)
 		return
@@ -347,7 +418,7 @@ func (c *workflowController) GetWorkflowRun(w http.ResponseWriter, r *http.Reque
 		helpers.WriteError(w, err)
 		return
 	}
-	details, err := c.workflowRunDetails(current)
+	details, err := c.workflowRunDetails(r, current)
 	if err != nil {
 		helpers.WriteError(w, err)
 		return
@@ -355,7 +426,7 @@ func (c *workflowController) GetWorkflowRun(w http.ResponseWriter, r *http.Reque
 	helpers.WriteJSON(w, http.StatusOK, details)
 }
 
-func (c *workflowController) workflowRunDetails(run db.WorkflowRun) (workflowRunDetails, error) {
+func (c *workflowController) workflowRunDetails(r *http.Request, run db.WorkflowRun) (workflowRunDetails, error) {
 	tasks, err := c.workflowManager.GetWorkflowRunTasks(run.ProjectID, run.ID, db.RetrieveQueryParams{})
 	if err != nil {
 		return workflowRunDetails{}, err
@@ -400,13 +471,55 @@ func (c *workflowController) workflowRunDetails(run db.WorkflowRun) (workflowRun
 		}
 		nodes = append(nodes, detail)
 	}
+	eligibleApprovals := make(map[int]bool)
+	if c.workflowService != nil {
+		inbox, inboxErr := c.workflowService.GetWorkflowApprovalInbox(run.ProjectID, helpers.UserFromContext(r))
+		if inboxErr == nil {
+			for _, approval := range inbox {
+				if approval.Status == db.WorkflowApprovalPending {
+					eligibleApprovals[approval.ID] = true
+				}
+			}
+		}
+	}
+	approvalViews := make([]workflowApprovalView, len(approvals))
+	contributionStore, _ := c.workflowManager.(db.WorkflowApprovalContributionStore)
+	for index, approval := range approvals {
+		approvalViews[index] = workflowApprovalView{
+			WorkflowApproval:         approval,
+			Eligible:                 eligibleApprovals[approval.ID],
+			PolicyRevision:           approval.RolePolicySnapshotRevision,
+			MinimumDistinctApprovers: approval.RolePolicySnapshot.Policy.MinimumDistinctApprovers,
+			Mode:                     approval.RolePolicySnapshot.Policy.Mode,
+		}
+		if contributionStore != nil {
+			contributions, contributionErr := contributionStore.GetWorkflowApprovalContributions(approval.ID)
+			if contributionErr != nil {
+				return workflowRunDetails{}, contributionErr
+			}
+			approvalViews[index].ContributionCount = len(contributions)
+		}
+	}
 	return workflowRunDetails{
 		Run:       newWorkflowRunView(run),
 		Workflow:  newWorkflowRunDefinitionView(run.DefinitionSnapshot),
 		Templates: templates,
 		Nodes:     nodes,
-		Approvals: approvals,
+		Approvals: approvalViews, EffectiveAccess: workflowEffectiveAccess(r, run.DefinitionSnapshot),
 	}, nil
+}
+
+func workflowEffectiveAccess(r *http.Request, workflow db.WorkflowTemplate) workflowEffectiveAccessView {
+	if _, ok := helpers.GetOkFromContext(r, "store"); !ok {
+		return workflowEffectiveAccessView{}
+	}
+	permissions := []pro_interfaces.PermissionID{pro_interfaces.PermissionViewWorkflow, pro_interfaces.PermissionEditWorkflow, pro_interfaces.PermissionStartWorkflow, pro_interfaces.PermissionStopWorkflow, pro_interfaces.PermissionAdministerWorkflow}
+	values := make([]bool, len(permissions))
+	for index, permission := range permissions {
+		view, allowed, err := coreprojects.AuthorizeWorkflowRequest(r, workflow, permission)
+		values[index] = err == nil && view && allowed
+	}
+	return workflowEffectiveAccessView{View: values[0], Edit: values[1], Start: values[2], Stop: values[3], Administer: values[4]}
 }
 
 func newWorkflowRunView(run db.WorkflowRun) workflowRunView {
@@ -488,6 +601,10 @@ func newWorkflowRunNodeView(node db.WorkflowNode) workflowRunNodeView {
 func (c *workflowController) GetWorkflowRunArtifacts(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	run := helpers.GetFromContext(r, "workflow_run").(db.WorkflowRun)
+	if !c.canReadWorkflowRun(r, run) {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 	artifacts, err := c.workflowService.GetWorkflowRunArtifacts(project.ID, run.ID, nil)
 	if err != nil {
 		helpers.WriteError(w, err)
@@ -499,12 +616,42 @@ func (c *workflowController) GetWorkflowRunArtifacts(w http.ResponseWriter, r *h
 func (c *workflowController) GetWorkflowApprovals(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	run := helpers.GetFromContext(r, "workflow_run").(db.WorkflowRun)
+	if !c.canReadWorkflowRun(r, run) {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 	approvals, err := c.workflowManager.GetWorkflowApprovals(project.ID, run.ID)
 	if err != nil {
 		helpers.WriteError(w, err)
 		return
 	}
 	helpers.WriteJSON(w, http.StatusOK, approvals)
+}
+
+// canReadWorkflowRun gives a current eligible pending approver a bounded view
+// of the one run they must decide on. It never grants workflow list/detail
+// visibility and relies on the service's live eligibility filtering.
+func (c *workflowController) canReadWorkflowRun(r *http.Request, run db.WorkflowRun) bool {
+	if _, ok := helpers.GetOkFromContext(r, "store"); !ok {
+		// Unit handlers may be invoked without router middleware; production
+		// requests always carry the store and take the checks below.
+		return true
+	}
+	viewAllowed, _, err := coreprojects.AuthorizeWorkflowRequest(r, run.DefinitionSnapshot, pro_interfaces.PermissionViewWorkflow)
+	if err == nil && viewAllowed {
+		return true
+	}
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	approvals, inboxErr := c.workflowService.GetWorkflowApprovalInbox(project.ID, helpers.UserFromContext(r))
+	if inboxErr != nil {
+		return false
+	}
+	for _, approval := range approvals {
+		if approval.WorkflowRunID == run.ID && approval.Status == db.WorkflowApprovalPending {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *workflowController) GetWorkflowApprovalInbox(w http.ResponseWriter, r *http.Request) {
@@ -514,7 +661,25 @@ func (c *workflowController) GetWorkflowApprovalInbox(w http.ResponseWriter, r *
 		helpers.WriteError(w, err)
 		return
 	}
-	helpers.WriteJSON(w, http.StatusOK, approvals)
+	contributionStore, _ := c.workflowManager.(db.WorkflowApprovalContributionStore)
+	result := make([]workflowApprovalInboxView, len(approvals))
+	for index, approval := range approvals {
+		result[index] = workflowApprovalInboxView{
+			WorkflowApproval: approval, Eligible: approval.Status == db.WorkflowApprovalPending,
+			PolicyRevision:           approval.RolePolicySnapshotRevision,
+			MinimumDistinctApprovers: approval.RolePolicySnapshot.Policy.MinimumDistinctApprovers,
+			Mode:                     approval.RolePolicySnapshot.Policy.Mode,
+		}
+		if contributionStore != nil {
+			contributions, contributionErr := contributionStore.GetWorkflowApprovalContributions(approval.ID)
+			if contributionErr != nil {
+				helpers.WriteError(w, contributionErr)
+				return
+			}
+			result[index].ContributionCount = len(contributions)
+		}
+	}
+	helpers.WriteJSON(w, http.StatusOK, result)
 }
 
 func (c *workflowController) ResolveWorkflowApproval(w http.ResponseWriter, r *http.Request) {
@@ -538,6 +703,10 @@ func (c *workflowController) ResolveWorkflowApproval(w http.ResponseWriter, r *h
 	}
 	approval, err := c.workflowService.ResolveWorkflowApproval(project.ID, workflow.ID, run.ID, nodeID, input, helpers.UserFromContext(r))
 	if err != nil {
+		if errors.Is(err, pro_interfaces.ErrWorkflowPermissionDenied) {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
 		helpers.WriteError(w, err)
 		return
 	}

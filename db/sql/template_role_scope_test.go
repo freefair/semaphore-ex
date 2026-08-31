@@ -39,7 +39,7 @@ func TestTemplateRoleOverrideSupportsDenyCASAndReadFiltering(t *testing.T) {
 	context, err := store.GetTemplatePermissionContext(projectID, template.ID, user.ID)
 	require.NoError(t, err)
 	require.NotNil(t, context.Override)
-	assert.Equal(t, db.CanViewProjectResources, context.ProjectPermissions)
+	assert.Equal(t, db.CanViewProjectResources|db.CanViewWorkflows, context.ProjectPermissions)
 	assert.Equal(t, db.CanRunTemplate, context.EffectivePermissions)
 
 	legacy, err := store.GetTemplatePermission(projectID, template.ID, user.ID)

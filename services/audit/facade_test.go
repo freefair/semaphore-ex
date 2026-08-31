@@ -180,6 +180,58 @@ func TestServiceFacadeScopesProjectRunnerEventsAndPreservesGlobalEvents(t *testi
 	assert.Nil(t, unrelatedEvents[0].ProjectID)
 }
 
+func TestServiceFacadePersistsWorkflowPolicyAndRoleProvenanceJSON(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	defer store.Close()
+	actor, err := store.CreateUser(db.UserWithPwd{User: db.User{
+		Username: "workflow-audit-actor", Name: "Workflow Audit Actor", Email: "workflow-audit-actor@example.invalid",
+	}, Pwd: "synthetic-password"})
+	require.NoError(t, err)
+	project, err := store.CreateProject(db.Project{Name: "workflow-audit"})
+	require.NoError(t, err)
+
+	actorID := actor.ID
+	projectID := project.ID
+	recorder := NewServiceFacade(store, &auditLogWriter{}, metrics.NewMetrics())
+	require.NoError(t, recorder.Record(context.Background(), pro_interfaces.AuditEvent{
+		CorrelationID:          "0123456789abcdef0123456789abcdef",
+		ActorID:                &actorID,
+		ProjectID:              &projectID,
+		Action:                 pro_interfaces.AuditActionWorkflowApprovalContribute,
+		TargetType:             pro_interfaces.AuditTargetWorkflowApproval,
+		TargetID:               "approval:17",
+		Outcome:                pro_interfaces.AuditOutcomeAllowed,
+		Source:                 pro_interfaces.AuditSourceAPI,
+		Reason:                 pro_interfaces.AuditReasonWorkflowApprovalApproved,
+		WorkflowPolicyRevision: 3,
+		RoleProvenance: []pro_interfaces.AuditRoleProvenance{{
+			RoleID:                       "role:release_manager",
+			RoleRevision:                 7,
+			Origin:                       pro_interfaces.AuditRoleOriginLDAP,
+			DirectoryProviderID:          "corp",
+			DirectoryMappingID:           "release-approvers",
+			DirectoryMappingRevision:     4,
+			DirectoryRevisionFingerprint: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		}},
+	}))
+
+	events, err := store.GetAllEvents(db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.NotNil(t, events[0].Description)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(*events[0].Description), &payload))
+	assert.Equal(t, float64(3), payload["workflow_policy_revision"])
+	provenance, ok := payload["role_provenance"].([]any)
+	require.True(t, ok)
+	require.Len(t, provenance, 1)
+	role, ok := provenance[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "role:release_manager", role["role_id"])
+	assert.Equal(t, "ldap", role["origin"])
+	assert.NotContains(t, *events[0].Description, "claim")
+}
+
 func TestServiceFacadeRedactsSinkFailuresAndMeasuresDrops(t *testing.T) {
 	tripwireError := errors.New(securityfixtures.TripwireValues[0])
 	writer := &auditLogWriter{err: tripwireError}

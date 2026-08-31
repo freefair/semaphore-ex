@@ -83,6 +83,20 @@ const (
 	AuditActionOIDCGroupPreview       AuditAction = "oidc_group_preview"
 )
 
+const (
+	AuditActionWorkflowList               AuditAction = "workflow_list"
+	AuditActionWorkflowRead               AuditAction = "workflow_read"
+	AuditActionWorkflowCreate             AuditAction = "workflow_create"
+	AuditActionWorkflowUpdate             AuditAction = "workflow_update"
+	AuditActionWorkflowDelete             AuditAction = "workflow_delete"
+	AuditActionWorkflowStart              AuditAction = "workflow_start"
+	AuditActionWorkflowStop               AuditAction = "workflow_stop"
+	AuditActionWorkflowRunRead            AuditAction = "workflow_run_read"
+	AuditActionWorkflowRunLogsRead        AuditAction = "workflow_run_logs_read"
+	AuditActionWorkflowApprovalInbox      AuditAction = "workflow_approval_inbox_read"
+	AuditActionWorkflowApprovalContribute AuditAction = "workflow_approval_contribute"
+)
+
 type AuditTargetType string
 
 const (
@@ -99,6 +113,13 @@ const (
 	AuditTargetWebhook              AuditTargetType = "audit_webhook"
 	AuditTargetLDAPGroupMapping     AuditTargetType = "ldap_group_mapping"
 	AuditTargetOIDCGroupMapping     AuditTargetType = "oidc_group_mapping"
+)
+
+const (
+	AuditTargetWorkflow              AuditTargetType = "workflow"
+	AuditTargetWorkflowRun           AuditTargetType = "workflow_run"
+	AuditTargetWorkflowApproval      AuditTargetType = "workflow_approval"
+	AuditTargetWorkflowApprovalInbox AuditTargetType = "workflow_approval_inbox"
 )
 
 type AuditOutcome string
@@ -136,6 +157,29 @@ const (
 	AuditReasonOIDCPolicy             = "oidc_policy"
 )
 
+const (
+	AuditReasonWorkflowPolicyAllowed              = "workflow_policy_allowed"
+	AuditReasonWorkflowPolicyDenied               = "workflow_policy_denied"
+	AuditReasonWorkflowApprovalApproved           = "workflow_approval_approved"
+	AuditReasonWorkflowApprovalRejected           = "workflow_approval_rejected"
+	AuditReasonWorkflowApprovalIneligible         = "workflow_approval_ineligible"
+	AuditReasonWorkflowApprovalInitiatorSeparated = "workflow_approval_initiator_separated"
+	AuditReasonWorkflowApprovalRoleRevoked        = "workflow_approval_role_revoked"
+	AuditReasonWorkflowApprovalAlreadyResolved    = "workflow_approval_already_resolved"
+	AuditReasonWorkflowApprovalTimedOut           = "workflow_approval_timed_out"
+)
+
+// AuditRoleOrigin records how a role was effective when a workflow decision
+// was made. It intentionally excludes directory claims and display names.
+type AuditRoleOrigin string
+
+const (
+	AuditRoleOriginBuiltin AuditRoleOrigin = "builtin"
+	AuditRoleOriginManual  AuditRoleOrigin = "manual"
+	AuditRoleOriginLDAP    AuditRoleOrigin = "ldap"
+	AuditRoleOriginOIDC    AuditRoleOrigin = "oidc"
+)
+
 type DependencyID string
 
 const (
@@ -171,6 +215,11 @@ const (
 	AuditUserAgentMaxLength   = 256
 )
 
+const (
+	AuditWorkflowPolicyRevisionMax = 1_000_000_000
+	AuditRoleProvenanceMaxEntries  = 16
+)
+
 var (
 	correlationPattern            = regexp.MustCompile(`^(?:[a-f0-9]{32}|internal)$`)
 	eventIDPattern                = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -185,7 +234,26 @@ var (
 	templateRoleTargetPattern     = regexp.MustCompile(`^(?:template|template-role):[1-9][0-9]*$`)
 	ldapGroupTargetPattern        = regexp.MustCompile(`^(?:(?:entryuuid|objectguid|nsuniqueid|ipauniqueid):[0-9a-f-]{36}|provider:[a-z][a-z0-9_-]{0,63})$`)
 	oidcGroupTargetPattern        = regexp.MustCompile(`^provider:[a-z][a-z0-9_-]{0,63}$`)
+	workflowTargetPattern         = regexp.MustCompile(`^(?:project|workflow):[1-9][0-9]*$`)
+	workflowRunTargetPattern      = regexp.MustCompile(`^run:[1-9][0-9]*$`)
+	workflowApprovalTargetPattern = regexp.MustCompile(`^approval:[1-9][0-9]*$`)
+	workflowInboxTargetPattern    = regexp.MustCompile(`^project:[1-9][0-9]*$`)
+	workflowRoleIDPattern         = regexp.MustCompile(`^(?:builtin:(?:owner|manager|task_runner|guest)|role:[a-z0-9][a-z0-9_-]{0,63})$`)
 )
+
+// AuditRoleProvenance is immutable, bounded evidence for an effective role at
+// one workflow authorization decision. Directory fields contain only stable
+// identifiers and revisions; raw claims, group names, and credentials are not
+// part of the audit protocol.
+type AuditRoleProvenance struct {
+	RoleID                       string          `json:"role_id"`
+	RoleRevision                 int             `json:"role_revision"`
+	Origin                       AuditRoleOrigin `json:"origin"`
+	DirectoryProviderID          string          `json:"directory_provider_id,omitempty"`
+	DirectoryMappingID           string          `json:"directory_mapping_id,omitempty"`
+	DirectoryMappingRevision     int             `json:"directory_mapping_revision,omitempty"`
+	DirectoryRevisionFingerprint string          `json:"directory_revision_fingerprint,omitempty"`
+}
 
 // AuditEvent is the allowlisted payload shared by enhanced features. It has no
 // field for request bodies, credentials, raw errors, or arbitrary log values.
@@ -203,6 +271,10 @@ type AuditEvent struct {
 	SourceIP      string          `json:"source_ip,omitempty"`
 	UserAgent     string          `json:"user_agent,omitempty"`
 	Reason        string          `json:"reason"`
+	// WorkflowPolicyRevision and RoleProvenance are retained in the database
+	// event JSON. They are intentionally not added to the v1 webhook envelope.
+	WorkflowPolicyRevision int                   `json:"workflow_policy_revision,omitempty"`
+	RoleProvenance         []AuditRoleProvenance `json:"role_provenance,omitempty"`
 }
 
 func (e AuditEvent) Validate() error {
@@ -224,9 +296,15 @@ func (e AuditEvent) Validate() error {
 	if !identifierPattern.MatchString(e.TargetID) || !identifierPattern.MatchString(e.Reason) {
 		return fmt.Errorf("invalid audit identifier")
 	}
-	if !validAuditAction(e.Action) || !validAuditTarget(e) ||
+	if !validAuditAction(e.Action) || !validAuditTarget(e) || !validAuditActionTarget(e) ||
 		!validAuditOutcome(e.Outcome) || !validAuditSource(e.Source) || !validAuditReason(e.Reason) {
 		return fmt.Errorf("unsupported audit context")
+	}
+	if !validWorkflowAuditReason(e) {
+		return fmt.Errorf("invalid workflow audit reason")
+	}
+	if !validWorkflowAuditProvenance(e) {
+		return fmt.Errorf("invalid workflow audit provenance")
 	}
 	return nil
 }
@@ -273,9 +351,147 @@ func validAuditTarget(event AuditEvent) bool {
 		return event.ProjectID == nil && ldapGroupTargetPattern.MatchString(event.TargetID)
 	case AuditTargetOIDCGroupMapping:
 		return event.ProjectID == nil && oidcGroupTargetPattern.MatchString(event.TargetID)
+	case AuditTargetWorkflow:
+		return validScopedProjectAuditTarget(event, workflowTargetPattern)
+	case AuditTargetWorkflowRun:
+		return validScopedProjectAuditTarget(event, workflowRunTargetPattern)
+	case AuditTargetWorkflowApproval:
+		return validScopedProjectAuditTarget(event, workflowApprovalTargetPattern)
+	case AuditTargetWorkflowApprovalInbox:
+		return validScopedProjectAuditTarget(event, workflowInboxTargetPattern)
 	default:
 		return false
 	}
+}
+
+func validWorkflowAuditProvenance(event AuditEvent) bool {
+	workflowTarget := event.TargetType == AuditTargetWorkflow ||
+		event.TargetType == AuditTargetWorkflowRun ||
+		event.TargetType == AuditTargetWorkflowApproval ||
+		event.TargetType == AuditTargetWorkflowApprovalInbox
+	if !workflowTarget {
+		return event.WorkflowPolicyRevision == 0 && len(event.RoleProvenance) == 0
+	}
+	if event.WorkflowPolicyRevision <= 0 || event.WorkflowPolicyRevision > AuditWorkflowPolicyRevisionMax {
+		return false
+	}
+	if len(event.RoleProvenance) > AuditRoleProvenanceMaxEntries {
+		return false
+	}
+	if event.Action == AuditActionWorkflowApprovalContribute {
+		if event.Outcome == AuditOutcomeAllowed && len(event.RoleProvenance) == 0 {
+			return false
+		}
+		if event.Outcome != AuditOutcomeAllowed && len(event.RoleProvenance) != 0 {
+			return false
+		}
+	}
+	for _, provenance := range event.RoleProvenance {
+		if !validAuditRoleProvenance(provenance) {
+			return false
+		}
+	}
+	return true
+}
+
+func validWorkflowAuditReason(event AuditEvent) bool {
+	if !isWorkflowAuditAction(event.Action) {
+		return true
+	}
+	if event.Action == AuditActionWorkflowApprovalContribute {
+		switch event.Outcome {
+		case AuditOutcomeAllowed:
+			return event.Reason == AuditReasonWorkflowApprovalApproved ||
+				event.Reason == AuditReasonWorkflowApprovalRejected
+		case AuditOutcomeDenied:
+			return event.Reason == AuditReasonWorkflowApprovalIneligible ||
+				event.Reason == AuditReasonWorkflowApprovalInitiatorSeparated ||
+				event.Reason == AuditReasonWorkflowApprovalRoleRevoked ||
+				event.Reason == AuditReasonWorkflowApprovalAlreadyResolved ||
+				event.Reason == AuditReasonWorkflowApprovalTimedOut
+		case AuditOutcomeFailure:
+			return event.Reason == AuditReasonOperationError
+		default:
+			return false
+		}
+	}
+	switch event.Outcome {
+	case AuditOutcomeAllowed:
+		return event.Reason == AuditReasonWorkflowPolicyAllowed
+	case AuditOutcomeDenied:
+		return event.Reason == AuditReasonWorkflowPolicyDenied ||
+			event.Reason == AuditReasonUnauthenticated || event.Reason == AuditReasonCrossOrigin
+	case AuditOutcomeFailure:
+		return event.Reason == AuditReasonOperationError
+	default:
+		return false
+	}
+}
+
+func validAuditActionTarget(event AuditEvent) bool {
+	workflowTarget := event.TargetType == AuditTargetWorkflow ||
+		event.TargetType == AuditTargetWorkflowRun ||
+		event.TargetType == AuditTargetWorkflowApproval ||
+		event.TargetType == AuditTargetWorkflowApprovalInbox
+	if !workflowTarget {
+		return !isWorkflowAuditAction(event.Action)
+	}
+	switch event.Action {
+	case AuditActionWorkflowList, AuditActionWorkflowCreate:
+		return event.TargetType == AuditTargetWorkflow && strings.HasPrefix(event.TargetID, "project:")
+	case AuditActionWorkflowRead, AuditActionWorkflowUpdate, AuditActionWorkflowDelete, AuditActionWorkflowStart:
+		return event.TargetType == AuditTargetWorkflow && strings.HasPrefix(event.TargetID, "workflow:")
+	case AuditActionWorkflowStop, AuditActionWorkflowRunRead, AuditActionWorkflowRunLogsRead:
+		return event.TargetType == AuditTargetWorkflowRun
+	case AuditActionWorkflowApprovalInbox:
+		return event.TargetType == AuditTargetWorkflowApprovalInbox
+	case AuditActionWorkflowApprovalContribute:
+		return event.TargetType == AuditTargetWorkflowApproval
+	default:
+		return false
+	}
+}
+
+func isWorkflowAuditAction(action AuditAction) bool {
+	switch action {
+	case AuditActionWorkflowList, AuditActionWorkflowRead, AuditActionWorkflowCreate,
+		AuditActionWorkflowUpdate, AuditActionWorkflowDelete, AuditActionWorkflowStart,
+		AuditActionWorkflowStop, AuditActionWorkflowRunRead, AuditActionWorkflowRunLogsRead,
+		AuditActionWorkflowApprovalInbox, AuditActionWorkflowApprovalContribute:
+		return true
+	default:
+		return false
+	}
+}
+
+func validAuditRoleProvenance(provenance AuditRoleProvenance) bool {
+	if !workflowRoleIDPattern.MatchString(provenance.RoleID) ||
+		provenance.RoleRevision <= 0 || provenance.RoleRevision > AuditWorkflowPolicyRevisionMax {
+		return false
+	}
+	directoryFieldsPresent := provenance.DirectoryProviderID != "" ||
+		provenance.DirectoryMappingID != "" ||
+		provenance.DirectoryMappingRevision != 0 || provenance.DirectoryRevisionFingerprint != ""
+	switch provenance.Origin {
+	case AuditRoleOriginBuiltin, AuditRoleOriginManual:
+		return !directoryFieldsPresent
+	case AuditRoleOriginLDAP, AuditRoleOriginOIDC:
+		return identifierPattern.MatchString(provenance.DirectoryProviderID) &&
+			identifierPattern.MatchString(provenance.DirectoryMappingID) &&
+			provenance.DirectoryMappingRevision > 0 &&
+			provenance.DirectoryMappingRevision <= AuditWorkflowPolicyRevisionMax &&
+			validAuditDirectoryRevisionFingerprint(provenance.DirectoryRevisionFingerprint)
+	default:
+		return false
+	}
+}
+
+func validAuditDirectoryRevisionFingerprint(value string) bool {
+	if len(value) != 64 || strings.ToLower(value) != value {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func validScopedProjectAuditTarget(event AuditEvent, pattern *regexp.Regexp) bool {
@@ -312,6 +528,11 @@ func validAuditReason(reason string) bool {
 		AuditReasonInvalidCode, AuditReasonReplay, AuditReasonThrottled,
 		AuditReasonRecoveryUsed, AuditReasonReset, AuditReasonReadiness,
 		AuditReasonLDAPInvalidCredentials, AuditReasonLDAPPolicy, AuditReasonOIDCPolicy,
+		AuditReasonWorkflowPolicyAllowed, AuditReasonWorkflowPolicyDenied,
+		AuditReasonWorkflowApprovalApproved, AuditReasonWorkflowApprovalRejected,
+		AuditReasonWorkflowApprovalIneligible, AuditReasonWorkflowApprovalInitiatorSeparated,
+		AuditReasonWorkflowApprovalRoleRevoked, AuditReasonWorkflowApprovalAlreadyResolved,
+		AuditReasonWorkflowApprovalTimedOut,
 		string(CapabilityReasonActive), string(CapabilityReasonProviderUnavailable),
 		string(CapabilityReasonDisabledByAdmin), string(CapabilityReasonEntitlementExpired),
 		string(CapabilityReasonReadOnly), string(CapabilityReasonInsufficientPermission),
@@ -358,6 +579,12 @@ func (e AuditEvent) SafeFields() map[string]any {
 	}
 	if e.ProjectID != nil {
 		fields["project_id"] = *e.ProjectID
+	}
+	if e.WorkflowPolicyRevision != 0 {
+		fields["workflow_policy_revision"] = e.WorkflowPolicyRevision
+	}
+	if len(e.RoleProvenance) > 0 {
+		fields["role_provenance"] = e.RoleProvenance
 	}
 	return fields
 }
@@ -510,6 +737,11 @@ func validAuditAction(action AuditAction) bool {
 		return true
 	case AuditActionOIDCGroupMappingRead, AuditActionOIDCGroupMappingWrite,
 		AuditActionOIDCGroupMappingDelete, AuditActionOIDCGroupPreview:
+		return true
+	case AuditActionWorkflowList, AuditActionWorkflowRead, AuditActionWorkflowCreate,
+		AuditActionWorkflowUpdate, AuditActionWorkflowDelete, AuditActionWorkflowStart,
+		AuditActionWorkflowStop, AuditActionWorkflowRunRead, AuditActionWorkflowRunLogsRead,
+		AuditActionWorkflowApprovalInbox, AuditActionWorkflowApprovalContribute:
 		return true
 	default:
 		return false

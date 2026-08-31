@@ -2,6 +2,9 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,17 +28,35 @@ const workflowReconcileQuarantineAfter = 3
 const maxWorkflowReconciliationErrorBytes = 512
 
 type workflowService struct {
-	repository       db.WorkflowManager
-	templateStore    db.WorkflowTemplateValidationStore
-	resultStore      db.WorkflowNodeResultStore
-	enqueuer         pro_interfaces.WorkflowTaskEnqueuer
-	locker           pro_interfaces.WorkflowRunLocker
-	progressionStore pro_interfaces.WorkflowProgressionRepository
-	resourceStore    db.WorkflowParameterValidationStore
-	approvalIdentity pro_interfaces.WorkflowApprovalIdentityStore
-	credentialReader pro_interfaces.WorkflowCredentialReader
-	localRunLocks    workflowLocalLocks
-	localStartLocks  workflowLocalLocks
+	repository         db.WorkflowManager
+	templateStore      db.WorkflowTemplateValidationStore
+	resultStore        db.WorkflowNodeResultStore
+	enqueuer           pro_interfaces.WorkflowTaskEnqueuer
+	locker             pro_interfaces.WorkflowRunLocker
+	progressionStore   pro_interfaces.WorkflowProgressionRepository
+	resourceStore      db.WorkflowParameterValidationStore
+	approvalIdentity   pro_interfaces.WorkflowApprovalIdentityStore
+	authorizationStore pro_interfaces.WorkflowAuthorizationIdentityStore
+	audit              pro_interfaces.AuditServiceFacade
+	credentialReader   pro_interfaces.WorkflowCredentialReader
+	localRunLocks      workflowLocalLocks
+	localStartLocks    workflowLocalLocks
+}
+
+// NewWorkflowServiceWithAudit attaches the optional Enhanced audit facade to
+// the workflow command service. Existing Community-compatible construction
+// remains unchanged until the router wiring is updated.
+func NewWorkflowServiceWithAudit(
+	repository db.WorkflowManager,
+	templateStore db.WorkflowTemplateValidationStore,
+	enqueuer pro_interfaces.WorkflowTaskEnqueuer,
+	locker pro_interfaces.WorkflowRunLocker,
+	audit pro_interfaces.AuditServiceFacade,
+	credentialReaders ...pro_interfaces.WorkflowCredentialReader,
+) pro_interfaces.WorkflowService {
+	service := NewWorkflowService(repository, templateStore, enqueuer, locker, credentialReaders...).(*workflowService)
+	service.audit = audit
+	return service
 }
 
 type workflowLocalLock struct {
@@ -49,6 +70,13 @@ type workflowLocalLocks struct {
 }
 
 var _ pro_interfaces.WorkflowService = (*workflowService)(nil)
+var _ pro_interfaces.WorkflowAuditConfigurer = (*workflowService)(nil)
+
+// ConfigureWorkflowAudit attaches the process-wide audit facade after route
+// construction. It is intentionally optional at the interface boundary.
+func (s *workflowService) ConfigureWorkflowAudit(audit pro_interfaces.AuditServiceFacade) {
+	s.audit = audit
+}
 
 func NewWorkflowService(
 	repository db.WorkflowManager,
@@ -60,6 +88,7 @@ func NewWorkflowService(
 	resultStore, _ := templateStore.(db.WorkflowNodeResultStore)
 	resourceStore, _ := templateStore.(db.WorkflowParameterValidationStore)
 	approvalIdentity, _ := templateStore.(pro_interfaces.WorkflowApprovalIdentityStore)
+	authorizationStore, _ := templateStore.(pro_interfaces.WorkflowAuthorizationIdentityStore)
 	progressionStore, _ := repository.(pro_interfaces.WorkflowProgressionRepository)
 	var credentialReader pro_interfaces.WorkflowCredentialReader
 	if len(credentialReaders) > 0 {
@@ -67,7 +96,7 @@ func NewWorkflowService(
 	}
 	return &workflowService{
 		repository: repository, templateStore: templateStore, resultStore: resultStore,
-		resourceStore: resourceStore, approvalIdentity: approvalIdentity, credentialReader: credentialReader,
+		resourceStore: resourceStore, approvalIdentity: approvalIdentity, authorizationStore: authorizationStore, credentialReader: credentialReader,
 		enqueuer: enqueuer, locker: locker, progressionStore: progressionStore,
 	}
 }
@@ -80,6 +109,9 @@ func (s *workflowService) StartWorkflow(
 ) (db.WorkflowRun, error) {
 	if user == nil || user.ID <= 0 {
 		return db.WorkflowRun{}, common_errors.NewValidationError("workflow run actor is required")
+	}
+	if err := s.requireWorkflowAccess(workflow, user, pro_interfaces.PermissionStartWorkflow, true); err != nil {
+		return db.WorkflowRun{}, err
 	}
 	if correlationID == "" {
 		return db.WorkflowRun{}, common_errors.NewValidationError("workflow run correlation ID is required")
@@ -251,15 +283,56 @@ func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *d
 }
 
 func (s *workflowService) StopWorkflowRun(projectID int, runID int, user *db.User) (db.WorkflowRun, error) {
+	run, err := s.repository.GetWorkflowRunByID(projectID, runID)
+	if err != nil {
+		return db.WorkflowRun{}, err
+	}
+	if err = s.requireWorkflowAccess(run.DefinitionSnapshot, user, pro_interfaces.PermissionStopWorkflow, true); err != nil {
+		return db.WorkflowRun{}, err
+	}
 	if _, err := s.RequestWorkflowRunStop(projectID, runID, user); err != nil {
 		return db.WorkflowRun{}, err
 	}
 	return s.ReconcileWorkflowRun(projectID, runID)
 }
 
-func (s *workflowService) RequestWorkflowRunStop(projectID int, runID int, _ *db.User) (db.WorkflowRun, error) {
+func (s *workflowService) requireWorkflowAccess(
+	workflow db.WorkflowTemplate,
+	user *db.User,
+	permission pro_interfaces.PermissionID,
+	requireView bool,
+) error {
+	if user != nil && user.Admin {
+		return nil
+	}
+	if user == nil || user.ID <= 0 || s.authorizationStore == nil {
+		return common_errors.NewValidationError("workflow access is unavailable")
+	}
+	state, err := pro_interfaces.ResolveWorkflowAuthorizationState(s.authorizationStore, workflow.ProjectID, user.ID)
+	if err != nil {
+		return common_errors.NewValidationError("workflow access is denied")
+	}
+	if requireView && permission != pro_interfaces.PermissionViewWorkflow &&
+		!pro_interfaces.AuthorizeWorkflowRead(workflow, state.Identity, state.KnownRoles).Allowed {
+		return common_errors.NewValidationError("workflow access is denied")
+	}
+	decision := pro_interfaces.EvaluateWorkflowAccess(pro_interfaces.WorkflowAccessRequest{
+		Permission: permission, ProjectPermissions: state.Identity.Permissions,
+		EffectiveRoleReferences: []db.ProjectRoleReference{state.Identity.Reference},
+		KnownRoleReferences:     state.KnownRoles, Policy: workflow.AccessPolicy,
+	})
+	if !decision.Allowed {
+		return common_errors.NewValidationError("workflow access is denied")
+	}
+	return nil
+}
+
+func (s *workflowService) RequestWorkflowRunStop(projectID int, runID int, user *db.User) (db.WorkflowRun, error) {
 	run, err := s.repository.GetWorkflowRunByID(projectID, runID)
 	if err != nil {
+		return db.WorkflowRun{}, err
+	}
+	if err = s.requireWorkflowAccess(run.DefinitionSnapshot, user, pro_interfaces.PermissionStopWorkflow, true); err != nil {
 		return db.WorkflowRun{}, err
 	}
 	if run.Status.IsFinished() {
@@ -319,11 +392,14 @@ func (s *workflowService) ReconcileWorkflowRun(projectID int, runID int) (db.Wor
 	return result, nil
 }
 
-func (s *workflowService) RetryWorkflowRunReconciliation(projectID int, runID int, _ *db.User) (db.WorkflowRun, error) {
+func (s *workflowService) RetryWorkflowRunReconciliation(projectID int, runID int, user *db.User) (db.WorkflowRun, error) {
 	var result db.WorkflowRun
 	err := s.withRunLock(projectID, runID, func(_ *pro_interfaces.WorkflowReconciliationLease) error {
 		run, err := s.repository.GetWorkflowRunByID(projectID, runID)
 		if err != nil {
+			return err
+		}
+		if err = s.requireWorkflowAccess(run.DefinitionSnapshot, user, pro_interfaces.PermissionAdministerWorkflow, false); err != nil {
 			return err
 		}
 		if run.Status.IsFinished() {
@@ -411,6 +487,42 @@ func (s *workflowService) GetWorkflowApprovalInbox(projectID int, user *db.User)
 	}
 	inbox := make([]db.WorkflowApproval, 0, len(approvals))
 	for _, approval := range approvals {
+		if approval.RolePolicySnapshotRevision > 0 {
+			contributionStore, supportsContributions := s.repository.(db.WorkflowApprovalContributionStore)
+			if !supportsContributions {
+				return nil, errors.New("workflow approval contribution store is unavailable")
+			}
+			contributions, contributionErr := contributionStore.GetWorkflowApprovalContributions(approval.ID)
+			if contributionErr != nil {
+				return nil, contributionErr
+			}
+			alreadyContributed := false
+			for _, contribution := range contributions {
+				if contribution.ActorUserID == user.ID {
+					alreadyContributed = true
+					break
+				}
+			}
+			if alreadyContributed {
+				continue
+			}
+			if s.authorizationStore == nil {
+				return nil, errors.New("workflow authorization store is unavailable")
+			}
+			state, resolveErr := pro_interfaces.ResolveWorkflowAuthorizationState(s.authorizationStore, projectID, user.ID)
+			if resolveErr != nil {
+				continue
+			}
+			eligibility := pro_interfaces.EvaluateWorkflowApprovalEligibility(pro_interfaces.WorkflowApprovalEligibilityRequest{
+				Policy: approval.RolePolicySnapshot.Policy, ActorUserID: user.ID,
+				InitiatorUserID:         approval.RequestActorUserID,
+				EffectiveRoleReferences: []db.ProjectRoleReference{state.Identity.Reference}, KnownRoleReferences: state.KnownRoles,
+			})
+			if eligibility.Allowed {
+				inbox = append(inbox, approval)
+			}
+			continue
+		}
 		if err = s.authorizeWorkflowApproval(projectID, approval, user); err == nil {
 			inbox = append(inbox, approval)
 		}
@@ -519,26 +631,164 @@ func (s *workflowService) ResolveWorkflowApproval(
 	if approval.Status != db.WorkflowApprovalPending {
 		return db.WorkflowApproval{}, common_errors.NewValidationError("workflow approval is already resolved")
 	}
-	if err = s.authorizeWorkflowApproval(projectID, approval, user); err != nil {
-		return db.WorkflowApproval{}, err
+	var legacySnapshot *db.WorkflowApprovalRolePolicySnapshot
+	if approval.RolePolicySnapshotRevision == 0 {
+		node, nodeErr := workflowDefinitionNode(run.DefinitionSnapshot, nodeID)
+		if nodeErr != nil {
+			return db.WorkflowApproval{}, nodeErr
+		}
+		policy, policyErr := s.workflowApprovalPolicy(projectID, node)
+		if policyErr != nil {
+			return db.WorkflowApproval{}, policyErr
+		}
+		legacySnapshot = &db.WorkflowApprovalRolePolicySnapshot{PolicyRevision: policy.Revision, Policy: policy}
 	}
-	now := tz.Now()
-	approval.Status = decision.Status
-	approval.DecisionComment = decision.Comment
-	approval.DecisionSource = decision.Source
-	approval.Resolved = &now
-	approval.ResolvedByUserID = &user.ID
-	resolved, err := s.repository.ResolveWorkflowApprovalIfPending(approval)
+	return s.contributeWorkflowApproval(projectID, run, approval, decision, user, legacySnapshot)
+}
+
+func (s *workflowService) contributeWorkflowApproval(
+	projectID int,
+	run db.WorkflowRun,
+	approval db.WorkflowApproval,
+	decision db.WorkflowApprovalDecision,
+	user *db.User,
+	legacySnapshot *db.WorkflowApprovalRolePolicySnapshot,
+) (db.WorkflowApproval, error) {
+	if approval.RolePolicySnapshot.Policy.InitiatorSeparation && approval.RequestActorUserID == user.ID {
+		s.recordWorkflowApprovalDeniedAudit(approval, &user.ID, pro_interfaces.AuditReasonWorkflowApprovalInitiatorSeparated)
+		return db.WorkflowApproval{}, fmt.Errorf("%w: workflow approval cannot be self-approved", pro_interfaces.ErrWorkflowPermissionDenied)
+	}
+	if s.authorizationStore == nil {
+		return db.WorkflowApproval{}, errors.New("workflow authorization store is unavailable")
+	}
+	store, ok := s.repository.(db.WorkflowApprovalContributionStore)
+	if !ok {
+		return db.WorkflowApproval{}, errors.New("workflow approval contribution store is unavailable")
+	}
+	result, err := store.SubmitWorkflowApprovalContribution(db.WorkflowApprovalContributionSubmission{
+		ProjectID: projectID, WorkflowRunID: run.ID, WorkflowNodeID: approval.WorkflowNodeID,
+		ActorUserID: user.ID, Decision: decision, CorrelationID: approval.CorrelationID,
+		LegacySnapshot: legacySnapshot, At: tz.Now(),
+	})
 	if err != nil {
 		return db.WorkflowApproval{}, err
 	}
-	if !resolved {
+	if result.Committed && result.Contribution != nil {
+		s.recordWorkflowApprovalAudit(approval, *result.Contribution)
+	} else if result.TimedOut {
+		s.recordWorkflowApprovalDeniedAudit(approval, nil, pro_interfaces.AuditReasonWorkflowApprovalTimedOut)
+	} else if result.Denied {
+		actorID := user.ID
+		s.recordWorkflowApprovalDeniedAudit(approval, &actorID, pro_interfaces.AuditReasonWorkflowApprovalIneligible)
+	}
+	if result.Duplicate {
+		return db.WorkflowApproval{}, common_errors.NewValidationError("workflow approval already has a contribution from this user")
+	}
+	if result.TimedOut || !result.Committed && result.Terminal {
 		return db.WorkflowApproval{}, common_errors.NewValidationError("workflow approval is already resolved")
 	}
-	if err = s.ProgressWorkflowRun(projectID, runID, user); err != nil {
+	if result.Denied {
+		return db.WorkflowApproval{}, fmt.Errorf("%w: workflow approval actor is not eligible", pro_interfaces.ErrWorkflowPermissionDenied)
+	}
+	if !result.Terminal {
+		return result.Approval, nil
+	}
+	if err = s.ProgressWorkflowRun(projectID, run.ID, user); err != nil {
 		return db.WorkflowApproval{}, err
 	}
-	return s.repository.GetWorkflowApproval(projectID, runID, nodeID)
+	return result.Approval, nil
+}
+
+func (s *workflowService) recordWorkflowApprovalDeniedAudit(
+	approval db.WorkflowApproval,
+	actorID *int,
+	reason string,
+) {
+	if s.audit == nil {
+		return
+	}
+	projectID := approval.ProjectID
+	policyRevision := approval.RolePolicySnapshotRevision
+	if policyRevision < 1 {
+		policyRevision = 1
+	}
+	_ = s.audit.Record(context.Background(), pro_interfaces.AuditEvent{
+		CorrelationID: workflowAuditCorrelationID(approval.CorrelationID), ActorID: actorID, ProjectID: &projectID,
+		Action:     pro_interfaces.AuditActionWorkflowApprovalContribute,
+		TargetType: pro_interfaces.AuditTargetWorkflowApproval,
+		TargetID:   fmt.Sprintf("approval:%d", approval.ID), Outcome: pro_interfaces.AuditOutcomeDenied,
+		Source: workflowApprovalAuditSource(actorID), Reason: reason,
+		WorkflowPolicyRevision: policyRevision,
+	})
+}
+
+func (s *workflowService) recordWorkflowApprovalAudit(
+	approval db.WorkflowApproval,
+	contribution db.WorkflowApprovalContribution,
+) {
+	if s.audit == nil {
+		return
+	}
+	projectID := approval.ProjectID
+	event := pro_interfaces.AuditEvent{
+		CorrelationID: workflowAuditCorrelationID(approval.CorrelationID), ActorID: &contribution.ActorUserID, ProjectID: &projectID,
+		Action:     pro_interfaces.AuditActionWorkflowApprovalContribute,
+		TargetType: pro_interfaces.AuditTargetWorkflowApproval,
+		TargetID:   fmt.Sprintf("approval:%d", approval.ID), Outcome: pro_interfaces.AuditOutcomeAllowed,
+		Source: pro_interfaces.AuditSourceAPI,
+		Reason: approvalAuditReason(contribution.Decision), WorkflowPolicyRevision: contribution.PolicyRevision,
+		RoleProvenance: []pro_interfaces.AuditRoleProvenance{approvalAuditRoleProvenance(contribution)},
+	}
+	_ = s.audit.Record(context.Background(), event)
+}
+
+func workflowAuditCorrelationID(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:16])
+}
+
+func workflowApprovalAuditSource(actorID *int) pro_interfaces.AuditSource {
+	if actorID == nil {
+		return pro_interfaces.AuditSourceWorker
+	}
+	return pro_interfaces.AuditSourceAPI
+}
+
+func approvalAuditReason(decision db.WorkflowApprovalStatus) string {
+	if decision == db.WorkflowApprovalRejected {
+		return pro_interfaces.AuditReasonWorkflowApprovalRejected
+	}
+	return pro_interfaces.AuditReasonWorkflowApprovalApproved
+}
+
+func approvalAuditRoleProvenance(contribution db.WorkflowApprovalContribution) pro_interfaces.AuditRoleProvenance {
+	origin := pro_interfaces.AuditRoleOriginManual
+	switch contribution.RoleOrigin {
+	case db.WorkflowApprovalRoleOriginBuiltIn:
+		origin = pro_interfaces.AuditRoleOriginBuiltin
+	case db.WorkflowApprovalRoleOriginLDAP:
+		origin = pro_interfaces.AuditRoleOriginLDAP
+	case db.WorkflowApprovalRoleOriginOIDC:
+		origin = pro_interfaces.AuditRoleOriginOIDC
+	}
+	return pro_interfaces.AuditRoleProvenance{
+		RoleID: string(contribution.RoleID), RoleRevision: contribution.RoleRevision, Origin: origin,
+		DirectoryProviderID: contribution.DirectoryProviderID, DirectoryMappingID: contribution.DirectoryMappingID,
+		DirectoryMappingRevision: contribution.DirectoryMappingRevision, DirectoryRevisionFingerprint: contribution.DirectoryRevisionFingerprint,
+	}
+}
+
+func contributionRoleOrigin(origin db.ProjectWorkflowRoleOrigin) db.WorkflowApprovalRoleOrigin {
+	switch origin {
+	case db.ProjectWorkflowRoleOriginBuiltIn:
+		return db.WorkflowApprovalRoleOriginBuiltIn
+	case db.ProjectWorkflowRoleOriginLDAP:
+		return db.WorkflowApprovalRoleOriginLDAP
+	case db.ProjectWorkflowRoleOriginOIDC:
+		return db.WorkflowApprovalRoleOriginOIDC
+	default:
+		return db.WorkflowApprovalRoleOriginManual
+	}
 }
 
 func (s *workflowService) openWorkflowApproval(run db.WorkflowRun, node db.WorkflowNode, lease *pro_interfaces.WorkflowReconciliationLease) (bool, error) {
@@ -552,15 +802,25 @@ func (s *workflowService) openWorkflowApproval(run db.WorkflowRun, node db.Workf
 		value := now.Add(time.Duration(*node.ApprovalTimeout) * time.Second)
 		deadline = &value
 	}
+	policy, err := s.workflowApprovalPolicy(run.ProjectID, node)
+	if err != nil {
+		return false, err
+	}
+	snapshot := db.WorkflowApprovalRolePolicySnapshot{PolicyRevision: policy.Revision, Policy: policy}
+	snapshotJSON, err := json.Marshal(snapshot)
+	if err != nil {
+		return false, fmt.Errorf("encode workflow approval role policy snapshot: %w", err)
+	}
 	approval := db.WorkflowApproval{
 		ProjectID: run.ProjectID, WorkflowRunID: run.ID, WorkflowNodeID: node.ID,
 		Status: db.WorkflowApprovalPending, Created: now, Deadline: deadline, Prompt: prompt,
 		EligiblePermission: node.EffectiveApprovalPermission(), SeparationOfDuties: node.ApprovalSeparationOfDuties,
+		RolePolicySnapshotJSON: string(snapshotJSON), RolePolicySnapshotRevision: snapshot.PolicyRevision,
+		RolePolicySnapshot: snapshot,
 		RequestActorUserID: run.ActorUserID, TimeoutOutcome: node.EffectiveApprovalTimeoutOutcome(),
 		CorrelationID: fmt.Sprintf("%s:approval:%d", run.CorrelationID, node.ID),
 	}
 	var opened bool
-	var err error
 	if lease != nil {
 		if s.progressionStore == nil {
 			return false, errors.New("workflow progression fencing is unavailable")
@@ -570,6 +830,48 @@ func (s *workflowService) openWorkflowApproval(run db.WorkflowRun, node db.Workf
 		_, opened, err = s.repository.OpenWorkflowApproval(approval)
 	}
 	return opened, err
+}
+
+func (s *workflowService) workflowApprovalPolicy(projectID int, node db.WorkflowNode) (db.WorkflowApprovalRolePolicy, error) {
+	if len(node.ApprovalRolePolicy.RoleIDs) > 0 {
+		policy := node.ApprovalRolePolicy
+		if policy.Revision <= 0 {
+			policy.Revision = node.ApprovalRolePolicyRevision
+		}
+		if err := policy.Validate(); err != nil {
+			return db.WorkflowApprovalRolePolicy{}, err
+		}
+		return policy, nil
+	}
+	if s.authorizationStore == nil {
+		return db.WorkflowApprovalRolePolicy{}, errors.New("workflow authorization store is unavailable")
+	}
+	roles, err := s.authorizationStore.GetProjectRoles(projectID)
+	if err != nil {
+		return db.WorkflowApprovalRolePolicy{}, err
+	}
+	references := make([]db.ProjectRoleReference, 0, len(roles)+4)
+	for role, permissions := range db.BuiltInProjectRolePermissions() {
+		if permissions.Can(node.EffectiveApprovalPermission()) {
+			if reference, ok := db.ProjectRoleReferenceForBuiltInRole(role); ok {
+				references = append(references, reference)
+			}
+		}
+	}
+	for _, role := range roles {
+		if role.Permissions.Can(node.EffectiveApprovalPermission()) {
+			references = append(references, db.ProjectRoleReferenceForCustomRole(role.ID))
+		}
+	}
+	sort.Slice(references, func(i, j int) bool { return references[i] < references[j] })
+	policy := db.WorkflowApprovalRolePolicy{
+		Revision: 1, Mode: db.WorkflowApprovalRoleModeAnyOf, RoleIDs: references,
+		MinimumDistinctApprovers: 1, InitiatorSeparation: node.ApprovalSeparationOfDuties,
+	}
+	if err := policy.Validate(); err != nil {
+		return db.WorkflowApprovalRolePolicy{}, err
+	}
+	return policy, nil
 }
 
 func (s *workflowService) reconcileWorkflowApprovals(run db.WorkflowRun, lease *pro_interfaces.WorkflowReconciliationLease) (bool, error) {

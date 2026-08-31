@@ -7,14 +7,15 @@ import (
 )
 
 var ErrWorkflowRevisionConflict = errors.New("workflow revision conflict")
+var ErrWorkflowPermissionDenied = errors.New("workflow permission denied")
 
 // WorkflowDefinitionService owns authoring use cases. The controller depends
 // on this interface instead of reaching into persistence directly.
 type WorkflowDefinitionService interface {
-	List(projectID int, params db.RetrieveQueryParams) ([]db.WorkflowTemplate, error)
-	Get(projectID int, workflowID int) (db.WorkflowTemplate, error)
-	Validate(projectID int, workflow db.WorkflowTemplate) (db.WorkflowValidationResult, error)
-	Create(projectID int, workflow db.WorkflowTemplate) (db.WorkflowTemplate, db.WorkflowValidationResult, error)
-	Update(projectID int, workflowID int, workflow db.WorkflowTemplate) (db.WorkflowTemplate, db.WorkflowValidationResult, error)
-	Delete(projectID int, workflowID int) error
+	List(projectID int, params db.RetrieveQueryParams, actors ...*db.User) ([]db.WorkflowTemplate, error)
+	Get(projectID int, workflowID int, actors ...*db.User) (db.WorkflowTemplate, error)
+	Validate(projectID int, workflow db.WorkflowTemplate, actors ...*db.User) (db.WorkflowValidationResult, error)
+	Create(projectID int, workflow db.WorkflowTemplate, actors ...*db.User) (db.WorkflowTemplate, db.WorkflowValidationResult, error)
+	Update(projectID int, workflowID int, workflow db.WorkflowTemplate, actors ...*db.User) (db.WorkflowTemplate, db.WorkflowValidationResult, error)
+	Delete(projectID int, workflowID int, actors ...*db.User) error
 }

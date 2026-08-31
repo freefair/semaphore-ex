@@ -47,7 +47,7 @@ func (s *workflowTriggerService) List(
 	params db.RetrieveQueryParams,
 	actor *db.User,
 ) ([]db.WorkflowTrigger, error) {
-	if err := s.authorize(ctx, actor, projectID, pro_interfaces.CapabilityAccessRead, 0); err != nil {
+	if err := s.authorizeWorkflow(ctx, actor, projectID, workflowID, pro_interfaces.PermissionViewWorkflow); err != nil {
 		return nil, err
 	}
 	return s.repository.GetWorkflowTriggers(projectID, workflowID, params)
@@ -60,7 +60,7 @@ func (s *workflowTriggerService) Get(
 	triggerID int,
 	actor *db.User,
 ) (db.WorkflowTrigger, error) {
-	if err := s.authorize(ctx, actor, projectID, pro_interfaces.CapabilityAccessRead, 0); err != nil {
+	if err := s.authorizeWorkflow(ctx, actor, projectID, workflowID, pro_interfaces.PermissionViewWorkflow); err != nil {
 		return db.WorkflowTrigger{}, err
 	}
 	return s.repository.GetWorkflowTrigger(projectID, workflowID, triggerID)
@@ -73,7 +73,7 @@ func (s *workflowTriggerService) Create(
 	trigger db.WorkflowTrigger,
 	actor *db.User,
 ) (pro_interfaces.WorkflowTriggerCredentialResult, error) {
-	if err := s.authorize(ctx, actor, projectID, pro_interfaces.CapabilityAccessWrite, db.CanManageProjectResources); err != nil {
+	if err := s.authorizeWorkflow(ctx, actor, projectID, workflowID, pro_interfaces.PermissionAdministerWorkflow); err != nil {
 		return pro_interfaces.WorkflowTriggerCredentialResult{}, err
 	}
 	current, err := s.repository.GetWorkflowTriggers(projectID, workflowID, db.RetrieveQueryParams{Count: db.MaxWorkflowTriggers})
@@ -120,7 +120,7 @@ func (s *workflowTriggerService) Update(
 	requested db.WorkflowTrigger,
 	actor *db.User,
 ) (db.WorkflowTrigger, error) {
-	if err := s.authorize(ctx, actor, projectID, pro_interfaces.CapabilityAccessWrite, db.CanManageProjectResources); err != nil {
+	if err := s.authorizeWorkflow(ctx, actor, projectID, workflowID, pro_interfaces.PermissionAdministerWorkflow); err != nil {
 		return db.WorkflowTrigger{}, err
 	}
 	current, err := s.repository.GetWorkflowTrigger(projectID, workflowID, triggerID)
@@ -155,7 +155,7 @@ func (s *workflowTriggerService) Delete(
 	triggerID int,
 	actor *db.User,
 ) error {
-	if err := s.authorize(ctx, actor, projectID, pro_interfaces.CapabilityAccessWrite, db.CanManageProjectResources); err != nil {
+	if err := s.authorizeWorkflow(ctx, actor, projectID, workflowID, pro_interfaces.PermissionAdministerWorkflow); err != nil {
 		return err
 	}
 	return s.repository.DeleteWorkflowTrigger(projectID, workflowID, triggerID)
@@ -170,7 +170,7 @@ func (s *workflowTriggerService) SetEnabled(
 	enabled bool,
 	actor *db.User,
 ) (db.WorkflowTrigger, error) {
-	if err := s.authorize(ctx, actor, projectID, pro_interfaces.CapabilityAccessWrite, db.CanManageProjectResources); err != nil {
+	if err := s.authorizeWorkflow(ctx, actor, projectID, workflowID, pro_interfaces.PermissionAdministerWorkflow); err != nil {
 		return db.WorkflowTrigger{}, err
 	}
 	trigger, err := s.repository.GetWorkflowTrigger(projectID, workflowID, triggerID)
@@ -189,7 +189,7 @@ func (s *workflowTriggerService) RotateCredential(
 	expectedRevision int,
 	actor *db.User,
 ) (pro_interfaces.WorkflowTriggerCredentialResult, error) {
-	if err := s.authorize(ctx, actor, projectID, pro_interfaces.CapabilityAccessWrite, db.CanManageProjectResources); err != nil {
+	if err := s.authorizeWorkflow(ctx, actor, projectID, workflowID, pro_interfaces.PermissionAdministerWorkflow); err != nil {
 		return pro_interfaces.WorkflowTriggerCredentialResult{}, err
 	}
 	trigger, err := s.repository.GetWorkflowTrigger(projectID, workflowID, triggerID)
@@ -217,7 +217,7 @@ func (s *workflowTriggerService) Test(
 	requestValues map[string]json.RawMessage,
 	actor *db.User,
 ) (pro_interfaces.WorkflowTriggerFireResult, error) {
-	if err := s.authorize(ctx, actor, projectID, pro_interfaces.CapabilityAccessExecute, db.CanRunProjectTasks); err != nil {
+	if err := s.authorizeWorkflow(ctx, actor, projectID, workflowID, pro_interfaces.PermissionStartWorkflow); err != nil {
 		return pro_interfaces.WorkflowTriggerFireResult{}, err
 	}
 	trigger, err := s.repository.GetWorkflowTrigger(projectID, workflowID, triggerID)
@@ -301,7 +301,7 @@ func (s *workflowTriggerService) History(
 	params db.RetrieveQueryParams,
 	actor *db.User,
 ) ([]db.WorkflowTriggerInvocation, error) {
-	if err := s.authorize(ctx, actor, projectID, pro_interfaces.CapabilityAccessRead, 0); err != nil {
+	if err := s.authorizeWorkflow(ctx, actor, projectID, workflowID, pro_interfaces.PermissionViewWorkflow); err != nil {
 		return nil, err
 	}
 	if _, err := s.repository.GetWorkflowTrigger(projectID, workflowID, triggerID); err != nil {
@@ -459,6 +459,62 @@ func (s *workflowTriggerService) authorize(
 		permissions = role.Permissions
 	}
 	if permissions&permission != permission {
+		return pro_interfaces.ErrWorkflowTriggerPermissionDenied
+	}
+	return nil
+}
+
+func (s *workflowTriggerService) authorizeWorkflow(
+	ctx context.Context,
+	actor *db.User,
+	projectID int,
+	workflowID int,
+	permission pro_interfaces.PermissionID,
+) error {
+	if err := s.authorize(ctx, actor, projectID, pro_interfaces.CapabilityAccessRead, 0); err != nil {
+		return err
+	}
+	workflow, err := s.workflowStore.GetWorkflowTemplate(projectID, workflowID)
+	if err != nil {
+		return err
+	}
+	if actor != nil && actor.Admin {
+		return nil
+	}
+	store, ok := s.identityStore.(pro_interfaces.WorkflowAuthorizationIdentityStore)
+	if actor == nil {
+		return pro_interfaces.ErrWorkflowTriggerPermissionDenied
+	}
+	if !ok {
+		// Narrow legacy test adapters do not expose the live resolver. Production
+		// wiring supplies db.Store and therefore never takes this compatibility path.
+		legacyPermission := db.ProjectUserPermission(0)
+		if permission == pro_interfaces.PermissionStartWorkflow {
+			legacyPermission = db.CanRunProjectTasks
+		} else if permission == pro_interfaces.PermissionAdministerWorkflow {
+			legacyPermission = db.CanManageProjectResources
+		}
+		return s.authorize(ctx, actor, projectID, pro_interfaces.CapabilityAccessRead, legacyPermission)
+	}
+	state, err := pro_interfaces.ResolveWorkflowAuthorizationState(store, projectID, actor.ID)
+	if err != nil {
+		return pro_interfaces.ErrWorkflowTriggerPermissionDenied
+	}
+	view := pro_interfaces.AuthorizeWorkflowTriggerRead(workflow, state.Identity, state.KnownRoles)
+	if !view.Allowed {
+		return pro_interfaces.ErrWorkflowTriggerPermissionDenied
+	}
+	var decision pro_interfaces.WorkflowAccessDecision
+	if permission == pro_interfaces.PermissionAdministerWorkflow {
+		decision = pro_interfaces.AuthorizeWorkflowTriggerAdmin(workflow, state.Identity, state.KnownRoles)
+	} else {
+		decision = pro_interfaces.EvaluateWorkflowAccess(pro_interfaces.WorkflowAccessRequest{
+			Permission: permission, ProjectPermissions: state.Identity.Permissions,
+			EffectiveRoleReferences: []db.ProjectRoleReference{state.Identity.Reference}, KnownRoleReferences: state.KnownRoles,
+			Policy: workflow.AccessPolicy,
+		})
+	}
+	if !decision.Allowed {
 		return pro_interfaces.ErrWorkflowTriggerPermissionDenied
 	}
 	return nil

@@ -102,12 +102,23 @@ func ValidateProjectRole(role Role) error {
 		return &common_errors.ValidationError{Message: "Project role revision must be positive"}
 	}
 	const knownPermissions = CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
-		CanManageProjectUsers | CanViewProjectResources
+		CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
+		CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows
 	if role.Permissions&^knownPermissions != 0 {
 		return &common_errors.ValidationError{Message: "Project role contains unknown permissions"}
 	}
 	if role.GlobalPermissions != 0 {
 		return &common_errors.ValidationError{Message: "Project role cannot contain global permissions"}
+	}
+	return nil
+}
+
+// ValidateProjectRoleReference verifies only the durable reference shape.
+// Whether a custom role still exists is intentionally evaluated from the
+// current role store at authorization time.
+func ValidateProjectRoleReference(reference ProjectRoleReference) error {
+	if !IsValidProjectRoleReferenceSyntax(reference) {
+		return &common_errors.ValidationError{Message: "Workflow role reference is invalid"}
 	}
 	return nil
 }

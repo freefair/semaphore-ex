@@ -13,10 +13,12 @@ import (
 
 	"github.com/semaphoreui/semaphore/db"
 	coresql "github.com/semaphoreui/semaphore/db/sql"
+	"github.com/semaphoreui/semaphore/pkg/metrics"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	workflowDB "github.com/semaphoreui/semaphore/pro/db"
 	workflowSQL "github.com/semaphoreui/semaphore/pro/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	auditServices "github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -75,16 +77,24 @@ func TestWorkflowServiceRunsTwoNodesInOrderFromImmutableSnapshot(t *testing.T) {
 func TestWorkflowApprovalPausesThenResumesOnlyForEligibleNonRequester(t *testing.T) {
 	fixture := newWorkflowServiceFixture(t)
 	defer fixture.store.Close()
+	configurable, ok := fixture.service.(pro_interfaces.WorkflowAuditConfigurer)
+	require.True(t, ok)
+	configurable.ConfigureWorkflowAudit(auditServices.NewServiceFacade(fixture.store, &workflowAuditLogWriter{}, metrics.NewMetrics()))
 	require.NoError(t, ensureWorkflowApprovalMember(fixture.store, fixture.projectID, fixture.user.ID, db.ProjectOwner))
 	approver, err := fixture.store.CreateUserWithoutPassword(db.User{Username: "workflow-approver", Name: "Workflow Approver", Email: "workflow-approver@example.invalid"})
 	require.NoError(t, err)
 	require.NoError(t, ensureWorkflowApprovalMember(fixture.store, fixture.projectID, approver.ID, db.ProjectManager))
+	secondApprover, err := fixture.store.CreateUserWithoutPassword(db.User{Username: "workflow-owner-approver", Name: "Workflow Owner Approver", Email: "workflow-owner-approver@example.invalid"})
+	require.NoError(t, err)
+	require.NoError(t, ensureWorkflowApprovalMember(fixture.store, fixture.projectID, secondApprover.ID, db.ProjectOwner))
+	policy := db.WorkflowApprovalRolePolicy{Mode: db.WorkflowApprovalRoleModeAllOf,
+		RoleIDs: []db.ProjectRoleReference{db.BuiltinProjectRoleReferenceOwner, db.BuiltinProjectRoleReferenceManager}, MinimumDistinctApprovers: 2, InitiatorSeparation: true}
 
 	workflow, err := fixture.repository.CreateWorkflowTemplate(db.WorkflowTemplate{
 		ProjectID: fixture.projectID, Name: "Approval", DefinitionVersion: db.WorkflowDefinitionVersion,
 		Nodes: []db.WorkflowNode{
 			{ID: -1, TemplateID: fixture.first.ID, DisplayName: "Prepare"},
-			{ID: -2, Kind: db.WorkflowNodeApprovalKind, DisplayName: "Approve", ApprovalSeparationOfDuties: true},
+			{ID: -2, Kind: db.WorkflowNodeApprovalKind, DisplayName: "Approve", ApprovalSeparationOfDuties: true, ApprovalRolePolicy: policy},
 			{ID: -3, TemplateID: fixture.second.ID, DisplayName: "Deploy"},
 		},
 		Edges: []db.WorkflowEdge{
@@ -115,16 +125,44 @@ func TestWorkflowApprovalPausesThenResumesOnlyForEligibleNonRequester(t *testing
 		Status: db.WorkflowApprovalApproved, Source: db.WorkflowApprovalDecisionSourceUser,
 	}, &fixture.user)
 	require.ErrorContains(t, err, "cannot be self-approved")
+	assert.ErrorIs(t, err, pro_interfaces.ErrWorkflowPermissionDenied)
 
 	resolved, err := fixture.service.ResolveWorkflowApproval(fixture.projectID, workflow.ID, run.ID, approvalNodeID, db.WorkflowApprovalDecision{
 		Status: db.WorkflowApprovalApproved, Comment: "Reviewed", Source: db.WorkflowApprovalDecisionSourceUser,
 	}, &approver)
 	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowApprovalPending, resolved.Status)
+	assert.Len(t, fixture.enqueuer.tasks, 1, "one contribution must not satisfy an all-of snapshot")
+	approverInbox, err := fixture.service.GetWorkflowApprovalInbox(fixture.projectID, &approver)
+	require.NoError(t, err)
+	assert.Empty(t, approverInbox, "a contributor must no longer be eligible for the same approval")
+	secondInbox, err := fixture.service.GetWorkflowApprovalInbox(fixture.projectID, &secondApprover)
+	require.NoError(t, err)
+	require.Len(t, secondInbox, 1, "an unmatched current role remains eligible for the pending snapshot")
+	resolved, err = fixture.service.ResolveWorkflowApproval(fixture.projectID, workflow.ID, run.ID, approvalNodeID, db.WorkflowApprovalDecision{
+		Status: db.WorkflowApprovalApproved, Comment: "Owner reviewed", Source: db.WorkflowApprovalDecisionSourceUser,
+	}, &secondApprover)
+	require.NoError(t, err)
 	assert.Equal(t, db.WorkflowApprovalApproved, resolved.Status)
-	assert.Equal(t, approver.ID, *resolved.ResolvedByUserID)
-	assert.Equal(t, "Reviewed", resolved.DecisionComment)
-	assert.Len(t, fixture.enqueuer.tasks, 2, "approval must permit the downstream task")
+	assert.Equal(t, secondApprover.ID, *resolved.ResolvedByUserID)
+	assert.Len(t, fixture.enqueuer.tasks, 2, "the second required contributor must permit the downstream task")
+	events, err := fixture.store.GetAllEvents(db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, events, 3, "the real facade must persist the denial and both committed contributions")
+	descriptions := []string{*events[0].Description, *events[1].Description, *events[2].Description}
+	assert.Contains(t, descriptions[0]+descriptions[1]+descriptions[2], `"outcome":"denied"`)
+	assert.Contains(t, descriptions[0]+descriptions[1]+descriptions[2], `"outcome":"allowed"`)
+	for _, description := range descriptions {
+		assert.NotContains(t, description, "approval-pause")
+		assert.Contains(t, description, `"source":"api"`)
+	}
 }
+
+type workflowAuditLogWriter struct{}
+
+func (*workflowAuditLogWriter) WriteEventLog(pro_interfaces.EventLogRecord) error { return nil }
+func (*workflowAuditLogWriter) WriteTaskLog(pro_interfaces.TaskLogRecord) error   { return nil }
+func (*workflowAuditLogWriter) WriteResult(any) error                             { return nil }
 
 func TestWorkflowApprovalInboxOnlyReturnsPendingRequestsTheActorMayResolve(t *testing.T) {
 	fixture := newWorkflowServiceFixture(t)
@@ -1333,6 +1371,8 @@ func newWorkflowServiceFixture(t *testing.T) workflowServiceFixture {
 		Username: "workflow-actor", Name: "Workflow Actor", Email: "workflow-service@example.invalid",
 	})
 	require.NoError(t, err)
+	_, err = store.CreateProjectUser(db.ProjectUser{ProjectID: project.ID, UserID: user.ID, Role: db.ProjectOwner})
+	require.NoError(t, err)
 	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &project.ID, Type: db.AccessKeyNone})
 	require.NoError(t, err)
 	repositoryResource, err := store.CreateRepository(db.Repository{
@@ -1374,6 +1414,23 @@ func ensureWorkflowApprovalMember(store *coresql.SqlDb, projectID int, userID in
 	}
 	_, err := store.CreateProjectUser(db.ProjectUser{ProjectID: projectID, UserID: userID, Role: role})
 	return err
+}
+
+func TestWorkflowServiceDirectMutationsRequireLiveWorkflowPermission(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	run, err := fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "direct-permission-run")
+	require.NoError(t, err)
+	outsider, err := fixture.store.CreateUserWithoutPassword(db.User{
+		Username: "workflow-outsider", Name: "Workflow Outsider", Email: "workflow-outsider@example.invalid",
+	})
+	require.NoError(t, err)
+
+	_, err = fixture.service.StartWorkflow(fixture.workflow, &outsider, "direct-permission-start")
+	require.Error(t, err)
+	_, err = fixture.service.RequestWorkflowRunStop(fixture.projectID, run.ID, &outsider)
+	require.Error(t, err)
+	_, err = fixture.service.RetryWorkflowRunReconciliation(fixture.projectID, run.ID, &outsider)
+	require.Error(t, err)
 }
 
 func configureWorkflowArtifactEncryption(t *testing.T) {
