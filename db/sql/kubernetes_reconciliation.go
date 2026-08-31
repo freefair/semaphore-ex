@@ -39,7 +39,7 @@ func (d *SqlDb) OpenKubernetesReconciliationSession(runnerID int, clusterAlias, 
 		return session, err
 	}
 	if resumeSessionID != "" && resumeFence != "" {
-		err = tx.SelectOne(&session, d.PrepareQuery("select session_id,runner_id,cluster_alias,namespace,scan_complete,scan_revision from kubernetes_reconciliation_session where session_id=? and runner_id=? and fence_hash=? and active=true"), resumeSessionID, runnerID, kubernetesReconciliationFenceHash(resumeFence))
+		err = tx.SelectOne(&session, d.PrepareQuery("select session_id,runner_id,cluster_alias,namespace,scan_complete,scan_revision,telemetry_highest_sequence from kubernetes_reconciliation_session where session_id=? and runner_id=? and fence_hash=? and active=true"), resumeSessionID, runnerID, kubernetesReconciliationFenceHash(resumeFence))
 		if err == nil && session.ClusterAlias == clusterAlias && session.Namespace == namespace {
 			session.Fence = resumeFence
 			session.Targets, err = kubernetesReconciliationTargetsTx(tx, d, session.SessionID)
@@ -119,7 +119,7 @@ func (d *SqlDb) IngestKubernetesReconciliationScan(runnerID int, scan db.Kuberne
 	}
 	defer func() { _ = tx.Rollback() }()
 	var session db.KubernetesReconciliationSession
-	err = tx.SelectOne(&session, d.PrepareQuery("select session_id,runner_id,cluster_alias,namespace,scan_complete,scan_revision from kubernetes_reconciliation_session where session_id=? and runner_id=? and fence_hash=? and active=true"), scan.SessionID, runnerID, kubernetesReconciliationFenceHash(scan.Fence))
+	err = tx.SelectOne(&session, d.PrepareQuery("select session_id,runner_id,cluster_alias,namespace,scan_complete,scan_revision,telemetry_highest_sequence from kubernetes_reconciliation_session where session_id=? and runner_id=? and fence_hash=? and active=true"), scan.SessionID, runnerID, kubernetesReconciliationFenceHash(scan.Fence))
 	if err != nil {
 		return db.ErrKubernetesReconciliationSessionStale
 	}
@@ -228,6 +228,62 @@ func (d *SqlDb) IngestKubernetesReconciliationScan(runnerID int, scan db.Kuberne
 		return db.ErrKubernetesReconciliationSessionStale
 	}
 	return tx.Commit()
+}
+
+// IngestKubernetesTelemetry durably accepts only the active reconciliation
+// session's contiguous sequence. Retried sequences must retain their exact
+// fingerprint, so neither stale runners nor mutated replays alter metrics.
+func (d *SqlDb) IngestKubernetesTelemetry(runnerID int, sessionID, fence string, batch db.KubernetesTelemetryBatch) (ack db.KubernetesTelemetryAck, accepted []db.KubernetesTelemetryEvent, err error) {
+	if runnerID <= 0 || !validKubernetesSessionID(sessionID) || !validKubernetesSessionID(fence) || batch.Validate() != nil {
+		return ack, nil, fmt.Errorf("invalid Kubernetes telemetry batch")
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return ack, nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	query := "select telemetry_highest_sequence from kubernetes_reconciliation_session where session_id=? and runner_id=? and fence_hash=? and active=true"
+	if d.GetDialect() != util.DbDriverSQLite {
+		query += " for update"
+	}
+	var highest int64
+	if err = tx.SelectOne(&highest, d.PrepareQuery(query), sessionID, runnerID, kubernetesReconciliationFenceHash(fence)); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ack, nil, db.ErrKubernetesTelemetrySessionStale
+		}
+		return ack, nil, err
+	}
+	for _, event := range batch.Events {
+		fingerprint := event.Fingerprint()
+		if event.Sequence <= highest {
+			var stored string
+			if err = tx.SelectOne(&stored, d.PrepareQuery("select fingerprint from kubernetes_telemetry_event where session_id=? and sequence=?"), sessionID, event.Sequence); err != nil || stored != fingerprint {
+				return ack, nil, db.ErrKubernetesTelemetrySequenceConflict
+			}
+			continue
+		}
+		if event.Sequence != highest+1 {
+			return ack, nil, db.ErrKubernetesTelemetrySequenceConflict
+		}
+		if _, err = tx.Exec(d.PrepareQuery("insert into kubernetes_telemetry_event (session_id,sequence,fingerprint) values (?,?,?)"), sessionID, event.Sequence, fingerprint); err != nil {
+			return ack, nil, err
+		}
+		highest++
+		accepted = append(accepted, event)
+	}
+	if len(accepted) > 0 {
+		result, updateErr := tx.Exec(d.PrepareQuery("update kubernetes_reconciliation_session set telemetry_highest_sequence=? where session_id=? and runner_id=? and fence_hash=? and active=true"), highest, sessionID, runnerID, kubernetesReconciliationFenceHash(fence))
+		if updateErr != nil {
+			return ack, nil, updateErr
+		}
+		if affected, affectedErr := result.RowsAffected(); affectedErr != nil || affected != 1 {
+			return ack, nil, db.ErrKubernetesTelemetrySessionStale
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return ack, nil, err
+	}
+	return db.KubernetesTelemetryAck{SessionID: sessionID, HighestSequence: highest}, accepted, nil
 }
 
 func (d *SqlDb) GetKubernetesReconciliationCommands(runnerID int, sessionID, fence string, limit int) ([]db.KubernetesReconciliationRemediationCommand, error) {

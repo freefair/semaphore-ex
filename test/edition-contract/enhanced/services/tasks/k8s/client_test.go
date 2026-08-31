@@ -65,6 +65,25 @@ func TestKubernetesAPIErrorUsesOnlyStableNonSensitiveCategories(t *testing.T) {
 	}
 }
 
+func TestClientTelemetryHooksUseOnlyStableOperationAndDenialEnums(t *testing.T) {
+	api := fake.NewSimpleClientset()
+	var events []db.KubernetesTelemetryEvent
+	client := &client{config: config{namespace: "semaphore-jobs"}, api: api, recordTelemetry: func(event db.KubernetesTelemetryEvent) { events = append(events, event) }}
+	_, err := client.CreateBundleSecret(context.Background(), BundleSecret{Name: "bundle", Labels: map[string]string{"managed": "true"}, Data: []byte("bundle"), Immutable: true})
+	require.ErrorContains(t, err, "no UID")
+	api.PrependReactor("create", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "jobs"}, "task-name", errors.New("admission detail token=secret"))
+	})
+	_, err = client.CreateJob(context.Background(), &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "task-name", Namespace: "semaphore-jobs"}})
+	require.Error(t, err)
+	assert.Contains(t, events, db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryAPILatency, Operation: db.KubernetesTelemetryOperationCreateSecret})
+	assert.Contains(t, events, db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryDenial, PolicyRule: db.KubernetesPolicyRuleRBACDenied})
+	for _, event := range events {
+		assert.NotContains(t, event.PolicyRule, "secret")
+		assert.NotContains(t, event.PolicyRule, "task-name")
+	}
+}
+
 func TestClientRequiresExactJobAndPodTerminationEvidence(t *testing.T) {
 	controller := true
 	jobUID := types.UID("job-uid")

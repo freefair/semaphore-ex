@@ -634,6 +634,7 @@ type Store interface {
 	KubernetesExecutionPolicyRepository
 	DockerReconciliationRepository
 	DockerTelemetryRepository
+	KubernetesTelemetryRepository
 	EventManager
 	SecretStorageRepository
 	SecretSyncRepository

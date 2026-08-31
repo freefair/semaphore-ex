@@ -507,6 +507,7 @@ func (p *JobPool) sendProgress() (ok bool) {
 	url := util.Config.WebHost + "/api/internal/runners"
 
 	body := RunnerProgress{Jobs: nil, KnownJobs: make([]JobState, 0)}
+	var kubernetesTelemetrySession db.KubernetesReconciliationSession
 	if resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeDocker {
 		p.dockerPolicyMu.Lock()
 		session := p.dockerReconciliationSession
@@ -553,6 +554,7 @@ func (p *JobPool) sendProgress() (ok bool) {
 		session := p.kubernetesReconciliationSession
 		ready := p.kubernetesReconciliationReady
 		p.kubernetesPolicyMu.Unlock()
+		kubernetesTelemetrySession = session
 		if session.SessionID != "" && !ready {
 			scanner, scannerOK := p.provider.(tasks.KubernetesReconciliationScanner)
 			if !scannerOK {
@@ -575,6 +577,14 @@ func (p *JobPool) sendProgress() (ok bool) {
 		}
 		body.KubernetesReconciliationRemediationResults = append(body.KubernetesReconciliationRemediationResults, p.kubernetesRemediationResults[:resultCount]...)
 		p.kubernetesPolicyMu.Unlock()
+		if session.SessionID != "" {
+			if reporter, reporterOK := p.provider.(tasks.KubernetesTelemetryReporter); reporterOK {
+				batch := reporter.PendingKubernetesTelemetry()
+				if len(batch.Events) > 0 {
+					body.KubernetesTelemetry = &batch
+				}
+			}
+		}
 	}
 
 	for id, j := range p.snapshotRunningJobs() {
@@ -679,6 +689,17 @@ func (p *JobPool) sendProgress() (ok bool) {
 	if progressResp.DockerTelemetryAck != nil {
 		if reporter, reporterOK := p.provider.(tasks.DockerTelemetryReporter); reporterOK {
 			reporter.AcknowledgeDockerTelemetry(*progressResp.DockerTelemetryAck)
+		}
+	}
+	if progressResp.KubernetesTelemetryAck != nil && body.KubernetesTelemetry != nil {
+		p.kubernetesPolicyMu.Lock()
+		currentSession := p.kubernetesReconciliationSession
+		p.kubernetesPolicyMu.Unlock()
+		ack := *progressResp.KubernetesTelemetryAck
+		if ack.SessionID == currentSession.SessionID && kubernetesTelemetrySession.SessionID == currentSession.SessionID && kubernetesTelemetrySession.Fence == currentSession.Fence {
+			if reporter, reporterOK := p.provider.(tasks.KubernetesTelemetryReporter); reporterOK {
+				reporter.AcknowledgeKubernetesTelemetry(ack)
+			}
 		}
 	}
 

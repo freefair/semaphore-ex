@@ -6,6 +6,33 @@ import (
 	"time"
 )
 
+// RecordKubernetesTelemetry exports only db-validated, bounded labels.
+func (m *Metrics) RecordKubernetesTelemetry(event db.KubernetesTelemetryEvent) {
+	if m == nil || event.Validate() != nil {
+		return
+	}
+	switch event.Kind {
+	case db.KubernetesTelemetryAPILatency:
+		m.kubernetesAPILatency.WithLabelValues(string(event.Operation)).Observe(float64(event.DurationMilliseconds) / 1000)
+	case db.KubernetesTelemetryWatchReconnect:
+		m.kubernetesReconnects.WithLabelValues("watch").Inc()
+	case db.KubernetesTelemetryLogReconnect:
+		m.kubernetesReconnects.WithLabelValues("logs").Inc()
+	case db.KubernetesTelemetryDenial:
+		m.kubernetesDenials.WithLabelValues(event.PolicyRule).Inc()
+	case db.KubernetesTelemetryCleanupFailure:
+		m.kubernetesCleanup.WithLabelValues(string(event.CleanupResource)).Inc()
+	case db.KubernetesTelemetryReconciliation:
+		m.kubernetesReconcile.WithLabelValues(string(event.ReconciliationState)).Add(float64(event.Count))
+	case db.KubernetesTelemetryOrphan:
+		m.kubernetesOrphans.Add(float64(event.Count))
+	case db.KubernetesTelemetryQuarantine:
+		m.kubernetesQuarantine.Add(float64(event.Count))
+	case db.KubernetesTelemetryDrop:
+		m.kubernetesDrops.WithLabelValues(string(event.DropReason)).Add(float64(event.Count))
+	}
+}
+
 // RecordDockerTelemetry accepts only db-validated events. All labels are
 // closed enums; no Docker object, runner, task, image, or error text can enter
 // the Prometheus label set.

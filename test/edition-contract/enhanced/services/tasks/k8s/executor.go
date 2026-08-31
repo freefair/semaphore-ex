@@ -47,6 +47,7 @@ type KubernetesExecutor struct {
 	terminalReason    string
 	retentionDeadline *time.Time
 	cleanupCompleted  bool
+	recordTelemetry   func(db.KubernetesTelemetryEvent)
 }
 
 func newExecutorForPlan(client KubernetesClient, cfg config, policy db.KubernetesExecutionPolicy, runnerID int, task db.Task, template db.Template, logger task_logger.Logger) *KubernetesExecutor {
@@ -286,6 +287,9 @@ func kubernetesTaskCommand(plan *tasks.ContainerTaskPlan) ([]string, error) {
 
 func (e *KubernetesExecutor) streamLogs(ctx context.Context, pod PodIdentity, tracker *logTracker) {
 	for reconnect := 0; reconnect < maxLogReconnects && ctx.Err() == nil; reconnect++ {
+		if reconnect > 0 {
+			e.emitTelemetry(db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryLogReconnect, Operation: db.KubernetesTelemetryOperationStreamPodLogs, Count: 1})
+		}
 		_ = e.streamLogsOnce(ctx, pod, tracker, true)
 		if ctx.Err() != nil {
 			return
@@ -410,21 +414,30 @@ func (e *KubernetesExecutor) cleanupTaskObjects(ctx context.Context) error {
 	e.mu.Unlock()
 	if job.Name != "" {
 		if err := e.client.DeleteJobForeground(ctx, job, pod, e.config.cleanupGrace); err != nil {
+			e.emitTelemetry(db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryCleanupFailure, CleanupResource: db.KubernetesTelemetryResourceJob})
 			return err
 		}
 	}
 	if networkPolicy.Name != "" {
 		if err := e.client.DeleteNetworkPolicy(ctx, networkPolicy, taskLabels(e.task, e.runnerID)); err != nil {
+			e.emitTelemetry(db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryCleanupFailure, CleanupResource: db.KubernetesTelemetryResourceNetworkPolicy})
 			return err
 		}
 	}
 	if secret.Name != "" {
 		if err := e.client.DeleteBundleSecret(ctx, secret); err != nil {
+			e.emitTelemetry(db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryCleanupFailure, CleanupResource: db.KubernetesTelemetryResourceSecret})
 			return err
 		}
 	}
 	e.cleanupCompleted = true
 	return nil
+}
+
+func (e *KubernetesExecutor) emitTelemetry(event db.KubernetesTelemetryEvent) {
+	if e.recordTelemetry != nil {
+		e.recordTelemetry(event)
+	}
 }
 
 func (e *KubernetesExecutor) ExecutorMetadata() db.RunnerExecutorMetadata {

@@ -504,6 +504,30 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			c.metrics.RecordDockerTelemetry(event)
 		}
 	}
+	if body.KubernetesTelemetry != nil {
+		if runner.EffectiveExecutorType() != db.RunnerExecutorK8s {
+			helpers.WriteErrorStatus(w, "Kubernetes telemetry is not available for this runner", http.StatusBadRequest)
+			return
+		}
+		telemetryStore, ok := c.runnerRepo.(db.KubernetesTelemetryRepository)
+		if !ok {
+			helpers.WriteErrorStatus(w, "Kubernetes telemetry storage is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		ack, accepted, telemetryErr := telemetryStore.IngestKubernetesTelemetry(runner.ID, r.Header.Get(runners.RunnerKubernetesSessionHeader), r.Header.Get(runners.RunnerKubernetesFenceHeader), *body.KubernetesTelemetry)
+		if telemetryErr != nil {
+			if errors.Is(telemetryErr, db.ErrKubernetesTelemetrySessionStale) || errors.Is(telemetryErr, db.ErrKubernetesTelemetrySequenceConflict) {
+				helpers.WriteErrorStatus(w, "Kubernetes telemetry rejected", http.StatusConflict)
+			} else {
+				helpers.WriteErrorStatus(w, "Invalid Kubernetes telemetry", http.StatusBadRequest)
+			}
+			return
+		}
+		response.KubernetesTelemetryAck = &ack
+		for _, event := range accepted {
+			c.metrics.RecordKubernetesTelemetry(event)
+		}
+	}
 	if runner.EffectiveExecutorType() == db.RunnerExecutorDocker && (len(body.DockerReconciliationObservations) > 0 || body.DockerReconciliationScanComplete != nil || len(body.DockerReconciliationOrphanCandidates) > 0 || len(body.DockerReconciliationQuarantines) > 0) {
 		sessionStore, ok := c.runnerRepo.(db.DockerReconciliationSessionRepository)
 		if !ok {
@@ -614,7 +638,7 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 		if body.KnownJobs != nil && !c.persistTaskExecutionEvidence(w, runner.ID, executionEvidence) {
 			return
 		}
-		if len(response.DockerReconciliationCommands) > 0 || len(response.KubernetesReconciliationCommands) > 0 || response.DockerTelemetryAck != nil {
+		if len(response.DockerReconciliationCommands) > 0 || len(response.KubernetesReconciliationCommands) > 0 || response.DockerTelemetryAck != nil || response.KubernetesTelemetryAck != nil {
 			helpers.WriteJSON(w, http.StatusOK, response)
 			return
 		}

@@ -45,6 +45,31 @@ func TestKubernetesReconciliationExpiredGCIsSessionFencedAndReplaySafe(t *testin
 	assert.Error(t, err)
 }
 
+func TestKubernetesTelemetrySessionFencesReplaysAndRejectsMutation(t *testing.T) {
+	store, _, runner, _ := createRunnerAttemptFixture(t)
+	session, err := store.OpenKubernetesReconciliationSession(runner.ID, "qa", "semaphore-jobs", "", "")
+	require.NoError(t, err)
+	batch := db.KubernetesTelemetryBatch{Events: []db.KubernetesTelemetryEvent{{Sequence: 1, Kind: db.KubernetesTelemetryAPILatency, Operation: db.KubernetesTelemetryOperationCreateJob, DurationMilliseconds: 7}, {Sequence: 2, Kind: db.KubernetesTelemetryDenial, PolicyRule: db.KubernetesPolicyRuleRBACDenied}}}
+	ack, accepted, err := store.IngestKubernetesTelemetry(runner.ID, session.SessionID, session.Fence, batch)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), ack.HighestSequence)
+	assert.Equal(t, session.SessionID, ack.SessionID)
+	assert.Len(t, accepted, 2)
+	ack, accepted, err = store.IngestKubernetesTelemetry(runner.ID, session.SessionID, session.Fence, batch)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), ack.HighestSequence)
+	assert.Empty(t, accepted)
+	mutated := batch
+	mutated.Events = append([]db.KubernetesTelemetryEvent(nil), batch.Events...)
+	mutated.Events[0].DurationMilliseconds = 8
+	_, _, err = store.IngestKubernetesTelemetry(runner.ID, session.SessionID, session.Fence, mutated)
+	assert.ErrorIs(t, err, db.ErrKubernetesTelemetrySequenceConflict)
+	_, err = store.OpenKubernetesReconciliationSession(runner.ID, "qa", "semaphore-jobs", "forged", "forged")
+	require.NoError(t, err)
+	_, _, err = store.IngestKubernetesTelemetry(runner.ID, session.SessionID, session.Fence, batch)
+	assert.ErrorIs(t, err, db.ErrKubernetesTelemetrySessionStale)
+}
+
 func TestKubernetesReconciliationExcludesUnexpiredTerminalAttemptAndRejectsActiveAbsence(t *testing.T) {
 	store, projectID, runner, task := createRunnerAttemptFixture(t)
 	assigned, ok, err := store.AssignTaskRunner(projectID, task.ID, runner.ID, runner.Name, time.Now().UTC())

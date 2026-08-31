@@ -63,6 +63,7 @@ type RunnerProgress struct {
 	DockerReconciliationQuarantines            []db.DockerReconciliationStopQuarantine        `json:"docker_reconciliation_quarantines,omitempty"`
 	DockerReconciliationRemediationResults     []db.DockerReconciliationRemediationResult     `json:"docker_reconciliation_remediation_results,omitempty"`
 	DockerTelemetry                            *db.DockerTelemetryBatch                       `json:"docker_telemetry,omitempty"`
+	KubernetesTelemetry                        *db.KubernetesTelemetryBatch                   `json:"kubernetes_telemetry,omitempty"`
 	KubernetesReconciliationScan               *db.KubernetesReconciliationScan               `json:"kubernetes_reconciliation_scan,omitempty"`
 	KubernetesReconciliationRemediationResults []db.KubernetesReconciliationRemediationResult `json:"kubernetes_reconciliation_remediation_results,omitempty"`
 }
@@ -77,6 +78,7 @@ type RunnerProgressResponse struct {
 	TerminatedJobs                   []int                                           `json:"terminated_jobs,omitempty"`
 	DockerReconciliationCommands     []db.DockerReconciliationRemediationCommand     `json:"docker_reconciliation_commands,omitempty"`
 	DockerTelemetryAck               *db.DockerTelemetryAck                          `json:"docker_telemetry_ack,omitempty"`
+	KubernetesTelemetryAck           *db.KubernetesTelemetryAck                      `json:"kubernetes_telemetry_ack,omitempty"`
 	KubernetesReconciliationCommands []db.KubernetesReconciliationRemediationCommand `json:"kubernetes_reconciliation_commands,omitempty"`
 }
 

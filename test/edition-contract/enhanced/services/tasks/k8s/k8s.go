@@ -3,6 +3,7 @@ package k8s
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -15,14 +16,20 @@ import (
 )
 
 type Provider struct {
-	config         config
-	client         KubernetesClient
-	keyInstaller   db_lib.AccessKeyInstaller
-	repoLock       *tasks.KeyLock
-	mu             sync.RWMutex
-	runnerID       int
-	policy         db.KubernetesExecutionPolicy
-	reconciliation db.KubernetesReconciliationSession
+	config                config
+	client                KubernetesClient
+	keyInstaller          db_lib.AccessKeyInstaller
+	repoLock              *tasks.KeyLock
+	mu                    sync.RWMutex
+	runnerID              int
+	policy                db.KubernetesExecutionPolicy
+	reconciliation        db.KubernetesReconciliationSession
+	telemetryMu           sync.Mutex
+	telemetrySessionID    string
+	telemetryFence        string
+	telemetryNextSequence int64
+	telemetry             []db.KubernetesTelemetryEvent
+	telemetryDropped      int64
 }
 
 func NewProvider(input util.RunnerK8sConfig) (tasks.ExecutorProvider, error) {
@@ -37,14 +44,18 @@ func NewProvider(input util.RunnerK8sConfig) (tasks.ExecutorProvider, error) {
 	return newProviderWithClient(cfg, client), nil
 }
 
-func newProviderWithClient(cfg config, client KubernetesClient) *Provider {
-	return &Provider{
+func newProviderWithClient(cfg config, kubernetesClient KubernetesClient) *Provider {
+	provider := &Provider{
 		config:       cfg,
-		client:       client,
+		client:       kubernetesClient,
 		keyInstaller: ssh.KeyInstaller{},
 		repoLock:     &tasks.KeyLock{},
 		policy:       db.DefaultKubernetesExecutionPolicy(cfg.clusterAlias),
 	}
+	if native, ok := kubernetesClient.(*client); ok {
+		native.recordTelemetry = provider.recordKubernetesTelemetry
+	}
+	return provider
 }
 
 func (p *Provider) ApplyKubernetesExecutionPolicy(policy db.KubernetesExecutionPolicy) error {
@@ -52,9 +63,12 @@ func (p *Provider) ApplyKubernetesExecutionPolicy(policy db.KubernetesExecutionP
 		return err
 	}
 	if policy.ClusterAlias != p.config.clusterAlias {
-		return db.KubernetesPolicyViolationError{Rule: db.KubernetesPolicyRuleClusterDenied}
+		err := db.KubernetesPolicyViolationError{Rule: db.KubernetesPolicyRuleClusterDenied}
+		p.recordKubernetesPolicyDenial(err)
+		return err
 	}
 	if err := validateProviderConfiguration(policy, p.config); err != nil {
+		p.recordKubernetesPolicyDenial(err)
 		return err
 	}
 	p.mu.Lock()
@@ -86,7 +100,77 @@ func (p *Provider) ApplyKubernetesReconciliationSession(session db.KubernetesRec
 	p.mu.Lock()
 	p.reconciliation = session
 	p.mu.Unlock()
+	p.telemetryMu.Lock()
+	if p.telemetrySessionID != session.SessionID || p.telemetryFence != session.Fence {
+		p.telemetrySessionID, p.telemetryFence, p.telemetryNextSequence, p.telemetry, p.telemetryDropped = session.SessionID, session.Fence, session.TelemetryHighestSequence, nil, 0
+	}
+	p.telemetryMu.Unlock()
 	return nil
+}
+
+const (
+	maxKubernetesTelemetryQueueEvents  = 100
+	maxKubernetesTelemetryDroppedCount = int64(1_000_000_000)
+)
+
+func (p *Provider) recordKubernetesTelemetry(event db.KubernetesTelemetryEvent) {
+	p.telemetryMu.Lock()
+	defer p.telemetryMu.Unlock()
+	if p.telemetrySessionID == "" {
+		return
+	}
+	p.flushDroppedKubernetesTelemetryLocked()
+	if len(p.telemetry) >= maxKubernetesTelemetryQueueEvents {
+		if p.telemetryDropped < maxKubernetesTelemetryDroppedCount {
+			p.telemetryDropped++
+		}
+		return
+	}
+	event.Sequence = p.telemetryNextSequence + 1
+	if event.Validate() != nil {
+		return
+	}
+	p.telemetryNextSequence = event.Sequence
+	p.telemetry = append(p.telemetry, event)
+}
+
+func (p *Provider) flushDroppedKubernetesTelemetryLocked() {
+	if p.telemetryDropped == 0 || len(p.telemetry) >= maxKubernetesTelemetryQueueEvents {
+		return
+	}
+	event := db.KubernetesTelemetryEvent{Sequence: p.telemetryNextSequence + 1, Kind: db.KubernetesTelemetryDrop, DropReason: db.KubernetesTelemetryDropQueueFull, Count: p.telemetryDropped}
+	if event.Validate() != nil {
+		return
+	}
+	p.telemetryNextSequence = event.Sequence
+	p.telemetry = append(p.telemetry, event)
+	p.telemetryDropped = 0
+}
+
+func (p *Provider) PendingKubernetesTelemetry() db.KubernetesTelemetryBatch {
+	p.telemetryMu.Lock()
+	defer p.telemetryMu.Unlock()
+	p.flushDroppedKubernetesTelemetryLocked()
+	return db.KubernetesTelemetryBatch{Events: append([]db.KubernetesTelemetryEvent(nil), p.telemetry...)}
+}
+
+func (p *Provider) AcknowledgeKubernetesTelemetry(ack db.KubernetesTelemetryAck) {
+	p.telemetryMu.Lock()
+	defer p.telemetryMu.Unlock()
+	if ack.Validate() != nil || ack.SessionID != p.telemetrySessionID {
+		return
+	}
+	for len(p.telemetry) > 0 && p.telemetry[0].Sequence <= ack.HighestSequence {
+		p.telemetry = p.telemetry[1:]
+	}
+	p.flushDroppedKubernetesTelemetryLocked()
+}
+
+func (p *Provider) recordKubernetesPolicyDenial(err error) {
+	var violation db.KubernetesPolicyViolationError
+	if errors.As(err, &violation) {
+		p.recordKubernetesTelemetry(db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryDenial, PolicyRule: violation.Rule})
+	}
 }
 
 func (p *Provider) ScanKubernetesReconciliation(ctx context.Context, session db.KubernetesReconciliationSession) (db.KubernetesReconciliationScan, error) {
@@ -134,6 +218,7 @@ func (p *Provider) NewExecutor(task db.Task, template db.Template, inventory db.
 		return nil, fmt.Errorf("Kubernetes runner identity is not installed")
 	}
 	if err := validateTaskExecution(policy, p.config, image); err != nil {
+		p.recordKubernetesPolicyDenial(err)
 		return nil, err
 	}
 	local := &tasks.LocalExecutor{
@@ -151,5 +236,6 @@ func (p *Provider) NewExecutor(task db.Task, template db.Template, inventory db.
 	executor := newExecutorForPlan(p.client, p.config, policy, runnerID, task, template, task_logger.NopLogger{})
 	executor.local = local
 	executor.image = image
+	executor.recordTelemetry = p.recordKubernetesTelemetry
 	return executor, nil
 }

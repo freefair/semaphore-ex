@@ -53,6 +53,13 @@ type KubernetesReconciliationRemediator interface {
 	RemediateKubernetesReconciliation(context.Context, db.KubernetesReconciliationRemediationCommand) db.KubernetesReconciliationRemediationResult
 }
 
+// KubernetesTelemetryReporter exposes only an in-memory, session-fenced
+// batch. Providers without Kubernetes support remain source-compatible.
+type KubernetesTelemetryReporter interface {
+	PendingKubernetesTelemetry() db.KubernetesTelemetryBatch
+	AcknowledgeKubernetesTelemetry(db.KubernetesTelemetryAck)
+}
+
 // DockerRunnerIdentityConsumer receives the server-authenticated runner ID
 // before Docker work is accepted. It is deliberately separate from the policy
 // contract so non-Docker providers remain source-compatible.

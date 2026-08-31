@@ -22,14 +22,15 @@ var (
 // authentication. The runner may resume it but can never choose its identity,
 // fence, cluster, namespace, or target snapshot.
 type KubernetesReconciliationSession struct {
-	SessionID    string                           `db:"session_id" json:"session_id"`
-	Fence        string                           `db:"-" json:"fence"`
-	RunnerID     int                              `db:"runner_id" json:"runner_id"`
-	ClusterAlias string                           `db:"cluster_alias" json:"cluster_alias"`
-	Namespace    string                           `db:"namespace" json:"namespace"`
-	Ready        bool                             `db:"scan_complete" json:"ready"`
-	Revision     int64                            `db:"scan_revision" json:"revision"`
-	Targets      []KubernetesReconciliationTarget `db:"-" json:"targets"`
+	SessionID                string                           `db:"session_id" json:"session_id"`
+	Fence                    string                           `db:"-" json:"fence"`
+	RunnerID                 int                              `db:"runner_id" json:"runner_id"`
+	ClusterAlias             string                           `db:"cluster_alias" json:"cluster_alias"`
+	Namespace                string                           `db:"namespace" json:"namespace"`
+	Ready                    bool                             `db:"scan_complete" json:"ready"`
+	Revision                 int64                            `db:"scan_revision" json:"revision"`
+	TelemetryHighestSequence int64                            `db:"telemetry_highest_sequence" json:"telemetry_highest_sequence"`
+	Targets                  []KubernetesReconciliationTarget `db:"-" json:"targets"`
 }
 
 type KubernetesReconciliationTarget struct {

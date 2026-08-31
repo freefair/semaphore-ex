@@ -39,28 +39,36 @@ func (c *client) ScanKubernetesReconciliation(ctx context.Context, session db.Ku
 	}).String()
 	options := metav1.ListOptions{LabelSelector: selector, Limit: 100}
 
+	started := time.Now()
 	jobs, err := c.api.BatchV1().Jobs(c.config.namespace).List(ctx, options)
+	c.recordAPICall(db.KubernetesTelemetryOperationListJobs, started, err)
 	if err != nil || jobs.Continue != "" {
 		if err == nil {
 			err = fmt.Errorf("Kubernetes reconciliation Job list exceeds bounded page")
 		}
 		return db.KubernetesReconciliationScan{}, kubernetesAPIError(err)
 	}
+	started = time.Now()
 	pods, err := c.api.CoreV1().Pods(c.config.namespace).List(ctx, options)
+	c.recordAPICall(db.KubernetesTelemetryOperationListPods, started, err)
 	if err != nil || pods.Continue != "" {
 		if err == nil {
 			err = fmt.Errorf("Kubernetes reconciliation Pod list exceeds bounded page")
 		}
 		return db.KubernetesReconciliationScan{}, kubernetesAPIError(err)
 	}
+	started = time.Now()
 	secrets, err := c.api.CoreV1().Secrets(c.config.namespace).List(ctx, options)
+	c.recordAPICall(db.KubernetesTelemetryOperationListSecrets, started, err)
 	if err != nil || secrets.Continue != "" {
 		if err == nil {
 			err = fmt.Errorf("Kubernetes reconciliation Secret list exceeds bounded page")
 		}
 		return db.KubernetesReconciliationScan{}, kubernetesAPIError(err)
 	}
+	started = time.Now()
 	networkPolicies, err := c.api.NetworkingV1().NetworkPolicies(c.config.namespace).List(ctx, options)
+	c.recordAPICall(db.KubernetesTelemetryOperationListNetworkPolicies, started, err)
 	if err != nil || networkPolicies.Continue != "" {
 		if err == nil {
 			err = fmt.Errorf("Kubernetes reconciliation NetworkPolicy list exceeds bounded page")
@@ -128,7 +136,37 @@ func (c *client) ScanKubernetesReconciliation(ctx context.Context, session db.Ku
 			return db.KubernetesReconciliationScan{}, fmt.Errorf("Kubernetes reconciliation candidate limit exceeded")
 		}
 	}
+	c.recordReconciliationTelemetry(scan)
 	return scan, nil
+}
+
+func (c *client) recordReconciliationTelemetry(scan db.KubernetesReconciliationScan) {
+	if c.recordTelemetry == nil {
+		return
+	}
+	var observed, absent, quarantined int64
+	for _, observation := range scan.Observations {
+		switch observation.State {
+		case db.KubernetesReconciliationObserved:
+			observed++
+		case db.KubernetesReconciliationAbsent:
+			absent++
+		case db.KubernetesReconciliationQuarantined:
+			quarantined++
+		}
+	}
+	if observed > 0 {
+		c.recordTelemetry(db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryReconciliation, ReconciliationState: db.KubernetesTelemetryReconciliationObserved, Count: observed})
+	}
+	if absent > 0 {
+		c.recordTelemetry(db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryReconciliation, ReconciliationState: db.KubernetesTelemetryReconciliationAbsent, Count: absent})
+	}
+	if quarantined > 0 {
+		c.recordTelemetry(db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryQuarantine, Count: quarantined})
+	}
+	if len(scan.Candidates) > 0 {
+		c.recordTelemetry(db.KubernetesTelemetryEvent{Kind: db.KubernetesTelemetryOrphan, Count: int64(len(scan.Candidates))})
+	}
 }
 
 func reconciliationObjects(jobs []batchv1.Job, pods []corev1.Pod, secrets []corev1.Secret, networkPolicies []networkingv1.NetworkPolicy) []reconciliationObject {
