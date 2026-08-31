@@ -85,13 +85,15 @@ describe('notification governance', () => {
 
   it('submits credentials once, preserves blank credentials on edit, and clears transient state', async () => {
     const payloads = [];
+    const routingKey = 'a'.repeat(32);
     axios.defaults.adapter = async (config) => {
       payloads.push(JSON.parse(config.data));
       return response({
         id: 7,
         name: 'Primary',
-        provider: 'generic',
+        provider: 'pagerduty',
         environment: 'production',
+        region: 'us',
         credential_configured: true,
         enabled: true,
         paused: false,
@@ -107,9 +109,10 @@ describe('notification governance', () => {
         id: null,
         revision: 0,
         name: 'Primary',
-        provider: 'generic',
+        provider: 'pagerduty',
         environment: 'production',
-        credential: 'write-only-secret',
+        region: 'us',
+        credential: routingKey,
         enabled: true,
       },
       destinations: [],
@@ -122,27 +125,30 @@ describe('notification governance', () => {
     await NotificationGovernance.methods.saveDestination.call(context);
 
     expect(payloads).to.deep.equal([{
-      name: 'Primary', provider: 'generic', environment: 'production', enabled: true, credential: 'write-only-secret',
+      name: 'Primary', provider: 'pagerduty', environment: 'production', region: 'us', enabled: true, credential: routingKey,
     }]);
     expect(context.destinationForm.credential).to.equal('');
-    expect(JSON.stringify(context.destinations)).not.to.include('write-only-secret');
+    expect(JSON.stringify(context.destinations)).not.to.include(routingKey);
     expect(context.destinationDialog).to.equal(false);
 
     NotificationGovernance.methods.openDestination.call(context, {
       id: 7,
       revision: 1,
       name: 'Primary',
-      provider: 'generic',
+      provider: 'pagerduty',
       environment: 'production',
+      region: 'eu',
       enabled: true,
       credential: 'must-not-render',
     });
     expect(context.destinationForm.credential).to.equal('');
+    expect(context.destinationForm.region).to.equal('eu');
     await NotificationGovernance.methods.saveDestination.call(context);
     expect(payloads[1]).to.deep.equal({
       name: 'Primary',
-      provider: 'generic',
+      provider: 'pagerduty',
       environment: 'production',
+      region: 'eu',
       enabled: true,
       revision: 1,
     });
@@ -162,6 +168,7 @@ describe('notification governance', () => {
         name: '',
         provider: '',
         environment: '',
+        region: 'us',
         credential: '',
         enabled: true,
       },
@@ -333,6 +340,30 @@ describe('notification governance', () => {
     expect(reason).to.equal('notificationReasonTransport');
     expect(unknownReason).to.equal('—');
     expect(NotificationGovernance.methods.routingOutcomeLabel.call(context, 'filtered')).to.equal('notificationRoutingOutcomeFiltered');
+    expect(NotificationGovernance.methods.providerRegionLabel.call(context, 'us')).to.equal('notificationRegionUS');
+    expect(NotificationGovernance.methods.providerRegionLabel.call(context, 'eu')).to.equal('notificationRegionEU');
+    expect(NotificationGovernance.methods.providerRegionLabel.call(context, 'custom')).to.equal('—');
+  });
+
+  it('requires an exact PagerDuty routing key only when a new key is entered', () => {
+    const compute = NotificationGovernance.computed.destinationCredentialRules;
+    const blank = compute.call({
+      destinationForm: { provider: 'pagerduty', credential: '' },
+      $t: translate,
+    });
+    const rules = compute.call({
+      destinationForm: { provider: 'pagerduty', credential: 'short' },
+      $t: translate,
+    });
+    const unrelated = compute.call({
+      destinationForm: { provider: 'generic', credential: 'short' },
+      $t: translate,
+    });
+
+    expect(blank).to.deep.equal([]);
+    expect(unrelated).to.deep.equal([]);
+    expect(rules[0]('a'.repeat(32))).to.equal(true);
+    expect(rules[0]('short')).to.equal('notificationPagerDutyKeyLength');
   });
 
   it('keeps delivery and routing-event pagination offsets independent', async () => {
