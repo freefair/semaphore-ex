@@ -332,16 +332,19 @@ func validKubernetesSessionID(value string) bool {
 
 func dbMaxKubernetesReconciliationPageSize() int { return 100 }
 
-// GetKubernetesReconciliationPendingDiagnostics returns only durable blocked
-// state for one runner. Candidate objects deliberately have no remediation
-// action; administrators can inspect them but cannot turn labels into delete
-// authority.
+// GetKubernetesReconciliationPendingDiagnostics returns durable blocked state
+// plus the only actionable state: a ready, observed, expired terminal target.
+// Candidate objects deliberately have no remediation action; administrators
+// can inspect them but cannot turn labels into delete authority.
 func (d *SqlDb) GetKubernetesReconciliationPendingDiagnostics(runnerID int, limit int) ([]db.KubernetesReconciliationDiagnostic, error) {
 	if runnerID <= 0 || limit <= 0 || limit > dbMaxKubernetesReconciliationPageSize() {
 		return nil, db.ErrKubernetesReconciliationCoverageInvalid
 	}
-	var sessionID string
-	if err := d.selectOne(&sessionID, "select session_id from kubernetes_reconciliation_session where runner_id=? and active=true", runnerID); err != nil {
+	var session struct {
+		SessionID string `db:"session_id"`
+		Ready     bool   `db:"scan_complete"`
+	}
+	if err := d.selectOne(&session, "select session_id,scan_complete from kubernetes_reconciliation_session where runner_id=? and active=true", runnerID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, db.ErrNotFound) {
 			return []db.KubernetesReconciliationDiagnostic{}, nil
 		}
@@ -349,28 +352,34 @@ func (d *SqlDb) GetKubernetesReconciliationPendingDiagnostics(runnerID int, limi
 	}
 	type targetRow struct {
 		db.KubernetesReconciliationTarget
-		State  db.KubernetesReconciliationState `db:"state"`
-		Reason string                           `db:"reason"`
+		State    db.KubernetesReconciliationState `db:"state"`
+		Reason   string                           `db:"reason"`
+		Revision int64                            `db:"revision"`
 	}
 	rows := make([]targetRow, 0, limit)
-	_, err := d.Sql().Select(&rows, d.PrepareQuery("select t.project_id,t.task_id,t.generation,t.job_name,t.job_uid,t.pod_name,t.pod_uid,t.secret_name,t.secret_uid,t.network_policy_name,t.network_policy_uid,t.retention_deadline,t.retention_state,o.state,o.reason from kubernetes_reconciliation_target t join kubernetes_reconciliation_observation o on o.session_id=t.session_id and o.project_id=t.project_id and o.task_id=t.task_id and o.generation=t.generation where t.session_id=? and o.state='quarantined' order by t.project_id,t.task_id,t.generation limit ?"), sessionID, limit)
+	serverNow := time.Now().UTC()
+	_, err := d.Sql().Select(&rows, d.PrepareQuery("select t.project_id,t.task_id,t.generation,t.job_name,t.job_uid,t.pod_name,t.pod_uid,t.secret_name,t.secret_uid,t.network_policy_name,t.network_policy_uid,t.retention_deadline,t.retention_state,o.state,o.reason,o.revision from kubernetes_reconciliation_target t join kubernetes_reconciliation_observation o on o.session_id=t.session_id and o.project_id=t.project_id and o.task_id=t.task_id and o.generation=t.generation where t.session_id=? and (o.state='quarantined' or (? and o.state='observed' and t.retention_state='terminal' and t.retention_deadline is not null and t.retention_deadline<?)) order by t.project_id,t.task_id,t.generation limit ?"), session.SessionID, session.Ready, serverNow, limit)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]db.KubernetesReconciliationDiagnostic, 0, limit)
 	for _, row := range rows {
-		result = append(result, db.KubernetesReconciliationDiagnostic{SessionID: sessionID, Target: row.KubernetesReconciliationTarget, State: row.State, Reason: row.Reason})
+		diagnostic := db.KubernetesReconciliationDiagnostic{SessionID: session.SessionID, Target: &db.KubernetesReconciliationDiagnosticTarget{ProjectID: row.ProjectID, TaskID: row.TaskID, Generation: row.Generation, RetentionDeadline: row.RetentionDeadline, RetentionState: row.RetentionState}, State: row.State, Reason: row.Reason}
+		if row.State == db.KubernetesReconciliationObserved && session.Ready {
+			diagnostic.Remediation = &db.KubernetesReconciliationRemediationDescriptor{Action: db.KubernetesReconciliationGarbageCollectExpired, ProjectID: row.ProjectID, TaskID: row.TaskID, Generation: row.Generation, ExpectedRevision: row.Revision}
+		}
+		result = append(result, diagnostic)
 	}
 	if len(result) == limit {
 		return result, nil
 	}
 	candidates := make([]db.KubernetesReconciliationCandidate, 0, limit-len(result))
-	_, err = d.Sql().Select(&candidates, d.PrepareQuery("select resource,name,uid,reason,revision from kubernetes_reconciliation_candidate where session_id=? and status='pending' order by resource,uid limit ?"), sessionID, limit-len(result))
+	_, err = d.Sql().Select(&candidates, d.PrepareQuery("select resource,name,uid,reason,revision from kubernetes_reconciliation_candidate where session_id=? and status='pending' order by resource,uid limit ?"), session.SessionID, limit-len(result))
 	if err != nil {
 		return nil, err
 	}
 	for index := range candidates {
-		result = append(result, db.KubernetesReconciliationDiagnostic{SessionID: sessionID, Candidate: &candidates[index], State: db.KubernetesReconciliationQuarantined, Reason: candidates[index].Reason})
+		result = append(result, db.KubernetesReconciliationDiagnostic{SessionID: session.SessionID, Candidate: &candidates[index], State: db.KubernetesReconciliationQuarantined, Reason: candidates[index].Reason})
 	}
 	return result, nil
 }

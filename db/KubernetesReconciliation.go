@@ -129,20 +129,42 @@ type KubernetesReconciliationRemediationRequest struct {
 	ExpectedRevision int64                          `json:"expected_revision"`
 }
 
+// KubernetesReconciliationRemediationDescriptor is server-built diagnostic
+// capability data. The browser may add only an idempotency key before posting
+// the matching request; no Kubernetes object identity reaches that boundary.
+type KubernetesReconciliationRemediationDescriptor struct {
+	Action           KubernetesReconciliationAction `json:"action"`
+	ProjectID        int                            `json:"project_id"`
+	TaskID           int                            `json:"task_id"`
+	Generation       int                            `json:"generation"`
+	ExpectedRevision int64                          `json:"expected_revision"`
+}
+
 type KubernetesReconciliationRemediationResult struct {
 	CommandID string                                      `json:"command_id"`
 	Status    KubernetesReconciliationRemediationStatus   `json:"status"`
 	Evidence  KubernetesReconciliationRemediationEvidence `json:"evidence"`
 }
 
-// KubernetesReconciliationDiagnostic is deliberately value-free except for
-// durable object identity. It is only exposed by the global-admin surface.
+// KubernetesReconciliationDiagnosticTarget is the browser-safe task tuple.
+// Kubernetes object names and UIDs stay in the server-side command snapshot.
+type KubernetesReconciliationDiagnosticTarget struct {
+	ProjectID         int        `json:"project_id"`
+	TaskID            int        `json:"task_id"`
+	Generation        int        `json:"generation"`
+	RetentionDeadline *time.Time `json:"retention_deadline,omitempty"`
+	RetentionState    string     `json:"retention_state"`
+}
+
+// KubernetesReconciliationDiagnostic is an administrator-only, sanitized
+// status record. Only Remediation is actionable, and it is server-built.
 type KubernetesReconciliationDiagnostic struct {
-	SessionID string                             `db:"session_id" json:"session_id"`
-	Target    KubernetesReconciliationTarget     `json:"target"`
-	Candidate *KubernetesReconciliationCandidate `json:"candidate,omitempty"`
-	State     KubernetesReconciliationState      `db:"state" json:"state"`
-	Reason    string                             `db:"reason" json:"reason"`
+	SessionID   string                                         `db:"session_id" json:"-"`
+	Target      *KubernetesReconciliationDiagnosticTarget      `json:"target,omitempty"`
+	Candidate   *KubernetesReconciliationCandidate             `json:"candidate,omitempty"`
+	State       KubernetesReconciliationState                  `db:"state" json:"state"`
+	Reason      string                                         `db:"reason" json:"reason"`
+	Remediation *KubernetesReconciliationRemediationDescriptor `json:"remediation,omitempty"`
 }
 
 func validKubernetesReconciliationToken(value string) bool {
