@@ -46,7 +46,7 @@ func (c *testCipher) DecryptOption(value string) ([]byte, error) {
 func TestDestinationCredentialsFailClosedAndRemainWriteOnly(t *testing.T) {
 	store := storeSql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
-	secret := "credential-value"
+	secret := testPagerDutyRoutingKey
 	disabled := NewGovernanceService(store, &testCipher{}).(*governanceService)
 	_, err := disabled.CreateDestination(context.Background(), nil, destinationInput(&secret))
 	require.ErrorIs(t, err, pro_interfaces.ErrNotificationEncryptionRequired)
@@ -57,6 +57,7 @@ func TestDestinationCredentialsFailClosedAndRemainWriteOnly(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, secret, cipher.value)
 	assert.True(t, created.CredentialConfigured)
+	assert.Equal(t, pro_interfaces.NotificationProviderRegionUS, created.Region)
 	assert.NotContains(t, mustJSON(t, created), secret)
 	assert.NotContains(t, mustJSON(t, created), "sealed:")
 
@@ -76,13 +77,21 @@ func TestGovernanceRejectsInvalidDestinationRuleAndPreviewInput(t *testing.T) {
 	store := storeSql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
 	service := NewGovernanceService(store, &testCipher{enabled: true}).(*governanceService)
-	secret := "validation-secret"
+	secret := testPagerDutyRoutingKey
 	invalidDestination := destinationInput(&secret)
 	invalidDestination.Name = " "
 	_, err := service.CreateDestination(context.Background(), nil, invalidDestination)
 	assert.ErrorIs(t, err, pro_interfaces.ErrNotificationInvalidInput)
 	invalidCredential := ""
 	_, err = service.CreateDestination(context.Background(), nil, destinationInput(&invalidCredential))
+	assert.ErrorIs(t, err, pro_interfaces.ErrNotificationInvalidInput)
+	invalidRegion := destinationInput(&secret)
+	invalidRegion.Region = "custom-url"
+	_, err = service.CreateDestination(context.Background(), nil, invalidRegion)
+	assert.ErrorIs(t, err, pro_interfaces.ErrNotificationInvalidInput)
+	missingRegion := destinationInput(&secret)
+	missingRegion.Region = ""
+	_, err = service.CreateDestination(context.Background(), nil, missingRegion)
 	assert.ErrorIs(t, err, pro_interfaces.ErrNotificationInvalidInput)
 
 	created, err := service.CreateDestination(context.Background(), nil, destinationInput(&secret))
@@ -100,6 +109,61 @@ func TestGovernanceRejectsInvalidDestinationRuleAndPreviewInput(t *testing.T) {
 	assert.ErrorIs(t, err, pro_interfaces.ErrNotificationDestinationNotConfigured)
 }
 
+func TestPagerDutyRoutingKeyValidationAndProviderChangeBoundary(t *testing.T) {
+	store := storeSql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	cipher := &testCipher{enabled: true}
+	service := NewGovernanceService(store, cipher).(*governanceService)
+
+	invalidKey := "not-a-routing-key"
+	invalidInput := destinationInput(&invalidKey)
+	_, err := service.CreateDestination(context.Background(), nil, invalidInput)
+	require.ErrorIs(t, err, pro_interfaces.ErrNotificationInvalidInput)
+	assert.NotContains(t, err.Error(), invalidKey)
+	assert.Empty(t, cipher.value, "invalid keys must be rejected before encryption")
+
+	blankKey := ""
+	_, err = service.CreateDestination(context.Background(), nil, destinationInput(&blankKey))
+	require.ErrorIs(t, err, pro_interfaces.ErrNotificationInvalidInput)
+
+	unconfigured, err := service.CreateDestination(context.Background(), nil, destinationInput(nil))
+	require.NoError(t, err)
+	assert.False(t, unconfigured.CredentialConfigured)
+
+	validKey := testPagerDutyRoutingKey
+	configured, err := service.CreateDestination(context.Background(), nil, destinationInput(&validKey))
+	require.NoError(t, err)
+	assert.True(t, configured.CredentialConfigured)
+	assert.Equal(t, validKey, cipher.value)
+
+	providerChange := destinationInput(nil)
+	providerChange.Provider = "test"
+	providerChange.Region = ""
+	_, err = service.UpdateDestination(context.Background(), nil, configured.ID, configured.Revision, providerChange)
+	require.ErrorIs(t, err, pro_interfaces.ErrNotificationInvalidInput)
+	persisted, err := store.GetNotificationDestination(nil, configured.ID)
+	require.NoError(t, err)
+	assert.Equal(t, pagerDutyProviderName, persisted.Provider)
+	assert.Equal(t, "sealed:"+validKey, persisted.EncryptedCredential)
+
+	newProviderCredential := "separate-provider-credential"
+	providerChange.Credential = &newProviderCredential
+	changed, err := service.UpdateDestination(context.Background(), nil, configured.ID, configured.Revision, providerChange)
+	require.NoError(t, err)
+	assert.Equal(t, "test", changed.Provider)
+	assert.True(t, changed.CredentialConfigured)
+
+	backToPagerDuty := destinationInput(nil)
+	backToPagerDuty.Credential = &invalidKey
+	_, err = service.UpdateDestination(context.Background(), nil, changed.ID, changed.Revision, backToPagerDuty)
+	require.ErrorIs(t, err, pro_interfaces.ErrNotificationInvalidInput)
+	backToPagerDuty.Credential = &validKey
+	returned, err := service.UpdateDestination(context.Background(), nil, changed.ID, changed.Revision, backToPagerDuty)
+	require.NoError(t, err)
+	assert.Equal(t, pagerDutyProviderName, returned.Provider)
+	assert.Equal(t, pro_interfaces.NotificationProviderRegionUS, returned.Region)
+}
+
 func TestDestinationAndRuleScopeAndRevisionBoundaries(t *testing.T) {
 	store := storeSql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
@@ -107,7 +171,7 @@ func TestDestinationAndRuleScopeAndRevisionBoundaries(t *testing.T) {
 	require.NoError(t, err)
 	cipher := &testCipher{enabled: true}
 	service := NewGovernanceService(store, cipher).(*governanceService)
-	secret := "scoped-secret"
+	secret := testPagerDutyRoutingKey
 	created, err := service.CreateDestination(context.Background(), &project.ID, destinationInput(&secret))
 	require.NoError(t, err)
 	_, err = service.GetDestination(context.Background(), nil, created.ID)
@@ -133,7 +197,7 @@ func TestDestinationAndRuleDeletionAreScopedRevisionedAndRetainHistory(t *testin
 	require.NoError(t, err)
 	service := NewGovernanceService(store, &testCipher{enabled: true}).(*governanceService)
 	service.now = func() time.Time { return time.Date(2026, time.August, 31, 14, 0, 0, 0, time.UTC) }
-	secret := "delete-secret"
+	secret := testPagerDutyRoutingKey
 	destination, err := service.CreateDestination(context.Background(), &first.ID, destinationInput(&secret))
 	require.NoError(t, err)
 	rule, err := service.CreateRule(context.Background(), &first.ID, notificationRuleInput(destination.ID))
@@ -174,7 +238,7 @@ func TestPreviewUsesPureRulesAndEnabledScopedDestinations(t *testing.T) {
 	project, err := store.CreateProject(db.Project{Name: "notification preview"})
 	require.NoError(t, err)
 	service := NewGovernanceService(store, &testCipher{enabled: true}).(*governanceService)
-	secret := "preview-secret"
+	secret := testPagerDutyRoutingKey
 	first, err := service.CreateDestination(context.Background(), &project.ID, destinationInput(&secret))
 	require.NoError(t, err)
 	secondInput := destinationInput(&secret)
@@ -214,7 +278,7 @@ func TestTestEnqueuePauseHistoryAndScopedRetry(t *testing.T) {
 	require.NoError(t, err)
 	service := NewGovernanceService(store, &testCipher{enabled: true}).(*governanceService)
 	service.now = func() time.Time { return time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC) }
-	secret := "test-secret"
+	secret := testPagerDutyRoutingKey
 	destination, err := service.CreateDestination(context.Background(), &firstProject.ID, destinationInput(&secret))
 	require.NoError(t, err)
 
@@ -238,8 +302,9 @@ func TestTestEnqueuePauseHistoryAndScopedRetry(t *testing.T) {
 	assert.Equal(t, pro_interfaces.NotificationSourceSystem, history[0].SourceKind)
 	assert.Equal(t, pro_interfaces.NotificationLifecycleTrigger, history[0].LifecycleAction)
 	assert.Equal(t, pro_interfaces.NotificationSeverityInfo, history[0].Severity)
+	assert.Equal(t, pro_interfaces.NotificationProviderRegionUS, history[0].DestinationRegion)
 	assert.Equal(t, service.now(), history[0].OccurredAt)
-	assert.NotContains(t, mustJSON(t, history[0]), "test-secret")
+	assert.NotContains(t, mustJSON(t, history[0]), testPagerDutyRoutingKey)
 	assert.NotContains(t, mustJSON(t, history[0]), "details")
 
 	_, err = service.RetryDelivery(context.Background(), &secondProject.ID, delivery.ID)
@@ -270,7 +335,7 @@ func TestEventHistoryMakesFilteredAndRoutedOutcomesInspectableWithoutDetails(t *
 		LifecycleAction: pro_interfaces.NotificationLifecycleUpdate, Details: pro_interfaces.NotificationDetails{Status: "degraded"},
 	}
 	require.NoError(t, store.RecordGlobalSystemNotification(filtered))
-	secret := "history-secret"
+	secret := testPagerDutyRoutingKey
 	destination, err := service.CreateDestination(context.Background(), nil, destinationInput(&secret))
 	require.NoError(t, err)
 	routed, err := service.EnqueueTestDelivery(context.Background(), nil, destination.ID)
@@ -291,7 +356,7 @@ func TestConcurrentDestinationUpdateAllowsOneRevision(t *testing.T) {
 	store := storeSql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
 	service := NewGovernanceService(store, &testCipher{enabled: true}).(*governanceService)
-	secret := "concurrent-secret"
+	secret := testPagerDutyRoutingKey
 	created, err := service.CreateDestination(context.Background(), nil, destinationInput(&secret))
 	require.NoError(t, err)
 	start := make(chan struct{})
@@ -326,11 +391,31 @@ func TestConcurrentDestinationUpdateAllowsOneRevision(t *testing.T) {
 	assert.Equal(t, 1, conflicts)
 }
 
+func TestDestinationPauseUsesRevisionCASWithoutChangingConfigurationRevision(t *testing.T) {
+	store := storeSql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	service := NewGovernanceService(store, &testCipher{enabled: true}).(*governanceService)
+	secret := testPagerDutyRoutingKey
+	created, err := service.CreateDestination(context.Background(), nil, destinationInput(&secret))
+	require.NoError(t, err)
+
+	paused, err := service.SetDestinationPaused(context.Background(), nil, created.ID, created.Revision, true)
+	require.NoError(t, err)
+	assert.Equal(t, created.Revision+1, paused.Revision)
+	_, err = service.SetDestinationPaused(context.Background(), nil, created.ID, created.Revision, false)
+	assert.ErrorIs(t, err, pro_interfaces.ErrNotificationRevisionConflict)
+
+	persisted, err := store.GetNotificationDestination(nil, created.ID)
+	require.NoError(t, err)
+	assert.True(t, persisted.Paused)
+	assert.Equal(t, 1, persisted.ConfigurationRevision)
+}
+
 func TestConcurrentDestinationDeletionAllowsOneRevision(t *testing.T) {
 	store := storeSql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
 	service := NewGovernanceService(store, &testCipher{enabled: true}).(*governanceService)
-	secret := "concurrent-delete-secret"
+	secret := testPagerDutyRoutingKey
 	destination, err := service.CreateDestination(context.Background(), nil, destinationInput(&secret))
 	require.NoError(t, err)
 	start := make(chan struct{})
@@ -363,8 +448,10 @@ func TestConcurrentDestinationDeletionAllowsOneRevision(t *testing.T) {
 }
 
 func destinationInput(credential *string) pro_interfaces.NotificationDestinationInput {
-	return pro_interfaces.NotificationDestinationInput{Name: "primary", Provider: "pagerduty", Environment: "production", Credential: credential, Enabled: true}
+	return pro_interfaces.NotificationDestinationInput{Name: "primary", Provider: "pagerduty", Environment: "production", Region: pro_interfaces.NotificationProviderRegionUS, Credential: credential, Enabled: true}
 }
+
+const testPagerDutyRoutingKey = "0123456789ABCDEF0123456789ABCDEF"
 
 func notificationRuleInput(destinationID int) pro_interfaces.NotificationRuleInput {
 	return pro_interfaces.NotificationRuleInput{

@@ -65,6 +65,7 @@ func (d *SqlDb) CreateNotificationDestination(destination db.NotificationDestina
 	}
 	now := tz.Now()
 	destination.Revision = 1
+	destination.ConfigurationRevision = 1
 	destination.Created = now
 	destination.Updated = now
 	if err := d.Sql().Insert(&destination); err != nil {
@@ -104,9 +105,33 @@ func (d *SqlDb) UpdateNotificationDestination(destination db.NotificationDestina
 		return db.NotificationDestination{}, err
 	}
 	now := tz.Now()
-	query := "update notification_destination set name=?, provider=?, environment=?, encrypted_credential=?, credential_configured=?, enabled=?, paused=?, revision=revision+1, updated=? where id=? and revision=? and " + notificationScopePredicate(destination.ProjectID)
-	args := []any{destination.Name, destination.Provider, destination.Environment, destination.EncryptedCredential, destination.CredentialConfigured, destination.Enabled, destination.Paused, now, destination.ID, expectedRevision}
+	query := "update notification_destination set name=?, provider=?, environment=?, region=?, encrypted_credential=?, credential_configured=?, enabled=?, paused=?, revision=revision+1, configuration_revision=configuration_revision+1, updated=? where id=? and revision=? and " + notificationScopePredicate(destination.ProjectID)
+	args := []any{destination.Name, destination.Provider, destination.Environment, destination.Region, destination.EncryptedCredential, destination.CredentialConfigured, destination.Enabled, destination.Paused, now, destination.ID, expectedRevision}
 	args = append(args, notificationScopeArgs(destination.ProjectID)...)
+	result, err := d.exec(query, args...)
+	if err != nil {
+		return db.NotificationDestination{}, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return db.NotificationDestination{}, err
+	}
+	if rows != 1 {
+		return db.NotificationDestination{}, db.ErrNotificationDestinationRevisionConflict
+	}
+	return d.GetNotificationDestination(destination.ProjectID, destination.ID)
+}
+
+// SetNotificationDestinationPaused changes only the administrative pause state
+// and its optimistic-lock revision. It deliberately preserves the immutable
+// configuration generation used to bind queued deliveries before decryption.
+func (d *SqlDb) SetNotificationDestinationPaused(destination db.NotificationDestination, expectedRevision int) (db.NotificationDestination, error) {
+	if destination.ID <= 0 || expectedRevision <= 0 || destination.Revision != expectedRevision {
+		return db.NotificationDestination{}, db.ErrNotificationDestinationRevisionConflict
+	}
+	now := tz.Now()
+	query := "update notification_destination set paused=?, revision=revision+1, updated=? where id=? and revision=? and " + notificationScopePredicate(destination.ProjectID)
+	args := append([]any{destination.Paused, now, destination.ID, expectedRevision}, notificationScopeArgs(destination.ProjectID)...)
 	result, err := d.exec(query, args...)
 	if err != nil {
 		return db.NotificationDestination{}, err
@@ -288,8 +313,8 @@ func (d *SqlDb) createNotificationEventWithRoutingTx(tx *gorp.Transaction, event
 		}
 		delivery.IdempotencyKey = key
 		if _, err = d.execTx(tx,
-			"insert into notification_delivery(notification_event_id, destination_id, destination_revision, destination_name, destination_provider, destination_environment, incident_key, idempotency_key, status, attempts, next_attempt, lease_token, lease_until, last_reason, created, updated, delivered_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			delivery.NotificationEventID, delivery.DestinationID, delivery.DestinationRevision, delivery.DestinationName, delivery.DestinationProvider, delivery.DestinationEnvironment, delivery.IncidentKey, delivery.IdempotencyKey,
+			"insert into notification_delivery(notification_event_id, destination_id, destination_revision, destination_configuration_revision, destination_name, destination_provider, destination_environment, destination_region, incident_key, idempotency_key, status, attempts, next_attempt, lease_token, lease_until, last_reason, created, updated, delivered_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			delivery.NotificationEventID, delivery.DestinationID, delivery.DestinationRevision, delivery.DestinationConfigurationRevision, delivery.DestinationName, delivery.DestinationProvider, delivery.DestinationEnvironment, delivery.DestinationRegion, delivery.IncidentKey, delivery.IdempotencyKey,
 			delivery.Status, delivery.Attempts, delivery.NextAttempt, delivery.LeaseToken, delivery.LeaseUntil, delivery.LastReason,
 			delivery.Created, delivery.Updated, delivery.DeliveredAt,
 		); err != nil {
@@ -350,9 +375,9 @@ func (d *SqlDb) routeNotificationTx(tx *gorp.Transaction, event pro_interfaces.N
 		}
 		seenDestinations[destination.ID] = struct{}{}
 		deliveries = append(deliveries, db.NotificationDelivery{
-			DestinationID: destination.ID, DestinationRevision: destination.Revision,
+			DestinationID: destination.ID, DestinationRevision: destination.Revision, DestinationConfigurationRevision: destination.ConfigurationRevision,
 			DestinationName: destination.Name, DestinationProvider: destination.Provider,
-			DestinationEnvironment: destination.Environment,
+			DestinationEnvironment: destination.Environment, DestinationRegion: destination.Region,
 		})
 	}
 	details, err := json.Marshal(event.Details)
@@ -478,22 +503,25 @@ func (d *SqlDb) ReleaseNotificationDelivery(id int, leaseToken string, reason db
 // ResumePausedNotificationDeliveries makes only items deferred by an explicit
 // pause immediately eligible again. It preserves retry schedules created by
 // providers and never changes attempts or delivery identity.
-func (d *SqlDb) ResumePausedNotificationDeliveries(destinationID, destinationRevision int, now time.Time) error {
-	if destinationID <= 0 || destinationRevision <= 0 {
+func (d *SqlDb) ResumePausedNotificationDeliveries(destinationID int, now time.Time) error {
+	if destinationID <= 0 {
 		return db.ErrInvalidOperation
 	}
-	_, err := d.exec("update notification_delivery set destination_revision=?, next_attempt=?, last_reason=?, updated=? where destination_id=? and status=? and last_reason=?",
-		destinationRevision, now, db.NotificationDeliveryReasonNone, now, destinationID, db.NotificationDeliveryRetrying, db.NotificationDeliveryReasonDestinationPaused)
+	_, err := d.exec("update notification_delivery set next_attempt=?, last_reason=?, updated=? where destination_id=? and status=? and last_reason=?",
+		now, db.NotificationDeliveryReasonNone, now, destinationID, db.NotificationDeliveryRetrying, db.NotificationDeliveryReasonDestinationPaused)
 	return err
 }
 
-func (d *SqlDb) RetryNotificationDelivery(id int, now time.Time) error {
+func (d *SqlDb) RetryNotificationDelivery(id, destinationID, configurationRevision int, now time.Time) error {
 	// A manual retry starts a new bounded delivery budget for the same durable
-	// event and idempotency key. Without this reset, a delivery that exhausted
-	// automatic attempts could never make a transient recovery after an admin
-	// fixes the provider configuration.
-	result, err := d.exec("update notification_delivery set status=?, attempts=0, next_attempt=?, lease_token='', lease_until=null, last_reason=?, updated=? where id=? and status=?",
-		db.NotificationDeliveryRetrying, now, db.NotificationDeliveryReasonManualRetry, now, id, db.NotificationDeliveryFailed)
+	// event and idempotency key. Unlike resume, it is an explicit administrator
+	// action and may deliberately bind a failed delivery to a corrected current
+	// configuration, fenced by that destination generation at update time.
+	if id <= 0 || destinationID <= 0 || configurationRevision <= 0 {
+		return db.ErrNotificationDeliveryNotClaimed
+	}
+	result, err := d.exec("update notification_delivery set destination_configuration_revision=?, status=?, attempts=0, next_attempt=?, lease_token='', lease_until=null, last_reason=?, updated=? where id=? and status=? and destination_id=? and exists (select 1 from notification_destination where id=? and configuration_revision=?)",
+		configurationRevision, db.NotificationDeliveryRetrying, now, db.NotificationDeliveryReasonManualRetry, now, id, db.NotificationDeliveryFailed, destinationID, destinationID, configurationRevision)
 	if err != nil {
 		return err
 	}
@@ -621,7 +649,7 @@ func (d *SqlDb) validateNotificationRule(rule db.NotificationRule) error {
 
 func validateNotificationDestination(destination db.NotificationDestination) error {
 	if destination.Name == "" || len(destination.Name) > 128 || !notificationProviderPattern.MatchString(destination.Provider) ||
-		len(destination.Environment) > 64 || len(destination.EncryptedCredential) > 16*1024 || destination.Revision < 0 {
+		len(destination.Environment) > 64 || len(destination.Region) > 8 || len(destination.EncryptedCredential) > 16*1024 || destination.Revision < 0 {
 		return db.ErrInvalidOperation
 	}
 	if destination.ProjectID != nil && *destination.ProjectID <= 0 {
@@ -657,8 +685,8 @@ func validateNotificationRouting(event db.NotificationEvent, deliveries []db.Not
 	}
 	seen := make(map[int]struct{}, len(deliveries))
 	for _, delivery := range deliveries {
-		if delivery.DestinationID <= 0 || delivery.DestinationRevision <= 0 || delivery.DestinationName == "" || len(delivery.DestinationName) > 128 ||
-			!notificationProviderPattern.MatchString(delivery.DestinationProvider) || len(delivery.DestinationEnvironment) > 64 {
+		if delivery.DestinationID <= 0 || delivery.DestinationRevision <= 0 || delivery.DestinationConfigurationRevision <= 0 || delivery.DestinationName == "" || len(delivery.DestinationName) > 128 ||
+			!notificationProviderPattern.MatchString(delivery.DestinationProvider) || len(delivery.DestinationEnvironment) > 64 || len(delivery.DestinationRegion) > 8 {
 			return db.ErrInvalidOperation
 		}
 		if _, exists := seen[delivery.DestinationID]; exists {

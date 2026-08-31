@@ -64,6 +64,15 @@ const (
 	NotificationLifecycleResolve NotificationLifecycleAction = "resolve"
 )
 
+// NotificationProviderRegion selects a provider's documented regional service
+// endpoint. It is intentionally an allow-list value rather than a URL.
+type NotificationProviderRegion string
+
+const (
+	NotificationProviderRegionUS NotificationProviderRegion = "us"
+	NotificationProviderRegionEU NotificationProviderRegion = "eu"
+)
+
 // NotificationSource is the immutable source identity for one lifecycle.
 // Source IDs are intentionally identifier-shaped and never include names,
 // message text, credentials, request content, or provider payloads.
@@ -118,25 +127,27 @@ type NotificationRoutingRule struct {
 // NotificationDestinationInput carries write-only provider credential material.
 // Credential is never represented in a DTO and is retained on update when nil.
 type NotificationDestinationInput struct {
-	Name        string  `json:"name"`
-	Provider    string  `json:"provider"`
-	Environment string  `json:"environment"`
-	Credential  *string `json:"credential,omitempty"`
-	Enabled     bool    `json:"enabled"`
+	Name        string                     `json:"name"`
+	Provider    string                     `json:"provider"`
+	Environment string                     `json:"environment"`
+	Region      NotificationProviderRegion `json:"region"`
+	Credential  *string                    `json:"credential,omitempty"`
+	Enabled     bool                       `json:"enabled"`
 }
 
 type NotificationDestinationDTO struct {
-	ID                   int       `json:"id"`
-	ProjectID            *int      `json:"project_id,omitempty"`
-	Name                 string    `json:"name"`
-	Provider             string    `json:"provider"`
-	Environment          string    `json:"environment"`
-	CredentialConfigured bool      `json:"credential_configured"`
-	Enabled              bool      `json:"enabled"`
-	Paused               bool      `json:"paused"`
-	Revision             int       `json:"revision"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
+	ID                   int                        `json:"id"`
+	ProjectID            *int                       `json:"project_id,omitempty"`
+	Name                 string                     `json:"name"`
+	Provider             string                     `json:"provider"`
+	Environment          string                     `json:"environment"`
+	Region               NotificationProviderRegion `json:"region"`
+	CredentialConfigured bool                       `json:"credential_configured"`
+	Enabled              bool                       `json:"enabled"`
+	Paused               bool                       `json:"paused"`
+	Revision             int                        `json:"revision"`
+	CreatedAt            time.Time                  `json:"created_at"`
+	UpdatedAt            time.Time                  `json:"updated_at"`
 }
 
 type NotificationRuleInput struct {
@@ -175,6 +186,7 @@ type NotificationDeliveryDTO struct {
 	DestinationName        string                        `json:"destination_name"`
 	DestinationProvider    string                        `json:"destination_provider"`
 	DestinationEnvironment string                        `json:"destination_environment"`
+	DestinationRegion      NotificationProviderRegion    `json:"destination_region"`
 	IncidentKey            string                        `json:"incident_key"`
 	IdempotencyKey         string                        `json:"idempotency_key"`
 	Status                 db.NotificationDeliveryStatus `json:"status"`
@@ -216,6 +228,7 @@ type NotificationDispatchRequest struct {
 	DestinationID  int
 	Provider       string
 	Environment    string
+	Region         NotificationProviderRegion
 	IncidentKey    string
 	IdempotencyKey string
 	Credential     []byte
