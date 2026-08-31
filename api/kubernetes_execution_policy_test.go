@@ -69,6 +69,23 @@ func TestKubernetesReconciliationDiagnosticsAreAdminOnly(t *testing.T) {
 
 }
 
+func TestKubernetesReconciliationDiagnosticsExposeOnlyClosedRemediationCapability(t *testing.T) {
+	response := kubernetesReconciliationDiagnosticsResponse{Diagnostics: []db.KubernetesReconciliationDiagnostic{{
+		SessionID: "server-only-session",
+		State:     db.KubernetesReconciliationObserved,
+		Target:    &db.KubernetesReconciliationDiagnosticTarget{ProjectID: 7, TaskID: 41, Generation: 3, RetentionState: "terminal"},
+		Remediation: &db.KubernetesReconciliationRemediationDescriptor{
+			Action: db.KubernetesReconciliationGarbageCollectExpired, ProjectID: 7, TaskID: 41, Generation: 3, ExpectedRevision: 4,
+		},
+	}}}
+
+	body, err := json.Marshal(response)
+
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"diagnostics":[{"target":{"project_id":7,"task_id":41,"generation":3,"retention_state":"terminal"},"state":"observed","reason":"","remediation":{"action":"garbage_collect_expired","project_id":7,"task_id":41,"generation":3,"expected_revision":4}}]}`, string(body))
+	assert.NotContains(t, string(body), "server-only-session")
+}
+
 func sqlPolicyFixture(alias string) db.KubernetesExecutionPolicy {
 	p := db.DefaultKubernetesExecutionPolicy(alias)
 	p.AllowedNamespaces = []string{"semaphore-jobs"}

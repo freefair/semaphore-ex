@@ -27,7 +27,16 @@ func TestKubernetesReconciliationExpiredGCIsSessionFencedAndReplaySafe(t *testin
 	require.Len(t, session.Targets, 1)
 	scan := db.KubernetesReconciliationScan{SessionID: session.SessionID, Fence: session.Fence, Revision: session.Revision, Observations: []db.KubernetesReconciliationObservation{{ProjectID: projectID, TaskID: task.ID, Generation: assigned.AssignmentGeneration, State: db.KubernetesReconciliationObserved, Revision: session.Revision}}}
 	require.NoError(t, store.IngestKubernetesReconciliationScan(runner.ID, scan))
-	request := db.KubernetesReconciliationRemediationRequest{Action: db.KubernetesReconciliationGarbageCollectExpired, IdempotencyKey: "gc-1", ProjectID: projectID, TaskID: task.ID, Generation: assigned.AssignmentGeneration, ExpectedRevision: session.Revision}
+	diagnostics, err := store.GetKubernetesReconciliationPendingDiagnostics(runner.ID, 100)
+	require.NoError(t, err)
+	require.Len(t, diagnostics, 1)
+	require.NotNil(t, diagnostics[0].Remediation)
+	assert.Equal(t, db.KubernetesReconciliationGarbageCollectExpired, diagnostics[0].Remediation.Action)
+	assert.Equal(t, projectID, diagnostics[0].Remediation.ProjectID)
+	assert.Equal(t, task.ID, diagnostics[0].Remediation.TaskID)
+	assert.Equal(t, assigned.AssignmentGeneration, diagnostics[0].Remediation.Generation)
+	assert.Equal(t, session.Revision, diagnostics[0].Remediation.ExpectedRevision)
+	request := db.KubernetesReconciliationRemediationRequest{Action: diagnostics[0].Remediation.Action, IdempotencyKey: "gc-1", ProjectID: diagnostics[0].Remediation.ProjectID, TaskID: diagnostics[0].Remediation.TaskID, Generation: diagnostics[0].Remediation.Generation, ExpectedRevision: diagnostics[0].Remediation.ExpectedRevision}
 	command, err := store.RequestKubernetesReconciliationRemediation(runner.ID, request)
 	require.NoError(t, err)
 	assert.Equal(t, session.Targets[0], command.Target)
@@ -105,6 +114,21 @@ func TestKubernetesReconciliationExcludesUnexpiredTerminalAttemptAndRejectsActiv
 	require.Len(t, activeSession.Targets, 1)
 	err = store.IngestKubernetesReconciliationScan(runner.ID, db.KubernetesReconciliationScan{SessionID: activeSession.SessionID, Fence: activeSession.Fence, Revision: activeSession.Revision, Observations: []db.KubernetesReconciliationObservation{{ProjectID: projectID, TaskID: task.ID, Generation: assigned.AssignmentGeneration, State: db.KubernetesReconciliationAbsent, Revision: activeSession.Revision}}})
 	assert.ErrorIs(t, err, db.ErrKubernetesReconciliationCoverageInvalid)
+}
+
+func TestKubernetesReconciliationDiagnosticsKeepCandidatesVisibleButNonRemediable(t *testing.T) {
+	store, _, runner, _ := createRunnerAttemptFixture(t)
+	session, err := store.OpenKubernetesReconciliationSession(runner.ID, "qa", "semaphore-jobs", "", "")
+	require.NoError(t, err)
+	_, err = store.exec("insert into kubernetes_reconciliation_candidate (session_id,resource,name,uid,reason,revision,status,observed_at) values (?,?,?,?,?,?,?,?)", session.SessionID, "job", "foreign-job", "foreign-uid", "foreign_or_duplicate", 0, "pending", time.Now().UTC())
+	require.NoError(t, err)
+
+	diagnostics, err := store.GetKubernetesReconciliationPendingDiagnostics(runner.ID, 100)
+
+	require.NoError(t, err)
+	require.Len(t, diagnostics, 1)
+	require.NotNil(t, diagnostics[0].Candidate)
+	assert.Nil(t, diagnostics[0].Remediation)
 }
 
 func kubernetesTerminalMetadata(deadline time.Time) db.RunnerExecutorMetadata {
