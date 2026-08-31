@@ -22,11 +22,12 @@
       {{ $t('auditWebhookUnavailable') }}
     </v-alert>
 
-    <div v-else class="pa-4 audit-webhook-content">
+    <div class="pa-4 audit-webhook-content">
       <v-alert v-if="error" text type="error" dismissible @input="error = ''">
         {{ error }}
       </v-alert>
 
+      <template v-if="!unavailable">
       <v-card outlined class="mb-4">
         <v-card-title class="subtitle-1">
           <v-icon left>mdi-webhook</v-icon>
@@ -162,6 +163,9 @@
           </v-btn>
         </v-card-actions>
       </v-card>
+      </template>
+
+      <NotificationGovernance />
     </div>
   </div>
 </template>
@@ -170,11 +174,16 @@
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
+import NotificationGovernance from '@/components/NotificationGovernance.vue';
 
 const PAGE_SIZE = 25;
 
 export default {
   name: 'AuditWebhooks',
+
+  components: {
+    NotificationGovernance,
+  },
 
   data() {
     return {
