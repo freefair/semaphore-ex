@@ -101,6 +101,7 @@ func Route(
 	logWriteService pro_interfaces.LogWriteService,
 	auditWebhookService pro_interfaces.AuditWebhookService,
 	appMetrics *metrics.Metrics,
+	notificationGovernanceServices ...pro_interfaces.NotificationGovernanceServiceFacade,
 ) *mux.Router {
 
 	projectController := &projects.ProjectController{ProjectService: projectService}
@@ -152,6 +153,13 @@ func Route(
 	configureCrossProjectTemplateAudit(crossProjectTemplateController, auditFacade)
 	workflowAudit := EnhancedWorkflowDeniedAuditMiddleware(auditFacade)
 	auditWebhookController := NewAuditWebhookController(auditWebhookService, auditFacade)
+	var notificationGovernanceService pro_interfaces.NotificationGovernanceServiceFacade
+	if len(notificationGovernanceServices) > 0 && notificationGovernanceServices[0] != nil {
+		notificationGovernanceService = notificationGovernanceServices[0]
+	} else {
+		notificationGovernanceService = proServer.NewNotificationGovernanceService(store)
+	}
+	notificationGovernanceController := NewNotificationGovernanceController(notificationGovernanceService)
 	projectRunnerController := proProjects.NewProjectRunnerController(subscriptionService, runnerService, capabilityProvider, auditFacade)
 	capabilityController := NewCapabilityController(capabilityFacade, auditFacade)
 	totpController := NewTOTPController(totpService, auditFacade)
@@ -286,19 +294,6 @@ func Route(
 
 	delegatedProjectRolesSnapshot := capabilityController.DelegatedProjectRolesSnapshotMiddleware
 	globalSystemPermission := globalPermissionMiddleware(db.CanManageGlobalSystem)
-	authenticatedAPI.Path("/subscription").Handler(
-		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
-			globalSystemPermission(http.HandlerFunc(subscriptionController.Activate))))).Methods("POST")
-	authenticatedAPI.Path("/subscription/refresh").Handler(
-		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
-			globalSystemPermission(http.HandlerFunc(subscriptionController.Refresh))))).Methods("POST")
-	authenticatedAPI.Path("/subscription").Handler(
-		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
-			globalSystemPermission(http.HandlerFunc(subscriptionController.GetSubscription))))).Methods("GET")
-	authenticatedAPI.Path("/subscription").Handler(
-		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
-			globalSystemPermission(http.HandlerFunc(subscriptionController.Delete))))).Methods("DELETE")
-
 	authenticatedAPI.Path("/projects").HandlerFunc(projects.GetProjects).Methods("GET", "HEAD")
 	authenticatedAPI.Path("/projects").HandlerFunc(projectsController.AddProject).Methods("POST")
 	authenticatedAPI.Path("/projects/restore").HandlerFunc(backupController.Restore).Methods("POST")
@@ -308,6 +303,13 @@ func Route(
 		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
 			globalPermissionMiddleware(db.CanReadGlobalAudit)(http.HandlerFunc(getGlobalAuditEvents)))),
 	).Methods("GET", "HEAD")
+	registerEnhancedGovernanceRoutes(
+		authenticatedAPI,
+		auditFacade,
+		notificationGovernanceController,
+		delegatedProjectRolesSnapshot,
+		globalSystemPermission,
+	)
 
 	authenticatedAPI.Path("/users").Handler(
 		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(

@@ -189,46 +189,30 @@ func (d *SqlDb) CreateTask(task db.Task, maxTasks int) (newTask db.Task, err err
 }
 
 func (d *SqlDb) UpdateTask(task db.Task) error {
-	err := task.PreUpdate(d.Sql())
+	if err := task.PreUpdate(d.Sql()); err != nil {
+		return err
+	}
+	tx, err := d.Sql().Begin()
 	if err != nil {
 		return err
 	}
-
-	if task.CommitHash != nil {
-		_, err = d.exec(
-			"update task set status=?, start=?, `end`=?, commit_hash=?, commit_message=?, runner_id=?, runner_id_snapshot=?, runner_name=?, assignment_generation=?, runner_assigned_at=?, recovery_reason=?, placement_decision=?, message=? where id=?",
-			task.Status,
-			task.Start,
-			task.End,
-			task.CommitHash,
-			task.CommitMessage,
-			task.RunnerID,
-			task.RunnerSnapshotID,
-			task.RunnerName,
-			task.AssignmentGeneration,
-			task.RunnerAssignedAt,
-			task.RecoveryReason,
-			task.PlacementDecision,
-			task.Message,
-			task.ID)
-	} else {
-		_, err = d.exec(
-			"update task set status=?, start=?, `end`=?, runner_id=?, runner_id_snapshot=?, runner_name=?, assignment_generation=?, runner_assigned_at=?, recovery_reason=?, placement_decision=?, message=? where id=?",
-			task.Status,
-			task.Start,
-			task.End,
-			task.RunnerID,
-			task.RunnerSnapshotID,
-			task.RunnerName,
-			task.AssignmentGeneration,
-			task.RunnerAssignedAt,
-			task.RecoveryReason,
-			task.PlacementDecision,
-			task.Message,
-			task.ID)
+	defer func() { _ = tx.Rollback() }()
+	var current db.Task
+	if err = tx.SelectOne(&current, d.PrepareQuery("select * from task where id=?"), task.ID); err != nil {
+		return err
 	}
-
-	return err
+	notify := current.Status != task.Status && task.Status.IsFinished()
+	query, args := taskUpdateStatement(task, notify, nil)
+	if _, err = d.execTx(tx, query, args...); err != nil {
+		return err
+	}
+	if notify {
+		task.NotificationRevision = current.NotificationRevision + 1
+		if err = d.routeNotificationTx(tx, taskTerminalNotification(task)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (d *SqlDb) UpdateTaskArtifacts(projectID int, taskID int, artifacts *string) error {

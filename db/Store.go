@@ -644,6 +644,7 @@ type Store interface {
 	LDAPRepository
 	OIDCGroupMappingRepository
 	AuditWebhookRepository
+	NotificationRepository
 }
 
 var AccessKeyProps = ObjectProps{

@@ -426,21 +426,20 @@ func TestUpdateRunner_StaleGenerationFromSameRunnerReportedAsTerminated(t *testi
 func TestUpdateRunner_CancelingTaskAcceptsInflightNonTerminalProgress(t *testing.T) {
 	prevCfg := util.Config
 	t.Cleanup(func() { util.Config = prevCfg })
-	store := sql.InitConfigCreateTestStore()
-	pool := tasks.CreateTaskPool(
-		store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, nil, nil, nil,
-	)
-	ctrl := NewRunnerController(nil, &pool, nil, nil)
-	runnerID := 1
-	tr := tasks.NewTaskRunner(db.Task{
-		ID: 10, ProjectID: 1, RunnerID: &runnerID,
-		Status: task_logger.TaskStoppingStatus,
-	}, &pool, "", nil)
-	pool.StateStore().SetRunning(tr)
+	fixture := newRunnerMetadataAPIFixture(t)
+	fixture.task.Status = task_logger.TaskStoppingStatus
+	require.NoError(t, fixture.store.UpdateTask(fixture.task))
 
-	req := newProgressRequest(t, store, db.Runner{ID: runnerID}, runners.RunnerProgress{
+	pool := tasks.CreateTaskPool(
+		fixture.store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, nil, nil, nil,
+	)
+	tr := tasks.NewTaskRunner(fixture.task, &pool, "", nil)
+	pool.StateStore().SetRunning(tr)
+	ctrl := NewRunnerController(fixture.store, &pool, nil, nil)
+
+	req := newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{
 		Jobs: []runners.JobProgress{{
-			ID: 10, Status: task_logger.TaskRunningStatus,
+			ID: fixture.task.ID, Generation: fixture.task.AssignmentGeneration, Status: task_logger.TaskRunningStatus,
 			Commit: &runners.CommitInfo{Hash: "cancel-commit", Message: "captured during cancellation"},
 		}},
 	})

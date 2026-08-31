@@ -168,8 +168,9 @@ func (status WorkflowRunStatus) IsFinished() bool {
 type WorkflowRun struct {
 	ID int `db:"id" json:"id" backup:"-"`
 
-	ProjectID          int `db:"project_id" json:"project_id" backup:"-"`
-	WorkflowTemplateID int `db:"workflow_template_id" json:"workflow_template_id" backup:"workflow_template_id"`
+	ProjectID            int `db:"project_id" json:"project_id" backup:"-"`
+	WorkflowTemplateID   int `db:"workflow_template_id" json:"workflow_template_id" backup:"workflow_template_id"`
+	NotificationRevision int `db:"notification_revision" json:"-" backup:"-"`
 
 	Status                      WorkflowRunStatus              `db:"status" json:"status" backup:"status"`
 	DesiredState                WorkflowRunDesiredState        `db:"desired_state" json:"desired_state" backup:"desired_state"`
@@ -216,7 +217,8 @@ const (
 )
 
 type WorkflowApproval struct {
-	ID int `db:"id" json:"id" backup:"-"`
+	ID                   int `db:"id" json:"id" backup:"-"`
+	NotificationRevision int `db:"notification_revision" json:"-" backup:"-"`
 
 	ProjectID          int                    `db:"project_id" json:"project_id" backup:"-"`
 	WorkflowTemplateID int                    `db:"workflow_template_id" json:"workflow_template_id,omitempty" backup:"-"`

@@ -10,8 +10,9 @@ import (
 type TerraformStoreImpl = community.TerraformStoreImpl
 type WorkflowStoreImpl struct {
 	community.WorkflowStoreImpl
-	connection        *coresql.SqlDbConnection
-	workflowTaskStore workflowRunTaskStore
+	connection         *coresql.SqlDbConnection
+	notificationRouter *coresql.NotificationTransactionRouter
+	workflowTaskStore  workflowRunTaskStore
 }
 
 var _ db.WorkflowTriggerManager = (*WorkflowStoreImpl)(nil)
@@ -21,7 +22,7 @@ type workflowRunTaskStore interface {
 }
 
 func NewWorkflowStore(connection *coresql.SqlDbConnection, taskStores ...workflowRunTaskStore) *WorkflowStoreImpl {
-	store := &WorkflowStoreImpl{connection: connection}
+	store := &WorkflowStoreImpl{connection: connection, notificationRouter: coresql.NewNotificationTransactionRouter(connection)}
 	if len(taskStores) > 0 {
 		store.workflowTaskStore = taskStores[0]
 	}
