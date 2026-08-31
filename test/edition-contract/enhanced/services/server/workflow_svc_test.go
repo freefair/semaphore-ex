@@ -74,6 +74,33 @@ func TestWorkflowServiceRunsTwoNodesInOrderFromImmutableSnapshot(t *testing.T) {
 	assert.Len(t, fixture.enqueuer.tasks, 2)
 }
 
+func TestWorkflowServiceStartBindsCurrentImmutableVersionAndRejectsTampering(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	versionStore := any(fixture.repository).(db.WorkflowVersionStore)
+
+	run, err := fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "version-bound-start")
+	require.NoError(t, err)
+	require.Positive(t, run.WorkflowVersionID)
+	version, err := versionStore.GetWorkflowVersion(fixture.projectID, fixture.workflow.ID, fixture.workflow.Revision)
+	require.NoError(t, err)
+	assert.Equal(t, version.ID, run.WorkflowVersionID)
+
+	tampered := fixture.workflow
+	tampered.Name = "tampered start policy bypass"
+	_, err = fixture.service.StartWorkflow(tampered, &fixture.user, "tampered-version-start")
+	assert.ErrorIs(t, err, pro_interfaces.ErrWorkflowRevisionConflict)
+
+	fixture.workflow.Name = "mutated after start"
+	updated, err := fixture.repository.UpdateWorkflowTemplate(fixture.workflow)
+	require.NoError(t, err)
+	replayed, err := fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "version-bound-start")
+	require.NoError(t, err)
+	assert.Equal(t, run.ID, replayed.ID)
+	assert.Equal(t, version.ID, replayed.WorkflowVersionID)
+	assert.NotEqual(t, updated.Revision, replayed.DefinitionRevision)
+}
+
 func TestWorkflowApprovalPausesThenResumesOnlyForEligibleNonRequester(t *testing.T) {
 	fixture := newWorkflowServiceFixture(t)
 	defer fixture.store.Close()
@@ -1626,6 +1653,56 @@ func (e *workflowTestEnqueuer) AddWorkflowTaskFenced(
 	e.tasks = append(e.tasks, created)
 	e.templates = append(e.templates, template)
 	return created, nil
+}
+
+func (e *workflowTestEnqueuer) AddCrossProjectWorkflowTaskFenced(
+	task db.Task,
+	provenance db.CrossProjectTemplateProvenance,
+	userID *int,
+	username string,
+	consumerProjectID int,
+	lease *pro_interfaces.WorkflowReconciliationLease,
+) (db.Task, error) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	template, err := provenance.TemplateSnapshot.ReconstructTemplate(
+		provenance.Reference.OwnerProjectID, provenance.Reference.TemplateID,
+	)
+	if err != nil {
+		return db.Task{}, err
+	}
+	templateJSON, err := json.Marshal(template)
+	if err != nil {
+		return db.Task{}, err
+	}
+	taskProvenance := db.WorkflowTemplateProvenance{CrossProject: &provenance}
+	provenanceJSON, err := taskProvenance.CanonicalJSON()
+	if err != nil {
+		return db.Task{}, err
+	}
+	task.ProjectID = consumerProjectID
+	task.TemplateID = template.ID
+	task.Status = task_logger.TaskWaitingStatus
+	task.WorkflowTemplateSnapshot = workflowTestStringPointer(string(templateJSON))
+	task.WorkflowTemplateProvenance = &taskProvenance
+	task.WorkflowTemplateProvenanceJSON = workflowTestStringPointer(provenanceJSON)
+	e.inputTasks = append(e.inputTasks, task)
+	var created db.Task
+	if lease == nil {
+		created, err = e.store.CreateTask(task, 0)
+	} else {
+		created, err = e.store.CreateWorkflowTaskFenced(task, 0, *lease)
+	}
+	if err != nil {
+		return db.Task{}, err
+	}
+	e.tasks = append(e.tasks, created)
+	e.templates = append(e.templates, template)
+	return created, nil
+}
+
+func workflowTestStringPointer(value string) *string {
+	return &value
 }
 
 type workflowSQLTestLocker struct {

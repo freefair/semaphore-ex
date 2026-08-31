@@ -12,6 +12,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/semaphoreui/semaphore/db"
 )
 
 type AuditAction string
@@ -84,17 +86,24 @@ const (
 )
 
 const (
-	AuditActionWorkflowList               AuditAction = "workflow_list"
-	AuditActionWorkflowRead               AuditAction = "workflow_read"
-	AuditActionWorkflowCreate             AuditAction = "workflow_create"
-	AuditActionWorkflowUpdate             AuditAction = "workflow_update"
-	AuditActionWorkflowDelete             AuditAction = "workflow_delete"
-	AuditActionWorkflowStart              AuditAction = "workflow_start"
-	AuditActionWorkflowStop               AuditAction = "workflow_stop"
-	AuditActionWorkflowRunRead            AuditAction = "workflow_run_read"
-	AuditActionWorkflowRunLogsRead        AuditAction = "workflow_run_logs_read"
-	AuditActionWorkflowApprovalInbox      AuditAction = "workflow_approval_inbox_read"
-	AuditActionWorkflowApprovalContribute AuditAction = "workflow_approval_contribute"
+	AuditActionWorkflowList                         AuditAction = "workflow_list"
+	AuditActionWorkflowRead                         AuditAction = "workflow_read"
+	AuditActionWorkflowCreate                       AuditAction = "workflow_create"
+	AuditActionWorkflowUpdate                       AuditAction = "workflow_update"
+	AuditActionWorkflowDelete                       AuditAction = "workflow_delete"
+	AuditActionWorkflowStart                        AuditAction = "workflow_start"
+	AuditActionWorkflowStop                         AuditAction = "workflow_stop"
+	AuditActionWorkflowRunRead                      AuditAction = "workflow_run_read"
+	AuditActionWorkflowRunLogsRead                  AuditAction = "workflow_run_logs_read"
+	AuditActionWorkflowApprovalInbox                AuditAction = "workflow_approval_inbox_read"
+	AuditActionWorkflowApprovalContribute           AuditAction = "workflow_approval_contribute"
+	AuditActionCrossProjectTemplateVersionPublish   AuditAction = "cross_project_template_version_publish"
+	AuditActionCrossProjectTemplateGrantCreate      AuditAction = "cross_project_template_grant_create"
+	AuditActionCrossProjectTemplateGrantUpdate      AuditAction = "cross_project_template_grant_update"
+	AuditActionCrossProjectTemplateGrantAccept      AuditAction = "cross_project_template_grant_accept"
+	AuditActionCrossProjectTemplateGrantRevoke      AuditAction = "cross_project_template_grant_revoke"
+	AuditActionCrossProjectTemplateGrantDelete      AuditAction = "cross_project_template_grant_delete"
+	AuditActionCrossProjectTemplateReferenceResolve AuditAction = "cross_project_template_reference_resolve"
 )
 
 type AuditTargetType string
@@ -116,10 +125,12 @@ const (
 )
 
 const (
-	AuditTargetWorkflow              AuditTargetType = "workflow"
-	AuditTargetWorkflowRun           AuditTargetType = "workflow_run"
-	AuditTargetWorkflowApproval      AuditTargetType = "workflow_approval"
-	AuditTargetWorkflowApprovalInbox AuditTargetType = "workflow_approval_inbox"
+	AuditTargetWorkflow                    AuditTargetType = "workflow"
+	AuditTargetWorkflowRun                 AuditTargetType = "workflow_run"
+	AuditTargetWorkflowApproval            AuditTargetType = "workflow_approval"
+	AuditTargetWorkflowApprovalInbox       AuditTargetType = "workflow_approval_inbox"
+	AuditTargetCrossProjectTemplateGrant   AuditTargetType = "cross_project_template_grant"
+	AuditTargetCrossProjectTemplateVersion AuditTargetType = "cross_project_template_version"
 )
 
 type AuditOutcome string
@@ -167,6 +178,8 @@ const (
 	AuditReasonWorkflowApprovalRoleRevoked        = "workflow_approval_role_revoked"
 	AuditReasonWorkflowApprovalAlreadyResolved    = "workflow_approval_already_resolved"
 	AuditReasonWorkflowApprovalTimedOut           = "workflow_approval_timed_out"
+	AuditReasonCrossProjectTemplateGrantActive    = "cross_project_template_grant_active"
+	AuditReasonCrossProjectTemplateGrantDenied    = "cross_project_template_grant_denied"
 )
 
 // AuditRoleOrigin records how a role was effective when a workflow decision
@@ -273,8 +286,25 @@ type AuditEvent struct {
 	Reason        string          `json:"reason"`
 	// WorkflowPolicyRevision and RoleProvenance are retained in the database
 	// event JSON. They are intentionally not added to the v1 webhook envelope.
-	WorkflowPolicyRevision int                   `json:"workflow_policy_revision,omitempty"`
-	RoleProvenance         []AuditRoleProvenance `json:"role_provenance,omitempty"`
+	WorkflowPolicyRevision         int                                  `json:"workflow_policy_revision,omitempty"`
+	RoleProvenance                 []AuditRoleProvenance                `json:"role_provenance,omitempty"`
+	CrossProjectTemplateProvenance *AuditCrossProjectTemplateProvenance `json:"cross_project_template_provenance,omitempty"`
+}
+
+// AuditCrossProjectTemplateProvenance is the only permitted cross-project
+// audit context. It carries immutable identifiers, never names or values.
+type AuditCrossProjectTemplateProvenance struct {
+	OwnerProjectID             int    `json:"owner_project_id"`
+	ConsumerProjectID          int    `json:"consumer_project_id"`
+	TemplateID                 int    `json:"template_id"`
+	TemplateVersionID          int    `json:"template_version_id"`
+	TemplateVersionNumber      int    `json:"template_version_number"`
+	TemplateVersionFingerprint string `json:"template_version_fingerprint"`
+	MinTemplateVersion         int    `json:"min_template_version,omitempty"`
+	MaxTemplateVersion         int    `json:"max_template_version,omitempty"`
+	GrantID                    int    `json:"grant_id"`
+	GrantRevision              int    `json:"grant_revision"`
+	Operation                  int    `json:"operation"`
 }
 
 func (e AuditEvent) Validate() error {
@@ -305,6 +335,9 @@ func (e AuditEvent) Validate() error {
 	}
 	if !validWorkflowAuditProvenance(e) {
 		return fmt.Errorf("invalid workflow audit provenance")
+	}
+	if !validCrossProjectTemplateAuditProvenance(e) {
+		return fmt.Errorf("invalid cross-project template audit provenance")
 	}
 	return nil
 }
@@ -359,6 +392,50 @@ func validAuditTarget(event AuditEvent) bool {
 		return validScopedProjectAuditTarget(event, workflowApprovalTargetPattern)
 	case AuditTargetWorkflowApprovalInbox:
 		return validScopedProjectAuditTarget(event, workflowInboxTargetPattern)
+	case AuditTargetCrossProjectTemplateGrant:
+		return validScopedProjectAuditTarget(event, regexp.MustCompile(`^grant:[1-9][0-9]*$`))
+	case AuditTargetCrossProjectTemplateVersion:
+		return validScopedProjectAuditTarget(event, regexp.MustCompile(`^template-version:[1-9][0-9]*$`))
+	default:
+		return false
+	}
+}
+
+func validCrossProjectTemplateAuditProvenance(event AuditEvent) bool {
+	if !isCrossProjectTemplateAuditAction(event.Action) {
+		return event.CrossProjectTemplateProvenance == nil
+	}
+	p := event.CrossProjectTemplateProvenance
+	if p == nil || p.OwnerProjectID <= 0 || p.TemplateID <= 0 {
+		return false
+	}
+	exact := event.Action == AuditActionCrossProjectTemplateVersionPublish || event.Action == AuditActionCrossProjectTemplateReferenceResolve
+	if exact && (p.TemplateVersionID <= 0 || p.TemplateVersionNumber <= 0 || len(p.TemplateVersionFingerprint) != len("sha256:")+64 || !strings.HasPrefix(p.TemplateVersionFingerprint, "sha256:")) {
+		return false
+	}
+	if exact {
+		if _, err := hex.DecodeString(strings.TrimPrefix(p.TemplateVersionFingerprint, "sha256:")); err != nil {
+			return false
+		}
+	}
+	if event.Action == AuditActionCrossProjectTemplateVersionPublish {
+		return event.TargetType == AuditTargetCrossProjectTemplateVersion && event.TargetID == "template-version:"+strconv.Itoa(p.TemplateVersionID) && event.ProjectID != nil && *event.ProjectID == p.OwnerProjectID && p.ConsumerProjectID == 0 && p.GrantID == 0 && p.GrantRevision == 0 && p.Operation == 0
+	}
+	if p.ConsumerProjectID <= 0 || p.OwnerProjectID == p.ConsumerProjectID || p.GrantID <= 0 || p.GrantRevision <= 0 || !db.CrossProjectTemplateGrantOperation(p.Operation).IsValid() || p.MinTemplateVersion <= 0 || p.MaxTemplateVersion < p.MinTemplateVersion {
+		return false
+	}
+	if event.TargetType != AuditTargetCrossProjectTemplateGrant || event.TargetID != "grant:"+strconv.Itoa(p.GrantID) || event.ProjectID == nil {
+		return false
+	}
+	switch event.Action {
+	case AuditActionCrossProjectTemplateGrantCreate, AuditActionCrossProjectTemplateGrantUpdate, AuditActionCrossProjectTemplateGrantDelete:
+		return *event.ProjectID == p.OwnerProjectID
+	case AuditActionCrossProjectTemplateGrantAccept:
+		return *event.ProjectID == p.ConsumerProjectID
+	case AuditActionCrossProjectTemplateGrantRevoke:
+		return *event.ProjectID == p.OwnerProjectID || *event.ProjectID == p.ConsumerProjectID
+	case AuditActionCrossProjectTemplateReferenceResolve:
+		return *event.ProjectID == p.ConsumerProjectID && db.CrossProjectTemplateGrantOperation(p.Operation) == db.CrossProjectTemplateGrantReference
 	default:
 		return false
 	}
@@ -429,6 +506,12 @@ func validWorkflowAuditReason(event AuditEvent) bool {
 }
 
 func validAuditActionTarget(event AuditEvent) bool {
+	if isCrossProjectTemplateAuditAction(event.Action) {
+		if event.Action == AuditActionCrossProjectTemplateVersionPublish {
+			return event.TargetType == AuditTargetCrossProjectTemplateVersion
+		}
+		return event.TargetType == AuditTargetCrossProjectTemplateGrant
+	}
 	workflowTarget := event.TargetType == AuditTargetWorkflow ||
 		event.TargetType == AuditTargetWorkflowRun ||
 		event.TargetType == AuditTargetWorkflowApproval ||
@@ -462,6 +545,14 @@ func isWorkflowAuditAction(action AuditAction) bool {
 	default:
 		return false
 	}
+}
+
+func isCrossProjectTemplateAuditAction(action AuditAction) bool {
+	switch action {
+	case AuditActionCrossProjectTemplateVersionPublish, AuditActionCrossProjectTemplateGrantCreate, AuditActionCrossProjectTemplateGrantUpdate, AuditActionCrossProjectTemplateGrantAccept, AuditActionCrossProjectTemplateGrantRevoke, AuditActionCrossProjectTemplateGrantDelete, AuditActionCrossProjectTemplateReferenceResolve:
+		return true
+	}
+	return false
 }
 
 func validAuditRoleProvenance(provenance AuditRoleProvenance) bool {
@@ -532,7 +623,8 @@ func validAuditReason(reason string) bool {
 		AuditReasonWorkflowApprovalApproved, AuditReasonWorkflowApprovalRejected,
 		AuditReasonWorkflowApprovalIneligible, AuditReasonWorkflowApprovalInitiatorSeparated,
 		AuditReasonWorkflowApprovalRoleRevoked, AuditReasonWorkflowApprovalAlreadyResolved,
-		AuditReasonWorkflowApprovalTimedOut,
+		AuditReasonWorkflowApprovalTimedOut, AuditReasonCrossProjectTemplateGrantActive,
+		AuditReasonCrossProjectTemplateGrantDenied,
 		string(CapabilityReasonActive), string(CapabilityReasonProviderUnavailable),
 		string(CapabilityReasonDisabledByAdmin), string(CapabilityReasonEntitlementExpired),
 		string(CapabilityReasonReadOnly), string(CapabilityReasonInsufficientPermission),
@@ -742,6 +834,11 @@ func validAuditAction(action AuditAction) bool {
 		AuditActionWorkflowUpdate, AuditActionWorkflowDelete, AuditActionWorkflowStart,
 		AuditActionWorkflowStop, AuditActionWorkflowRunRead, AuditActionWorkflowRunLogsRead,
 		AuditActionWorkflowApprovalInbox, AuditActionWorkflowApprovalContribute:
+		return true
+	case AuditActionCrossProjectTemplateVersionPublish,
+		AuditActionCrossProjectTemplateGrantCreate, AuditActionCrossProjectTemplateGrantUpdate,
+		AuditActionCrossProjectTemplateGrantAccept, AuditActionCrossProjectTemplateGrantRevoke,
+		AuditActionCrossProjectTemplateGrantDelete, AuditActionCrossProjectTemplateReferenceResolve:
 		return true
 	default:
 		return false

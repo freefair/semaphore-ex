@@ -94,6 +94,10 @@ type Task struct {
 	// WorkflowTemplateSnapshot freezes the referenced template for workflow
 	// tasks so a later template edit cannot change queued or restarted work.
 	WorkflowTemplateSnapshot *string `db:"workflow_template_snapshot" json:"-"`
+	// WorkflowTemplateProvenance is the value-free immutable owner-version and
+	// grant provenance for a consumer-scoped cross-project workflow task.
+	WorkflowTemplateProvenanceJSON *string                     `db:"workflow_template_provenance" json:"-"`
+	WorkflowTemplateProvenance     *WorkflowTemplateProvenance `db:"-" json:"-"`
 	// Version is a build version.
 	// This field available only for Build tasks.
 	Version *string `db:"version" json:"version,omitempty"`
@@ -106,6 +110,23 @@ type Task struct {
 
 	// Limit is deprecated, use Params.Limit instead
 	Limit string `db:"-" json:"limit"`
+}
+
+// DecodeWorkflowTemplateProvenance restores the validated, value-free task
+// provenance used by cross-project workflow dispatch after a database read.
+func (task *Task) DecodeWorkflowTemplateProvenance() error {
+	if task.WorkflowTemplateProvenance != nil {
+		return task.WorkflowTemplateProvenance.Validate()
+	}
+	if task.WorkflowTemplateProvenanceJSON == nil {
+		return nil
+	}
+	provenance, err := DecodeWorkflowTemplateProvenance(*task.WorkflowTemplateProvenanceJSON)
+	if err != nil {
+		return err
+	}
+	task.WorkflowTemplateProvenance = provenance
+	return nil
 }
 
 type RunnerAttemptOutcome string

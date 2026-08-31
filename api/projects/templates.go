@@ -35,9 +35,31 @@ func TemplatesMiddleware(next http.Handler) http.Handler {
 }
 
 type TemplateController struct {
-	templateRepo           db.TemplateManager
-	roleRepo               db.RoleRepository
-	executorImageAvailable func(*db.User) bool
+	templateRepo              db.TemplateManager
+	roleRepo                  db.RoleRepository
+	executorImageAvailable    func(*db.User) bool
+	crossProjectDeletionGuard interface {
+		HasUnrevokedCrossProjectTemplateGrants(int, int) (bool, error)
+	}
+	crossProjectDeletionStore interface {
+		DeleteTemplateWithCrossProjectGrantGuard(int, int) error
+	}
+}
+
+// ConfigureCrossProjectDeletionGuard attaches the optional Enhanced grant
+// guard. Community keeps the historical delete behavior because its workflow
+// store does not implement this narrow capability.
+func (c *TemplateController) ConfigureCrossProjectDeletionGuard(guard any) {
+	if configured, ok := guard.(interface {
+		HasUnrevokedCrossProjectTemplateGrants(int, int) (bool, error)
+	}); ok {
+		c.crossProjectDeletionGuard = configured
+	}
+	if configured, ok := guard.(interface {
+		DeleteTemplateWithCrossProjectGrantGuard(int, int) error
+	}); ok {
+		c.crossProjectDeletionStore = configured
+	}
 }
 
 func NewTemplateController(
@@ -309,7 +331,42 @@ func updateTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailab
 
 // RemoveTemplate deletes a template from the database
 func RemoveTemplate(w http.ResponseWriter, r *http.Request) {
+	removeTemplate(w, r, nil, nil)
+}
+
+func (c *TemplateController) RemoveTemplate(w http.ResponseWriter, r *http.Request) {
+	removeTemplate(w, r, c.crossProjectDeletionGuard, c.crossProjectDeletionStore)
+}
+
+func removeTemplate(w http.ResponseWriter, r *http.Request, guard interface {
+	HasUnrevokedCrossProjectTemplateGrants(int, int) (bool, error)
+}, command interface {
+	DeleteTemplateWithCrossProjectGrantGuard(int, int) error
+}) {
 	tpl := helpers.GetFromContext(r, "template").(db.Template)
+	if command != nil {
+		if err := command.DeleteTemplateWithCrossProjectGrantGuard(tpl.ProjectID, tpl.ID); err != nil {
+			if errors.Is(err, db.ErrCrossProjectTemplateGrantUnrevokedReference) {
+				helpers.WriteErrorStatus(w, err.Error(), http.StatusConflict)
+				return
+			}
+			helpers.WriteError(w, err)
+			return
+		}
+		writeTemplateDeleteEvent(w, r, tpl)
+		return
+	}
+	if guard != nil {
+		blocked, guardErr := guard.HasUnrevokedCrossProjectTemplateGrants(tpl.ProjectID, tpl.ID)
+		if guardErr != nil {
+			helpers.WriteError(w, guardErr)
+			return
+		}
+		if blocked {
+			helpers.WriteErrorStatus(w, db.ErrCrossProjectTemplateGrantUnrevokedReference.Error(), http.StatusConflict)
+			return
+		}
+	}
 
 	err := helpers.Store(r).DeleteTemplate(tpl.ProjectID, tpl.ID)
 	if err != nil {
@@ -317,6 +374,10 @@ func RemoveTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	writeTemplateDeleteEvent(w, r, tpl)
+}
+
+func writeTemplateDeleteEvent(w http.ResponseWriter, r *http.Request, tpl db.Template) {
 	helpers.EventLog(r, helpers.EventLogDelete, helpers.EventLogItem{
 		UserID:      helpers.UserFromContext(r).ID,
 		ProjectID:   tpl.ProjectID,

@@ -16,6 +16,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	workflowDB "github.com/semaphoreui/semaphore/pro/db"
 	workflowSQL "github.com/semaphoreui/semaphore/pro/db/sql"
+	workflowServer "github.com/semaphoreui/semaphore/pro/services/server"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -148,6 +149,22 @@ func (s *workflowDefinitionServiceStub) Delete(_ int, workflowID int, _ ...*db.U
 	return nil
 }
 
+func (s *workflowDefinitionServiceStub) ListVersions(_ int, _ int, _ db.RetrieveQueryParams, _ ...*db.User) ([]db.WorkflowVersion, error) {
+	return []db.WorkflowVersion{}, nil
+}
+
+func (s *workflowDefinitionServiceStub) GetVersion(_ int, _ int, _ int, _ ...*db.User) (db.WorkflowVersion, error) {
+	return db.WorkflowVersion{}, db.ErrNotFound
+}
+
+func (s *workflowDefinitionServiceStub) DiffVersions(_ int, _ int, _ int, _ int, _ ...*db.User) (pro_interfaces.WorkflowDefinitionDiff, error) {
+	return pro_interfaces.WorkflowDefinitionDiff{}, db.ErrNotFound
+}
+
+func (s *workflowDefinitionServiceStub) RestoreVersion(_ int, _ int, _ int, _ string, _ ...*db.User) (db.WorkflowTemplate, db.WorkflowValidationResult, error) {
+	return db.WorkflowTemplate{}, db.WorkflowValidationResult{}, db.ErrNotFound
+}
+
 func TestWorkflowControllerCRUDAndValidation(t *testing.T) {
 	valid := db.WorkflowValidationResult{Valid: true, Issues: []db.WorkflowValidationIssue{}}
 	created := db.WorkflowTemplate{ID: 41, ProjectID: 7, Name: "Deploy", DefinitionVersion: 1, Revision: 1}
@@ -226,6 +243,72 @@ func TestWorkflowControllerReturnsCurrentDefinitionOnRevisionConflict(t *testing
 	assert.Equal(t, 12, service.getActors[0].ID)
 }
 
+func TestWorkflowControllerAcceptsBrowserPolicyRevisionWithoutStorageOnlyMirror(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "browser policy revision"})
+	require.NoError(t, err)
+	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &project.ID, Type: db.AccessKeyNone})
+	require.NoError(t, err)
+	repository, err := store.CreateRepository(db.Repository{
+		ProjectID: project.ID, SSHKeyID: key.ID, Name: "browser-policy-repository",
+		GitURL: "https://example.test/browser-policy.git", GitBranch: "main",
+	})
+	require.NoError(t, err)
+	template, err := store.CreateTemplate(db.Template{
+		ProjectID: project.ID, RepositoryID: repository.ID, Name: "browser policy", Playbook: "deploy.yml",
+	})
+	require.NoError(t, err)
+	manager := workflowSQL.NewWorkflowStore(store.GetConnection())
+	definitionService := workflowServer.NewWorkflowDefinitionService(manager, store)
+	actor := &db.User{ID: 1, Admin: true}
+	created, validation, err := definitionService.Create(project.ID, db.WorkflowTemplate{
+		Name: "before browser save", Nodes: []db.WorkflowNode{{ID: -1, TemplateID: template.ID}},
+	}, actor)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	payload, err := json.Marshal(created)
+	require.NoError(t, err)
+	var browser db.WorkflowTemplate
+	require.NoError(t, json.Unmarshal(payload, &browser))
+	assert.Zero(t, browser.AccessPolicyRevision)
+	require.Equal(t, created.AccessPolicy.Revision, browser.AccessPolicy.Revision)
+	browser.Name = "saved through browser JSON"
+	payload, err = json.Marshal(browser)
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPut, "/api/project/1/workflows/1", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request = helpers.SetContextValue(request, "project", project)
+	request = helpers.SetContextValue(request, "workflow", created)
+	request = helpers.SetContextValue(request, "user", actor)
+	controller := NewWorkflowController(nil, manager, definitionService)
+	recorder := httptest.NewRecorder()
+	controller.UpdateWorkflow(recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var updated db.WorkflowTemplate
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &updated))
+	assert.Equal(t, "saved through browser JSON", updated.Name)
+	assert.Equal(t, 1, updated.AccessPolicy.Revision)
+	persisted, err := definitionService.Get(project.ID, created.ID, actor)
+	require.NoError(t, err)
+	assert.Equal(t, 1, persisted.AccessPolicyRevision)
+	assert.Equal(t, 1, persisted.AccessPolicy.Revision)
+
+	var invalid map[string]any
+	require.NoError(t, json.Unmarshal(payload, &invalid))
+	invalid["access_policy_revision"] = 999
+	invalidPayload, err := json.Marshal(invalid)
+	require.NoError(t, err)
+	invalidRequest := httptest.NewRequest(http.MethodPut, "/api/project/1/workflows/1", bytes.NewReader(invalidPayload))
+	invalidRequest.Header.Set("Content-Type", "application/json")
+	invalidRequest = helpers.SetContextValue(invalidRequest, "project", project)
+	invalidRequest = helpers.SetContextValue(invalidRequest, "workflow", persisted)
+	invalidRequest = helpers.SetContextValue(invalidRequest, "user", actor)
+	invalidRecorder := httptest.NewRecorder()
+	controller.UpdateWorkflow(invalidRecorder, invalidRequest)
+	assert.Equal(t, http.StatusBadRequest, invalidRecorder.Code, invalidRecorder.Body.String())
+}
+
 func TestWorkflowControllerResponseShapesUsePersistedContributions(t *testing.T) {
 	store := coresql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
@@ -250,8 +333,10 @@ func TestWorkflowControllerResponseShapesUsePersistedContributions(t *testing.T)
 	})
 	require.NoError(t, err)
 	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	workflow.CurrentVersionID = 73
 	run, err := workflowDB.BuildWorkflowRunSnapshot(workflow, map[int]db.Template{template.ID: template}, actor.ID, "response-shape", now)
 	require.NoError(t, err)
+	assert.Equal(t, 73, run.WorkflowVersionID)
 	run, err = manager.CreateWorkflowRun(run)
 	require.NoError(t, err)
 	policy := db.WorkflowApprovalRolePolicy{
@@ -300,6 +385,7 @@ func TestWorkflowControllerResponseShapesUsePersistedContributions(t *testing.T)
 	runRequest := helpers.SetContextValue(request(http.MethodGet, "/api/project/7/workflows/41/runs/91", &workflow), "workflow_run", run)
 	controller.GetWorkflowRun(runDetail, runRequest)
 	require.Equal(t, http.StatusOK, runDetail.Code, runDetail.Body.String())
+	assert.Contains(t, runDetail.Body.String(), `"workflow_version_id":73`)
 	assert.Contains(t, runDetail.Body.String(), `"effective_access":{"view":true,"edit":true,"start":true,"stop":true,"administer":true}`)
 	assert.Contains(t, runDetail.Body.String(), `"eligible":true`)
 	assert.Contains(t, runDetail.Body.String(), `"policy_revision":3`)

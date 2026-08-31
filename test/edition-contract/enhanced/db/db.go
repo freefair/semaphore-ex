@@ -297,6 +297,18 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 		}
 		switch node.EffectiveKind() {
 		case coreDB.WorkflowNodeTaskKind:
+			if node.CrossProjectTemplateReference != nil {
+				if err := node.CrossProjectTemplateReference.ValidateNormalized(); err != nil {
+					add("WORKFLOW_CROSS_PROJECT_REFERENCE_INVALID", "Cross-project template provenance is invalid.", path+".cross_project_template_reference", &id, nil)
+				}
+				if node.TemplateID != node.CrossProjectTemplateReference.TemplateID {
+					add("WORKFLOW_CROSS_PROJECT_TEMPLATE_MISMATCH", "Cross-project provenance must match the task template.", path+".template_id", &id, nil)
+				}
+				if len(node.OverridePolicy.InventoryIDs) > 0 || len(node.OverridePolicy.EnvironmentIDs) > 0 || len(node.OverridePolicy.CredentialParameters) > 0 {
+					add("WORKFLOW_CROSS_PROJECT_RESOURCE_OVERRIDE_FORBIDDEN", "Cross-project templates cannot override inventory, environments, or credentials.", path+".override_policy", &id, nil)
+				}
+				continue
+			}
 			for optionIndex, name := range node.OverridePolicy.CredentialParameters {
 				if parameterTypes[name] != coreDB.WorkflowParameterSecretReference {
 					add("WORKFLOW_NODE_CREDENTIAL_PARAMETER_INVALID", "Approved credential must reference a secret-reference workflow parameter.", fmt.Sprintf("%s.override_policy.credential_parameters[%d]", path, optionIndex), &id, nil)
@@ -604,6 +616,21 @@ func BuildWorkflowRunSnapshot(
 	now time.Time,
 	inputs ...coreDB.WorkflowRunInput,
 ) (coreDB.WorkflowRun, error) {
+	return BuildWorkflowRunSnapshotWithCrossProjectProvenance(workflow, templates, nil, actorUserID, correlationID, now, inputs...)
+}
+
+// BuildWorkflowRunSnapshotWithCrossProjectProvenance freezes local templates
+// and server-resolved external template versions in one immutable run graph.
+// The caller supplies provenance only after validating a live run grant.
+func BuildWorkflowRunSnapshotWithCrossProjectProvenance(
+	workflow coreDB.WorkflowTemplate,
+	templates map[int]coreDB.Template,
+	crossProject map[int]coreDB.CrossProjectTemplateProvenance,
+	actorUserID int,
+	correlationID string,
+	now time.Time,
+	inputs ...coreDB.WorkflowRunInput,
+) (coreDB.WorkflowRun, error) {
 	workflow = NormalizeWorkflowTemplate(workflow)
 	if issues := compileWorkflowConditions(&workflow); len(issues) > 0 {
 		return coreDB.WorkflowRun{}, common_errors.NewValidationError(issues[0].Message)
@@ -661,7 +688,8 @@ func BuildWorkflowRunSnapshot(
 		ProjectID: workflow.ProjectID, WorkflowTemplateID: workflow.ID,
 		Status: coreDB.WorkflowRunPending, ActorUserID: actorUserID,
 		DefinitionVersion: workflow.DefinitionVersion, DefinitionRevision: workflow.Revision,
-		CorrelationID: correlationID, DefinitionSnapshotJSON: string(definitionJSON),
+		WorkflowVersionID: workflow.CurrentVersionID,
+		CorrelationID:     correlationID, DefinitionSnapshotJSON: string(definitionJSON),
 		DefinitionSnapshot: workflow, ParameterSnapshotJSON: string(parameterJSON), ParameterSnapshot: parameterSnapshot,
 		TriggerSnapshotJSON: triggerSnapshotJSON, TriggerSnapshot: triggerSnapshot,
 		Created: now, Start: &now,
@@ -672,16 +700,29 @@ func BuildWorkflowRunSnapshot(
 			continue
 		}
 		var template coreDB.Template
+		var provenance *coreDB.CrossProjectTemplateProvenance
 		if node.EffectiveKind() == coreDB.WorkflowNodeTaskKind {
-			var ok bool
-			template, ok = templates[node.TemplateID]
-			if !ok || template.ID == 0 || template.ProjectID != workflow.ProjectID {
-				return coreDB.WorkflowRun{}, common_errors.NewValidationError("workflow task template snapshot is unavailable")
+			if node.CrossProjectTemplateReference != nil {
+				resolved, ok := crossProject[node.ID]
+				if !ok || resolved.Reference != *node.CrossProjectTemplateReference || resolved.Validate() != nil {
+					return coreDB.WorkflowRun{}, common_errors.NewValidationError("workflow cross-project template provenance is unavailable")
+				}
+				copy := resolved
+				provenance = &copy
+			} else {
+				var ok bool
+				template, ok = templates[node.TemplateID]
+				if !ok || template.ID == 0 || template.ProjectID != workflow.ProjectID {
+					return coreDB.WorkflowRun{}, common_errors.NewValidationError("workflow task template snapshot is unavailable")
+				}
 			}
 		}
 		override := input.NodeOverrides[node.ID]
 		if err := coreDB.ValidateWorkflowNodeOverride(node.OverridePolicy, override); err != nil {
 			return coreDB.WorkflowRun{}, common_errors.NewValidationError(fmt.Sprintf("workflow node %d override: %s", node.ID, err.Error()))
+		}
+		if provenance != nil && (override.InventoryID != nil || override.EnvironmentIDs != nil) {
+			return coreDB.WorkflowRun{}, common_errors.NewValidationError("workflow cross-project template resource overrides are forbidden")
 		}
 		if override.EnvironmentIDs != nil {
 			template.EnvironmentIDs = append([]int(nil), (*override.EnvironmentIDs)...)
@@ -697,7 +738,8 @@ func BuildWorkflowRunSnapshot(
 		run.Nodes = append(run.Nodes, coreDB.WorkflowRunNode{
 			ProjectID: workflow.ProjectID, WorkflowNodeID: node.ID, TemplateID: node.TemplateID,
 			Status: coreDB.WorkflowRunNodePending, TemplateSnapshotJSON: string(templateJSON),
-			TemplateSnapshot: template, OverrideSnapshotJSON: string(overrideJSON), OverrideSnapshot: override, Created: now,
+			TemplateSnapshot: template, CrossProjectTemplateProvenance: provenance,
+			OverrideSnapshotJSON: string(overrideJSON), OverrideSnapshot: override, Created: now,
 		})
 	}
 	return run, nil

@@ -105,6 +105,27 @@ type WorkflowTaskFencedEnqueuer interface {
 	AddWorkflowTaskFenced(task db.Task, template db.Template, userID *int, username string, projectID int, needAlias bool, lease WorkflowReconciliationLease) (db.Task, error)
 }
 
+// CrossProjectWorkflowTaskStore is the Enhanced-only transactional boundary
+// for dispatching an immutable owner template into a consumer workflow run.
+// It revalidates the live grant and reconciles the workflow node before the
+// task is made durable; the task pool registers it only after that commit.
+type CrossProjectWorkflowTaskStore interface {
+	CreateCrossProjectWorkflowTaskFenced(task db.Task, provenance db.CrossProjectTemplateProvenance, lease *WorkflowReconciliationLease) (db.Task, error)
+}
+
+// CrossProjectWorkflowTaskStoreConfigurer attaches the optional Enhanced SQL
+// fence to a TaskPool without adding it to Community's db.Store contract.
+type CrossProjectWorkflowTaskStoreConfigurer interface {
+	ConfigureCrossProjectWorkflowTaskStore(CrossProjectWorkflowTaskStore)
+}
+
+// CrossProjectWorkflowTaskFencedEnqueuer is deliberately separate from the
+// local workflow task contract. Cross-project tasks must never fall back to
+// AddWorkflowTask because their grant/version recheck is part of persistence.
+type CrossProjectWorkflowTaskFencedEnqueuer interface {
+	AddCrossProjectWorkflowTaskFenced(task db.Task, provenance db.CrossProjectTemplateProvenance, userID *int, username string, consumerProjectID int, lease *WorkflowReconciliationLease) (db.Task, error)
+}
+
 // WorkflowCredentialReader resolves an approved AccessKey immediately before
 // a workflow task is created. Implementations must keep the value write-only.
 type WorkflowCredentialReader interface {

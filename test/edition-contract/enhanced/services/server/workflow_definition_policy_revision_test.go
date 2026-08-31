@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"sync"
 	"testing"
 
@@ -47,6 +48,56 @@ func TestWorkflowDefinitionConcurrentSameRevisionHasOneWinner(t *testing.T) {
 	}
 	assert.Equal(t, 1, success)
 	assert.Equal(t, 1, conflict)
+	versions, err := service.ListVersions(project.ID, created.ID, db.RetrieveQueryParams{}, actor)
+	require.NoError(t, err)
+	assert.Len(t, versions, 2, "the losing CAS update must not append a version")
+}
+
+func TestWorkflowDefinitionUpdateDoesNotMutateCallerGraph(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "immutable update input"})
+	require.NoError(t, err)
+	templateID := insertWorkflowTestTemplate(t, store, project.ID)
+	service := NewWorkflowDefinitionService(workflowSQL.NewWorkflowStore(store.GetConnection()), store)
+	actor := &db.User{ID: 1, Admin: true}
+	created, validation, err := service.Create(project.ID, db.WorkflowTemplate{
+		Name: "immutable", Nodes: []db.WorkflowNode{{ID: -1, TemplateID: templateID}},
+	}, actor)
+	require.NoError(t, err)
+	require.True(t, validation.Valid)
+
+	candidate := created
+	candidate.Nodes = append(candidate.Nodes, db.WorkflowNode{ID: -2, TemplateID: templateID})
+	candidate.Edges = append(candidate.Edges, db.WorkflowEdge{
+		ID: -1, SourceNodeID: created.Nodes[0].ID, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess,
+	})
+	expected := candidate
+	expected.Nodes = append([]db.WorkflowNode(nil), candidate.Nodes...)
+	expected.Edges = append([]db.WorkflowEdge(nil), candidate.Edges...)
+
+	_, validation, err = service.Update(project.ID, created.ID, candidate, actor)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	assert.Equal(t, expected, candidate, "workflow updates must not mutate the caller-owned graph")
+}
+
+func TestWorkflowDefinitionClonePreservesEmptyPolicyRoleSlices(t *testing.T) {
+	input := db.WorkflowTemplate{
+		AccessPolicy: db.WorkflowAccessPolicy{
+			ViewRoleIDs:  []db.ProjectRoleReference{},
+			StartRoleIDs: []db.ProjectRoleReference{},
+		},
+		Nodes: []db.WorkflowNode{{
+			ApprovalRolePolicy: db.WorkflowApprovalRolePolicy{RoleIDs: []db.ProjectRoleReference{}},
+		}},
+	}
+
+	cloned, err := cloneWorkflowDefinitionInput(input)
+	require.NoError(t, err)
+	assert.NotNil(t, cloned.AccessPolicy.ViewRoleIDs)
+	assert.NotNil(t, cloned.AccessPolicy.StartRoleIDs)
+	assert.NotNil(t, cloned.Nodes[0].ApprovalRolePolicy.RoleIDs)
 }
 
 func TestWorkflowDefinitionPolicyRevisionsAreServerOwned(t *testing.T) {
@@ -84,6 +135,80 @@ func TestWorkflowDefinitionPolicyRevisionsAreServerOwned(t *testing.T) {
 	stale.AccessPolicy.Revision = 1
 	_, _, err = service.Update(project.ID, created.ID, stale, actor)
 	assert.ErrorIs(t, err, pro_interfaces.ErrWorkflowRevisionConflict)
+}
+
+func TestWorkflowDefinitionUsesNestedPolicyRevisionsAsWireCASInput(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "nested policy CAS"})
+	require.NoError(t, err)
+	templateID := insertWorkflowTestTemplate(t, store, project.ID)
+	service := NewWorkflowDefinitionService(workflowSQL.NewWorkflowStore(store.GetConnection()), store)
+	admin := &db.User{ID: 1, Admin: true}
+	editor := createWorkflowDefinitionActor(t, store, project.ID, "nested-policy-editor", db.CanViewWorkflows|db.CanEditWorkflows)
+	approvalPolicy := db.WorkflowApprovalRolePolicy{
+		Mode:                     db.WorkflowApprovalRoleModeAnyOf,
+		RoleIDs:                  []db.ProjectRoleReference{db.BuiltinProjectRoleReferenceOwner},
+		MinimumDistinctApprovers: 1,
+	}
+	created, validation, err := service.Create(project.ID, db.WorkflowTemplate{
+		Name: "nested policy", Nodes: []db.WorkflowNode{
+			{ID: -1, TemplateID: templateID},
+			{ID: -2, Kind: db.WorkflowNodeApprovalKind, ApprovalRolePolicy: approvalPolicy},
+		}, Edges: []db.WorkflowEdge{{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess}},
+	}, admin)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	require.Equal(t, 1, created.AccessPolicyRevision)
+	require.Equal(t, 1, created.AccessPolicy.Revision)
+	require.Equal(t, 1, created.Nodes[1].ApprovalRolePolicyRevision)
+	require.Equal(t, 1, created.Nodes[1].ApprovalRolePolicy.Revision)
+
+	browser := workflowDefinitionWireRoundTrip(t, created)
+	assert.Zero(t, browser.AccessPolicyRevision, "the storage-only policy revision is never a client field")
+	assert.Zero(t, browser.Nodes[1].ApprovalRolePolicyRevision, "the storage-only approval revision is never a client field")
+	require.Equal(t, 1, browser.AccessPolicy.Revision)
+	require.Equal(t, 1, browser.Nodes[1].ApprovalRolePolicy.Revision)
+	browser.Name = "ordinary browser save"
+	ordinary, validation, err := service.Update(project.ID, created.ID, browser, &editor)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	assert.Equal(t, 1, ordinary.AccessPolicyRevision)
+	assert.Equal(t, 1, ordinary.Nodes[1].ApprovalRolePolicyRevision)
+
+	policyChange := workflowDefinitionWireRoundTrip(t, ordinary)
+	policyChange.AccessPolicy.ViewRoleIDs = []db.ProjectRoleReference{db.BuiltinProjectRoleReferenceOwner}
+	_, _, err = service.Update(project.ID, created.ID, policyChange, &editor)
+	assert.ErrorIs(t, err, pro_interfaces.ErrWorkflowPermissionDenied, "only workflow administrators may change access policy")
+
+	policyUpdated, validation, err := service.Update(project.ID, created.ID, policyChange, admin)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	assert.Equal(t, 2, policyUpdated.AccessPolicyRevision)
+	assert.Equal(t, 2, policyUpdated.AccessPolicy.Revision, "an accepted policy change increments exactly once")
+
+	staleAccessPolicy := workflowDefinitionWireRoundTrip(t, ordinary)
+	staleAccessPolicy.Revision = policyUpdated.Revision
+	staleAccessPolicy.AccessPolicy.StartRoleIDs = []db.ProjectRoleReference{db.BuiltinProjectRoleReferenceOwner}
+	_, _, err = service.Update(project.ID, created.ID, staleAccessPolicy, admin)
+	assert.ErrorIs(t, err, pro_interfaces.ErrWorkflowRevisionConflict, "stale nested access policy revisions fail closed")
+
+	approvalUpdatedRequest := workflowDefinitionWireRoundTrip(t, policyUpdated)
+	approvalUpdatedRequest.Nodes[1].ApprovalRolePolicy.RoleIDs = []db.ProjectRoleReference{db.BuiltinProjectRoleReferenceManager}
+	approvalUpdated, validation, err := service.Update(project.ID, created.ID, approvalUpdatedRequest, admin)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	assert.Equal(t, 2, approvalUpdated.Nodes[1].ApprovalRolePolicyRevision)
+	assert.Equal(t, 2, approvalUpdated.Nodes[1].ApprovalRolePolicy.Revision, "an accepted approval policy change increments exactly once")
+}
+
+func workflowDefinitionWireRoundTrip(t *testing.T, workflow db.WorkflowTemplate) db.WorkflowTemplate {
+	t.Helper()
+	payload, err := json.Marshal(workflow)
+	require.NoError(t, err)
+	var browser db.WorkflowTemplate
+	require.NoError(t, json.Unmarshal(payload, &browser))
+	return browser
 }
 
 func TestWorkflowDefinitionApprovalPolicyRevisionUsesNodeIdentity(t *testing.T) {

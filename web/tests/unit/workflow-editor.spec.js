@@ -108,6 +108,54 @@ describe('workflow editor authoring lifecycle', () => {
     expect(WorkflowEditor.methods.payload.call(context)).not.to.have.property('effective_access');
   });
 
+  it('includes an optional bounded version message in the existing save payload', () => {
+    const context = {
+      item: {
+        name: 'Deploy',
+        version_message: 'Explain the change',
+        start_version: '',
+        access_policy: { revision: 1, view_role_ids: [], start_role_ids: [] },
+      },
+      projectId: 7,
+      clone: WorkflowEditor.methods.clone,
+    };
+
+    const payload = WorkflowEditor.methods.payload.call(context);
+
+    expect(payload.version_message).to.equal('Explain the change');
+    expect(payload).not.to.have.property('start_version');
+    expect(WorkflowEditor.computed.versionMessageTooLong.call(context)).to.equal(false);
+    context.item.version_message = '🚀'.repeat(129);
+    expect(WorkflowEditor.computed.versionMessageTooLong.call(context)).to.equal(true);
+  });
+
+  it('keeps nested workflow policy revisions as the sole save CAS tokens', () => {
+    const item = WorkflowEditor.methods.prepareItem({
+      name: 'Policy CAS',
+      access_policy: { revision: 4, view_role_ids: [], start_role_ids: [] },
+      nodes: [{
+        id: 7,
+        kind: 'approval',
+        approval_role_policy: {
+          revision: 6,
+          mode: 'any_of',
+          role_ids: ['builtin:owner'],
+          minimum_distinct_approvers: 1,
+          initiator_separation: false,
+        },
+      }],
+      edges: [],
+    });
+    const context = { item, projectId: 7, clone: WorkflowEditor.methods.clone };
+
+    const payload = WorkflowEditor.methods.payload.call(context);
+
+    expect(payload.access_policy.revision).to.equal(4);
+    expect(payload.nodes[0].approval_role_policy.revision).to.equal(6);
+    expect(payload).not.to.have.property('access_policy_revision');
+    expect(payload.nodes[0]).not.to.have.property('approval_role_policy_revision');
+  });
+
   it('preserves typed artifact declarations and limits references to reachable predecessors', () => {
     const item = WorkflowEditor.methods.prepareItem({
       name: 'Artifacts',

@@ -38,3 +38,19 @@ func (s *unavailableWorkflowDefinitionService) Update(_ int, _ int, workflow db.
 func (s *unavailableWorkflowDefinitionService) Delete(_ int, _ int, _ ...*db.User) error {
 	return db.ErrNotFound
 }
+
+func (s *unavailableWorkflowDefinitionService) ListVersions(_ int, _ int, _ db.RetrieveQueryParams, _ ...*db.User) ([]db.WorkflowVersion, error) {
+	return nil, db.ErrNotFound
+}
+
+func (s *unavailableWorkflowDefinitionService) GetVersion(_ int, _ int, _ int, _ ...*db.User) (db.WorkflowVersion, error) {
+	return db.WorkflowVersion{}, db.ErrNotFound
+}
+
+func (s *unavailableWorkflowDefinitionService) DiffVersions(_ int, _ int, _ int, _ int, _ ...*db.User) (pro_interfaces.WorkflowDefinitionDiff, error) {
+	return pro_interfaces.WorkflowDefinitionDiff{}, db.ErrNotFound
+}
+
+func (s *unavailableWorkflowDefinitionService) RestoreVersion(_ int, _ int, _ int, _ string, _ ...*db.User) (db.WorkflowTemplate, db.WorkflowValidationResult, error) {
+	return db.WorkflowTemplate{}, db.WorkflowValidationResult{}, db.ErrNotFound
+}

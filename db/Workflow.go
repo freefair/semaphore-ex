@@ -104,6 +104,8 @@ type WorkflowTemplate struct {
 	AccessPolicyJSON     string               `db:"access_policy" json:"-" backup:"access_policy"`
 	AccessPolicyRevision int                  `db:"access_policy_revision" json:"-" backup:"access_policy_revision"`
 	AccessPolicy         WorkflowAccessPolicy `db:"-" json:"access_policy,omitempty" backup:"-"`
+	CurrentVersionID     int                  `db:"-" json:"current_version_id,omitempty" backup:"-"`
+	VersionMessage       string               `db:"-" json:"version_message,omitempty" backup:"-"`
 
 	Nodes []WorkflowNode `db:"-" bolt:"include" json:"nodes" backup:"-"`
 	Edges []WorkflowEdge `db:"-" bolt:"include" json:"edges" backup:"edges"`
@@ -111,24 +113,60 @@ type WorkflowTemplate struct {
 	LastRun *WorkflowRun `db:"-" json:"last_run,omitempty" backup:"-"`
 }
 
+const MaxWorkflowVersionMessageBytes = 512
+
+// WorkflowVersion is one append-only definition snapshot. Version
+// numbers follow the live workflow revision while the row ID provides an
+// immutable reference for runs, diffs, and restore provenance.
+type WorkflowVersion struct {
+	ID int `db:"id" json:"id"`
+
+	ProjectID          int `db:"project_id" json:"project_id"`
+	WorkflowTemplateID int `db:"workflow_template_id" json:"workflow_template_id"`
+	VersionNumber      int `db:"version_number" json:"version_number"`
+
+	ParentVersionID       *int `db:"parent_version_id" json:"parent_version_id,omitempty"`
+	RestoredFromVersionID *int `db:"restored_from_version_id" json:"restored_from_version_id,omitempty"`
+	AuthorUserID          int  `db:"author_user_id" json:"author_user_id"`
+
+	Message            string `db:"message" json:"message"`
+	ContentFingerprint string `db:"content_fingerprint" json:"content_fingerprint"`
+
+	DefinitionSnapshotJSON string           `db:"definition_snapshot" json:"-"`
+	DefinitionSnapshot     WorkflowTemplate `db:"-" json:"definition"`
+
+	Created time.Time `db:"created" json:"created"`
+}
+
+// WorkflowVersionMutation is server-owned authorship and restore provenance
+// supplied to the atomic versioned repository mutation.
+type WorkflowVersionMutation struct {
+	AuthorUserID          int
+	Message               string
+	RestoredFromVersionID *int
+	Created               time.Time
+}
+
 type WorkflowNode struct {
 	ID int `db:"id" json:"id" backup:"id"`
 
 	WorkflowTemplateID int `db:"workflow_template_id" json:"workflow_template_id" backup:"-"`
 
-	TemplateID                 int                            `db:"template_id" json:"template_id,omitempty" backup:"-"`
-	DisplayName                string                         `db:"display_name" json:"display_name,omitempty" backup:"display_name"`
-	Kind                       WorkflowNodeKind               `db:"kind" json:"kind,omitempty" backup:"kind"`
-	ConvergenceMode            WorkflowConvergenceMode        `db:"convergence_mode" json:"convergence_mode,omitempty" backup:"convergence_mode"`
-	JoinMode                   WorkflowJoinMode               `db:"join_mode" json:"join_mode,omitempty" backup:"join_mode"`
-	ApprovalTimeout            *int                           `db:"approval_timeout" json:"approval_timeout,omitempty" backup:"approval_timeout"`
-	ApprovalMessage            *string                        `db:"approval_message" json:"approval_message,omitempty" backup:"approval_message"`
-	ApprovalPermission         ProjectUserPermission          `db:"approval_permission" json:"approval_permission,omitempty" backup:"approval_permission"`
-	ApprovalTimeoutOutcome     WorkflowApprovalTimeoutOutcome `db:"approval_timeout_outcome" json:"approval_timeout_outcome,omitempty" backup:"approval_timeout_outcome"`
-	ApprovalSeparationOfDuties bool                           `db:"approval_separation_of_duties" json:"approval_separation_of_duties,omitempty" backup:"approval_separation_of_duties"`
-	ApprovalRolePolicyJSON     string                         `db:"approval_role_policy" json:"-" backup:"approval_role_policy"`
-	ApprovalRolePolicyRevision int                            `db:"approval_role_policy_revision" json:"-" backup:"approval_role_policy_revision"`
-	ApprovalRolePolicy         WorkflowApprovalRolePolicy     `db:"-" json:"approval_role_policy,omitempty" backup:"-"`
+	TemplateID                        int                            `db:"template_id" json:"template_id,omitempty" backup:"-"`
+	CrossProjectTemplateReferenceJSON string                         `db:"cross_project_template_reference" json:"-" backup:"-"`
+	CrossProjectTemplateReference     *CrossProjectTemplateReference `db:"-" json:"cross_project_template_reference,omitempty" backup:"-"`
+	DisplayName                       string                         `db:"display_name" json:"display_name,omitempty" backup:"display_name"`
+	Kind                              WorkflowNodeKind               `db:"kind" json:"kind,omitempty" backup:"kind"`
+	ConvergenceMode                   WorkflowConvergenceMode        `db:"convergence_mode" json:"convergence_mode,omitempty" backup:"convergence_mode"`
+	JoinMode                          WorkflowJoinMode               `db:"join_mode" json:"join_mode,omitempty" backup:"join_mode"`
+	ApprovalTimeout                   *int                           `db:"approval_timeout" json:"approval_timeout,omitempty" backup:"approval_timeout"`
+	ApprovalMessage                   *string                        `db:"approval_message" json:"approval_message,omitempty" backup:"approval_message"`
+	ApprovalPermission                ProjectUserPermission          `db:"approval_permission" json:"approval_permission,omitempty" backup:"approval_permission"`
+	ApprovalTimeoutOutcome            WorkflowApprovalTimeoutOutcome `db:"approval_timeout_outcome" json:"approval_timeout_outcome,omitempty" backup:"approval_timeout_outcome"`
+	ApprovalSeparationOfDuties        bool                           `db:"approval_separation_of_duties" json:"approval_separation_of_duties,omitempty" backup:"approval_separation_of_duties"`
+	ApprovalRolePolicyJSON            string                         `db:"approval_role_policy" json:"-" backup:"approval_role_policy"`
+	ApprovalRolePolicyRevision        int                            `db:"approval_role_policy_revision" json:"-" backup:"approval_role_policy_revision"`
+	ApprovalRolePolicy                WorkflowApprovalRolePolicy     `db:"-" json:"approval_role_policy,omitempty" backup:"-"`
 
 	TaskParamsID *int        `db:"task_params_id" json:"-" backup:"-"`
 	TaskParams   *TaskParams `db:"-" json:"task_params,omitempty" backup:"task_params"`
@@ -266,6 +304,7 @@ type WorkflowRun struct {
 	ActorUserID        int    `db:"actor_user_id" json:"actor_user_id" backup:"actor_user_id"`
 	DefinitionVersion  int    `db:"definition_version" json:"definition_version" backup:"definition_version"`
 	DefinitionRevision int    `db:"definition_revision" json:"definition_revision" backup:"definition_revision"`
+	WorkflowVersionID  int    `db:"workflow_version_id" json:"workflow_version_id" backup:"workflow_version_id"`
 	CorrelationID      string `db:"correlation_id" json:"correlation_id" backup:"correlation_id"`
 
 	DefinitionSnapshotJSON string                               `db:"definition_snapshot" json:"-" backup:"definition_snapshot"`
@@ -338,14 +377,16 @@ type WorkflowRunNode struct {
 	// workflow reconciliation owner that claimed this node.
 	ProgressionFencingToken int64 `db:"progression_fencing_token" json:"-" backup:"-"`
 
-	TemplateSnapshotJSON string                          `db:"template_snapshot" json:"-" backup:"template_snapshot"`
-	TemplateSnapshot     Template                        `db:"-" json:"template" backup:"-"`
-	ResultJSON           string                          `db:"result" json:"-" backup:"result"`
-	Result               WorkflowNodeResult              `db:"-" json:"result,omitempty" backup:"-"`
-	ArtifactInputsJSON   string                          `db:"artifact_inputs" json:"-" backup:"artifact_inputs"`
-	ArtifactInputs       []WorkflowArtifactInputSnapshot `db:"-" json:"artifact_inputs,omitempty" backup:"-"`
-	OverrideSnapshotJSON string                          `db:"override_snapshot" json:"-" backup:"override_snapshot"`
-	OverrideSnapshot     WorkflowNodeOverride            `db:"-" json:"overrides,omitempty" backup:"-"`
+	TemplateSnapshotJSON               string                          `db:"template_snapshot" json:"-" backup:"template_snapshot"`
+	TemplateSnapshot                   Template                        `db:"-" json:"template" backup:"-"`
+	CrossProjectTemplateProvenanceJSON string                          `db:"cross_project_template_provenance" json:"-" backup:"cross_project_template_provenance"`
+	CrossProjectTemplateProvenance     *CrossProjectTemplateProvenance `db:"-" json:"cross_project_template_provenance,omitempty" backup:"-"`
+	ResultJSON                         string                          `db:"result" json:"-" backup:"result"`
+	Result                             WorkflowNodeResult              `db:"-" json:"result,omitempty" backup:"-"`
+	ArtifactInputsJSON                 string                          `db:"artifact_inputs" json:"-" backup:"artifact_inputs"`
+	ArtifactInputs                     []WorkflowArtifactInputSnapshot `db:"-" json:"artifact_inputs,omitempty" backup:"-"`
+	OverrideSnapshotJSON               string                          `db:"override_snapshot" json:"-" backup:"override_snapshot"`
+	OverrideSnapshot                   WorkflowNodeOverride            `db:"-" json:"overrides,omitempty" backup:"-"`
 
 	Created time.Time  `db:"created" json:"created" backup:"created"`
 	Queued  *time.Time `db:"queued" json:"queued,omitempty" backup:"queued"`

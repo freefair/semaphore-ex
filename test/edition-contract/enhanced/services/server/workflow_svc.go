@@ -34,6 +34,9 @@ type workflowService struct {
 	enqueuer           pro_interfaces.WorkflowTaskEnqueuer
 	locker             pro_interfaces.WorkflowRunLocker
 	progressionStore   pro_interfaces.WorkflowProgressionRepository
+	versionStore       db.WorkflowVersionStore
+	grantStore         db.CrossProjectTemplateGrantStore
+	referenceStore     db.CrossProjectWorkflowReferenceStore
 	resourceStore      db.WorkflowParameterValidationStore
 	approvalIdentity   pro_interfaces.WorkflowApprovalIdentityStore
 	authorizationStore pro_interfaces.WorkflowAuthorizationIdentityStore
@@ -90,14 +93,23 @@ func NewWorkflowService(
 	approvalIdentity, _ := templateStore.(pro_interfaces.WorkflowApprovalIdentityStore)
 	authorizationStore, _ := templateStore.(pro_interfaces.WorkflowAuthorizationIdentityStore)
 	progressionStore, _ := repository.(pro_interfaces.WorkflowProgressionRepository)
+	versionStore, _ := repository.(db.WorkflowVersionStore)
+	grantStore, _ := repository.(db.CrossProjectTemplateGrantStore)
+	referenceStore, _ := repository.(db.CrossProjectWorkflowReferenceStore)
 	var credentialReader pro_interfaces.WorkflowCredentialReader
 	if len(credentialReaders) > 0 {
 		credentialReader = credentialReaders[0]
 	}
+	if crossProjectStore, ok := repository.(pro_interfaces.CrossProjectWorkflowTaskStore); ok {
+		if configurer, configured := enqueuer.(pro_interfaces.CrossProjectWorkflowTaskStoreConfigurer); configured {
+			configurer.ConfigureCrossProjectWorkflowTaskStore(crossProjectStore)
+		}
+	}
 	return &workflowService{
 		repository: repository, templateStore: templateStore, resultStore: resultStore,
 		resourceStore: resourceStore, approvalIdentity: approvalIdentity, authorizationStore: authorizationStore, credentialReader: credentialReader,
-		enqueuer: enqueuer, locker: locker, progressionStore: progressionStore,
+		enqueuer: enqueuer, locker: locker, progressionStore: progressionStore, versionStore: versionStore,
+		grantStore: grantStore, referenceStore: referenceStore,
 	}
 }
 
@@ -109,9 +121,6 @@ func (s *workflowService) StartWorkflow(
 ) (db.WorkflowRun, error) {
 	if user == nil || user.ID <= 0 {
 		return db.WorkflowRun{}, common_errors.NewValidationError("workflow run actor is required")
-	}
-	if err := s.requireWorkflowAccess(workflow, user, pro_interfaces.PermissionStartWorkflow, true); err != nil {
-		return db.WorkflowRun{}, err
 	}
 	if correlationID == "" {
 		return db.WorkflowRun{}, common_errors.NewValidationError("workflow run correlation ID is required")
@@ -126,9 +135,32 @@ func (s *workflowService) StartWorkflow(
 		if !errors.Is(err, db.ErrNotFound) {
 			return err
 		}
+		if s.versionStore == nil {
+			return errors.New("workflow version store is unavailable")
+		}
+		version, versionErr := s.versionStore.EnsureCurrentWorkflowVersion(workflow.ProjectID, workflow.ID)
+		if versionErr != nil {
+			return versionErr
+		}
+		fingerprint, fingerprintErr := pro_interfaces.WorkflowDefinitionFingerprint(workflow)
+		if fingerprintErr != nil || version.ProjectID != workflow.ProjectID || version.WorkflowTemplateID != workflow.ID ||
+			version.VersionNumber != workflow.Revision || fingerprint != version.ContentFingerprint {
+			return pro_interfaces.ErrWorkflowRevisionConflict
+		}
+		workflow = version.DefinitionSnapshot
+		if err = s.requireWorkflowAccess(workflow, user, pro_interfaces.PermissionStartWorkflow, true); err != nil {
+			return err
+		}
+		crossProject, resolveErr := s.resolveCrossProjectTemplateProvenance(workflow, db.CrossProjectTemplateGrantRun)
+		if resolveErr != nil {
+			return resolveErr
+		}
 		templates := make(map[int]db.Template, len(workflow.Nodes))
 		for _, node := range workflow.Nodes {
 			if node.EffectiveKind() != db.WorkflowNodeTaskKind {
+				continue
+			}
+			if node.CrossProjectTemplateReference != nil {
 				continue
 			}
 			template, getErr := s.templateStore.GetTemplate(workflow.ProjectID, node.TemplateID)
@@ -137,17 +169,25 @@ func (s *workflowService) StartWorkflow(
 			}
 			templates[node.TemplateID] = template
 		}
-		snapshot, buildErr := workflowDB.BuildWorkflowRunSnapshot(workflow, templates, user.ID, correlationID, tz.Now(), inputs...)
+		snapshot, buildErr := workflowDB.BuildWorkflowRunSnapshotWithCrossProjectProvenance(workflow, templates, crossProject, user.ID, correlationID, tz.Now(), inputs...)
 		if buildErr != nil {
 			return buildErr
 		}
+		snapshot.WorkflowVersionID = version.ID
 		if validateErr := s.validateWorkflowRunResources(snapshot); validateErr != nil {
 			return validateErr
 		}
 		if validateErr := s.validateWorkflowParameterReferences(snapshot); validateErr != nil {
 			return validateErr
 		}
-		result, err = s.repository.CreateWorkflowRun(snapshot)
+		if len(crossProject) > 0 {
+			if s.referenceStore == nil {
+				return errors.New("cross-project workflow reference store is unavailable")
+			}
+			result, err = s.referenceStore.CreateWorkflowRunWithCrossProjectReferences(snapshot)
+		} else {
+			result, err = s.repository.CreateWorkflowRun(snapshot)
+		}
 		if err != nil {
 			return err
 		}
@@ -325,6 +365,34 @@ func (s *workflowService) requireWorkflowAccess(
 		return common_errors.NewValidationError("workflow access is denied")
 	}
 	return nil
+}
+
+func (s *workflowService) resolveCrossProjectTemplateProvenance(
+	workflow db.WorkflowTemplate,
+	operation db.CrossProjectTemplateGrantOperation,
+) (map[int]db.CrossProjectTemplateProvenance, error) {
+	resolved := make(map[int]db.CrossProjectTemplateProvenance)
+	for _, node := range workflow.Nodes {
+		if node.CrossProjectTemplateReference == nil {
+			continue
+		}
+		if s.grantStore == nil {
+			return nil, errors.New("cross-project template grant store is unavailable")
+		}
+		normalized, version, err := s.grantStore.ResolveActiveCrossProjectTemplateGrant(workflow.ProjectID, *node.CrossProjectTemplateReference, operation)
+		if err != nil {
+			return nil, err
+		}
+		if normalized != *node.CrossProjectTemplateReference {
+			return nil, db.ErrNotFound
+		}
+		provenance := db.CrossProjectTemplateProvenance{Reference: normalized, TemplateSnapshot: version.Snapshot}
+		if err = provenance.Validate(); err != nil {
+			return nil, err
+		}
+		resolved[node.ID] = provenance
+	}
+	return resolved, nil
 }
 
 func (s *workflowService) RequestWorkflowRunStop(projectID int, runID int, user *db.User) (db.WorkflowRun, error) {
@@ -1187,6 +1255,9 @@ func (s *workflowService) enqueueWorkflowNode(
 	if err := s.applyWorkflowRunParameters(run, definitionNode.OverridePolicy, &task); err != nil {
 		return err
 	}
+	if node.CrossProjectTemplateProvenance != nil && task.InventoryID != nil {
+		return s.blockCrossProjectWorkflowNode(run, node, "Cross-project template resource overrides are unavailable.", lease)
+	}
 	blocked, err := s.resolveWorkflowTaskInputs(run, node, definitionNode, &task)
 	if err != nil {
 		return err
@@ -1201,7 +1272,18 @@ func (s *workflowService) enqueueWorkflowNode(
 	}
 	var created db.Task
 	var enqueueErr error
-	if lease != nil {
+	if node.CrossProjectTemplateProvenance != nil {
+		if accessErr := s.requireCrossProjectDispatchAccess(run, user); accessErr != nil {
+			return s.blockCrossProjectWorkflowNode(run, node, "Cross-project template authorization is no longer available.", lease)
+		}
+		crossProjectEnqueuer, ok := s.enqueuer.(pro_interfaces.CrossProjectWorkflowTaskFencedEnqueuer)
+		if !ok {
+			return errors.New("cross-project workflow task fencing is unavailable")
+		}
+		created, enqueueErr = crossProjectEnqueuer.AddCrossProjectWorkflowTaskFenced(
+			task, *node.CrossProjectTemplateProvenance, &actorID, username, run.ProjectID, lease,
+		)
+	} else if lease != nil {
 		fencedEnqueuer, ok := s.enqueuer.(pro_interfaces.WorkflowTaskFencedEnqueuer)
 		if !ok {
 			return errors.New("workflow task fencing is unavailable")
@@ -1221,6 +1303,9 @@ func (s *workflowService) enqueueWorkflowNode(
 		}
 	}
 	if enqueueErr != nil {
+		if node.CrossProjectTemplateProvenance != nil && errors.Is(enqueueErr, db.ErrNotFound) {
+			return s.blockCrossProjectWorkflowNode(run, node, "Cross-project template grant is no longer active.", lease)
+		}
 		existing, getErr := s.repository.GetWorkflowRunNodeTask(run.ProjectID, run.ID, node.WorkflowNodeID)
 		if getErr == nil {
 			return s.attachWorkflowTask(run, node, existing, root, lease)
@@ -1228,6 +1313,34 @@ func (s *workflowService) enqueueWorkflowNode(
 		return enqueueErr
 	}
 	return nil
+}
+
+func (s *workflowService) requireCrossProjectDispatchAccess(run db.WorkflowRun, _ *db.User) error {
+	users, ok := s.templateStore.(interface {
+		GetUser(int) (db.User, error)
+	})
+	if !ok {
+		return errors.New("workflow dispatch actor lookup is unavailable")
+	}
+	actor, err := users.GetUser(run.ActorUserID)
+	if err != nil {
+		return err
+	}
+	return s.requireWorkflowAccess(run.DefinitionSnapshot, &actor, pro_interfaces.PermissionStartWorkflow, true)
+}
+
+func (s *workflowService) blockCrossProjectWorkflowNode(
+	run db.WorkflowRun,
+	node db.WorkflowRunNode,
+	reason string,
+	lease *pro_interfaces.WorkflowReconciliationLease,
+) error {
+	resultJSON, err := marshalWorkflowNodeResult(db.WorkflowNodeResult{Status: db.WorkflowRunNodeBlocked})
+	if err != nil {
+		return err
+	}
+	_, err = s.finalizeWorkflowRunNode(run, node.WorkflowNodeID, db.WorkflowRunNodeBlocked, reason, resultJSON, tz.Now(), lease)
+	return err
 }
 
 func applyWorkflowNodeOverride(task *db.Task, override db.WorkflowNodeOverride) {

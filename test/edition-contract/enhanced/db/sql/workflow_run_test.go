@@ -108,6 +108,259 @@ func TestWorkflowRunRepositoryPersistsImmutableSnapshotAndConditionalNodeState(t
 	assert.Equal(t, db.WorkflowRunNodeSkipped, dependent.Result.Status)
 }
 
+func TestCrossProjectWorkflowTaskFencePersistsConsumerTaskAndPreservesAuditAfterRevoke(t *testing.T) {
+	store, ownerProjectID, ownerTemplate := templateVersionGrantFixture(t, "dispatch-owner")
+	defer store.Close()
+	consumer, err := store.CreateProject(db.Project{Name: "dispatch-consumer"})
+	require.NoError(t, err)
+	repository := NewWorkflowStore(store.GetConnection())
+	versionStore := any(repository).(db.TemplateVersionStore)
+	grantStore := any(repository).(db.CrossProjectTemplateGrantStore)
+	published, _, err := versionStore.PublishTemplateVersion(ownerTemplate, 1, time.Now().UTC())
+	require.NoError(t, err)
+	grant, err := grantStore.CreateCrossProjectTemplateGrant(db.CrossProjectTemplateGrant{
+		OwnerProjectID: ownerProjectID, ConsumerProjectID: consumer.ID, TemplateID: ownerTemplate.ID,
+		MinTemplateVersion: published.VersionNumber, MaxTemplateVersion: published.VersionNumber,
+		Operations: db.CrossProjectTemplateGrantReference | db.CrossProjectTemplateGrantRun,
+		Status:     db.CrossProjectTemplateGrantPending, Revision: 1, CreatedByUserID: 1,
+		Created: time.Now().UTC(), Reason: "fenced dispatch",
+	})
+	require.NoError(t, err)
+	grant, err = grantStore.AcceptCrossProjectTemplateGrant(consumer.ID, grant.ID, 1, grant.Revision, time.Now().UTC())
+	require.NoError(t, err)
+	reference, version, err := grantStore.ResolveActiveCrossProjectTemplateGrant(
+		consumer.ID,
+		db.CrossProjectTemplateReference{GrantID: grant.ID, TemplateVersionNumber: published.VersionNumber},
+		db.CrossProjectTemplateGrantRun,
+	)
+	require.NoError(t, err)
+	workflow, validation, err := workflowDB.PrepareWorkflowTemplate(store, db.WorkflowTemplate{
+		ProjectID: consumer.ID, Name: "external dispatch", Nodes: []db.WorkflowNode{{
+			ID: -1, Kind: db.WorkflowNodeTaskKind, TemplateID: reference.TemplateID,
+			CrossProjectTemplateReference: &reference,
+		}},
+	})
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	workflow, workflowVersion, err := repository.CreateWorkflowTemplateVersionedWithCrossProjectReferences(
+		workflow, db.WorkflowVersionMutation{AuthorUserID: 1, Created: time.Now().UTC()},
+	)
+	require.NoError(t, err)
+	workflow.CurrentVersionID = workflowVersion.ID
+	provenance := db.CrossProjectTemplateProvenance{Reference: reference, TemplateSnapshot: version.Snapshot}
+	require.NoError(t, provenance.Validate())
+
+	firstRun := createCrossProjectDispatchRun(t, repository, workflow, provenance, 1, "dispatch-before-revoke")
+	firstNodeID := firstRun.Nodes[0].WorkflowNodeID
+	ownership := NewWorkflowReconciliationStore(store.GetConnection())
+	lease, owned, err := ownership.ClaimWorkflowReconciliation(consumer.ID, firstRun.ID, "dispatch-owner", time.Minute)
+	require.NoError(t, err)
+	require.True(t, owned)
+	claimed, err := repository.ClaimWorkflowRunNodeFenced(lease, firstNodeID, time.Now().UTC())
+	require.NoError(t, err)
+	require.True(t, claimed)
+	firstTask := crossProjectDispatchTask(t, provenance, consumer.ID, firstRun.ID, firstNodeID)
+	created, err := repository.CreateCrossProjectWorkflowTaskFenced(firstTask, provenance, &lease)
+	require.NoError(t, err)
+	assert.Equal(t, consumer.ID, created.ProjectID)
+	assert.Equal(t, ownerTemplate.ID, created.TemplateID)
+	require.NotNil(t, created.WorkflowTemplateProvenance)
+	require.NotNil(t, created.WorkflowTemplateProvenance.CrossProject)
+	assert.Equal(t, reference, created.WorkflowTemplateProvenance.CrossProject.Reference)
+	firstNode, err := repository.GetWorkflowRunNode(consumer.ID, firstRun.ID, firstNodeID)
+	require.NoError(t, err)
+	require.NotNil(t, firstNode.TaskID)
+	assert.Equal(t, created.ID, *firstNode.TaskID)
+
+	secondRun := createCrossProjectDispatchRun(t, repository, workflow, provenance, 1, "dispatch-after-revoke")
+	secondNodeID := secondRun.Nodes[0].WorkflowNodeID
+	claimed, err = repository.ClaimWorkflowRunNode(consumer.ID, secondRun.ID, secondNodeID, time.Now().UTC())
+	require.NoError(t, err)
+	require.True(t, claimed)
+	grant, err = grantStore.RevokeCrossProjectTemplateGrant(ownerProjectID, grant.ID, 1, grant.Revision, "withdrawn", time.Now().UTC())
+	require.NoError(t, err)
+	_, err = repository.CreateCrossProjectWorkflowTaskFenced(
+		crossProjectDispatchTask(t, provenance, consumer.ID, secondRun.ID, secondNodeID), provenance, nil,
+	)
+	assert.ErrorIs(t, err, db.ErrNotFound)
+	_, err = repository.GetWorkflowRunNodeTask(consumer.ID, secondRun.ID, secondNodeID)
+	assert.ErrorIs(t, err, db.ErrNotFound)
+
+	// A retry for the already-inserted task remains idempotent after revocation;
+	// historical work keeps immutable provenance instead of being corrupted.
+	replayed, err := repository.CreateCrossProjectWorkflowTaskFenced(firstTask, provenance, nil)
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, replayed.ID)
+}
+
+func TestCrossProjectWorkflowTaskFenceSerializesDispatchWithRevocation(t *testing.T) {
+	store, ownerProjectID, ownerTemplate := templateVersionGrantFixture(t, "dispatch-revoke-owner")
+	defer store.Close()
+	consumer, err := store.CreateProject(db.Project{Name: "dispatch-revoke-consumer"})
+	require.NoError(t, err)
+	repository := NewWorkflowStore(store.GetConnection())
+	versionStore := any(repository).(db.TemplateVersionStore)
+	grantStore := any(repository).(db.CrossProjectTemplateGrantStore)
+	published, _, err := versionStore.PublishTemplateVersion(ownerTemplate, 1, time.Now().UTC())
+	require.NoError(t, err)
+	grant, err := grantStore.CreateCrossProjectTemplateGrant(db.CrossProjectTemplateGrant{
+		OwnerProjectID: ownerProjectID, ConsumerProjectID: consumer.ID, TemplateID: ownerTemplate.ID,
+		MinTemplateVersion: published.VersionNumber, MaxTemplateVersion: published.VersionNumber,
+		Operations: db.CrossProjectTemplateGrantReference | db.CrossProjectTemplateGrantRun,
+		Status:     db.CrossProjectTemplateGrantPending, Revision: 1, CreatedByUserID: 1,
+		Created: time.Now().UTC(), Reason: "dispatch revoke race",
+	})
+	require.NoError(t, err)
+	grant, err = grantStore.AcceptCrossProjectTemplateGrant(consumer.ID, grant.ID, 1, grant.Revision, time.Now().UTC())
+	require.NoError(t, err)
+	reference, version, err := grantStore.ResolveActiveCrossProjectTemplateGrant(
+		consumer.ID,
+		db.CrossProjectTemplateReference{GrantID: grant.ID, TemplateVersionNumber: published.VersionNumber},
+		db.CrossProjectTemplateGrantRun,
+	)
+	require.NoError(t, err)
+	workflow, validation, err := workflowDB.PrepareWorkflowTemplate(store, db.WorkflowTemplate{
+		ProjectID: consumer.ID, Name: "dispatch revoke", Nodes: []db.WorkflowNode{{
+			ID: -1, Kind: db.WorkflowNodeTaskKind, TemplateID: reference.TemplateID,
+			CrossProjectTemplateReference: &reference,
+		}},
+	})
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	workflow, workflowVersion, err := repository.CreateWorkflowTemplateVersionedWithCrossProjectReferences(
+		workflow, db.WorkflowVersionMutation{AuthorUserID: 1, Created: time.Now().UTC()},
+	)
+	require.NoError(t, err)
+	workflow.CurrentVersionID = workflowVersion.ID
+	provenance := db.CrossProjectTemplateProvenance{Reference: reference, TemplateSnapshot: version.Snapshot}
+	run := createCrossProjectDispatchRun(t, repository, workflow, provenance, 1, "dispatch-revoke-race")
+	nodeID := run.Nodes[0].WorkflowNodeID
+	claimed, err := repository.ClaimWorkflowRunNode(consumer.ID, run.ID, nodeID, time.Now().UTC())
+	require.NoError(t, err)
+	require.True(t, claimed)
+	task := crossProjectDispatchTask(t, provenance, consumer.ID, run.ID, nodeID)
+
+	type dispatchResult struct {
+		task db.Task
+		err  error
+	}
+	start := make(chan struct{})
+	dispatchDone := make(chan dispatchResult, 1)
+	revokeDone := make(chan error, 1)
+	go func() {
+		<-start
+		created, dispatchErr := repository.CreateCrossProjectWorkflowTaskFenced(task, provenance, nil)
+		dispatchDone <- dispatchResult{task: created, err: dispatchErr}
+	}()
+	go func() {
+		<-start
+		_, revokeErr := grantStore.RevokeCrossProjectTemplateGrant(
+			ownerProjectID, grant.ID, 1, grant.Revision, "withdrawn", time.Now().UTC(),
+		)
+		revokeDone <- revokeErr
+	}()
+	close(start)
+	dispatched := <-dispatchDone
+	require.NoError(t, <-revokeDone)
+	if dispatched.err == nil {
+		assert.Positive(t, dispatched.task.ID)
+		persisted, getErr := repository.GetWorkflowRunNodeTask(consumer.ID, run.ID, nodeID)
+		require.NoError(t, getErr)
+		assert.Equal(t, dispatched.task.ID, persisted.ID)
+		require.NotNil(t, persisted.WorkflowTemplateProvenance)
+		assert.Equal(t, provenance.Reference, persisted.WorkflowTemplateProvenance.CrossProject.Reference)
+	} else {
+		assert.ErrorIs(t, dispatched.err, db.ErrNotFound)
+		_, getErr := repository.GetWorkflowRunNodeTask(consumer.ID, run.ID, nodeID)
+		assert.ErrorIs(t, getErr, db.ErrNotFound)
+	}
+}
+
+func TestCrossProjectWorkflowTaskFencePreservesStorageFailureWithoutIdempotentTask(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	runID, nodeID := 41, 73
+	cause := errors.New("task insert failed")
+	_, err := repository.resolveExistingCrossProjectWorkflowTask(
+		db.Task{ProjectID: projectID, WorkflowRunID: &runID, WorkflowNodeID: &nodeID},
+		db.CrossProjectTemplateProvenance{}, cause,
+	)
+	assert.ErrorIs(t, err, cause)
+}
+
+func createCrossProjectDispatchRun(
+	t *testing.T,
+	repository *WorkflowStoreImpl,
+	workflow db.WorkflowTemplate,
+	provenance db.CrossProjectTemplateProvenance,
+	actorID int,
+	correlationID string,
+) db.WorkflowRun {
+	t.Helper()
+	run, err := workflowDB.BuildWorkflowRunSnapshotWithCrossProjectProvenance(
+		workflow, nil, map[int]db.CrossProjectTemplateProvenance{workflow.Nodes[0].ID: provenance},
+		actorID, correlationID, time.Now().UTC(),
+	)
+	require.NoError(t, err)
+	created, err := repository.CreateWorkflowRunWithCrossProjectReferences(run)
+	require.NoError(t, err)
+	return created
+}
+
+func crossProjectDispatchTask(
+	t *testing.T,
+	provenance db.CrossProjectTemplateProvenance,
+	consumerProjectID int,
+	runID int,
+	nodeID int,
+) db.Task {
+	t.Helper()
+	template, err := provenance.TemplateSnapshot.ReconstructTemplate(
+		provenance.Reference.OwnerProjectID, provenance.Reference.TemplateID,
+	)
+	require.NoError(t, err)
+	templateJSON, err := json.Marshal(template)
+	require.NoError(t, err)
+	snapshotJSON := string(templateJSON)
+	taskProvenance := db.WorkflowTemplateProvenance{CrossProject: &provenance}
+	provenanceJSON, err := taskProvenance.CanonicalJSON()
+	require.NoError(t, err)
+	return db.Task{
+		ProjectID: consumerProjectID, TemplateID: provenance.Reference.TemplateID,
+		Status: task_logger.TaskWaitingStatus, WorkflowRunID: &runID, WorkflowNodeID: &nodeID,
+		WorkflowTemplateSnapshot: &snapshotJSON, WorkflowTemplateProvenance: &taskProvenance,
+		WorkflowTemplateProvenanceJSON: &provenanceJSON, Created: time.Now().UTC(),
+	}
+}
+
+func TestWorkflowRunRepositoryPersistsExactWorkflowVersionReference(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	user, templateOne, templateTwo := workflowRunResources(t, store, projectID)
+	versionStore := any(repository).(db.WorkflowVersionStore)
+	workflow, version, err := versionStore.CreateWorkflowTemplateVersioned(
+		linearRepositoryWorkflow(projectID, templateOne.ID, templateTwo.ID),
+		db.WorkflowVersionMutation{AuthorUserID: user.ID, Message: "Initial definition"},
+	)
+	require.NoError(t, err)
+	workflow.CurrentVersionID = version.ID
+	run, err := workflowDB.BuildWorkflowRunSnapshot(
+		workflow,
+		map[int]db.Template{templateOne.ID: templateOne, templateTwo.ID: templateTwo},
+		user.ID,
+		"exact-version-reference",
+		time.Date(2026, 8, 31, 8, 0, 0, 0, time.UTC),
+	)
+	require.NoError(t, err)
+
+	created, err := repository.CreateWorkflowRun(run)
+	require.NoError(t, err)
+	reloaded, err := repository.GetWorkflowRun(projectID, workflow.ID, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, version.ID, reloaded.WorkflowVersionID)
+	assert.Equal(t, version.VersionNumber, reloaded.DefinitionRevision)
+}
+
 func TestWorkflowRunRepositoryDoesNotClaimNodesAfterDurableStopRequest(t *testing.T) {
 	store, repository, projectID := workflowRepositoryFixture(t)
 	defer store.Close()

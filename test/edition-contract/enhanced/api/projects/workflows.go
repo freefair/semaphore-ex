@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,9 @@ import (
 const workflowDefinitionBodyLimit int64 = 8 * 1024 * 1024
 const workflowRunCorrelationIDLimit = 64
 const workflowRunBodyLimit int64 = 256 * 1024
+const workflowVersionRestoreBodyLimit int64 = 2 * 1024
+const defaultWorkflowVersionPageSize = 50
+const maxWorkflowVersionPageSize = 100
 
 type workflowController struct {
 	definitionService pro_interfaces.WorkflowDefinitionService
@@ -39,6 +43,19 @@ type workflowRunDetails struct {
 type workflowResponse struct {
 	db.WorkflowTemplate
 	EffectiveAccess workflowEffectiveAccessView `json:"effective_access"`
+}
+
+type workflowVersionSummary struct {
+	ID                    int       `json:"id"`
+	ProjectID             int       `json:"project_id"`
+	WorkflowTemplateID    int       `json:"workflow_template_id"`
+	VersionNumber         int       `json:"version_number"`
+	ParentVersionID       *int      `json:"parent_version_id,omitempty"`
+	RestoredFromVersionID *int      `json:"restored_from_version_id,omitempty"`
+	AuthorUserID          int       `json:"author_user_id"`
+	Message               string    `json:"message"`
+	ContentFingerprint    string    `json:"content_fingerprint"`
+	Created               time.Time `json:"created"`
 }
 
 type workflowEffectiveAccessView struct {
@@ -87,6 +104,7 @@ type workflowRunView struct {
 	ActorUserID                 int                                     `json:"actor_user_id"`
 	DefinitionVersion           int                                     `json:"definition_version"`
 	DefinitionRevision          int                                     `json:"definition_revision"`
+	WorkflowVersionID           int                                     `json:"workflow_version_id"`
 	CorrelationID               string                                  `json:"correlation_id"`
 	DesiredState                db.WorkflowRunDesiredState              `json:"desired_state"`
 	ReconciliationState         db.WorkflowRunReconciliationState       `json:"reconciliation_state"`
@@ -299,6 +317,136 @@ func (c *workflowController) RemoveWorkflow(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (c *workflowController) GetWorkflowVersions(w http.ResponseWriter, r *http.Request) {
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
+	versions, err := c.definitionService.ListVersions(
+		project.ID, workflow.ID, workflowVersionQueryParams(r), helpers.UserFromContext(r),
+	)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	result := make([]workflowVersionSummary, len(versions))
+	for index := range versions {
+		result[index] = newWorkflowVersionSummary(versions[index])
+	}
+	helpers.WriteJSON(w, http.StatusOK, result)
+}
+
+func (c *workflowController) GetWorkflowVersion(w http.ResponseWriter, r *http.Request) {
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
+	versionNumber, err := helpers.GetIntParam("version_number", w, r)
+	if err != nil {
+		return
+	}
+	version, err := c.definitionService.GetVersion(
+		project.ID, workflow.ID, versionNumber, helpers.UserFromContext(r),
+	)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, version)
+}
+
+func (c *workflowController) DiffWorkflowVersions(w http.ResponseWriter, r *http.Request) {
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
+	beforeVersion, beforeErr := positiveWorkflowVersionQuery(r, "from")
+	afterVersion, afterErr := positiveWorkflowVersionQuery(r, "to")
+	if beforeErr != nil || afterErr != nil {
+		helpers.WriteError(w, common_errors.NewValidationError("workflow version diff requires positive from and to versions"))
+		return
+	}
+	diff, err := c.definitionService.DiffVersions(
+		project.ID, workflow.ID, beforeVersion, afterVersion, helpers.UserFromContext(r),
+	)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, diff)
+}
+
+func (c *workflowController) RestoreWorkflowVersion(w http.ResponseWriter, r *http.Request) {
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
+	versionNumber, err := helpers.GetIntParam("version_number", w, r)
+	if err != nil {
+		return
+	}
+	var request struct {
+		Message string `json:"message"`
+	}
+	if !bindWorkflowVersionRestore(w, r, &request) {
+		return
+	}
+	restored, validation, err := c.definitionService.RestoreVersion(
+		project.ID, workflow.ID, versionNumber, request.Message, helpers.UserFromContext(r),
+	)
+	if err != nil {
+		writeWorkflowError(w, err, c.definitionService, project.ID, workflow.ID, helpers.UserFromContext(r))
+		return
+	}
+	if !validation.Valid {
+		writeWorkflowValidation(w, validation)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, restored)
+}
+
+func newWorkflowVersionSummary(version db.WorkflowVersion) workflowVersionSummary {
+	return workflowVersionSummary{
+		ID: version.ID, ProjectID: version.ProjectID, WorkflowTemplateID: version.WorkflowTemplateID,
+		VersionNumber: version.VersionNumber, ParentVersionID: version.ParentVersionID,
+		RestoredFromVersionID: version.RestoredFromVersionID, AuthorUserID: version.AuthorUserID,
+		Message: version.Message, ContentFingerprint: version.ContentFingerprint, Created: version.Created,
+	}
+}
+
+func positiveWorkflowVersionQuery(r *http.Request, name string) (int, error) {
+	value, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get(name)))
+	if err != nil || value <= 0 {
+		return 0, errors.New("workflow version query is invalid")
+	}
+	return value, nil
+}
+
+func workflowVersionQueryParams(r *http.Request) db.RetrieveQueryParams {
+	params := helpers.QueryParams(r.URL)
+	params.Count = defaultWorkflowVersionPageSize
+	if value, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("count"))); err == nil && value > 0 {
+		params.Count = value
+	}
+	if params.Count > maxWorkflowVersionPageSize {
+		params.Count = maxWorkflowVersionPageSize
+	}
+	if value, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("before"))); err == nil && value > 0 {
+		params.BeforeID = value
+	}
+	return params
+}
+
+func bindWorkflowVersionRestore(w http.ResponseWriter, r *http.Request, request any) bool {
+	if r.Body == nil {
+		helpers.WriteError(w, common_errors.NewValidationError("workflow version restore body is required"))
+		return false
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, workflowVersionRestoreBodyLimit))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(request); err != nil {
+		helpers.WriteError(w, common_errors.NewValidationError("workflow version restore body is invalid"))
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		helpers.WriteError(w, common_errors.NewValidationError("workflow version restore body is invalid"))
+		return false
+	}
+	return true
 }
 
 func writeWorkflowValidation(w http.ResponseWriter, result db.WorkflowValidationResult) {
@@ -533,6 +681,7 @@ func newWorkflowRunView(run db.WorkflowRun) workflowRunView {
 		ActorUserID:                 run.ActorUserID,
 		DefinitionVersion:           run.DefinitionVersion,
 		DefinitionRevision:          run.DefinitionRevision,
+		WorkflowVersionID:           run.WorkflowVersionID,
 		CorrelationID:               run.CorrelationID,
 		DesiredState:                run.DesiredState,
 		ReconciliationState:         run.ReconciliationState,

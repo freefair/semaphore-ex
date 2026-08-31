@@ -134,6 +134,14 @@ func fairWorkflowRunOrder(runs []db.WorkflowRun) []db.WorkflowRun {
 }
 
 func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (db.WorkflowRun, error) {
+	return d.createWorkflowRun(run, false)
+}
+
+func (d *WorkflowStoreImpl) CreateWorkflowRunWithCrossProjectReferences(run db.WorkflowRun) (db.WorkflowRun, error) {
+	return d.createWorkflowRun(run, true)
+}
+
+func (d *WorkflowStoreImpl) createWorkflowRun(run db.WorkflowRun, crossProjectReferences bool) (db.WorkflowRun, error) {
 	if existing, err := d.GetWorkflowRunByCorrelationID(run.ProjectID, run.WorkflowTemplateID, run.CorrelationID); err == nil {
 		return existing, nil
 	} else if !errors.Is(err, db.ErrNotFound) {
@@ -158,10 +166,15 @@ func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (db.WorkflowRu
 	if run.ReconciliationState == "" {
 		run.ReconciliationState = db.WorkflowRunReconciliationHealthy
 	}
+	if crossProjectReferences {
+		if err = d.recheckWorkflowRunCrossProjectReferencesTx(tx, run); err != nil {
+			return db.WorkflowRun{}, err
+		}
+	}
 	run.ID, err = d.insertTx(tx,
-		"insert into project__workflow_run(project_id, workflow_template_id, status, desired_state, reconciliation_state, reconciliation_attempts, reconciliation_last_error, reconciliation_next_retry_at, reconciliation_quarantined_at, version, start, `end`, root_task_id, actor_user_id, definition_version, definition_revision, definition_snapshot, parameter_snapshot, trigger_snapshot, correlation_id, created, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"insert into project__workflow_run(project_id, workflow_template_id, status, desired_state, reconciliation_state, reconciliation_attempts, reconciliation_last_error, reconciliation_next_retry_at, reconciliation_quarantined_at, version, start, `end`, root_task_id, actor_user_id, definition_version, definition_revision, workflow_version_id, definition_snapshot, parameter_snapshot, trigger_snapshot, correlation_id, created, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		run.ProjectID, run.WorkflowTemplateID, run.Status, run.DesiredState, run.ReconciliationState, run.ReconciliationAttempts, run.ReconciliationLastError, run.ReconciliationNextRetryAt, run.ReconciliationQuarantinedAt, run.Version, run.Start, run.End, run.RootTaskID,
-		run.ActorUserID, run.DefinitionVersion, run.DefinitionRevision, run.DefinitionSnapshotJSON,
+		run.ActorUserID, run.DefinitionVersion, run.DefinitionRevision, run.WorkflowVersionID, run.DefinitionSnapshotJSON,
 		run.ParameterSnapshotJSON, run.TriggerSnapshotJSON, run.CorrelationID, run.Created, run.Reason,
 	)
 	if err != nil {
@@ -182,10 +195,19 @@ func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (db.WorkflowRu
 		if node.OverrideSnapshotJSON == "" {
 			node.OverrideSnapshotJSON = "{}"
 		}
+		if node.CrossProjectTemplateProvenance != nil {
+			provenanceJSON, provenanceErr := node.CrossProjectTemplateProvenance.CanonicalJSON()
+			if provenanceErr != nil {
+				return db.WorkflowRun{}, fmt.Errorf("encode workflow run cross-project template provenance: %w", provenanceErr)
+			}
+			node.CrossProjectTemplateProvenanceJSON = provenanceJSON
+		} else if node.CrossProjectTemplateProvenanceJSON != "" {
+			return db.WorkflowRun{}, errors.New("workflow run cross-project template provenance must be decoded before persistence")
+		}
 		node.ID, err = d.insertTx(tx,
-			"insert into project__workflow_run_node(project_id, workflow_run_id, workflow_node_id, template_id, status, task_id, template_snapshot, result, artifact_inputs, override_snapshot, created, queued, start, `end`, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"insert into project__workflow_run_node(project_id, workflow_run_id, workflow_node_id, template_id, status, task_id, template_snapshot, cross_project_template_provenance, result, artifact_inputs, override_snapshot, created, queued, start, `end`, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			node.ProjectID, node.WorkflowRunID, node.WorkflowNodeID, node.TemplateID, node.Status,
-			node.TaskID, node.TemplateSnapshotJSON, node.ResultJSON, node.ArtifactInputsJSON, node.OverrideSnapshotJSON, node.Created, node.Queued, node.Start, node.End, node.Reason,
+			node.TaskID, node.TemplateSnapshotJSON, node.CrossProjectTemplateProvenanceJSON, node.ResultJSON, node.ArtifactInputsJSON, node.OverrideSnapshotJSON, node.Created, node.Queued, node.Start, node.End, node.Reason,
 		)
 		if err != nil {
 			return db.WorkflowRun{}, err
@@ -196,6 +218,243 @@ func (d *WorkflowStoreImpl) CreateWorkflowRun(run db.WorkflowRun) (db.WorkflowRu
 	}
 	rollback = false
 	return run, nil
+}
+
+func (d *WorkflowStoreImpl) recheckWorkflowRunCrossProjectReferencesTx(tx *gorp.Transaction, run db.WorkflowRun) error {
+	definitionNodes := make(map[int]db.WorkflowNode, len(run.DefinitionSnapshot.Nodes))
+	for _, definitionNode := range run.DefinitionSnapshot.Nodes {
+		definitionNodes[definitionNode.ID] = definitionNode
+	}
+	for _, node := range run.Nodes {
+		if node.CrossProjectTemplateProvenance == nil {
+			continue
+		}
+		provenance := node.CrossProjectTemplateProvenance
+		definitionNode, found := definitionNodes[node.WorkflowNodeID]
+		if !found || definitionNode.CrossProjectTemplateReference == nil ||
+			*definitionNode.CrossProjectTemplateReference != provenance.Reference || node.TemplateID != definitionNode.TemplateID {
+			return errors.New("workflow run-node cross-project provenance does not match definition")
+		}
+		normalized, version, err := d.resolveActiveCrossProjectTemplateGrantTx(tx, run.ProjectID, provenance.Reference, db.CrossProjectTemplateGrantRun)
+		if err != nil {
+			return err
+		}
+		if normalized != provenance.Reference || version.ContentFingerprint != provenance.Reference.ContentFingerprint {
+			return db.ErrNotFound
+		}
+		canonical, canonicalErr := provenance.CanonicalJSON()
+		if canonicalErr != nil || canonical == "" {
+			if canonicalErr != nil {
+				return canonicalErr
+			}
+			return errors.New("workflow cross-project template provenance is empty")
+		}
+	}
+	return nil
+}
+
+// CreateCrossProjectWorkflowTaskFenced binds one consumer-owned task to a
+// queued external workflow node. The grant/version recheck, run-node
+// reconciliation, task insert, and attachment share one transaction so a
+// revoke or stop cannot leave a dispatchable orphan behind.
+func (d *WorkflowStoreImpl) CreateCrossProjectWorkflowTaskFenced(
+	task db.Task,
+	provenance db.CrossProjectTemplateProvenance,
+	lease *pro_interfaces.WorkflowReconciliationLease,
+) (db.Task, error) {
+	if d.connection == nil || task.ProjectID <= 0 || task.WorkflowRunID == nil || task.WorkflowNodeID == nil ||
+		provenance.Validate() != nil || task.TemplateID != provenance.Reference.TemplateID {
+		return db.Task{}, errors.New("cross-project workflow task provenance is invalid")
+	}
+	if lease != nil && (lease.ProjectID != task.ProjectID || lease.WorkflowRunID != *task.WorkflowRunID ||
+		lease.OwnerBootID == "" || lease.FencingToken <= 0) {
+		return db.Task{}, errors.New("cross-project workflow reconciliation ownership is invalid")
+	}
+	if existing, err := d.GetWorkflowRunNodeTask(task.ProjectID, *task.WorkflowRunID, *task.WorkflowNodeID); err == nil {
+		if crossProjectWorkflowTaskMatches(existing, provenance) {
+			return existing, nil
+		}
+		return db.Task{}, errors.New("cross-project workflow task attachment conflicts with existing provenance")
+	} else if !errors.Is(err, db.ErrNotFound) {
+		return db.Task{}, err
+	}
+
+	expectedTemplate, err := provenance.TemplateSnapshot.ReconstructTemplate(
+		provenance.Reference.OwnerProjectID, provenance.Reference.TemplateID,
+	)
+	if err != nil {
+		return db.Task{}, err
+	}
+	expectedTemplateJSON, err := json.Marshal(expectedTemplate)
+	if err != nil {
+		return db.Task{}, fmt.Errorf("encode immutable cross-project template snapshot: %w", err)
+	}
+	if task.WorkflowTemplateSnapshot == nil || *task.WorkflowTemplateSnapshot != string(expectedTemplateJSON) {
+		return db.Task{}, errors.New("cross-project workflow task template snapshot is invalid")
+	}
+	taskProvenance := db.WorkflowTemplateProvenance{CrossProject: &provenance}
+	canonicalTaskProvenance, err := taskProvenance.CanonicalJSON()
+	if err != nil {
+		return db.Task{}, err
+	}
+	if task.WorkflowTemplateProvenance != nil {
+		provided, providedErr := task.WorkflowTemplateProvenance.CanonicalJSON()
+		if providedErr != nil || provided != canonicalTaskProvenance {
+			return db.Task{}, errors.New("cross-project workflow task provenance is invalid")
+		}
+	}
+	task.WorkflowTemplateProvenance = &taskProvenance
+	task.WorkflowTemplateProvenanceJSON = &canonicalTaskProvenance
+
+	tx, err := d.connection.Begin()
+	if err != nil {
+		return db.Task{}, err
+	}
+	rollback := true
+	defer func() {
+		if rollback {
+			_ = tx.Rollback()
+		}
+	}()
+	if lease != nil {
+		result, updateErr := d.connection.ExecTx(tx,
+			"update cluster__workflow_reconciliation set operation_sequence=operation_sequence+1, updated=CURRENT_TIMESTAMP where project_id=? and workflow_run_id=? and owner_boot_id=? and fencing_token=? and lease_expires_at>CURRENT_TIMESTAMP",
+			lease.ProjectID, lease.WorkflowRunID, lease.OwnerBootID, lease.FencingToken,
+		)
+		if updateErr != nil {
+			return db.Task{}, updateErr
+		}
+		updated, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return db.Task{}, rowsErr
+		}
+		if updated != 1 {
+			return db.Task{}, errors.New("stale workflow reconciliation owner")
+		}
+	}
+
+	var run struct {
+		DefinitionSnapshotJSON string                     `db:"definition_snapshot"`
+		DesiredState           db.WorkflowRunDesiredState `db:"desired_state"`
+	}
+	if err = tx.SelectOne(&run, d.connection.PrepareQuery(
+		"select definition_snapshot, desired_state from project__workflow_run where project_id=? and id=?"),
+		task.ProjectID, *task.WorkflowRunID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return db.Task{}, db.ErrNotFound
+		}
+		return db.Task{}, err
+	}
+	if run.DesiredState != db.WorkflowRunDesiredRunning {
+		return db.Task{}, db.ErrNotFound
+	}
+	var definition db.WorkflowTemplate
+	if err = json.Unmarshal([]byte(run.DefinitionSnapshotJSON), &definition); err != nil {
+		return db.Task{}, fmt.Errorf("decode workflow definition snapshot: %w", err)
+	}
+	definitionNode, found := workflowDefinitionNodeByID(definition, *task.WorkflowNodeID)
+	if !found || definitionNode.CrossProjectTemplateReference == nil ||
+		definitionNode.TemplateID != task.TemplateID || *definitionNode.CrossProjectTemplateReference != provenance.Reference {
+		return db.Task{}, errors.New("cross-project workflow definition provenance does not match task")
+	}
+
+	var node struct {
+		TemplateID                 int                      `db:"template_id"`
+		Status                     db.WorkflowRunNodeStatus `db:"status"`
+		TaskID                     *int                     `db:"task_id"`
+		CrossProjectProvenanceJSON string                   `db:"cross_project_template_provenance"`
+		ProgressionFencingToken    int64                    `db:"progression_fencing_token"`
+	}
+	if err = tx.SelectOne(&node, d.connection.PrepareQuery(
+		"select template_id, status, task_id, cross_project_template_provenance, progression_fencing_token from project__workflow_run_node where project_id=? and workflow_run_id=? and workflow_node_id=?"),
+		task.ProjectID, *task.WorkflowRunID, *task.WorkflowNodeID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return db.Task{}, db.ErrNotFound
+		}
+		return db.Task{}, err
+	}
+	if node.TemplateID != task.TemplateID || node.Status != db.WorkflowRunNodeQueued || node.TaskID != nil ||
+		lease != nil && node.ProgressionFencingToken != lease.FencingToken {
+		return db.Task{}, db.ErrNotFound
+	}
+	storedProvenance, decodeErr := db.DecodeCrossProjectTemplateProvenance(node.CrossProjectProvenanceJSON)
+	if decodeErr != nil || storedProvenance == nil || !crossProjectTemplateProvenanceEqual(*storedProvenance, provenance) {
+		return db.Task{}, errors.New("cross-project workflow run-node provenance does not match task")
+	}
+
+	normalized, version, resolveErr := d.resolveActiveCrossProjectTemplateGrantTx(
+		tx, task.ProjectID, provenance.Reference, db.CrossProjectTemplateGrantRun,
+	)
+	if resolveErr != nil {
+		return db.Task{}, resolveErr
+	}
+	if normalized != provenance.Reference || version.ContentFingerprint != provenance.Reference.ContentFingerprint {
+		return db.Task{}, db.ErrNotFound
+	}
+	if err = tx.Insert(&task); err != nil {
+		_ = tx.Rollback()
+		rollback = false
+		return d.resolveExistingCrossProjectWorkflowTask(task, provenance, err)
+	}
+	attachQuery := "update project__workflow_run_node set task_id=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null and exists (select 1 from project__workflow_run where project_id=? and id=? and desired_state=?)"
+	attachArgs := []any{task.ID, task.ProjectID, *task.WorkflowRunID, *task.WorkflowNodeID, db.WorkflowRunNodeQueued, task.ProjectID, *task.WorkflowRunID, db.WorkflowRunDesiredRunning}
+	if lease != nil {
+		attachQuery += " and progression_fencing_token=?"
+		attachArgs = append(attachArgs, lease.FencingToken)
+	}
+	result, attachErr := tx.Exec(d.connection.PrepareQuery(attachQuery), attachArgs...)
+	if attachErr != nil {
+		return db.Task{}, attachErr
+	}
+	attached, rowsErr := result.RowsAffected()
+	if rowsErr != nil {
+		return db.Task{}, rowsErr
+	}
+	if attached != 1 {
+		_ = tx.Rollback()
+		rollback = false
+		return d.resolveExistingCrossProjectWorkflowTask(task, provenance, db.ErrNotFound)
+	}
+	if err = tx.Commit(); err != nil {
+		rollback = false
+		return d.resolveExistingCrossProjectWorkflowTask(task, provenance, err)
+	}
+	rollback = false
+	return task, nil
+}
+
+func workflowDefinitionNodeByID(definition db.WorkflowTemplate, nodeID int) (db.WorkflowNode, bool) {
+	for _, node := range definition.Nodes {
+		if node.ID == nodeID {
+			return node, true
+		}
+	}
+	return db.WorkflowNode{}, false
+}
+
+func (d *WorkflowStoreImpl) resolveExistingCrossProjectWorkflowTask(task db.Task, provenance db.CrossProjectTemplateProvenance, cause error) (db.Task, error) {
+	existing, err := d.GetWorkflowRunNodeTask(task.ProjectID, *task.WorkflowRunID, *task.WorkflowNodeID)
+	if err == nil && crossProjectWorkflowTaskMatches(existing, provenance) {
+		return existing, nil
+	}
+	if err != nil && !errors.Is(err, db.ErrNotFound) {
+		return db.Task{}, err
+	}
+	return db.Task{}, cause
+}
+
+func crossProjectWorkflowTaskMatches(task db.Task, provenance db.CrossProjectTemplateProvenance) bool {
+	if task.TemplateID != provenance.Reference.TemplateID || task.WorkflowTemplateProvenance == nil ||
+		task.WorkflowTemplateProvenance.CrossProject == nil {
+		return false
+	}
+	return crossProjectTemplateProvenanceEqual(*task.WorkflowTemplateProvenance.CrossProject, provenance)
+}
+
+func crossProjectTemplateProvenanceEqual(left db.CrossProjectTemplateProvenance, right db.CrossProjectTemplateProvenance) bool {
+	leftJSON, leftErr := left.CanonicalJSON()
+	rightJSON, rightErr := right.CanonicalJSON()
+	return leftErr == nil && rightErr == nil && leftJSON == rightJSON
 }
 
 func (d *WorkflowStoreImpl) UpdateWorkflowRun(run db.WorkflowRun) error {
@@ -785,6 +1044,9 @@ func (d *WorkflowStoreImpl) GetWorkflowRunNodeTask(projectID int, runID int, nod
 	if errors.Is(err, sql.ErrNoRows) {
 		return db.Task{}, db.ErrNotFound
 	}
+	if err == nil {
+		err = task.DecodeWorkflowTemplateProvenance()
+	}
 	return task, err
 }
 
@@ -1242,6 +1504,11 @@ func (d *WorkflowStoreImpl) loadWorkflowRun(run *db.WorkflowRun) error {
 }
 
 func decodeWorkflowRunNode(node *db.WorkflowRunNode) error {
+	provenance, err := db.DecodeCrossProjectTemplateProvenance(node.CrossProjectTemplateProvenanceJSON)
+	if err != nil {
+		return fmt.Errorf("decode workflow run cross-project template provenance: %w", err)
+	}
+	node.CrossProjectTemplateProvenance = provenance
 	if node.TemplateSnapshotJSON != "" {
 		if err := json.Unmarshal([]byte(node.TemplateSnapshotJSON), &node.TemplateSnapshot); err != nil {
 			return fmt.Errorf("decode workflow template snapshot: %w", err)
