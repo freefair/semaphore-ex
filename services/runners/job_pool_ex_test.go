@@ -42,6 +42,23 @@ type dockerPolicyConsumerStub struct {
 	remediated []db.DockerReconciliationRemediationCommand
 }
 
+type kubernetesTelemetryReporterStub struct {
+	batch db.KubernetesTelemetryBatch
+	acks  []db.KubernetesTelemetryAck
+}
+
+func (*kubernetesTelemetryReporterStub) NewExecutor(db.Task, db.Template, db.Inventory, db.Repository, db.Environment, string) (tasks.Executor, error) {
+	return &tasks.LocalExecutor{}, nil
+}
+
+func (p *kubernetesTelemetryReporterStub) PendingKubernetesTelemetry() db.KubernetesTelemetryBatch {
+	return p.batch
+}
+
+func (p *kubernetesTelemetryReporterStub) AcknowledgeKubernetesTelemetry(ack db.KubernetesTelemetryAck) {
+	p.acks = append(p.acks, ack)
+}
+
 type runnerIdentityConsumerStub struct {
 	dockerPolicyConsumerStub
 	runnerID int
@@ -149,6 +166,31 @@ func TestJobPoolSubmitsDockerScanBeforeDispatch(t *testing.T) {
 	require.NotNil(t, received.DockerReconciliationScanComplete)
 	assert.Equal(t, "scan-session", received.DockerReconciliationScanComplete.SessionID)
 	assert.Len(t, received.DockerReconciliationOrphanCandidates, 1)
+}
+
+func TestJobPoolAcknowledgesKubernetesTelemetryOnlyForCurrentFence(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
+	session := db.KubernetesReconciliationSession{SessionID: "telemetry-session", Fence: "telemetry-fence", RunnerID: 1, ClusterAlias: "qa", Namespace: "semaphore-jobs", Ready: true}
+	provider := &kubernetesTelemetryReporterStub{batch: db.KubernetesTelemetryBatch{Events: []db.KubernetesTelemetryEvent{{Sequence: 1, Kind: db.KubernetesTelemetryDenial, PolicyRule: db.KubernetesPolicyRuleRBACDenied}}}}
+	responses := []db.KubernetesTelemetryAck{{SessionID: "stale-session", HighestSequence: 1}, {SessionID: session.SessionID, HighestSequence: 1}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, session.SessionID, r.Header.Get(RunnerKubernetesSessionHeader))
+		assert.Equal(t, session.Fence, r.Header.Get(RunnerKubernetesFenceHeader))
+		var progress RunnerProgress
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&progress))
+		require.NotNil(t, progress.KubernetesTelemetry)
+		ack := responses[0]
+		responses = responses[1:]
+		require.NoError(t, json.NewEncoder(w).Encode(RunnerProgressResponse{KubernetesTelemetryAck: &ack}))
+	}))
+	t.Cleanup(server.Close)
+	util.Config = &util.ConfigType{WebHost: server.URL, Runner: &util.RunnerConfig{Token: "test-token", Executor: &util.ExecutorConfig{Type: util.ExecutorTypeKubernetes, K8s: util.RunnerK8sConfig{ClusterAlias: "qa", Namespace: "semaphore-jobs"}}, Connection: &util.RunnerConnectionConfig{}}}
+	pool := &JobPool{provider: provider, runningJobs: make(map[int]*runningJob), startedAt: time.Now(), client: newHTTPClient(), kubernetesReconciliationReady: true, kubernetesReconciliationSession: session}
+	require.True(t, pool.sendProgress())
+	assert.Empty(t, provider.acks, "a stale acknowledgement cannot drop a telemetry batch")
+	require.True(t, pool.sendProgress())
+	require.Equal(t, []db.KubernetesTelemetryAck{{SessionID: session.SessionID, HighestSequence: 1}}, provider.acks)
 }
 
 func TestJobPoolInstallsPollSessionBeforeExecutingDockerRemediation(t *testing.T) {
