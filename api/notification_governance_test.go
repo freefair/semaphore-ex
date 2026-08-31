@@ -100,13 +100,21 @@ func TestNotificationGovernanceControllerStrictInputRedactsCredentialAndBoundsPa
 	service := &notificationGovernanceStub{}
 	controller := NewNotificationGovernanceController(service)
 	credential := "controller-write-only-secret"
-	request := httptest.NewRequest(http.MethodPost, "/api/notification-governance/destinations", strings.NewReader(`{"name":"primary","provider":"pagerduty","environment":"prod","credential":"`+credential+`","enabled":true}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/notification-governance/destinations", strings.NewReader(`{"name":"primary","provider":"pagerduty","environment":"prod","region":"us","credential":"`+credential+`","enabled":true}`))
 	response := httptest.NewRecorder()
 	controller.CreateGlobalDestination(response, request)
 	require.Equal(t, http.StatusCreated, response.Code)
 	assert.Equal(t, credential, *service.createDestinationInput.Credential)
+	assert.Equal(t, pro_interfaces.NotificationProviderRegionUS, service.createDestinationInput.Region)
 	assert.Nil(t, service.createDestinationScope)
 	assert.NotContains(t, response.Body.String(), credential)
+	service.err = pro_interfaces.ErrNotificationInvalidInput
+	invalidCredential := "not-a-routing-key"
+	response = httptest.NewRecorder()
+	controller.CreateGlobalDestination(response, httptest.NewRequest(http.MethodPost, "/api/notification-governance/destinations", strings.NewReader(`{"name":"primary","provider":"pagerduty","environment":"prod","region":"us","credential":"`+invalidCredential+`","enabled":true}`)))
+	assert.Equal(t, http.StatusBadRequest, response.Code)
+	assert.NotContains(t, response.Body.String(), invalidCredential)
+	service.err = nil
 
 	for _, body := range []string{
 		`{"name":"primary","provider":"pagerduty","unknown":true}`,

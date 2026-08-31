@@ -48,11 +48,11 @@ type notificationDeliveryDispatcher struct {
 	closeOnce  sync.Once
 }
 
-// NewNotificationDispatcher returns the sole process-level outbox worker.
-// Slice 056 intentionally registers no adapters; provider slices add adapters
-// through RegisterAdapter after their constrained transports exist.
+// NewNotificationDispatcher returns the sole process-level outbox worker. The
+// PagerDuty adapter is registered before callers can start it; the Community
+// replacement keeps notification transport unavailable.
 func NewNotificationDispatcher(repository db.NotificationRepository) pro_interfaces.NotificationDeliveryDispatcher {
-	return newNotificationDeliveryDispatcher(repository, util.Config, time.Now, rand.Float64)
+	return newNotificationDeliveryDispatcher(repository, util.Config, time.Now, rand.Float64, NewPagerDutyAdapter())
 }
 
 func newNotificationDeliveryDispatcher(
@@ -173,7 +173,7 @@ func (d *notificationDeliveryDispatcher) dispatchClaimed(ctx context.Context, cl
 	if !destination.Enabled {
 		return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonDestinationDisabled, now)
 	}
-	if destination.Revision != delivery.DestinationRevision || destination.Provider != delivery.DestinationProvider {
+	if destination.ConfigurationRevision != delivery.DestinationConfigurationRevision || destination.Provider != delivery.DestinationProvider {
 		return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonDestinationChanged, now)
 	}
 	if !destination.CredentialConfigured || destination.EncryptedCredential == "" || d.cipher == nil || !d.cipher.OptionEncryptionEnabled() {
@@ -195,7 +195,7 @@ func (d *notificationDeliveryDispatcher) dispatchClaimed(ctx context.Context, cl
 	}
 	result := adapter.Dispatch(ctx, pro_interfaces.NotificationDispatchRequest{
 		Event: notificationEvent, DestinationID: destination.ID, Provider: destination.Provider,
-		Environment: destination.Environment, IncidentKey: delivery.IncidentKey,
+		Environment: destination.Environment, Region: pro_interfaces.NotificationProviderRegion(delivery.DestinationRegion), IncidentKey: delivery.IncidentKey,
 		IdempotencyKey: delivery.IdempotencyKey, Credential: credential,
 	})
 	return d.applyResult(delivery, result, now)

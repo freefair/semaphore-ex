@@ -32,6 +32,8 @@ type governanceService struct {
 
 var providerPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 
+const pagerDutyProviderName = "pagerduty"
+
 // NewGovernanceService creates the provider-neutral notification use-case
 // boundary. The production path encrypts credentials through util.Config;
 // tests can supply a deterministic cipher without mutating global config.
@@ -60,7 +62,7 @@ func (s *governanceService) CreateDestination(ctx context.Context, projectID *in
 		return pro_interfaces.NotificationDestinationDTO{}, err
 	}
 	destination, err := s.repository.CreateNotificationDestination(db.NotificationDestination{
-		ProjectID: projectID, Name: input.Name, Provider: input.Provider, Environment: input.Environment,
+		ProjectID: projectID, Name: input.Name, Provider: input.Provider, Environment: input.Environment, Region: string(input.Region),
 		EncryptedCredential: credential, CredentialConfigured: configured, Enabled: input.Enabled,
 	})
 	if err != nil {
@@ -112,12 +114,12 @@ func (s *governanceService) UpdateDestination(ctx context.Context, projectID *in
 	if current.Revision != expectedRevision {
 		return pro_interfaces.NotificationDestinationDTO{}, pro_interfaces.ErrNotificationRevisionConflict
 	}
-	credential, configured, err := s.updatedCredential(current, input.Credential)
+	credential, configured, err := s.updatedCredential(current, input.Provider, input.Credential)
 	if err != nil {
 		return pro_interfaces.NotificationDestinationDTO{}, err
 	}
 	updated, err := s.repository.UpdateNotificationDestination(db.NotificationDestination{
-		ID: id, ProjectID: projectID, Name: input.Name, Provider: input.Provider, Environment: input.Environment,
+		ID: id, ProjectID: projectID, Name: input.Name, Provider: input.Provider, Environment: input.Environment, Region: string(input.Region),
 		EncryptedCredential: credential, CredentialConfigured: configured, Enabled: input.Enabled, Paused: current.Paused,
 		Revision: expectedRevision,
 	}, expectedRevision)
@@ -161,13 +163,14 @@ func (s *governanceService) SetDestinationPaused(ctx context.Context, projectID 
 	if current.Revision != expectedRevision {
 		return pro_interfaces.NotificationDestinationDTO{}, pro_interfaces.ErrNotificationRevisionConflict
 	}
-	current.Paused = paused
-	updated, err := s.repository.UpdateNotificationDestination(current, expectedRevision)
+	updated, err := s.repository.SetNotificationDestinationPaused(db.NotificationDestination{
+		ID: id, ProjectID: projectID, Paused: paused, Revision: expectedRevision,
+	}, expectedRevision)
 	if err != nil {
 		return pro_interfaces.NotificationDestinationDTO{}, mapRepositoryError(err)
 	}
 	if !paused {
-		if err := s.repository.ResumePausedNotificationDeliveries(updated.ID, updated.Revision, s.now()); err != nil {
+		if err := s.repository.ResumePausedNotificationDeliveries(updated.ID, s.now()); err != nil {
 			return pro_interfaces.NotificationDestinationDTO{}, mapRepositoryError(err)
 		}
 	}
@@ -336,8 +339,8 @@ func (s *governanceService) EnqueueTestDelivery(ctx context.Context, projectID *
 		return pro_interfaces.NotificationDeliveryDTO{}, pro_interfaces.ErrNotificationInvalidInput
 	}
 	created, err := s.repository.CreateNotificationEventWithRouting(notificationEvent(event, db.NotificationRoutingRouted), []db.NotificationDelivery{{
-		DestinationID: destination.ID, DestinationRevision: destination.Revision, DestinationName: destination.Name,
-		DestinationProvider: destination.Provider, DestinationEnvironment: destination.Environment,
+		DestinationID: destination.ID, DestinationRevision: destination.Revision, DestinationConfigurationRevision: destination.ConfigurationRevision, DestinationName: destination.Name,
+		DestinationProvider: destination.Provider, DestinationEnvironment: destination.Environment, DestinationRegion: destination.Region,
 	}})
 	if err != nil {
 		return pro_interfaces.NotificationDeliveryDTO{}, mapRepositoryError(err)
@@ -397,16 +400,21 @@ func (s *governanceService) RetryDelivery(ctx context.Context, projectID *int, i
 	if id <= 0 {
 		return pro_interfaces.NotificationDeliveryDTO{}, pro_interfaces.ErrNotificationInvalidInput
 	}
-	if _, err := s.repository.GetNotificationDelivery(projectID, id); err != nil {
+	delivery, err := s.repository.GetNotificationDelivery(projectID, id)
+	if err != nil {
 		return pro_interfaces.NotificationDeliveryDTO{}, mapRepositoryError(err)
 	}
-	if err := s.repository.RetryNotificationDelivery(id, s.now()); err != nil {
+	destination, err := s.destination(projectID, delivery.DestinationID)
+	if err != nil {
+		return pro_interfaces.NotificationDeliveryDTO{}, err
+	}
+	if err := s.repository.RetryNotificationDelivery(id, destination.ID, destination.ConfigurationRevision, s.now()); err != nil {
 		if errors.Is(err, db.ErrNotificationDeliveryNotClaimed) {
 			return pro_interfaces.NotificationDeliveryDTO{}, pro_interfaces.ErrNotificationRetryUnavailable
 		}
 		return pro_interfaces.NotificationDeliveryDTO{}, mapRepositoryError(err)
 	}
-	delivery, err := s.repository.GetNotificationDelivery(projectID, id)
+	delivery, err = s.repository.GetNotificationDelivery(projectID, id)
 	if err != nil {
 		return pro_interfaces.NotificationDeliveryDTO{}, mapRepositoryError(err)
 	}
@@ -441,8 +449,11 @@ func (s *governanceService) encryptCredential(credential *string) (string, bool,
 	return encrypted, true, nil
 }
 
-func (s *governanceService) updatedCredential(current db.NotificationDestination, credential *string) (string, bool, error) {
+func (s *governanceService) updatedCredential(current db.NotificationDestination, provider string, credential *string) (string, bool, error) {
 	if credential == nil {
+		if current.Provider != provider {
+			return "", false, pro_interfaces.ErrNotificationInvalidInput
+		}
 		return current.EncryptedCredential, current.CredentialConfigured, nil
 	}
 	return s.encryptCredential(credential)
@@ -453,7 +464,23 @@ func validateDestinationInput(projectID *int, input pro_interfaces.NotificationD
 		!providerPattern.MatchString(input.Provider) || len(input.Environment) > 64 {
 		return pro_interfaces.ErrNotificationInvalidInput
 	}
+	if input.Provider == pagerDutyProviderName {
+		if !validPagerDutyRegion(input.Region) || input.Credential != nil && !validPagerDutyRoutingKey(*input.Credential) {
+			return pro_interfaces.ErrNotificationInvalidInput
+		}
+	}
+	if input.Provider != pagerDutyProviderName && input.Region != "" {
+		return pro_interfaces.ErrNotificationInvalidInput
+	}
 	return nil
+}
+
+func validPagerDutyRegion(region pro_interfaces.NotificationProviderRegion) bool {
+	return region == pro_interfaces.NotificationProviderRegionUS || region == pro_interfaces.NotificationProviderRegionEU
+}
+
+func validPagerDutyRoutingKey(credential string) bool {
+	return pagerDutyRoutingKeyPattern.MatchString(credential)
 }
 
 func ruleFromInput(projectID *int, input pro_interfaces.NotificationRuleInput) (db.NotificationRule, error) {
@@ -538,7 +565,7 @@ func notificationActionsFromString(value string) []pro_interfaces.NotificationLi
 
 func destinationDTO(destination db.NotificationDestination) pro_interfaces.NotificationDestinationDTO {
 	return pro_interfaces.NotificationDestinationDTO{
-		ID: destination.ID, ProjectID: destination.ProjectID, Name: destination.Name, Provider: destination.Provider, Environment: destination.Environment,
+		ID: destination.ID, ProjectID: destination.ProjectID, Name: destination.Name, Provider: destination.Provider, Environment: destination.Environment, Region: pro_interfaces.NotificationProviderRegion(destination.Region),
 		CredentialConfigured: destination.CredentialConfigured, Enabled: destination.Enabled, Paused: destination.Paused, Revision: destination.Revision,
 		CreatedAt: destination.Created, UpdatedAt: destination.Updated,
 	}
@@ -555,7 +582,7 @@ func ruleDTO(rule db.NotificationRule) pro_interfaces.NotificationRuleDTO {
 func deliveryDTO(delivery db.NotificationDelivery) pro_interfaces.NotificationDeliveryDTO {
 	return pro_interfaces.NotificationDeliveryDTO{
 		ID: delivery.ID, EventID: delivery.EventID, DestinationID: delivery.DestinationID, DestinationRevision: delivery.DestinationRevision,
-		DestinationName: delivery.DestinationName, DestinationProvider: delivery.DestinationProvider, DestinationEnvironment: delivery.DestinationEnvironment,
+		DestinationName: delivery.DestinationName, DestinationProvider: delivery.DestinationProvider, DestinationEnvironment: delivery.DestinationEnvironment, DestinationRegion: pro_interfaces.NotificationProviderRegion(delivery.DestinationRegion),
 		IncidentKey: delivery.IncidentKey, IdempotencyKey: delivery.IdempotencyKey, Status: delivery.Status, Attempts: delivery.Attempts,
 		NextAttempt: delivery.NextAttempt, LastReason: delivery.LastReason, CreatedAt: delivery.Created, UpdatedAt: delivery.Updated, DeliveredAt: delivery.DeliveredAt,
 		SourceKind: pro_interfaces.NotificationSourceKind(delivery.SourceKind), SourceID: delivery.SourceID,

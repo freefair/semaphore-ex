@@ -50,6 +50,12 @@ func (a *dispatchAdapter) Dispatch(ctx context.Context, request pro_interfaces.N
 	return result
 }
 
+func TestNewNotificationDispatcherRegistersOnlyPagerDutyAdapter(t *testing.T) {
+	dispatcher := NewNotificationDispatcher(nil).(*notificationDeliveryDispatcher)
+	require.Len(t, dispatcher.adapters, 1)
+	assert.NotNil(t, dispatcher.adapters[pagerDutyProviderName])
+}
+
 func TestNotificationDispatcherRetriesWithoutChangingEventIdentity(t *testing.T) {
 	store, service, cipher, delivery := dispatchDeliveryFixture(t)
 	adapter := &dispatchAdapter{provider: "pagerduty", results: []pro_interfaces.NotificationDispatchResult{
@@ -74,13 +80,13 @@ func TestNotificationDispatcherRetriesWithoutChangingEventIdentity(t *testing.T)
 	assert.Equal(t, db.NotificationDeliverySucceeded, succeeded.Status)
 	assert.Equal(t, 2, succeeded.Attempts)
 	assert.Equal(t, delivery.EventID, succeeded.EventID)
-	assert.Equal(t, "test-secret", cipher.value)
+	assert.Equal(t, testPagerDutyRoutingKey, cipher.value)
 	require.Len(t, adapter.requests, 2)
 	assert.Equal(t, delivery.EventID, adapter.requests[0].Event.EventID)
 	assert.Equal(t, delivery.IncidentKey, adapter.requests[0].IncidentKey)
 	assert.Equal(t, delivery.IdempotencyKey, adapter.requests[0].IdempotencyKey)
-	assert.Equal(t, "test-secret", adapter.credentials[0])
-	assert.NotContains(t, mustJSON(t, succeeded), "test-secret")
+	assert.Equal(t, testPagerDutyRoutingKey, adapter.credentials[0])
+	assert.NotContains(t, mustJSON(t, succeeded), testPagerDutyRoutingKey)
 	_ = service
 }
 
@@ -91,7 +97,7 @@ func TestNotificationDispatcherDispatchesAfterBlankCredentialEdit(t *testing.T) 
 	service := NewGovernanceService(store, cipher).(*governanceService)
 	service.now = func() time.Time { return time.Date(2026, time.August, 31, 16, 0, 0, 0, time.UTC) }
 
-	credential := "test-secret"
+	credential := testPagerDutyRoutingKey
 	created, err := service.CreateDestination(context.Background(), nil, destinationInput(&credential))
 	require.NoError(t, err)
 	updatedInput := destinationInput(nil)
@@ -141,14 +147,105 @@ func TestNotificationDispatcherPauseDefersWithoutBurningAttemptsAndResumeRuns(t 
 	assert.Equal(t, 0, deferred.Attempts)
 	assert.Equal(t, db.NotificationDeliveryReasonDestinationPaused, deferred.LastReason)
 	assert.True(t, deferred.NextAttempt.After(now))
+	assert.Equal(t, 1, deferred.DestinationConfigurationRevision)
 
-	_, err = service.SetDestinationPaused(context.Background(), nil, paused.ID, paused.Revision, false)
+	resumed, err := service.SetDestinationPaused(context.Background(), nil, paused.ID, paused.Revision, false)
 	require.NoError(t, err)
+	assert.Equal(t, 3, resumed.Revision)
+	persistedDestination, err := store.GetNotificationDestination(nil, resumed.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, persistedDestination.ConfigurationRevision, "pause changes administrative state without rebinding the configuration generation")
 	require.NoError(t, dispatcher.DispatchOnce(context.Background()))
 	delivered, err := store.GetNotificationDelivery(nil, delivery.ID)
 	require.NoError(t, err)
 	assert.Equal(t, db.NotificationDeliverySucceeded, delivered.Status)
 	assert.Equal(t, 1, delivered.Attempts)
+	assert.Equal(t, deferred.DestinationRevision, delivered.DestinationRevision)
+	assert.Equal(t, deferred.DestinationConfigurationRevision, delivered.DestinationConfigurationRevision)
+}
+
+func TestNotificationDispatcherRejectsPausedDeliveryAfterConfigurationChange(t *testing.T) {
+	rotatedCredential := "FEDCBA9876543210FEDCBA9876543210"
+	for _, change := range []struct {
+		name  string
+		apply func(*pro_interfaces.NotificationDestinationInput)
+	}{
+		{name: "credential", apply: func(input *pro_interfaces.NotificationDestinationInput) { input.Credential = &rotatedCredential }},
+		{name: "environment", apply: func(input *pro_interfaces.NotificationDestinationInput) { input.Environment = "staging" }},
+		{name: "region", apply: func(input *pro_interfaces.NotificationDestinationInput) {
+			input.Region = pro_interfaces.NotificationProviderRegionEU
+		}},
+		{name: "provider", apply: func(input *pro_interfaces.NotificationDestinationInput) {
+			input.Provider, input.Region, input.Credential = "generic", "", &rotatedCredential
+		}},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			store, service, cipher, delivery := dispatchDeliveryFixture(t)
+			destination, err := service.GetDestination(context.Background(), nil, delivery.DestinationID)
+			require.NoError(t, err)
+			paused, err := service.SetDestinationPaused(context.Background(), nil, destination.ID, destination.Revision, true)
+			require.NoError(t, err)
+
+			now := notificationDispatchTestNow(delivery)
+			adapter := &dispatchAdapter{provider: "pagerduty"}
+			dispatcher := newNotificationDeliveryDispatcher(store, cipher, func() time.Time { return now }, func() float64 { return .5 }, adapter)
+			require.NoError(t, dispatcher.DispatchOnce(context.Background()))
+			deferred, err := store.GetNotificationDelivery(nil, delivery.ID)
+			require.NoError(t, err)
+			require.Equal(t, db.NotificationDeliveryReasonDestinationPaused, deferred.LastReason)
+
+			input := destinationInput(nil)
+			change.apply(&input)
+			updated, err := service.UpdateDestination(context.Background(), nil, paused.ID, paused.Revision, input)
+			require.NoError(t, err)
+			resumed, err := service.SetDestinationPaused(context.Background(), nil, updated.ID, updated.Revision, false)
+			require.NoError(t, err)
+			assert.Equal(t, 4, resumed.Revision)
+
+			require.NoError(t, dispatcher.DispatchOnce(context.Background()))
+			failed, err := store.GetNotificationDelivery(nil, delivery.ID)
+			require.NoError(t, err)
+			assert.Equal(t, db.NotificationDeliveryFailed, failed.Status)
+			assert.Equal(t, db.NotificationDeliveryReasonDestinationChanged, failed.LastReason)
+			assert.Equal(t, deferred.DestinationConfigurationRevision, failed.DestinationConfigurationRevision)
+			assert.Empty(t, adapter.requests, "configuration must be bound before a credential is decrypted or an adapter is invoked")
+		})
+	}
+}
+
+func TestNotificationDispatcherManualRetryExplicitlyRebindsCorrectedConfiguration(t *testing.T) {
+	store, service, cipher, delivery := dispatchDeliveryFixture(t)
+	destination, err := service.GetDestination(context.Background(), nil, delivery.DestinationID)
+	require.NoError(t, err)
+	rotatedCredential := "FEDCBA9876543210FEDCBA9876543210"
+	updated, err := service.UpdateDestination(context.Background(), nil, destination.ID, destination.Revision, destinationInput(&rotatedCredential))
+	require.NoError(t, err)
+
+	now := notificationDispatchTestNow(delivery)
+	adapter := &dispatchAdapter{provider: "pagerduty"}
+	dispatcher := newNotificationDeliveryDispatcher(store, cipher, func() time.Time { return now }, func() float64 { return .5 }, adapter)
+	require.NoError(t, dispatcher.DispatchOnce(context.Background()))
+	failed, err := store.GetNotificationDelivery(nil, delivery.ID)
+	require.NoError(t, err)
+	require.Equal(t, db.NotificationDeliveryReasonDestinationChanged, failed.LastReason)
+	assert.Empty(t, adapter.requests)
+
+	retried, err := service.RetryDelivery(context.Background(), nil, delivery.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.NotificationDeliveryReasonManualRetry, retried.LastReason)
+	persisted, err := store.GetNotificationDelivery(nil, delivery.ID)
+	require.NoError(t, err)
+	current, err := store.GetNotificationDestination(nil, updated.ID)
+	require.NoError(t, err)
+	assert.Equal(t, current.ConfigurationRevision, persisted.DestinationConfigurationRevision)
+	assert.Equal(t, failed.DestinationRevision, persisted.DestinationRevision, "manual retry preserves the public historical destination revision")
+
+	require.NoError(t, dispatcher.DispatchOnce(context.Background()))
+	delivered, err := store.GetNotificationDelivery(nil, delivery.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.NotificationDeliverySucceeded, delivered.Status)
+	require.Len(t, adapter.requests, 1)
+	assert.Equal(t, rotatedCredential, adapter.credentials[0])
 }
 
 func TestNotificationDispatcherBoundsRateLimitAndConfigurationOutcomes(t *testing.T) {
@@ -257,7 +354,7 @@ func dispatchDeliveryFixture(t *testing.T) (*storeSql.SqlDb, *governanceService,
 	cipher := &testCipher{enabled: true}
 	service := NewGovernanceService(store, cipher).(*governanceService)
 	service.now = func() time.Time { return time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC) }
-	credential := "test-secret"
+	credential := testPagerDutyRoutingKey
 	destination, err := service.CreateDestination(context.Background(), nil, destinationInput(&credential))
 	require.NoError(t, err)
 	delivery, err := service.EnqueueTestDelivery(context.Background(), nil, destination.ID)
