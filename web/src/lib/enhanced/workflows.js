@@ -1,8 +1,12 @@
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
+import { USER_PERMISSIONS } from '@/lib/constants';
 
 const enhancedMethods = {
+  allowActions() {
+    return this.can(USER_PERMISSIONS.startWorkflows);
+  },
   hasRunInputs(workflow) {
     return (workflow.parameters || []).length > 0
         || (workflow.nodes || []).some((node) => {

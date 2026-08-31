@@ -125,6 +125,40 @@
                 dense
                 @input="markDirty"
               />
+              <v-select
+                v-model="item.access_policy.view_role_ids"
+                :items="workflowRoleOptions"
+                item-value="value"
+                item-text="text"
+                :label="$t('workflowViewRoles')"
+                :hint="$t('workflowRoleRestrictionHint')"
+                persistent-hint
+                multiple
+                chips
+                small-chips
+                deletable-chips
+                :disabled="!canAdminister"
+                outlined
+                dense
+                @change="markDirty"
+              />
+              <v-select
+                v-model="item.access_policy.start_role_ids"
+                :items="workflowRoleOptions"
+                item-value="value"
+                item-text="text"
+                :label="$t('workflowStartRoles')"
+                :hint="$t('workflowRoleRestrictionHint')"
+                persistent-hint
+                multiple
+                chips
+                small-chips
+                deletable-chips
+                :disabled="!canAdminister"
+                outlined
+                dense
+                @change="markDirty"
+              />
               <WorkflowParameterEditor
                 v-model="item.parameters"
                 :project-id="projectId"
@@ -145,7 +179,7 @@
             </template>
             <div
               class="WorkflowEditor__paletteItem WorkflowEditor__paletteItem--task"
-              draggable="true"
+              :draggable="canManage"
               :title="sideCollapsed ? $t('workflowPaletteTaskNode') : null"
               @dragstart="onDragStart($event, 'task')"
             >
@@ -154,7 +188,7 @@
             </div>
             <div
               class="WorkflowEditor__paletteItem WorkflowEditor__paletteItem--approval"
-              draggable="true"
+              :draggable="canManage"
               :title="sideCollapsed ? $t('workflowPaletteApprovalNode') : null"
               @dragstart="onDragStart($event, 'approval')"
             >
@@ -163,16 +197,17 @@
             </div>
             <div
               class="WorkflowEditor__paletteItem WorkflowEditor__paletteItem--delay"
-              draggable="true"
+              :draggable="canManage"
+              :title="sideCollapsed ? $t('workflowPaletteDelayNode') : null"
               @dragstart="onDragStart($event, 'delay')"
             >
-              <v-icon small left>mdi-timer-outline</v-icon>
-              {{ $t('workflowPaletteDelayNode') }}
+              <v-icon small :left="!sideCollapsed">mdi-timer-outline</v-icon>
+              <template v-if="!sideCollapsed">{{ $t('workflowPaletteDelayNode') }}</template>
             </div>
 
             <div
               class="WorkflowEditor__paletteItem WorkflowEditor__paletteItem--note"
-              draggable="true"
+              :draggable="canManage"
               :title="sideCollapsed ? $t('workflowPaletteNoteNode') : null"
               @dragstart="onDragStart($event, 'note')"
             >
@@ -267,7 +302,7 @@
           :nodes="item.nodes"
           :edges="item.edges"
           :templates="templates"
-          editable
+          :editable="canManage"
           @change="onGraphChange"
           @node-selected="onNodeSelected"
           @connection-selected="onConnectionSelected"
@@ -583,17 +618,46 @@
                 @change="applyNodeEdit"
               />
               <v-select
-                v-model="editingNode.approval_permission"
-                :items="approvalPermissionOptions"
+                v-model="editingNode.approval_role_policy.role_ids"
+                :items="workflowRoleOptions"
                 item-value="value"
                 item-text="text"
-                :label="$t('workflowApprovalPermission')"
-                :disabled="!canManage"
+                :label="$t('workflowApprovalRoles')"
+                :disabled="!canAdminister"
+                multiple
+                chips
+                small-chips
+                deletable-chips
                 outlined
                 dense
                 hide-details="auto"
                 class="mb-2"
-                @change="applyNodeEdit"
+                @change="onApprovalPolicyChanged"
+              />
+              <v-select
+                v-model="editingNode.approval_role_policy.mode"
+                :items="approvalRoleModeOptions"
+                item-value="value"
+                item-text="text"
+                :label="$t('workflowApprovalRoleMode')"
+                :disabled="!canAdminister"
+                outlined
+                dense
+                hide-details="auto"
+                class="mb-2"
+                @change="onApprovalPolicyChanged"
+              />
+              <v-text-field
+                v-model.number="editingNode.approval_role_policy.minimum_distinct_approvers"
+                type="number"
+                min="1"
+                :label="$t('workflowApprovalMinimumApprovers')"
+                :disabled="!canAdminister"
+                outlined
+                dense
+                hide-details="auto"
+                class="mb-2"
+                @change="onApprovalPolicyChanged"
               />
               <v-select
                 v-model="editingNode.approval_timeout_outcome"
@@ -609,13 +673,13 @@
                 @change="applyNodeEdit"
               />
               <v-switch
-                v-model="editingNode.approval_separation_of_duties"
+                v-model="editingNode.approval_role_policy.initiator_separation"
                 :label="$t('workflowApprovalSeparationOfDuties')"
-                :disabled="!canManage"
+                :disabled="!canAdminister"
                 dense
                 hide-details
                 class="mt-0"
-                @change="applyNodeEdit"
+                @change="onApprovalPolicyChanged"
               />
             </template>
             <template v-if="editingNode.kind === 'delay'">
@@ -719,6 +783,7 @@ export default {
       item: null,
       baseline: null,
       templates: null,
+      projectRoles: [],
       saving: false,
       validating: false,
       dirty: false,
@@ -746,7 +811,9 @@ export default {
       return this.workflowId == null;
     },
     canManage() {
-      return this.can(USER_PERMISSIONS.manageProjectResources);
+      if (this.isNew) return this.can(USER_PERMISSIONS.editWorkflows);
+      return this.item?.effective_access?.edit
+        ?? this.can(USER_PERMISSIONS.editWorkflows);
     },
     editingNodeTemplate() {
       if (!this.editingNode || !this.editingNode.template_id) return null;
@@ -796,7 +863,10 @@ export default {
     },
   },
   async created() {
-    this.templates = await this.loadProjectResources('templates');
+    [this.templates, this.projectRoles] = await Promise.all([
+      this.loadProjectResources('templates'),
+      this.loadEndpoint(`/api/project/${this.projectId}/roles/all`),
+    ]);
     await this.loadData();
   },
   methods: {
@@ -811,6 +881,11 @@ export default {
         definition_version: WORKFLOW_DEFINITION_VERSION,
         revision: 0,
         max_parallel_tasks: 4,
+        access_policy: {
+          revision: 0,
+          view_role_ids: [],
+          start_role_ids: [],
+        },
         parameters: [],
         nodes: [],
         edges: [],
@@ -853,10 +928,18 @@ export default {
 
     // ---- palette / canvas glue ------------------------------------------------
     onDragStart(ev, kind) {
+      if (!this.canManage) return;
       ev.dataTransfer.setData('node-kind', kind);
     },
     onGraphChange({ nodes, edges }) {
-      this.item.nodes = nodes;
+      this.item.nodes = nodes.map((node) => {
+        if (node.kind !== 'approval' || node.approval_role_policy !== undefined) return node;
+        return {
+          ...node,
+          approval_permission: USER_PERMISSIONS.runProjectTasks,
+          approval_role_policy: this.defaultApprovalRolePolicy(),
+        };
+      });
       this.item.edges = edges;
       this.markDirty();
       // Keep the open property panel in sync with the latest model snapshot.
@@ -885,6 +968,9 @@ export default {
       if (clone && !Array.isArray(clone.artifact_outputs)) clone.artifact_outputs = [];
       if (clone && !Array.isArray(clone.artifact_inputs)) clone.artifact_inputs = [];
       if (clone && !clone.override_policy) clone.override_policy = {};
+      if (clone && clone.kind === 'approval' && !clone.approval_role_policy) {
+        clone.approval_role_policy = this.defaultApprovalRolePolicy();
+      }
       this.editingNode = clone;
     },
     onConnectionSelected(edge) {
@@ -908,12 +994,14 @@ export default {
         this.editingNode.approval_permission = USER_PERMISSIONS.runProjectTasks;
         this.editingNode.approval_timeout_outcome = 'reject';
         this.editingNode.approval_separation_of_duties = false;
+        this.editingNode.approval_role_policy = this.defaultApprovalRolePolicy();
       } else {
         this.editingNode.approval_timeout = null;
         this.editingNode.approval_message = null;
         this.editingNode.approval_permission = null;
         this.editingNode.approval_timeout_outcome = null;
         this.editingNode.approval_separation_of_duties = false;
+        this.editingNode.approval_role_policy = null;
       }
       if (kind !== 'delay') {
         this.editingNode.delay_seconds = null;

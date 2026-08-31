@@ -35,3 +35,13 @@ describe('workflow approvals inbox', () => {
     expect(context.approvalInboxLoading).to.equal(false);
   });
 });
+
+describe('workflow action column permission', () => {
+  it('keeps the action column for a start-only workflow role', () => {
+    const context = {
+      can: (permission) => permission === 128,
+    };
+
+    expect(Workflows.methods.allowActions.call(context)).to.equal(true);
+  });
+});

@@ -24,6 +24,11 @@ export const USER_PERMISSIONS = {
   manageProjectResources: 4,
   manageProjectUsers: 8,
   viewProjectResources: 16,
+  viewWorkflows: 32,
+  editWorkflows: 64,
+  startWorkflows: 128,
+  stopWorkflows: 256,
+  administerWorkflows: 512,
 };
 
 export const GLOBAL_PERMISSIONS = {
@@ -36,19 +41,19 @@ export const GLOBAL_PERMISSIONS = {
 export const USER_ROLES = [{
   slug: 'owner',
   name: 'Owner',
-  permissions: 31,
+  permissions: 1023,
 }, {
   slug: 'manager',
   name: 'Manager',
-  permissions: 21,
+  permissions: 1013,
 }, {
   slug: 'task_runner',
   name: 'Task Runner',
-  permissions: 17,
+  permissions: 433,
 }, {
   slug: 'guest',
   name: 'Guest',
-  permissions: 16,
+  permissions: 48,
 }];
 
 export const MATCHER_TYPE_TITLES = {

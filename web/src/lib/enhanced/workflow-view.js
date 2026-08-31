@@ -1,6 +1,9 @@
 import { findCapabilityDecision } from '@/lib/capabilities';
 
 export const enhancedComputed = {
+  canAdminister() {
+    return Boolean(this.item?.effective_access?.administer);
+  },
   triggerDecision() {
     return findCapabilityDecision(this.systemInfo, 'workflow_triggers');
   },

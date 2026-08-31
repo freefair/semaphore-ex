@@ -22,6 +22,17 @@ function graphHasCycle(nodes, adjacency) {
   return [...nodes].some((node) => visit(node));
 }
 
+function validRoleReference(value) {
+  return /^builtin:(owner|manager|task_runner|guest)$/.test(value)
+    || /^role:[a-z0-9][a-z0-9_-]{0,63}$/.test(value);
+}
+
+function validDistinctRoleReferences(values) {
+  return Array.isArray(values)
+    && values.every(validRoleReference)
+    && new Set(values).size === values.length;
+}
+
 export function validateWorkflowDefinition(workflow, templateIds = []) {
   const issues = [];
   const nodes = Array.isArray(workflow?.nodes) ? workflow.nodes : [];
@@ -55,6 +66,15 @@ export function validateWorkflowDefinition(workflow, templateIds = []) {
   }
   if (edges.length > WORKFLOW_EDGE_LIMIT) {
     issues.push(issue('WORKFLOW_EDGE_LIMIT_EXCEEDED', 'workflowErrorEdgeLimit', 'edges', null, null, { count: WORKFLOW_EDGE_LIMIT }));
+  }
+  const accessPolicy = workflow?.access_policy || {};
+  if (!validDistinctRoleReferences(accessPolicy.view_role_ids || [])
+      || !validDistinctRoleReferences(accessPolicy.start_role_ids || [])) {
+    issues.push(issue(
+      'WORKFLOW_ACCESS_POLICY_INVALID',
+      'workflowErrorAccessPolicyInvalid',
+      'access_policy',
+    ));
   }
 
   const byId = new Map();
@@ -95,6 +115,26 @@ export function validateWorkflowDefinition(workflow, templateIds = []) {
     }
     if (kind === 'approval' && node.approval_timeout != null && node.approval_timeout <= 0) {
       issues.push(issue('WORKFLOW_APPROVAL_TIMEOUT_INVALID', 'workflowErrorApprovalTimeoutPositive', `${path}.approval_timeout`, node.id));
+    }
+    if (kind === 'approval') {
+      const policy = node.approval_role_policy || {};
+      const roleIds = policy.role_ids || [];
+      if (roleIds.length > 0) {
+        const validMode = ['any_of', 'all_of'].includes(policy.mode);
+        const validMinimum = Number.isInteger(policy.minimum_distinct_approvers)
+          && policy.minimum_distinct_approvers >= 1;
+        const validAllOfMinimum = policy.mode !== 'all_of'
+          || policy.minimum_distinct_approvers >= roleIds.length;
+        if (!validDistinctRoleReferences(roleIds)
+            || !validMode || !validMinimum || !validAllOfMinimum) {
+          issues.push(issue(
+            'WORKFLOW_APPROVAL_ROLE_POLICY_INVALID',
+            'workflowErrorApprovalRolePolicyInvalid',
+            `${path}.approval_role_policy`,
+            node.id,
+          ));
+        }
+      }
     }
   });
 

@@ -3,6 +3,9 @@ import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
 
 export const enhancedComputed = {
+  canAdminister() {
+    return Boolean(this.details?.effective_access?.administer);
+  },
   reconciliationQuarantined() {
     return this.details?.run?.reconciliation_state === 'quarantined';
   },

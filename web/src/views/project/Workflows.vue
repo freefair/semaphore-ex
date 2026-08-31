@@ -34,7 +34,14 @@
               <v-list-item-title>
                 {{ approval.workflow_name || $t('workflowRun') }} #{{ approval.workflow_run_id }}
               </v-list-item-title>
-              <v-list-item-subtitle>{{ approval.prompt }}</v-list-item-subtitle>
+              <v-list-item-subtitle>
+                {{ approval.prompt }}
+                <span class="ml-2">
+                  {{ approval.contribution_count || 0 }}/
+                  {{ approval.minimum_distinct_approvers || 1 }}
+                  · {{ approval.mode || 'any_of' }}
+                </span>
+              </v-list-item-subtitle>
             </v-list-item-content>
             <v-list-item-action v-if="approval.deadline">
               <span class="text-caption">{{ approval.deadline | formatDate }}</span>
@@ -53,7 +60,6 @@
       <v-spacer></v-spacer>
 
       <v-btn
-        v-if="can(USER_PERMISSIONS.runProjectTasks)"
         text
         class="mr-1"
         @click="openApprovalInbox()"
@@ -66,7 +72,7 @@
         color="primary"
         class="mr-1"
         @click="openEditor('new')"
-        v-if="can(USER_PERMISSIONS.manageProjectResources)"
+        v-if="can(USER_PERMISSIONS.editWorkflows)"
       >
         {{ $t('newWorkflow') }}
       </v-btn>
@@ -123,7 +129,7 @@
       <template v-slot:item.actions="{ item }">
         <v-btn-toggle dense :value-comparator="() => false">
           <v-btn
-            v-if="can(USER_PERMISSIONS.runProjectTasks)"
+            v-if="item.effective_access && item.effective_access.start"
             @click="runWorkflow(item)"
             :title="$t('workflowRunNow')"
           >
@@ -197,6 +203,7 @@ import TableSettingsSheet from '@/components/TableSettingsSheet.vue';
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
+
 import WorkflowRunDialog from '@/components/WorkflowRunDialog.vue';
 
 export default {
@@ -242,6 +249,10 @@ export default {
 
   methods: {
     ...enhancedMethods,
+    // Workflow actions are independently policy-gated per row. Requiring the
+    // generic resource-management bit here hides a permitted start action for
+    // narrow workflow roles before effective_access can decide visibility.
+
     statusColor(status) {
       switch (status) {
         case 'success':

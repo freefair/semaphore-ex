@@ -1,23 +1,39 @@
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
-import { USER_PERMISSIONS } from '@/lib/constants';
+import { USER_PERMISSIONS, USER_ROLES } from '@/lib/constants';
 import { validateWorkflowDefinition, WORKFLOW_DEFINITION_VERSION } from '@/lib/workflowValidation';
 
 export const enhancedComputed = {
+  canAdminister() {
+    if (this.isNew) return this.can(USER_PERMISSIONS.administerWorkflows);
+    return this.item?.effective_access?.administer
+        ?? this.can(USER_PERMISSIONS.administerWorkflows);
+  },
+  workflowRoleOptions() {
+    const builtIns = USER_ROLES.map((role) => ({
+      value: `builtin:${role.slug}`,
+      text: role.name,
+      permissions: role.permissions,
+    }));
+    const custom = this.projectRoles.map((role) => ({
+      value: `role:${role.id}`,
+      text: role.name,
+      permissions: role.permissions || 0,
+    }));
+    return [...builtIns, ...custom];
+  },
+  approvalRoleModeOptions() {
+    return [
+      { value: 'any_of', text: this.$t('workflowApprovalRoleModeAnyOf') },
+      { value: 'all_of', text: this.$t('workflowApprovalRoleModeAllOf') },
+    ];
+  },
   joinOptions() {
     return [
       { value: 'all-successful', text: this.$t('workflowJoinAllSuccessful') },
       { value: 'all-complete', text: this.$t('workflowJoinAllComplete') },
       { value: 'any-successful', text: this.$t('workflowJoinAnySuccessful') },
-    ];
-  },
-  approvalPermissionOptions() {
-    return [
-      { value: USER_PERMISSIONS.runProjectTasks, text: this.$t('workflowApprovalPermissionRunTasks') },
-      { value: USER_PERMISSIONS.updateProject, text: this.$t('workflowApprovalPermissionUpdateProject') },
-      { value: USER_PERMISSIONS.manageProjectResources, text: this.$t('workflowApprovalPermissionManageResources') },
-      { value: USER_PERMISSIONS.manageProjectUsers, text: this.$t('workflowApprovalPermissionManageUsers') },
     ];
   },
   approvalTimeoutOutcomeOptions() {
@@ -78,6 +94,13 @@ export const enhancedMethods = {
       definition_version: value.definition_version || WORKFLOW_DEFINITION_VERSION,
       revision: value.revision || 0,
       max_parallel_tasks: value.max_parallel_tasks ?? 4,
+      access_policy: {
+        revision: value.access_policy?.revision || 0,
+        view_role_ids: Array.isArray(value.access_policy?.view_role_ids)
+          ? value.access_policy.view_role_ids : [],
+        start_role_ids: Array.isArray(value.access_policy?.start_role_ids)
+          ? value.access_policy.start_role_ids : [],
+      },
       parameters: Array.isArray(value.parameters) ? value.parameters : [],
       nodes: Array.isArray(value.nodes) ? value.nodes : [],
       edges: Array.isArray(value.edges) ? value.edges : [],
@@ -103,6 +126,20 @@ export const enhancedMethods = {
           ? (node.approval_timeout_outcome || 'reject')
           : node.approval_timeout_outcome,
         approval_separation_of_duties: node.approval_separation_of_duties || false,
+        approval_role_policy: node.kind === 'approval'
+          ? {
+            revision: node.approval_role_policy?.revision || 0,
+            mode: node.approval_role_policy?.mode || 'any_of',
+            role_ids: Array.isArray(node.approval_role_policy?.role_ids)
+              ? node.approval_role_policy.role_ids : [],
+            minimum_distinct_approvers:
+                node.approval_role_policy?.minimum_distinct_approvers || 1,
+            initiator_separation:
+                node.approval_role_policy?.initiator_separation
+                  ?? node.approval_separation_of_duties
+                  ?? false,
+          }
+          : node.approval_role_policy,
       };
     });
     item.edges = item.edges.map((edge) => ({
@@ -123,6 +160,34 @@ export const enhancedMethods = {
     this.validationIssues = [];
     this.validationState = 'idle';
     this.conflict = null;
+  },
+  defaultApprovalRolePolicy() {
+    return {
+      revision: 0,
+      mode: 'any_of',
+      role_ids: this.workflowRoleOptions
+        .filter((role) => (role.permissions & USER_PERMISSIONS.runProjectTasks)
+            === USER_PERMISSIONS.runProjectTasks)
+        .map((role) => role.value),
+      minimum_distinct_approvers: 1,
+      initiator_separation: false,
+    };
+  },
+  onApprovalPolicyChanged() {
+    const policy = this.editingNode.approval_role_policy;
+    if (policy.mode === 'all_of') {
+      policy.minimum_distinct_approvers = Math.max(
+        policy.minimum_distinct_approvers || 1,
+        policy.role_ids.length,
+      );
+    } else {
+      policy.minimum_distinct_approvers = Math.max(
+        policy.minimum_distinct_approvers || 1,
+        1,
+      );
+    }
+    this.editingNode.approval_separation_of_duties = policy.initiator_separation;
+    this.applyNodeEdit();
   },
   addArtifactOutput() {
     this.editingNode.artifact_outputs.push({
@@ -192,6 +257,7 @@ export const enhancedMethods = {
   },
   payload() {
     const payload = this.clone({ ...this.item, project_id: this.projectId });
+    delete payload.effective_access;
     if (!payload.start_version) delete payload.start_version;
     return payload;
   },

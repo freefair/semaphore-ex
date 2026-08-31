@@ -105,4 +105,22 @@ describe('workflow definition validation', () => {
 
     expect(issues.map((entry) => entry.code)).to.include('WORKFLOW_PARALLELISM_INVALID');
   });
+
+  it('validates stable workflow and approval role policies', () => {
+    const workflow = validWorkflow();
+    workflow.access_policy = {
+      view_role_ids: ['manager'],
+      start_role_ids: [],
+    };
+    workflow.nodes[1].approval_role_policy = {
+      mode: 'all_of',
+      role_ids: ['builtin:owner', 'role:release_manager'],
+      minimum_distinct_approvers: 1,
+    };
+
+    const codes = validateWorkflowDefinition(workflow, [10]).map((entry) => entry.code);
+
+    expect(codes).to.include('WORKFLOW_ACCESS_POLICY_INVALID');
+    expect(codes).to.include('WORKFLOW_APPROVAL_ROLE_POLICY_INVALID');
+  });
 });
