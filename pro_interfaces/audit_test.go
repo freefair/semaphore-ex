@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/test/securityfixtures"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -367,6 +368,76 @@ func TestAuditEventRejectsUnboundedOrInconsistentWorkflowProvenance(t *testing.T
 		tooMany.RoleProvenance[index] = base.RoleProvenance[0]
 	}
 	assert.Error(t, tooMany.Validate())
+}
+
+func TestAuditEventBindsCrossProjectTemplateProvenanceToActionScopeAndTarget(t *testing.T) {
+	ownerProjectID := 11
+	consumerProjectID := 12
+	grantEvent := func(action AuditAction, projectID int) AuditEvent {
+		return AuditEvent{
+			CorrelationID: "0123456789abcdef0123456789abcdef",
+			ProjectID:     &projectID,
+			Action:        action,
+			TargetType:    AuditTargetCrossProjectTemplateGrant,
+			TargetID:      "grant:41",
+			Outcome:       AuditOutcomeAllowed,
+			Source:        AuditSourceAPI,
+			Reason:        AuditReasonCrossProjectTemplateGrantActive,
+			CrossProjectTemplateProvenance: &AuditCrossProjectTemplateProvenance{
+				OwnerProjectID: ownerProjectID, ConsumerProjectID: consumerProjectID, TemplateID: 21,
+				GrantID: 41, GrantRevision: 3, Operation: int(db.CrossProjectTemplateGrantReference),
+				MinTemplateVersion: 1, MaxTemplateVersion: 2,
+			},
+		}
+	}
+
+	for _, test := range []struct {
+		name    string
+		action  AuditAction
+		project int
+	}{
+		{"create", AuditActionCrossProjectTemplateGrantCreate, ownerProjectID},
+		{"update", AuditActionCrossProjectTemplateGrantUpdate, ownerProjectID},
+		{"delete", AuditActionCrossProjectTemplateGrantDelete, ownerProjectID},
+		{"accept", AuditActionCrossProjectTemplateGrantAccept, consumerProjectID},
+		{"revoke owner", AuditActionCrossProjectTemplateGrantRevoke, ownerProjectID},
+		{"revoke consumer", AuditActionCrossProjectTemplateGrantRevoke, consumerProjectID},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.NoError(t, grantEvent(test.action, test.project).Validate())
+		})
+	}
+
+	reference := grantEvent(AuditActionCrossProjectTemplateReferenceResolve, consumerProjectID)
+	reference.CrossProjectTemplateProvenance.TemplateVersionID = 31
+	reference.CrossProjectTemplateProvenance.TemplateVersionNumber = 2
+	reference.CrossProjectTemplateProvenance.TemplateVersionFingerprint = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	require.NoError(t, reference.Validate())
+
+	publish := AuditEvent{
+		CorrelationID: "0123456789abcdef0123456789abcdef",
+		ProjectID:     &ownerProjectID,
+		Action:        AuditActionCrossProjectTemplateVersionPublish,
+		TargetType:    AuditTargetCrossProjectTemplateVersion,
+		TargetID:      "template-version:31",
+		Outcome:       AuditOutcomeAllowed,
+		Source:        AuditSourceAPI,
+		Reason:        AuditReasonCrossProjectTemplateGrantActive,
+		CrossProjectTemplateProvenance: &AuditCrossProjectTemplateProvenance{
+			OwnerProjectID: ownerProjectID, TemplateID: 21, TemplateVersionID: 31, TemplateVersionNumber: 2,
+			TemplateVersionFingerprint: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		},
+	}
+	require.NoError(t, publish.Validate())
+
+	wrongProject := grantEvent(AuditActionCrossProjectTemplateGrantAccept, ownerProjectID)
+	assert.Error(t, wrongProject.Validate())
+	wrongTarget := grantEvent(AuditActionCrossProjectTemplateGrantCreate, ownerProjectID)
+	wrongTarget.TargetID = "grant:42"
+	assert.Error(t, wrongTarget.Validate())
+	wrongOperation := reference
+	wrongOperation.CrossProjectTemplateProvenance.Operation = int(db.CrossProjectTemplateGrantRun)
+	assert.Error(t, wrongOperation.Validate())
 }
 
 func TestAuditWebhookV1OmitsWorkflowPolicyAndRoleProvenance(t *testing.T) {

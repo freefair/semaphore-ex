@@ -30,9 +30,15 @@ func TemplatesMiddleware(next http.Handler) http.Handler {
 }
 
 type TemplateController struct {
-	templateRepo           db.TemplateManager
-	roleRepo               db.RoleRepository
-	executorImageAvailable func(*db.User) bool
+	templateRepo              db.TemplateManager
+	roleRepo                  db.RoleRepository
+	executorImageAvailable    func(*db.User) bool
+	crossProjectDeletionGuard interface {
+		HasUnrevokedCrossProjectTemplateGrants(int, int) (bool, error)
+	}
+	crossProjectDeletionStore interface {
+		DeleteTemplateWithCrossProjectGrantGuard(int, int) error
+	}
 }
 
 func NewTemplateController(
@@ -131,23 +137,7 @@ func UpdateTemplate(w http.ResponseWriter, r *http.Request) {
 
 // RemoveTemplate deletes a template from the database
 func RemoveTemplate(w http.ResponseWriter, r *http.Request) {
-	tpl := helpers.GetFromContext(r, "template").(db.Template)
-
-	err := helpers.Store(r).DeleteTemplate(tpl.ProjectID, tpl.ID)
-	if err != nil {
-		helpers.WriteError(w, err)
-		return
-	}
-
-	helpers.EventLog(r, helpers.EventLogDelete, helpers.EventLogItem{
-		UserID:      helpers.UserFromContext(r).ID,
-		ProjectID:   tpl.ProjectID,
-		ObjectType:  db.EventTemplate,
-		ObjectID:    tpl.ID,
-		Description: fmt.Sprintf("Template ID %d deleted", tpl.ID),
-	})
-
-	w.WriteHeader(http.StatusNoContent)
+	removeTemplate(w, r, nil, nil)
 }
 
 func SetTemplateInventory(w http.ResponseWriter, r *http.Request) {

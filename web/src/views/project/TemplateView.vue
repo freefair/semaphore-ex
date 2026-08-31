@@ -30,6 +30,13 @@
       :task-type="item.type"
     ></EditTemplateDialog>
 
+    <CrossProjectTemplateGrantsDialog
+      v-if="isPro && canUpdate"
+      v-model="crossProjectGrantsDialog"
+      :project-id="projectId"
+      :template-id="itemId"
+    />
+
     <ObjectRefsDialog
       object-title="template"
       :object-refs="itemRefs"
@@ -128,6 +135,16 @@
       <v-btn icon @click="editDialog = true" v-if="canUpdate">
         <v-icon>mdi-pencil</v-icon>
       </v-btn>
+
+      <v-btn
+        v-if="isPro && canUpdate"
+        icon
+        :title="$t('crossProjectTemplates')"
+        data-testid="cross-project-template-grants"
+        @click="crossProjectGrantsDialog = true"
+      >
+        <v-icon>mdi-share-variant-outline</v-icon>
+      </v-btn>
     </v-toolbar>
 
     <SingleLineEditable
@@ -213,6 +230,7 @@ import {
 import ObjectRefsDialog from '@/components/ObjectRefsDialog.vue';
 import NewTaskDialog from '@/components/NewTaskDialog.vue';
 import EditTemplateDialog from '@/components/EditTemplateDialog.vue';
+import CrossProjectTemplateGrantsDialog from '@/components/CrossProjectTemplateGrantsDialog.vue';
 import PermissionsCheck from '@/components/PermissionsCheck';
 import SingleLineEditable from '@/components/SingleLineEditable.vue';
 import ProjectMixin from '@/components/ProjectMixin';
@@ -224,6 +242,7 @@ export default {
     ObjectRefsDialog,
     NewTaskDialog,
     EditTemplateDialog,
+    CrossProjectTemplateGrantsDialog,
   },
 
   props: {
@@ -251,6 +270,7 @@ export default {
       newTaskDialog: null,
       stopAllDialog: null,
       forceStopAllDialog: null,
+      crossProjectGrantsDialog: false,
       USER_PERMISSIONS,
 
       needLoadData: false,

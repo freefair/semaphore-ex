@@ -14,6 +14,13 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// ConfigureCrossProjectWorkflowTaskStore attaches the Enhanced transactional
+// dispatch fence. It is configured during service wiring before the pool is
+// used and is intentionally absent from the Community db.Store interface.
+func (p *TaskPool) ConfigureCrossProjectWorkflowTaskStore(store pro_interfaces.CrossProjectWorkflowTaskStore) {
+	p.crossProjectTaskStore = store
+}
+
 // SetExecutorImageCapabilityResolver injects the replaceable-edition entitlement decision.
 func (p *TaskPool) SetExecutorImageCapabilityResolver(resolver func(*db.User) bool) {
 	p.executorImageAvailable = resolver
@@ -77,7 +84,7 @@ func (p *TaskPool) AddWorkflowTask(
 	}
 	encoded := string(snapshot)
 	taskObj.WorkflowTemplateSnapshot = &encoded
-	return p.addTask(taskObj, &template, userID, username, projectID, needAlias)
+	return p.addTask(taskObj, &template, userID, username, projectID, needAlias, nil, nil)
 }
 
 func (p *TaskPool) AddWorkflowTaskFenced(
@@ -98,7 +105,57 @@ func (p *TaskPool) AddWorkflowTaskFenced(
 	}
 	encoded := string(snapshot)
 	taskObj.WorkflowTemplateSnapshot = &encoded
-	return p.addTask(taskObj, &template, userID, username, projectID, needAlias, &lease)
+	return p.addTask(taskObj, &template, userID, username, projectID, needAlias, &lease, nil)
+}
+
+// AddCrossProjectWorkflowTaskFenced persists a consumer-scoped workflow task
+// only through the Enhanced grant-aware SQL fence. It reconstructs the owner
+// template from the immutable version snapshot and never falls back to the
+// normal local-template path.
+func (p *TaskPool) AddCrossProjectWorkflowTaskFenced(
+	taskObj db.Task,
+	provenance db.CrossProjectTemplateProvenance,
+	userID *int,
+	username string,
+	consumerProjectID int,
+	lease *pro_interfaces.WorkflowReconciliationLease,
+) (db.Task, error) {
+	if p.crossProjectTaskStore == nil {
+		return db.Task{}, errors.New("cross-project workflow task fencing is unavailable")
+	}
+	if consumerProjectID <= 0 || taskObj.WorkflowRunID == nil || taskObj.WorkflowNodeID == nil ||
+		(taskObj.ProjectID != 0 && taskObj.ProjectID != consumerProjectID) || provenance.Validate() != nil ||
+		taskObj.TemplateID != provenance.Reference.TemplateID {
+		return db.Task{}, errors.New("cross-project workflow task provenance is invalid")
+	}
+	template, err := provenance.TemplateSnapshot.ReconstructTemplate(
+		provenance.Reference.OwnerProjectID, provenance.Reference.TemplateID,
+	)
+	if err != nil {
+		return db.Task{}, fmt.Errorf("reconstruct cross-project workflow template: %w", err)
+	}
+	encodedTemplate, err := json.Marshal(template)
+	if err != nil {
+		return db.Task{}, fmt.Errorf("encode cross-project workflow template snapshot: %w", err)
+	}
+	provenanceCopy := provenance
+	taskProvenance := db.WorkflowTemplateProvenance{CrossProject: &provenanceCopy}
+	encodedProvenance, err := taskProvenance.CanonicalJSON()
+	if err != nil {
+		return db.Task{}, fmt.Errorf("encode cross-project workflow task provenance: %w", err)
+	}
+	taskObj.TemplateID = template.ID
+	taskObj.WorkflowTemplateSnapshot = stringPointer(string(encodedTemplate))
+	taskObj.WorkflowTemplateProvenance = &taskProvenance
+	taskObj.WorkflowTemplateProvenanceJSON = stringPointer(encodedProvenance)
+	return p.addTask(
+		taskObj, &template, userID, username, consumerProjectID,
+		template.App.NeedTaskAlias(), lease, &provenanceCopy,
+	)
+}
+
+func stringPointer(value string) *string {
+	return &value
 }
 
 func (p *TaskPool) addTask(
@@ -108,7 +165,8 @@ func (p *TaskPool) addTask(
 	username string,
 	projectID int,
 	needAlias bool,
-	workflowLease ...*pro_interfaces.WorkflowReconciliationLease,
+	workflowLease *pro_interfaces.WorkflowReconciliationLease,
+	crossProjectProvenance *db.CrossProjectTemplateProvenance,
 ) (newTask db.Task, err error) {
 	taskObj.Created = tz.Now()
 	taskObj.Status = task_logger.TaskWaitingStatus
@@ -165,26 +223,38 @@ func (p *TaskPool) addTask(
 	}
 
 	if tpl.Type == db.TemplateBuild { // get next version for TaskRunner if it is a Build
-		var builds []db.TaskWithTpl
-		builds, err = p.store.GetTemplateTasks(tpl.ProjectID, tpl.ID, db.RetrieveQueryParams{Count: 1})
-		if err != nil {
-			return
-		}
-		if len(builds) == 0 || builds[0].Version == nil {
+		if crossProjectProvenance != nil {
+			// A consumer-owned external task must not derive its build identity
+			// from mutable owner task history. The exact published build-template
+			// dependency remains in immutable provenance instead.
 			taskObj.Version = tpl.StartVersion
 		} else {
-			taskObj.Version = new(db.GetNextBuildVersion(*tpl.StartVersion, *builds[0].Version))
+			var builds []db.TaskWithTpl
+			builds, err = p.store.GetTemplateTasks(tpl.ProjectID, tpl.ID, db.RetrieveQueryParams{Count: 1})
+			if err != nil {
+				return
+			}
+			if len(builds) == 0 || builds[0].Version == nil {
+				taskObj.Version = tpl.StartVersion
+			} else {
+				taskObj.Version = new(db.GetNextBuildVersion(*tpl.StartVersion, *builds[0].Version))
+			}
 		}
 	}
 
-	if len(workflowLease) > 0 && workflowLease[0] != nil {
+	if crossProjectProvenance != nil {
+		if workflowLease != nil && (workflowLease.ProjectID != taskObj.ProjectID || workflowLease.WorkflowRunID != *taskObj.WorkflowRunID) {
+			return db.Task{}, errors.New("cross-project workflow reconciliation ownership is invalid")
+		}
+		newTask, err = p.crossProjectTaskStore.CreateCrossProjectWorkflowTaskFenced(taskObj, *crossProjectProvenance, workflowLease)
+	} else if workflowLease != nil {
 		creator, ok := p.store.(interface {
 			CreateWorkflowTaskFenced(db.Task, int, pro_interfaces.WorkflowReconciliationLease) (db.Task, error)
 		})
 		if !ok {
 			return db.Task{}, errors.New("workflow task fencing is unavailable")
 		}
-		newTask, err = creator.CreateWorkflowTaskFenced(taskObj, util.Config.MaxTasksPerTemplate, *workflowLease[0])
+		newTask, err = creator.CreateWorkflowTaskFenced(taskObj, util.Config.MaxTasksPerTemplate, *workflowLease)
 	} else {
 		newTask, err = p.store.CreateTask(taskObj, util.Config.MaxTasksPerTemplate)
 	}

@@ -91,6 +91,10 @@ type Task struct {
 	// WorkflowTemplateSnapshot freezes the referenced template for workflow
 	// tasks so a later template edit cannot change queued or restarted work.
 	WorkflowTemplateSnapshot *string `db:"workflow_template_snapshot" json:"-"`
+	// WorkflowTemplateProvenance is the value-free immutable owner-version and
+	// grant provenance for a consumer-scoped cross-project workflow task.
+	WorkflowTemplateProvenanceJSON *string                     `db:"workflow_template_provenance" json:"-"`
+	WorkflowTemplateProvenance     *WorkflowTemplateProvenance `db:"-" json:"-"`
 	// Version is a build version.
 	// This field available only for Build tasks.
 	Version *string `db:"version" json:"version,omitempty"`

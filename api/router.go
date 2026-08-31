@@ -5,38 +5,34 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"net/http"
-	"os"
-	"path"
-	"strings"
-	"time"
-
-	"github.com/semaphoreui/semaphore/pro_interfaces"
-
+	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
+	"github.com/semaphoreui/semaphore/api/projects"
+	"github.com/semaphoreui/semaphore/api/runners"
+	"github.com/semaphoreui/semaphore/api/sockets"
+	"github.com/semaphoreui/semaphore/api/tasks"
+	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/jwt"
+	"github.com/semaphoreui/semaphore/pkg/metrics"
+	"github.com/semaphoreui/semaphore/pkg/tz"
 	proApi "github.com/semaphoreui/semaphore/pro/api"
 	proProjects "github.com/semaphoreui/semaphore/pro/api/projects"
 	proFeatures "github.com/semaphoreui/semaphore/pro/pkg/features"
 	proHA "github.com/semaphoreui/semaphore/pro/services/ha"
+	proServer "github.com/semaphoreui/semaphore/pro/services/server"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	auditServices "github.com/semaphoreui/semaphore/services/audit"
 	capabilityServices "github.com/semaphoreui/semaphore/services/capabilities"
 	identityServices "github.com/semaphoreui/semaphore/services/identity"
 	"github.com/semaphoreui/semaphore/services/server"
 	taskServices "github.com/semaphoreui/semaphore/services/tasks"
-
-	"github.com/semaphoreui/semaphore/api/tasks"
-	"github.com/semaphoreui/semaphore/pkg/jwt"
-	"github.com/semaphoreui/semaphore/pkg/metrics"
-	"github.com/semaphoreui/semaphore/pkg/tz"
-	log "github.com/sirupsen/logrus"
-
-	"github.com/semaphoreui/semaphore/api/runners"
-
-	"github.com/gorilla/mux"
-	"github.com/semaphoreui/semaphore/api/projects"
-	"github.com/semaphoreui/semaphore/api/sockets"
-	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/util"
+	log "github.com/sirupsen/logrus"
+	"net/http"
+	"os"
+	"path"
+	"strings"
+	"time"
 )
 
 var startTime = tz.Now()
@@ -132,6 +128,7 @@ func Route(
 	terraformController := proApi.NewTerraformController(encryptionService, terraformStore, store)
 	terraformInventoryController := proProjects.NewTerraformInventoryController(terraformStore)
 	workflowController := proProjects.NewWorkflowController(workflowService, workflowStore, workflowDefinitionService)
+	crossProjectTemplateController := proProjects.NewCrossProjectTemplateController(proServer.NewCrossProjectTemplateService(store, workflowStore))
 	workflowTriggerController := proProjects.NewWorkflowTriggerController(workflowTriggerService)
 	workflowMiddlewareController := projects.NewWorkflowController(workflowStore)
 	backupController := projects.NewBackupController(workflowStore)
@@ -146,11 +143,13 @@ func Route(
 	taskController := projects.NewTaskController(store, ansibleTaskRepo, workflowStore)
 	rolesController := proApi.NewRolesController(store, capabilityProvider)
 	templateController := projects.NewTemplateController(store, store, executorImageResolver)
+	templateController.ConfigureCrossProjectDeletionGuard(workflowStore)
 	systemInfoController := NewSystemInfoController(subscriptionService)
 	capabilityTestService := proFeatures.NewCapabilityTestService(store)
 	capabilityFacade := capabilityServices.NewServiceFacade(capabilityProvider, capabilityTestService)
 	auditFacade := auditServices.NewServiceFacade(store, logWriteService, appMetrics, auditWebhookService)
 	configureWorkflowAudit(workflowService, auditFacade)
+	configureCrossProjectTemplateAudit(crossProjectTemplateController, auditFacade)
 	workflowAudit := EnhancedWorkflowDeniedAuditMiddleware(auditFacade)
 	auditWebhookController := NewAuditWebhookController(auditWebhookService, auditFacade)
 	projectRunnerController := proProjects.NewProjectRunnerController(subscriptionService, runnerService, capabilityProvider, auditFacade)
@@ -710,13 +709,25 @@ func Route(
 	templateEdit := projects.GetMustHaveTemplatePermissionMiddleware(db.CanEditTemplate)
 	templateDelete := projects.GetMustHaveTemplatePermissionMiddleware(db.CanDeleteTemplate)
 	templateACLManage := projects.GetMustHaveBaseProjectPermissionMiddleware(db.CanManageProjectResources)
+	projectTmplManagement.Path("/{template_id}/versions").Handler(templateACLManage(templateEdit(http.HandlerFunc(crossProjectTemplateController.PublishTemplateVersion)))).Methods("POST")
+	projectTmplManagement.Path("/{template_id}/versions").Handler(templateACLManage(templateEdit(http.HandlerFunc(crossProjectTemplateController.ListTemplateVersions)))).Methods("GET", "HEAD")
+	projectTmplManagement.Path("/{template_id}/cross-project-grants").Handler(templateACLManage(http.HandlerFunc(crossProjectTemplateController.CreateGrant))).Methods("POST")
+
+	projectCrossProjectTemplates := authenticatedAPI.PathPrefix("/project/{project_id}/cross-project-template-grants").Subrouter()
+	projectCrossProjectTemplates.Use(projects.ProjectMiddleware, templateACLManage)
+	projectCrossProjectTemplates.HandleFunc("", crossProjectTemplateController.ListGrants).Methods("GET", "HEAD")
+	projectCrossProjectTemplates.HandleFunc("/{grant_id}", crossProjectTemplateController.UpdateGrant).Methods("PUT")
+	projectCrossProjectTemplates.HandleFunc("/{grant_id}", crossProjectTemplateController.DeleteGrant).Methods("DELETE")
+	projectCrossProjectTemplates.HandleFunc("/{grant_id}/accept", crossProjectTemplateController.AcceptGrant).Methods("POST")
+	projectCrossProjectTemplates.HandleFunc("/{grant_id}/revoke", crossProjectTemplateController.RevokeGrant).Methods("POST")
+	projectCrossProjectTemplates.HandleFunc("/{grant_id}/references", crossProjectTemplateController.ListReferences).Methods("GET", "HEAD")
 
 	projectTmplManagement.Path("/{template_id}").Handler(
 		templateEdit(http.HandlerFunc(templateController.UpdateTemplate))).Methods("PUT")
 	projectTmplManagement.Path("/{template_id}/description").Handler(
 		templateEdit(http.HandlerFunc(projects.UpdateTemplateDescription))).Methods("PUT")
 	projectTmplManagement.Path("/{template_id}").Handler(
-		templateDelete(http.HandlerFunc(projects.RemoveTemplate))).Methods("DELETE")
+		templateDelete(http.HandlerFunc(templateController.RemoveTemplate))).Methods("DELETE")
 	projectTmplManagement.Path("/{template_id}").Handler(
 		templateRead(http.HandlerFunc(projects.GetTemplate))).Methods("GET")
 	projectTmplManagement.Path("/{template_id}/refs").Handler(
@@ -765,6 +776,10 @@ func Route(
 	projectWorkflowManagement.Handle("/{workflow_id}", workflowEdit(http.HandlerFunc(workflowController.UpdateWorkflow))).Methods("PUT")
 	projectWorkflowManagement.Handle("/{workflow_id}", workflowAdmin(http.HandlerFunc(workflowController.RemoveWorkflow))).Methods("DELETE")
 	projectWorkflowManagement.Handle("/{workflow_id}", workflowView(http.HandlerFunc(workflowController.GetWorkflow))).Methods("GET", "HEAD")
+	projectWorkflowManagement.Handle("/{workflow_id}/versions", workflowView(http.HandlerFunc(workflowController.GetWorkflowVersions))).Methods("GET", "HEAD")
+	projectWorkflowManagement.Handle("/{workflow_id}/versions/diff", workflowView(http.HandlerFunc(workflowController.DiffWorkflowVersions))).Methods("GET", "HEAD")
+	projectWorkflowManagement.Handle("/{workflow_id}/versions/{version_number}", workflowView(http.HandlerFunc(workflowController.GetWorkflowVersion))).Methods("GET", "HEAD")
+	projectWorkflowManagement.Handle("/{workflow_id}/versions/{version_number}/restore", workflowEdit(http.HandlerFunc(workflowController.RestoreWorkflowVersion))).Methods("POST")
 	projectWorkflowManagement.Handle("/{workflow_id}/triggers", workflowAdmin(http.HandlerFunc(workflowTriggerController.GetTriggers))).Methods("GET", "HEAD")
 	projectWorkflowManagement.Handle("/{workflow_id}/triggers", workflowAdmin(http.HandlerFunc(workflowTriggerController.AddTrigger))).Methods("POST")
 	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}", workflowAdmin(http.HandlerFunc(workflowTriggerController.GetTrigger))).Methods("GET", "HEAD")

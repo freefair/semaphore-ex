@@ -327,9 +327,9 @@ func (d *SqlDb) getTasks(projectID int, templateID *int, workflowRunID *int, tas
 	}
 
 	if templateID == nil {
-		q = q.Where("tpl.project_id=?", projectID)
+		q = q.Where("task.project_id=?", projectID)
 	} else {
-		q = q.Where("tpl.project_id=? AND task.template_id=?", projectID, templateID)
+		q = q.Where("task.project_id=? AND task.template_id=?", projectID, templateID)
 	}
 
 	if workflowRunID != nil {
@@ -358,6 +358,10 @@ func (d *SqlDb) getTasks(projectID int, templateID *int, workflowRunID *int, tas
 	_, err = d.selectAll(tasks, query, args...)
 
 	for i := range *tasks {
+		err = (*tasks)[i].Task.DecodeWorkflowTemplateProvenance()
+		if err != nil {
+			return
+		}
 		err = (*tasks)[i].Fill(d)
 		if err != nil {
 			return
@@ -370,8 +374,7 @@ func (d *SqlDb) getTasks(projectID int, templateID *int, workflowRunID *int, tas
 func (d *SqlDb) GetTask(projectID int, taskID int) (task db.Task, err error) {
 	q := squirrel.Select("task.*").
 		From("task").
-		Join("project__template as tpl on task.template_id=tpl.id").
-		Where("tpl.project_id=? AND task.id=?", projectID, taskID)
+		Where("task.project_id=? AND task.id=?", projectID, taskID)
 
 	query, args, err := q.ToSql()
 
@@ -380,12 +383,18 @@ func (d *SqlDb) GetTask(projectID int, taskID int) (task db.Task, err error) {
 	}
 
 	err = d.selectOne(&task, query, args...)
+	if err == nil {
+		err = task.DecodeWorkflowTemplateProvenance()
+	}
 
 	return
 }
 
 func (d *SqlDb) GetTaskByID(taskID int) (task db.Task, err error) {
 	err = d.selectOne(&task, d.PrepareQuery("select * from task where id=?"), taskID)
+	if err == nil {
+		err = task.DecodeWorkflowTemplateProvenance()
+	}
 	return
 }
 

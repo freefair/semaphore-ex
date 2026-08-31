@@ -490,13 +490,23 @@ func (t *TaskRunner) populateTaskEnvironment() (err error) {
 func (t *TaskRunner) populateDetails() error {
 	// get template
 	var err error
+	if err = t.Task.DecodeWorkflowTemplateProvenance(); err != nil {
+		return t.prepareError(err, "Workflow template provenance is invalid!")
+	}
+	crossProjectProvenance := t.Task.WorkflowTemplateProvenance
 
 	if t.Task.WorkflowTemplateSnapshot != nil {
 		err = json.Unmarshal([]byte(*t.Task.WorkflowTemplateSnapshot), &t.Template)
-		if err != nil || t.Template.ID != t.Task.TemplateID || t.Template.ProjectID != t.Task.ProjectID {
-			if err == nil {
-				err = errors.New("workflow template snapshot identity does not match task")
+		if err == nil && crossProjectProvenance != nil && crossProjectProvenance.CrossProject != nil {
+			reference := crossProjectProvenance.CrossProject.Reference
+			if t.Template.ID != t.Task.TemplateID || t.Template.ID != reference.TemplateID ||
+				t.Template.ProjectID != reference.OwnerProjectID || t.Task.ProjectID == reference.OwnerProjectID {
+				err = errors.New("cross-project workflow template snapshot identity does not match task provenance")
 			}
+		} else if err == nil && (t.Template.ID != t.Task.TemplateID || t.Template.ProjectID != t.Task.ProjectID) {
+			err = errors.New("workflow template snapshot identity does not match task")
+		}
+		if err != nil {
 			return t.prepareError(err, "Workflow template snapshot is invalid!")
 		}
 	} else {
@@ -507,7 +517,7 @@ func (t *TaskRunner) populateDetails() error {
 	}
 
 	// get project alert setting
-	project, err := t.pool.store.GetProject(t.Template.ProjectID)
+	project, err := t.pool.store.GetProject(t.Task.ProjectID)
 	if err != nil {
 		return t.prepareError(err, "Project not found!")
 	}
@@ -516,7 +526,7 @@ func (t *TaskRunner) populateDetails() error {
 	t.alertChat = project.AlertChat
 
 	// get project users
-	projectUsers, err := t.pool.store.GetProjectUsers(t.Template.ProjectID, db.RetrieveQueryParams{})
+	projectUsers, err := t.pool.store.GetProjectUsers(t.Task.ProjectID, db.RetrieveQueryParams{})
 	if err != nil {
 		return t.prepareError(err, "Users not found!")
 	}
@@ -575,6 +585,12 @@ func (t *TaskRunner) populateDetails() error {
 
 	if err = t.pool.encryptionService.DeserializeSecret(&t.Repository.SSHKey); err != nil {
 		return err
+	}
+
+	if crossProjectProvenance != nil && crossProjectProvenance.CrossProject != nil {
+		if err = t.resolveCrossProjectTemplateVaults(crossProjectProvenance.CrossProject.Reference.OwnerProjectID); err != nil {
+			return err
+		}
 	}
 
 	t.Repository = withEffectiveBranch(t.Repository, t.Template, t.Task)

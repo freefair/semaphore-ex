@@ -1,0 +1,12 @@
+alter table `task` drop column `workflow_template_provenance`;
+alter table `project__workflow_run_node` drop column `cross_project_template_provenance`;
+alter table `project__workflow_node` drop column `cross_project_template_reference`;
+alter table `project__workflow_run` drop column `workflow_version_id`;
+drop table `project__cross_project_template_grant_version`;
+{{ if .Mysql }}drop index `project__cross_project_template_grant__consumer` on `project__cross_project_template_grant`{{ else }}drop index `project__cross_project_template_grant__consumer`{{ end }};
+{{ if .Mysql }}drop index `project__cross_project_template_grant__owner` on `project__cross_project_template_grant`{{ else }}drop index `project__cross_project_template_grant__owner`{{ end }};
+drop table `project__cross_project_template_grant`;
+{{ if .Mysql }}drop index `project__template_version__timeline` on `project__template_version`{{ else }}drop index `project__template_version__timeline`{{ end }};
+drop table `project__template_version`;
+{{ if .Mysql }}drop index `project__workflow_version__timeline` on `project__workflow_version`{{ else }}drop index `project__workflow_version__timeline`{{ end }};
+drop table `project__workflow_version`;

@@ -52,6 +52,8 @@ type WorkflowTemplate struct {
 	AccessPolicyJSON     string               `db:"access_policy" json:"-" backup:"access_policy"`
 	AccessPolicyRevision int                  `db:"access_policy_revision" json:"-" backup:"access_policy_revision"`
 	AccessPolicy         WorkflowAccessPolicy `db:"-" json:"access_policy,omitempty" backup:"-"`
+	CurrentVersionID     int                  `db:"-" json:"current_version_id,omitempty" backup:"-"`
+	VersionMessage       string               `db:"-" json:"version_message,omitempty" backup:"-"`
 
 	Nodes []WorkflowNode `db:"-" bolt:"include" json:"nodes" backup:"-"`
 	Edges []WorkflowEdge `db:"-" bolt:"include" json:"edges" backup:"edges"`
@@ -64,19 +66,21 @@ type WorkflowNode struct {
 
 	WorkflowTemplateID int `db:"workflow_template_id" json:"workflow_template_id" backup:"-"`
 
-	TemplateID                 int                            `db:"template_id" json:"template_id,omitempty" backup:"-"`
-	DisplayName                string                         `db:"display_name" json:"display_name,omitempty" backup:"display_name"`
-	Kind                       WorkflowNodeKind               `db:"kind" json:"kind,omitempty" backup:"kind"`
-	ConvergenceMode            WorkflowConvergenceMode        `db:"convergence_mode" json:"convergence_mode,omitempty" backup:"convergence_mode"`
-	JoinMode                   WorkflowJoinMode               `db:"join_mode" json:"join_mode,omitempty" backup:"join_mode"`
-	ApprovalTimeout            *int                           `db:"approval_timeout" json:"approval_timeout,omitempty" backup:"approval_timeout"`
-	ApprovalMessage            *string                        `db:"approval_message" json:"approval_message,omitempty" backup:"approval_message"`
-	ApprovalPermission         ProjectUserPermission          `db:"approval_permission" json:"approval_permission,omitempty" backup:"approval_permission"`
-	ApprovalTimeoutOutcome     WorkflowApprovalTimeoutOutcome `db:"approval_timeout_outcome" json:"approval_timeout_outcome,omitempty" backup:"approval_timeout_outcome"`
-	ApprovalSeparationOfDuties bool                           `db:"approval_separation_of_duties" json:"approval_separation_of_duties,omitempty" backup:"approval_separation_of_duties"`
-	ApprovalRolePolicyJSON     string                         `db:"approval_role_policy" json:"-" backup:"approval_role_policy"`
-	ApprovalRolePolicyRevision int                            `db:"approval_role_policy_revision" json:"-" backup:"approval_role_policy_revision"`
-	ApprovalRolePolicy         WorkflowApprovalRolePolicy     `db:"-" json:"approval_role_policy,omitempty" backup:"-"`
+	TemplateID                        int                            `db:"template_id" json:"template_id,omitempty" backup:"-"`
+	CrossProjectTemplateReferenceJSON string                         `db:"cross_project_template_reference" json:"-" backup:"-"`
+	CrossProjectTemplateReference     *CrossProjectTemplateReference `db:"-" json:"cross_project_template_reference,omitempty" backup:"-"`
+	DisplayName                       string                         `db:"display_name" json:"display_name,omitempty" backup:"display_name"`
+	Kind                              WorkflowNodeKind               `db:"kind" json:"kind,omitempty" backup:"kind"`
+	ConvergenceMode                   WorkflowConvergenceMode        `db:"convergence_mode" json:"convergence_mode,omitempty" backup:"convergence_mode"`
+	JoinMode                          WorkflowJoinMode               `db:"join_mode" json:"join_mode,omitempty" backup:"join_mode"`
+	ApprovalTimeout                   *int                           `db:"approval_timeout" json:"approval_timeout,omitempty" backup:"approval_timeout"`
+	ApprovalMessage                   *string                        `db:"approval_message" json:"approval_message,omitempty" backup:"approval_message"`
+	ApprovalPermission                ProjectUserPermission          `db:"approval_permission" json:"approval_permission,omitempty" backup:"approval_permission"`
+	ApprovalTimeoutOutcome            WorkflowApprovalTimeoutOutcome `db:"approval_timeout_outcome" json:"approval_timeout_outcome,omitempty" backup:"approval_timeout_outcome"`
+	ApprovalSeparationOfDuties        bool                           `db:"approval_separation_of_duties" json:"approval_separation_of_duties,omitempty" backup:"approval_separation_of_duties"`
+	ApprovalRolePolicyJSON            string                         `db:"approval_role_policy" json:"-" backup:"approval_role_policy"`
+	ApprovalRolePolicyRevision        int                            `db:"approval_role_policy_revision" json:"-" backup:"approval_role_policy_revision"`
+	ApprovalRolePolicy                WorkflowApprovalRolePolicy     `db:"-" json:"approval_role_policy,omitempty" backup:"-"`
 
 	TaskParamsID *int        `db:"task_params_id" json:"-" backup:"-"`
 	TaskParams   *TaskParams `db:"-" json:"task_params,omitempty" backup:"task_params"`
@@ -181,6 +185,7 @@ type WorkflowRun struct {
 	ActorUserID        int    `db:"actor_user_id" json:"actor_user_id" backup:"actor_user_id"`
 	DefinitionVersion  int    `db:"definition_version" json:"definition_version" backup:"definition_version"`
 	DefinitionRevision int    `db:"definition_revision" json:"definition_revision" backup:"definition_revision"`
+	WorkflowVersionID  int    `db:"workflow_version_id" json:"workflow_version_id" backup:"workflow_version_id"`
 	CorrelationID      string `db:"correlation_id" json:"correlation_id" backup:"correlation_id"`
 
 	DefinitionSnapshotJSON string                               `db:"definition_snapshot" json:"-" backup:"definition_snapshot"`

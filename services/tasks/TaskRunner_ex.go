@@ -3,6 +3,7 @@ package tasks
 import (
 	"encoding/json"
 	"github.com/semaphoreui/semaphore/api/sockets"
+	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/util"
 )
 
@@ -29,4 +30,25 @@ func (t *TaskRunner) publishStatus() {
 
 		sockets.Message(user, b)
 	}
+}
+
+// resolveCrossProjectTemplateVaults fills password vault values only in the
+// in-memory runner template. The persisted provenance contains descriptors
+// and IDs, never the resolved AccessKey material.
+func (t *TaskRunner) resolveCrossProjectTemplateVaults(ownerProjectID int) error {
+	for index := range t.Template.Vaults {
+		vault := &t.Template.Vaults[index]
+		if vault.Type != db.TemplateVaultPassword || vault.VaultKeyID == nil {
+			continue
+		}
+		key, err := t.pool.store.GetAccessKey(ownerProjectID, *vault.VaultKeyID)
+		if err != nil {
+			return err
+		}
+		if err = t.pool.encryptionService.DeserializeSecret(&key); err != nil {
+			return err
+		}
+		vault.Vault = &key
+	}
+	return nil
 }

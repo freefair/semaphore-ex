@@ -79,6 +79,7 @@ type TaskPool struct {
 	workflowService        pro_interfaces.WorkflowService
 	executorImageAvailable func(*db.User) bool
 	taskControlLifecycle   TaskControlLifecycle
+	crossProjectTaskStore  pro_interfaces.CrossProjectWorkflowTaskStore
 	// stop signals the background loops started by Run to exit. Closing it (via
 	// Stop) terminates the runner-task reconcile loop and Run's own select.
 	// Channels are used rather than sync.WaitGroup/sync.Once because TaskPool is
@@ -1042,5 +1043,5 @@ func (p *TaskPool) AddTask(
 	projectID int,
 	needAlias bool,
 ) (newTask db.Task, err error) {
-	return p.addTask(taskObj, nil, userID, username, projectID, needAlias)
+	return p.addTask(taskObj, nil, userID, username, projectID, needAlias, nil, nil)
 }

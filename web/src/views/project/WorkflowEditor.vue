@@ -1,5 +1,19 @@
 <template>
   <div>
+    <WorkflowVersionsDialog
+      v-if="!isNew"
+      v-model="versionsDialog"
+      :project-id="projectId"
+      :workflow-id="workflowId"
+      :can-restore="canManage"
+      @restored="onVersionRestored"
+    />
+    <CrossProjectTemplateGrantsDialog
+      v-if="canManageCrossProjectTemplates"
+      v-model="crossProjectGrantsDialog"
+      :project-id="projectId"
+      @changed="refreshCrossProjectReferences"
+    />
     <v-toolbar flat>
       <v-app-bar-nav-icon @click="showDrawer()"></v-app-bar-nav-icon>
       <v-toolbar-title class="WorkflowEditor__title d-flex align-center">
@@ -29,6 +43,26 @@
 
       <v-spacer></v-spacer>
 
+      <v-btn
+        v-if="!isNew"
+        icon
+        :title="$t('workflowVersionHistory')"
+        data-testid="workflow-version-history"
+        @click="versionsDialog = true"
+      >
+        <v-icon>mdi-history</v-icon>
+      </v-btn>
+
+      <v-btn
+        v-if="canManageCrossProjectTemplates"
+        icon
+        :title="$t('crossProjectTemplates')"
+        data-testid="workflow-cross-project-template-grants"
+        @click="crossProjectGrantsDialog = true"
+      >
+        <v-icon>mdi-share-variant-outline</v-icon>
+      </v-btn>
+
       <v-btn icon :title="$t('workflowToolbarZoomOut')" @click="zoomOut()">
         <v-icon>mdi-magnify-minus-outline</v-icon>
       </v-btn>
@@ -56,7 +90,8 @@
 
       <v-btn
         color="primary"
-        :disabled="!canManage || saving || validating || clientIssues.length > 0"
+        :disabled="!canManage || saving || validating || clientIssues.length > 0
+          || versionMessageTooLong"
         :loading="saving"
         @click="save()"
       >{{ $t('save') }}
@@ -102,6 +137,17 @@
         <div class="WorkflowEditor__sideScroll">
           <template v-if="!sideCollapsed">
             <div class="pa-3">
+              <v-text-field
+                v-model="item.version_message"
+                :label="$t('workflowVersionMessage')"
+                :hint="$t('workflowVersionMessageHint')"
+                :counter="512"
+                :error-messages="versionMessageTooLong ? [$t('workflowVersionMessageTooLong')] : []"
+                :disabled="!canManage"
+                outlined
+                dense
+                @input="markDirty"
+              />
               <v-text-field
                 v-model="item.start_version"
                 :label="$t('startVersion')"
@@ -301,7 +347,7 @@
           :key="graphKey"
           :nodes="item.nodes"
           :edges="item.edges"
-          :templates="templates"
+          :templates="workflowGraphTemplates"
           :editable="canManage"
           @change="onGraphChange"
           @node-selected="onNodeSelected"
@@ -393,19 +439,31 @@
             />
 
             <v-autocomplete
-            v-if="editingNode.kind !== 'approval' && editingNode.kind !== 'delay'"
-              v-model="editingNode.template_id"
-              :items="templates"
-              item-value="id"
-              item-text="name"
+              v-if="editingNode.kind !== 'approval' && editingNode.kind !== 'delay'"
+              v-model="editingNodeTemplateChoice"
+              :items="workflowTemplateChoices"
+              item-value="value"
+              item-text="text"
               :label="$t('taskTemplate')"
               :disabled="!canManage"
+              :loading="crossProjectReferencesLoading"
               outlined
               dense
               hide-details="auto"
               class="mb-5"
-              @change="applyNodeEdit"
             />
+
+            <v-alert
+              v-if="editingNodeCrossProjectReference"
+              :type="editingNodeCrossProjectReference.available ? 'info' : 'warning'"
+              text
+              dense
+              class="mb-5"
+            >
+              {{ editingNodeCrossProjectReference.available
+                ? $t('crossProjectReferencePinned')
+                : $t('crossProjectReferenceUnavailable') }}
+            </v-alert>
 
             <v-card
             v-if="editingNode.kind !== 'approval'
@@ -761,6 +819,8 @@ import TaskParamsForm from '@/components/TaskParamsForm.vue';
 import WorkflowGraph from '@/components/WorkflowGraph.vue';
 import WorkflowNodeOverridePolicyEditor from '@/components/WorkflowNodeOverridePolicyEditor.vue';
 import WorkflowParameterEditor from '@/components/WorkflowParameterEditor.vue';
+import WorkflowVersionsDialog from '@/components/WorkflowVersionsDialog.vue';
+import CrossProjectTemplateGrantsDialog from '@/components/CrossProjectTemplateGrantsDialog.vue';
 import ProjectMixin from '@/components/ProjectMixin';
 import PermissionsCheck from '@/components/PermissionsCheck';
 import { USER_PERMISSIONS } from '@/lib/constants';
@@ -773,6 +833,8 @@ export default {
     WorkflowGraph,
     WorkflowNodeOverridePolicyEditor,
     WorkflowParameterEditor,
+    WorkflowVersionsDialog,
+    CrossProjectTemplateGrantsDialog,
   },
   mixins: [ProjectMixin, PermissionsCheck],
   props: {
@@ -790,6 +852,10 @@ export default {
       validationState: 'idle',
       validationIssues: [],
       conflict: null,
+      versionsDialog: false,
+      crossProjectGrantsDialog: false,
+      crossProjectReferences: [],
+      crossProjectReferencesLoading: false,
       graphKey: 0,
       // Set before navigating new -> /edit after a create, so the route watcher
       // does not reload (which would reset the selection and rebuild the canvas).
@@ -817,6 +883,7 @@ export default {
     },
     editingNodeTemplate() {
       if (!this.editingNode || !this.editingNode.template_id) return null;
+      if (this.editingNode.cross_project_template_reference) return null;
       return this.templates.find((t) => t.id === this.editingNode.template_id) || null;
     },
     kindOptions() {
@@ -868,6 +935,7 @@ export default {
       this.loadEndpoint(`/api/project/${this.projectId}/roles/all`),
     ]);
     await this.loadData();
+    if (this.canManageCrossProjectTemplates) await this.refreshCrossProjectReferences();
   },
   methods: {
     ...enhancedMethods,
@@ -881,6 +949,7 @@ export default {
         definition_version: WORKFLOW_DEFINITION_VERSION,
         revision: 0,
         max_parallel_tasks: 4,
+        version_message: '',
         access_policy: {
           revision: 0,
           view_role_ids: [],
@@ -908,6 +977,10 @@ export default {
         return;
       }
       this.baseline = this.clone(this.item);
+      this.crossProjectReferences = this.crossProjectReferences.filter(
+        (reference) => reference.available,
+      );
+      this.includePersistedCrossProjectReferences();
       this.dirty = false;
       // Force a clean canvas rebuild matching the freshly loaded model.
       this.graphKey += 1;
@@ -986,6 +1059,11 @@ export default {
       const kind = this.editingNode.kind;
       if (kind === 'approval' || kind === 'delay') {
         this.editingNode.template_id = null;
+        if (this.$delete) {
+          this.$delete(this.editingNode, 'cross_project_template_reference');
+        } else {
+          delete this.editingNode.cross_project_template_reference;
+        }
         this.editingNode.task_params = null;
         this.editingNode.artifact_outputs = [];
         this.editingNode.artifact_inputs = [];
@@ -1039,7 +1117,7 @@ export default {
 
     // ---- save -----------------------------------------------------------------
     async save() {
-      if (this.clientIssues.length > 0) return;
+      if (this.clientIssues.length > 0 || this.versionMessageTooLong) return;
       if (!await this.validate(false)) return;
       this.saving = true;
       try {
@@ -1275,6 +1353,35 @@ $worklow_pallete_width_collapsed: 60px;
 
   &__side--collapsed &__paletteItem {
     padding-left: 8px;
+  }
+}
+
+@media (max-width: 959px) {
+  .WorkflowEditor {
+    &__body {
+      flex-direction: column;
+      height: auto;
+      min-height: calc(100vh - 65px);
+    }
+
+    &__side {
+      width: 100%;
+      flex: 0 0 auto;
+      overflow: visible;
+      border-right: none;
+      border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+
+      &--right {
+        border-left: none;
+        border-top: 1px solid rgba(127, 127, 127, 0.2);
+      }
+    }
+
+    &__canvas {
+      flex: 0 0 420px;
+      width: 100%;
+      min-height: 420px;
+    }
   }
 }
 </style>

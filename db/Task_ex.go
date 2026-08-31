@@ -8,6 +8,23 @@ import (
 	"time"
 )
 
+// DecodeWorkflowTemplateProvenance restores the validated, value-free task
+// provenance used by cross-project workflow dispatch after a database read.
+func (task *Task) DecodeWorkflowTemplateProvenance() error {
+	if task.WorkflowTemplateProvenance != nil {
+		return task.WorkflowTemplateProvenance.Validate()
+	}
+	if task.WorkflowTemplateProvenanceJSON == nil {
+		return nil
+	}
+	provenance, err := DecodeWorkflowTemplateProvenance(*task.WorkflowTemplateProvenanceJSON)
+	if err != nil {
+		return err
+	}
+	task.WorkflowTemplateProvenance = provenance
+	return nil
+}
+
 type RunnerAttemptOutcome string
 
 const (

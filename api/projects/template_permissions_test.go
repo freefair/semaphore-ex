@@ -99,6 +99,21 @@ func TestTemplatePermissionAPIEnforcesDenyAllowInheritanceAndBoundedProvenance(t
 	}
 }
 
+func TestGetTemplateRefsDoesNotMutateTemplate(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, template := createTemplatePermissionFixture(t, store)
+	request := httptest.NewRequest(http.MethodGet, "/api/project/1/templates/1/refs", nil)
+	request = helpers.SetContextValue(request, "store", store)
+	request = helpers.SetContextValue(request, "project", project)
+	request = helpers.SetContextValue(request, "template", template)
+	response := httptest.NewRecorder()
+	GetTemplateRefs(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+	_, err := store.GetTemplate(project.ID, template.ID)
+	require.NoError(t, err)
+}
+
 func TestTemplatePermissionAPIUsesCASAndRejectsCrossScopeRole(t *testing.T) {
 	store := coresql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)

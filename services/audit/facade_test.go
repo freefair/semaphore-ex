@@ -232,6 +232,91 @@ func TestServiceFacadePersistsWorkflowPolicyAndRoleProvenanceJSON(t *testing.T) 
 	assert.NotContains(t, *events[0].Description, "claim")
 }
 
+func TestServiceFacadePersistsEverySafeCrossProjectTemplateAuditAction(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	defer store.Close()
+	owner, err := store.CreateProject(db.Project{Name: "cross-project-audit-owner"})
+	require.NoError(t, err)
+	consumer, err := store.CreateProject(db.Project{Name: "cross-project-audit-consumer"})
+	require.NoError(t, err)
+	recorder := NewServiceFacade(store, &auditLogWriter{}, metrics.NewMetrics())
+
+	for _, event := range crossProjectTemplateAuditEvents(owner.ID, consumer.ID) {
+		require.NoError(t, recorder.Record(context.Background(), event))
+	}
+
+	events, err := store.GetAllEvents(db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, events, 7)
+	seen := make(map[pro_interfaces.AuditAction]bool, len(events))
+	for _, stored := range events {
+		require.NotNil(t, stored.Description)
+		for _, forbidden := range []string{"execution_snapshot", "dependencies", "survey_vars", "vault", "environment_ids", "repository_id", "accepted_by_user_id", "revoked_by_user_id", "created_by_user_id"} {
+			assert.NotContains(t, *stored.Description, forbidden)
+		}
+		var event pro_interfaces.AuditEvent
+		require.NoError(t, json.Unmarshal([]byte(*stored.Description), &event))
+		require.NoError(t, event.Validate())
+		seen[event.Action] = true
+	}
+	assert.Equal(t, map[pro_interfaces.AuditAction]bool{
+		pro_interfaces.AuditActionCrossProjectTemplateVersionPublish:   true,
+		pro_interfaces.AuditActionCrossProjectTemplateGrantCreate:      true,
+		pro_interfaces.AuditActionCrossProjectTemplateGrantUpdate:      true,
+		pro_interfaces.AuditActionCrossProjectTemplateGrantAccept:      true,
+		pro_interfaces.AuditActionCrossProjectTemplateGrantRevoke:      true,
+		pro_interfaces.AuditActionCrossProjectTemplateGrantDelete:      true,
+		pro_interfaces.AuditActionCrossProjectTemplateReferenceResolve: true,
+	}, seen)
+}
+
+func crossProjectTemplateAuditEvents(ownerProjectID, consumerProjectID int) []pro_interfaces.AuditEvent {
+	grantEvent := func(action pro_interfaces.AuditAction, projectID int) pro_interfaces.AuditEvent {
+		return pro_interfaces.AuditEvent{
+			CorrelationID: "0123456789abcdef0123456789abcdef",
+			ProjectID:     &projectID,
+			Action:        action,
+			TargetType:    pro_interfaces.AuditTargetCrossProjectTemplateGrant,
+			TargetID:      "grant:41",
+			Outcome:       pro_interfaces.AuditOutcomeAllowed,
+			Source:        pro_interfaces.AuditSourceAPI,
+			Reason:        pro_interfaces.AuditReasonCrossProjectTemplateGrantActive,
+			CrossProjectTemplateProvenance: &pro_interfaces.AuditCrossProjectTemplateProvenance{
+				OwnerProjectID: ownerProjectID, ConsumerProjectID: consumerProjectID, TemplateID: 21,
+				GrantID: 41, GrantRevision: 3, Operation: int(db.CrossProjectTemplateGrantReference),
+				MinTemplateVersion: 1, MaxTemplateVersion: 2,
+			},
+		}
+	}
+	version := pro_interfaces.AuditEvent{
+		CorrelationID: "0123456789abcdef0123456789abcdef",
+		ProjectID:     &ownerProjectID,
+		Action:        pro_interfaces.AuditActionCrossProjectTemplateVersionPublish,
+		TargetType:    pro_interfaces.AuditTargetCrossProjectTemplateVersion,
+		TargetID:      "template-version:31",
+		Outcome:       pro_interfaces.AuditOutcomeAllowed,
+		Source:        pro_interfaces.AuditSourceAPI,
+		Reason:        pro_interfaces.AuditReasonCrossProjectTemplateGrantActive,
+		CrossProjectTemplateProvenance: &pro_interfaces.AuditCrossProjectTemplateProvenance{
+			OwnerProjectID: ownerProjectID, TemplateID: 21, TemplateVersionID: 31, TemplateVersionNumber: 2,
+			TemplateVersionFingerprint: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		},
+	}
+	reference := grantEvent(pro_interfaces.AuditActionCrossProjectTemplateReferenceResolve, consumerProjectID)
+	reference.CrossProjectTemplateProvenance.TemplateVersionID = 31
+	reference.CrossProjectTemplateProvenance.TemplateVersionNumber = 2
+	reference.CrossProjectTemplateProvenance.TemplateVersionFingerprint = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	return []pro_interfaces.AuditEvent{
+		version,
+		grantEvent(pro_interfaces.AuditActionCrossProjectTemplateGrantCreate, ownerProjectID),
+		grantEvent(pro_interfaces.AuditActionCrossProjectTemplateGrantUpdate, ownerProjectID),
+		grantEvent(pro_interfaces.AuditActionCrossProjectTemplateGrantAccept, consumerProjectID),
+		grantEvent(pro_interfaces.AuditActionCrossProjectTemplateGrantRevoke, ownerProjectID),
+		grantEvent(pro_interfaces.AuditActionCrossProjectTemplateGrantDelete, ownerProjectID),
+		reference,
+	}
+}
+
 func TestServiceFacadeRedactsSinkFailuresAndMeasuresDrops(t *testing.T) {
 	tripwireError := errors.New(securityfixtures.TripwireValues[0])
 	writer := &auditLogWriter{err: tripwireError}

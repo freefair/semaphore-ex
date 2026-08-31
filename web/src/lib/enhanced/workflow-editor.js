@@ -10,6 +10,56 @@ export const enhancedComputed = {
     return this.item?.effective_access?.administer
         ?? this.can(USER_PERMISSIONS.administerWorkflows);
   },
+  canManageCrossProjectTemplates() {
+    return this.can(USER_PERMISSIONS.manageProjectResources);
+  },
+  workflowTemplateChoices() {
+    const local = (this.templates || []).map((template) => ({
+      value: `local:${template.id}`,
+      text: template.name,
+      disabled: false,
+    }));
+    const shared = this.crossProjectReferences.map((reference) => ({
+      value: reference.choice_value,
+      text: reference.available
+        ? `${reference.name} · v${reference.template_version_number}`
+        : `${this.$t('crossProjectReferenceUnavailableShort')} · #${reference.template_id}`
+            + ` · v${reference.template_version_number}`,
+      disabled: !reference.available,
+    }));
+    return [...local, ...shared];
+  },
+  workflowGraphTemplates() {
+    const byID = new Map((this.templates || []).map((template) => [template.id, template]));
+    this.crossProjectReferences.forEach((reference) => {
+      if (!byID.has(reference.template_id)) {
+        byID.set(reference.template_id, {
+          id: reference.template_id,
+          name: reference.name || `${this.$t('crossProjectTemplate')} #${reference.template_id}`,
+        });
+      }
+    });
+    return [...byID.values()];
+  },
+  editingNodeTemplateChoice: {
+    get() {
+      if (!this.editingNode) return null;
+      const reference = this.editingNode.cross_project_template_reference;
+      if (reference) {
+        return `grant:${reference.grant_id}:version:${reference.template_version_number}`;
+      }
+      return this.editingNode.template_id ? `local:${this.editingNode.template_id}` : null;
+    },
+    set(value) {
+      this.applyTemplateChoice(value);
+    },
+  },
+  editingNodeCrossProjectReference() {
+    if (!this.editingNode?.cross_project_template_reference) return null;
+    const current = this.editingNode.cross_project_template_reference;
+    return this.crossProjectReferences.find((reference) => reference.grant_id === current.grant_id
+        && reference.template_version_number === current.template_version_number) || null;
+  },
   workflowRoleOptions() {
     const builtIns = USER_ROLES.map((role) => ({
       value: `builtin:${role.slug}`,
@@ -79,8 +129,11 @@ export const enhancedComputed = {
   clientIssues() {
     return validateWorkflowDefinition(
       this.item,
-      (this.templates || []).map((template) => template.id),
+      this.workflowGraphTemplates.map((template) => template.id),
     );
+  },
+  versionMessageTooLong() {
+    return new TextEncoder().encode(this.item?.version_message || '').length > 512;
   },
 };
 
@@ -94,6 +147,7 @@ export const enhancedMethods = {
       definition_version: value.definition_version || WORKFLOW_DEFINITION_VERSION,
       revision: value.revision || 0,
       max_parallel_tasks: value.max_parallel_tasks ?? 4,
+      version_message: value.version_message || '',
       access_policy: {
         revision: value.access_policy?.revision || 0,
         view_role_ids: Array.isArray(value.access_policy?.view_role_ids)
@@ -160,6 +214,77 @@ export const enhancedMethods = {
     this.validationIssues = [];
     this.validationState = 'idle';
     this.conflict = null;
+  },
+  applyTemplateChoice(value) {
+    if (!this.editingNode || !value) return;
+    if (value.startsWith('local:')) {
+      this.editingNode.template_id = Number(value.slice('local:'.length));
+      if (this.$delete) {
+        this.$delete(this.editingNode, 'cross_project_template_reference');
+      } else {
+        delete this.editingNode.cross_project_template_reference;
+      }
+    } else {
+      const reference = this.crossProjectReferences.find(
+        (entry) => entry.choice_value === value && entry.available !== false,
+      );
+      if (!reference) return;
+      this.editingNode.template_id = reference.template_id;
+      this.editingNode.cross_project_template_reference = {
+        grant_id: reference.grant_id,
+        template_version_number: reference.template_version_number,
+      };
+      this.editingNode.task_params = {};
+      this.editingNode.override_policy = {};
+    }
+    this.applyNodeEdit();
+  },
+  includePersistedCrossProjectReferences() {
+    const known = new Set(this.crossProjectReferences.map((reference) => reference.choice_value));
+    (this.item?.nodes || []).forEach((node) => {
+      const reference = node.cross_project_template_reference;
+      if (!reference) return;
+      const choice = `grant:${reference.grant_id}:version:${reference.template_version_number}`;
+      if (known.has(choice)) return;
+      this.crossProjectReferences.push({
+        choice_value: choice,
+        grant_id: reference.grant_id,
+        template_id: node.template_id,
+        template_version_number: reference.template_version_number,
+        name: `${this.$t('crossProjectTemplate')} #${node.template_id}`,
+        available: false,
+      });
+      known.add(choice);
+    });
+  },
+  async refreshCrossProjectReferences() {
+    if (!this.canManageCrossProjectTemplates) return;
+    this.crossProjectReferencesLoading = true;
+    try {
+      const grantsResponse = await axios.get(
+        `/api/project/${this.projectId}/cross-project-template-grants?count=100`,
+      );
+      const grants = (grantsResponse.data || []).filter((grant) => grant.status === 'active'
+          && grant.consumer_project_id === this.projectId && (grant.operations & 1) !== 0);
+      const responses = await Promise.allSettled(grants.map((grant) => axios.get(
+        `/api/project/${this.projectId}/cross-project-template-grants/${grant.id}`
+            + '/references?count=100',
+      )));
+      this.crossProjectReferences = responses.flatMap((response) => (
+        response.status === 'fulfilled' ? response.value.data : []
+      )).map((reference) => ({
+        ...reference,
+        choice_value: `grant:${reference.grant_id}`
+            + `:version:${reference.template_version_number}`,
+        available: true,
+      }));
+      this.includePersistedCrossProjectReferences();
+    } catch (err) {
+      EventBus.$emit('i-snackbar', { color: 'error', text: getErrorMessage(err) });
+      this.includePersistedCrossProjectReferences();
+    } finally {
+      this.crossProjectReferencesLoading = false;
+    }
   },
   defaultApprovalRolePolicy() {
     return {
@@ -259,6 +384,17 @@ export const enhancedMethods = {
     const payload = this.clone({ ...this.item, project_id: this.projectId });
     delete payload.effective_access;
     if (!payload.start_version) delete payload.start_version;
+    payload.nodes = (payload.nodes || []).map((node) => {
+      const reference = node.cross_project_template_reference;
+      if (!reference) return node;
+      return {
+        ...node,
+        cross_project_template_reference: {
+          grant_id: reference.grant_id,
+          template_version_number: reference.template_version_number,
+        },
+      };
+    });
     return payload;
   },
   async validate(showSuccess = true) {
@@ -305,5 +441,17 @@ export const enhancedMethods = {
       return;
     }
     await this.reload();
+  },
+  onVersionRestored(restored) {
+    this.item = this.prepareItem(restored);
+    this.includePersistedCrossProjectReferences();
+    this.autoLayout();
+    this.baseline = this.clone(this.item);
+    this.resetEditorState();
+    this.dirty = false;
+    this.graphKey += 1;
+    EventBus.$emit('i-snackbar', {
+      color: 'success', text: this.$t('workflowVersionRestoredSuccess'),
+    });
   },
 };
