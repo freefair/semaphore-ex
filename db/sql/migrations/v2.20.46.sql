@@ -1,0 +1,12 @@
+alter table `task__runner_attempt` add column `k8s_service_account` varchar(63) not null default '';
+alter table `task__runner_attempt` add column `k8s_runtime_class` varchar(63) not null default '';
+alter table `task__runner_attempt` add column `k8s_resource_policy_id` varchar(128) not null default '';
+alter table `task__runner_attempt` add column `k8s_resource_policy_hash` varchar(64) not null default '';
+alter table `task__runner_attempt` add column `k8s_network_profile` varchar(63) not null default '';
+alter table `task__runner_attempt` add column `k8s_network_enforcement` varchar(32) not null default '';
+alter table `task__runner_attempt` add column `k8s_secret_name` varchar(63) not null default '';
+alter table `task__runner_attempt` add column `k8s_secret_uid` varchar(128) not null default '';
+alter table `task__runner_attempt` add column `k8s_network_policy_name` varchar(63) not null default '';
+alter table `task__runner_attempt` add column `k8s_network_policy_uid` varchar(128) not null default '';
+alter table `task__runner_attempt` add column `k8s_retention_deadline` datetime;
+alter table `task__runner_attempt` add column `k8s_retention_state` varchar(16) not null default '';

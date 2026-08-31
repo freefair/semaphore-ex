@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"net/http"
@@ -12,6 +13,10 @@ import (
 type dockerReconciliationDiagnosticsResponse struct {
 	Diagnostics []dockerReconciliationDiagnosticDTO `json:"diagnostics"`
 	NextCursor  string                              `json:"next_cursor,omitempty"`
+}
+
+type kubernetesReconciliationDiagnosticsResponse struct {
+	Diagnostics []db.KubernetesReconciliationDiagnostic `json:"diagnostics"`
 }
 
 // dockerReconciliationDiagnosticDTO is deliberately separate from db JSON.
@@ -180,6 +185,49 @@ func (c *GlobalRunnerController) RequestDockerReconciliationRemediation(w http.R
 	helpers.WriteJSON(w, http.StatusAccepted, command)
 }
 
+func (c *GlobalRunnerController) GetKubernetesReconciliationDiagnostics(w http.ResponseWriter, r *http.Request) {
+	runner := helpers.GetFromContext(r, "runner").(*db.Runner)
+	limit := 100
+	if value := r.URL.Query().Get("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			helpers.WriteErrorStatus(w, "invalid Kubernetes reconciliation diagnostics page", http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+	}
+	store, ok := helpers.Store(r).(db.KubernetesReconciliationRepository)
+	if !ok {
+		helpers.WriteErrorStatus(w, "Kubernetes reconciliation storage is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	diagnostics, err := store.GetKubernetesReconciliationPendingDiagnostics(runner.ID, limit)
+	if err != nil {
+		helpers.WriteErrorStatus(w, "invalid Kubernetes reconciliation diagnostics page", http.StatusBadRequest)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, kubernetesReconciliationDiagnosticsResponse{Diagnostics: diagnostics})
+}
+
+func (c *GlobalRunnerController) RequestKubernetesReconciliationRemediation(w http.ResponseWriter, r *http.Request) {
+	runner := helpers.GetFromContext(r, "runner").(*db.Runner)
+	var request db.KubernetesReconciliationRemediationRequest
+	if !helpers.Bind(w, r, &request) {
+		return
+	}
+	store, ok := helpers.Store(r).(db.KubernetesReconciliationRepository)
+	if !ok {
+		helpers.WriteErrorStatus(w, "Kubernetes reconciliation storage is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	command, err := store.RequestKubernetesReconciliationRemediation(runner.ID, request)
+	if err != nil {
+		helpers.WriteErrorStatus(w, "Kubernetes reconciliation remediation request rejected", http.StatusConflict)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusAccepted, command)
+}
+
 func (c *GlobalRunnerController) GetDockerExecutionPolicy(w http.ResponseWriter, r *http.Request) {
 	policy, err := helpers.Store(r).GetDockerExecutionPolicy()
 	if err != nil {
@@ -212,6 +260,76 @@ func (c *GlobalRunnerController) TestDockerExecutionPolicy(w http.ResponseWriter
 		return
 	}
 	policy, err := helpers.Store(r).GetDockerExecutionPolicy()
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, policy.Test(request))
+}
+
+func kubernetesPolicyAlias(r *http.Request) (string, error) {
+	alias := mux.Vars(r)["cluster_alias"]
+	if err := db.ValidateKubernetesClusterAlias(alias); err != nil {
+		return "", err
+	}
+	return alias, nil
+}
+
+func (c *GlobalRunnerController) GetKubernetesExecutionPolicy(w http.ResponseWriter, r *http.Request) {
+	alias, err := kubernetesPolicyAlias(r)
+	if err != nil {
+		helpers.WriteErrorStatus(w, "Invalid Kubernetes cluster alias", http.StatusBadRequest)
+		return
+	}
+	policy, err := helpers.Store(r).GetKubernetesExecutionPolicy(alias)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, policy)
+}
+
+func (c *GlobalRunnerController) UpdateKubernetesExecutionPolicy(w http.ResponseWriter, r *http.Request) {
+	alias, err := kubernetesPolicyAlias(r)
+	if err != nil {
+		helpers.WriteErrorStatus(w, "Invalid Kubernetes cluster alias", http.StatusBadRequest)
+		return
+	}
+	var policy db.KubernetesExecutionPolicy
+	if !helpers.Bind(w, r, &policy) {
+		return
+	}
+	if policy.ClusterAlias != alias {
+		helpers.WriteErrorStatus(w, "Kubernetes policy cluster alias does not match route", http.StatusBadRequest)
+		return
+	}
+	saved, err := helpers.Store(r).SaveKubernetesExecutionPolicy(policy, policy.Revision)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, db.ErrKubernetesExecutionPolicyRevisionConflict) {
+			status = http.StatusConflict
+		}
+		helpers.WriteErrorStatus(w, err.Error(), status)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, saved)
+}
+
+func (c *GlobalRunnerController) TestKubernetesExecutionPolicy(w http.ResponseWriter, r *http.Request) {
+	alias, err := kubernetesPolicyAlias(r)
+	if err != nil {
+		helpers.WriteErrorStatus(w, "Invalid Kubernetes cluster alias", http.StatusBadRequest)
+		return
+	}
+	var request db.KubernetesExecutionPolicyTestRequest
+	if !helpers.Bind(w, r, &request) {
+		return
+	}
+	if request.ClusterAlias != alias {
+		helpers.WriteErrorStatus(w, "Kubernetes policy test cluster alias does not match route", http.StatusBadRequest)
+		return
+	}
+	policy, err := helpers.Store(r).GetKubernetesExecutionPolicy(alias)
 	if err != nil {
 		helpers.WriteError(w, err)
 		return

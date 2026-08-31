@@ -66,6 +66,10 @@ type Runner struct {
 
 	DockerPolicyRevision int    `db:"docker_policy_revision" json:"docker_policy_revision" backup:"-"`
 	DockerPolicyHash     string `db:"docker_policy_hash" json:"docker_policy_hash" backup:"-"`
+	K8sClusterAlias      string `db:"k8s_cluster_alias" json:"k8s_cluster_alias" backup:"-"`
+	K8sNamespace         string `db:"k8s_namespace" json:"k8s_namespace" backup:"-"`
+	K8sPolicyRevision    int    `db:"k8s_policy_revision" json:"k8s_policy_revision" backup:"-"`
+	K8sPolicyHash        string `db:"k8s_policy_hash" json:"k8s_policy_hash" backup:"-"`
 
 	PublicKey *string `db:"public_key" json:"-" backup:"-"`
 

@@ -87,13 +87,19 @@ type JobPool struct {
 	// cycle (~2/sec) until the runner exhausts ephemeral ports (issue #3941).
 	client *http.Client
 
-	dockerPolicyMu              sync.Mutex
-	dockerPolicyAck             db.DockerExecutionPolicyAck
-	dockerPolicyReady           bool
-	dockerReconciliationReady   bool
-	dockerReconciliationSession db.DockerReconciliationSession
-	dockerQuarantines           []db.DockerReconciliationStopQuarantine
-	dockerRemediationResults    []db.DockerReconciliationRemediationResult
+	dockerPolicyMu                  sync.Mutex
+	dockerPolicyAck                 db.DockerExecutionPolicyAck
+	dockerPolicyReady               bool
+	dockerReconciliationReady       bool
+	dockerReconciliationSession     db.DockerReconciliationSession
+	dockerQuarantines               []db.DockerReconciliationStopQuarantine
+	dockerRemediationResults        []db.DockerReconciliationRemediationResult
+	kubernetesPolicyMu              sync.Mutex
+	kubernetesPolicyAck             db.KubernetesExecutionPolicyAck
+	kubernetesPolicyReady           bool
+	kubernetesReconciliationReady   bool
+	kubernetesReconciliationSession db.KubernetesReconciliationSession
+	kubernetesRemediationResults    []db.KubernetesReconciliationRemediationResult
 }
 
 // NewJobPool wires a runner-side job pool. The ExecutorProvider is materialised
@@ -132,6 +138,28 @@ func (p *JobPool) setCommonHeaders(req *http.Request) {
 	if ack, ready := p.currentDockerPolicyAck(); ready {
 		req.Header.Set(RunnerDockerPolicyRevisionHeader, strconv.Itoa(ack.Revision))
 		req.Header.Set(RunnerDockerPolicyHashHeader, ack.Hash)
+	}
+	if resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeKubernetes {
+		alias := strings.TrimSpace(util.Config.Runner.Executor.K8s.ClusterAlias)
+		namespace := strings.TrimSpace(util.Config.Runner.Executor.K8s.Namespace)
+		if namespace == "" {
+			namespace = "semaphore"
+		}
+		if alias != "" {
+			req.Header.Set(RunnerKubernetesClusterAliasHeader, alias)
+			req.Header.Set(RunnerKubernetesNamespaceHeader, namespace)
+		}
+		if ack, ready := p.currentKubernetesPolicyAck(); ready {
+			req.Header.Set(RunnerKubernetesPolicyRevisionHeader, strconv.Itoa(ack.Revision))
+			req.Header.Set(RunnerKubernetesPolicyHashHeader, ack.Hash)
+		}
+		p.kubernetesPolicyMu.Lock()
+		session := p.kubernetesReconciliationSession
+		p.kubernetesPolicyMu.Unlock()
+		if session.SessionID != "" {
+			req.Header.Set(RunnerKubernetesSessionHeader, session.SessionID)
+			req.Header.Set(RunnerKubernetesFenceHeader, session.Fence)
+		}
 	}
 	if resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeDocker {
 		p.dockerPolicyMu.Lock()
@@ -520,6 +548,34 @@ func (p *JobPool) sendProgress() (ok bool) {
 			}
 		}
 	}
+	if resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeKubernetes {
+		p.kubernetesPolicyMu.Lock()
+		session := p.kubernetesReconciliationSession
+		ready := p.kubernetesReconciliationReady
+		p.kubernetesPolicyMu.Unlock()
+		if session.SessionID != "" && !ready {
+			scanner, scannerOK := p.provider.(tasks.KubernetesReconciliationScanner)
+			if !scannerOK {
+				log.WithField("context", "sending_progress").Error("Kubernetes provider has no reconciliation scanner")
+				return false
+			}
+			scanCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			scan, scanErr := scanner.ScanKubernetesReconciliation(scanCtx, session)
+			cancel()
+			if scanErr != nil {
+				log.WithError(scanErr).WithField("context", "sending_progress").Error("Kubernetes reconciliation scan failed; refusing dispatch")
+				return false
+			}
+			body.KubernetesReconciliationScan = &scan
+		}
+		p.kubernetesPolicyMu.Lock()
+		resultCount := len(p.kubernetesRemediationResults)
+		if resultCount > maxDockerReconciliationQuarantinesPerProgress {
+			resultCount = maxDockerReconciliationQuarantinesPerProgress
+		}
+		body.KubernetesReconciliationRemediationResults = append(body.KubernetesReconciliationRemediationResults, p.kubernetesRemediationResults[:resultCount]...)
+		p.kubernetesPolicyMu.Unlock()
+	}
 
 	for id, j := range p.snapshotRunningJobs() {
 
@@ -660,6 +716,14 @@ func (p *JobPool) sendProgress() (ok bool) {
 
 	p.applyTerminatedJobs(progressResp.TerminatedJobs)
 	p.applyDockerRemediationCommands(progressResp.DockerReconciliationCommands)
+	p.applyKubernetesRemediationCommands(progressResp.KubernetesReconciliationCommands)
+	if len(body.KubernetesReconciliationRemediationResults) > 0 {
+		p.kubernetesPolicyMu.Lock()
+		if len(p.kubernetesRemediationResults) >= len(body.KubernetesReconciliationRemediationResults) {
+			p.kubernetesRemediationResults = p.kubernetesRemediationResults[len(body.KubernetesReconciliationRemediationResults):]
+		}
+		p.kubernetesPolicyMu.Unlock()
+	}
 
 	return
 }
@@ -1003,6 +1067,12 @@ func (p *JobPool) checkNewJobs() {
 			return
 		}
 	}
+	if response.KubernetesPolicy != nil {
+		if err := p.applyKubernetesPolicy(*response.KubernetesPolicy); err != nil {
+			log.WithError(err).WithField("context", "checking_new_jobs").Error("refusing Kubernetes dispatch until policy installation succeeds")
+			return
+		}
+	}
 	if resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeDocker {
 		if err := p.applyDockerRunnerIdentity(response.RunnerID); err != nil {
 			log.WithError(err).WithField("context", "checking_new_jobs").Error("refusing Docker dispatch until runner identity installation succeeds")
@@ -1026,6 +1096,22 @@ func (p *JobPool) checkNewJobs() {
 		// command is evaluated; a startup/restart command must not be compared
 		// against the previous process session.
 		p.applyDockerRemediationCommands(response.DockerReconciliationCommands)
+	}
+	if resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeKubernetes {
+		if response.KubernetesReconciliationSession == nil {
+			log.WithField("context", "checking_new_jobs").Warn("refusing Kubernetes dispatch until reconciliation session is present")
+			return
+		}
+		p.kubernetesPolicyMu.Lock()
+		p.kubernetesReconciliationReady = response.KubernetesReconciliationSession.Ready
+		p.kubernetesReconciliationSession = *response.KubernetesReconciliationSession
+		p.kubernetesPolicyMu.Unlock()
+		consumer, ok := p.provider.(tasks.KubernetesReconciliationConsumer)
+		if !ok || consumer.ApplyKubernetesReconciliationSession(*response.KubernetesReconciliationSession) != nil {
+			log.WithField("context", "checking_new_jobs").Warn("refusing Kubernetes dispatch until reconciliation session installation succeeds")
+			return
+		}
+		p.applyKubernetesRemediationCommands(response.KubernetesReconciliationCommands)
 	}
 
 	runningJobs := p.snapshotRunningJobs()
@@ -1097,6 +1183,10 @@ func (p *JobPool) checkNewJobs() {
 		log.WithField("context", "checking_new_jobs").Warn("refusing Docker work before the server policy acknowledgement")
 		return
 	}
+	if !p.kubernetesDispatchReady() {
+		log.WithField("context", "checking_new_jobs").Warn("refusing Kubernetes work before the server policy acknowledgement")
+		return
+	}
 
 	for _, newJob := range response.NewJobs {
 		if p.getRunningJob(newJob.Task.ID) != nil {
@@ -1134,6 +1224,17 @@ func (p *JobPool) checkNewJobs() {
 		if execErr != nil {
 			if policyRejection, isPolicyRejection := newDockerPolicyRejectionExecutor(execErr); isPolicyRejection {
 				executor = policyRejection
+			} else if response.KubernetesPolicy != nil && resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeKubernetes {
+				image := derefString(newJob.ExecutorImage)
+				if image == "" {
+					image = util.Config.Runner.Executor.K8s.Image
+				}
+				if policyRejection, isPolicyRejection := newKubernetesPolicyRejectionExecutor(execErr, *response.KubernetesPolicy, util.Config.Runner.Executor.K8s, image); isPolicyRejection {
+					executor = policyRejection
+				} else {
+					log.WithError(execErr).WithFields(log.Fields{"context": "checking_new_jobs", "project_id": newJob.Task.ProjectID, "task_id": newJob.Task.ID}).Error("cannot construct executor for task")
+					continue
+				}
 			} else {
 				log.WithError(execErr).WithFields(log.Fields{
 					"context":    "checking_new_jobs",
@@ -1159,6 +1260,13 @@ func (p *JobPool) checkNewJobs() {
 				continue
 			}
 			taskRunner.dockerPolicyAck = &ack
+		}
+		if resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeKubernetes {
+			ack, ready := p.currentKubernetesPolicyAck()
+			if !ready {
+				continue
+			}
+			taskRunner.kubernetesPolicyAck = &ack
 		}
 
 		p.enqueue(&taskRunner)

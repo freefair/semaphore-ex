@@ -37,6 +37,31 @@ func (p *JobPool) currentDockerPolicyAck() (db.DockerExecutionPolicyAck, bool) {
 	return p.dockerPolicyAck, p.dockerPolicyReady
 }
 
+func (p *JobPool) currentKubernetesPolicyAck() (db.KubernetesExecutionPolicyAck, bool) {
+	p.kubernetesPolicyMu.Lock()
+	defer p.kubernetesPolicyMu.Unlock()
+	return p.kubernetesPolicyAck, p.kubernetesPolicyReady
+}
+
+func (p *JobPool) applyKubernetesPolicy(policy db.KubernetesExecutionPolicy) error {
+	consumer, ok := p.provider.(tasks.KubernetesExecutionPolicyConsumer)
+	if !ok {
+		return fmt.Errorf("Kubernetes policy was received by a runner without a Kubernetes policy consumer")
+	}
+	if err := consumer.ApplyKubernetesExecutionPolicy(policy); err != nil {
+		return err
+	}
+	ack := consumer.KubernetesExecutionPolicyAcknowledgement()
+	if !policy.MatchesAck(ack) {
+		return fmt.Errorf("Kubernetes policy provider acknowledgement does not match the delivered policy")
+	}
+	p.kubernetesPolicyMu.Lock()
+	p.kubernetesPolicyAck = ack
+	p.kubernetesPolicyReady = true
+	p.kubernetesPolicyMu.Unlock()
+	return nil
+}
+
 func (p *JobPool) applyDockerPolicy(policy db.DockerExecutionPolicy) error {
 	consumer, ok := p.provider.(tasks.DockerExecutionPolicyConsumer)
 	if !ok {
@@ -82,9 +107,24 @@ func (p *JobPool) dockerDispatchReady() bool {
 	return ready && p.dockerReconciliationReady
 }
 
+func (p *JobPool) kubernetesDispatchReady() bool {
+	if resolveExecutorType(util.Config.Runner.Executor) != util.ExecutorTypeKubernetes {
+		return true
+	}
+	_, ready := p.currentKubernetesPolicyAck()
+	p.kubernetesPolicyMu.Lock()
+	reconciled := p.kubernetesReconciliationReady
+	p.kubernetesPolicyMu.Unlock()
+	return ready && reconciled
+}
+
 func (p *JobPool) canDispatchQueuedJob(candidate *job) bool {
 	if candidate.dockerPolicyAck == nil {
-		return true
+		if candidate.kubernetesPolicyAck == nil {
+			return true
+		}
+		acknowledged, ready := p.currentKubernetesPolicyAck()
+		return ready && *candidate.kubernetesPolicyAck == acknowledged
 	}
 	acknowledged, ready := p.currentDockerPolicyAck()
 	return ready && *candidate.dockerPolicyAck == acknowledged
@@ -114,6 +154,33 @@ func (p *JobPool) applyDockerRemediationCommands(commands []db.DockerReconciliat
 			p.dockerRemediationResults = append(p.dockerRemediationResults, result)
 		}
 		p.dockerPolicyMu.Unlock()
+	}
+}
+
+func (p *JobPool) applyKubernetesRemediationCommands(commands []db.KubernetesReconciliationRemediationCommand) {
+	if len(commands) == 0 {
+		return
+	}
+	remediator, ok := p.provider.(tasks.KubernetesReconciliationRemediator)
+	if !ok {
+		return
+	}
+	for _, command := range commands {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		result := remediator.RemediateKubernetesReconciliation(ctx, command)
+		cancel()
+		p.kubernetesPolicyMu.Lock()
+		duplicate := false
+		for _, pending := range p.kubernetesRemediationResults {
+			if pending.CommandID == result.CommandID {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			p.kubernetesRemediationResults = append(p.kubernetesRemediationResults, result)
+		}
+		p.kubernetesPolicyMu.Unlock()
 	}
 }
 

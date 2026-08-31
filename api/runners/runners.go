@@ -183,6 +183,41 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 			data.DockerReconciliationCommands = commands
 		}
 	}
+	if runner.EffectiveExecutorType() == db.RunnerExecutorK8s {
+		policyStore, ok := c.runnerRepo.(db.KubernetesExecutionPolicyRepository)
+		if !ok {
+			helpers.WriteErrorStatus(w, "Kubernetes policy storage is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if runner.K8sClusterAlias == "" {
+			helpers.WriteErrorStatus(w, "Kubernetes runner cluster alias is unavailable", http.StatusConflict)
+			return
+		}
+		policy, policyErr := policyStore.GetKubernetesExecutionPolicy(runner.K8sClusterAlias)
+		if policyErr != nil {
+			helpers.WriteError(w, policyErr)
+			return
+		}
+		data.KubernetesPolicy = &policy
+		if runner.K8sNamespace == "" || !kubernetesNamespaceAllowed(policy, runner.K8sNamespace) {
+			helpers.WriteErrorStatus(w, "Kubernetes runner namespace is not permitted by policy", http.StatusConflict)
+			return
+		}
+		sessionStore, ok := c.runnerRepo.(db.KubernetesReconciliationSessionRepository)
+		if !ok {
+			helpers.WriteErrorStatus(w, "Kubernetes reconciliation storage is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		session, sessionErr := sessionStore.OpenKubernetesReconciliationSession(runner.ID, runner.K8sClusterAlias, runner.K8sNamespace, r.Header.Get(runners.RunnerKubernetesSessionHeader), r.Header.Get(runners.RunnerKubernetesFenceHeader))
+		if sessionErr != nil {
+			helpers.WriteError(w, sessionErr)
+			return
+		}
+		data.KubernetesReconciliationSession = &session
+		if commands, commandsErr := sessionStore.GetKubernetesReconciliationCommands(runner.ID, session.SessionID, session.Fence, 100); commandsErr == nil {
+			data.KubernetesReconciliationCommands = commands
+		}
+	}
 
 	if clearCache {
 		data.CacheCleanProjectID = runner.ProjectID
@@ -225,6 +260,19 @@ func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Ru
 		}
 		policy, policyErr := policyStore.GetDockerExecutionPolicy()
 		if policyErr != nil || !policy.MatchesAck(db.DockerExecutionPolicyAck{Revision: runner.DockerPolicyRevision, Hash: runner.DockerPolicyHash}) {
+			return
+		}
+	}
+	if runner.EffectiveExecutorType() == db.RunnerExecutorK8s {
+		if data.KubernetesReconciliationSession == nil || !data.KubernetesReconciliationSession.Ready {
+			return
+		}
+		policyStore, ok := c.runnerRepo.(db.KubernetesExecutionPolicyRepository)
+		if !ok || runner.K8sClusterAlias == "" {
+			return
+		}
+		policy, policyErr := policyStore.GetKubernetesExecutionPolicy(runner.K8sClusterAlias)
+		if policyErr != nil || !policy.MatchesAck(db.KubernetesExecutionPolicyAck{ClusterAlias: runner.K8sClusterAlias, Revision: runner.K8sPolicyRevision, Hash: runner.K8sPolicyHash}) {
 			return
 		}
 	}
@@ -499,6 +547,40 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
+	if body.KubernetesReconciliationScan != nil {
+		if runner.EffectiveExecutorType() != db.RunnerExecutorK8s {
+			helpers.WriteErrorStatus(w, "Kubernetes reconciliation is not available for this runner", http.StatusBadRequest)
+			return
+		}
+		store, ok := c.runnerRepo.(db.KubernetesReconciliationSessionRepository)
+		if !ok {
+			helpers.WriteErrorStatus(w, "Kubernetes reconciliation storage is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		scan := *body.KubernetesReconciliationScan
+		scan.SessionID, scan.Fence = r.Header.Get(runners.RunnerKubernetesSessionHeader), r.Header.Get(runners.RunnerKubernetesFenceHeader)
+		if err := store.IngestKubernetesReconciliationScan(runner.ID, scan); err != nil {
+			helpers.WriteErrorStatus(w, "Kubernetes reconciliation scan rejected", http.StatusConflict)
+			return
+		}
+	}
+	if runner.EffectiveExecutorType() == db.RunnerExecutorK8s && len(body.KubernetesReconciliationRemediationResults) > 0 {
+		store, ok := c.runnerRepo.(db.KubernetesReconciliationSessionRepository)
+		if !ok {
+			helpers.WriteErrorStatus(w, "Kubernetes reconciliation storage is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if len(body.KubernetesReconciliationRemediationResults) > 100 {
+			helpers.WriteErrorStatus(w, "Kubernetes reconciliation remediation result limit exceeded", http.StatusBadRequest)
+			return
+		}
+		for _, result := range body.KubernetesReconciliationRemediationResults {
+			if err := store.ReportKubernetesReconciliationRemediation(runner.ID, r.Header.Get(runners.RunnerKubernetesSessionHeader), r.Header.Get(runners.RunnerKubernetesFenceHeader), result); err != nil {
+				helpers.WriteErrorStatus(w, "Kubernetes reconciliation remediation result rejected", http.StatusConflict)
+				return
+			}
+		}
+	}
 
 	taskPool := c.taskPool
 
@@ -520,12 +602,19 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
+	if runner.EffectiveExecutorType() == db.RunnerExecutorK8s {
+		if store, ok := c.runnerRepo.(db.KubernetesReconciliationSessionRepository); ok {
+			if commands, commandErr := store.GetKubernetesReconciliationCommands(runner.ID, r.Header.Get(runners.RunnerKubernetesSessionHeader), r.Header.Get(runners.RunnerKubernetesFenceHeader), 100); commandErr == nil {
+				response.KubernetesReconciliationCommands = commands
+			}
+		}
+	}
 
 	if body.Jobs == nil {
 		if body.KnownJobs != nil && !c.persistTaskExecutionEvidence(w, runner.ID, executionEvidence) {
 			return
 		}
-		if len(response.DockerReconciliationCommands) > 0 || response.DockerTelemetryAck != nil {
+		if len(response.DockerReconciliationCommands) > 0 || len(response.KubernetesReconciliationCommands) > 0 || response.DockerTelemetryAck != nil {
 			helpers.WriteJSON(w, http.StatusOK, response)
 			return
 		}

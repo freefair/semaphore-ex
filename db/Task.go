@@ -108,7 +108,7 @@ type Task struct {
 var kubernetesTerminalReasons = map[string]struct{}{
 	"BackoffLimitExceeded": {}, "Canceled": {}, "CleanupFailed": {}, "ContainerCannotRun": {},
 	"DeadlineExceeded": {}, "Error": {}, "Evicted": {}, "FailedIndexes": {}, "NodeLost": {},
-	"NonZeroExit": {}, "OOMKilled": {}, "PodFailurePolicy": {}, "Shutdown": {},
+	"NonZeroExit": {}, "OOMKilled": {}, "PodFailurePolicy": {}, "PolicyDenied": {}, "Shutdown": {},
 }
 
 func (task *Task) ExtractParams(target any) (err error) {

@@ -17,26 +17,39 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
 type fakeKubernetesClient struct {
-	mu              sync.Mutex
-	events          []string
-	logStreams      []io.ReadCloser
-	logsOpened      chan struct{}
-	logsOpenedOnce  sync.Once
-	deleteJobErrors []error
-	deleteJobError  error
-	createdJob      *batchv1.Job
-	createdBundle   BundleSecret
-	jobResult       JobResult
+	mu                   sync.Mutex
+	events               []string
+	logStreams           []io.ReadCloser
+	logsOpened           chan struct{}
+	logsOpenedOnce       sync.Once
+	deleteJobErrors      []error
+	deleteJobError       error
+	createdJob           *batchv1.Job
+	createdBundle        BundleSecret
+	createdNetworkPolicy *networkingv1.NetworkPolicy
+	jobResult            JobResult
+}
+
+func (f *fakeKubernetesClient) CreateNetworkPolicy(_ context.Context, policy *networkingv1.NetworkPolicy) (ObjectIdentity, error) {
+	f.createdNetworkPolicy = policy.DeepCopy()
+	f.record("create-network-policy")
+	return ObjectIdentity{Name: policy.Name, UID: types.UID("network-policy-uid")}, nil
 }
 
 func (f *fakeKubernetesClient) record(event string) {
 	f.mu.Lock()
 	f.events = append(f.events, event)
 	f.mu.Unlock()
+}
+
+func (f *fakeKubernetesClient) DeleteNetworkPolicy(_ context.Context, _ ObjectIdentity, _ map[string]string) error {
+	f.record("delete-network-policy")
+	return nil
 }
 
 func (f *fakeKubernetesClient) CreateBundleSecret(_ context.Context, spec BundleSecret) (ObjectIdentity, error) {
@@ -149,7 +162,7 @@ func TestKubernetesExecutorRunsJobStreamsAtLeastOnceAndCleansUIDBoundObjects(t *
 		jobResult:  JobResult{Succeeded: true, Lifecycle: "succeeded"},
 	}
 	logger := &captureLogger{}
-	executor := newExecutorForPlan(client, config{
+	cfg := config{
 		clusterAlias:          "qa",
 		namespace:             "semaphore-jobs",
 		serviceAccount:        "semaphore-task",
@@ -158,7 +171,8 @@ func TestKubernetesExecutorRunsJobStreamsAtLeastOnceAndCleansUIDBoundObjects(t *
 		pollInterval:          time.Millisecond,
 		cleanupGrace:          time.Second,
 		activeDeadlineSeconds: 60,
-	}, 19, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 3}, db.Template{App: db.AppBash}, logger)
+	}
+	executor := newExecutorForPlan(client, cfg, testKubernetesPolicy(t, cfg), 19, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 3}, db.Template{App: db.AppBash}, logger)
 	plan := &tasks.ContainerTaskPlan{App: db.AppBash, Bundle: io.NopCloser(bytes.NewReader([]byte("bundle")))}
 
 	err := executor.runPlan(context.Background(), plan)
@@ -170,7 +184,10 @@ func TestKubernetesExecutorRunsJobStreamsAtLeastOnceAndCleansUIDBoundObjects(t *
 	assert.Equal(t, []byte("bundle"), client.createdBundle.Data)
 	assert.True(t, client.createdBundle.Immutable)
 	assert.Less(t, indexOf(client.events, "create-secret"), indexOf(client.events, "create-job"))
-	assert.Less(t, indexOf(client.events, "delete-job"), indexOf(client.events, "delete-secret"))
+	assert.Less(t, indexOf(client.events, "create-network-policy"), indexOf(client.events, "create-job"))
+	assert.NotNil(t, client.createdNetworkPolicy)
+	assert.Less(t, indexOf(client.events, "delete-job"), indexOf(client.events, "delete-network-policy"))
+	assert.Less(t, indexOf(client.events, "delete-network-policy"), indexOf(client.events, "delete-secret"))
 	metadata := executor.ExecutorMetadata()
 	assert.Equal(t, db.RunnerExecutorK8s, metadata.ExecutorType)
 	assert.Equal(t, "qa", metadata.K8sClusterAlias)
@@ -188,7 +205,7 @@ func TestKubernetesLogStreamPreservesIdenticalTimestampedLines(t *testing.T) {
 		timestamp + " same\n" + timestamp + " same\n",
 	))}}
 	logger := &captureLogger{}
-	executor := newExecutorForPlan(client, config{}, 19, db.Task{}, db.Template{}, logger)
+	executor := newExecutorForPlan(client, config{}, db.KubernetesExecutionPolicy{}, 19, db.Task{}, db.Template{}, logger)
 
 	require.NoError(t, executor.streamLogsOnce(context.Background(), PodIdentity{}, newLogTracker(), false))
 	assert.Equal(t, []string{"same", "same"}, logger.records)
@@ -202,7 +219,7 @@ func TestKubernetesLogStreamReconnectsAfterCleanFollowEOF(t *testing.T) {
 		io.NopCloser(strings.NewReader(secondTime + " second\n")),
 	}}
 	logger := &captureLogger{}
-	executor := newExecutorForPlan(client, config{pollInterval: time.Millisecond}, 19, db.Task{}, db.Template{}, logger)
+	executor := newExecutorForPlan(client, config{pollInterval: time.Millisecond}, db.KubernetesExecutionPolicy{}, 19, db.Task{}, db.Template{}, logger)
 
 	executor.streamLogs(context.Background(), PodIdentity{}, newLogTracker())
 
@@ -216,11 +233,12 @@ func TestKubernetesExecutorFailsSuccessfulJobWhenCleanupCannotBeConfirmed(t *tes
 		jobResult:      JobResult{Succeeded: true, Lifecycle: "succeeded"},
 		deleteJobError: errors.New("pod still running"),
 	}
-	executor := newExecutorForPlan(client, config{
+	cfg := config{
 		clusterAlias: "qa", namespace: "semaphore-jobs", serviceAccount: "semaphore-task",
 		image: testImage, helperImage: testImage, pollInterval: time.Millisecond,
 		cleanupGrace: time.Second, activeDeadlineSeconds: 60,
-	}, 19, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 3}, db.Template{App: db.AppBash}, &captureLogger{})
+	}
+	executor := newExecutorForPlan(client, cfg, testKubernetesPolicy(t, cfg), 19, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 3}, db.Template{App: db.AppBash}, &captureLogger{})
 	plan := &tasks.ContainerTaskPlan{App: db.AppBash, Bundle: io.NopCloser(bytes.NewReader([]byte("bundle")))}
 
 	err := executor.runPlan(context.Background(), plan)
@@ -233,7 +251,7 @@ func TestKubernetesExecutorFailsSuccessfulJobWhenCleanupCannotBeConfirmed(t *tes
 
 func TestKubernetesExecutorDoesNotDeleteSecretBeforeUIDBoundJobDeletion(t *testing.T) {
 	client := &fakeKubernetesClient{deleteJobErrors: []error{errors.New("pod still running"), nil}}
-	executor := newExecutorForPlan(client, config{cleanupGrace: time.Second}, 19, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 3}, db.Template{}, task_logger.NopLogger{})
+	executor := newExecutorForPlan(client, config{cleanupGrace: time.Second}, db.KubernetesExecutionPolicy{}, 19, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 3}, db.Template{}, task_logger.NopLogger{})
 	executor.secret = ObjectIdentity{Name: "bundle", UID: types.UID("secret-uid")}
 	executor.job = ObjectIdentity{Name: "job", UID: types.UID("job-uid")}
 	executor.pod = PodIdentity{ObjectIdentity: ObjectIdentity{Name: "pod", UID: types.UID("pod-uid")}}
@@ -246,7 +264,7 @@ func TestKubernetesExecutorDoesNotDeleteSecretBeforeUIDBoundJobDeletion(t *testi
 
 func TestKubernetesExecutorRejectsOversizedBundleBeforeCreatingObjects(t *testing.T) {
 	client := &fakeKubernetesClient{}
-	executor := newExecutorForPlan(client, config{}, 19, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 3}, db.Template{}, task_logger.NopLogger{})
+	executor := newExecutorForPlan(client, config{}, db.KubernetesExecutionPolicy{}, 19, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 3}, db.Template{}, task_logger.NopLogger{})
 	plan := &tasks.ContainerTaskPlan{Bundle: io.NopCloser(io.LimitReader(strings.NewReader(strings.Repeat("x", maxBundleBytes+1)), maxBundleBytes+1))}
 
 	err := executor.runPlan(context.Background(), plan)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ const (
 type KubernetesExecutor struct {
 	client   KubernetesClient
 	config   config
+	policy   db.KubernetesExecutionPolicy
 	runnerID int
 	task     db.Task
 	template db.Template
@@ -31,27 +33,29 @@ type KubernetesExecutor struct {
 	logger   task_logger.Logger
 	image    string
 
-	mu               sync.Mutex
-	createMu         sync.Mutex
-	cleanupMu        sync.Mutex
-	killed           bool
-	runCancel        context.CancelFunc
-	plan             *tasks.ContainerTaskPlan
-	secret           ObjectIdentity
-	job              ObjectIdentity
-	pod              PodIdentity
-	lifecycle        string
-	terminalReason   string
-	cleanupCompleted bool
+	mu                sync.Mutex
+	createMu          sync.Mutex
+	cleanupMu         sync.Mutex
+	killed            bool
+	runCancel         context.CancelFunc
+	plan              *tasks.ContainerTaskPlan
+	secret            ObjectIdentity
+	networkPolicy     ObjectIdentity
+	job               ObjectIdentity
+	pod               PodIdentity
+	lifecycle         string
+	terminalReason    string
+	retentionDeadline *time.Time
+	cleanupCompleted  bool
 }
 
-func newExecutorForPlan(client KubernetesClient, cfg config, runnerID int, task db.Task, template db.Template, logger task_logger.Logger) *KubernetesExecutor {
+func newExecutorForPlan(client KubernetesClient, cfg config, policy db.KubernetesExecutionPolicy, runnerID int, task db.Task, template db.Template, logger task_logger.Logger) *KubernetesExecutor {
 	if logger == nil {
 		logger = task_logger.NopLogger{}
 	}
 	image, _ := cfg.taskImage(template)
 	return &KubernetesExecutor{
-		client: client, config: cfg, runnerID: runnerID, task: task, template: template,
+		client: client, config: cfg, policy: policy, runnerID: runnerID, task: task, template: template,
 		logger: logger, image: image, lifecycle: "starting",
 	}
 }
@@ -222,7 +226,25 @@ func (e *KubernetesExecutor) createTaskObjects(ctx context.Context, labels map[s
 	if killed {
 		return ObjectIdentity{}, nil
 	}
-	job, err := e.client.CreateJob(ctx, buildJob(e.config, e.task, e.runnerID, secret.Name, image, command))
+	networkManifest, err := buildNetworkPolicy(e.config, e.policy, e.task, e.runnerID)
+	if err != nil {
+		return ObjectIdentity{}, err
+	}
+	if err := validateNetworkPolicy(networkManifest, e.config, e.task, e.runnerID); err != nil {
+		return ObjectIdentity{}, err
+	}
+	networkPolicy, err := e.client.CreateNetworkPolicy(ctx, networkManifest)
+	if err != nil {
+		return ObjectIdentity{}, fmt.Errorf("creating Kubernetes task NetworkPolicy: %w", err)
+	}
+	e.mu.Lock()
+	e.networkPolicy = networkPolicy
+	e.mu.Unlock()
+	jobManifest := buildJob(e.config, e.policy, e.task, e.runnerID, secret.Name, image, command)
+	if err := validateGeneratedJob(jobManifest, e.config, e.policy, image); err != nil {
+		return ObjectIdentity{}, err
+	}
+	job, err := e.client.CreateJob(ctx, jobManifest)
 	if err != nil {
 		return ObjectIdentity{}, fmt.Errorf("creating Kubernetes Job: %w", err)
 	}
@@ -384,10 +406,15 @@ func (e *KubernetesExecutor) cleanupTaskObjects(ctx context.Context) error {
 		return nil
 	}
 	e.mu.Lock()
-	job, pod, secret := e.job, e.pod, e.secret
+	job, pod, networkPolicy, secret := e.job, e.pod, e.networkPolicy, e.secret
 	e.mu.Unlock()
 	if job.Name != "" {
 		if err := e.client.DeleteJobForeground(ctx, job, pod, e.config.cleanupGrace); err != nil {
+			return err
+		}
+	}
+	if networkPolicy.Name != "" {
+		if err := e.client.DeleteNetworkPolicy(ctx, networkPolicy, taskLabels(e.task, e.runnerID)); err != nil {
 			return err
 		}
 	}
@@ -403,20 +430,43 @@ func (e *KubernetesExecutor) cleanupTaskObjects(ctx context.Context) error {
 func (e *KubernetesExecutor) ExecutorMetadata() db.RunnerExecutorMetadata {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return db.RunnerExecutorMetadata{
-		ExecutorType:      db.RunnerExecutorK8s,
-		RequestedImage:    e.image,
-		ResolvedImage:     e.image,
-		K8sClusterAlias:   e.config.clusterAlias,
-		K8sNamespace:      e.config.namespace,
-		K8sJobName:        e.job.Name,
-		K8sJobUID:         string(e.job.UID),
-		K8sPodName:        e.pod.Name,
-		K8sPodUID:         string(e.pod.UID),
-		K8sContainerName:  taskContainerName,
-		K8sLifecycle:      e.lifecycle,
-		K8sTerminalReason: e.terminalReason,
+	metadata := db.RunnerExecutorMetadata{
+		ExecutorType:          db.RunnerExecutorK8s,
+		RequestedImage:        e.image,
+		ResolvedImage:         e.image,
+		K8sClusterAlias:       e.config.clusterAlias,
+		K8sNamespace:          e.config.namespace,
+		K8sJobName:            e.job.Name,
+		K8sJobUID:             string(e.job.UID),
+		K8sPodName:            e.pod.Name,
+		K8sPodUID:             string(e.pod.UID),
+		K8sContainerName:      taskContainerName,
+		K8sLifecycle:          e.lifecycle,
+		K8sTerminalReason:     e.terminalReason,
+		K8sPolicyRevision:     e.policy.Revision,
+		K8sPolicyHash:         e.policy.Hash,
+		K8sServiceAccount:     e.config.serviceAccount,
+		K8sRuntimeClass:       e.policy.RuntimeClass,
+		K8sResourcePolicyID:   strconv.Itoa(e.policy.Revision),
+		K8sResourcePolicyHash: e.policy.Hash,
+		K8sNetworkProfile:     e.policy.NetworkProfile,
+		K8sNetworkEnforcement: string(e.policy.NetworkPolicyEnforcement),
+		K8sSecretName:         e.secret.Name,
+		K8sSecretUID:          string(e.secret.UID),
+		K8sNetworkPolicyName:  e.networkPolicy.Name,
+		K8sNetworkPolicyUID:   string(e.networkPolicy.UID),
+		K8sRetentionState:     "active",
 	}
+	if e.lifecycle == "succeeded" || e.lifecycle == "failed" || e.lifecycle == "stopped" {
+		if e.retentionDeadline == nil {
+			deadline := time.Now().UTC().Add(e.policy.TerminalRetentionDuration())
+			e.retentionDeadline = &deadline
+		}
+		deadline := *e.retentionDeadline
+		metadata.K8sRetentionDeadline = &deadline
+		metadata.K8sRetentionState = "terminal"
+	}
+	return metadata
 }
 
 func safeTerminalReason(value string) string {

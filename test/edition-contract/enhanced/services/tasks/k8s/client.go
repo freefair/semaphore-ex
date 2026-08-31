@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
+	"github.com/semaphoreui/semaphore/db"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -58,10 +61,24 @@ func (c *client) CreateBundleSecret(ctx context.Context, spec BundleSecret) (Obj
 		Data:       map[string][]byte{bundleArchiveKey: append([]byte(nil), spec.Data...)},
 	}, metav1.CreateOptions{})
 	if err != nil {
-		return ObjectIdentity{}, fmt.Errorf("creating task-scoped Kubernetes Secret: %w", err)
+		return ObjectIdentity{}, kubernetesAPIError(err)
 	}
 	if created.UID == "" {
 		return ObjectIdentity{}, fmt.Errorf("created Kubernetes Secret has no UID")
+	}
+	return ObjectIdentity{Name: created.Name, UID: created.UID}, nil
+}
+
+func (c *client) CreateNetworkPolicy(ctx context.Context, policy *networkingv1.NetworkPolicy) (ObjectIdentity, error) {
+	if policy == nil || policy.Namespace != c.config.namespace {
+		return ObjectIdentity{}, fmt.Errorf("Kubernetes NetworkPolicy namespace does not match runner configuration")
+	}
+	created, err := c.api.NetworkingV1().NetworkPolicies(c.config.namespace).Create(ctx, policy, metav1.CreateOptions{})
+	if err != nil {
+		return ObjectIdentity{}, kubernetesAPIError(err)
+	}
+	if created.UID == "" {
+		return ObjectIdentity{}, fmt.Errorf("created Kubernetes NetworkPolicy has no UID")
 	}
 	return ObjectIdentity{Name: created.Name, UID: created.UID}, nil
 }
@@ -72,12 +89,45 @@ func (c *client) CreateJob(ctx context.Context, job *batchv1.Job) (ObjectIdentit
 	}
 	created, err := c.api.BatchV1().Jobs(c.config.namespace).Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {
-		return ObjectIdentity{}, fmt.Errorf("creating task Kubernetes Job: %w", err)
+		return ObjectIdentity{}, kubernetesAPIError(err)
 	}
 	if created.UID == "" {
 		return ObjectIdentity{}, fmt.Errorf("created Kubernetes Job has no UID")
 	}
 	return ObjectIdentity{Name: created.Name, UID: created.UID}, nil
+}
+
+func (c *client) DeleteNetworkPolicy(ctx context.Context, policy ObjectIdentity, expectedLabels map[string]string) error {
+	if policy.Name == "" || policy.UID == "" || len(expectedLabels) == 0 {
+		return fmt.Errorf("Kubernetes NetworkPolicy identity is incomplete")
+	}
+	current, err := c.api.NetworkingV1().NetworkPolicies(c.config.namespace).Get(ctx, policy.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return kubernetesAPIError(err)
+	}
+	if current.UID != policy.UID || !labelsExactlyMatch(current.Labels, expectedLabels) {
+		return fmt.Errorf("Kubernetes NetworkPolicy identity changed before deletion")
+	}
+	uid := policy.UID
+	if err := c.api.NetworkingV1().NetworkPolicies(c.config.namespace).Delete(ctx, policy.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) {
+		return kubernetesAPIError(err)
+	}
+	return wait.PollUntilContextCancel(ctx, c.config.pollInterval, true, func(ctx context.Context) (bool, error) {
+		current, getErr := c.api.NetworkingV1().NetworkPolicies(c.config.namespace).Get(ctx, policy.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(getErr) {
+			return true, nil
+		}
+		if getErr != nil {
+			return false, kubernetesAPIError(getErr)
+		}
+		if current.UID != policy.UID || !labelsExactlyMatch(current.Labels, expectedLabels) {
+			return false, fmt.Errorf("Kubernetes NetworkPolicy name was reused during deletion")
+		}
+		return false, nil
+	})
 }
 
 func (c *client) WaitForTaskPod(ctx context.Context, job ObjectIdentity, expectedLabels map[string]string) (PodIdentity, error) {
@@ -296,6 +346,26 @@ func labelsMatch(actual map[string]string, expected map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func labelsExactlyMatch(actual map[string]string, expected map[string]string) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	return labelsMatch(actual, expected)
+}
+
+func kubernetesAPIError(err error) error {
+	if apierrors.IsForbidden(err) {
+		if strings.Contains(strings.ToLower(err.Error()), "quota") {
+			return db.KubernetesPolicyViolationError{Rule: db.KubernetesPolicyRuleQuotaDenied}
+		}
+		return db.KubernetesPolicyViolationError{Rule: db.KubernetesPolicyRuleRBACDenied}
+	}
+	if apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) {
+		return db.KubernetesPolicyViolationError{Rule: db.KubernetesPolicyRuleAdmissionDenied}
+	}
+	return db.KubernetesPolicyViolationError{Rule: db.KubernetesPolicyRuleUnavailable}
 }
 
 func ownedBy(references []metav1.OwnerReference, uid types.UID) bool {

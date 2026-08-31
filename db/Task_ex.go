@@ -55,32 +55,62 @@ type RunnerAttempt struct {
 	K8sContainerName       string               `db:"k8s_container_name" json:"k8s_container_name,omitempty"`
 	K8sLifecycle           string               `db:"k8s_lifecycle" json:"k8s_lifecycle,omitempty"`
 	K8sTerminalReason      string               `db:"k8s_terminal_reason" json:"k8s_terminal_reason,omitempty"`
+	K8sPolicyRevision      int                  `db:"k8s_policy_revision" json:"k8s_policy_revision,omitempty"`
+	K8sPolicyHash          string               `db:"k8s_policy_hash" json:"k8s_policy_hash,omitempty"`
+	K8sDenialRuleID        string               `db:"k8s_denial_rule_id" json:"k8s_denial_rule_id,omitempty"`
+	K8sServiceAccount      string               `db:"k8s_service_account" json:"k8s_service_account,omitempty"`
+	K8sRuntimeClass        string               `db:"k8s_runtime_class" json:"k8s_runtime_class,omitempty"`
+	K8sResourcePolicyID    string               `db:"k8s_resource_policy_id" json:"k8s_resource_policy_id,omitempty"`
+	K8sResourcePolicyHash  string               `db:"k8s_resource_policy_hash" json:"k8s_resource_policy_hash,omitempty"`
+	K8sNetworkProfile      string               `db:"k8s_network_profile" json:"k8s_network_profile,omitempty"`
+	K8sNetworkEnforcement  string               `db:"k8s_network_enforcement" json:"k8s_network_enforcement,omitempty"`
+	K8sSecretName          string               `db:"k8s_secret_name" json:"k8s_secret_name,omitempty"`
+	K8sSecretUID           string               `db:"k8s_secret_uid" json:"k8s_secret_uid,omitempty"`
+	K8sNetworkPolicyName   string               `db:"k8s_network_policy_name" json:"k8s_network_policy_name,omitempty"`
+	K8sNetworkPolicyUID    string               `db:"k8s_network_policy_uid" json:"k8s_network_policy_uid,omitempty"`
+	K8sRetentionDeadline   *time.Time           `db:"k8s_retention_deadline" json:"k8s_retention_deadline,omitempty"`
+	K8sRetentionState      string               `db:"k8s_retention_state" json:"k8s_retention_state,omitempty"`
 }
 
 // RunnerExecutorMetadata is the bounded runtime identity a runner may attach
 // to its current assignment. Task arguments, environment, labels, mounts, and
 // daemon details intentionally never cross this API boundary.
 type RunnerExecutorMetadata struct {
-	ExecutorType      RunnerExecutorType `json:"executor_type"`
-	ContainerID       string             `json:"container_id,omitempty"`
-	ContainerName     string             `json:"container_name,omitempty"`
-	RequestedImage    string             `json:"requested_image,omitempty"`
-	ResolvedImage     string             `json:"resolved_image,omitempty"`
-	PolicyRevision    int                `json:"policy_revision,omitempty"`
-	PolicyHash        string             `json:"policy_hash,omitempty"`
-	NanoCPUs          int64              `json:"nano_cpus,omitempty"`
-	MemoryBytes       int64              `json:"memory_bytes,omitempty"`
-	PidsLimit         int64              `json:"pids_limit,omitempty"`
-	DenialRuleID      string             `json:"denial_rule_id,omitempty"`
-	K8sClusterAlias   string             `json:"k8s_cluster_alias,omitempty"`
-	K8sNamespace      string             `json:"k8s_namespace,omitempty"`
-	K8sJobName        string             `json:"k8s_job_name,omitempty"`
-	K8sJobUID         string             `json:"k8s_job_uid,omitempty"`
-	K8sPodName        string             `json:"k8s_pod_name,omitempty"`
-	K8sPodUID         string             `json:"k8s_pod_uid,omitempty"`
-	K8sContainerName  string             `json:"k8s_container_name,omitempty"`
-	K8sLifecycle      string             `json:"k8s_lifecycle,omitempty"`
-	K8sTerminalReason string             `json:"k8s_terminal_reason,omitempty"`
+	ExecutorType          RunnerExecutorType `json:"executor_type"`
+	ContainerID           string             `json:"container_id,omitempty"`
+	ContainerName         string             `json:"container_name,omitempty"`
+	RequestedImage        string             `json:"requested_image,omitempty"`
+	ResolvedImage         string             `json:"resolved_image,omitempty"`
+	PolicyRevision        int                `json:"policy_revision,omitempty"`
+	PolicyHash            string             `json:"policy_hash,omitempty"`
+	NanoCPUs              int64              `json:"nano_cpus,omitempty"`
+	MemoryBytes           int64              `json:"memory_bytes,omitempty"`
+	PidsLimit             int64              `json:"pids_limit,omitempty"`
+	DenialRuleID          string             `json:"denial_rule_id,omitempty"`
+	K8sClusterAlias       string             `json:"k8s_cluster_alias,omitempty"`
+	K8sNamespace          string             `json:"k8s_namespace,omitempty"`
+	K8sJobName            string             `json:"k8s_job_name,omitempty"`
+	K8sJobUID             string             `json:"k8s_job_uid,omitempty"`
+	K8sPodName            string             `json:"k8s_pod_name,omitempty"`
+	K8sPodUID             string             `json:"k8s_pod_uid,omitempty"`
+	K8sContainerName      string             `json:"k8s_container_name,omitempty"`
+	K8sLifecycle          string             `json:"k8s_lifecycle,omitempty"`
+	K8sTerminalReason     string             `json:"k8s_terminal_reason,omitempty"`
+	K8sPolicyRevision     int                `json:"k8s_policy_revision,omitempty"`
+	K8sPolicyHash         string             `json:"k8s_policy_hash,omitempty"`
+	K8sDenialRuleID       string             `json:"k8s_denial_rule_id,omitempty"`
+	K8sServiceAccount     string             `json:"k8s_service_account,omitempty"`
+	K8sRuntimeClass       string             `json:"k8s_runtime_class,omitempty"`
+	K8sResourcePolicyID   string             `json:"k8s_resource_policy_id,omitempty"`
+	K8sResourcePolicyHash string             `json:"k8s_resource_policy_hash,omitempty"`
+	K8sNetworkProfile     string             `json:"k8s_network_profile,omitempty"`
+	K8sNetworkEnforcement string             `json:"k8s_network_enforcement,omitempty"`
+	K8sSecretName         string             `json:"k8s_secret_name,omitempty"`
+	K8sSecretUID          string             `json:"k8s_secret_uid,omitempty"`
+	K8sNetworkPolicyName  string             `json:"k8s_network_policy_name,omitempty"`
+	K8sNetworkPolicyUID   string             `json:"k8s_network_policy_uid,omitempty"`
+	K8sRetentionDeadline  *time.Time         `json:"k8s_retention_deadline,omitempty"`
+	K8sRetentionState     string             `json:"k8s_retention_state,omitempty"`
 }
 
 const MaxRunnerContainerIdentityLength = 128
@@ -148,20 +178,40 @@ func (m RunnerExecutorMetadata) validateKubernetes() error {
 	if !safeDNSLabel(m.K8sNamespace) {
 		return errors.New("Kubernetes executor metadata contains an invalid namespace")
 	}
+	provenanceSupplied := m.hasKubernetesProvenance()
+	if provenanceSupplied && (!safeDNSLabel(m.K8sServiceAccount) || m.K8sServiceAccount == "default" ||
+		(m.K8sRuntimeClass != "" && !safeDNSLabel(m.K8sRuntimeClass)) ||
+		!safeExecutorIdentity(m.K8sResourcePolicyID, 128, false) || !IsKubernetesPolicyHash(m.K8sResourcePolicyHash) ||
+		m.K8sNetworkProfile != string(KubernetesNetworkProfileDenyAll) ||
+		(m.K8sNetworkEnforcement != string(KubernetesNetworkPolicyEnforcementNetworkPolicy) && !(m.K8sDenialRuleID != "" && m.K8sNetworkEnforcement == string(KubernetesNetworkPolicyEnforcementUnsupported)))) {
+		return errors.New("Kubernetes executor metadata contains invalid declared execution provenance")
+	}
 	if m.K8sContainerName != "task" {
 		return errors.New("Kubernetes executor metadata contains an invalid main container")
 	}
 	if !immutableSHA256Image(m.RequestedImage) || m.ResolvedImage != m.RequestedImage {
 		return errors.New("Kubernetes executor metadata requires one immutable requested and resolved image")
 	}
+	if (m.K8sPolicyRevision != 0 || m.K8sPolicyHash != "") && (m.K8sPolicyRevision <= 0 || !IsKubernetesPolicyHash(m.K8sPolicyHash)) {
+		return errors.New("Kubernetes executor metadata requires a policy acknowledgement")
+	}
+	if m.K8sDenialRuleID != "" && !IsKubernetesPolicyRuleID(m.K8sDenialRuleID) {
+		return errors.New("Kubernetes executor metadata contains an invalid policy denial")
+	}
+	if m.K8sDenialRuleID != "" {
+		if m.K8sLifecycle != "failed" || m.K8sTerminalReason != "PolicyDenied" || m.K8sRetentionState != "terminal" || m.K8sRetentionDeadline == nil {
+			return errors.New("Kubernetes policy denial requires terminal bounded provenance")
+		}
+		return nil
+	}
 	switch m.K8sLifecycle {
 	case "starting":
-		if m.K8sJobName != "" || m.K8sJobUID != "" || m.K8sPodName != "" || m.K8sPodUID != "" || m.K8sTerminalReason != "" {
+		if m.K8sJobName != "" || m.K8sJobUID != "" || m.K8sPodName != "" || m.K8sPodUID != "" || m.K8sSecretName != "" || m.K8sSecretUID != "" || m.K8sNetworkPolicyName != "" || m.K8sNetworkPolicyUID != "" || m.K8sTerminalReason != "" || m.K8sDenialRuleID != "" {
 			return errors.New("starting Kubernetes metadata cannot claim runtime identities")
 		}
 		return nil
 	case "pending":
-		if !safeDNSLabel(m.K8sJobName) || !safeExecutorIdentity(m.K8sJobUID, 128, false) || m.K8sPodName != "" || m.K8sPodUID != "" || m.K8sTerminalReason != "" {
+		if !safeDNSLabel(m.K8sJobName) || !safeExecutorIdentity(m.K8sJobUID, 128, false) || (provenanceSupplied && (!safeDNSLabel(m.K8sSecretName) || !safeExecutorIdentity(m.K8sSecretUID, 128, false) || !safeDNSLabel(m.K8sNetworkPolicyName) || !safeExecutorIdentity(m.K8sNetworkPolicyUID, 128, false))) || m.K8sPodName != "" || m.K8sPodUID != "" || m.K8sTerminalReason != "" || m.K8sDenialRuleID != "" {
 			return errors.New("pending Kubernetes metadata requires only a valid Job identity")
 		}
 		return nil
@@ -170,7 +220,8 @@ func (m RunnerExecutorMetadata) validateKubernetes() error {
 		return errors.New("Kubernetes executor metadata contains an invalid lifecycle")
 	}
 	if !safeDNSLabel(m.K8sJobName) || !safeExecutorIdentity(m.K8sJobUID, 128, false) ||
-		!safeDNSLabel(m.K8sPodName) || !safeExecutorIdentity(m.K8sPodUID, 128, false) {
+		!safeDNSLabel(m.K8sPodName) || !safeExecutorIdentity(m.K8sPodUID, 128, false) ||
+		(provenanceSupplied && (!safeDNSLabel(m.K8sSecretName) || !safeExecutorIdentity(m.K8sSecretUID, 128, false) || !safeDNSLabel(m.K8sNetworkPolicyName) || !safeExecutorIdentity(m.K8sNetworkPolicyUID, 128, false))) {
 		return errors.New("Kubernetes executor metadata requires valid Job and Pod identities")
 	}
 	_, allowedReason := kubernetesTerminalReasons[m.K8sTerminalReason]
@@ -183,12 +234,28 @@ func (m RunnerExecutorMetadata) validateKubernetes() error {
 		if !allowedReason {
 			return errors.New("failed Kubernetes metadata requires an allow-listed terminal reason")
 		}
+		if m.K8sDenialRuleID != "" && m.K8sTerminalReason != "PolicyDenied" {
+			return errors.New("Kubernetes policy denial requires the policy denied reason")
+		}
 	case "stopped":
 		if m.K8sTerminalReason != "Canceled" {
 			return errors.New("stopped Kubernetes metadata requires the canceled reason")
 		}
 	}
+	if provenanceSupplied && (m.K8sLifecycle == "succeeded" || m.K8sLifecycle == "failed" || m.K8sLifecycle == "stopped") {
+		if m.K8sRetentionState != "terminal" || m.K8sRetentionDeadline == nil || !m.K8sRetentionDeadline.After(time.Unix(0, 0)) {
+			return errors.New("terminal Kubernetes metadata requires a bounded retention deadline")
+		}
+	} else if provenanceSupplied && (m.K8sRetentionState != "active" || m.K8sRetentionDeadline != nil) {
+		return errors.New("active Kubernetes metadata requires active retention state")
+	}
 	return nil
+}
+
+func (m RunnerExecutorMetadata) hasKubernetesProvenance() bool {
+	return m.K8sServiceAccount != "" || m.K8sRuntimeClass != "" || m.K8sResourcePolicyID != "" || m.K8sResourcePolicyHash != "" ||
+		m.K8sNetworkProfile != "" || m.K8sNetworkEnforcement != "" || m.K8sSecretName != "" || m.K8sSecretUID != "" ||
+		m.K8sNetworkPolicyName != "" || m.K8sNetworkPolicyUID != "" || m.K8sRetentionDeadline != nil || m.K8sRetentionState != ""
 }
 
 func immutableSHA256Image(value string) bool {

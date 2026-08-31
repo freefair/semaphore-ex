@@ -416,6 +416,9 @@ func Route(
 	adminAPI.Path("/runners/docker-policy").HandlerFunc(globalRunnerController.GetDockerExecutionPolicy).Methods("GET", "HEAD")
 	adminAPI.Path("/runners/docker-policy").HandlerFunc(globalRunnerController.UpdateDockerExecutionPolicy).Methods("PUT")
 	adminAPI.Path("/runners/docker-policy/test").HandlerFunc(globalRunnerController.TestDockerExecutionPolicy).Methods("POST")
+	adminAPI.Path("/runners/kubernetes-policies/{cluster_alias}").HandlerFunc(globalRunnerController.GetKubernetesExecutionPolicy).Methods("GET", "HEAD")
+	adminAPI.Path("/runners/kubernetes-policies/{cluster_alias}").HandlerFunc(globalRunnerController.UpdateKubernetesExecutionPolicy).Methods("PUT")
+	adminAPI.Path("/runners/kubernetes-policies/{cluster_alias}/test").HandlerFunc(globalRunnerController.TestKubernetesExecutionPolicy).Methods("POST")
 
 	globalRunnersAPI := adminAPI.PathPrefix("/runners").Subrouter()
 	globalRunnersAPI.Use(globalRunnerController.RunnerMiddleware)
@@ -429,6 +432,8 @@ func Route(
 	globalRunnersAPI.Path("/{runner_id}/docker-reconciliation/candidates").HandlerFunc(globalRunnerController.GetDockerReconciliationCandidates).Methods("GET", "HEAD")
 	globalRunnersAPI.Path("/{runner_id}/docker-reconciliation/diagnostics").HandlerFunc(globalRunnerController.GetDockerReconciliationDiagnostics).Methods("GET", "HEAD")
 	globalRunnersAPI.Path("/{runner_id}/docker-reconciliation/remediation").HandlerFunc(globalRunnerController.RequestDockerReconciliationRemediation).Methods("POST")
+	globalRunnersAPI.Path("/{runner_id}/kubernetes-reconciliation/diagnostics").HandlerFunc(globalRunnerController.GetKubernetesReconciliationDiagnostics).Methods("GET", "HEAD")
+	globalRunnersAPI.Path("/{runner_id}/kubernetes-reconciliation/remediation").HandlerFunc(globalRunnerController.RequestKubernetesReconciliationRemediation).Methods("POST")
 
 	appsAPI := adminAPI.PathPrefix("/apps").Subrouter()
 	appsAPI.Use(appMiddleware)

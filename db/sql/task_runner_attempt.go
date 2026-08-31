@@ -164,10 +164,11 @@ func (d *SqlDb) UpdateTaskRunnerAttemptMetadata(
 ) (bool, error) {
 	result, err := d.exec(
 		"update task__runner_attempt set executor_type=?, container_id=?, container_name=?, docker_requested_image=?, docker_resolved_image=?, docker_policy_revision=?, docker_policy_hash=?, docker_nano_cpus=?, docker_memory_bytes=?, docker_pids_limit=?, denial_rule_id=?, "+
-			"k8s_cluster_alias=?, k8s_namespace=?, k8s_job_name=?, k8s_job_uid=?, k8s_pod_name=?, k8s_pod_uid=?, k8s_container_name=?, k8s_lifecycle=?, k8s_terminal_reason=? "+
+			"k8s_cluster_alias=?, k8s_namespace=?, k8s_job_name=?, k8s_job_uid=?, k8s_pod_name=?, k8s_pod_uid=?, k8s_container_name=?, k8s_lifecycle=?, k8s_terminal_reason=?, k8s_policy_revision=?, k8s_policy_hash=?, k8s_denial_rule_id=?, k8s_service_account=?, k8s_runtime_class=?, k8s_resource_policy_id=?, k8s_resource_policy_hash=?, k8s_network_profile=?, k8s_network_enforcement=?, k8s_secret_name=?, k8s_secret_uid=?, k8s_network_policy_name=?, k8s_network_policy_uid=?, k8s_retention_deadline=?, k8s_retention_state=? "+
 			"where project_id=? and task_id=? and generation=? and runner_id=? and ended_at is null",
 		metadata.ExecutorType, metadata.ContainerID, metadata.ContainerName, metadata.RequestedImage, metadata.ResolvedImage, metadata.PolicyRevision, metadata.PolicyHash, metadata.NanoCPUs, metadata.MemoryBytes, metadata.PidsLimit, metadata.DenialRuleID,
 		metadata.K8sClusterAlias, metadata.K8sNamespace, metadata.K8sJobName, metadata.K8sJobUID, metadata.K8sPodName, metadata.K8sPodUID, metadata.K8sContainerName, metadata.K8sLifecycle, metadata.K8sTerminalReason,
+		metadata.K8sPolicyRevision, metadata.K8sPolicyHash, metadata.K8sDenialRuleID, metadata.K8sServiceAccount, metadata.K8sRuntimeClass, metadata.K8sResourcePolicyID, metadata.K8sResourcePolicyHash, metadata.K8sNetworkProfile, metadata.K8sNetworkEnforcement, metadata.K8sSecretName, metadata.K8sSecretUID, metadata.K8sNetworkPolicyName, metadata.K8sNetworkPolicyUID, metadata.K8sRetentionDeadline, metadata.K8sRetentionState,
 		projectID, taskID, generation, runnerID,
 	)
 	if err != nil {

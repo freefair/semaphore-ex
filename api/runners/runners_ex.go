@@ -14,6 +14,15 @@ import (
 // evidence-sink contract while the API router wires the process metrics once.
 func (c *RunnerController) SetMetrics(appMetrics *metrics.Metrics) { c.metrics = appMetrics }
 
+func kubernetesNamespaceAllowed(policy db.KubernetesExecutionPolicy, namespace string) bool {
+	for _, allowed := range policy.AllowedNamespaces {
+		if allowed == namespace {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *RunnerController) persistTaskExecutionEvidence(w http.ResponseWriter, runnerID int, evidence []db.TaskExecutionEvidence) bool {
 	if c.taskExecutionEvidenceSink == nil {
 		return true

@@ -22,13 +22,14 @@ func TestBuildJobCreatesOneBoundedAttributableTaskPod(t *testing.T) {
 	}
 	task := db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 3}
 
-	job := buildJob(cfg, task, 19, "semaphore-bundle-41-3", testImage, []string{"/bin/sh", "/semaphore/bundle/run.sh", "run"})
+	job := buildJob(cfg, testKubernetesPolicy(t, cfg), task, 19, "semaphore-bundle-41-3", testImage, []string{"/bin/sh", "/semaphore/bundle/run.sh", "run"})
 
 	require.NotNil(t, job)
 	assert.Equal(t, "semaphore-jobs", job.Namespace)
 	assert.Equal(t, "semaphore-task-41-3", job.Name)
 	assert.Equal(t, map[string]string{
 		"app.kubernetes.io/managed-by":       "semaphore",
+		"io.semaphore.managed":               "v1",
 		"io.semaphore.executor":              "k8s",
 		"io.semaphore.project-id":            "7",
 		"io.semaphore.runner-id":             "19",
@@ -46,7 +47,12 @@ func TestBuildJobCreatesOneBoundedAttributableTaskPod(t *testing.T) {
 	assert.Equal(t, int64(20), *job.Spec.Template.Spec.TerminationGracePeriodSeconds)
 	require.NotNil(t, job.Spec.Template.Spec.AutomountServiceAccountToken)
 	assert.False(t, *job.Spec.Template.Spec.AutomountServiceAccountToken)
+	require.NotNil(t, job.Spec.Template.Spec.SecurityContext)
+	require.NotNil(t, job.Spec.Template.Spec.SecurityContext.FSGroup)
+	assert.Equal(t, restrictedWorkloadUID, *job.Spec.Template.Spec.SecurityContext.FSGroup)
 	assert.Equal(t, []corev1.LocalObjectReference{{Name: "registry-a"}, {Name: "registry-b"}}, job.Spec.Template.Spec.ImagePullSecrets)
+	require.NotNil(t, job.Spec.Template.Spec.Volumes[0].Secret.DefaultMode)
+	assert.Equal(t, int32(0o440), *job.Spec.Template.Spec.Volumes[0].Secret.DefaultMode)
 	require.Len(t, job.Spec.Template.Spec.InitContainers, 1)
 	assert.Equal(t, testImage, job.Spec.Template.Spec.InitContainers[0].Image)
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
@@ -59,7 +65,8 @@ func TestBuildJobCreatesOneBoundedAttributableTaskPod(t *testing.T) {
 }
 
 func TestBuildJobNameIsStableAndWithinKubernetesLimit(t *testing.T) {
-	job := buildJob(config{namespace: "semaphore", serviceAccount: "semaphore-task", helperImage: testImage, activeDeadlineSeconds: 1}, db.Task{
+	cfg := config{clusterAlias: "qa", namespace: "semaphore", serviceAccount: "semaphore-task", image: testImage, helperImage: testImage, activeDeadlineSeconds: 1}
+	job := buildJob(cfg, testKubernetesPolicy(t, cfg), db.Task{
 		ID:                   2147483647,
 		ProjectID:            2147483647,
 		AssignmentGeneration: 2147483647,

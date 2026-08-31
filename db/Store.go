@@ -631,6 +631,7 @@ type Store interface {
 	ViewManager
 	RunnerManager
 	DockerExecutionPolicyRepository
+	KubernetesExecutionPolicyRepository
 	DockerReconciliationRepository
 	DockerTelemetryRepository
 	EventManager
