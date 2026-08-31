@@ -74,6 +74,79 @@ func TestDeniedCapabilityActionPersistsRedactedAuditAndMetrics(t *testing.T) {
 		`semaphore_enhanced_actions_total{action="capability_write",outcome="denied",source="api"} 1`)
 }
 
+func TestDeniedWorkflowRoutesPersistBoundedAuditEvents(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	defer store.Close()
+	project, err := store.CreateProject(db.Project{Name: "workflow audit"})
+	require.NoError(t, err)
+	user, err := store.CreateUserWithoutPassword(db.User{Username: "workflow-audit", Name: "Workflow Audit", Email: "workflow-audit@example.test"})
+	require.NoError(t, err)
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: project.ID, AccessPolicyRevision: 4}
+	writer := &integrationAuditWriter{}
+	face := auditservice.NewServiceFacade(store, writer, metrics.NewMetrics())
+	for _, test := range []struct {
+		method     string
+		path       string
+		vars       map[string]string
+		status     int
+		action     pro_interfaces.AuditAction
+		targetType pro_interfaces.AuditTargetType
+		target     string
+		task       bool
+	}{
+		{http.MethodGet, "/api/project/1/workflows", map[string]string{"project_id": "1"}, http.StatusForbidden, pro_interfaces.AuditActionWorkflowList, pro_interfaces.AuditTargetWorkflow, "project:1", false},
+		{http.MethodGet, "/api/project/1/workflows/41", map[string]string{"project_id": "1", "workflow_id": "41"}, http.StatusNotFound, pro_interfaces.AuditActionWorkflowRead, pro_interfaces.AuditTargetWorkflow, "workflow:41", false},
+		{http.MethodPost, "/api/project/1/workflows/41/run", map[string]string{"project_id": "1", "workflow_id": "41"}, http.StatusForbidden, pro_interfaces.AuditActionWorkflowStart, pro_interfaces.AuditTargetWorkflow, "workflow:41", false},
+		{http.MethodPost, "/api/project/1/workflows/41/runs/91/stop", map[string]string{"project_id": "1", "workflow_id": "41", "run_id": "91"}, http.StatusForbidden, pro_interfaces.AuditActionWorkflowStop, pro_interfaces.AuditTargetWorkflowRun, "run:91", false},
+		{http.MethodDelete, "/api/project/1/workflows/41", map[string]string{"project_id": "1", "workflow_id": "41"}, http.StatusForbidden, pro_interfaces.AuditActionWorkflowDelete, pro_interfaces.AuditTargetWorkflow, "workflow:41", false},
+		{http.MethodGet, "/api/project/1/workflow-approvals", map[string]string{"project_id": "1"}, http.StatusForbidden, pro_interfaces.AuditActionWorkflowApprovalInbox, pro_interfaces.AuditTargetWorkflowApprovalInbox, "project:1", false},
+		{http.MethodGet, "/api/project/1/tasks/9/output", map[string]string{"project_id": "1", "task_id": "9"}, http.StatusNotFound, pro_interfaces.AuditActionWorkflowRunLogsRead, pro_interfaces.AuditTargetWorkflowRun, "run:91", true},
+	} {
+		t.Run(test.target, func(t *testing.T) {
+			r := httptest.NewRequest(test.method, test.path+"?secret=tripwire", nil)
+			r = mux.SetURLVars(r, test.vars)
+			r = helpers.SetContextValue(r, "store", store)
+			r = helpers.SetContextValue(r, "project", project)
+			r = helpers.SetContextValue(r, "user", &user)
+			r = helpers.SetContextValue(r, "workflow", workflow)
+			if test.task {
+				runID := 91
+				r = helpers.SetContextValue(r, "task", db.Task{ProjectID: project.ID, WorkflowRunID: &runID})
+			}
+			response := httptest.NewRecorder()
+			EnhancedWorkflowDeniedAuditMiddleware(face)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(test.status) })).ServeHTTP(response, r)
+			assert.Equal(t, test.status, response.Code)
+		})
+	}
+	events, err := store.GetAllEvents(db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, events, 7)
+	seen := make(map[pro_interfaces.AuditAction]pro_interfaces.AuditEvent, len(events))
+	for _, event := range events {
+		require.NotNil(t, event.Description)
+		var payload pro_interfaces.AuditEvent
+		require.NoError(t, json.Unmarshal([]byte(*event.Description), &payload))
+		assert.Equal(t, pro_interfaces.AuditOutcomeDenied, payload.Outcome)
+		assert.Equal(t, pro_interfaces.AuditReasonWorkflowPolicyDenied, payload.Reason)
+		assert.Equal(t, 4, payload.WorkflowPolicyRevision)
+		assert.Equal(t, pro_interfaces.AuditSourceAPI, payload.Source)
+		assert.NotContains(t, *event.Description, "tripwire")
+		seen[payload.Action] = payload
+	}
+	for _, test := range []struct {
+		action     pro_interfaces.AuditAction
+		targetType pro_interfaces.AuditTargetType
+		target     string
+	}{
+		{pro_interfaces.AuditActionWorkflowList, pro_interfaces.AuditTargetWorkflow, "project:1"}, {pro_interfaces.AuditActionWorkflowRead, pro_interfaces.AuditTargetWorkflow, "workflow:41"}, {pro_interfaces.AuditActionWorkflowStart, pro_interfaces.AuditTargetWorkflow, "workflow:41"}, {pro_interfaces.AuditActionWorkflowStop, pro_interfaces.AuditTargetWorkflowRun, "run:91"}, {pro_interfaces.AuditActionWorkflowDelete, pro_interfaces.AuditTargetWorkflow, "workflow:41"}, {pro_interfaces.AuditActionWorkflowApprovalInbox, pro_interfaces.AuditTargetWorkflowApprovalInbox, "project:1"}, {pro_interfaces.AuditActionWorkflowRunLogsRead, pro_interfaces.AuditTargetWorkflowRun, "run:91"},
+	} {
+		payload, ok := seen[test.action]
+		require.True(t, ok)
+		assert.Equal(t, test.targetType, payload.TargetType)
+		assert.Equal(t, test.target, payload.TargetID)
+	}
+}
+
 func TestAnonymousMissingProjectDenialIsRetainedWithoutUserFeedExposure(t *testing.T) {
 	store := sqldb.InitConfigCreateTestStore()
 	defer store.Close()

@@ -143,13 +143,15 @@ func Route(
 	if taskPool != nil {
 		taskPool.SetExecutorImageCapabilityResolver(executorImageResolver)
 	}
-	taskController := projects.NewTaskController(store, ansibleTaskRepo)
+	taskController := projects.NewTaskController(store, ansibleTaskRepo, workflowStore)
 	rolesController := proApi.NewRolesController(store, capabilityProvider)
 	templateController := projects.NewTemplateController(store, store, executorImageResolver)
 	systemInfoController := NewSystemInfoController(subscriptionService)
 	capabilityTestService := proFeatures.NewCapabilityTestService(store)
 	capabilityFacade := capabilityServices.NewServiceFacade(capabilityProvider, capabilityTestService)
 	auditFacade := auditServices.NewServiceFacade(store, logWriteService, appMetrics, auditWebhookService)
+	configureWorkflowAudit(workflowService, auditFacade)
+	workflowAudit := EnhancedWorkflowDeniedAuditMiddleware(auditFacade)
 	auditWebhookController := NewAuditWebhookController(auditWebhookService, auditFacade)
 	projectRunnerController := proProjects.NewProjectRunnerController(subscriptionService, runnerService, capabilityProvider, auditFacade)
 	capabilityController := NewCapabilityController(capabilityFacade, auditFacade)
@@ -495,7 +497,7 @@ func Route(
 	projectTaskStart.Path("/tasks").HandlerFunc(taskController.AddTask).Methods("POST")
 
 	projectTaskStop := authenticatedAPI.PathPrefix("/project/{project_id}").Subrouter()
-	projectTaskStop.Use(projects.ProjectMiddleware, taskController.GetTaskMiddleware, taskController.GetTaskPermissionsMiddleware, projects.GetMustCanMiddleware(db.CanRunProjectTasks))
+	projectTaskStop.Use(projects.ProjectMiddleware, taskController.GetTaskMiddleware, taskController.GetTaskPermissionsMiddleware, taskController.WorkflowTaskControlAccessMiddleware)
 	projectTaskStop.HandleFunc("/tasks/{task_id}/stop", taskController.StopTask).Methods("POST")
 	projectTaskStop.HandleFunc("/tasks/{task_id}/confirm", taskController.ConfirmTask).Methods("POST")
 	projectTaskStop.HandleFunc("/tasks/{task_id}/reject", taskController.RejectTask).Methods("POST")
@@ -536,9 +538,23 @@ func Route(
 
 	projectUserAPI.Path("/templates").HandlerFunc(projects.GetTemplates).Methods("GET", "HEAD")
 	projectUserAPI.Path("/templates").HandlerFunc(templateController.AddTemplate).Methods("POST")
-	projectUserAPI.Path("/workflows").HandlerFunc(workflowController.GetWorkflows).Methods("GET", "HEAD")
-	projectUserAPI.Path("/workflows").HandlerFunc(workflowController.AddWorkflow).Methods("POST")
-	projectUserAPI.Path("/workflows/validate").HandlerFunc(workflowController.ValidateWorkflow).Methods("POST")
+	projectWorkflowCollectionAPI := authenticatedAPI.PathPrefix("/project/{project_id}/workflows").Subrouter()
+	projectWorkflowCollectionAPI.Use(projects.ProjectMiddleware, workflowAudit)
+	projectWorkflowCollectionAPI.Path("").Handler(
+		projects.WorkflowProjectPermissionMiddleware(pro_interfaces.PermissionViewWorkflow)(
+			http.HandlerFunc(workflowController.GetWorkflows),
+		),
+	).Methods("GET", "HEAD")
+	projectWorkflowCollectionAPI.Path("").Handler(
+		projects.WorkflowProjectPermissionMiddleware(pro_interfaces.PermissionEditWorkflow)(
+			http.HandlerFunc(workflowController.AddWorkflow),
+		),
+	).Methods("POST")
+	projectWorkflowCollectionAPI.Path("/validate").Handler(
+		projects.WorkflowProjectPermissionMiddleware(pro_interfaces.PermissionEditWorkflow)(
+			http.HandlerFunc(workflowController.ValidateWorkflow),
+		),
+	).Methods("POST")
 
 	projectUserAPI.Path("/schedules").HandlerFunc(projects.GetProjectSchedules).Methods("GET", "HEAD")
 	projectUserAPI.Path("/schedules").HandlerFunc(projects.AddSchedule).Methods("POST")
@@ -738,41 +754,51 @@ func Route(
 	projectTmplInvManagement.Path("/{inventory_id}/detach").Handler(
 		templateEdit(http.HandlerFunc(projects.DetachInventory))).Methods("POST")
 
-	projectWorkflowManagement := projectUserAPI.PathPrefix("/workflows").Subrouter()
-	projectWorkflowManagement.Use(workflowMiddlewareController.WorkflowsMiddleware)
-	projectWorkflowManagement.HandleFunc("/{workflow_id}", workflowController.UpdateWorkflow).Methods("PUT")
-	projectWorkflowManagement.HandleFunc("/{workflow_id}", workflowController.RemoveWorkflow).Methods("DELETE")
-	projectWorkflowManagement.HandleFunc("/{workflow_id}", workflowController.GetWorkflow).Methods("GET")
-	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers", workflowTriggerController.GetTriggers).Methods("GET", "HEAD")
-	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers", workflowTriggerController.AddTrigger).Methods("POST")
-	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}", workflowTriggerController.GetTrigger).Methods("GET", "HEAD")
-	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}", workflowTriggerController.UpdateTrigger).Methods("PUT")
-	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}", workflowTriggerController.DeleteTrigger).Methods("DELETE")
-	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}/enabled", workflowTriggerController.SetTriggerEnabled).Methods("PUT")
-	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}/rotate", workflowTriggerController.RotateTriggerCredential).Methods("POST")
-	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}/test", workflowTriggerController.TestTrigger).Methods("POST")
-	projectWorkflowManagement.HandleFunc("/{workflow_id}/triggers/{trigger_id}/history", workflowTriggerController.GetTriggerHistory).Methods("GET", "HEAD")
+	workflowView := projects.WorkflowAccessMiddleware(pro_interfaces.PermissionViewWorkflow)
+	workflowEdit := projects.WorkflowAccessMiddleware(pro_interfaces.PermissionEditWorkflow)
+	workflowStart := projects.WorkflowAccessMiddleware(pro_interfaces.PermissionStartWorkflow)
+	workflowStop := projects.WorkflowAccessMiddleware(pro_interfaces.PermissionStopWorkflow)
+	workflowAdmin := projects.WorkflowAccessMiddleware(pro_interfaces.PermissionAdministerWorkflow)
+
+	projectWorkflowManagement := authenticatedAPI.PathPrefix("/project/{project_id}/workflows").Subrouter()
+	projectWorkflowManagement.Use(projects.ProjectMiddleware, workflowMiddlewareController.WorkflowsMiddleware, workflowAudit)
+	projectWorkflowManagement.Handle("/{workflow_id}", workflowEdit(http.HandlerFunc(workflowController.UpdateWorkflow))).Methods("PUT")
+	projectWorkflowManagement.Handle("/{workflow_id}", workflowAdmin(http.HandlerFunc(workflowController.RemoveWorkflow))).Methods("DELETE")
+	projectWorkflowManagement.Handle("/{workflow_id}", workflowView(http.HandlerFunc(workflowController.GetWorkflow))).Methods("GET", "HEAD")
+	projectWorkflowManagement.Handle("/{workflow_id}/triggers", workflowAdmin(http.HandlerFunc(workflowTriggerController.GetTriggers))).Methods("GET", "HEAD")
+	projectWorkflowManagement.Handle("/{workflow_id}/triggers", workflowAdmin(http.HandlerFunc(workflowTriggerController.AddTrigger))).Methods("POST")
+	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}", workflowAdmin(http.HandlerFunc(workflowTriggerController.GetTrigger))).Methods("GET", "HEAD")
+	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}", workflowAdmin(http.HandlerFunc(workflowTriggerController.UpdateTrigger))).Methods("PUT")
+	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}", workflowAdmin(http.HandlerFunc(workflowTriggerController.DeleteTrigger))).Methods("DELETE")
+	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}/enabled", workflowAdmin(http.HandlerFunc(workflowTriggerController.SetTriggerEnabled))).Methods("PUT")
+	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}/rotate", workflowAdmin(http.HandlerFunc(workflowTriggerController.RotateTriggerCredential))).Methods("POST")
+	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}/test", workflowAdmin(http.HandlerFunc(workflowTriggerController.TestTrigger))).Methods("POST")
+	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}/history", workflowAdmin(http.HandlerFunc(workflowTriggerController.GetTriggerHistory))).Methods("GET", "HEAD")
 
 	projectWorkflowApprovalInboxAPI := authenticatedAPI.PathPrefix("/project/{project_id}/workflow-approvals").Subrouter()
-	projectWorkflowApprovalInboxAPI.Use(projects.ProjectMiddleware)
+	projectWorkflowApprovalInboxAPI.Use(projects.ProjectMiddleware, workflowAudit)
 	projectWorkflowApprovalInboxAPI.HandleFunc("", workflowController.GetWorkflowApprovalInbox).Methods("GET", "HEAD")
 
 	projectWorkflowRunAPI := authenticatedAPI.PathPrefix("/project/{project_id}/workflows").Subrouter()
-	projectWorkflowRunAPI.Use(projects.ProjectMiddleware, workflowMiddlewareController.WorkflowsMiddleware, projects.GetMustCanMiddleware(db.CanRunProjectTasks))
-	projectWorkflowRunAPI.HandleFunc("/{workflow_id}/run", workflowController.RunWorkflow).Methods("POST")
-	projectWorkflowRunAPI.HandleFunc("/{workflow_id}/runs", workflowController.GetWorkflowRuns).Methods("GET", "HEAD")
+	projectWorkflowRunAPI.Use(projects.ProjectMiddleware, workflowMiddlewareController.WorkflowsMiddleware, workflowAudit)
+	projectWorkflowRunAPI.Handle("/{workflow_id}/run", workflowStart(http.HandlerFunc(workflowController.RunWorkflow))).Methods("POST")
+	projectWorkflowRunAPI.Handle("/{workflow_id}/runs", workflowView(http.HandlerFunc(workflowController.GetWorkflowRuns))).Methods("GET", "HEAD")
 
 	projectWorkflowRunManagement := projectWorkflowRunAPI.PathPrefix("/{workflow_id}/runs").Subrouter()
 	projectWorkflowRunManagement.Use(workflowMiddlewareController.WorkflowRunsMiddleware)
 	projectWorkflowRunManagement.HandleFunc("/{run_id}", workflowController.GetWorkflowRun).Methods("GET", "HEAD")
-	projectWorkflowRunManagement.HandleFunc("/{run_id}/stop", workflowController.StopWorkflowRun).Methods("POST")
-	projectWorkflowRunManagement.HandleFunc("/{run_id}/retry-reconcile", workflowController.RetryWorkflowRunReconciliation).Methods("POST")
+	projectWorkflowRunManagement.Handle("/{run_id}/stop", workflowStop(http.HandlerFunc(workflowController.StopWorkflowRun))).Methods("POST")
+	projectWorkflowRunManagement.Handle("/{run_id}/retry-reconcile", workflowAdmin(http.HandlerFunc(workflowController.RetryWorkflowRunReconciliation))).Methods("POST")
 	projectWorkflowRunManagement.HandleFunc("/{run_id}/artifacts", workflowController.GetWorkflowRunArtifacts).Methods("GET", "HEAD")
 	projectWorkflowRunManagement.HandleFunc("/{run_id}/approvals", workflowController.GetWorkflowApprovals).Methods("GET", "HEAD")
+	// Approval decisions are authorized again by the workflow service against
+	// the immutable request snapshot and current role eligibility. Do not apply
+	// ordinary workflow-view narrowing here: an eligible approver may need this
+	// bounded decision route without broader workflow visibility.
 	projectWorkflowRunManagement.HandleFunc("/{run_id}/approvals/{node_id}", workflowController.ResolveWorkflowApproval).Methods("POST")
 
-	projectTaskManagement := projectUserAPI.PathPrefix("/tasks").Subrouter()
-	projectTaskManagement.Use(taskController.GetTaskMiddleware)
+	projectTaskManagement := authenticatedAPI.PathPrefix("/project/{project_id}/tasks").Subrouter()
+	projectTaskManagement.Use(projects.ProjectMiddleware, taskController.GetTaskMiddleware, taskController.WorkflowTaskAccessMiddleware, workflowAudit)
 
 	projectTaskManagement.HandleFunc("/{task_id}/output", taskController.GetTaskOutput).Methods("GET", "HEAD")
 	projectTaskManagement.HandleFunc("/{task_id}/raw_output", taskController.GetTaskRawOutput).Methods("GET", "HEAD")

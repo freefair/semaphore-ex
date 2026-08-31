@@ -104,6 +104,7 @@ func PrepareWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, workf
 	conditionIssues := compileWorkflowConditions(&workflow)
 	artifactIssues := prepareWorkflowArtifactMetadata(&workflow)
 	parameterIssues := prepareWorkflowParameterMetadata(&workflow)
+	policyIssues := prepareWorkflowPolicyMetadata(&workflow)
 	result, err := validateWorkflowTemplate(store, workflow)
 	if err != nil {
 		return coreDB.WorkflowTemplate{}, coreDB.WorkflowValidationResult{}, err
@@ -111,8 +112,39 @@ func PrepareWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, workf
 	result.Issues = append(result.Issues, conditionIssues...)
 	result.Issues = append(result.Issues, artifactIssues...)
 	result.Issues = append(result.Issues, parameterIssues...)
+	result.Issues = append(result.Issues, policyIssues...)
 	result.Valid = len(result.Issues) == 0
 	return workflow, result, nil
+}
+
+func prepareWorkflowPolicyMetadata(workflow *coreDB.WorkflowTemplate) []coreDB.WorkflowValidationIssue {
+	issues := make([]coreDB.WorkflowValidationIssue, 0)
+	if err := workflow.AccessPolicy.Validate(); err != nil {
+		issues = append(issues, coreDB.WorkflowValidationIssue{Code: "WORKFLOW_ACCESS_POLICY_INVALID", Message: err.Error(), Path: "access_policy"})
+	} else if encoded, err := json.Marshal(workflow.AccessPolicy); err != nil {
+		issues = append(issues, coreDB.WorkflowValidationIssue{Code: "WORKFLOW_ACCESS_POLICY_INVALID", Message: "Workflow access policy could not be stored.", Path: "access_policy"})
+	} else {
+		workflow.AccessPolicyJSON = string(encoded)
+	}
+	for index := range workflow.Nodes {
+		node := &workflow.Nodes[index]
+		if node.EffectiveKind() != coreDB.WorkflowNodeApprovalKind {
+			continue
+		}
+		if node.ApprovalRolePolicy.Mode == "" && len(node.ApprovalRolePolicy.RoleIDs) == 0 {
+			continue // Legacy permission-based approval remains readable until migration.
+		}
+		if err := node.ApprovalRolePolicy.Validate(); err != nil {
+			id := node.ID
+			issues = append(issues, coreDB.WorkflowValidationIssue{Code: "WORKFLOW_APPROVAL_ROLE_POLICY_INVALID", Message: err.Error(), Path: fmt.Sprintf("nodes[%d].approval_role_policy", index), NodeID: &id})
+		} else if encoded, err := json.Marshal(node.ApprovalRolePolicy); err != nil {
+			id := node.ID
+			issues = append(issues, coreDB.WorkflowValidationIssue{Code: "WORKFLOW_APPROVAL_ROLE_POLICY_INVALID", Message: "Workflow approval role policy could not be stored.", Path: fmt.Sprintf("nodes[%d].approval_role_policy", index), NodeID: &id})
+		} else {
+			node.ApprovalRolePolicyJSON = string(encoded)
+		}
+	}
+	return issues
 }
 
 func prepareWorkflowParameterMetadata(workflow *coreDB.WorkflowTemplate) []coreDB.WorkflowValidationIssue {

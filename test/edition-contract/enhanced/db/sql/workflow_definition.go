@@ -29,6 +29,71 @@ func decodeWorkflowParameterDefinitions(workflow *db.WorkflowTemplate) error {
 	return nil
 }
 
+func decodeWorkflowPolicies(workflow *db.WorkflowTemplate) error {
+	if workflow.AccessPolicyJSON == "" {
+		workflow.AccessPolicyJSON = "{}"
+	}
+	if err := json.Unmarshal([]byte(workflow.AccessPolicyJSON), &workflow.AccessPolicy); err != nil {
+		return fmt.Errorf("decode workflow access policy: %w", err)
+	}
+	workflow.AccessPolicy.Revision = workflow.AccessPolicyRevision
+	if err := workflow.AccessPolicy.Validate(); err != nil {
+		return err
+	}
+	for index := range workflow.Nodes {
+		node := &workflow.Nodes[index]
+		if node.ApprovalRolePolicyJSON == "" || node.ApprovalRolePolicyJSON == "{}" {
+			continue
+		}
+		if err := json.Unmarshal([]byte(node.ApprovalRolePolicyJSON), &node.ApprovalRolePolicy); err != nil {
+			return fmt.Errorf("decode workflow approval role policy: %w", err)
+		}
+		node.ApprovalRolePolicy.Revision = node.ApprovalRolePolicyRevision
+		if err := node.ApprovalRolePolicy.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func encodeWorkflowPolicies(workflow *db.WorkflowTemplate) error {
+	if workflow.AccessPolicy.Revision <= 0 {
+		workflow.AccessPolicy.Revision = 1
+	}
+	if err := workflow.AccessPolicy.Validate(); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(workflow.AccessPolicy)
+	if err != nil {
+		return fmt.Errorf("encode workflow access policy: %w", err)
+	}
+	workflow.AccessPolicyJSON = string(payload)
+	workflow.AccessPolicyRevision = workflow.AccessPolicy.Revision
+	for index := range workflow.Nodes {
+		node := &workflow.Nodes[index]
+		if node.EffectiveKind() != db.WorkflowNodeApprovalKind || len(node.ApprovalRolePolicy.RoleIDs) == 0 {
+			node.ApprovalRolePolicyJSON = "{}"
+			if node.ApprovalRolePolicyRevision <= 0 {
+				node.ApprovalRolePolicyRevision = 1
+			}
+			continue
+		}
+		if node.ApprovalRolePolicy.Revision <= 0 {
+			node.ApprovalRolePolicy.Revision = 1
+		}
+		if err = node.ApprovalRolePolicy.Validate(); err != nil {
+			return err
+		}
+		payload, err = json.Marshal(node.ApprovalRolePolicy)
+		if err != nil {
+			return fmt.Errorf("encode workflow approval role policy: %w", err)
+		}
+		node.ApprovalRolePolicyJSON = string(payload)
+		node.ApprovalRolePolicyRevision = node.ApprovalRolePolicy.Revision
+	}
+	return nil
+}
+
 func (d *WorkflowStoreImpl) GetWorkflowTemplates(projectID int, params db.RetrieveQueryParams) ([]db.WorkflowTemplate, error) {
 	if d.connection == nil {
 		return nil, db.ErrNotFound
@@ -71,6 +136,9 @@ func (d *WorkflowStoreImpl) GetWorkflowTemplates(projectID int, params db.Retrie
 		if err := d.loadWorkflowGraph(nil, &workflows[index]); err != nil {
 			return nil, err
 		}
+		if err := decodeWorkflowPolicies(&workflows[index]); err != nil {
+			return nil, err
+		}
 	}
 	return workflows, nil
 }
@@ -90,6 +158,9 @@ func (d *WorkflowStoreImpl) GetWorkflowTemplate(projectID int, workflowID int) (
 	if err := d.loadWorkflowGraph(nil, &workflow); err != nil {
 		return db.WorkflowTemplate{}, err
 	}
+	if err := decodeWorkflowPolicies(&workflow); err != nil {
+		return db.WorkflowTemplate{}, err
+	}
 	return workflow, nil
 }
 
@@ -104,10 +175,13 @@ func (d *WorkflowStoreImpl) CreateWorkflowTemplate(workflow db.WorkflowTemplate)
 	defer func() { _ = tx.Rollback() }()
 	workflow.DefinitionVersion = db.WorkflowDefinitionVersion
 	workflow.Revision = 1
+	if err = encodeWorkflowPolicies(&workflow); err != nil {
+		return db.WorkflowTemplate{}, err
+	}
 	workflow.ID, err = d.insertTx(tx,
-		"insert into project__workflow_template(project_id, name, description, start_version, definition_version, revision, max_parallel_tasks, parameter_definitions) values (?, ?, ?, ?, ?, ?, ?, ?)",
+		"insert into project__workflow_template(project_id, name, description, start_version, definition_version, revision, max_parallel_tasks, parameter_definitions, access_policy, access_policy_revision) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		workflow.ProjectID, workflow.Name, workflow.Description, workflow.StartVersion,
-		workflow.DefinitionVersion, workflow.Revision, workflow.MaxParallelTasks, workflow.ParameterDefinitionsJSON,
+		workflow.DefinitionVersion, workflow.Revision, workflow.MaxParallelTasks, workflow.ParameterDefinitionsJSON, workflow.AccessPolicyJSON, workflow.AccessPolicyRevision,
 	)
 	if err != nil {
 		return db.WorkflowTemplate{}, err
@@ -137,10 +211,13 @@ func (d *WorkflowStoreImpl) UpdateWorkflowTemplate(workflow db.WorkflowTemplate)
 	if current.Revision != workflow.Revision {
 		return db.WorkflowTemplate{}, pro_interfaces.ErrWorkflowRevisionConflict
 	}
+	if err = encodeWorkflowPolicies(&workflow); err != nil {
+		return db.WorkflowTemplate{}, err
+	}
 	result, err := tx.Exec(d.connection.PrepareQuery(
-		"update project__workflow_template set name=?, description=?, start_version=?, definition_version=?, max_parallel_tasks=?, parameter_definitions=?, revision=revision+1 where project_id=? and id=? and revision=?"),
+		"update project__workflow_template set name=?, description=?, start_version=?, definition_version=?, max_parallel_tasks=?, parameter_definitions=?, access_policy=?, access_policy_revision=?, revision=revision+1 where project_id=? and id=? and revision=?"),
 		workflow.Name, workflow.Description, workflow.StartVersion, workflow.DefinitionVersion, workflow.MaxParallelTasks, workflow.ParameterDefinitionsJSON,
-		workflow.ProjectID, workflow.ID, workflow.Revision,
+		workflow.AccessPolicyJSON, workflow.AccessPolicyRevision, workflow.ProjectID, workflow.ID, workflow.Revision,
 	)
 	if err != nil {
 		return db.WorkflowTemplate{}, err
@@ -200,7 +277,7 @@ func (d *WorkflowStoreImpl) selectWorkflowTemplateTx(tx *gorp.Transaction, proje
 
 func (d *WorkflowStoreImpl) loadWorkflowGraph(tx *gorp.Transaction, workflow *db.WorkflowTemplate) error {
 	nodeQuery := d.connection.PrepareQuery(
-		"select id, workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, approval_permission, approval_timeout_outcome, approval_separation_of_duties, task_params_id, note, position_x, position_y, display_name, artifact_outputs, artifact_inputs, override_policy from project__workflow_node where workflow_template_id=? order by id")
+		"select id, workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, approval_permission, approval_timeout_outcome, approval_separation_of_duties, approval_role_policy, approval_role_policy_revision, task_params_id, note, position_x, position_y, display_name, artifact_outputs, artifact_inputs, override_policy from project__workflow_node where workflow_template_id=? order by id")
 	edgeQuery := d.connection.PrepareQuery(
 		"select * from project__workflow_edge where workflow_template_id=? order by id")
 	var err error
@@ -290,10 +367,10 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 		}
 		if _, exists := existingNodes[clientID]; exists && clientID > 0 {
 			if _, err := tx.Exec(d.connection.PrepareQuery(
-				"update project__workflow_node set template_id=?, kind=?, convergence_mode=?, join_mode=?, approval_timeout=?, approval_message=?, approval_permission=?, approval_timeout_outcome=?, approval_separation_of_duties=?, task_params_id=?, note=?, position_x=?, position_y=?, display_name=?, override_policy=? where workflow_template_id=? and id=?"),
+				"update project__workflow_node set template_id=?, kind=?, convergence_mode=?, join_mode=?, approval_timeout=?, approval_message=?, approval_permission=?, approval_timeout_outcome=?, approval_separation_of_duties=?, approval_role_policy=?, approval_role_policy_revision=?, task_params_id=?, note=?, position_x=?, position_y=?, display_name=?, override_policy=? where workflow_template_id=? and id=?"),
 				node.TemplateID, node.Kind, node.ConvergenceMode, node.JoinMode, node.ApprovalTimeout, node.ApprovalMessage,
 				node.ApprovalPermission, node.ApprovalTimeoutOutcome, sqlBool(node.ApprovalSeparationOfDuties),
-				node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, node.OverridePolicyJSON,
+				node.ApprovalRolePolicyJSON, node.ApprovalRolePolicyRevision, node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, node.OverridePolicyJSON,
 				workflow.ID, clientID,
 			); err != nil {
 				return err
@@ -312,10 +389,10 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 			return fmt.Errorf("workflow node %d does not belong to workflow %d", clientID, workflow.ID)
 		}
 		newID, err := d.insertTx(tx,
-			"insert into project__workflow_node(workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, approval_permission, approval_timeout_outcome, approval_separation_of_duties, task_params_id, note, position_x, position_y, display_name, override_policy) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"insert into project__workflow_node(workflow_template_id, template_id, kind, convergence_mode, join_mode, approval_timeout, approval_message, approval_permission, approval_timeout_outcome, approval_separation_of_duties, approval_role_policy, approval_role_policy_revision, task_params_id, note, position_x, position_y, display_name, override_policy) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			workflow.ID, node.TemplateID, node.Kind, node.ConvergenceMode, node.JoinMode, node.ApprovalTimeout,
 			node.ApprovalMessage, node.ApprovalPermission, node.ApprovalTimeoutOutcome, sqlBool(node.ApprovalSeparationOfDuties),
-			node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, node.OverridePolicyJSON,
+			node.ApprovalRolePolicyJSON, node.ApprovalRolePolicyRevision, node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, node.OverridePolicyJSON,
 		)
 		if err != nil {
 			return err

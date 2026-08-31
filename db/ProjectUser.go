@@ -1,5 +1,9 @@
 package db
 
+import (
+	"errors"
+)
+
 type ProjectUserRole string
 
 const (
@@ -18,14 +22,23 @@ const (
 	CanManageProjectResources
 	CanManageProjectUsers
 	CanViewProjectResources
+	CanViewWorkflows
+	CanEditWorkflows
+	CanStartWorkflows
+	CanStopWorkflows
+	CanAdministerWorkflows
 )
 
 var rolePermissions = map[ProjectUserRole]ProjectUserPermission{
 	ProjectOwner: CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
-		CanManageProjectUsers | CanViewProjectResources,
-	ProjectManager:    CanRunProjectTasks | CanManageProjectResources | CanViewProjectResources,
-	ProjectTaskRunner: CanRunProjectTasks | CanViewProjectResources,
-	ProjectGuest:      CanViewProjectResources,
+		CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
+		CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows,
+	ProjectManager: CanRunProjectTasks | CanManageProjectResources | CanViewProjectResources |
+		CanViewWorkflows | CanEditWorkflows | CanStartWorkflows | CanStopWorkflows |
+		CanAdministerWorkflows,
+	ProjectTaskRunner: CanRunProjectTasks | CanViewProjectResources |
+		CanViewWorkflows | CanStartWorkflows | CanStopWorkflows,
+	ProjectGuest: CanViewProjectResources | CanViewWorkflows,
 }
 
 func (r ProjectUserRole) IsValid() bool {
@@ -43,6 +56,8 @@ type ProjectUser struct {
 	LDAPGroupManagedAssignmentID *int            `db:"ldap_group_managed_assignment_id" json:"-"`
 	OIDCGroupManagedAssignmentID *int            `db:"oidc_group_managed_assignment_id" json:"-"`
 }
+
+var ErrProjectWorkflowRoleIdentityUnavailable = errors.New("project workflow role identity is unavailable")
 
 func (r ProjectUserRole) Can(permissions ProjectUserPermission) bool {
 	return (rolePermissions[r] & permissions) == permissions

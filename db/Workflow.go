@@ -49,6 +49,10 @@ type WorkflowTemplate struct {
 	ParameterDefinitionsJSON string                         `db:"parameter_definitions" json:"-" backup:"parameter_definitions"`
 	ParameterDefinitions     []WorkflowParameterDeclaration `db:"-" json:"parameters,omitempty" backup:"-"`
 
+	AccessPolicyJSON     string               `db:"access_policy" json:"-" backup:"access_policy"`
+	AccessPolicyRevision int                  `db:"access_policy_revision" json:"-" backup:"access_policy_revision"`
+	AccessPolicy         WorkflowAccessPolicy `db:"-" json:"access_policy,omitempty" backup:"-"`
+
 	Nodes []WorkflowNode `db:"-" bolt:"include" json:"nodes" backup:"-"`
 	Edges []WorkflowEdge `db:"-" bolt:"include" json:"edges" backup:"edges"`
 
@@ -70,6 +74,9 @@ type WorkflowNode struct {
 	ApprovalPermission         ProjectUserPermission          `db:"approval_permission" json:"approval_permission,omitempty" backup:"approval_permission"`
 	ApprovalTimeoutOutcome     WorkflowApprovalTimeoutOutcome `db:"approval_timeout_outcome" json:"approval_timeout_outcome,omitempty" backup:"approval_timeout_outcome"`
 	ApprovalSeparationOfDuties bool                           `db:"approval_separation_of_duties" json:"approval_separation_of_duties,omitempty" backup:"approval_separation_of_duties"`
+	ApprovalRolePolicyJSON     string                         `db:"approval_role_policy" json:"-" backup:"approval_role_policy"`
+	ApprovalRolePolicyRevision int                            `db:"approval_role_policy_revision" json:"-" backup:"approval_role_policy_revision"`
+	ApprovalRolePolicy         WorkflowApprovalRolePolicy     `db:"-" json:"approval_role_policy,omitempty" backup:"-"`
 
 	TaskParamsID *int        `db:"task_params_id" json:"-" backup:"-"`
 	TaskParams   *TaskParams `db:"-" json:"task_params,omitempty" backup:"task_params"`
@@ -206,24 +213,29 @@ const (
 type WorkflowApproval struct {
 	ID int `db:"id" json:"id" backup:"-"`
 
-	ProjectID          int                            `db:"project_id" json:"project_id" backup:"-"`
-	WorkflowTemplateID int                            `db:"workflow_template_id" json:"workflow_template_id,omitempty" backup:"-"`
-	WorkflowName       string                         `db:"workflow_name" json:"workflow_name,omitempty" backup:"-"`
-	WorkflowRunID      int                            `db:"workflow_run_id" json:"workflow_run_id" backup:"workflow_run_id"`
-	WorkflowNodeID     int                            `db:"workflow_node_id" json:"workflow_node_id" backup:"workflow_node_id"`
-	Status             WorkflowApprovalStatus         `db:"status" json:"status" backup:"status"`
-	Created            time.Time                      `db:"created" json:"created" backup:"created"`
-	Resolved           *time.Time                     `db:"resolved" json:"resolved,omitempty" backup:"resolved"`
-	ResolvedByUserID   *int                           `db:"resolved_by_user_id" json:"resolved_by_user_id,omitempty" backup:"resolved_by_user_id"`
-	Deadline           *time.Time                     `db:"deadline" json:"deadline,omitempty" backup:"deadline"`
-	Prompt             string                         `db:"prompt" json:"prompt" backup:"prompt"`
-	EligiblePermission ProjectUserPermission          `db:"eligible_permission" json:"eligible_permission" backup:"eligible_permission"`
-	SeparationOfDuties bool                           `db:"separation_of_duties" json:"separation_of_duties" backup:"separation_of_duties"`
-	RequestActorUserID int                            `db:"request_actor_user_id" json:"request_actor_user_id" backup:"request_actor_user_id"`
-	TimeoutOutcome     WorkflowApprovalTimeoutOutcome `db:"timeout_outcome" json:"timeout_outcome" backup:"timeout_outcome"`
-	DecisionComment    string                         `db:"decision_comment" json:"decision_comment,omitempty" backup:"decision_comment"`
-	DecisionSource     WorkflowApprovalDecisionSource `db:"decision_source" json:"decision_source,omitempty" backup:"decision_source"`
-	CorrelationID      string                         `db:"correlation_id" json:"correlation_id" backup:"correlation_id"`
+	ProjectID          int                    `db:"project_id" json:"project_id" backup:"-"`
+	WorkflowTemplateID int                    `db:"workflow_template_id" json:"workflow_template_id,omitempty" backup:"-"`
+	WorkflowName       string                 `db:"workflow_name" json:"workflow_name,omitempty" backup:"-"`
+	WorkflowRunID      int                    `db:"workflow_run_id" json:"workflow_run_id" backup:"workflow_run_id"`
+	WorkflowNodeID     int                    `db:"workflow_node_id" json:"workflow_node_id" backup:"workflow_node_id"`
+	Status             WorkflowApprovalStatus `db:"status" json:"status" backup:"status"`
+	Created            time.Time              `db:"created" json:"created" backup:"created"`
+	Resolved           *time.Time             `db:"resolved" json:"resolved,omitempty" backup:"resolved"`
+	ResolvedByUserID   *int                   `db:"resolved_by_user_id" json:"resolved_by_user_id,omitempty" backup:"resolved_by_user_id"`
+	Deadline           *time.Time             `db:"deadline" json:"deadline,omitempty" backup:"deadline"`
+	Prompt             string                 `db:"prompt" json:"prompt" backup:"prompt"`
+	EligiblePermission ProjectUserPermission  `db:"eligible_permission" json:"eligible_permission" backup:"eligible_permission"`
+	// EligiblePermission is retained only to read pre-054 approval records. New
+	// decisions must use RolePolicySnapshot, never this mutable broad bit.
+	RolePolicySnapshotJSON     string                             `db:"role_policy_snapshot" json:"-" backup:"role_policy_snapshot"`
+	RolePolicySnapshotRevision int                                `db:"role_policy_revision" json:"-" backup:"role_policy_revision"`
+	RolePolicySnapshot         WorkflowApprovalRolePolicySnapshot `db:"-" json:"role_policy_snapshot,omitempty" backup:"-"`
+	SeparationOfDuties         bool                               `db:"separation_of_duties" json:"separation_of_duties" backup:"separation_of_duties"`
+	RequestActorUserID         int                                `db:"request_actor_user_id" json:"request_actor_user_id" backup:"request_actor_user_id"`
+	TimeoutOutcome             WorkflowApprovalTimeoutOutcome     `db:"timeout_outcome" json:"timeout_outcome" backup:"timeout_outcome"`
+	DecisionComment            string                             `db:"decision_comment" json:"decision_comment,omitempty" backup:"decision_comment"`
+	DecisionSource             WorkflowApprovalDecisionSource     `db:"decision_source" json:"decision_source,omitempty" backup:"decision_source"`
+	CorrelationID              string                             `db:"correlation_id" json:"correlation_id" backup:"correlation_id"`
 }
 
 func (condition WorkflowEdgeCondition) Validate() error {

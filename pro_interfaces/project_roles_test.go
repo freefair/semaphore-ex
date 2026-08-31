@@ -10,15 +10,21 @@ import (
 
 func TestProjectPermissionCatalogIsStableTypedAndIsolated(t *testing.T) {
 	catalog := ProjectPermissionCatalog()
-	require.Len(t, catalog, 5)
+	require.Len(t, catalog, 10)
 	assert.Equal(t, []PermissionID{
 		PermissionRunProjectTasks,
 		PermissionUpdateProject,
 		PermissionViewProjectResources,
 		PermissionManageProjectResources,
 		PermissionManageProjectUsers,
+		PermissionViewWorkflow,
+		PermissionEditWorkflow,
+		PermissionStartWorkflow,
+		PermissionStopWorkflow,
+		PermissionAdministerWorkflow,
 	}, []PermissionID{
 		catalog[0].ID, catalog[1].ID, catalog[2].ID, catalog[3].ID, catalog[4].ID,
+		catalog[5].ID, catalog[6].ID, catalog[7].ID, catalog[8].ID, catalog[9].ID,
 	})
 
 	seenPermissions := make(map[db.ProjectUserPermission]struct{}, len(catalog))
@@ -143,6 +149,109 @@ func TestExplainEffectiveGlobalPermissionsReturnsOnlyDecidingRoles(t *testing.T)
 		assert.True(t, decision.Allowed)
 		assert.Equal(t, "admin", decision.Provenance.RoleID)
 	}
+}
+
+func TestEvaluateWorkflowAccessNarrowsViewAndStartFailClosed(t *testing.T) {
+	known := db.KnownProjectRoleReferences(nil)
+	policy := db.WorkflowAccessPolicy{
+		ViewRoleIDs:  []db.ProjectRoleReference{db.BuiltinProjectRoleReferenceOwner},
+		StartRoleIDs: []db.ProjectRoleReference{db.BuiltinProjectRoleReferenceManager},
+	}
+
+	viewer := EvaluateWorkflowAccess(WorkflowAccessRequest{
+		Permission: PermissionViewWorkflow, ProjectPermissions: db.CanViewWorkflows,
+		EffectiveRoleReferences: []db.ProjectRoleReference{db.BuiltinProjectRoleReferenceGuest},
+		KnownRoleReferences:     known, Policy: policy,
+	})
+	assert.False(t, viewer.Allowed)
+	assert.True(t, viewer.PolicyApplied)
+
+	manager := EvaluateWorkflowAccess(WorkflowAccessRequest{
+		Permission: PermissionStartWorkflow, ProjectPermissions: db.CanStartWorkflows,
+		EffectiveRoleReferences: []db.ProjectRoleReference{db.BuiltinProjectRoleReferenceManager},
+		KnownRoleReferences:     known, Policy: policy,
+	})
+	assert.True(t, manager.Allowed)
+
+	deletedRolePolicy := db.WorkflowAccessPolicy{
+		ViewRoleIDs: []db.ProjectRoleReference{db.ProjectRoleReferenceForCustomRole("role_deleted")},
+	}
+	assert.False(t, EvaluateWorkflowAccess(WorkflowAccessRequest{
+		Permission: PermissionViewWorkflow, ProjectPermissions: db.CanViewWorkflows,
+		EffectiveRoleReferences: []db.ProjectRoleReference{db.BuiltinProjectRoleReferenceOwner},
+		KnownRoleReferences:     known, Policy: deletedRolePolicy,
+	}).Allowed)
+}
+
+func TestWorkflowApprovalEligibilityAndProgressEnforceSeparationAndDistinctRoles(t *testing.T) {
+	known := db.KnownProjectRoleReferences(nil)
+	policy := db.WorkflowApprovalRolePolicy{
+		Mode: db.WorkflowApprovalRoleModeAllOf,
+		RoleIDs: []db.ProjectRoleReference{
+			db.BuiltinProjectRoleReferenceOwner,
+			db.BuiltinProjectRoleReferenceManager,
+		},
+		MinimumDistinctApprovers: 2, InitiatorSeparation: true,
+	}
+	self := EvaluateWorkflowApprovalEligibility(WorkflowApprovalEligibilityRequest{
+		Policy: policy, ActorUserID: 7, InitiatorUserID: 7,
+		EffectiveRoleReferences: []db.ProjectRoleReference{db.BuiltinProjectRoleReferenceOwner},
+		KnownRoleReferences:     known,
+	})
+	assert.False(t, self.Allowed)
+
+	other := EvaluateWorkflowApprovalEligibility(WorkflowApprovalEligibilityRequest{
+		Policy: policy, ActorUserID: 8, InitiatorUserID: 7,
+		EffectiveRoleReferences: []db.ProjectRoleReference{db.BuiltinProjectRoleReferenceOwner},
+		KnownRoleReferences:     known,
+	})
+	assert.True(t, other.Allowed)
+
+	partial := EvaluateWorkflowApprovalProgress(WorkflowApprovalProgressRequest{
+		Policy: policy, InitiatorUserID: 7, KnownRoleReferences: known,
+		Contributions: []db.WorkflowApprovalContribution{{ActorUserID: 8, RoleID: db.BuiltinProjectRoleReferenceOwner}},
+	})
+	assert.False(t, partial.Satisfied)
+
+	complete := EvaluateWorkflowApprovalProgress(WorkflowApprovalProgressRequest{
+		Policy: policy, InitiatorUserID: 7, KnownRoleReferences: known,
+		Contributions: []db.WorkflowApprovalContribution{
+			{ActorUserID: 8, RoleID: db.BuiltinProjectRoleReferenceOwner},
+			{ActorUserID: 9, RoleID: db.BuiltinProjectRoleReferenceManager},
+		},
+	})
+	assert.True(t, complete.Satisfied)
+
+	duplicateActor := EvaluateWorkflowApprovalProgress(WorkflowApprovalProgressRequest{
+		Policy: policy, InitiatorUserID: 7, KnownRoleReferences: known,
+		Contributions: []db.WorkflowApprovalContribution{
+			{ActorUserID: 8, RoleID: db.BuiltinProjectRoleReferenceOwner},
+			{ActorUserID: 8, RoleID: db.BuiltinProjectRoleReferenceManager},
+		},
+	})
+	assert.False(t, duplicateActor.Satisfied)
+}
+
+func TestWorkflowApprovalAllOfAllowsAdditionalDistinctContributorsForOneRole(t *testing.T) {
+	known := db.KnownProjectRoleReferences(nil)
+	policy := db.WorkflowApprovalRolePolicy{
+		Mode: db.WorkflowApprovalRoleModeAllOf,
+		RoleIDs: []db.ProjectRoleReference{
+			db.BuiltinProjectRoleReferenceOwner,
+			db.BuiltinProjectRoleReferenceManager,
+		},
+		MinimumDistinctApprovers: 3,
+	}
+
+	progress := EvaluateWorkflowApprovalProgress(WorkflowApprovalProgressRequest{
+		Policy: policy, KnownRoleReferences: known,
+		Contributions: []db.WorkflowApprovalContribution{
+			{ActorUserID: 1, RoleID: db.BuiltinProjectRoleReferenceOwner},
+			{ActorUserID: 2, RoleID: db.BuiltinProjectRoleReferenceManager},
+			{ActorUserID: 3, RoleID: db.BuiltinProjectRoleReferenceManager},
+		},
+	})
+	assert.True(t, progress.Satisfied)
 }
 
 func permissionIDs(definitions []PermissionDefinition) []PermissionID {

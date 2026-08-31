@@ -169,6 +169,88 @@ func EnhancedProjectPermissionAuditMiddleware(audit pro_interfaces.AuditServiceF
 	}
 }
 
+// EnhancedWorkflowDeniedAuditMiddleware records only denied workflow actions.
+// It runs after entity middleware so the audit event can carry the live or
+// immutable snapshot policy revision without turning hidden 404s into leaks.
+func EnhancedWorkflowDeniedAuditMiddleware(audit pro_interfaces.AuditServiceFacade) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			descriptor, ok := workflowAuditDescriptor(r)
+			if !ok || audit == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			captured := &statusCapturingWriter{ResponseWriter: w}
+			next.ServeHTTP(captured, r)
+			if captured.status != http.StatusForbidden && captured.status != http.StatusNotFound {
+				return
+			}
+			event := routeAuditEvent(r, descriptor, pro_interfaces.AuditOutcomeDenied, pro_interfaces.AuditReasonWorkflowPolicyDenied)
+			event.WorkflowPolicyRevision = workflowAuditPolicyRevision(r)
+			if err := audit.Record(r.Context(), event); err != nil {
+				log.WithFields(event.SafeFields()).Error("Failed to store workflow audit event")
+			}
+		})
+	}
+}
+
+func workflowAuditPolicyRevision(r *http.Request) int {
+	if run, ok := helpers.GetFromContext(r, "workflow_run").(db.WorkflowRun); ok && run.DefinitionSnapshot.AccessPolicyRevision > 0 {
+		return run.DefinitionSnapshot.AccessPolicyRevision
+	}
+	if workflow, ok := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate); ok && workflow.AccessPolicyRevision > 0 {
+		return workflow.AccessPolicyRevision
+	}
+	return 1
+}
+
+func workflowAuditDescriptor(r *http.Request) (enhancedAuditDescriptor, bool) {
+	projectID, ok := positiveMuxID(r, "project_id")
+	if !ok {
+		return enhancedAuditDescriptor{}, false
+	}
+	path, method := r.URL.Path, r.Method
+	if strings.HasSuffix(path, "/workflow-approvals") && (method == http.MethodGet || method == http.MethodHead) {
+		return enhancedAuditDescriptor{Action: pro_interfaces.AuditActionWorkflowApprovalInbox, TargetType: pro_interfaces.AuditTargetWorkflowApprovalInbox, TargetID: fmt.Sprintf("project:%d", projectID), ProjectID: &projectID}, true
+	}
+	if strings.Contains(path, "/tasks/") {
+		if task, found := helpers.GetFromContext(r, "task").(db.Task); found && task.WorkflowRunID != nil {
+			return enhancedAuditDescriptor{Action: pro_interfaces.AuditActionWorkflowRunLogsRead, TargetType: pro_interfaces.AuditTargetWorkflowRun, TargetID: fmt.Sprintf("run:%d", *task.WorkflowRunID), ProjectID: &projectID}, true
+		}
+	}
+	if !strings.Contains(path, "/workflows") {
+		return enhancedAuditDescriptor{}, false
+	}
+	if workflowID, has := positiveMuxID(r, "workflow_id"); has {
+		target := fmt.Sprintf("workflow:%d", workflowID)
+		if runID, runHas := positiveMuxID(r, "run_id"); runHas {
+			target = fmt.Sprintf("run:%d", runID)
+			action := pro_interfaces.AuditActionWorkflowRunRead
+			if strings.HasSuffix(path, "/artifacts") {
+				action = pro_interfaces.AuditActionWorkflowRunLogsRead
+			}
+			if strings.HasSuffix(path, "/stop") {
+				action = pro_interfaces.AuditActionWorkflowStop
+			}
+			return enhancedAuditDescriptor{Action: action, TargetType: pro_interfaces.AuditTargetWorkflowRun, TargetID: target, ProjectID: &projectID}, true
+		}
+		action := pro_interfaces.AuditActionWorkflowRead
+		if strings.HasSuffix(path, "/run") {
+			action = pro_interfaces.AuditActionWorkflowStart
+		} else if method == http.MethodPut {
+			action = pro_interfaces.AuditActionWorkflowUpdate
+		} else if method == http.MethodDelete {
+			action = pro_interfaces.AuditActionWorkflowDelete
+		}
+		return enhancedAuditDescriptor{Action: action, TargetType: pro_interfaces.AuditTargetWorkflow, TargetID: target, ProjectID: &projectID}, true
+	}
+	action := pro_interfaces.AuditActionWorkflowList
+	if method == http.MethodPost {
+		action = pro_interfaces.AuditActionWorkflowCreate
+	}
+	return enhancedAuditDescriptor{Action: action, TargetType: pro_interfaces.AuditTargetWorkflow, TargetID: fmt.Sprintf("project:%d", projectID), ProjectID: &projectID}, true
+}
+
 func projectPermissionDenied(r *http.Request) bool {
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		return false

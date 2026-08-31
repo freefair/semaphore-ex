@@ -17,13 +17,14 @@ func TestWorkflowDefinitionServicePreventsInvalidPersistence(t *testing.T) {
 	require.NoError(t, err)
 	repository := workflowSQL.NewWorkflowStore(store.GetConnection())
 	service := NewWorkflowDefinitionService(repository, store)
+	actor := &db.User{ID: 1, Admin: true}
 
 	_, validation, err := service.Create(project.ID, db.WorkflowTemplate{
 		Name: "Invalid",
 		Nodes: []db.WorkflowNode{{
 			ID: -1, Kind: db.WorkflowNodeTaskKind, TemplateID: 987654,
 		}},
-	})
+	}, actor)
 
 	require.NoError(t, err)
 	assert.False(t, validation.Valid)
@@ -41,13 +42,14 @@ func TestWorkflowDefinitionServiceNormalizesBeforeCreate(t *testing.T) {
 	templateID := insertWorkflowTestTemplate(t, store, project.ID)
 	repository := workflowSQL.NewWorkflowStore(store.GetConnection())
 	service := NewWorkflowDefinitionService(repository, store)
+	actor := &db.User{ID: 1, Admin: true}
 
 	created, validation, err := service.Create(project.ID, db.WorkflowTemplate{
 		Name: "  Build  ",
 		Nodes: []db.WorkflowNode{{
 			ID: -1, TemplateID: templateID,
 		}},
-	})
+	}, actor)
 
 	require.NoError(t, err)
 	require.True(t, validation.Valid, validation.Issues)
@@ -66,6 +68,7 @@ func TestWorkflowDefinitionServiceCompilesConditionsBeforePersistence(t *testing
 	templateID := insertWorkflowTestTemplate(t, store, project.ID)
 	repository := workflowSQL.NewWorkflowStore(store.GetConnection())
 	service := NewWorkflowDefinitionService(repository, store)
+	actor := &db.User{ID: 1, Admin: true}
 	workflow := db.WorkflowTemplate{
 		Name: "Conditional",
 		Nodes: []db.WorkflowNode{
@@ -78,7 +81,7 @@ func TestWorkflowDefinitionServiceCompilesConditionsBeforePersistence(t *testing
 		}},
 	}
 
-	created, validation, err := service.Create(project.ID, workflow)
+	created, validation, err := service.Create(project.ID, workflow, actor)
 	require.NoError(t, err)
 	require.True(t, validation.Valid, validation.Issues)
 	require.NotEmpty(t, created.Edges[0].ConditionProgramJSON)
@@ -97,6 +100,7 @@ func TestWorkflowDefinitionServiceRejectsMalformedConditionAndParallelismLimit(t
 	templateID := insertWorkflowTestTemplate(t, store, project.ID)
 	repository := workflowSQL.NewWorkflowStore(store.GetConnection())
 	service := NewWorkflowDefinitionService(repository, store)
+	actor := &db.User{ID: 1, Admin: true}
 
 	_, validation, err := service.Create(project.ID, db.WorkflowTemplate{
 		Name: "Unsafe", MaxParallelTasks: 33,
@@ -105,7 +109,7 @@ func TestWorkflowDefinitionServiceRejectsMalformedConditionAndParallelismLimit(t
 			ID: -1, SourceNodeID: -1, DestinationNodeID: -2,
 			Condition: db.WorkflowEdgeExpression, Expression: `result.secret == "value"`,
 		}},
-	})
+	}, actor)
 
 	require.NoError(t, err)
 	assert.False(t, validation.Valid)
@@ -138,6 +142,7 @@ func TestWorkflowDefinitionServiceRejectsUnapprovedParameterAndOverrideResources
 	require.NoError(t, err)
 	repository := workflowSQL.NewWorkflowStore(store.GetConnection())
 	service := NewWorkflowDefinitionService(repository, store)
+	actor := &db.User{ID: 1, Admin: true}
 
 	_, validation, err := service.Create(project.ID, db.WorkflowTemplate{
 		Name: "Invalid resources",
@@ -152,7 +157,7 @@ func TestWorkflowDefinitionServiceRejectsUnapprovedParameterAndOverrideResources
 				CredentialParameters: []string{"missing_token"}, AllowArguments: true, AllowBranch: true,
 			},
 		}},
-	})
+	}, actor)
 
 	require.NoError(t, err)
 	assert.False(t, validation.Valid)

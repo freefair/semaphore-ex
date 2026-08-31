@@ -12,7 +12,10 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	coresql "github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	workflowDB "github.com/semaphoreui/semaphore/pro/db"
+	workflowSQL "github.com/semaphoreui/semaphore/pro/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,6 +29,7 @@ type workflowDefinitionServiceStub struct {
 	updateErr  error
 	deletedID  int
 	calls      int
+	getActors  []*db.User
 }
 
 type workflowServiceStub struct {
@@ -108,11 +112,14 @@ func (s *workflowManagerStub) GetWorkflowApprovals(_ int, _ int) ([]db.WorkflowA
 	return s.approvals, nil
 }
 
-func (s *workflowDefinitionServiceStub) List(_ int, _ db.RetrieveQueryParams) ([]db.WorkflowTemplate, error) {
+func (s *workflowDefinitionServiceStub) List(_ int, _ db.RetrieveQueryParams, _ ...*db.User) ([]db.WorkflowTemplate, error) {
 	return s.workflows, nil
 }
 
-func (s *workflowDefinitionServiceStub) Get(_ int, workflowID int) (db.WorkflowTemplate, error) {
+func (s *workflowDefinitionServiceStub) Get(_ int, workflowID int, actors ...*db.User) (db.WorkflowTemplate, error) {
+	if len(actors) == 1 {
+		s.getActors = append(s.getActors, actors[0])
+	}
 	for _, workflow := range s.workflows {
 		if workflow.ID == workflowID {
 			return workflow, nil
@@ -121,22 +128,22 @@ func (s *workflowDefinitionServiceStub) Get(_ int, workflowID int) (db.WorkflowT
 	return db.WorkflowTemplate{}, db.ErrNotFound
 }
 
-func (s *workflowDefinitionServiceStub) Validate(_ int, _ db.WorkflowTemplate) (db.WorkflowValidationResult, error) {
+func (s *workflowDefinitionServiceStub) Validate(_ int, _ db.WorkflowTemplate, _ ...*db.User) (db.WorkflowValidationResult, error) {
 	s.calls++
 	return s.validation, nil
 }
 
-func (s *workflowDefinitionServiceStub) Create(_ int, _ db.WorkflowTemplate) (db.WorkflowTemplate, db.WorkflowValidationResult, error) {
+func (s *workflowDefinitionServiceStub) Create(_ int, _ db.WorkflowTemplate, _ ...*db.User) (db.WorkflowTemplate, db.WorkflowValidationResult, error) {
 	s.calls++
 	return s.create, s.validation, nil
 }
 
-func (s *workflowDefinitionServiceStub) Update(_ int, _ int, _ db.WorkflowTemplate) (db.WorkflowTemplate, db.WorkflowValidationResult, error) {
+func (s *workflowDefinitionServiceStub) Update(_ int, _ int, _ db.WorkflowTemplate, _ ...*db.User) (db.WorkflowTemplate, db.WorkflowValidationResult, error) {
 	s.calls++
 	return s.update, s.validation, s.updateErr
 }
 
-func (s *workflowDefinitionServiceStub) Delete(_ int, workflowID int) error {
+func (s *workflowDefinitionServiceStub) Delete(_ int, workflowID int, _ ...*db.User) error {
 	s.deletedID = workflowID
 	return nil
 }
@@ -215,6 +222,104 @@ func TestWorkflowControllerReturnsCurrentDefinitionOnRevisionConflict(t *testing
 	assert.Contains(t, recorder.Body.String(), `"code":"WORKFLOW_REVISION_CONFLICT"`)
 	assert.Contains(t, recorder.Body.String(), `"name":"Newer"`)
 	assert.Contains(t, recorder.Body.String(), `"revision":3`)
+	require.Len(t, service.getActors, 1)
+	assert.Equal(t, 12, service.getActors[0].ID)
+}
+
+func TestWorkflowControllerResponseShapesUsePersistedContributions(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "workflow response shape"})
+	require.NoError(t, err)
+	actor, err := store.CreateUserWithoutPassword(db.User{
+		Username: "workflow-response-admin", Name: "Workflow Response Admin", Email: "workflow-response-admin@example.test",
+	})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUser(db.ProjectUser{ProjectID: project.ID, UserID: actor.ID, Role: db.ProjectOwner})
+	require.NoError(t, err)
+	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &project.ID, Type: db.AccessKeyNone})
+	require.NoError(t, err)
+	repository, err := store.CreateRepository(db.Repository{ProjectID: project.ID, SSHKeyID: key.ID, Name: "workflow-response", GitURL: "https://example.test/repo.git", GitBranch: "main"})
+	require.NoError(t, err)
+	template, err := store.CreateTemplate(db.Template{ProjectID: project.ID, RepositoryID: repository.ID, Name: "Deploy", Playbook: "deploy.yml"})
+	require.NoError(t, err)
+	manager := workflowSQL.NewWorkflowStore(store.GetConnection())
+	workflow, err := manager.CreateWorkflowTemplate(db.WorkflowTemplate{
+		ProjectID: project.ID, Name: "restricted", DefinitionVersion: db.WorkflowDefinitionVersion,
+		Nodes: []db.WorkflowNode{{ID: -1, TemplateID: template.ID, DisplayName: "deploy"}},
+	})
+	require.NoError(t, err)
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	run, err := workflowDB.BuildWorkflowRunSnapshot(workflow, map[int]db.Template{template.ID: template}, actor.ID, "response-shape", now)
+	require.NoError(t, err)
+	run, err = manager.CreateWorkflowRun(run)
+	require.NoError(t, err)
+	policy := db.WorkflowApprovalRolePolicy{
+		Revision: 3, Mode: db.WorkflowApprovalRoleModeAllOf,
+		RoleIDs: []db.ProjectRoleReference{db.BuiltinProjectRoleReferenceOwner}, MinimumDistinctApprovers: 2,
+	}
+	policySnapshot := db.WorkflowApprovalRolePolicySnapshot{PolicyRevision: 3, Policy: policy}
+	policyJSON, err := json.Marshal(policySnapshot)
+	require.NoError(t, err)
+	approval, opened, err := manager.OpenWorkflowApproval(db.WorkflowApproval{
+		ProjectID: project.ID, WorkflowTemplateID: workflow.ID, WorkflowName: workflow.Name,
+		WorkflowRunID: run.ID, WorkflowNodeID: workflow.Nodes[0].ID, Status: db.WorkflowApprovalPending,
+		Created: now, Prompt: "Approve deployment", EligiblePermission: db.CanRunProjectTasks, RolePolicySnapshotJSON: string(policyJSON),
+		RolePolicySnapshotRevision: 3, RolePolicySnapshot: policySnapshot, RequestActorUserID: actor.ID + 1,
+		TimeoutOutcome: db.WorkflowApprovalTimeoutReject, CorrelationID: "response-shape",
+	})
+	require.NoError(t, err)
+	require.True(t, opened)
+	require.NoError(t, manager.CreateWorkflowApprovalContribution(db.WorkflowApprovalContribution{
+		ApprovalID: approval.ID, ActorUserID: actor.ID, RoleID: db.BuiltinProjectRoleReferenceOwner,
+		RoleRevision: 1, RoleOrigin: db.WorkflowApprovalRoleOriginBuiltIn, Decision: db.WorkflowApprovalApproved,
+		Created: now, PolicyRevision: 3, CorrelationID: "response-shape-contribution",
+	}))
+
+	service := &workflowServiceStub{inbox: []db.WorkflowApproval{approval}}
+	definition := &workflowDefinitionServiceStub{workflows: []db.WorkflowTemplate{workflow}}
+	controller := NewWorkflowController(service, manager, definition)
+	request := func(method, target string, selected *db.WorkflowTemplate) *http.Request {
+		r := workflowRequest(method, target, nil, selected)
+		r = helpers.SetContextValue(r, "project", project)
+		r = helpers.SetContextValue(r, "user", &db.User{ID: actor.ID, Admin: true})
+		return helpers.SetContextValue(r, "store", store)
+	}
+
+	list := httptest.NewRecorder()
+	controller.GetWorkflows(list, request(http.MethodGet, "/api/project/7/workflows", nil))
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	assert.Contains(t, list.Body.String(), `"effective_access":{"view":true,"edit":true,"start":true,"stop":true,"administer":true}`)
+
+	detail := httptest.NewRecorder()
+	controller.GetWorkflow(detail, request(http.MethodGet, "/api/project/7/workflows/41", &workflow))
+	require.Equal(t, http.StatusOK, detail.Code, detail.Body.String())
+	assert.Contains(t, detail.Body.String(), `"effective_access":{"view":true,"edit":true,"start":true,"stop":true,"administer":true}`)
+
+	runDetail := httptest.NewRecorder()
+	runRequest := helpers.SetContextValue(request(http.MethodGet, "/api/project/7/workflows/41/runs/91", &workflow), "workflow_run", run)
+	controller.GetWorkflowRun(runDetail, runRequest)
+	require.Equal(t, http.StatusOK, runDetail.Code, runDetail.Body.String())
+	assert.Contains(t, runDetail.Body.String(), `"effective_access":{"view":true,"edit":true,"start":true,"stop":true,"administer":true}`)
+	assert.Contains(t, runDetail.Body.String(), `"eligible":true`)
+	assert.Contains(t, runDetail.Body.String(), `"policy_revision":3`)
+	assert.Contains(t, runDetail.Body.String(), `"contribution_count":1`)
+	assert.Contains(t, runDetail.Body.String(), `"minimum_distinct_approvers":2`)
+	assert.Contains(t, runDetail.Body.String(), `"mode":"all_of"`)
+
+	inbox := httptest.NewRecorder()
+	controller.GetWorkflowApprovalInbox(inbox, request(http.MethodGet, "/api/project/7/workflow-approvals", nil))
+	require.Equal(t, http.StatusOK, inbox.Code, inbox.Body.String())
+	assert.Contains(t, inbox.Body.String(), `"eligible":true`)
+	assert.Contains(t, inbox.Body.String(), `"policy_revision":3`)
+	assert.Contains(t, inbox.Body.String(), `"contribution_count":1`)
+	assert.Contains(t, inbox.Body.String(), `"minimum_distinct_approvers":2`)
+	assert.Contains(t, inbox.Body.String(), `"mode":"all_of"`)
+	for _, response := range []string{runDetail.Body.String(), inbox.Body.String()} {
+		assert.NotContains(t, response, "directory_provider_id")
+		assert.NotContains(t, response, "directory_mapping_id")
+		assert.NotContains(t, response, "directory_revision_fingerprint")
+	}
 }
 
 func TestWorkflowControllerRejectsOversizedDefinitionsBeforeServiceCalls(t *testing.T) {

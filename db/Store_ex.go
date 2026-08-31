@@ -71,3 +71,10 @@ type OIDCGroupMappingRepository interface {
 		additions []OIDCGroupAssignmentChange, removals []OIDCGroupAssignmentChange) (OIDCGroupReconciliation, error)
 	GetOIDCGroupReconciliationHistory(providerID string, limit int) ([]OIDCGroupReconciliation, error)
 }
+
+// ProjectWorkflowRoleIdentityResolver resolves the single current project
+// role and assignment provenance for a workflow authorization decision. It
+// deliberately excludes global roles and legacy role-slug fallbacks.
+type ProjectWorkflowRoleIdentityResolver interface {
+	ResolveProjectWorkflowRoleIdentity(projectID int, userID int) (ProjectWorkflowRoleIdentity, error)
+}

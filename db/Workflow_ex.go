@@ -185,10 +185,180 @@ const MaxWorkflowApprovalPromptBytes = 2048
 
 const MaxWorkflowApprovalCommentBytes = 1024
 
+const MaxWorkflowApprovalCorrelationIDBytes = 128
+
+const MaxWorkflowApprovalDirectoryRevisionFingerprintBytes = 64
+
 type WorkflowApprovalDecision struct {
 	Status  WorkflowApprovalStatus         `json:"status"`
 	Comment string                         `json:"comment,omitempty"`
 	Source  WorkflowApprovalDecisionSource `json:"source"`
+}
+
+// WorkflowAccessPolicy narrows only workflow view and start permissions. An
+// empty role list preserves the workflow behavior that existed before Slice
+// 054; edit, stop, and administer remain base-permission decisions.
+type WorkflowAccessPolicy struct {
+	Revision     int                    `json:"revision"`
+	ViewRoleIDs  []ProjectRoleReference `json:"view_role_ids,omitempty"`
+	StartRoleIDs []ProjectRoleReference `json:"start_role_ids,omitempty"`
+}
+
+// WorkflowApprovalRoleMode controls whether a policy requires a contribution
+// from any selected role or coverage of every selected role.
+type WorkflowApprovalRoleMode string
+
+const (
+	WorkflowApprovalRoleModeAnyOf WorkflowApprovalRoleMode = "any_of"
+	WorkflowApprovalRoleModeAllOf WorkflowApprovalRoleMode = "all_of"
+)
+
+// WorkflowApprovalRolePolicy is definition-time approval policy. It is copied
+// unchanged into WorkflowApprovalRolePolicySnapshot when a run opens it.
+type WorkflowApprovalRolePolicy struct {
+	Revision                 int                      `json:"revision"`
+	Mode                     WorkflowApprovalRoleMode `json:"mode"`
+	RoleIDs                  []ProjectRoleReference   `json:"role_ids"`
+	MinimumDistinctApprovers int                      `json:"minimum_distinct_approvers"`
+	InitiatorSeparation      bool                     `json:"initiator_separation"`
+}
+
+// WorkflowApprovalRolePolicySnapshot is immutable run evidence. Current
+// eligibility is evaluated separately; this snapshot must never become a
+// copied grant after a role is revoked or deleted.
+type WorkflowApprovalRolePolicySnapshot struct {
+	PolicyRevision int                        `json:"policy_revision"`
+	Policy         WorkflowApprovalRolePolicy `json:"policy"`
+}
+
+// WorkflowApprovalRoleOrigin records how the contributor's effective role was
+// assigned at the exact time of their decision.
+type WorkflowApprovalRoleOrigin string
+
+const (
+	WorkflowApprovalRoleOriginBuiltIn WorkflowApprovalRoleOrigin = "built_in"
+	WorkflowApprovalRoleOriginManual  WorkflowApprovalRoleOrigin = "manual"
+	WorkflowApprovalRoleOriginLDAP    WorkflowApprovalRoleOrigin = "ldap"
+	WorkflowApprovalRoleOriginOIDC    WorkflowApprovalRoleOrigin = "oidc"
+)
+
+// WorkflowApprovalContribution is immutable, durable evidence of one
+// distinct user's contribution. DirectoryRevisionFingerprint stores a bounded
+// fingerprint of the reconciliation revision, never raw LDAP/OIDC claims.
+type WorkflowApprovalContribution struct {
+	ApprovalID                   int                        `db:"workflow_approval_id" json:"workflow_approval_id"`
+	ActorUserID                  int                        `db:"actor_user_id" json:"actor_user_id"`
+	RoleID                       ProjectRoleReference       `db:"role_id" json:"role_id"`
+	RoleRevision                 int                        `db:"role_revision" json:"role_revision"`
+	RoleOrigin                   WorkflowApprovalRoleOrigin `db:"role_origin" json:"role_origin"`
+	DirectoryProviderID          string                     `db:"directory_provider_id" json:"directory_provider_id,omitempty"`
+	DirectoryMappingID           string                     `db:"directory_mapping_id" json:"directory_mapping_id,omitempty"`
+	DirectoryMappingRevision     int                        `db:"directory_mapping_revision" json:"directory_mapping_revision,omitempty"`
+	DirectoryRevisionFingerprint string                     `db:"directory_revision_fingerprint" json:"directory_revision_fingerprint,omitempty"`
+	Decision                     WorkflowApprovalStatus     `db:"decision" json:"decision"`
+	Comment                      string                     `db:"comment" json:"comment,omitempty"`
+	Created                      time.Time                  `db:"created" json:"created"`
+	PolicyRevision               int                        `db:"policy_revision" json:"policy_revision"`
+	CorrelationID                string                     `db:"correlation_id" json:"correlation_id"`
+}
+
+// Validate ensures that persisted contribution evidence cannot represent a
+// non-user decision or an unbounded directory value.
+func (contribution WorkflowApprovalContribution) Validate() error {
+	if contribution.ApprovalID <= 0 || contribution.ActorUserID <= 0 ||
+		contribution.RoleRevision < 1 || contribution.PolicyRevision < 1 || contribution.Created.IsZero() {
+		return common_errors.NewValidationError("workflow approval contribution is invalid")
+	}
+	if err := ValidateProjectRoleReference(contribution.RoleID); err != nil {
+		return err
+	}
+	if contribution.Decision != WorkflowApprovalApproved && contribution.Decision != WorkflowApprovalRejected {
+		return common_errors.NewValidationError("workflow approval contribution decision is invalid")
+	}
+	if len(contribution.Comment) > MaxWorkflowApprovalCommentBytes ||
+		len(contribution.CorrelationID) == 0 || len(contribution.CorrelationID) > MaxWorkflowApprovalCorrelationIDBytes ||
+		len(contribution.DirectoryRevisionFingerprint) > MaxWorkflowApprovalDirectoryRevisionFingerprintBytes {
+		return common_errors.NewValidationError("workflow approval contribution evidence is invalid")
+	}
+	switch contribution.RoleOrigin {
+	case WorkflowApprovalRoleOriginBuiltIn, WorkflowApprovalRoleOriginManual:
+		if contribution.DirectoryProviderID != "" || contribution.DirectoryMappingID != "" ||
+			contribution.DirectoryMappingRevision != 0 || contribution.DirectoryRevisionFingerprint != "" {
+			return common_errors.NewValidationError("workflow approval contribution provenance is invalid")
+		}
+	case WorkflowApprovalRoleOriginLDAP, WorkflowApprovalRoleOriginOIDC:
+		if contribution.DirectoryProviderID == "" || contribution.DirectoryMappingID == "" ||
+			contribution.DirectoryMappingRevision < 1 ||
+			!isCanonicalSHA256Fingerprint(contribution.DirectoryRevisionFingerprint) {
+			return common_errors.NewValidationError("workflow approval directory provenance is incomplete")
+		}
+	default:
+		return common_errors.NewValidationError("workflow approval contribution role origin is invalid")
+	}
+	return nil
+}
+
+func isCanonicalSHA256Fingerprint(value string) bool {
+	if len(value) != MaxWorkflowApprovalDirectoryRevisionFingerprintBytes {
+		return false
+	}
+	for _, character := range value {
+		if character >= '0' && character <= '9' || character >= 'a' && character <= 'f' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// Validate validates a workflow narrowing policy before it is persisted.
+// Existence of custom roles is intentionally evaluated against the live store
+// by the authorization evaluator rather than being inferred from this record.
+func (policy WorkflowAccessPolicy) Validate() error {
+	if policy.Revision < 0 {
+		return common_errors.NewValidationError("workflow access policy revision is invalid")
+	}
+	if err := validateWorkflowRoleReferences(policy.ViewRoleIDs); err != nil {
+		return err
+	}
+	return validateWorkflowRoleReferences(policy.StartRoleIDs)
+}
+
+// Validate validates a role-based approval policy before it is persisted.
+func (policy WorkflowApprovalRolePolicy) Validate() error {
+	if policy.Revision < 0 {
+		return common_errors.NewValidationError("workflow approval role policy revision is invalid")
+	}
+	if policy.Mode != WorkflowApprovalRoleModeAnyOf && policy.Mode != WorkflowApprovalRoleModeAllOf {
+		return common_errors.NewValidationError("workflow approval role policy mode is invalid")
+	}
+	if err := validateWorkflowRoleReferences(policy.RoleIDs); err != nil {
+		return err
+	}
+	if len(policy.RoleIDs) == 0 {
+		return common_errors.NewValidationError("workflow approval role policy requires roles")
+	}
+	if policy.MinimumDistinctApprovers < 1 {
+		return common_errors.NewValidationError("workflow approval minimum distinct approvers is invalid")
+	}
+	if policy.Mode == WorkflowApprovalRoleModeAllOf && policy.MinimumDistinctApprovers < len(policy.RoleIDs) {
+		return common_errors.NewValidationError("workflow approval all-of policy requires one distinct approver per role")
+	}
+	return nil
+}
+
+func validateWorkflowRoleReferences(references []ProjectRoleReference) error {
+	seen := make(map[ProjectRoleReference]struct{}, len(references))
+	for _, reference := range references {
+		if err := ValidateProjectRoleReference(reference); err != nil {
+			return err
+		}
+		if _, duplicate := seen[reference]; duplicate {
+			return common_errors.NewValidationError("workflow role policy contains duplicate role reference")
+		}
+		seen[reference] = struct{}{}
+	}
+	return nil
 }
 
 func (mode WorkflowJoinMode) Validate() error {

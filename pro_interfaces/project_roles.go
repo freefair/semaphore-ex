@@ -11,6 +11,11 @@ const (
 	PermissionViewProjectResources   PermissionID = "project.resources.view"
 	PermissionManageProjectResources PermissionID = "project.resources.manage"
 	PermissionManageProjectUsers     PermissionID = "project.members.manage"
+	PermissionViewWorkflow           PermissionID = "workflow.view"
+	PermissionEditWorkflow           PermissionID = "workflow.edit"
+	PermissionStartWorkflow          PermissionID = "workflow.start"
+	PermissionStopWorkflow           PermissionID = "workflow.stop"
+	PermissionAdministerWorkflow     PermissionID = "workflow.administer"
 	PermissionManageGlobalUsers      PermissionID = "global.users.manage"
 	PermissionManageGlobalRoles      PermissionID = "global.roles.manage"
 	PermissionManageGlobalSystem     PermissionID = "global.system.manage"
@@ -131,6 +136,31 @@ func permissionCatalog() []PermissionDefinition {
 		{
 			ID: PermissionManageProjectUsers, Description: "Manage project members and roles",
 			Scope: PermissionScopeProject, Permission: db.CanManageProjectUsers,
+			CapabilityPrerequisites: []CapabilityID{},
+		},
+		{
+			ID: PermissionViewWorkflow, Description: "View workflows and workflow runs",
+			Scope: PermissionScopeProject, Permission: db.CanViewWorkflows,
+			CapabilityPrerequisites: []CapabilityID{},
+		},
+		{
+			ID: PermissionEditWorkflow, Description: "Create and edit workflows",
+			Scope: PermissionScopeProject, Permission: db.CanEditWorkflows,
+			CapabilityPrerequisites: []CapabilityID{},
+		},
+		{
+			ID: PermissionStartWorkflow, Description: "Start workflows",
+			Scope: PermissionScopeProject, Permission: db.CanStartWorkflows,
+			CapabilityPrerequisites: []CapabilityID{},
+		},
+		{
+			ID: PermissionStopWorkflow, Description: "Stop workflow runs",
+			Scope: PermissionScopeProject, Permission: db.CanStopWorkflows,
+			CapabilityPrerequisites: []CapabilityID{},
+		},
+		{
+			ID: PermissionAdministerWorkflow, Description: "Administer workflows",
+			Scope: PermissionScopeProject, Permission: db.CanAdministerWorkflows,
 			CapabilityPrerequisites: []CapabilityID{},
 		},
 		{
@@ -394,6 +424,180 @@ func inheritedProjectPermission(permission PermissionID) (PermissionID, bool) {
 func containsPermission(permissions []PermissionID, permission PermissionID) bool {
 	for _, candidate := range permissions {
 		if candidate == permission {
+			return true
+		}
+	}
+	return false
+}
+
+// WorkflowAccessRequest contains the current membership-derived permissions
+// and role identities required for one workflow authorization decision. The
+// role set and known-role map must come from the current store state.
+type WorkflowAccessRequest struct {
+	Permission              PermissionID
+	ProjectPermissions      db.ProjectUserPermission
+	EffectiveRoleReferences []db.ProjectRoleReference
+	KnownRoleReferences     map[db.ProjectRoleReference]bool
+	Policy                  db.WorkflowAccessPolicy
+}
+
+// WorkflowAccessDecision is intentionally minimal so a caller cannot mistake
+// policy provenance for a cached authorization grant.
+type WorkflowAccessDecision struct {
+	Allowed       bool
+	Required      db.ProjectUserPermission
+	PolicyApplied bool
+}
+
+// EvaluateWorkflowAccess applies the typed base permission and then the
+// optional role narrowing for view/start. An unknown or deleted policy role
+// fails closed even if the actor still has a broad project permission.
+func EvaluateWorkflowAccess(request WorkflowAccessRequest) WorkflowAccessDecision {
+	required, roleReferences, narrowed := workflowAccessRequirement(request.Permission, request.Policy)
+	if required == 0 || !request.ProjectPermissions.Can(required) {
+		return WorkflowAccessDecision{Required: required, PolicyApplied: narrowed}
+	}
+	if !narrowed {
+		return WorkflowAccessDecision{Allowed: true, Required: required}
+	}
+	if request.Policy.Validate() != nil || !allWorkflowRoleReferencesKnown(roleReferences, request.KnownRoleReferences) {
+		return WorkflowAccessDecision{Required: required, PolicyApplied: true}
+	}
+	for _, reference := range request.EffectiveRoleReferences {
+		if request.KnownRoleReferences[reference] && containsWorkflowRoleReference(roleReferences, reference) {
+			return WorkflowAccessDecision{Allowed: true, Required: required, PolicyApplied: true}
+		}
+	}
+	return WorkflowAccessDecision{Required: required, PolicyApplied: true}
+}
+
+func workflowAccessRequirement(
+	permission PermissionID,
+	policy db.WorkflowAccessPolicy,
+) (db.ProjectUserPermission, []db.ProjectRoleReference, bool) {
+	switch permission {
+	case PermissionViewWorkflow:
+		return db.CanViewWorkflows, policy.ViewRoleIDs, len(policy.ViewRoleIDs) > 0
+	case PermissionEditWorkflow:
+		return db.CanEditWorkflows, nil, false
+	case PermissionStartWorkflow:
+		return db.CanStartWorkflows, policy.StartRoleIDs, len(policy.StartRoleIDs) > 0
+	case PermissionStopWorkflow:
+		return db.CanStopWorkflows, nil, false
+	case PermissionAdministerWorkflow:
+		return db.CanAdministerWorkflows, nil, false
+	default:
+		return 0, nil, false
+	}
+}
+
+// WorkflowApprovalEligibilityRequest contains only the current identity state
+// needed to decide whether an actor may add a contribution to a snapshot.
+type WorkflowApprovalEligibilityRequest struct {
+	Policy                  db.WorkflowApprovalRolePolicy
+	ActorUserID             int
+	InitiatorUserID         int
+	EffectiveRoleReferences []db.ProjectRoleReference
+	KnownRoleReferences     map[db.ProjectRoleReference]bool
+}
+
+type WorkflowApprovalEligibility struct {
+	Allowed         bool
+	MatchingRoleIDs []db.ProjectRoleReference
+}
+
+// EvaluateWorkflowApprovalEligibility applies immutable snapshot policy to
+// current role state. It is user-ID based, so changing sessions or credentials
+// cannot evade initiator separation.
+func EvaluateWorkflowApprovalEligibility(
+	request WorkflowApprovalEligibilityRequest,
+) WorkflowApprovalEligibility {
+	if request.ActorUserID <= 0 || request.Policy.Validate() != nil ||
+		!allWorkflowRoleReferencesKnown(request.Policy.RoleIDs, request.KnownRoleReferences) {
+		return WorkflowApprovalEligibility{}
+	}
+	if request.Policy.InitiatorSeparation && request.ActorUserID == request.InitiatorUserID {
+		return WorkflowApprovalEligibility{}
+	}
+	matching := make([]db.ProjectRoleReference, 0, len(request.EffectiveRoleReferences))
+	for _, reference := range request.EffectiveRoleReferences {
+		if request.KnownRoleReferences[reference] && containsWorkflowRoleReference(request.Policy.RoleIDs, reference) {
+			matching = append(matching, reference)
+		}
+	}
+	return WorkflowApprovalEligibility{Allowed: len(matching) > 0, MatchingRoleIDs: matching}
+}
+
+// WorkflowApprovalProgressRequest contains already accepted contributions. A
+// malformed or duplicate contribution fails closed rather than being silently
+// discounted, because persistence must enforce the same invariant.
+type WorkflowApprovalProgressRequest struct {
+	Policy              db.WorkflowApprovalRolePolicy
+	InitiatorUserID     int
+	KnownRoleReferences map[db.ProjectRoleReference]bool
+	Contributions       []db.WorkflowApprovalContribution
+}
+
+type WorkflowApprovalProgress struct {
+	Satisfied bool
+}
+
+// EvaluateWorkflowApprovalProgress determines whether approved
+// contributions satisfy the immutable policy. For all-of policies, every role
+// must be covered by a different actor; a multi-role identity therefore cannot
+// collapse a multi-party control into one decision.
+func EvaluateWorkflowApprovalProgress(request WorkflowApprovalProgressRequest) WorkflowApprovalProgress {
+	if request.Policy.Validate() != nil ||
+		!allWorkflowRoleReferencesKnown(request.Policy.RoleIDs, request.KnownRoleReferences) {
+		return WorkflowApprovalProgress{}
+	}
+	actors := make(map[int]struct{}, len(request.Contributions))
+	coveredRoles := make(map[db.ProjectRoleReference]struct{}, len(request.Contributions))
+	for _, contribution := range request.Contributions {
+		if contribution.ActorUserID <= 0 ||
+			request.Policy.InitiatorSeparation && contribution.ActorUserID == request.InitiatorUserID ||
+			!request.KnownRoleReferences[contribution.RoleID] ||
+			!containsWorkflowRoleReference(request.Policy.RoleIDs, contribution.RoleID) {
+			return WorkflowApprovalProgress{}
+		}
+		if _, duplicate := actors[contribution.ActorUserID]; duplicate {
+			return WorkflowApprovalProgress{}
+		}
+		actors[contribution.ActorUserID] = struct{}{}
+		if request.Policy.Mode == db.WorkflowApprovalRoleModeAllOf {
+			coveredRoles[contribution.RoleID] = struct{}{}
+		}
+	}
+	if len(actors) < request.Policy.MinimumDistinctApprovers {
+		return WorkflowApprovalProgress{}
+	}
+	if request.Policy.Mode == db.WorkflowApprovalRoleModeAllOf && len(coveredRoles) != len(request.Policy.RoleIDs) {
+		return WorkflowApprovalProgress{}
+	}
+	return WorkflowApprovalProgress{Satisfied: true}
+}
+
+func allWorkflowRoleReferencesKnown(
+	references []db.ProjectRoleReference,
+	known map[db.ProjectRoleReference]bool,
+) bool {
+	if known == nil {
+		return false
+	}
+	for _, reference := range references {
+		if !known[reference] {
+			return false
+		}
+	}
+	return true
+}
+
+func containsWorkflowRoleReference(
+	references []db.ProjectRoleReference,
+	reference db.ProjectRoleReference,
+) bool {
+	for _, candidate := range references {
+		if candidate == reference {
 			return true
 		}
 	}

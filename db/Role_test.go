@@ -1,9 +1,8 @@
 package db
 
 import (
-	"testing"
-
 	"github.com/stretchr/testify/assert"
+	"testing"
 )
 
 func TestValidateRole(t *testing.T) {

@@ -8,12 +8,123 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 const (
 	defaultTaskSummaryPageSize = 50
 	maxTaskSummaryPageSize     = 200
 )
+
+// refillVisibleWorkflowTaskPage preserves keyset pagination semantics after
+// hidden workflow-owned tasks are removed. It keeps fetching raw sentinel
+// pages until it has pageSize+1 visible tasks or the underlying query ends.
+func (c *TaskController) refillVisibleWorkflowTaskPage(
+	r *http.Request,
+	project db.Project,
+	tpl any,
+	params db.RetrieveQueryParams,
+	pageSize int,
+	first []db.TaskWithTpl,
+) []db.TaskWithTpl {
+	visible := c.filterWorkflowTasksForRead(r, first)
+	raw := first
+	for len(visible) <= pageSize && len(raw) == params.Count && len(raw) > 0 {
+		next := params
+		next.BeforeID = raw[len(raw)-1].ID
+		var err error
+		if tpl != nil {
+			template := tpl.(db.Template)
+			raw, err = c.store.GetTemplateTasks(template.ProjectID, template.ID, next)
+		} else {
+			raw, err = c.store.GetProjectTasks(project.ID, next)
+		}
+		if err != nil {
+			break
+		}
+		visible = append(visible, c.filterWorkflowTasksForRead(r, raw)...)
+	}
+	return visible
+}
+
+// WorkflowTaskAccessMiddleware closes the direct task/log route bypass for
+// workflow-owned tasks. Normal tasks retain their existing authorization.
+func (c *TaskController) WorkflowTaskAccessMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		task := helpers.GetFromContext(r, "task").(db.Task)
+		permission := pro_interfaces.PermissionViewWorkflow
+		if r.Method == http.MethodDelete {
+			permission = pro_interfaces.PermissionAdministerWorkflow
+		}
+		if !c.authorizeWorkflowTask(r, task, permission) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// WorkflowTaskControlAccessMiddleware maps direct task controls to workflow
+// permissions so a task runner cannot stop or administer a restricted run by
+// addressing the underlying task endpoint.
+func (c *TaskController) WorkflowTaskControlAccessMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		task := helpers.GetFromContext(r, "task").(db.Task)
+		permission := pro_interfaces.PermissionStopWorkflow
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/confirm"):
+			permission = pro_interfaces.PermissionStartWorkflow
+		case strings.HasSuffix(r.URL.Path, "/retry-recovery"):
+			permission = pro_interfaces.PermissionAdministerWorkflow
+		}
+		if !c.authorizeWorkflowTask(r, task, permission) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (c *TaskController) filterWorkflowTasksForRead(r *http.Request, tasks []db.TaskWithTpl) []db.TaskWithTpl {
+	visible := make([]db.TaskWithTpl, 0, len(tasks))
+	for _, task := range tasks {
+		if c.authorizeWorkflowTask(r, task.Task, pro_interfaces.PermissionViewWorkflow) {
+			visible = append(visible, task)
+		}
+	}
+	return visible
+}
+
+func (c *TaskController) authorizeWorkflowTask(
+	r *http.Request,
+	task db.Task,
+	permission pro_interfaces.PermissionID,
+) bool {
+	if task.WorkflowRunID == nil {
+		if permission == pro_interfaces.PermissionAdministerWorkflow {
+			user := helpers.UserFromContext(r)
+			permissions, ok := helpers.GetOkFromContext(r, "permissions")
+			value, valid := permissions.(db.ProjectUserPermission)
+			return user != nil && (user.Admin || ok && valid && value.Can(db.CanManageProjectResources))
+		}
+		if permission != pro_interfaces.PermissionViewWorkflow {
+			user := helpers.UserFromContext(r)
+			permissions, ok := helpers.GetOkFromContext(r, "permissions")
+			value, valid := permissions.(db.ProjectUserPermission)
+			return user != nil && (user.Admin || ok && valid && value.Can(db.CanRunProjectTasks))
+		}
+		return true
+	}
+	if c.workflowStore == nil {
+		return false
+	}
+	run, err := c.workflowStore.GetWorkflowRunByID(task.ProjectID, *task.WorkflowRunID)
+	if err != nil {
+		return false
+	}
+	viewAllowed, allowed, err := AuthorizeWorkflowRequest(r, run.DefinitionSnapshot, permission)
+	return err == nil && viewAllowed && allowed
+}
 
 func parseTaskSummaryPageParams(query url.Values) db.RetrieveQueryParams {
 	count := defaultTaskSummaryPageSize

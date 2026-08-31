@@ -48,6 +48,13 @@ type WorkflowRunFairScanner interface {
 	GetActiveWorkflowRunsFair() ([]db.WorkflowRun, error)
 }
 
+// WorkflowAuditConfigurer is an optional Enhanced seam. Route wiring uses a
+// type assertion so Community workflow implementations never acquire an audit
+// dependency or a breaking interface requirement.
+type WorkflowAuditConfigurer interface {
+	ConfigureWorkflowAudit(AuditServiceFacade)
+}
+
 // WorkflowApprovalIdentityStore resolves the current project role used to
 // authorize an approval decision. The request itself snapshots the required
 // permission, so later definition edits cannot weaken the pending request.

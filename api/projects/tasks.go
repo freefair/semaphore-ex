@@ -22,12 +22,18 @@ const maxTasksPageSize = 200
 type TaskController struct {
 	store           db.Store
 	ansibleTaskRepo db.AnsibleTaskRepository
+	workflowStore   db.WorkflowManager
 }
 
-func NewTaskController(store db.Store, ansibleTaskRepo db.AnsibleTaskRepository) *TaskController {
+func NewTaskController(store db.Store, ansibleTaskRepo db.AnsibleTaskRepository, workflowStores ...db.WorkflowManager) *TaskController {
+	var workflowStore db.WorkflowManager
+	if len(workflowStores) > 0 {
+		workflowStore = workflowStores[0]
+	}
 	return &TaskController{
 		store:           store,
 		ansibleTaskRepo: ansibleTaskRepo,
+		workflowStore:   workflowStore,
 	}
 }
 
@@ -113,6 +119,11 @@ func (c *TaskController) writeTasksList(w http.ResponseWriter, r *http.Request, 
 		util.LogErrorF(err, log.Fields{"error": "Bad request. Cannot get tasks list from database"})
 		w.WriteHeader(http.StatusBadRequest)
 		return
+	}
+	if pageSize > 0 {
+		taskList = c.refillVisibleWorkflowTaskPage(r, project, tpl, params, pageSize, taskList)
+	} else {
+		taskList = c.filterWorkflowTasksForRead(r, taskList)
 	}
 
 	if pageSize > 0 {

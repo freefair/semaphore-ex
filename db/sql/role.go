@@ -109,3 +109,5 @@ func (d *SqlDb) GetProjectOrGlobalRoleBySlug(projectID int, slug string) (db.Rol
 		projectID)
 	return role, err
 }
+
+var _ db.ProjectWorkflowRoleIdentityResolver = (*SqlDb)(nil)

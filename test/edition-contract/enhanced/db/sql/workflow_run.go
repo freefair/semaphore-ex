@@ -1,13 +1,16 @@
 package sql
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/go-gorp/gorp/v3"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
@@ -284,6 +287,11 @@ func (d *WorkflowStoreImpl) GetWorkflowApprovals(projectID int, runID int) ([]db
 	); err != nil {
 		return nil, err
 	}
+	for index := range approvals {
+		if err := decodeWorkflowApprovalPolicy(&approvals[index]); err != nil {
+			return nil, err
+		}
+	}
 	return approvals, nil
 }
 
@@ -299,6 +307,11 @@ func (d *WorkflowStoreImpl) GetPendingWorkflowApprovals(projectID int) ([]db.Wor
 	); err != nil {
 		return nil, err
 	}
+	for index := range approvals {
+		if err := decodeWorkflowApprovalPolicy(&approvals[index]); err != nil {
+			return nil, err
+		}
+	}
 	return approvals, nil
 }
 
@@ -310,6 +323,9 @@ func (d *WorkflowStoreImpl) GetWorkflowApproval(projectID int, runID int, nodeID
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return db.WorkflowApproval{}, db.ErrNotFound
+	}
+	if err == nil {
+		err = decodeWorkflowApprovalPolicy(&approval)
 	}
 	return approval, err
 }
@@ -347,10 +363,10 @@ func (d *WorkflowStoreImpl) OpenWorkflowApproval(approval db.WorkflowApproval) (
 		return db.WorkflowApproval{}, false, getErr
 	}
 	approval.ID, err = d.insertTx(tx,
-		"insert into project__workflow_approval(project_id, workflow_run_id, workflow_node_id, status, created, resolved, resolved_by_user_id, deadline, prompt, eligible_permission, separation_of_duties, request_actor_user_id, timeout_outcome, decision_comment, decision_source, correlation_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"insert into project__workflow_approval(project_id, workflow_run_id, workflow_node_id, status, created, resolved, resolved_by_user_id, deadline, prompt, eligible_permission, role_policy_snapshot, role_policy_revision, separation_of_duties, request_actor_user_id, timeout_outcome, decision_comment, decision_source, correlation_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		approval.ProjectID, approval.WorkflowRunID, approval.WorkflowNodeID, approval.Status, approval.Created,
 		approval.Resolved, approval.ResolvedByUserID, approval.Deadline, approval.Prompt, approval.EligiblePermission,
-		sqlBool(approval.SeparationOfDuties), approval.RequestActorUserID, approval.TimeoutOutcome, approval.DecisionComment,
+		approval.RolePolicySnapshotJSON, approval.RolePolicySnapshotRevision, sqlBool(approval.SeparationOfDuties), approval.RequestActorUserID, approval.TimeoutOutcome, approval.DecisionComment,
 		approval.DecisionSource, approval.CorrelationID,
 	)
 	if err != nil {
@@ -360,6 +376,335 @@ func (d *WorkflowStoreImpl) OpenWorkflowApproval(approval db.WorkflowApproval) (
 		return db.WorkflowApproval{}, false, err
 	}
 	return approval, true, nil
+}
+
+func decodeWorkflowApprovalPolicy(approval *db.WorkflowApproval) error {
+	if approval.RolePolicySnapshotRevision == 0 {
+		return nil
+	}
+	if approval.RolePolicySnapshotJSON == "" || approval.RolePolicySnapshotJSON == "{}" {
+		return errors.New("workflow approval role policy snapshot is missing")
+	}
+	if err := json.Unmarshal([]byte(approval.RolePolicySnapshotJSON), &approval.RolePolicySnapshot); err != nil {
+		return fmt.Errorf("decode workflow approval role policy snapshot: %w", err)
+	}
+	if approval.RolePolicySnapshot.PolicyRevision != approval.RolePolicySnapshotRevision ||
+		approval.RolePolicySnapshot.Policy.Validate() != nil {
+		return errors.New("workflow approval role policy snapshot is invalid")
+	}
+	return nil
+}
+
+func (d *WorkflowStoreImpl) GetWorkflowApprovalContributions(approvalID int) ([]db.WorkflowApprovalContribution, error) {
+	contributions := make([]db.WorkflowApprovalContribution, 0)
+	if _, err := d.connection.SelectAll(&contributions,
+		"select * from project__workflow_approval_contribution where workflow_approval_id=? order by created, actor_user_id", approvalID,
+	); err != nil {
+		return nil, err
+	}
+	return contributions, nil
+}
+
+func (d *WorkflowStoreImpl) CreateWorkflowApprovalContribution(contribution db.WorkflowApprovalContribution) error {
+	if err := contribution.Validate(); err != nil {
+		return err
+	}
+	_, err := d.connection.Exec(d.connection.PrepareQuery(
+		"insert into project__workflow_approval_contribution(workflow_approval_id, actor_user_id, role_id, role_revision, role_origin, directory_provider_id, directory_mapping_id, directory_mapping_revision, directory_revision_fingerprint, decision, comment, created, policy_revision, correlation_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+		contribution.ApprovalID, contribution.ActorUserID, contribution.RoleID, contribution.RoleRevision, contribution.RoleOrigin,
+		contribution.DirectoryProviderID, contribution.DirectoryMappingID, contribution.DirectoryMappingRevision, contribution.DirectoryRevisionFingerprint,
+		contribution.Decision, contribution.Comment, contribution.Created, contribution.PolicyRevision, contribution.CorrelationID,
+	)
+	return err
+}
+
+func (d *WorkflowStoreImpl) SubmitWorkflowApprovalContribution(
+	submission db.WorkflowApprovalContributionSubmission,
+) (db.WorkflowApprovalContributionResult, error) {
+	if submission.ProjectID <= 0 || submission.WorkflowRunID <= 0 || submission.WorkflowNodeID <= 0 ||
+		submission.ActorUserID <= 0 || submission.At.IsZero() || submission.Decision.Validate() != nil {
+		return db.WorkflowApprovalContributionResult{}, errors.New("workflow approval contribution is invalid")
+	}
+	tx, err := d.connection.Begin()
+	if err != nil {
+		return db.WorkflowApprovalContributionResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var approval db.WorkflowApproval
+	err = tx.SelectOne(&approval, d.connection.PrepareQuery(
+		"select * from project__workflow_approval where project_id=? and workflow_run_id=? and workflow_node_id=?"),
+		submission.ProjectID, submission.WorkflowRunID, submission.WorkflowNodeID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return db.WorkflowApprovalContributionResult{}, db.ErrNotFound
+	}
+	if err != nil {
+		return db.WorkflowApprovalContributionResult{}, err
+	}
+	if err = decodeWorkflowApprovalPolicy(&approval); err != nil {
+		return db.WorkflowApprovalContributionResult{}, err
+	}
+	if approval.Status != db.WorkflowApprovalPending {
+		return db.WorkflowApprovalContributionResult{Approval: approval, Terminal: true}, nil
+	}
+	if approval.Deadline != nil && !approval.Deadline.After(submission.At) {
+		if err = finalizeWorkflowApprovalTx(tx, d, &approval, db.WorkflowApprovalExpired, submission.At, nil, "", db.WorkflowApprovalDecisionSourceTimeout); err != nil {
+			return db.WorkflowApprovalContributionResult{}, err
+		}
+		if err = tx.Commit(); err != nil {
+			return db.WorkflowApprovalContributionResult{}, err
+		}
+		return db.WorkflowApprovalContributionResult{Approval: approval, Terminal: true, TimedOut: true}, nil
+	}
+	if approval.RolePolicySnapshotRevision == 0 {
+		if submission.LegacySnapshot == nil || submission.LegacySnapshot.PolicyRevision <= 0 || submission.LegacySnapshot.Policy.Validate() != nil {
+			return db.WorkflowApprovalContributionResult{}, errors.New("workflow approval legacy policy snapshot is unavailable")
+		}
+		payload, marshalErr := json.Marshal(submission.LegacySnapshot)
+		if marshalErr != nil {
+			return db.WorkflowApprovalContributionResult{}, marshalErr
+		}
+		result, updateErr := tx.Exec(d.connection.PrepareQuery(
+			"update project__workflow_approval set role_policy_snapshot=?, role_policy_revision=? where id=? and role_policy_revision=0"),
+			string(payload), submission.LegacySnapshot.PolicyRevision, approval.ID,
+		)
+		if updateErr != nil {
+			return db.WorkflowApprovalContributionResult{}, updateErr
+		}
+		updated, updateErr := result.RowsAffected()
+		if updateErr != nil || updated != 1 {
+			return db.WorkflowApprovalContributionResult{}, errors.New("workflow approval legacy policy snapshot conflict")
+		}
+		approval.RolePolicySnapshot = *submission.LegacySnapshot
+		approval.RolePolicySnapshotJSON = string(payload)
+		approval.RolePolicySnapshotRevision = submission.LegacySnapshot.PolicyRevision
+	}
+	identity, knownRoles, identityErr := d.resolveWorkflowApprovalIdentityTx(tx, submission.ProjectID, submission.ActorUserID)
+	if identityErr != nil {
+		if err = tx.Commit(); err != nil {
+			return db.WorkflowApprovalContributionResult{}, err
+		}
+		return db.WorkflowApprovalContributionResult{Approval: approval, Denied: true}, nil
+	}
+	eligibility := pro_interfaces.EvaluateWorkflowApprovalEligibility(pro_interfaces.WorkflowApprovalEligibilityRequest{
+		Policy: approval.RolePolicySnapshot.Policy, ActorUserID: submission.ActorUserID,
+		InitiatorUserID:         approval.RequestActorUserID,
+		EffectiveRoleReferences: []db.ProjectRoleReference{identity.Reference}, KnownRoleReferences: knownRoles,
+	})
+	if !eligibility.Allowed || len(eligibility.MatchingRoleIDs) == 0 {
+		if err = tx.Commit(); err != nil {
+			return db.WorkflowApprovalContributionResult{}, err
+		}
+		return db.WorkflowApprovalContributionResult{Approval: approval, Denied: true}, nil
+	}
+	contribution := db.WorkflowApprovalContribution{
+		ApprovalID: approval.ID, ActorUserID: submission.ActorUserID, RoleID: eligibility.MatchingRoleIDs[0],
+		RoleRevision: identity.Revision, RoleOrigin: workflowApprovalRoleOrigin(identity.Origin),
+		DirectoryProviderID: identity.DirectoryProviderID, DirectoryMappingID: identity.DirectoryMappingID,
+		DirectoryMappingRevision:     identity.DirectoryMappingRevision,
+		DirectoryRevisionFingerprint: identity.DirectoryRevisionFingerprint,
+		Decision:                     submission.Decision.Status, Comment: submission.Decision.Comment, Created: submission.At,
+		PolicyRevision: approval.RolePolicySnapshotRevision, CorrelationID: submission.CorrelationID,
+	}
+	if err = contribution.Validate(); err != nil {
+		return db.WorkflowApprovalContributionResult{}, err
+	}
+	_, err = tx.Exec(d.connection.PrepareQuery(
+		"insert into project__workflow_approval_contribution(workflow_approval_id, actor_user_id, role_id, role_revision, role_origin, directory_provider_id, directory_mapping_id, directory_mapping_revision, directory_revision_fingerprint, decision, comment, created, policy_revision, correlation_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+		contribution.ApprovalID, contribution.ActorUserID, contribution.RoleID,
+		contribution.RoleRevision, contribution.RoleOrigin,
+		contribution.DirectoryProviderID, contribution.DirectoryMappingID,
+		contribution.DirectoryMappingRevision, contribution.DirectoryRevisionFingerprint, contribution.Decision,
+		contribution.Comment, contribution.Created, contribution.PolicyRevision,
+		contribution.CorrelationID,
+	)
+	if err != nil {
+		if isWorkflowApprovalContributionDuplicate(err) {
+			if err = tx.Rollback(); err != nil {
+				return db.WorkflowApprovalContributionResult{}, err
+			}
+			current, getErr := d.GetWorkflowApproval(submission.ProjectID, submission.WorkflowRunID, submission.WorkflowNodeID)
+			if getErr != nil {
+				return db.WorkflowApprovalContributionResult{}, getErr
+			}
+			return db.WorkflowApprovalContributionResult{Approval: current, Terminal: current.Status != db.WorkflowApprovalPending, Duplicate: true}, nil
+		}
+		return db.WorkflowApprovalContributionResult{}, err
+	}
+	contributions := make([]db.WorkflowApprovalContribution, 0)
+	if _, err = tx.Select(&contributions, d.connection.PrepareQuery(
+		"select * from project__workflow_approval_contribution where workflow_approval_id=? order by created, actor_user_id"), approval.ID,
+	); err != nil {
+		return db.WorkflowApprovalContributionResult{}, err
+	}
+	terminalStatus := db.WorkflowApprovalPending
+	if contribution.Decision == db.WorkflowApprovalRejected {
+		terminalStatus = db.WorkflowApprovalRejected
+	} else if pro_interfaces.AuthorizeWorkflowApprovalQuorum(
+		approval.RolePolicySnapshot.Policy, approval.RequestActorUserID, knownRoles, contributions,
+	).Satisfied {
+		terminalStatus = db.WorkflowApprovalApproved
+	}
+	if terminalStatus != db.WorkflowApprovalPending {
+		if err = finalizeWorkflowApprovalTx(tx, d, &approval, terminalStatus, submission.At, &contribution.ActorUserID, contribution.Comment, db.WorkflowApprovalDecisionSourceUser); err != nil {
+			return db.WorkflowApprovalContributionResult{}, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return db.WorkflowApprovalContributionResult{}, err
+	}
+	return db.WorkflowApprovalContributionResult{Approval: approval, Committed: true, Terminal: terminalStatus != db.WorkflowApprovalPending, Contribution: &contribution}, nil
+}
+
+func finalizeWorkflowApprovalTx(
+	tx *gorp.Transaction,
+	d *WorkflowStoreImpl,
+	approval *db.WorkflowApproval,
+	status db.WorkflowApprovalStatus,
+	at time.Time,
+	actorID *int,
+	comment string,
+	source db.WorkflowApprovalDecisionSource,
+) error {
+	result, err := tx.Exec(d.connection.PrepareQuery(
+		"update project__workflow_approval set status=?, resolved=?, resolved_by_user_id=?, decision_comment=?, decision_source=? where id=? and status=?"),
+		status, at, actorID, comment, source, approval.ID, db.WorkflowApprovalPending,
+	)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil || updated != 1 {
+		return errors.New("workflow approval terminal transition conflict")
+	}
+	approval.Status, approval.Resolved, approval.ResolvedByUserID = status, &at, actorID
+	approval.DecisionComment, approval.DecisionSource = comment, source
+	return nil
+}
+
+func isWorkflowApprovalContributionDuplicate(err error) bool {
+	value := strings.ToLower(err.Error())
+	return strings.Contains(value, "unique") || strings.Contains(value, "duplicate")
+}
+
+func (d *WorkflowStoreImpl) resolveWorkflowApprovalIdentityTx(
+	tx *gorp.Transaction,
+	projectID int,
+	userID int,
+) (db.ProjectWorkflowRoleIdentity, map[db.ProjectRoleReference]bool, error) {
+	var member db.ProjectUser
+	if err := tx.SelectOne(&member, d.connection.PrepareQuery(
+		"select * from project__user where project_id=? and user_id=?"), projectID, userID,
+	); err != nil {
+		return db.ProjectWorkflowRoleIdentity{}, nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+	}
+	roleIDs := make([]db.ProjectRoleID, 0)
+	var roles []db.Role
+	if _, err := tx.Select(&roles, d.connection.PrepareQuery(
+		"select * from `role` where project_id=? and revision>=1 order by role_id"), projectID,
+	); err != nil {
+		return db.ProjectWorkflowRoleIdentity{}, nil, err
+	}
+	for _, role := range roles {
+		roleIDs = append(roleIDs, role.ID)
+	}
+	known := db.KnownProjectRoleReferences(roleIDs)
+	identity, roleID, builtIn, err := workflowApprovalIdentityBase(member, roles)
+	if err != nil {
+		return db.ProjectWorkflowRoleIdentity{}, nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+	}
+	if member.LDAPGroupManagedAssignmentID != nil && member.OIDCGroupManagedAssignmentID != nil {
+		return db.ProjectWorkflowRoleIdentity{}, nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+	}
+	if member.LDAPGroupManagedAssignmentID != nil {
+		identity, err = d.resolveWorkflowApprovalDirectoryIdentityTx(tx, identity, member, roleID, *member.LDAPGroupManagedAssignmentID, "ldap")
+	} else if member.OIDCGroupManagedAssignmentID != nil {
+		identity, err = d.resolveWorkflowApprovalDirectoryIdentityTx(tx, identity, member, roleID, *member.OIDCGroupManagedAssignmentID, "oidc")
+	} else if builtIn {
+		identity.Origin = db.ProjectWorkflowRoleOriginBuiltIn
+	} else {
+		identity.Origin = db.ProjectWorkflowRoleOriginManual
+	}
+	if err != nil || identity.Validate() != nil {
+		return db.ProjectWorkflowRoleIdentity{}, nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+	}
+	return identity, known, nil
+}
+
+func workflowApprovalIdentityBase(member db.ProjectUser, roles []db.Role) (db.ProjectWorkflowRoleIdentity, string, bool, error) {
+	if member.RoleID == nil {
+		reference, ok := db.ProjectRoleReferenceForBuiltInRole(member.Role)
+		if !ok || member.Revision < 1 {
+			return db.ProjectWorkflowRoleIdentity{}, "", false, errors.New("workflow role is unavailable")
+		}
+		return db.ProjectWorkflowRoleIdentity{Reference: reference, Permissions: member.Role.GetPermissions(), Revision: member.Revision}, string(member.Role), true, nil
+	}
+	for _, role := range roles {
+		if role.ID == *member.RoleID {
+			return db.ProjectWorkflowRoleIdentity{Reference: db.ProjectRoleReferenceForCustomRole(role.ID), Permissions: role.Permissions, Revision: role.Revision}, string(role.ID), false, nil
+		}
+	}
+	return db.ProjectWorkflowRoleIdentity{}, "", false, errors.New("workflow role is unavailable")
+}
+
+func (d *WorkflowStoreImpl) resolveWorkflowApprovalDirectoryIdentityTx(
+	tx *gorp.Transaction,
+	identity db.ProjectWorkflowRoleIdentity,
+	member db.ProjectUser,
+	roleID string,
+	ledgerID int,
+	kind string,
+) (db.ProjectWorkflowRoleIdentity, error) {
+	table := "ldap"
+	origin := db.ProjectWorkflowRoleOriginLDAP
+	revisionColumn := "directory_revision"
+	if kind == "oidc" {
+		table, origin, revisionColumn = "oidc", db.ProjectWorkflowRoleOriginOIDC, "claim_revision"
+	}
+	query := fmt.Sprintf(`select assignment.provider_id, assignment.mapping_id, mapping.revision as mapping_revision,
+       reconciliation.%s as directory_revision
+ from %s_group_managed_assignment assignment
+ join %s_group_mapping mapping on mapping.provider_id=assignment.provider_id and mapping.id=assignment.mapping_id
+ join %s_group_mapping_state state on state.provider_id=assignment.provider_id
+ join %s_group_reconciliation reconciliation on reconciliation.id=(
+   select latest.id from %s_group_reconciliation latest
+   where latest.provider_id=assignment.provider_id %s and latest.mapping_revision=state.revision
+     and latest.status='applied' and latest.applied_at is not null order by latest.id desc limit 1)
+ where assignment.id=? and assignment.user_id=? and assignment.project_id=?
+   and assignment.target_scope='project' and assignment.role_id=?
+   and mapping.target_scope='project' and mapping.project_id=? and mapping.role_id=? and mapping.enabled=true`,
+		revisionColumn, table, table, table, table, table,
+		map[bool]string{true: "and latest.user_id=assignment.user_id", false: ""}[kind == "oidc"],
+	)
+	var provenance struct {
+		ProviderID        string `db:"provider_id"`
+		MappingID         string `db:"mapping_id"`
+		MappingRevision   int    `db:"mapping_revision"`
+		DirectoryRevision string `db:"directory_revision"`
+	}
+	if err := tx.SelectOne(&provenance, d.connection.PrepareQuery(query), ledgerID, member.UserID, member.ProjectID, roleID, member.ProjectID, roleID); err != nil {
+		return db.ProjectWorkflowRoleIdentity{}, db.ErrProjectWorkflowRoleIdentityUnavailable
+	}
+	if provenance.ProviderID == "" || provenance.MappingID == "" || provenance.MappingRevision < 1 || provenance.DirectoryRevision == "" {
+		return db.ProjectWorkflowRoleIdentity{}, db.ErrProjectWorkflowRoleIdentityUnavailable
+	}
+	digest := sha256.Sum256([]byte(provenance.DirectoryRevision))
+	identity.Origin, identity.DirectoryProviderID, identity.DirectoryMappingID = origin, provenance.ProviderID, provenance.MappingID
+	identity.DirectoryMappingRevision, identity.DirectoryRevisionFingerprint = provenance.MappingRevision, hex.EncodeToString(digest[:])
+	return identity, nil
+}
+
+func workflowApprovalRoleOrigin(origin db.ProjectWorkflowRoleOrigin) db.WorkflowApprovalRoleOrigin {
+	switch origin {
+	case db.ProjectWorkflowRoleOriginBuiltIn:
+		return db.WorkflowApprovalRoleOriginBuiltIn
+	case db.ProjectWorkflowRoleOriginLDAP:
+		return db.WorkflowApprovalRoleOriginLDAP
+	case db.ProjectWorkflowRoleOriginOIDC:
+		return db.WorkflowApprovalRoleOriginOIDC
+	default:
+		return db.WorkflowApprovalRoleOriginManual
+	}
 }
 
 func (d *WorkflowStoreImpl) UpdateWorkflowApproval(approval db.WorkflowApproval) error {

@@ -260,6 +260,139 @@ func TestAuditEventRequiresConsistentProjectScope(t *testing.T) {
 	assert.Error(t, globalCapability.Validate())
 }
 
+func TestAuditEventPersistsBoundedWorkflowApprovalProvenance(t *testing.T) {
+	projectID := 42
+	event := AuditEvent{
+		CorrelationID:          "0123456789abcdef0123456789abcdef",
+		ProjectID:              &projectID,
+		Action:                 AuditActionWorkflowApprovalContribute,
+		TargetType:             AuditTargetWorkflowApproval,
+		TargetID:               "approval:17",
+		Outcome:                AuditOutcomeAllowed,
+		Source:                 AuditSourceAPI,
+		Reason:                 AuditReasonWorkflowApprovalApproved,
+		WorkflowPolicyRevision: 3,
+		RoleProvenance: []AuditRoleProvenance{{
+			RoleID:                       "role:release_manager",
+			RoleRevision:                 7,
+			Origin:                       AuditRoleOriginOIDC,
+			DirectoryProviderID:          "corp",
+			DirectoryMappingID:           "release-approvers",
+			DirectoryMappingRevision:     4,
+			DirectoryRevisionFingerprint: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		}},
+	}
+
+	require.NoError(t, event.Validate())
+	payload, err := json.Marshal(event)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"occurred_at":"0001-01-01T00:00:00Z",
+		"correlation_id":"0123456789abcdef0123456789abcdef",
+		"project_id":42,
+		"action":"workflow_approval_contribute",
+		"target_type":"workflow_approval",
+		"target_id":"approval:17",
+		"outcome":"allowed",
+		"source":"api",
+		"reason":"workflow_approval_approved",
+		"workflow_policy_revision":3,
+		"role_provenance":[{
+			"role_id":"role:release_manager",
+			"role_revision":7,
+			"origin":"oidc",
+			"directory_provider_id":"corp",
+			"directory_mapping_id":"release-approvers",
+			"directory_mapping_revision":4,
+			"directory_revision_fingerprint":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		}]
+	}`, string(payload))
+	assert.Equal(t, event.RoleProvenance, event.SafeFields()["role_provenance"])
+}
+
+func TestAuditEventRejectsUnboundedOrInconsistentWorkflowProvenance(t *testing.T) {
+	projectID := 42
+	base := AuditEvent{
+		CorrelationID:          "0123456789abcdef0123456789abcdef",
+		ProjectID:              &projectID,
+		Action:                 AuditActionWorkflowApprovalContribute,
+		TargetType:             AuditTargetWorkflowApproval,
+		TargetID:               "approval:17",
+		Outcome:                AuditOutcomeAllowed,
+		Source:                 AuditSourceAPI,
+		Reason:                 AuditReasonWorkflowApprovalApproved,
+		WorkflowPolicyRevision: 1,
+		RoleProvenance: []AuditRoleProvenance{{
+			RoleID:       "builtin:manager",
+			RoleRevision: 1,
+			Origin:       AuditRoleOriginBuiltin,
+		}},
+	}
+
+	require.NoError(t, base.Validate())
+	missingProvenance := base
+	missingProvenance.RoleProvenance = nil
+	assert.Error(t, missingProvenance.Validate())
+
+	withDirectoryClaims := base
+	withDirectoryClaims.RoleProvenance = append([]AuditRoleProvenance(nil), base.RoleProvenance...)
+	withDirectoryClaims.RoleProvenance[0].DirectoryProviderID = "corp"
+	assert.Error(t, withDirectoryClaims.Validate())
+
+	withRawDirectoryRevision := base
+	withRawDirectoryRevision.RoleProvenance = append([]AuditRoleProvenance(nil), base.RoleProvenance...)
+	withRawDirectoryRevision.RoleProvenance[0] = AuditRoleProvenance{
+		RoleID:                       "role:release_manager",
+		RoleRevision:                 1,
+		Origin:                       AuditRoleOriginOIDC,
+		DirectoryProviderID:          "corp",
+		DirectoryMappingID:           "release-approvers",
+		DirectoryMappingRevision:     1,
+		DirectoryRevisionFingerprint: "release-approvers",
+	}
+	assert.Error(t, withRawDirectoryRevision.Validate())
+
+	wrongTarget := base
+	wrongTarget.TargetType = AuditTargetWorkflowRun
+	wrongTarget.TargetID = "run:17"
+	assert.Error(t, wrongTarget.Validate())
+
+	genericReason := base
+	genericReason.Reason = string(CapabilityReasonActive)
+	assert.Error(t, genericReason.Validate())
+
+	tooMany := base
+	tooMany.RoleProvenance = make([]AuditRoleProvenance, AuditRoleProvenanceMaxEntries+1)
+	for index := range tooMany.RoleProvenance {
+		tooMany.RoleProvenance[index] = base.RoleProvenance[0]
+	}
+	assert.Error(t, tooMany.Validate())
+}
+
+func TestAuditWebhookV1OmitsWorkflowPolicyAndRoleProvenance(t *testing.T) {
+	projectID := 42
+	event := AuditEvent{
+		EventID:                "0123456789abcdef0123456789abcdef",
+		OccurredAt:             time.Date(2026, time.August, 31, 10, 11, 12, 0, time.UTC),
+		CorrelationID:          "abcdef0123456789abcdef0123456789",
+		ProjectID:              &projectID,
+		Action:                 AuditActionWorkflowRead,
+		TargetType:             AuditTargetWorkflow,
+		TargetID:               "workflow:17",
+		Outcome:                AuditOutcomeDenied,
+		Source:                 AuditSourceAPI,
+		Reason:                 AuditReasonWorkflowPolicyDenied,
+		WorkflowPolicyRevision: 3,
+	}
+
+	envelope, err := NewAuditWebhookEnvelope(event)
+	require.NoError(t, err)
+	payload, err := json.Marshal(envelope)
+	require.NoError(t, err)
+	assert.NotContains(t, string(payload), "workflow_policy_revision")
+	assert.NotContains(t, string(payload), "role_provenance")
+}
+
 func withAuditCorrelation(event AuditEvent, value string) AuditEvent {
 	event.CorrelationID = value
 	return event
