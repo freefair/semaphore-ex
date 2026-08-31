@@ -807,6 +807,13 @@ func TestUpdateRunnerPersistsBoundedKubernetesExecutorMetadata(t *testing.T) {
 		K8sJobName: "semaphore-task-41-3", K8sJobUID: "job-uid",
 		K8sPodName: "semaphore-task-41-3-pod", K8sPodUID: "pod-uid",
 		K8sContainerName: "task", K8sLifecycle: "running",
+		K8sServiceAccount: "semaphore-task", K8sResourcePolicyID: "1",
+		K8sResourcePolicyHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		K8sNetworkProfile:     string(db.KubernetesNetworkProfileDenyAll),
+		K8sNetworkEnforcement: string(db.KubernetesNetworkPolicyEnforcementNetworkPolicy),
+		K8sSecretName:         "semaphore-bundle-41-3", K8sSecretUID: "secret-uid",
+		K8sNetworkPolicyName: "semaphore-network-41-3", K8sNetworkPolicyUID: "network-policy-uid",
+		K8sRetentionState: "active",
 	}
 	request := newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{Jobs: []runners.JobProgress{{
 		ID: fixture.task.ID, Generation: fixture.task.AssignmentGeneration,

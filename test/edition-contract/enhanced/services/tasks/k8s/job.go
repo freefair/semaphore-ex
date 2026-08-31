@@ -18,19 +18,20 @@ const (
 	taskContainerName = "task"
 )
 
-func buildJob(cfg config, task db.Task, runnerID int, bundleSecret string, image string, command []string) *batchv1.Job {
+func buildJob(cfg config, policy db.KubernetesExecutionPolicy, task db.Task, runnerID int, bundleSecret string, image string, command []string) *batchv1.Job {
 	labels := taskLabels(task, runnerID)
 	backoffLimit := int32(0)
 	automountToken := false
 	enableServiceLinks := false
-	secretMode := int32(0o400)
+	secretMode := int32(0o440)
 	terminationGraceSeconds := int64(cfg.cleanupGrace.Seconds())
+	runtimeClassName := policy.RuntimeClass
 	pullSecrets := make([]corev1.LocalObjectReference, 0, len(cfg.pullSecrets))
 	for _, name := range cfg.pullSecrets {
 		pullSecrets = append(pullSecrets, corev1.LocalObjectReference{Name: name})
 	}
 
-	return &batchv1.Job{
+	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      taskObjectName("semaphore-task", task),
 			Namespace: cfg.namespace,
@@ -47,6 +48,7 @@ func buildJob(cfg config, task db.Task, runnerID int, bundleSecret string, image
 					ServiceAccountName:            cfg.serviceAccount,
 					AutomountServiceAccountToken:  &automountToken,
 					EnableServiceLinks:            &enableServiceLinks,
+					SecurityContext:               restrictedPodSecurityContext(),
 					ImagePullSecrets:              pullSecrets,
 					InitContainers: []corev1.Container{{
 						Name:    "bundle",
@@ -56,6 +58,8 @@ func buildJob(cfg config, task db.Task, runnerID int, bundleSecret string, image
 							{Name: "bundle-input", MountPath: bundleInputPath, ReadOnly: true},
 							{Name: "bundle", MountPath: bundlePath},
 						},
+						SecurityContext: restrictedContainerSecurityContext(),
+						Resources:       policyResources(policy.Resources),
 					}},
 					Containers: []corev1.Container{{
 						Name:       taskContainerName,
@@ -66,21 +70,28 @@ func buildJob(cfg config, task db.Task, runnerID int, bundleSecret string, image
 							{Name: "bundle", MountPath: bundlePath, ReadOnly: true},
 							{Name: "workspace", MountPath: workspacePath},
 						},
+						SecurityContext: restrictedContainerSecurityContext(),
+						Resources:       policyResources(policy.Resources),
 					}},
 					Volumes: []corev1.Volume{
 						{Name: "bundle-input", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: bundleSecret, Items: []corev1.KeyToPath{{Key: bundleArchiveKey, Path: bundleArchiveKey}}, DefaultMode: &secretMode}}},
-						{Name: "bundle", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-						{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+						{Name: "bundle", VolumeSource: corev1.VolumeSource{EmptyDir: policyEmptyDir(policy.Resources)}},
+						{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: policyEmptyDir(policy.Resources)}},
 					},
 				},
 			},
 		},
 	}
+	if runtimeClassName != "" {
+		job.Spec.Template.Spec.RuntimeClassName = &runtimeClassName
+	}
+	return job
 }
 
 func taskLabels(task db.Task, runnerID int) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/managed-by":       "semaphore",
+		"io.semaphore.managed":               "v1",
 		"io.semaphore.executor":              "k8s",
 		"io.semaphore.project-id":            strconv.Itoa(task.ProjectID),
 		"io.semaphore.task-id":               strconv.Itoa(task.ID),

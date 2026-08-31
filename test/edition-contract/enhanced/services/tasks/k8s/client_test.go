@@ -2,13 +2,16 @@ package k8s
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/semaphoreui/semaphore/db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -40,6 +43,26 @@ func TestClientCreatesImmutableTaskScopedBundleSecret(t *testing.T) {
 	assert.True(t, *stored.Immutable)
 	assert.Equal(t, []byte("bundle"), stored.Data[bundleArchiveKey])
 	assert.Equal(t, map[string]string{"io.semaphore.task-id": "41"}, stored.Labels)
+}
+
+func TestKubernetesAPIErrorUsesOnlyStableNonSensitiveCategories(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		err  error
+		rule string
+	}{
+		{"secret RBAC", apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "bundle", errors.New("operator detail")), db.KubernetesPolicyRuleRBACDenied},
+		{"quota", apierrors.NewForbidden(schema.GroupResource{Resource: "jobs"}, "task", errors.New("exceeded quota with detail")), db.KubernetesPolicyRuleQuotaDenied},
+		{"admission", apierrors.NewInvalid(schema.GroupKind{Group: "batch", Kind: "Job"}, "task", nil), db.KubernetesPolicyRuleAdmissionDenied},
+		{"transport", errors.New("https://cluster.internal:6443 token=secret"), db.KubernetesPolicyRuleUnavailable},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var violation db.KubernetesPolicyViolationError
+			require.ErrorAs(t, kubernetesAPIError(tt.err), &violation)
+			assert.Equal(t, tt.rule, violation.Rule)
+			assert.NotContains(t, violation.Rule, "detail")
+		})
+	}
 }
 
 func TestClientRequiresExactJobAndPodTerminationEvidence(t *testing.T) {

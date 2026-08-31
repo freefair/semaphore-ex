@@ -10,16 +10,22 @@ import (
 )
 
 const (
-	RunnerVersionHeader              = "X-Runner-Version"
-	RunnerPlatformHeader             = "X-Runner-Platform"
-	RunnerCurrentLoadHeader          = "X-Runner-Current-Load"
-	RunnerExecutorTypeHeader         = "X-Runner-Executor-Type"
-	RunnerTransportTrustHeader       = "X-Runner-Transport-Trust"
-	RunnerSecurityProtocolHeader     = "X-Runner-Security-Protocol"
-	RunnerDockerPolicyRevisionHeader = "X-Runner-Docker-Policy-Revision"
-	RunnerDockerPolicyHashHeader     = "X-Runner-Docker-Policy-Hash"
-	RunnerDockerSessionHeader        = "X-Runner-Docker-Session"
-	RunnerDockerFenceHeader          = "X-Runner-Docker-Fence"
+	RunnerVersionHeader                  = "X-Runner-Version"
+	RunnerPlatformHeader                 = "X-Runner-Platform"
+	RunnerCurrentLoadHeader              = "X-Runner-Current-Load"
+	RunnerExecutorTypeHeader             = "X-Runner-Executor-Type"
+	RunnerTransportTrustHeader           = "X-Runner-Transport-Trust"
+	RunnerSecurityProtocolHeader         = "X-Runner-Security-Protocol"
+	RunnerDockerPolicyRevisionHeader     = "X-Runner-Docker-Policy-Revision"
+	RunnerDockerPolicyHashHeader         = "X-Runner-Docker-Policy-Hash"
+	RunnerKubernetesClusterAliasHeader   = "X-Runner-Kubernetes-Cluster-Alias"
+	RunnerKubernetesNamespaceHeader      = "X-Runner-Kubernetes-Namespace"
+	RunnerKubernetesPolicyRevisionHeader = "X-Runner-Kubernetes-Policy-Revision"
+	RunnerKubernetesPolicyHashHeader     = "X-Runner-Kubernetes-Policy-Hash"
+	RunnerDockerSessionHeader            = "X-Runner-Docker-Session"
+	RunnerDockerFenceHeader              = "X-Runner-Docker-Fence"
+	RunnerKubernetesSessionHeader        = "X-Runner-Kubernetes-Session"
+	RunnerKubernetesFenceHeader          = "X-Runner-Kubernetes-Fence"
 
 	maxRunnerReportTextBytes = 128
 	maxRunnerReportedLoad    = 100_000
@@ -35,6 +41,9 @@ type HealthReport struct {
 	TransportTrust          *db.RunnerTransportTrust
 	SecurityProtocolVersion *int
 	DockerPolicyAck         *db.DockerExecutionPolicyAck
+	KubernetesClusterAlias  *string
+	KubernetesNamespace     *string
+	KubernetesPolicyAck     *db.KubernetesExecutionPolicyAck
 }
 
 // ParseHealthReport validates the bounded metadata attached to a runner poll.
@@ -107,6 +116,44 @@ func ParseHealthReport(header http.Header) (HealthReport, error) {
 		}
 		report.DockerPolicyAck = &db.DockerExecutionPolicyAck{Revision: value, Hash: hash}
 	}
+	kubernetesAlias, aliasPresent := header[RunnerKubernetesClusterAliasHeader]
+	kubernetesNamespace, namespacePresent := header[RunnerKubernetesNamespaceHeader]
+	kubernetesRevision, kubernetesRevisionPresent := header[RunnerKubernetesPolicyRevisionHeader]
+	kubernetesHash, kubernetesHashPresent := header[RunnerKubernetesPolicyHashHeader]
+	if kubernetesRevisionPresent != kubernetesHashPresent || (kubernetesRevisionPresent && (!aliasPresent || !namespacePresent)) {
+		return HealthReport{}, fmt.Errorf("Kubernetes policy acknowledgement is incomplete")
+	}
+	if aliasPresent {
+		alias := strings.TrimSpace(strings.Join(kubernetesAlias, ","))
+		if err := db.ValidateKubernetesClusterAlias(alias); err != nil {
+			return HealthReport{}, err
+		}
+		report.KubernetesClusterAlias = &alias
+		if !namespacePresent {
+			return HealthReport{}, fmt.Errorf("Kubernetes reconciliation namespace is required")
+		}
+		namespace := strings.TrimSpace(strings.Join(kubernetesNamespace, ","))
+		if db.ValidateKubernetesNamespace(namespace) != nil {
+			return HealthReport{}, fmt.Errorf("%s contains an invalid namespace", RunnerKubernetesNamespaceHeader)
+		}
+		report.KubernetesNamespace = &namespace
+		if kubernetesRevisionPresent {
+			revision, err := strconv.Atoi(strings.TrimSpace(strings.Join(kubernetesRevision, ",")))
+			if err != nil || revision < 0 {
+				return HealthReport{}, fmt.Errorf("%s must be a non-negative integer", RunnerKubernetesPolicyRevisionHeader)
+			}
+			hash := strings.TrimSpace(strings.Join(kubernetesHash, ","))
+			if len(hash) != 64 {
+				return HealthReport{}, fmt.Errorf("%s must be a SHA-256 hash", RunnerKubernetesPolicyHashHeader)
+			}
+			for _, char := range hash {
+				if !(char >= '0' && char <= '9') && !(char >= 'a' && char <= 'f') {
+					return HealthReport{}, fmt.Errorf("%s must be a SHA-256 hash", RunnerKubernetesPolicyHashHeader)
+				}
+			}
+			report.KubernetesPolicyAck = &db.KubernetesExecutionPolicyAck{ClusterAlias: alias, Revision: revision, Hash: hash}
+		}
+	}
 	return report, nil
 }
 
@@ -124,6 +171,16 @@ func (report HealthReport) Apply(runner *db.Runner) {
 	if report.DockerPolicyAck != nil {
 		runner.DockerPolicyRevision = report.DockerPolicyAck.Revision
 		runner.DockerPolicyHash = report.DockerPolicyAck.Hash
+	}
+	if report.KubernetesPolicyAck != nil {
+		runner.K8sPolicyRevision = report.KubernetesPolicyAck.Revision
+		runner.K8sPolicyHash = report.KubernetesPolicyAck.Hash
+	}
+	if report.KubernetesClusterAlias != nil {
+		runner.K8sClusterAlias = *report.KubernetesClusterAlias
+	}
+	if report.KubernetesNamespace != nil {
+		runner.K8sNamespace = *report.KubernetesNamespace
 	}
 	if report.ExecutorType != nil {
 		runner.ExecutorType = *report.ExecutorType

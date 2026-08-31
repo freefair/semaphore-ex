@@ -63,8 +63,8 @@ func effectiveConfig(input util.RunnerK8sConfig) (config, error) {
 	} else if result.context != "" {
 		return config{}, fmt.Errorf("Kubernetes context requires a kubeconfig path")
 	}
-	if result.clusterAlias == "" || len(result.clusterAlias) > 128 {
-		return config{}, fmt.Errorf("Kubernetes cluster alias must contain 1 to 128 bytes")
+	if err := db.ValidateKubernetesClusterAlias(result.clusterAlias); err != nil {
+		return config{}, err
 	}
 	if errors := validation.IsDNS1123Label(result.namespace); len(errors) > 0 {
 		return config{}, fmt.Errorf("invalid Kubernetes namespace: %s", strings.Join(errors, "; "))

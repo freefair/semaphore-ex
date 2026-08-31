@@ -95,6 +95,32 @@ type DockerExecutionPolicyConsumer interface {
 	DockerExecutionPolicyAcknowledgement() db.DockerExecutionPolicyAck
 }
 
+// KubernetesExecutionPolicyConsumer is implemented only by Kubernetes-backed
+// providers. The job pool will install a server-owned policy before accepting
+// Kubernetes work; Community and local providers remain source-compatible.
+type KubernetesExecutionPolicyConsumer interface {
+	ApplyKubernetesExecutionPolicy(db.KubernetesExecutionPolicy) error
+	KubernetesExecutionPolicyAcknowledgement() db.KubernetesExecutionPolicyAck
+}
+
+// KubernetesReconciliationConsumer and Scanner mirror the fenced Docker
+// protocol but are deliberately separate: Kubernetes scans use only
+// namespaced typed client calls and return no object metadata beyond the
+// bounded server contract.
+type KubernetesReconciliationConsumer interface {
+	ApplyKubernetesReconciliationSession(db.KubernetesReconciliationSession) error
+}
+
+type KubernetesReconciliationScanner interface {
+	ScanKubernetesReconciliation(context.Context, db.KubernetesReconciliationSession) (db.KubernetesReconciliationScan, error)
+}
+
+// KubernetesReconciliationRemediator is runner-local. The server can only
+// issue a closed GC command; it never receives Kubernetes credentials.
+type KubernetesReconciliationRemediator interface {
+	RemediateKubernetesReconciliation(context.Context, db.KubernetesReconciliationRemediationCommand) db.KubernetesReconciliationRemediationResult
+}
+
 // DockerRunnerIdentityConsumer receives the server-authenticated runner ID
 // before Docker work is accepted. It is deliberately separate from the policy
 // contract so non-Docker providers remain source-compatible.

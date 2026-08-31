@@ -70,6 +70,11 @@ func TestEffectiveConfigRejectsAmbiguousOrMutableInputs(t *testing.T) {
 			match:  "cluster alias",
 		},
 		{
+			name:   "unsafe cluster alias",
+			config: util.RunnerK8sConfig{ClusterAlias: "qa cluster", ServiceAccount: "semaphore-task", Image: testImage, HelperImage: testImage},
+			match:  "cluster alias",
+		},
+		{
 			name:   "mutable image",
 			config: util.RunnerK8sConfig{ClusterAlias: "qa", ServiceAccount: "semaphore-task", Image: "registry.example.test/semaphore/job:latest", HelperImage: testImage},
 			match:  "immutable",

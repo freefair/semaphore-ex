@@ -1,0 +1,12 @@
+alter table `task__runner_attempt` drop column `k8s_retention_state`;
+alter table `task__runner_attempt` drop column `k8s_retention_deadline`;
+alter table `task__runner_attempt` drop column `k8s_network_policy_uid`;
+alter table `task__runner_attempt` drop column `k8s_network_policy_name`;
+alter table `task__runner_attempt` drop column `k8s_secret_uid`;
+alter table `task__runner_attempt` drop column `k8s_secret_name`;
+alter table `task__runner_attempt` drop column `k8s_network_enforcement`;
+alter table `task__runner_attempt` drop column `k8s_network_profile`;
+alter table `task__runner_attempt` drop column `k8s_resource_policy_hash`;
+alter table `task__runner_attempt` drop column `k8s_resource_policy_id`;
+alter table `task__runner_attempt` drop column `k8s_runtime_class`;
+alter table `task__runner_attempt` drop column `k8s_service_account`;
