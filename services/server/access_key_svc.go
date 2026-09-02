@@ -17,6 +17,14 @@ type AccessKeyService interface {
 	Delete(projectID int, keyID int) (err error)
 }
 
+// GeneratedSSHKeyService adds the intentionally narrow server-side key-generation
+// commands without changing the long-standing imported-key CRUD contract.
+type GeneratedSSHKeyService interface {
+	AccessKeyService
+	CreateGeneratedSSHKey(request CreateGeneratedSSHKeyRequest) (GeneratedSSHKeyResult, error)
+	RotateGeneratedSSHKey(request RotateGeneratedSSHKeyRequest) (GeneratedSSHKeyResult, error)
+}
+
 type AccessKeyServiceImpl struct {
 	accessKeyRepo      db.AccessKeyManager
 	encryptionService  AccessKeyEncryptionService
@@ -29,7 +37,7 @@ func NewAccessKeyService(
 	encryptionService AccessKeyEncryptionService,
 	secretStorageRepo db.SecretStorageRepository,
 	capabilityProviders ...pro_interfaces.CapabilityProvider,
-) AccessKeyService {
+) GeneratedSSHKeyService {
 	var capabilityProvider pro_interfaces.CapabilityProvider
 	if len(capabilityProviders) > 0 {
 		capabilityProvider = capabilityProviders[0]
