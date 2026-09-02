@@ -108,7 +108,7 @@ func ValidateProjectRole(role Role) error {
 	const knownPermissions = CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
 		CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
 		CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
-		CanListGrantedCredentials | CanConsumeGrantedCredentials
+		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow
 	if role.Permissions&^knownPermissions != 0 {
 		return &common_errors.ValidationError{Message: "Project role contains unknown permissions"}
 	}

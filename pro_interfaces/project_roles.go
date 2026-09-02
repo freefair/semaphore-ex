@@ -18,6 +18,7 @@ const (
 	PermissionAdministerWorkflow              PermissionID = "workflow.administer"
 	PermissionListGrantedCredentials          PermissionID = "project.credentials.granted.list"
 	PermissionConsumeGrantedCredentials       PermissionID = "project.credentials.granted.consume"
+	PermissionOverrideDeploymentWindow        PermissionID = "project.deployment_windows.override"
 	PermissionManageGlobalUsers               PermissionID = "global.users.manage"
 	PermissionManageGlobalRoles               PermissionID = "global.roles.manage"
 	PermissionManageGlobalSystem              PermissionID = "global.system.manage"
@@ -176,6 +177,11 @@ func permissionCatalog() []PermissionDefinition {
 		{
 			ID: PermissionConsumeGrantedCredentials, Description: "Use granted global credentials at runtime",
 			Scope: PermissionScopeProject, Permission: db.CanConsumeGrantedCredentials,
+			CapabilityPrerequisites: []CapabilityID{},
+		},
+		{
+			ID: PermissionOverrideDeploymentWindow, Description: "Override a blocked deployment window with an emergency reference",
+			Scope: PermissionScopeProject, Permission: db.CanOverrideDeploymentWindow,
 			CapabilityPrerequisites: []CapabilityID{},
 		},
 		{

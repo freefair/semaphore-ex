@@ -89,6 +89,7 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	assertWorkflowTriggerSchema(t, store, true)
 	assertWorkflowProgressionSchema(t, store, true)
 	assertGlobalTemplateRoleSchema(t, store, true)
+	assertDeploymentWindowSchema(t, store, true)
 
 	user, err := store.CreateUserWithoutPassword(fixture.User)
 	require.NoError(t, err)
@@ -99,6 +100,7 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	assertWorkflowTriggerSchema(t, store, false)
 	assertWorkflowProgressionSchema(t, store, false)
 	assertGlobalTemplateRoleSchema(t, store, false)
+	assertDeploymentWindowSchema(t, store, false)
 
 	legacyUser, err := store.GetUser(user.ID)
 	require.NoError(t, err)
@@ -111,6 +113,7 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	assertWorkflowTriggerSchema(t, store, true)
 	assertWorkflowProgressionSchema(t, store, true)
 	assertGlobalTemplateRoleSchema(t, store, true)
+	assertDeploymentWindowSchema(t, store, true)
 	assert.Equal(t, freshSchema, upgradedSchema)
 
 	upgradedUser, err := store.GetUser(user.ID)
@@ -198,6 +201,21 @@ func assertGlobalTemplateRoleSchema(t testing.TB, store *SqlDb, expected bool) {
 				column,
 			)
 		}
+	}
+}
+
+func assertDeploymentWindowSchema(t testing.TB, store *SqlDb, expected bool) {
+	t.Helper()
+	tables := matrixUserTables(t, store)
+	for _, table := range []string{
+		"project__deployment_window_policy", "project__deployment_window_rule", "project__deployment_window_decision",
+	} {
+		assert.Equalf(t, expected, containsString(tables, table), "%s presence", table)
+	}
+	for _, column := range []string{
+		"decision_key", "source", "origin", "policy_revision", "effective_timezone", "evaluated_at", "matched_rules",
+	} {
+		assert.Equalf(t, expected, matrixColumnExists(t, store, "project__deployment_window_decision", column), "project__deployment_window_decision.%s presence", column)
 	}
 }
 
