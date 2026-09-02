@@ -1,6 +1,7 @@
 <template>
   <div class="object-refs-view">
     <v-alert
+      v-if="!hideWarning"
       type="warning"
     >
       {{ $t('theCantBeDeletedBecauseItUsedByTheResourcesBelow', {objectTitle: objectTitle}) }}
@@ -45,6 +46,10 @@ export default {
     objectRefs: Object,
     projectId: Number,
     objectTitle: String,
+    hideWarning: {
+      type: Boolean,
+      default: false,
+    },
   },
   computed: {
     sections() {
