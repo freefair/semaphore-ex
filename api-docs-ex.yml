@@ -875,6 +875,26 @@ paths:
           description: workflow run stopped
           schema:
             $ref: ./api-docs.yml#/definitions/WorkflowRun
+  /project/{project_id}/schedules/validate:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    post:
+      tags:
+      - schedule
+      summary: Validate a schedule and preview its next occurrence
+      parameters:
+      - name: schedule
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/ScheduleRequest
+      responses:
+        200:
+          description: Valid schedule with effective timezone and next run
+          schema:
+            $ref: ./api-docs.yml#/definitions/Schedule
+        400:
+          description: Invalid schedule, timezone, or cron expression
   /project/{project_id}/views/{view_id}/templates:
     parameters:
     - $ref: ./api-docs.yml#/parameters/project_id
