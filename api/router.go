@@ -160,6 +160,7 @@ func Route(
 		notificationGovernanceService = proServer.NewNotificationGovernanceService(store)
 	}
 	notificationGovernanceController := NewNotificationGovernanceController(notificationGovernanceService)
+	globalCredentialController := NewGlobalCredentialController(proServer.NewGlobalCredentialService(store))
 	projectRunnerController := proProjects.NewProjectRunnerController(subscriptionService, runnerService, capabilityProvider, auditFacade)
 	capabilityController := NewCapabilityController(capabilityFacade, auditFacade)
 	totpController := NewTOTPController(totpService, auditFacade)
@@ -307,6 +308,7 @@ func Route(
 		authenticatedAPI,
 		auditFacade,
 		notificationGovernanceController,
+		globalCredentialController,
 		delegatedProjectRolesSnapshot,
 		globalSystemPermission,
 	)

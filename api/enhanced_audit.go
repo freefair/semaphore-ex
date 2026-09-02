@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -117,6 +120,82 @@ func EnhancedGlobalPermissionAuditMiddleware(audit pro_interfaces.AuditServiceFa
 			}
 		})
 	}
+}
+
+// EnhancedGlobalCredentialEnabledAuditMiddleware classifies the explicit
+// enable/disable transition without ever retaining or recording the body.
+// The controller independently performs strict decoding and validation.
+func EnhancedGlobalCredentialEnabledAuditMiddleware(audit pro_interfaces.AuditServiceFacade) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			descriptor, enhanced := enhancedAuditForRoute(r)
+			if !enhanced || audit == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			action := descriptor.Action
+			if enabled, ok := globalCredentialEnabledRequest(r); ok {
+				if enabled {
+					action = pro_interfaces.AuditActionGlobalCredentialEnable
+				} else {
+					action = pro_interfaces.AuditActionGlobalCredentialDisable
+				}
+			}
+			captured := &statusCapturingWriter{ResponseWriter: w}
+			next.ServeHTTP(captured, r)
+			status := captured.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			outcome, reason := enhancedAuditOutcome(status)
+			descriptor.Action = action
+			if err := audit.Record(r.Context(), routeAuditEvent(r, descriptor, outcome, reason)); err != nil {
+				log.WithField("action", action).Error("Failed to store global credential audit event")
+			}
+		})
+	}
+}
+
+// EnhancedGlobalCredentialDeleteAuditMiddleware records every deletion attempt
+// with its outcome. Its descriptor contains only the stable credential ID.
+func EnhancedGlobalCredentialDeleteAuditMiddleware(audit pro_interfaces.AuditServiceFacade) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			descriptor, enhanced := enhancedAuditForRoute(r)
+			if !enhanced || audit == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			captured := &statusCapturingWriter{ResponseWriter: w}
+			next.ServeHTTP(captured, r)
+			status := captured.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			outcome, reason := enhancedAuditOutcome(status)
+			if err := audit.Record(r.Context(), routeAuditEvent(r, descriptor, outcome, reason)); err != nil {
+				log.WithField("action", descriptor.Action).Error("Failed to store global credential deletion attempt")
+			}
+		})
+	}
+}
+
+func globalCredentialEnabledRequest(r *http.Request) (bool, bool) {
+	if r.Body == nil {
+		return false, false
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, globalCredentialBodyLimit+1))
+	if err != nil || len(body) > globalCredentialBodyLimit {
+		return false, false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	var request struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil || request.Enabled == nil {
+		return false, false
+	}
+	return *request.Enabled, true
 }
 
 func enhancedAuditOutcome(status int) (pro_interfaces.AuditOutcome, string) {
@@ -272,6 +351,16 @@ func enhancedAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {
 	method := r.Method
 	path := r.URL.Path
 	switch {
+	case strings.Contains(path, "/global-credentials"):
+		return globalCredentialAuditDescriptor(r)
+	case strings.HasSuffix(path, "/granted-credentials") && (method == http.MethodGet || method == http.MethodHead):
+		if projectID, ok := positiveMuxID(r, "project_id"); ok {
+			return enhancedAuditDescriptor{
+				Action: pro_interfaces.AuditActionGrantedCredentialRead, TargetType: pro_interfaces.AuditTargetGlobalCredentialGrant,
+				TargetID: fmt.Sprintf("project:%d", projectID), ProjectID: &projectID,
+			}, true
+		}
+		return enhancedAuditDescriptor{}, false
 	case strings.Contains(path, "/notification-governance"):
 		return notificationGovernanceAuditDescriptor(r), true
 	case strings.HasSuffix(path, "/audit-webhook/deliveries") && (method == http.MethodGet || method == http.MethodHead):
@@ -382,6 +471,60 @@ func enhancedAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {
 		case http.MethodDelete:
 			return projectRunnerAuditDescriptor(pro_interfaces.AuditActionProjectRunnerDelete, runnerTarget, projectID), true
 		}
+	}
+	return enhancedAuditDescriptor{}, false
+}
+
+func globalCredentialAuditDescriptor(r *http.Request) (enhancedAuditDescriptor, bool) {
+	credentialID, hasCredentialID := positiveMuxID(r, "credential_id")
+	if !hasCredentialID {
+		if strings.HasSuffix(r.URL.Path, "/global-credentials") {
+			if r.Method == http.MethodGet || r.Method == http.MethodHead {
+				return globalAuditDescriptor(
+					pro_interfaces.AuditActionGlobalCredentialRead,
+					pro_interfaces.AuditTargetGlobalCredential,
+					"credentials",
+				), true
+			}
+			if r.Method == http.MethodPost {
+				return globalAuditDescriptor(
+					pro_interfaces.AuditActionGlobalCredentialCreate,
+					pro_interfaces.AuditTargetGlobalCredential,
+					"credentials",
+				), true
+			}
+		}
+		return enhancedAuditDescriptor{}, false
+	}
+	credentialTarget := fmt.Sprintf("credential:%d", credentialID)
+	if grantID, hasGrantID := positiveMuxID(r, "grant_id"); hasGrantID {
+		grantTarget := fmt.Sprintf("credential-grant:%d", grantID)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/revoke") && r.Method == http.MethodPost:
+			return globalAuditDescriptor(pro_interfaces.AuditActionGlobalCredentialGrantRevoke, pro_interfaces.AuditTargetGlobalCredentialGrant, grantTarget), true
+		case strings.HasSuffix(r.URL.Path, "/restore") && r.Method == http.MethodPost:
+			return globalAuditDescriptor(pro_interfaces.AuditActionGlobalCredentialGrantRestore, pro_interfaces.AuditTargetGlobalCredentialGrant, grantTarget), true
+		case r.Method == http.MethodPut:
+			return globalAuditDescriptor(pro_interfaces.AuditActionGlobalCredentialGrant, pro_interfaces.AuditTargetGlobalCredentialGrant, grantTarget), true
+		case r.Method == http.MethodDelete:
+			return globalAuditDescriptor(pro_interfaces.AuditActionGlobalCredentialGrantDelete, pro_interfaces.AuditTargetGlobalCredentialGrant, grantTarget), true
+		}
+		return enhancedAuditDescriptor{}, false
+	}
+	if strings.HasSuffix(r.URL.Path, "/grants") && r.Method == http.MethodPost {
+		return globalAuditDescriptor(pro_interfaces.AuditActionGlobalCredentialGrant, pro_interfaces.AuditTargetGlobalCredential, credentialTarget), true
+	}
+	switch {
+	case r.Method == http.MethodGet || r.Method == http.MethodHead:
+		return globalAuditDescriptor(pro_interfaces.AuditActionGlobalCredentialRead, pro_interfaces.AuditTargetGlobalCredential, credentialTarget), true
+	case strings.HasSuffix(r.URL.Path, "/enabled") && r.Method == http.MethodPost:
+		return globalAuditDescriptor(pro_interfaces.AuditActionGlobalCredentialUpdate, pro_interfaces.AuditTargetGlobalCredential, credentialTarget), true
+	case strings.HasSuffix(r.URL.Path, "/rotate") && r.Method == http.MethodPost:
+		return globalAuditDescriptor(pro_interfaces.AuditActionGlobalCredentialRotate, pro_interfaces.AuditTargetGlobalCredential, credentialTarget), true
+	case r.Method == http.MethodPut:
+		return globalAuditDescriptor(pro_interfaces.AuditActionGlobalCredentialUpdate, pro_interfaces.AuditTargetGlobalCredential, credentialTarget), true
+	case r.Method == http.MethodDelete:
+		return globalAuditDescriptor(pro_interfaces.AuditActionGlobalCredentialDeleteAttempt, pro_interfaces.AuditTargetGlobalCredential, credentialTarget), true
 	}
 	return enhancedAuditDescriptor{}, false
 }

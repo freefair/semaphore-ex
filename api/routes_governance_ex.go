@@ -2,6 +2,7 @@ package api
 
 import (
 	"github.com/gorilla/mux"
+	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/api/projects"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
@@ -13,6 +14,7 @@ func registerEnhancedGovernanceRoutes(
 	authenticatedAPI *mux.Router,
 	auditFacade pro_interfaces.AuditServiceFacade,
 	notificationGovernanceController *NotificationGovernanceController,
+	globalCredentialController *GlobalCredentialController,
 	delegatedProjectRolesSnapshot func(http.Handler) http.Handler,
 	globalSystemPermission func(http.Handler) http.Handler,
 ) {
@@ -35,6 +37,59 @@ func registerEnhancedGovernanceRoutes(
 		return projects.ProjectMiddleware(EnhancedProjectPermissionAuditMiddleware(auditFacade)(
 			projects.GetMustHavePermissionMiddleware(db.CanViewProjectResources)(handler),
 		))
+	}
+	globalCredentialAnyRead := func(handler http.Handler) http.Handler {
+		return delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user := helpers.UserFromContext(r)
+			for _, permission := range []db.GlobalPermission{db.CanManageGlobalCredentialsMetadata, db.CanManageGlobalCredentialsRotate, db.CanManageGlobalCredentialsGrant} {
+				allowed, err := hasGlobalPermission(r, user, permission)
+				if err != nil {
+					helpers.WriteError(w, err)
+					return
+				}
+				if allowed {
+					handler.ServeHTTP(w, r)
+					return
+				}
+			}
+			w.WriteHeader(http.StatusForbidden)
+		})))
+	}
+	globalCredentialAudited := func(permission db.GlobalPermission, handler http.Handler) http.Handler {
+		return delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
+			globalPermissionMiddleware(permission)(handler),
+		))
+	}
+	globalCredentialCreate := func(handler http.Handler) http.Handler {
+		return delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
+			globalPermissionMiddleware(db.CanManageGlobalCredentialsMetadata)(
+				globalPermissionMiddleware(db.CanManageGlobalCredentialsRotate)(handler),
+			),
+		))
+	}
+	globalCredentialMetadata := func(handler http.Handler) http.Handler {
+		return globalCredentialAudited(db.CanManageGlobalCredentialsMetadata, handler)
+	}
+	globalCredentialRotate := func(handler http.Handler) http.Handler {
+		return globalCredentialAudited(db.CanManageGlobalCredentialsRotate, handler)
+	}
+	globalCredentialGrant := func(handler http.Handler) http.Handler {
+		return globalCredentialAudited(db.CanManageGlobalCredentialsGrant, handler)
+	}
+	globalCredentialEnabled := func(handler http.Handler) http.Handler {
+		return delegatedProjectRolesSnapshot(EnhancedGlobalCredentialEnabledAuditMiddleware(auditFacade)(
+			globalPermissionMiddleware(db.CanManageGlobalCredentialsMetadata)(handler),
+		))
+	}
+	globalCredentialDelete := func(handler http.Handler) http.Handler {
+		return delegatedProjectRolesSnapshot(EnhancedGlobalCredentialDeleteAuditMiddleware(auditFacade)(
+			globalPermissionMiddleware(db.CanManageGlobalCredentialsMetadata)(handler),
+		))
+	}
+	projectGrantedCredentialList := func(handler http.Handler) http.Handler {
+		return delegatedProjectRolesSnapshot(projects.ProjectMiddleware(EnhancedProjectPermissionAuditMiddleware(auditFacade)(
+			projects.GetMustHavePermissionMiddleware(db.CanListGrantedCredentials)(handler),
+		)))
 	}
 	authenticatedAPI.Path("/subscription").Handler(
 		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
@@ -68,6 +123,21 @@ func registerEnhancedGovernanceRoutes(
 	authenticatedAPI.Path("/notification-governance/deliveries").Handler(globalNotificationRead(http.HandlerFunc(notificationGovernanceController.GlobalHistory))).Methods("GET", "HEAD")
 	authenticatedAPI.Path("/notification-governance/events").Handler(globalNotificationRead(http.HandlerFunc(notificationGovernanceController.GlobalEventHistory))).Methods("GET", "HEAD")
 	authenticatedAPI.Path("/notification-governance/deliveries/{delivery_id}/retry").Handler(globalNotificationManage(http.HandlerFunc(notificationGovernanceController.RetryGlobalDelivery))).Methods("POST")
+	authenticatedAPI.Path("/global-credentials").Handler(globalCredentialAnyRead(http.HandlerFunc(globalCredentialController.List))).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/global-credentials/grant-projects").Handler(globalCredentialGrant(http.HandlerFunc(globalCredentialController.ListGrantProjects))).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/global-credentials").Handler(globalCredentialCreate(http.HandlerFunc(globalCredentialController.Create))).Methods("POST")
+	authenticatedAPI.Path("/global-credentials/{credential_id}").Handler(globalCredentialMetadata(http.HandlerFunc(globalCredentialController.Get))).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/global-credentials/{credential_id}").Handler(globalCredentialMetadata(http.HandlerFunc(globalCredentialController.Update))).Methods("PUT")
+	authenticatedAPI.Path("/global-credentials/{credential_id}/enabled").Handler(globalCredentialEnabled(http.HandlerFunc(globalCredentialController.SetEnabled))).Methods("POST")
+	authenticatedAPI.Path("/global-credentials/{credential_id}/rotate").Handler(globalCredentialRotate(http.HandlerFunc(globalCredentialController.Rotate))).Methods("POST")
+	authenticatedAPI.Path("/global-credentials/{credential_id}").Handler(globalCredentialDelete(http.HandlerFunc(globalCredentialController.Delete))).Methods("DELETE")
+	authenticatedAPI.Path("/global-credentials/{credential_id}/grants").Handler(globalCredentialGrant(http.HandlerFunc(globalCredentialController.ListGrants))).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/global-credentials/{credential_id}/grants").Handler(globalCredentialGrant(http.HandlerFunc(globalCredentialController.CreateGrant))).Methods("POST")
+	authenticatedAPI.Path("/global-credentials/{credential_id}/grants/{grant_id}").Handler(globalCredentialGrant(http.HandlerFunc(globalCredentialController.UpdateGrant))).Methods("PUT")
+	authenticatedAPI.Path("/global-credentials/{credential_id}/grants/{grant_id}/revoke").Handler(globalCredentialGrant(http.HandlerFunc(globalCredentialController.RevokeGrant))).Methods("POST")
+	authenticatedAPI.Path("/global-credentials/{credential_id}/grants/{grant_id}/restore").Handler(globalCredentialGrant(http.HandlerFunc(globalCredentialController.RestoreGrant))).Methods("POST")
+	authenticatedAPI.Path("/global-credentials/{credential_id}/grants/{grant_id}").Handler(globalCredentialGrant(http.HandlerFunc(globalCredentialController.DeleteGrant))).Methods("DELETE")
+	authenticatedAPI.Path("/project/{project_id}/granted-credentials").Handler(projectGrantedCredentialList(http.HandlerFunc(globalCredentialController.ListGranted))).Methods("GET", "HEAD")
 
 	authenticatedAPI.Path("/project/{project_id}/notification-governance/destinations").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.ListProjectDestinations))).Methods("GET", "HEAD")
 	authenticatedAPI.Path("/project/{project_id}/notification-governance/destinations").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.CreateProjectDestination))).Methods("POST")
