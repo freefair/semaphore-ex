@@ -177,6 +177,15 @@
       >
         Storages
       </v-tab>
+
+      <v-tab
+        v-if="isPro"
+        key="granted-credentials"
+        :to="`/project/${projectId}/granted-credentials`"
+        data-testid="keystore-granted-credentials"
+      >
+        Granted
+      </v-tab>
     </v-tabs>
 
     <v-divider style="margin-top: -1px" />
@@ -346,6 +355,10 @@ export default {
 
   props: {
     systemInfo: Object,
+    isPro: {
+      type: Boolean,
+      default: false,
+    },
   },
 
   computed: {

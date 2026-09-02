@@ -28,6 +28,7 @@ import Apps from '../views/Apps.vue';
 import Runners from '../views/Runners.vue';
 import Cluster from '../views/Cluster.vue';
 import AuditWebhooks from '../views/AuditWebhooks.vue';
+import GlobalCredentials from '../views/GlobalCredentials.vue';
 import Stats from '../views/project/Stats.vue';
 import Tokens from '../views/Tokens.vue';
 import AcceptInvite from '../views/AcceptInvite.vue';
@@ -38,6 +39,7 @@ import WorkflowRuns from '../views/project/workflow/WorkflowRuns.vue';
 import WorkflowStats from '../views/project/workflow/WorkflowStats.vue';
 import WorkflowRun from '../views/project/WorkflowRun.vue';
 import WorkflowEditor from '../views/project/WorkflowEditor.vue';
+import GrantedCredentials from '../views/project/GrantedCredentials.vue';
 
 Vue.use(VueRouter);
 
@@ -179,6 +181,10 @@ const routes = [
     component: Keys,
   },
   {
+    path: '/project/:projectId/granted-credentials',
+    component: GrantedCredentials,
+  },
+  {
     path: '/project/:projectId/team',
     component: Team,
   },
@@ -213,6 +219,10 @@ const routes = [
   {
     path: '/audit-webhooks',
     component: AuditWebhooks,
+  },
+  {
+    path: '/global-credentials',
+    component: GlobalCredentials,
   },
   {
     path: '/tasks',

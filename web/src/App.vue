@@ -496,6 +496,21 @@
                 </v-list-item-content>
               </v-list-item>
 
+              <v-list-item
+                key="global-credentials"
+                to="/global-credentials"
+                v-if="isPro && canAccessGlobalCredentials"
+                data-testid="sidebar-global-credentials"
+              >
+                <v-list-item-icon>
+                  <v-icon>mdi-key-chain</v-icon>
+                </v-list-item-icon>
+
+                <v-list-item-content>
+                  Global credentials
+                </v-list-item-content>
+              </v-list-item>
+
               <v-list-item key="tasks" to="/tasks" v-if="canManageGlobalSystem">
                 <v-list-item-icon>
                   <v-icon>mdi-check-all</v-icon>
@@ -573,6 +588,7 @@
         :userRole="(userRole || {}).role"
         :userId="(user || {}).id"
         :isAdmin="(user || {}).admin"
+        :isPro="isPro"
         :user="user"
         :features="(systemInfo || { features: {} }).features"
         :authMethods="(systemInfo || { auth_methods: {} }).auth_methods"
@@ -1117,6 +1133,22 @@ export default {
       return hasGlobalPermission(
         this.systemInfo,
         GLOBAL_PERMISSIONS.manageSystem,
+        this.user?.admin,
+      );
+    },
+
+    canAccessGlobalCredentials() {
+      return hasGlobalPermission(
+        this.systemInfo,
+        GLOBAL_PERMISSIONS.manageCredentialMetadata,
+        this.user?.admin,
+      ) || hasGlobalPermission(
+        this.systemInfo,
+        GLOBAL_PERMISSIONS.rotateCredentials,
+        this.user?.admin,
+      ) || hasGlobalPermission(
+        this.systemInfo,
+        GLOBAL_PERMISSIONS.grantCredentials,
         this.user?.admin,
       );
     },

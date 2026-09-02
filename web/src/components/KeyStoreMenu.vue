@@ -16,6 +16,14 @@
       >
         Storages
       </v-tab>
+
+      <v-tab
+        key="granted-credentials"
+        :to="`/project/${projectId}/granted-credentials`"
+        data-testid="keystore-granted-credentials"
+      >
+        Granted
+      </v-tab>
     </v-tabs>
     <v-divider style="margin-top: -1px;" />
   </div>
