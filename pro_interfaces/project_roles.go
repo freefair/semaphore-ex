@@ -6,24 +6,29 @@ import "github.com/semaphoreui/semaphore/db"
 type PermissionID string
 
 const (
-	PermissionRunProjectTasks        PermissionID = "project.tasks.run"
-	PermissionUpdateProject          PermissionID = "project.settings.update"
-	PermissionViewProjectResources   PermissionID = "project.resources.view"
-	PermissionManageProjectResources PermissionID = "project.resources.manage"
-	PermissionManageProjectUsers     PermissionID = "project.members.manage"
-	PermissionViewWorkflow           PermissionID = "workflow.view"
-	PermissionEditWorkflow           PermissionID = "workflow.edit"
-	PermissionStartWorkflow          PermissionID = "workflow.start"
-	PermissionStopWorkflow           PermissionID = "workflow.stop"
-	PermissionAdministerWorkflow     PermissionID = "workflow.administer"
-	PermissionManageGlobalUsers      PermissionID = "global.users.manage"
-	PermissionManageGlobalRoles      PermissionID = "global.roles.manage"
-	PermissionManageGlobalSystem     PermissionID = "global.system.manage"
-	PermissionReadGlobalAudit        PermissionID = "global.audit.read"
-	PermissionReadTemplate           PermissionID = "template.read"
-	PermissionRunTemplate            PermissionID = "template.run"
-	PermissionEditTemplate           PermissionID = "template.edit"
-	PermissionDeleteTemplate         PermissionID = "template.delete"
+	PermissionRunProjectTasks                 PermissionID = "project.tasks.run"
+	PermissionUpdateProject                   PermissionID = "project.settings.update"
+	PermissionViewProjectResources            PermissionID = "project.resources.view"
+	PermissionManageProjectResources          PermissionID = "project.resources.manage"
+	PermissionManageProjectUsers              PermissionID = "project.members.manage"
+	PermissionViewWorkflow                    PermissionID = "workflow.view"
+	PermissionEditWorkflow                    PermissionID = "workflow.edit"
+	PermissionStartWorkflow                   PermissionID = "workflow.start"
+	PermissionStopWorkflow                    PermissionID = "workflow.stop"
+	PermissionAdministerWorkflow              PermissionID = "workflow.administer"
+	PermissionListGrantedCredentials          PermissionID = "project.credentials.granted.list"
+	PermissionConsumeGrantedCredentials       PermissionID = "project.credentials.granted.consume"
+	PermissionManageGlobalUsers               PermissionID = "global.users.manage"
+	PermissionManageGlobalRoles               PermissionID = "global.roles.manage"
+	PermissionManageGlobalSystem              PermissionID = "global.system.manage"
+	PermissionReadGlobalAudit                 PermissionID = "global.audit.read"
+	PermissionManageGlobalCredentialsMetadata PermissionID = "global.credentials.metadata.manage"
+	PermissionManageGlobalCredentialsRotate   PermissionID = "global.credentials.rotate"
+	PermissionManageGlobalCredentialsGrant    PermissionID = "global.credentials.grant"
+	PermissionReadTemplate                    PermissionID = "template.read"
+	PermissionRunTemplate                     PermissionID = "template.run"
+	PermissionEditTemplate                    PermissionID = "template.edit"
+	PermissionDeleteTemplate                  PermissionID = "template.delete"
 )
 
 type PermissionScope string
@@ -164,6 +169,16 @@ func permissionCatalog() []PermissionDefinition {
 			CapabilityPrerequisites: []CapabilityID{},
 		},
 		{
+			ID: PermissionListGrantedCredentials, Description: "List safe metadata for granted global credentials",
+			Scope: PermissionScopeProject, Permission: db.CanListGrantedCredentials,
+			CapabilityPrerequisites: []CapabilityID{},
+		},
+		{
+			ID: PermissionConsumeGrantedCredentials, Description: "Use granted global credentials at runtime",
+			Scope: PermissionScopeProject, Permission: db.CanConsumeGrantedCredentials,
+			CapabilityPrerequisites: []CapabilityID{},
+		},
+		{
 			ID: PermissionManageGlobalUsers, Description: "Manage global users",
 			Scope: PermissionScopeGlobal, Permission: 1,
 			CapabilityPrerequisites: []CapabilityID{CapabilityProjectRoles},
@@ -181,6 +196,21 @@ func permissionCatalog() []PermissionDefinition {
 		{
 			ID: PermissionReadGlobalAudit, Description: "Read the global audit log",
 			Scope: PermissionScopeGlobal, Permission: 8,
+			CapabilityPrerequisites: []CapabilityID{CapabilityProjectRoles},
+		},
+		{
+			ID: PermissionManageGlobalCredentialsMetadata, Description: "Manage global credential metadata",
+			Scope: PermissionScopeGlobal, Permission: db.ProjectUserPermission(db.CanManageGlobalCredentialsMetadata),
+			CapabilityPrerequisites: []CapabilityID{CapabilityProjectRoles},
+		},
+		{
+			ID: PermissionManageGlobalCredentialsRotate, Description: "Rotate global credential versions",
+			Scope: PermissionScopeGlobal, Permission: db.ProjectUserPermission(db.CanManageGlobalCredentialsRotate),
+			CapabilityPrerequisites: []CapabilityID{CapabilityProjectRoles},
+		},
+		{
+			ID: PermissionManageGlobalCredentialsGrant, Description: "Manage global credential grants",
+			Scope: PermissionScopeGlobal, Permission: db.ProjectUserPermission(db.CanManageGlobalCredentialsGrant),
 			CapabilityPrerequisites: []CapabilityID{CapabilityProjectRoles},
 		},
 		{

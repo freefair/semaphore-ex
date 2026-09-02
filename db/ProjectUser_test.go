@@ -10,12 +10,14 @@ func TestBuiltInProjectRolePermissionsRemainDeterministic(t *testing.T) {
 	expected := map[ProjectUserRole]ProjectUserPermission{
 		ProjectOwner: CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
 			CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
-			CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows,
+			CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
+			CanListGrantedCredentials | CanConsumeGrantedCredentials,
 		ProjectManager: CanRunProjectTasks | CanManageProjectResources | CanViewProjectResources |
 			CanViewWorkflows | CanEditWorkflows | CanStartWorkflows | CanStopWorkflows |
-			CanAdministerWorkflows,
+			CanAdministerWorkflows | CanListGrantedCredentials | CanConsumeGrantedCredentials,
 		ProjectTaskRunner: CanRunProjectTasks | CanViewProjectResources |
-			CanViewWorkflows | CanStartWorkflows | CanStopWorkflows,
+			CanViewWorkflows | CanStartWorkflows | CanStopWorkflows |
+			CanListGrantedCredentials | CanConsumeGrantedCredentials,
 		ProjectGuest: CanViewProjectResources | CanViewWorkflows,
 	}
 

@@ -627,6 +627,28 @@ type SecretStorageRepository interface {
 	DeleteSecretStorage(projectID int, storageID int) error
 }
 
+// GlobalCredentialRepository persists global credential metadata, immutable
+// versions and project grants. It never resolves or returns plaintext.
+type GlobalCredentialRepository interface {
+	CreateGlobalCredential(GlobalCredential, GlobalCredentialVersion) (GlobalCredential, GlobalCredentialVersion, error)
+	GetGlobalCredential(int) (GlobalCredential, error)
+	GetGlobalCredentials(RetrieveQueryParams) ([]GlobalCredential, error)
+	GetGlobalCredentialVersion(int, int) (GlobalCredentialVersion, error)
+	GetGlobalCredentialVersions(int) ([]GlobalCredentialVersion, error)
+	UpdateGlobalCredentialMetadata(GlobalCredential, int, time.Time) (GlobalCredential, error)
+	SetGlobalCredentialEnabled(int, bool, int, time.Time) (GlobalCredential, error)
+	RotateGlobalCredential(int, int, GlobalCredentialVersion, time.Time) (GlobalCredential, GlobalCredentialVersion, error)
+	CreateGlobalCredentialGrant(GlobalCredentialGrant) (GlobalCredentialGrant, error)
+	GetGlobalCredentialGrant(int, int) (GlobalCredentialGrant, error)
+	GetGlobalCredentialGrants(int, RetrieveQueryParams) ([]GlobalCredentialGrant, error)
+	UpdateGlobalCredentialGrant(GlobalCredentialGrant, int, time.Time) (GlobalCredentialGrant, error)
+	SetGlobalCredentialGrantStatus(int, int, GlobalCredentialGrantStatus, int, *int, time.Time) (GlobalCredentialGrant, error)
+	DeleteGlobalCredentialGrant(int, int, int) error
+	GetEffectiveGlobalCredentialMetadata(int, time.Time, RetrieveQueryParams) ([]GlobalCredentialGrantedMetadata, error)
+	GetGlobalCredentialGrantProjects() ([]GlobalCredentialGrantProject, error)
+	DeleteGlobalCredential(int, int) error
+}
+
 type SecretSyncRepository interface {
 	// GetSyncEnabledSecretSyncs returns every sync config (storage-level
 	// and env-scoped) that is enabled with a positive interval.
@@ -714,6 +736,7 @@ type Store interface {
 	KubernetesTelemetryRepository
 	EventManager
 	SecretStorageRepository
+	GlobalCredentialRepository
 	SecretSyncRepository
 	RoleRepository
 	CapabilityRepository

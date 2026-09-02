@@ -37,10 +37,14 @@ const (
 	CanManageGlobalRoles
 	CanManageGlobalSystem
 	CanReadGlobalAudit
+	CanManageGlobalCredentialsMetadata
+	CanManageGlobalCredentialsRotate
+	CanManageGlobalCredentialsGrant
 )
 
 const AllGlobalPermissions = CanManageGlobalUsers | CanManageGlobalRoles |
-	CanManageGlobalSystem | CanReadGlobalAudit
+	CanManageGlobalSystem | CanReadGlobalAudit | CanManageGlobalCredentialsMetadata |
+	CanManageGlobalCredentialsRotate | CanManageGlobalCredentialsGrant
 
 func (p GlobalPermission) Can(permission GlobalPermission) bool {
 	return p&permission == permission
@@ -103,7 +107,8 @@ func ValidateProjectRole(role Role) error {
 	}
 	const knownPermissions = CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
 		CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
-		CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows
+		CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
+		CanListGrantedCredentials | CanConsumeGrantedCredentials
 	if role.Permissions&^knownPermissions != 0 {
 		return &common_errors.ValidationError{Message: "Project role contains unknown permissions"}
 	}
@@ -139,7 +144,8 @@ func ValidateGlobalRole(role Role) error {
 		return &common_errors.ValidationError{Message: "Global role revision must be positive"}
 	}
 	const known = CanManageGlobalUsers | CanManageGlobalRoles |
-		CanManageGlobalSystem | CanReadGlobalAudit
+		CanManageGlobalSystem | CanReadGlobalAudit | CanManageGlobalCredentialsMetadata |
+		CanManageGlobalCredentialsRotate | CanManageGlobalCredentialsGrant
 	if role.GlobalPermissions&^known != 0 {
 		return &common_errors.ValidationError{Message: "Global role contains unknown permissions"}
 	}
