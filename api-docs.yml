@@ -826,6 +826,7 @@ definitions:
         type: integer
       status:
         type: string
+        enum: [waiting, starting, waiting_confirmation, confirmed, rejected, running, stopping, stopped, blocked, success, error]
       playbook:
         type: string
       environment:
@@ -1667,6 +1668,12 @@ definitions:
     $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialGrantProject"
   GlobalCredentialRevisionRequest:
     $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialRevisionRequest"
+  GlobalCredentialResolutionSnapshot:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialResolutionSnapshot"
+  GlobalCredentialUsage:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialUsage"
+  GlobalCredentialImpact:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialImpact"
 securityDefinitions:
   cookie:
     type: apiKey
@@ -3746,6 +3753,8 @@ paths:
             items:
               $ref: "#/definitions/TaskOutput"
 
+  /project/{project_id}/tasks/{task_id}/credential-usage:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1tasks~1{task_id}~1credential-usage"
   /project/{project_id}/tasks/{task_id}/runner-attempts:
     $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1tasks~1{task_id}~1runner-attempts"
   /project/{project_id}/tasks/{task_id}/raw_output:
@@ -4070,6 +4079,10 @@ paths:
     $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1{credential_id}~1enabled"
   /global-credentials/{credential_id}/rotate:
     $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1{credential_id}~1rotate"
+  /global-credentials/{credential_id}/usage:
+    $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1{credential_id}~1usage"
+  /global-credentials/{credential_id}/impact:
+    $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1{credential_id}~1impact"
   /global-credentials/{credential_id}/grants:
     $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1{credential_id}~1grants"
   /global-credentials/{credential_id}/grants/{grant_id}:

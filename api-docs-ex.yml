@@ -648,6 +648,98 @@ definitions:
       revision:
         type: integer
         minimum: 1
+  GlobalCredentialResolutionSnapshot:
+    type: object
+    description: Value-free provenance for one execution-time credential resolution attempt.
+    required:
+    - task_id
+    - project_id
+    - actor_id
+    - dispatch_generation
+    - target
+    - credential_id
+    - outcome
+    - reason
+    - occurred_at
+    properties:
+      task_id:
+        type: integer
+      project_id:
+        type: integer
+      actor_id:
+        type: integer
+        description: Zero identifies an actorless task that was denied before dispatch.
+      runner_id:
+        type: integer
+      dispatch_generation:
+        type: integer
+        minimum: 0
+      target:
+        type: string
+        maxLength: 64
+      credential_id:
+        type: integer
+      grant_id:
+        type: integer
+      credential_version:
+        type: integer
+      version_fingerprint:
+        type: string
+        pattern: ^[a-f0-9]{64}$
+      provider_version:
+        type: integer
+      outcome:
+        type: string
+        enum:
+        - allowed
+        - denied
+        - failure
+      reason:
+        type: string
+        enum:
+        - allowed
+        - actor_required
+        - task_permission_denied
+        - consume_permission_denied
+        - capability_unavailable
+        - credential_unavailable
+        - grant_unavailable
+        - provider_unavailable
+        - audit_unavailable
+        - injection_failed
+      occurred_at:
+        type: string
+        format: date-time
+  GlobalCredentialUsage:
+    type: object
+    required:
+    - id
+    - snapshot
+    properties:
+      id:
+        type: integer
+      snapshot:
+        $ref: ./api-docs.yml#/definitions/GlobalCredentialResolutionSnapshot
+  GlobalCredentialImpact:
+    type: object
+    description: Value-free transition preview for rotation, grant, disable, and deletion decisions.
+    required:
+    - credential_id
+    - usage_count
+    - project_count
+    - active_grant_count
+    properties:
+      credential_id:
+        type: integer
+      usage_count:
+        type: integer
+      project_count:
+        type: integer
+      active_grant_count:
+        type: integer
+      last_used_at:
+        type: string
+        format: date-time
 paths:
   /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/stop:
     parameters:
@@ -663,6 +755,44 @@ paths:
           description: workflow run stopped
           schema:
             $ref: ./api-docs.yml#/definitions/WorkflowRun
+  /project/{project_id}/tasks/{task_id}/credential-usage:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/task_id
+    get:
+      tags:
+      - task
+      - global-credential
+      summary: Get value-free credential provenance for a visible task
+      parameters:
+      - name: count
+        in: query
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+      - name: before_id
+        in: query
+        type: integer
+        minimum: 1
+      - name: outcome
+        in: query
+        type: string
+        enum:
+        - allowed
+        - denied
+        - failure
+      responses:
+        200:
+          description: Bounded task-scoped credential provenance
+          schema:
+            type: array
+            items:
+              $ref: ./api-docs.yml#/definitions/GlobalCredentialUsage
+        400:
+          description: Invalid or ambiguous filters
+        403:
+          description: Task is not visible to the current user
   /project/{project_id}/tasks/{task_id}/runner-attempts:
     parameters:
     - $ref: ./api-docs.yml#/parameters/project_id
@@ -778,8 +908,8 @@ paths:
       tags:
       - global-credential
       summary: List global credential summaries
-      description: Requires any global credential metadata, rotation, or grant permission. Values and external reference
-        coordinates are never returned.
+      description: Requires global audit or any global credential metadata, rotation, or grant permission. Values
+        and external reference coordinates are never returned.
       parameters:
       - name: count
         in: query
@@ -960,6 +1090,71 @@ paths:
           description: Stale revision
         503:
           description: Local material encryption is unavailable
+  /global-credentials/{credential_id}/usage:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/credential_id
+    get:
+      tags:
+      - global-credential
+      - audit
+      summary: List value-free credential resolution history
+      description: Requires global.audit.read. Material and external provider coordinates are never returned.
+      parameters:
+      - name: count
+        in: query
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+      - name: before_id
+        in: query
+        type: integer
+        minimum: 1
+      - name: project_id
+        in: query
+        type: integer
+        minimum: 1
+      - name: task_id
+        in: query
+        type: integer
+        minimum: 1
+      - name: outcome
+        in: query
+        type: string
+        enum:
+        - allowed
+        - denied
+        - failure
+      responses:
+        200:
+          description: Bounded newest-first usage history
+          schema:
+            type: array
+            items:
+              $ref: ./api-docs.yml#/definitions/GlobalCredentialUsage
+        400:
+          description: Invalid or ambiguous filters
+        403:
+          description: Missing global.audit.read
+        404:
+          description: Credential not found
+  /global-credentials/{credential_id}/impact:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/credential_id
+    get:
+      tags:
+      - global-credential
+      summary: Preview credential transition impact
+      description: Requires any global credential administration or audit permission.
+      responses:
+        200:
+          description: Value-free usage and active-grant counts
+          schema:
+            $ref: ./api-docs.yml#/definitions/GlobalCredentialImpact
+        403:
+          description: Missing global credential permission
+        404:
+          description: Credential not found
   /global-credentials/{credential_id}/grants:
     parameters:
     - $ref: ./api-docs.yml#/parameters/credential_id

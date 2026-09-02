@@ -2,11 +2,23 @@ package runners
 
 import (
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/taskredaction"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
+
+func TestRunningJobRedactsGlobalCredentialBeforeProgressUpload(t *testing.T) {
+	runner := newTestRunningJob(1)
+	runner.redactor = taskredaction.NewFromTaskSecret(`{"deploy_token":"runner-secret-value"}`, []string{"deploy_token"})
+	runner.Log("credential=runner-secret-value")
+
+	_, records, _, _ := runner.getProgress()
+	require.Len(t, records, 1)
+	assert.NotContains(t, records[0].Message, "runner-secret-value")
+	assert.Contains(t, records[0].Message, "[REDACTED]")
+}
 
 func TestRunningJob_GetProgressIncludesBoundedExecutorMetadata(t *testing.T) {
 	rj := newTestRunningJob(1)

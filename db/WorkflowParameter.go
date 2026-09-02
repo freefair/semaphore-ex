@@ -46,20 +46,47 @@ const (
 // WorkflowSecretReference identifies an approved project credential without
 // copying its value into a workflow definition or run snapshot.
 type WorkflowSecretReference struct {
-	AccessKeyID int `json:"access_key_id"`
+	AccessKeyID        int `json:"access_key_id,omitempty"`
+	GlobalCredentialID int `json:"global_credential_id,omitempty"`
 }
 
 func (reference WorkflowSecretReference) Fingerprint() string {
-	if reference.AccessKeyID <= 0 {
+	if reference.Validate() != nil {
 		return ""
 	}
-	hash := sha256.Sum256([]byte(fmt.Sprintf("semaphore-workflow-secret-reference:v1\x00%d", reference.AccessKeyID)))
+	kind, id := "access_key", reference.AccessKeyID
+	if reference.GlobalCredentialID > 0 {
+		kind, id = "global_credential", reference.GlobalCredentialID
+	}
+	hash := sha256.Sum256([]byte(fmt.Sprintf("semaphore-workflow-secret-reference:v2\x00%s\x00%d", kind, id)))
 	return "sha256:" + hex.EncodeToString(hash[:])
 }
 
+func (reference WorkflowSecretReference) Validate() error {
+	if (reference.AccessKeyID > 0) == (reference.GlobalCredentialID > 0) ||
+		reference.AccessKeyID < 0 || reference.GlobalCredentialID < 0 {
+		return errors.New("workflow secret reference must identify exactly one credential")
+	}
+	return nil
+}
+
+func (reference WorkflowSecretReference) identity() string {
+	if reference.AccessKeyID > 0 {
+		return fmt.Sprintf("access_key:%d", reference.AccessKeyID)
+	}
+	return fmt.Sprintf("global_credential:%d", reference.GlobalCredentialID)
+}
+
 type WorkflowSecretOption struct {
-	AccessKeyID int    `json:"access_key_id"`
-	Label       string `json:"label,omitempty"`
+	AccessKeyID        int    `json:"access_key_id,omitempty"`
+	GlobalCredentialID int    `json:"global_credential_id,omitempty"`
+	Label              string `json:"label,omitempty"`
+}
+
+func (option WorkflowSecretOption) reference() WorkflowSecretReference {
+	return WorkflowSecretReference{
+		AccessKeyID: option.AccessKeyID, GlobalCredentialID: option.GlobalCredentialID,
+	}
 }
 
 // WorkflowParameterDeclaration is persisted with the workflow definition.
@@ -183,15 +210,17 @@ func (declaration WorkflowParameterDeclaration) validateShape() error {
 		if len(declaration.SecretOptions) == 0 || len(declaration.SecretOptions) > MaxWorkflowSecretOptions {
 			return fmt.Errorf("secret-reference parameter must declare between 1 and %d approved credentials", MaxWorkflowSecretOptions)
 		}
-		seen := make(map[int]struct{}, len(declaration.SecretOptions))
+		seen := make(map[string]struct{}, len(declaration.SecretOptions))
 		for _, option := range declaration.SecretOptions {
-			if option.AccessKeyID <= 0 || len(option.Label) > 128 {
+			reference := option.reference()
+			if reference.Validate() != nil || len(option.Label) > 128 {
 				return errors.New("secret-reference option is invalid")
 			}
-			if _, duplicate := seen[option.AccessKeyID]; duplicate {
-				return fmt.Errorf("secret-reference option %d is duplicated", option.AccessKeyID)
+			identity := reference.identity()
+			if _, duplicate := seen[identity]; duplicate {
+				return fmt.Errorf("secret-reference option %s is duplicated", identity)
 			}
-			seen[option.AccessKeyID] = struct{}{}
+			seen[identity] = struct{}{}
 		}
 	default:
 		return errors.New("parameter type is invalid")
@@ -301,12 +330,12 @@ func resolveWorkflowParameterValue(
 		var reference WorkflowSecretReference
 		decoder := json.NewDecoder(bytes.NewReader(raw))
 		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&reference); err != nil || requireJSONEOF(decoder) != nil || reference.AccessKeyID <= 0 {
+		if err := decoder.Decode(&reference); err != nil || requireJSONEOF(decoder) != nil || reference.Validate() != nil {
 			return WorkflowParameterSnapshot{}, errors.New("value must be an approved secret reference")
 		}
 		approved := false
 		for _, option := range declaration.SecretOptions {
-			if option.AccessKeyID == reference.AccessKeyID {
+			if option.reference() == reference {
 				approved = true
 				break
 			}

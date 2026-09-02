@@ -5,6 +5,7 @@ import (
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pkg/taskredaction"
 	"github.com/semaphoreui/semaphore/services/tasks"
 )
 
@@ -18,8 +19,12 @@ type JobData struct {
 	InventoryRepository *db.Repository `json:"inventory_repository" binding:"required"`
 	Repository          db.Repository  `json:"repository" binding:"required"`
 	Environment         db.Environment `json:"environment" binding:"required"`
-	JWT                 string         `json:"jwt,omitempty"`
-	ExecutorImage       *string        `json:"executor_image,omitempty"`
+	// TaskSecret is the authenticated runner-only transport for task-scoped
+	// material. db.Task deliberately excludes its transient Secret from JSON.
+	TaskSecret        string   `json:"task_secret,omitempty"`
+	CredentialTargets []string `json:"credential_targets,omitempty"`
+	JWT               string   `json:"jwt,omitempty"`
+	ExecutorImage     *string  `json:"executor_image,omitempty"`
 }
 
 type RunnerState struct {
@@ -129,6 +134,7 @@ type job struct {
 	taskID     int
 	generation int
 	status     task_logger.TaskStatus
+	redactor   taskredaction.Redactor
 	// dockerPolicyAck captures the policy snapshot that was active while the
 	// Docker executor was constructed. It is checked again immediately before
 	// starting the queued job so an administrator policy revision cannot race

@@ -28,22 +28,23 @@ const workflowReconcileQuarantineAfter = 3
 const maxWorkflowReconciliationErrorBytes = 512
 
 type workflowService struct {
-	repository         db.WorkflowManager
-	templateStore      db.WorkflowTemplateValidationStore
-	resultStore        db.WorkflowNodeResultStore
-	enqueuer           pro_interfaces.WorkflowTaskEnqueuer
-	locker             pro_interfaces.WorkflowRunLocker
-	progressionStore   pro_interfaces.WorkflowProgressionRepository
-	versionStore       db.WorkflowVersionStore
-	grantStore         db.CrossProjectTemplateGrantStore
-	referenceStore     db.CrossProjectWorkflowReferenceStore
-	resourceStore      db.WorkflowParameterValidationStore
-	approvalIdentity   pro_interfaces.WorkflowApprovalIdentityStore
-	authorizationStore pro_interfaces.WorkflowAuthorizationIdentityStore
-	audit              pro_interfaces.AuditServiceFacade
-	credentialReader   pro_interfaces.WorkflowCredentialReader
-	localRunLocks      workflowLocalLocks
-	localStartLocks    workflowLocalLocks
+	repository            db.WorkflowManager
+	templateStore         db.WorkflowTemplateValidationStore
+	resultStore           db.WorkflowNodeResultStore
+	enqueuer              pro_interfaces.WorkflowTaskEnqueuer
+	locker                pro_interfaces.WorkflowRunLocker
+	progressionStore      pro_interfaces.WorkflowProgressionRepository
+	versionStore          db.WorkflowVersionStore
+	grantStore            db.CrossProjectTemplateGrantStore
+	referenceStore        db.CrossProjectWorkflowReferenceStore
+	resourceStore         db.WorkflowParameterValidationStore
+	globalCredentialStore db.WorkflowGlobalCredentialValidationStore
+	approvalIdentity      pro_interfaces.WorkflowApprovalIdentityStore
+	authorizationStore    pro_interfaces.WorkflowAuthorizationIdentityStore
+	audit                 pro_interfaces.AuditServiceFacade
+	credentialReader      pro_interfaces.WorkflowCredentialReader
+	localRunLocks         workflowLocalLocks
+	localStartLocks       workflowLocalLocks
 }
 
 // NewWorkflowServiceWithAudit attaches the optional Enhanced audit facade to
@@ -90,6 +91,7 @@ func NewWorkflowService(
 ) pro_interfaces.WorkflowService {
 	resultStore, _ := templateStore.(db.WorkflowNodeResultStore)
 	resourceStore, _ := templateStore.(db.WorkflowParameterValidationStore)
+	globalCredentialStore, _ := templateStore.(db.WorkflowGlobalCredentialValidationStore)
 	approvalIdentity, _ := templateStore.(pro_interfaces.WorkflowApprovalIdentityStore)
 	authorizationStore, _ := templateStore.(pro_interfaces.WorkflowAuthorizationIdentityStore)
 	progressionStore, _ := repository.(pro_interfaces.WorkflowProgressionRepository)
@@ -107,7 +109,7 @@ func NewWorkflowService(
 	}
 	return &workflowService{
 		repository: repository, templateStore: templateStore, resultStore: resultStore,
-		resourceStore: resourceStore, approvalIdentity: approvalIdentity, authorizationStore: authorizationStore, credentialReader: credentialReader,
+		resourceStore: resourceStore, globalCredentialStore: globalCredentialStore, approvalIdentity: approvalIdentity, authorizationStore: authorizationStore, credentialReader: credentialReader,
 		enqueuer: enqueuer, locker: locker, progressionStore: progressionStore, versionStore: versionStore,
 		grantStore: grantStore, referenceStore: referenceStore,
 	}
@@ -1119,7 +1121,7 @@ func (s *workflowService) syncWorkflowTaskStates(run db.WorkflowRun) error {
 func (s *workflowService) workflowTaskTerminalState(task db.Task) (db.WorkflowRunNodeStatus, string, error) {
 	status := workflowDB.WorkflowRunNodeStatusFromTaskStatus(task.Status)
 	reason := ""
-	if status == db.WorkflowRunNodeFailed || status == db.WorkflowRunNodeCanceled || status == db.WorkflowRunNodeStopped {
+	if status == db.WorkflowRunNodeFailed || status == db.WorkflowRunNodeCanceled || status == db.WorkflowRunNodeStopped || status == db.WorkflowRunNodeBlocked {
 		reason = task.Message
 	}
 	artifactFailure, err := s.ensureWorkflowTaskArtifacts(task, status == db.WorkflowRunNodeSucceeded)
@@ -1403,7 +1405,14 @@ func (s *workflowService) validateWorkflowParameterReferences(run db.WorkflowRun
 		if snapshot.SecretReference == nil {
 			continue
 		}
-		if _, err := s.workflowParameterAccessKey(run.ProjectID, *snapshot.SecretReference); err != nil {
+		if snapshot.SecretReference.GlobalCredentialID > 0 {
+			if _, _, err := s.workflowParameterGlobalCredential(
+				run.ProjectID, *snapshot.SecretReference,
+				db.GlobalCredentialGrantOperationReference|db.GlobalCredentialGrantOperationConsume,
+			); err != nil {
+				return err
+			}
+		} else if _, err := s.workflowParameterAccessKey(run.ProjectID, *snapshot.SecretReference); err != nil {
 			return err
 		}
 	}
@@ -1425,6 +1434,10 @@ func (s *workflowService) applyWorkflowRunParameters(
 	}
 	plain := make(map[string]json.RawMessage, len(run.ParameterSnapshot)+len(nodePlain))
 	secret := make(map[string]json.RawMessage, len(run.ParameterSnapshot)+len(nodeSecret))
+	bindings := make(map[string]int, len(task.GlobalCredentialBindings)+len(run.ParameterSnapshot))
+	for name, credentialID := range task.GlobalCredentialBindings {
+		bindings[name] = credentialID
+	}
 	for _, name := range sortedWorkflowParameterNames(run.ParameterSnapshot) {
 		snapshot := run.ParameterSnapshot[name]
 		if snapshot.SecretReference == nil {
@@ -1432,6 +1445,19 @@ func (s *workflowService) applyWorkflowRunParameters(
 			continue
 		}
 		if !workflowStringContains(policy.CredentialParameters, name) {
+			continue
+		}
+		if snapshot.SecretReference.GlobalCredentialID > 0 {
+			credential, _, credentialErr := s.workflowParameterGlobalCredential(
+				run.ProjectID, *snapshot.SecretReference,
+				db.GlobalCredentialGrantOperationReference|db.GlobalCredentialGrantOperationConsume,
+			)
+			if credentialErr != nil {
+				return credentialErr
+			}
+			bindings[name] = credential.ID
+			delete(secret, name)
+			delete(plain, name)
 			continue
 		}
 		key, keyErr := s.workflowParameterAccessKey(run.ProjectID, *snapshot.SecretReference)
@@ -1453,23 +1479,30 @@ func (s *workflowService) applyWorkflowRunParameters(
 			return errors.New("workflow secret reference could not be encoded")
 		}
 		secret[name] = encoded
+		delete(bindings, name)
 	}
 	// Existing node TaskParams are the final definition-level override and
 	// therefore win over workflow defaults, trigger values, and user values.
 	for name, value := range nodePlain {
 		plain[name] = value
 		delete(secret, name)
+		delete(bindings, name)
 	}
 	for name, value := range nodeSecret {
 		secret[name] = value
 		delete(plain, name)
+		delete(bindings, name)
 	}
 	task.Environment, err = encodeWorkflowArtifactObject(plain)
 	if err != nil {
 		return err
 	}
 	task.Secret, err = encodeWorkflowArtifactObject(secret)
-	return err
+	if err != nil {
+		return err
+	}
+	task.GlobalCredentialBindings = bindings
+	return task.EncodeGlobalCredentialBindings()
 }
 
 func workflowStringContains(values []string, wanted string) bool {
@@ -1493,6 +1526,25 @@ func (s *workflowService) workflowParameterAccessKey(
 		return db.AccessKey{}, errors.New("workflow secret reference is unavailable")
 	}
 	return key, nil
+}
+
+func (s *workflowService) workflowParameterGlobalCredential(
+	projectID int,
+	reference db.WorkflowSecretReference,
+	operation db.GlobalCredentialGrantOperation,
+) (db.GlobalCredential, db.GlobalCredentialGrant, error) {
+	if s.globalCredentialStore == nil || reference.GlobalCredentialID <= 0 || reference.AccessKeyID > 0 {
+		return db.GlobalCredential{}, db.GlobalCredentialGrant{}, errors.New("workflow global credential reference is unavailable")
+	}
+	credential, err := s.globalCredentialStore.GetGlobalCredential(reference.GlobalCredentialID)
+	if err != nil || credential.Type != db.GlobalCredentialTypeString || !credential.Enabled {
+		return db.GlobalCredential{}, db.GlobalCredentialGrant{}, errors.New("workflow global credential reference is unavailable")
+	}
+	grant, err := s.globalCredentialStore.GetGlobalCredentialGrantForProject(credential.ID, projectID)
+	if err != nil || !grant.IsEffectiveAt(projectID, operation, credential.Enabled, time.Now().UTC()) {
+		return db.GlobalCredential{}, db.GlobalCredentialGrant{}, errors.New("workflow global credential grant is unavailable")
+	}
+	return credential, grant, nil
 }
 
 func sortedWorkflowParameterNames(values map[string]db.WorkflowParameterSnapshot) []string {

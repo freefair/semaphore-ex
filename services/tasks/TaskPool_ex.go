@@ -14,6 +14,13 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// SetGlobalCredentialRuntimeResolver installs the edition-provided runtime
+// authority. Community installs a fail-closed stub; a nil resolver is also
+// fail-closed whenever a task has persisted global credential bindings.
+func (p *TaskPool) SetGlobalCredentialRuntimeResolver(resolver pro_interfaces.GlobalCredentialRuntimeResolver) {
+	p.globalCredentialResolver = resolver
+}
+
 // ConfigureCrossProjectWorkflowTaskStore attaches the Enhanced transactional
 // dispatch fence. It is configured during service wiring before the pool is
 // used and is intentionally absent from the Community db.Store interface.

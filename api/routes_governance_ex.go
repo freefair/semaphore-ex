@@ -41,7 +41,7 @@ func registerEnhancedGovernanceRoutes(
 	globalCredentialAnyRead := func(handler http.Handler) http.Handler {
 		return delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user := helpers.UserFromContext(r)
-			for _, permission := range []db.GlobalPermission{db.CanManageGlobalCredentialsMetadata, db.CanManageGlobalCredentialsRotate, db.CanManageGlobalCredentialsGrant} {
+			for _, permission := range []db.GlobalPermission{db.CanReadGlobalAudit, db.CanManageGlobalCredentialsMetadata, db.CanManageGlobalCredentialsRotate, db.CanManageGlobalCredentialsGrant} {
 				allowed, err := hasGlobalPermission(r, user, permission)
 				if err != nil {
 					helpers.WriteError(w, err)
@@ -75,6 +75,9 @@ func registerEnhancedGovernanceRoutes(
 	}
 	globalCredentialGrant := func(handler http.Handler) http.Handler {
 		return globalCredentialAudited(db.CanManageGlobalCredentialsGrant, handler)
+	}
+	globalCredentialUsage := func(handler http.Handler) http.Handler {
+		return globalCredentialAudited(db.CanReadGlobalAudit, handler)
 	}
 	globalCredentialEnabled := func(handler http.Handler) http.Handler {
 		return delegatedProjectRolesSnapshot(EnhancedGlobalCredentialEnabledAuditMiddleware(auditFacade)(
@@ -130,6 +133,8 @@ func registerEnhancedGovernanceRoutes(
 	authenticatedAPI.Path("/global-credentials/{credential_id}").Handler(globalCredentialMetadata(http.HandlerFunc(globalCredentialController.Update))).Methods("PUT")
 	authenticatedAPI.Path("/global-credentials/{credential_id}/enabled").Handler(globalCredentialEnabled(http.HandlerFunc(globalCredentialController.SetEnabled))).Methods("POST")
 	authenticatedAPI.Path("/global-credentials/{credential_id}/rotate").Handler(globalCredentialRotate(http.HandlerFunc(globalCredentialController.Rotate))).Methods("POST")
+	authenticatedAPI.Path("/global-credentials/{credential_id}/usage").Handler(globalCredentialUsage(http.HandlerFunc(globalCredentialController.ListUsage))).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/global-credentials/{credential_id}/impact").Handler(globalCredentialAnyRead(http.HandlerFunc(globalCredentialController.GetImpact))).Methods("GET", "HEAD")
 	authenticatedAPI.Path("/global-credentials/{credential_id}").Handler(globalCredentialDelete(http.HandlerFunc(globalCredentialController.Delete))).Methods("DELETE")
 	authenticatedAPI.Path("/global-credentials/{credential_id}/grants").Handler(globalCredentialGrant(http.HandlerFunc(globalCredentialController.ListGrants))).Methods("GET", "HEAD")
 	authenticatedAPI.Path("/global-credentials/{credential_id}/grants").Handler(globalCredentialGrant(http.HandlerFunc(globalCredentialController.CreateGrant))).Methods("POST")

@@ -28,6 +28,7 @@ func (t *TaskRunner) Logf(format string, a ...any) {
 }
 
 func (t *TaskRunner) LogWithTime(now time.Time, msg string) {
+	msg = t.redactor.Redact(msg)
 	if t.Template.App == db.AppAnsible {
 		event, recognized, err := stage_parsers.ParseTaskSummaryEvent(msg)
 		if recognized {

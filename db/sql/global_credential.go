@@ -220,6 +220,18 @@ func (d *SqlDb) GetGlobalCredentialGrant(credentialID, grantID int) (db.GlobalCr
 	return value, err
 }
 
+// GetGlobalCredentialGrantForProject is the runtime lookup. The unique
+// credential/project constraint makes this a single authority record rather
+// than an inferred list membership.
+func (d *SqlDb) GetGlobalCredentialGrantForProject(credentialID, projectID int) (db.GlobalCredentialGrant, error) {
+	if credentialID <= 0 || projectID <= 0 {
+		return db.GlobalCredentialGrant{}, db.ErrInvalidOperation
+	}
+	var value db.GlobalCredentialGrant
+	err := d.selectOne(&value, "select * from global_credential_grant where credential_id=? and project_id=?", credentialID, projectID)
+	return value, err
+}
+
 func (d *SqlDb) GetGlobalCredentialGrants(credentialID int, params db.RetrieveQueryParams) ([]db.GlobalCredentialGrant, error) {
 	if credentialID <= 0 || params.Offset < 0 || params.Count < 0 {
 		return nil, db.ErrInvalidOperation
@@ -344,6 +356,115 @@ func (d *SqlDb) GetGlobalCredentialGrantProjects() ([]db.GlobalCredentialGrantPr
 	values := make([]db.GlobalCredentialGrantProject, 0)
 	_, err := d.selectAll(&values, "select id, name from project order by name, id limit ?", globalCredentialGrantProjectLimit)
 	return values, err
+}
+
+// CreateGlobalCredentialUsage is intentionally the only write operation for
+// the usage ledger. No update or delete repository method exists.
+func (d *SqlDb) CreateGlobalCredentialUsage(usage db.GlobalCredentialUsage) (db.GlobalCredentialUsage, error) {
+	if usage.TaskID <= 0 || usage.ProjectID <= 0 || usage.ActorID < 0 || usage.CredentialID <= 0 ||
+		usage.Target == "" || usage.DispatchGeneration < 0 || usage.Outcome == "" || usage.Reason == "" ||
+		usage.OccurredAt.IsZero() || usage.OccurredAt.Location() != time.UTC ||
+		(usage.RunnerID != nil && *usage.RunnerID <= 0) {
+		return db.GlobalCredentialUsage{}, db.ErrInvalidOperation
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return db.GlobalCredentialUsage{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	usage.ID, err = insertGlobalCredentialTx(tx, d,
+		"insert into global_credential_usage (task_id, project_id, actor_id, runner_id, dispatch_generation, target, credential_id, grant_id, credential_version, version_fingerprint, provider_version, outcome, reason, occurred_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		usage.TaskID, usage.ProjectID, usage.ActorID, usage.RunnerID, usage.DispatchGeneration,
+		usage.Target, usage.CredentialID, usage.GrantID, usage.CredentialVersion, usage.VersionFingerprint,
+		usage.ProviderVersion, usage.Outcome, usage.Reason, usage.OccurredAt,
+	)
+	if err != nil {
+		return db.GlobalCredentialUsage{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return db.GlobalCredentialUsage{}, err
+	}
+	return usage, nil
+}
+
+func (d *SqlDb) GetGlobalCredentialUsage(credentialID int, query db.GlobalCredentialUsageQuery) ([]db.GlobalCredentialUsage, error) {
+	if credentialID <= 0 || query.Count < 1 || query.Count > 100 || query.BeforeID < 0 ||
+		(query.ProjectID != nil && *query.ProjectID <= 0) || (query.TaskID != nil && *query.TaskID <= 0) ||
+		(query.Outcome != nil && *query.Outcome == "") {
+		return nil, db.ErrInvalidOperation
+	}
+	statement := "select * from global_credential_usage where credential_id=?"
+	args := []any{credentialID}
+	if query.ProjectID != nil {
+		statement += " and project_id=?"
+		args = append(args, *query.ProjectID)
+	}
+	if query.TaskID != nil {
+		statement += " and task_id=?"
+		args = append(args, *query.TaskID)
+	}
+	if query.Outcome != nil {
+		statement += " and outcome=?"
+		args = append(args, *query.Outcome)
+	}
+	if query.BeforeID > 0 {
+		statement += " and id<?"
+		args = append(args, query.BeforeID)
+	}
+	statement += " order by id desc limit ?"
+	args = append(args, query.Count)
+	values := make([]db.GlobalCredentialUsage, 0)
+	_, err := d.selectAll(&values, statement, args...)
+	return values, err
+}
+
+func (d *SqlDb) GetTaskGlobalCredentialUsage(projectID, taskID int, query db.GlobalCredentialUsageQuery) ([]db.GlobalCredentialUsage, error) {
+	if projectID <= 0 || taskID <= 0 || query.Count < 1 || query.Count > 100 || query.BeforeID < 0 ||
+		query.ProjectID != nil || query.TaskID != nil || (query.Outcome != nil && *query.Outcome == "") {
+		return nil, db.ErrInvalidOperation
+	}
+	statement := "select * from global_credential_usage where project_id=? and task_id=?"
+	args := []any{projectID, taskID}
+	if query.Outcome != nil {
+		statement += " and outcome=?"
+		args = append(args, *query.Outcome)
+	}
+	if query.BeforeID > 0 {
+		statement += " and id<?"
+		args = append(args, query.BeforeID)
+	}
+	statement += " order by id desc limit ?"
+	args = append(args, query.Count)
+	values := make([]db.GlobalCredentialUsage, 0)
+	_, err := d.selectAll(&values, statement, args...)
+	return values, err
+}
+
+func (d *SqlDb) GetGlobalCredentialImpact(credentialID int, now time.Time) (db.GlobalCredentialImpact, error) {
+	if credentialID <= 0 || now.Location() != time.UTC {
+		return db.GlobalCredentialImpact{}, db.ErrInvalidOperation
+	}
+	var impact db.GlobalCredentialImpact
+	impact.CredentialID = credentialID
+	if err := d.selectOne(&impact.UsageCount, "select count(*) from global_credential_usage where credential_id=?", credentialID); err != nil {
+		return db.GlobalCredentialImpact{}, err
+	}
+	if err := d.selectOne(&impact.ProjectCount, "select count(distinct project_id) from global_credential_usage where credential_id=?", credentialID); err != nil {
+		return db.GlobalCredentialImpact{}, err
+	}
+	if err := d.selectOne(&impact.ActiveGrantCount, "select count(*) from global_credential_grant where credential_id=? and status=? and (expires_at is null or expires_at>?)", credentialID, db.GlobalCredentialGrantStatusActive, now); err != nil {
+		return db.GlobalCredentialImpact{}, err
+	}
+	var last db.GlobalCredentialUsage
+	err := d.selectOne(&last, "select * from global_credential_usage where credential_id=? order by occurred_at desc, id desc limit 1", credentialID)
+	if err != nil && !errors.Is(err, db.ErrNotFound) {
+		return db.GlobalCredentialImpact{}, err
+	}
+	if err == nil {
+		value := last.OccurredAt.UTC()
+		impact.LastUsedAt = &value
+	}
+	return impact, nil
 }
 
 func (d *SqlDb) DeleteGlobalCredential(id, expectedRevision int) error {

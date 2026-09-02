@@ -662,6 +662,11 @@ type ConfigType struct {
 	// oidc settings
 	OidcProviders map[string]OidcProvider `json:"oidc_providers,omitempty" env:"SEMAPHORE_OIDC_PROVIDERS"`
 
+	// GlobalCredentialProviders is intentionally a registry independent from
+	// project SecretStorage. Values are connection/auth metadata only; each
+	// bootstrap credential is read from a derived environment variable.
+	GlobalCredentialProviders map[string]GlobalCredentialProviderConfig `json:"global_credential_providers,omitempty" env:"SEMAPHORE_GLOBAL_CREDENTIAL_PROVIDERS"`
+
 	MaxTaskDurationSec  int `json:"max_task_duration_sec,omitempty" env:"SEMAPHORE_MAX_TASK_DURATION_SEC"`
 	MaxTasksPerTemplate int `json:"max_tasks_per_template,omitempty" env:"SEMAPHORE_MAX_TASKS_PER_TEMPLATE"`
 

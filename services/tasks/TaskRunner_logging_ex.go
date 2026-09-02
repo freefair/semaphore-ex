@@ -3,9 +3,14 @@ package tasks
 import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pkg/taskredaction"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	log "github.com/sirupsen/logrus"
 )
+
+func (t *TaskRunner) SetTaskCredentialRedaction(taskSecret string) {
+	t.redactor = taskredaction.NewFromTaskSecret(taskSecret, t.GlobalCredentialBindingTargets())
+}
 
 func taskStatusTransitionAllowed(current task_logger.TaskStatus, next task_logger.TaskStatus) bool {
 	if current == next {
@@ -18,7 +23,7 @@ func taskStatusTransitionAllowed(current task_logger.TaskStatus, next task_logge
 		return next != task_logger.TaskWaitingStatus
 	case task_logger.TaskStoppingStatus, task_logger.TaskRejected:
 		return next == task_logger.TaskStoppedStatus || next == task_logger.TaskFailStatus
-	case task_logger.TaskSuccessStatus, task_logger.TaskFailStatus, task_logger.TaskStoppedStatus:
+	case task_logger.TaskSuccessStatus, task_logger.TaskFailStatus, task_logger.TaskStoppedStatus, task_logger.TaskBlockedStatus:
 		return false
 	default:
 		return true
@@ -29,7 +34,7 @@ func runnerAttemptOutcomeForStatus(status task_logger.TaskStatus) db.RunnerAttem
 	switch status {
 	case task_logger.TaskSuccessStatus:
 		return db.RunnerAttemptSucceeded
-	case task_logger.TaskFailStatus:
+	case task_logger.TaskFailStatus, task_logger.TaskBlockedStatus:
 		return db.RunnerAttemptFailed
 	case task_logger.TaskStoppedStatus:
 		return db.RunnerAttemptStopped

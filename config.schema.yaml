@@ -171,6 +171,19 @@ properties:
     description: OIDC identity providers, keyed by provider id used in callback URLs.
 
   # ==========================================================================
+  # Global credential providers (Enhanced Edition)
+  # ==========================================================================
+  global_credential_providers:
+    type: object
+    propertyNames:
+      pattern: "^[a-z][a-z0-9_-]{0,63}$"
+    additionalProperties: { $ref: "#/$defs/GlobalCredentialProvider" }
+    description: >-
+      Execution-only Vault/OpenBao providers keyed by provider id. Bootstrap
+      credentials are never stored here; provider "primary" reads only
+      SEMAPHORE_GLOBAL_CREDENTIAL_PROVIDER_PRIMARY_CREDENTIAL.
+
+  # ==========================================================================
   # Task scheduling
   # ==========================================================================
   max_task_duration_sec:  { type: integer, minimum: 0 }
@@ -471,6 +484,42 @@ $defs:
       algorithms:
         type: array
         items: { type: string }
+
+  GlobalCredentialProvider:
+    type: object
+    required: [type, url]
+    additionalProperties: false
+    properties:
+      type:
+        type: string
+        enum: [vault, openbao]
+      url:
+        type: string
+        format: uri
+      namespace:
+        type: string
+      ca_certificate:
+        type: string
+        description: PEM-encoded CA certificate. This is trust metadata, not credential material.
+      timeout:
+        type: string
+        description: Positive Go duration capped at 30 seconds.
+      max_response_bytes:
+        type: integer
+        minimum: 1
+        maximum: 4194304
+      auth_method:
+        type: string
+        enum: [token, approle, kubernetes]
+        default: token
+      auth_mount:
+        type: string
+      role_id:
+        type: string
+        description: Required for AppRole authentication.
+      role:
+        type: string
+        description: Required for Kubernetes authentication.
 
   App:
     type: object

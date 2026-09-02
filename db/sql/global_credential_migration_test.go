@@ -43,3 +43,31 @@ func TestGlobalCredentialMigrationPreparesForEverySQLDialect(t *testing.T) {
 		})
 	}
 }
+
+func TestGlobalCredentialUsageMigrationKeepsBindingsPrivateAndLedgerUnconstrained(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		dialect string
+		gorp    gorp.Dialect
+	}{
+		{"sqlite", "sqlite", gorp.SqliteDialect{}},
+		{"mysql", "mysql", gorp.MySQLDialect{}},
+		{"postgres", "postgres", gorp.PostgresDialect{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &SqlDb{connection: SqlDbConnection{sql: &gorp.DbMap{Dialect: tt.gorp}}}
+			queries := getVersionSQL(tt.dialect, "v2.20.57.sql", false)
+			joined := strings.ToLower(strings.Join(queries, ";"))
+			if !strings.Contains(joined, "global_credential_bindings") || !strings.Contains(joined, "global_credential_usage") ||
+				!strings.Contains(joined, "global_credential_usage__task") {
+				t.Fatalf("usage migration omits required runtime storage: %s", joined)
+			}
+			if strings.Contains(joined, "foreign key") || strings.Contains(joined, "encrypted_material") || strings.Contains(joined, "external_reference") {
+				t.Fatalf("usage migration must retain value-free records without lifecycle foreign keys: %s", joined)
+			}
+			for index := range queries {
+				_ = store.prepareMigration(queries[index])
+			}
+		})
+	}
+}

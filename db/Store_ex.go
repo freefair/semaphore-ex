@@ -85,12 +85,17 @@ type GlobalCredentialRepository interface {
 	RotateGlobalCredential(int, int, GlobalCredentialVersion, time.Time) (GlobalCredential, GlobalCredentialVersion, error)
 	CreateGlobalCredentialGrant(GlobalCredentialGrant) (GlobalCredentialGrant, error)
 	GetGlobalCredentialGrant(int, int) (GlobalCredentialGrant, error)
+	GetGlobalCredentialGrantForProject(int, int) (GlobalCredentialGrant, error)
 	GetGlobalCredentialGrants(int, RetrieveQueryParams) ([]GlobalCredentialGrant, error)
 	UpdateGlobalCredentialGrant(GlobalCredentialGrant, int, time.Time) (GlobalCredentialGrant, error)
 	SetGlobalCredentialGrantStatus(int, int, GlobalCredentialGrantStatus, int, *int, time.Time) (GlobalCredentialGrant, error)
 	DeleteGlobalCredentialGrant(int, int, int) error
 	GetEffectiveGlobalCredentialMetadata(int, time.Time, RetrieveQueryParams) ([]GlobalCredentialGrantedMetadata, error)
 	GetGlobalCredentialGrantProjects() ([]GlobalCredentialGrantProject, error)
+	CreateGlobalCredentialUsage(GlobalCredentialUsage) (GlobalCredentialUsage, error)
+	GetGlobalCredentialUsage(int, GlobalCredentialUsageQuery) ([]GlobalCredentialUsage, error)
+	GetTaskGlobalCredentialUsage(int, int, GlobalCredentialUsageQuery) ([]GlobalCredentialUsage, error)
+	GetGlobalCredentialImpact(int, time.Time) (GlobalCredentialImpact, error)
 	DeleteGlobalCredential(int, int) error
 }
 

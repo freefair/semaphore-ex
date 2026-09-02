@@ -47,7 +47,7 @@ type kubernetesTelemetryReporterStub struct {
 	acks  []db.KubernetesTelemetryAck
 }
 
-func (*kubernetesTelemetryReporterStub) NewExecutor(db.Task, db.Template, db.Inventory, db.Repository, db.Environment, string) (tasks.Executor, error) {
+func (*kubernetesTelemetryReporterStub) NewExecutor(db.Task, db.Template, db.Inventory, db.Repository, db.Environment, string, string) (tasks.Executor, error) {
 	return &tasks.LocalExecutor{}, nil
 }
 
@@ -82,7 +82,7 @@ func TestJobPoolAppliesOptionalRunnerIdentityBeforeExecutorConstruction(t *testi
 	require.ErrorContains(t, pool.applyRunnerIdentity(42), "identity rejected")
 }
 
-func (p *dockerPolicyConsumerStub) NewExecutor(db.Task, db.Template, db.Inventory, db.Repository, db.Environment, string) (tasks.Executor, error) {
+func (p *dockerPolicyConsumerStub) NewExecutor(db.Task, db.Template, db.Inventory, db.Repository, db.Environment, string, string) (tasks.Executor, error) {
 	return nil, nil
 }
 
@@ -129,7 +129,7 @@ func (p *dockerPolicyConsumerStub) RemediateDockerReconciliation(_ context.Conte
 
 type denyingDockerPolicyProvider struct{ dockerPolicyConsumerStub }
 
-func (p *denyingDockerPolicyProvider) NewExecutor(db.Task, db.Template, db.Inventory, db.Repository, db.Environment, string) (tasks.Executor, error) {
+func (p *denyingDockerPolicyProvider) NewExecutor(db.Task, db.Template, db.Inventory, db.Repository, db.Environment, string, string) (tasks.Executor, error) {
 	return nil, db.DockerPolicyViolationError{Rule: db.DockerPolicyRuleImageDenied}
 }
 

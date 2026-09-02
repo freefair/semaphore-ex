@@ -12,6 +12,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/tz"
 
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pkg/taskredaction"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	log "github.com/sirupsen/logrus"
 )
@@ -34,6 +35,7 @@ type runningJob struct {
 	generation int
 	job        tasks.Executor
 	commit     *CommitInfo
+	redactor   taskredaction.Redactor
 
 	statusListeners []task_logger.StatusListener
 	logListeners    []task_logger.LogListener
@@ -60,6 +62,7 @@ func (p *runningJob) Logf(format string, a ...any) {
 }
 
 func (p *runningJob) LogWithTime(now time.Time, msg string) {
+	msg = p.redactor.Redact(msg)
 	p.mu.Lock()
 	p.logRecords = append(
 		p.logRecords,

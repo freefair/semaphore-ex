@@ -122,6 +122,48 @@ func (c *GlobalCredentialController) ListGranted(w http.ResponseWriter, r *http.
 	c.write(w, http.StatusOK, value, err)
 }
 
+func (c *GlobalCredentialController) ListUsage(w http.ResponseWriter, r *http.Request) {
+	credentialID, ok := globalCredentialID(w, r, "credential_id")
+	if !ok {
+		return
+	}
+	query, ok := globalCredentialUsagePage(w, r, true)
+	if !ok {
+		return
+	}
+	value, err := c.service.ListGlobalCredentialUsage(r.Context(), credentialID, query)
+	c.write(w, http.StatusOK, value, err)
+}
+
+func (c *GlobalCredentialController) GetImpact(w http.ResponseWriter, r *http.Request) {
+	credentialID, ok := globalCredentialID(w, r, "credential_id")
+	if !ok {
+		return
+	}
+	if _, ok = globalCredentialQuery(w, r); !ok {
+		return
+	}
+	value, err := c.service.GetGlobalCredentialImpact(r.Context(), credentialID)
+	c.write(w, http.StatusOK, value, err)
+}
+
+func (c *GlobalCredentialController) ListTaskUsage(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := globalCredentialID(w, r, "project_id")
+	if !ok {
+		return
+	}
+	taskID, ok := globalCredentialID(w, r, "task_id")
+	if !ok {
+		return
+	}
+	query, ok := globalCredentialUsagePage(w, r, false)
+	if !ok {
+		return
+	}
+	value, err := c.service.ListTaskGlobalCredentialUsage(r.Context(), projectID, taskID, query)
+	c.write(w, http.StatusOK, value, err)
+}
+
 // ListGrantProjects is deliberately separate from /projects: a delegated
 // grant administrator needs a target selector, not project configuration.
 func (c *GlobalCredentialController) ListGrantProjects(w http.ResponseWriter, r *http.Request) {
@@ -310,6 +352,67 @@ func globalCredentialPage(w http.ResponseWriter, r *http.Request) (db.RetrieveQu
 		params.Offset = value
 	}
 	return params, true
+}
+
+func globalCredentialUsagePage(w http.ResponseWriter, r *http.Request, global bool) (pro_interfaces.GlobalCredentialUsageQuery, bool) {
+	allowed := []string{"count", "before_id", "outcome"}
+	if global {
+		allowed = append(allowed, "project_id", "task_id")
+	}
+	values, ok := globalCredentialQuery(w, r, allowed...)
+	query := pro_interfaces.GlobalCredentialUsageQuery{Count: 25}
+	if !ok {
+		return query, false
+	}
+	parsePositive := func(name string, optional bool) (*int, bool) {
+		raw := values.Get(name)
+		if raw == "" && optional {
+			return nil, true
+		}
+		value, err := strconv.Atoi(raw)
+		if err != nil || value <= 0 {
+			return nil, false
+		}
+		return &value, true
+	}
+	if raw := values.Get("count"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > pro_interfaces.GlobalCredentialUsagePageMax {
+			helpers.WriteErrorStatus(w, "Invalid global credential usage page", http.StatusBadRequest)
+			return query, false
+		}
+		query.Count = value
+	}
+	if raw := values.Get("before_id"); raw != "" {
+		value, valid := parsePositive("before_id", false)
+		if !valid {
+			helpers.WriteErrorStatus(w, "Invalid global credential usage page", http.StatusBadRequest)
+			return query, false
+		}
+		query.BeforeID = *value
+	}
+	if raw := values.Get("outcome"); raw != "" {
+		outcome := pro_interfaces.GlobalCredentialResolutionOutcome(raw)
+		query.Outcome = &outcome
+	}
+	if global {
+		var valid bool
+		query.ProjectID, valid = parsePositive("project_id", true)
+		if !valid {
+			helpers.WriteErrorStatus(w, "Invalid global credential usage filter", http.StatusBadRequest)
+			return query, false
+		}
+		query.TaskID, valid = parsePositive("task_id", true)
+		if !valid {
+			helpers.WriteErrorStatus(w, "Invalid global credential usage filter", http.StatusBadRequest)
+			return query, false
+		}
+	}
+	if query.Validate() != nil {
+		helpers.WriteErrorStatus(w, "Invalid global credential usage filter", http.StatusBadRequest)
+		return query, false
+	}
+	return query, true
 }
 
 // globalCredentialQuery accepts precisely one bounded value per known key.

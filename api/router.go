@@ -823,6 +823,7 @@ func Route(
 	projectTaskManagement.HandleFunc("/{task_id}/raw_output", taskController.GetTaskRawOutput).Methods("GET", "HEAD")
 	projectTaskManagement.HandleFunc("/{task_id}/runner-attempts", taskController.GetTaskRunnerAttempts).Methods("GET", "HEAD")
 	projectTaskManagement.HandleFunc("/{task_id}/recovery", taskController.GetTaskRecoveryDiagnostics).Methods("GET", "HEAD")
+	projectTaskManagement.HandleFunc("/{task_id}/credential-usage", globalCredentialController.ListTaskUsage).Methods("GET", "HEAD")
 	projectTaskManagement.HandleFunc("/{task_id}", taskController.GetTask).Methods("GET", "HEAD")
 	projectTaskManagement.HandleFunc("/{task_id}", taskController.RemoveTask).Methods("DELETE")
 	projectTaskManagement.HandleFunc("/{task_id}/stages", taskController.GetTaskStages).Methods("GET", "HEAD")

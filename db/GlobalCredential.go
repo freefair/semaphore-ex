@@ -219,6 +219,43 @@ type GlobalCredentialGrantProject struct {
 	Name string `db:"name" json:"name"`
 }
 
+// GlobalCredentialUsage is an append-only, value-free resolution record. It
+// deliberately has no foreign keys so retention survives task and credential
+// deletion; the durable IDs are provenance, not live authorization pointers.
+type GlobalCredentialUsage struct {
+	ID                 int       `db:"id" json:"id"`
+	TaskID             int       `db:"task_id" json:"task_id"`
+	ProjectID          int       `db:"project_id" json:"project_id"`
+	ActorID            int       `db:"actor_id" json:"actor_id"`
+	RunnerID           *int      `db:"runner_id" json:"runner_id,omitempty"`
+	DispatchGeneration int       `db:"dispatch_generation" json:"dispatch_generation,omitempty"`
+	Target             string    `db:"target" json:"target"`
+	CredentialID       int       `db:"credential_id" json:"credential_id"`
+	GrantID            int       `db:"grant_id" json:"grant_id,omitempty"`
+	CredentialVersion  int       `db:"credential_version" json:"credential_version,omitempty"`
+	VersionFingerprint string    `db:"version_fingerprint" json:"version_fingerprint,omitempty"`
+	ProviderVersion    int       `db:"provider_version" json:"provider_version,omitempty"`
+	Outcome            string    `db:"outcome" json:"outcome"`
+	Reason             string    `db:"reason" json:"reason"`
+	OccurredAt         time.Time `db:"occurred_at" json:"occurred_at"`
+}
+
+type GlobalCredentialUsageQuery struct {
+	ProjectID *int
+	TaskID    *int
+	Outcome   *string
+	BeforeID  int
+	Count     int
+}
+
+type GlobalCredentialImpact struct {
+	CredentialID     int
+	UsageCount       int
+	ProjectCount     int
+	ActiveGrantCount int
+	LastUsedAt       *time.Time
+}
+
 func ValidateGlobalCredential(credential GlobalCredential) error {
 	if credential.Type != GlobalCredentialTypeString ||
 		strings.TrimSpace(credential.DisplayName) == "" || len(credential.DisplayName) > 128 ||

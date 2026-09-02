@@ -205,7 +205,7 @@ func (p *Provider) RemediateKubernetesReconciliation(ctx context.Context, comman
 	return remediator.GarbageCollectKubernetesReconciliation(ctx, command, runnerID)
 }
 
-func (p *Provider) NewExecutor(task db.Task, template db.Template, inventory db.Inventory, repository db.Repository, environment db.Environment, jwt string) (tasks.Executor, error) {
+func (p *Provider) NewExecutor(task db.Task, template db.Template, inventory db.Inventory, repository db.Repository, environment db.Environment, taskSecret, jwt string) (tasks.Executor, error) {
 	image, err := p.config.taskImage(template)
 	if err != nil {
 		return nil, err
@@ -227,7 +227,7 @@ func (p *Provider) NewExecutor(task db.Task, template db.Template, inventory db.
 		Inventory:    inventory,
 		Repository:   repository,
 		Environment:  environment,
-		Secret:       task.Secret,
+		Secret:       taskSecret,
 		KeyInstaller: p.keyInstaller,
 		App:          db_lib.CreateApp(template, repository, inventory, nil),
 		JWT:          jwt,

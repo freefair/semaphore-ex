@@ -10,6 +10,7 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db_lib"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pkg/taskredaction"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
@@ -398,6 +399,7 @@ func (p *JobPool) Run() {
 				taskID:     t.taskID,
 				generation: t.generation,
 				status:     task_logger.TaskStartingStatus,
+				redactor:   t.redactor,
 			}
 			p.addRunningJob(t.taskID, rj)
 
@@ -1274,6 +1276,7 @@ func (p *JobPool) checkNewJobs() {
 			taskID:          newJob.Task.ID,
 			generation:      newJob.Task.AssignmentGeneration,
 			status:          newJob.Task.Status,
+			redactor:        taskredaction.NewFromTaskSecret(newJob.TaskSecret, newJob.CredentialTargets),
 		}
 		if resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeDocker {
 			ack, ready := p.currentDockerPolicyAck()

@@ -162,6 +162,13 @@ func runService() {
 		jwtSigner,
 		appMetrics,
 	)
+	taskPool.SetGlobalCredentialRuntimeResolver(proServer.NewGlobalCredentialRuntimeResolver(
+		store,
+		pro_interfaces.GlobalCredentialRuntimeDependencies{
+			Cipher: util.Config, Capability: capabilityProvider,
+			External: proServer.NewGlobalCredentialExternalAdapter(util.Config),
+		},
+	))
 
 	// The workflow service orchestrates workflow runs and launches each node's
 	// task through the pool; the pool calls back into it when a workflow task
