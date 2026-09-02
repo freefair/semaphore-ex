@@ -5,7 +5,7 @@
       :save-button-text="itemId === 'new' ? $t('create') : $t('save')"
       :title="`${itemId === 'new' ? $t('nnew') : $t('edit')} Key`"
       :max-width="450"
-      @save="loadItems()"
+      @save="onKeySaved"
     >
       <template v-slot:form="{ onSave, onError, needSave, needReset }">
         <KeyForm
@@ -20,6 +20,78 @@
         />
       </template>
     </EditDialog>
+
+    <v-dialog v-model="generatedKeyDialog" max-width="700">
+      <v-card v-if="generatedKeyResult" class="generated-ssh-key-result">
+        <v-card-title>SSH public key</v-card-title>
+        <v-card-text>
+          <v-alert dense text type="info">
+            The private key is stored encrypted by Semaphore and is never displayed.
+          </v-alert>
+          <div>Algorithm: <code>{{ generatedKeyResult.algorithm }}</code></div>
+          <div class="generated-ssh-key-fingerprint">
+            Fingerprint: <code>{{ generatedKeyResult.fingerprint }}</code>
+          </div>
+          <div style="position: relative">
+            <pre
+              class="pa-2 mt-3 generated-ssh-key-public"
+              style="overflow: auto; background: #616161; color: white; border-radius: 6px"
+            >{{ generatedKeyResult.public_key }}</pre>
+            <CopyClipboardButton
+              style="position: absolute; right: 0; top: 0; transform: scale(0.9);"
+              :text="generatedKeyResult.public_key"
+            />
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn text color="primary" @click="generatedKeyDialog = false">Close</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="rotationDialog" max-width="640">
+      <v-card v-if="rotationItem" class="generated-ssh-key-rotation">
+        <v-card-title>Rotate SSH key</v-card-title>
+        <v-card-text>
+          <v-alert dense text type="warning">
+            Update every authorized_keys destination with the new public key immediately.
+            Running jobs keep their already loaded key.
+          </v-alert>
+          <ObjectRefsView
+            object-title="access key"
+            :object-refs="rotationRefs"
+            :project-id="projectId"
+            hide-warning
+          />
+          <v-select
+            v-model="rotationAlgorithm"
+            :items="generatedSSHKeyAlgorithms"
+            item-value="id"
+            item-text="name"
+            label="Key algorithm"
+            outlined
+            dense
+            :disabled="rotationLoading"
+          />
+          <v-alert v-if="rotationError" dense text type="error">{{ rotationError }}</v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn text :disabled="rotationLoading" @click="rotationDialog = false">
+            Cancel
+          </v-btn>
+          <v-btn
+            color="primary"
+            :loading="rotationLoading"
+            :disabled="rotationLoading"
+            @click="rotateSSHKey"
+          >
+            Rotate key
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <ObjectRefsDialog
       object-title="access key"
@@ -83,6 +155,9 @@
           <v-btn @click="editItem(item.id)">
             <v-icon>mdi-pencil</v-icon>
           </v-btn>
+          <v-btn v-if="canRotateSSHKey(item)" @click="beginSSHKeyRotation(item)">
+            <v-icon>mdi-refresh</v-icon>
+          </v-btn>
         </v-btn-toggle>
       </template>
     </v-data-table>
@@ -95,9 +170,19 @@ import ItemListPageBase from '@/components/ItemListPageBase';
 import KeyForm from '@/components/KeyForm.vue';
 import PageMixin from '@/components/PageMixin';
 import KeyStoreMenu from '@/components/KeyStoreMenu.vue';
+import CopyClipboardButton from '@/components/CopyClipboardButton.vue';
+import ObjectRefsView from '@/components/ObjectRefsView.vue';
+import axios from 'axios';
+import { getErrorMessage } from '@/lib/error';
+import EventBus from '@/event-bus';
 
 export default {
-  components: { KeyStoreMenu, KeyForm },
+  components: {
+    KeyStoreMenu,
+    KeyForm,
+    CopyClipboardButton,
+    ObjectRefsView,
+  },
 
   mixins: [ItemListPageBase, PageMixin],
 
@@ -111,7 +196,122 @@ export default {
     },
   },
 
+  data() {
+    return {
+      generatedKeyDialog: false,
+      generatedKeyResult: null,
+      rotationDialog: false,
+      rotationItem: null,
+      rotationRefs: null,
+      rotationAlgorithm: 'ed25519',
+      rotationLoading: false,
+      rotationError: null,
+      generatedSSHKeyAlgorithms: [
+        { id: 'ed25519', name: 'Ed25519 (recommended)' },
+        { id: 'rsa-3072', name: 'RSA 3072 (compatibility)' },
+      ],
+    };
+  },
+
+  watch: {
+    generatedKeyDialog(value) {
+      if (!value) {
+        this.generatedKeyResult = null;
+      }
+    },
+    rotationDialog(value) {
+      if (!value) {
+        this.rotationItem = null;
+        this.rotationRefs = null;
+        this.rotationError = null;
+      }
+    },
+  },
+
   methods: {
+    async onKeySaved(event) {
+      await this.loadItems();
+      this.showGeneratedKeyResult(event?.response);
+    },
+
+    showGeneratedKeyResult(response) {
+      if (!response || typeof response.public_key !== 'string' || typeof response.fingerprint !== 'string'
+        || !['ed25519', 'rsa-3072'].includes(response.algorithm)
+        || Object.prototype.hasOwnProperty.call(response, 'private_key')
+        || Object.prototype.hasOwnProperty.call(response, 'passphrase')) {
+        return;
+      }
+      const prefix = response.algorithm === 'ed25519' ? 'ssh-ed25519 ' : 'ssh-rsa ';
+      if (!response.public_key.startsWith(prefix) || !response.fingerprint.startsWith('SHA256:')) {
+        return;
+      }
+      this.generatedKeyResult = {
+        public_key: response.public_key,
+        fingerprint: response.fingerprint,
+        algorithm: response.algorithm,
+      };
+      this.generatedKeyDialog = true;
+    },
+
+    canRotateSSHKey(item) {
+      return this.can(this.USER_PERMISSIONS.manageProjectResources)
+        && item.type === 'ssh' && !item.synchronized && !item.source_storage_type;
+    },
+
+    async beginSSHKeyRotation(item) {
+      if (!this.canRotateSSHKey(item) || this.rotationLoading) {
+        return;
+      }
+      this.rotationLoading = true;
+      this.rotationError = null;
+      try {
+        this.rotationRefs = (await axios({
+          method: 'get',
+          url: `/api/project/${this.projectId}/keys/${item.id}/refs`,
+          responseType: 'json',
+        })).data;
+        this.rotationItem = item;
+        this.rotationAlgorithm = item.generated_ssh_key?.algorithm || 'ed25519';
+        this.rotationDialog = true;
+      } catch (err) {
+        EventBus.$emit('i-snackbar', {
+          color: 'error',
+          text: getErrorMessage(err),
+        });
+      } finally {
+        this.rotationLoading = false;
+      }
+    },
+
+    async rotateSSHKey() {
+      if (!this.rotationItem || this.rotationLoading) {
+        return;
+      }
+      this.rotationLoading = true;
+      this.rotationError = null;
+      try {
+        const response = (await axios({
+          method: 'post',
+          url: `/api/project/${this.projectId}/keys/${this.rotationItem.id}/rotate`,
+          responseType: 'json',
+          data: this.rotationRequest(),
+        })).data;
+        this.rotationDialog = false;
+        await this.loadItems();
+        this.showGeneratedKeyResult(response);
+      } catch (err) {
+        this.rotationError = getErrorMessage(err);
+      } finally {
+        this.rotationLoading = false;
+      }
+    },
+    rotationRequest() {
+      return {
+        algorithm: this.rotationAlgorithm,
+        confirm_rotation: true,
+      };
+    },
+
     getHeaders() {
       return [{
         text: this.$i18n.t('name'),
@@ -142,3 +342,28 @@ export default {
   },
 };
 </script>
+<style scoped>
+.generated-ssh-key-result,
+.generated-ssh-key-rotation,
+.generated-ssh-key-result ::v-deep .v-alert__content,
+.generated-ssh-key-rotation ::v-deep .v-alert__content {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.generated-ssh-key-fingerprint,
+.generated-ssh-key-fingerprint code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.generated-ssh-key-public {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+</style>

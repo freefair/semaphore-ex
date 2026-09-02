@@ -166,6 +166,9 @@
     />
 
     <v-alert v-if="isReadOnly" type="info" text>Read-only secret storage chosen.</v-alert>
+    <v-alert v-if="isNew && item.type === 'ssh' && sourceStorageType" type="info" text>
+      Server generation is available only for Local storage.
+    </v-alert>
 
     <v-text-field
       v-model="item.login_password.login"
@@ -200,12 +203,58 @@
       dense
     />
 
+    <v-checkbox
+      v-if="canGenerateSSHKey"
+      v-model="generateSSHKey"
+      label="Generate on server"
+      :disabled="formSaving || !canEditSecrets"
+      data-testid="key-generateServer"
+    />
+
+    <v-select
+      v-if="canGenerateSSHKey && generateSSHKey"
+      v-model="generatedSSHKeyAlgorithm"
+      :items="generatedSSHKeyAlgorithms"
+      item-value="id"
+      item-text="name"
+      label="Key algorithm"
+      :disabled="formSaving || !canEditSecrets"
+      data-testid="key-generateAlgorithm"
+      outlined
+      dense
+    />
+
+    <v-alert
+      v-if="generatedSSHKeyMetadata"
+      dense
+      text
+      type="info"
+      data-testid="key-generatedMetadata"
+      class="generated-ssh-key-metadata"
+    >
+      <div><strong>Generated {{ generatedSSHKeyMetadata.algorithm }}</strong></div>
+      <div class="generated-ssh-key-fingerprint">
+        Fingerprint: <code>{{ generatedSSHKeyMetadata.fingerprint }}</code>
+      </div>
+      <div style="position: relative">
+        <pre
+          class="pa-2 mt-2 generated-ssh-key-public"
+          style="overflow: auto; background: #616161; color: white; border-radius: 6px"
+        >{{ generatedSSHKeyMetadata.public_key }}</pre>
+        <CopyClipboardButton
+          style="position: absolute; right: 0; top: 0; transform: scale(0.9);"
+          :text="generatedSSHKeyMetadata.public_key"
+        />
+      </div>
+      The private key is stored encrypted by Semaphore and is never displayed.
+    </v-alert>
+
     <v-text-field
       v-model="item.ssh.passphrase"
       :append-icon="showSSHPassphrase ? 'mdi-eye' : 'mdi-eye-off'"
       label="Passphrase (Optional)"
       :class="{ 'masked-secret-input': !showSSHPassphrase }"
-      v-if="!isReadOnly && item.type === 'ssh'"
+      v-if="!isReadOnly && item.type === 'ssh' && !generateSSHKey"
       :disabled="formSaving || !canEditSecrets"
       @click:append="showSSHPassphrase = !showSSHPassphrase"
       outlined
@@ -218,10 +267,14 @@
       :label="$t('privateKey')"
       :disabled="formSaving || !canEditSecrets"
       :rules="[(v) => !canEditSecrets || !!v || $t('private_key_required')]"
-      v-if="!isReadOnly && item.type === 'ssh'"
+      v-if="!isReadOnly && item.type === 'ssh' && !generateSSHKey"
     />
 
-    <v-checkbox v-model="item.override_secret" :label="$t('override')" v-if="!isNew" />
+    <v-checkbox
+      v-model="item.override_secret"
+      :label="$t('override')"
+      v-if="!isNew && !generatedSSHKeyMetadata"
+    />
 
     <v-alert dense text type="info" v-if="item.type === 'none'">
       {{ $t('useThisTypeOfKeyForHttpsRepositoriesAndForPlaybook') }}
@@ -231,9 +284,16 @@
 <script>
 import ItemFormBase from '@/components/ItemFormBase';
 import { findCapabilityDecision } from '@/lib/capabilities';
+import axios from 'axios';
+import { getErrorMessage } from '@/lib/error';
+import CopyClipboardButton from '@/components/CopyClipboardButton.vue';
 
 export default {
   mixins: [ItemFormBase],
+
+  components: {
+    CopyClipboardButton,
+  },
 
   props: {
     supportStorages: Boolean,
@@ -260,6 +320,12 @@ export default {
       ],
       secretStorages: null,
       isSynced: false,
+      generateSSHKey: false,
+      generatedSSHKeyAlgorithm: 'ed25519',
+      generatedSSHKeyAlgorithms: [
+        { id: 'ed25519', name: 'Ed25519 (recommended)' },
+        { id: 'rsa-3072', name: 'RSA 3072 (compatibility)' },
+      ],
     };
   },
 
@@ -310,10 +376,14 @@ export default {
         );
       },
       set(index) {
+        const sourceStorageType = [undefined, 'vault', 'env', 'file'][index];
         this.item = {
           ...this.item,
-          source_storage_type: [undefined, 'vault', 'env', 'file'][index],
+          source_storage_type: sourceStorageType,
         };
+        if (sourceStorageType) {
+          this.generateSSHKey = false;
+        }
       },
     },
 
@@ -341,9 +411,36 @@ export default {
 
       return storage.readonly;
     },
+
+    canGenerateSSHKey() {
+      return this.isNew && !this.isReadOnly && !this.sourceStorageType && this.item.type === 'ssh';
+    },
+
+    generatedSSHKeyMetadata() {
+      const metadata = this.item?.generated_ssh_key;
+      if (!metadata || !['ed25519', 'rsa-3072'].includes(metadata.algorithm)
+        || typeof metadata.public_key !== 'string' || typeof metadata.fingerprint !== 'string') {
+        return null;
+      }
+      const expectedPrefix = metadata.algorithm === 'ed25519' ? 'ssh-ed25519 ' : 'ssh-rsa ';
+      if (!metadata.public_key.startsWith(expectedPrefix) || !metadata.fingerprint.startsWith('SHA256:')) {
+        return null;
+      }
+      return metadata;
+    },
   },
 
   watch: {
+    'item.type': function itemType(type) {
+      if (type !== 'ssh') {
+        this.generateSSHKey = false;
+      }
+    },
+    generateSSHKey(enabled) {
+      if (enabled) {
+        this.clearGeneratedSSHKeyInput(false);
+      }
+    },
     'item.source_storage_id': {
       handler(storageId) {
         if (this.item?.source_storage_type !== 'vault' || storageId == null) {
@@ -369,11 +466,71 @@ export default {
       }
     },
 
+    afterReset() {
+      this.generateSSHKey = false;
+      this.generatedSSHKeyAlgorithm = 'ed25519';
+    },
+
     getNewItem() {
       return {
         ssh: {},
         login_password: {},
         source_storage_version: 0,
+      };
+    },
+
+    async save(data = {}) {
+      if (!this.generateSSHKey) {
+        return ItemFormBase.methods.save.call(this, data);
+      }
+      return this.saveGeneratedSSHKey();
+    },
+
+    async saveGeneratedSSHKey() {
+      this.formError = null;
+      if (!this.$refs.form.validate()) {
+        this.$emit('error', {});
+        return null;
+      }
+      this.formSaving = true;
+      try {
+        const response = (await axios({
+          method: 'post',
+          url: `/api/project/${this.projectId}/keys/generate`,
+          responseType: 'json',
+          data: this.generatedSSHKeyRequest(),
+        })).data;
+        this.clearGeneratedSSHKeyInput();
+        this.$emit('save', {
+          item: response.key,
+          response,
+          action: 'generated',
+        });
+        return response.key;
+      } catch (err) {
+        this.formError = getErrorMessage(err);
+        this.$emit('error', { message: this.formError });
+        return null;
+      } finally {
+        this.formSaving = false;
+      }
+    },
+
+    clearGeneratedSSHKeyInput(resetGeneration = true) {
+      if (resetGeneration) {
+        this.generateSSHKey = false;
+      }
+      if (this.item?.ssh) {
+        this.$set(this.item.ssh, 'private_key', '');
+        this.$set(this.item.ssh, 'passphrase', '');
+      }
+    },
+
+    generatedSSHKeyRequest() {
+      return {
+        name: this.item.name,
+        login: this.item.ssh.login || '',
+        algorithm: this.generatedSSHKeyAlgorithm,
       };
     },
 
@@ -387,3 +544,26 @@ export default {
   },
 };
 </script>
+<style scoped>
+.generated-ssh-key-metadata,
+.generated-ssh-key-metadata ::v-deep .v-alert__content {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.generated-ssh-key-fingerprint,
+.generated-ssh-key-fingerprint code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.generated-ssh-key-public {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+</style>
