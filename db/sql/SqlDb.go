@@ -99,6 +99,9 @@ func (d *SqlDbConnection) Connect() {
 	d.sql.AddTableWithName(db.NotificationRule{}, "notification_rule").SetKeys(true, "id")
 	d.sql.AddTableWithName(db.NotificationEvent{}, "notification_event").SetKeys(true, "id")
 	d.sql.AddTableWithName(db.NotificationIncidentBinding{}, "notification_incident_binding").SetKeys(true, "id")
+	d.sql.AddTableWithName(db.GlobalCredential{}, "global_credential").SetKeys(true, "id")
+	d.sql.AddTableWithName(db.GlobalCredentialVersion{}, "global_credential_version").SetKeys(true, "id")
+	d.sql.AddTableWithName(db.GlobalCredentialGrant{}, "global_credential_grant").SetKeys(true, "id")
 
 	if d.GetDialect() == util.DbDriverSQLite {
 		_, err = d.Exec("PRAGMA foreign_keys = ON")

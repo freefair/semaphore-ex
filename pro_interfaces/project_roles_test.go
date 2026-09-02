@@ -10,7 +10,7 @@ import (
 
 func TestProjectPermissionCatalogIsStableTypedAndIsolated(t *testing.T) {
 	catalog := ProjectPermissionCatalog()
-	require.Len(t, catalog, 10)
+	require.Len(t, catalog, 12)
 	assert.Equal(t, []PermissionID{
 		PermissionRunProjectTasks,
 		PermissionUpdateProject,
@@ -22,9 +22,12 @@ func TestProjectPermissionCatalogIsStableTypedAndIsolated(t *testing.T) {
 		PermissionStartWorkflow,
 		PermissionStopWorkflow,
 		PermissionAdministerWorkflow,
+		PermissionListGrantedCredentials,
+		PermissionConsumeGrantedCredentials,
 	}, []PermissionID{
 		catalog[0].ID, catalog[1].ID, catalog[2].ID, catalog[3].ID, catalog[4].ID,
 		catalog[5].ID, catalog[6].ID, catalog[7].ID, catalog[8].ID, catalog[9].ID,
+		catalog[10].ID, catalog[11].ID,
 	})
 
 	seenPermissions := make(map[db.ProjectUserPermission]struct{}, len(catalog))
@@ -50,6 +53,9 @@ func TestPermissionCatalogUsesExplicitGlobalAndTemplateScopes(t *testing.T) {
 		PermissionManageGlobalRoles,
 		PermissionManageGlobalSystem,
 		PermissionReadGlobalAudit,
+		PermissionManageGlobalCredentialsMetadata,
+		PermissionManageGlobalCredentialsRotate,
+		PermissionManageGlobalCredentialsGrant,
 	}, permissionIDs(GlobalPermissionCatalog()))
 	assert.Equal(t, []PermissionID{
 		PermissionReadTemplate,
@@ -137,7 +143,7 @@ func TestExplainEffectiveGlobalPermissionsReturnsOnlyDecidingRoles(t *testing.T)
 	})
 
 	assert.Equal(t, db.CanManageGlobalUsers|db.CanReadGlobalAudit, result.Permissions)
-	assert.Len(t, result.Decisions, 4)
+	assert.Len(t, result.Decisions, 7)
 	assert.Equal(t, "user_manager", result.Decisions[0].Provenance.RoleID)
 	assert.Empty(t, result.Decisions[1].Provenance.RoleID)
 	assert.Empty(t, result.Decisions[2].Provenance.RoleID)

@@ -72,6 +72,28 @@ type OIDCGroupMappingRepository interface {
 	GetOIDCGroupReconciliationHistory(providerID string, limit int) ([]OIDCGroupReconciliation, error)
 }
 
+// GlobalCredentialRepository persists global credential metadata, immutable
+// versions and project grants. It never resolves or returns plaintext.
+type GlobalCredentialRepository interface {
+	CreateGlobalCredential(GlobalCredential, GlobalCredentialVersion) (GlobalCredential, GlobalCredentialVersion, error)
+	GetGlobalCredential(int) (GlobalCredential, error)
+	GetGlobalCredentials(RetrieveQueryParams) ([]GlobalCredential, error)
+	GetGlobalCredentialVersion(int, int) (GlobalCredentialVersion, error)
+	GetGlobalCredentialVersions(int) ([]GlobalCredentialVersion, error)
+	UpdateGlobalCredentialMetadata(GlobalCredential, int, time.Time) (GlobalCredential, error)
+	SetGlobalCredentialEnabled(int, bool, int, time.Time) (GlobalCredential, error)
+	RotateGlobalCredential(int, int, GlobalCredentialVersion, time.Time) (GlobalCredential, GlobalCredentialVersion, error)
+	CreateGlobalCredentialGrant(GlobalCredentialGrant) (GlobalCredentialGrant, error)
+	GetGlobalCredentialGrant(int, int) (GlobalCredentialGrant, error)
+	GetGlobalCredentialGrants(int, RetrieveQueryParams) ([]GlobalCredentialGrant, error)
+	UpdateGlobalCredentialGrant(GlobalCredentialGrant, int, time.Time) (GlobalCredentialGrant, error)
+	SetGlobalCredentialGrantStatus(int, int, GlobalCredentialGrantStatus, int, *int, time.Time) (GlobalCredentialGrant, error)
+	DeleteGlobalCredentialGrant(int, int, int) error
+	GetEffectiveGlobalCredentialMetadata(int, time.Time, RetrieveQueryParams) ([]GlobalCredentialGrantedMetadata, error)
+	GetGlobalCredentialGrantProjects() ([]GlobalCredentialGrantProject, error)
+	DeleteGlobalCredential(int, int) error
+}
+
 // ProjectWorkflowRoleIdentityResolver resolves the single current project
 // role and assignment provenance for a workflow authorization decision. It
 // deliberately excludes global roles and legacy role-slug fallbacks.

@@ -60,7 +60,7 @@ func TestProjectRoleControllerCRUDCatalogIsolationAndStaleWrites(t *testing.T) {
 	assert.Equal(t, http.StatusOK, catalogResponse.Code)
 	var catalog []pro_interfaces.PermissionDefinition
 	require.NoError(t, json.Unmarshal(catalogResponse.Body.Bytes(), &catalog))
-	require.Len(t, catalog, 10)
+	require.Len(t, catalog, 12)
 	assert.Equal(t, pro_interfaces.PermissionViewWorkflow, catalog[5].ID)
 	assert.Equal(t, pro_interfaces.PermissionAdministerWorkflow, catalog[9].ID)
 
@@ -156,7 +156,7 @@ func TestGlobalRoleControllerCRUDCatalogAssignmentsAndProvenance(t *testing.T) {
 	assert.Equal(t, http.StatusOK, catalogResponse.Code)
 	var catalog []pro_interfaces.PermissionDefinition
 	require.NoError(t, json.Unmarshal(catalogResponse.Body.Bytes(), &catalog))
-	assert.Len(t, catalog, 4)
+	assert.Len(t, catalog, 7)
 	assert.Equal(t, pro_interfaces.PermissionScopeGlobal, catalog[0].Scope)
 
 	createResponse := serveGlobalRoleRequest(
@@ -234,7 +234,7 @@ func TestGlobalRoleControllerCRUDCatalogAssignmentsAndProvenance(t *testing.T) {
 	var effective pro_interfaces.EffectiveGlobalPermissions
 	require.NoError(t, json.Unmarshal(effectiveResponse.Body.Bytes(), &effective))
 	assert.True(t, effective.Permissions.Can(db.CanManageGlobalUsers))
-	assert.Len(t, effective.Decisions, 4)
+	assert.Len(t, effective.Decisions, 7)
 	assert.True(t, effective.Decisions[0].Allowed)
 	assert.Equal(t, string(created.ID), effective.Decisions[0].Provenance.RoleID)
 	assert.Empty(t, effective.Decisions[2].Provenance.RoleID)

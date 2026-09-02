@@ -27,17 +27,25 @@ const (
 	CanStartWorkflows
 	CanStopWorkflows
 	CanAdministerWorkflows
+	// CanListGrantedCredentials permits viewing safe metadata for global
+	// credentials explicitly granted to this project. It does not permit use.
+	CanListGrantedCredentials
+	// CanConsumeGrantedCredentials is reserved for Slice 061's runtime
+	// resolver and is intentionally not implied by list/reference access.
+	CanConsumeGrantedCredentials
 )
 
 var rolePermissions = map[ProjectUserRole]ProjectUserPermission{
 	ProjectOwner: CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
 		CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
-		CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows,
+		CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
+		CanListGrantedCredentials | CanConsumeGrantedCredentials,
 	ProjectManager: CanRunProjectTasks | CanManageProjectResources | CanViewProjectResources |
 		CanViewWorkflows | CanEditWorkflows | CanStartWorkflows | CanStopWorkflows |
-		CanAdministerWorkflows,
+		CanAdministerWorkflows | CanListGrantedCredentials | CanConsumeGrantedCredentials,
 	ProjectTaskRunner: CanRunProjectTasks | CanViewProjectResources |
-		CanViewWorkflows | CanStartWorkflows | CanStopWorkflows,
+		CanViewWorkflows | CanStartWorkflows | CanStopWorkflows |
+		CanListGrantedCredentials | CanConsumeGrantedCredentials,
 	ProjectGuest: CanViewProjectResources | CanViewWorkflows,
 }
 

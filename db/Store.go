@@ -637,6 +637,7 @@ type Store interface {
 	KubernetesTelemetryRepository
 	EventManager
 	SecretStorageRepository
+	GlobalCredentialRepository
 	SecretSyncRepository
 	RoleRepository
 	CapabilityRepository
