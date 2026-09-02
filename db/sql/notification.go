@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -470,6 +471,31 @@ func (d *SqlDb) MarkNotificationDeliverySucceeded(id int, leaseToken string, now
 	return d.updateNotificationDelivery(id, leaseToken, db.NotificationDeliverySucceeded, db.NotificationDeliveryReasonNone, now, now, true)
 }
 
+// MarkNotificationDeliverySucceededWithRecord records a lifecycle update's
+// exact provider identity with its terminal delivery state in one transition.
+func (d *SqlDb) MarkNotificationDeliverySucceededWithRecord(id int, leaseToken, recordID, recordURL string, now time.Time) error {
+	if id <= 0 || leaseToken == "" || !notificationRecordIDPattern.MatchString(recordID) || len(recordURL) == 0 || len(recordURL) > 1024 {
+		return db.ErrNotificationDeliveryNotClaimed
+	}
+	var origin string
+	if err := d.selectOne(&origin, "select b.provider_origin from notification_incident_binding b join notification_delivery d on d.destination_id=b.destination_id and d.incident_key=b.incident_key where d.id=?", id); err != nil || !validNotificationIncidentRecordURL(origin, recordID, recordURL) {
+		return db.ErrNotificationDeliveryNotClaimed
+	}
+	result, err := d.exec("update notification_delivery set provider_record_id=?, provider_record_url=?, status=?, attempts=attempts+1, next_attempt=?, lease_token='', lease_until=null, last_reason=?, updated=?, delivered_at=? where id=? and status=? and lease_token=?",
+		recordID, recordURL, db.NotificationDeliverySucceeded, now, db.NotificationDeliveryReasonNone, now, now, id, db.NotificationDeliveryRunning, leaseToken)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return db.ErrNotificationDeliveryNotClaimed
+	}
+	return nil
+}
+
 func (d *SqlDb) MarkNotificationDeliveryRetrying(id int, leaseToken string, reason db.NotificationDeliveryReason, nextAttempt, now time.Time) error {
 	return d.updateNotificationDelivery(id, leaseToken, db.NotificationDeliveryRetrying, reason, nextAttempt, now, false)
 }
@@ -629,6 +655,172 @@ func (d *SqlDb) GetNotificationDispatchContext(id int) (db.NotificationDelivery,
 		return db.NotificationDelivery{}, db.NotificationEvent{}, db.NotificationDestination{}, err
 	}
 	return delivery, event, destination, nil
+}
+
+// ReserveNotificationIncidentBinding creates the durable, lifecycle-wide
+// create fence before a provider can issue a non-idempotent POST. A competing
+// worker receives the existing row and therefore cannot create a second record.
+func (d *SqlDb) ReserveNotificationIncidentBinding(binding db.NotificationIncidentBinding, leaseUntil time.Time) (db.NotificationIncidentBinding, error) {
+	if binding.DestinationID <= 0 || len(binding.IncidentKey) != 64 || len(binding.CorrelationID) != 64 ||
+		binding.Provider == "" || binding.ProviderOrigin == "" || binding.ConfigurationRevision <= 0 || !leaseUntil.After(tz.Now()) {
+		return db.NotificationIncidentBinding{}, db.ErrInvalidOperation
+	}
+	if existing, err := d.GetNotificationIncidentBinding(binding.DestinationID, binding.IncidentKey); err == nil {
+		if existing.State == db.NotificationIncidentBindingReservedNoPost && existing.LeaseUntil != nil && !existing.LeaseUntil.After(tz.Now()) {
+			token, tokenErr := notificationLeaseToken()
+			if tokenErr != nil {
+				return db.NotificationIncidentBinding{}, tokenErr
+			}
+			result, updateErr := d.exec("update notification_incident_binding set owner_delivery_id=?, lease_token=?, lease_until=?, updated=? where id=? and state=? and lease_until<=?", binding.OwnerDeliveryID, token, leaseUntil, tz.Now(), existing.ID, db.NotificationIncidentBindingReservedNoPost, tz.Now())
+			if updateErr != nil {
+				return db.NotificationIncidentBinding{}, updateErr
+			}
+			if rows, rowsErr := result.RowsAffected(); rowsErr != nil {
+				return db.NotificationIncidentBinding{}, rowsErr
+			} else if rows == 1 {
+				return d.GetNotificationIncidentBinding(binding.DestinationID, binding.IncidentKey)
+			}
+		}
+		return existing, nil
+	} else if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, db.ErrNotFound) {
+		return db.NotificationIncidentBinding{}, err
+	}
+	token, err := notificationLeaseToken()
+	if err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	now := tz.Now()
+	binding.State = db.NotificationIncidentBindingReservedNoPost
+	binding.LeaseToken = token
+	binding.LeaseUntil = &leaseUntil
+	binding.LastReason = db.NotificationDeliveryReasonNone
+	binding.Created = now
+	binding.Updated = now
+	if err = d.Sql().Insert(&binding); err != nil {
+		// A unique-key collision is the expected concurrent path. Re-read the
+		// authoritative binding rather than deciding from a driver-specific error.
+		return d.GetNotificationIncidentBinding(binding.DestinationID, binding.IncidentKey)
+	}
+	return binding, nil
+}
+
+func (d *SqlDb) GetNotificationIncidentBinding(destinationID int, incidentKey string) (db.NotificationIncidentBinding, error) {
+	if destinationID <= 0 || len(incidentKey) != 64 {
+		return db.NotificationIncidentBinding{}, db.ErrNotFound
+	}
+	var binding db.NotificationIncidentBinding
+	err := d.selectOne(&binding, "select * from notification_incident_binding where destination_id=? and incident_key=?", destinationID, incidentKey)
+	return binding, err
+}
+
+// MarkNotificationIncidentPostStarted makes the ambiguity fence durable before
+// the HTTP client is permitted to dispatch the one create request.
+func (d *SqlDb) MarkNotificationIncidentPostStarted(id int, leaseToken string, now time.Time) (db.NotificationIncidentBinding, error) {
+	if id <= 0 || leaseToken == "" {
+		return db.NotificationIncidentBinding{}, db.ErrNotificationDeliveryNotClaimed
+	}
+	result, err := d.exec("update notification_incident_binding set state=?, updated=? where id=? and state=? and lease_token=?",
+		db.NotificationIncidentBindingPostStarted, now, id, db.NotificationIncidentBindingReservedNoPost, leaseToken)
+	if err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return db.NotificationIncidentBinding{}, db.ErrNotificationDeliveryNotClaimed
+	}
+	var binding db.NotificationIncidentBinding
+	if err = d.selectOne(&binding, "select * from notification_incident_binding where id=?", id); err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	return binding, nil
+}
+
+func (d *SqlDb) BindNotificationIncident(id int, leaseToken, recordID, recordURL string, now time.Time) (db.NotificationIncidentBinding, error) {
+	if id <= 0 || leaseToken == "" || !notificationRecordIDPattern.MatchString(recordID) || len(recordURL) == 0 || len(recordURL) > 1024 {
+		return db.NotificationIncidentBinding{}, db.ErrInvalidOperation
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var before db.NotificationIncidentBinding
+	if err = tx.SelectOne(&before, d.PrepareQuery("select * from notification_incident_binding where id=?"), id); err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	if !validNotificationIncidentRecordURL(before.ProviderOrigin, recordID, recordURL) {
+		return db.NotificationIncidentBinding{}, db.ErrInvalidOperation
+	}
+	result, err := d.execTx(tx, "update notification_incident_binding set state=?, provider_record_id=?, provider_record_url=?, lease_token='', lease_until=null, last_reason='', updated=? where id=? and state in (?, ?, ?) and lease_token=?",
+		db.NotificationIncidentBindingBound, recordID, recordURL, now, id, db.NotificationIncidentBindingReservedNoPost, db.NotificationIncidentBindingPostStarted, db.NotificationIncidentBindingAmbiguous, leaseToken)
+	if err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return db.NotificationIncidentBinding{}, db.ErrNotificationDeliveryNotClaimed
+	}
+	if _, err = d.execTx(tx, "update notification_delivery set provider_record_id=?, provider_record_url=?, updated=? where destination_id=? and incident_key=?", recordID, recordURL, now, before.DestinationID, before.IncidentKey); err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	var binding db.NotificationIncidentBinding
+	if err = d.selectOne(&binding, "select * from notification_incident_binding where id=?", id); err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	return binding, nil
+}
+
+// BindNotificationIncidentAndSucceed commits a successful create as one
+// atomic transition: binding identity, all lifecycle history metadata, and the
+// owner delivery's terminal success can never become externally inconsistent.
+func (d *SqlDb) BindNotificationIncidentAndSucceed(id int, leaseToken, recordID, recordURL string, deliveryID int, deliveryLeaseToken string, now time.Time) (db.NotificationIncidentBinding, error) {
+	if id <= 0 || leaseToken == "" || deliveryID <= 0 || deliveryLeaseToken == "" || !notificationRecordIDPattern.MatchString(recordID) || len(recordURL) == 0 || len(recordURL) > 1024 {
+		return db.NotificationIncidentBinding{}, db.ErrInvalidOperation
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var before db.NotificationIncidentBinding
+	if err = tx.SelectOne(&before, d.PrepareQuery("select * from notification_incident_binding where id=?"), id); err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	if !validNotificationIncidentRecordURL(before.ProviderOrigin, recordID, recordURL) {
+		return db.NotificationIncidentBinding{}, db.ErrInvalidOperation
+	}
+	result, err := d.execTx(tx, "update notification_incident_binding set state=?, provider_record_id=?, provider_record_url=?, lease_token='', lease_until=null, last_reason='', updated=? where id=? and state in (?, ?, ?) and lease_token=?",
+		db.NotificationIncidentBindingBound, recordID, recordURL, now, id, db.NotificationIncidentBindingReservedNoPost, db.NotificationIncidentBindingPostStarted, db.NotificationIncidentBindingAmbiguous, leaseToken)
+	if err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return db.NotificationIncidentBinding{}, db.ErrNotificationDeliveryNotClaimed
+	}
+	if _, err = d.execTx(tx, "update notification_delivery set provider_record_id=?, provider_record_url=?, updated=? where destination_id=? and incident_key=?", recordID, recordURL, now, before.DestinationID, before.IncidentKey); err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	result, err = d.execTx(tx, "update notification_delivery set status=?, attempts=attempts+1, next_attempt=?, lease_token='', lease_until=null, last_reason=?, updated=?, delivered_at=? where id=? and status=? and lease_token=?",
+		db.NotificationDeliverySucceeded, now, db.NotificationDeliveryReasonNone, now, now, deliveryID, db.NotificationDeliveryRunning, deliveryLeaseToken)
+	if err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	rows, err = result.RowsAffected()
+	if err != nil || rows != 1 {
+		return db.NotificationIncidentBinding{}, db.ErrNotificationDeliveryNotClaimed
+	}
+	if err = tx.Commit(); err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	var binding db.NotificationIncidentBinding
+	if err = d.selectOne(&binding, "select * from notification_incident_binding where id=?", id); err != nil {
+		return db.NotificationIncidentBinding{}, err
+	}
+	return binding, nil
 }
 
 func (d *SqlDb) updateNotificationDelivery(id int, leaseToken string, status db.NotificationDeliveryStatus, reason db.NotificationDeliveryReason, nextAttempt, now time.Time, delivered bool) error {
@@ -804,6 +996,21 @@ func notificationLeaseToken() (string, error) {
 	return hex.EncodeToString(random), nil
 }
 
+// validNotificationIncidentRecordURL accepts only the fixed record URL the
+// dispatcher derives from the durable binding origin; callers cannot persist a
+// provider-controlled redirect or arbitrary history link.
+func validNotificationIncidentRecordURL(origin, recordID, recordURL string) bool {
+	if !notificationRecordIDPattern.MatchString(recordID) || len(recordURL) == 0 || len(recordURL) > 1024 {
+		return false
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") || parsed.Hostname() == "" || parsed.Port() != "" {
+		return false
+	}
+	expected := "https://" + strings.ToLower(strings.TrimSuffix(parsed.Hostname(), ".")) + "/incident.do?sys_id=" + url.QueryEscape(recordID)
+	return recordURL == expected
+}
+
 func validNotificationDeliveryReason(reason db.NotificationDeliveryReason) bool {
 	switch reason {
 	case db.NotificationDeliveryReasonNone, db.NotificationDeliveryReasonConfiguration, db.NotificationDeliveryReasonRateLimited,
@@ -811,7 +1018,7 @@ func validNotificationDeliveryReason(reason db.NotificationDeliveryReason) bool 
 		db.NotificationDeliveryReasonDestinationPaused, db.NotificationDeliveryReasonDestinationMissing,
 		db.NotificationDeliveryReasonDestinationDisabled, db.NotificationDeliveryReasonDestinationChanged,
 		db.NotificationDeliveryReasonCredentialUnavailable, db.NotificationDeliveryReasonProviderUnavailable,
-		db.NotificationDeliveryReasonPermanent, db.NotificationDeliveryReasonProviderPending:
+		db.NotificationDeliveryReasonPermanent, db.NotificationDeliveryReasonProviderPending, db.NotificationDeliveryReasonProviderAmbiguous:
 		return true
 	default:
 		return false
@@ -825,6 +1032,7 @@ func isUniqueConstraintError(err error) bool {
 var (
 	notificationEventIDPattern     = regexp.MustCompile(`^[a-f0-9]{32}$`)
 	notificationIncidentKeyPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	notificationRecordIDPattern    = regexp.MustCompile(`^[a-f0-9]{32}$`)
 	notificationSourceIDPattern    = regexp.MustCompile(`^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.:-]{0,127}$`)
 	notificationProviderPattern    = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 	notificationDetailPattern      = regexp.MustCompile(`^[a-z0-9][a-z0-9_.:-]{0,63}$`)

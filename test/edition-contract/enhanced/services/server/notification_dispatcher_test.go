@@ -23,6 +23,23 @@ type dispatchAdapter struct {
 	mu          sync.Mutex
 }
 
+type lifecycleDispatchAdapter struct {
+	dispatchAdapter
+	reconciliations []pro_interfaces.NotificationLifecycleReconciliation
+}
+
+func (a *lifecycleDispatchAdapter) ReconcileLifecycle(_ context.Context, request pro_interfaces.NotificationDispatchRequest) pro_interfaces.NotificationLifecycleReconciliation {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.requests = append(a.requests, request)
+	if len(a.reconciliations) == 0 {
+		return pro_interfaces.NotificationLifecycleReconciliation{Result: pro_interfaces.NotificationDispatchResult{Outcome: pro_interfaces.NotificationDispatchSucceeded}}
+	}
+	result := a.reconciliations[0]
+	a.reconciliations = a.reconciliations[1:]
+	return result
+}
+
 func (a *dispatchAdapter) ProviderName() string { return a.provider }
 
 func (a *dispatchAdapter) Dispatch(ctx context.Context, request pro_interfaces.NotificationDispatchRequest) pro_interfaces.NotificationDispatchResult {
@@ -50,11 +67,12 @@ func (a *dispatchAdapter) Dispatch(ctx context.Context, request pro_interfaces.N
 	return result
 }
 
-func TestNewNotificationDispatcherRegistersFixedPagerDutyAndOpsgenieAdapters(t *testing.T) {
+func TestNewNotificationDispatcherRegistersFixedProviderAdapters(t *testing.T) {
 	dispatcher := NewNotificationDispatcher(nil).(*notificationDeliveryDispatcher)
-	require.Len(t, dispatcher.adapters, 2)
+	require.Len(t, dispatcher.adapters, 3)
 	assert.NotNil(t, dispatcher.adapters[pagerDutyProviderName])
 	assert.NotNil(t, dispatcher.adapters[opsgenieProviderName])
+	assert.NotNil(t, dispatcher.adapters[serviceNowProviderName])
 }
 
 func TestNotificationDispatcherRetriesWithoutChangingEventIdentity(t *testing.T) {
@@ -315,6 +333,113 @@ func TestNotificationDispatcherExhaustsBoundedTransientAttempts(t *testing.T) {
 	assert.Equal(t, 0, retried.Attempts)
 	assert.Equal(t, delivery.EventID, retried.EventID)
 	assert.Equal(t, delivery.IncidentKey, retried.IncidentKey)
+}
+
+func TestServiceNowDispatcherUsesInjectedLifecycleAdapterAndBindsAtomicHistory(t *testing.T) {
+	store := storeSql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	cipher := &testCipher{enabled: true}
+	service := NewGovernanceService(store, cipher).(*governanceService)
+	service.now = func() time.Time { return time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC) }
+	credential := "service-now-secret"
+	destination, err := service.CreateDestination(context.Background(), nil, pro_interfaces.NotificationDestinationInput{Name: "ServiceNow", Provider: serviceNowProviderName, Credential: &credential, Enabled: true, ServiceNow: serviceNowTestConfiguration(pro_interfaces.NotificationServiceNowAuthBasic)})
+	require.NoError(t, err)
+	delivery, err := service.EnqueueTestDelivery(context.Background(), nil, destination.ID)
+	require.NoError(t, err)
+	now := notificationDispatchTestNow(delivery)
+	adapter := &lifecycleDispatchAdapter{dispatchAdapter: dispatchAdapter{provider: serviceNowProviderName, results: []pro_interfaces.NotificationDispatchResult{{Outcome: pro_interfaces.NotificationDispatchSucceeded, RecordID: serviceNowTestRecordID}}}}
+	dispatcher := newNotificationDeliveryDispatcher(store, cipher, func() time.Time { return now }, func() float64 { return .5 }, adapter)
+	require.NoError(t, dispatcher.DispatchOnce(context.Background()))
+	persisted, err := store.GetNotificationDelivery(nil, delivery.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.NotificationDeliverySucceeded, persisted.Status)
+	assert.Equal(t, serviceNowTestRecordID, persisted.ProviderRecordID)
+	assert.Contains(t, persisted.ProviderRecordURL, serviceNowTestRecordID)
+	binding, err := store.GetNotificationIncidentBinding(destination.ID, persisted.IncidentKey)
+	require.NoError(t, err)
+	assert.Equal(t, db.NotificationIncidentBindingBound, binding.State)
+	assert.Equal(t, serviceNowTestRecordID, binding.ProviderRecordID)
+	storedDestination, err := store.GetNotificationDestination(nil, destination.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storedDestination.ConfigurationRevision, adapter.requests[0].DestinationConfigurationRevision)
+}
+
+func TestServiceNowPostStartedRecoveryNeverPostsAgain(t *testing.T) {
+	store := storeSql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	cipher := &testCipher{enabled: true}
+	service := NewGovernanceService(store, cipher).(*governanceService)
+	service.now = func() time.Time { return time.Date(2026, time.September, 1, 13, 0, 0, 0, time.UTC) }
+	credential := "service-now-secret"
+	destination, err := service.CreateDestination(context.Background(), nil, pro_interfaces.NotificationDestinationInput{Name: "ServiceNow", Provider: serviceNowProviderName, Credential: &credential, Enabled: true, ServiceNow: serviceNowTestConfiguration(pro_interfaces.NotificationServiceNowAuthBasic)})
+	require.NoError(t, err)
+	delivery, err := service.EnqueueTestDelivery(context.Background(), nil, destination.ID)
+	require.NoError(t, err)
+	firstNow := notificationDispatchTestNow(delivery)
+	firstAdapter := &lifecycleDispatchAdapter{dispatchAdapter: dispatchAdapter{provider: serviceNowProviderName, results: []pro_interfaces.NotificationDispatchResult{{Outcome: pro_interfaces.NotificationDispatchTransient}}}}
+	first := newNotificationDeliveryDispatcher(store, cipher, func() time.Time { return firstNow }, func() float64 { return .5 }, firstAdapter)
+	require.NoError(t, first.DispatchOnce(context.Background()))
+	afterFirst, err := store.GetNotificationDelivery(nil, delivery.ID)
+	require.NoError(t, err)
+	require.Equal(t, db.NotificationDeliveryReasonTransport, afterFirst.LastReason)
+	binding, err := store.GetNotificationIncidentBinding(destination.ID, afterFirst.IncidentKey)
+	require.NoError(t, err)
+	require.Equal(t, db.NotificationIncidentBindingPostStarted, binding.State)
+
+	restartAdapter := &lifecycleDispatchAdapter{dispatchAdapter: dispatchAdapter{provider: serviceNowProviderName}}
+	restarted := newNotificationDeliveryDispatcher(store, cipher, func() time.Time { return afterFirst.NextAttempt.Add(time.Second) }, func() float64 { return .5 }, restartAdapter)
+	require.NoError(t, restarted.DispatchOnce(context.Background()))
+	afterRestart, err := store.GetNotificationDelivery(nil, delivery.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.NotificationDeliveryReasonProviderAmbiguous, afterRestart.LastReason)
+	assert.Empty(t, restartAdapter.results, "recovery must reconcile, never issue a second POST")
+	assert.Len(t, restartAdapter.requests, 1, "only the reconciliation boundary was invoked")
+}
+
+func TestServiceNowUpdateBeforeTriggerConvergesWithoutCreating(t *testing.T) {
+	store := storeSql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	cipher := &testCipher{enabled: true}
+	service := NewGovernanceService(store, cipher).(*governanceService)
+	now := time.Now().UTC().Add(time.Second)
+	service.now = func() time.Time { return now }
+	credential := "service-now-secret"
+	destination, err := service.CreateDestination(context.Background(), nil, pro_interfaces.NotificationDestinationInput{Name: "ServiceNow", Provider: serviceNowProviderName, Credential: &credential, Enabled: true, ServiceNow: serviceNowTestConfiguration(pro_interfaces.NotificationServiceNowAuthBasic)})
+	require.NoError(t, err)
+	storedDestination, err := store.GetNotificationDestination(nil, destination.ID)
+	require.NoError(t, err)
+	deliveryFor := func() db.NotificationDelivery {
+		return db.NotificationDelivery{DestinationID: storedDestination.ID, DestinationRevision: storedDestination.Revision, DestinationConfigurationRevision: storedDestination.ConfigurationRevision, DestinationName: storedDestination.Name, DestinationProvider: storedDestination.Provider, DestinationEnvironment: storedDestination.Environment}
+	}
+	update, err := (pro_interfaces.NotificationEvent{SourceRevision: 1, Scope: pro_interfaces.NotificationScopeGlobal, Source: pro_interfaces.NotificationSource{Kind: pro_interfaces.NotificationSourceSystem, ID: "system:update-before-trigger"}, LifecycleID: "system:shared", Severity: pro_interfaces.NotificationSeverityError, LifecycleAction: pro_interfaces.NotificationLifecycleUpdate}).EnsureIdentity(now)
+	require.NoError(t, err)
+	_, err = store.CreateNotificationEventWithRouting(notificationEvent(update, db.NotificationRoutingRouted), []db.NotificationDelivery{deliveryFor()})
+	require.NoError(t, err)
+	adapter := &lifecycleDispatchAdapter{dispatchAdapter: dispatchAdapter{provider: serviceNowProviderName, results: []pro_interfaces.NotificationDispatchResult{{Outcome: pro_interfaces.NotificationDispatchSucceeded, RecordID: serviceNowTestRecordID}, {Outcome: pro_interfaces.NotificationDispatchSucceeded}}}}
+	worker := newNotificationDeliveryDispatcher(store, cipher, func() time.Time { return now.Add(time.Second) }, func() float64 { return .5 }, adapter)
+	require.NoError(t, worker.DispatchOnce(context.Background()))
+	updates, err := store.GetNotificationDeliveries(nil, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, updates, 1)
+	assert.Equal(t, db.NotificationDeliveryRetrying, updates[0].Status)
+	assert.Equal(t, db.NotificationDeliveryReasonProviderAmbiguous, updates[0].LastReason)
+	assert.Empty(t, adapter.requests, "an update never creates or reconciles before a trigger owns the lifecycle")
+
+	trigger, err := (pro_interfaces.NotificationEvent{SourceRevision: 1, Scope: pro_interfaces.NotificationScopeGlobal, Source: pro_interfaces.NotificationSource{Kind: pro_interfaces.NotificationSourceSystem, ID: "system:trigger-after-update"}, LifecycleID: "system:shared", Severity: pro_interfaces.NotificationSeverityError, LifecycleAction: pro_interfaces.NotificationLifecycleTrigger}).EnsureIdentity(now.Add(2 * time.Second))
+	require.NoError(t, err)
+	_, err = store.CreateNotificationEventWithRouting(notificationEvent(trigger, db.NotificationRoutingRouted), []db.NotificationDelivery{deliveryFor()})
+	require.NoError(t, err)
+	worker.now = func() time.Time { return now.Add(3 * time.Second) }
+	require.NoError(t, worker.DispatchOnce(context.Background()))
+	worker.now = func() time.Time { return now.Add(time.Minute) }
+	require.NoError(t, worker.DispatchOnce(context.Background()))
+	history, err := store.GetNotificationDeliveries(nil, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, history, 2)
+	for _, delivery := range history {
+		assert.Equal(t, db.NotificationDeliverySucceeded, delivery.Status)
+		assert.Equal(t, serviceNowTestRecordID, delivery.ProviderRecordID)
+	}
 }
 
 func TestNotificationDispatcherPersistsPendingRequestAcrossRestartAndManualRetryClearsIt(t *testing.T) {

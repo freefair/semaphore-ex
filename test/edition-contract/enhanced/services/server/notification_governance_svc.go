@@ -35,6 +35,7 @@ type governanceService struct {
 var providerPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 
 const pagerDutyProviderName = "pagerduty"
+const serviceNowProviderName = "servicenow"
 
 // NewGovernanceService creates the provider-neutral notification use-case
 // boundary. The production path encrypts credentials through util.Config;
@@ -484,7 +485,15 @@ func validateDestinationInput(projectID *int, input pro_interfaces.NotificationD
 			return pro_interfaces.ErrNotificationInvalidInput
 		}
 	}
-	if input.Provider != pagerDutyProviderName && input.Provider != opsgenieProviderName && (input.Region != "" || input.Opsgenie != nil) {
+	if input.Provider == serviceNowProviderName {
+		if input.Region != "" || input.Opsgenie != nil || !validServiceNowConfiguration(input.ServiceNow) || input.Credential != nil && !validServiceNowCredential(input.ServiceNow, *input.Credential) {
+			return pro_interfaces.ErrNotificationInvalidInput
+		}
+	}
+	if input.Provider != pagerDutyProviderName && input.Provider != opsgenieProviderName && input.Provider != serviceNowProviderName && (input.Region != "" || input.Opsgenie != nil || input.ServiceNow != nil) {
+		return pro_interfaces.ErrNotificationInvalidInput
+	}
+	if input.Provider != serviceNowProviderName && input.ServiceNow != nil {
 		return pro_interfaces.ErrNotificationInvalidInput
 	}
 	return nil
@@ -543,6 +552,16 @@ func validOpsgenieConfiguration(configuration *pro_interfaces.NotificationOpsgen
 }
 
 func canonicalProviderConfig(input pro_interfaces.NotificationDestinationInput) (string, error) {
+	if input.Provider == serviceNowProviderName {
+		if !validServiceNowConfiguration(input.ServiceNow) {
+			return "", pro_interfaces.ErrNotificationInvalidInput
+		}
+		encoded, err := json.Marshal(input.ServiceNow)
+		if err != nil || len(encoded) > 16*1024 {
+			return "", pro_interfaces.ErrNotificationInvalidInput
+		}
+		return string(encoded), nil
+	}
 	if input.Provider != opsgenieProviderName {
 		return "", nil
 	}
@@ -559,6 +578,60 @@ func canonicalProviderConfig(input pro_interfaces.NotificationDestinationInput) 
 	return string(encoded), nil
 }
 
+func validServiceNowCredential(configuration *pro_interfaces.NotificationServiceNowConfiguration, credential string) bool {
+	if configuration == nil || len(credential) == 0 || len(credential) > 1024 || strings.TrimSpace(credential) != credential {
+		return false
+	}
+	return configuration.AuthMode == pro_interfaces.NotificationServiceNowAuthOAuthClientCredentials || configuration.AuthMode == pro_interfaces.NotificationServiceNowAuthBasic
+}
+
+func validServiceNowConfiguration(configuration *pro_interfaces.NotificationServiceNowConfiguration) bool {
+	if configuration == nil || !validServiceNowOrigin(configuration.InstanceOrigin) || len(configuration.Scope) > 256 || strings.TrimSpace(configuration.Scope) != configuration.Scope || len(configuration.FieldMappings) == 0 || len(configuration.FieldMappings) > 4 {
+		return false
+	}
+	if configuration.AuthMode == pro_interfaces.NotificationServiceNowAuthOAuthClientCredentials {
+		if configuration.ClientID == "" || len(configuration.ClientID) > 255 || configuration.BasicUsername != "" {
+			return false
+		}
+	} else if configuration.AuthMode == pro_interfaces.NotificationServiceNowAuthBasic {
+		if configuration.BasicUsername == "" || len(configuration.BasicUsername) > 255 || configuration.ClientID != "" {
+			return false
+		}
+	} else {
+		return false
+	}
+	seenTargets := make(map[pro_interfaces.NotificationServiceNowIncidentField]struct{}, len(configuration.FieldMappings))
+	for _, mapping := range configuration.FieldMappings {
+		if _, duplicate := seenTargets[mapping.IncidentField]; duplicate || !validServiceNowMapping(mapping) {
+			return false
+		}
+		seenTargets[mapping.IncidentField] = struct{}{}
+	}
+	_, hasShortDescription := seenTargets[pro_interfaces.NotificationServiceNowIncidentShortDescription]
+	return hasShortDescription
+}
+
+func validServiceNowMapping(mapping pro_interfaces.NotificationServiceNowFieldMapping) bool {
+	if !validServiceNowTarget(mapping.IncidentField) || !validServiceNowSource(mapping.SourceField) {
+		return false
+	}
+	if mapping.IncidentField == pro_interfaces.NotificationServiceNowIncidentImpact || mapping.IncidentField == pro_interfaces.NotificationServiceNowIncidentUrgency {
+		return mapping.SourceField == pro_interfaces.NotificationServiceNowSourceSeverity
+	}
+	if mapping.IncidentField == pro_interfaces.NotificationServiceNowIncidentShortDescription {
+		return mapping.SourceField == pro_interfaces.NotificationServiceNowSourceSummary
+	}
+	return mapping.SourceField != pro_interfaces.NotificationServiceNowSourceSeverity
+}
+
+func validServiceNowTarget(value pro_interfaces.NotificationServiceNowIncidentField) bool {
+	return value == pro_interfaces.NotificationServiceNowIncidentShortDescription || value == pro_interfaces.NotificationServiceNowIncidentDescription || value == pro_interfaces.NotificationServiceNowIncidentImpact || value == pro_interfaces.NotificationServiceNowIncidentUrgency
+}
+
+func validServiceNowSource(value pro_interfaces.NotificationServiceNowSourceField) bool {
+	return value == pro_interfaces.NotificationServiceNowSourceSummary || value == pro_interfaces.NotificationServiceNowSourceSeverity || value == pro_interfaces.NotificationServiceNowSourceLifecycleAction || value == pro_interfaces.NotificationServiceNowSourceStatus
+}
+
 func opsgenieConfiguration(value string) (*pro_interfaces.NotificationOpsgenieConfiguration, bool) {
 	if value == "" {
 		return nil, true
@@ -567,6 +640,19 @@ func opsgenieConfiguration(value string) (*pro_interfaces.NotificationOpsgenieCo
 	decoder := json.NewDecoder(strings.NewReader(value))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&configuration) != nil || decoder.Decode(&struct{}{}) != io.EOF || !validOpsgenieConfiguration(&configuration) {
+		return nil, false
+	}
+	return &configuration, true
+}
+
+func serviceNowConfiguration(value string) (*pro_interfaces.NotificationServiceNowConfiguration, bool) {
+	if value == "" {
+		return nil, false
+	}
+	var configuration pro_interfaces.NotificationServiceNowConfiguration
+	decoder := json.NewDecoder(strings.NewReader(value))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&configuration) != nil || decoder.Decode(&struct{}{}) != io.EOF || !validServiceNowConfiguration(&configuration) {
 		return nil, false
 	}
 	return &configuration, true
@@ -662,9 +748,10 @@ func notificationActionsFromString(value string) []pro_interfaces.NotificationLi
 
 func destinationDTO(destination db.NotificationDestination) pro_interfaces.NotificationDestinationDTO {
 	configuration, _ := opsgenieConfiguration(destination.ProviderConfig)
+	serviceNow, _ := serviceNowConfiguration(destination.ProviderConfig)
 	return pro_interfaces.NotificationDestinationDTO{
 		ID: destination.ID, ProjectID: destination.ProjectID, Name: destination.Name, Provider: destination.Provider, Environment: destination.Environment, Region: pro_interfaces.NotificationProviderRegion(destination.Region),
-		CredentialConfigured: destination.CredentialConfigured, Opsgenie: configuration, Enabled: destination.Enabled, Paused: destination.Paused, Revision: destination.Revision,
+		CredentialConfigured: destination.CredentialConfigured, Opsgenie: configuration, ServiceNow: serviceNow, Enabled: destination.Enabled, Paused: destination.Paused, Revision: destination.Revision,
 		CreatedAt: destination.Created, UpdatedAt: destination.Updated,
 	}
 }
@@ -681,7 +768,7 @@ func deliveryDTO(delivery db.NotificationDelivery) pro_interfaces.NotificationDe
 	return pro_interfaces.NotificationDeliveryDTO{
 		ID: delivery.ID, EventID: delivery.EventID, DestinationID: delivery.DestinationID, DestinationRevision: delivery.DestinationRevision,
 		DestinationName: delivery.DestinationName, DestinationProvider: delivery.DestinationProvider, DestinationEnvironment: delivery.DestinationEnvironment, DestinationRegion: pro_interfaces.NotificationProviderRegion(delivery.DestinationRegion),
-		IncidentKey: delivery.IncidentKey, IdempotencyKey: delivery.IdempotencyKey, ProviderRequestID: delivery.ProviderRequestID, Status: delivery.Status, Attempts: delivery.Attempts,
+		IncidentKey: delivery.IncidentKey, IdempotencyKey: delivery.IdempotencyKey, ProviderRequestID: delivery.ProviderRequestID, ProviderRecordID: delivery.ProviderRecordID, ProviderRecordURL: delivery.ProviderRecordURL, Status: delivery.Status, Attempts: delivery.Attempts,
 		NextAttempt: delivery.NextAttempt, LastReason: delivery.LastReason, CreatedAt: delivery.Created, UpdatedAt: delivery.Updated, DeliveredAt: delivery.DeliveredAt,
 		SourceKind: pro_interfaces.NotificationSourceKind(delivery.SourceKind), SourceID: delivery.SourceID,
 		LifecycleAction: pro_interfaces.NotificationLifecycleAction(delivery.LifecycleAction), Severity: pro_interfaces.NotificationSeverity(delivery.Severity), OccurredAt: delivery.OccurredAt,

@@ -45,6 +45,7 @@ const (
 	NotificationDeliveryReasonProviderUnavailable   NotificationDeliveryReason = "provider_unavailable"
 	NotificationDeliveryReasonPermanent             NotificationDeliveryReason = "permanent_failure"
 	NotificationDeliveryReasonProviderPending       NotificationDeliveryReason = "provider_pending"
+	NotificationDeliveryReasonProviderAmbiguous     NotificationDeliveryReason = "provider_ambiguous"
 )
 
 // NotificationDestination stores only opaque provider selection and encrypted
@@ -116,6 +117,8 @@ type NotificationDelivery struct {
 	IncidentKey                      string                     `db:"incident_key" json:"incident_key"`
 	IdempotencyKey                   string                     `db:"idempotency_key" json:"idempotency_key"`
 	ProviderRequestID                string                     `db:"provider_request_id" json:"provider_request_id,omitempty"`
+	ProviderRecordID                 string                     `db:"provider_record_id" json:"provider_record_id,omitempty"`
+	ProviderRecordURL                string                     `db:"provider_record_url" json:"provider_record_url,omitempty"`
 	Status                           NotificationDeliveryStatus `db:"status" json:"status"`
 	Attempts                         int                        `db:"attempts" json:"attempts"`
 	NextAttempt                      time.Time                  `db:"next_attempt" json:"next_attempt"`
@@ -130,6 +133,36 @@ type NotificationDelivery struct {
 	LifecycleAction                  string                     `db:"lifecycle_action" json:"lifecycle_action"`
 	Severity                         string                     `db:"severity" json:"severity"`
 	OccurredAt                       time.Time                  `db:"occurred_at" json:"occurred_at"`
+}
+
+type NotificationIncidentBindingState string
+
+const (
+	NotificationIncidentBindingReservedNoPost NotificationIncidentBindingState = "reserved_no_post"
+	NotificationIncidentBindingPostStarted    NotificationIncidentBindingState = "post_started"
+	NotificationIncidentBindingBound          NotificationIncidentBindingState = "bound"
+	NotificationIncidentBindingAmbiguous      NotificationIncidentBindingState = "ambiguous"
+)
+
+// NotificationIncidentBinding joins all notification events in one logical
+// lifecycle to a provider record. It owns the create fence, not one outbox row.
+type NotificationIncidentBinding struct {
+	ID                    int                              `db:"id" json:"id"`
+	DestinationID         int                              `db:"destination_id" json:"destination_id"`
+	IncidentKey           string                           `db:"incident_key" json:"incident_key"`
+	Provider              string                           `db:"provider" json:"provider"`
+	ProviderOrigin        string                           `db:"provider_origin" json:"provider_origin"`
+	ConfigurationRevision int                              `db:"configuration_revision" json:"configuration_revision"`
+	CorrelationID         string                           `db:"correlation_id" json:"correlation_id"`
+	State                 NotificationIncidentBindingState `db:"state" json:"state"`
+	ProviderRecordID      string                           `db:"provider_record_id" json:"provider_record_id,omitempty"`
+	ProviderRecordURL     string                           `db:"provider_record_url" json:"provider_record_url,omitempty"`
+	OwnerDeliveryID       int                              `db:"owner_delivery_id" json:"owner_delivery_id"`
+	LeaseToken            string                           `db:"lease_token" json:"-"`
+	LeaseUntil            *time.Time                       `db:"lease_until" json:"-"`
+	LastReason            NotificationDeliveryReason       `db:"last_reason" json:"last_reason,omitempty"`
+	Created               time.Time                        `db:"created" json:"created"`
+	Updated               time.Time                        `db:"updated" json:"updated"`
 }
 
 // NotificationEventHistory is the intentionally narrow persisted projection
@@ -163,6 +196,7 @@ type NotificationRepository interface {
 	CreateNotificationEventWithRouting(NotificationEvent, []NotificationDelivery) (NotificationEvent, error)
 	ClaimNotificationDeliveries(time.Time, time.Time, int) ([]NotificationDelivery, error)
 	MarkNotificationDeliverySucceeded(int, string, time.Time) error
+	MarkNotificationDeliverySucceededWithRecord(int, string, string, string, time.Time) error
 	MarkNotificationDeliveryRetrying(int, string, NotificationDeliveryReason, time.Time, time.Time) error
 	MarkNotificationDeliveryFailed(int, string, NotificationDeliveryReason, time.Time) error
 	ReleaseNotificationDelivery(int, string, NotificationDeliveryReason, time.Time, time.Time) error
@@ -173,4 +207,9 @@ type NotificationRepository interface {
 	GetNotificationDeliveries(*int, RetrieveQueryParams) ([]NotificationDelivery, error)
 	GetNotificationEventHistory(*int, RetrieveQueryParams) ([]NotificationEventHistory, error)
 	GetNotificationDispatchContext(int) (NotificationDelivery, NotificationEvent, NotificationDestination, error)
+	ReserveNotificationIncidentBinding(NotificationIncidentBinding, time.Time) (NotificationIncidentBinding, error)
+	MarkNotificationIncidentPostStarted(int, string, time.Time) (NotificationIncidentBinding, error)
+	BindNotificationIncident(int, string, string, string, time.Time) (NotificationIncidentBinding, error)
+	BindNotificationIncidentAndSucceed(int, string, string, string, int, string, time.Time) (NotificationIncidentBinding, error)
+	GetNotificationIncidentBinding(int, string) (NotificationIncidentBinding, error)
 }

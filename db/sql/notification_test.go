@@ -91,6 +91,15 @@ func TestOpsgenieAsyncStateMigrationIsPortableAndReversible(t *testing.T) {
 	assert.Contains(t, rollback, "drop column provider_config")
 }
 
+func TestServiceNowBindingMigrationIsPortableAndReversible(t *testing.T) {
+	migration := strings.Join(getVersionSQL("mysql", "v2.20.55.sql", false), ";")
+	rollback := strings.Join(getVersionSQL("mysql", "v2.20.55.err.sql", true), ";")
+	assert.Contains(t, migration, "create table notification_incident_binding")
+	assert.Contains(t, migration, "unique (`destination_id`, `incident_key`)")
+	assert.Contains(t, migration, "provider_record_id varchar(32)")
+	assert.Contains(t, rollback, "drop table notification_incident_binding")
+}
+
 func TestNotificationMigrationKeepsLOBAndRollbackPortable(t *testing.T) {
 	migration := strings.Join(getVersionSQL("mysql", "v2.20.51.sql", false), ";")
 	rollback := strings.Join(getVersionSQL("mysql", "v2.20.51.err.sql", true), ";")
@@ -129,6 +138,71 @@ func TestNotificationDestinationIsScopedRevisionedAndCredentialWriteOnly(t *test
 	assert.Equal(t, 2, updated.ConfigurationRevision)
 	_, err = store.UpdateNotificationDestination(updated, 1)
 	assert.ErrorIs(t, err, db.ErrNotificationDestinationRevisionConflict)
+}
+
+func TestNotificationIncidentBindingFencesConcurrentLifecycleCreate(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	destination, err := store.CreateNotificationDestination(db.NotificationDestination{Name: "ServiceNow", Provider: "servicenow", Enabled: true})
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	input := db.NotificationIncidentBinding{DestinationID: destination.ID, IncidentKey: strings.Repeat("a", 64), CorrelationID: strings.Repeat("a", 64), Provider: "servicenow", ProviderOrigin: "https://tenant.service-now.com", ConfigurationRevision: destination.ConfigurationRevision, OwnerDeliveryID: 1}
+	first, err := store.ReserveNotificationIncidentBinding(input, now.Add(time.Minute))
+	require.NoError(t, err)
+	second, err := store.ReserveNotificationIncidentBinding(input, now.Add(time.Minute))
+	require.NoError(t, err)
+	assert.Equal(t, first.ID, second.ID)
+	assert.Equal(t, db.NotificationIncidentBindingReservedNoPost, first.State)
+	started, err := store.MarkNotificationIncidentPostStarted(first.ID, first.LeaseToken, now)
+	require.NoError(t, err)
+	assert.Equal(t, db.NotificationIncidentBindingPostStarted, started.State)
+	bound, err := store.BindNotificationIncident(first.ID, first.LeaseToken, "0123456789abcdef0123456789abcdef", "https://tenant.service-now.com/incident.do?sys_id=0123456789abcdef0123456789abcdef", now)
+	require.NoError(t, err)
+	assert.Equal(t, db.NotificationIncidentBindingBound, bound.State)
+	assert.Equal(t, "0123456789abcdef0123456789abcdef", bound.ProviderRecordID)
+}
+
+func TestNotificationIncidentBindingCommitsOwnerHistoryAtomically(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	destination, err := store.CreateNotificationDestination(db.NotificationDestination{Name: "ServiceNow", Provider: "servicenow", Enabled: true})
+	require.NoError(t, err)
+	event := notificationTestEvent(nil, strings.Repeat("b", 32), "system", "system:atomic", "error", "trigger", db.NotificationRoutingRouted)
+	_, err = store.CreateNotificationEventWithRouting(event, []db.NotificationDelivery{{DestinationID: destination.ID, DestinationRevision: destination.Revision, DestinationConfigurationRevision: destination.ConfigurationRevision, DestinationName: destination.Name, DestinationProvider: destination.Provider}})
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	claimed, err := store.ClaimNotificationDeliveries(now.Add(time.Second), now.Add(time.Minute), 1)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	binding, err := store.ReserveNotificationIncidentBinding(db.NotificationIncidentBinding{DestinationID: destination.ID, IncidentKey: claimed[0].IncidentKey, CorrelationID: claimed[0].IncidentKey, Provider: "servicenow", ProviderOrigin: "https://tenant.service-now.com", ConfigurationRevision: destination.ConfigurationRevision, OwnerDeliveryID: claimed[0].ID}, now.Add(time.Minute))
+	require.NoError(t, err)
+	started, err := store.MarkNotificationIncidentPostStarted(binding.ID, binding.LeaseToken, now)
+	require.NoError(t, err)
+	_, err = store.BindNotificationIncident(started.ID, started.LeaseToken, "0123456789ABCDEF0123456789ABCDEF", "https://tenant.service-now.com/incident.do?sys_id=0123456789abcdef0123456789abcdef", now)
+	assert.ErrorIs(t, err, db.ErrInvalidOperation)
+	_, err = store.BindNotificationIncident(started.ID, started.LeaseToken, "0123456789abcdef0123456789abcdef", "https://evil.service-now.com/incident.do?sys_id=0123456789abcdef0123456789abcdef", now)
+	assert.ErrorIs(t, err, db.ErrInvalidOperation)
+	_, err = store.BindNotificationIncidentAndSucceed(started.ID, started.LeaseToken, "0123456789abcdef0123456789abcdef", "https://tenant.service-now.com/incident.do?sys_id=0123456789abcdef0123456789abcdef", claimed[0].ID, claimed[0].LeaseToken, now)
+	require.NoError(t, err)
+	history, err := store.GetNotificationDelivery(nil, claimed[0].ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.NotificationDeliverySucceeded, history.Status)
+	assert.Equal(t, 1, history.Attempts)
+	assert.Equal(t, "0123456789abcdef0123456789abcdef", history.ProviderRecordID)
+	assert.Contains(t, history.ProviderRecordURL, history.ProviderRecordID)
+
+	future := notificationTestEvent(nil, strings.Repeat("c", 32), "system", "system:later", "error", "update", db.NotificationRoutingRouted)
+	_, err = store.CreateNotificationEventWithRouting(future, []db.NotificationDelivery{{DestinationID: destination.ID, DestinationRevision: destination.Revision, DestinationConfigurationRevision: destination.ConfigurationRevision, DestinationName: destination.Name, DestinationProvider: destination.Provider}})
+	require.NoError(t, err)
+	claimed, err = store.ClaimNotificationDeliveries(now.Add(2*time.Minute), now.Add(3*time.Minute), 1)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	assert.ErrorIs(t, store.MarkNotificationDeliverySucceededWithRecord(claimed[0].ID, claimed[0].LeaseToken, history.ProviderRecordID, "https://evil.service-now.com/incident.do?sys_id="+history.ProviderRecordID, now.Add(2*time.Minute)), db.ErrNotificationDeliveryNotClaimed)
+	require.NoError(t, store.MarkNotificationDeliverySucceededWithRecord(claimed[0].ID, claimed[0].LeaseToken, history.ProviderRecordID, history.ProviderRecordURL, now.Add(2*time.Minute)))
+	later, err := store.GetNotificationDelivery(nil, claimed[0].ID)
+	require.NoError(t, err)
+	assert.Equal(t, history.ProviderRecordID, later.ProviderRecordID)
+	assert.Equal(t, history.ProviderRecordURL, later.ProviderRecordURL)
 }
 
 func TestNotificationOutboxIsIdempotentAndLeaseFenced(t *testing.T) {
