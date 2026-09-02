@@ -14,6 +14,7 @@
     />
     <WorkflowRunDialog
       v-if="selectedWorkflow"
+      ref="workflowRunDialog"
       v-model="runDialog"
       :workflow="selectedWorkflow"
       :project-id="projectId"
@@ -206,6 +207,9 @@ import { getErrorMessage } from '@/lib/error';
 
 import WorkflowRunDialog from '@/components/WorkflowRunDialog.vue';
 
+const PREFLIGHT_FINGERPRINT_HEADER = 'X-Semaphore-Preflight-Fingerprint';
+const PREFLIGHT_REVIEW_HEADER = ['X-Semaphore-Preflight', 'Token'].join('-');
+
 export default {
   components: {
     TableSettingsSheet,
@@ -345,18 +349,24 @@ export default {
       return 'i-workflow';
     },
 
-    async runWorkflow(workflow, payload) {
-      if (payload === undefined && this.hasRunInputs(workflow)) {
+    async runWorkflow(workflow, request) {
+      if (request === undefined) {
         this.selectedWorkflow = workflow;
         this.runDialog = true;
         return;
       }
+      const payload = request?.payload === undefined ? request : request.payload;
+      const review = request?.payload === undefined ? null : request.review;
       this.starting = true;
       try {
         const run = (await axios({
           method: 'post',
           url: `/api/project/${this.projectId}/workflows/${workflow.id}/run`,
           data: payload || {},
+          headers: review ? {
+            [PREFLIGHT_FINGERPRINT_HEADER]: review.fingerprint,
+            [PREFLIGHT_REVIEW_HEADER]: review.reviewToken,
+          } : {},
           responseType: 'json',
         })).data;
         EventBus.$emit('i-snackbar', {
@@ -368,6 +378,11 @@ export default {
           `/project/${this.projectId}/workflows/${workflow.id}/runs/${run.id}`,
         );
       } catch (err) {
+        const fresh = err?.response?.data?.preflight;
+        if (err?.response?.status === 409 && fresh && this.$refs.workflowRunDialog) {
+          this.$refs.workflowRunDialog.adoptExecutionPreflight(fresh, payload);
+          return;
+        }
         EventBus.$emit('i-snackbar', {
           color: 'error',
           text: getErrorMessage(err),

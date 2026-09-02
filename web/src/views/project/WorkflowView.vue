@@ -10,6 +10,7 @@
       @yes="remove()"
     />
     <WorkflowRunDialog
+      ref="workflowRunDialog"
       v-model="runDialog"
       :workflow="item"
       :project-id="projectId"
@@ -102,6 +103,9 @@ import ProjectMixin from '@/components/ProjectMixin';
 import WorkflowRunDialog from '@/components/WorkflowRunDialog.vue';
 import WorkflowTriggersDialog from '@/components/WorkflowTriggersDialog.vue';
 
+const PREFLIGHT_FINGERPRINT_HEADER = 'X-Semaphore-Preflight-Fingerprint';
+const PREFLIGHT_REVIEW_HEADER = ['X-Semaphore-Preflight', 'Token'].join('-');
+
 export default {
   components: {
     YesNoDialog,
@@ -157,17 +161,23 @@ export default {
       EventBus.$emit('i-show-drawer');
     },
 
-    async runWorkflow(payload) {
-      if (payload === undefined && this.hasRunInputs(this.item)) {
+    async runWorkflow(request) {
+      if (request === undefined) {
         this.runDialog = true;
         return;
       }
+      const payload = request?.payload === undefined ? request : request.payload;
+      const review = request?.payload === undefined ? null : request.review;
       this.starting = true;
       try {
         const run = (await axios({
           method: 'post',
           url: `/api/project/${this.projectId}/workflows/${this.itemId}/run`,
           data: payload || {},
+          headers: review ? {
+            [PREFLIGHT_FINGERPRINT_HEADER]: review.fingerprint,
+            [PREFLIGHT_REVIEW_HEADER]: review.reviewToken,
+          } : {},
           responseType: 'json',
         })).data;
 
@@ -181,6 +191,11 @@ export default {
           `/project/${this.projectId}/workflows/${this.itemId}/runs/${run.id}`,
         );
       } catch (err) {
+        const fresh = err?.response?.data?.preflight;
+        if (err?.response?.status === 409 && fresh && this.$refs.workflowRunDialog) {
+          this.$refs.workflowRunDialog.adoptExecutionPreflight(fresh, payload);
+          return;
+        }
         EventBus.$emit('i-snackbar', {
           color: 'error',
           text: getErrorMessage(err),
