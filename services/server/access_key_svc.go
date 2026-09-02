@@ -26,7 +26,7 @@ func NewAccessKeyService(
 	encryptionService AccessKeyEncryptionService,
 	secretStorageRepo db.SecretStorageRepository,
 	capabilityProviders ...pro_interfaces.CapabilityProvider,
-) AccessKeyService {
+) GeneratedSSHKeyService {
 	var capabilityProvider pro_interfaces.CapabilityProvider
 	if len(capabilityProviders) > 0 {
 		capabilityProvider = capabilityProviders[0]

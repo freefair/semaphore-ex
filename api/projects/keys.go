@@ -3,12 +3,10 @@ package projects
 import (
 	"errors"
 	"fmt"
-	"net/http"
-
-	"github.com/semaphoreui/semaphore/services/server"
-
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/services/server"
+	"net/http"
 )
 
 type KeyController struct {
@@ -67,7 +65,7 @@ func GetKeys(w http.ResponseWriter, r *http.Request) {
 	if key := helpers.GetFromContext(r, "accessKey"); key != nil {
 		k := key.(db.AccessKey)
 		server.ExposeRuntimeSecretReference(&k)
-		helpers.WriteJSON(w, http.StatusOK, k)
+		helpers.WriteJSON(w, http.StatusOK, accessKeyReadDTOFrom(k))
 		return
 	}
 
@@ -80,11 +78,13 @@ func GetKeys(w http.ResponseWriter, r *http.Request) {
 		helpers.WriteError(w, err)
 		return
 	}
+	response := make([]accessKeyReadDTO, 0, len(keys))
 	for index := range keys {
 		server.ExposeRuntimeSecretReference(&keys[index])
+		response = append(response, accessKeyReadDTOFrom(keys[index]))
 	}
 
-	helpers.WriteJSON(w, http.StatusOK, keys)
+	helpers.WriteJSON(w, http.StatusOK, response)
 }
 
 // AddKey adds a new key to the database
@@ -146,7 +146,7 @@ func (c *KeyController) AddKey(w http.ResponseWriter, r *http.Request) {
 	}
 	server.ExposeRuntimeSecretReference(&key)
 
-	helpers.WriteJSON(w, http.StatusCreated, key)
+	helpers.WriteJSON(w, http.StatusCreated, accessKeyReadDTOFrom(key))
 }
 
 // UpdateKey updates key in database
@@ -173,6 +173,14 @@ func (c *KeyController) UpdateKey(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if key.OverrideSecret {
+		if _, generated := server.ParseGeneratedSSHKeyMetadata(oldKey.Plain); generated {
+			helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "Generated SSH keys must be replaced with the explicit rotate action",
+			})
+			return
+		}
+	}
 
 	if oldKey.Synchronized {
 		if key.Name != oldKey.Name || key.Type != oldKey.Type {
@@ -188,24 +196,12 @@ func (c *KeyController) UpdateKey(w http.ResponseWriter, r *http.Request) {
 	key.IgnorePlain = true
 	key.Synchronized = oldKey.Synchronized
 
-	repos, err := helpers.Store(r).GetRepositories(*key.ProjectID, db.RetrieveQueryParams{})
-	if err != nil {
+	if err := clearRepositoryCachesForKey(r, key); err != nil {
 		helpers.WriteError(w, err)
 		return
 	}
 
-	for _, repo := range repos {
-		if repo.SSHKeyID != key.ID {
-			continue
-		}
-		err = repo.ClearCache()
-		if err != nil {
-			helpers.WriteError(w, err)
-			return
-		}
-	}
-
-	err = c.accessKeyService.Update(key)
+	err := c.accessKeyService.Update(key)
 	if err != nil {
 		helpers.WriteError(w, err)
 		return

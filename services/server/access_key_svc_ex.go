@@ -7,6 +7,14 @@ import (
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
 
+// GeneratedSSHKeyService adds the intentionally narrow server-side key-generation
+// commands without changing the long-standing imported-key CRUD contract.
+type GeneratedSSHKeyService interface {
+	AccessKeyService
+	CreateGeneratedSSHKey(request CreateGeneratedSSHKeyRequest) (GeneratedSSHKeyResult, error)
+	RotateGeneratedSSHKey(request RotateGeneratedSSHKeyRequest) (GeneratedSSHKeyResult, error)
+}
+
 func (s *AccessKeyServiceImpl) requireRuntimeSecretWrite(key db.AccessKey) error {
 	if key.SourceStorageType == nil || *key.SourceStorageType != db.AccessKeySourceStorageVault {
 		return nil

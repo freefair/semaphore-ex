@@ -524,6 +524,7 @@ func Route(
 
 	projectUserAPI.Path("/keys").HandlerFunc(projects.GetKeys).Methods("GET", "HEAD")
 	projectUserAPI.Path("/keys").HandlerFunc(keyController.AddKey).Methods("POST")
+	projectUserAPI.Path("/keys/generate").HandlerFunc(keyController.GenerateSSHKey).Methods("POST")
 
 	projectUserAPI.Path("/secret_storages").HandlerFunc(secretStorageController.GetSecretStorages).Methods("GET", "HEAD")
 	projectUserAPI.Path("/secret_storages").HandlerFunc(secretStorageController.Add).Methods("POST")
@@ -646,6 +647,7 @@ func Route(
 
 	projectKeyManagement.HandleFunc("/{key_id}", projects.GetKeys).Methods("GET", "HEAD")
 	projectKeyManagement.HandleFunc("/{key_id}/refs", projects.GetKeyRefs).Methods("GET", "HEAD")
+	projectKeyManagement.HandleFunc("/{key_id}/rotate", keyController.RotateGeneratedSSHKey).Methods("POST")
 	projectKeyManagement.HandleFunc("/{key_id}", keyController.UpdateKey).Methods("PUT")
 	projectKeyManagement.HandleFunc("/{key_id}", keyController.RemoveKey).Methods("DELETE")
 
