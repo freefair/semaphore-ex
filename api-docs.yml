@@ -495,6 +495,65 @@ definitions:
         enum: [none, ssh, login_password]
       project_id:
         type: integer
+      generated_ssh_key:
+        $ref: "#/definitions/GeneratedSSHKeyMetadata"
+
+  GeneratedSSHKeyMetadata:
+    type: object
+    required: [public_key, fingerprint, algorithm]
+    properties:
+      public_key:
+        type: string
+        description: Public key in authorized_keys-compatible OpenSSH format.
+      fingerprint:
+        type: string
+        description: OpenSSH SHA-256 public-key fingerprint.
+      algorithm:
+        type: string
+        enum: [ed25519, rsa-3072]
+
+  GeneratedSSHKeyCreateRequest:
+    type: object
+    required: [name]
+    additionalProperties: false
+    properties:
+      name:
+        type: string
+      login:
+        type: string
+      algorithm:
+        type: string
+        default: ed25519
+        enum: [ed25519, rsa-3072]
+
+  GeneratedSSHKeyRotateRequest:
+    type: object
+    required: [confirm_rotation]
+    additionalProperties: false
+    properties:
+      algorithm:
+        type: string
+        default: ed25519
+        enum: [ed25519, rsa-3072]
+      confirm_rotation:
+        type: boolean
+        enum: [true]
+
+  GeneratedSSHKeyResponse:
+    type: object
+    required: [key, public_key, fingerprint, algorithm]
+    properties:
+      key:
+        $ref: "#/definitions/AccessKey"
+      public_key:
+        type: string
+        description: Public key in authorized_keys-compatible OpenSSH format.
+      fingerprint:
+        type: string
+        description: OpenSSH SHA-256 public-key fingerprint.
+      algorithm:
+        type: string
+        enum: [ed25519, rsa-3072]
 
   EnvironmentSecret:
     type: object
@@ -3536,6 +3595,33 @@ paths:
             $ref: "#/definitions/AccessKey"
         400:
           description: Bad type
+
+  /project/{project_id}/keys/generate:
+    parameters:
+      - $ref: "#/parameters/project_id"
+    post:
+      tags:
+        - key-store
+      summary: Generate and store a local SSH key pair
+      description: >-
+        Generates an encrypted local SSH credential. The private key is never
+        returned; Access Key encryption must be configured.
+      parameters:
+        - name: Generated SSH Key
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/GeneratedSSHKeyCreateRequest"
+      responses:
+        201:
+          description: SSH key generated
+          schema:
+            $ref: "#/definitions/GeneratedSSHKeyResponse"
+        400:
+          description: Invalid request, algorithm, storage, or encryption configuration
+        403:
+          description: Project-resource management permission required
+
   /project/{project_id}/keys/{key_id}:
     parameters:
       - $ref: "#/parameters/project_id"
@@ -3562,6 +3648,33 @@ paths:
       responses:
         204:
           description: access key removed
+
+  /project/{project_id}/keys/{key_id}/rotate:
+    parameters:
+      - $ref: "#/parameters/project_id"
+      - $ref: "#/parameters/key_id"
+    post:
+      tags:
+        - key-store
+      summary: Rotate a local SSH key with a newly generated pair
+      description: >-
+        Replaces an existing local, non-synchronized SSH credential after
+        explicit confirmation and returns only its new public metadata.
+      parameters:
+        - name: SSH Key Rotation
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/GeneratedSSHKeyRotateRequest"
+      responses:
+        200:
+          description: SSH key rotated
+          schema:
+            $ref: "#/definitions/GeneratedSSHKeyResponse"
+        400:
+          description: Rotation not confirmed or key is not eligible
+        403:
+          description: Project-resource management permission required
 
   # project repositories
   /project/{project_id}/repositories:
