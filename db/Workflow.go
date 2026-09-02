@@ -758,6 +758,14 @@ type WorkflowParameterValidationStore interface {
 	GetAccessKey(projectID int, accessKeyID int) (AccessKey, error)
 }
 
+// WorkflowGlobalCredentialValidationStore is the value-free subset used while
+// validating workflow declarations and snapshots. Material and versions are
+// deliberately absent: workflow authoring may approve a reference, not read it.
+type WorkflowGlobalCredentialValidationStore interface {
+	GetGlobalCredential(credentialID int) (GlobalCredential, error)
+	GetGlobalCredentialGrantForProject(credentialID int, projectID int) (GlobalCredentialGrant, error)
+}
+
 // WorkflowNodeResultStore exposes only the sanitized, persisted summary used
 // to freeze allow-listed condition inputs when a workflow task finishes.
 type WorkflowNodeResultStore interface {

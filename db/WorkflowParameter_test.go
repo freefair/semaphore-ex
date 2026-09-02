@@ -103,6 +103,43 @@ func TestWorkflowSecretReferenceFingerprintContainsNoValue(t *testing.T) {
 	assert.NotEqual(t, fingerprint, (WorkflowSecretReference{AccessKeyID: 42}).Fingerprint())
 }
 
+func TestWorkflowSecretReferenceSupportsApprovedGlobalCredentials(t *testing.T) {
+	declaration := WorkflowParameterDeclaration{
+		Name: "token", Type: WorkflowParameterSecretReference, Required: true,
+		SecretOptions: []WorkflowSecretOption{{GlobalCredentialID: 51, Label: "Global deployment token"}},
+	}
+
+	resolved, err := ResolveWorkflowParameters(
+		[]WorkflowParameterDeclaration{declaration}, nil,
+		map[string]json.RawMessage{"token": workflowParameterRaw(`{"global_credential_id":51}`)},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, resolved["token"].SecretReference)
+	assert.Equal(t, 51, resolved["token"].SecretReference.GlobalCredentialID)
+	assert.Zero(t, resolved["token"].SecretReference.AccessKeyID)
+	assert.NotEqual(t,
+		(WorkflowSecretReference{AccessKeyID: 51}).Fingerprint(),
+		resolved["token"].ReferenceFingerprint,
+	)
+}
+
+func TestWorkflowSecretReferenceRejectsAmbiguousCredentialKinds(t *testing.T) {
+	declaration := WorkflowParameterDeclaration{
+		Name: "token", Type: WorkflowParameterSecretReference,
+		SecretOptions: []WorkflowSecretOption{{AccessKeyID: 7, GlobalCredentialID: 8}},
+	}
+	require.Error(t, ValidateWorkflowParameterDeclarations([]WorkflowParameterDeclaration{declaration}))
+
+	valid := WorkflowParameterDeclaration{
+		Name: "token", Type: WorkflowParameterSecretReference,
+		SecretOptions: []WorkflowSecretOption{{GlobalCredentialID: 8}},
+	}
+	_, err := ResolveWorkflowParameters([]WorkflowParameterDeclaration{valid}, nil,
+		map[string]json.RawMessage{"token": workflowParameterRaw(`{"access_key_id":7,"global_credential_id":8}`)})
+	require.Error(t, err)
+}
+
 func TestValidateWorkflowNodeOverrideEnforcesAllowList(t *testing.T) {
 	policy := WorkflowNodeOverridePolicy{
 		InventoryIDs: []int{11, 12}, EnvironmentIDs: []int{21, 22}, AllowArguments: true,

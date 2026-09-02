@@ -32,7 +32,7 @@ func TestDockerProviderRejectsTaskImageOutsideCentralExactAllowList(t *testing.T
 	policy := db.DefaultDockerExecutionPolicy()
 	policy.AllowedImages = []string{allowed}
 	require.NoError(t, provider.ApplyDockerExecutionPolicy(policy))
-	_, err = provider.NewExecutor(db.Task{}, db.Template{ExecutorImage: stringPointer("registry.example.test/other@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")}, db.Inventory{}, db.Repository{}, db.Environment{}, "")
+	_, err = provider.NewExecutor(db.Task{}, db.Template{ExecutorImage: stringPointer("registry.example.test/other@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")}, db.Inventory{}, db.Repository{}, db.Environment{}, "", "")
 	require.ErrorContains(t, err, db.DockerPolicyRuleImageDenied)
 }
 

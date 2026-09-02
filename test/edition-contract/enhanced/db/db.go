@@ -249,6 +249,7 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 	nodes := make(map[int]coreDB.WorkflowNode, len(workflow.Nodes))
 	executable := make(map[int]struct{}, len(workflow.Nodes))
 	resourceStore, hasResourceStore := store.(coreDB.WorkflowParameterValidationStore)
+	globalCredentialStore, hasGlobalCredentialStore := store.(coreDB.WorkflowGlobalCredentialValidationStore)
 	requiresParameterResources := false
 	parameterTypes := make(map[string]coreDB.WorkflowParameterType, len(workflow.ParameterDefinitions))
 	for _, parameter := range workflow.ParameterDefinitions {
@@ -261,10 +262,27 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 	if hasResourceStore {
 		for parameterIndex, parameter := range workflow.ParameterDefinitions {
 			for optionIndex, option := range parameter.SecretOptions {
+				path := fmt.Sprintf("parameters[%d].secret_options[%d]", parameterIndex, optionIndex)
+				if option.GlobalCredentialID > 0 {
+					if !hasGlobalCredentialStore {
+						add("WORKFLOW_PARAMETER_SECRET_NOT_APPROVED", "Secret reference is not an approved string credential in this project.", path, nil, nil)
+						continue
+					}
+					credential, err := globalCredentialStore.GetGlobalCredential(option.GlobalCredentialID)
+					grant, grantErr := globalCredentialStore.GetGlobalCredentialGrantForProject(option.GlobalCredentialID, workflow.ProjectID)
+					if errors.Is(err, coreDB.ErrNotFound) || errors.Is(grantErr, coreDB.ErrNotFound) || err == nil && grantErr == nil &&
+						(credential.Type != coreDB.GlobalCredentialTypeString || !grant.IsEffectiveAt(workflow.ProjectID, coreDB.GlobalCredentialGrantOperationReference, credential.Enabled, time.Now().UTC())) {
+						add("WORKFLOW_PARAMETER_SECRET_NOT_APPROVED", "Secret reference is not an approved string credential in this project.", path, nil, nil)
+					} else if err != nil {
+						return coreDB.WorkflowValidationResult{}, fmt.Errorf("validate workflow global credential: %w", err)
+					} else if grantErr != nil {
+						return coreDB.WorkflowValidationResult{}, fmt.Errorf("validate workflow global credential grant: %w", grantErr)
+					}
+					continue
+				}
 				key, err := resourceStore.GetAccessKey(workflow.ProjectID, option.AccessKeyID)
 				if errors.Is(err, coreDB.ErrNotFound) || err == nil && (key.Type != coreDB.AccessKeyString || key.Owner != coreDB.AccessKeyShared) {
-					add("WORKFLOW_PARAMETER_SECRET_NOT_APPROVED", "Secret reference is not an approved string credential in this project.",
-						fmt.Sprintf("parameters[%d].secret_options[%d]", parameterIndex, optionIndex), nil, nil)
+					add("WORKFLOW_PARAMETER_SECRET_NOT_APPROVED", "Secret reference is not an approved string credential in this project.", path, nil, nil)
 				} else if err != nil {
 					return coreDB.WorkflowValidationResult{}, fmt.Errorf("validate workflow secret reference: %w", err)
 				}
@@ -783,6 +801,8 @@ func WorkflowRunNodeStatusFromTaskStatus(status task_logger.TaskStatus) coreDB.W
 		return coreDB.WorkflowRunNodeSucceeded
 	case task_logger.TaskStoppedStatus:
 		return coreDB.WorkflowRunNodeCanceled
+	case task_logger.TaskBlockedStatus:
+		return coreDB.WorkflowRunNodeBlocked
 	case task_logger.TaskFailStatus, task_logger.TaskRejected:
 		return coreDB.WorkflowRunNodeFailed
 	default:

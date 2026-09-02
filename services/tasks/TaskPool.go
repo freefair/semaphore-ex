@@ -81,10 +81,11 @@ type TaskPool struct {
 	// workflowService orchestrates workflow runs (a Pro feature). It is injected
 	// after construction via SetWorkflowService; the pool only calls back into it
 	// when a workflow task finishes. nil in tests / before wiring.
-	workflowService        pro_interfaces.WorkflowService
-	executorImageAvailable func(*db.User) bool
-	taskControlLifecycle   TaskControlLifecycle
-	crossProjectTaskStore  pro_interfaces.CrossProjectWorkflowTaskStore
+	workflowService          pro_interfaces.WorkflowService
+	globalCredentialResolver pro_interfaces.GlobalCredentialRuntimeResolver
+	executorImageAvailable   func(*db.User) bool
+	taskControlLifecycle     TaskControlLifecycle
+	crossProjectTaskStore    pro_interfaces.CrossProjectWorkflowTaskStore
 	// stop signals the background loops started by Run to exit. Closing it (via
 	// Stop) terminates the runner-task reconcile loop and Run's own select.
 	// Channels are used rather than sync.WaitGroup/sync.Once because TaskPool is
@@ -143,6 +144,13 @@ func (p *TaskPool) StateStore() TaskStateStore {
 // and the pool needs the service to progress runs as tasks finish).
 func (p *TaskPool) SetWorkflowService(svc pro_interfaces.WorkflowService) {
 	p.workflowService = svc
+}
+
+// SetGlobalCredentialRuntimeResolver installs the edition-provided runtime
+// authority. Community installs a fail-closed stub; a nil resolver is also
+// fail-closed whenever a task has persisted global credential bindings.
+func (p *TaskPool) SetGlobalCredentialRuntimeResolver(resolver pro_interfaces.GlobalCredentialRuntimeResolver) {
+	p.globalCredentialResolver = resolver
 }
 
 // ConfigureCrossProjectWorkflowTaskStore attaches the Enhanced transactional

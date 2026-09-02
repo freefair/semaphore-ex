@@ -1,6 +1,7 @@
 package runners
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -324,9 +325,10 @@ func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Ru
 	}
 	jobData.Template.ExecutorImage = jobData.ExecutorImage
 
-	// Always overwrite: the dispatched Secret must be exactly the
-	// DB-derived value, never whatever the in-memory task carries
-	jobData.Task.Secret = surveySecrets
+	// Always overwrite through the dedicated runner-only field. db.Task.Secret
+	// is intentionally excluded from JSON and ordinary task APIs.
+	jobData.Task.Secret = ""
+	jobData.TaskSecret = surveySecrets
 
 	if c.signer != nil && tsk.Template.JWTParams != nil && tsk.Template.JWTParams.Enabled {
 		ttl, terr := tsk.Template.JWTParams.ParsedTTL()
@@ -375,6 +377,15 @@ func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Ru
 		c.taskPool.FinalizeRemoteTask(tsk, runner)
 		return
 	}
+	mergedSecret, resolveErr := c.taskPool.ResolveTaskGlobalCredentials(context.Background(), tsk, &runner.ID, surveySecrets)
+	if resolveErr != nil {
+		tsk.BlockGlobalCredentialResolution()
+		c.taskPool.FinalizeRemoteTask(tsk, runner)
+		return
+	}
+	jobData.TaskSecret = mergedSecret
+	jobData.CredentialTargets = tsk.GlobalCredentialBindingTargets()
+	tsk.SetTaskCredentialRedaction(mergedSecret)
 	if runner.EffectiveExecutorType() == db.RunnerExecutorDocker {
 		sessionStore, ok := c.runnerRepo.(db.DockerReconciliationSessionRepository)
 		baseName := fmt.Sprintf("semaphore-task-%d-g%d-%s", tsk.Task.ID, tsk.Task.AssignmentGeneration, data.DockerReconciliationSession.TargetBoot)

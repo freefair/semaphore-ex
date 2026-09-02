@@ -238,6 +238,82 @@ func (s *globalCredentialService) ListGrantedCredentials(ctx context.Context, pr
 	return result, nil
 }
 
+func (s *globalCredentialService) ListGlobalCredentialUsage(ctx context.Context, credentialID int, query pro_interfaces.GlobalCredentialUsageQuery) ([]pro_interfaces.GlobalCredentialUsageDTO, error) {
+	if err := globalCredentialContext(ctx); err != nil {
+		return nil, err
+	}
+	if credentialID <= 0 || query.Validate() != nil {
+		return nil, pro_interfaces.ErrGlobalCredentialInvalidInput
+	}
+	if _, err := s.repository.GetGlobalCredential(credentialID); err != nil {
+		return nil, mapGlobalCredentialError(err)
+	}
+	values, err := s.repository.GetGlobalCredentialUsage(credentialID, globalCredentialUsageQuery(query))
+	if err != nil {
+		return nil, mapGlobalCredentialError(err)
+	}
+	return globalCredentialUsageDTOs(values), nil
+}
+
+func (s *globalCredentialService) GetGlobalCredentialImpact(ctx context.Context, credentialID int) (pro_interfaces.GlobalCredentialImpactDTO, error) {
+	if err := globalCredentialContext(ctx); err != nil {
+		return pro_interfaces.GlobalCredentialImpactDTO{}, err
+	}
+	if credentialID <= 0 {
+		return pro_interfaces.GlobalCredentialImpactDTO{}, pro_interfaces.ErrGlobalCredentialInvalidInput
+	}
+	if _, err := s.repository.GetGlobalCredential(credentialID); err != nil {
+		return pro_interfaces.GlobalCredentialImpactDTO{}, mapGlobalCredentialError(err)
+	}
+	value, err := s.repository.GetGlobalCredentialImpact(credentialID, s.now())
+	if err != nil {
+		return pro_interfaces.GlobalCredentialImpactDTO{}, mapGlobalCredentialError(err)
+	}
+	return pro_interfaces.GlobalCredentialImpactDTO{
+		CredentialID: value.CredentialID, UsageCount: value.UsageCount, ProjectCount: value.ProjectCount,
+		ActiveGrantCount: value.ActiveGrantCount, LastUsedAt: value.LastUsedAt,
+	}, nil
+}
+
+func (s *globalCredentialService) ListTaskGlobalCredentialUsage(ctx context.Context, projectID, taskID int, query pro_interfaces.GlobalCredentialUsageQuery) ([]pro_interfaces.GlobalCredentialUsageDTO, error) {
+	if err := globalCredentialContext(ctx); err != nil {
+		return nil, err
+	}
+	if projectID <= 0 || taskID <= 0 || query.ProjectID != nil || query.TaskID != nil || query.Validate() != nil {
+		return nil, pro_interfaces.ErrGlobalCredentialInvalidInput
+	}
+	values, err := s.repository.GetTaskGlobalCredentialUsage(projectID, taskID, globalCredentialUsageQuery(query))
+	if err != nil {
+		return nil, mapGlobalCredentialError(err)
+	}
+	return globalCredentialUsageDTOs(values), nil
+}
+
+func globalCredentialUsageQuery(query pro_interfaces.GlobalCredentialUsageQuery) db.GlobalCredentialUsageQuery {
+	value := db.GlobalCredentialUsageQuery{
+		ProjectID: query.ProjectID, TaskID: query.TaskID, BeforeID: query.BeforeID, Count: query.Count,
+	}
+	if query.Outcome != nil {
+		outcome := string(*query.Outcome)
+		value.Outcome = &outcome
+	}
+	return value
+}
+
+func globalCredentialUsageDTOs(values []db.GlobalCredentialUsage) []pro_interfaces.GlobalCredentialUsageDTO {
+	result := make([]pro_interfaces.GlobalCredentialUsageDTO, 0, len(values))
+	for _, value := range values {
+		result = append(result, pro_interfaces.GlobalCredentialUsageDTO{ID: value.ID, Snapshot: pro_interfaces.GlobalCredentialResolutionSnapshot{
+			TaskID: value.TaskID, ProjectID: value.ProjectID, ActorID: value.ActorID, RunnerID: value.RunnerID,
+			DispatchGeneration: value.DispatchGeneration, Target: value.Target, CredentialID: value.CredentialID,
+			GrantID: value.GrantID, CredentialVersion: value.CredentialVersion, VersionFingerprint: value.VersionFingerprint,
+			ProviderVersion: value.ProviderVersion, Outcome: pro_interfaces.GlobalCredentialResolutionOutcome(value.Outcome),
+			Reason: pro_interfaces.GlobalCredentialResolutionReason(value.Reason), OccurredAt: value.OccurredAt,
+		}})
+	}
+	return result
+}
+
 func (s *globalCredentialService) version(actorID int, input *pro_interfaces.GlobalCredentialMaterialInput) (db.GlobalCredentialVersion, error) {
 	if input == nil || (input.StringValue == nil) == (input.ExternalReference == nil) {
 		return db.GlobalCredentialVersion{}, pro_interfaces.ErrGlobalCredentialInvalidInput

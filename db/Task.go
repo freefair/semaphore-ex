@@ -50,11 +50,15 @@ type Task struct {
 	NotificationRevision int `db:"notification_revision" json:"-"`
 
 	// override variables
-	Playbook    string  `db:"playbook" json:"playbook"`
-	Environment string  `db:"environment" json:"environment,omitempty"`
-	Secret      string  `db:"-" json:"secret,omitempty"`
-	Arguments   *string `db:"arguments" json:"arguments,omitempty"`
-	GitBranch   *string `db:"git_branch" json:"git_branch,omitempty"`
+	Playbook    string `db:"playbook" json:"playbook"`
+	Environment string `db:"environment" json:"environment,omitempty"`
+	Secret      string `db:"-" json:"secret,omitempty"`
+	// GlobalCredentialBindingsJSON is a private, value-free map from injection
+	// name to global credential ID. It is never returned through task APIs.
+	GlobalCredentialBindingsJSON string         `db:"global_credential_bindings" json:"-"`
+	GlobalCredentialBindings     map[string]int `db:"-" json:"-"`
+	Arguments                    *string        `db:"arguments" json:"arguments,omitempty"`
+	GitBranch                    *string        `db:"git_branch" json:"git_branch,omitempty"`
 
 	UserID        *int `db:"user_id" json:"user_id,omitempty"`
 	IntegrationID *int `db:"integration_id" json:"integration_id,omitempty"`
@@ -472,6 +476,9 @@ func (task *Task) ExtractParams(target any) (err error) {
 // Called directly in BoltDB implementation.
 func (task *Task) PreInsert(gorp.SqlExecutor) error {
 	task.Created = tz.In(task.Created)
+	if err := task.EncodeGlobalCredentialBindings(); err != nil {
+		return err
+	}
 
 	if _, ok := task.Params["limit"]; !ok {
 		if task.Params == nil {

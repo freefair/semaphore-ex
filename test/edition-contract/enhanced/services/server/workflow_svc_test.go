@@ -706,6 +706,60 @@ func TestWorkflowRunResolvesSecretReferencesAtEachTaskDispatch(t *testing.T) {
 	assert.NotContains(t, persisted.ParameterSnapshotJSON, "rotated-version")
 }
 
+func TestWorkflowRunPersistsGlobalCredentialBindingWithoutResolvingMaterial(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	now := time.Now().UTC()
+	credential, _, err := fixture.store.CreateGlobalCredential(
+		db.GlobalCredential{Type: db.GlobalCredentialTypeString, DisplayName: "Global token", OwnerUserID: fixture.user.ID, Enabled: true, Created: now},
+		db.GlobalCredentialVersion{MaterialKind: db.GlobalCredentialMaterialLocalEncrypted, EncryptedMaterial: "sealed-value", CreatedByUserID: fixture.user.ID},
+	)
+	require.NoError(t, err)
+	_, err = fixture.store.CreateGlobalCredentialGrant(db.GlobalCredentialGrant{
+		CredentialID: credential.ID, ProjectID: fixture.projectID,
+		Operations: db.GlobalCredentialGrantOperationReference | db.GlobalCredentialGrantOperationConsume,
+		Status:     db.GlobalCredentialGrantStatusActive, CreatedByUserID: fixture.user.ID, Created: now,
+	})
+	require.NoError(t, err)
+	raw := db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Global credential", DefinitionVersion: db.WorkflowDefinitionVersion,
+		ParameterDefinitions: []db.WorkflowParameterDeclaration{{
+			Name: "token", Type: db.WorkflowParameterSecretReference, Required: true,
+			SecretOptions: []db.WorkflowSecretOption{{GlobalCredentialID: credential.ID, Label: "Global token"}},
+		}},
+		Nodes: []db.WorkflowNode{{
+			ID: -1, TemplateID: fixture.first.ID,
+			OverridePolicy: db.WorkflowNodeOverridePolicy{CredentialParameters: []string{"token"}},
+		}},
+	}
+	prepared, validation, err := workflowDB.PrepareWorkflowTemplate(fixture.store, raw)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	workflow, err := fixture.repository.CreateWorkflowTemplate(prepared)
+	require.NoError(t, err)
+	reader := &workflowCredentialReaderStub{value: "must-not-resolve"}
+	service := NewWorkflowService(fixture.repository, fixture.store, fixture.enqueuer, nil, reader)
+
+	run, err := service.StartWorkflow(workflow, &fixture.user, "global-credential", db.WorkflowRunInput{
+		UserValues: map[string]json.RawMessage{
+			"token": json.RawMessage(fmt.Sprintf(`{"global_credential_id":%d}`, credential.ID)),
+		},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, fixture.enqueuer.inputTasks, 1)
+	assert.Empty(t, fixture.enqueuer.inputTasks[0].Secret)
+	assert.Equal(t, map[string]int{"token": credential.ID}, fixture.enqueuer.inputTasks[0].GlobalCredentialBindings)
+	assert.JSONEq(t, fmt.Sprintf(`{"token":%d}`, credential.ID), fixture.enqueuer.inputTasks[0].GlobalCredentialBindingsJSON)
+	assert.Zero(t, reader.calls)
+	require.NotNil(t, run.RootTaskID)
+	persisted, err := fixture.store.GetTask(fixture.projectID, *run.RootTaskID)
+	require.NoError(t, err)
+	require.NoError(t, persisted.DecodeGlobalCredentialBindings())
+	assert.Equal(t, map[string]int{"token": credential.ID}, persisted.GlobalCredentialBindings)
+	assert.Empty(t, persisted.Secret)
+}
+
 func TestWorkflowServiceSkipsUnselectedDependentNodeAfterFirstFailure(t *testing.T) {
 	fixture := newWorkflowServiceFixture(t)
 	defer fixture.store.Close()

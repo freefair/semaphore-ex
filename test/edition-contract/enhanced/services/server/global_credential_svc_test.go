@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/semaphoreui/semaphore/db"
 	storepkg "github.com/semaphoreui/semaphore/db/sql"
@@ -123,6 +124,50 @@ func TestGlobalCredentialGrantProjectSelectorCapsResults(t *testing.T) {
 	require.Len(t, projects, 200)
 	assert.Equal(t, "selector-cap-000", projects[0].Name)
 	assert.Equal(t, "selector-cap-199", projects[len(projects)-1].Name)
+}
+
+func TestGlobalCredentialUsageFacadeReturnsOnlyValueFreeProvenance(t *testing.T) {
+	store := storepkg.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	owner, err := store.CreateUserWithoutPassword(db.User{
+		Username: "gc-usage", Name: "Owner", Email: "gc-usage@example.test",
+	})
+	require.NoError(t, err)
+	project, err := store.CreateProject(db.Project{Name: "Usage project"})
+	require.NoError(t, err)
+	secret := "must-never-appear"
+	service := NewGlobalCredentialService(store, globalCredentialTestCipher{})
+	credential, err := service.CreateGlobalCredential(context.Background(), owner.ID, pro_interfaces.GlobalCredentialInput{
+		Type: db.GlobalCredentialTypeString, DisplayName: "Usage", Material: &pro_interfaces.GlobalCredentialMaterialInput{StringValue: &secret},
+	})
+	require.NoError(t, err)
+	_, err = store.CreateGlobalCredentialUsage(db.GlobalCredentialUsage{
+		TaskID: 41, ProjectID: project.ID, ActorID: owner.ID, DispatchGeneration: 2,
+		Target: "deploy_token", CredentialID: credential.ID, CredentialVersion: credential.CurrentVersion,
+		VersionFingerprint: credential.Fingerprint, Outcome: "allowed", Reason: "allowed", OccurredAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+
+	usage, err := service.ListGlobalCredentialUsage(context.Background(), credential.ID,
+		pro_interfaces.GlobalCredentialUsageQuery{ProjectID: &project.ID, Count: 25})
+	require.NoError(t, err)
+	require.Len(t, usage, 1)
+	assert.Equal(t, "deploy_token", usage[0].Snapshot.Target)
+	assert.Equal(t, pro_interfaces.GlobalCredentialResolutionAllowed, usage[0].Snapshot.Outcome)
+	payload, err := json.Marshal(usage)
+	require.NoError(t, err)
+	assert.NotContains(t, string(payload), secret)
+	assert.NotContains(t, string(payload), "sealed:")
+	assert.NotContains(t, string(payload), "external_reference")
+
+	taskUsage, err := service.ListTaskGlobalCredentialUsage(context.Background(), project.ID, 41,
+		pro_interfaces.GlobalCredentialUsageQuery{Count: 25})
+	require.NoError(t, err)
+	require.Len(t, taskUsage, 1)
+	impact, err := service.GetGlobalCredentialImpact(context.Background(), credential.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, impact.UsageCount)
+	assert.Equal(t, 1, impact.ProjectCount)
 }
 
 func TestGlobalCredentialServiceRejectsMalformedInputsBeforePersistence(t *testing.T) {

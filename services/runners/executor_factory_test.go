@@ -1,6 +1,7 @@
 package runners
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/semaphoreui/semaphore/db"
@@ -60,7 +61,8 @@ func TestNewExecutor_DispatchesToProvider(t *testing.T) {
 	resolvedImage := "registry.example.com/team/job:v1"
 	changedTemplateImage := "registry.example.com/team/job:v2"
 	jobData := JobData{
-		Task:          db.Task{ID: 42, Secret: `{"passwd":"123456"}`},
+		Task:          db.Task{ID: 42},
+		TaskSecret:    `{"passwd":"123456"}`,
 		Template:      db.Template{ID: 7, App: db.AppAnsible, ExecutorImage: &changedTemplateImage},
 		Inventory:     db.Inventory{ID: 3},
 		Repository:    db.Repository{ID: 5},
@@ -80,9 +82,22 @@ func TestNewExecutor_DispatchesToProvider(t *testing.T) {
 	assert.NotNil(t, local.App, "provider must populate App so Prepare has somewhere to install requirements")
 	assert.Equal(t, `{"passwd":"123456"}`, local.Secret,
 		"survey secrets delivered in the job payload must reach the executor")
+	assert.Empty(t, local.Task.Secret, "the transport value must not remain on the ordinary task DTO")
 	require.NotNil(t, local.Template.ExecutorImage)
 	assert.Equal(t, resolvedImage, *local.Template.ExecutorImage,
 		"the immutable job payload must override a later template edit")
+}
+
+func TestJobDataCarriesTaskSecretOutsideTheTaskDTO(t *testing.T) {
+	payload, err := json.Marshal(JobData{Task: db.Task{ID: 42}, TaskSecret: `{"token":"runner-only"}`})
+	require.NoError(t, err)
+	assert.Contains(t, string(payload), `"task_secret":"{\"token\":\"runner-only\"}"`)
+	assert.NotContains(t, string(payload), `"secret":`)
+
+	var decoded JobData
+	require.NoError(t, json.Unmarshal(payload, &decoded))
+	assert.Equal(t, `{"token":"runner-only"}`, decoded.TaskSecret)
+	assert.Empty(t, decoded.Task.Secret)
 }
 
 func TestValidateExecutorImageCompatibility(t *testing.T) {

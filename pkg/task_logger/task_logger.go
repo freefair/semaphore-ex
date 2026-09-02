@@ -16,6 +16,7 @@ const (
 	TaskRunningStatus       TaskStatus = "running"
 	TaskStoppingStatus      TaskStatus = "stopping"
 	TaskStoppedStatus       TaskStatus = "stopped"
+	TaskBlockedStatus       TaskStatus = "blocked"
 	TaskSuccessStatus       TaskStatus = "success"
 	TaskFailStatus          TaskStatus = "error"
 )
@@ -42,6 +43,7 @@ func (s TaskStatus) IsValid() bool {
 		TaskRunningStatus,
 		TaskStoppingStatus,
 		TaskStoppedStatus,
+		TaskBlockedStatus,
 		TaskSuccessStatus,
 		TaskFailStatus:
 		return true
@@ -50,7 +52,7 @@ func (s TaskStatus) IsValid() bool {
 }
 
 func (s TaskStatus) IsNotifiable() bool {
-	return s == TaskSuccessStatus || s == TaskFailStatus || s == TaskWaitingConfirmation
+	return s == TaskSuccessStatus || s == TaskFailStatus || s == TaskBlockedStatus || s == TaskWaitingConfirmation
 }
 
 func (s TaskStatus) Format() (res string) {
@@ -62,6 +64,8 @@ func (s TaskStatus) Format() (res string) {
 		res += "✅"
 	case TaskStoppedStatus:
 		res += "⏹️"
+	case TaskBlockedStatus:
+		res += "⛔"
 	case TaskWaitingConfirmation:
 		res += "⚠️"
 	default:
@@ -85,6 +89,8 @@ func (s TaskStatus) Format() (res string) {
 		res += " STOPPING"
 	case TaskStoppedStatus:
 		res += " STOPPED"
+	case TaskBlockedStatus:
+		res += " BLOCKED"
 	case TaskSuccessStatus:
 		res += " SUCCESS"
 	case TaskFailStatus:
@@ -97,7 +103,7 @@ func (s TaskStatus) Format() (res string) {
 }
 
 func (s TaskStatus) IsFinished() bool {
-	return s == TaskStoppedStatus || s == TaskSuccessStatus || s == TaskFailStatus
+	return s == TaskStoppedStatus || s == TaskBlockedStatus || s == TaskSuccessStatus || s == TaskFailStatus
 }
 
 // TaskStatusProgressRank orders statuses for comparing how far execution has progressed
@@ -117,7 +123,7 @@ func TaskStatusProgressRank(s TaskStatus) int {
 		return 40
 	case TaskStoppingStatus:
 		return 50
-	case TaskStoppedStatus, TaskSuccessStatus, TaskFailStatus:
+	case TaskStoppedStatus, TaskBlockedStatus, TaskSuccessStatus, TaskFailStatus:
 		return 100
 	default:
 		return 0

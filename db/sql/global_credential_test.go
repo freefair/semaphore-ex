@@ -137,6 +137,55 @@ func TestGlobalCredentialRepositoryConcurrentRotationUsesRevisionCAS(t *testing.
 	assert.Len(t, versions, 2)
 }
 
+func TestGlobalCredentialUsageHistoryIsBoundedAndTaskScoped(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	owner, err := store.CreateUserWithoutPassword(db.User{
+		Username: "credential-usage-owner", Name: "Owner", Email: "credential-usage@example.test",
+	})
+	require.NoError(t, err)
+	firstProject, err := store.CreateProject(db.Project{Name: "Credential usage project one"})
+	require.NoError(t, err)
+	secondProject, err := store.CreateProject(db.Project{Name: "Credential usage project two"})
+	require.NoError(t, err)
+	now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
+	credential, _, err := store.CreateGlobalCredential(
+		db.GlobalCredential{Type: db.GlobalCredentialTypeString, DisplayName: "Usage", OwnerUserID: owner.ID, Enabled: true, Created: now},
+		db.GlobalCredentialVersion{MaterialKind: db.GlobalCredentialMaterialLocalEncrypted, EncryptedMaterial: "envelope", CreatedByUserID: owner.ID},
+	)
+	require.NoError(t, err)
+	for index, usage := range []db.GlobalCredentialUsage{
+		{TaskID: 41, ProjectID: firstProject.ID, ActorID: owner.ID, Target: "token", CredentialID: credential.ID, Outcome: "allowed", Reason: "allowed"},
+		{TaskID: 41, ProjectID: secondProject.ID, ActorID: owner.ID, Target: "token", CredentialID: credential.ID, Outcome: "denied", Reason: "grant_unavailable"},
+		{TaskID: 42, ProjectID: firstProject.ID, ActorID: owner.ID, Target: "token", CredentialID: credential.ID, Outcome: "failure", Reason: "provider_unavailable"},
+	} {
+		usage.OccurredAt = now.Add(time.Duration(index) * time.Minute)
+		_, err = store.CreateGlobalCredentialUsage(usage)
+		require.NoError(t, err)
+	}
+
+	firstTask, err := store.GetTaskGlobalCredentialUsage(firstProject.ID, 41, db.GlobalCredentialUsageQuery{Count: 10})
+	require.NoError(t, err)
+	require.Len(t, firstTask, 1)
+	assert.Equal(t, firstProject.ID, firstTask[0].ProjectID)
+	assert.Equal(t, "allowed", firstTask[0].Outcome)
+
+	failures := "failure"
+	filtered, err := store.GetGlobalCredentialUsage(credential.ID, db.GlobalCredentialUsageQuery{
+		ProjectID: &firstProject.ID, Outcome: &failures, Count: 1,
+	})
+	require.NoError(t, err)
+	require.Len(t, filtered, 1)
+	assert.Equal(t, 42, filtered[0].TaskID)
+
+	impact, err := store.GetGlobalCredentialImpact(credential.ID, now.Add(time.Hour))
+	require.NoError(t, err)
+	assert.Equal(t, 3, impact.UsageCount)
+	assert.Equal(t, 2, impact.ProjectCount)
+	require.NotNil(t, impact.LastUsedAt)
+	assert.Equal(t, now.Add(2*time.Minute), *impact.LastUsedAt)
+}
+
 func TestGlobalCredentialGrantProjectSelectorIsOrderedAndBounded(t *testing.T) {
 	store := InitConfigCreateTestStore()
 	t.Cleanup(store.Close)

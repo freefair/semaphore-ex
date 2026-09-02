@@ -15,6 +15,7 @@ import (
 
 	"github.com/semaphoreui/semaphore/api/sockets"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pkg/taskredaction"
 	"github.com/semaphoreui/semaphore/pro/pkg/stage_parsers"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
@@ -30,6 +31,7 @@ func (t *TaskRunner) Logf(format string, a ...any) {
 }
 
 func (t *TaskRunner) LogWithTime(now time.Time, msg string) {
+	msg = t.redactor.Redact(msg)
 	if t.Template.App == db.AppAnsible {
 		event, recognized, err := stage_parsers.ParseTaskSummaryEvent(msg)
 		if recognized {
@@ -85,6 +87,10 @@ func (t *TaskRunner) LogWithTime(now time.Time, msg string) {
 	for _, l := range t.logListeners {
 		l(now, msg)
 	}
+}
+
+func (t *TaskRunner) SetTaskCredentialRedaction(taskSecret string) {
+	t.redactor = taskredaction.NewFromTaskSecret(taskSecret, t.GlobalCredentialBindingTargets())
 }
 
 func (t *TaskRunner) sendToWs(now time.Time, msg string) {
@@ -159,7 +165,7 @@ func taskStatusTransitionAllowed(current task_logger.TaskStatus, next task_logge
 		return next != task_logger.TaskWaitingStatus
 	case task_logger.TaskStoppingStatus, task_logger.TaskRejected:
 		return next == task_logger.TaskStoppedStatus || next == task_logger.TaskFailStatus
-	case task_logger.TaskSuccessStatus, task_logger.TaskFailStatus, task_logger.TaskStoppedStatus:
+	case task_logger.TaskSuccessStatus, task_logger.TaskFailStatus, task_logger.TaskStoppedStatus, task_logger.TaskBlockedStatus:
 		return false
 	default:
 		return true
@@ -170,7 +176,7 @@ func runnerAttemptOutcomeForStatus(status task_logger.TaskStatus) db.RunnerAttem
 	switch status {
 	case task_logger.TaskSuccessStatus:
 		return db.RunnerAttemptSucceeded
-	case task_logger.TaskFailStatus:
+	case task_logger.TaskFailStatus, task_logger.TaskBlockedStatus:
 		return db.RunnerAttemptFailed
 	case task_logger.TaskStoppedStatus:
 		return db.RunnerAttemptStopped

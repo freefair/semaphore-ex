@@ -52,13 +52,13 @@ func TestKubernetesProviderRequiresPolicyAcknowledgementAndValidatesFinalManifes
 	cfg := config{clusterAlias: "qa", namespace: "semaphore-jobs", serviceAccount: "semaphore-task", image: testImage, helperImage: testImage, cleanupGrace: time.Second, activeDeadlineSeconds: 60}
 	provider := newProviderWithClient(cfg, &fakeKubernetesClient{})
 	provider.ApplyRunnerIdentity(19)
-	_, err := provider.NewExecutor(db.Task{}, db.Template{}, db.Inventory{}, db.Repository{}, db.Environment{}, "")
+	_, err := provider.NewExecutor(db.Task{}, db.Template{}, db.Inventory{}, db.Repository{}, db.Environment{}, "", "")
 	require.ErrorContains(t, err, db.KubernetesPolicyRuleClusterDenied)
 
 	policy := testKubernetesPolicy(t, cfg)
 	require.NoError(t, provider.ApplyKubernetesExecutionPolicy(policy))
 	assert.True(t, policy.MatchesAck(provider.KubernetesExecutionPolicyAcknowledgement()))
-	_, err = provider.NewExecutor(db.Task{}, db.Template{ExecutorImage: stringPointer("registry.example.test/other@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")}, db.Inventory{}, db.Repository{}, db.Environment{}, "")
+	_, err = provider.NewExecutor(db.Task{}, db.Template{ExecutorImage: stringPointer("registry.example.test/other@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")}, db.Inventory{}, db.Repository{}, db.Environment{}, "", "")
 	require.ErrorContains(t, err, db.KubernetesPolicyRuleImageDenied)
 
 	job := buildJob(cfg, policy, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 1}, 19, "bundle", testImage, []string{"/bin/true"})

@@ -1363,7 +1363,7 @@ func (d *WorkflowStoreImpl) UpdateWorkflowRunNodeFromTask(
 	resultJSON string,
 	at time.Time,
 ) (bool, error) {
-	if status == db.WorkflowRunNodePending || status == db.WorkflowRunNodeBlocked {
+	if status == db.WorkflowRunNodePending {
 		return false, fmt.Errorf("workflow task cannot transition node to %s", status)
 	}
 	start := any(nil)

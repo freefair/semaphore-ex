@@ -25,12 +25,30 @@ type globalCredentialFacadeStub struct {
 		projectID int
 		params    db.RetrieveQueryParams
 	}
+	usageInput struct {
+		credentialID int
+		projectID    int
+		taskID       int
+		query        pro_interfaces.GlobalCredentialUsageQuery
+	}
 	actorID      int
 	credentialID int
 	grantID      int
 	revision     int
 	grantStatus  db.GlobalCredentialGrantStatus
 	err          error
+}
+
+func (s *globalCredentialFacadeStub) ListGlobalCredentialUsage(_ context.Context, credentialID int, query pro_interfaces.GlobalCredentialUsageQuery) ([]pro_interfaces.GlobalCredentialUsageDTO, error) {
+	s.usageInput.credentialID, s.usageInput.query = credentialID, query
+	return []pro_interfaces.GlobalCredentialUsageDTO{{ID: 1}}, s.err
+}
+func (s *globalCredentialFacadeStub) GetGlobalCredentialImpact(context.Context, int) (pro_interfaces.GlobalCredentialImpactDTO, error) {
+	return pro_interfaces.GlobalCredentialImpactDTO{CredentialID: 7, UsageCount: 2}, s.err
+}
+func (s *globalCredentialFacadeStub) ListTaskGlobalCredentialUsage(_ context.Context, projectID, taskID int, query pro_interfaces.GlobalCredentialUsageQuery) ([]pro_interfaces.GlobalCredentialUsageDTO, error) {
+	s.usageInput.projectID, s.usageInput.taskID, s.usageInput.query = projectID, taskID, query
+	return []pro_interfaces.GlobalCredentialUsageDTO{{ID: 1}}, s.err
 }
 
 func (s *globalCredentialFacadeStub) CreateGlobalCredential(_ context.Context, actorID int, input pro_interfaces.GlobalCredentialInput) (pro_interfaces.GlobalCredentialSummaryDTO, error) {
@@ -121,6 +139,58 @@ func TestGlobalCredentialGrantProjectListReturnsOnlySelectorFields(t *testing.T)
 	require.Len(t, result, 1)
 	assert.Equal(t, "Project seven", result[0]["name"])
 	assert.Len(t, result[0], 2)
+}
+
+func TestGlobalCredentialUsageRoutesUseBoundedValueFreeFilters(t *testing.T) {
+	service := &globalCredentialFacadeStub{}
+	controller := NewGlobalCredentialController(service)
+	response := httptest.NewRecorder()
+	request := globalCredentialRequest(http.MethodGet,
+		"/global-credentials/7/usage?count=10&before_id=20&project_id=4&task_id=8&outcome=denied", "",
+		map[string]string{"credential_id": "7"})
+	controller.ListUsage(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.NotNil(t, service.usageInput.query.Outcome)
+	assert.Equal(t, pro_interfaces.GlobalCredentialResolutionDenied, *service.usageInput.query.Outcome)
+	assert.Equal(t, 7, service.usageInput.credentialID)
+	assert.Equal(t, 10, service.usageInput.query.Count)
+	assert.Equal(t, 20, service.usageInput.query.BeforeID)
+	require.NotNil(t, service.usageInput.query.ProjectID)
+	require.NotNil(t, service.usageInput.query.TaskID)
+	assert.Equal(t, 4, *service.usageInput.query.ProjectID)
+	assert.Equal(t, 8, *service.usageInput.query.TaskID)
+
+	response = httptest.NewRecorder()
+	request = globalCredentialRequest(http.MethodGet,
+		"/project/4/tasks/8/credential-usage?count=5&outcome=allowed", "",
+		map[string]string{"project_id": "4", "task_id": "8"})
+	controller.ListTaskUsage(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+	assert.Equal(t, 4, service.usageInput.projectID)
+	assert.Equal(t, 8, service.usageInput.taskID)
+	assert.Nil(t, service.usageInput.query.ProjectID)
+	assert.Nil(t, service.usageInput.query.TaskID)
+}
+
+func TestGlobalCredentialUsageRoutesRejectAmbiguousAndUnknownFilters(t *testing.T) {
+	controller := NewGlobalCredentialController(&globalCredentialFacadeStub{})
+	for _, target := range []string{
+		"/global-credentials/7/usage?outcome=unknown",
+		"/global-credentials/7/usage?count=10&count=11",
+		"/global-credentials/7/usage?offset=1",
+		"/project/4/tasks/8/credential-usage?project_id=4",
+	} {
+		response := httptest.NewRecorder()
+		request := globalCredentialRequest(http.MethodGet, target, "", map[string]string{
+			"credential_id": "7", "project_id": "4", "task_id": "8",
+		})
+		if strings.Contains(target, "credential-usage") {
+			controller.ListTaskUsage(response, request)
+		} else {
+			controller.ListUsage(response, request)
+		}
+		assert.Equal(t, http.StatusBadRequest, response.Code, target)
+	}
 }
 
 func TestGlobalCredentialDeleteRejectsAmbiguousRevision(t *testing.T) {

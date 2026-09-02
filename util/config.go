@@ -543,6 +543,22 @@ type SshConfig struct {
 	StrictHostKeyChecking SshStrictHostKeyChecking `json:"strict_host_key_checking,omitempty" env:"" default:"no"`
 }
 
+// GlobalCredentialProviderConfig is global connection/auth metadata for the
+// execution-only credential resolver. Bootstrap credentials intentionally do
+// not appear here and are read only from the derived process environment name.
+type GlobalCredentialProviderConfig struct {
+	Type             string `json:"type"`
+	URL              string `json:"url"`
+	Namespace        string `json:"namespace,omitempty"`
+	CACertificate    string `json:"ca_certificate,omitempty"`
+	Timeout          string `json:"timeout,omitempty"`
+	MaxResponseBytes int64  `json:"max_response_bytes,omitempty"`
+	AuthMethod       string `json:"auth_method,omitempty"`
+	AuthMount        string `json:"auth_mount,omitempty"`
+	RoleID           string `json:"role_id,omitempty"`
+	Role             string `json:"role,omitempty"`
+}
+
 // ConfigType mapping between Config and the json file that sets it
 type ConfigType struct {
 	MySQL    *DbConfig `json:"mysql,omitempty"`
@@ -668,6 +684,11 @@ type ConfigType struct {
 
 	// oidc settings
 	OidcProviders map[string]OidcProvider `json:"oidc_providers,omitempty" env:"SEMAPHORE_OIDC_PROVIDERS"`
+
+	// GlobalCredentialProviders is intentionally a registry independent from
+	// project SecretStorage. Values are connection/auth metadata only; each
+	// bootstrap credential is read from a derived environment variable.
+	GlobalCredentialProviders map[string]GlobalCredentialProviderConfig `json:"global_credential_providers,omitempty" env:"SEMAPHORE_GLOBAL_CREDENTIAL_PROVIDERS"`
 
 	MaxTaskDurationSec  int `json:"max_task_duration_sec,omitempty" env:"SEMAPHORE_MAX_TASK_DURATION_SEC"`
 	MaxTasksPerTemplate int `json:"max_tasks_per_template,omitempty" env:"SEMAPHORE_MAX_TASKS_PER_TEMPLATE"`

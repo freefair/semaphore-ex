@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/semaphoreui/semaphore/api/sockets"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pkg/taskredaction"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 )
@@ -63,6 +65,8 @@ type TaskRunner struct {
 	// Alias uses if task require an alias for run.
 	// For example, terraform task require an alias for run.
 	Alias string
+
+	redactor taskredaction.Redactor
 
 	// dispatching is true while this process owns a live goroutine that is
 	// dispatching/running the task (set in runTask). A TaskRunner restored from
@@ -340,6 +344,14 @@ func (t *TaskRunner) run() {
 
 			localJob.JWT = token
 		}
+
+		mergedSecret, resolveErr := t.pool.ResolveTaskGlobalCredentials(context.Background(), t, nil, localJob.Secret)
+		if resolveErr != nil {
+			t.BlockGlobalCredentialResolution()
+			return
+		}
+		localJob.Secret = mergedSecret
+		t.SetTaskCredentialRedaction(mergedSecret)
 	}
 
 	err = t.job.Run(username, incomingVersion, t.Alias)
