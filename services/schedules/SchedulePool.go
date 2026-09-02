@@ -262,13 +262,14 @@ func NewScheduleOccurrence(schedule db.Schedule, intendedAt time.Time) (Schedule
 	revisionInput := struct {
 		TemplateID     int
 		CronFormat     string
+		Timezone       *string
 		Type           string
 		RepositoryID   *int
 		RunAt          *time.Time
 		DeleteAfterRun bool
 		TaskParams     *db.TaskParams
 	}{
-		TemplateID: schedule.TemplateID, CronFormat: schedule.CronFormat, Type: schedule.Type,
+		TemplateID: schedule.TemplateID, CronFormat: schedule.CronFormat, Timezone: schedule.Timezone, Type: schedule.Type,
 		RepositoryID: schedule.RepositoryID, RunAt: schedule.RunAt, DeleteAfterRun: schedule.DeleteAfterRun,
 		TaskParams: schedule.TaskParams,
 	}
@@ -301,7 +302,11 @@ func (p *SchedulePool) SetDeduplicator(d ScheduleDeduplicator) {
 }
 
 func (p *SchedulePool) init() {
-	loc, err := time.LoadLocation(util.Config.Schedule.Timezone)
+	globalTimezone := defaultScheduleTimezone
+	if util.Config.Schedule != nil && util.Config.Schedule.Timezone != "" {
+		globalTimezone = util.Config.Schedule.Timezone
+	}
+	loc, err := time.LoadLocation(globalTimezone)
 	if err != nil {
 		panic(err)
 	}
@@ -325,6 +330,7 @@ func (p *SchedulePool) Refresh() {
 
 	p.clear()
 	now := time.Now().In(p.cron.Location())
+	globalTimezone := p.cron.Location().String()
 	for _, schedule := range schedules {
 		scheduleType := schedule.Type
 		if scheduleType == "" {
@@ -384,7 +390,12 @@ func (p *SchedulePool) Refresh() {
 				continue
 			}
 
-			_, err = p.addRunner(runner, schedule.CronFormat)
+			_, expression, resolveErr := resolveScheduleExpression(schedule, globalTimezone)
+			if resolveErr != nil {
+				err = resolveErr
+				break
+			}
+			_, err = p.addRunner(runner, expression)
 		default:
 			log.WithFields(log.Fields{
 				"project_id":  schedule.ProjectID,
