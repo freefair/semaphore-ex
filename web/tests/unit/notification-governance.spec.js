@@ -485,4 +485,177 @@ describe('notification governance', () => {
       { url: '/api/notification-governance/events', offset: 1 },
     ]);
   });
+
+  it('submits typed ServiceNow configuration and keeps its secret write-only', async () => {
+    const payloads = [];
+    axios.defaults.adapter = async (config) => {
+      payloads.push(JSON.parse(config.data));
+      return response({
+        id: 59,
+        revision: 1,
+        name: 'ServiceNow',
+        provider: 'servicenow',
+        environment: 'production',
+        credential_configured: true,
+        servicenow: {
+          instance_origin: 'https://example.service-now.com',
+          auth_mode: 'oauth_client_credentials',
+          client_id: 'semaphore',
+          scope: 'incident_read incident_write',
+          field_mappings: [
+            { incident_field: 'short_description', source_field: 'summary' },
+            { incident_field: 'description', source_field: 'status' },
+          ],
+        },
+        enabled: true,
+        paused: false,
+      });
+    };
+    const context = {
+      $refs: { destinationForm: { validate: () => true } },
+      $t: translate,
+      destinationSaving: false,
+      destinationDialog: true,
+      destinationForm: {
+        id: null,
+        revision: 0,
+        name: 'ServiceNow',
+        provider: 'servicenow',
+        environment: 'production',
+        region: 'us',
+        opsgeniePriority: '',
+        opsgenieRespondersText: '',
+        serviceNowInstanceOrigin: 'https://example.service-now.com',
+        serviceNowAuthMode: 'oauth_client_credentials',
+        serviceNowClientID: 'semaphore',
+        serviceNowUsername: '',
+        serviceNowScope: 'incident_read incident_write',
+        serviceNowFieldMappingsText: 'short_description=summary\ndescription=status',
+        credential: 'client-secret',
+        enabled: true,
+      },
+      destinations: [],
+      error: '',
+      upsertDestination: NotificationGovernance.methods.upsertDestination,
+      closeDestination: NotificationGovernance.methods.closeDestination,
+      handleError: NotificationGovernance.methods.handleError,
+    };
+
+    await NotificationGovernance.methods.saveDestination.call(context);
+
+    expect(payloads).to.deep.equal([{
+      name: 'ServiceNow',
+      provider: 'servicenow',
+      environment: 'production',
+      region: '',
+      enabled: true,
+      servicenow: {
+        instance_origin: 'https://example.service-now.com',
+        auth_mode: 'oauth_client_credentials',
+        client_id: 'semaphore',
+        basic_username: '',
+        scope: 'incident_read incident_write',
+        field_mappings: [
+          { incident_field: 'short_description', source_field: 'summary' },
+          { incident_field: 'description', source_field: 'status' },
+        ],
+      },
+      credential: 'client-secret',
+    }]);
+    expect(JSON.stringify(context.destinations)).not.to.include('client-secret');
+
+    NotificationGovernance.methods.openDestination.call(context, context.destinations[0]);
+    expect(context.destinationForm.serviceNowInstanceOrigin).to.equal('https://example.service-now.com');
+    expect(context.destinationForm.serviceNowAuthMode).to.equal('oauth_client_credentials');
+    expect(context.destinationForm.serviceNowFieldMappingsText)
+      .to.equal('short_description=summary\ndescription=status');
+    expect(context.destinationForm.credential).to.equal('');
+  });
+
+  it('validates ServiceNow origin, auth fields, mappings, and record links locally', () => {
+    const initial = NotificationGovernance.data.call({ $t: translate });
+    expect(initial.destinationForm.serviceNowFieldMappingsText)
+      .to.include('description=lifecycle_action');
+    const originRules = NotificationGovernance.computed.serviceNowOriginRules.call({
+      destinationForm: { provider: 'servicenow' },
+      $t: translate,
+    });
+    const mappingRules = NotificationGovernance.computed.serviceNowFieldMappingRules.call({
+      destinationForm: { provider: 'servicenow' },
+      $t: translate,
+    });
+    const credentialRules = NotificationGovernance.computed.destinationCredentialRules.call({
+      destinationForm: { provider: 'servicenow', credential: 'secret' },
+      $t: translate,
+    });
+
+    expect(originRules[0]('https://example.service-now.com')).to.equal(true);
+    expect(originRules[0]('http://127.0.0.1')).to.equal('notificationServiceNowOriginInvalid');
+    expect(mappingRules[0](initial.destinationForm.serviceNowFieldMappingsText)).to.equal(true);
+    expect(mappingRules[0]('short_description=summary\ndescription=status')).to.equal(true);
+    expect(mappingRules[0]('short_description=severity')).to.equal('notificationServiceNowMappingsInvalid');
+    expect(mappingRules[0]('short_description=status')).to.equal('notificationServiceNowMappingsInvalid');
+    expect(mappingRules[0]('description=severity')).to.equal('notificationServiceNowMappingsInvalid');
+    expect(mappingRules[0]('work_notes=status')).to.equal('notificationServiceNowMappingsInvalid');
+    expect(credentialRules[0]('secret')).to.equal(true);
+    expect(credentialRules[0](' secret')).to.equal('notificationServiceNowCredentialInvalid');
+
+    const record = {
+      destination_provider: 'servicenow',
+      provider_record_id: '0123456789abcdef0123456789abcdef',
+      provider_record_url: 'https://example.service-now.com/incident.do?sys_id=0123456789abcdef0123456789abcdef',
+    };
+    expect(NotificationGovernance.methods.safeProviderRecordURL(record))
+      .to.equal(record.provider_record_url);
+    expect(NotificationGovernance.methods.safeProviderRecordURL({
+      ...record,
+      provider_record_url: ['java', 'script:alert(1)'].join(''),
+    })).to.equal('');
+  });
+
+  it('does not carry hidden OAuth fields into explicit ServiceNow Basic auth', async () => {
+    let submitted;
+    axios.defaults.adapter = async (config) => {
+      submitted = JSON.parse(config.data);
+      return response({ id: 60, provider: 'servicenow', revision: 1 });
+    };
+    const context = {
+      $refs: { destinationForm: { validate: () => true } },
+      $t: translate,
+      destinationSaving: false,
+      destinationDialog: true,
+      destinationForm: {
+        id: null,
+        revision: 0,
+        name: 'ServiceNow Basic',
+        provider: 'servicenow',
+        environment: 'legacy',
+        region: 'us',
+        serviceNowInstanceOrigin: 'https://example.service-now.com',
+        serviceNowAuthMode: 'basic',
+        serviceNowClientID: 'stale-oauth-client',
+        serviceNowUsername: 'semaphore-api',
+        serviceNowScope: 'stale_scope',
+        serviceNowFieldMappingsText: 'short_description=summary',
+        credential: 'password',
+        enabled: true,
+      },
+      destinations: [],
+      error: '',
+      upsertDestination: NotificationGovernance.methods.upsertDestination,
+      closeDestination: NotificationGovernance.methods.closeDestination,
+      handleError: NotificationGovernance.methods.handleError,
+    };
+
+    await NotificationGovernance.methods.saveDestination.call(context);
+
+    expect(submitted.servicenow).to.deep.equal({
+      instance_origin: 'https://example.service-now.com',
+      auth_mode: 'basic',
+      client_id: '',
+      basic_username: 'semaphore-api',
+      scope: '',
+      field_mappings: [{ incident_field: 'short_description', source_field: 'summary' }],
+    });
+  });
 });

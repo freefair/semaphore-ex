@@ -83,6 +83,13 @@
                     · {{ $t('notificationOpsgenieResponders') }}:
                     {{ (item.opsgenie.responders || []).length }}
                   </div>
+                  <div
+                    v-if="item.provider === 'servicenow' && item.servicenow"
+                    class="text-caption text--secondary notification-governance-incident-key"
+                  >
+                    {{ item.servicenow.instance_origin }}
+                    · {{ serviceNowAuthModeLabel(item.servicenow.auth_mode) }}
+                  </div>
                 </template>
                 <template v-slot:item.actions="{ item }">
                   <div class="notification-governance-row-actions">
@@ -348,6 +355,19 @@
                   >
                     {{ $t('notificationProviderRequestID') }}: {{ item.provider_request_id }}
                   </div>
+                  <div
+                    v-if="item.provider_record_id"
+                    class="text-caption text--secondary notification-governance-incident-key"
+                  >
+                    {{ $t('notificationProviderRecordID') }}:
+                    <a
+                      v-if="safeProviderRecordURL(item)"
+                      :href="safeProviderRecordURL(item)"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >{{ item.provider_record_id }}</a>
+                    <span v-else>{{ item.provider_record_id }}</span>
+                  </div>
                 </template>
                 <template v-slot:item.status="{ item }">
                   <v-chip x-small dark :color="deliveryStatusColor(item.status)">
@@ -469,9 +489,77 @@
               :disabled="destinationSaving"
               data-testid="notification-destination-opsgenie-responders"
             />
+            <template v-if="destinationForm.provider.trim() === 'servicenow'">
+              <v-text-field
+                v-model.trim="destinationForm.serviceNowInstanceOrigin"
+                :label="$t('notificationServiceNowInstanceOrigin')"
+                :hint="$t('notificationServiceNowInstanceOriginHint')"
+                :rules="serviceNowOriginRules"
+                persistent-hint
+                outlined
+                dense
+                :disabled="destinationSaving"
+                data-testid="notification-destination-servicenow-origin"
+              />
+              <v-select
+                v-model="destinationForm.serviceNowAuthMode"
+                :items="serviceNowAuthModeOptions"
+                item-text="text"
+                item-value="value"
+                :label="$t('notificationServiceNowAuthMode')"
+                :rules="requiredRules"
+                outlined
+                dense
+                :disabled="destinationSaving"
+                data-testid="notification-destination-servicenow-auth-mode"
+              />
+              <v-text-field
+                v-if="destinationForm.serviceNowAuthMode === 'oauth_client_credentials'"
+                v-model.trim="destinationForm.serviceNowClientID"
+                :label="$t('notificationServiceNowClientID')"
+                :rules="requiredRules"
+                outlined
+                dense
+                :disabled="destinationSaving"
+                data-testid="notification-destination-servicenow-client-id"
+              />
+              <v-text-field
+                v-else
+                v-model.trim="destinationForm.serviceNowUsername"
+                :label="$t('username')"
+                :rules="requiredRules"
+                outlined
+                dense
+                :disabled="destinationSaving"
+                data-testid="notification-destination-servicenow-username"
+              />
+              <v-text-field
+                v-if="destinationForm.serviceNowAuthMode === 'oauth_client_credentials'"
+                v-model.trim="destinationForm.serviceNowScope"
+                :label="$t('notificationServiceNowScope')"
+                :hint="$t('notificationServiceNowScopeHint')"
+                persistent-hint
+                outlined
+                dense
+                :disabled="destinationSaving"
+                data-testid="notification-destination-servicenow-scope"
+              />
+              <v-textarea
+                v-model="destinationForm.serviceNowFieldMappingsText"
+                :label="$t('notificationServiceNowFieldMappings')"
+                :hint="$t('notificationServiceNowFieldMappingsHint')"
+                :rules="serviceNowFieldMappingRules"
+                persistent-hint
+                outlined
+                dense
+                rows="4"
+                :disabled="destinationSaving"
+                data-testid="notification-destination-servicenow-mappings"
+              />
+            </template>
             <v-text-field
               v-model="destinationForm.credential"
-              :label="$t('notificationCredential')"
+              :label="destinationCredentialLabel"
               :rules="destinationCredentialRules"
               type="password"
               autocomplete="new-password"
@@ -604,6 +692,70 @@ const formatOpsgenieResponders = (responders = []) => responders.map((responder)
   return field ? `${responder.type}:${field}:${responder[field]}` : '';
 }).filter(Boolean).join('\n');
 
+const SERVICE_NOW_DEFAULT_MAPPINGS = [
+  'short_description=summary',
+  'description=lifecycle_action',
+  'impact=severity',
+  'urgency=severity',
+].join('\n');
+const SERVICE_NOW_PRIORITY_FIELDS = ['impact', 'urgency'];
+const SERVICE_NOW_DESCRIPTION_SOURCES = ['summary', 'lifecycle_action', 'status'];
+
+const parseServiceNowFieldMappings = (value) => {
+  const lines = value.split('\n').map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0 || lines.length > 4) return null;
+  const parsed = lines.reduce((state, line) => {
+    if (state === null) return null;
+    const match = /^(short_description|description|impact|urgency)=([a-z_]+)$/.exec(line);
+    if (!match || state.targets.has(match[1])) return null;
+    const [incidentField, sourceField] = match.slice(1);
+    let compatible = false;
+    if (incidentField === 'short_description') {
+      compatible = sourceField === 'summary';
+    } else if (SERVICE_NOW_PRIORITY_FIELDS.includes(incidentField)) {
+      compatible = sourceField === 'severity';
+    } else if (incidentField === 'description') {
+      compatible = SERVICE_NOW_DESCRIPTION_SOURCES.includes(sourceField);
+    }
+    if (!compatible) return null;
+    state.targets.add(incidentField);
+    state.mappings.push({ incident_field: incidentField, source_field: sourceField });
+    return state;
+  }, { targets: new Set(), mappings: [] });
+  return parsed && parsed.targets.has('short_description') ? parsed.mappings : null;
+};
+
+const formatServiceNowFieldMappings = (mappings = []) => mappings
+  .map((mapping) => `${mapping.incident_field}=${mapping.source_field}`)
+  .join('\n');
+
+const isServiceNowHostname = (hostname) => {
+  const lower = hostname.toLowerCase();
+  const suffix = ['.service-now.com', '.servicenow.com']
+    .find((candidate) => lower.endsWith(candidate));
+  if (!suffix) return false;
+  const prefix = lower.slice(0, -suffix.length);
+  return prefix.length > 0 && prefix.split('.').every((label) => (
+    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)
+  ));
+};
+
+const isServiceNowOrigin = (value) => {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:'
+      && parsed.username === ''
+      && parsed.password === ''
+      && (parsed.port === '' || parsed.port === '443')
+      && parsed.pathname === '/'
+      && parsed.search === ''
+      && parsed.hash === ''
+      && isServiceNowHostname(parsed.hostname);
+  } catch (err) {
+    return false;
+  }
+};
+
 const newDestinationForm = () => ({
   id: null,
   revision: 0,
@@ -613,6 +765,12 @@ const newDestinationForm = () => ({
   region: 'us',
   opsgeniePriority: '',
   opsgenieRespondersText: '',
+  serviceNowInstanceOrigin: '',
+  serviceNowAuthMode: 'oauth_client_credentials',
+  serviceNowClientID: '',
+  serviceNowUsername: '',
+  serviceNowScope: '',
+  serviceNowFieldMappingsText: SERVICE_NOW_DEFAULT_MAPPINGS,
   credential: '',
   enabled: true,
 });
@@ -734,6 +892,37 @@ export default {
         ...['P1', 'P2', 'P3', 'P4', 'P5'].map((value) => ({ text: value, value })),
       ];
     },
+    serviceNowAuthModeOptions() {
+      return [
+        {
+          text: this.$t('notificationServiceNowAuthOAuthClientCredentials'),
+          value: 'oauth_client_credentials',
+        },
+        { text: this.$t('notificationServiceNowAuthBasic'), value: 'basic' },
+      ];
+    },
+    serviceNowOriginRules() {
+      if (this.destinationForm.provider.trim() !== 'servicenow') return [];
+      return [
+        (value) => isServiceNowOrigin(value)
+          || this.$t('notificationServiceNowOriginInvalid'),
+      ];
+    },
+    serviceNowFieldMappingRules() {
+      if (this.destinationForm.provider.trim() !== 'servicenow') return [];
+      return [
+        (value) => parseServiceNowFieldMappings(value) !== null
+          || this.$t('notificationServiceNowMappingsInvalid'),
+      ];
+    },
+    destinationCredentialLabel() {
+      if (this.destinationForm.provider.trim() !== 'servicenow') {
+        return this.$t('notificationCredential');
+      }
+      return this.destinationForm.serviceNowAuthMode === 'basic'
+        ? this.$t('password')
+        : this.$t('notificationServiceNowClientSecret');
+    },
     destinationCredentialRules() {
       if (this.destinationForm.credential === '') return [];
       if (this.destinationForm.provider.trim() === 'pagerduty') {
@@ -741,6 +930,10 @@ export default {
       }
       if (this.destinationForm.provider.trim() === 'opsgenie') {
         return [(value) => /^[\x21-\x7e]{1,256}$/.test(value) || this.$t('notificationOpsgenieKeyInvalid')];
+      }
+      if (this.destinationForm.provider.trim() === 'servicenow') {
+        return [(value) => (value.length <= 1024 && value.trim() === value)
+          || this.$t('notificationServiceNowCredentialInvalid')];
       }
       return [];
     },
@@ -829,6 +1022,14 @@ export default {
         region: destination.region || 'us',
         opsgeniePriority: destination.opsgenie?.priority || '',
         opsgenieRespondersText: formatOpsgenieResponders(destination.opsgenie?.responders),
+        serviceNowInstanceOrigin: destination.servicenow?.instance_origin || '',
+        serviceNowAuthMode: destination.servicenow?.auth_mode || 'oauth_client_credentials',
+        serviceNowClientID: destination.servicenow?.client_id || '',
+        serviceNowUsername: destination.servicenow?.basic_username || '',
+        serviceNowScope: destination.servicenow?.scope || '',
+        serviceNowFieldMappingsText: formatServiceNowFieldMappings(
+          destination.servicenow?.field_mappings,
+        ) || SERVICE_NOW_DEFAULT_MAPPINGS,
         credential: '',
         enabled: !!destination.enabled,
       } : newDestinationForm();
@@ -860,6 +1061,21 @@ export default {
           payload.opsgenie = {
             priority: this.destinationForm.opsgeniePriority,
             responders: parseOpsgenieResponders(this.destinationForm.opsgenieRespondersText),
+          };
+        }
+        if (this.destinationForm.provider.trim() === 'servicenow') {
+          payload.servicenow = {
+            instance_origin: this.destinationForm.serviceNowInstanceOrigin.trim(),
+            auth_mode: this.destinationForm.serviceNowAuthMode,
+            client_id: this.destinationForm.serviceNowAuthMode === 'oauth_client_credentials'
+              ? this.destinationForm.serviceNowClientID.trim() : '',
+            basic_username: this.destinationForm.serviceNowAuthMode === 'basic'
+              ? this.destinationForm.serviceNowUsername.trim() : '',
+            scope: this.destinationForm.serviceNowAuthMode === 'oauth_client_credentials'
+              ? this.destinationForm.serviceNowScope.trim() : '',
+            field_mappings: parseServiceNowFieldMappings(
+              this.destinationForm.serviceNowFieldMappingsText,
+            ),
           };
         }
         if (this.destinationForm.credential !== '') {
@@ -1082,6 +1298,34 @@ export default {
       if (region === 'us') return this.$t('notificationRegionUS');
       if (region === 'eu') return this.$t('notificationRegionEU');
       return '—';
+    },
+    serviceNowAuthModeLabel(mode) {
+      if (mode === 'oauth_client_credentials') {
+        return this.$t('notificationServiceNowAuthOAuthClientCredentials');
+      }
+      if (mode === 'basic') return this.$t('notificationServiceNowAuthBasic');
+      return '—';
+    },
+    safeProviderRecordURL(item) {
+      if (item.destination_provider !== 'servicenow'
+        || !/^[a-f0-9]{32}$/.test(item.provider_record_id || '')) return '';
+      try {
+        const parsed = new URL(item.provider_record_url || '');
+        const keys = [...parsed.searchParams.keys()];
+        if (parsed.protocol !== 'https:'
+          || parsed.username !== ''
+          || parsed.password !== ''
+          || (parsed.port !== '' && parsed.port !== '443')
+          || !isServiceNowHostname(parsed.hostname)
+          || parsed.pathname !== '/incident.do'
+          || parsed.hash !== ''
+          || keys.length !== 1
+          || keys[0] !== 'sys_id'
+          || parsed.searchParams.get('sys_id') !== item.provider_record_id) return '';
+        return parsed.toString();
+      } catch (err) {
+        return '';
+      }
     },
     canTest(destination) {
       return destination.enabled && !destination.paused && destination.credential_configured;
