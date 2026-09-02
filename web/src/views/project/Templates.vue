@@ -130,7 +130,45 @@
 
     <v-divider style="margin-top: -1px;"/>
 
+    <div class="template-search-bar px-4 pt-4">
+      <v-text-field
+        ref="templateSearch"
+        v-model="templateSearchInput"
+        :label="$t('templateSearchLabel')"
+        prepend-inner-icon="mdi-magnify"
+        clearable
+        dense
+        outlined
+        hide-details
+        maxlength="256"
+        :loading="templateSearchLoading"
+        data-testid="template-search"
+        @input="queueTemplateSearch"
+        @click:clear="clearTemplateSearch"
+        @keydown.esc.stop.prevent="clearTemplateSearch"
+      />
+      <div
+        v-if="appliedTemplateSearch && !templateSearchLoading"
+        class="template-search-results"
+        data-testid="template-search-results"
+        aria-live="polite"
+      >
+        {{ $t('templateSearchResultCount', { count: items.length }) }}
+      </div>
+    </div>
+
+    <v-alert
+      v-if="templateSearchError"
+      dense
+      text
+      type="error"
+      class="mx-4 mt-3 mb-0"
+    >
+      {{ templateSearchError }}
+    </v-alert>
+
     <v-data-table
+      ref="templatesTable"
       hide-default-footer
       class="mt-4 templates-table"
       single-expand
@@ -138,9 +176,10 @@
       :headers="filteredHeaders"
       :items="items"
       :items-per-page="Number.MAX_VALUE"
+      :page.sync="templateTablePage"
       :expanded.sync="openedItems"
       :style="{
-        opacity: viewItemsLoading ? 0.3 : 1,
+        opacity: viewItemsLoading || templateSearchLoading ? 0.3 : 1,
       }"
     >
       <template v-slot:item.name="{ item }">
@@ -159,8 +198,45 @@
           :to="viewId
               ? `/project/${projectId}/views/${viewId}/templates/${item.id}`
               : `/project/${projectId}/templates/${item.id}`"
-        >{{ item.name }}
+        >
+          <template v-for="(segment, index) in highlightTemplateSearch(item.name)">
+            <mark
+              v-if="segment.match"
+              :key="`name-match-${item.id}-${index}`"
+              class="template-search-match"
+            >{{ segment.text }}</mark>
+            <span v-else :key="`name-text-${item.id}-${index}`">{{ segment.text }}</span>
+          </template>
         </router-link>
+        <div
+          v-if="templateSearchSecondaryMatch(item)"
+          class="template-search-context ml-8"
+        >
+          {{ $t('templateSearchMatchedIn', { field: templateSearchSecondaryMatch(item).label }) }}:
+          <template
+            v-for="(segment, index) in highlightTemplateSearch(
+              templateSearchSecondaryMatch(item).value
+            )"
+          >
+            <mark
+              v-if="segment.match"
+              :key="`context-match-${item.id}-${index}`"
+              class="template-search-match"
+            >{{ segment.text }}</mark>
+            <span v-else :key="`context-text-${item.id}-${index}`">{{ segment.text }}</span>
+          </template>
+        </div>
+      </template>
+
+      <template v-slot:item.playbook="{ item }">
+        <template v-for="(segment, index) in highlightTemplateSearch(item.playbook)">
+          <mark
+            v-if="segment.match"
+            :key="`playbook-match-${item.id}-${index}`"
+            class="template-search-match"
+          >{{ segment.text }}</mark>
+          <span v-else :key="`playbook-text-${item.id}-${index}`">{{ segment.text }}</span>
+        </template>
       </template>
 
       <template v-slot:item.version="{ item }">
@@ -240,6 +316,21 @@
           />
         </td>
       </template>
+
+      <template v-slot:no-data>
+        <div
+          v-if="appliedTemplateSearch"
+          class="template-search-empty py-8"
+          data-testid="template-search-empty"
+          aria-live="polite"
+        >
+          <div>{{ $t('templateSearchNoResults', { query: appliedTemplateSearch }) }}</div>
+          <v-btn text color="primary" class="mt-2" @click="clearTemplateSearch">
+            {{ $t('templateSearchClear') }}
+          </v-btn>
+        </div>
+        <span v-else>{{ $t('templateSearchNoTemplates') }}</span>
+      </template>
     </v-data-table>
 
     <TableSettingsSheet
@@ -257,7 +348,58 @@
   padding-right: 0 !important;
 }
 
+.template-search-bar {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+}
+
+.template-search-bar .v-input {
+  flex: 0 1 520px;
+}
+
+.template-search-results {
+  color: var(--text-color, rgba(0, 0, 0, 0.6));
+  flex: 0 0 auto;
+  font-size: 0.875rem;
+}
+
+.template-search-context {
+  color: rgba(0, 0, 0, 0.6);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  max-width: 48rem;
+  overflow-wrap: anywhere;
+}
+
+.theme--dark .template-search-context,
+.theme--dark .template-search-results {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.template-search-match {
+  background: #fff2a8;
+  border-radius: 2px;
+  color: inherit;
+  padding: 0;
+}
+
+.theme--dark .template-search-match {
+  background: #675d20;
+}
+
 @media #{map-get($display-breakpoints, 'sm-and-down')} {
+  .template-search-bar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .template-search-bar .v-input {
+    flex-basis: auto;
+    width: 100%;
+  }
+
   .templates-table .v-data-table__mobile-row:first-child {
     display: none !important;
   }
@@ -274,6 +416,7 @@ import EventBus from '@/event-bus';
 import TaskStatus from '@/components/TaskStatus.vue';
 import socket from '@/socket';
 import NewTaskDialog from '@/components/NewTaskDialog.vue';
+import { getErrorMessage } from '@/lib/error';
 
 import { TEMPLATE_TYPE_ACTION_TITLES, TEMPLATE_TYPE_ICONS } from '@/lib/constants';
 import EditTemplateDialog from '@/components/EditTemplateDialog.vue';
@@ -295,6 +438,9 @@ export default {
   mixins: [ItemListPageBase, AppsMixin],
 
   data() {
+    const initialTemplateSearch = typeof this.$route.query.search === 'string'
+      ? this.$route.query.search.trim().slice(0, 256)
+      : '';
     return {
       TEMPLATE_TYPE_ICONS,
       TEMPLATE_TYPE_ACTION_TITLES,
@@ -311,6 +457,14 @@ export default {
       viewTab: null,
       apps: null,
       itemApp: '',
+      templateSearchInput: initialTemplateSearch,
+      appliedTemplateSearch: initialTemplateSearch,
+      templateSearchTimer: null,
+      templateSearchAbort: null,
+      templateSearchRequest: 0,
+      templateSearchLoading: false,
+      templateSearchError: null,
+      templateTablePage: 1,
     };
   },
 
@@ -340,6 +494,18 @@ export default {
     },
   },
   watch: {
+    '$route.query.search': async function routeTemplateSearch(value) {
+      const normalized = this.normalizeTemplateSearch(value);
+      if (normalized === this.templateSearchInput
+        && normalized === this.appliedTemplateSearch) {
+        return;
+      }
+      this.cancelQueuedTemplateSearch();
+      this.templateSearchInput = normalized;
+      this.appliedTemplateSearch = normalized;
+      this.templateTablePage = 1;
+      await this.loadItems();
+    },
     async viewId() {
       try {
         this.viewItemsLoading = true;
@@ -360,11 +526,168 @@ export default {
     await this.loadData();
   },
 
+  mounted() {
+    window.addEventListener('keydown', this.onTemplateSearchShortcut);
+  },
+
   beforeDestroy() {
+    this.cancelQueuedTemplateSearch();
+    this.cancelTemplateSearchRequest();
+    window.removeEventListener('keydown', this.onTemplateSearchShortcut);
     socket.removeListener(this.socketListenerId);
   },
 
   methods: {
+    normalizeTemplateSearch(value) {
+      return typeof value === 'string' ? value.trim().slice(0, 256) : '';
+    },
+
+    cancelQueuedTemplateSearch() {
+      if (this.templateSearchTimer != null) {
+        clearTimeout(this.templateSearchTimer);
+        this.templateSearchTimer = null;
+      }
+    },
+
+    queueTemplateSearch() {
+      this.cancelQueuedTemplateSearch();
+      this.templateSearchTimer = setTimeout(() => {
+        this.templateSearchTimer = null;
+        this.applyTemplateSearch();
+      }, 300);
+    },
+
+    async applyTemplateSearch() {
+      this.cancelQueuedTemplateSearch();
+      const normalized = this.normalizeTemplateSearch(this.templateSearchInput);
+      this.templateSearchInput = normalized;
+      this.appliedTemplateSearch = normalized;
+      this.templateTablePage = 1;
+
+      const query = { ...this.$route.query };
+      delete query.page;
+      if (normalized) {
+        query.search = normalized;
+      } else {
+        delete query.search;
+      }
+      if (JSON.stringify(query) !== JSON.stringify(this.$route.query)) {
+        await this.$router.push({ query });
+      }
+      await this.loadItems();
+    },
+
+    async clearTemplateSearch() {
+      this.templateSearchInput = '';
+      await this.applyTemplateSearch();
+      await this.$nextTick();
+      if (this.$refs.templateSearch) {
+        this.$refs.templateSearch.focus();
+      }
+    },
+
+    onTemplateSearchShortcut(event) {
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      const target = event.target;
+      if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) {
+        return;
+      }
+      event.preventDefault();
+      if (this.$refs.templateSearch) {
+        this.$refs.templateSearch.focus();
+      }
+    },
+
+    cancelTemplateSearchRequest() {
+      if (this.templateSearchAbort) {
+        this.templateSearchAbort.abort();
+        this.templateSearchAbort = null;
+      }
+    },
+
+    async loadItems() {
+      this.cancelTemplateSearchRequest();
+      const controller = new AbortController();
+      this.templateSearchRequest += 1;
+      const request = this.templateSearchRequest;
+      this.templateSearchAbort = controller;
+      this.templateSearchLoading = true;
+      this.templateSearchError = null;
+      try {
+        const response = await axios({
+          method: 'get',
+          url: this.getItemsUrl(),
+          responseType: 'json',
+          params: this.appliedTemplateSearch ? { search: this.appliedTemplateSearch } : undefined,
+          signal: controller.signal,
+        });
+        if (request === this.templateSearchRequest) {
+          this.items = response.data;
+          this.openedItems = this.openedItems.filter((opened) => (
+            this.items.some((item) => item.id === opened.id)
+          ));
+        }
+      } catch (err) {
+        if (!controller.signal.aborted && request === this.templateSearchRequest) {
+          this.templateSearchError = getErrorMessage(err);
+        }
+      } finally {
+        if (request === this.templateSearchRequest) {
+          this.templateSearchAbort = null;
+          this.templateSearchLoading = false;
+        }
+      }
+    },
+
+    highlightTemplateSearch(value) {
+      const text = value == null ? '' : String(value);
+      const query = this.appliedTemplateSearch.toLocaleLowerCase();
+      if (!query) {
+        return [{ text, match: false }];
+      }
+      const normalized = text.toLocaleLowerCase();
+      const segments = [];
+      let offset = 0;
+      let matchIndex = normalized.indexOf(query, offset);
+      while (matchIndex !== -1) {
+        if (matchIndex > offset) {
+          segments.push({ text: text.slice(offset, matchIndex), match: false });
+        }
+        const end = matchIndex + query.length;
+        segments.push({ text: text.slice(matchIndex, end), match: true });
+        offset = end;
+        matchIndex = normalized.indexOf(query, offset);
+      }
+      if (offset < text.length || segments.length === 0) {
+        segments.push({ text: text.slice(offset), match: false });
+      }
+      return segments;
+    },
+
+    templateSearchFields(item) {
+      const tags = Array.isArray(item.runner_tags) && item.runner_tags.length > 0
+        ? item.runner_tags.join(', ')
+        : (item.runner_tag || '');
+      return [
+        { field: 'name', label: this.$t('name'), value: item.name || '' },
+        { field: 'description', label: this.$t('description'), value: item.description || '' },
+        { field: 'playbook', label: this.$t('playbook'), value: item.playbook || '' },
+        { field: 'tags', label: this.$t('tags'), value: tags },
+      ];
+    },
+
+    templateSearchSecondaryMatch(item) {
+      if (!this.appliedTemplateSearch) {
+        return null;
+      }
+      const query = this.appliedTemplateSearch.toLocaleLowerCase();
+      return this.templateSearchFields(item).slice(1).find(
+        (field) => field.value.toLocaleLowerCase().includes(query),
+      ) || null;
+    },
+
     async beforeLoadItems() {
       await this.loadViews();
       if (this.viewId == null) {
@@ -376,7 +699,11 @@ export default {
 
         if (viewId != null
           && this.views.some((v) => v.id === parseInt(viewId, 10))) {
-          await this.$router.push({ path: `/project/${this.projectId}/views/${viewId}/templates` });
+          const target = { path: `/project/${this.projectId}/views/${viewId}/templates` };
+          if (this.appliedTemplateSearch) {
+            target.query = { ...this.$route.query, search: this.appliedTemplateSearch };
+          }
+          await this.$router.push(target);
         }
       }
     },
@@ -399,10 +726,16 @@ export default {
     },
 
     getViewUrl(viewId) {
-      if (viewId == null) {
-        return `/project/${this.projectId}/templates`;
+      const path = viewId == null
+        ? `/project/${this.projectId}/templates`
+        : `/project/${this.projectId}/views/${viewId}/templates`;
+      if (!this.appliedTemplateSearch) {
+        return path;
       }
-      return `/project/${this.projectId}/views/${viewId}/templates`;
+      return {
+        path,
+        query: { ...this.$route.query, search: this.appliedTemplateSearch },
+      };
     },
 
     async loadViews() {

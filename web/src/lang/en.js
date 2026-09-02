@@ -1010,4 +1010,10 @@ export default {
   taskTemplate: 'Task Template',
   refresh: 'Refresh',
   end: 'End',
+  templateSearchLabel: 'Search templates',
+  templateSearchResultCount: '{count} matching templates',
+  templateSearchNoResults: 'No templates match “{query}”.',
+  templateSearchClear: 'Clear search',
+  templateSearchNoTemplates: 'No templates available',
+  templateSearchMatchedIn: 'Matched in {field}',
 };
