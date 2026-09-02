@@ -130,7 +130,45 @@
 
     <v-divider style="margin-top: -1px;"/>
 
+    <div class="template-search-bar px-4 pt-4">
+      <v-text-field
+        ref="templateSearch"
+        v-model="templateSearchInput"
+        :label="$t('templateSearchLabel')"
+        prepend-inner-icon="mdi-magnify"
+        clearable
+        dense
+        outlined
+        hide-details
+        maxlength="256"
+        :loading="templateSearchLoading"
+        data-testid="template-search"
+        @input="queueTemplateSearch"
+        @click:clear="clearTemplateSearch"
+        @keydown.esc.stop.prevent="clearTemplateSearch"
+      />
+      <div
+        v-if="appliedTemplateSearch && !templateSearchLoading"
+        class="template-search-results"
+        data-testid="template-search-results"
+        aria-live="polite"
+      >
+        {{ $t('templateSearchResultCount', { count: items.length }) }}
+      </div>
+    </div>
+
+    <v-alert
+      v-if="templateSearchError"
+      dense
+      text
+      type="error"
+      class="mx-4 mt-3 mb-0"
+    >
+      {{ templateSearchError }}
+    </v-alert>
+
     <v-data-table
+      ref="templatesTable"
       hide-default-footer
       class="mt-4 templates-table"
       single-expand
@@ -138,9 +176,10 @@
       :headers="filteredHeaders"
       :items="items"
       :items-per-page="Number.MAX_VALUE"
+      :page.sync="templateTablePage"
       :expanded.sync="openedItems"
       :style="{
-        opacity: viewItemsLoading ? 0.3 : 1,
+        opacity: viewItemsLoading || templateSearchLoading ? 0.3 : 1,
       }"
     >
       <template v-slot:item.name="{ item }">
@@ -159,8 +198,45 @@
           :to="viewId
               ? `/project/${projectId}/views/${viewId}/templates/${item.id}`
               : `/project/${projectId}/templates/${item.id}`"
-        >{{ item.name }}
+        >
+          <template v-for="(segment, index) in highlightTemplateSearch(item.name)">
+            <mark
+              v-if="segment.match"
+              :key="`name-match-${item.id}-${index}`"
+              class="template-search-match"
+            >{{ segment.text }}</mark>
+            <span v-else :key="`name-text-${item.id}-${index}`">{{ segment.text }}</span>
+          </template>
         </router-link>
+        <div
+          v-if="templateSearchSecondaryMatch(item)"
+          class="template-search-context ml-8"
+        >
+          {{ $t('templateSearchMatchedIn', { field: templateSearchSecondaryMatch(item).label }) }}:
+          <template
+            v-for="(segment, index) in highlightTemplateSearch(
+              templateSearchSecondaryMatch(item).value
+            )"
+          >
+            <mark
+              v-if="segment.match"
+              :key="`context-match-${item.id}-${index}`"
+              class="template-search-match"
+            >{{ segment.text }}</mark>
+            <span v-else :key="`context-text-${item.id}-${index}`">{{ segment.text }}</span>
+          </template>
+        </div>
+      </template>
+
+      <template v-slot:item.playbook="{ item }">
+        <template v-for="(segment, index) in highlightTemplateSearch(item.playbook)">
+          <mark
+            v-if="segment.match"
+            :key="`playbook-match-${item.id}-${index}`"
+            class="template-search-match"
+          >{{ segment.text }}</mark>
+          <span v-else :key="`playbook-text-${item.id}-${index}`">{{ segment.text }}</span>
+        </template>
       </template>
 
       <template v-slot:item.version="{ item }">
@@ -240,6 +316,21 @@
           />
         </td>
       </template>
+
+      <template v-slot:no-data>
+        <div
+          v-if="appliedTemplateSearch"
+          class="template-search-empty py-8"
+          data-testid="template-search-empty"
+          aria-live="polite"
+        >
+          <div>{{ $t('templateSearchNoResults', { query: appliedTemplateSearch }) }}</div>
+          <v-btn text color="primary" class="mt-2" @click="clearTemplateSearch">
+            {{ $t('templateSearchClear') }}
+          </v-btn>
+        </div>
+        <span v-else>{{ $t('templateSearchNoTemplates') }}</span>
+      </template>
     </v-data-table>
 
     <TableSettingsSheet
@@ -257,13 +348,66 @@
   padding-right: 0 !important;
 }
 
+.template-search-bar {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+}
+
+.template-search-bar .v-input {
+  flex: 0 1 520px;
+}
+
+.template-search-results {
+  color: var(--text-color, rgba(0, 0, 0, 0.6));
+  flex: 0 0 auto;
+  font-size: 0.875rem;
+}
+
+.template-search-context {
+  color: rgba(0, 0, 0, 0.6);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  max-width: 48rem;
+  overflow-wrap: anywhere;
+}
+
+.theme--dark .template-search-context,
+.theme--dark .template-search-results {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.template-search-match {
+  background: #fff2a8;
+  border-radius: 2px;
+  color: inherit;
+  padding: 0;
+}
+
+.theme--dark .template-search-match {
+  background: #675d20;
+}
+
 @media #{map-get($display-breakpoints, 'sm-and-down')} {
+  .template-search-bar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .template-search-bar .v-input {
+    flex-basis: auto;
+    width: 100%;
+  }
+
   .templates-table .v-data-table__mobile-row:first-child {
     display: none !important;
   }
 }
 </style>
 <script>
+import enhancedMethods from '@/lib/enhanced/templates';
+
 import ItemListPageBase from '@/components/ItemListPageBase';
 import TaskLink from '@/components/TaskLink.vue';
 import axios from 'axios';
@@ -295,6 +439,9 @@ export default {
   mixins: [ItemListPageBase, AppsMixin],
 
   data() {
+    const initialTemplateSearch = typeof this.$route.query.search === 'string'
+      ? this.$route.query.search.trim().slice(0, 256)
+      : '';
     return {
       TEMPLATE_TYPE_ICONS,
       TEMPLATE_TYPE_ACTION_TITLES,
@@ -311,6 +458,14 @@ export default {
       viewTab: null,
       apps: null,
       itemApp: '',
+      templateSearchInput: initialTemplateSearch,
+      appliedTemplateSearch: initialTemplateSearch,
+      templateSearchTimer: null,
+      templateSearchAbort: null,
+      templateSearchRequest: 0,
+      templateSearchLoading: false,
+      templateSearchError: null,
+      templateTablePage: 1,
     };
   },
 
@@ -340,6 +495,18 @@ export default {
     },
   },
   watch: {
+    '$route.query.search': async function routeTemplateSearch(value) {
+      const normalized = this.normalizeTemplateSearch(value);
+      if (normalized === this.templateSearchInput
+        && normalized === this.appliedTemplateSearch) {
+        return;
+      }
+      this.cancelQueuedTemplateSearch();
+      this.templateSearchInput = normalized;
+      this.appliedTemplateSearch = normalized;
+      this.templateTablePage = 1;
+      await this.loadItems();
+    },
     async viewId() {
       try {
         this.viewItemsLoading = true;
@@ -360,11 +527,20 @@ export default {
     await this.loadData();
   },
 
+  mounted() {
+    window.addEventListener('keydown', this.onTemplateSearchShortcut);
+  },
+
   beforeDestroy() {
+    this.cancelQueuedTemplateSearch();
+    this.cancelTemplateSearchRequest();
+    window.removeEventListener('keydown', this.onTemplateSearchShortcut);
     socket.removeListener(this.socketListenerId);
   },
 
   methods: {
+    ...enhancedMethods,
+
     async beforeLoadItems() {
       await this.loadViews();
       if (this.viewId == null) {
@@ -376,7 +552,11 @@ export default {
 
         if (viewId != null
           && this.views.some((v) => v.id === parseInt(viewId, 10))) {
-          await this.$router.push({ path: `/project/${this.projectId}/views/${viewId}/templates` });
+          const target = { path: `/project/${this.projectId}/views/${viewId}/templates` };
+          if (this.appliedTemplateSearch) {
+            target.query = { ...this.$route.query, search: this.appliedTemplateSearch };
+          }
+          await this.$router.push(target);
         }
       }
     },
@@ -399,10 +579,16 @@ export default {
     },
 
     getViewUrl(viewId) {
-      if (viewId == null) {
-        return `/project/${this.projectId}/templates`;
+      const path = viewId == null
+        ? `/project/${this.projectId}/templates`
+        : `/project/${this.projectId}/views/${viewId}/templates`;
+      if (!this.appliedTemplateSearch) {
+        return path;
       }
-      return `/project/${this.projectId}/views/${viewId}/templates`;
+      return {
+        path,
+        query: { ...this.$route.query, search: this.appliedTemplateSearch },
+      };
     },
 
     async loadViews() {

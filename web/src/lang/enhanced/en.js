@@ -409,4 +409,10 @@ export default {
   workflowErrorEdgeDestinationMissing: 'A workflow edge destination does not exist.',
   workflowErrorNoteEdge: 'Note nodes cannot be connected.',
   workflowErrorDisconnected: 'The workflow graph contains disconnected nodes.',
+  templateSearchLabel: 'Search templates',
+  templateSearchResultCount: '{count} matching templates',
+  templateSearchNoResults: 'No templates match “{query}”.',
+  templateSearchClear: 'Clear search',
+  templateSearchNoTemplates: 'No templates available',
+  templateSearchMatchedIn: 'Matched in {field}',
 };
