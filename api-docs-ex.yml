@@ -1,5 +1,131 @@
 # Fork-owned API definitions and paths, referenced by api-docs.yml.
 definitions:
+  ExecutionPreflightPlan:
+    type: object
+    required:
+    - contract_version
+    - intent
+    - project_id
+    - actor_id
+    - definition
+    - fingerprint
+    - expires_at
+    properties:
+      contract_version:
+        type: integer
+        enum:
+        - 1
+      intent:
+        type: string
+        enum:
+        - task
+        - workflow
+      project_id:
+        type: integer
+      actor_id:
+        type: integer
+      template_id:
+        type: integer
+      workflow_id:
+        type: integer
+      definition:
+        type: object
+        properties:
+          kind:
+            type: string
+          id:
+            type: integer
+          name:
+            type: string
+          revision:
+            type: string
+          fingerprint:
+            type: string
+      inputs:
+        type: array
+        maxItems: 128
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            type:
+              type: string
+            source:
+              type: string
+            present:
+              type: boolean
+            sensitive:
+              type: boolean
+      references:
+        type: array
+        maxItems: 256
+        items:
+          type: object
+          properties:
+            kind:
+              type: string
+            id:
+              type: integer
+            name:
+              type: string
+            binding_target:
+              type: string
+            visible:
+              type: boolean
+            reason:
+              type: string
+      commands:
+        type: array
+        maxItems: 128
+        description: Value-free command shapes; argument and input values are omitted.
+        items:
+          type: object
+      placements:
+        type: array
+        maxItems: 128
+        description: Provisional runner selections with at most 100 redacted candidates each.
+        items:
+          type: object
+      findings:
+        type: array
+        maxItems: 128
+        items:
+          type: object
+          properties:
+            severity:
+              type: string
+              enum:
+              - info
+              - warning
+              - denial
+            code:
+              type: string
+            message:
+              type: string
+      fingerprint:
+        type: string
+      expires_at:
+        type: string
+        format: date-time
+      review_token:
+        type: string
+        description: Opaque short-lived review binding; it is not execution authority.
+  ExecutionPreflightStale:
+    type: object
+    properties:
+      code:
+        type: string
+        enum:
+        - stale_execution_preflight
+        - execution_preflight_denied
+      changes:
+        type: array
+        maxItems: 16
+        items:
+          type: string
+      preflight:
+        $ref: ./api-docs.yml#/definitions/ExecutionPreflightPlan
   GeneratedSSHKeyMetadata:
     type: object
     required:
@@ -861,6 +987,23 @@ paths:
           description: Rotation not confirmed or key is not eligible
         403:
           description: Project-resource management permission required
+  /project/{project_id}/workflows/{workflow_id}/preflight:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/workflow_id
+    post:
+      tags:
+      - workflow
+      summary: Preview a workflow execution plan without starting it
+      responses:
+        200:
+          description: Value-free, provisional workflow execution plan
+          schema:
+            $ref: ./api-docs.yml#/definitions/ExecutionPreflightPlan
+        403:
+          description: Workflow start permission denied
+        404:
+          description: Workflow hidden or execution preflight capability unavailable
   /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/stop:
     parameters:
     - $ref: ./api-docs.yml#/parameters/project_id
@@ -932,6 +1075,33 @@ paths:
               $ref: ./api-docs.yml#/definitions/Template
         400:
           description: Invalid search or pagination query
+  /project/{project_id}/tasks/preflight:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    post:
+      tags:
+      - task
+      summary: Preview a task execution plan without starting it
+      parameters:
+      - name: task
+        in: body
+        required: true
+        schema:
+          type: object
+          required:
+          - template_id
+          properties:
+            template_id:
+              type: integer
+      responses:
+        200:
+          description: Value-free, provisional task execution plan
+          schema:
+            $ref: ./api-docs.yml#/definitions/ExecutionPreflightPlan
+        403:
+          description: Task start permission denied
+        404:
+          description: Template hidden or execution preflight capability unavailable
   /project/{project_id}/tasks/{task_id}/credential-usage:
     parameters:
     - $ref: ./api-docs.yml#/parameters/project_id

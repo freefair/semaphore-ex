@@ -39,6 +39,10 @@ definitions:
   App:
     type: object
 
+  ExecutionPreflightPlan:
+    $ref: "./api-docs-ex.yml#/definitions/ExecutionPreflightPlan"
+  ExecutionPreflightStale:
+    $ref: "./api-docs-ex.yml#/definitions/ExecutionPreflightStale"
   Option:
     type: object
     properties:
@@ -3463,6 +3467,16 @@ paths:
           type: string
           maxLength: 64
           description: Reuses the same workflow attempt when repeated for this workflow
+        - name: X-Semaphore-Preflight-Fingerprint
+          in: header
+          required: false
+          type: string
+          description: Fingerprint returned by the reviewed workflow preflight
+        - name: X-Semaphore-Preflight-Token
+          in: header
+          required: false
+          type: string
+          description: Opaque short-lived token returned by the reviewed workflow preflight
       responses:
         201:
           description: workflow run created
@@ -3472,7 +3486,13 @@ paths:
               description: Correlation key used for this workflow attempt
           schema:
             $ref: "#/definitions/WorkflowRun"
+        409:
+          description: Reviewed plan is stale, expired, invalid, or currently denied
+          schema:
+            $ref: '#/definitions/ExecutionPreflightStale'
 
+  /project/{project_id}/workflows/{workflow_id}/preflight:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1preflight"
   /project/{project_id}/workflows/{workflow_id}/runs:
     parameters:
       - $ref: "#/parameters/project_id"
@@ -3718,6 +3738,16 @@ paths:
         - task
       summary: Starts a job
       parameters:
+        - name: X-Semaphore-Preflight-Fingerprint
+          in: header
+          required: false
+          type: string
+          description: Fingerprint returned by the reviewed task preflight
+        - name: X-Semaphore-Preflight-Token
+          in: header
+          required: false
+          type: string
+          description: Opaque short-lived token returned by the reviewed task preflight
         - name: task
           in: body
           required: true
@@ -3751,8 +3781,13 @@ paths:
           description: Task queued
           schema:
             $ref: "#/definitions/Task"
+        409:
+          description: Reviewed plan is stale, expired, invalid, or currently denied
+          schema:
+            $ref: '#/definitions/ExecutionPreflightStale'
 
-
+  /project/{project_id}/tasks/preflight:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1tasks~1preflight"
   /project/{project_id}/tasks/last:
     parameters:
       - $ref: "#/parameters/project_id"
