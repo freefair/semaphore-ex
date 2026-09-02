@@ -60,7 +60,7 @@ func TestProjectRoleControllerCRUDCatalogIsolationAndStaleWrites(t *testing.T) {
 	assert.Equal(t, http.StatusOK, catalogResponse.Code)
 	var catalog []pro_interfaces.PermissionDefinition
 	require.NoError(t, json.Unmarshal(catalogResponse.Body.Bytes(), &catalog))
-	require.Len(t, catalog, 12)
+	require.Len(t, catalog, 13)
 	assert.Equal(t, pro_interfaces.PermissionViewWorkflow, catalog[5].ID)
 	assert.Equal(t, pro_interfaces.PermissionAdministerWorkflow, catalog[9].ID)
 

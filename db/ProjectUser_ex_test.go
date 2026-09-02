@@ -10,10 +10,11 @@ func TestBuiltInProjectRolePermissionsRemainDeterministic(t *testing.T) {
 		ProjectOwner: CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
 			CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
 			CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
-			CanListGrantedCredentials | CanConsumeGrantedCredentials,
+			CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow,
 		ProjectManager: CanRunProjectTasks | CanManageProjectResources | CanViewProjectResources |
 			CanViewWorkflows | CanEditWorkflows | CanStartWorkflows | CanStopWorkflows |
-			CanAdministerWorkflows | CanListGrantedCredentials | CanConsumeGrantedCredentials,
+			CanAdministerWorkflows | CanListGrantedCredentials | CanConsumeGrantedCredentials |
+			CanOverrideDeploymentWindow,
 		ProjectTaskRunner: CanRunProjectTasks | CanViewProjectResources |
 			CanViewWorkflows | CanStartWorkflows | CanStopWorkflows |
 			CanListGrantedCredentials | CanConsumeGrantedCredentials,

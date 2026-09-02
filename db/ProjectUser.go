@@ -33,16 +33,22 @@ const (
 	// CanConsumeGrantedCredentials is reserved for Slice 061's runtime
 	// resolver and is intentionally not implied by list/reference access.
 	CanConsumeGrantedCredentials
+	// CanOverrideDeploymentWindow is intentionally independent from ordinary
+	// task-start permission. It authorizes an explicit, audited emergency
+	// admission override only; it never makes scheduled or automatic starts
+	// override-capable.
+	CanOverrideDeploymentWindow
 )
 
 var rolePermissions = map[ProjectUserRole]ProjectUserPermission{
 	ProjectOwner: CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
 		CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
 		CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
-		CanListGrantedCredentials | CanConsumeGrantedCredentials,
+		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow,
 	ProjectManager: CanRunProjectTasks | CanManageProjectResources | CanViewProjectResources |
 		CanViewWorkflows | CanEditWorkflows | CanStartWorkflows | CanStopWorkflows |
-		CanAdministerWorkflows | CanListGrantedCredentials | CanConsumeGrantedCredentials,
+		CanAdministerWorkflows | CanListGrantedCredentials | CanConsumeGrantedCredentials |
+		CanOverrideDeploymentWindow,
 	ProjectTaskRunner: CanRunProjectTasks | CanViewProjectResources |
 		CanViewWorkflows | CanStartWorkflows | CanStopWorkflows |
 		CanListGrantedCredentials | CanConsumeGrantedCredentials,
