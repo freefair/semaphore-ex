@@ -5,10 +5,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/util"
 
@@ -157,18 +159,17 @@ func (r ScheduleRunner) Run() {
 		return
 	}
 
+	intendedAt := time.Now().UTC().Truncate(time.Minute)
+	if scheduleType == db.ScheduleTypeRunAt && schedule.RunAt != nil {
+		intendedAt = schedule.RunAt.UTC()
+	}
+	occurrence, occurrenceErr := NewScheduleOccurrence(schedule, intendedAt)
+	if occurrenceErr != nil {
+		log.WithError(occurrenceErr).WithField("schedule_id", schedule.ID).Error("invalid schedule occurrence")
+		return
+	}
 	var lease ScheduleExecutionLease
-	var occurrence ScheduleOccurrence
 	if r.pool.dedup != nil {
-		intendedAt := time.Now().UTC().Truncate(time.Minute)
-		if scheduleType == db.ScheduleTypeRunAt && schedule.RunAt != nil {
-			intendedAt = schedule.RunAt.UTC()
-		}
-		occurrence, err = NewScheduleOccurrence(schedule, intendedAt)
-		if err != nil {
-			log.WithError(err).WithField("schedule_id", schedule.ID).Error("invalid schedule occurrence")
-			return
-		}
 		claimed, acquired, claimErr := r.pool.dedup.ClaimScheduleOccurrence(occurrence)
 		if claimErr != nil {
 			log.WithError(claimErr).WithField("schedule_id", schedule.ID).Error("failed to claim schedule occurrence")
@@ -210,12 +211,19 @@ func (r ScheduleRunner) Run() {
 		task.ScheduleOccurrenceKey = &occurrenceKey
 	}
 
-	createdTask, err := r.pool.taskPool.AddTask(
+	decisionKey := deploymentWindowScheduleDecisionKey(occurrence)
+	templateID := schedule.TemplateID
+	scheduleID := schedule.ID
+	createdTask, err := r.pool.taskPool.AddTaskWithDeploymentWindowAdmission(
 		task,
 		nil,
 		"",
 		schedule.ProjectID,
 		tpl.App.NeedTaskAlias(),
+		pro_interfaces.DeploymentWindowAdmissionRequest{
+			ProjectID: schedule.ProjectID, DecisionKey: decisionKey, Source: pro_interfaces.DeploymentWindowSourceSchedule,
+			Origin: pro_interfaces.DeploymentWindowOriginSchedule, TemplateID: &templateID, ScheduleID: &scheduleID,
+		},
 	)
 
 	if err != nil {
@@ -244,6 +252,16 @@ func (r ScheduleRunner) Run() {
 	if scheduleType == db.ScheduleTypeRunAt {
 		r.pool.Refresh()
 	}
+}
+
+// deploymentWindowScheduleDecisionKey is stable for an HA replay of one
+// schedule occurrence, while retaining the schedule identity. The revision is
+// intentionally insufficient by itself because two schedules in one project
+// may have identical definitions and therefore identical revisions.
+func deploymentWindowScheduleDecisionKey(occurrence ScheduleOccurrence) string {
+	material := strconv.Itoa(occurrence.ScheduleID) + "|" + occurrence.Revision + "|" + occurrence.IntendedAt.UTC().Format(time.RFC3339Nano)
+	digest := sha256.Sum256([]byte(material))
+	return "schedule-" + hex.EncodeToString(digest[:])
 }
 
 // ScheduleDeduplicator claims one intended schedule fire through durable

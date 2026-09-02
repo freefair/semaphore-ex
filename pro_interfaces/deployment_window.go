@@ -118,7 +118,10 @@ func (request DeploymentWindowEvaluationRequest) Validate() error {
 		(request.Source != DeploymentWindowSourceManual && request.Source != DeploymentWindowSourceSchedule && request.Source != DeploymentWindowSourceAPI && request.Source != DeploymentWindowSourceWebhook && request.Source != DeploymentWindowSourceWorkflowNode && request.Source != DeploymentWindowSourceIntegration && request.Source != DeploymentWindowSourceAutorun) {
 		return errors.New("deployment window evaluation request is invalid")
 	}
-	if request.Source == DeploymentWindowSourceWorkflowNode && (request.TemplateID <= 0 || request.WorkflowID <= 0) {
+	// A cross-project workflow node is consumer-scoped. It deliberately carries
+	// no owner-template ID, so its admission can only be evaluated against the
+	// consumer workflow policy.
+	if request.Source == DeploymentWindowSourceWorkflowNode && request.WorkflowID <= 0 {
 		return errors.New("deployment window evaluation request is invalid")
 	}
 	if request.Override != nil {
@@ -156,7 +159,7 @@ func (request DeploymentWindowAdmissionRequest) Validate() error {
 		(request.ActorUserID != nil && *request.ActorUserID <= 0) || !validDeploymentWindowSourceOrigin(request.Source, request.Origin) {
 		return errors.New("deployment window admission request is invalid")
 	}
-	if request.Source == DeploymentWindowSourceWorkflowNode && (request.TemplateID == nil || request.WorkflowID == nil) {
+	if request.Source == DeploymentWindowSourceWorkflowNode && request.WorkflowID == nil {
 		return errors.New("deployment window admission request is invalid")
 	}
 	if (request.Source == DeploymentWindowSourceAPI || request.Source == DeploymentWindowSourceWebhook) && (request.WorkflowID == nil || request.TemplateID != nil) {
@@ -224,6 +227,23 @@ type DeploymentWindowPolicyRepository interface {
 // must bind atomically to its own task or workflow-run mutation.
 type DeploymentWindowAdmissionService interface {
 	Claim(DeploymentWindowAdmissionRequest) (DeploymentWindowAdmissionClaim, error)
+}
+
+// DeploymentWindowAdmissionConfigurer attaches the optional Enhanced boundary
+// without widening Community constructors or db.Store.
+type DeploymentWindowAdmissionConfigurer interface {
+	ConfigureDeploymentWindowAdmission(DeploymentWindowAdmissionService)
+}
+
+// DeploymentWindowBlockedError is deliberately coarse for start callers. Rule
+// provenance remains private to the decision/audit layer.
+type DeploymentWindowBlockedError struct {
+	NextEligibleAt    *time.Time
+	NextEligibleKnown bool
+}
+
+func (e *DeploymentWindowBlockedError) Error() string {
+	return "deployment is blocked by the current deployment window"
 }
 
 type DeploymentWindowDecisionProvenance struct {

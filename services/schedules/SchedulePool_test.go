@@ -243,3 +243,19 @@ func TestNewScheduleOccurrenceBindsMutableScheduleSettings(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEqual(t, first.Revision, other.Revision)
 }
+
+func TestDeploymentWindowScheduleDecisionKeySeparatesIdenticalSchedules(t *testing.T) {
+	at := time.Date(2026, 9, 3, 9, 0, 0, 0, time.UTC)
+	first, err := NewScheduleOccurrence(db.Schedule{ID: 42, TemplateID: 7, CronFormat: "0 * * * *"}, at)
+	if !assert.NoError(t, err) {
+		return
+	}
+	second, err := NewScheduleOccurrence(db.Schedule{ID: 43, TemplateID: 7, CronFormat: "0 * * * *"}, at)
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	assert.Equal(t, first.Revision, second.Revision, "the distinct schedules intentionally share their definition revision")
+	assert.NotEqual(t, deploymentWindowScheduleDecisionKey(first), deploymentWindowScheduleDecisionKey(second), "admission keys must not collide within one project")
+	assert.Equal(t, deploymentWindowScheduleDecisionKey(first), deploymentWindowScheduleDecisionKey(first), "a replay must retain the same admission key")
+}

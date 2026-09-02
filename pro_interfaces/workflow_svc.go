@@ -78,6 +78,12 @@ type WorkflowAuditConfigurer interface {
 	ConfigureWorkflowAudit(AuditServiceFacade)
 }
 
+// WorkflowDeploymentWindowAdmissionConfigurer attaches the optional Enhanced
+// start boundary without changing the public WorkflowService contract.
+type WorkflowDeploymentWindowAdmissionConfigurer interface {
+	ConfigureDeploymentWindowAdmission(DeploymentWindowAdmissionService)
+}
+
 // WorkflowApprovalIdentityStore resolves the current project role used to
 // authorize an approval decision. The request itself snapshots the required
 // permission, so later definition edits cannot weaken the pending request.
@@ -105,6 +111,22 @@ type WorkflowTaskFencedEnqueuer interface {
 	AddWorkflowTaskFenced(task db.Task, template db.Template, userID *int, username string, projectID int, needAlias bool, lease WorkflowReconciliationLease) (db.Task, error)
 }
 
+// WorkflowDeploymentWindowTaskDecisionEnqueuer is the explicit final boundary
+// for a local workflow node after the workflow service has claimed its
+// immutable admission decision. Keeping this separate from the historical
+// enqueuer prevents a configured admission service from handing a private
+// decision pointer to an implementation that silently ignores it.
+type WorkflowDeploymentWindowTaskDecisionEnqueuer interface {
+	AddWorkflowTaskWithDeploymentWindowDecision(task db.Task, template db.Template, userID *int, username string, projectID int, needAlias bool) (db.Task, error)
+}
+
+// WorkflowDeploymentWindowTaskFencedDecisionEnqueuer is the same explicit
+// boundary for HA reconciliation. The enqueuer must consume the decision in
+// the transaction protected by the supplied workflow lease.
+type WorkflowDeploymentWindowTaskFencedDecisionEnqueuer interface {
+	AddWorkflowTaskFencedWithDeploymentWindowDecision(task db.Task, template db.Template, userID *int, username string, projectID int, needAlias bool, lease WorkflowReconciliationLease) (db.Task, error)
+}
+
 // CrossProjectWorkflowTaskStore is the Enhanced-only transactional boundary
 // for dispatching an immutable owner template into a consumer workflow run.
 // It revalidates the live grant and reconciles the workflow node before the
@@ -124,6 +146,14 @@ type CrossProjectWorkflowTaskStoreConfigurer interface {
 // AddWorkflowTask because their grant/version recheck is part of persistence.
 type CrossProjectWorkflowTaskFencedEnqueuer interface {
 	AddCrossProjectWorkflowTaskFenced(task db.Task, provenance db.CrossProjectTemplateProvenance, userID *int, username string, consumerProjectID int, lease *WorkflowReconciliationLease) (db.Task, error)
+}
+
+// CrossProjectWorkflowDeploymentWindowTaskFencedDecisionEnqueuer makes the
+// consumer-scoped decision fence mandatory for cross-project workflow nodes.
+// It is intentionally distinct from the legacy cross-project enqueuer so
+// deployment-window wiring fails closed if an implementation cannot bind it.
+type CrossProjectWorkflowDeploymentWindowTaskFencedDecisionEnqueuer interface {
+	AddCrossProjectWorkflowTaskFencedWithDeploymentWindowDecision(task db.Task, provenance db.CrossProjectTemplateProvenance, userID *int, username string, consumerProjectID int, lease *WorkflowReconciliationLease) (db.Task, error)
 }
 
 // WorkflowCredentialReader resolves an approved AccessKey immediately before

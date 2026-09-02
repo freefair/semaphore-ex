@@ -6,6 +6,7 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	coresql "github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pro/db/sql"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
 
 var (
@@ -24,6 +25,16 @@ func NewWorkflowStore(store db.Store) db.WorkflowManager {
 		GetWorkflowRunTasks(projectID int, runID int, params db.RetrieveQueryParams) ([]db.TaskWithTpl, error)
 	})
 	return sql.NewWorkflowStore(connectionStore.GetConnection(), taskStore)
+}
+
+func NewDeploymentWindowStore(store db.Store) pro_interfaces.DeploymentWindowPolicyRepository {
+	connectionStore, ok := store.(interface {
+		GetConnection() *coresql.SqlDbConnection
+	})
+	if !ok {
+		return nil
+	}
+	return sql.NewDeploymentWindowStore(connectionStore.GetConnection())
 }
 
 func NewWorkflowTriggerStore(store db.Store) db.WorkflowTriggerManager {

@@ -454,23 +454,37 @@ func (t *TaskRunner) startAutorunTasks() {
 	}
 
 	for _, tpl := range tpls {
-		task := db.Task{
-			TemplateID:  tpl.ID,
-			ProjectID:   tpl.ProjectID,
-			BuildTaskID: &t.Task.ID,
-		}
-		_, err = t.pool.AddTask(
-			task,
-			nil,
-			"",
-			tpl.ProjectID,
-			tpl.App.NeedTaskAlias(),
-		)
+		_, err = t.addAutorunTask(tpl)
 		if err != nil {
 			t.Log("Running app failed: " + err.Error())
 			continue
 		}
 	}
+}
+
+// addAutorunTask keeps the parent build/child template pair as the only
+// idempotency inputs for a deployment-window admission. startAutorunTasks
+// intentionally handles failures per child, while this helper lets callers
+// preserve the same exact admission path when a replay must be observed.
+func (t *TaskRunner) addAutorunTask(tpl db.Template) (db.Task, error) {
+	task := db.Task{
+		TemplateID:  tpl.ID,
+		ProjectID:   tpl.ProjectID,
+		BuildTaskID: &t.Task.ID,
+	}
+	templateID := tpl.ID
+	buildTaskID := t.Task.ID
+	return t.pool.AddTaskWithDeploymentWindowAdmission(
+		task,
+		nil,
+		"",
+		tpl.ProjectID,
+		tpl.App.NeedTaskAlias(),
+		pro_interfaces.DeploymentWindowAdmissionRequest{
+			ProjectID: tpl.ProjectID, DecisionKey: "autorun-" + strconv.Itoa(buildTaskID) + "-" + strconv.Itoa(templateID),
+			Source: pro_interfaces.DeploymentWindowSourceAutorun, Origin: pro_interfaces.DeploymentWindowOriginAutorun, TemplateID: &templateID,
+		},
+	)
 }
 
 func (t *TaskRunner) prepareError(err error, errMsg string) error {

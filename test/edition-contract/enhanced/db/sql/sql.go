@@ -11,9 +11,18 @@ type AnsibleTaskStoreImpl = community.AnsibleTaskStoreImpl
 type TerraformStoreImpl = community.TerraformStoreImpl
 type WorkflowStoreImpl struct {
 	community.WorkflowStoreImpl
-	connection         *coresql.SqlDbConnection
-	notificationRouter *coresql.NotificationTransactionRouter
-	workflowTaskStore  workflowRunTaskStore
+	connection               *coresql.SqlDbConnection
+	notificationRouter       *coresql.NotificationTransactionRouter
+	workflowTaskStore        workflowRunTaskStore
+	deploymentWindowRequired bool
+}
+
+// ConfigureDeploymentWindowAdmission marks this Enhanced store as the final
+// workflow-run persistence boundary. Once enabled it rejects unbound runs.
+func (d *WorkflowStoreImpl) ConfigureDeploymentWindowAdmission() {
+	if d != nil {
+		d.deploymentWindowRequired = true
+	}
 }
 
 var _ db.WorkflowTriggerManager = (*WorkflowStoreImpl)(nil)

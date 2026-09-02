@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/random"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
@@ -95,6 +96,16 @@ func (p *TaskPool) AddTaskWithExecutionPreflightPlan(
 				changes = []pro_interfaces.ExecutionPreflightChangeCode{pro_interfaces.ExecutionChangeDefinition}
 			}
 			return db.Task{}, sealed, &ExecutionPreflightStaleError{Changes: changes, Preflight: sealed}
+		}
+	}
+	if p.deploymentWindowAdmission != nil {
+		templateID := task.TemplateID
+		actorID := actor.ID
+		if err = p.claimDeploymentWindowTaskAdmission(&task, pro_interfaces.DeploymentWindowAdmissionRequest{
+			ProjectID: projectID, DecisionKey: "manual-" + random.String(32), Source: pro_interfaces.DeploymentWindowSourceManual,
+			Origin: pro_interfaces.DeploymentWindowOriginUser, TemplateID: &templateID, ActorUserID: &actorID,
+		}); err != nil {
+			return db.Task{}, snapshot.Plan, err
 		}
 	}
 	if reviewed {

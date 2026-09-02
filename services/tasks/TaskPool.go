@@ -82,12 +82,13 @@ type TaskPool struct {
 	// workflowService orchestrates workflow runs (a Pro feature). It is injected
 	// after construction via SetWorkflowService; the pool only calls back into it
 	// when a workflow task finishes. nil in tests / before wiring.
-	workflowService          pro_interfaces.WorkflowService
-	globalCredentialResolver pro_interfaces.GlobalCredentialRuntimeResolver
-	executorImageAvailable   func(*db.User) bool
-	taskControlLifecycle     TaskControlLifecycle
-	crossProjectTaskStore    pro_interfaces.CrossProjectWorkflowTaskStore
-	executionPreflightIssuer *ExecutionPreflightReviewTokenIssuer
+	workflowService           pro_interfaces.WorkflowService
+	globalCredentialResolver  pro_interfaces.GlobalCredentialRuntimeResolver
+	executorImageAvailable    func(*db.User) bool
+	taskControlLifecycle      TaskControlLifecycle
+	crossProjectTaskStore     pro_interfaces.CrossProjectWorkflowTaskStore
+	deploymentWindowAdmission pro_interfaces.DeploymentWindowAdmissionService
+	executionPreflightIssuer  *ExecutionPreflightReviewTokenIssuer
 	// stop signals the background loops started by Run to exit. Closing it (via
 	// Stop) terminates the runner-task reconcile loop and Run's own select.
 	// Channels are used rather than sync.WaitGroup/sync.Once because TaskPool is
@@ -174,6 +175,12 @@ func (p *TaskPool) SetGlobalCredentialRuntimeResolver(resolver pro_interfaces.Gl
 // used and is intentionally absent from the Community db.Store interface.
 func (p *TaskPool) ConfigureCrossProjectWorkflowTaskStore(store pro_interfaces.CrossProjectWorkflowTaskStore) {
 	p.crossProjectTaskStore = store
+}
+
+// ConfigureDeploymentWindowAdmission enables the Enhanced execution-admission
+// fence. Community leaves it unset and continues through its existing path.
+func (p *TaskPool) ConfigureDeploymentWindowAdmission(service pro_interfaces.DeploymentWindowAdmissionService) {
+	p.deploymentWindowAdmission = service
 }
 
 // SetExecutorImageCapabilityResolver injects the replaceable-edition entitlement decision.
@@ -1124,6 +1131,75 @@ func (p *TaskPool) AddTask(
 	return p.addTask(taskObj, nil, userID, username, projectID, needAlias, nil, nil)
 }
 
+// AddTaskWithDeploymentWindowAdmission claims a server-derived Enhanced
+// decision immediately before the normal persistence path. Its task fence is
+// consumed by SqlDb atomically with task creation; a configured Enhanced path
+// can therefore never silently fall back to an unbound CreateTask call.
+func (p *TaskPool) AddTaskWithDeploymentWindowAdmission(
+	taskObj db.Task,
+	userID *int,
+	username string,
+	projectID int,
+	needAlias bool,
+	request pro_interfaces.DeploymentWindowAdmissionRequest,
+) (db.Task, error) {
+	if p.deploymentWindowAdmission == nil {
+		return p.addTask(taskObj, nil, userID, username, projectID, needAlias, nil, nil)
+	}
+	if request.ProjectID != projectID || request.TemplateID == nil || *request.TemplateID != taskObj.TemplateID {
+		return db.Task{}, errors.New("deployment window admission is unavailable")
+	}
+	claim, err := p.deploymentWindowAdmission.Claim(request)
+	if err != nil {
+		return db.Task{}, err
+	}
+	if claim.Decision.TaskID != nil {
+		existing, getErr := p.store.GetTask(projectID, *claim.Decision.TaskID)
+		if getErr != nil || existing.TemplateID != taskObj.TemplateID || existing.ProjectID != projectID ||
+			!sameTaskBindingID(existing.WorkflowRunID, taskObj.WorkflowRunID) || !sameTaskBindingID(existing.WorkflowNodeID, taskObj.WorkflowNodeID) {
+			return db.Task{}, errors.New("deployment window decision is bound to a different task")
+		}
+		return existing, nil
+	}
+	if claim.Decision.State == string(pro_interfaces.DeploymentWindowDecisionBlocked) {
+		return db.Task{}, &pro_interfaces.DeploymentWindowBlockedError{
+			NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown,
+		}
+	}
+	if claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionAllowed) && claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionOverridden) || claim.Decision.ID <= 0 {
+		return db.Task{}, errors.New("deployment window admission did not allow execution")
+	}
+	decisionID := claim.Decision.ID
+	taskObj.DeploymentWindowDecisionID = &decisionID
+	return p.addTask(taskObj, nil, userID, username, projectID, needAlias, nil, nil)
+}
+
+func (p *TaskPool) claimDeploymentWindowTaskAdmission(task *db.Task, request pro_interfaces.DeploymentWindowAdmissionRequest) error {
+	if task == nil || p.deploymentWindowAdmission == nil {
+		return errors.New("deployment window admission is unavailable")
+	}
+	claim, err := p.deploymentWindowAdmission.Claim(request)
+	if err != nil {
+		return err
+	}
+	if claim.Decision.State == string(pro_interfaces.DeploymentWindowDecisionBlocked) {
+		return &pro_interfaces.DeploymentWindowBlockedError{NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown}
+	}
+	if (claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionAllowed) && claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionOverridden)) || claim.Decision.ID <= 0 {
+		return errors.New("deployment window admission did not allow execution")
+	}
+	decisionID := claim.Decision.ID
+	task.DeploymentWindowDecisionID = &decisionID
+	return nil
+}
+
+func sameTaskBindingID(left, right *int) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
 // AddWorkflowTask creates a normal task while freezing the template selected
 // by the workflow run snapshot. The rest of task validation, persistence,
 // placement, queueing, logging, and completion remains the standard TaskPool
@@ -1148,6 +1224,24 @@ func (p *TaskPool) AddWorkflowTask(
 	return p.addTask(taskObj, &template, userID, username, projectID, needAlias, nil, nil)
 }
 
+// AddWorkflowTaskWithDeploymentWindowDecision is the workflow service's
+// explicit post-claim boundary. It refuses to make a task durable unless this
+// pool has admission enabled and the already-claimed decision remains attached
+// for the SQL transaction to consume.
+func (p *TaskPool) AddWorkflowTaskWithDeploymentWindowDecision(
+	taskObj db.Task,
+	template db.Template,
+	userID *int,
+	username string,
+	projectID int,
+	needAlias bool,
+) (db.Task, error) {
+	if p.deploymentWindowAdmission == nil || taskObj.DeploymentWindowDecisionID == nil {
+		return db.Task{}, errors.New("workflow task deployment window decision is required")
+	}
+	return p.AddWorkflowTask(taskObj, template, userID, username, projectID, needAlias)
+}
+
 func (p *TaskPool) AddWorkflowTaskFenced(
 	taskObj db.Task,
 	template db.Template,
@@ -1167,6 +1261,24 @@ func (p *TaskPool) AddWorkflowTaskFenced(
 	encoded := string(snapshot)
 	taskObj.WorkflowTemplateSnapshot = &encoded
 	return p.addTask(taskObj, &template, userID, username, projectID, needAlias, &lease, nil)
+}
+
+// AddWorkflowTaskFencedWithDeploymentWindowDecision is the HA variant of the
+// explicit post-claim boundary. The decision is atomically bound along with
+// the task and current workflow-node lease in the SQL store.
+func (p *TaskPool) AddWorkflowTaskFencedWithDeploymentWindowDecision(
+	taskObj db.Task,
+	template db.Template,
+	userID *int,
+	username string,
+	projectID int,
+	needAlias bool,
+	lease pro_interfaces.WorkflowReconciliationLease,
+) (db.Task, error) {
+	if p.deploymentWindowAdmission == nil || taskObj.DeploymentWindowDecisionID == nil {
+		return db.Task{}, errors.New("fenced workflow task deployment window decision is required")
+	}
+	return p.AddWorkflowTaskFenced(taskObj, template, userID, username, projectID, needAlias, lease)
 }
 
 // AddCrossProjectWorkflowTaskFenced persists a consumer-scoped workflow task
@@ -1215,6 +1327,23 @@ func (p *TaskPool) AddCrossProjectWorkflowTaskFenced(
 	)
 }
 
+// AddCrossProjectWorkflowTaskFencedWithDeploymentWindowDecision is the
+// consumer-side post-claim boundary. Its store validates that the decision is
+// scoped to the consumer run/node before either task or node linkage commits.
+func (p *TaskPool) AddCrossProjectWorkflowTaskFencedWithDeploymentWindowDecision(
+	taskObj db.Task,
+	provenance db.CrossProjectTemplateProvenance,
+	userID *int,
+	username string,
+	consumerProjectID int,
+	lease *pro_interfaces.WorkflowReconciliationLease,
+) (db.Task, error) {
+	if p.deploymentWindowAdmission == nil || taskObj.DeploymentWindowDecisionID == nil {
+		return db.Task{}, errors.New("cross-project workflow task deployment window decision is required")
+	}
+	return p.AddCrossProjectWorkflowTaskFenced(taskObj, provenance, userID, username, consumerProjectID, lease)
+}
+
 func stringPointer(value string) *string {
 	return &value
 }
@@ -1229,6 +1358,9 @@ func (p *TaskPool) addTask(
 	workflowLease *pro_interfaces.WorkflowReconciliationLease,
 	crossProjectProvenance *db.CrossProjectTemplateProvenance,
 ) (newTask db.Task, err error) {
+	if p.deploymentWindowAdmission != nil && taskObj.DeploymentWindowDecisionID == nil {
+		return db.Task{}, errors.New("deployment window decision is required before task persistence")
+	}
 	taskObj.Created = tz.Now()
 	taskObj.Status = task_logger.TaskWaitingStatus
 	taskObj.UserID = userID
