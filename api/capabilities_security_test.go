@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -415,6 +416,115 @@ func TestProjectRunnerLifecycleRoutesUseSpecificAuditActions(t *testing.T) {
 			assert.Equal(t, "runner:34", descriptor.TargetID)
 			require.NotNil(t, descriptor.ProjectID)
 			assert.Equal(t, 12, *descriptor.ProjectID)
+		})
+	}
+}
+
+func TestGlobalCredentialAuditDescriptorsAreSpecificAndValueFree(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		vars       map[string]string
+		action     pro_interfaces.AuditAction
+		targetType pro_interfaces.AuditTargetType
+		targetID   string
+	}{
+		{
+			name: "credential create", method: http.MethodPost, path: "/api/global-credentials",
+			action:     pro_interfaces.AuditActionGlobalCredentialCreate,
+			targetType: pro_interfaces.AuditTargetGlobalCredential, targetID: "credentials",
+		},
+		{
+			name: "credential rotate", method: http.MethodPost, path: "/api/global-credentials/31/rotate",
+			vars: map[string]string{"credential_id": "31"}, action: pro_interfaces.AuditActionGlobalCredentialRotate,
+			targetType: pro_interfaces.AuditTargetGlobalCredential, targetID: "credential:31",
+		},
+		{
+			name: "grant create", method: http.MethodPost, path: "/api/global-credentials/31/grants",
+			vars: map[string]string{"credential_id": "31"}, action: pro_interfaces.AuditActionGlobalCredentialGrant,
+			targetType: pro_interfaces.AuditTargetGlobalCredential, targetID: "credential:31",
+		},
+		{
+			name: "grant revoke", method: http.MethodPost, path: "/api/global-credentials/31/grants/47/revoke",
+			vars: map[string]string{"credential_id": "31", "grant_id": "47"}, action: pro_interfaces.AuditActionGlobalCredentialGrantRevoke,
+			targetType: pro_interfaces.AuditTargetGlobalCredentialGrant, targetID: "credential-grant:47",
+		},
+		{
+			name: "credential delete", method: http.MethodDelete, path: "/api/global-credentials/31",
+			vars: map[string]string{"credential_id": "31"}, action: pro_interfaces.AuditActionGlobalCredentialDeleteAttempt,
+			targetType: pro_interfaces.AuditTargetGlobalCredential, targetID: "credential:31",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, nil)
+			request = mux.SetURLVars(request, test.vars)
+			descriptor, ok := enhancedAuditForRoute(request)
+			require.True(t, ok)
+			assert.Equal(t, test.action, descriptor.Action)
+			assert.Equal(t, test.targetType, descriptor.TargetType)
+			assert.Equal(t, test.targetID, descriptor.TargetID)
+			event := routeAuditEvent(request, descriptor, pro_interfaces.AuditOutcomeAllowed, string(pro_interfaces.CapabilityReasonActive))
+			assert.NotContains(t, event.TargetID, "secret")
+			require.NoError(t, event.Validate())
+		})
+	}
+}
+
+func TestGlobalCredentialStateTransitionAuditSeparatesAttemptsAndOutcomes(t *testing.T) {
+	tests := []struct {
+		name     string
+		method   string
+		path     string
+		body     string
+		vars     map[string]string
+		status   int
+		wrap     func(pro_interfaces.AuditServiceFacade) func(http.Handler) http.Handler
+		expected []pro_interfaces.AuditAction
+	}{
+		{
+			name: "disable failure remains disable attempt", method: http.MethodPost,
+			path: "/api/global-credentials/31/enabled", body: `{"enabled":false,"revision":3}`,
+			vars: map[string]string{"credential_id": "31"}, status: http.StatusConflict,
+			wrap:     EnhancedGlobalCredentialEnabledAuditMiddleware,
+			expected: []pro_interfaces.AuditAction{pro_interfaces.AuditActionGlobalCredentialDisable},
+		},
+		{
+			name: "enable success is specific", method: http.MethodPost,
+			path: "/api/global-credentials/31/enabled", body: `{"enabled":true,"revision":3}`,
+			vars: map[string]string{"credential_id": "31"}, status: http.StatusOK,
+			wrap:     EnhancedGlobalCredentialEnabledAuditMiddleware,
+			expected: []pro_interfaces.AuditAction{pro_interfaces.AuditActionGlobalCredentialEnable},
+		},
+		{
+			name: "delete success records one value-free attempt", method: http.MethodDelete,
+			path: "/api/global-credentials/31", vars: map[string]string{"credential_id": "31"},
+			status: http.StatusNoContent, wrap: EnhancedGlobalCredentialDeleteAuditMiddleware,
+			expected: []pro_interfaces.AuditAction{pro_interfaces.AuditActionGlobalCredentialDeleteAttempt},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			audit := &auditRecorderStub{}
+			handler := helpers.CorrelationMiddleware(test.wrap(audit)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(test.status)
+			})))
+			request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
+			request = mux.SetURLVars(request, test.vars)
+			request = helpers.SetContextValue(request, "user", &db.User{ID: 11})
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			assert.Equal(t, test.status, response.Code)
+			require.Len(t, audit.events, len(test.expected))
+			for index, action := range test.expected {
+				assert.Equal(t, action, audit.events[index].Action)
+				require.NoError(t, audit.events[index].Validate())
+			}
 		})
 	}
 }

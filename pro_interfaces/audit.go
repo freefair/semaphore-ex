@@ -86,6 +86,21 @@ const (
 )
 
 const (
+	AuditActionGlobalCredentialCreate        AuditAction = "global_credential_create"
+	AuditActionGlobalCredentialRead          AuditAction = "global_credential_read"
+	AuditActionGrantedCredentialRead         AuditAction = "granted_credential_read"
+	AuditActionGlobalCredentialUpdate        AuditAction = "global_credential_update"
+	AuditActionGlobalCredentialRotate        AuditAction = "global_credential_rotate"
+	AuditActionGlobalCredentialGrant         AuditAction = "global_credential_grant"
+	AuditActionGlobalCredentialGrantRevoke   AuditAction = "global_credential_grant_revoke"
+	AuditActionGlobalCredentialGrantRestore  AuditAction = "global_credential_grant_restore"
+	AuditActionGlobalCredentialGrantDelete   AuditAction = "global_credential_grant_delete"
+	AuditActionGlobalCredentialDisable       AuditAction = "global_credential_disable"
+	AuditActionGlobalCredentialEnable        AuditAction = "global_credential_enable"
+	AuditActionGlobalCredentialDeleteAttempt AuditAction = "global_credential_delete_attempt"
+)
+
+const (
 	AuditActionWorkflowList                         AuditAction = "workflow_list"
 	AuditActionWorkflowRead                         AuditAction = "workflow_read"
 	AuditActionWorkflowCreate                       AuditAction = "workflow_create"
@@ -123,6 +138,11 @@ const (
 	AuditTargetLDAPGroupMapping     AuditTargetType = "ldap_group_mapping"
 	AuditTargetOIDCGroupMapping     AuditTargetType = "oidc_group_mapping"
 	AuditTargetNotification         AuditTargetType = "notification_governance"
+)
+
+const (
+	AuditTargetGlobalCredential      AuditTargetType = "global_credential"
+	AuditTargetGlobalCredentialGrant AuditTargetType = "global_credential_grant"
 )
 
 const (
@@ -254,6 +274,11 @@ var (
 	workflowInboxTargetPattern    = regexp.MustCompile(`^project:[1-9][0-9]*$`)
 	notificationTargetPattern     = regexp.MustCompile(`^(?:global|project:[1-9][0-9]*)$`)
 	workflowRoleIDPattern         = regexp.MustCompile(`^(?:builtin:(?:owner|manager|task_runner|guest)|role:[a-z0-9][a-z0-9_-]{0,63})$`)
+)
+
+var (
+	globalCredentialTargetPattern      = regexp.MustCompile(`^(?:credentials|credential:[1-9][0-9]*)$`)
+	globalCredentialGrantTargetPattern = regexp.MustCompile(`^credential-grant:[1-9][0-9]*$`)
 )
 
 // AuditRoleProvenance is immutable, bounded evidence for an effective role at
@@ -394,6 +419,13 @@ func validAuditTarget(event AuditEvent) bool {
 			return event.TargetID == "global"
 		}
 		return event.TargetID == "project:"+strconv.Itoa(*event.ProjectID)
+	case AuditTargetGlobalCredential:
+		return event.ProjectID == nil && globalCredentialTargetPattern.MatchString(event.TargetID)
+	case AuditTargetGlobalCredentialGrant:
+		if event.ProjectID != nil {
+			return event.TargetID == "project:"+strconv.Itoa(*event.ProjectID)
+		}
+		return globalCredentialGrantTargetPattern.MatchString(event.TargetID)
 	case AuditTargetWorkflow:
 		return validScopedProjectAuditTarget(event, workflowTargetPattern)
 	case AuditTargetWorkflowRun:
@@ -516,6 +548,25 @@ func validWorkflowAuditReason(event AuditEvent) bool {
 }
 
 func validAuditActionTarget(event AuditEvent) bool {
+	if isGlobalCredentialAuditAction(event.Action) {
+		switch event.Action {
+		case AuditActionGrantedCredentialRead:
+			return event.ProjectID != nil && event.TargetType == AuditTargetGlobalCredentialGrant &&
+				event.TargetID == "project:"+strconv.Itoa(*event.ProjectID)
+		case AuditActionGlobalCredentialRead:
+			return event.ProjectID == nil && event.TargetType == AuditTargetGlobalCredential
+		case AuditActionGlobalCredentialCreate:
+			return event.ProjectID == nil && event.TargetType == AuditTargetGlobalCredential && event.TargetID == "credentials"
+		case AuditActionGlobalCredentialGrant:
+			return event.ProjectID == nil && ((event.TargetType == AuditTargetGlobalCredential && event.TargetID != "credentials") ||
+				event.TargetType == AuditTargetGlobalCredentialGrant)
+		case AuditActionGlobalCredentialGrantRevoke, AuditActionGlobalCredentialGrantRestore,
+			AuditActionGlobalCredentialGrantDelete:
+			return event.ProjectID == nil && event.TargetType == AuditTargetGlobalCredentialGrant
+		default:
+			return event.ProjectID == nil && event.TargetType == AuditTargetGlobalCredential && event.TargetID != "credentials"
+		}
+	}
 	if isCrossProjectTemplateAuditAction(event.Action) {
 		if event.Action == AuditActionCrossProjectTemplateVersionPublish {
 			return event.TargetType == AuditTargetCrossProjectTemplateVersion
@@ -563,6 +614,21 @@ func isCrossProjectTemplateAuditAction(action AuditAction) bool {
 		return true
 	}
 	return false
+}
+
+func isGlobalCredentialAuditAction(action AuditAction) bool {
+	switch action {
+	case AuditActionGlobalCredentialCreate, AuditActionGlobalCredentialRead,
+		AuditActionGrantedCredentialRead, AuditActionGlobalCredentialUpdate,
+		AuditActionGlobalCredentialRotate, AuditActionGlobalCredentialGrant,
+		AuditActionGlobalCredentialGrantRevoke, AuditActionGlobalCredentialGrantRestore,
+		AuditActionGlobalCredentialGrantDelete,
+		AuditActionGlobalCredentialDisable, AuditActionGlobalCredentialEnable,
+		AuditActionGlobalCredentialDeleteAttempt:
+		return true
+	default:
+		return false
+	}
 }
 
 func validAuditRoleProvenance(provenance AuditRoleProvenance) bool {
@@ -839,6 +905,14 @@ func validAuditAction(action AuditAction) bool {
 		return true
 	case AuditActionOIDCGroupMappingRead, AuditActionOIDCGroupMappingWrite,
 		AuditActionOIDCGroupMappingDelete, AuditActionOIDCGroupPreview:
+		return true
+	case AuditActionGlobalCredentialCreate, AuditActionGlobalCredentialRead,
+		AuditActionGrantedCredentialRead, AuditActionGlobalCredentialUpdate,
+		AuditActionGlobalCredentialRotate, AuditActionGlobalCredentialGrant,
+		AuditActionGlobalCredentialGrantRevoke, AuditActionGlobalCredentialGrantRestore,
+		AuditActionGlobalCredentialGrantDelete,
+		AuditActionGlobalCredentialDisable, AuditActionGlobalCredentialEnable,
+		AuditActionGlobalCredentialDeleteAttempt:
 		return true
 	case AuditActionWorkflowList, AuditActionWorkflowRead, AuditActionWorkflowCreate,
 		AuditActionWorkflowUpdate, AuditActionWorkflowDelete, AuditActionWorkflowStart,
