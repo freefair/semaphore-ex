@@ -1446,6 +1446,12 @@ definitions:
         type: string
         x-example: "* * * 1 *"
         example: "* * * 1 *"
+        description: May start with CRON_TZ to override the schedule timezone.
+      timezone:
+        type: string
+        maxLength: 128
+        x-nullable: true
+        description: Optional IANA timezone; null uses the configured global timezone.
       project_id:
         type: integer
       template_id:
@@ -1470,6 +1476,19 @@ definitions:
         type: integer
       cron_format:
         type: string
+      timezone:
+        type: string
+        maxLength: 128
+        x-nullable: true
+        description: Persisted IANA timezone, or null when the global fallback applies.
+      effective_timezone:
+        type: string
+        description: Effective IANA timezone after CRON_TZ, schedule, and global precedence.
+      next_run:
+        type: string
+        format: date-time
+        x-nullable: true
+        description: Backend-computed next occurrence in UTC.
       project_id:
         type: integer
       template_id:
@@ -4267,8 +4286,12 @@ paths:
           schema:
             $ref: "#/definitions/ScheduleRequest"
       responses:
-        204:
+        200:
           description: schedule updated
+          schema:
+            $ref: "#/definitions/Schedule"
+        400:
+          description: Invalid schedule, timezone, or cron expression
 
   /project/{project_id}/schedules:
     parameters:
@@ -4288,6 +4311,40 @@ paths:
           description: schedule created
           schema:
             $ref: "#/definitions/Schedule"
+        400:
+          description: Invalid schedule, timezone, or cron expression
+    get:
+      tags:
+        - schedule
+      summary: Get project schedules
+      responses:
+        200:
+          description: Project schedules with backend-authoritative timing
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/Schedule"
+
+  /project/{project_id}/schedules/validate:
+    parameters:
+      - $ref: "#/parameters/project_id"
+    post:
+      tags:
+        - schedule
+      summary: Validate a schedule and preview its next occurrence
+      parameters:
+        - name: schedule
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/ScheduleRequest"
+      responses:
+        200:
+          description: Valid schedule with effective timezone and next run
+          schema:
+            $ref: "#/definitions/Schedule"
+        400:
+          description: Invalid schedule, timezone, or cron expression
 
   # project views
   /project/{project_id}/views:
