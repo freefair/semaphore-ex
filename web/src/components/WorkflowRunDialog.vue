@@ -3,6 +3,9 @@
     <v-card data-testid="workflow-run-inputs">
       <v-card-title>{{ $t('workflowRunInputs') }}</v-card-title>
       <v-card-text>
+        <v-alert v-if="preflightMessage" type="warning" dense text>
+          {{ preflightMessage }}
+        </v-alert>
         <v-alert v-for="error in errors" :key="error" type="error" dense text>
           {{ error }}
         </v-alert>
@@ -134,14 +137,21 @@
             />
           </v-card>
         </template>
+
+        <ExecutionPreflightReview :plan="executionPreflight" />
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn text :disabled="loading" @click="$emit('input', false)">
+        <v-btn text :disabled="busy" @click="$emit('input', false)">
           {{ $t('cancel') }}
         </v-btn>
-        <v-btn color="primary" :loading="loading" :disabled="errors.length > 0" @click="submit">
-          {{ $t('run') }}
+        <v-btn
+          color="primary"
+          :loading="busy"
+          :disabled="errors.length > 0 || hasDenial"
+          @click="submit"
+        >
+          {{ executionPreflight ? $t('confirmExecution') : $t('run') }}
         </v-btn>
       </v-card-actions>
     </v-card>
@@ -156,11 +166,13 @@ import {
   credentialOptionItems,
   credentialReferenceFromKey,
 } from '@/lib/workflow-credential-references';
+import ExecutionPreflightReview from '@/components/ExecutionPreflightReview.vue';
 
 const NODE_OVERRIDE_FIELDS = ['inventory_id', 'environment_ids', 'arguments', 'git_branch'];
 const stringByteLength = (value) => new TextEncoder().encode(String(value)).length;
 
 export default {
+  components: { ExecutionPreflightReview },
   props: {
     value: Boolean,
     workflow: { type: Object, required: true },
@@ -173,6 +185,10 @@ export default {
       nodeValues: {},
       inventories: [],
       environments: [],
+      executionPreflight: null,
+      executionPreflightPayloadSignature: null,
+      preflightLoading: false,
+      preflightMessage: null,
     };
   },
   computed: {
@@ -198,6 +214,12 @@ export default {
         { value: true, text: this.$t('yes') },
         { value: false, text: this.$t('workflowBooleanFalse') },
       ];
+    },
+    busy() {
+      return this.loading || this.preflightLoading;
+    },
+    hasDenial() {
+      return (this.executionPreflight?.findings || []).some(({ severity }) => severity === 'denial');
     },
     errors() {
       const errors = [];
@@ -230,7 +252,12 @@ export default {
     value: {
       immediate: true,
       handler(open) {
-        if (open) this.reset();
+        if (open) {
+          this.reset();
+          if (!this.parameters.length && !this.configurableNodes.length) {
+            this.$nextTick(() => this.submit());
+          }
+        }
       },
     },
   },
@@ -261,6 +288,9 @@ export default {
           git_branch: undefined,
         },
       }), {});
+      this.executionPreflight = null;
+      this.executionPreflightPayloadSignature = null;
+      this.preflightMessage = null;
     },
     parameterLabel(parameter) {
       return `${parameter.name}${parameter.required ? ' *' : ''}`;
@@ -325,9 +355,47 @@ export default {
       if (Object.keys(nodeOverrides).length) payload.node_overrides = nodeOverrides;
       return payload;
     },
-    submit() {
+    isExecutionPreflightUnavailable(err) {
+      const response = err?.response;
+      return response?.status === 404
+        && response?.data?.error === 'CAPABILITY_DENIED'
+        && response?.data?.capability === 'execution_preflight';
+    },
+    adoptExecutionPreflight(plan, payload) {
+      this.executionPreflight = plan;
+      this.executionPreflightPayloadSignature = JSON.stringify(payload || this.buildPayload());
+      this.preflightMessage = this.$t('executionPreflightChanged');
+    },
+    async submit() {
       if (this.errors.length) return;
-      this.$emit('start', this.buildPayload());
+      const payload = this.buildPayload();
+      const signature = JSON.stringify(payload);
+      if (!this.executionPreflight || signature !== this.executionPreflightPayloadSignature) {
+        this.preflightLoading = true;
+        this.preflightMessage = null;
+        try {
+          this.executionPreflight = (await axios.post(`/api/project/${this.projectId}/workflows/${this.workflow.id}/preflight`, payload)).data;
+          this.executionPreflightPayloadSignature = signature;
+          if (this.hasDenial) this.preflightMessage = this.$t('executionPreflightDenied');
+        } catch (err) {
+          if (this.isExecutionPreflightUnavailable(err)) {
+            this.$emit('start', { payload, review: null });
+            return;
+          }
+          this.preflightMessage = getErrorMessage(err);
+        } finally {
+          this.preflightLoading = false;
+        }
+        return;
+      }
+      if (this.hasDenial) return;
+      this.$emit('start', {
+        payload,
+        review: {
+          fingerprint: this.executionPreflight.fingerprint,
+          reviewToken: this.executionPreflight.review_token,
+        },
+      });
     },
   },
 };

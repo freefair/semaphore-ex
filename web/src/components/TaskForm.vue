@@ -192,6 +192,8 @@
       @change="setArgs"
     />
 
+    <ExecutionPreflightReview :plan="executionPreflight" />
+
   </v-form>
 </template>
 <script>
@@ -199,10 +201,15 @@
 
 import ItemFormBase from '@/components/ItemFormBase';
 import axios from 'axios';
+import { getErrorMessage } from '@/lib/error';
 import ArgsPicker from '@/components/ArgsPicker.vue';
 import AppFieldsMixin from '@/components/AppFieldsMixin';
 import TaskParamsAnsibleForm from '@/components/TaskParamsAnsibleForm.vue';
 import TaskParamsTerraformForm from '@/components/TaskParamsTerraformForm.vue';
+import ExecutionPreflightReview from '@/components/ExecutionPreflightReview.vue';
+
+const PREFLIGHT_FINGERPRINT_HEADER = 'X-Semaphore-Preflight-Fingerprint';
+const PREFLIGHT_REVIEW_HEADER = ['X-Semaphore-Preflight', 'Token'].join('-');
 
 export default {
   mixins: [ItemFormBase, AppFieldsMixin],
@@ -216,6 +223,7 @@ export default {
     TaskParamsAnsibleForm,
     TaskParamsTerraformForm,
     ArgsPicker,
+    ExecutionPreflightReview,
   },
 
   data() {
@@ -233,6 +241,8 @@ export default {
         indentWithTabs: false,
       },
       inventory: null,
+      executionPreflight: null,
+      executionPreflightPayloadSignature: null,
     };
   },
 
@@ -351,6 +361,8 @@ export default {
       this.editedEnvironment = JSON.parse(v.environment || '{}');
       this.editedSecretEnvironment = JSON.parse(v.secret || '{}');
       this.hasCommit = v.commit_hash != null;
+      this.executionPreflight = null;
+      this.executionPreflightPayloadSignature = null;
 
       this.normalizeSelectValues();
     },
@@ -362,6 +374,86 @@ export default {
     beforeSave() {
       this.item.environment = JSON.stringify(this.editedEnvironment);
       this.item.secret = JSON.stringify(this.editedSecretEnvironment);
+    },
+
+    taskSavePayload() {
+      return {
+        ...this.item,
+        project_id: this.projectId,
+      };
+    },
+
+    isExecutionPreflightUnavailable(err) {
+      const response = err?.response;
+      return response?.status === 404
+        && response?.data?.error === 'CAPABILITY_DENIED'
+        && response?.data?.capability === 'execution_preflight';
+    },
+
+    async submitTaskPayload(payload, headers = {}) {
+      const item = (await axios({
+        method: 'post',
+        url: this.getItemsUrl(),
+        responseType: 'json',
+        data: payload,
+        headers,
+      })).data;
+      await this.afterSave(item);
+      this.$emit('save', { item: item || this.item, action: this.getSaveAction() });
+      return item || this.item;
+    },
+
+    async save() {
+      this.formError = null;
+      if (!this.$refs.form.validate()) {
+        this.$emit('error', {});
+        return null;
+      }
+      this.formSaving = true;
+      try {
+        await this.beforeSave();
+        const payload = this.taskSavePayload();
+        const signature = JSON.stringify(payload);
+        if (!this.executionPreflight || signature !== this.executionPreflightPayloadSignature) {
+          try {
+            this.executionPreflight = (await axios.post(`/api/project/${this.projectId}/tasks/preflight`, payload)).data;
+          } catch (err) {
+            if (this.isExecutionPreflightUnavailable(err)) {
+              return await this.submitTaskPayload(payload);
+            }
+            throw err;
+          }
+          this.executionPreflightPayloadSignature = signature;
+          this.$emit('preflight', this.executionPreflight);
+          if ((this.executionPreflight.findings || []).some(({ severity }) => severity === 'denial')) {
+            this.formError = this.$t('executionPreflightDenied');
+          }
+          return null;
+        }
+        if ((this.executionPreflight.findings || []).some(({ severity }) => severity === 'denial')) {
+          this.formError = this.$t('executionPreflightDenied');
+          this.$emit('preflight', this.executionPreflight);
+          return null;
+        }
+        return await this.submitTaskPayload(payload, {
+          [PREFLIGHT_FINGERPRINT_HEADER]: this.executionPreflight.fingerprint,
+          [PREFLIGHT_REVIEW_HEADER]: this.executionPreflight.review_token,
+        });
+      } catch (err) {
+        const fresh = err?.response?.data?.preflight;
+        if (err?.response?.status === 409 && fresh) {
+          this.executionPreflight = fresh;
+          this.executionPreflightPayloadSignature = JSON.stringify(this.taskSavePayload());
+          this.formError = this.$t('executionPreflightChanged');
+          this.$emit('preflight', fresh);
+          return null;
+        }
+        this.formError = getErrorMessage(err);
+        this.$emit('error', { message: this.formError });
+        return null;
+      } finally {
+        this.formSaving = false;
+      }
     },
 
     refreshItem() {

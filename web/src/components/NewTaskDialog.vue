@@ -1,11 +1,12 @@
 <template>
   <EditDialog
     v-model="dialog"
-    :save-button-text="$t(TEMPLATE_TYPE_ACTION_TITLES[template?.type || ''])"
+    :save-button-text="saveButtonText"
     :title="$t('newTask')"
     @save="closeDialog"
     @close="closeDialog"
     test-id="newTaskDialog"
+    content-class="execution-preflight-task-dialog"
   >
     <template v-slot:title={}>
       <v-icon small class="mr-4">{{ TEMPLATE_TYPE_ICONS[template?.type || ''] }}</v-icon>
@@ -21,6 +22,7 @@
         :template="template"
         @save="onSave"
         @error="onError"
+        @preflight="handlePreflight(onError)"
         :need-save="needSave"
         :need-reset="needReset"
         :source-task="sourceTask"
@@ -51,6 +53,7 @@ export default {
       dialog: false,
       TEMPLATE_TYPE_ACTION_TITLES,
       TEMPLATE_TYPE_ICONS,
+      preflightReady: false,
     };
   },
   watch: {
@@ -60,10 +63,16 @@ export default {
 
     async value(val) {
       this.dialog = val;
+      if (val) this.preflightReady = false;
     },
   },
 
   computed: {
+    saveButtonText() {
+      return this.preflightReady
+        ? this.$t('confirmExecution')
+        : this.$t(this.TEMPLATE_TYPE_ACTION_TITLES[this.template?.type || '']);
+    },
     templateTitle() {
       let res = this.template?.name || '';
       if (res.length > 16) {
@@ -75,8 +84,13 @@ export default {
   },
 
   methods: {
+    handlePreflight(clearSaveRequest) {
+      this.preflightReady = true;
+      clearSaveRequest();
+    },
     closeDialog(e) {
       this.dialog = false;
+      this.preflightReady = false;
       if (e) {
         EventBus.$emit('i-show-task', {
           taskId: e.item.id,
@@ -88,3 +102,15 @@ export default {
   },
 };
 </script>
+
+<style>
+.execution-preflight-task-dialog > .v-card {
+  display: flex;
+  max-height: 90vh;
+  flex-direction: column;
+}
+
+.execution-preflight-task-dialog > .v-card > .v-card__text {
+  overflow-y: auto;
+}
+</style>
