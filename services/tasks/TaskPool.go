@@ -183,6 +183,13 @@ func (p *TaskPool) ConfigureDeploymentWindowAdmission(service pro_interfaces.Dep
 	p.deploymentWindowAdmission = service
 }
 
+// DeploymentWindowAdmissionEnabled lets a durable scheduler fail closed when
+// admission is active but no terminal occurrence store is wired. Community
+// leaves the service nil and retains its existing non-HA behavior.
+func (p *TaskPool) DeploymentWindowAdmissionEnabled() bool {
+	return p != nil && p.deploymentWindowAdmission != nil
+}
+
 // SetExecutorImageCapabilityResolver injects the replaceable-edition entitlement decision.
 func (p *TaskPool) SetExecutorImageCapabilityResolver(resolver func(*db.User) bool) {
 	p.executorImageAvailable = resolver
@@ -1163,7 +1170,7 @@ func (p *TaskPool) AddTaskWithDeploymentWindowAdmission(
 	}
 	if claim.Decision.State == string(pro_interfaces.DeploymentWindowDecisionBlocked) {
 		return db.Task{}, &pro_interfaces.DeploymentWindowBlockedError{
-			NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown,
+			DecisionID: claim.Decision.ID, NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown,
 		}
 	}
 	if claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionAllowed) && claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionOverridden) || claim.Decision.ID <= 0 {
@@ -1183,7 +1190,7 @@ func (p *TaskPool) claimDeploymentWindowTaskAdmission(task *db.Task, request pro
 		return err
 	}
 	if claim.Decision.State == string(pro_interfaces.DeploymentWindowDecisionBlocked) {
-		return &pro_interfaces.DeploymentWindowBlockedError{NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown}
+		return &pro_interfaces.DeploymentWindowBlockedError{DecisionID: claim.Decision.ID, NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown}
 	}
 	if (claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionAllowed) && claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionOverridden)) || claim.Decision.ID <= 0 {
 		return errors.New("deployment window admission did not allow execution")

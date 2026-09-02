@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"strconv"
 	"sync"
 	"time"
 
@@ -44,6 +43,7 @@ type ScheduleExecutionLease interface {
 	OccurrenceKey() string
 	IsCurrent() (bool, error)
 	Complete(taskID int) (bool, error)
+	Block(decisionID int) (bool, error)
 	Release() (bool, error)
 }
 
@@ -195,6 +195,10 @@ func (r ScheduleRunner) Run() {
 			return
 		}
 	}
+	if r.pool.taskPool.DeploymentWindowAdmissionEnabled() && lease == nil {
+		log.WithField("schedule_id", schedule.ID).Error("deployment-window schedule admission requires durable occurrence coordination")
+		return
+	}
 
 	var task db.Task
 	if schedule.TaskParams != nil {
@@ -227,6 +231,18 @@ func (r ScheduleRunner) Run() {
 	)
 
 	if err != nil {
+		var blocked *pro_interfaces.DeploymentWindowBlockedError
+		if errors.As(err, &blocked) {
+			if lease == nil || blocked.DecisionID <= 0 {
+				log.WithError(err).WithField("schedule_id", schedule.ID).Error("blocked schedule admission has no durable occurrence decision")
+				return
+			}
+			terminal, blockErr := lease.Block(blocked.DecisionID)
+			if blockErr != nil || !terminal {
+				log.WithError(blockErr).WithFields(log.Fields{"schedule_id": schedule.ID, "decision_id": blocked.DecisionID}).Error("failed to persist blocked schedule occurrence")
+			}
+			return
+		}
 		if lease != nil {
 			_, _ = lease.Release()
 		}
@@ -259,9 +275,15 @@ func (r ScheduleRunner) Run() {
 // intentionally insufficient by itself because two schedules in one project
 // may have identical definitions and therefore identical revisions.
 func deploymentWindowScheduleDecisionKey(occurrence ScheduleOccurrence) string {
-	material := strconv.Itoa(occurrence.ScheduleID) + "|" + occurrence.Revision + "|" + occurrence.IntendedAt.UTC().Format(time.RFC3339Nano)
-	digest := sha256.Sum256([]byte(material))
-	return "schedule-" + hex.EncodeToString(digest[:])
+	durable, err := pro_interfaces.NewScheduleOccurrence(occurrence.ScheduleID, occurrence.Revision, occurrence.IntendedAt)
+	if err != nil {
+		return ""
+	}
+	key, err := pro_interfaces.DeploymentWindowScheduleDecisionKey(durable)
+	if err != nil {
+		return ""
+	}
+	return key
 }
 
 // ScheduleDeduplicator claims one intended schedule fire through durable

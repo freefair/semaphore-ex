@@ -90,6 +90,7 @@ const (
 	WorkflowTriggerInvocationSucceeded WorkflowTriggerInvocationStatus = "succeeded"
 	WorkflowTriggerInvocationFailed    WorkflowTriggerInvocationStatus = "failed"
 	WorkflowTriggerInvocationRejected  WorkflowTriggerInvocationStatus = "rejected"
+	WorkflowTriggerInvocationBlocked   WorkflowTriggerInvocationStatus = "blocked"
 )
 
 // WorkflowTriggerSnapshot identifies the exact trigger revision responsible
@@ -110,27 +111,31 @@ type WorkflowTriggerSnapshot struct {
 // single attempt to start a workflow. Request and schedule keys are hashes or
 // derived identities; raw credentials and caller idempotency keys are absent.
 type WorkflowTriggerInvocation struct {
-	ID                   int                                  `db:"id" json:"id"`
-	ProjectID            int                                  `db:"project_id" json:"project_id"`
-	WorkflowTriggerID    int                                  `db:"workflow_trigger_id" json:"workflow_trigger_id"`
-	WorkflowTemplateID   int                                  `db:"workflow_template_id" json:"workflow_template_id"`
-	TriggerRevision      int                                  `db:"trigger_revision" json:"trigger_revision"`
-	CredentialGeneration int                                  `db:"credential_generation" json:"credential_generation,omitempty"`
-	DefinitionRevision   int                                  `db:"definition_revision" json:"definition_revision"`
-	RequestKeyHash       *string                              `db:"request_key_hash" json:"-"`
-	OccurrenceIdentity   *string                              `db:"occurrence_identity" json:"occurrence_identity,omitempty"`
-	Status               WorkflowTriggerInvocationStatus      `db:"status" json:"status"`
-	RunID                *int                                 `db:"run_id" json:"run_id,omitempty"`
-	ActorUserID          int                                  `db:"actor_user_id" json:"actor_user_id"`
-	TriggerSnapshotJSON  string                               `db:"trigger_snapshot" json:"-"`
-	TriggerSnapshot      WorkflowTriggerSnapshot              `db:"-" json:"trigger"`
-	InputSnapshotJSON    string                               `db:"input_snapshot" json:"-"`
-	InputSnapshot        map[string]WorkflowParameterSnapshot `db:"-" json:"inputs,omitempty"`
-	Result               string                               `db:"result" json:"result,omitempty"`
-	Reason               string                               `db:"reason" json:"reason,omitempty"`
-	Created              time.Time                            `db:"created" json:"created"`
-	Updated              time.Time                            `db:"updated" json:"updated"`
-	ExpiresAt            *time.Time                           `db:"expires_at" json:"expires_at,omitempty"`
+	ID                         int                                  `db:"id" json:"id"`
+	ProjectID                  int                                  `db:"project_id" json:"project_id"`
+	WorkflowTriggerID          int                                  `db:"workflow_trigger_id" json:"workflow_trigger_id"`
+	WorkflowTemplateID         int                                  `db:"workflow_template_id" json:"workflow_template_id"`
+	TriggerRevision            int                                  `db:"trigger_revision" json:"trigger_revision"`
+	CredentialGeneration       int                                  `db:"credential_generation" json:"credential_generation,omitempty"`
+	DefinitionRevision         int                                  `db:"definition_revision" json:"definition_revision"`
+	RequestKeyHash             *string                              `db:"request_key_hash" json:"-"`
+	OccurrenceIdentity         *string                              `db:"occurrence_identity" json:"occurrence_identity,omitempty"`
+	Status                     WorkflowTriggerInvocationStatus      `db:"status" json:"status"`
+	RunID                      *int                                 `db:"run_id" json:"run_id,omitempty"`
+	DeploymentWindowDecisionID *int                                 `db:"deployment_window_decision_id" json:"-"`
+	NextEligibleAt             *time.Time                           `db:"next_eligible_at" json:"-"`
+	NextEligibleKnown          bool                                 `db:"next_eligible_known" json:"-"`
+	BlockedAt                  *time.Time                           `db:"blocked_at" json:"-"`
+	ActorUserID                int                                  `db:"actor_user_id" json:"actor_user_id"`
+	TriggerSnapshotJSON        string                               `db:"trigger_snapshot" json:"-"`
+	TriggerSnapshot            WorkflowTriggerSnapshot              `db:"-" json:"trigger"`
+	InputSnapshotJSON          string                               `db:"input_snapshot" json:"-"`
+	InputSnapshot              map[string]WorkflowParameterSnapshot `db:"-" json:"inputs,omitempty"`
+	Result                     string                               `db:"result" json:"result,omitempty"`
+	Reason                     string                               `db:"reason" json:"reason,omitempty"`
+	Created                    time.Time                            `db:"created" json:"created"`
+	Updated                    time.Time                            `db:"updated" json:"updated"`
+	ExpiresAt                  *time.Time                           `db:"expires_at" json:"expires_at,omitempty"`
 }
 
 type WorkflowTriggerManager interface {
@@ -397,7 +402,8 @@ func containsWorkflowTriggerInvocationStatus(wanted WorkflowTriggerInvocationSta
 		WorkflowTriggerInvocationRunning,
 		WorkflowTriggerInvocationSucceeded,
 		WorkflowTriggerInvocationFailed,
-		WorkflowTriggerInvocationRejected:
+		WorkflowTriggerInvocationRejected,
+		WorkflowTriggerInvocationBlocked:
 		return true
 	default:
 		return false

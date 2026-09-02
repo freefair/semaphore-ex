@@ -392,6 +392,9 @@ func (s *workflowTriggerService) fireWithWorkflow(
 			return pro_interfaces.WorkflowTriggerFireResult{Trigger: trigger, Invocation: claimed, Run: existing, Duplicate: true}, nil
 		}
 	}
+	if !inserted && claimed.Status == db.WorkflowTriggerInvocationBlocked {
+		return pro_interfaces.WorkflowTriggerFireResult{Trigger: trigger, Invocation: claimed, Duplicate: true}, nil
+	}
 	snapshot.InvocationID = claimed.ID
 	correlationID := db.WorkflowTriggerInvocationCorrelationID(claimed)
 	if correlationID == "" {
@@ -402,6 +405,24 @@ func (s *workflowTriggerService) fireWithWorkflow(
 	})
 	claimed.Updated = time.Now().UTC()
 	if startErr != nil {
+		var blocked *pro_interfaces.DeploymentWindowBlockedError
+		if errors.As(startErr, &blocked) {
+			blockedAt := claimed.Updated
+			claimed.Status = db.WorkflowTriggerInvocationBlocked
+			claimed.Result = "blocked"
+			claimed.Reason = "deployment_window_blocked"
+			claimed.DeploymentWindowDecisionID = &blocked.DecisionID
+			claimed.NextEligibleAt = blocked.NextEligibleAt
+			claimed.NextEligibleKnown = blocked.NextEligibleKnown
+			claimed.BlockedAt = &blockedAt
+			if err = s.repository.UpdateWorkflowTriggerInvocation(claimed); err != nil {
+				return pro_interfaces.WorkflowTriggerFireResult{}, err
+			}
+			if err = s.repository.RecordWorkflowTriggerResult(trigger.ProjectID, trigger.ID, claimed.Updated, "blocked"); err != nil {
+				return pro_interfaces.WorkflowTriggerFireResult{}, err
+			}
+			return pro_interfaces.WorkflowTriggerFireResult{Trigger: trigger, Invocation: claimed}, nil
+		}
 		claimed.Status = db.WorkflowTriggerInvocationFailed
 		claimed.Result = "failed"
 		claimed.Reason = startErr.Error()

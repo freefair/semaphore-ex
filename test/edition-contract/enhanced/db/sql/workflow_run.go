@@ -249,6 +249,59 @@ func (d *WorkflowStoreImpl) bindDeploymentWindowWorkflowRunTx(tx *gorp.Transacti
 	return nil
 }
 
+// BlockWorkflowRunNodeForDeploymentWindow atomically makes a queued/pending
+// node terminal and links the exact blocked decision. A stale reconciler may
+// not overwrite a successor because the optional progression fencing token is
+// part of the same CAS predicate.
+func (d *WorkflowStoreImpl) BlockWorkflowRunNodeForDeploymentWindow(projectID, runID, nodeID, decisionID int, resultJSON string, lease *pro_interfaces.WorkflowReconciliationLease) (bool, error) {
+	if d == nil || d.connection == nil || projectID <= 0 || runID <= 0 || nodeID <= 0 || decisionID <= 0 || resultJSON == "" {
+		return false, errors.New("workflow deployment-window block is invalid")
+	}
+	query := `update project__workflow_run_node
+	 set status=?, reason='deployment_window_blocked', result=?,
+	     deployment_window_decision_id=?,
+	     next_eligible_at=(select next_eligible_at from project__deployment_window_decision where id=?),
+	     next_eligible_known=(select next_eligible_known from project__deployment_window_decision where id=?),
+	     blocked_at=CURRENT_TIMESTAMP, ` + "`end`" + `=CURRENT_TIMESTAMP
+	 where project_id=? and workflow_run_id=? and workflow_node_id=? and task_id is null
+	   and status in (?, ?)
+	   and exists (
+	     select 1 from project__deployment_window_decision d
+	     where d.id=? and d.project_id=? and d.workflow_run_id=?
+	       and d.workflow_run_node_id=project__workflow_run_node.id
+	       and d.source='workflow_node' and d.origin='workflow_node'
+	       and d.state='blocked' and d.task_id is null
+	   )`
+	args := []any{db.WorkflowRunNodeBlocked, resultJSON, decisionID, decisionID, decisionID,
+		projectID, runID, nodeID, db.WorkflowRunNodePending, db.WorkflowRunNodeQueued,
+		decisionID, projectID, runID}
+	if lease != nil {
+		if lease.ProjectID != projectID || lease.WorkflowRunID != runID || lease.OwnerBootID == "" || lease.FencingToken <= 0 {
+			return false, errors.New("workflow deployment-window block lease is invalid")
+		}
+		query += " and progression_fencing_token=? and exists (select 1 from cluster__workflow_reconciliation where project_id=? and workflow_run_id=? and owner_boot_id=? and fencing_token=? and lease_expires_at>CURRENT_TIMESTAMP)"
+		args = append(args, lease.FencingToken, lease.ProjectID, lease.WorkflowRunID, lease.OwnerBootID, lease.FencingToken)
+	}
+	result, err := d.connection.Exec(d.connection.PrepareQuery(query), args...)
+	if err != nil {
+		return false, err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil || updated == 1 {
+		return updated == 1, err
+	}
+	var existing struct {
+		Status     db.WorkflowRunNodeStatus `db:"status"`
+		DecisionID *int                     `db:"deployment_window_decision_id"`
+	}
+	err = d.connection.SelectOne(&existing, d.connection.PrepareQuery(
+		"select status, deployment_window_decision_id from project__workflow_run_node where project_id=? and workflow_run_id=? and workflow_node_id=?"), projectID, runID, nodeID)
+	if err != nil {
+		return false, err
+	}
+	return existing.Status == db.WorkflowRunNodeBlocked && existing.DecisionID != nil && *existing.DecisionID == decisionID, nil
+}
+
 func (d *WorkflowStoreImpl) recheckWorkflowRunCrossProjectReferencesTx(tx *gorp.Transaction, run db.WorkflowRun) error {
 	definitionNodes := make(map[int]db.WorkflowNode, len(run.DefinitionSnapshot.Nodes))
 	for _, definitionNode := range run.DefinitionSnapshot.Nodes {

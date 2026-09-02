@@ -127,6 +127,13 @@ type WorkflowDeploymentWindowTaskFencedDecisionEnqueuer interface {
 	AddWorkflowTaskFencedWithDeploymentWindowDecision(task db.Task, template db.Template, userID *int, username string, projectID int, needAlias bool, lease WorkflowReconciliationLease) (db.Task, error)
 }
 
+// WorkflowDeploymentWindowNodeBlocker terminalizes a node with the exact
+// immutable blocked decision. It is separate from the generic finalizer so
+// admission provenance cannot be lost during an HA reconciliation race.
+type WorkflowDeploymentWindowNodeBlocker interface {
+	BlockWorkflowRunNodeForDeploymentWindow(projectID, runID, nodeID, decisionID int, resultJSON string, lease *WorkflowReconciliationLease) (bool, error)
+}
+
 // CrossProjectWorkflowTaskStore is the Enhanced-only transactional boundary
 // for dispatching an immutable owner template into a consumer workflow run.
 // It revalidates the live grant and reconciles the workflow node before the

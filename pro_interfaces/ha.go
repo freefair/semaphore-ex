@@ -75,6 +75,17 @@ func NewScheduleOccurrence(scheduleID int, revision string, intendedAt time.Time
 	}, nil
 }
 
+// DeploymentWindowScheduleDecisionKey binds one admission decision to the
+// durable occurrence identity. Both the scheduler and the SQL lease boundary
+// derive it, so a caller cannot substitute another schedule's blocked decision.
+func DeploymentWindowScheduleDecisionKey(occurrence ScheduleOccurrence) (string, error) {
+	if occurrence.Key == "" || occurrence.ScheduleID <= 0 || occurrence.Revision == "" || occurrence.IntendedAt.IsZero() {
+		return "", errors.New("schedule occurrence is invalid")
+	}
+	digest := sha256.Sum256([]byte("semaphore-deployment-window-schedule:v1\x00" + occurrence.Key))
+	return "schedule-" + hex.EncodeToString(digest[:]), nil
+}
+
 // ScheduleOccurrenceLease is a fenced, renewable ownership record. A caller
 // must present its exact owner boot identity and fencing token for every
 // follow-up action, so an expired owner cannot act after a successor claims
@@ -92,6 +103,7 @@ type ScheduleOccurrenceLeaseRepository interface {
 	ClaimScheduleOccurrence(occurrence ScheduleOccurrence, ownerBootID string, ttl time.Duration) (ScheduleOccurrenceLease, bool, error)
 	IsCurrentScheduleLease(lease ScheduleOccurrenceLease) (bool, error)
 	CompleteScheduleOccurrence(lease ScheduleOccurrenceLease, taskID int) (bool, error)
+	BlockScheduleOccurrence(lease ScheduleOccurrenceLease, decisionID int) (bool, error)
 	ReleaseScheduleOccurrenceLease(lease ScheduleOccurrenceLease) (bool, error)
 }
 

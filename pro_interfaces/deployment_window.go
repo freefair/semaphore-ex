@@ -238,6 +238,7 @@ type DeploymentWindowAdmissionConfigurer interface {
 // DeploymentWindowBlockedError is deliberately coarse for start callers. Rule
 // provenance remains private to the decision/audit layer.
 type DeploymentWindowBlockedError struct {
+	DecisionID        int `json:"-"`
 	NextEligibleAt    *time.Time
 	NextEligibleKnown bool
 }

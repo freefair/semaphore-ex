@@ -129,6 +129,12 @@ func (l *scheduleExecutionLease) Complete(taskID int) (bool, error) {
 	return completed, err
 }
 
+func (l *scheduleExecutionLease) Block(decisionID int) (bool, error) {
+	blocked, err := l.repository.BlockScheduleOccurrence(l.lease, decisionID)
+	l.finish()
+	return blocked, err
+}
+
 func (l *scheduleExecutionLease) Release() (bool, error) {
 	released, err := l.repository.ReleaseScheduleOccurrenceLease(l.lease)
 	l.finish()

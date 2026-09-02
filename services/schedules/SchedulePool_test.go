@@ -86,6 +86,7 @@ type mockScheduleLease struct{ key string }
 func (l mockScheduleLease) OccurrenceKey() string    { return l.key }
 func (mockScheduleLease) IsCurrent() (bool, error)   { return true, nil }
 func (mockScheduleLease) Complete(int) (bool, error) { return true, nil }
+func (mockScheduleLease) Block(int) (bool, error)    { return true, nil }
 func (mockScheduleLease) Release() (bool, error)     { return true, nil }
 
 func newMockDeduplicator() *mockDeduplicator {

@@ -213,9 +213,9 @@ func (d *WorkflowStoreImpl) insertWorkflowTriggerInvocationIfCurrent(
 	query := `insert into project__workflow_trigger_invocation(
 		project_id, workflow_trigger_id, workflow_template_id, trigger_revision,
 		credential_generation, definition_revision, request_key_hash, occurrence_identity,
-		status, run_id, actor_user_id, trigger_snapshot, input_snapshot, result, reason,
-		created, updated, expires_at
-	) select ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		status, run_id, deployment_window_decision_id, next_eligible_at, next_eligible_known, blocked_at,
+		actor_user_id, trigger_snapshot, input_snapshot, result, reason, created, updated, expires_at
+	) select ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 	where exists (
 		select 1 from project__workflow_trigger
 		where project_id=? and workflow_template_id=? and id=?
@@ -225,6 +225,7 @@ func (d *WorkflowStoreImpl) insertWorkflowTriggerInvocationIfCurrent(
 		invocation.ProjectID, invocation.WorkflowTriggerID, invocation.WorkflowTemplateID,
 		invocation.TriggerRevision, invocation.CredentialGeneration, invocation.DefinitionRevision,
 		invocation.RequestKeyHash, invocation.OccurrenceIdentity, invocation.Status, invocation.RunID,
+		invocation.DeploymentWindowDecisionID, invocation.NextEligibleAt, invocation.NextEligibleKnown, invocation.BlockedAt,
 		invocation.ActorUserID, invocation.TriggerSnapshotJSON, invocation.InputSnapshotJSON,
 		invocation.Result, invocation.Reason, invocation.Created, invocation.Updated, invocation.ExpiresAt,
 		invocation.ProjectID, invocation.WorkflowTemplateID, invocation.WorkflowTriggerID,
@@ -255,8 +256,8 @@ func (d *WorkflowStoreImpl) insertWorkflowTriggerInvocationIfCurrent(
 
 func (d *WorkflowStoreImpl) UpdateWorkflowTriggerInvocation(invocation db.WorkflowTriggerInvocation) error {
 	result, err := d.connection.Exec(
-		"update project__workflow_trigger_invocation set status=?, run_id=?, result=?, reason=?, updated=? where project_id=? and workflow_trigger_id=? and id=?",
-		invocation.Status, invocation.RunID, invocation.Result, invocation.Reason, invocation.Updated,
+		"update project__workflow_trigger_invocation set status=?, run_id=?, deployment_window_decision_id=?, next_eligible_at=?, next_eligible_known=?, blocked_at=?, result=?, reason=?, updated=? where project_id=? and workflow_trigger_id=? and id=?",
+		invocation.Status, invocation.RunID, invocation.DeploymentWindowDecisionID, invocation.NextEligibleAt, invocation.NextEligibleKnown, invocation.BlockedAt, invocation.Result, invocation.Reason, invocation.Updated,
 		invocation.ProjectID, invocation.WorkflowTriggerID, invocation.ID,
 	)
 	if err != nil {
