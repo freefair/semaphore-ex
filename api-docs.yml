@@ -26,6 +26,8 @@ tags:
     description: Runner management (project and global runners)
   - name: workflow
     description: Workflows
+  - name: global-credential
+    description: Enhanced global credential metadata, versions, and project grants
 
 schemes:
   - http
@@ -1637,6 +1639,34 @@ definitions:
         type: string
         enum: [approved, rejected]
 
+  GlobalCredentialExternalReference:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialExternalReference"
+  GlobalCredentialMaterialInput:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialMaterialInput"
+  GlobalCredentialCreateRequest:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialCreateRequest"
+  GlobalCredentialSummary:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialSummary"
+  GlobalCredentialDetail:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialDetail"
+  GlobalCredentialMetadataUpdateRequest:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialMetadataUpdateRequest"
+  GlobalCredentialEnabledRequest:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialEnabledRequest"
+  GlobalCredentialRotateRequest:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialRotateRequest"
+  GlobalCredentialGrantInput:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialGrantInput"
+  GlobalCredentialGrantUpdateRequest:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialGrantUpdateRequest"
+  GlobalCredentialGrant:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialGrant"
+  GrantedCredential:
+    $ref: "./api-docs-ex.yml#/definitions/GrantedCredential"
+  GlobalCredentialGrantProject:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialGrantProject"
+  GlobalCredentialRevisionRequest:
+    $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialRevisionRequest"
 securityDefinitions:
   cookie:
     type: apiKey
@@ -1792,6 +1822,20 @@ parameters:
     type: integer
     required: true
     x-example: 17
+  credential_id:
+    name: credential_id
+    description: Global credential ID
+    in: path
+    type: integer
+    required: true
+    x-example: 21
+  grant_id:
+    name: grant_id
+    description: Global credential grant ID
+    in: path
+    type: integer
+    required: true
+    x-example: 22
 
 paths:
   /ping:
@@ -4015,3 +4059,24 @@ paths:
       responses:
         204:
           description: Runner cache cleared
+
+  /global-credentials:
+    $ref: "./api-docs-ex.yml#/paths/~1global-credentials"
+  /global-credentials/grant-projects:
+    $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1grant-projects"
+  /global-credentials/{credential_id}:
+    $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1{credential_id}"
+  /global-credentials/{credential_id}/enabled:
+    $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1{credential_id}~1enabled"
+  /global-credentials/{credential_id}/rotate:
+    $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1{credential_id}~1rotate"
+  /global-credentials/{credential_id}/grants:
+    $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1{credential_id}~1grants"
+  /global-credentials/{credential_id}/grants/{grant_id}:
+    $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1{credential_id}~1grants~1{grant_id}"
+  /global-credentials/{credential_id}/grants/{grant_id}/revoke:
+    $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1{credential_id}~1grants~1{grant_id}~1revoke"
+  /global-credentials/{credential_id}/grants/{grant_id}/restore:
+    $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1{credential_id}~1grants~1{grant_id}~1restore"
+  /project/{project_id}/granted-credentials:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1granted-credentials"

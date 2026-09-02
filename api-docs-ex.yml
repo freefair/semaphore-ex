@@ -366,6 +366,288 @@ definitions:
       end:
         type: string
         format: date-time
+  GlobalCredentialExternalReference:
+    type: object
+    description: Value-free Vault or OpenBao reference. The server stores but does not resolve it in this API layer.
+    required:
+    - provider
+    - provider_id
+    - mount
+    - path
+    - version
+    - field
+    additionalProperties: false
+    properties:
+      provider:
+        type: string
+        enum:
+        - vault
+        - openbao
+      provider_id:
+        type: string
+        maxLength: 64
+      mount:
+        type: string
+        maxLength: 128
+      path:
+        type: string
+        maxLength: 512
+      version:
+        type: integer
+        minimum: 1
+      field:
+        type: string
+        maxLength: 128
+  GlobalCredentialMaterialInput:
+    type: object
+    description: Write-only material. Supply exactly one of string_value or external_reference. No response returns
+      this object.
+    additionalProperties: false
+    properties:
+      string_value:
+        type: string
+        format: password
+        minLength: 1
+        maxLength: 4096
+      external_reference:
+        $ref: ./api-docs.yml#/definitions/GlobalCredentialExternalReference
+  GlobalCredentialCreateRequest:
+    type: object
+    required:
+    - type
+    - display_name
+    - material
+    additionalProperties: false
+    properties:
+      type:
+        type: string
+        enum:
+        - string
+      display_name:
+        type: string
+        minLength: 1
+        maxLength: 128
+      material:
+        $ref: ./api-docs.yml#/definitions/GlobalCredentialMaterialInput
+  GlobalCredentialSummary:
+    type: object
+    description: Least-privilege global view. Material, owner, provider coordinates, and timestamps are omitted.
+    required:
+    - id
+    - type
+    - display_name
+    - enabled
+    - revision
+    - current_version
+    - fingerprint
+    - material_kind
+    properties:
+      id:
+        type: integer
+      type:
+        type: string
+        enum:
+        - string
+      display_name:
+        type: string
+      enabled:
+        type: boolean
+      revision:
+        type: integer
+        minimum: 1
+      current_version:
+        type: integer
+        minimum: 1
+      fingerprint:
+        type: string
+        description: Random opaque per-version identifier, never a content hash.
+        pattern: ^[a-f0-9]{64}$
+      material_kind:
+        type: string
+        enum:
+        - local_encrypted
+        - external_reference
+  GlobalCredentialDetail:
+    allOf:
+    - $ref: ./api-docs.yml#/definitions/GlobalCredentialSummary
+    - type: object
+      required:
+      - owner_user_id
+      - created
+      - updated
+      properties:
+        owner_user_id:
+          type: integer
+        external_reference:
+          $ref: ./api-docs.yml#/definitions/GlobalCredentialExternalReference
+        created:
+          type: string
+          format: date-time
+        updated:
+          type: string
+          format: date-time
+  GlobalCredentialMetadataUpdateRequest:
+    type: object
+    required:
+    - revision
+    - display_name
+    additionalProperties: false
+    properties:
+      revision:
+        type: integer
+        minimum: 1
+      display_name:
+        type: string
+        minLength: 1
+        maxLength: 128
+  GlobalCredentialEnabledRequest:
+    type: object
+    required:
+    - revision
+    - enabled
+    additionalProperties: false
+    properties:
+      revision:
+        type: integer
+        minimum: 1
+      enabled:
+        type: boolean
+  GlobalCredentialRotateRequest:
+    type: object
+    required:
+    - revision
+    - material
+    additionalProperties: false
+    properties:
+      revision:
+        type: integer
+        minimum: 1
+      material:
+        $ref: ./api-docs.yml#/definitions/GlobalCredentialMaterialInput
+  GlobalCredentialGrantInput:
+    type: object
+    required:
+    - project_id
+    - operations
+    additionalProperties: false
+    properties:
+      project_id:
+        type: integer
+        minimum: 1
+      operations:
+        type: integer
+        description: Bit mask containing reference (1), consume (2), or both (3).
+        enum:
+        - 1
+        - 2
+        - 3
+      expires_at:
+        type: string
+        format: date-time
+  GlobalCredentialGrantUpdateRequest:
+    allOf:
+    - $ref: ./api-docs.yml#/definitions/GlobalCredentialGrantInput
+    - type: object
+      required:
+      - revision
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+  GlobalCredentialGrant:
+    type: object
+    required:
+    - id
+    - credential_id
+    - project_id
+    - operations
+    - status
+    - revision
+    - created
+    - updated
+    properties:
+      id:
+        type: integer
+      credential_id:
+        type: integer
+      project_id:
+        type: integer
+      operations:
+        type: integer
+        enum:
+        - 1
+        - 2
+        - 3
+      expires_at:
+        type: string
+        format: date-time
+      status:
+        type: string
+        enum:
+        - active
+        - revoked
+      revision:
+        type: integer
+      created:
+        type: string
+        format: date-time
+      updated:
+        type: string
+        format: date-time
+  GrantedCredential:
+    type: object
+    description: Project-scoped value-free metadata. Owner, fingerprint, storage coordinates, and material are omitted.
+    required:
+    - credential_id
+    - type
+    - display_name
+    - version
+    - operations
+    - grant_id
+    - grant_revision
+    properties:
+      credential_id:
+        type: integer
+      type:
+        type: string
+        enum:
+        - string
+      display_name:
+        type: string
+      version:
+        type: integer
+      operations:
+        type: integer
+        enum:
+        - 1
+        - 3
+      grant_id:
+        type: integer
+      grant_revision:
+        type: integer
+      expires_at:
+        type: string
+        format: date-time
+  GlobalCredentialGrantProject:
+    type: object
+    description: Bounded global grant target selector.
+    required:
+    - id
+    - name
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+  GlobalCredentialRevisionRequest:
+    type: object
+    required:
+    - revision
+    additionalProperties: false
+    properties:
+      revision:
+        type: integer
+        minimum: 1
 paths:
   /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/stop:
     parameters:
@@ -491,3 +773,380 @@ paths:
             $ref: ./api-docs.yml#/definitions/TaskSummaryErrorPage
         404:
           description: Project or task not found
+  /global-credentials:
+    get:
+      tags:
+      - global-credential
+      summary: List global credential summaries
+      description: Requires any global credential metadata, rotation, or grant permission. Values and external reference
+        coordinates are never returned.
+      parameters:
+      - name: count
+        in: query
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+      - name: offset
+        in: query
+        type: integer
+        minimum: 0
+        default: 0
+      responses:
+        200:
+          description: Bounded value-free summaries
+          schema:
+            type: array
+            items:
+              $ref: ./api-docs.yml#/definitions/GlobalCredentialSummary
+        400:
+          description: Invalid or ambiguous pagination
+        403:
+          description: Missing global credential permission
+    post:
+      tags:
+      - global-credential
+      summary: Create a global credential and its first immutable version
+      description: Requires both global.credentials.metadata.manage and global.credentials.rotate. Material is write-only.
+      parameters:
+      - name: Credential
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/GlobalCredentialCreateRequest
+      responses:
+        201:
+          description: Value-free credential summary
+          schema:
+            $ref: ./api-docs.yml#/definitions/GlobalCredentialSummary
+        400:
+          description: Invalid input
+        403:
+          description: Either required permission is missing
+        503:
+          description: Local material encryption is unavailable
+  /global-credentials/grant-projects:
+    get:
+      tags:
+      - global-credential
+      summary: List bounded project grant targets
+      description: Requires global.credentials.grant and returns at most 200 projects with only ID and name.
+      responses:
+        200:
+          description: Ordered project selectors
+          schema:
+            type: array
+            items:
+              $ref: ./api-docs.yml#/definitions/GlobalCredentialGrantProject
+        403:
+          description: Missing global.credentials.grant
+  /global-credentials/{credential_id}:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/credential_id
+    get:
+      tags:
+      - global-credential
+      summary: Get detailed global credential metadata
+      description: Requires global.credentials.metadata.manage. Local material and ciphertext are always omitted.
+      responses:
+        200:
+          description: Detailed value-free metadata
+          schema:
+            $ref: ./api-docs.yml#/definitions/GlobalCredentialDetail
+        403:
+          description: Missing metadata-management permission
+        404:
+          description: Credential not found
+    put:
+      tags:
+      - global-credential
+      summary: Update global credential display metadata
+      description: Requires global.credentials.metadata.manage. Material cannot be included.
+      parameters:
+      - name: Metadata
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/GlobalCredentialMetadataUpdateRequest
+      responses:
+        200:
+          description: Updated value-free summary
+          schema:
+            $ref: ./api-docs.yml#/definitions/GlobalCredentialSummary
+        400:
+          description: Invalid input
+        403:
+          description: Missing metadata-management permission
+        404:
+          description: Credential not found
+        409:
+          description: Stale revision
+    delete:
+      tags:
+      - global-credential
+      summary: Delete a disabled, ungranted global credential
+      description: Requires global.credentials.metadata.manage. The credential must be disabled and have no grants.
+      parameters:
+      - name: expected_revision
+        in: query
+        required: true
+        type: integer
+        minimum: 1
+      responses:
+        204:
+          description: Credential deleted
+        400:
+          description: Invalid or ambiguous revision
+        403:
+          description: Missing metadata-management permission
+        404:
+          description: Credential not found
+        409:
+          description: Stale revision or dependency guard
+  /global-credentials/{credential_id}/enabled:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/credential_id
+    post:
+      tags:
+      - global-credential
+      summary: Enable or disable a global credential
+      description: Requires global.credentials.metadata.manage and records the explicit reversible transition.
+      parameters:
+      - name: State
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/GlobalCredentialEnabledRequest
+      responses:
+        200:
+          description: Updated value-free summary
+          schema:
+            $ref: ./api-docs.yml#/definitions/GlobalCredentialSummary
+        400:
+          description: Invalid input
+        403:
+          description: Missing metadata-management permission
+        404:
+          description: Credential not found
+        409:
+          description: Stale revision
+  /global-credentials/{credential_id}/rotate:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/credential_id
+    post:
+      tags:
+      - global-credential
+      summary: Append a new immutable credential version
+      description: Requires global.credentials.rotate. New material is write-only and the response contains only
+        a random opaque fingerprint.
+      parameters:
+      - name: Rotation
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/GlobalCredentialRotateRequest
+      responses:
+        200:
+          description: Rotated value-free summary
+          schema:
+            $ref: ./api-docs.yml#/definitions/GlobalCredentialSummary
+        400:
+          description: Invalid input
+        403:
+          description: Missing rotation permission
+        404:
+          description: Credential not found
+        409:
+          description: Stale revision
+        503:
+          description: Local material encryption is unavailable
+  /global-credentials/{credential_id}/grants:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/credential_id
+    get:
+      tags:
+      - global-credential
+      summary: List project grants for one credential
+      description: Requires global.credentials.grant.
+      parameters:
+      - name: count
+        in: query
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+      - name: offset
+        in: query
+        type: integer
+        minimum: 0
+        default: 0
+      responses:
+        200:
+          description: Credential grants
+          schema:
+            type: array
+            items:
+              $ref: ./api-docs.yml#/definitions/GlobalCredentialGrant
+        403:
+          description: Missing grant permission
+    post:
+      tags:
+      - global-credential
+      summary: Grant a project explicit operations on one credential
+      description: Requires global.credentials.grant. One grant per credential/project pair is allowed.
+      parameters:
+      - name: Grant
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/GlobalCredentialGrantInput
+      responses:
+        201:
+          description: Grant created
+          schema:
+            $ref: ./api-docs.yml#/definitions/GlobalCredentialGrant
+        400:
+          description: Invalid input
+        403:
+          description: Missing grant permission
+        404:
+          description: Credential not found
+        409:
+          description: Grant already exists or a dependency changed
+  /global-credentials/{credential_id}/grants/{grant_id}:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/credential_id
+    - $ref: ./api-docs.yml#/parameters/grant_id
+    put:
+      tags:
+      - global-credential
+      summary: Update allowed operations or expiry
+      description: Requires global.credentials.grant and preserves the current grant status.
+      parameters:
+      - name: Grant
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/GlobalCredentialGrantUpdateRequest
+      responses:
+        200:
+          description: Grant updated
+          schema:
+            $ref: ./api-docs.yml#/definitions/GlobalCredentialGrant
+        400:
+          description: Invalid input
+        403:
+          description: Missing grant permission
+        404:
+          description: Grant not found for this credential
+        409:
+          description: Stale grant revision
+    delete:
+      tags:
+      - global-credential
+      summary: Delete a revoked grant
+      description: Requires global.credentials.grant. Active grants must be revoked first.
+      parameters:
+      - name: expected_revision
+        in: query
+        required: true
+        type: integer
+        minimum: 1
+      responses:
+        204:
+          description: Grant deleted
+        400:
+          description: Invalid input or active grant
+        403:
+          description: Missing grant permission
+        404:
+          description: Grant not found for this credential
+        409:
+          description: Stale grant revision
+  /global-credentials/{credential_id}/grants/{grant_id}/revoke:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/credential_id
+    - $ref: ./api-docs.yml#/parameters/grant_id
+    post:
+      tags:
+      - global-credential
+      summary: Revoke a project grant
+      description: Requires global.credentials.grant. Revocation is explicit and reversible.
+      parameters:
+      - name: Revision
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/GlobalCredentialRevisionRequest
+      responses:
+        200:
+          description: Revoked grant
+          schema:
+            $ref: ./api-docs.yml#/definitions/GlobalCredentialGrant
+        403:
+          description: Missing grant permission
+        404:
+          description: Grant not found for this credential
+        409:
+          description: Stale grant revision
+  /global-credentials/{credential_id}/grants/{grant_id}/restore:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/credential_id
+    - $ref: ./api-docs.yml#/parameters/grant_id
+    post:
+      tags:
+      - global-credential
+      summary: Restore a revoked project grant
+      description: Requires global.credentials.grant.
+      parameters:
+      - name: Revision
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/GlobalCredentialRevisionRequest
+      responses:
+        200:
+          description: Restored grant
+          schema:
+            $ref: ./api-docs.yml#/definitions/GlobalCredentialGrant
+        403:
+          description: Missing grant permission
+        404:
+          description: Grant not found for this credential
+        409:
+          description: Stale grant revision
+  /project/{project_id}/granted-credentials:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    get:
+      tags:
+      - global-credential
+      - project
+      summary: List effective granted credential metadata for one project
+      description: Requires project.credentials.granted.list. Only enabled credentials with active, unexpired reference
+        grants are returned.
+      parameters:
+      - name: count
+        in: query
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+      - name: offset
+        in: query
+        type: integer
+        minimum: 0
+        default: 0
+      responses:
+        200:
+          description: Value-free effective project metadata
+          schema:
+            type: array
+            items:
+              $ref: ./api-docs.yml#/definitions/GrantedCredential
+        400:
+          description: Invalid or ambiguous pagination
+        403:
+          description: Missing project.credentials.granted.list
+        404:
+          description: Project not found or not visible
