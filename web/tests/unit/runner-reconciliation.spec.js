@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import axios from 'axios';
 import TaskRunnerDetails from '@/components/TaskRunnerDetails.vue';
+import TaskStatus from '@/components/TaskStatus.vue';
 
 describe('runner reconciliation task details', () => {
   it('formats immutable runner attempts and their terminal outcome', () => {
@@ -57,7 +58,16 @@ describe('runner reconciliation task details', () => {
       k8s_retention_deadline: '2026-08-31T12:00:00Z',
     })).to.equal('terminal · until 2026-08-31T12:00:00Z');
     expect(TaskRunnerDetails.methods.recoveryDecisionColor('quarantine')).to.equal('warning');
+    expect(TaskRunnerDetails.methods.shortCredentialFingerprint('abcdef1234567890'))
+      .to.equal('abcdef123456…');
+    expect(TaskRunnerDetails.methods.credentialOutcomeColor('denied')).to.equal('warning');
     expect(TaskRunnerDetails.watch.item.deep).to.equal(true);
+  });
+
+  it('renders blocked tasks as an actionable terminal status', () => {
+    expect(TaskStatus.methods.getStatusIcon('blocked')).to.equal('mdi-lock-alert');
+    expect(TaskStatus.methods.humanizeStatus('blocked')).to.equal('Blocked');
+    expect(TaskStatus.methods.getStatusColor('blocked')).to.equal('warning');
   });
 
   it('loads the task-scoped attempt history', async () => {

@@ -132,6 +132,7 @@ describe('Global credential administration', () => {
     const context = {
       grantCredential: { id: 9 },
       loadGrants: async () => {},
+      loadImpact: async () => {},
       notifyError: () => { throw new Error('unexpected failure'); },
     };
 
@@ -149,6 +150,89 @@ describe('Global credential administration', () => {
         url: '/api/global-credentials/9/grants/4?expected_revision=4',
       },
     ]);
+  });
+
+  it('refreshes impact immediately after creating a grant', async () => {
+    const calls = [];
+    axios.post = async () => ({ data: {} });
+    axios.get = async (url) => {
+      calls.push(url);
+      if (url.endsWith('/impact')) {
+        return { data: { credential_id: 9, active_grant_count: 1 } };
+      }
+      return { data: [] };
+    };
+    const context = {
+      grantCredential: { id: 9 },
+      grantForm: {
+        projectId: 4, reference: true, consume: true, expiresAt: '',
+      },
+      grantSaving: false,
+      grants: [],
+      grantProjects: [],
+      impact: { credential_id: 9, active_grant_count: 0 },
+      loadGrants: GlobalCredentials.methods.loadGrants,
+      loadImpact: GlobalCredentials.methods.loadImpact,
+      notifyError: (error) => { throw error; },
+    };
+
+    await GlobalCredentials.methods.createGrant.call(context);
+
+    expect(calls).to.include('/api/global-credentials/9/impact');
+    expect(context.impact.active_grant_count).to.equal(1);
+  });
+
+  it('does not render a fake version for denied pre-resolution attempts', () => {
+    expect(GlobalCredentials.methods.usageVersionLabel({
+      credential_version: 0,
+      version_fingerprint: '',
+    })).to.equal('Not resolved');
+    expect(GlobalCredentials.methods.usageVersionLabel({ credential_version: 2 })).to.equal('v2');
+  });
+
+  it('loads value-free usage history and impact before credential changes', async () => {
+    const calls = [];
+    axios.get = async (url) => {
+      calls.push(url);
+      if (url.endsWith('/impact')) {
+        return {
+          data: {
+            credential_id: 9,
+            usage_count: 3,
+            project_count: 2,
+            active_grant_count: 1,
+          },
+        };
+      }
+      return {
+        data: [{
+          id: 4,
+          snapshot: { credential_id: 9, task_id: 8, outcome: 'allowed' },
+        }],
+      };
+    };
+    const context = {
+      usageCredential: null,
+      usage: [],
+      usageDialog: false,
+      usageLoading: false,
+      impact: null,
+      enabledTarget: null,
+      notifyError: () => { throw new Error('unexpected failure'); },
+      loadImpact: GlobalCredentials.methods.loadImpact,
+    };
+
+    await GlobalCredentials.methods.openUsage.call(context, { id: 9, display_name: 'Registry' });
+    await GlobalCredentials.methods.openEnabledChange.call(context, { id: 9 }, false);
+
+    expect(calls).to.deep.equal([
+      '/api/global-credentials/9/usage?count=100',
+      '/api/global-credentials/9/impact',
+    ]);
+    expect(context.usage[0].snapshot)
+      .not.to.have.any.keys('value', 'material', 'external_reference');
+    expect(context.impact.usage_count).to.equal(3);
+    expect(context.enabledTarget.enabled).to.equal(false);
   });
 });
 

@@ -158,10 +158,10 @@
 
           <template v-else-if="parameter.type === 'secret_reference'">
             <v-autocomplete
-              :value="secretOptionIds(parameter)"
+              :value="secretOptionKeys(parameter)"
               :items="credentials"
-              item-value="id"
-              item-text="name"
+              item-value="value"
+              item-text="text"
               :label="$t('workflowApprovedCredentials')"
               :disabled="disabled"
               multiple
@@ -172,10 +172,10 @@
               @change="setSecretOptions(index, $event)"
             />
             <v-select
-              :value="parameter.default && parameter.default.access_key_id"
-              :items="parameter.secret_options || []"
-              item-value="access_key_id"
-              item-text="label"
+              :value="credentialReferenceKey(parameter.default)"
+              :items="secretOptionItems(parameter)"
+              item-value="value"
+              item-text="text"
               :label="$t('default')"
               :disabled="disabled"
               clearable
@@ -229,6 +229,11 @@
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
+import {
+  credentialOptionItems,
+  credentialReferenceFromKey,
+  credentialReferenceKey,
+} from '@/lib/workflow-credential-references';
 
 export default {
   props: {
@@ -275,9 +280,27 @@ export default {
       const response = await axios.get(`/api/project/${this.projectId}/keys`);
       this.credentials = (response.data || []).filter(
         (key) => key.type === 'string' && !key.owner,
-      );
+      ).map((key) => ({
+        value: `access_key:${key.id}`,
+        text: key.name,
+        reference: { access_key_id: key.id },
+      }));
     } catch (err) {
       EventBus.$emit('i-snackbar', { color: 'error', text: getErrorMessage(err) });
+    }
+    try {
+      const response = await axios.get(
+        `/api/project/${this.projectId}/granted-credentials?count=100&offset=0`,
+      );
+      this.credentials.push(...(response.data || []).map((credential) => ({
+        value: `global_credential:${credential.credential_id}`,
+        text: `Global · ${credential.display_name}`,
+        reference: { global_credential_id: credential.credential_id },
+      })));
+    } catch (err) {
+      if (err?.response?.status !== 403) {
+        EventBus.$emit('i-snackbar', { color: 'error', text: getErrorMessage(err) });
+      }
     }
   },
   methods: {
@@ -331,21 +354,26 @@ export default {
       }
       this.emitValue();
     },
-    secretOptionIds(parameter) {
-      return (parameter.secret_options || []).map((option) => option.access_key_id);
+    credentialReferenceKey,
+    secretOptionItems(parameter) {
+      return credentialOptionItems(parameter.secret_options);
     },
-    setSecretOptions(index, ids) {
-      const options = ids.map((id) => {
-        const key = this.credentials.find((entry) => entry.id === id);
-        return { access_key_id: id, label: key ? key.name : `#${id}` };
-      });
+    secretOptionKeys(parameter) {
+      return (parameter.secret_options || []).map(credentialReferenceKey).filter(Boolean);
+    },
+    setSecretOptions(index, keys) {
+      const options = keys.map((key) => {
+        const credential = this.credentials.find((entry) => entry.value === key);
+        const reference = credential?.reference || credentialReferenceFromKey(key);
+        return { ...reference, label: credential?.text || key };
+      }).filter((option) => credentialReferenceKey(option));
       this.$set(this.items[index], 'secret_options', options);
-      const defaultId = this.items[index].default?.access_key_id;
-      if (defaultId && !ids.includes(defaultId)) this.$delete(this.items[index], 'default');
+      const defaultKey = credentialReferenceKey(this.items[index].default);
+      if (defaultKey && !keys.includes(defaultKey)) this.$delete(this.items[index], 'default');
       this.emitValue();
     },
-    setSecretDefault(index, id) {
-      this.setDefault(index, id == null ? null : { access_key_id: id });
+    setSecretDefault(index, key) {
+      this.setDefault(index, key == null ? null : credentialReferenceFromKey(key));
     },
   },
 };

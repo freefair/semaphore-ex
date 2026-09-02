@@ -65,9 +65,9 @@
               v-else-if="parameter.type === 'secret_reference'"
               :key="parameter.name"
               v-model="values[parameter.name]"
-              :items="parameter.secret_options || []"
-              item-value="access_key_id"
-              item-text="label"
+              :items="secretOptions(parameter)"
+              item-value="value"
+              item-text="text"
               :label="parameterLabel(parameter)"
               :hint="parameterHint(parameter)"
               persistent-hint
@@ -152,6 +152,10 @@
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
+import {
+  credentialOptionItems,
+  credentialReferenceFromKey,
+} from '@/lib/workflow-credential-references';
 
 const NODE_OVERRIDE_FIELDS = ['inventory_id', 'environment_ids', 'arguments', 'git_branch'];
 const stringByteLength = (value) => new TextEncoder().encode(String(value)).length;
@@ -282,15 +286,21 @@ export default {
       return ids.map((id) => this.environments.find((entry) => entry.id === id)
         || { id, name: `#${id}` });
     },
+    secretOptions(parameter) {
+      return credentialOptionItems(parameter.secret_options);
+    },
     buildPayload() {
       const parameters = {};
       (this.workflow.parameters || []).forEach((parameter) => {
         const value = this.values[parameter.name];
         if (value === undefined || value === null
           || (value === '' && parameter.type !== 'string')) return;
-        parameters[parameter.name] = parameter.type === 'secret_reference'
-          ? { access_key_id: value }
-          : value;
+        if (parameter.type === 'secret_reference') {
+          const reference = credentialReferenceFromKey(value);
+          if (reference) parameters[parameter.name] = reference;
+        } else {
+          parameters[parameter.name] = value;
+        }
       });
       const nodeOverrides = {};
       (this.workflow.nodes || []).forEach((node) => {
