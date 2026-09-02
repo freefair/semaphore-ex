@@ -22,6 +22,7 @@ type DeploymentWindowStore struct {
 }
 
 var _ pro_interfaces.DeploymentWindowPolicyRepository = (*DeploymentWindowStore)(nil)
+var _ pro_interfaces.DeploymentWindowGovernanceRepository = (*DeploymentWindowStore)(nil)
 
 func NewDeploymentWindowStore(connection *coresql.SqlDbConnection) *DeploymentWindowStore {
 	return &DeploymentWindowStore{connection: connection}
@@ -42,6 +43,150 @@ func (d *DeploymentWindowStore) GetDeploymentWindowPolicy(projectID int) (db.Dep
 		return defaultDeploymentWindowPolicy(projectID), nil
 	}
 	return policy, nil
+}
+
+// GetDeploymentWindowDatabaseTime returns the authoritative clock used by
+// admission/status evaluation. Governance callers must not substitute a web
+// server timestamp, which could disagree with the transactional start path.
+func (d *DeploymentWindowStore) GetDeploymentWindowDatabaseTime() (time.Time, error) {
+	if d == nil || d.connection == nil {
+		return time.Time{}, db.ErrInvalidOperation
+	}
+	tx, err := d.connection.Begin()
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now, err := d.databaseNow(tx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return time.Time{}, err
+	}
+	return now, nil
+}
+
+// GetDeploymentWindowDecisionHistory returns only immutable decisions for one
+// project. The query has a fixed id-desc order and bounded page size so a
+// controller cannot turn the governance history into an unbounded export.
+func (d *DeploymentWindowStore) GetDeploymentWindowDecisionHistory(projectID int, params db.RetrieveQueryParams) ([]db.DeploymentWindowDecisionRecord, error) {
+	if d == nil || d.connection == nil || projectID <= 0 || params.Offset < 0 || params.Count < 0 || params.BeforeID < 0 {
+		return nil, db.ErrInvalidOperation
+	}
+	if err := d.ensureProject(projectID); err != nil {
+		return nil, err
+	}
+	query := "select * from project__deployment_window_decision where project_id=?"
+	args := []any{projectID}
+	if params.BeforeID > 0 {
+		query += " and id < ?"
+		args = append(args, params.BeforeID)
+	}
+	query += " order by id desc limit ?"
+	count := params.Count
+	if count <= 0 || count > db.MaxDeploymentWindowHistoryPage {
+		count = db.MaxDeploymentWindowHistoryPage
+	}
+	args = append(args, count)
+	if params.Offset > 0 {
+		query += " offset ?"
+		args = append(args, params.Offset)
+	}
+	var records []db.DeploymentWindowDecisionRecord
+	if _, err := d.connection.SelectAll(&records, query, args...); err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
+// EvaluateDeploymentWindowStatus keeps policy load and database time together
+// under the project lock, matching the clock semantics of an admission claim
+// while deliberately avoiding creation of an execution decision.
+func (d *DeploymentWindowStore) EvaluateDeploymentWindowStatus(
+	request pro_interfaces.DeploymentWindowStatusRequest,
+	evaluate func(db.DeploymentWindowPolicy, pro_interfaces.DeploymentWindowEvaluationRequest) (pro_interfaces.DeploymentWindowDecision, error),
+) (pro_interfaces.DeploymentWindowDecision, error) {
+	if d == nil || d.connection == nil || evaluate == nil || request.Validate() != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, db.ErrInvalidOperation
+	}
+	tx, err := d.connection.Begin()
+	if err != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = d.lockProject(tx, request.ProjectID); err != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, err
+	}
+	if err = d.validateStatusTenants(tx, request); err != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, err
+	}
+	now, err := d.databaseNow(tx)
+	if err != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, err
+	}
+	policy, found, err := d.getPolicy(tx, request.ProjectID, true)
+	if err != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, err
+	}
+	if !found {
+		policy = defaultDeploymentWindowPolicy(request.ProjectID)
+	}
+	decision, err := evaluate(policy, pro_interfaces.DeploymentWindowEvaluationRequest{
+		ProjectID: request.ProjectID, TemplateID: dereferenceDeploymentWindowID(request.TemplateID), WorkflowID: dereferenceDeploymentWindowID(request.WorkflowID),
+		Source: pro_interfaces.DeploymentWindowSourceManual, At: now,
+	})
+	if err != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, err
+	}
+	return decision, nil
+}
+
+// PreviewDeploymentWindowPolicy evaluates an unpersisted draft under the same
+// project lock and database clock as status/admission. Draft rules and the
+// requested target are tenant-checked here so an API caller cannot use a
+// numerically colliding target from another project to influence a preview.
+func (d *DeploymentWindowStore) PreviewDeploymentWindowPolicy(
+	policy db.DeploymentWindowPolicy,
+	request pro_interfaces.DeploymentWindowStatusRequest,
+	evaluate func(db.DeploymentWindowPolicy, pro_interfaces.DeploymentWindowEvaluationRequest) (pro_interfaces.DeploymentWindowDecision, error),
+) (pro_interfaces.DeploymentWindowDecision, error) {
+	if d == nil || d.connection == nil || evaluate == nil || policy.ProjectID != request.ProjectID ||
+		policy.ValidateDraft(validateDeploymentWindowTimezone) != nil || request.Validate() != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, db.ErrInvalidOperation
+	}
+	tx, err := d.connection.Begin()
+	if err != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = d.lockProject(tx, request.ProjectID); err != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, err
+	}
+	if err = d.validateRuleTenants(tx, policy); err != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, err
+	}
+	if err = d.validateStatusTenants(tx, request); err != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, err
+	}
+	now, err := d.databaseNow(tx)
+	if err != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, err
+	}
+	decision, err := evaluate(policy, pro_interfaces.DeploymentWindowEvaluationRequest{
+		ProjectID: request.ProjectID, TemplateID: dereferenceDeploymentWindowID(request.TemplateID), WorkflowID: dereferenceDeploymentWindowID(request.WorkflowID),
+		Source: pro_interfaces.DeploymentWindowSourceManual, At: now,
+	})
+	if err != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return pro_interfaces.DeploymentWindowDecision{}, err
+	}
+	return decision, nil
 }
 
 func (d *DeploymentWindowStore) SaveDeploymentWindowPolicy(policy db.DeploymentWindowPolicy, expectedRevision int) (db.DeploymentWindowPolicy, error) {
@@ -340,6 +485,16 @@ func (d *DeploymentWindowStore) validateDecisionTenants(tx *gorp.Transaction, re
 		if err != nil || count != 1 {
 			return db.ErrDeploymentWindowTenantMismatch
 		}
+	}
+	return nil
+}
+
+func (d *DeploymentWindowStore) validateStatusTenants(tx *gorp.Transaction, request pro_interfaces.DeploymentWindowStatusRequest) error {
+	if request.TemplateID != nil && !d.tenantReferenceExists(tx, "project__template", "id", request.ProjectID, *request.TemplateID) {
+		return db.ErrDeploymentWindowTenantMismatch
+	}
+	if request.WorkflowID != nil && !d.tenantReferenceExists(tx, "project__workflow_template", "id", request.ProjectID, *request.WorkflowID) {
+		return db.ErrDeploymentWindowTenantMismatch
 	}
 	return nil
 }

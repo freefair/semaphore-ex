@@ -118,6 +118,7 @@ func Route(
 	logWriteService pro_interfaces.LogWriteService,
 	auditWebhookService pro_interfaces.AuditWebhookService,
 	appMetrics *metrics.Metrics,
+	deploymentWindowGovernanceService pro_interfaces.DeploymentWindowGovernanceServiceFacade,
 	notificationGovernanceServices ...pro_interfaces.NotificationGovernanceServiceFacade,
 ) *mux.Router {
 
@@ -185,6 +186,7 @@ func Route(
 	totpController := NewTOTPController(totpService, auditFacade)
 	ldapController := NewLDAPController(ldapService, auditFacade)
 	oidcGroupMappingController := NewOIDCGroupMappingController(oidcGroupMappingService, auditFacade)
+	deploymentWindowController := proProjects.NewDeploymentWindowController(deploymentWindowGovernanceService, workflowStore)
 
 	r := mux.NewRouter()
 	r.NotFoundHandler = http.HandlerFunc(servePublic)
@@ -334,6 +336,18 @@ func Route(
 			projects.GetMustHavePermissionMiddleware(db.CanViewProjectResources)(handler),
 		))
 	}
+	projectDeploymentWindowManage := func(access pro_interfaces.CapabilityAccess, handler http.Handler) http.Handler {
+		return projects.ProjectMiddleware(EnhancedProjectPermissionAuditMiddleware(auditFacade)(
+			capabilityController.SnapshotMiddleware(capabilityController.RequireCapability(
+				pro_interfaces.CapabilityDeploymentWindows, access,
+			)(projects.GetMustHaveBaseProjectPermissionMiddleware(db.CanManageProjectResources)(handler))),
+		))
+	}
+	projectDeploymentWindowStatus := func(handler http.Handler) http.Handler {
+		return projects.ProjectMiddleware(capabilityController.SnapshotMiddleware(
+			capabilityController.RequireCapability(pro_interfaces.CapabilityDeploymentWindows, pro_interfaces.CapabilityAccessExecute)(handler),
+		))
+	}
 	globalCredentialAnyRead := func(handler http.Handler) http.Handler {
 		return delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user := helpers.UserFromContext(r)
@@ -466,6 +480,25 @@ func Route(
 	authenticatedAPI.Path("/project/{project_id}/notification-governance/deliveries").Handler(projectNotificationRead(http.HandlerFunc(notificationGovernanceController.ProjectHistory))).Methods("GET", "HEAD")
 	authenticatedAPI.Path("/project/{project_id}/notification-governance/events").Handler(projectNotificationRead(http.HandlerFunc(notificationGovernanceController.ProjectEventHistory))).Methods("GET", "HEAD")
 	authenticatedAPI.Path("/project/{project_id}/notification-governance/deliveries/{delivery_id}/retry").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.RetryProjectDelivery))).Methods("POST")
+
+	authenticatedAPI.Path("/project/{project_id}/deployment-windows").Handler(
+		projectDeploymentWindowManage(pro_interfaces.CapabilityAccessRead, http.HandlerFunc(deploymentWindowController.GetPolicy)),
+	).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/project/{project_id}/deployment-windows").Handler(
+		projectDeploymentWindowManage(pro_interfaces.CapabilityAccessWrite, http.HandlerFunc(deploymentWindowController.SavePolicy)),
+	).Methods("PUT")
+	authenticatedAPI.Path("/project/{project_id}/deployment-windows").Handler(
+		projectDeploymentWindowManage(pro_interfaces.CapabilityAccessWrite, http.HandlerFunc(deploymentWindowController.ResetPolicy)),
+	).Methods("DELETE")
+	authenticatedAPI.Path("/project/{project_id}/deployment-windows/preview").Handler(
+		projectDeploymentWindowManage(pro_interfaces.CapabilityAccessExecute, http.HandlerFunc(deploymentWindowController.Preview)),
+	).Methods("POST")
+	authenticatedAPI.Path("/project/{project_id}/deployment-windows/status").Handler(
+		projectDeploymentWindowStatus(http.HandlerFunc(deploymentWindowController.CurrentStatus)),
+	).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/project/{project_id}/deployment-windows/history").Handler(
+		projectDeploymentWindowManage(pro_interfaces.CapabilityAccessRead, http.HandlerFunc(deploymentWindowController.DecisionHistory)),
+	).Methods("GET", "HEAD")
 
 	authenticatedAPI.Path("/users").Handler(
 		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(

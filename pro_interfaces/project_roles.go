@@ -182,7 +182,7 @@ func permissionCatalog() []PermissionDefinition {
 		{
 			ID: PermissionOverrideDeploymentWindow, Description: "Override a blocked deployment window with an emergency reference",
 			Scope: PermissionScopeProject, Permission: db.CanOverrideDeploymentWindow,
-			CapabilityPrerequisites: []CapabilityID{},
+			CapabilityPrerequisites: []CapabilityID{CapabilityDeploymentWindows},
 		},
 		{
 			ID: PermissionManageGlobalUsers, Description: "Manage global users",

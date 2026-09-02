@@ -96,6 +96,10 @@ func (p *capabilityProvider) Resolve(
 		},
 		nil,
 	)
+	deploymentWindowsDecision := pro_interfaces.NewCapabilityDecision(
+		pro_interfaces.CapabilityDeploymentWindows, pro_interfaces.CapabilityStateActive, pro_interfaces.CapabilityReasonActive,
+		[]pro_interfaces.CapabilityAccess{pro_interfaces.CapabilityAccessRead, pro_interfaces.CapabilityAccessWrite, pro_interfaces.CapabilityAccessExecute}, nil,
+	)
 	runtimeSecrets, err := p.resolveRuntimeSecretsDecision(request)
 	if err != nil {
 		return pro_interfaces.CapabilitySnapshot{}, err
@@ -106,7 +110,7 @@ func (p *capabilityProvider) Resolve(
 	}
 	return pro_interfaces.NewCapabilitySnapshot(request, []pro_interfaces.CapabilityDecision{
 		decision, projectRunners, runtimeSecrets, totpDecision, ldapDecision, workflowTriggerDecision,
-		projectRolesDecision, executionPreflightDecision,
+		projectRolesDecision, executionPreflightDecision, deploymentWindowsDecision,
 	}), nil
 }
 

@@ -95,6 +95,91 @@ func TestDeploymentWindowAdmissionUsesDatabaseTimeAndPersistsOneImmutableDecisio
 	assert.ErrorIs(t, err, coreDB.ErrInvalidOperation)
 }
 
+func TestDeploymentWindowHistoryIsTenantScopedAndDatabaseTimed(t *testing.T) {
+	store := coreSQL.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	repository := NewDeploymentWindowStore(store.GetConnection())
+	project, err := store.CreateProject(coreDB.Project{Name: "window history project"})
+	require.NoError(t, err)
+	otherProject, err := store.CreateProject(coreDB.Project{Name: "other window history project"})
+	require.NoError(t, err)
+	template := deploymentWindowTemplate(t, store, project.ID, "history")
+	otherTemplate := deploymentWindowTemplate(t, store, otherProject.ID, "other-history")
+
+	for _, request := range []pro_interfaces.DeploymentWindowAdmissionRequest{
+		{ProjectID: project.ID, DecisionKey: "history-first", Source: pro_interfaces.DeploymentWindowSourceManual, Origin: pro_interfaces.DeploymentWindowOriginUser, TemplateID: intPointer(template.ID)},
+		{ProjectID: project.ID, DecisionKey: "history-second", Source: pro_interfaces.DeploymentWindowSourceManual, Origin: pro_interfaces.DeploymentWindowOriginUser, TemplateID: intPointer(template.ID)},
+		{ProjectID: otherProject.ID, DecisionKey: "history-other", Source: pro_interfaces.DeploymentWindowSourceManual, Origin: pro_interfaces.DeploymentWindowOriginUser, TemplateID: intPointer(otherTemplate.ID)},
+	} {
+		_, claimErr := repository.ClaimDeploymentWindowAdmission(request, deploymentWindowEvaluator().Evaluate)
+		require.NoError(t, claimErr)
+	}
+
+	before := time.Now().UTC().Add(-time.Second)
+	databaseTime, err := repository.GetDeploymentWindowDatabaseTime()
+	require.NoError(t, err)
+	after := time.Now().UTC().Add(time.Second)
+	assert.False(t, databaseTime.Before(before) || databaseTime.After(after), "database time must be backend-authoritative and UTC")
+
+	firstPage, err := repository.GetDeploymentWindowDecisionHistory(project.ID, coreDB.RetrieveQueryParams{Count: 1})
+	require.NoError(t, err)
+	require.Len(t, firstPage, 1)
+	assert.Equal(t, project.ID, firstPage[0].ProjectID)
+	assert.NotEmpty(t, firstPage[0].MatchedRulesJSON)
+
+	secondPage, err := repository.GetDeploymentWindowDecisionHistory(project.ID, coreDB.RetrieveQueryParams{Count: 1, BeforeID: firstPage[0].ID})
+	require.NoError(t, err)
+	require.Len(t, secondPage, 1)
+	assert.Equal(t, project.ID, secondPage[0].ProjectID)
+	assert.Less(t, secondPage[0].ID, firstPage[0].ID)
+
+	status, err := repository.EvaluateDeploymentWindowStatus(pro_interfaces.DeploymentWindowStatusRequest{
+		ProjectID: project.ID, TemplateID: intPointer(template.ID),
+	}, deploymentWindowEvaluator().Evaluate)
+	require.NoError(t, err)
+	assert.False(t, status.Provenance.EvaluatedAt.IsZero())
+	assert.False(t, status.Provenance.EvaluatedAt.Before(before) || status.Provenance.EvaluatedAt.After(after), "status must use the repository database clock")
+
+	_, err = repository.EvaluateDeploymentWindowStatus(pro_interfaces.DeploymentWindowStatusRequest{
+		ProjectID: project.ID, TemplateID: intPointer(otherTemplate.ID),
+	}, deploymentWindowEvaluator().Evaluate)
+	assert.ErrorIs(t, err, coreDB.ErrDeploymentWindowTenantMismatch)
+}
+
+func TestDeploymentWindowPreviewRejectsForeignTargetAndDraftRuleTarget(t *testing.T) {
+	store := coreSQL.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	repository := NewDeploymentWindowStore(store.GetConnection())
+	project, err := store.CreateProject(coreDB.Project{Name: "preview tenant project"})
+	require.NoError(t, err)
+	otherProject, err := store.CreateProject(coreDB.Project{Name: "preview foreign project"})
+	require.NoError(t, err)
+	template := deploymentWindowTemplate(t, store, project.ID, "preview-owned")
+	foreignTemplate := deploymentWindowTemplate(t, store, otherProject.ID, "preview-foreign")
+
+	request := pro_interfaces.DeploymentWindowStatusRequest{ProjectID: project.ID, TemplateID: intPointer(template.ID)}
+	draft := coreDB.DeploymentWindowPolicy{
+		ProjectID: project.ID, Revision: 1, Timezone: "UTC", Default: coreDB.DeploymentWindowDefaultAllow,
+		Rules: []coreDB.DeploymentWindowRule{{
+			Name: "foreign target", Active: true, Kind: coreDB.DeploymentWindowAllow, Scope: coreDB.DeploymentWindowTemplateScope,
+			TemplateID: intPointer(foreignTemplate.ID), Recurrence: "* * * * *", DurationMinutes: 1,
+		}},
+	}
+
+	_, err = repository.PreviewDeploymentWindowPolicy(draft, request, deploymentWindowEvaluator().Evaluate)
+	assert.ErrorIs(t, err, coreDB.ErrDeploymentWindowTenantMismatch)
+
+	draft.Rules = nil
+	request.TemplateID = intPointer(foreignTemplate.ID)
+	_, err = repository.PreviewDeploymentWindowPolicy(draft, request, deploymentWindowEvaluator().Evaluate)
+	assert.ErrorIs(t, err, coreDB.ErrDeploymentWindowTenantMismatch)
+
+	request.TemplateID = intPointer(template.ID)
+	request.WorkflowID = intPointer(1)
+	_, err = repository.PreviewDeploymentWindowPolicy(draft, request, deploymentWindowEvaluator().Evaluate)
+	assert.ErrorIs(t, err, coreDB.ErrInvalidOperation)
+}
+
 func TestDeploymentWindowDecisionBindsExactlyOnceWithTaskCreation(t *testing.T) {
 	store := coreSQL.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)

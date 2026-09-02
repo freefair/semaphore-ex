@@ -27,7 +27,7 @@ func NewWorkflowStore(store db.Store) db.WorkflowManager {
 	return sql.NewWorkflowStore(connectionStore.GetConnection(), taskStore)
 }
 
-func NewDeploymentWindowStore(store db.Store) pro_interfaces.DeploymentWindowPolicyRepository {
+func NewDeploymentWindowStore(store db.Store) pro_interfaces.DeploymentWindowGovernanceRepository {
 	connectionStore, ok := store.(interface {
 		GetConnection() *coresql.SqlDbConnection
 	})

@@ -11,7 +11,11 @@ func NewTerraformStore(store db.Store) db.TerraformStore {
 	return &sql.TerraformStoreImpl{}
 }
 
-func NewDeploymentWindowStore(db.Store) pro_interfaces.DeploymentWindowPolicyRepository { return nil }
+// NewDeploymentWindowStore is unavailable in Community. The Enhanced module
+// replaces this factory with the SQL-backed governance repository.
+func NewDeploymentWindowStore(db.Store) pro_interfaces.DeploymentWindowGovernanceRepository {
+	return nil
+}
 
 func NewAnsibleTaskRepository(store db.Store) db.AnsibleTaskRepository {
 	connectionStore, ok := store.(interface {

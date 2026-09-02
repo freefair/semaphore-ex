@@ -129,6 +129,30 @@ func TestTaskExecutionPreflightControllerRejectsStalePlanBeforeInsert(t *testing
 	assert.Empty(t, stored)
 }
 
+func TestTaskExecutionPreflightControllerReturnsCoarseDeploymentWindowConflict(t *testing.T) {
+	controller := NewTaskController(nil, nil)
+	response := httptest.NewRecorder()
+	nextEligible := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+
+	handled := controller.writeTaskExecutionPreflightError(
+		response,
+		httptest.NewRequest(http.MethodPost, "/api/project/7/tasks", nil),
+		db.Task{},
+		pro_interfaces.ExecutionPreflightPlan{},
+		&pro_interfaces.DeploymentWindowBlockedError{
+			DecisionID: 42, Reason: pro_interfaces.DeploymentWindowReasonFreezeActive,
+			NextEligibleAt: &nextEligible, NextEligibleKnown: true,
+		},
+	)
+
+	assert.True(t, handled)
+	assert.Equal(t, http.StatusConflict, response.Code)
+	assert.Contains(t, response.Body.String(), `"state":"blocked"`)
+	assert.Contains(t, response.Body.String(), `"reason":"freeze_active"`)
+	assert.NotContains(t, response.Body.String(), "decision_id")
+	assert.NotContains(t, response.Body.String(), "42")
+}
+
 func createTaskExecutionPreflightControllerFixture(t *testing.T) (*sql.SqlDb, tasks.TaskPool, db.Project, db.User, db.Template, db.Repository) {
 	t.Helper()
 	store := sql.InitConfigCreateTestStore()

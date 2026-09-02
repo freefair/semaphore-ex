@@ -1,6 +1,7 @@
 package pro_interfaces
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -221,12 +222,72 @@ type DeploymentWindowPolicyRepository interface {
 	ClaimDeploymentWindowAdmission(request DeploymentWindowAdmissionRequest, evaluate func(db.DeploymentWindowPolicy, DeploymentWindowEvaluationRequest) (DeploymentWindowDecision, error)) (DeploymentWindowAdmissionClaim, error)
 }
 
+// DeploymentWindowStatusRequest identifies the project-owned target whose
+// current policy result is needed by governance. It deliberately has no
+// timestamp or override: preview/status uses repository time and can never
+// exercise the emergency path.
+type DeploymentWindowStatusRequest struct {
+	ProjectID  int  `json:"-"`
+	TemplateID *int `json:"template_id,omitempty"`
+	WorkflowID *int `json:"workflow_id,omitempty"`
+}
+
+func (request DeploymentWindowStatusRequest) Validate() error {
+	if request.ProjectID <= 0 || (request.TemplateID == nil && request.WorkflowID == nil) || (request.TemplateID != nil && request.WorkflowID != nil) ||
+		(request.TemplateID != nil && *request.TemplateID <= 0) ||
+		(request.WorkflowID != nil && *request.WorkflowID <= 0) {
+		return errors.New("deployment window status request is invalid")
+	}
+	return nil
+}
+
+// DeploymentWindowGovernanceRepository extends the admission repository only
+// for the project settings surface. The separate interface keeps start paths
+// dependent on the smaller admission contract.
+type DeploymentWindowGovernanceRepository interface {
+	DeploymentWindowPolicyRepository
+	GetDeploymentWindowDecisionHistory(projectID int, params db.RetrieveQueryParams) ([]db.DeploymentWindowDecisionRecord, error)
+	GetDeploymentWindowDatabaseTime() (time.Time, error)
+	PreviewDeploymentWindowPolicy(policy db.DeploymentWindowPolicy, request DeploymentWindowStatusRequest, evaluate func(db.DeploymentWindowPolicy, DeploymentWindowEvaluationRequest) (DeploymentWindowDecision, error)) (DeploymentWindowDecision, error)
+	EvaluateDeploymentWindowStatus(request DeploymentWindowStatusRequest, evaluate func(db.DeploymentWindowPolicy, DeploymentWindowEvaluationRequest) (DeploymentWindowDecision, error)) (DeploymentWindowDecision, error)
+}
+
 // DeploymentWindowAdmissionService is the sole use-case surface that later
 // manual, scheduled and trigger start paths may call. Its implementation does
 // not enqueue work; it returns the durable decision that an enqueue boundary
 // must bind atomically to its own task or workflow-run mutation.
 type DeploymentWindowAdmissionService interface {
 	Claim(DeploymentWindowAdmissionRequest) (DeploymentWindowAdmissionClaim, error)
+}
+
+// DeploymentWindowDecisionHistoryDTO is an admin-only projection of an
+// immutable decision. The override reference, decision key, and normal actor
+// identity intentionally never leave repository storage; only the already
+// bounded provenance shape can be exposed by a later authorized controller.
+type DeploymentWindowDecisionHistoryDTO struct {
+	ID                int                           `json:"id"`
+	Source            DeploymentWindowSource        `json:"source"`
+	Origin            DeploymentWindowOrigin        `json:"origin"`
+	TemplateID        *int                          `json:"template_id,omitempty"`
+	WorkflowID        *int                          `json:"workflow_id,omitempty"`
+	ScheduleID        *int                          `json:"schedule_id,omitempty"`
+	TaskID            *int                          `json:"task_id,omitempty"`
+	WorkflowRunID     *int                          `json:"workflow_run_id,omitempty"`
+	WorkflowRunNodeID *int                          `json:"workflow_run_node_id,omitempty"`
+	Decision          DeploymentWindowAdminDecision `json:"decision"`
+	CreatedAt         time.Time                     `json:"created_at"`
+}
+
+// DeploymentWindowGovernanceServiceFacade is the API-facing Enhanced use-case
+// boundary. Authorization is deliberately left to the controller boundary;
+// every operation still takes an explicit project scope to preserve tenancy.
+type DeploymentWindowGovernanceServiceFacade interface {
+	GetPolicy(context.Context, int) (db.DeploymentWindowPolicy, error)
+	SavePolicy(context.Context, db.DeploymentWindowPolicy, int) (db.DeploymentWindowPolicy, error)
+	ResetPolicy(context.Context, int, int) error
+	CurrentStatus(context.Context, DeploymentWindowStatusRequest) (DeploymentWindowAdminDecision, error)
+	Preview(context.Context, db.DeploymentWindowPolicy, DeploymentWindowStatusRequest) (DeploymentWindowAdminDecision, error)
+	DecisionHistory(context.Context, int, db.RetrieveQueryParams) ([]DeploymentWindowDecisionHistoryDTO, error)
 }
 
 // DeploymentWindowAdmissionConfigurer attaches the optional Enhanced boundary
@@ -238,7 +299,8 @@ type DeploymentWindowAdmissionConfigurer interface {
 // DeploymentWindowBlockedError is deliberately coarse for start callers. Rule
 // provenance remains private to the decision/audit layer.
 type DeploymentWindowBlockedError struct {
-	DecisionID        int `json:"-"`
+	DecisionID        int                    `json:"-"`
+	Reason            DeploymentWindowReason `json:"-"`
 	NextEligibleAt    *time.Time
 	NextEligibleKnown bool
 }
