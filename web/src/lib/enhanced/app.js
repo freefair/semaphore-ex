@@ -24,6 +24,21 @@ export const enhancedComputed = {
       this.user?.admin,
     );
   },
+  canAccessGlobalCredentials() {
+    return hasGlobalPermission(
+      this.systemInfo,
+      GLOBAL_PERMISSIONS.manageCredentialMetadata,
+      this.user?.admin,
+    ) || hasGlobalPermission(
+      this.systemInfo,
+      GLOBAL_PERMISSIONS.rotateCredentials,
+      this.user?.admin,
+    ) || hasGlobalPermission(
+      this.systemInfo,
+      GLOBAL_PERMISSIONS.grantCredentials,
+      this.user?.admin,
+    );
+  },
 };
 
 export const enhancedMethods = {

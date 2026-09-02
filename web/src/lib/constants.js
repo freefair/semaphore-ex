@@ -29,6 +29,8 @@ export const USER_PERMISSIONS = {
   startWorkflows: 128,
   stopWorkflows: 256,
   administerWorkflows: 512,
+  listGrantedCredentials: 1024,
+  consumeGrantedCredentials: 2048,
 };
 
 export const GLOBAL_PERMISSIONS = {
@@ -36,20 +38,23 @@ export const GLOBAL_PERMISSIONS = {
   manageRoles: 2,
   manageSystem: 4,
   readAudit: 8,
+  manageCredentialMetadata: 16,
+  rotateCredentials: 32,
+  grantCredentials: 64,
 };
 
 export const USER_ROLES = [{
   slug: 'owner',
   name: 'Owner',
-  permissions: 1023,
+  permissions: 4095,
 }, {
   slug: 'manager',
   name: 'Manager',
-  permissions: 1013,
+  permissions: 4085,
 }, {
   slug: 'task_runner',
   name: 'Task Runner',
-  permissions: 433,
+  permissions: 3505,
 }, {
   slug: 'guest',
   name: 'Guest',
@@ -299,6 +304,16 @@ export const ROLE_PERMISSIONS = {
     label: 'canViewProjectResources',
     color: 'purple',
     textColor: 'white',
+  }, {
+    permission: USER_PERMISSIONS.listGrantedCredentials,
+    label: 'List granted credential metadata',
+    color: 'teal',
+    textColor: 'white',
+  }, {
+    permission: USER_PERMISSIONS.consumeGrantedCredentials,
+    label: 'Consume granted credentials',
+    color: 'indigo',
+    textColor: 'white',
   }],
   global: [{
     permission: GLOBAL_PERMISSIONS.manageUsers,
@@ -319,6 +334,21 @@ export const ROLE_PERMISSIONS = {
     permission: GLOBAL_PERMISSIONS.readAudit,
     label: 'Read global audit log',
     color: 'green',
+    textColor: 'white',
+  }, {
+    permission: GLOBAL_PERMISSIONS.manageCredentialMetadata,
+    label: 'Manage global credential metadata',
+    color: 'teal',
+    textColor: 'white',
+  }, {
+    permission: GLOBAL_PERMISSIONS.rotateCredentials,
+    label: 'Rotate global credentials',
+    color: 'indigo',
+    textColor: 'white',
+  }, {
+    permission: GLOBAL_PERMISSIONS.grantCredentials,
+    label: 'Grant global credentials',
+    color: 'cyan darken-2',
     textColor: 'white',
   }],
   template: [{
