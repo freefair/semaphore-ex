@@ -8,6 +8,7 @@ import (
 	coresql "github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	workflowDB "github.com/semaphoreui/semaphore/pro/db"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -149,6 +150,39 @@ func TestWorkflowNodeAttemptRejectsExpiredOwner(t *testing.T) {
 
 	_, err = database.CreateWorkflowTaskFenced(task, 0, second)
 	require.Error(t, err, "the unique run/node boundary must reject a duplicate logical task")
+}
+
+func TestFencedWorkflowTaskAtomicallyBindsDeploymentWindowDecision(t *testing.T) {
+	database, repository, projectID, run := workflowReconciliationFixture(t, "ha-deployment-window")
+	t.Cleanup(database.Close)
+	node := run.Nodes[0]
+	ownership := NewWorkflowReconciliationStore(database.GetConnection())
+	lease, claimed, err := ownership.ClaimWorkflowReconciliation(projectID, run.ID, "deployment-window", time.Minute)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	claimed, err = repository.ClaimWorkflowRunNodeFenced(lease, node.WorkflowNodeID, time.Now().UTC())
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	admissions := NewDeploymentWindowStore(database.GetConnection())
+	templateID, workflowID, runID, runNodeID := node.TemplateID, run.WorkflowTemplateID, run.ID, node.ID
+	claim, err := admissions.ClaimDeploymentWindowAdmission(pro_interfaces.DeploymentWindowAdmissionRequest{
+		ProjectID: projectID, DecisionKey: "fenced-node", Source: pro_interfaces.DeploymentWindowSourceWorkflowNode,
+		Origin: pro_interfaces.DeploymentWindowOriginWorkflowNode, TemplateID: &templateID, WorkflowID: &workflowID,
+		WorkflowRunID: &runID, WorkflowRunNodeID: &runNodeID,
+	}, deploymentWindowEvaluator().Evaluate)
+	require.NoError(t, err)
+	decisionID := claim.Decision.ID
+	task := db.Task{ProjectID: projectID, TemplateID: node.TemplateID, Status: task_logger.TaskWaitingStatus,
+		WorkflowRunID: &run.ID, WorkflowNodeID: &node.WorkflowNodeID, WorkflowTemplateSnapshot: &node.TemplateSnapshotJSON,
+		DeploymentWindowDecisionID: &decisionID}
+	created, err := database.CreateWorkflowTaskFenced(task, 0, lease)
+	require.NoError(t, err)
+	var boundTaskID, nodeTaskID int
+	require.NoError(t, database.Sql().SelectOne(&boundTaskID, "select task_id from project__deployment_window_decision where id=?", decisionID))
+	require.NoError(t, database.Sql().SelectOne(&nodeTaskID, "select task_id from project__workflow_run_node where id=?", node.ID))
+	assert.Equal(t, created.ID, boundTaskID)
+	assert.Equal(t, created.ID, nodeTaskID)
 }
 
 func TestWorkflowApprovalAttemptRejectsExpiredOwner(t *testing.T) {

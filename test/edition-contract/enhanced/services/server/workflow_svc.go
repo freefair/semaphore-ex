@@ -28,23 +28,25 @@ const workflowReconcileQuarantineAfter = 3
 const maxWorkflowReconciliationErrorBytes = 512
 
 type workflowService struct {
-	repository            db.WorkflowManager
-	templateStore         db.WorkflowTemplateValidationStore
-	resultStore           db.WorkflowNodeResultStore
-	enqueuer              pro_interfaces.WorkflowTaskEnqueuer
-	locker                pro_interfaces.WorkflowRunLocker
-	progressionStore      pro_interfaces.WorkflowProgressionRepository
-	versionStore          db.WorkflowVersionStore
-	grantStore            db.CrossProjectTemplateGrantStore
-	referenceStore        db.CrossProjectWorkflowReferenceStore
-	resourceStore         db.WorkflowParameterValidationStore
-	globalCredentialStore db.WorkflowGlobalCredentialValidationStore
-	approvalIdentity      pro_interfaces.WorkflowApprovalIdentityStore
-	authorizationStore    pro_interfaces.WorkflowAuthorizationIdentityStore
-	audit                 pro_interfaces.AuditServiceFacade
-	credentialReader      pro_interfaces.WorkflowCredentialReader
-	localRunLocks         workflowLocalLocks
-	localStartLocks       workflowLocalLocks
+	repository                db.WorkflowManager
+	templateStore             db.WorkflowTemplateValidationStore
+	resultStore               db.WorkflowNodeResultStore
+	enqueuer                  pro_interfaces.WorkflowTaskEnqueuer
+	locker                    pro_interfaces.WorkflowRunLocker
+	progressionStore          pro_interfaces.WorkflowProgressionRepository
+	versionStore              db.WorkflowVersionStore
+	grantStore                db.CrossProjectTemplateGrantStore
+	referenceStore            db.CrossProjectWorkflowReferenceStore
+	resourceStore             db.WorkflowParameterValidationStore
+	globalCredentialStore     db.WorkflowGlobalCredentialValidationStore
+	approvalIdentity          pro_interfaces.WorkflowApprovalIdentityStore
+	authorizationStore        pro_interfaces.WorkflowAuthorizationIdentityStore
+	audit                     pro_interfaces.AuditServiceFacade
+	credentialReader          pro_interfaces.WorkflowCredentialReader
+	deploymentWindowAdmission pro_interfaces.DeploymentWindowAdmissionService
+	deploymentWindowRunFence  bool
+	localRunLocks             workflowLocalLocks
+	localStartLocks           workflowLocalLocks
 }
 
 // NewWorkflowServiceWithAudit attaches the optional Enhanced audit facade to
@@ -77,11 +79,23 @@ var _ pro_interfaces.WorkflowService = (*workflowService)(nil)
 var _ pro_interfaces.WorkflowAuditConfigurer = (*workflowService)(nil)
 var _ pro_interfaces.WorkflowExecutionPreflightService = (*workflowService)(nil)
 var _ pro_interfaces.WorkflowExecutionPreflightAuditResultService = (*workflowService)(nil)
+var _ pro_interfaces.WorkflowDeploymentWindowAdmissionConfigurer = (*workflowService)(nil)
 
 // ConfigureWorkflowAudit attaches the process-wide audit facade after route
 // construction. It is intentionally optional at the interface boundary.
 func (s *workflowService) ConfigureWorkflowAudit(audit pro_interfaces.AuditServiceFacade) {
 	s.audit = audit
+}
+
+func (s *workflowService) ConfigureDeploymentWindowAdmission(service pro_interfaces.DeploymentWindowAdmissionService) {
+	s.deploymentWindowAdmission = service
+	s.deploymentWindowRunFence = false
+	if service != nil {
+		if boundary, ok := s.repository.(interface{ ConfigureDeploymentWindowAdmission() }); ok {
+			boundary.ConfigureDeploymentWindowAdmission()
+			s.deploymentWindowRunFence = true
+		}
+	}
 }
 
 func NewWorkflowService(
@@ -240,6 +254,9 @@ func (s *workflowService) startReviewedWorkflowFromExecutionSnapshot(
 		}
 		runSnapshot.WorkflowVersionID = version.ID
 		runSnapshot.CorrelationID = correlationID
+		if admissionErr := s.claimWorkflowStartAdmission(&runSnapshot, canonical, user, correlationID, inputs...); admissionErr != nil {
+			return admissionErr
+		}
 		var createErr error
 		if hasCrossProjectWorkflowRunNodes(runSnapshot) {
 			if s.referenceStore == nil {
@@ -604,6 +621,9 @@ func (s *workflowService) StartWorkflow(
 		if validateErr := s.validateWorkflowParameterReferences(snapshot); validateErr != nil {
 			return validateErr
 		}
+		if admissionErr := s.claimWorkflowStartAdmission(&snapshot, workflow, user, correlationID, inputs...); admissionErr != nil {
+			return admissionErr
+		}
 		if len(crossProject) > 0 {
 			if s.referenceStore == nil {
 				return errors.New("cross-project workflow reference store is unavailable")
@@ -621,6 +641,51 @@ func (s *workflowService) StartWorkflow(
 		return result, err
 	}
 	return s.repository.GetWorkflowRun(workflow.ProjectID, workflow.ID, result.ID)
+}
+
+func (s *workflowService) claimWorkflowStartAdmission(run *db.WorkflowRun, workflow db.WorkflowTemplate, user *db.User, correlationID string, inputs ...db.WorkflowRunInput) error {
+	if s.deploymentWindowAdmission == nil {
+		return nil
+	}
+	if !s.deploymentWindowRunFence || run == nil || user == nil || user.ID <= 0 {
+		return errors.New("deployment window workflow admission is unavailable")
+	}
+	source, origin := pro_interfaces.DeploymentWindowSourceManual, pro_interfaces.DeploymentWindowOriginUser
+	keyMaterial := "manual|" + correlationID
+	for _, input := range inputs {
+		if input.TriggerSnapshot == nil {
+			continue
+		}
+		switch input.TriggerSnapshot.Type {
+		case db.WorkflowTriggerSchedule:
+			source, origin = pro_interfaces.DeploymentWindowSourceSchedule, pro_interfaces.DeploymentWindowOriginSchedule
+		case db.WorkflowTriggerAPI:
+			source, origin = pro_interfaces.DeploymentWindowSourceAPI, pro_interfaces.DeploymentWindowOriginWorkflowTrigger
+		case db.WorkflowTriggerWebhook:
+			source, origin = pro_interfaces.DeploymentWindowSourceWebhook, pro_interfaces.DeploymentWindowOriginWorkflowTrigger
+		default:
+			return errors.New("deployment window workflow trigger source is invalid")
+		}
+		keyMaterial = fmt.Sprintf("%s|%d|%d|%d", input.TriggerSnapshot.Type, input.TriggerSnapshot.ID, input.TriggerSnapshot.Revision, input.TriggerSnapshot.InvocationID)
+		break
+	}
+	digest := sha256.Sum256([]byte(keyMaterial))
+	workflowID, actorID := workflow.ID, user.ID
+	claim, err := s.deploymentWindowAdmission.Claim(pro_interfaces.DeploymentWindowAdmissionRequest{
+		ProjectID: workflow.ProjectID, DecisionKey: "workflow-" + hex.EncodeToString(digest[:]), Source: source, Origin: origin,
+		WorkflowID: &workflowID, ActorUserID: &actorID,
+	})
+	if err != nil {
+		return err
+	}
+	if claim.Decision.State == string(pro_interfaces.DeploymentWindowDecisionBlocked) {
+		return &pro_interfaces.DeploymentWindowBlockedError{NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown}
+	}
+	if (claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionAllowed) && claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionOverridden)) || claim.Decision.ID <= 0 {
+		return errors.New("deployment window workflow admission did not allow execution")
+	}
+	run.DeploymentWindowDecisionID = &claim.Decision.ID
+	return nil
 }
 
 func (s *workflowService) ProgressWorkflowRun(projectID int, runID int, user *db.User) error {
@@ -1700,30 +1765,68 @@ func (s *workflowService) enqueueWorkflowNode(
 	}
 	var created db.Task
 	var enqueueErr error
+	if s.deploymentWindowAdmission != nil {
+		if admissionErr := s.claimWorkflowNodeAdmission(&task, run, node, actorID); admissionErr != nil {
+			return admissionErr
+		}
+	}
 	if node.CrossProjectTemplateProvenance != nil {
 		if accessErr := s.requireCrossProjectDispatchAccess(run, user); accessErr != nil {
 			return s.blockCrossProjectWorkflowNode(run, node, "Cross-project template authorization is no longer available.", lease)
 		}
-		crossProjectEnqueuer, ok := s.enqueuer.(pro_interfaces.CrossProjectWorkflowTaskFencedEnqueuer)
-		if !ok {
-			return errors.New("cross-project workflow task fencing is unavailable")
+		var crossProjectEnqueuer pro_interfaces.CrossProjectWorkflowTaskFencedEnqueuer
+		if s.deploymentWindowAdmission != nil {
+			admittedEnqueuer, admitted := s.enqueuer.(pro_interfaces.CrossProjectWorkflowDeploymentWindowTaskFencedDecisionEnqueuer)
+			if !admitted {
+				return errors.New("cross-project workflow deployment window task binding is unavailable")
+			}
+			created, enqueueErr = admittedEnqueuer.AddCrossProjectWorkflowTaskFencedWithDeploymentWindowDecision(
+				task, *node.CrossProjectTemplateProvenance, &actorID, username, run.ProjectID, lease,
+			)
+		} else {
+			var ok bool
+			crossProjectEnqueuer, ok = s.enqueuer.(pro_interfaces.CrossProjectWorkflowTaskFencedEnqueuer)
+			if !ok {
+				return errors.New("cross-project workflow task fencing is unavailable")
+			}
+			created, enqueueErr = crossProjectEnqueuer.AddCrossProjectWorkflowTaskFenced(
+				task, *node.CrossProjectTemplateProvenance, &actorID, username, run.ProjectID, lease,
+			)
 		}
-		created, enqueueErr = crossProjectEnqueuer.AddCrossProjectWorkflowTaskFenced(
-			task, *node.CrossProjectTemplateProvenance, &actorID, username, run.ProjectID, lease,
-		)
 	} else if lease != nil {
-		fencedEnqueuer, ok := s.enqueuer.(pro_interfaces.WorkflowTaskFencedEnqueuer)
-		if !ok {
-			return errors.New("workflow task fencing is unavailable")
+		if s.deploymentWindowAdmission != nil {
+			admittedEnqueuer, ok := s.enqueuer.(pro_interfaces.WorkflowDeploymentWindowTaskFencedDecisionEnqueuer)
+			if !ok {
+				return errors.New("fenced workflow deployment window task binding is unavailable")
+			}
+			created, enqueueErr = admittedEnqueuer.AddWorkflowTaskFencedWithDeploymentWindowDecision(
+				task, node.TemplateSnapshot, &actorID, username, run.ProjectID,
+				node.TemplateSnapshot.App.NeedTaskAlias(), *lease,
+			)
+		} else {
+			fencedEnqueuer, ok := s.enqueuer.(pro_interfaces.WorkflowTaskFencedEnqueuer)
+			if !ok {
+				return errors.New("workflow task fencing is unavailable")
+			}
+			created, enqueueErr = fencedEnqueuer.AddWorkflowTaskFenced(
+				task, node.TemplateSnapshot, &actorID, username, run.ProjectID,
+				node.TemplateSnapshot.App.NeedTaskAlias(), *lease,
+			)
 		}
-		created, enqueueErr = fencedEnqueuer.AddWorkflowTaskFenced(
-			task, node.TemplateSnapshot, &actorID, username, run.ProjectID,
-			node.TemplateSnapshot.App.NeedTaskAlias(), *lease,
-		)
 	} else {
-		created, enqueueErr = s.enqueuer.AddWorkflowTask(
-			task, node.TemplateSnapshot, &actorID, username, run.ProjectID, node.TemplateSnapshot.App.NeedTaskAlias(),
-		)
+		if s.deploymentWindowAdmission != nil {
+			admittedEnqueuer, ok := s.enqueuer.(pro_interfaces.WorkflowDeploymentWindowTaskDecisionEnqueuer)
+			if !ok {
+				return errors.New("workflow deployment window task binding is unavailable")
+			}
+			created, enqueueErr = admittedEnqueuer.AddWorkflowTaskWithDeploymentWindowDecision(
+				task, node.TemplateSnapshot, &actorID, username, run.ProjectID, node.TemplateSnapshot.App.NeedTaskAlias(),
+			)
+		} else {
+			created, enqueueErr = s.enqueuer.AddWorkflowTask(
+				task, node.TemplateSnapshot, &actorID, username, run.ProjectID, node.TemplateSnapshot.App.NeedTaskAlias(),
+			)
+		}
 	}
 	if created.ID > 0 {
 		if attachErr := s.attachWorkflowTask(run, node, created, root, lease); attachErr != nil {
@@ -1740,6 +1843,37 @@ func (s *workflowService) enqueueWorkflowNode(
 		}
 		return enqueueErr
 	}
+	return nil
+}
+
+func (s *workflowService) claimWorkflowNodeAdmission(task *db.Task, run db.WorkflowRun, node db.WorkflowRunNode, actorID int) error {
+	if s.deploymentWindowAdmission == nil || task == nil || task.WorkflowRunID == nil || task.WorkflowNodeID == nil || node.ID <= 0 {
+		return errors.New("deployment window workflow-node admission is unavailable")
+	}
+	workflowID, runID, runNodeID := run.WorkflowTemplateID, run.ID, node.ID
+	request := pro_interfaces.DeploymentWindowAdmissionRequest{
+		ProjectID: run.ProjectID, DecisionKey: fmt.Sprintf("workflow-node-%d-%d", run.ID, node.ID),
+		Source: pro_interfaces.DeploymentWindowSourceWorkflowNode, Origin: pro_interfaces.DeploymentWindowOriginWorkflowNode,
+		WorkflowID: &workflowID, WorkflowRunID: &runID, WorkflowRunNodeID: &runNodeID, ActorUserID: &actorID,
+	}
+	// A cross-project node evaluates its consumer project's project/workflow
+	// scope only. Its owner template ID is deliberately not supplied, so a
+	// numerically colliding consumer template rule cannot apply.
+	if node.CrossProjectTemplateProvenance == nil {
+		templateID := node.TemplateID
+		request.TemplateID = &templateID
+	}
+	claim, err := s.deploymentWindowAdmission.Claim(request)
+	if err != nil {
+		return err
+	}
+	if claim.Decision.State == string(pro_interfaces.DeploymentWindowDecisionBlocked) {
+		return &pro_interfaces.DeploymentWindowBlockedError{NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown}
+	}
+	if (claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionAllowed) && claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionOverridden)) || claim.Decision.ID <= 0 || claim.Decision.TaskID != nil {
+		return errors.New("deployment window workflow-node admission did not allow execution")
+	}
+	task.DeploymentWindowDecisionID = &claim.Decision.ID
 	return nil
 }
 

@@ -142,6 +142,9 @@ func (d *WorkflowStoreImpl) CreateWorkflowRunWithCrossProjectReferences(run db.W
 }
 
 func (d *WorkflowStoreImpl) createWorkflowRun(run db.WorkflowRun, crossProjectReferences bool) (db.WorkflowRun, error) {
+	if d.deploymentWindowRequired && run.DeploymentWindowDecisionID == nil {
+		return db.WorkflowRun{}, errors.New("deployment window decision is required before workflow persistence")
+	}
 	if existing, err := d.GetWorkflowRunByCorrelationID(run.ProjectID, run.WorkflowTemplateID, run.CorrelationID); err == nil {
 		return existing, nil
 	} else if !errors.Is(err, db.ErrNotFound) {
@@ -213,11 +216,37 @@ func (d *WorkflowStoreImpl) createWorkflowRun(run db.WorkflowRun, crossProjectRe
 			return db.WorkflowRun{}, err
 		}
 	}
+	if run.DeploymentWindowDecisionID != nil {
+		if err = d.bindDeploymentWindowWorkflowRunTx(tx, run); err != nil {
+			return db.WorkflowRun{}, err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return db.WorkflowRun{}, err
 	}
 	rollback = false
 	return run, nil
+}
+
+func (d *WorkflowStoreImpl) bindDeploymentWindowWorkflowRunTx(tx *gorp.Transaction, run db.WorkflowRun) error {
+	if run.DeploymentWindowDecisionID == nil || *run.DeploymentWindowDecisionID <= 0 {
+		return errors.New("deployment window workflow admission is invalid")
+	}
+	result, err := tx.Exec(d.connection.PrepareQuery(
+		"update project__deployment_window_decision set workflow_run_id=? where id=? and project_id=? and workflow_template_id=? and state in (?, ?) and workflow_run_id is null and task_id is null"),
+		run.ID, *run.DeploymentWindowDecisionID, run.ProjectID, run.WorkflowTemplateID, "allowed", "overridden",
+	)
+	if err != nil {
+		return err
+	}
+	bound, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if bound != 1 {
+		return errors.New("deployment window decision cannot be bound to workflow")
+	}
+	return nil
 }
 
 func (d *WorkflowStoreImpl) recheckWorkflowRunCrossProjectReferencesTx(tx *gorp.Transaction, run db.WorkflowRun) error {
@@ -391,10 +420,28 @@ func (d *WorkflowStoreImpl) CreateCrossProjectWorkflowTaskFenced(
 	if normalized != provenance.Reference || version.ContentFingerprint != provenance.Reference.ContentFingerprint {
 		return db.Task{}, db.ErrNotFound
 	}
+	if task.DeploymentWindowDecisionID != nil {
+		if err = d.validateCrossProjectDeploymentWindowTaskBindingTx(tx, task); err != nil {
+			return db.Task{}, err
+		}
+	}
 	if err = tx.Insert(&task); err != nil {
 		_ = tx.Rollback()
 		rollback = false
 		return d.resolveExistingCrossProjectWorkflowTask(task, provenance, err)
+	}
+	if task.DeploymentWindowDecisionID != nil {
+		result, bindErr := tx.Exec(d.connection.PrepareQuery(
+			"update project__deployment_window_decision set task_id=? where id=? and project_id=? and state in (?, ?) and task_id is null"),
+			task.ID, *task.DeploymentWindowDecisionID, task.ProjectID, "allowed", "overridden",
+		)
+		if bindErr != nil {
+			return db.Task{}, bindErr
+		}
+		bound, rowsErr := result.RowsAffected()
+		if rowsErr != nil || bound != 1 {
+			return db.Task{}, errors.New("deployment window decision cannot be bound to cross-project workflow task")
+		}
 	}
 	attachQuery := "update project__workflow_run_node set task_id=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null and exists (select 1 from project__workflow_run where project_id=? and id=? and desired_state=?)"
 	attachArgs := []any{task.ID, task.ProjectID, *task.WorkflowRunID, *task.WorkflowNodeID, db.WorkflowRunNodeQueued, task.ProjectID, *task.WorkflowRunID, db.WorkflowRunDesiredRunning}
@@ -421,6 +468,34 @@ func (d *WorkflowStoreImpl) CreateCrossProjectWorkflowTaskFenced(
 	}
 	rollback = false
 	return task, nil
+}
+
+func (d *WorkflowStoreImpl) validateCrossProjectDeploymentWindowTaskBindingTx(tx *gorp.Transaction, task db.Task) error {
+	if task.DeploymentWindowDecisionID == nil || task.WorkflowRunID == nil || task.WorkflowNodeID == nil {
+		return errors.New("cross-project deployment window admission is invalid")
+	}
+	var decision struct {
+		ProjectID         int    `db:"project_id"`
+		WorkflowRunID     *int   `db:"workflow_run_id"`
+		WorkflowRunNodeID *int   `db:"workflow_run_node_id"`
+		TaskID            *int   `db:"task_id"`
+		State             string `db:"state"`
+	}
+	if err := tx.SelectOne(&decision, d.connection.PrepareQuery(
+		"select project_id, workflow_run_id, workflow_run_node_id, task_id, state from project__deployment_window_decision where id=?"), *task.DeploymentWindowDecisionID); err != nil {
+		return errors.New("cross-project deployment window decision is unavailable")
+	}
+	if decision.ProjectID != task.ProjectID || decision.WorkflowRunID == nil || *decision.WorkflowRunID != *task.WorkflowRunID || decision.WorkflowRunNodeID == nil || decision.TaskID != nil ||
+		(decision.State != "allowed" && decision.State != "overridden") {
+		return errors.New("cross-project deployment window decision does not match task")
+	}
+	var count int
+	if err := tx.SelectOne(&count, d.connection.PrepareQuery(
+		"select count(1) from project__workflow_run_node where id=? and project_id=? and workflow_run_id=? and workflow_node_id=?"),
+		*decision.WorkflowRunNodeID, task.ProjectID, *task.WorkflowRunID, *task.WorkflowNodeID); err != nil || count != 1 {
+		return errors.New("cross-project deployment window decision does not match task")
+	}
+	return nil
 }
 
 func workflowDefinitionNodeByID(definition db.WorkflowTemplate, nodeID int) (db.WorkflowNode, bool) {

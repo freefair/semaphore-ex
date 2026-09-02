@@ -203,6 +203,10 @@ type WorkflowRun struct {
 
 	RootTaskID *int `db:"root_task_id" json:"root_task_id,omitempty" backup:"root_task_id"`
 
+	// DeploymentWindowDecisionID is an Enhanced-only admission fence. The
+	// immutable decision row owns the workflow-run link.
+	DeploymentWindowDecisionID *int `db:"-" json:"-" backup:"-"`
+
 	ReconciliationOwnership *WorkflowReconciliationDiagnostics `db:"-" json:"reconciliation_ownership,omitempty" backup:"-"`
 }
 

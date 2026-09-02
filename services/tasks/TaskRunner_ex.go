@@ -5,7 +5,9 @@ import (
 	"errors"
 	"github.com/semaphoreui/semaphore/api/sockets"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
+	"strconv"
 )
 
 func (t *TaskRunner) publishStatus() {
@@ -31,6 +33,31 @@ func (t *TaskRunner) publishStatus() {
 
 		sockets.Message(user, b)
 	}
+}
+
+// addAutorunTask keeps the parent build/child template pair as the only
+// idempotency inputs for a deployment-window admission. startAutorunTasks
+// intentionally handles failures per child, while this helper lets callers
+// preserve the same exact admission path when a replay must be observed.
+func (t *TaskRunner) addAutorunTask(tpl db.Template) (db.Task, error) {
+	task := db.Task{
+		TemplateID:  tpl.ID,
+		ProjectID:   tpl.ProjectID,
+		BuildTaskID: &t.Task.ID,
+	}
+	templateID := tpl.ID
+	buildTaskID := t.Task.ID
+	return t.pool.AddTaskWithDeploymentWindowAdmission(
+		task,
+		nil,
+		"",
+		tpl.ProjectID,
+		tpl.App.NeedTaskAlias(),
+		pro_interfaces.DeploymentWindowAdmissionRequest{
+			ProjectID: tpl.ProjectID, DecisionKey: "autorun-" + strconv.Itoa(buildTaskID) + "-" + strconv.Itoa(templateID),
+			Source: pro_interfaces.DeploymentWindowSourceAutorun, Origin: pro_interfaces.DeploymentWindowOriginAutorun, TemplateID: &templateID,
+		},
+	)
 }
 
 func valueOrEmpty(value *string) string {

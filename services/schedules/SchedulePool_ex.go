@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/semaphoreui/semaphore/db"
+	"strconv"
 	"time"
 )
 
@@ -25,6 +26,16 @@ type ScheduleExecutionLease interface {
 	IsCurrent() (bool, error)
 	Complete(taskID int) (bool, error)
 	Release() (bool, error)
+}
+
+// deploymentWindowScheduleDecisionKey is stable for an HA replay of one
+// schedule occurrence, while retaining the schedule identity. The revision is
+// intentionally insufficient by itself because two schedules in one project
+// may have identical definitions and therefore identical revisions.
+func deploymentWindowScheduleDecisionKey(occurrence ScheduleOccurrence) string {
+	material := strconv.Itoa(occurrence.ScheduleID) + "|" + occurrence.Revision + "|" + occurrence.IntendedAt.UTC().Format(time.RFC3339Nano)
+	digest := sha256.Sum256([]byte(material))
+	return "schedule-" + hex.EncodeToString(digest[:])
 }
 
 // NewScheduleOccurrence derives the relevant revision and normalizes the

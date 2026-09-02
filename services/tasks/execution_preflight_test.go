@@ -365,3 +365,16 @@ func createTaskPreflightFixture(t *testing.T) (*sql.SqlDb, TaskPool, db.User, db
 	pool.register = make(chan *TaskRunner, 2)
 	return store, pool, actor, template, environment
 }
+
+type deploymentWindowAdmissionStub struct{}
+
+func (deploymentWindowAdmissionStub) Claim(pro_interfaces.DeploymentWindowAdmissionRequest) (pro_interfaces.DeploymentWindowAdmissionClaim, error) {
+	return pro_interfaces.DeploymentWindowAdmissionClaim{}, nil
+}
+
+func TestTaskPoolConfiguredAdmissionRejectsDirectPersistenceWithoutDecision(t *testing.T) {
+	pool := TaskPool{deploymentWindowAdmission: deploymentWindowAdmissionStub{}}
+	_, err := pool.addTask(db.Task{TemplateID: 1}, nil, nil, "", 1, false, nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "deployment window decision is required")
+}

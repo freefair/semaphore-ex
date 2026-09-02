@@ -9,6 +9,7 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	workflowDB "github.com/semaphoreui/semaphore/pro/db"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -108,6 +109,20 @@ func TestWorkflowRunRepositoryPersistsImmutableSnapshotAndConditionalNodeState(t
 	assert.Equal(t, db.WorkflowRunNodeSkipped, dependent.Result.Status)
 }
 
+func TestConfiguredWorkflowRepositoryRejectsUnboundRun(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	user, first, second := workflowRunResources(t, store, projectID)
+	workflow, err := repository.CreateWorkflowTemplate(linearRepositoryWorkflow(projectID, first.ID, second.ID))
+	require.NoError(t, err)
+	run, err := workflowDB.BuildWorkflowRunSnapshot(workflow, map[int]db.Template{first.ID: first, second.ID: second}, user.ID, "unbound-admission", time.Now().UTC())
+	require.NoError(t, err)
+	repository.ConfigureDeploymentWindowAdmission()
+	_, err = repository.CreateWorkflowRun(run)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "deployment window decision is required")
+}
+
 func TestCrossProjectWorkflowTaskFencePersistsConsumerTaskAndPreservesAuditAfterRevoke(t *testing.T) {
 	store, ownerProjectID, ownerTemplate := templateVersionGrantFixture(t, "dispatch-owner")
 	defer store.Close()
@@ -160,6 +175,15 @@ func TestCrossProjectWorkflowTaskFencePersistsConsumerTaskAndPreservesAuditAfter
 	require.NoError(t, err)
 	require.True(t, claimed)
 	firstTask := crossProjectDispatchTask(t, provenance, consumer.ID, firstRun.ID, firstNodeID)
+	admissions := NewDeploymentWindowStore(store.GetConnection())
+	workflowID, runID, runNodeID := workflow.ID, firstRun.ID, firstRun.Nodes[0].ID
+	claim, err := admissions.ClaimDeploymentWindowAdmission(pro_interfaces.DeploymentWindowAdmissionRequest{
+		ProjectID: consumer.ID, DecisionKey: "cross-project-workflow-node", Source: pro_interfaces.DeploymentWindowSourceWorkflowNode,
+		Origin: pro_interfaces.DeploymentWindowOriginWorkflowNode, WorkflowID: &workflowID, WorkflowRunID: &runID, WorkflowRunNodeID: &runNodeID,
+	}, deploymentWindowEvaluator().Evaluate)
+	require.NoError(t, err)
+	decisionID := claim.Decision.ID
+	firstTask.DeploymentWindowDecisionID = &decisionID
 	created, err := repository.CreateCrossProjectWorkflowTaskFenced(firstTask, provenance, &lease)
 	require.NoError(t, err)
 	assert.Equal(t, consumer.ID, created.ProjectID)
@@ -167,6 +191,15 @@ func TestCrossProjectWorkflowTaskFencePersistsConsumerTaskAndPreservesAuditAfter
 	require.NotNil(t, created.WorkflowTemplateProvenance)
 	require.NotNil(t, created.WorkflowTemplateProvenance.CrossProject)
 	assert.Equal(t, reference, created.WorkflowTemplateProvenance.CrossProject.Reference)
+	var decision struct {
+		TemplateID         *int `db:"template_id"`
+		WorkflowTemplateID int  `db:"workflow_template_id"`
+		TaskID             int  `db:"task_id"`
+	}
+	require.NoError(t, store.Sql().SelectOne(&decision, "select template_id, workflow_template_id, task_id from project__deployment_window_decision where id=?", decisionID))
+	assert.Nil(t, decision.TemplateID, "cross-project work is admitted against the consumer workflow, never the owner template")
+	assert.Equal(t, workflow.ID, decision.WorkflowTemplateID)
+	assert.Equal(t, created.ID, decision.TaskID)
 	firstNode, err := repository.GetWorkflowRunNode(consumer.ID, firstRun.ID, firstNodeID)
 	require.NoError(t, err)
 	require.NotNil(t, firstNode.TaskID)
@@ -177,6 +210,12 @@ func TestCrossProjectWorkflowTaskFencePersistsConsumerTaskAndPreservesAuditAfter
 	claimed, err = repository.ClaimWorkflowRunNode(consumer.ID, secondRun.ID, secondNodeID, time.Now().UTC())
 	require.NoError(t, err)
 	require.True(t, claimed)
+	wrongTask := crossProjectDispatchTask(t, provenance, consumer.ID, secondRun.ID, secondNodeID)
+	wrongTask.DeploymentWindowDecisionID = &decisionID
+	_, err = repository.CreateCrossProjectWorkflowTaskFenced(wrongTask, provenance, nil)
+	require.Error(t, err, "an already-bound workflow-only decision cannot be moved to another run node")
+	_, err = repository.GetWorkflowRunNodeTask(consumer.ID, secondRun.ID, secondNodeID)
+	assert.ErrorIs(t, err, db.ErrNotFound, "the failed binding must roll back without a task or node attachment")
 	grant, err = grantStore.RevokeCrossProjectTemplateGrant(ownerProjectID, grant.ID, 1, grant.Revision, "withdrawn", time.Now().UTC())
 	require.NoError(t, err)
 	_, err = repository.CreateCrossProjectWorkflowTaskFenced(

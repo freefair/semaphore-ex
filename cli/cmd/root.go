@@ -169,7 +169,6 @@ func runService() {
 			External: proServer.NewGlobalCredentialExternalAdapter(util.Config),
 		},
 	))
-
 	// The workflow service orchestrates workflow runs and launches each node's
 	// task through the pool; the pool calls back into it when a workflow task
 	// finishes. Wire the cycle: pool first, then service (with the pool as its
@@ -183,6 +182,12 @@ func runService() {
 		workflowTriggerStore, workflowStore, workflowService, store, capabilityProvider,
 	)
 	taskPool.SetWorkflowService(workflowService)
+	if admission := proServer.NewDeploymentWindowAdmissionService(proFactory.NewDeploymentWindowStore(store)); admission != nil {
+		taskPool.ConfigureDeploymentWindowAdmission(admission)
+		if configurable, ok := workflowService.(pro_interfaces.WorkflowDeploymentWindowAdmissionConfigurer); ok {
+			configurable.ConfigureDeploymentWindowAdmission(admission)
+		}
+	}
 	workflowTriggerScheduler := proServer.NewWorkflowTriggerScheduler(workflowTriggerStore, workflowTriggerService)
 	if workflowTriggerScheduler != nil {
 		workflowTriggerScheduler.Start()

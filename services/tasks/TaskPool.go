@@ -77,12 +77,13 @@ type TaskPool struct {
 	// workflowService orchestrates workflow runs (a Pro feature). It is injected
 	// after construction via SetWorkflowService; the pool only calls back into it
 	// when a workflow task finishes. nil in tests / before wiring.
-	workflowService          pro_interfaces.WorkflowService
-	globalCredentialResolver pro_interfaces.GlobalCredentialRuntimeResolver
-	executorImageAvailable   func(*db.User) bool
-	taskControlLifecycle     TaskControlLifecycle
-	crossProjectTaskStore    pro_interfaces.CrossProjectWorkflowTaskStore
-	executionPreflightIssuer *ExecutionPreflightReviewTokenIssuer
+	workflowService           pro_interfaces.WorkflowService
+	globalCredentialResolver  pro_interfaces.GlobalCredentialRuntimeResolver
+	executorImageAvailable    func(*db.User) bool
+	taskControlLifecycle      TaskControlLifecycle
+	crossProjectTaskStore     pro_interfaces.CrossProjectWorkflowTaskStore
+	deploymentWindowAdmission pro_interfaces.DeploymentWindowAdmissionService
+	executionPreflightIssuer  *ExecutionPreflightReviewTokenIssuer
 	// stop signals the background loops started by Run to exit. Closing it (via
 	// Stop) terminates the runner-task reconcile loop and Run's own select.
 	// Channels are used rather than sync.WaitGroup/sync.Once because TaskPool is

@@ -167,6 +167,9 @@ func (d *SqlDb) clearTasks(projectID int, templateID int, maxTasks int) {
 }
 
 func (d *SqlDb) CreateTask(task db.Task, maxTasks int) (newTask db.Task, err error) {
+	if task.DeploymentWindowDecisionID != nil {
+		return d.createTaskWithDeploymentWindowDecision(task, maxTasks)
+	}
 	err = d.Sql().Insert(&task)
 	newTask = task
 

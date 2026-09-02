@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/semaphoreui/semaphore/pkg/conv"
+	"github.com/semaphoreui/semaphore/pkg/random"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/server"
 	task2 "github.com/semaphoreui/semaphore/services/tasks"
 
@@ -360,7 +362,11 @@ func (c *IntegrationController) RunIntegration(integration db.Integration, proje
 
 	pool := helpers.GetFromContext(r, "task_pool").(*task2.TaskPool)
 
-	task, err := pool.AddTask(taskDefinition, nil, "", integration.ProjectID, tpl.App.NeedTaskAlias())
+	templateID := integration.TemplateID
+	task, err := pool.AddTaskWithDeploymentWindowAdmission(taskDefinition, nil, "", integration.ProjectID, tpl.App.NeedTaskAlias(), pro_interfaces.DeploymentWindowAdmissionRequest{
+		ProjectID: integration.ProjectID, DecisionKey: "integration-" + random.String(32), Source: pro_interfaces.DeploymentWindowSourceIntegration,
+		Origin: pro_interfaces.DeploymentWindowOriginIntegration, TemplateID: &templateID,
+	})
 	if err != nil {
 		log.Error(err)
 		return

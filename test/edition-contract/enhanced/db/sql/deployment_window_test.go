@@ -95,6 +95,29 @@ func TestDeploymentWindowAdmissionUsesDatabaseTimeAndPersistsOneImmutableDecisio
 	assert.ErrorIs(t, err, coreDB.ErrInvalidOperation)
 }
 
+func TestDeploymentWindowDecisionBindsExactlyOnceWithTaskCreation(t *testing.T) {
+	store := coreSQL.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	repository := NewDeploymentWindowStore(store.GetConnection())
+	project, err := store.CreateProject(coreDB.Project{Name: "task decision binding project"})
+	require.NoError(t, err)
+	template := deploymentWindowTemplate(t, store, project.ID, "task-decision-binding")
+	claim, err := repository.ClaimDeploymentWindowAdmission(pro_interfaces.DeploymentWindowAdmissionRequest{
+		ProjectID: project.ID, DecisionKey: "task-binding", Source: pro_interfaces.DeploymentWindowSourceManual,
+		Origin: pro_interfaces.DeploymentWindowOriginUser, TemplateID: intPointer(template.ID),
+	}, deploymentWindowEvaluator().Evaluate)
+	require.NoError(t, err)
+	decisionID := claim.Decision.ID
+	created, err := store.CreateTask(coreDB.Task{ProjectID: project.ID, TemplateID: template.ID, DeploymentWindowDecisionID: &decisionID}, 0)
+	require.NoError(t, err)
+	var taskID int
+	require.NoError(t, store.Sql().SelectOne(&taskID, "select task_id from project__deployment_window_decision where id=?", decisionID))
+	assert.Equal(t, created.ID, taskID)
+
+	_, err = store.CreateTask(coreDB.Task{ProjectID: project.ID, TemplateID: template.ID, DeploymentWindowDecisionID: &decisionID}, 0)
+	assert.Error(t, err)
+}
+
 func TestDeploymentWindowOverriddenClaimRejectsKeyReuseWithoutTheOverride(t *testing.T) {
 	store := coreSQL.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
