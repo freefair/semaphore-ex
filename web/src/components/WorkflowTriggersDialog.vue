@@ -396,6 +396,7 @@ import axios from 'axios';
 import EventBus from '@/event-bus';
 import { findCapabilityDecision } from '@/lib/capabilities';
 import { getErrorMessage } from '@/lib/error';
+import { credentialOptionItems } from '@/lib/workflow-credential-references';
 import YesNoDialog from '@/components/YesNoDialog.vue';
 
 function emptyForm() {
@@ -559,7 +560,7 @@ export default {
       if (parameter.type === 'enumeration') return (parameter.options || [])[0];
       if (parameter.type === 'secret_reference') {
         const first = (parameter.secret_options || [])[0];
-        return first ? { access_key_id: first.access_key_id } : null;
+        return first ? credentialOptionItems([first])[0]?.reference || null : null;
       }
       return '';
     },
@@ -576,9 +577,9 @@ export default {
     },
 
     secretOptions(parameter) {
-      return (parameter.secret_options || []).map((option) => ({
-        value: { access_key_id: option.access_key_id },
-        text: option.label || `#${option.access_key_id}`,
+      return credentialOptionItems(parameter.secret_options).map((option) => ({
+        value: option.reference,
+        text: option.text,
       }));
     },
 

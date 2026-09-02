@@ -66,12 +66,15 @@
           <v-btn icon small v-if="canGrant" aria-label="Manage grants" @click="openGrants(item)">
             <v-icon small>mdi-share-variant</v-icon>
           </v-btn>
+          <v-btn icon small v-if="canAudit" aria-label="View usage" @click="openUsage(item)">
+            <v-icon small>mdi-history</v-icon>
+          </v-btn>
           <v-btn
             icon
             small
             v-if="canMetadata"
             :aria-label="item.enabled ? 'Disable credential' : 'Enable credential'"
-            @click="setEnabled(item, !item.enabled)"
+            @click="openEnabledChange(item, !item.enabled)"
           >
             <v-icon small>{{ item.enabled ? 'mdi-pause-circle' : 'mdi-play-circle' }}</v-icon>
           </v-btn>
@@ -80,7 +83,7 @@
             small
             v-if="canMetadata && !item.enabled"
             aria-label="Delete credential"
-            @click="deleteTarget = item"
+            @click="openDelete(item)"
           >
             <v-icon small>mdi-delete</v-icon>
           </v-btn>
@@ -162,10 +165,74 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="usageDialog" max-width="980">
+      <v-card>
+        <v-card-title>
+          Credential usage
+          <span v-if="usageCredential" class="ml-2">· {{ usageCredential.display_name }}</span>
+        </v-card-title>
+        <v-card-text>
+          <v-data-table
+            :headers="usageHeaders"
+            :items="usage"
+            :loading="usageLoading"
+            hide-default-footer
+            :items-per-page="100"
+            data-testid="credential-usage-table"
+          >
+            <template v-slot:item.identity="{ item }">
+              Project #{{ item.snapshot.project_id }} · Task #{{ item.snapshot.task_id }}
+            </template>
+            <template v-slot:item.version="{ item }">
+              {{ usageVersionLabel(item.snapshot) }}
+              <template v-if="item.snapshot.credential_version">
+                · <code>{{ shortFingerprint(item.snapshot.version_fingerprint) }}</code>
+              </template>
+            </template>
+            <template v-slot:item.outcome="{ item }">
+              <v-chip x-small :color="usageOutcomeColor(item.snapshot.outcome)">
+                {{ item.snapshot.outcome }}
+              </v-chip>
+              <span class="ml-2">{{ item.snapshot.reason }}</span>
+            </template>
+            <template v-slot:item.occurred="{ item }">
+              {{ dateLabel(item.snapshot.occurred_at) }}
+            </template>
+          </v-data-table>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn text @click="usageDialog = false">Close</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog :value="Boolean(enabledTarget)" max-width="520" persistent>
+      <v-card>
+        <v-card-title>
+          {{ enabledTarget && enabledTarget.enabled ? 'Enable' : 'Disable' }} credential?
+        </v-card-title>
+        <v-card-text>
+          <v-alert v-if="impact" dense text type="info" data-testid="credential-impact">
+            {{ impactLabel(impact) }}
+          </v-alert>
+          Existing tasks resolve the credential only at dispatch time. Disabling it blocks new use.
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn text @click="enabledTarget = null">Cancel</v-btn>
+          <v-btn color="primary" @click="confirmEnabledChange">Confirm</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-dialog v-model="rotateDialog" max-width="620" persistent>
       <v-card>
         <v-card-title>Rotate credential</v-card-title>
         <v-card-text>
+          <v-alert v-if="impact" dense text type="info" data-testid="credential-impact">
+            {{ impactLabel(impact) }}
+          </v-alert>
           <v-select
             v-model="rotateForm.materialKind"
             :items="materialKinds"
@@ -221,6 +288,9 @@
           </span>
         </v-card-title>
         <v-card-text>
+          <v-alert v-if="impact" dense text type="info" data-testid="credential-impact">
+            {{ impactLabel(impact) }}
+          </v-alert>
           <v-row>
             <v-col cols="12" md="5">
               <v-select
@@ -300,6 +370,9 @@
       <v-card>
         <v-card-title>Delete credential?</v-card-title>
         <v-card-text>
+          <v-alert v-if="impact" dense text type="info" data-testid="credential-impact">
+            {{ impactLabel(impact) }}
+          </v-alert>
           The credential must be disabled and all project grants must be deleted first.
         </v-card-text>
         <v-card-actions>
@@ -363,6 +436,12 @@ export default {
         projectId: null, reference: true, consume: false, expiresAt: '',
       },
       deleteTarget: null,
+      enabledTarget: null,
+      impact: null,
+      usageDialog: false,
+      usageLoading: false,
+      usageCredential: null,
+      usage: [],
       materialKinds: [
         { text: 'Encrypted local value', value: 'local_encrypted' },
         { text: 'External Vault/OpenBao reference', value: 'external_reference' },
@@ -385,6 +464,13 @@ export default {
         {
           text: '', value: 'actions', sortable: false, align: 'end',
         },
+      ],
+      usageHeaders: [
+        { text: 'Task', value: 'identity' },
+        { text: 'Target', value: 'snapshot.target' },
+        { text: 'Version', value: 'version' },
+        { text: 'Result', value: 'outcome' },
+        { text: 'Time', value: 'occurred' },
       ],
     };
   },
@@ -411,8 +497,15 @@ export default {
         this.isAdmin,
       );
     },
+    canAudit() {
+      return hasGlobalPermission(
+        this.systemInfo,
+        GLOBAL_PERMISSIONS.readAudit,
+        this.isAdmin,
+      );
+    },
     canRead() {
-      return this.canMetadata || this.canRotate || this.canGrant;
+      return this.canAudit || this.canMetadata || this.canRotate || this.canGrant;
     },
     canCreate() {
       return this.canMetadata && this.canRotate;
@@ -502,9 +595,10 @@ export default {
         this.notifyError(error);
       }
     },
-    openRotate(item) {
+    async openRotate(item) {
       this.rotateForm = { id: item.id, revision: item.revision, ...emptyMaterialForm() };
       this.rotateDialog = true;
+      await this.loadImpact(item);
     },
     async rotateCredential() {
       if (this.rotateSaving) return;
@@ -538,6 +632,19 @@ export default {
         this.notifyError(error);
       }
     },
+    async openEnabledChange(item, enabled) {
+      this.enabledTarget = { ...item, enabled };
+      await this.loadImpact(item);
+    },
+    async confirmEnabledChange() {
+      const item = this.enabledTarget;
+      this.enabledTarget = null;
+      if (item) await this.setEnabled(item, item.enabled);
+    },
+    async openDelete(item) {
+      this.deleteTarget = item;
+      await this.loadImpact(item);
+    },
     async deleteCredential() {
       const item = this.deleteTarget;
       this.deleteTarget = null;
@@ -555,7 +662,30 @@ export default {
         projectId: null, reference: true, consume: false, expiresAt: '',
       };
       this.grantsDialog = true;
-      await this.loadGrants();
+      await Promise.all([this.loadGrants(), this.loadImpact(item)]);
+    },
+    async loadImpact(item) {
+      this.impact = null;
+      try {
+        this.impact = (await axios.get(`/api/global-credentials/${item.id}/impact`)).data;
+      } catch (error) {
+        this.notifyError(error);
+      }
+    },
+    async openUsage(item) {
+      this.usageCredential = item;
+      this.usage = [];
+      this.usageDialog = true;
+      this.usageLoading = true;
+      try {
+        this.usage = (await axios.get(
+          `/api/global-credentials/${item.id}/usage?count=100`,
+        )).data || [];
+      } catch (error) {
+        this.notifyError(error);
+      } finally {
+        this.usageLoading = false;
+      }
     },
     async loadGrants() {
       try {
@@ -585,7 +715,7 @@ export default {
         this.grantForm = {
           projectId: null, reference: true, consume: false, expiresAt: '',
         };
-        await this.loadGrants();
+        await Promise.all([this.loadGrants(), this.loadImpact(this.grantCredential)]);
       } catch (error) {
         this.notifyError(error);
       } finally {
@@ -598,7 +728,7 @@ export default {
           `/api/global-credentials/${this.grantCredential.id}/grants/${grant.id}/${action}`,
           { revision: grant.revision },
         );
-        await this.loadGrants();
+        await Promise.all([this.loadGrants(), this.loadImpact(this.grantCredential)]);
       } catch (error) {
         this.notifyError(error);
       }
@@ -609,7 +739,7 @@ export default {
           `/api/global-credentials/${this.grantCredential.id}/grants/${grant.id}`
             + `?expected_revision=${grant.revision}`,
         );
-        await this.loadGrants();
+        await Promise.all([this.loadGrants(), this.loadImpact(this.grantCredential)]);
       } catch (error) {
         this.notifyError(error);
       }
@@ -627,6 +757,16 @@ export default {
     },
     shortFingerprint(value) {
       return value ? `${value.slice(0, 12)}…` : '—';
+    },
+    impactLabel(impact) {
+      const last = impact.last_used_at ? ` Last used ${this.dateLabel(impact.last_used_at)}.` : '';
+      return `${impact.usage_count} resolution attempts across ${impact.project_count} projects; ${impact.active_grant_count} active grants.${last}`;
+    },
+    usageOutcomeColor(outcome) {
+      return { allowed: 'success', denied: 'warning', failure: 'error' }[outcome] || 'grey';
+    },
+    usageVersionLabel(snapshot) {
+      return snapshot?.credential_version ? `v${snapshot.credential_version}` : 'Not resolved';
     },
     dateLabel(value) {
       return value ? new Date(value).toLocaleString() : 'Never';

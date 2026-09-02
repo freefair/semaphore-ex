@@ -55,8 +55,11 @@ export default {
   methods: {
     parameterValue(snapshot) {
       if (snapshot.type === 'secret_reference') {
-        const id = snapshot.secret_reference?.access_key_id;
-        return `${this.$t ? this.$t('workflowCredential') : 'Credential'} #${id} · ${snapshot.reference_fingerprint}`;
+        const globalId = snapshot.secret_reference?.global_credential_id;
+        const id = globalId || snapshot.secret_reference?.access_key_id;
+        let label = 'Global credential';
+        if (!globalId) label = this.$t ? this.$t('workflowCredential') : 'Credential';
+        return `${label} #${id} · ${snapshot.reference_fingerprint}`;
       }
       return JSON.stringify(snapshot.value);
     },

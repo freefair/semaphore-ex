@@ -1,10 +1,15 @@
 import { expect } from 'chai';
 import { shallowMount } from '@vue/test-utils';
 import axios from 'axios';
+import './local-storage-fixture';
 import WorkflowNodeOverridePolicyEditor from '@/components/WorkflowNodeOverridePolicyEditor.vue';
 import WorkflowParameterAudit from '@/components/WorkflowParameterAudit.vue';
 import WorkflowParameterEditor from '@/components/WorkflowParameterEditor.vue';
 import WorkflowRunDialog from '@/components/WorkflowRunDialog.vue';
+import {
+  credentialReferenceFromKey,
+  credentialReferenceKey,
+} from '../../src/lib/workflow-credential-references';
 
 describe('workflow parameters and node overrides', () => {
   let originalGet;
@@ -81,6 +86,26 @@ describe('workflow parameters and node overrides', () => {
     expect(payload).to.deep.equal({});
   });
 
+  it('round-trips global references without collapsing them into project keys', () => {
+    expect(credentialReferenceKey({ access_key_id: 41 })).to.equal('access_key:41');
+    expect(credentialReferenceKey({ global_credential_id: 41 })).to.equal('global_credential:41');
+    expect(credentialReferenceFromKey('global_credential:51')).to.deep.equal({
+      global_credential_id: 51,
+    });
+
+    const payload = WorkflowRunDialog.methods.buildPayload.call({
+      values: { deploy_credential: 'global_credential:51' },
+      nodeValues: {},
+      workflow: {
+        parameters: [{ name: 'deploy_credential', type: 'secret_reference' }],
+        nodes: [],
+      },
+    });
+    expect(payload).to.deep.equal({
+      parameters: { deploy_credential: { global_credential_id: 51 } },
+    });
+  });
+
   it('can explicitly override a non-empty string default with an empty string', () => {
     const payload = WorkflowRunDialog.methods.buildPayload.call({
       values: { note: '' },
@@ -141,5 +166,17 @@ describe('workflow parameters and node overrides', () => {
 
     expect(rendered).to.equal('Credential #41 · sha256:abc');
     expect(rendered).not.to.contain('value');
+  });
+
+  it('renders global credential provenance as metadata only', () => {
+    const rendered = WorkflowParameterAudit.methods.parameterValue.call({
+      $t: () => 'Credential',
+    }, {
+      type: 'secret_reference',
+      secret_reference: { global_credential_id: 51 },
+      reference_fingerprint: 'sha256:def',
+    });
+
+    expect(rendered).to.equal('Global credential #51 · sha256:def');
   });
 });

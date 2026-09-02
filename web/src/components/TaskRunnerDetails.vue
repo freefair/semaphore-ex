@@ -96,6 +96,46 @@
 
     <slot />
 
+    <v-row v-if="credentialUsage.length > 0 || credentialUsageError">
+      <v-col cols="12">
+        <v-card
+          :color="$vuetify.theme.dark ? '#212121' : 'white'"
+          style="background: #8585850f"
+          class="mb-5"
+          data-testid="task-credential-usage"
+        >
+          <v-card-title>Credential provenance</v-card-title>
+          <v-card-text>
+            <v-alert v-if="credentialUsageError" type="error" dense text class="mb-0">
+              {{ credentialUsageError }}
+            </v-alert>
+            <div
+              v-for="usage in credentialUsage"
+              :key="usage.id"
+              class="TaskRunnerDetails__credentialUsage"
+            >
+              <div>
+                <strong><code>{{ usage.snapshot.target }}</code></strong>
+                · credential #{{ usage.snapshot.credential_id }}
+              </div>
+              <div>
+                <span v-if="usage.snapshot.credential_version">
+                  version {{ usage.snapshot.credential_version }} ·
+                  <code>
+                    {{ shortCredentialFingerprint(usage.snapshot.version_fingerprint) }}
+                  </code> ·
+                </span>
+                <v-chip x-small :color="credentialOutcomeColor(usage.snapshot.outcome)">
+                  {{ usage.snapshot.outcome }}
+                </v-chip>
+                <span class="ml-2">{{ usage.snapshot.reason }}</span>
+              </div>
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
+
     <v-row v-if="runnerAttempts.length > 0 || runnerAttemptsError">
       <v-col cols="12">
         <v-card
@@ -282,6 +322,8 @@ export default {
       recoveryDiagnosticsError: null,
       recoveryActionError: null,
       retryingRecovery: false,
+      credentialUsage: [],
+      credentialUsageError: null,
       loadedTaskId: null,
       loadedTaskStatus: null,
       loadedAssignmentGeneration: null,
@@ -294,6 +336,9 @@ export default {
     },
     placementRejected() {
       return this.placementDecision?.selected_runner_id == null;
+    },
+    isPro() {
+      return (process.env.VUE_APP_BUILD_TYPE || '').startsWith('pro_');
     },
   },
   watch: {
@@ -435,6 +480,7 @@ export default {
         this.runnerAttemptsError = 'Runner attempt history could not be loaded.';
       }
       await this.loadTaskRecoveryDiagnostics(taskId, revision);
+      if (this.isPro) await this.loadCredentialUsage(taskId, revision);
       this.loadedTaskId = taskId;
       this.loadedTaskStatus = this.item?.status;
       this.loadedAssignmentGeneration = this.item?.assignment_generation;
@@ -452,6 +498,26 @@ export default {
         this.recoveryDiagnostics = null;
         this.recoveryDiagnosticsError = 'HA task recovery diagnostics could not be loaded.';
       }
+    },
+    async loadCredentialUsage(taskId, revision) {
+      try {
+        const { data } = await axios.get(
+          `/api/project/${this.projectId}/tasks/${taskId}/credential-usage?count=100`,
+        );
+        if (this.item?.id !== taskId || this.loadRevision !== revision) return;
+        this.credentialUsage = data || [];
+        this.credentialUsageError = null;
+      } catch {
+        if (this.item?.id !== taskId || this.loadRevision !== revision) return;
+        this.credentialUsage = [];
+        this.credentialUsageError = 'Credential provenance could not be loaded.';
+      }
+    },
+    shortCredentialFingerprint(value) {
+      return value ? `${value.slice(0, 12)}…` : 'not recorded';
+    },
+    credentialOutcomeColor(outcome) {
+      return { allowed: 'success', denied: 'warning', failure: 'error' }[outcome] || 'grey';
     },
     async retryTaskRecovery() {
       if (this.item?.id == null || this.retryingRecovery) return;
@@ -502,6 +568,17 @@ export default {
 .TaskRunnerDetails__placementEvaluation {
   padding: 12px 0;
   border-top: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.TaskRunnerDetails__credentialUsage {
+  padding: 10px 0;
+  border-top: 1px solid rgba(128, 128, 128, 0.25);
+  overflow-wrap: anywhere;
+}
+
+.TaskRunnerDetails__credentialUsage:first-child {
+  border-top: 0;
+  padding-top: 0;
 }
 
 .TaskRunnerDetails__criteria {

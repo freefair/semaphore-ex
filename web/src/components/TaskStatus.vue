@@ -19,6 +19,7 @@ const TaskStatus = Object.freeze({
   ERROR: 'error',
   STOPPING: 'stopping',
   STOPPED: 'stopped',
+  BLOCKED: 'blocked',
 });
 
 export default {
@@ -44,6 +45,8 @@ export default {
           return 'mdi-stop-circle';
         case TaskStatus.STOPPED:
           return 'mdi-stop-circle';
+        case TaskStatus.BLOCKED:
+          return 'mdi-lock-alert';
         case TaskStatus.CONFIRMED:
           return 'mdi-check-circle';
         case TaskStatus.WAITING_CONFIRMATION:
@@ -69,6 +72,8 @@ export default {
           return 'Stopping...';
         case TaskStatus.STOPPED:
           return 'Stopped';
+        case TaskStatus.BLOCKED:
+          return 'Blocked';
         case TaskStatus.CONFIRMED:
           return 'Confirmed';
         case TaskStatus.WAITING_CONFIRMATION:
@@ -94,6 +99,8 @@ export default {
           return '';
         case TaskStatus.STOPPED:
           return '';
+        case TaskStatus.BLOCKED:
+          return 'warning';
         case TaskStatus.CONFIRMED:
           return 'warning';
         case TaskStatus.WAITING_CONFIRMATION:
