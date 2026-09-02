@@ -14,6 +14,13 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// SetExecutionPreflightReviewTokenIssuer replaces the review-token issuer.
+// Production pools derive it from the shared cookie signing key; tests may
+// inject a deterministic issuer without changing process-wide configuration.
+func (p *TaskPool) SetExecutionPreflightReviewTokenIssuer(issuer *ExecutionPreflightReviewTokenIssuer) {
+	p.executionPreflightIssuer = issuer
+}
+
 // SetGlobalCredentialRuntimeResolver installs the edition-provided runtime
 // authority. Community installs a fail-closed stub; a nil resolver is also
 // fail-closed whenever a task has persisted global credential bindings.

@@ -19,6 +19,7 @@ type WorkflowController interface {
 	GetWorkflowVersion(w http.ResponseWriter, r *http.Request)
 	DiffWorkflowVersions(w http.ResponseWriter, r *http.Request)
 	RestoreWorkflowVersion(w http.ResponseWriter, r *http.Request)
+	PreviewWorkflow(w http.ResponseWriter, r *http.Request)
 	RunWorkflow(w http.ResponseWriter, r *http.Request)
 	StopWorkflowRun(w http.ResponseWriter, r *http.Request)
 	RetryWorkflowRunReconciliation(w http.ResponseWriter, r *http.Request)

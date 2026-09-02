@@ -1514,6 +1514,60 @@ func TestWorkflowServiceDirectMutationsRequireLiveWorkflowPermission(t *testing.
 	require.Error(t, err)
 }
 
+func TestWorkflowExecutionPreflightIsSideEffectFreeAndMatchesReviewedStart(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	service := fixture.service.(pro_interfaces.WorkflowExecutionPreflightService)
+
+	preview, err := service.PreviewWorkflowExecution(fixture.workflow, &fixture.user)
+
+	require.NoError(t, err)
+	assert.Equal(t, pro_interfaces.ExecutionPreflightWorkflow, preview.Intent)
+	assert.Len(t, preview.Commands, 2)
+	assert.Len(t, preview.Placements, 2)
+	assert.NotEmpty(t, preview.ReviewToken)
+	assert.Equal(t, 2, fixture.enqueuer.preflightCalls)
+	runs, err := fixture.repository.GetWorkflowRuns(fixture.projectID, fixture.workflow.ID, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	assert.Empty(t, runs, "preview must not persist a workflow run")
+	assert.Empty(t, fixture.enqueuer.tasks, "preview must not enqueue a task")
+
+	run, err := service.StartWorkflowWithExecutionPreflight(
+		fixture.workflow, &fixture.user, "reviewed-workflow-start",
+		pro_interfaces.ExecutionPreflightReview{Fingerprint: preview.Fingerprint, ReviewToken: preview.ReviewToken},
+	)
+
+	require.NoError(t, err)
+	assert.Positive(t, run.ID)
+	require.NotEmpty(t, run.Nodes)
+	assert.Equal(t, "test-reviewed-execution-snapshot", run.Nodes[0].ExecutionSnapshotJSON)
+	assert.GreaterOrEqual(t, fixture.enqueuer.preflightCalls, 4)
+	assert.NotEmpty(t, fixture.enqueuer.tasks)
+}
+
+func TestWorkflowExecutionPreflightRejectsStaleReviewBeforeRunCreation(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	service := fixture.service.(pro_interfaces.WorkflowExecutionPreflightService)
+	preview, err := service.PreviewWorkflowExecution(fixture.workflow, &fixture.user)
+	require.NoError(t, err)
+	fixture.enqueuer.preflightChanges = []pro_interfaces.ExecutionPreflightChangeCode{
+		pro_interfaces.ExecutionChangeReference,
+	}
+
+	_, err = service.StartWorkflowWithExecutionPreflight(
+		fixture.workflow, &fixture.user, "stale-workflow-start",
+		pro_interfaces.ExecutionPreflightReview{Fingerprint: preview.Fingerprint, ReviewToken: preview.ReviewToken},
+	)
+
+	var stale *pro_interfaces.ExecutionPreflightStaleError
+	require.ErrorAs(t, err, &stale)
+	assert.Equal(t, fixture.enqueuer.preflightChanges, stale.Changes)
+	assert.NotEmpty(t, stale.Preflight.ReviewToken)
+	runs, listErr := fixture.repository.GetWorkflowRuns(fixture.projectID, fixture.workflow.ID, db.RetrieveQueryParams{})
+	require.NoError(t, listErr)
+	assert.Empty(t, runs)
+	assert.Empty(t, fixture.enqueuer.tasks)
+}
+
 func configureWorkflowArtifactEncryption(t *testing.T) {
 	t.Helper()
 	previous := util.Config.AccessKeyEncryption
@@ -1609,12 +1663,14 @@ func finishWorkflowTask(
 }
 
 type workflowTestEnqueuer struct {
-	mutex           sync.Mutex
-	store           *coresql.SqlDb
-	tasks           []db.Task
-	inputTasks      []db.Task
-	templates       []db.Template
-	failAfterCreate bool
+	mutex            sync.Mutex
+	store            *coresql.SqlDb
+	tasks            []db.Task
+	inputTasks       []db.Task
+	templates        []db.Template
+	failAfterCreate  bool
+	preflightCalls   int
+	preflightChanges []pro_interfaces.ExecutionPreflightChangeCode
 }
 
 type workflowReconcileFailingService struct {
@@ -1646,6 +1702,78 @@ func (e *workflowTestEnqueuer) AddTask(
 	needAlias bool,
 ) (db.Task, error) {
 	return db.Task{}, errors.New("workflow tests must use AddWorkflowTask")
+}
+
+func (e *workflowTestEnqueuer) BuildWorkflowTaskExecutionPreflight(
+	task db.Task,
+	template db.Template,
+	actor *db.User,
+	projectID int,
+	_ time.Time,
+) (pro_interfaces.ExecutionPreflightSnapshot, error) {
+	e.preflightCalls++
+	plan := pro_interfaces.ExecutionPreflightPlan{
+		ContractVersion: pro_interfaces.ExecutionPreflightContractVersion,
+		Intent:          pro_interfaces.ExecutionPreflightTask, ProjectID: projectID,
+		ActorID: actor.ID, TemplateID: template.ID,
+		Definition: pro_interfaces.ExecutionPreflightDefinition{
+			Kind: pro_interfaces.ExecutionReferenceTemplate, ID: template.ID,
+			Name: template.Name, Revision: "1", Fingerprint: executionPreflightHash(template),
+		},
+		Inputs:     []pro_interfaces.ExecutionPreflightInput{},
+		References: []pro_interfaces.ExecutionPreflightReference{},
+		Commands: []pro_interfaces.ExecutionPreflightCommand{{
+			TemplateID: template.ID, Application: template.App, Playbook: template.Playbook,
+		}},
+		Placements: []pro_interfaces.ExecutionPreflightPlacement{{
+			SelectedName: "Local executor", Decision: pro_interfaces.ExecutionReasonSelected,
+			Provisional: true, Candidates: []pro_interfaces.ExecutionPreflightCandidate{},
+		}},
+		Findings: []pro_interfaces.ExecutionPreflightFinding{},
+	}
+	plan.Fingerprint, _ = pro_interfaces.FingerprintExecutionPreflight(plan)
+	return pro_interfaces.ExecutionPreflightSnapshot{
+		Plan: plan,
+		Components: map[pro_interfaces.ExecutionPreflightChangeCode]string{
+			pro_interfaces.ExecutionChangeDefinition: executionPreflightHash(template),
+			pro_interfaces.ExecutionChangeInput:      executionPreflightHash(task.Environment, task.Secret),
+			pro_interfaces.ExecutionChangeReference:  executionPreflightHash(template.RepositoryID, template.InventoryID, template.EnvironmentIDs),
+			pro_interfaces.ExecutionChangePlacement:  executionPreflightHash("local"),
+			pro_interfaces.ExecutionChangeCapability: executionPreflightHash("active"),
+			pro_interfaces.ExecutionChangePolicy:     executionPreflightHash(template.RunnerTags),
+		},
+	}, nil
+}
+
+func (e *workflowTestEnqueuer) BuildWorkflowTaskExecutionPreflightSnapshot(
+	task db.Task,
+	template db.Template,
+	user *db.User,
+	projectID int,
+	now time.Time,
+) (pro_interfaces.ExecutionPreflightSnapshot, string, error) {
+	snapshot, err := e.BuildWorkflowTaskExecutionPreflight(task, template, user, projectID, now)
+	if err != nil {
+		return pro_interfaces.ExecutionPreflightSnapshot{}, "", err
+	}
+	return snapshot, "test-reviewed-execution-snapshot", nil
+}
+
+func (e *workflowTestEnqueuer) SealExecutionPreflight(snapshot pro_interfaces.ExecutionPreflightSnapshot) (pro_interfaces.ExecutionPreflightPlan, error) {
+	plan := snapshot.Plan
+	plan.ReviewToken = "test-review-token"
+	plan.ExpiresAt = time.Now().UTC().Add(time.Minute)
+	return plan, nil
+}
+
+func (e *workflowTestEnqueuer) VerifyExecutionPreflightReview(
+	_ pro_interfaces.ExecutionPreflightSnapshot,
+	review pro_interfaces.ExecutionPreflightReview,
+) ([]pro_interfaces.ExecutionPreflightChangeCode, error) {
+	if review.ReviewToken != "test-review-token" || review.Fingerprint == "" {
+		return nil, pro_interfaces.ErrExecutionPreflightReviewTokenInvalid
+	}
+	return append([]pro_interfaces.ExecutionPreflightChangeCode(nil), e.preflightChanges...), nil
 }
 
 func (e *workflowTestEnqueuer) AddWorkflowTask(

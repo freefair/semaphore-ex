@@ -205,9 +205,9 @@ func (d *WorkflowStoreImpl) createWorkflowRun(run db.WorkflowRun, crossProjectRe
 			return db.WorkflowRun{}, errors.New("workflow run cross-project template provenance must be decoded before persistence")
 		}
 		node.ID, err = d.insertTx(tx,
-			"insert into project__workflow_run_node(project_id, workflow_run_id, workflow_node_id, template_id, status, task_id, template_snapshot, cross_project_template_provenance, result, artifact_inputs, override_snapshot, created, queued, start, `end`, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"insert into project__workflow_run_node(project_id, workflow_run_id, workflow_node_id, template_id, status, task_id, template_snapshot, execution_snapshot, cross_project_template_provenance, result, artifact_inputs, override_snapshot, created, queued, start, `end`, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			node.ProjectID, node.WorkflowRunID, node.WorkflowNodeID, node.TemplateID, node.Status,
-			node.TaskID, node.TemplateSnapshotJSON, node.CrossProjectTemplateProvenanceJSON, node.ResultJSON, node.ArtifactInputsJSON, node.OverrideSnapshotJSON, node.Created, node.Queued, node.Start, node.End, node.Reason,
+			node.TaskID, node.TemplateSnapshotJSON, node.ExecutionSnapshotJSON, node.CrossProjectTemplateProvenanceJSON, node.ResultJSON, node.ArtifactInputsJSON, node.OverrideSnapshotJSON, node.Created, node.Queued, node.Start, node.End, node.Reason,
 		)
 		if err != nil {
 			return db.WorkflowRun{}, err

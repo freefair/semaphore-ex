@@ -136,12 +136,14 @@ func DecideRunnerPlacement(
 		}
 	}
 	if decision.SelectedRunnerID != nil {
+		decision.ReasonCode = db.RunnerPlacementReasonSelected
 		decision.Reason = fmt.Sprintf(
 			"selected %s runner #%d by scope, current load, and stable runner id",
 			decision.SelectedScope, *decision.SelectedRunnerID,
 		)
 		return decision
 	}
+	decision.ReasonCode = db.RunnerPlacementReasonNoCandidate
 	decision.Reason, decision.ActionHint = rejectedPlacementSummary(tags, evaluated)
 	return decision
 }
@@ -162,27 +164,38 @@ func evaluateRunnerPlacement(
 	}
 	evaluation := db.RunnerPlacementEvaluation{
 		RunnerID: runner.ID, RunnerName: runner.Name, Scope: scope,
-		AcceptedCriteria: make([]string, 0, 6), RejectedCriteria: make([]string, 0, 6),
+		AcceptedCriteria: make([]string, 0, 7), RejectedCriteria: make([]string, 0, 7),
+		AcceptedReasonCodes: make([]db.RunnerPlacementReasonCode, 0, 7),
+		RejectedReasonCodes: make([]db.RunnerPlacementReasonCode, 0, 7),
 	}
-	criterion := func(ok bool, accepted string, rejected string) {
+	criterion := func(ok bool, accepted string, acceptedCode db.RunnerPlacementReasonCode, rejected string, rejectedCode db.RunnerPlacementReasonCode) {
 		if ok {
 			evaluation.AcceptedCriteria = append(evaluation.AcceptedCriteria, accepted)
+			evaluation.AcceptedReasonCodes = append(evaluation.AcceptedReasonCodes, acceptedCode)
 		} else {
 			evaluation.RejectedCriteria = append(evaluation.RejectedCriteria, rejected)
+			evaluation.RejectedReasonCodes = append(evaluation.RejectedReasonCodes, rejectedCode)
 		}
 	}
 	criterion(runner.ProjectID == nil || *runner.ProjectID == projectID,
-		"project scope accepted", "different project")
-	criterion(runner.Active, "active", "inactive")
-	criterion(runner.IsRegistered(), "registered", "not registered")
-	criterion(runner.IsOnline(now, offlineTimeout), "heartbeat accepted", "offline")
+		"project scope accepted", db.RunnerPlacementReasonScopeAccepted,
+		"different project", db.RunnerPlacementReasonDifferentProject)
+	criterion(runner.Active, "active", db.RunnerPlacementReasonActive,
+		"inactive", db.RunnerPlacementReasonInactive)
+	criterion(runner.IsRegistered(), "registered", db.RunnerPlacementReasonRegistered,
+		"not registered", db.RunnerPlacementReasonNotRegistered)
+	criterion(runner.IsOnline(now, offlineTimeout), "heartbeat accepted", db.RunnerPlacementReasonOnline,
+		"offline", db.RunnerPlacementReasonOffline)
 	criterion(runner.MaxParallelTasks <= 0 || candidate.RunningTasks < runner.MaxParallelTasks,
-		"capacity available", "at capacity")
+		"capacity available", db.RunnerPlacementReasonCapacityAvailable,
+		"at capacity", db.RunnerPlacementReasonCapacity)
 	criterion(runnerTagsMatch(runner, requestedTags, matchMode),
-		"tag policy matched", "tag policy did not match")
+		"tag policy matched", db.RunnerPlacementReasonTagMatched,
+		"tag policy did not match", db.RunnerPlacementReasonTagMismatch)
 	if executorImage != nil {
 		criterion(runner.SupportsExecutorImage(),
-			"executor image compatible", "executor image unsupported")
+			"executor image compatible", db.RunnerPlacementReasonImageSupported,
+			"executor image unsupported", db.RunnerPlacementReasonImageUnsupported)
 	}
 	evaluation.Eligible = len(evaluation.RejectedCriteria) == 0
 	return evaluatedRunnerPlacement{candidate: candidate, evaluation: evaluation}

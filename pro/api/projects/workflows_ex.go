@@ -25,6 +25,10 @@ func (c *workflowController) RestoreWorkflowVersion(w http.ResponseWriter, r *ht
 	w.WriteHeader(http.StatusNotFound)
 }
 
+func (c *workflowController) PreviewWorkflow(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+
 func (c *workflowController) RetryWorkflowRunReconciliation(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }

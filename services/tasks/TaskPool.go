@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/semaphoreui/semaphore/db"
@@ -81,6 +82,7 @@ type TaskPool struct {
 	executorImageAvailable   func(*db.User) bool
 	taskControlLifecycle     TaskControlLifecycle
 	crossProjectTaskStore    pro_interfaces.CrossProjectWorkflowTaskStore
+	executionPreflightIssuer *ExecutionPreflightReviewTokenIssuer
 	// stop signals the background loops started by Run to exit. Closing it (via
 	// Stop) terminates the runner-task reconcile loop and Run's own select.
 	// Channels are used rather than sync.WaitGroup/sync.Once because TaskPool is
@@ -122,6 +124,13 @@ func CreateTaskPool(
 		repoLock:               &KeyLock{},
 		stop:                   make(chan struct{}),
 		reconcileDone:          make(chan struct{}),
+	}
+	if util.Config != nil {
+		if key, err := base64.StdEncoding.DecodeString(util.Config.CookieHash); err == nil {
+			p.executionPreflightIssuer, _ = NewExecutionPreflightReviewTokenIssuer(
+				key, pro_interfaces.MaxExecutionPreflightReviewTTL,
+			)
+		}
 	}
 	// attempt to start HA state store (no-op for memory)
 	_ = p.state.Start(p.hydrateTaskRunner)

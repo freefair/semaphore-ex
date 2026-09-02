@@ -16,11 +16,14 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/random"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	log "github.com/sirupsen/logrus"
 )
 
 const workflowDefinitionBodyLimit int64 = 8 * 1024 * 1024
 const workflowRunCorrelationIDLimit = 64
 const workflowRunBodyLimit int64 = 256 * 1024
+const workflowPreflightFingerprintHeader = "X-Semaphore-Preflight-Fingerprint"
+const workflowPreflightTokenHeader = "X-Semaphore-Preflight-Token"
 const workflowVersionRestoreBodyLimit int64 = 2 * 1024
 const defaultWorkflowVersionPageSize = 50
 const maxWorkflowVersionPageSize = 100
@@ -29,6 +32,7 @@ type workflowController struct {
 	definitionService pro_interfaces.WorkflowDefinitionService
 	workflowService   pro_interfaces.WorkflowService
 	workflowManager   db.WorkflowManager
+	audit             pro_interfaces.AuditServiceFacade
 }
 
 type workflowRunDetails struct {
@@ -174,6 +178,7 @@ type workflowRunTaskView struct {
 }
 
 var _ pro_interfaces.WorkflowController = (*workflowController)(nil)
+var _ pro_interfaces.ExecutionPreflightAuditConfigurer = (*workflowController)(nil)
 
 func NewWorkflowController(
 	workflowService pro_interfaces.WorkflowService,
@@ -185,6 +190,12 @@ func NewWorkflowController(
 		workflowService:   workflowService,
 		workflowManager:   workflowManager,
 	}
+}
+
+// ConfigureExecutionPreflightAudit attaches an optional value-free recorder
+// after the router has constructed its shared audit facade.
+func (c *workflowController) ConfigureExecutionPreflightAudit(audit pro_interfaces.AuditServiceFacade) {
+	c.audit = audit
 }
 
 func (c *workflowController) GetWorkflows(w http.ResponseWriter, r *http.Request) {
@@ -479,18 +490,9 @@ func writeWorkflowError(
 
 func (c *workflowController) RunWorkflow(w http.ResponseWriter, r *http.Request) {
 	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
-	input := db.WorkflowRunInput{}
-	if r.Body != nil {
-		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, workflowRunBodyLimit))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&input); err != nil && !errors.Is(err, io.EOF) {
-			helpers.WriteError(w, common_errors.NewValidationError("workflow run input is invalid"))
-			return
-		}
-		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-			helpers.WriteError(w, common_errors.NewValidationError("workflow run input is invalid"))
-			return
-		}
+	input, ok := readWorkflowRunInput(w, r)
+	if !ok {
+		return
 	}
 	correlationID := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if correlationID == "" {
@@ -503,13 +505,162 @@ func (c *workflowController) RunWorkflow(w http.ResponseWriter, r *http.Request)
 		helpers.WriteError(w, common_errors.NewValidationError("workflow run idempotency key must not exceed 64 characters"))
 		return
 	}
-	run, err := c.workflowService.StartWorkflow(workflow, helpers.UserFromContext(r), correlationID, input)
+	user := helpers.UserFromContext(r)
+	var run db.WorkflowRun
+	var planned pro_interfaces.ExecutionPreflightPlan
+	var err error
+	if service, supported := c.workflowService.(pro_interfaces.WorkflowExecutionPreflightAuditResultService); supported {
+		run, planned, err = service.StartWorkflowWithExecutionPreflightPlan(
+			workflow, user, correlationID,
+			pro_interfaces.ExecutionPreflightReview{
+				Fingerprint: r.Header.Get(workflowPreflightFingerprintHeader),
+				ReviewToken: r.Header.Get(workflowPreflightTokenHeader),
+			}, input,
+		)
+	} else if service, supported := c.workflowService.(pro_interfaces.WorkflowExecutionPreflightService); supported {
+		run, err = service.StartWorkflowWithExecutionPreflight(
+			workflow, user, correlationID,
+			pro_interfaces.ExecutionPreflightReview{
+				Fingerprint: r.Header.Get(workflowPreflightFingerprintHeader),
+				ReviewToken: r.Header.Get(workflowPreflightTokenHeader),
+			}, input,
+		)
+	} else {
+		run, err = c.workflowService.StartWorkflow(workflow, user, correlationID, input)
+	}
 	if err != nil {
+		if c.writeWorkflowExecutionPreflightError(w, r, workflow, planned, err) {
+			return
+		}
 		helpers.WriteError(w, err)
 		return
 	}
 	w.Header().Set("Idempotency-Key", correlationID)
+	if planned.Fingerprint != "" {
+		if r.Header.Get(workflowPreflightFingerprintHeader) != "" {
+			c.recordExecutionPreflightAudit(r, pro_interfaces.AuditActionExecutionPreflightStart,
+				pro_interfaces.AuditOutcomeAllowed, pro_interfaces.AuditReasonExecutionPreflightStarted,
+				workflow.ID, &planned, nil)
+		}
+	}
 	helpers.WriteJSON(w, http.StatusCreated, newWorkflowRunView(run))
+}
+
+func (c *workflowController) PreviewWorkflow(w http.ResponseWriter, r *http.Request) {
+	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
+	input, ok := readWorkflowRunInput(w, r)
+	if !ok {
+		return
+	}
+	service, supported := c.workflowService.(pro_interfaces.WorkflowExecutionPreflightService)
+	if !supported {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	plan, err := service.PreviewWorkflowExecution(workflow, helpers.UserFromContext(r), input)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, plan)
+	outcome, reason := pro_interfaces.AuditOutcomeAllowed, pro_interfaces.AuditReasonExecutionPreflightPreviewed
+	if denialReason, denied := pro_interfaces.ExecutionPreflightAuditDenialReason(plan); denied {
+		outcome, reason = pro_interfaces.AuditOutcomeDenied, denialReason
+	}
+	c.recordExecutionPreflightAudit(r, pro_interfaces.AuditActionExecutionPreflightPreview,
+		outcome, reason,
+		workflow.ID, &plan, nil)
+}
+
+func readWorkflowRunInput(w http.ResponseWriter, r *http.Request) (db.WorkflowRunInput, bool) {
+	input := db.WorkflowRunInput{}
+	if r.Body == nil {
+		return input, true
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, workflowRunBodyLimit))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil && !errors.Is(err, io.EOF) {
+		helpers.WriteError(w, common_errors.NewValidationError("workflow run input is invalid"))
+		return db.WorkflowRunInput{}, false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		helpers.WriteError(w, common_errors.NewValidationError("workflow run input is invalid"))
+		return db.WorkflowRunInput{}, false
+	}
+	return input, true
+}
+
+func (c *workflowController) writeWorkflowExecutionPreflightError(w http.ResponseWriter, r *http.Request, workflow db.WorkflowTemplate, planned pro_interfaces.ExecutionPreflightPlan, err error) bool {
+	var stale *pro_interfaces.ExecutionPreflightStaleError
+	if errors.As(err, &stale) {
+		c.recordExecutionPreflightAudit(r, pro_interfaces.AuditActionExecutionPreflightStart,
+			pro_interfaces.AuditOutcomeDenied, pro_interfaces.AuditReasonExecutionPreflightStale,
+			workflow.ID, &stale.Preflight, stale.Changes)
+		helpers.WriteJSON(w, http.StatusConflict, pro_interfaces.ExecutionPreflightStale{
+			Code: "stale_execution_preflight", Changes: stale.Changes, Preflight: &stale.Preflight,
+		})
+		return true
+	}
+	var denied *pro_interfaces.ExecutionPreflightDeniedError
+	if errors.As(err, &denied) {
+		reason := pro_interfaces.AuditReasonExecutionPreflightDenied
+		if denialReason, found := pro_interfaces.ExecutionPreflightAuditDenialReason(denied.Preflight); found {
+			reason = denialReason
+		}
+		c.recordExecutionPreflightAudit(r, pro_interfaces.AuditActionExecutionPreflightStart,
+			pro_interfaces.AuditOutcomeDenied, reason,
+			workflow.ID, &denied.Preflight, nil)
+		helpers.WriteJSON(w, http.StatusConflict, pro_interfaces.ExecutionPreflightStale{
+			Code: "execution_preflight_denied", Preflight: &denied.Preflight,
+		})
+		return true
+	}
+	if errors.Is(err, pro_interfaces.ErrExecutionPreflightReviewTokenExpired) {
+		helpers.WriteErrorStatus(w, "EXECUTION_PREFLIGHT_EXPIRED", http.StatusConflict)
+		return true
+	}
+	if errors.Is(err, pro_interfaces.ErrExecutionPreflightReviewTokenInvalid) ||
+		errors.Is(err, pro_interfaces.ErrExecutionPreflightReviewScopeMismatch) {
+		if planned.Fingerprint != "" {
+			c.recordExecutionPreflightAudit(r, pro_interfaces.AuditActionExecutionPreflightStart,
+				pro_interfaces.AuditOutcomeDenied, pro_interfaces.AuditReasonExecutionPreflightDenied,
+				workflow.ID, &planned, nil)
+		}
+		helpers.WriteErrorStatus(w, "EXECUTION_PREFLIGHT_INVALID", http.StatusConflict)
+		return true
+	}
+	return false
+}
+
+func (c *workflowController) recordExecutionPreflightAudit(
+	r *http.Request,
+	action pro_interfaces.AuditAction,
+	outcome pro_interfaces.AuditOutcome,
+	reason string,
+	workflowID int,
+	plan *pro_interfaces.ExecutionPreflightPlan,
+	changes []pro_interfaces.ExecutionPreflightChangeCode,
+) {
+	if c.audit == nil || plan == nil {
+		return
+	}
+	user := helpers.UserFromContext(r)
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	if user == nil || user.ID <= 0 || project.ID <= 0 {
+		return
+	}
+	correlationID := helpers.CorrelationID(r.Context())
+	if correlationID == "" {
+		correlationID = "internal"
+	}
+	event := pro_interfaces.NewExecutionPreflightAuditEvent(
+		user.ID, project.ID, correlationID, r.RemoteAddr, r.UserAgent(), action, outcome, reason,
+		pro_interfaces.ExecutionPreflightWorkflow, workflowID,
+		pro_interfaces.NewExecutionPreflightAuditProvenance(*plan, changes),
+	)
+	if err := c.audit.Record(r.Context(), event); err != nil {
+		log.WithFields(event.SafeFields()).Error("Failed to record execution preflight audit event")
+	}
 }
 
 func (c *workflowController) StopWorkflowRun(w http.ResponseWriter, r *http.Request) {

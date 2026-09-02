@@ -506,18 +506,17 @@ func (t *TaskRunner) populateDetails() error {
 		return t.prepareError(err, "Workflow template provenance is invalid!")
 	}
 	crossProjectProvenance := t.Task.WorkflowTemplateProvenance
+	executionSnapshot, err := db.DecodeTaskExecutionSnapshot(
+		valueOrEmpty(t.Task.ExecutionSnapshotJSON), t.Task.ProjectID, t.Task.TemplateID,
+	)
+	if err != nil {
+		return t.prepareError(err, "Execution preflight snapshot is invalid!")
+	}
 
-	if t.Task.WorkflowTemplateSnapshot != nil {
+	if executionSnapshot != nil {
+		t.Template = executionSnapshot.Template
+	} else if t.Task.WorkflowTemplateSnapshot != nil {
 		err = json.Unmarshal([]byte(*t.Task.WorkflowTemplateSnapshot), &t.Template)
-		if err == nil && crossProjectProvenance != nil && crossProjectProvenance.CrossProject != nil {
-			reference := crossProjectProvenance.CrossProject.Reference
-			if t.Template.ID != t.Task.TemplateID || t.Template.ID != reference.TemplateID ||
-				t.Template.ProjectID != reference.OwnerProjectID || t.Task.ProjectID == reference.OwnerProjectID {
-				err = errors.New("cross-project workflow template snapshot identity does not match task provenance")
-			}
-		} else if err == nil && (t.Template.ID != t.Task.TemplateID || t.Template.ProjectID != t.Task.ProjectID) {
-			err = errors.New("workflow template snapshot identity does not match task")
-		}
 		if err != nil {
 			return t.prepareError(err, "Workflow template snapshot is invalid!")
 		}
@@ -526,6 +525,16 @@ func (t *TaskRunner) populateDetails() error {
 		if err != nil {
 			return t.prepareError(err, "Template not found!")
 		}
+	}
+	if crossProjectProvenance != nil && crossProjectProvenance.CrossProject != nil {
+		reference := crossProjectProvenance.CrossProject.Reference
+		if t.Template.ID != t.Task.TemplateID || t.Template.ID != reference.TemplateID ||
+			t.Template.ProjectID != reference.OwnerProjectID || t.Task.ProjectID == reference.OwnerProjectID {
+			return t.prepareError(errors.New("cross-project workflow template snapshot identity does not match task provenance"), "Execution template snapshot is invalid!")
+		}
+	} else if (executionSnapshot != nil || t.Task.WorkflowTemplateSnapshot != nil) &&
+		(t.Template.ID != t.Task.TemplateID || t.Template.ProjectID != t.Task.ProjectID) {
+		return t.prepareError(errors.New("execution template snapshot identity does not match task"), "Execution template snapshot is invalid!")
 	}
 
 	// get project alert setting
@@ -563,43 +572,60 @@ func (t *TaskRunner) populateDetails() error {
 		t.users = append(t.users, userID)
 	}
 
-	// get inventory
-	canOverrideInventory, err := t.Template.CanOverrideInventory()
-	if err != nil {
-		return err
-	}
+	if executionSnapshot != nil {
+		if executionSnapshot.Inventory != nil {
+			t.Inventory = *executionSnapshot.Inventory
+			t.Inventory.Repository = executionSnapshot.InventoryRepository
+			if err = t.resolveExecutionSnapshotInventory(); err != nil {
+				return err
+			}
+		}
+		t.Repository = executionSnapshot.Repository
+		key, keyErr := t.pool.store.GetAccessKey(t.Repository.ProjectID, t.Repository.SSHKeyID)
+		if keyErr != nil {
+			return t.prepareError(keyErr, "Execution repository credential not found!")
+		}
+		t.Repository.SSHKey = key
+		if err = t.pool.encryptionService.DeserializeSecret(&t.Repository.SSHKey); err != nil {
+			return err
+		}
+	} else {
+		// get inventory
+		canOverrideInventory, overrideErr := t.Template.CanOverrideInventory()
+		if overrideErr != nil {
+			return overrideErr
+		}
 
-	if canOverrideInventory && t.Task.InventoryID != nil {
-		t.Inventory, err = t.pool.inventoryService.GetInventory(t.Template.ProjectID, *t.Task.InventoryID)
-		if err != nil {
-			if t.Template.InventoryID != nil {
+		if canOverrideInventory && t.Task.InventoryID != nil {
+			t.Inventory, err = t.pool.inventoryService.GetInventory(t.Template.ProjectID, *t.Task.InventoryID)
+			if err != nil && t.Template.InventoryID != nil {
 				t.Inventory, err = t.pool.inventoryService.GetInventory(t.Template.ProjectID, *t.Template.InventoryID)
 				if err != nil {
 					return t.prepareError(err, "Template Inventory not found!")
 				}
 			}
-		}
-	} else {
-		if t.Template.InventoryID != nil {
+		} else if t.Template.InventoryID != nil {
 			t.Inventory, err = t.pool.inventoryService.GetInventory(t.Template.ProjectID, *t.Template.InventoryID)
 			if err != nil {
 				return t.prepareError(err, "Template Inventory not found!")
 			}
 		}
+
+		// get repository
+		t.Repository, err = t.pool.store.GetRepository(t.Template.ProjectID, t.Template.RepositoryID)
+		if err != nil {
+			return err
+		}
+		if err = t.pool.encryptionService.DeserializeSecret(&t.Repository.SSHKey); err != nil {
+			return err
+		}
 	}
 
-	// get repository
-	t.Repository, err = t.pool.store.GetRepository(t.Template.ProjectID, t.Template.RepositoryID)
-
-	if err != nil {
-		return err
-	}
-
-	if err = t.pool.encryptionService.DeserializeSecret(&t.Repository.SSHKey); err != nil {
-		return err
-	}
-
-	if crossProjectProvenance != nil && crossProjectProvenance.CrossProject != nil {
+	if executionSnapshot != nil {
+		if err = t.resolveExecutionSnapshotTemplateVaults(); err != nil {
+			return err
+		}
+	} else if crossProjectProvenance != nil && crossProjectProvenance.CrossProject != nil {
 		if err = t.resolveCrossProjectTemplateVaults(crossProjectProvenance.CrossProject.Reference.OwnerProjectID); err != nil {
 			return err
 		}
@@ -608,7 +634,11 @@ func (t *TaskRunner) populateDetails() error {
 	t.Repository = withEffectiveBranch(t.Repository, t.Template, t.Task)
 
 	// load and merge all configured environments
-	err = t.loadEnvironments()
+	if executionSnapshot != nil {
+		err = t.loadExecutionSnapshotEnvironments(executionSnapshot.Environments)
+	} else {
+		err = t.loadEnvironments()
+	}
 	if err != nil {
 		return err
 	}
@@ -625,91 +655,20 @@ func (t *TaskRunner) loadEnvironments() error {
 	if len(t.Template.EnvironmentIDs) == 0 {
 		return nil
 	}
-
+	environments := make([]db.Environment, 0, len(t.Template.EnvironmentIDs))
 	seen := make(map[int]bool)
-
-	mergedJSON := make(map[string]any)
-	mergedENV := make(map[string]string)
-	var mergedSecrets []db.EnvironmentSecret
-	secretIndex := make(map[string]int)
-
-	var lastEnv db.Environment
-
 	for _, envID := range t.Template.EnvironmentIDs {
 		if seen[envID] {
 			continue
 		}
 		seen[envID] = true
-
 		env, err := t.pool.store.GetEnvironment(t.Template.ProjectID, envID)
 		if err != nil {
 			return err
 		}
-
-		err = t.pool.encryptionService.FillEnvironmentSecrets(&env, true)
-		if err != nil {
-			return err
-		}
-
-		if env.JSON != "" {
-			partial := make(map[string]any)
-			if err := json.Unmarshal([]byte(env.JSON), &partial); err != nil {
-				return err
-			}
-			for k, v := range partial {
-				mergedJSON[k] = v
-			}
-		}
-
-		if env.ENV != nil && *env.ENV != "" {
-			partial := make(map[string]string)
-			if err := json.Unmarshal([]byte(*env.ENV), &partial); err != nil {
-				return err
-			}
-			for k, v := range partial {
-				mergedENV[k] = v
-			}
-		}
-
-		for _, s := range env.Secrets {
-			key := string(s.Type) + ":" + s.Name
-			if idx, ok := secretIndex[key]; ok {
-				mergedSecrets[idx] = s
-			} else {
-				mergedSecrets = append(mergedSecrets, s)
-				secretIndex[key] = len(mergedSecrets) - 1
-			}
-		}
-
-		lastEnv = env
+		environments = append(environments, env)
 	}
-
-	t.Environment = lastEnv
-
-	if len(mergedJSON) > 0 {
-		b, err := json.Marshal(mergedJSON)
-		if err != nil {
-			return err
-		}
-		t.Environment.JSON = string(b)
-	} else {
-		t.Environment.JSON = ""
-	}
-
-	if len(mergedENV) > 0 {
-		b, err := json.Marshal(mergedENV)
-		if err != nil {
-			return err
-		}
-		s := string(b)
-		t.Environment.ENV = &s
-	} else {
-		t.Environment.ENV = nil
-	}
-
-	t.Environment.Secrets = mergedSecrets
-
-	return nil
+	return t.mergeEnvironmentLayers(environments, false)
 }
 
 // checkTmpDir checks to see if the temporary directory exists

@@ -75,6 +75,8 @@ type workflowLocalLocks struct {
 
 var _ pro_interfaces.WorkflowService = (*workflowService)(nil)
 var _ pro_interfaces.WorkflowAuditConfigurer = (*workflowService)(nil)
+var _ pro_interfaces.WorkflowExecutionPreflightService = (*workflowService)(nil)
+var _ pro_interfaces.WorkflowExecutionPreflightAuditResultService = (*workflowService)(nil)
 
 // ConfigureWorkflowAudit attaches the process-wide audit facade after route
 // construction. It is intentionally optional at the interface boundary.
@@ -113,6 +115,426 @@ func NewWorkflowService(
 		enqueuer: enqueuer, locker: locker, progressionStore: progressionStore, versionStore: versionStore,
 		grantStore: grantStore, referenceStore: referenceStore,
 	}
+}
+
+func (s *workflowService) PreviewWorkflowExecution(
+	workflow db.WorkflowTemplate,
+	user *db.User,
+	inputs ...db.WorkflowRunInput,
+) (pro_interfaces.ExecutionPreflightPlan, error) {
+	planner, ok := s.enqueuer.(pro_interfaces.WorkflowExecutionPreflightPlanner)
+	if !ok {
+		return pro_interfaces.ExecutionPreflightPlan{}, errors.New("workflow execution preflight is unavailable")
+	}
+	snapshot, err := s.buildWorkflowExecutionPreflight(workflow, user, inputs...)
+	if err != nil {
+		return pro_interfaces.ExecutionPreflightPlan{}, err
+	}
+	return planner.SealExecutionPreflight(snapshot)
+}
+
+func (s *workflowService) StartWorkflowWithExecutionPreflight(
+	workflow db.WorkflowTemplate,
+	user *db.User,
+	correlationID string,
+	review pro_interfaces.ExecutionPreflightReview,
+	inputs ...db.WorkflowRunInput,
+) (db.WorkflowRun, error) {
+	run, _, err := s.StartWorkflowWithExecutionPreflightPlan(workflow, user, correlationID, review, inputs...)
+	return run, err
+}
+
+// StartWorkflowWithExecutionPreflightPlan returns the freshly server-built
+// plan with the run result so the API boundary can audit trusted provenance
+// without consuming client review headers.
+func (s *workflowService) StartWorkflowWithExecutionPreflightPlan(
+	workflow db.WorkflowTemplate,
+	user *db.User,
+	correlationID string,
+	review pro_interfaces.ExecutionPreflightReview,
+	inputs ...db.WorkflowRunInput,
+) (db.WorkflowRun, pro_interfaces.ExecutionPreflightPlan, error) {
+	planner, ok := s.enqueuer.(pro_interfaces.WorkflowExecutionPreflightPlanner)
+	if !ok {
+		return db.WorkflowRun{}, pro_interfaces.ExecutionPreflightPlan{}, errors.New("workflow execution preflight is unavailable")
+	}
+	reviewed := review.Fingerprint != "" || review.ReviewToken != ""
+	if !reviewed {
+		snapshot, err := s.buildWorkflowExecutionPreflight(workflow, user, inputs...)
+		if err != nil {
+			return db.WorkflowRun{}, pro_interfaces.ExecutionPreflightPlan{}, err
+		}
+		run, startErr := s.StartWorkflow(workflow, user, correlationID, inputs...)
+		return run, snapshot.Plan, startErr
+	}
+
+	return s.startReviewedWorkflowFromExecutionSnapshot(workflow, user, correlationID, review, planner, inputs...)
+}
+
+// startReviewedWorkflowFromExecutionSnapshot holds the normal start lock while
+// it recomputes, verifies, and persists one immutable run snapshot. Calling
+// StartWorkflow here would re-read mutable definitions and resources after the
+// review check, reopening the validation-to-use race.
+func (s *workflowService) startReviewedWorkflowFromExecutionSnapshot(
+	workflow db.WorkflowTemplate,
+	user *db.User,
+	correlationID string,
+	review pro_interfaces.ExecutionPreflightReview,
+	planner pro_interfaces.WorkflowExecutionPreflightPlanner,
+	inputs ...db.WorkflowRunInput,
+) (db.WorkflowRun, pro_interfaces.ExecutionPreflightPlan, error) {
+	if user == nil || user.ID <= 0 || correlationID == "" {
+		return db.WorkflowRun{}, pro_interfaces.ExecutionPreflightPlan{}, common_errors.NewValidationError("workflow run actor and correlation ID are required")
+	}
+	var result db.WorkflowRun
+	var plan pro_interfaces.ExecutionPreflightPlan
+	err := s.withStartLock(workflow.ProjectID, workflow.ID, func() error {
+		if existing, existingErr := s.repository.GetWorkflowRunByCorrelationID(workflow.ProjectID, workflow.ID, correlationID); existingErr == nil {
+			result = existing
+			return nil
+		} else if !errors.Is(existingErr, db.ErrNotFound) {
+			return existingErr
+		}
+		if s.versionStore == nil {
+			return errors.New("workflow version store is unavailable")
+		}
+		version, versionErr := s.versionStore.EnsureCurrentWorkflowVersion(workflow.ProjectID, workflow.ID)
+		if versionErr != nil {
+			return versionErr
+		}
+		if version.ProjectID != workflow.ProjectID || version.WorkflowTemplateID != workflow.ID {
+			return pro_interfaces.ErrWorkflowRevisionConflict
+		}
+		canonical := version.DefinitionSnapshot
+		var runSnapshot db.WorkflowRun
+		snapshot, buildErr := s.buildWorkflowExecutionPreflightWithRun(canonical, user, &runSnapshot, inputs...)
+		if buildErr != nil {
+			return buildErr
+		}
+		plan = snapshot.Plan
+		if hasWorkflowPreflightDenial(snapshot.Plan) {
+			if sealed, sealErr := planner.SealExecutionPreflight(snapshot); sealErr == nil {
+				plan = sealed
+			}
+			return &pro_interfaces.ExecutionPreflightDeniedError{Preflight: plan}
+		}
+		fresh, sealErr := planner.SealExecutionPreflight(snapshot)
+		if sealErr != nil {
+			return sealErr
+		}
+		plan = fresh
+		changes, verifyErr := planner.VerifyExecutionPreflightReview(snapshot, review)
+		if verifyErr != nil {
+			return verifyErr
+		}
+		if len(changes) > 0 || review.Fingerprint != fresh.Fingerprint {
+			if len(changes) == 0 {
+				changes = []pro_interfaces.ExecutionPreflightChangeCode{pro_interfaces.ExecutionChangeDefinition}
+			}
+			return &pro_interfaces.ExecutionPreflightStaleError{Changes: changes, Preflight: fresh}
+		}
+		for _, node := range runSnapshot.Nodes {
+			if node.TemplateID > 0 && node.ExecutionSnapshotJSON == "" {
+				return errors.New("workflow execution preflight snapshot is unavailable")
+			}
+		}
+		runSnapshot.WorkflowVersionID = version.ID
+		runSnapshot.CorrelationID = correlationID
+		var createErr error
+		if hasCrossProjectWorkflowRunNodes(runSnapshot) {
+			if s.referenceStore == nil {
+				return errors.New("cross-project workflow reference store is unavailable")
+			}
+			result, createErr = s.referenceStore.CreateWorkflowRunWithCrossProjectReferences(runSnapshot)
+		} else {
+			result, createErr = s.repository.CreateWorkflowRun(runSnapshot)
+		}
+		return createErr
+	})
+	if err != nil {
+		return db.WorkflowRun{}, plan, err
+	}
+	if progressErr := s.ProgressWorkflowRun(workflow.ProjectID, result.ID, user); progressErr != nil {
+		return result, plan, progressErr
+	}
+	run, getErr := s.repository.GetWorkflowRun(workflow.ProjectID, workflow.ID, result.ID)
+	return run, plan, getErr
+}
+
+func hasCrossProjectWorkflowRunNodes(run db.WorkflowRun) bool {
+	for _, node := range run.Nodes {
+		if node.CrossProjectTemplateProvenance != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *workflowService) buildWorkflowExecutionPreflight(
+	workflow db.WorkflowTemplate,
+	user *db.User,
+	inputs ...db.WorkflowRunInput,
+) (pro_interfaces.ExecutionPreflightSnapshot, error) {
+	return s.buildWorkflowExecutionPreflightWithRun(workflow, user, nil, inputs...)
+}
+
+func (s *workflowService) buildWorkflowExecutionPreflightWithRun(
+	workflow db.WorkflowTemplate,
+	user *db.User,
+	capture *db.WorkflowRun,
+	inputs ...db.WorkflowRunInput,
+) (pro_interfaces.ExecutionPreflightSnapshot, error) {
+	if user == nil || user.ID <= 0 {
+		return pro_interfaces.ExecutionPreflightSnapshot{}, common_errors.NewValidationError("workflow run actor is required")
+	}
+	if err := s.requireWorkflowAccess(workflow, user, pro_interfaces.PermissionStartWorkflow, true); err != nil {
+		return pro_interfaces.ExecutionPreflightSnapshot{}, err
+	}
+	planner, ok := s.enqueuer.(pro_interfaces.WorkflowExecutionPreflightPlanner)
+	if !ok {
+		return pro_interfaces.ExecutionPreflightSnapshot{}, errors.New("workflow execution preflight is unavailable")
+	}
+	snapshotPlanner, hasSnapshotPlanner := s.enqueuer.(pro_interfaces.WorkflowTaskExecutionSnapshotPlanner)
+	fingerprint, err := pro_interfaces.WorkflowDefinitionFingerprint(workflow)
+	if err != nil {
+		return pro_interfaces.ExecutionPreflightSnapshot{}, err
+	}
+	now := tz.Now().UTC()
+	crossProject, err := s.resolveCrossProjectTemplateProvenance(workflow, db.CrossProjectTemplateGrantRun)
+	if err != nil {
+		return workflowHiddenReferencePreflight(workflow, user.ID, fingerprint, now), nil
+	}
+	templates := make(map[int]db.Template, len(workflow.Nodes))
+	for _, node := range workflow.Nodes {
+		if node.EffectiveKind() != db.WorkflowNodeTaskKind || node.CrossProjectTemplateReference != nil {
+			continue
+		}
+		template, getErr := s.templateStore.GetTemplate(workflow.ProjectID, node.TemplateID)
+		if getErr != nil {
+			if errors.Is(getErr, db.ErrNotFound) {
+				return workflowHiddenReferencePreflight(workflow, user.ID, fingerprint, now), nil
+			}
+			return pro_interfaces.ExecutionPreflightSnapshot{}, getErr
+		}
+		templates[node.TemplateID] = template
+	}
+	run, err := workflowDB.BuildWorkflowRunSnapshotWithCrossProjectProvenance(
+		workflow, templates, crossProject, user.ID, "execution-preflight", now, inputs...,
+	)
+	if err != nil {
+		return pro_interfaces.ExecutionPreflightSnapshot{}, err
+	}
+	plan := pro_interfaces.ExecutionPreflightPlan{
+		ContractVersion: pro_interfaces.ExecutionPreflightContractVersion,
+		Intent:          pro_interfaces.ExecutionPreflightWorkflow, ProjectID: workflow.ProjectID,
+		ActorID: user.ID, WorkflowID: workflow.ID,
+		Definition: pro_interfaces.ExecutionPreflightDefinition{
+			Kind: pro_interfaces.ExecutionReferenceWorkflow, ID: workflow.ID,
+			Name: workflow.Name, Revision: fmt.Sprintf("%d", workflow.Revision), Fingerprint: fingerprint,
+		},
+		Inputs:     workflowPreflightInputs(run.ParameterSnapshot),
+		References: []pro_interfaces.ExecutionPreflightReference{},
+		Commands:   []pro_interfaces.ExecutionPreflightCommand{},
+		Placements: []pro_interfaces.ExecutionPreflightPlacement{},
+		Findings:   []pro_interfaces.ExecutionPreflightFinding{}, ExpiresAt: now.Add(pro_interfaces.MaxExecutionPreflightReviewTTL),
+	}
+	components := map[pro_interfaces.ExecutionPreflightChangeCode]string{
+		pro_interfaces.ExecutionChangeDefinition: fingerprint,
+		pro_interfaces.ExecutionChangeInput:      executionPreflightHash(run.ParameterSnapshotJSON, inputs),
+		pro_interfaces.ExecutionChangePermission: s.workflowExecutionPermissionDigest(workflow, user),
+		pro_interfaces.ExecutionChangePolicy:     executionPreflightHash(workflow.AccessPolicy, workflow.Nodes),
+	}
+	if err = s.validateWorkflowRunResources(run); err != nil {
+		plan.Findings = append(plan.Findings, workflowHiddenReferenceFinding(nil))
+	}
+	if err = s.validateWorkflowParameterReferences(run); err != nil {
+		plan.Findings = append(plan.Findings, workflowHiddenReferenceFinding(nil))
+	}
+	for _, name := range sortedWorkflowParameterNames(run.ParameterSnapshot) {
+		parameter := run.ParameterSnapshot[name]
+		if parameter.SecretReference == nil {
+			continue
+		}
+		credentialID := parameter.SecretReference.AccessKeyID
+		if parameter.SecretReference.GlobalCredentialID > 0 {
+			credentialID = parameter.SecretReference.GlobalCredentialID
+		}
+		plan.References = append(plan.References, pro_interfaces.ExecutionPreflightReference{
+			Kind: pro_interfaces.ExecutionReferenceCredential, ID: credentialID,
+			Name: fmt.Sprintf("Credential #%d", credentialID), BindingTarget: name,
+			Revision: parameter.ReferenceFingerprint, Visible: true,
+		})
+	}
+	childComponents := make(map[pro_interfaces.ExecutionPreflightChangeCode][]string)
+	for nodeIndex := range run.Nodes {
+		node := &run.Nodes[nodeIndex]
+		if node.TemplateID <= 0 {
+			continue
+		}
+		definitionNode, definitionErr := workflowDefinitionNode(run.DefinitionSnapshot, node.WorkflowNodeID)
+		if definitionErr != nil {
+			return pro_interfaces.ExecutionPreflightSnapshot{}, definitionErr
+		}
+		task := db.Task{TemplateID: node.TemplateID}
+		if definitionNode.TaskParams != nil {
+			task = definitionNode.TaskParams.CreateTask(node.TemplateID)
+		}
+		applyWorkflowNodeOverride(&task, node.OverrideSnapshot)
+		template := node.TemplateSnapshot
+		crossProjectNode := node.CrossProjectTemplateProvenance != nil
+		if crossProjectNode {
+			template, err = node.CrossProjectTemplateProvenance.TemplateSnapshot.ReconstructTemplate(
+				node.CrossProjectTemplateProvenance.Reference.OwnerProjectID,
+				node.CrossProjectTemplateProvenance.Reference.TemplateID,
+			)
+			if err != nil {
+				return workflowHiddenReferencePreflight(workflow, user.ID, fingerprint, now), nil
+			}
+		}
+		var child pro_interfaces.ExecutionPreflightSnapshot
+		var childErr error
+		if hasSnapshotPlanner {
+			var encoded string
+			child, encoded, childErr = snapshotPlanner.BuildWorkflowTaskExecutionPreflightSnapshot(task, template, user, workflow.ProjectID, now)
+			if childErr == nil {
+				node.ExecutionSnapshotJSON = encoded
+			}
+		} else {
+			child, childErr = planner.BuildWorkflowTaskExecutionPreflight(task, template, user, workflow.ProjectID, now)
+		}
+		if childErr != nil {
+			if errors.Is(childErr, db.ErrNotFound) {
+				plan.Findings = append(plan.Findings, workflowHiddenReferenceFinding(&node.WorkflowNodeID))
+				continue
+			}
+			return pro_interfaces.ExecutionPreflightSnapshot{}, childErr
+		}
+		for commandIndex := range child.Plan.Commands {
+			child.Plan.Commands[commandIndex].NodeID = intCopy(node.WorkflowNodeID)
+		}
+		for placementIndex := range child.Plan.Placements {
+			child.Plan.Placements[placementIndex].NodeID = intCopy(node.WorkflowNodeID)
+		}
+		for findingIndex := range child.Plan.Findings {
+			child.Plan.Findings[findingIndex].NodeID = intCopy(node.WorkflowNodeID)
+		}
+		if crossProjectNode {
+			for referenceIndex := range child.Plan.References {
+				child.Plan.References[referenceIndex].Name = ""
+			}
+		}
+		plan.References = append(plan.References, child.Plan.References...)
+		plan.Commands = append(plan.Commands, child.Plan.Commands...)
+		plan.Placements = append(plan.Placements, child.Plan.Placements...)
+		plan.Findings = append(plan.Findings, child.Plan.Findings...)
+		for code, digest := range child.Components {
+			childComponents[code] = append(childComponents[code], fmt.Sprintf("%d:%s", node.WorkflowNodeID, digest))
+		}
+	}
+	if len(plan.Inputs) > pro_interfaces.MaxExecutionPreflightInputs || len(plan.References) > pro_interfaces.MaxExecutionPreflightReferences ||
+		len(plan.Commands) > pro_interfaces.MaxExecutionPreflightCommands || len(plan.Placements) > pro_interfaces.MaxExecutionPreflightPlacements ||
+		len(plan.Findings) > pro_interfaces.MaxExecutionPreflightFindings {
+		plan.Inputs, plan.References, plan.Commands, plan.Placements = nil, nil, nil, nil
+		plan.Findings = []pro_interfaces.ExecutionPreflightFinding{{
+			Severity: pro_interfaces.ExecutionFindingDenial, Code: pro_interfaces.ExecutionReasonPlanLimitExceeded,
+			Message: "The execution plan exceeds the supported preview limits.",
+		}}
+		components[pro_interfaces.ExecutionChangePolicy] = executionPreflightHash("plan_limit_exceeded")
+	}
+	for _, code := range []pro_interfaces.ExecutionPreflightChangeCode{
+		pro_interfaces.ExecutionChangeReference, pro_interfaces.ExecutionChangePlacement,
+		pro_interfaces.ExecutionChangeCapability, pro_interfaces.ExecutionChangePolicy,
+	} {
+		if values := childComponents[code]; len(values) > 0 {
+			sort.Strings(values)
+			components[code] = executionPreflightHash(components[code], values)
+		}
+	}
+	plan.Fingerprint, err = pro_interfaces.FingerprintExecutionPreflight(plan)
+	if err != nil {
+		return pro_interfaces.ExecutionPreflightSnapshot{}, err
+	}
+	if err = plan.Validate(); err != nil {
+		return pro_interfaces.ExecutionPreflightSnapshot{}, err
+	}
+	result := pro_interfaces.ExecutionPreflightSnapshot{Plan: plan, Components: components}
+	if capture != nil {
+		*capture = run
+	}
+	return result, nil
+}
+
+func workflowPreflightInputs(parameters map[string]db.WorkflowParameterSnapshot) []pro_interfaces.ExecutionPreflightInput {
+	names := sortedWorkflowParameterNames(parameters)
+	result := make([]pro_interfaces.ExecutionPreflightInput, 0, len(names))
+	for _, name := range names {
+		parameter := parameters[name]
+		result = append(result, pro_interfaces.ExecutionPreflightInput{
+			Name: name, Type: string(parameter.Type), Source: string(parameter.Source),
+			Present:   len(parameter.Value) > 0 || parameter.SecretReference != nil,
+			Sensitive: parameter.Type == db.WorkflowParameterSecretReference,
+		})
+	}
+	return result
+}
+
+func (s *workflowService) workflowExecutionPermissionDigest(workflow db.WorkflowTemplate, user *db.User) string {
+	if user.Admin {
+		return executionPreflightHash("admin", user.ID, workflow.AccessPolicy.Revision)
+	}
+	state, err := pro_interfaces.ResolveWorkflowAuthorizationState(s.authorizationStore, workflow.ProjectID, user.ID)
+	if err != nil {
+		return executionPreflightHash("denied", user.ID, workflow.AccessPolicy.Revision)
+	}
+	return executionPreflightHash(state.Identity, state.KnownRoles, workflow.AccessPolicy)
+}
+
+func workflowHiddenReferencePreflight(workflow db.WorkflowTemplate, actorID int, fingerprint string, now time.Time) pro_interfaces.ExecutionPreflightSnapshot {
+	plan := pro_interfaces.ExecutionPreflightPlan{
+		ContractVersion: pro_interfaces.ExecutionPreflightContractVersion,
+		Intent:          pro_interfaces.ExecutionPreflightWorkflow, ProjectID: workflow.ProjectID,
+		ActorID: actorID, WorkflowID: workflow.ID,
+		Definition: pro_interfaces.ExecutionPreflightDefinition{
+			Kind: pro_interfaces.ExecutionReferenceWorkflow, ID: workflow.ID,
+			Name: workflow.Name, Revision: fmt.Sprintf("%d", workflow.Revision), Fingerprint: fingerprint,
+		},
+		Inputs: []pro_interfaces.ExecutionPreflightInput{}, References: []pro_interfaces.ExecutionPreflightReference{},
+		Commands: []pro_interfaces.ExecutionPreflightCommand{}, Placements: []pro_interfaces.ExecutionPreflightPlacement{},
+		Findings:  []pro_interfaces.ExecutionPreflightFinding{workflowHiddenReferenceFinding(nil)},
+		ExpiresAt: now.Add(pro_interfaces.MaxExecutionPreflightReviewTTL),
+	}
+	plan.Fingerprint, _ = pro_interfaces.FingerprintExecutionPreflight(plan)
+	return pro_interfaces.ExecutionPreflightSnapshot{Plan: plan, Components: map[pro_interfaces.ExecutionPreflightChangeCode]string{
+		pro_interfaces.ExecutionChangeDefinition: fingerprint,
+		pro_interfaces.ExecutionChangeReference:  executionPreflightHash("hidden_reference"),
+	}}
+}
+
+func workflowHiddenReferenceFinding(nodeID *int) pro_interfaces.ExecutionPreflightFinding {
+	return pro_interfaces.ExecutionPreflightFinding{
+		Severity: pro_interfaces.ExecutionFindingDenial, Code: pro_interfaces.ExecutionReasonHiddenReference,
+		Message: "A required execution reference is unavailable.", NodeID: nodeID,
+	}
+}
+
+func executionPreflightHash(values ...any) string {
+	encoded, _ := json.Marshal(values)
+	digest := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(digest[:])
+}
+
+func intCopy(value int) *int {
+	copy := value
+	return &copy
+}
+
+func hasWorkflowPreflightDenial(plan pro_interfaces.ExecutionPreflightPlan) bool {
+	for _, finding := range plan.Findings {
+		if finding.Severity == pro_interfaces.ExecutionFindingDenial {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *workflowService) StartWorkflow(
@@ -1253,6 +1675,10 @@ func (s *workflowService) enqueueWorkflowNode(
 	}
 	task.WorkflowRunID = &run.ID
 	task.WorkflowNodeID = &node.WorkflowNodeID
+	if node.ExecutionSnapshotJSON != "" {
+		encoded := node.ExecutionSnapshotJSON
+		task.ExecutionSnapshotJSON = &encoded
+	}
 	applyWorkflowNodeOverride(&task, node.OverrideSnapshot)
 	if err := s.applyWorkflowRunParameters(run, definitionNode.OverridePolicy, &task); err != nil {
 		return err

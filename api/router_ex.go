@@ -9,3 +9,9 @@ func configureCrossProjectTemplateAudit(controller pro_interfaces.CrossProjectTe
 		configurable.ConfigureCrossProjectTemplateAudit(audit)
 	}
 }
+
+func configureExecutionPreflightAudit(controller any, audit pro_interfaces.AuditServiceFacade) {
+	if configurable, ok := controller.(pro_interfaces.ExecutionPreflightAuditConfigurer); ok {
+		configurable.ConfigureExecutionPreflightAudit(audit)
+	}
+}

@@ -151,6 +151,8 @@ func Route(
 	auditFacade := auditServices.NewServiceFacade(store, logWriteService, appMetrics, auditWebhookService)
 	configureWorkflowAudit(workflowService, auditFacade)
 	configureCrossProjectTemplateAudit(crossProjectTemplateController, auditFacade)
+	configureExecutionPreflightAudit(taskController, auditFacade)
+	configureExecutionPreflightAudit(workflowController, auditFacade)
 	workflowAudit := EnhancedWorkflowDeniedAuditMiddleware(auditFacade)
 	auditWebhookController := NewAuditWebhookController(auditWebhookService, auditFacade)
 	var notificationGovernanceService pro_interfaces.NotificationGovernanceServiceFacade
@@ -497,7 +499,24 @@ func Route(
 	// Start and Stop tasks
 	projectTaskStart := authenticatedAPI.PathPrefix("/project/{project_id}").Subrouter()
 	projectTaskStart.Use(projects.ProjectMiddleware, taskController.NewTaskMiddleware, taskController.GetTaskPermissionsMiddleware, projects.GetMustCanMiddleware(db.CanRunProjectTasks))
-	projectTaskStart.Path("/tasks").HandlerFunc(taskController.AddTask).Methods("POST")
+	projectTaskStart.Path("/tasks").Handler(
+		capabilityController.RequireExecutionPreflightForReviewedStart(http.HandlerFunc(taskController.AddTask)),
+	).Methods("POST")
+
+	projectTaskPreflight := authenticatedAPI.PathPrefix("/project/{project_id}").Subrouter()
+	projectTaskPreflight.Use(
+		projects.ProjectMiddleware,
+		taskController.NewTaskMiddleware,
+		taskController.GetTaskPermissionsMiddleware,
+		taskController.GetTaskReadPermissionMiddleware,
+		projects.GetMustCanMiddleware(db.CanRunProjectTasks),
+		capabilityController.SnapshotMiddleware,
+		capabilityController.RequireCapability(
+			pro_interfaces.CapabilityExecutionPreflight,
+			pro_interfaces.CapabilityAccessRead,
+		),
+	)
+	projectTaskPreflight.Path("/tasks/preflight").HandlerFunc(taskController.PreviewTask).Methods("POST")
 
 	projectTaskStop := authenticatedAPI.PathPrefix("/project/{project_id}").Subrouter()
 	projectTaskStop.Use(projects.ProjectMiddleware, taskController.GetTaskMiddleware, taskController.GetTaskPermissionsMiddleware, taskController.WorkflowTaskControlAccessMiddleware)
@@ -802,7 +821,17 @@ func Route(
 
 	projectWorkflowRunAPI := authenticatedAPI.PathPrefix("/project/{project_id}/workflows").Subrouter()
 	projectWorkflowRunAPI.Use(projects.ProjectMiddleware, workflowMiddlewareController.WorkflowsMiddleware, workflowAudit)
-	projectWorkflowRunAPI.Handle("/{workflow_id}/run", workflowStart(http.HandlerFunc(workflowController.RunWorkflow))).Methods("POST")
+	projectWorkflowRunAPI.Handle("/{workflow_id}/preflight", workflowStart(
+		capabilityController.SnapshotMiddleware(
+			capabilityController.RequireCapability(
+				pro_interfaces.CapabilityExecutionPreflight,
+				pro_interfaces.CapabilityAccessRead,
+			)(http.HandlerFunc(workflowController.PreviewWorkflow)),
+		),
+	)).Methods("POST")
+	projectWorkflowRunAPI.Handle("/{workflow_id}/run", workflowStart(
+		capabilityController.RequireExecutionPreflightForReviewedStart(http.HandlerFunc(workflowController.RunWorkflow)),
+	)).Methods("POST")
 	projectWorkflowRunAPI.Handle("/{workflow_id}/runs", workflowView(http.HandlerFunc(workflowController.GetWorkflowRuns))).Methods("GET", "HEAD")
 
 	projectWorkflowRunManagement := projectWorkflowRunAPI.PathPrefix("/{workflow_id}/runs").Subrouter()

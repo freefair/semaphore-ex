@@ -281,3 +281,114 @@ func TestCapabilityValidationErrorDoesNotEchoInput(t *testing.T) {
 	assert.JSONEq(t, `{"error":"CAPABILITY_INPUT_INVALID"}`, recorder.Body.String())
 	securityfixtures.AssertTripwiresAbsent(t, recorder.Body.String())
 }
+
+func TestExecutionPreflightCapabilityMiddlewareFailsClosedAndHidesProviderOutage(t *testing.T) {
+	deniedFacade := &capabilityFacadeStub{decision: pro_interfaces.NewCapabilityDecision(
+		pro_interfaces.CapabilityExecutionPreflight,
+		pro_interfaces.CapabilityStateUnavailable,
+		pro_interfaces.CapabilityReasonProviderUnavailable,
+		nil,
+		nil,
+	)}
+	deniedController := NewCapabilityController(deniedFacade, nil)
+	deniedHandler := deniedController.SnapshotMiddleware(
+		deniedController.RequireCapability(pro_interfaces.CapabilityExecutionPreflight, pro_interfaces.CapabilityAccessExecute)(
+			http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("denied request reached handler") }),
+		),
+	)
+	request := httptest.NewRequest(http.MethodPost, "/", nil)
+	request = helpers.SetContextValue(request, "user", &db.User{ID: 7})
+	response := httptest.NewRecorder()
+	deniedHandler.ServeHTTP(response, request)
+	assert.Equal(t, http.StatusNotFound, response.Code)
+	assert.JSONEq(t, `{"error":"CAPABILITY_DENIED","capability":"execution_preflight","state":"unavailable","reason":"provider_unavailable","required_access":"execute"}`, response.Body.String())
+
+	outageFacade := &capabilityFacadeStub{resolveError: errors.New("private provider failure")}
+	outageController := NewCapabilityController(outageFacade, nil)
+	outageHandler := outageController.SnapshotMiddleware(
+		outageController.RequireCapability(pro_interfaces.CapabilityExecutionPreflight, pro_interfaces.CapabilityAccessExecute)(
+			http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("outage request reached handler") }),
+		),
+	)
+	response = httptest.NewRecorder()
+	outageHandler.ServeHTTP(response, request)
+	assert.Equal(t, http.StatusServiceUnavailable, response.Code)
+	assert.JSONEq(t, `{"error":"CAPABILITY_PROVIDER_ERROR"}`, response.Body.String())
+}
+
+func TestExecutionPreflightCapabilityMiddlewareAllowsExecute(t *testing.T) {
+	facade := &capabilityFacadeStub{decision: pro_interfaces.NewCapabilityDecision(
+		pro_interfaces.CapabilityExecutionPreflight,
+		pro_interfaces.CapabilityStateActive,
+		pro_interfaces.CapabilityReasonActive,
+		[]pro_interfaces.CapabilityAccess{pro_interfaces.CapabilityAccessRead, pro_interfaces.CapabilityAccessExecute},
+		nil,
+	)}
+	controller := NewCapabilityController(facade, nil)
+	handler := controller.SnapshotMiddleware(
+		controller.RequireCapability(pro_interfaces.CapabilityExecutionPreflight, pro_interfaces.CapabilityAccessExecute)(
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+		),
+	)
+	request := httptest.NewRequest(http.MethodPost, "/", nil)
+	request = helpers.SetContextValue(request, "user", &db.User{ID: 7})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	assert.Equal(t, http.StatusNoContent, response.Code)
+	assert.Equal(t, 1, facade.resolutionCount)
+}
+
+func TestReviewedStartCapabilityGatePreservesLegacyAndFailsClosedForPartialOrDeniedReview(t *testing.T) {
+	activeFacade := &capabilityFacadeStub{decision: pro_interfaces.NewCapabilityDecision(
+		pro_interfaces.CapabilityExecutionPreflight,
+		pro_interfaces.CapabilityStateActive,
+		pro_interfaces.CapabilityReasonActive,
+		[]pro_interfaces.CapabilityAccess{pro_interfaces.CapabilityAccessExecute}, nil,
+	)}
+	controller := NewCapabilityController(activeFacade, nil)
+	called := 0
+	handler := controller.RequireExecutionPreflightForReviewedStart(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	newRequest := func() *http.Request {
+		request := httptest.NewRequest(http.MethodPost, "/", nil)
+		return helpers.SetContextValue(request, "user", &db.User{ID: 7})
+	}
+
+	legacy := httptest.NewRecorder()
+	handler.ServeHTTP(legacy, newRequest())
+	assert.Equal(t, http.StatusNoContent, legacy.Code)
+	assert.Equal(t, 1, called)
+	assert.Zero(t, activeFacade.resolutionCount)
+
+	partialRequest := newRequest()
+	partialRequest.Header.Set("X-Semaphore-Preflight-Fingerprint", "sha256:test")
+	partial := httptest.NewRecorder()
+	handler.ServeHTTP(partial, partialRequest)
+	assert.Equal(t, http.StatusConflict, partial.Code)
+	assert.JSONEq(t, `{"error":"EXECUTION_PREFLIGHT_INVALID"}`, partial.Body.String())
+	assert.Equal(t, 1, called)
+
+	reviewedRequest := newRequest()
+	reviewedRequest.Header.Set("X-Semaphore-Preflight-Fingerprint", "sha256:test")
+	reviewedRequest.Header.Set("X-Semaphore-Preflight-Token", "review")
+	reviewed := httptest.NewRecorder()
+	handler.ServeHTTP(reviewed, reviewedRequest)
+	assert.Equal(t, http.StatusNoContent, reviewed.Code)
+	assert.Equal(t, 2, called)
+	assert.Equal(t, 1, activeFacade.resolutionCount)
+
+	deniedFacade := &capabilityFacadeStub{decision: pro_interfaces.NewCapabilityDecision(
+		pro_interfaces.CapabilityExecutionPreflight,
+		pro_interfaces.CapabilityStateUnavailable,
+		pro_interfaces.CapabilityReasonProviderUnavailable,
+		nil, nil,
+	)}
+	deniedHandler := NewCapabilityController(deniedFacade, nil).RequireExecutionPreflightForReviewedStart(http.HandlerFunc(
+		func(http.ResponseWriter, *http.Request) { t.Fatal("unavailable reviewed start reached handler") },
+	))
+	denied := httptest.NewRecorder()
+	deniedHandler.ServeHTTP(denied, reviewedRequest)
+	assert.Equal(t, http.StatusNotFound, denied.Code)
+}

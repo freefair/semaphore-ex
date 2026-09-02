@@ -7,6 +7,7 @@ import (
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
@@ -23,7 +24,10 @@ type TaskController struct {
 	store           db.Store
 	ansibleTaskRepo db.AnsibleTaskRepository
 	workflowStore   db.WorkflowManager
+	audit           pro_interfaces.AuditServiceFacade
 }
+
+var _ pro_interfaces.ExecutionPreflightAuditConfigurer = (*TaskController)(nil)
 
 func NewTaskController(store db.Store, ansibleTaskRepo db.AnsibleTaskRepository, workflowStores ...db.WorkflowManager) *TaskController {
 	var workflowStore db.WorkflowManager
@@ -53,13 +57,19 @@ func (c *TaskController) AddTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newTask, err := taskPool(r).AddTask(
+	newTask, planned, err := taskPool(r).AddTaskWithExecutionPreflightPlan(
 		taskObj,
-		&user.ID,
-		user.Username,
+		user,
 		project.ID,
 		tpl.App.NeedTaskAlias(),
+		pro_interfaces.ExecutionPreflightReview{
+			Fingerprint: r.Header.Get(taskPreflightFingerprintHeader),
+			ReviewToken: r.Header.Get(taskPreflightTokenHeader),
+		},
 	)
+	if c.writeTaskExecutionPreflightError(w, r, taskObj, planned, err) {
+		return
+	}
 
 	if errors.Is(err, common_errors.ErrInvalidSubscription) {
 		helpers.WriteErrorStatus(w, "No active subscription available.", http.StatusForbidden)
@@ -87,6 +97,11 @@ func (c *TaskController) AddTask(w http.ResponseWriter, r *http.Request) {
 		}).WithError(err).Error("Cannot add task")
 		w.WriteHeader(http.StatusInternalServerError)
 		return
+	}
+	if r.Header.Get(taskPreflightFingerprintHeader) != "" {
+		c.recordExecutionPreflightAudit(r, pro_interfaces.AuditActionExecutionPreflightStart,
+			pro_interfaces.AuditOutcomeAllowed, pro_interfaces.AuditReasonExecutionPreflightStarted,
+			pro_interfaces.ExecutionPreflightTask, taskObj.TemplateID, &planned, nil)
 	}
 
 	helpers.WriteJSON(w, http.StatusCreated, newTask)
