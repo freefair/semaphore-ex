@@ -8,6 +8,7 @@ import (
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 	"net/http"
+	"strconv"
 )
 
 // ConfigureCrossProjectDeletionGuard attaches the optional Enhanced grant
@@ -49,6 +50,60 @@ func validateTemplateExecutorImage(
 		return false
 	}
 	return true
+}
+
+func applyTemplateSearchQuery(r *http.Request, filter *db.TemplateFilter) (db.RetrieveQueryParams, error) {
+	const maxTemplatePageSize = 200
+
+	search, present := r.URL.Query()["search"]
+	if present {
+		if len(search) != 1 {
+			return db.RetrieveQueryParams{}, errors.New("template search must be specified once")
+		}
+		filter.Search = search[0]
+	}
+	if err := filter.ValidateSearch(); err != nil {
+		return db.RetrieveQueryParams{}, err
+	}
+
+	params := helpers.QueryParams(r.URL)
+	countPresent := false
+	offsetPresent := false
+	for _, field := range []struct {
+		key         string
+		destination *int
+	}{
+		{key: "count", destination: &params.Count},
+		{key: "offset", destination: &params.Offset},
+	} {
+		raw, present := r.URL.Query()[field.key]
+		if !present {
+			continue
+		}
+		if field.key == "count" {
+			countPresent = true
+		} else {
+			offsetPresent = true
+		}
+		if len(raw) != 1 || raw[0] == "" {
+			return db.RetrieveQueryParams{}, errors.New("template " + field.key + " must be an integer")
+		}
+		value, err := strconv.Atoi(raw[0])
+		if err != nil {
+			return db.RetrieveQueryParams{}, errors.New("template " + field.key + " must be an integer")
+		}
+		if field.key == "count" && (value <= 0 || value > maxTemplatePageSize) {
+			return db.RetrieveQueryParams{}, errors.New("template count must be between 1 and 200")
+		}
+		*field.destination = value
+	}
+	if offsetPresent && !countPresent {
+		return db.RetrieveQueryParams{}, errors.New("template offset requires count")
+	}
+	if _, err := params.Validate(db.TemplateProps); err != nil {
+		return db.RetrieveQueryParams{}, err
+	}
+	return params, nil
 }
 
 func (c *TemplateController) AddTemplate(w http.ResponseWriter, r *http.Request) {

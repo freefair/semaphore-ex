@@ -230,13 +230,12 @@ func (d *SqlDb) getTemplates(
 	if err != nil {
 		return
 	}
+	if err = filter.ValidateSearch(); err != nil {
+		return
+	}
+	normalizedSearch := db.NormalizeTemplateSearch(filter.Search)
 
 	templates = make([]db.TemplateWithPerms, 0)
-
-	type templateWithLastTask struct {
-		db.TemplateWithPerms
-		LastTaskID *int `db:"last_task_id"`
-	}
 
 	var view db.View
 
@@ -273,6 +272,17 @@ func (d *SqlDb) getTemplates(
 		"pt.jwt_params",
 		"pt.executor_image",
 		"(SELECT `id` FROM `task` WHERE template_id = pt.id ORDER BY `id` DESC LIMIT 1) last_task_id",
+	}
+
+	// runner_tags was added after the original template schema. Keep reads from
+	// pre-policy database versions compatible while including every current tag
+	// in the literal search surface.
+	hasRunnerTagPolicy, err := d.IsMigrationApplied(db.Migration{Version: "2.20.6"})
+	if err != nil {
+		return
+	}
+	if hasRunnerTagPolicy {
+		fields = append(fields, "pt.runner_tags")
 	}
 
 	if userID != nil {
@@ -319,18 +329,18 @@ func (d *SqlDb) getTemplates(
 	switch sortBy {
 	case "name", "playbook":
 		q = q.Where("pt.project_id=?", projectID).
-			OrderBy("pt." + sortBy + " " + order)
+			OrderBy("pt."+sortBy+" "+order, "pt.id ASC")
 	case "inventory":
 		q = q.LeftJoin("project__inventory pi ON (pt.inventory_id = pi.id)").
 			Where("pt.project_id=?", projectID).
-			OrderBy("pi.name " + order)
+			OrderBy("pi.name "+order, "pt.id ASC")
 	case "repository":
 		q = q.LeftJoin("project__repository pr ON (pt.repository_id = pr.id)").
 			Where("pt.project_id=?", projectID).
-			OrderBy("pr.name " + order)
+			OrderBy("pr.name "+order, "pt.id ASC")
 	default:
 		q = q.Where("pt.project_id=?", projectID).
-			OrderBy("pt.name " + order)
+			OrderBy("pt.name "+order, "pt.id ASC")
 	}
 
 	query, args, err := q.ToSql()
@@ -347,37 +357,81 @@ func (d *SqlDb) getTemplates(
 		return
 	}
 
-	taskIDs := make([]int, 0)
-
+	// Permission evaluation remains the sole authority for visibility. Search and
+	// pagination happen only after that evaluator so a hidden template cannot
+	// influence matches, offsets, or response lengths.
+	visible := make([]templateWithLastTask, 0, len(tpls))
 	for _, tpl := range tpls {
+		template := tpl.TemplateWithPerms
+		if userID != nil {
+			var permissionContext db.TemplatePermissionContext
+			permissionContext, err = d.GetTemplatePermissionContext(projectID, template.ID, *userID)
+			if err != nil {
+				return
+			}
+			if !permissionContext.EffectivePermissions.Can(db.CanReadTemplate) {
+				continue
+			}
+			legacyPermissions := db.TemplatePermissionsToProject(permissionContext.EffectivePermissions)
+			template.Permissions = &legacyPermissions
+		}
+		tpl.TemplateWithPerms = template
+		visible = append(visible, tpl)
+	}
+
+	if normalizedSearch != "" && templateSearchCanUseSQLCandidateFilter(normalizedSearch) {
+		visible, err = d.filterVisibleTemplateSearchCandidates(
+			q, visible, normalizedSearch, hasRunnerTagPolicy, userID != nil,
+		)
+		if err != nil {
+			return
+		}
+	}
+
+	// The SQL candidate filter is only an optimization for ASCII terms. Go
+	// matching remains authoritative for Unicode case folding and control
+	// characters, whose LIKE behavior differs across supported SQL engines.
+	matched := visible[:0]
+	for _, tpl := range visible {
+		if tpl.Template.MatchesSearch(normalizedSearch) {
+			matched = append(matched, tpl)
+		}
+	}
+	visible = matched
+
+	if pp.Offset >= len(visible) {
+		visible = visible[:0]
+	} else if pp.Offset > 0 {
+		visible = visible[pp.Offset:]
+	}
+	if pp.Count > 0 && pp.Count < len(visible) {
+		visible = visible[:pp.Count]
+	}
+
+	taskIDs := make([]int, 0, len(visible))
+	for _, tpl := range visible {
 		if tpl.LastTaskID != nil {
 			taskIDs = append(taskIDs, *tpl.LastTaskID)
 		}
 	}
-
 	var tasks []db.TaskWithTpl
-	err = d.getTasks(projectID, nil, nil, taskIDs, db.RetrieveQueryParams{}, &tasks)
-
-	if err != nil {
-		return
+	if len(taskIDs) > 0 {
+		err = d.getTasks(projectID, nil, nil, taskIDs, db.RetrieveQueryParams{}, &tasks)
+		if err != nil {
+			return
+		}
 	}
 
-	for _, tpl := range tpls {
+	for _, tpl := range visible {
 		template := tpl.TemplateWithPerms
-
 		if tpl.LastTaskID != nil {
 			for _, tsk := range tasks {
 				if tsk.ID == *tpl.LastTaskID {
-					// err = tsk.Fill(d)
-					// if err != nil {
-					// 	return
-					// }
 					template.LastTask = &tsk
 					break
 				}
 			}
 		}
-
 		if tpl.SurveyVarsJSON != nil {
 			if err2 := json.Unmarshal([]byte(*tpl.SurveyVarsJSON), &template.SurveyVars); err2 != nil {
 				log.WithFields(log.Fields{
@@ -388,39 +442,19 @@ func (d *SqlDb) getTemplates(
 				}).Error("failed to unmarshal template survey vars")
 			}
 		}
-
 		if loadVaults {
 			template.Vaults, err = d.GetTemplateVaults(projectID, template.ID)
 			if err != nil {
 				return
 			}
 		}
-
 		template.EnvironmentIDs, err = d.GetTemplateEnvironments(projectID, template.ID)
 		if err != nil {
 			return
 		}
-
-		// For backward compatibility
 		if len(template.EnvironmentIDs) > 0 {
 			template.EnvironmentID = template.EnvironmentIDs[0]
 		}
-
-		if userID != nil {
-			var permissionContext db.TemplatePermissionContext
-			permissionContext, err = d.GetTemplatePermissionContext(projectID, template.ID, *userID)
-			if err != nil {
-				return
-			}
-			if !permissionContext.EffectivePermissions.Can(db.CanReadTemplate) {
-				continue
-			}
-			legacyPermissions := db.TemplatePermissionsToProject(
-				permissionContext.EffectivePermissions,
-			)
-			template.Permissions = &legacyPermissions
-		}
-
 		templates = append(templates, template)
 	}
 

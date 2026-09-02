@@ -2,8 +2,100 @@ package sql
 
 import (
 	"errors"
+	sq "github.com/Masterminds/squirrel"
 	"github.com/semaphoreui/semaphore/db"
+	"strings"
 )
+
+type templateWithLastTask struct {
+	db.TemplateWithPerms
+	LastTaskID *int `db:"last_task_id"`
+}
+
+const templateSearchVisibleIDChunkSize = 500
+
+// filterVisibleTemplateSearchCandidates narrows already-authorized templates
+// with a portable SQL LIKE query. The caller has applied the canonical
+// per-template evaluator before passing IDs here; this function must never
+// become a second permission implementation.
+func (d *SqlDb) filterVisibleTemplateSearchCandidates(
+	baseQuery sq.SelectBuilder,
+	visible []templateWithLastTask,
+	normalizedSearch string,
+	hasRunnerTagPolicy bool,
+	withPermissions bool,
+) ([]templateWithLastTask, error) {
+	if len(visible) == 0 {
+		return visible, nil
+	}
+
+	permissionsByID := make(map[int]*db.ProjectUserPermission, len(visible))
+	visibleIDs := make([]int, 0, len(visible))
+	for _, template := range visible {
+		visibleIDs = append(visibleIDs, template.ID)
+		permissionsByID[template.ID] = template.Permissions
+	}
+
+	pattern := templateSearchSQLPattern(normalizedSearch)
+	candidates := make([]templateWithLastTask, 0, len(visible))
+	for start := 0; start < len(visibleIDs); start += templateSearchVisibleIDChunkSize {
+		end := start + templateSearchVisibleIDChunkSize
+		if end > len(visibleIDs) {
+			end = len(visibleIDs)
+		}
+		query, args, err := baseQuery.
+			Where(sq.Eq{"pt.id": visibleIDs[start:end]}).
+			Where(templateSearchSQLCondition(pattern, hasRunnerTagPolicy)).
+			ToSql()
+		if err != nil {
+			return nil, err
+		}
+
+		var chunk []templateWithLastTask
+		if _, err = d.selectAll(&chunk, query, args...); err != nil {
+			return nil, err
+		}
+		if withPermissions {
+			for i := range chunk {
+				chunk[i].Permissions = permissionsByID[chunk[i].ID]
+			}
+		}
+		candidates = append(candidates, chunk...)
+	}
+
+	return candidates, nil
+}
+
+func templateSearchCanUseSQLCandidateFilter(normalizedSearch string) bool {
+	for _, char := range normalizedSearch {
+		if char < 0x20 || char == 0x7f || char > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+func templateSearchSQLPattern(normalizedSearch string) string {
+	escaped := strings.NewReplacer(
+		"!", "!!",
+		"%", "!%",
+		"_", "!_",
+	).Replace(normalizedSearch)
+	return "%" + escaped + "%"
+}
+
+func templateSearchSQLCondition(pattern string, includeRunnerTags bool) sq.Sqlizer {
+	conditions := sq.Or{
+		sq.Expr("LOWER(pt.name) LIKE ? ESCAPE '!'", pattern),
+		sq.Expr("LOWER(pt.description) LIKE ? ESCAPE '!'", pattern),
+		sq.Expr("LOWER(pt.playbook) LIKE ? ESCAPE '!'", pattern),
+		sq.Expr("LOWER(pt.runner_tag) LIKE ? ESCAPE '!'", pattern),
+	}
+	if includeRunnerTags {
+		conditions = append(conditions, sq.Expr("LOWER(pt.runner_tags) LIKE ? ESCAPE '!'", pattern))
+	}
+	return conditions
+}
 
 func (d *SqlDb) GetTemplatePermissionContext(
 	projectID int,

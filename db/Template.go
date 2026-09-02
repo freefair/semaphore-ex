@@ -257,6 +257,9 @@ type TemplateFilter struct {
 	BuildTemplateID *int
 	AutorunOnly     bool
 	App             *TemplateApp
+	// Search is a bounded, literal term evaluated only after the normal
+	// per-template permission evaluator has established visibility.
+	Search string
 }
 
 // Template is a user defined model that is used to run a task

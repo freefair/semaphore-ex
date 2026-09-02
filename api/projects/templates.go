@@ -87,7 +87,12 @@ func GetTemplates(w http.ResponseWriter, r *http.Request) {
 		app := db.TemplateApp(r.URL.Query().Get("app"))
 		filter.App = &app
 	}
-	templates, err := helpers.Store(r).GetTemplatesWithPermissions(project.ID, user.ID, filter, helpers.QueryParams(r.URL))
+	params, err := applyTemplateSearchQuery(r, &filter)
+	if err != nil {
+		helpers.WriteErrorStatus(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	templates, err := helpers.Store(r).GetTemplatesWithPermissions(project.ID, user.ID, filter, params)
 
 	if err != nil {
 		helpers.WriteError(w, err)
