@@ -3934,6 +3934,28 @@ paths:
           type: string
           description: ordering manner
           enum: [asc, desc]
+        - name: search
+          in: query
+          required: false
+          type: string
+          maxLength: 256
+          description: >-
+            Case-insensitive literal match over the visible template name,
+            description, playbook, and runner tags. SQL wildcard characters
+            have no special meaning.
+        - name: count
+          in: query
+          required: false
+          type: integer
+          minimum: 1
+          maximum: 200
+          description: Optional page size. Omit to retain the unpaged list contract.
+        - name: offset
+          in: query
+          required: false
+          type: integer
+          minimum: 0
+          description: Zero-based visible-result offset; requires count.
       responses:
         200:
           description: template
@@ -3948,6 +3970,8 @@ paths:
                     $ref: "#/definitions/TemplateSurveyVar"
                 last_task:
                   $ref: "#/definitions/Task"
+        400:
+          description: Invalid search or pagination query
     post:
       tags:
         - template
@@ -4328,6 +4352,46 @@ paths:
       responses:
         204:
           description: view removed
+
+  /project/{project_id}/views/{view_id}/templates:
+    parameters:
+      - $ref: "#/parameters/project_id"
+      - $ref: "#/parameters/view_id"
+    get:
+      tags:
+        - template
+      summary: Get visible templates in a view
+      parameters:
+        - name: search
+          in: query
+          required: false
+          type: string
+          maxLength: 256
+          description: >-
+            Case-insensitive literal match over the visible template name,
+            description, playbook, and runner tags. SQL wildcard characters
+            have no special meaning.
+        - name: count
+          in: query
+          required: false
+          type: integer
+          minimum: 1
+          maximum: 200
+        - name: offset
+          in: query
+          required: false
+          type: integer
+          minimum: 0
+          description: Requires count.
+      responses:
+        200:
+          description: Visible matching templates in deterministic order
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/Template"
+        400:
+          description: Invalid search or pagination query
 
 
   # tasks
