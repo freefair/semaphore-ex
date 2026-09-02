@@ -1,6 +1,7 @@
 package schedules
 
 import (
+	"errors"
 	"github.com/robfig/cron/v3"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db_lib"
@@ -170,6 +171,10 @@ func (r ScheduleRunner) Run() {
 			return
 		}
 	}
+	if r.pool.taskPool.DeploymentWindowAdmissionEnabled() && lease == nil {
+		log.WithField("schedule_id", schedule.ID).Error("deployment-window schedule admission requires durable occurrence coordination")
+		return
+	}
 
 	var task db.Task
 	if schedule.TaskParams != nil {
@@ -202,6 +207,18 @@ func (r ScheduleRunner) Run() {
 	)
 
 	if err != nil {
+		var blocked *pro_interfaces.DeploymentWindowBlockedError
+		if errors.As(err, &blocked) {
+			if lease == nil || blocked.DecisionID <= 0 {
+				log.WithError(err).WithField("schedule_id", schedule.ID).Error("blocked schedule admission has no durable occurrence decision")
+				return
+			}
+			terminal, blockErr := lease.Block(blocked.DecisionID)
+			if blockErr != nil || !terminal {
+				log.WithError(blockErr).WithFields(log.Fields{"schedule_id": schedule.ID, "decision_id": blocked.DecisionID}).Error("failed to persist blocked schedule occurrence")
+			}
+			return
+		}
 		if lease != nil {
 			_, _ = lease.Release()
 		}

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/semaphoreui/semaphore/db"
-	"strconv"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"time"
 )
 
@@ -25,6 +25,7 @@ type ScheduleExecutionLease interface {
 	OccurrenceKey() string
 	IsCurrent() (bool, error)
 	Complete(taskID int) (bool, error)
+	Block(decisionID int) (bool, error)
 	Release() (bool, error)
 }
 
@@ -33,9 +34,15 @@ type ScheduleExecutionLease interface {
 // intentionally insufficient by itself because two schedules in one project
 // may have identical definitions and therefore identical revisions.
 func deploymentWindowScheduleDecisionKey(occurrence ScheduleOccurrence) string {
-	material := strconv.Itoa(occurrence.ScheduleID) + "|" + occurrence.Revision + "|" + occurrence.IntendedAt.UTC().Format(time.RFC3339Nano)
-	digest := sha256.Sum256([]byte(material))
-	return "schedule-" + hex.EncodeToString(digest[:])
+	durable, err := pro_interfaces.NewScheduleOccurrence(occurrence.ScheduleID, occurrence.Revision, occurrence.IntendedAt)
+	if err != nil {
+		return ""
+	}
+	key, err := pro_interfaces.DeploymentWindowScheduleDecisionKey(durable)
+	if err != nil {
+		return ""
+	}
+	return key
 }
 
 // NewScheduleOccurrence derives the relevant revision and normalizes the

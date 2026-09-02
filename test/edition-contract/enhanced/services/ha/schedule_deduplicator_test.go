@@ -98,6 +98,10 @@ func (*scheduleLeaseRepositoryFake) CompleteScheduleOccurrence(pro_interfaces.Sc
 	return true, nil
 }
 
+func (*scheduleLeaseRepositoryFake) BlockScheduleOccurrence(pro_interfaces.ScheduleOccurrenceLease, int) (bool, error) {
+	return true, nil
+}
+
 func (*scheduleLeaseRepositoryFake) ReleaseScheduleOccurrenceLease(pro_interfaces.ScheduleOccurrenceLease) (bool, error) {
 	return true, nil
 }

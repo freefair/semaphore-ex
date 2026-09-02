@@ -53,20 +53,26 @@ func NewWorkflowRunLocker(store db.Store) pro_interfaces.WorkflowRunLocker {
 	)
 }
 
-// NewScheduleDeduplicator binds the core scheduler only to durable SQL lease
-// operations. A missing HA configuration remains unavailable; NewNodeRegistry
-// turns the same configuration error into a startup failure before scheduling.
+// NewScheduleDeduplicator binds every Enhanced scheduler to durable SQL
+// occurrence authority. HA supplies its configured boot identity; single-node
+// mode derives a process-lifetime identity so a restart cannot revive a
+// terminal blocked occurrence. Community still receives nil from its own
+// replaceable implementation.
 func NewScheduleDeduplicator(store db.Store) schedules.ScheduleDeduplicator {
-	if !util.HAEnabled() || util.Config.HA == nil || util.Config.HA.NodeID == "" {
-		return nil
-	}
 	connectionStore, ok := store.(interface {
 		GetConnection() *coresql.SqlDbConnection
 	})
 	if !ok {
 		return nil
 	}
-	identity, err := clusterIdentity(util.Config.HA.NodeID)
+	nodeID := "single-node"
+	if util.HAEnabled() {
+		if util.Config.HA == nil || util.Config.HA.NodeID == "" {
+			return nil
+		}
+		nodeID = util.Config.HA.NodeID
+	}
+	identity, err := clusterIdentity(nodeID)
 	if err != nil {
 		return nil
 	}

@@ -136,7 +136,7 @@ func (s *ScheduleCoordinatorStore) CompleteScheduleOccurrence(lease pro_interfac
 		return false, errors.New("schedule occurrence task id is required")
 	}
 	result, err := s.connection.Exec(
-		"update cluster__schedule_occurrence set task_id=?, completed_at=CURRENT_TIMESTAMP, updated=CURRENT_TIMESTAMP where occurrence_key=? and owner_boot_id=? and fencing_token=? and task_id is null and completed_at is null and lease_expires_at>CURRENT_TIMESTAMP and exists(select 1 from task where id=? and schedule_occurrence_key=?)",
+		"update cluster__schedule_occurrence set task_id=?, terminal_outcome='completed', completed_at=CURRENT_TIMESTAMP, updated=CURRENT_TIMESTAMP where occurrence_key=? and owner_boot_id=? and fencing_token=? and task_id is null and completed_at is null and lease_expires_at>CURRENT_TIMESTAMP and exists(select 1 from task where id=? and schedule_occurrence_key=?)",
 		taskID, lease.Occurrence.Key, lease.OwnerBootID, lease.FencingToken, taskID, lease.Occurrence.Key,
 	)
 	if err != nil {
@@ -144,6 +144,59 @@ func (s *ScheduleCoordinatorStore) CompleteScheduleOccurrence(lease pro_interfac
 	}
 	updated, err := result.RowsAffected()
 	return updated == 1, err
+}
+
+// BlockScheduleOccurrence terminalizes one fenced occurrence without creating
+// a task. The decision is re-derived from the lease's durable identity inside
+// the CAS predicate, so neither a stale owner nor another occurrence of the
+// same schedule can consume it.
+func (s *ScheduleCoordinatorStore) BlockScheduleOccurrence(lease pro_interfaces.ScheduleOccurrenceLease, decisionID int) (bool, error) {
+	if s.connection == nil {
+		return false, errors.New("schedule coordinator database connection is required")
+	}
+	if decisionID <= 0 {
+		return false, errors.New("blocked schedule decision is required")
+	}
+	decisionKey, err := pro_interfaces.DeploymentWindowScheduleDecisionKey(lease.Occurrence)
+	if err != nil {
+		return false, err
+	}
+	result, err := s.connection.Exec(
+		`update cluster__schedule_occurrence
+		 set terminal_outcome='blocked', deployment_window_decision_id=?,
+		     next_eligible_at=(select next_eligible_at from project__deployment_window_decision where id=?),
+		     next_eligible_known=(select next_eligible_known from project__deployment_window_decision where id=?),
+		     blocked_at=CURRENT_TIMESTAMP, completed_at=CURRENT_TIMESTAMP, updated=CURRENT_TIMESTAMP
+		 where occurrence_key=? and owner_boot_id=? and fencing_token=?
+		   and task_id is null and completed_at is null and lease_expires_at>CURRENT_TIMESTAMP
+		   and exists (
+		     select 1 from project__deployment_window_decision d
+		     join project__schedule schedule on schedule.id=?
+		     where d.id=? and d.project_id=schedule.project_id and d.schedule_id=schedule.id
+		       and d.source='schedule' and d.origin='schedule' and d.decision_key=?
+		       and d.state='blocked' and d.task_id is null and d.workflow_run_id is null
+		   )`,
+		decisionID, decisionID, decisionID, lease.Occurrence.Key, lease.OwnerBootID, lease.FencingToken,
+		lease.Occurrence.ScheduleID, decisionID, decisionKey,
+	)
+	if err != nil {
+		return false, err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil || updated == 1 {
+		return updated == 1, err
+	}
+	var record scheduleOccurrenceRecord
+	lookupErr := s.connection.SelectOne(&record,
+		"select * from cluster__schedule_occurrence where occurrence_key=? and owner_boot_id=? and fencing_token=?", lease.Occurrence.Key, lease.OwnerBootID, lease.FencingToken,
+	)
+	if lookupErr == nil && record.TerminalOutcome == "blocked" && record.DeploymentWindowDecisionID != nil && *record.DeploymentWindowDecisionID == decisionID {
+		return true, nil
+	}
+	if lookupErr != nil && !errors.Is(lookupErr, coredb.ErrNotFound) {
+		return false, lookupErr
+	}
+	return false, nil
 }
 
 func (s *ScheduleCoordinatorStore) ReleaseScheduleOccurrenceLease(lease pro_interfaces.ScheduleOccurrenceLease) (bool, error) {
@@ -217,17 +270,22 @@ func (s *ScheduleCoordinatorStore) taskForOccurrence(key string) (int, bool, err
 }
 
 type scheduleOccurrenceRecord struct {
-	OccurrenceKey    string     `db:"occurrence_key"`
-	ScheduleID       int        `db:"schedule_id"`
-	ScheduleRevision string     `db:"schedule_revision"`
-	IntendedAt       time.Time  `db:"intended_at"`
-	OwnerBootID      string     `db:"owner_boot_id"`
-	FencingToken     int64      `db:"fencing_token"`
-	LeaseExpiresAt   time.Time  `db:"lease_expires_at"`
-	TaskID           *int       `db:"task_id"`
-	CompletedAt      *time.Time `db:"completed_at"`
-	Created          time.Time  `db:"created"`
-	Updated          time.Time  `db:"updated"`
+	OccurrenceKey              string     `db:"occurrence_key"`
+	ScheduleID                 int        `db:"schedule_id"`
+	ScheduleRevision           string     `db:"schedule_revision"`
+	IntendedAt                 time.Time  `db:"intended_at"`
+	OwnerBootID                string     `db:"owner_boot_id"`
+	FencingToken               int64      `db:"fencing_token"`
+	LeaseExpiresAt             time.Time  `db:"lease_expires_at"`
+	TaskID                     *int       `db:"task_id"`
+	CompletedAt                *time.Time `db:"completed_at"`
+	TerminalOutcome            string     `db:"terminal_outcome"`
+	DeploymentWindowDecisionID *int       `db:"deployment_window_decision_id"`
+	NextEligibleAt             *time.Time `db:"next_eligible_at"`
+	NextEligibleKnown          bool       `db:"next_eligible_known"`
+	BlockedAt                  *time.Time `db:"blocked_at"`
+	Created                    time.Time  `db:"created"`
+	Updated                    time.Time  `db:"updated"`
 }
 
 func leaseFromRecord(record scheduleOccurrenceRecord) pro_interfaces.ScheduleOccurrenceLease {

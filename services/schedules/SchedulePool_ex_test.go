@@ -15,6 +15,8 @@ func (mockScheduleLease) IsCurrent() (bool, error) { return true, nil }
 
 func (mockScheduleLease) Complete(int) (bool, error) { return true, nil }
 
+func (mockScheduleLease) Block(int) (bool, error) { return true, nil }
+
 func (mockScheduleLease) Release() (bool, error) { return true, nil }
 
 func (m *mockDeduplicator) ClaimScheduleOccurrence(occurrence ScheduleOccurrence) (ScheduleExecutionLease, bool, error) {

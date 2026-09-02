@@ -679,7 +679,7 @@ func (s *workflowService) claimWorkflowStartAdmission(run *db.WorkflowRun, workf
 		return err
 	}
 	if claim.Decision.State == string(pro_interfaces.DeploymentWindowDecisionBlocked) {
-		return &pro_interfaces.DeploymentWindowBlockedError{NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown}
+		return &pro_interfaces.DeploymentWindowBlockedError{DecisionID: claim.Decision.ID, NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown}
 	}
 	if (claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionAllowed) && claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionOverridden)) || claim.Decision.ID <= 0 {
 		return errors.New("deployment window workflow admission did not allow execution")
@@ -1767,6 +1767,10 @@ func (s *workflowService) enqueueWorkflowNode(
 	var enqueueErr error
 	if s.deploymentWindowAdmission != nil {
 		if admissionErr := s.claimWorkflowNodeAdmission(&task, run, node, actorID); admissionErr != nil {
+			var blocked *pro_interfaces.DeploymentWindowBlockedError
+			if errors.As(admissionErr, &blocked) {
+				return s.blockDeploymentWindowWorkflowNode(run, node, blocked, lease)
+			}
 			return admissionErr
 		}
 	}
@@ -1846,6 +1850,28 @@ func (s *workflowService) enqueueWorkflowNode(
 	return nil
 }
 
+func (s *workflowService) blockDeploymentWindowWorkflowNode(run db.WorkflowRun, node db.WorkflowRunNode, blocked *pro_interfaces.DeploymentWindowBlockedError, lease *pro_interfaces.WorkflowReconciliationLease) error {
+	if blocked == nil || blocked.DecisionID <= 0 {
+		return errors.New("workflow deployment-window block is invalid")
+	}
+	blocker, ok := s.repository.(pro_interfaces.WorkflowDeploymentWindowNodeBlocker)
+	if !ok {
+		return errors.New("workflow deployment-window block persistence is unavailable")
+	}
+	resultJSON, err := marshalWorkflowNodeResult(db.WorkflowNodeResult{Status: db.WorkflowRunNodeBlocked})
+	if err != nil {
+		return err
+	}
+	blockedNode, err := blocker.BlockWorkflowRunNodeForDeploymentWindow(run.ProjectID, run.ID, node.WorkflowNodeID, blocked.DecisionID, resultJSON, lease)
+	if err != nil {
+		return err
+	}
+	if !blockedNode {
+		return errors.New("workflow deployment-window block lost its reconciliation fence")
+	}
+	return nil
+}
+
 func (s *workflowService) claimWorkflowNodeAdmission(task *db.Task, run db.WorkflowRun, node db.WorkflowRunNode, actorID int) error {
 	if s.deploymentWindowAdmission == nil || task == nil || task.WorkflowRunID == nil || task.WorkflowNodeID == nil || node.ID <= 0 {
 		return errors.New("deployment window workflow-node admission is unavailable")
@@ -1868,7 +1894,7 @@ func (s *workflowService) claimWorkflowNodeAdmission(task *db.Task, run db.Workf
 		return err
 	}
 	if claim.Decision.State == string(pro_interfaces.DeploymentWindowDecisionBlocked) {
-		return &pro_interfaces.DeploymentWindowBlockedError{NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown}
+		return &pro_interfaces.DeploymentWindowBlockedError{DecisionID: claim.Decision.ID, NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown}
 	}
 	if (claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionAllowed) && claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionOverridden)) || claim.Decision.ID <= 0 || claim.Decision.TaskID != nil {
 		return errors.New("deployment window workflow-node admission did not allow execution")

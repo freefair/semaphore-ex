@@ -96,6 +96,27 @@ func TestWorkflowTriggerServiceRetriesFailedScheduledOccurrenceWithoutSecondRun(
 	assert.Equal(t, 2, fixture.starter.calls)
 }
 
+func TestWorkflowTriggerPersistsBlockedAdmissionAndDeduplicatesIt(t *testing.T) {
+	fixture := newWorkflowTriggerServiceFixture(t)
+	created := fixture.createAPITrigger(t)
+	next := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
+	fixture.starter.blocked = &pro_interfaces.DeploymentWindowBlockedError{DecisionID: 77, NextEligibleAt: &next, NextEligibleKnown: true}
+
+	first, err := fixture.service.FireExternal(context.Background(), fixture.projectID, fixture.workflow.ID, created.Trigger.ID, db.WorkflowTriggerAPI, created.Credential, "blocked-once", map[string]json.RawMessage{"target": json.RawMessage(`"eu"`)})
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowTriggerInvocationBlocked, first.Invocation.Status)
+	require.NotNil(t, first.Invocation.DeploymentWindowDecisionID)
+	assert.Equal(t, 77, *first.Invocation.DeploymentWindowDecisionID)
+	assert.Equal(t, "deployment_window_blocked", first.Invocation.Reason)
+	assert.Nil(t, first.Invocation.RunID)
+
+	duplicate, err := fixture.service.FireExternal(context.Background(), fixture.projectID, fixture.workflow.ID, created.Trigger.ID, db.WorkflowTriggerAPI, created.Credential, "blocked-once", map[string]json.RawMessage{"target": json.RawMessage(`"eu"`)})
+	require.NoError(t, err)
+	assert.True(t, duplicate.Duplicate)
+	assert.Equal(t, first.Invocation.ID, duplicate.Invocation.ID)
+	assert.Equal(t, 1, fixture.starter.calls, "a blocked invocation is terminal and must not re-evaluate")
+}
+
 func TestWorkflowTriggerSchedulerDrainRejectsNewRunsUntilResume(t *testing.T) {
 	fixture := newWorkflowTriggerServiceFixture(t)
 	created, err := fixture.service.Create(context.Background(), fixture.projectID, fixture.workflow.ID, db.WorkflowTrigger{
@@ -225,6 +246,7 @@ func (f *workflowTriggerServiceFixture) createAPITrigger(t *testing.T) pro_inter
 type workflowTriggerStarter struct {
 	calls      int
 	failures   int
+	blocked    error
 	input      db.WorkflowRunInput
 	runs       map[string]db.WorkflowRun
 	repository db.WorkflowManager
@@ -235,6 +257,9 @@ func (s *workflowTriggerStarter) StartWorkflow(workflow db.WorkflowTemplate, use
 		return existing, nil
 	}
 	s.calls++
+	if s.blocked != nil {
+		return db.WorkflowRun{}, s.blocked
+	}
 	if s.failures > 0 {
 		s.failures--
 		return db.WorkflowRun{}, errors.New("temporary workflow start outage")
