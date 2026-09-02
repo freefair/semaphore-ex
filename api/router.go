@@ -101,6 +101,7 @@ func Route(
 	logWriteService pro_interfaces.LogWriteService,
 	auditWebhookService pro_interfaces.AuditWebhookService,
 	appMetrics *metrics.Metrics,
+	deploymentWindowGovernanceService pro_interfaces.DeploymentWindowGovernanceServiceFacade,
 	notificationGovernanceServices ...pro_interfaces.NotificationGovernanceServiceFacade,
 ) *mux.Router {
 
@@ -168,6 +169,7 @@ func Route(
 	totpController := NewTOTPController(totpService, auditFacade)
 	ldapController := NewLDAPController(ldapService, auditFacade)
 	oidcGroupMappingController := NewOIDCGroupMappingController(oidcGroupMappingService, auditFacade)
+	deploymentWindowController := proProjects.NewDeploymentWindowController(deploymentWindowGovernanceService, workflowStore)
 
 	r := mux.NewRouter()
 	r.NotFoundHandler = http.HandlerFunc(servePublic)
@@ -308,9 +310,11 @@ func Route(
 	).Methods("GET", "HEAD")
 	registerEnhancedGovernanceRoutes(
 		authenticatedAPI,
+		capabilityController,
 		auditFacade,
 		notificationGovernanceController,
 		globalCredentialController,
+		deploymentWindowController,
 		delegatedProjectRolesSnapshot,
 		globalSystemPermission,
 	)

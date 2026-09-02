@@ -287,7 +287,7 @@ func TestNotificationGovernanceRouterEnforcesGlobalAndProjectPermissions(t *test
 		_, err = store.CreateAPIToken(token)
 		require.NoError(t, err)
 	}
-	router := Route(store, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, notificationGovernanceLogWriter{}, nil, metrics.NewMetrics(), &notificationGovernanceStub{err: pro_interfaces.ErrNotificationUnavailable})
+	router := Route(store, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, notificationGovernanceLogWriter{}, nil, metrics.NewMetrics(), nil, &notificationGovernanceStub{err: pro_interfaces.ErrNotificationUnavailable})
 	for _, test := range []struct {
 		token, path string
 		expected    int

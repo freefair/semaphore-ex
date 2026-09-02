@@ -31,6 +31,8 @@ const (
 	// CapabilityExecutionPreflight gates value-free execution plan review and
 	// reviewed-plan start checks before an execution is enqueued.
 	CapabilityExecutionPreflight CapabilityID = "execution_preflight"
+	// CapabilityDeploymentWindows gates Enhanced deployment-window governance.
+	CapabilityDeploymentWindows CapabilityID = "deployment_windows"
 )
 
 // LimitID identifies one numeric limit in a capability decision.

@@ -15,6 +15,10 @@ const (
 	MaxDeploymentWindowRuleNameBytes    = 255
 	MaxDeploymentWindowRecurrenceBytes  = 255
 	MaxDeploymentWindowDecisionKeyBytes = 128
+	// MaxDeploymentWindowHistoryPage bounds the immutable admission history
+	// returned to governance callers. Cursor pagination remains available for
+	// older records without widening a project-scoped query.
+	MaxDeploymentWindowHistoryPage = 100
 )
 
 var (

@@ -56,6 +56,14 @@ func (c *TaskController) writeTaskExecutionPreflightError(w http.ResponseWriter,
 	if err == nil {
 		return false
 	}
+	var blocked *pro_interfaces.DeploymentWindowBlockedError
+	if errors.As(err, &blocked) {
+		helpers.WriteJSON(w, http.StatusConflict, pro_interfaces.DeploymentWindowPublicDecision{
+			State: pro_interfaces.DeploymentWindowDecisionBlocked, Reason: blocked.Reason,
+			NextEligibleAt: blocked.NextEligibleAt, NextEligibleKnown: blocked.NextEligibleKnown,
+		})
+		return true
+	}
 	var stale *tasks.ExecutionPreflightStaleError
 	if errors.As(err, &stale) {
 		c.recordExecutionPreflightAudit(r, pro_interfaces.AuditActionExecutionPreflightStart,

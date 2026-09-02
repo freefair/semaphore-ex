@@ -105,6 +105,8 @@ func runService() {
 	ansibleTaskRepo := proFactory.NewAnsibleTaskRepository(store)
 	workflowStore := proFactory.NewWorkflowStore(store)
 	workflowTriggerStore := proFactory.NewWorkflowTriggerStore(store)
+	deploymentWindowStore := proFactory.NewDeploymentWindowStore(store)
+	deploymentWindowGovernanceService := proServer.NewDeploymentWindowGovernanceService(deploymentWindowStore)
 
 	projectService := server.NewProjectService(store, store)
 	capabilityProvider := proFeatures.NewCapabilityProvider(store)
@@ -182,7 +184,7 @@ func runService() {
 		workflowTriggerStore, workflowStore, workflowService, store, capabilityProvider,
 	)
 	taskPool.SetWorkflowService(workflowService)
-	if admission := proServer.NewDeploymentWindowAdmissionService(proFactory.NewDeploymentWindowStore(store)); admission != nil {
+	if admission := proServer.NewDeploymentWindowAdmissionService(deploymentWindowStore); admission != nil {
 		taskPool.ConfigureDeploymentWindowAdmission(admission)
 		if configurable, ok := workflowService.(pro_interfaces.WorkflowDeploymentWindowAdmissionConfigurer); ok {
 			configurable.ConfigureDeploymentWindowAdmission(admission)
@@ -325,6 +327,7 @@ func runService() {
 		logWriteService,
 		auditWebhookService,
 		appMetrics,
+		deploymentWindowGovernanceService,
 		notificationGovernanceService,
 	)
 

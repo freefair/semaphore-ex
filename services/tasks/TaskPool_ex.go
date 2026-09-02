@@ -122,7 +122,7 @@ func (p *TaskPool) AddTaskWithDeploymentWindowAdmission(
 	}
 	if claim.Decision.State == string(pro_interfaces.DeploymentWindowDecisionBlocked) {
 		return db.Task{}, &pro_interfaces.DeploymentWindowBlockedError{
-			DecisionID: claim.Decision.ID, NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown,
+			DecisionID: claim.Decision.ID, Reason: pro_interfaces.DeploymentWindowReason(claim.Decision.Reason), NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown,
 		}
 	}
 	if claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionAllowed) && claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionOverridden) || claim.Decision.ID <= 0 {
@@ -142,7 +142,7 @@ func (p *TaskPool) claimDeploymentWindowTaskAdmission(task *db.Task, request pro
 		return err
 	}
 	if claim.Decision.State == string(pro_interfaces.DeploymentWindowDecisionBlocked) {
-		return &pro_interfaces.DeploymentWindowBlockedError{DecisionID: claim.Decision.ID, NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown}
+		return &pro_interfaces.DeploymentWindowBlockedError{DecisionID: claim.Decision.ID, Reason: pro_interfaces.DeploymentWindowReason(claim.Decision.Reason), NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown}
 	}
 	if (claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionAllowed) && claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionOverridden)) || claim.Decision.ID <= 0 {
 		return errors.New("deployment window admission did not allow execution")
