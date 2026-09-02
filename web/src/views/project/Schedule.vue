@@ -118,6 +118,14 @@
           {{ formatRunAt(item) }}
         </div>
         <code v-else>{{ item.cron_format }}</code>
+        <div class="text-caption" data-testid="schedule-timing-summary">
+          {{ item.effective_timezone
+            || systemInfo.schedule_timezone
+            || 'UTC' }}
+          <span v-if="item.next_run">
+            · {{ $t('scheduleNextRun') }}: {{ formatNextRun(item) }}
+          </span>
+        </div>
       </template>
 
       <template v-slot:item.actions="{ item }">
@@ -183,7 +191,7 @@ export default {
         return '—';
       }
 
-      const tz = this.systemInfo?.schedule_timezone || 'UTC';
+      const tz = item.effective_timezone || this.systemInfo?.schedule_timezone || 'UTC';
       const parsed = dayjs(item.run_at).tz(tz);
 
       if (!parsed.isValid()) {
@@ -191,6 +199,15 @@ export default {
       }
 
       return `${parsed.format('YYYY-MM-DD HH:mm')} (${tz})`;
+    },
+
+    formatNextRun(item) {
+      if (!item.next_run) {
+        return '—';
+      }
+      const tz = item.effective_timezone || this.systemInfo?.schedule_timezone || 'UTC';
+      const parsed = dayjs(item.next_run).tz(tz);
+      return parsed.isValid() ? parsed.format('YYYY-MM-DD HH:mm') : '—';
     },
 
     async setActive(scheduleId, active) {
