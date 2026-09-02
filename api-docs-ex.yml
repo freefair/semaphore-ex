@@ -1,5 +1,76 @@
 # Fork-owned API definitions and paths, referenced by api-docs.yml.
 definitions:
+  GeneratedSSHKeyMetadata:
+    type: object
+    required:
+    - public_key
+    - fingerprint
+    - algorithm
+    properties:
+      public_key:
+        type: string
+        description: Public key in authorized_keys-compatible OpenSSH format.
+      fingerprint:
+        type: string
+        description: OpenSSH SHA-256 public-key fingerprint.
+      algorithm:
+        type: string
+        enum:
+        - ed25519
+        - rsa-3072
+  GeneratedSSHKeyCreateRequest:
+    type: object
+    required:
+    - name
+    additionalProperties: false
+    properties:
+      name:
+        type: string
+      login:
+        type: string
+      algorithm:
+        type: string
+        default: ed25519
+        enum:
+        - ed25519
+        - rsa-3072
+  GeneratedSSHKeyRotateRequest:
+    type: object
+    required:
+    - confirm_rotation
+    additionalProperties: false
+    properties:
+      algorithm:
+        type: string
+        default: ed25519
+        enum:
+        - ed25519
+        - rsa-3072
+      confirm_rotation:
+        type: boolean
+        enum:
+        - true
+  GeneratedSSHKeyResponse:
+    type: object
+    required:
+    - key
+    - public_key
+    - fingerprint
+    - algorithm
+    properties:
+      key:
+        $ref: ./api-docs.yml#/definitions/AccessKey
+      public_key:
+        type: string
+        description: Public key in authorized_keys-compatible OpenSSH format.
+      fingerprint:
+        type: string
+        description: OpenSSH SHA-256 public-key fingerprint.
+      algorithm:
+        type: string
+        enum:
+        - ed25519
+        - rsa-3072
   RunnerAttempt:
     type: object
     properties:
@@ -741,6 +812,55 @@ definitions:
         type: string
         format: date-time
 paths:
+  /project/{project_id}/keys/generate:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    post:
+      tags:
+      - key-store
+      summary: Generate and store a local SSH key pair
+      description: Generates an encrypted local SSH credential. The private key is never returned; Access Key encryption
+        must be configured.
+      parameters:
+      - name: Generated SSH Key
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/GeneratedSSHKeyCreateRequest
+      responses:
+        201:
+          description: SSH key generated
+          schema:
+            $ref: ./api-docs.yml#/definitions/GeneratedSSHKeyResponse
+        400:
+          description: Invalid request, algorithm, storage, or encryption configuration
+        403:
+          description: Project-resource management permission required
+  /project/{project_id}/keys/{key_id}/rotate:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/key_id
+    post:
+      tags:
+      - key-store
+      summary: Rotate a local SSH key with a newly generated pair
+      description: Replaces an existing local, non-synchronized SSH credential after explicit confirmation and returns
+        only its new public metadata.
+      parameters:
+      - name: SSH Key Rotation
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/GeneratedSSHKeyRotateRequest
+      responses:
+        200:
+          description: SSH key rotated
+          schema:
+            $ref: ./api-docs.yml#/definitions/GeneratedSSHKeyResponse
+        400:
+          description: Rotation not confirmed or key is not eligible
+        403:
+          description: Project-resource management permission required
   /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/stop:
     parameters:
     - $ref: ./api-docs.yml#/parameters/project_id

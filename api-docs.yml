@@ -495,7 +495,17 @@ definitions:
         enum: [none, ssh, login_password]
       project_id:
         type: integer
+      generated_ssh_key:
+        $ref: "#/definitions/GeneratedSSHKeyMetadata"
 
+  GeneratedSSHKeyMetadata:
+    $ref: "./api-docs-ex.yml#/definitions/GeneratedSSHKeyMetadata"
+  GeneratedSSHKeyCreateRequest:
+    $ref: "./api-docs-ex.yml#/definitions/GeneratedSSHKeyCreateRequest"
+  GeneratedSSHKeyRotateRequest:
+    $ref: "./api-docs-ex.yml#/definitions/GeneratedSSHKeyRotateRequest"
+  GeneratedSSHKeyResponse:
+    $ref: "./api-docs-ex.yml#/definitions/GeneratedSSHKeyResponse"
   EnvironmentSecret:
     type: object
     properties:
@@ -2955,6 +2965,9 @@ paths:
             $ref: "#/definitions/AccessKey"
         400:
           description: Bad type
+
+  /project/{project_id}/keys/generate:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1keys~1generate"
   /project/{project_id}/keys/{key_id}:
     parameters:
       - $ref: "#/parameters/project_id"
@@ -2982,7 +2995,8 @@ paths:
         204:
           description: access key removed
 
-  # project repositories
+  /project/{project_id}/keys/{key_id}/rotate:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1keys~1{key_id}~1rotate"
   /project/{project_id}/repositories:
     parameters:
       - $ref: "#/parameters/project_id"
