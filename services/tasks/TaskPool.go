@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -86,6 +87,7 @@ type TaskPool struct {
 	executorImageAvailable   func(*db.User) bool
 	taskControlLifecycle     TaskControlLifecycle
 	crossProjectTaskStore    pro_interfaces.CrossProjectWorkflowTaskStore
+	executionPreflightIssuer *ExecutionPreflightReviewTokenIssuer
 	// stop signals the background loops started by Run to exit. Closing it (via
 	// Stop) terminates the runner-task reconcile loop and Run's own select.
 	// Channels are used rather than sync.WaitGroup/sync.Once because TaskPool is
@@ -128,9 +130,23 @@ func CreateTaskPool(
 		stop:                   make(chan struct{}),
 		reconcileDone:          make(chan struct{}),
 	}
+	if util.Config != nil {
+		if key, err := base64.StdEncoding.DecodeString(util.Config.CookieHash); err == nil {
+			p.executionPreflightIssuer, _ = NewExecutionPreflightReviewTokenIssuer(
+				key, pro_interfaces.MaxExecutionPreflightReviewTTL,
+			)
+		}
+	}
 	// attempt to start HA state store (no-op for memory)
 	_ = p.state.Start(p.hydrateTaskRunner)
 	return p
+}
+
+// SetExecutionPreflightReviewTokenIssuer replaces the review-token issuer.
+// Production pools derive it from the shared cookie signing key; tests may
+// inject a deterministic issuer without changing process-wide configuration.
+func (p *TaskPool) SetExecutionPreflightReviewTokenIssuer(issuer *ExecutionPreflightReviewTokenIssuer) {
+	p.executionPreflightIssuer = issuer
 }
 
 // StateStore returns the pluggable task state backend. Used by the Cluster

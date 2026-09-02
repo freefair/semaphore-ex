@@ -23,15 +23,20 @@ import (
 const maxTasksPageSize = 200
 
 const (
-	defaultTaskSummaryPageSize = 50
-	maxTaskSummaryPageSize     = 200
+	defaultTaskSummaryPageSize     = 50
+	maxTaskSummaryPageSize         = 200
+	taskPreflightFingerprintHeader = "X-Semaphore-Preflight-Fingerprint"
+	taskPreflightTokenHeader       = "X-Semaphore-Preflight-Token"
 )
 
 type TaskController struct {
 	store           db.Store
 	ansibleTaskRepo db.AnsibleTaskRepository
 	workflowStore   db.WorkflowManager
+	audit           pro_interfaces.AuditServiceFacade
 }
+
+var _ pro_interfaces.ExecutionPreflightAuditConfigurer = (*TaskController)(nil)
 
 func NewTaskController(store db.Store, ansibleTaskRepo db.AnsibleTaskRepository, workflowStores ...db.WorkflowManager) *TaskController {
 	var workflowStore db.WorkflowManager
@@ -49,6 +54,12 @@ func taskPool(r *http.Request) *tasks.TaskPool {
 	return helpers.GetFromContext(r, "task_pool").(*tasks.TaskPool)
 }
 
+// ConfigureExecutionPreflightAudit attaches the optional value-free audit
+// recorder after route construction. Community route wiring may omit it.
+func (c *TaskController) ConfigureExecutionPreflightAudit(audit pro_interfaces.AuditServiceFacade) {
+	c.audit = audit
+}
+
 // AddTask inserts a task into the database and returns a header or returns error
 func (c *TaskController) AddTask(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
@@ -61,13 +72,19 @@ func (c *TaskController) AddTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newTask, err := taskPool(r).AddTask(
+	newTask, planned, err := taskPool(r).AddTaskWithExecutionPreflightPlan(
 		taskObj,
-		&user.ID,
-		user.Username,
+		user,
 		project.ID,
 		tpl.App.NeedTaskAlias(),
+		pro_interfaces.ExecutionPreflightReview{
+			Fingerprint: r.Header.Get(taskPreflightFingerprintHeader),
+			ReviewToken: r.Header.Get(taskPreflightTokenHeader),
+		},
 	)
+	if c.writeTaskExecutionPreflightError(w, r, taskObj, planned, err) {
+		return
+	}
 
 	if errors.Is(err, common_errors.ErrInvalidSubscription) {
 		helpers.WriteErrorStatus(w, "No active subscription available.", http.StatusForbidden)
@@ -96,8 +113,126 @@ func (c *TaskController) AddTask(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	if r.Header.Get(taskPreflightFingerprintHeader) != "" {
+		c.recordExecutionPreflightAudit(r, pro_interfaces.AuditActionExecutionPreflightStart,
+			pro_interfaces.AuditOutcomeAllowed, pro_interfaces.AuditReasonExecutionPreflightStarted,
+			pro_interfaces.ExecutionPreflightTask, taskObj.TemplateID, &planned, nil)
+	}
 
 	helpers.WriteJSON(w, http.StatusCreated, newTask)
+}
+
+// PreviewTask returns the value-free execution plan that AddTask recomputes
+// immediately before enqueue. Route middleware provides the same project,
+// template, and task-run authorization as AddTask.
+func (c *TaskController) PreviewTask(w http.ResponseWriter, r *http.Request) {
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	user := helpers.GetFromContext(r, "user").(*db.User)
+	taskObj := helpers.GetFromContext(r, "task").(db.Task)
+	plan, err := taskPool(r).PreviewTaskExecution(taskObj, user, project.ID)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"context": "PreviewTask", "project_id": project.ID,
+			"template_id": taskObj.TemplateID, "user_id": user.ID,
+		}).WithError(err).Error("Cannot preview task execution")
+		helpers.WriteErrorStatus(w, "EXECUTION_PREFLIGHT_UNAVAILABLE", http.StatusServiceUnavailable)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, plan)
+	outcome, reason := pro_interfaces.AuditOutcomeAllowed, pro_interfaces.AuditReasonExecutionPreflightPreviewed
+	if denialReason, denied := pro_interfaces.ExecutionPreflightAuditDenialReason(plan); denied {
+		outcome, reason = pro_interfaces.AuditOutcomeDenied, denialReason
+	}
+	c.recordExecutionPreflightAudit(r, pro_interfaces.AuditActionExecutionPreflightPreview,
+		outcome, reason,
+		pro_interfaces.ExecutionPreflightTask, taskObj.TemplateID, &plan, nil)
+}
+
+func (c *TaskController) writeTaskExecutionPreflightError(w http.ResponseWriter, r *http.Request, taskObj db.Task, planned pro_interfaces.ExecutionPreflightPlan, err error) bool {
+	if err == nil {
+		return false
+	}
+	var stale *tasks.ExecutionPreflightStaleError
+	if errors.As(err, &stale) {
+		c.recordExecutionPreflightAudit(r, pro_interfaces.AuditActionExecutionPreflightStart,
+			pro_interfaces.AuditOutcomeDenied, pro_interfaces.AuditReasonExecutionPreflightStale,
+			pro_interfaces.ExecutionPreflightTask, taskObj.TemplateID, &stale.Preflight, stale.Changes)
+		helpers.WriteJSON(w, http.StatusConflict, pro_interfaces.ExecutionPreflightStale{
+			Code: "stale_execution_preflight", Changes: stale.Changes, Preflight: &stale.Preflight,
+		})
+		return true
+	}
+	var denied *tasks.ExecutionPreflightDeniedError
+	if errors.As(err, &denied) {
+		reason := pro_interfaces.AuditReasonExecutionPreflightDenied
+		if denialReason, found := pro_interfaces.ExecutionPreflightAuditDenialReason(denied.Preflight); found {
+			reason = denialReason
+		}
+		c.recordExecutionPreflightAudit(r, pro_interfaces.AuditActionExecutionPreflightStart,
+			pro_interfaces.AuditOutcomeDenied, reason,
+			pro_interfaces.ExecutionPreflightTask, taskObj.TemplateID, &denied.Preflight, nil)
+		helpers.WriteJSON(w, http.StatusConflict, pro_interfaces.ExecutionPreflightStale{
+			Code: "execution_preflight_denied", Preflight: &denied.Preflight,
+		})
+		return true
+	}
+	if errors.Is(err, pro_interfaces.ErrExecutionPreflightReviewTokenExpired) {
+		project := helpers.GetFromContext(r, "project").(db.Project)
+		user := helpers.GetFromContext(r, "user").(*db.User)
+		fresh, previewErr := taskPool(r).PreviewTaskExecution(taskObj, user, project.ID)
+		if previewErr == nil {
+			c.recordExecutionPreflightAudit(r, pro_interfaces.AuditActionExecutionPreflightStart,
+				pro_interfaces.AuditOutcomeDenied, pro_interfaces.AuditReasonExecutionPreflightStale,
+				pro_interfaces.ExecutionPreflightTask, taskObj.TemplateID, &fresh, nil)
+			helpers.WriteJSON(w, http.StatusConflict, pro_interfaces.ExecutionPreflightStale{
+				Code: "execution_preflight_expired", Preflight: &fresh,
+			})
+			return true
+		}
+	}
+	if errors.Is(err, pro_interfaces.ErrExecutionPreflightReviewTokenInvalid) ||
+		errors.Is(err, pro_interfaces.ErrExecutionPreflightReviewScopeMismatch) {
+		if planned.Fingerprint != "" {
+			c.recordExecutionPreflightAudit(r, pro_interfaces.AuditActionExecutionPreflightStart,
+				pro_interfaces.AuditOutcomeDenied, pro_interfaces.AuditReasonExecutionPreflightDenied,
+				pro_interfaces.ExecutionPreflightTask, taskObj.TemplateID, &planned, nil)
+		}
+		helpers.WriteErrorStatus(w, "EXECUTION_PREFLIGHT_INVALID", http.StatusConflict)
+		return true
+	}
+	return false
+}
+
+func (c *TaskController) recordExecutionPreflightAudit(
+	r *http.Request,
+	action pro_interfaces.AuditAction,
+	outcome pro_interfaces.AuditOutcome,
+	reason string,
+	intent pro_interfaces.ExecutionPreflightIntent,
+	resourceID int,
+	plan *pro_interfaces.ExecutionPreflightPlan,
+	changes []pro_interfaces.ExecutionPreflightChangeCode,
+) {
+	if c.audit == nil || plan == nil {
+		return
+	}
+	user := helpers.UserFromContext(r)
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	if user == nil || user.ID <= 0 || project.ID <= 0 {
+		return
+	}
+	correlationID := helpers.CorrelationID(r.Context())
+	if correlationID == "" {
+		correlationID = "internal"
+	}
+	provenance := pro_interfaces.NewExecutionPreflightAuditProvenance(*plan, changes)
+	event := pro_interfaces.NewExecutionPreflightAuditEvent(
+		user.ID, project.ID, correlationID, r.RemoteAddr, r.UserAgent(),
+		action, outcome, reason, intent, resourceID, provenance,
+	)
+	if err := c.audit.Record(r.Context(), event); err != nil {
+		log.WithFields(event.SafeFields()).Error("Failed to record execution preflight audit event")
+	}
 }
 
 // writeTasksList retrieves the tasks list (project-wide or per-template
@@ -407,6 +542,24 @@ func (c *TaskController) GetTaskPermissionsMiddleware(next http.Handler) http.Ha
 		)
 
 		r = helpers.SetContextValue(r, "permissions", permissions)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// GetTaskReadPermissionMiddleware narrows only execution-preview disclosure.
+// A user may retain run-only permission for legacy starts, but a value-free
+// preview includes labels and execution shape that are visible only to a
+// template reader.
+func (c *TaskController) GetTaskReadPermissionMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		project := helpers.GetFromContext(r, "project").(db.Project)
+		user := helpers.GetFromContext(r, "user").(*db.User)
+		task := helpers.GetFromContext(r, "task").(db.Task)
+		permissionContext, err := c.store.GetTemplatePermissionContext(project.ID, task.TemplateID, user.ID)
+		if err != nil || !permissionContext.EffectivePermissions.Can(db.CanReadTemplate) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }

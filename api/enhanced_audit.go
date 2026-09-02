@@ -264,8 +264,16 @@ func EnhancedWorkflowDeniedAuditMiddleware(audit pro_interfaces.AuditServiceFaca
 			if captured.status != http.StatusForbidden && captured.status != http.StatusNotFound {
 				return
 			}
-			event := routeAuditEvent(r, descriptor, pro_interfaces.AuditOutcomeDenied, pro_interfaces.AuditReasonWorkflowPolicyDenied)
-			event.WorkflowPolicyRevision = workflowAuditPolicyRevision(r)
+			reason := pro_interfaces.AuditReasonWorkflowPolicyDenied
+			if descriptor.Action == pro_interfaces.AuditActionExecutionPreflightPreview ||
+				descriptor.Action == pro_interfaces.AuditActionExecutionPreflightStart {
+				reason = pro_interfaces.AuditReasonExecutionPreflightDenied
+			}
+			event := routeAuditEvent(r, descriptor, pro_interfaces.AuditOutcomeDenied, reason)
+			if descriptor.Action != pro_interfaces.AuditActionExecutionPreflightPreview &&
+				descriptor.Action != pro_interfaces.AuditActionExecutionPreflightStart {
+				event.WorkflowPolicyRevision = workflowAuditPolicyRevision(r)
+			}
 			if err := audit.Record(r.Context(), event); err != nil {
 				log.WithFields(event.SafeFields()).Error("Failed to store workflow audit event")
 			}
@@ -301,6 +309,13 @@ func workflowAuditDescriptor(r *http.Request) (enhancedAuditDescriptor, bool) {
 		return enhancedAuditDescriptor{}, false
 	}
 	if workflowID, has := positiveMuxID(r, "workflow_id"); has {
+		if strings.HasSuffix(path, "/preflight") {
+			return enhancedAuditDescriptor{
+				Action:     pro_interfaces.AuditActionExecutionPreflightPreview,
+				TargetType: pro_interfaces.AuditTargetExecutionPreflight,
+				TargetID:   fmt.Sprintf("workflow:%d", workflowID), ProjectID: &projectID,
+			}, true
+		}
 		target := fmt.Sprintf("workflow:%d", workflowID)
 		if runID, runHas := positiveMuxID(r, "run_id"); runHas {
 			target = fmt.Sprintf("run:%d", runID)
@@ -314,6 +329,15 @@ func workflowAuditDescriptor(r *http.Request) (enhancedAuditDescriptor, bool) {
 			return enhancedAuditDescriptor{Action: action, TargetType: pro_interfaces.AuditTargetWorkflowRun, TargetID: target, ProjectID: &projectID}, true
 		}
 		action := pro_interfaces.AuditActionWorkflowRead
+		if strings.HasSuffix(path, "/run") &&
+			strings.TrimSpace(r.Header.Get("X-Semaphore-Preflight-Fingerprint")) != "" &&
+			strings.TrimSpace(r.Header.Get("X-Semaphore-Preflight-Token")) != "" {
+			return enhancedAuditDescriptor{
+				Action:     pro_interfaces.AuditActionExecutionPreflightStart,
+				TargetType: pro_interfaces.AuditTargetExecutionPreflight,
+				TargetID:   fmt.Sprintf("workflow:%d", workflowID), ProjectID: &projectID,
+			}, true
+		}
 		if strings.HasSuffix(path, "/run") {
 			action = pro_interfaces.AuditActionWorkflowStart
 		} else if method == http.MethodPut {

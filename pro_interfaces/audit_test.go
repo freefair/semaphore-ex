@@ -464,6 +464,51 @@ func TestAuditWebhookV1OmitsWorkflowPolicyAndRoleProvenance(t *testing.T) {
 	assert.NotContains(t, string(payload), "role_provenance")
 }
 
+func TestExecutionPreflightAuditUsesStrictValueFreeAllowlist(t *testing.T) {
+	actorID, projectID := 7, 42
+	selectedRunnerID := 11
+	plan := ExecutionPreflightPlan{
+		Intent:      ExecutionPreflightTask,
+		Fingerprint: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Placements: []ExecutionPreflightPlacement{{
+			Provisional: true, Decision: ExecutionReasonSelected,
+			Candidates:       []ExecutionPreflightCandidate{{RunnerID: 11}},
+			SelectedRunnerID: &selectedRunnerID,
+		}},
+		Findings: []ExecutionPreflightFinding{{Code: ExecutionReasonPolicyDenied}},
+	}
+	event := NewExecutionPreflightAuditEvent(
+		actorID, projectID, "0123456789abcdef0123456789abcdef", "192.0.2.10:443", "audit-client",
+		AuditActionExecutionPreflightPreview, AuditOutcomeAllowed, AuditReasonExecutionPreflightPreviewed,
+		ExecutionPreflightTask, 9, NewExecutionPreflightAuditProvenance(plan, nil),
+	)
+	require.NoError(t, event.Validate())
+	assert.Equal(t, "task-template:9", event.TargetID)
+	assert.Equal(t, 1, event.ExecutionPreflightProvenance.CandidateCount)
+	assert.Equal(t, 11, event.ExecutionPreflightProvenance.SelectedRunnerID)
+	assert.Contains(t, event.SafeFields(), "execution_preflight_provenance")
+
+	unsafe := event
+	unsafe.ExecutionPreflightProvenance.Fingerprint = "sha256:not-a-canonical-fingerprint"
+	assert.Error(t, unsafe.Validate())
+	unsafe = event
+	unsafe.TargetID = "workflow:9"
+	assert.Error(t, unsafe.Validate())
+	unsafe = event
+	unsafe.Action = AuditActionWorkflowStart
+	assert.Error(t, unsafe.Validate())
+	event.ExecutionPreflightProvenance.Fingerprint = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	event.EventID = "0123456789abcdef0123456789abcdef"
+	event.OccurredAt = time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
+	envelope, err := NewAuditWebhookEnvelope(event)
+	require.NoError(t, err)
+	payload, err := json.Marshal(envelope)
+	require.NoError(t, err)
+	assert.NotContains(t, string(payload), "execution_preflight_provenance")
+	assert.NotContains(t, string(payload), "review_token")
+}
+
 func withAuditCorrelation(event AuditEvent, value string) AuditEvent {
 	event.CorrelationID = value
 	return event

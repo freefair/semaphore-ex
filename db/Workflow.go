@@ -378,8 +378,11 @@ type WorkflowRunNode struct {
 	// workflow reconciliation owner that claimed this node.
 	ProgressionFencingToken int64 `db:"progression_fencing_token" json:"-" backup:"-"`
 
-	TemplateSnapshotJSON               string                          `db:"template_snapshot" json:"-" backup:"template_snapshot"`
-	TemplateSnapshot                   Template                        `db:"-" json:"template" backup:"-"`
+	TemplateSnapshotJSON string   `db:"template_snapshot" json:"-" backup:"template_snapshot"`
+	TemplateSnapshot     Template `db:"-" json:"template" backup:"-"`
+	// ExecutionSnapshotJSON freezes the reviewed node's non-secret execution
+	// configuration before delayed workflow dispatch. It is never public.
+	ExecutionSnapshotJSON              string                          `db:"execution_snapshot" json:"-" backup:"-"`
 	CrossProjectTemplateProvenanceJSON string                          `db:"cross_project_template_provenance" json:"-" backup:"cross_project_template_provenance"`
 	CrossProjectTemplateProvenance     *CrossProjectTemplateProvenance `db:"-" json:"cross_project_template_provenance,omitempty" backup:"-"`
 	ResultJSON                         string                          `db:"result" json:"-" backup:"result"`

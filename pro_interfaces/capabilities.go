@@ -28,6 +28,9 @@ const (
 	CapabilityWorkflowTriggers CapabilityID = "workflow_triggers"
 	// CapabilityProjectRoles gates project-scoped custom role management.
 	CapabilityProjectRoles CapabilityID = "project_roles"
+	// CapabilityExecutionPreflight gates value-free execution plan review and
+	// reviewed-plan start checks before an execution is enqueued.
+	CapabilityExecutionPreflight CapabilityID = "execution_preflight"
 )
 
 // LimitID identifies one numeric limit in a capability decision.

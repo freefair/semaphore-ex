@@ -298,19 +298,42 @@ type RunnerTag struct {
 
 type RunnerPlacementScope string
 
+// RunnerPlacementReasonCode is a stable, machine-readable placement outcome.
+// Human-readable criteria remain available for existing API consumers.
+type RunnerPlacementReasonCode string
+
 const (
 	RunnerPlacementProject RunnerPlacementScope = "project"
 	RunnerPlacementGlobal  RunnerPlacementScope = "global"
+
+	RunnerPlacementReasonSelected          RunnerPlacementReasonCode = "selected"
+	RunnerPlacementReasonScopeAccepted     RunnerPlacementReasonCode = "scope_accepted"
+	RunnerPlacementReasonDifferentProject  RunnerPlacementReasonCode = "different_project"
+	RunnerPlacementReasonActive            RunnerPlacementReasonCode = "active"
+	RunnerPlacementReasonInactive          RunnerPlacementReasonCode = "inactive"
+	RunnerPlacementReasonRegistered        RunnerPlacementReasonCode = "registered"
+	RunnerPlacementReasonNotRegistered     RunnerPlacementReasonCode = "not_registered"
+	RunnerPlacementReasonOnline            RunnerPlacementReasonCode = "online"
+	RunnerPlacementReasonOffline           RunnerPlacementReasonCode = "offline"
+	RunnerPlacementReasonCapacityAvailable RunnerPlacementReasonCode = "capacity_available"
+	RunnerPlacementReasonCapacity          RunnerPlacementReasonCode = "capacity_exhausted"
+	RunnerPlacementReasonTagMatched        RunnerPlacementReasonCode = "tag_matched"
+	RunnerPlacementReasonTagMismatch       RunnerPlacementReasonCode = "tag_mismatch"
+	RunnerPlacementReasonImageSupported    RunnerPlacementReasonCode = "executor_image_supported"
+	RunnerPlacementReasonImageUnsupported  RunnerPlacementReasonCode = "executor_image_unsupported"
+	RunnerPlacementReasonNoCandidate       RunnerPlacementReasonCode = "no_candidate"
 )
 
 // RunnerPlacementEvaluation is a redacted explanation for one considered runner.
 type RunnerPlacementEvaluation struct {
-	RunnerID         int                  `json:"runner_id"`
-	RunnerName       string               `json:"runner_name"`
-	Scope            RunnerPlacementScope `json:"scope"`
-	Eligible         bool                 `json:"eligible"`
-	AcceptedCriteria []string             `json:"accepted_criteria"`
-	RejectedCriteria []string             `json:"rejected_criteria"`
+	RunnerID            int                         `json:"runner_id"`
+	RunnerName          string                      `json:"runner_name"`
+	Scope               RunnerPlacementScope        `json:"scope"`
+	Eligible            bool                        `json:"eligible"`
+	AcceptedCriteria    []string                    `json:"accepted_criteria"`
+	RejectedCriteria    []string                    `json:"rejected_criteria"`
+	AcceptedReasonCodes []RunnerPlacementReasonCode `json:"accepted_reason_codes,omitempty"`
+	RejectedReasonCodes []RunnerPlacementReasonCode `json:"rejected_reason_codes,omitempty"`
 }
 
 // RunnerPlacementDecision explains the deterministic result of one placement attempt.
@@ -322,6 +345,7 @@ type RunnerPlacementDecision struct {
 	SelectedRunnerID *int                        `json:"selected_runner_id,omitempty"`
 	SelectedName     string                      `json:"selected_runner_name,omitempty"`
 	SelectedScope    RunnerPlacementScope        `json:"selected_scope,omitempty"`
+	ReasonCode       RunnerPlacementReasonCode   `json:"reason_code"`
 	Reason           string                      `json:"reason"`
 	ActionHint       string                      `json:"action_hint,omitempty"`
 	Evaluations      []RunnerPlacementEvaluation `json:"evaluations"`

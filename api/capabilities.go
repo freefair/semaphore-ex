@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
@@ -140,6 +141,92 @@ func (c *CapabilityController) Require(access pro_interfaces.CapabilityAccess) f
 			}
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+// RequireCapability denies a request unless its already-resolved immutable
+// capability snapshot permits the requested access. Router wiring composes it
+// with SnapshotMiddleware so provider failures remain a bounded 503 rather
+// than silently falling back to a permissive default.
+func (c *CapabilityController) RequireCapability(
+	id pro_interfaces.CapabilityID,
+	access pro_interfaces.CapabilityAccess,
+) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			snapshot, ok := capabilitySnapshotFromHTTP(r)
+			if !ok {
+				helpers.WriteErrorStatus(w, "CAPABILITY_CONTEXT_ERROR", http.StatusInternalServerError)
+				return
+			}
+			if err := snapshot.Require(id, access); err != nil {
+				writeCapabilityError(w, err)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireExecutionPreflightForReviewedStart preserves legacy starts that do
+// not carry a review, while requiring execute access on the current request
+// whenever both review headers are present. A partial review is never treated
+// as a legacy start.
+func (c *CapabilityController) RequireExecutionPreflightForReviewedStart(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fingerprint := strings.TrimSpace(r.Header.Get("X-Semaphore-Preflight-Fingerprint"))
+		token := strings.TrimSpace(r.Header.Get("X-Semaphore-Preflight-Token"))
+		if fingerprint == "" && token == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if fingerprint == "" || token == "" {
+			c.recordPartialExecutionPreflightStart(r)
+			helpers.WriteErrorStatus(w, "EXECUTION_PREFLIGHT_INVALID", http.StatusConflict)
+			return
+		}
+		c.SnapshotMiddleware(
+			c.RequireCapability(pro_interfaces.CapabilityExecutionPreflight, pro_interfaces.CapabilityAccessExecute)(next),
+		).ServeHTTP(w, r)
+	})
+}
+
+func (c *CapabilityController) recordPartialExecutionPreflightStart(r *http.Request) {
+	if c.audit == nil {
+		return
+	}
+	user := helpers.UserFromContext(r)
+	project, projectOK := helpers.GetOkFromContext(r, "project")
+	currentProject, validProject := project.(db.Project)
+	if user == nil || user.ID <= 0 || !projectOK || !validProject || currentProject.ID <= 0 {
+		return
+	}
+	intent := pro_interfaces.ExecutionPreflightTask
+	resourceID := 0
+	if task, ok := helpers.GetOkFromContext(r, "task"); ok {
+		if currentTask, valid := task.(db.Task); valid {
+			resourceID = currentTask.TemplateID
+		}
+	}
+	if workflow, ok := helpers.GetOkFromContext(r, "workflow"); ok {
+		if currentWorkflow, valid := workflow.(db.WorkflowTemplate); valid {
+			intent, resourceID = pro_interfaces.ExecutionPreflightWorkflow, currentWorkflow.ID
+		}
+	}
+	if resourceID <= 0 {
+		return
+	}
+	correlationID := helpers.CorrelationID(r.Context())
+	if correlationID == "" {
+		correlationID = "internal"
+	}
+	event := pro_interfaces.NewExecutionPreflightAuditEvent(
+		user.ID, currentProject.ID, correlationID, r.RemoteAddr, r.UserAgent(),
+		pro_interfaces.AuditActionExecutionPreflightStart, pro_interfaces.AuditOutcomeDenied,
+		pro_interfaces.AuditReasonExecutionPreflightDenied, intent, resourceID, nil,
+	)
+	if err := c.audit.Record(r.Context(), event); err != nil {
+		log.WithFields(event.SafeFields()).Error("Failed to record partial execution preflight audit event")
 	}
 }
 

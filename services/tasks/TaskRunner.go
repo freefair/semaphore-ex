@@ -487,6 +487,13 @@ func (t *TaskRunner) prepareError(err error, errMsg string) error {
 	return nil
 }
 
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
 func (t *TaskRunner) populateTaskEnvironment() (err error) {
 
 	if t.Task.Environment == "" {
@@ -535,18 +542,17 @@ func (t *TaskRunner) populateDetails() error {
 		return t.prepareError(err, "Workflow template provenance is invalid!")
 	}
 	crossProjectProvenance := t.Task.WorkflowTemplateProvenance
+	executionSnapshot, err := db.DecodeTaskExecutionSnapshot(
+		valueOrEmpty(t.Task.ExecutionSnapshotJSON), t.Task.ProjectID, t.Task.TemplateID,
+	)
+	if err != nil {
+		return t.prepareError(err, "Execution preflight snapshot is invalid!")
+	}
 
-	if t.Task.WorkflowTemplateSnapshot != nil {
+	if executionSnapshot != nil {
+		t.Template = executionSnapshot.Template
+	} else if t.Task.WorkflowTemplateSnapshot != nil {
 		err = json.Unmarshal([]byte(*t.Task.WorkflowTemplateSnapshot), &t.Template)
-		if err == nil && crossProjectProvenance != nil && crossProjectProvenance.CrossProject != nil {
-			reference := crossProjectProvenance.CrossProject.Reference
-			if t.Template.ID != t.Task.TemplateID || t.Template.ID != reference.TemplateID ||
-				t.Template.ProjectID != reference.OwnerProjectID || t.Task.ProjectID == reference.OwnerProjectID {
-				err = errors.New("cross-project workflow template snapshot identity does not match task provenance")
-			}
-		} else if err == nil && (t.Template.ID != t.Task.TemplateID || t.Template.ProjectID != t.Task.ProjectID) {
-			err = errors.New("workflow template snapshot identity does not match task")
-		}
 		if err != nil {
 			return t.prepareError(err, "Workflow template snapshot is invalid!")
 		}
@@ -555,6 +561,16 @@ func (t *TaskRunner) populateDetails() error {
 		if err != nil {
 			return t.prepareError(err, "Template not found!")
 		}
+	}
+	if crossProjectProvenance != nil && crossProjectProvenance.CrossProject != nil {
+		reference := crossProjectProvenance.CrossProject.Reference
+		if t.Template.ID != t.Task.TemplateID || t.Template.ID != reference.TemplateID ||
+			t.Template.ProjectID != reference.OwnerProjectID || t.Task.ProjectID == reference.OwnerProjectID {
+			return t.prepareError(errors.New("cross-project workflow template snapshot identity does not match task provenance"), "Execution template snapshot is invalid!")
+		}
+	} else if (executionSnapshot != nil || t.Task.WorkflowTemplateSnapshot != nil) &&
+		(t.Template.ID != t.Task.TemplateID || t.Template.ProjectID != t.Task.ProjectID) {
+		return t.prepareError(errors.New("execution template snapshot identity does not match task"), "Execution template snapshot is invalid!")
 	}
 
 	// get project alert setting
@@ -592,43 +608,60 @@ func (t *TaskRunner) populateDetails() error {
 		t.users = append(t.users, userID)
 	}
 
-	// get inventory
-	canOverrideInventory, err := t.Template.CanOverrideInventory()
-	if err != nil {
-		return err
-	}
+	if executionSnapshot != nil {
+		if executionSnapshot.Inventory != nil {
+			t.Inventory = *executionSnapshot.Inventory
+			t.Inventory.Repository = executionSnapshot.InventoryRepository
+			if err = t.resolveExecutionSnapshotInventory(); err != nil {
+				return err
+			}
+		}
+		t.Repository = executionSnapshot.Repository
+		key, keyErr := t.pool.store.GetAccessKey(t.Repository.ProjectID, t.Repository.SSHKeyID)
+		if keyErr != nil {
+			return t.prepareError(keyErr, "Execution repository credential not found!")
+		}
+		t.Repository.SSHKey = key
+		if err = t.pool.encryptionService.DeserializeSecret(&t.Repository.SSHKey); err != nil {
+			return err
+		}
+	} else {
+		// get inventory
+		canOverrideInventory, overrideErr := t.Template.CanOverrideInventory()
+		if overrideErr != nil {
+			return overrideErr
+		}
 
-	if canOverrideInventory && t.Task.InventoryID != nil {
-		t.Inventory, err = t.pool.inventoryService.GetInventory(t.Template.ProjectID, *t.Task.InventoryID)
-		if err != nil {
-			if t.Template.InventoryID != nil {
+		if canOverrideInventory && t.Task.InventoryID != nil {
+			t.Inventory, err = t.pool.inventoryService.GetInventory(t.Template.ProjectID, *t.Task.InventoryID)
+			if err != nil && t.Template.InventoryID != nil {
 				t.Inventory, err = t.pool.inventoryService.GetInventory(t.Template.ProjectID, *t.Template.InventoryID)
 				if err != nil {
 					return t.prepareError(err, "Template Inventory not found!")
 				}
 			}
-		}
-	} else {
-		if t.Template.InventoryID != nil {
+		} else if t.Template.InventoryID != nil {
 			t.Inventory, err = t.pool.inventoryService.GetInventory(t.Template.ProjectID, *t.Template.InventoryID)
 			if err != nil {
 				return t.prepareError(err, "Template Inventory not found!")
 			}
 		}
+
+		// get repository
+		t.Repository, err = t.pool.store.GetRepository(t.Template.ProjectID, t.Template.RepositoryID)
+		if err != nil {
+			return err
+		}
+		if err = t.pool.encryptionService.DeserializeSecret(&t.Repository.SSHKey); err != nil {
+			return err
+		}
 	}
 
-	// get repository
-	t.Repository, err = t.pool.store.GetRepository(t.Template.ProjectID, t.Template.RepositoryID)
-
-	if err != nil {
-		return err
-	}
-
-	if err = t.pool.encryptionService.DeserializeSecret(&t.Repository.SSHKey); err != nil {
-		return err
-	}
-
-	if crossProjectProvenance != nil && crossProjectProvenance.CrossProject != nil {
+	if executionSnapshot != nil {
+		if err = t.resolveExecutionSnapshotTemplateVaults(); err != nil {
+			return err
+		}
+	} else if crossProjectProvenance != nil && crossProjectProvenance.CrossProject != nil {
 		if err = t.resolveCrossProjectTemplateVaults(crossProjectProvenance.CrossProject.Reference.OwnerProjectID); err != nil {
 			return err
 		}
@@ -637,7 +670,11 @@ func (t *TaskRunner) populateDetails() error {
 	t.Repository = withEffectiveBranch(t.Repository, t.Template, t.Task)
 
 	// load and merge all configured environments
-	err = t.loadEnvironments()
+	if executionSnapshot != nil {
+		err = t.loadExecutionSnapshotEnvironments(executionSnapshot.Environments)
+	} else {
+		err = t.loadEnvironments()
+	}
 	if err != nil {
 		return err
 	}
@@ -645,6 +682,56 @@ func (t *TaskRunner) populateDetails() error {
 	err = t.populateTaskEnvironment()
 
 	return err
+}
+
+func (t *TaskRunner) resolveExecutionSnapshotInventory() error {
+	if t.Inventory.SSHKeyID != nil {
+		key, err := t.pool.store.GetAccessKey(t.Inventory.ProjectID, *t.Inventory.SSHKeyID)
+		if err != nil {
+			return errors.New("execution preflight inventory credential is unavailable")
+		}
+		t.Inventory.SSHKey = key
+	}
+	if t.Inventory.BecomeKeyID != nil {
+		key, err := t.pool.store.GetAccessKey(t.Inventory.ProjectID, *t.Inventory.BecomeKeyID)
+		if err != nil {
+			return errors.New("execution preflight inventory credential is unavailable")
+		}
+		t.Inventory.BecomeKey = key
+	}
+	if t.Inventory.RepositoryID != nil {
+		if t.Inventory.Repository == nil || t.Inventory.Repository.ID != *t.Inventory.RepositoryID ||
+			t.Inventory.Repository.ProjectID != t.Inventory.ProjectID {
+			return errors.New("execution preflight inventory repository snapshot is invalid")
+		}
+		key, err := t.pool.store.GetAccessKey(t.Inventory.Repository.ProjectID, t.Inventory.Repository.SSHKeyID)
+		if err != nil {
+			return errors.New("execution preflight inventory repository credential is unavailable")
+		}
+		t.Inventory.Repository.SSHKey = key
+		if err = t.pool.encryptionService.DeserializeSecret(&t.Inventory.Repository.SSHKey); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (t *TaskRunner) resolveExecutionSnapshotTemplateVaults() error {
+	for index := range t.Template.Vaults {
+		vault := &t.Template.Vaults[index]
+		if vault.Type != db.TemplateVaultPassword || vault.VaultKeyID == nil {
+			continue
+		}
+		key, err := t.pool.store.GetAccessKey(t.Template.ProjectID, *vault.VaultKeyID)
+		if err != nil {
+			return errors.New("execution preflight vault credential is unavailable")
+		}
+		if err = t.pool.encryptionService.DeserializeSecret(&key); err != nil {
+			return err
+		}
+		vault.Vault = &key
+	}
+	return nil
 }
 
 // resolveCrossProjectTemplateVaults fills password vault values only in the
@@ -675,6 +762,34 @@ func (t *TaskRunner) loadEnvironments() error {
 	if len(t.Template.EnvironmentIDs) == 0 {
 		return nil
 	}
+	environments := make([]db.Environment, 0, len(t.Template.EnvironmentIDs))
+	seen := make(map[int]bool)
+	for _, envID := range t.Template.EnvironmentIDs {
+		if seen[envID] {
+			continue
+		}
+		seen[envID] = true
+		env, err := t.pool.store.GetEnvironment(t.Template.ProjectID, envID)
+		if err != nil {
+			return err
+		}
+		environments = append(environments, env)
+	}
+	return t.mergeEnvironmentLayers(environments, false)
+}
+
+// loadExecutionSnapshotEnvironments merges the already-persisted resource
+// layers of a reviewed task. It only resolves their AccessKey-backed secrets
+// through the existing live credential authority; it never re-reads mutable
+// environment configuration.
+func (t *TaskRunner) loadExecutionSnapshotEnvironments(environments []db.Environment) error {
+	return t.mergeEnvironmentLayers(environments, true)
+}
+
+func (t *TaskRunner) mergeEnvironmentLayers(environments []db.Environment, useSnapshotBindings bool) error {
+	if len(environments) == 0 {
+		return nil
+	}
 
 	seen := make(map[int]bool)
 
@@ -685,18 +800,18 @@ func (t *TaskRunner) loadEnvironments() error {
 
 	var lastEnv db.Environment
 
-	for _, envID := range t.Template.EnvironmentIDs {
-		if seen[envID] {
+	for _, env := range environments {
+		if seen[env.ID] {
 			continue
 		}
-		seen[envID] = true
+		seen[env.ID] = true
 
-		env, err := t.pool.store.GetEnvironment(t.Template.ProjectID, envID)
-		if err != nil {
-			return err
+		var err error
+		if useSnapshotBindings {
+			err = t.resolveExecutionSnapshotEnvironmentSecrets(&env)
+		} else {
+			err = t.pool.encryptionService.FillEnvironmentSecrets(&env, true)
 		}
-
-		err = t.pool.encryptionService.FillEnvironmentSecrets(&env, true)
 		if err != nil {
 			return err
 		}
@@ -759,6 +874,29 @@ func (t *TaskRunner) loadEnvironments() error {
 
 	t.Environment.Secrets = mergedSecrets
 
+	return nil
+}
+
+func (t *TaskRunner) resolveExecutionSnapshotEnvironmentSecrets(environment *db.Environment) error {
+	resolved := make([]db.EnvironmentSecret, 0, len(environment.Secrets))
+	for _, descriptor := range environment.Secrets {
+		if descriptor.ID <= 0 || descriptor.Name == "" || descriptor.Secret != "" ||
+			(descriptor.Type != db.EnvironmentSecretVar && descriptor.Type != db.EnvironmentSecretEnv) {
+			return errors.New("execution preflight environment secret snapshot is invalid")
+		}
+		key, err := t.pool.store.GetAccessKey(environment.ProjectID, descriptor.ID)
+		if err != nil || key.EnvironmentID == nil || *key.EnvironmentID != environment.ID ||
+			(descriptor.Type == db.EnvironmentSecretVar && key.Owner != db.AccessKeyVariable) ||
+			(descriptor.Type == db.EnvironmentSecretEnv && key.Owner != db.AccessKeyEnvironment) {
+			return errors.New("execution preflight environment secret is unavailable")
+		}
+		if err = t.pool.encryptionService.DeserializeSecret(&key); err != nil {
+			return err
+		}
+		descriptor.Secret = key.String
+		resolved = append(resolved, descriptor)
+	}
+	environment.Secrets = resolved
 	return nil
 }
 

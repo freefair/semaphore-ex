@@ -35,6 +35,9 @@ func TestCommunityProviderAndWorkerRemainUnavailable(t *testing.T) {
 		snapshot.Decision(pro_interfaces.CapabilityLDAP).State())
 	assert.Equal(t, pro_interfaces.CapabilityStateUnavailable,
 		snapshot.Decision(pro_interfaces.CapabilityProjectRoles).State())
+	assert.Equal(t, pro_interfaces.CapabilityStateUnavailable,
+		snapshot.Decision(pro_interfaces.CapabilityExecutionPreflight).State())
+	assert.False(t, snapshot.Decision(pro_interfaces.CapabilityExecutionPreflight).Allows(pro_interfaces.CapabilityAccessRead))
 	_, err = service.RunBackgroundAction(context.Background(), snapshot, "blocked")
 	assertCommunityDenied(t, err, pro_interfaces.CapabilityAccessExecute)
 	_, err = provider.Configure(context.Background(), request, pro_interfaces.CapabilityConfiguration{

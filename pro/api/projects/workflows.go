@@ -65,6 +65,10 @@ func (c *workflowController) RunWorkflow(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNotFound)
 }
 
+func (c *workflowController) PreviewWorkflow(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+
 func (c *workflowController) StopWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }

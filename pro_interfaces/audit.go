@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -119,6 +120,8 @@ const (
 	AuditActionCrossProjectTemplateGrantRevoke      AuditAction = "cross_project_template_grant_revoke"
 	AuditActionCrossProjectTemplateGrantDelete      AuditAction = "cross_project_template_grant_delete"
 	AuditActionCrossProjectTemplateReferenceResolve AuditAction = "cross_project_template_reference_resolve"
+	AuditActionExecutionPreflightPreview            AuditAction = "execution_preflight_preview"
+	AuditActionExecutionPreflightStart              AuditAction = "execution_preflight_start"
 )
 
 type AuditTargetType string
@@ -152,6 +155,7 @@ const (
 	AuditTargetWorkflowApprovalInbox       AuditTargetType = "workflow_approval_inbox"
 	AuditTargetCrossProjectTemplateGrant   AuditTargetType = "cross_project_template_grant"
 	AuditTargetCrossProjectTemplateVersion AuditTargetType = "cross_project_template_version"
+	AuditTargetExecutionPreflight          AuditTargetType = "execution_preflight"
 )
 
 type AuditOutcome string
@@ -201,6 +205,10 @@ const (
 	AuditReasonWorkflowApprovalTimedOut           = "workflow_approval_timed_out"
 	AuditReasonCrossProjectTemplateGrantActive    = "cross_project_template_grant_active"
 	AuditReasonCrossProjectTemplateGrantDenied    = "cross_project_template_grant_denied"
+	AuditReasonExecutionPreflightPreviewed        = "execution_preflight_previewed"
+	AuditReasonExecutionPreflightStarted          = "execution_preflight_started"
+	AuditReasonExecutionPreflightDenied           = "execution_preflight_denied"
+	AuditReasonExecutionPreflightStale            = "execution_preflight_stale"
 )
 
 // AuditRoleOrigin records how a role was effective when a workflow decision
@@ -255,25 +263,26 @@ const (
 )
 
 var (
-	correlationPattern            = regexp.MustCompile(`^(?:[a-f0-9]{32}|internal)$`)
-	eventIDPattern                = regexp.MustCompile(`^[a-f0-9]{32}$`)
-	identifierPattern             = regexp.MustCompile(`^[a-z0-9_.:-]{1,64}$`)
-	projectRunnerTargetPattern    = regexp.MustCompile(`^(?:project|runner):[1-9][0-9]*$`)
-	projectRoleTargetPattern      = regexp.MustCompile(`^(?:project:[1-9][0-9]*|role:[a-z0-9][a-z0-9_.-]{0,49})$`)
-	projectMemberTargetPattern    = regexp.MustCompile(`^(?:project:[1-9][0-9]*|member:[1-9][0-9]*)$`)
-	globalRoleTargetPattern       = regexp.MustCompile(`^(?:roles|role:[a-z0-9][a-z0-9_.-]{0,49})$`)
-	globalAssignmentTargetPattern = regexp.MustCompile(`^(?:user|assignment):[1-9][0-9]*$`)
-	globalUserTargetPattern       = regexp.MustCompile(`^(?:users|user:[1-9][0-9]*)$`)
-	globalSystemTargetPattern     = regexp.MustCompile(`^(?:subscription|options|cache)$`)
-	templateRoleTargetPattern     = regexp.MustCompile(`^(?:template|template-role):[1-9][0-9]*$`)
-	ldapGroupTargetPattern        = regexp.MustCompile(`^(?:(?:entryuuid|objectguid|nsuniqueid|ipauniqueid):[0-9a-f-]{36}|provider:[a-z][a-z0-9_-]{0,63})$`)
-	oidcGroupTargetPattern        = regexp.MustCompile(`^provider:[a-z][a-z0-9_-]{0,63}$`)
-	workflowTargetPattern         = regexp.MustCompile(`^(?:project|workflow):[1-9][0-9]*$`)
-	workflowRunTargetPattern      = regexp.MustCompile(`^run:[1-9][0-9]*$`)
-	workflowApprovalTargetPattern = regexp.MustCompile(`^approval:[1-9][0-9]*$`)
-	workflowInboxTargetPattern    = regexp.MustCompile(`^project:[1-9][0-9]*$`)
-	notificationTargetPattern     = regexp.MustCompile(`^(?:global|project:[1-9][0-9]*)$`)
-	workflowRoleIDPattern         = regexp.MustCompile(`^(?:builtin:(?:owner|manager|task_runner|guest)|role:[a-z0-9][a-z0-9_-]{0,63})$`)
+	correlationPattern              = regexp.MustCompile(`^(?:[a-f0-9]{32}|internal)$`)
+	eventIDPattern                  = regexp.MustCompile(`^[a-f0-9]{32}$`)
+	identifierPattern               = regexp.MustCompile(`^[a-z0-9_.:-]{1,64}$`)
+	projectRunnerTargetPattern      = regexp.MustCompile(`^(?:project|runner):[1-9][0-9]*$`)
+	projectRoleTargetPattern        = regexp.MustCompile(`^(?:project:[1-9][0-9]*|role:[a-z0-9][a-z0-9_.-]{0,49})$`)
+	projectMemberTargetPattern      = regexp.MustCompile(`^(?:project:[1-9][0-9]*|member:[1-9][0-9]*)$`)
+	globalRoleTargetPattern         = regexp.MustCompile(`^(?:roles|role:[a-z0-9][a-z0-9_.-]{0,49})$`)
+	globalAssignmentTargetPattern   = regexp.MustCompile(`^(?:user|assignment):[1-9][0-9]*$`)
+	globalUserTargetPattern         = regexp.MustCompile(`^(?:users|user:[1-9][0-9]*)$`)
+	globalSystemTargetPattern       = regexp.MustCompile(`^(?:subscription|options|cache)$`)
+	templateRoleTargetPattern       = regexp.MustCompile(`^(?:template|template-role):[1-9][0-9]*$`)
+	ldapGroupTargetPattern          = regexp.MustCompile(`^(?:(?:entryuuid|objectguid|nsuniqueid|ipauniqueid):[0-9a-f-]{36}|provider:[a-z][a-z0-9_-]{0,63})$`)
+	oidcGroupTargetPattern          = regexp.MustCompile(`^provider:[a-z][a-z0-9_-]{0,63}$`)
+	workflowTargetPattern           = regexp.MustCompile(`^(?:project|workflow):[1-9][0-9]*$`)
+	workflowRunTargetPattern        = regexp.MustCompile(`^run:[1-9][0-9]*$`)
+	workflowApprovalTargetPattern   = regexp.MustCompile(`^approval:[1-9][0-9]*$`)
+	workflowInboxTargetPattern      = regexp.MustCompile(`^project:[1-9][0-9]*$`)
+	executionPreflightTargetPattern = regexp.MustCompile(`^(?:task-template|workflow):[1-9][0-9]*$`)
+	notificationTargetPattern       = regexp.MustCompile(`^(?:global|project:[1-9][0-9]*)$`)
+	workflowRoleIDPattern           = regexp.MustCompile(`^(?:builtin:(?:owner|manager|task_runner|guest)|role:[a-z0-9][a-z0-9_-]{0,63})$`)
 )
 
 var (
@@ -316,6 +325,121 @@ type AuditEvent struct {
 	WorkflowPolicyRevision         int                                  `json:"workflow_policy_revision,omitempty"`
 	RoleProvenance                 []AuditRoleProvenance                `json:"role_provenance,omitempty"`
 	CrossProjectTemplateProvenance *AuditCrossProjectTemplateProvenance `json:"cross_project_template_provenance,omitempty"`
+	ExecutionPreflightProvenance   *AuditExecutionPreflightProvenance   `json:"execution_preflight_provenance,omitempty"`
+}
+
+// AuditExecutionPreflightProvenance is the complete allowlist for execution
+// preview/start context. It deliberately has no token, resource names, input,
+// command, endpoint, path, webhook, or error-text field.
+type AuditExecutionPreflightProvenance struct {
+	Intent           ExecutionPreflightIntent       `json:"intent"`
+	Fingerprint      string                         `json:"fingerprint"`
+	Changes          []ExecutionPreflightChangeCode `json:"changes,omitempty"`
+	ReasonCodes      []ExecutionPreflightReasonCode `json:"reason_codes,omitempty"`
+	CandidateCount   int                            `json:"candidate_count,omitempty"`
+	SelectedRunnerID int                            `json:"selected_runner_id,omitempty"`
+}
+
+// NewExecutionPreflightAuditProvenance projects a plan into the only
+// execution-preflight metadata permitted in an audit record.
+func NewExecutionPreflightAuditProvenance(
+	plan ExecutionPreflightPlan,
+	changes []ExecutionPreflightChangeCode,
+) *AuditExecutionPreflightProvenance {
+	provenance := &AuditExecutionPreflightProvenance{
+		Intent: plan.Intent, Fingerprint: plan.Fingerprint,
+	}
+	changeSet := make(map[ExecutionPreflightChangeCode]struct{}, len(changes))
+	for _, change := range changes {
+		changeSet[change] = struct{}{}
+	}
+	for change := range changeSet {
+		provenance.Changes = append(provenance.Changes, change)
+	}
+	reasons := make(map[ExecutionPreflightReasonCode]struct{})
+	selected := 0
+	selectedCount := 0
+	for _, placement := range plan.Placements {
+		provenance.CandidateCount += len(placement.Candidates)
+		if placement.Decision != "" {
+			reasons[placement.Decision] = struct{}{}
+		}
+		if placement.SelectedRunnerID != nil {
+			selected = *placement.SelectedRunnerID
+			selectedCount++
+		}
+	}
+	if selectedCount == 1 {
+		provenance.SelectedRunnerID = selected
+	}
+	for _, finding := range plan.Findings {
+		if finding.Code != "" {
+			reasons[finding.Code] = struct{}{}
+		}
+	}
+	for reason := range reasons {
+		provenance.ReasonCodes = append(provenance.ReasonCodes, reason)
+	}
+	sort.Slice(provenance.Changes, func(i, j int) bool { return provenance.Changes[i] < provenance.Changes[j] })
+	sort.Slice(provenance.ReasonCodes, func(i, j int) bool { return provenance.ReasonCodes[i] < provenance.ReasonCodes[j] })
+	return provenance
+}
+
+// ExecutionPreflightAuditDenialReason returns the bounded, server-derived
+// reason used for a denied preview/start audit event. It never returns a
+// finding message or any other plan content.
+func ExecutionPreflightAuditDenialReason(plan ExecutionPreflightPlan) (string, bool) {
+	for _, expected := range []ExecutionPreflightReasonCode{
+		ExecutionReasonHiddenReference,
+		ExecutionReasonPermissionDenied,
+		ExecutionReasonCapabilityUnavailable,
+		ExecutionReasonPolicyDenied,
+		ExecutionReasonPlanLimitExceeded,
+		ExecutionReasonInvalidInput,
+		ExecutionReasonNoCandidate,
+	} {
+		for _, finding := range plan.Findings {
+			if finding.Severity == ExecutionFindingDenial && finding.Code == expected {
+				return string(expected), true
+			}
+		}
+	}
+	return "", false
+}
+
+// NewExecutionPreflightAuditEvent creates a scoped API audit event without an
+// extension point for arbitrary request data or error text.
+func NewExecutionPreflightAuditEvent(
+	actorID, projectID int,
+	correlationID string,
+	sourceIP, userAgent string,
+	action AuditAction,
+	outcome AuditOutcome,
+	reason string,
+	intent ExecutionPreflightIntent,
+	resourceID int,
+	provenance *AuditExecutionPreflightProvenance,
+) AuditEvent {
+	targetID := ""
+	if intent == ExecutionPreflightTask {
+		targetID = "task-template:" + strconv.Itoa(resourceID)
+	} else if intent == ExecutionPreflightWorkflow {
+		targetID = "workflow:" + strconv.Itoa(resourceID)
+	}
+	return AuditEvent{
+		CorrelationID:                correlationID,
+		ActorID:                      &actorID,
+		ProjectID:                    &projectID,
+		Action:                       action,
+		TargetType:                   AuditTargetExecutionPreflight,
+		TargetID:                     targetID,
+		Outcome:                      outcome,
+		Source:                       AuditSourceAPI,
+		SourceIP:                     NormalizeAuditSourceIP(sourceIP),
+		UserAgent:                    SanitizeAuditUserAgent(userAgent),
+		Reason:                       reason,
+		ExecutionPreflightProvenance: provenance,
+	}
 }
 
 // AuditCrossProjectTemplateProvenance is the only permitted cross-project
@@ -365,6 +489,9 @@ func (e AuditEvent) Validate() error {
 	}
 	if !validCrossProjectTemplateAuditProvenance(e) {
 		return fmt.Errorf("invalid cross-project template audit provenance")
+	}
+	if !validExecutionPreflightAuditProvenance(e) {
+		return fmt.Errorf("invalid execution preflight audit provenance")
 	}
 	return nil
 }
@@ -438,6 +565,11 @@ func validAuditTarget(event AuditEvent) bool {
 		return validScopedProjectAuditTarget(event, regexp.MustCompile(`^grant:[1-9][0-9]*$`))
 	case AuditTargetCrossProjectTemplateVersion:
 		return validScopedProjectAuditTarget(event, regexp.MustCompile(`^template-version:[1-9][0-9]*$`))
+	case AuditTargetExecutionPreflight:
+		if event.ProjectID == nil || *event.ProjectID <= 0 || !executionPreflightTargetPattern.MatchString(event.TargetID) {
+			return false
+		}
+		return true
 	default:
 		return false
 	}
@@ -481,6 +613,118 @@ func validCrossProjectTemplateAuditProvenance(event AuditEvent) bool {
 	default:
 		return false
 	}
+}
+
+func validExecutionPreflightAuditProvenance(event AuditEvent) bool {
+	if !isExecutionPreflightAuditAction(event.Action) {
+		return event.ExecutionPreflightProvenance == nil
+	}
+	p := event.ExecutionPreflightProvenance
+	if p == nil {
+		return (event.Outcome == AuditOutcomeDenied && event.Reason == AuditReasonExecutionPreflightDenied) ||
+			(event.Outcome == AuditOutcomeFailure && event.Reason == AuditReasonOperationError)
+	}
+	if !validExecutionPreflightAuditFingerprint(p.Fingerprint) ||
+		len(p.Changes) > MaxExecutionPreflightChanges || len(p.ReasonCodes) > MaxExecutionPreflightFindings ||
+		p.CandidateCount < 0 || p.CandidateCount > MaxExecutionPreflightPlacements*MaxExecutionPreflightCandidates ||
+		p.SelectedRunnerID < 0 {
+		return false
+	}
+	if p.Intent == ExecutionPreflightTask {
+		if !strings.HasPrefix(event.TargetID, "task-template:") {
+			return false
+		}
+	} else if p.Intent == ExecutionPreflightWorkflow {
+		if !strings.HasPrefix(event.TargetID, "workflow:") {
+			return false
+		}
+	} else {
+		return false
+	}
+	if !validDistinctExecutionPreflightChanges(p.Changes) || !validDistinctExecutionPreflightReasons(p.ReasonCodes) {
+		return false
+	}
+	switch event.Action {
+	case AuditActionExecutionPreflightPreview:
+		switch event.Outcome {
+		case AuditOutcomeAllowed:
+			return event.Reason == AuditReasonExecutionPreflightPreviewed
+		case AuditOutcomeDenied:
+			return validExecutionPreflightAuditDenialReason(event.Reason)
+		case AuditOutcomeFailure:
+			return event.Reason == AuditReasonOperationError
+		}
+	case AuditActionExecutionPreflightStart:
+		switch event.Outcome {
+		case AuditOutcomeAllowed:
+			return event.Reason == AuditReasonExecutionPreflightStarted
+		case AuditOutcomeDenied:
+			return validExecutionPreflightAuditDenialReason(event.Reason) || event.Reason == AuditReasonExecutionPreflightStale
+		case AuditOutcomeFailure:
+			return event.Reason == AuditReasonOperationError
+		}
+	}
+	return false
+}
+
+func validExecutionPreflightAuditFingerprint(value string) bool {
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	for _, character := range value[len("sha256:"):] {
+		if !(character >= '0' && character <= '9') && !(character >= 'a' && character <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validExecutionPreflightAuditDenialReason(reason string) bool {
+	switch ExecutionPreflightReasonCode(reason) {
+	case ExecutionReasonHiddenReference, ExecutionReasonPermissionDenied, ExecutionReasonCapabilityUnavailable,
+		ExecutionReasonPolicyDenied, ExecutionReasonPlanLimitExceeded, ExecutionReasonInvalidInput,
+		ExecutionReasonNoCandidate:
+		return true
+	default:
+		return false
+	}
+}
+
+func validDistinctExecutionPreflightChanges(values []ExecutionPreflightChangeCode) bool {
+	seen := make(map[ExecutionPreflightChangeCode]struct{}, len(values))
+	for _, value := range values {
+		switch value {
+		case ExecutionChangeDefinition, ExecutionChangeInput, ExecutionChangeReference, ExecutionChangePlacement,
+			ExecutionChangePermission, ExecutionChangeCapability, ExecutionChangePolicy:
+		default:
+			return false
+		}
+		if _, duplicate := seen[value]; duplicate {
+			return false
+		}
+		seen[value] = struct{}{}
+	}
+	return true
+}
+
+func validDistinctExecutionPreflightReasons(values []ExecutionPreflightReasonCode) bool {
+	seen := make(map[ExecutionPreflightReasonCode]struct{}, len(values))
+	for _, value := range values {
+		switch value {
+		case ExecutionReasonSelected, ExecutionReasonProvisionalPlacement, ExecutionReasonDifferentProject, ExecutionReasonInactive,
+			ExecutionReasonNotRegistered, ExecutionReasonOffline, ExecutionReasonCapacity,
+			ExecutionReasonTagMismatch, ExecutionReasonImageUnsupported, ExecutionReasonNoCandidate,
+			ExecutionReasonHiddenReference, ExecutionReasonPermissionDenied, ExecutionReasonCapabilityUnavailable,
+			ExecutionReasonPolicyDenied, ExecutionReasonPlanLimitExceeded, ExecutionReasonInvalidInput:
+		default:
+			return false
+		}
+		if _, duplicate := seen[value]; duplicate {
+			return false
+		}
+		seen[value] = struct{}{}
+	}
+	return true
 }
 
 func validWorkflowAuditProvenance(event AuditEvent) bool {
@@ -548,6 +792,18 @@ func validWorkflowAuditReason(event AuditEvent) bool {
 }
 
 func validAuditActionTarget(event AuditEvent) bool {
+	if isExecutionPreflightAuditAction(event.Action) {
+		if event.TargetType != AuditTargetExecutionPreflight || event.ProjectID == nil {
+			return false
+		}
+		if event.Action == AuditActionExecutionPreflightPreview || event.Action == AuditActionExecutionPreflightStart {
+			return executionPreflightTargetPattern.MatchString(event.TargetID)
+		}
+		return false
+	}
+	if event.TargetType == AuditTargetExecutionPreflight {
+		return false
+	}
 	if isGlobalCredentialAuditAction(event.Action) {
 		switch event.Action {
 		case AuditActionGrantedCredentialRead:
@@ -606,6 +862,10 @@ func isWorkflowAuditAction(action AuditAction) bool {
 	default:
 		return false
 	}
+}
+
+func isExecutionPreflightAuditAction(action AuditAction) bool {
+	return action == AuditActionExecutionPreflightPreview || action == AuditActionExecutionPreflightStart
 }
 
 func isCrossProjectTemplateAuditAction(action AuditAction) bool {
@@ -701,6 +961,11 @@ func validAuditReason(reason string) bool {
 		AuditReasonWorkflowApprovalRoleRevoked, AuditReasonWorkflowApprovalAlreadyResolved,
 		AuditReasonWorkflowApprovalTimedOut, AuditReasonCrossProjectTemplateGrantActive,
 		AuditReasonCrossProjectTemplateGrantDenied,
+		AuditReasonExecutionPreflightPreviewed, AuditReasonExecutionPreflightStarted,
+		AuditReasonExecutionPreflightDenied, AuditReasonExecutionPreflightStale,
+		string(ExecutionReasonHiddenReference), string(ExecutionReasonPermissionDenied),
+		string(ExecutionReasonCapabilityUnavailable), string(ExecutionReasonPolicyDenied),
+		string(ExecutionReasonPlanLimitExceeded), string(ExecutionReasonNoCandidate),
 		string(CapabilityReasonActive), string(CapabilityReasonProviderUnavailable),
 		string(CapabilityReasonDisabledByAdmin), string(CapabilityReasonEntitlementExpired),
 		string(CapabilityReasonReadOnly), string(CapabilityReasonInsufficientPermission),
@@ -753,6 +1018,9 @@ func (e AuditEvent) SafeFields() map[string]any {
 	}
 	if len(e.RoleProvenance) > 0 {
 		fields["role_provenance"] = e.RoleProvenance
+	}
+	if e.ExecutionPreflightProvenance != nil {
+		fields["execution_preflight_provenance"] = e.ExecutionPreflightProvenance
 	}
 	return fields
 }
@@ -876,6 +1144,13 @@ type AuditServiceFacade interface {
 	Record(context.Context, AuditEvent) error
 }
 
+// ExecutionPreflightAuditConfigurer is an optional route-wiring seam. It
+// keeps Community controllers free of an audit dependency while allowing an
+// Enhanced controller to record strictly value-free preview/start decisions.
+type ExecutionPreflightAuditConfigurer interface {
+	ConfigureExecutionPreflightAudit(AuditServiceFacade)
+}
+
 func validAuditAction(action AuditAction) bool {
 	switch action {
 	case AuditActionCapabilityResolve, AuditActionCapabilityRead, AuditActionCapabilityWrite,
@@ -918,6 +1193,8 @@ func validAuditAction(action AuditAction) bool {
 		AuditActionWorkflowUpdate, AuditActionWorkflowDelete, AuditActionWorkflowStart,
 		AuditActionWorkflowStop, AuditActionWorkflowRunRead, AuditActionWorkflowRunLogsRead,
 		AuditActionWorkflowApprovalInbox, AuditActionWorkflowApprovalContribute:
+		return true
+	case AuditActionExecutionPreflightPreview, AuditActionExecutionPreflightStart:
 		return true
 	case AuditActionCrossProjectTemplateVersionPublish,
 		AuditActionCrossProjectTemplateGrantCreate, AuditActionCrossProjectTemplateGrantUpdate,

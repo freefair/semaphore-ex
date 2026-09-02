@@ -48,6 +48,36 @@ type workflowServiceStub struct {
 	inbox          []db.WorkflowApproval
 }
 
+type workflowExecutionPreflightServiceStub struct {
+	*workflowServiceStub
+	preview    pro_interfaces.ExecutionPreflightPlan
+	previewErr error
+	startErr   error
+	reviews    []pro_interfaces.ExecutionPreflightReview
+}
+
+func (s *workflowExecutionPreflightServiceStub) PreviewWorkflowExecution(
+	_ db.WorkflowTemplate,
+	_ *db.User,
+	_ ...db.WorkflowRunInput,
+) (pro_interfaces.ExecutionPreflightPlan, error) {
+	return s.preview, s.previewErr
+}
+
+func (s *workflowExecutionPreflightServiceStub) StartWorkflowWithExecutionPreflight(
+	workflow db.WorkflowTemplate,
+	user *db.User,
+	correlationID string,
+	review pro_interfaces.ExecutionPreflightReview,
+	input ...db.WorkflowRunInput,
+) (db.WorkflowRun, error) {
+	s.reviews = append(s.reviews, review)
+	if s.startErr != nil {
+		return db.WorkflowRun{}, s.startErr
+	}
+	return s.StartWorkflow(workflow, user, correlationID, input...)
+}
+
 func (s *workflowServiceStub) StartWorkflow(_ db.WorkflowTemplate, _ *db.User, correlationID string, input ...db.WorkflowRunInput) (db.WorkflowRun, error) {
 	s.correlationIDs = append(s.correlationIDs, correlationID)
 	if len(input) > 0 {
@@ -528,6 +558,63 @@ func TestWorkflowRunControllerStartStatusListStopAndArtifacts(t *testing.T) {
 	controller.GetWorkflowRunArtifacts(artifactsRecorder, workflowRunRequest(http.MethodGet, "/api/project/7/workflows/41/runs/91/artifacts", workflow, run))
 	assert.Equal(t, http.StatusOK, artifactsRecorder.Code)
 	assert.JSONEq(t, `[]`, artifactsRecorder.Body.String())
+}
+
+func TestWorkflowExecutionPreflightControllerReturnsPlanAndForwardsReview(t *testing.T) {
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7}
+	plan := pro_interfaces.ExecutionPreflightPlan{
+		ContractVersion: pro_interfaces.ExecutionPreflightContractVersion,
+		Intent:          pro_interfaces.ExecutionPreflightWorkflow, ProjectID: 7, ActorID: 12, WorkflowID: 41,
+		Definition: pro_interfaces.ExecutionPreflightDefinition{Kind: pro_interfaces.ExecutionReferenceWorkflow, ID: 41},
+		Inputs:     []pro_interfaces.ExecutionPreflightInput{{Name: "token", Type: "secret_reference", Present: true, Sensitive: true}},
+		References: []pro_interfaces.ExecutionPreflightReference{{Kind: pro_interfaces.ExecutionReferenceCredential, ID: 9, Visible: true}},
+		Commands:   []pro_interfaces.ExecutionPreflightCommand{}, Placements: []pro_interfaces.ExecutionPreflightPlacement{},
+		Findings: []pro_interfaces.ExecutionPreflightFinding{}, Fingerprint: "sha256:preview", ReviewToken: "review-token",
+	}
+	service := &workflowExecutionPreflightServiceStub{
+		workflowServiceStub: &workflowServiceStub{run: db.WorkflowRun{ID: 91}}, preview: plan,
+	}
+	controller := NewWorkflowController(service, &workflowManagerStub{}, &workflowDefinitionServiceStub{})
+	previewRequest := workflowRawRequest(http.MethodPost, "/api/project/7/workflows/41/preflight", []byte(`{"parameters":{"token":{"access_key_id":9}}}`), &workflow)
+	previewRecorder := httptest.NewRecorder()
+
+	controller.PreviewWorkflow(previewRecorder, previewRequest)
+
+	assert.Equal(t, http.StatusOK, previewRecorder.Code, previewRecorder.Body.String())
+	assert.Contains(t, previewRecorder.Body.String(), `"review_token":"review-token"`)
+	assert.NotContains(t, previewRecorder.Body.String(), "credential-value")
+
+	startRequest := workflowRequest(http.MethodPost, "/api/project/7/workflows/41/run", nil, &workflow)
+	startRequest.Header.Set(workflowPreflightFingerprintHeader, "sha256:preview")
+	startRequest.Header.Set(workflowPreflightTokenHeader, "review-token")
+	startRecorder := httptest.NewRecorder()
+	controller.RunWorkflow(startRecorder, startRequest)
+
+	assert.Equal(t, http.StatusCreated, startRecorder.Code, startRecorder.Body.String())
+	require.Len(t, service.reviews, 1)
+	assert.Equal(t, "sha256:preview", service.reviews[0].Fingerprint)
+	assert.Equal(t, "review-token", service.reviews[0].ReviewToken)
+}
+
+func TestWorkflowExecutionPreflightControllerReturnsBoundedStaleDiff(t *testing.T) {
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7}
+	service := &workflowExecutionPreflightServiceStub{
+		workflowServiceStub: &workflowServiceStub{},
+		startErr: &pro_interfaces.ExecutionPreflightStaleError{
+			Changes:   []pro_interfaces.ExecutionPreflightChangeCode{pro_interfaces.ExecutionChangeReference},
+			Preflight: pro_interfaces.ExecutionPreflightPlan{ReviewToken: "fresh-token"},
+		},
+	}
+	controller := NewWorkflowController(service, &workflowManagerStub{}, &workflowDefinitionServiceStub{})
+	recorder := httptest.NewRecorder()
+	request := workflowRequest(http.MethodPost, "/api/project/7/workflows/41/run", nil, &workflow)
+
+	controller.RunWorkflow(recorder, request)
+
+	assert.Equal(t, http.StatusConflict, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"code":"stale_execution_preflight"`)
+	assert.Contains(t, recorder.Body.String(), `"reference_changed"`)
+	assert.Contains(t, recorder.Body.String(), `"review_token":"fresh-token"`)
 }
 
 func TestWorkflowRunControllerRejectsOversizedIdempotencyKey(t *testing.T) {
