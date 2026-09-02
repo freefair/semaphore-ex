@@ -11,8 +11,7 @@
       text
       class="mb-6"
     >
-      Use environment variable <code>SEMAPHORE_SCHEDULE_TIMEZONE</code> or config param
-      <code>schedule.timezone</code> to set timezone for Schedule.
+      {{ $t('scheduleTimezoneFallback', { timezone }) }}
     </v-alert>
 
     <v-alert
@@ -43,6 +42,20 @@
       :disabled="formSaving"
       outlined
       dense
+    />
+
+    <v-autocomplete
+      v-model="item.timezone"
+      :label="$t('scheduleTimezone')"
+      :items="timezoneOptions"
+      :hint="$t('scheduleTimezoneHint', { timezone })"
+      persistent-hint
+      clearable
+      :disabled="formSaving"
+      outlined
+      dense
+      data-testid="schedule-timezone"
+      @change="onScheduleTimezoneChange"
     />
 
     <v-card
@@ -78,9 +91,10 @@
         label="Run at"
         :rules="runAtRules"
         :disabled="formSaving"
-        :suffix="timezone + ' time'"
+        :suffix="inputTimezone + ' time'"
         outlined
         dense
+        @input="queueRunAtPreview"
       ></v-text-field>
 
       <div class="d-flex justify-end">
@@ -112,7 +126,7 @@
         required
         :disabled="formSaving"
         @input="refreshCheckboxes()"
-        :suffix="timezone + ' time'"
+        :suffix="effectiveTimezone + ' time'"
         outlined
         :error="cronFormatError != null"
         :error-messages="cronFormatError"
@@ -188,7 +202,7 @@
         <div v-if="['yearly', 'monthly', 'weekly', 'daily'].includes(timing)">
           <div class="mt-4 d-flex justify-space-between">
             <span>Hours</span>
-            <b style="color: red;">{{ timezone + ' time' }}</b>
+            <b style="color: red;">{{ effectiveTimezone + ' time' }}</b>
           </div>
           <div class="d-flex flex-wrap">
             <v-checkbox
@@ -229,7 +243,7 @@
       :class="{'mt-8': !rawCron, 'mt-3': rawCron}"
       style="color: limegreen; font-weight: bold;"
     >
-      Next run time
+      {{ $t('scheduleNextRun') }}
     </div>
 
     <v-simple-table class="TaskDetails__table text-sub mb-2">
@@ -243,7 +257,7 @@
         </thead>
         <tbody>
         <tr>
-          <td>{{ timezone }}</td>
+          <td data-testid="schedule-effective-timezone">{{ effectiveTimezone }}</td>
           <td>{{ nextRunUtcDate }}</td>
           <td>{{ nextRunUtcTime }}</td>
         </tr>
@@ -308,6 +322,8 @@
 </style>
 
 <script>
+import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/schedule-form';
+
 import ItemFormBase from '@/components/ItemFormBase';
 import axios from 'axios';
 import dayjs from 'dayjs';
@@ -481,6 +497,10 @@ export default {
       showInfo: true,
       cronFormatError: null,
       runAtInput: '',
+      timezoneOptions: [],
+      schedulePreview: null,
+      schedulePreviewRequest: 0,
+      runAtPreviewTimer: null,
     };
   },
 
@@ -511,6 +531,14 @@ export default {
       url: `/api/project/${this.projectId}/templates`,
       responseType: 'json',
     })).data;
+    this.timezoneOptions = this.getTimezoneOptions();
+  },
+
+  beforeDestroy() {
+    if (this.runAtPreviewTimer != null) {
+      clearTimeout(this.runAtPreviewTimer);
+    }
+    this.schedulePreviewRequest += 1;
   },
 
   props: {
@@ -519,6 +547,8 @@ export default {
   },
 
   computed: {
+    ...enhancedComputed,
+
     localTimezone() {
       return 'Local';
     },
@@ -534,7 +564,7 @@ export default {
     },
 
     nextRunUtcDate() {
-      return formatDateInTZ(this.nextRunTime(), this.timezone);
+      return formatDateInTZ(this.nextRunTime(), this.effectiveTimezone);
     },
 
     nextRunLocalDate() {
@@ -543,7 +573,7 @@ export default {
     },
 
     nextRunUtcTime() {
-      return formatTimeInTZ(this.nextRunTime(), this.timezone);
+      return formatTimeInTZ(this.nextRunTime(), this.effectiveTimezone);
     },
 
     nextRunLocalTime() {
@@ -553,6 +583,8 @@ export default {
   },
 
   methods: {
+    ...enhancedMethods,
+
     getNewItem() {
       return {
         name: '',
@@ -563,11 +595,12 @@ export default {
         delete_after_run: false,
         task_params: {},
         run_at: null,
+        timezone: null,
       };
     },
 
     setDefaultRunAt() {
-      const nextHour = dayjs().tz(this.timezone).add(1, 'hour').minute(0)
+      const nextHour = dayjs().tz(this.inputTimezone).add(1, 'hour').minute(0)
         .second(0)
         .millisecond(0);
 
@@ -580,46 +613,74 @@ export default {
         return;
       }
 
-      const parsed = dayjs(this.item.run_at).tz(this.timezone);
+      const parsed = dayjs(this.item.run_at).tz(this.inputTimezone);
       this.runAtInput = parsed.isValid() ? parsed.format(RUN_AT_FORMAT) : '';
     },
 
     nextRunTime() {
-      if (this.type === 'run_at') {
-        const runAt = this.item.run_at ? dayjs(this.item.run_at) : null;
-        const parsed = this.runAtInput
-          ? dayjs.tz(this.runAtInput, RUN_AT_FORMAT, this.timezone)
-          : runAt;
-
-        if (!parsed || !parsed.isValid()) {
-          return null;
-        }
-
-        return parsed.toDate();
-      }
-
-      try {
-        return CronExpressionParser.parse(this.item.cron_format, {
-          tz: this.timezone,
-        }).next().toDate();
-      } catch {
-        return null;
-      }
+      const value = this.schedulePreview?.next_run || this.item?.next_run;
+      const parsed = value ? new Date(value) : null;
+      return parsed && !Number.isNaN(parsed.getTime()) ? parsed : null;
     },
 
     async validateCronFormat(cronFormat) {
+      this.schedulePreviewRequest += 1;
+      const request = this.schedulePreviewRequest;
       try {
-        await axios({
+        const response = await axios({
           method: 'post',
           url: `/api/project/${this.projectId}/schedules/validate`,
           responseType: 'json',
           data: {
             project_id: this.projectId,
             cron_format: cronFormat,
+            timezone: this.item.timezone || null,
+            type: this.type || '',
           },
         });
+        if (request === this.schedulePreviewRequest) {
+          this.schedulePreview = response.data;
+        }
         return null;
       } catch (err) {
+        if (request === this.schedulePreviewRequest) {
+          this.schedulePreview = null;
+        }
+        return getErrorMessage(err);
+      }
+    },
+
+    async refreshRunAtPreview() {
+      const parsed = this.runAtInput
+        ? dayjs.tz(this.runAtInput, RUN_AT_FORMAT, this.inputTimezone)
+        : null;
+      if (!parsed || !parsed.isValid()) {
+        this.schedulePreview = null;
+        return this.$t('scheduleRunAtInvalid');
+      }
+
+      this.schedulePreviewRequest += 1;
+      const request = this.schedulePreviewRequest;
+      try {
+        const response = await axios({
+          method: 'post',
+          url: `/api/project/${this.projectId}/schedules/validate`,
+          responseType: 'json',
+          data: {
+            project_id: this.projectId,
+            type: 'run_at',
+            run_at: parsed.toISOString(),
+            timezone: this.item.timezone || null,
+          },
+        });
+        if (request === this.schedulePreviewRequest) {
+          this.schedulePreview = response.data;
+        }
+        return null;
+      } catch (err) {
+        if (request === this.schedulePreviewRequest) {
+          this.schedulePreview = null;
+        }
         return getErrorMessage(err);
       }
     },
@@ -642,9 +703,10 @@ export default {
       this.disableRawCron = false;
 
       const cronFormat = this.item.cron_format;
+      const timezone = this.item.timezone;
       const cronError = await this.validateCronFormat(cronFormat);
 
-      if (cronFormat !== this.item.cron_format) {
+      if (cronFormat !== this.item.cron_format || timezone !== this.item.timezone) {
         return; // the value changed while validating, ignore stale result
       }
 
@@ -722,7 +784,11 @@ export default {
         this.item.cron_format = '* * * * *';
       }
 
-      this.refreshCheckboxes();
+      if (this.type === 'run_at') {
+        this.refreshRunAtPreview();
+      } else {
+        this.refreshCheckboxes();
+      }
     },
 
     async beforeSave() {
@@ -730,7 +796,7 @@ export default {
 
       if (this.type === 'run_at') {
         const parsed = this.runAtInput
-          ? dayjs.tz(this.runAtInput, RUN_AT_FORMAT, this.timezone)
+          ? dayjs.tz(this.runAtInput, RUN_AT_FORMAT, this.inputTimezone)
           : null;
 
         if (!parsed || !parsed.isValid()) {
@@ -740,6 +806,11 @@ export default {
 
         this.item.run_at = parsed.toISOString();
         this.item.cron_format = this.item.cron_format || '';
+        const previewError = await this.refreshRunAtPreview();
+        if (previewError) {
+          this.formError = previewError;
+          throw new Error(previewError);
+        }
       } else {
         this.item.run_at = null;
       }

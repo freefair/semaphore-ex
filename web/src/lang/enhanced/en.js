@@ -415,4 +415,7 @@ export default {
   templateSearchClear: 'Clear search',
   templateSearchNoTemplates: 'No templates available',
   templateSearchMatchedIn: 'Matched in {field}',
+  scheduleTimezoneFallback: 'Schedules without a timezone use the global fallback: {timezone}.',
+  scheduleTimezoneHint: 'Leave empty to use the global fallback ({timezone}).',
+  scheduleRunAtInvalid: 'Please provide a valid run time.',
 };
