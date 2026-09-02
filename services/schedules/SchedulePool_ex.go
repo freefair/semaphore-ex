@@ -36,13 +36,14 @@ func NewScheduleOccurrence(schedule db.Schedule, intendedAt time.Time) (Schedule
 	revisionInput := struct {
 		TemplateID     int
 		CronFormat     string
+		Timezone       *string
 		Type           string
 		RepositoryID   *int
 		RunAt          *time.Time
 		DeleteAfterRun bool
 		TaskParams     *db.TaskParams
 	}{
-		TemplateID: schedule.TemplateID, CronFormat: schedule.CronFormat, Type: schedule.Type,
+		TemplateID: schedule.TemplateID, CronFormat: schedule.CronFormat, Timezone: schedule.Timezone, Type: schedule.Type,
 		RepositoryID: schedule.RepositoryID, RunAt: schedule.RunAt, DeleteAfterRun: schedule.DeleteAfterRun,
 		TaskParams: schedule.TaskParams,
 	}
