@@ -3254,6 +3254,28 @@ paths:
           type: string
           description: ordering manner
           enum: [asc, desc]
+        - name: search
+          in: query
+          required: false
+          type: string
+          maxLength: 256
+          description: >-
+            Case-insensitive literal match over the visible template name,
+            description, playbook, and runner tags. SQL wildcard characters
+            have no special meaning.
+        - name: count
+          in: query
+          required: false
+          type: integer
+          minimum: 1
+          maximum: 200
+          description: Optional page size. Omit to retain the unpaged list contract.
+        - name: offset
+          in: query
+          required: false
+          type: integer
+          minimum: 0
+          description: Zero-based visible-result offset; requires count.
       responses:
         200:
           description: template
@@ -3268,6 +3290,8 @@ paths:
                     $ref: "#/definitions/TemplateSurveyVar"
                 last_task:
                   $ref: "#/definitions/Task"
+        400:
+          description: Invalid search or pagination query
     post:
       tags:
         - template
@@ -3636,8 +3660,8 @@ paths:
         204:
           description: view removed
 
-
-  # tasks
+  /project/{project_id}/views/{view_id}/templates:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1views~1{view_id}~1templates"
   /project/{project_id}/tasks:
     parameters:
       - $ref: "#/parameters/project_id"
