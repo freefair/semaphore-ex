@@ -8,6 +8,7 @@ import (
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/services/schedules"
+	"github.com/semaphoreui/semaphore/util"
 )
 
 // SchedulesMiddleware ensures a template exists and loads it to the context
@@ -39,6 +40,10 @@ func refreshSchedulePool(r *http.Request) {
 // GetSchedule returns single template by ID
 func GetSchedule(w http.ResponseWriter, r *http.Request) {
 	schedule := helpers.GetFromContext(r, "schedule").(db.Schedule)
+	if err := applyScheduleTiming(&schedule, time.Now().UTC()); err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
 	helpers.WriteJSON(w, http.StatusOK, schedule)
 }
 
@@ -50,6 +55,13 @@ func GetProjectSchedules(w http.ResponseWriter, r *http.Request) {
 		helpers.WriteError(w, err)
 		return
 	}
+	now := time.Now().UTC()
+	for i := range tplSchedules {
+		if err = applyScheduleTiming(&tplSchedules[i].Schedule, now); err != nil {
+			helpers.WriteError(w, err)
+			return
+		}
+	}
 
 	helpers.WriteJSON(w, http.StatusOK, tplSchedules)
 }
@@ -59,28 +71,27 @@ func GetTemplateSchedules(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
 	tplSchedules, err := helpers.Store(r).GetTemplateSchedules(project.ID, templateID, true)
 	if err != nil {
 		helpers.WriteError(w, err)
 		return
 	}
+	now := time.Now().UTC()
+	for i := range tplSchedules {
+		if err = applyScheduleTiming(&tplSchedules[i], now); err != nil {
+			helpers.WriteError(w, err)
+			return
+		}
+	}
 
 	helpers.WriteJSON(w, http.StatusOK, tplSchedules)
 }
 
-func validateCronFormat(cronFormat string, w http.ResponseWriter) bool {
-	err := schedules.ValidateCronFormat(cronFormat)
-	if err == nil {
-		return true
-	}
-	helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
-		"error": "Cron: " + err.Error(),
-	})
-	return false
-}
-
 func validateSchedulePayload(schedule *db.Schedule, w http.ResponseWriter) bool {
+	now := time.Now().UTC()
+	if schedule.Timezone != nil && *schedule.Timezone == "" {
+		schedule.Timezone = nil
+	}
 	if schedule.Type == "" {
 		schedule.Type = db.ScheduleTypeCron
 	}
@@ -94,7 +105,7 @@ func validateSchedulePayload(schedule *db.Schedule, w http.ResponseWriter) bool 
 			return false
 		}
 
-		if schedule.RunAt.Before(time.Now()) {
+		if schedule.RunAt.Before(now) {
 			helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
 				"error": "run_at must be in the future",
 			})
@@ -102,16 +113,22 @@ func validateSchedulePayload(schedule *db.Schedule, w http.ResponseWriter) bool 
 		}
 
 		schedule.CronFormat = ""
-		return true
 	case db.ScheduleTypeCron:
 		schedule.RunAt = nil
-		return validateCronFormat(schedule.CronFormat, w)
 	default:
 		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "invalid schedule type",
 		})
 		return false
 	}
+
+	if err := applyScheduleTiming(schedule, now); err != nil {
+		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "Schedule: " + err.Error(),
+		})
+		return false
+	}
+	return true
 }
 
 func ValidateScheduleCronFormat(w http.ResponseWriter, r *http.Request) {
@@ -120,7 +137,10 @@ func ValidateScheduleCronFormat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = validateCronFormat(schedule.CronFormat, w)
+	if !validateSchedulePayload(&schedule, w) {
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, schedule)
 }
 
 // AddSchedule adds a template to the database
@@ -201,7 +221,18 @@ func UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 
 	refreshSchedulePool(r)
 
-	w.WriteHeader(http.StatusNoContent)
+	helpers.WriteJSON(w, http.StatusOK, schedule)
+}
+
+func configuredScheduleTimezone() string {
+	if util.Config.Schedule == nil || util.Config.Schedule.Timezone == "" {
+		return "UTC"
+	}
+	return util.Config.Schedule.Timezone
+}
+
+func applyScheduleTiming(schedule *db.Schedule, after time.Time) error {
+	return schedules.ApplyScheduleTiming(schedule, configuredScheduleTimezone(), after)
 }
 
 func SetScheduleActive(w http.ResponseWriter, r *http.Request) {
