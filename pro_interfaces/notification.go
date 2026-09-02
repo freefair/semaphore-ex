@@ -108,6 +108,52 @@ type NotificationOpsgenieConfiguration struct {
 	Responders []NotificationOpsgenieResponder `json:"responders,omitempty"`
 }
 
+// NotificationServiceNowAuthMode is explicit so a failed OAuth request can
+// never silently fall through to a Basic credential.
+type NotificationServiceNowAuthMode string
+
+const (
+	NotificationServiceNowAuthOAuthClientCredentials NotificationServiceNowAuthMode = "oauth_client_credentials"
+	NotificationServiceNowAuthBasic                  NotificationServiceNowAuthMode = "basic"
+)
+
+type NotificationServiceNowIncidentField string
+
+const (
+	NotificationServiceNowIncidentShortDescription NotificationServiceNowIncidentField = "short_description"
+	NotificationServiceNowIncidentDescription      NotificationServiceNowIncidentField = "description"
+	NotificationServiceNowIncidentImpact           NotificationServiceNowIncidentField = "impact"
+	NotificationServiceNowIncidentUrgency          NotificationServiceNowIncidentField = "urgency"
+)
+
+type NotificationServiceNowSourceField string
+
+const (
+	NotificationServiceNowSourceSummary         NotificationServiceNowSourceField = "summary"
+	NotificationServiceNowSourceSeverity        NotificationServiceNowSourceField = "severity"
+	NotificationServiceNowSourceLifecycleAction NotificationServiceNowSourceField = "lifecycle_action"
+	NotificationServiceNowSourceStatus          NotificationServiceNowSourceField = "status"
+)
+
+// NotificationServiceNowFieldMapping is deliberately a mapping between two
+// enums. It is not a generic provider-payload escape hatch.
+type NotificationServiceNowFieldMapping struct {
+	IncidentField NotificationServiceNowIncidentField `json:"incident_field"`
+	SourceField   NotificationServiceNowSourceField   `json:"source_field"`
+}
+
+// NotificationServiceNowConfiguration contains no secret values. ClientID
+// identifies an OAuth application; credentials remain write-only in
+// NotificationDestinationInput.Credential.
+type NotificationServiceNowConfiguration struct {
+	InstanceOrigin string                               `json:"instance_origin"`
+	AuthMode       NotificationServiceNowAuthMode       `json:"auth_mode"`
+	ClientID       string                               `json:"client_id,omitempty"`
+	BasicUsername  string                               `json:"basic_username,omitempty"`
+	Scope          string                               `json:"scope,omitempty"`
+	FieldMappings  []NotificationServiceNowFieldMapping `json:"field_mappings"`
+}
+
 // NotificationSource is the immutable source identity for one lifecycle.
 // Source IDs are intentionally identifier-shaped and never include names,
 // message text, credentials, request content, or provider payloads.
@@ -162,29 +208,31 @@ type NotificationRoutingRule struct {
 // NotificationDestinationInput carries write-only provider credential material.
 // Credential is never represented in a DTO and is retained on update when nil.
 type NotificationDestinationInput struct {
-	Name        string                             `json:"name"`
-	Provider    string                             `json:"provider"`
-	Environment string                             `json:"environment"`
-	Region      NotificationProviderRegion         `json:"region"`
-	Credential  *string                            `json:"credential,omitempty"`
-	Opsgenie    *NotificationOpsgenieConfiguration `json:"opsgenie,omitempty"`
-	Enabled     bool                               `json:"enabled"`
+	Name        string                               `json:"name"`
+	Provider    string                               `json:"provider"`
+	Environment string                               `json:"environment"`
+	Region      NotificationProviderRegion           `json:"region"`
+	Credential  *string                              `json:"credential,omitempty"`
+	Opsgenie    *NotificationOpsgenieConfiguration   `json:"opsgenie,omitempty"`
+	ServiceNow  *NotificationServiceNowConfiguration `json:"servicenow,omitempty"`
+	Enabled     bool                                 `json:"enabled"`
 }
 
 type NotificationDestinationDTO struct {
-	ID                   int                                `json:"id"`
-	ProjectID            *int                               `json:"project_id,omitempty"`
-	Name                 string                             `json:"name"`
-	Provider             string                             `json:"provider"`
-	Environment          string                             `json:"environment"`
-	Region               NotificationProviderRegion         `json:"region"`
-	CredentialConfigured bool                               `json:"credential_configured"`
-	Opsgenie             *NotificationOpsgenieConfiguration `json:"opsgenie,omitempty"`
-	Enabled              bool                               `json:"enabled"`
-	Paused               bool                               `json:"paused"`
-	Revision             int                                `json:"revision"`
-	CreatedAt            time.Time                          `json:"created_at"`
-	UpdatedAt            time.Time                          `json:"updated_at"`
+	ID                   int                                  `json:"id"`
+	ProjectID            *int                                 `json:"project_id,omitempty"`
+	Name                 string                               `json:"name"`
+	Provider             string                               `json:"provider"`
+	Environment          string                               `json:"environment"`
+	Region               NotificationProviderRegion           `json:"region"`
+	CredentialConfigured bool                                 `json:"credential_configured"`
+	Opsgenie             *NotificationOpsgenieConfiguration   `json:"opsgenie,omitempty"`
+	ServiceNow           *NotificationServiceNowConfiguration `json:"servicenow,omitempty"`
+	Enabled              bool                                 `json:"enabled"`
+	Paused               bool                                 `json:"paused"`
+	Revision             int                                  `json:"revision"`
+	CreatedAt            time.Time                            `json:"created_at"`
+	UpdatedAt            time.Time                            `json:"updated_at"`
 }
 
 type NotificationRuleInput struct {
@@ -227,6 +275,8 @@ type NotificationDeliveryDTO struct {
 	IncidentKey            string                        `json:"incident_key"`
 	IdempotencyKey         string                        `json:"idempotency_key"`
 	ProviderRequestID      string                        `json:"provider_request_id,omitempty"`
+	ProviderRecordID       string                        `json:"provider_record_id,omitempty"`
+	ProviderRecordURL      string                        `json:"provider_record_url,omitempty"`
 	Status                 db.NotificationDeliveryStatus `json:"status"`
 	Attempts               int                           `json:"attempts"`
 	NextAttempt            time.Time                     `json:"next_attempt"`
@@ -262,16 +312,21 @@ type NotificationEventHistoryDTO struct {
 // delivery is in flight; implementations must never persist or log either
 // credential material or provider response content.
 type NotificationDispatchRequest struct {
-	Event             NotificationEvent
-	DestinationID     int
-	Provider          string
-	Environment       string
-	Region            NotificationProviderRegion
-	IncidentKey       string
-	IdempotencyKey    string
-	Credential        []byte
-	Opsgenie          *NotificationOpsgenieConfiguration
-	ProviderRequestID string
+	Event          NotificationEvent
+	DestinationID  int
+	Provider       string
+	Environment    string
+	Region         NotificationProviderRegion
+	IncidentKey    string
+	IdempotencyKey string
+	Credential     []byte
+	Opsgenie       *NotificationOpsgenieConfiguration
+	ServiceNow     *NotificationServiceNowConfiguration
+	// DestinationConfigurationRevision fences configuration-scoped provider
+	// state such as OAuth tokens across credential and configuration rotation.
+	DestinationConfigurationRevision int
+	ProviderRequestID                string
+	ProviderRecordID                 string
 }
 
 // NotificationDispatchOutcome deliberately carries no HTTP status, headers,
@@ -285,12 +340,16 @@ const (
 	NotificationDispatchPermanent   NotificationDispatchOutcome = "permanent_failure"
 	NotificationDispatchRateLimited NotificationDispatchOutcome = "rate_limited"
 	NotificationDispatchPending     NotificationDispatchOutcome = "pending"
+	// NotificationDispatchAmbiguous means a create may have reached the
+	// provider but its exact record identity was not safely confirmed.
+	NotificationDispatchAmbiguous NotificationDispatchOutcome = "provider_ambiguous"
 )
 
 type NotificationDispatchResult struct {
 	Outcome    NotificationDispatchOutcome
 	RetryAfter time.Duration
 	RequestID  string
+	RecordID   string
 }
 
 // ValidNotificationProviderRequestID bounds the safe asynchronous operation
@@ -313,6 +372,24 @@ func ValidNotificationProviderRequestID(value string) bool {
 type NotificationProviderAdapter interface {
 	ProviderName() string
 	Dispatch(context.Context, NotificationDispatchRequest) NotificationDispatchResult
+}
+
+// NotificationLifecycleReconciliation is the bounded result of an exact
+// provider lifecycle lookup. Found is true only when exactly one durable
+// provider identity was verified; adapters never expose provider payloads.
+type NotificationLifecycleReconciliation struct {
+	Found    bool
+	RecordID string
+	Result   NotificationDispatchResult
+}
+
+// NotificationLifecycleAdapter is an optional extension for providers whose
+// create operation must be reconciled across a worker restart. The dispatcher
+// depends only on this provider-neutral seam, which keeps recovery injectable
+// in tests and does not couple it to an HTTP implementation.
+type NotificationLifecycleAdapter interface {
+	NotificationProviderAdapter
+	ReconcileLifecycle(context.Context, NotificationDispatchRequest) NotificationLifecycleReconciliation
 }
 
 // NotificationDeliveryDispatcher owns the outbox worker lifecycle. The CLI

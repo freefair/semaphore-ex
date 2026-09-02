@@ -164,6 +164,100 @@ func TestPagerDutyRoutingKeyValidationAndProviderChangeBoundary(t *testing.T) {
 	assert.Equal(t, pro_interfaces.NotificationProviderRegionUS, returned.Region)
 }
 
+func TestServiceNowDestinationFacadePersistsTypedConfigAndKeepsSecretsWriteOnly(t *testing.T) {
+	store := storeSql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	cipher := &testCipher{enabled: true}
+	service := NewGovernanceService(store, cipher).(*governanceService)
+	secret := "oauth-service-now-secret"
+	configuration := governanceServiceNowConfiguration(pro_interfaces.NotificationServiceNowAuthOAuthClientCredentials)
+	created, err := service.CreateDestination(context.Background(), nil, pro_interfaces.NotificationDestinationInput{Name: "ServiceNow OAuth", Provider: serviceNowProviderName, Credential: &secret, Enabled: true, ServiceNow: configuration})
+	require.NoError(t, err)
+	require.NotNil(t, created.ServiceNow)
+	assert.Equal(t, configuration.InstanceOrigin, created.ServiceNow.InstanceOrigin)
+	assert.Equal(t, pro_interfaces.NotificationServiceNowAuthOAuthClientCredentials, created.ServiceNow.AuthMode)
+	assert.Equal(t, "semaphore-client", created.ServiceNow.ClientID)
+	assert.Empty(t, created.ServiceNow.BasicUsername)
+	assert.NotContains(t, mustJSON(t, created), secret)
+	assert.NotContains(t, mustJSON(t, created), "sealed:")
+
+	persisted, err := store.GetNotificationDestination(nil, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "sealed:"+secret, persisted.EncryptedCredential)
+	persistedConfiguration, ok := serviceNowConfiguration(persisted.ProviderConfig)
+	require.True(t, ok)
+	assert.Equal(t, configuration, persistedConfiguration)
+
+	updatedConfiguration := governanceServiceNowConfiguration(pro_interfaces.NotificationServiceNowAuthOAuthClientCredentials)
+	updatedConfiguration.Scope = "incident_write"
+	updated, err := service.UpdateDestination(context.Background(), nil, created.ID, created.Revision, pro_interfaces.NotificationDestinationInput{Name: "ServiceNow OAuth", Provider: serviceNowProviderName, Enabled: true, ServiceNow: updatedConfiguration})
+	require.NoError(t, err)
+	assert.Equal(t, "incident_write", updated.ServiceNow.Scope)
+	assert.NotContains(t, mustJSON(t, updated), secret)
+	persisted, err = store.GetNotificationDestination(nil, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "sealed:"+secret, persisted.EncryptedCredential, "nil credential retains only same-provider encrypted state")
+}
+
+func TestServiceNowDestinationFacadeRejectsInvalidAuthOriginAndMappings(t *testing.T) {
+	store := storeSql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	service := NewGovernanceService(store, &testCipher{enabled: true}).(*governanceService)
+	secret := "service-now-secret"
+	for _, test := range []struct {
+		name   string
+		mutate func(*pro_interfaces.NotificationServiceNowConfiguration)
+	}{
+		{name: "invalid origin", mutate: func(configuration *pro_interfaces.NotificationServiceNowConfiguration) {
+			configuration.InstanceOrigin = "https://bad_label.service-now.com"
+		}},
+		{name: "oauth basic field", mutate: func(configuration *pro_interfaces.NotificationServiceNowConfiguration) {
+			configuration.BasicUsername = "must-not-coexist"
+		}},
+		{name: "basic oauth field", mutate: func(configuration *pro_interfaces.NotificationServiceNowConfiguration) {
+			configuration.AuthMode, configuration.ClientID, configuration.BasicUsername = pro_interfaces.NotificationServiceNowAuthBasic, "must-not-coexist", "semaphore"
+		}},
+		{name: "invalid mapping", mutate: func(configuration *pro_interfaces.NotificationServiceNowConfiguration) {
+			configuration.FieldMappings = []pro_interfaces.NotificationServiceNowFieldMapping{{IncidentField: pro_interfaces.NotificationServiceNowIncidentShortDescription, SourceField: pro_interfaces.NotificationServiceNowSourceSummary}, {IncidentField: pro_interfaces.NotificationServiceNowIncidentImpact, SourceField: pro_interfaces.NotificationServiceNowSourceSummary}}
+		}},
+		{name: "unknown auth", mutate: func(configuration *pro_interfaces.NotificationServiceNowConfiguration) {
+			configuration.AuthMode = "unsupported"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			configuration := governanceServiceNowConfiguration(pro_interfaces.NotificationServiceNowAuthOAuthClientCredentials)
+			test.mutate(configuration)
+			_, err := service.CreateDestination(context.Background(), nil, pro_interfaces.NotificationDestinationInput{Name: "invalid ServiceNow", Provider: serviceNowProviderName, Credential: &secret, Enabled: true, ServiceNow: configuration})
+			assert.ErrorIs(t, err, pro_interfaces.ErrNotificationInvalidInput)
+		})
+	}
+}
+
+func TestServiceNowDestinationProviderChangeCannotRetainConfigOrCredential(t *testing.T) {
+	store := storeSql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	cipher := &testCipher{enabled: true}
+	service := NewGovernanceService(store, cipher).(*governanceService)
+	serviceNowSecret := "service-now-secret"
+	created, err := service.CreateDestination(context.Background(), nil, pro_interfaces.NotificationDestinationInput{Name: "ServiceNow", Provider: serviceNowProviderName, Credential: &serviceNowSecret, Enabled: true, ServiceNow: governanceServiceNowConfiguration(pro_interfaces.NotificationServiceNowAuthBasic)})
+	require.NoError(t, err)
+
+	_, err = service.UpdateDestination(context.Background(), nil, created.ID, created.Revision, pro_interfaces.NotificationDestinationInput{Name: "replacement", Provider: "generic", Enabled: true})
+	assert.ErrorIs(t, err, pro_interfaces.ErrNotificationInvalidInput, "a provider change requires an explicit replacement credential")
+	replacementSecret := "generic-replacement-secret"
+	changed, err := service.UpdateDestination(context.Background(), nil, created.ID, created.Revision, pro_interfaces.NotificationDestinationInput{Name: "replacement", Provider: "generic", Credential: &replacementSecret, Enabled: true})
+	require.NoError(t, err)
+	assert.Equal(t, "generic", changed.Provider)
+	assert.Nil(t, changed.ServiceNow)
+	assert.NotContains(t, mustJSON(t, changed), serviceNowSecret)
+	assert.NotContains(t, mustJSON(t, changed), replacementSecret)
+	persisted, err := store.GetNotificationDestination(nil, created.ID)
+	require.NoError(t, err)
+	assert.Empty(t, persisted.ProviderConfig)
+	assert.Equal(t, "sealed:"+replacementSecret, persisted.EncryptedCredential)
+	assert.NotContains(t, persisted.EncryptedCredential, serviceNowSecret)
+}
+
 func TestDestinationAndRuleScopeAndRevisionBoundaries(t *testing.T) {
 	store := storeSql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
@@ -449,6 +543,23 @@ func TestConcurrentDestinationDeletionAllowsOneRevision(t *testing.T) {
 
 func destinationInput(credential *string) pro_interfaces.NotificationDestinationInput {
 	return pro_interfaces.NotificationDestinationInput{Name: "primary", Provider: "pagerduty", Environment: "production", Region: pro_interfaces.NotificationProviderRegionUS, Credential: credential, Enabled: true}
+}
+
+func governanceServiceNowConfiguration(mode pro_interfaces.NotificationServiceNowAuthMode) *pro_interfaces.NotificationServiceNowConfiguration {
+	configuration := &pro_interfaces.NotificationServiceNowConfiguration{
+		InstanceOrigin: "https://tenant.service-now.com", AuthMode: mode,
+		FieldMappings: []pro_interfaces.NotificationServiceNowFieldMapping{
+			{IncidentField: pro_interfaces.NotificationServiceNowIncidentShortDescription, SourceField: pro_interfaces.NotificationServiceNowSourceSummary},
+			{IncidentField: pro_interfaces.NotificationServiceNowIncidentImpact, SourceField: pro_interfaces.NotificationServiceNowSourceSeverity},
+		},
+	}
+	if mode == pro_interfaces.NotificationServiceNowAuthOAuthClientCredentials {
+		configuration.ClientID = "semaphore-client"
+		configuration.Scope = "incident_read incident_write"
+	} else {
+		configuration.BasicUsername = "semaphore"
+	}
+	return configuration
 }
 
 const testPagerDutyRoutingKey = "0123456789ABCDEF0123456789ABCDEF"

@@ -116,6 +116,16 @@ func TestNotificationGovernanceControllerStrictInputRedactsCredentialAndBoundsPa
 	require.Len(t, service.createDestinationInput.Opsgenie.Responders, 1)
 	assert.Equal(t, pro_interfaces.NotificationProviderRegionEU, service.createDestinationInput.Region)
 	assert.NotContains(t, response.Body.String(), credential)
+	response = httptest.NewRecorder()
+	controller.CreateGlobalDestination(response, httptest.NewRequest(http.MethodPost, "/api/notification-governance/destinations", strings.NewReader(`{"name":"snow","provider":"servicenow","environment":"prod","credential":"`+credential+`","servicenow":{"instance_origin":"https://example.service-now.com","auth_mode":"oauth_client_credentials","client_id":"semaphore","scope":"incident_read incident_write","field_mappings":[{"incident_field":"short_description","source_field":"summary"}]},"enabled":true}`)))
+	require.Equal(t, http.StatusCreated, response.Code)
+	require.NotNil(t, service.createDestinationInput.ServiceNow)
+	assert.Equal(t, "https://example.service-now.com", service.createDestinationInput.ServiceNow.InstanceOrigin)
+	assert.Equal(t, pro_interfaces.NotificationServiceNowAuthOAuthClientCredentials, service.createDestinationInput.ServiceNow.AuthMode)
+	assert.Equal(t, "incident_read incident_write", service.createDestinationInput.ServiceNow.Scope)
+	require.Len(t, service.createDestinationInput.ServiceNow.FieldMappings, 1)
+	assert.Equal(t, pro_interfaces.NotificationServiceNowIncidentShortDescription, service.createDestinationInput.ServiceNow.FieldMappings[0].IncidentField)
+	assert.NotContains(t, response.Body.String(), credential)
 	service.err = pro_interfaces.ErrNotificationInvalidInput
 	invalidCredential := "not-a-routing-key"
 	response = httptest.NewRecorder()
@@ -127,6 +137,7 @@ func TestNotificationGovernanceControllerStrictInputRedactsCredentialAndBoundsPa
 	for _, body := range []string{
 		`{"name":"primary","provider":"pagerduty","unknown":true}`,
 		`{"name":"ops","provider":"opsgenie","region":"us","opsgenie":{"unknown":true}}`,
+		`{"name":"snow","provider":"servicenow","servicenow":{"instance_origin":"https://example.service-now.com","unknown":true}}`,
 		`{"name":"primary"} {}`,
 	} {
 		response = httptest.NewRecorder()
@@ -206,6 +217,8 @@ func TestNotificationGovernanceHistoryReturnsOnlyAllowListedEventProjection(t *t
 		LifecycleAction: pro_interfaces.NotificationLifecycleTrigger, Severity: pro_interfaces.NotificationSeverityError,
 		LastReason:        db.NotificationDeliveryReasonTransport,
 		ProviderRequestID: "request_1",
+		ProviderRecordID:  "0123456789abcdef0123456789abcdef",
+		ProviderRecordURL: "https://example.service-now.com/incident.do?sys_id=0123456789abcdef0123456789abcdef",
 	}}}
 	controller := NewNotificationGovernanceController(service)
 	response := httptest.NewRecorder()
@@ -217,6 +230,8 @@ func TestNotificationGovernanceHistoryReturnsOnlyAllowListedEventProjection(t *t
 	assert.Contains(t, response.Body.String(), `"severity":"error"`)
 	assert.Contains(t, response.Body.String(), `"last_reason":"transport_error"`)
 	assert.Contains(t, response.Body.String(), `"provider_request_id":"request_1"`)
+	assert.Contains(t, response.Body.String(), `"provider_record_id":"0123456789abcdef0123456789abcdef"`)
+	assert.Contains(t, response.Body.String(), `"provider_record_url":"https://example.service-now.com/incident.do?sys_id=0123456789abcdef0123456789abcdef"`)
 	assert.NotContains(t, response.Body.String(), "details")
 	assert.NotContains(t, response.Body.String(), "credential")
 }

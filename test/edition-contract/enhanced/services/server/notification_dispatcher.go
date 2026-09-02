@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"math"
@@ -52,7 +53,7 @@ type notificationDeliveryDispatcher struct {
 // PagerDuty adapter is registered before callers can start it; the Community
 // replacement keeps notification transport unavailable.
 func NewNotificationDispatcher(repository db.NotificationRepository) pro_interfaces.NotificationDeliveryDispatcher {
-	return newNotificationDeliveryDispatcher(repository, util.Config, time.Now, rand.Float64, NewPagerDutyAdapter(), NewOpsgenieAdapter())
+	return newNotificationDeliveryDispatcher(repository, util.Config, time.Now, rand.Float64, NewPagerDutyAdapter(), NewOpsgenieAdapter(), NewServiceNowAdapter())
 }
 
 func newNotificationDeliveryDispatcher(
@@ -194,14 +195,124 @@ func (d *notificationDeliveryDispatcher) dispatchClaimed(ctx context.Context, cl
 		return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonConfiguration, now)
 	}
 	configuration, valid := opsgenieConfiguration(destination.ProviderConfig)
+	var serviceNow *pro_interfaces.NotificationServiceNowConfiguration
+	if destination.Provider == serviceNowProviderName {
+		serviceNow, valid = serviceNowConfiguration(destination.ProviderConfig)
+		if !valid {
+			return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonConfiguration, now)
+		}
+		return d.dispatchServiceNowClaimed(ctx, delivery, destination, notificationEvent, credential, serviceNow, adapter, now)
+	}
 	if !valid {
 		return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonConfiguration, now)
 	}
 	result := adapter.Dispatch(ctx, pro_interfaces.NotificationDispatchRequest{
 		Event: notificationEvent, DestinationID: destination.ID, Provider: destination.Provider,
 		Environment: destination.Environment, Region: pro_interfaces.NotificationProviderRegion(delivery.DestinationRegion), IncidentKey: delivery.IncidentKey,
-		IdempotencyKey: delivery.IdempotencyKey, Credential: credential, Opsgenie: configuration, ProviderRequestID: delivery.ProviderRequestID,
+		IdempotencyKey: delivery.IdempotencyKey, Credential: credential, Opsgenie: configuration, ProviderRequestID: delivery.ProviderRequestID, DestinationConfigurationRevision: destination.ConfigurationRevision,
 	})
+	return d.applyResult(delivery, result, now)
+}
+
+func (d *notificationDeliveryDispatcher) dispatchServiceNowClaimed(ctx context.Context, delivery db.NotificationDelivery, destination db.NotificationDestination, event pro_interfaces.NotificationEvent, credential []byte, configuration *pro_interfaces.NotificationServiceNowConfiguration, adapter pro_interfaces.NotificationProviderAdapter, now time.Time) error {
+	origin := canonicalServiceNowOrigin(configuration.InstanceOrigin)
+	if event.LifecycleAction != pro_interfaces.NotificationLifecycleTrigger {
+		binding, lookupErr := d.repository.GetNotificationIncidentBinding(destination.ID, delivery.IncidentKey)
+		if lookupErr != nil {
+			if errors.Is(lookupErr, db.ErrNotFound) || errors.Is(lookupErr, sql.ErrNoRows) {
+				return d.retryServiceNowAmbiguous(delivery, now)
+			}
+			return lookupErr
+		}
+		if binding.State != db.NotificationIncidentBindingBound {
+			return d.retryServiceNowAmbiguous(delivery, now)
+		}
+		if binding.ProviderOrigin != origin || binding.ConfigurationRevision != destination.ConfigurationRevision {
+			return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonDestinationChanged, now)
+		}
+		request := pro_interfaces.NotificationDispatchRequest{Event: event, DestinationID: destination.ID, Provider: serviceNowProviderName, IncidentKey: delivery.IncidentKey, IdempotencyKey: delivery.IdempotencyKey, Credential: credential, ServiceNow: configuration, ProviderRecordID: binding.ProviderRecordID, DestinationConfigurationRevision: destination.ConfigurationRevision}
+		return d.applyServiceNowResult(delivery, adapter.Dispatch(ctx, request), origin, binding.ProviderRecordID, now)
+	}
+	binding, err := d.repository.ReserveNotificationIncidentBinding(db.NotificationIncidentBinding{
+		DestinationID: destination.ID, IncidentKey: delivery.IncidentKey, Provider: serviceNowProviderName,
+		ProviderOrigin: origin, ConfigurationRevision: destination.ConfigurationRevision, CorrelationID: delivery.IncidentKey,
+		OwnerDeliveryID: delivery.ID,
+	}, now.Add(notificationDispatchLease))
+	if err != nil {
+		return err
+	}
+	if binding.Provider != serviceNowProviderName || binding.ProviderOrigin != origin || binding.ConfigurationRevision != destination.ConfigurationRevision {
+		return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonDestinationChanged, now)
+	}
+	request := pro_interfaces.NotificationDispatchRequest{Event: event, DestinationID: destination.ID, Provider: serviceNowProviderName,
+		IncidentKey: delivery.IncidentKey, IdempotencyKey: delivery.IdempotencyKey, Credential: credential, ServiceNow: configuration, DestinationConfigurationRevision: destination.ConfigurationRevision}
+	if binding.State == db.NotificationIncidentBindingBound {
+		request.ProviderRecordID = binding.ProviderRecordID
+		return d.applyServiceNowResult(delivery, adapter.Dispatch(ctx, request), origin, binding.ProviderRecordID, now)
+	}
+	lifecycleAdapter, ok := adapter.(pro_interfaces.NotificationLifecycleAdapter)
+	if !ok {
+		return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonProviderUnavailable, now)
+	}
+	if binding.State == db.NotificationIncidentBindingPostStarted || binding.State == db.NotificationIncidentBindingAmbiguous {
+		reconciliation := lifecycleAdapter.ReconcileLifecycle(ctx, request)
+		if reconciliation.Result.Outcome != pro_interfaces.NotificationDispatchSucceeded {
+			return d.applyResult(delivery, reconciliation.Result, now)
+		}
+		if !reconciliation.Found {
+			return d.retryServiceNowAmbiguous(delivery, now)
+		}
+		if _, err = d.repository.BindNotificationIncident(binding.ID, binding.LeaseToken, reconciliation.RecordID, serviceNowRecordURL(origin, reconciliation.RecordID), now); err != nil {
+			return err
+		}
+		request.ProviderRecordID = reconciliation.RecordID
+		return d.applyServiceNowResult(delivery, adapter.Dispatch(ctx, request), origin, reconciliation.RecordID, now)
+	}
+	if binding.State != db.NotificationIncidentBindingReservedNoPost || binding.OwnerDeliveryID != delivery.ID || binding.LeaseToken == "" {
+		return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonProviderAmbiguous, now)
+	}
+	reconciliation := lifecycleAdapter.ReconcileLifecycle(ctx, request)
+	if reconciliation.Result.Outcome != pro_interfaces.NotificationDispatchSucceeded {
+		return d.applyResult(delivery, reconciliation.Result, now)
+	}
+	if reconciliation.Found {
+		if _, err = d.repository.BindNotificationIncident(binding.ID, binding.LeaseToken, reconciliation.RecordID, serviceNowRecordURL(origin, reconciliation.RecordID), now); err != nil {
+			return err
+		}
+		request.ProviderRecordID = reconciliation.RecordID
+		return d.applyServiceNowResult(delivery, adapter.Dispatch(ctx, request), origin, reconciliation.RecordID, now)
+	}
+	if _, err = d.repository.MarkNotificationIncidentPostStarted(binding.ID, binding.LeaseToken, now); err != nil {
+		return err
+	}
+	result := adapter.Dispatch(ctx, request)
+	if result.Outcome != pro_interfaces.NotificationDispatchSucceeded {
+		return d.applyResult(delivery, result, now)
+	}
+	if !serviceNowSysID.MatchString(result.RecordID) {
+		return d.retryServiceNowAmbiguous(delivery, now)
+	}
+	recordURL := serviceNowRecordURL(origin, result.RecordID)
+	if _, err = d.repository.BindNotificationIncidentAndSucceed(binding.ID, binding.LeaseToken, result.RecordID, recordURL, delivery.ID, delivery.LeaseToken, now); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *notificationDeliveryDispatcher) retryServiceNowAmbiguous(delivery db.NotificationDelivery, now time.Time) error {
+	if delivery.Attempts+1 >= notificationDispatchMaxAttempts {
+		return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonAttemptsExhausted, now)
+	}
+	return d.repository.MarkNotificationDeliveryRetrying(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonProviderAmbiguous, d.backoff(delivery.Attempts+1), now)
+}
+
+func (d *notificationDeliveryDispatcher) applyServiceNowResult(delivery db.NotificationDelivery, result pro_interfaces.NotificationDispatchResult, origin, recordID string, now time.Time) error {
+	if result.Outcome == pro_interfaces.NotificationDispatchSucceeded {
+		if !serviceNowSysID.MatchString(recordID) {
+			return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonConfiguration, now)
+		}
+		return d.repository.MarkNotificationDeliverySucceededWithRecord(delivery.ID, delivery.LeaseToken, recordID, serviceNowRecordURL(origin, recordID), now)
+	}
 	return d.applyResult(delivery, result, now)
 }
 
@@ -222,6 +333,8 @@ func (d *notificationDeliveryDispatcher) applyResult(delivery db.NotificationDel
 			return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonAttemptsExhausted, now)
 		}
 		return d.repository.StoreNotificationDeliveryPending(delivery.ID, delivery.LeaseToken, result.RequestID, d.backoff(delivery.Attempts+1), now)
+	case pro_interfaces.NotificationDispatchAmbiguous:
+		return d.retryServiceNowAmbiguous(delivery, now)
 	case pro_interfaces.NotificationDispatchTransient, pro_interfaces.NotificationDispatchRateLimited:
 		if delivery.Attempts+1 >= notificationDispatchMaxAttempts {
 			return d.repository.MarkNotificationDeliveryFailed(delivery.ID, delivery.LeaseToken, db.NotificationDeliveryReasonAttemptsExhausted, now)
