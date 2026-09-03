@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -60,6 +61,51 @@ func (s *taskSummaryRepositoryStub) RepairTaskSummary(int, int, task_logger.Task
 
 func (s *taskSummaryRepositoryStub) GetTaskSummary(int, int) (db.TaskSummary, error) {
 	return s.summary, s.summaryErr
+}
+
+func TestTaskStartOverrideEnvelopeIsStrictAndTransportLocal(t *testing.T) {
+	controller := NewTaskController(nil, nil)
+	var received *pro_interfaces.DeploymentWindowOverrideInput
+	handler := controller.NewTaskMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received = deploymentWindowOverrideInput(r)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	accepted := httptest.NewRecorder()
+	handler.ServeHTTP(accepted, httptest.NewRequest(http.MethodPost, "/api/project/7/tasks", strings.NewReader(`{
+		"template_id": 11,
+		"deployment_window_override": {"category":"incident","reference":"INC-41"}
+	}`)))
+
+	assert.Equal(t, http.StatusNoContent, accepted.Code)
+	require.NotNil(t, received)
+	assert.Equal(t, pro_interfaces.DeploymentWindowOverrideIncident, received.Category)
+	assert.Equal(t, "INC-41", received.Reference)
+
+	topLevelPrivilegedFields := httptest.NewRecorder()
+	handler.ServeHTTP(topLevelPrivilegedFields, httptest.NewRequest(http.MethodPost, "/api/project/7/tasks", strings.NewReader(`{
+		"template_id": 11,
+		"actor_id": 999,
+		"authenticated": true,
+		"authorized": true,
+		"reference": "INC-41"
+	}`)))
+	assert.Equal(t, http.StatusNoContent, topLevelPrivilegedFields.Code)
+	assert.Nil(t, received, "only the nested deployment_window_override envelope can request an override")
+
+	for _, body := range []string{
+		`{"template_id":11,"deployment_window_override":{"category":"incident","reference":"INC-41","actor_id":999}}`,
+		`{"template_id":11,"deployment_window_override":{"category":"incident","reference":"INC-41","authorized":true}}`,
+		`{"template_id":11,"deployment_window_override":{"category":"incident","reference":"INC-41"}} {}`,
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/project/7/tasks", strings.NewReader(body)))
+		assert.Equal(t, http.StatusBadRequest, response.Code, body)
+	}
+
+	overLimit := httptest.NewRecorder()
+	handler.ServeHTTP(overLimit, httptest.NewRequest(http.MethodPost, "/api/project/7/tasks", strings.NewReader(`{"template_id":11,"playbook":"`+strings.Repeat("a", int(taskStartBodyLimit))+`"}`)))
+	assert.Equal(t, http.StatusBadRequest, overLimit.Code)
 }
 
 func (s *taskSummaryRepositoryStub) GetTaskSummaryHosts(_ int, _ int, params db.RetrieveQueryParams) (db.TaskSummaryPage[db.TaskSummaryHost], error) {

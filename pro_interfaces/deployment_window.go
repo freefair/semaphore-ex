@@ -1,8 +1,11 @@
 package pro_interfaces
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"time"
 
@@ -10,6 +13,12 @@ import (
 )
 
 const MaxDeploymentWindowOverrideReferenceBytes = 128
+
+var (
+	ErrDeploymentWindowOverrideForbidden = errors.New("deployment window override is not permitted")
+	ErrDeploymentWindowOverrideInvalid   = errors.New("deployment window override is invalid")
+	ErrDeploymentWindowOverrideConflict  = errors.New("deployment window override conflicts with an existing start")
+)
 
 type DeploymentWindowDecisionState string
 
@@ -66,12 +75,60 @@ const (
 	DeploymentWindowOverrideCustomerImpact DeploymentWindowOverrideCategory = "customer_impact"
 )
 
+// DeploymentWindowOverrideInput is the request-only form. The controller
+// never accepts actor or authorization fields from the client.
+type DeploymentWindowOverrideInput struct {
+	Category  DeploymentWindowOverrideCategory `json:"category"`
+	Reference string                           `json:"reference"`
+}
+
+// UnmarshalJSON makes the small transport-local envelope strict without
+// changing the historical task and workflow payload contracts around it.
+// In particular, a client can never smuggle actor or authorization attributes
+// through an ignored JSON field.
+func (input *DeploymentWindowOverrideInput) UnmarshalJSON(raw []byte) error {
+	if input == nil || len(raw) == 0 || len(raw) > 512 {
+		return ErrDeploymentWindowOverrideInvalid
+	}
+	var decoded struct {
+		Category  DeploymentWindowOverrideCategory `json:"category"`
+		Reference string                           `json:"reference"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return ErrDeploymentWindowOverrideInvalid
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return ErrDeploymentWindowOverrideInvalid
+	}
+	*input = DeploymentWindowOverrideInput(decoded)
+	return nil
+}
+
 type DeploymentWindowOverrideRequest struct {
 	ActorID       int                              `json:"-"`
 	Authenticated bool                             `json:"-"`
 	Authorized    bool                             `json:"-"`
 	Category      DeploymentWindowOverrideCategory `json:"category"`
 	Reference     string                           `json:"reference"`
+}
+
+// NewManualDeploymentWindowOverride converts the only client-provided fields
+// into an admission request after the caller has derived the authenticated
+// actor. Callers cannot populate authentication or authorization flags.
+func NewManualDeploymentWindowOverride(input *DeploymentWindowOverrideInput, actorID int) (*DeploymentWindowOverrideRequest, error) {
+	if input == nil {
+		return nil, nil
+	}
+	request := &DeploymentWindowOverrideRequest{
+		ActorID: actorID, Authenticated: true, Authorized: true,
+		Category: input.Category, Reference: input.Reference,
+	}
+	if err := request.Validate(); err != nil {
+		return nil, ErrDeploymentWindowOverrideInvalid
+	}
+	return request, nil
 }
 
 func (request DeploymentWindowOverrideRequest) Validate() error {

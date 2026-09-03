@@ -13,6 +13,11 @@ import (
 	"strings"
 )
 
+// taskStartBodyLimit matches the bounded workflow-run transport and prevents
+// a deployment-window override envelope from making task-start parsing
+// unbounded. Existing task fields keep their established JSON contract.
+const taskStartBodyLimit int64 = 256 * 1024
+
 const (
 	defaultTaskSummaryPageSize     = 50
 	maxTaskSummaryPageSize         = 200
@@ -62,6 +67,14 @@ func (c *TaskController) writeTaskExecutionPreflightError(w http.ResponseWriter,
 			State: pro_interfaces.DeploymentWindowDecisionBlocked, Reason: blocked.Reason,
 			NextEligibleAt: blocked.NextEligibleAt, NextEligibleKnown: blocked.NextEligibleKnown,
 		})
+		return true
+	}
+	if errors.Is(err, pro_interfaces.ErrDeploymentWindowOverrideForbidden) {
+		helpers.WriteErrorStatus(w, "DEPLOYMENT_WINDOW_OVERRIDE_FORBIDDEN", http.StatusForbidden)
+		return true
+	}
+	if errors.Is(err, pro_interfaces.ErrDeploymentWindowOverrideInvalid) {
+		helpers.WriteErrorStatus(w, "DEPLOYMENT_WINDOW_INVALID_INPUT", http.StatusBadRequest)
 		return true
 	}
 	var stale *tasks.ExecutionPreflightStaleError
@@ -398,4 +411,10 @@ func (c *TaskController) GetTaskSummaryErrors(w http.ResponseWriter, r *http.Req
 		return
 	}
 	helpers.WriteJSON(w, http.StatusOK, page)
+}
+
+func deploymentWindowOverrideInput(r *http.Request) *pro_interfaces.DeploymentWindowOverrideInput {
+	value, _ := helpers.GetOkFromContext(r, "deployment_window_override")
+	override, _ := value.(*pro_interfaces.DeploymentWindowOverrideInput)
+	return override
 }

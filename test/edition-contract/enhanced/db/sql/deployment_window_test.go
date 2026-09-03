@@ -225,7 +225,7 @@ func TestDeploymentWindowOverriddenClaimRejectsKeyReuseWithoutTheOverride(t *tes
 
 	request.Override = nil
 	_, err = repository.ClaimDeploymentWindowAdmission(request, deploymentWindowEvaluator().Evaluate)
-	assert.ErrorIs(t, err, coreDB.ErrInvalidOperation)
+	assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden)
 }
 
 func TestDeploymentWindowAdmissionDerivesOverridePermissionAndRejectsAutorunOverride(t *testing.T) {
@@ -251,7 +251,7 @@ func TestDeploymentWindowAdmissionDerivesOverridePermissionAndRejectsAutorunOver
 
 	autorun := pro_interfaces.DeploymentWindowAdmissionRequest{ProjectID: project.ID, DecisionKey: "autorun-1", Source: pro_interfaces.DeploymentWindowSourceAutorun, Origin: pro_interfaces.DeploymentWindowOriginAutorun, TemplateID: intPointer(template.ID), ActorUserID: &actorID, Override: override}
 	_, err = repository.ClaimDeploymentWindowAdmission(autorun, evaluator.Evaluate)
-	assert.ErrorIs(t, err, coreDB.ErrInvalidOperation)
+	assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden)
 }
 
 func TestDeploymentWindowOverrideAuthorizationLocksRevocableRowsInOrder(t *testing.T) {
@@ -291,8 +291,10 @@ func TestDeploymentWindowOverrideRejectsRevokedMembershipAndAllowsGlobalAdminWit
 	assert.Equal(t, string(pro_interfaces.DeploymentWindowDecisionOverridden), claim.Decision.State)
 
 	require.NoError(t, store.DeleteProjectUser(project.ID, manager.ID))
+	_, err = repository.ClaimDeploymentWindowAdmission(deploymentWindowOverrideAdmission(project.ID, template.ID, manager.ID, "before-revocation"), evaluator.Evaluate)
+	assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden, "an unbound decision must recheck a revoked permission before first task/run persistence")
 	_, err = repository.ClaimDeploymentWindowAdmission(deploymentWindowOverrideAdmission(project.ID, template.ID, manager.ID, "after-revocation"), evaluator.Evaluate)
-	assert.ErrorIs(t, err, coreDB.ErrInvalidOperation)
+	assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden)
 
 	globalAdmin, err := store.CreateUserWithoutPassword(coreDB.User{Username: "override-global-admin", Name: "Override Global Admin", Email: "admin@example.test", Admin: true})
 	require.NoError(t, err)
@@ -319,8 +321,10 @@ func TestDeploymentWindowOverrideRejectsRevokedMembershipAndAllowsGlobalAdminWit
 	customRole.Permissions = 0
 	customRole, err = store.UpdateProjectRole(project.ID, customRole, customRole.Revision)
 	require.NoError(t, err)
+	_, err = repository.ClaimDeploymentWindowAdmission(deploymentWindowOverrideAdmission(project.ID, template.ID, customRoleUser.ID, "custom-role-before-revocation"), evaluator.Evaluate)
+	assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden, "custom-role permission is rechecked before an unbound decision can be bound")
 	_, err = repository.ClaimDeploymentWindowAdmission(deploymentWindowOverrideAdmission(project.ID, template.ID, customRoleUser.ID, "custom-role-after-revocation"), evaluator.Evaluate)
-	assert.ErrorIs(t, err, coreDB.ErrInvalidOperation)
+	assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden)
 }
 
 func TestDeploymentWindowClaimOrdersConcurrentAuthorizationRevocations(t *testing.T) {
@@ -337,7 +341,7 @@ func TestDeploymentWindowClaimOrdersConcurrentAuthorizationRevocations(t *testin
 			return store.DeleteProjectUser(project.ID, manager.ID)
 		})
 		_, err = repository.ClaimDeploymentWindowAdmission(deploymentWindowOverrideAdmission(project.ID, template.ID, manager.ID, "membership-revoked"), deploymentWindowEvaluator().Evaluate)
-		assert.ErrorIs(t, err, coreDB.ErrInvalidOperation)
+		assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden)
 	})
 
 	t.Run("custom role", func(t *testing.T) {
@@ -360,7 +364,7 @@ func TestDeploymentWindowClaimOrdersConcurrentAuthorizationRevocations(t *testin
 			return updateErr
 		})
 		_, err = repository.ClaimDeploymentWindowAdmission(deploymentWindowOverrideAdmission(project.ID, template.ID, actor.ID, "custom-role-revoked"), deploymentWindowEvaluator().Evaluate)
-		assert.ErrorIs(t, err, coreDB.ErrInvalidOperation)
+		assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden)
 	})
 
 	t.Run("administrator", func(t *testing.T) {
@@ -374,7 +378,7 @@ func TestDeploymentWindowClaimOrdersConcurrentAuthorizationRevocations(t *testin
 			return store.UpdateUser(revoked)
 		})
 		_, err := repository.ClaimDeploymentWindowAdmission(deploymentWindowOverrideAdmission(project.ID, template.ID, actor.ID, "admin-revoked"), deploymentWindowEvaluator().Evaluate)
-		assert.ErrorIs(t, err, coreDB.ErrInvalidOperation)
+		assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden)
 	})
 }
 

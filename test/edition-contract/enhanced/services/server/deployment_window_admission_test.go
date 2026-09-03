@@ -11,12 +11,65 @@ import (
 )
 
 type deploymentWindowAdmissionCapture struct {
-	request pro_interfaces.DeploymentWindowAdmissionRequest
+	request  pro_interfaces.DeploymentWindowAdmissionRequest
+	decision pro_interfaces.DeploymentWindowDecisionState
 }
 
 func (s *deploymentWindowAdmissionCapture) Claim(request pro_interfaces.DeploymentWindowAdmissionRequest) (pro_interfaces.DeploymentWindowAdmissionClaim, error) {
 	s.request = request
-	return pro_interfaces.DeploymentWindowAdmissionClaim{Decision: db.DeploymentWindowDecisionRecord{ID: 19, State: string(pro_interfaces.DeploymentWindowDecisionAllowed)}}, nil
+	state := s.decision
+	if state == "" {
+		state = pro_interfaces.DeploymentWindowDecisionAllowed
+	}
+	return pro_interfaces.DeploymentWindowAdmissionClaim{Decision: db.DeploymentWindowDecisionRecord{ID: 19, State: string(state)}}, nil
+}
+
+func TestWorkflowManualOverrideUsesServerDerivedIdentityAndCannotApplyToTrigger(t *testing.T) {
+	workflow := db.WorkflowTemplate{ID: 8, ProjectID: 7}
+	actor := &db.User{ID: 4}
+	override := &pro_interfaces.DeploymentWindowOverrideInput{
+		Category: pro_interfaces.DeploymentWindowOverrideIncident, Reference: "INC-41",
+	}
+
+	capture := &deploymentWindowAdmissionCapture{decision: pro_interfaces.DeploymentWindowDecisionOverridden}
+	service := &workflowService{deploymentWindowAdmission: capture, deploymentWindowRunFence: true}
+	run := db.WorkflowRun{}
+	require.NoError(t, service.claimWorkflowStartAdmission(&run, workflow, actor, "manual-run", override))
+	require.NotNil(t, capture.request.Override)
+	assert.Equal(t, pro_interfaces.DeploymentWindowSourceManual, capture.request.Source)
+	assert.Equal(t, pro_interfaces.DeploymentWindowOriginUser, capture.request.Origin)
+	assert.Equal(t, actor.ID, *capture.request.ActorUserID)
+	assert.Equal(t, actor.ID, capture.request.Override.ActorID)
+	assert.True(t, capture.request.Override.Authenticated)
+	assert.True(t, capture.request.Override.Authorized)
+	assert.Equal(t, "INC-41", capture.request.Override.Reference)
+	assert.Equal(t, 19, *run.DeploymentWindowDecisionID)
+
+	triggered := &workflowService{deploymentWindowAdmission: &deploymentWindowAdmissionCapture{}, deploymentWindowRunFence: true}
+	snapshot := db.WorkflowTriggerSnapshot{ID: 31, Revision: 2, InvocationID: 11, Type: db.WorkflowTriggerSchedule}
+	err := triggered.claimWorkflowStartAdmission(&db.WorkflowRun{}, workflow, actor, "schedule-run", override, db.WorkflowRunInput{TriggerSnapshot: &snapshot})
+	assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden)
+
+	unconfigured := &workflowService{}
+	err = unconfigured.claimWorkflowStartAdmission(&db.WorkflowRun{}, workflow, actor, "manual-run", override)
+	assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden)
+}
+
+func TestWorkflowOverrideRejectsExistingCorrelationInsteadOfIgnoringRequest(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	_, err := fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "override-correlation")
+	require.NoError(t, err)
+
+	service, ok := fixture.service.(pro_interfaces.WorkflowExecutionPreflightOverrideService)
+	require.True(t, ok)
+	_, err = service.StartWorkflowWithExecutionPreflightAndDeploymentWindowOverride(
+		fixture.workflow, &fixture.user, "override-correlation", pro_interfaces.ExecutionPreflightReview{},
+		&pro_interfaces.DeploymentWindowOverrideInput{
+			Category: pro_interfaces.DeploymentWindowOverrideIncident, Reference: "INC-41",
+		},
+	)
+	assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideConflict)
 }
 
 func TestWorkflowStartAdmissionRequiresFinalRunPersistenceFence(t *testing.T) {
@@ -26,7 +79,7 @@ func TestWorkflowStartAdmissionRequiresFinalRunPersistenceFence(t *testing.T) {
 	actor := &db.User{ID: 4}
 	run := db.WorkflowRun{}
 
-	err := service.claimWorkflowStartAdmission(&run, workflow, actor, "must-not-reach-unfenced-store")
+	err := service.claimWorkflowStartAdmission(&run, workflow, actor, "must-not-reach-unfenced-store", nil)
 	require.ErrorContains(t, err, "deployment window workflow admission is unavailable")
 	assert.Empty(t, capture.request.DecisionKey, "no decision may be claimed before the final store fence is installed")
 }
@@ -50,7 +103,7 @@ func TestWorkflowStartAdmissionMapsTriggerSourcesServerSide(t *testing.T) {
 			actor := &db.User{ID: 4}
 			run := db.WorkflowRun{}
 			snapshot := db.WorkflowTriggerSnapshot{ID: 31, Revision: 2, InvocationID: 11, Type: tc.trigger}
-			require.NoError(t, service.claimWorkflowStartAdmission(&run, workflow, actor, "caller-controlled", db.WorkflowRunInput{TriggerSnapshot: &snapshot}))
+			require.NoError(t, service.claimWorkflowStartAdmission(&run, workflow, actor, "caller-controlled", nil, db.WorkflowRunInput{TriggerSnapshot: &snapshot}))
 			assert.Equal(t, tc.source, capture.request.Source)
 			assert.Equal(t, tc.origin, capture.request.Origin)
 			assert.Equal(t, workflow.ID, *capture.request.WorkflowID)

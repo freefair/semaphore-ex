@@ -11,6 +11,7 @@ import (
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -57,7 +58,7 @@ func (c *TaskController) AddTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newTask, planned, err := taskPool(r).AddTaskWithExecutionPreflightPlan(
+	newTask, planned, err := taskPool(r).AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverride(
 		taskObj,
 		user,
 		project.ID,
@@ -66,6 +67,7 @@ func (c *TaskController) AddTask(w http.ResponseWriter, r *http.Request) {
 			Fingerprint: r.Header.Get(taskPreflightFingerprintHeader),
 			ReviewToken: r.Header.Get(taskPreflightTokenHeader),
 		},
+		deploymentWindowOverrideInput(r),
 	)
 	if c.writeTaskExecutionPreflightError(w, r, taskObj, planned, err) {
 		return
@@ -265,13 +267,23 @@ func (c *TaskController) GetTaskMiddleware(next http.Handler) http.Handler {
 func (c *TaskController) NewTaskMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-		var taskObj db.Task
+		var payload struct {
+			db.Task
+			DeploymentWindowOverride *pro_interfaces.DeploymentWindowOverrideInput `json:"deployment_window_override,omitempty"`
+		}
 
-		if !helpers.Bind(w, r, &taskObj) {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, taskStartBodyLimit))
+		if err := decoder.Decode(&payload); err != nil {
+			helpers.WriteErrorStatus(w, "TASK_START_INVALID_INPUT", http.StatusBadRequest)
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			helpers.WriteErrorStatus(w, "TASK_START_INVALID_INPUT", http.StatusBadRequest)
 			return
 		}
 
-		r = helpers.SetContextValue(r, "task", taskObj)
+		r = helpers.SetContextValue(r, "task", payload.Task)
+		r = helpers.SetContextValue(r, "deployment_window_override", payload.DeploymentWindowOverride)
 		next.ServeHTTP(w, r)
 	})
 }
