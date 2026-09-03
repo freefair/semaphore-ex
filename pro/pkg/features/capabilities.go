@@ -33,6 +33,7 @@ func (p *communityCapabilityProvider) Resolve(
 			communityUnavailableDecision(pro_interfaces.CapabilityProjectRoles),
 			communityUnavailableDecision(pro_interfaces.CapabilityExecutionPreflight),
 			communityUnavailableDecision(pro_interfaces.CapabilityDeploymentWindows),
+			communityUnavailableDecision(pro_interfaces.CapabilityPolicyGuardrails),
 		},
 	), nil
 }

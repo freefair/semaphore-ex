@@ -20,11 +20,15 @@ const (
 	CanManageGlobalCredentialsMetadata
 	CanManageGlobalCredentialsRotate
 	CanManageGlobalCredentialsGrant
+	// CanManageGlobalPolicyGuardrails permits global policy governance.
+	CanManageGlobalPolicyGuardrails
+	// CanRollbackGlobalPolicyGuardrails permits global break-glass rollback.
+	CanRollbackGlobalPolicyGuardrails
 )
 
 const AllGlobalPermissions = CanManageGlobalUsers | CanManageGlobalRoles |
 	CanManageGlobalSystem | CanReadGlobalAudit | CanManageGlobalCredentialsMetadata |
-	CanManageGlobalCredentialsRotate | CanManageGlobalCredentialsGrant
+	CanManageGlobalCredentialsRotate | CanManageGlobalCredentialsGrant | CanManageGlobalPolicyGuardrails | CanRollbackGlobalPolicyGuardrails
 
 func (p GlobalPermission) Can(permission GlobalPermission) bool {
 	return p&permission == permission
@@ -63,7 +67,7 @@ func ValidateProjectRole(role Role) error {
 	const knownPermissions = CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
 		CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
 		CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
-		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow
+		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails
 	if role.Permissions&^knownPermissions != 0 {
 		return &common_errors.ValidationError{Message: "Project role contains unknown permissions"}
 	}
@@ -100,7 +104,7 @@ func ValidateGlobalRole(role Role) error {
 	}
 	const known = CanManageGlobalUsers | CanManageGlobalRoles |
 		CanManageGlobalSystem | CanReadGlobalAudit | CanManageGlobalCredentialsMetadata |
-		CanManageGlobalCredentialsRotate | CanManageGlobalCredentialsGrant
+		CanManageGlobalCredentialsRotate | CanManageGlobalCredentialsGrant | CanManageGlobalPolicyGuardrails | CanRollbackGlobalPolicyGuardrails
 	if role.GlobalPermissions&^known != 0 {
 		return &common_errors.ValidationError{Message: "Global role contains unknown permissions"}
 	}
