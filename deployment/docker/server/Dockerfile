@@ -17,7 +17,6 @@ COPY . /go/src/semaphore
 RUN --mount=type=cache,target=/go/pkg \
     go mod download -x
 
-ARG APP_BUILD_TYPE
 ARG TARGETOS
 ARG TARGETARCH
 ARG CORE_REVISION
@@ -26,11 +25,6 @@ ARG SOURCE_DATE_EPOCH
 ARG SOURCE_TAG
 ARG SOURCE_SHA
 
-RUN if [ -n "$APP_BUILD_TYPE" ]; then \
-      test -f pro_impl/go.mod && \
-      go work init . ./pro_impl; \
-    fi
-
 RUN --mount=type=cache,target=/go/pkg \
     --mount=type=cache,target=/root/.cache/go-build \
     core_revision="${CORE_REVISION:-$(git rev-parse HEAD)}" && \
@@ -38,7 +32,6 @@ RUN --mount=type=cache,target=/go/pkg \
     source_tag="${SOURCE_TAG:-$(git name-rev --name-only --tags --no-undefined HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD)}" && \
     source_sha="${SOURCE_SHA:-$(git log --pretty=format:%h -n 1)}" && \
     task deps:be \
-      APP_BUILD_TYPE="${APP_BUILD_TYPE}" \
       CORE_REVISION="${core_revision}" \
       ENHANCED_REVISION="${ENHANCED_REVISION}" \
       SOURCE_DATE_EPOCH="${source_date_epoch}" && \
@@ -46,13 +39,11 @@ RUN --mount=type=cache,target=/go/pkg \
       CORE_REVISION="${core_revision}" \
       SOURCE_DATE_EPOCH="${source_date_epoch}" && \
     task build:fe \
-      APP_BUILD_TYPE="${APP_BUILD_TYPE}" \
       CORE_REVISION="${core_revision}" \
       SOURCE_DATE_EPOCH="${source_date_epoch}" && \
     env SEMAPHORE_SOURCE_TAG="${source_tag}" SEMAPHORE_SOURCE_SHA="${source_sha}" task build:be \
       GOOS="${TARGETOS}" \
       GOARCH="${TARGETARCH}" \
-      APP_BUILD_TYPE="${APP_BUILD_TYPE}" \
       CORE_REVISION="${core_revision}" \
       ENHANCED_REVISION="${ENHANCED_REVISION}" \
       SOURCE_DATE_EPOCH="${source_date_epoch}" \
@@ -88,12 +79,11 @@ RUN wget -O /tmp/terragrunt https://github.com/gruntwork-io/terragrunt/releases/
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 ARG TARGETARCH="amd64"
-ARG EDITION="community"
 ARG CORE_REVISION
 ARG ENHANCED_REVISION
 
 LABEL org.opencontainers.image.revision=${CORE_REVISION} \
-      io.semaphore.edition=${EDITION} \
+      io.semaphore.edition=enhanced \
       io.semaphore.core.revision=${CORE_REVISION} \
       io.semaphore.enhanced.revision=${ENHANCED_REVISION}
 # renovate: datasource=pypi depName=ansible

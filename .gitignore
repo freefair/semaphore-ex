@@ -53,7 +53,6 @@ __debug_bin*
 /task_results.log
 /pro_impl/
 /go.work.x
-/go.work
 /go.work.sum
 /.licenses-cache
 /*-config.yaml

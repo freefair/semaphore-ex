@@ -22,7 +22,7 @@ usage() {
   cat <<EOF
 Usage: $(basename "${BASH_SOURCE[0]}") [-h|--help]
 
-Build disposable Clean-room Enhanced server images for the local HA gate.
+Build disposable full-product server images for the local HA gate.
 
 Environment:
   SEMAPHORE_HA_CANDIDATE_IMAGE  Candidate tag (default: semaphore-enhanced-server:ha-candidate)
@@ -62,18 +62,12 @@ rsync -a \
   --exclude 'test/e2e/node_modules/' \
   --exclude '0.0.0.0*' \
   "${repository_dir}/" "${context_dir}/"
-cp -R "${repository_dir}/test/edition-contract/enhanced" "${context_dir}/pro_impl"
-(cd -- "${context_dir}/pro_impl" && go mod edit \
-  -replace github.com/semaphoreui/semaphore/community-pro=../pro)
-
 core_revision="$(git -C "${repository_dir}" rev-parse HEAD)"
 source_date_epoch="$(git -C "${repository_dir}" show -s --format=%ct HEAD)"
 source_sha="$(git -C "${repository_dir}" log --pretty=format:%h -n 1)"
 docker build \
-  --build-arg APP_BUILD_TYPE=pro_selfhosted \
-  --build-arg EDITION=enhanced \
   --build-arg CORE_REVISION="${core_revision}" \
-  --build-arg ENHANCED_REVISION=clean-room-ha-fixture \
+  --build-arg ENHANCED_REVISION="${core_revision}" \
   --build-arg SOURCE_DATE_EPOCH="${source_date_epoch}" \
   --build-arg SOURCE_TAG=ha-candidate \
   --build-arg SOURCE_SHA="${source_sha}" \

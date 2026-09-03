@@ -1,11 +1,11 @@
 #!/usr/bin/env bats
 
 setup() {
-  workflow="${BATS_TEST_DIRNAME}/../../.github/workflows/edition_build.yml"
+  workflow="${BATS_TEST_DIRNAME}/../../.github/workflows/product_build.yml"
 }
 
-@test "edition workflow contains an independent required HA contract gate" {
-  run grep -F "enhanced-ha-resilience:" "${workflow}"
+@test "product workflow contains an independent required HA contract gate" {
+  run grep -F "ha-resilience:" "${workflow}"
   [ "${status}" -eq 0 ]
 
   run grep -F "./test/ha-resilience/build-clean-room-images.sh" "${workflow}"
@@ -19,7 +19,7 @@ setup() {
   run grep -F "jq --exit-status '.result == \"passed\"' dist/ha-resilience/report.json" "${workflow}"
   [ "${status}" -eq 0 ]
 
-  run grep -F 'name: enhanced-ha-resilience-${{ github.sha }}' "${workflow}"
+  run grep -F 'name: ha-resilience-${{ github.sha }}' "${workflow}"
   [ "${status}" -eq 0 ]
 
   run grep -F "retention-days: 14" "${workflow}"

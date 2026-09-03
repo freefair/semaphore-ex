@@ -37,3 +37,40 @@ func TestWorkspaceSelectsCleanRoomEnhancedModule(t *testing.T) {
 	buildOutput, err := buildCommand.CombinedOutput()
 	require.NoError(t, err, string(buildOutput))
 }
+
+func TestSupportedRootWorkspaceSelectsFullProductModule(t *testing.T) {
+	repositoryRoot, err := filepath.Abs("..")
+	require.NoError(t, err)
+	workspaceFile := filepath.Join(repositoryRoot, "go.work")
+	require.FileExists(t, workspaceFile)
+
+	listCommand := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/semaphoreui/semaphore/pro")
+	listCommand.Dir = repositoryRoot
+	listCommand.Env = append(os.Environ(), "GOWORK="+workspaceFile)
+	selectedModule, err := listCommand.CombinedOutput()
+	require.NoError(t, err, string(selectedModule))
+	assert.Equal(
+		t,
+		filepath.Join(repositoryRoot, "test", "edition-contract", "enhanced"),
+		strings.TrimSpace(string(selectedModule)),
+	)
+}
+
+func TestSupportedBuildInputsHaveNoEditionSelector(t *testing.T) {
+	repositoryRoot, err := filepath.Abs("..")
+	require.NoError(t, err)
+	for _, filename := range []string{
+		"Taskfile.yml",
+		"deployment/docker/server/Dockerfile",
+		"deployment/docker/runner/Dockerfile",
+		".github/workflows/product_build.yml",
+		".github/workflows/product_beta.yml",
+		".github/workflows/product_release.yml",
+	} {
+		content, readErr := os.ReadFile(filepath.Join(repositoryRoot, filename))
+		require.NoError(t, readErr, filename)
+		assert.NotContains(t, string(content), "APP_BUILD_TYPE", filename)
+		assert.NotContains(t, string(content), "VUE_APP_EDITION", filename)
+		assert.NotContains(t, string(content), "VUE_APP_BUILD_TYPE", filename)
+	}
+}
