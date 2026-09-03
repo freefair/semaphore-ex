@@ -484,6 +484,10 @@ func (p *TaskPool) enrichTaskPreflightWithPolicyGuardrails(
 	if err != nil {
 		return ExecutionPreflightSnapshot{}, err
 	}
+	// The admission repository evaluates under its own locked database clock.
+	// Rebase the locally planned preview input to that authoritative instant
+	// before validating the returned, atomically evaluated policy provenance.
+	input.EvaluatedAt = evaluation.EvaluatedAt
 	return applyTaskPolicyGuardrailEvaluation(snapshot, input, evaluation, expectedFingerprint)
 }
 
