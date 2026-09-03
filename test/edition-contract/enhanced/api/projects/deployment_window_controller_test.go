@@ -29,6 +29,16 @@ type deploymentWindowGovernanceStub struct {
 	statusRequest pro_interfaces.DeploymentWindowStatusRequest
 }
 
+type deploymentWindowAuditRecorder struct {
+	events []pro_interfaces.AuditEvent
+	err    error
+}
+
+func (r *deploymentWindowAuditRecorder) Record(_ context.Context, event pro_interfaces.AuditEvent) error {
+	r.events = append(r.events, event)
+	return r.err
+}
+
 func (s *deploymentWindowGovernanceStub) GetPolicy(context.Context, int) (db.DeploymentWindowPolicy, error) {
 	return s.policy, nil
 }
@@ -88,6 +98,34 @@ func TestDeploymentWindowControllerUsesRouteProjectAndCAS(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, response.Code)
 	assert.Equal(t, 7, service.resetProject)
 	assert.Equal(t, 4, service.resetRevision)
+}
+
+func TestDeploymentWindowPolicyMutationsRecordBoundedBestEffortAudit(t *testing.T) {
+	service := &deploymentWindowGovernanceStub{}
+	controller := NewDeploymentWindowController(service, nil)
+	audit := &deploymentWindowAuditRecorder{}
+	controller.(pro_interfaces.DeploymentWindowAuditConfigurer).ConfigureDeploymentWindowAudit(audit)
+	user := db.User{ID: 1}
+	response := httptest.NewRecorder()
+	controller.SavePolicy(response, deploymentWindowRequest(http.MethodPut, "/api/project/7/deployment-windows", `{"revision":4,"timezone":"UTC","default":"allow","rules":[]}`, user, db.CanManageProjectResources))
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Len(t, audit.events, 1)
+	assert.Equal(t, pro_interfaces.AuditActionDeploymentWindowPolicyUpdate, audit.events[0].Action)
+	assert.Equal(t, pro_interfaces.AuditReasonDeploymentWindowPolicyUpdated, audit.events[0].Reason)
+	require.NoError(t, audit.events[0].Validate())
+
+	service.resetErr = errors.New("write failed")
+	response = httptest.NewRecorder()
+	controller.ResetPolicy(response, deploymentWindowRequest(http.MethodDelete, "/api/project/7/deployment-windows?expected_revision=4", "", user, db.CanManageProjectResources))
+	assert.Equal(t, http.StatusServiceUnavailable, response.Code)
+	require.Len(t, audit.events, 2)
+	assert.Equal(t, pro_interfaces.AuditOutcomeFailure, audit.events[1].Outcome)
+	assert.Equal(t, pro_interfaces.AuditReasonOperationError, audit.events[1].Reason)
+
+	audit.err = errors.New("audit offline")
+	response = httptest.NewRecorder()
+	controller.SavePolicy(response, deploymentWindowRequest(http.MethodPut, "/api/project/7/deployment-windows", `{"revision":4,"timezone":"UTC","default":"allow","rules":[]}`, user, db.CanManageProjectResources))
+	assert.Equal(t, http.StatusOK, response.Code, "audit writer failures must not undo governance changes")
 }
 
 func TestDeploymentWindowControllerRejectsUntrustedBodiesAndManagerBoundary(t *testing.T) {

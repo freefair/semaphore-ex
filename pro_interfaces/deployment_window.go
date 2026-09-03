@@ -360,6 +360,11 @@ type DeploymentWindowBlockedError struct {
 	Reason            DeploymentWindowReason `json:"-"`
 	NextEligibleAt    *time.Time
 	NextEligibleKnown bool
+	// AuditDecision is internal-only immutable metadata carried from the final
+	// admission boundary to a subsequent durable blocked binding. It is never
+	// serialized to a start caller and includes no transport-controlled values.
+	AuditDecision *db.DeploymentWindowDecisionRecord `json:"-"`
+	AuditInserted bool                               `json:"-"`
 }
 
 func (e *DeploymentWindowBlockedError) Error() string {

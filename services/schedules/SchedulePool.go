@@ -216,6 +216,8 @@ func (r ScheduleRunner) Run() {
 			terminal, blockErr := lease.Block(blocked.DecisionID)
 			if blockErr != nil || !terminal {
 				log.WithError(blockErr).WithFields(log.Fields{"schedule_id": schedule.ID, "decision_id": blocked.DecisionID}).Error("failed to persist blocked schedule occurrence")
+			} else {
+				r.pool.taskPool.RecordDeploymentWindowScheduleOccurrenceBinding(blocked)
 			}
 			return
 		}

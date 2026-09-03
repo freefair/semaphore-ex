@@ -12,6 +12,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pkg/random"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	log "github.com/sirupsen/logrus"
 )
 
 const workflowTriggerCredentialBytes = 48
@@ -23,9 +24,11 @@ type workflowTriggerService struct {
 	workflowService pro_interfaces.WorkflowService
 	identityStore   pro_interfaces.WorkflowTriggerIdentityStore
 	capability      pro_interfaces.CapabilityProvider
+	audit           pro_interfaces.AuditServiceFacade
 }
 
 var _ pro_interfaces.WorkflowTriggerService = (*workflowTriggerService)(nil)
+var _ pro_interfaces.DeploymentWindowAuditConfigurer = (*workflowTriggerService)(nil)
 
 func NewWorkflowTriggerService(
 	repository db.WorkflowTriggerManager,
@@ -38,6 +41,10 @@ func NewWorkflowTriggerService(
 		repository: repository, workflowStore: workflowStore, workflowService: workflowService,
 		identityStore: identityStore, capability: capability,
 	}
+}
+
+func (s *workflowTriggerService) ConfigureDeploymentWindowAudit(audit pro_interfaces.AuditServiceFacade) {
+	s.audit = audit
 }
 
 func (s *workflowTriggerService) List(
@@ -421,6 +428,7 @@ func (s *workflowTriggerService) fireWithWorkflow(
 			if err = s.repository.RecordWorkflowTriggerResult(trigger.ProjectID, trigger.ID, claimed.Updated, "blocked"); err != nil {
 				return pro_interfaces.WorkflowTriggerFireResult{}, err
 			}
+			s.recordBlockedDeploymentWindowInvocation(blocked)
 			return pro_interfaces.WorkflowTriggerFireResult{Trigger: trigger, Invocation: claimed}, nil
 		}
 		claimed.Status = db.WorkflowTriggerInvocationFailed
@@ -440,6 +448,19 @@ func (s *workflowTriggerService) fireWithWorkflow(
 		return pro_interfaces.WorkflowTriggerFireResult{}, err
 	}
 	return pro_interfaces.WorkflowTriggerFireResult{Trigger: trigger, Invocation: claimed, Run: run, Duplicate: !inserted}, nil
+}
+
+func (s *workflowTriggerService) recordBlockedDeploymentWindowInvocation(blocked *pro_interfaces.DeploymentWindowBlockedError) {
+	if s == nil || s.audit == nil || blocked == nil || !blocked.AuditInserted || blocked.AuditDecision == nil {
+		return
+	}
+	event, err := pro_interfaces.NewDeploymentWindowAuditEvent(*blocked.AuditDecision, pro_interfaces.AuditActionDeploymentWindowBinding, "internal", blocked.AuditDecision.ActorUserID)
+	if err != nil {
+		return
+	}
+	if err = s.audit.Record(context.Background(), event); err != nil {
+		log.WithFields(event.SafeFields()).Error("Failed to record blocked workflow trigger deployment window audit event")
+	}
 }
 
 func (s *workflowTriggerService) authorize(

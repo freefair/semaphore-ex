@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/semaphoreui/semaphore/db"
 	workflowSQL "github.com/semaphoreui/semaphore/pro/db/sql"
@@ -13,6 +15,23 @@ import (
 type deploymentWindowAdmissionCapture struct {
 	request  pro_interfaces.DeploymentWindowAdmissionRequest
 	decision pro_interfaces.DeploymentWindowDecisionState
+}
+
+type deploymentWindowAuditCapture struct{ events []pro_interfaces.AuditEvent }
+
+func (s *deploymentWindowAuditCapture) Record(_ context.Context, event pro_interfaces.AuditEvent) error {
+	s.events = append(s.events, event)
+	return nil
+}
+
+type workflowDeploymentWindowNodeBlockerStub struct {
+	db.WorkflowManager
+	nodeID int
+}
+
+func (s *workflowDeploymentWindowNodeBlockerStub) BlockWorkflowRunNodeForDeploymentWindow(_ int, _ int, nodeID int, _ int, _ string, _ *pro_interfaces.WorkflowReconciliationLease) (bool, error) {
+	s.nodeID = nodeID
+	return true, nil
 }
 
 func (s *deploymentWindowAdmissionCapture) Claim(request pro_interfaces.DeploymentWindowAdmissionRequest) (pro_interfaces.DeploymentWindowAdmissionClaim, error) {
@@ -53,6 +72,51 @@ func TestWorkflowManualOverrideUsesServerDerivedIdentityAndCannotApplyToTrigger(
 	unconfigured := &workflowService{}
 	err = unconfigured.claimWorkflowStartAdmission(&db.WorkflowRun{}, workflow, actor, "manual-run", override)
 	assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden)
+}
+
+func TestWorkflowOverrideForbiddenRecordsBoundedAuditDenial(t *testing.T) {
+	workflow := db.WorkflowTemplate{ID: 8, ProjectID: 7}
+	actor := &db.User{ID: 4}
+	override := &pro_interfaces.DeploymentWindowOverrideInput{
+		Category: pro_interfaces.DeploymentWindowOverrideIncident, Reference: "INC-41",
+	}
+	audit := &deploymentWindowAuditCapture{}
+	service := &workflowService{audit: audit}
+
+	_, err := service.claimWorkflowStartAdmissionDecision(&db.WorkflowRun{}, workflow, actor, "manual-run", override)
+	require.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden)
+	require.Len(t, audit.events, 1)
+	event := audit.events[0]
+	assert.Equal(t, pro_interfaces.AuditActionDeploymentWindowAdmission, event.Action)
+	assert.Equal(t, pro_interfaces.AuditOutcomeDenied, event.Outcome)
+	assert.Equal(t, pro_interfaces.AuditReasonDeploymentWindowOverrideForbidden, event.Reason)
+	assert.Equal(t, "project:7", event.TargetID)
+	assert.Equal(t, pro_interfaces.AuditSourceAPI, event.Source)
+	assert.Nil(t, event.DeploymentWindowProvenance)
+	require.NoError(t, event.Validate())
+}
+
+func TestBlockedWorkflowNodeAuditBindsPersistedRunNodeID(t *testing.T) {
+	blocker := &workflowDeploymentWindowNodeBlockerStub{}
+	audit := &deploymentWindowAuditCapture{}
+	service := &workflowService{repository: blocker, audit: audit}
+	run := db.WorkflowRun{ID: 41, ProjectID: 7}
+	node := db.WorkflowRunNode{ID: 71, WorkflowNodeID: 13}
+	decision := db.DeploymentWindowDecisionRecord{
+		ID: 19, ProjectID: run.ProjectID,
+		Source: string(pro_interfaces.DeploymentWindowSourceWorkflowNode), Origin: string(pro_interfaces.DeploymentWindowOriginWorkflowNode),
+		PolicyRevision: 1, EffectiveTimezone: "UTC", EvaluatedAt: time.Date(2026, time.September, 3, 10, 0, 0, 0, time.UTC),
+		State: string(pro_interfaces.DeploymentWindowDecisionBlocked), Reason: string(pro_interfaces.DeploymentWindowReasonDefaultDeny), MatchedRulesJSON: "[]",
+	}
+
+	require.NoError(t, service.blockDeploymentWindowWorkflowNode(run, node, &pro_interfaces.DeploymentWindowBlockedError{DecisionID: decision.ID}, &decision, nil))
+	assert.Equal(t, node.WorkflowNodeID, blocker.nodeID, "the persistence CAS targets the definition node key")
+	require.Len(t, audit.events, 1)
+	event := audit.events[0]
+	require.NotNil(t, event.DeploymentWindowProvenance)
+	assert.Equal(t, node.ID, event.DeploymentWindowProvenance.WorkflowRunNodeID, "audit must use the persisted run-node key")
+	assert.NotEqual(t, node.WorkflowNodeID, event.DeploymentWindowProvenance.WorkflowRunNodeID)
+	require.NoError(t, event.Validate())
 }
 
 func TestWorkflowOverrideRejectsExistingCorrelationInsteadOfIgnoringRequest(t *testing.T) {

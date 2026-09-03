@@ -170,6 +170,9 @@ func Route(
 	ldapController := NewLDAPController(ldapService, auditFacade)
 	oidcGroupMappingController := NewOIDCGroupMappingController(oidcGroupMappingService, auditFacade)
 	deploymentWindowController := proProjects.NewDeploymentWindowController(deploymentWindowGovernanceService, workflowStore)
+	configureDeploymentWindowAudit(deploymentWindowController, auditFacade)
+	configureDeploymentWindowAudit(taskPool, auditFacade)
+	configureDeploymentWindowAudit(workflowTriggerService, auditFacade)
 
 	r := mux.NewRouter()
 	r.NotFoundHandler = http.HandlerFunc(servePublic)

@@ -509,6 +509,100 @@ func TestExecutionPreflightAuditUsesStrictValueFreeAllowlist(t *testing.T) {
 	assert.NotContains(t, string(payload), "review_token")
 }
 
+func TestDeploymentWindowAuditUsesStrictBoundedProvenance(t *testing.T) {
+	projectID, actorID := 42, 7
+	category := "incident"
+	record := db.DeploymentWindowDecisionRecord{
+		ID: 99, ProjectID: projectID, Source: string(DeploymentWindowSourceManual), Origin: string(DeploymentWindowOriginUser),
+		PolicyRevision: 3, EffectiveTimezone: "Europe/Berlin", EvaluatedAt: time.Date(2026, time.September, 3, 10, 0, 0, 0, time.UTC),
+		State: string(DeploymentWindowDecisionOverridden), Reason: string(DeploymentWindowReasonOverride),
+		OverrideActorID: &actorID, OverrideCategory: &category,
+		MatchedRulesJSON: `[{"id":11,"revision":4,"kind":"freeze"}]`,
+	}
+	event, err := NewDeploymentWindowAuditEvent(record, AuditActionDeploymentWindowAdmission, "0123456789abcdef0123456789abcdef", &actorID)
+	require.NoError(t, err)
+	require.NoError(t, event.Validate())
+	payload, err := json.Marshal(event)
+	require.NoError(t, err)
+	for _, forbidden := range []string{"decision_key", "override_reference", "actor_user_id", "rule_name", "recurrence", "effective_from", "effective_until", "headers", "credential", "SECRET_MARKER"} {
+		assert.NotContains(t, string(payload), forbidden)
+	}
+	assert.Contains(t, string(payload), `"matched_rules"`)
+	assert.Equal(t, AuditReasonDeploymentWindowOverridden, event.Reason)
+
+	invalid := event
+	invalid.DeploymentWindowProvenance.MatchedRules = append(invalid.DeploymentWindowProvenance.MatchedRules, AuditDeploymentWindowRule{ID: 11, Revision: 4, Kind: db.DeploymentWindowFreeze})
+	assert.Error(t, invalid.Validate(), "matching rules must remain a unique bounded tuple set")
+	invalid = event
+	invalid.DeploymentWindowProvenance.OverrideCategory = "unbounded-free-text"
+	assert.Error(t, invalid.Validate())
+}
+
+func TestDeploymentWindowAuditRejectsInvalidActionTargetAndForbiddenOverrideCarriesNoReference(t *testing.T) {
+	projectID, actorID := 42, 7
+	forbidden := AuditEvent{
+		CorrelationID: "0123456789abcdef0123456789abcdef", ActorID: &actorID, ProjectID: &projectID,
+		Action: AuditActionDeploymentWindowAdmission, TargetType: AuditTargetDeploymentWindow, TargetID: "project:42",
+		Outcome: AuditOutcomeDenied, Source: AuditSourceAPI, Reason: AuditReasonDeploymentWindowOverrideForbidden,
+	}
+	require.NoError(t, forbidden.Validate())
+	payload, err := json.Marshal(forbidden)
+	require.NoError(t, err)
+	assert.NotContains(t, string(payload), "override_reference")
+	assert.NotContains(t, string(payload), "INC-1234")
+	wrong := forbidden
+	wrong.TargetID = "decision:1"
+	assert.Error(t, wrong.Validate())
+	wrong = forbidden
+	wrong.Source = AuditSourceWorker
+	assert.Error(t, wrong.Validate())
+}
+
+func TestAuditWebhookV1OmitsDeploymentWindowProvenance(t *testing.T) {
+	projectID, actorID := 42, 7
+	record := db.DeploymentWindowDecisionRecord{
+		ID: 99, ProjectID: projectID, Source: string(DeploymentWindowSourceManual), Origin: string(DeploymentWindowOriginUser),
+		PolicyRevision: 3, EffectiveTimezone: "UTC", EvaluatedAt: time.Date(2026, time.September, 3, 10, 0, 0, 0, time.UTC),
+		State: string(DeploymentWindowDecisionAllowed), Reason: string(DeploymentWindowReasonDefaultAllow), MatchedRulesJSON: "[]",
+	}
+	event, err := NewDeploymentWindowAuditEvent(record, AuditActionDeploymentWindowAdmission, "0123456789abcdef0123456789abcdef", &actorID)
+	require.NoError(t, err)
+	event.EventID = "0123456789abcdef0123456789abcdef"
+	event.OccurredAt = time.Date(2026, time.September, 3, 10, 1, 0, 0, time.UTC)
+	envelope, err := NewAuditWebhookEnvelope(event)
+	require.NoError(t, err)
+	payload, err := json.Marshal(envelope)
+	require.NoError(t, err)
+	assert.NotContains(t, string(payload), "deployment_window_provenance")
+	assert.NotContains(t, string(payload), "policy_revision")
+	assert.NotContains(t, string(payload), "matched_rules")
+}
+
+func TestDeploymentWindowBindingAllowsOnlyDurableTargetsOrBlockedTrigger(t *testing.T) {
+	projectID, actorID := 42, 7
+	record := db.DeploymentWindowDecisionRecord{
+		ID: 99, ProjectID: projectID, Source: string(DeploymentWindowSourceWebhook), Origin: string(DeploymentWindowOriginWorkflowTrigger),
+		PolicyRevision: 3, EffectiveTimezone: "UTC", EvaluatedAt: time.Date(2026, time.September, 3, 10, 0, 0, 0, time.UTC),
+		State: string(DeploymentWindowDecisionBlocked), Reason: string(DeploymentWindowReasonFreezeActive), MatchedRulesJSON: "[]",
+	}
+	event, err := NewDeploymentWindowAuditEvent(record, AuditActionDeploymentWindowBinding, "internal", &actorID)
+	require.NoError(t, err)
+	require.NoError(t, event.Validate(), "a blocked trigger invocation has no permitted invocation-ID field")
+	assert.Nil(t, event.ActorID, "automatic execution identities stay private")
+
+	record.Origin = string(DeploymentWindowOriginIntegration)
+	_, err = NewDeploymentWindowAuditEvent(record, AuditActionDeploymentWindowBinding, "internal", nil)
+	require.Error(t, err, "a non-trigger binding must carry one of the permitted durable linkage IDs")
+
+	manual := record
+	manual.Source, manual.Origin = string(DeploymentWindowSourceManual), string(DeploymentWindowOriginUser)
+	manual.State, manual.Reason, manual.ActorUserID = string(DeploymentWindowDecisionAllowed), string(DeploymentWindowReasonDefaultAllow), &actorID
+	manual.TaskID = &actorID
+	event, err = NewDeploymentWindowAuditEvent(manual, AuditActionDeploymentWindowBinding, "internal", &actorID)
+	require.NoError(t, err)
+	require.NoError(t, event.Validate())
+}
+
 func withAuditCorrelation(event AuditEvent, value string) AuditEvent {
 	event.CorrelationID = value
 	return event

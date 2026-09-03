@@ -130,6 +130,7 @@ func (p *TaskPool) addTaskWithExecutionPreflightPlan(
 		return db.Task{}, snapshot.Plan, overrideErr
 	}
 	if override != nil && p.deploymentWindowAdmission == nil {
+		p.recordDeploymentWindowOverrideForbidden(projectID, actorID)
 		return db.Task{}, snapshot.Plan, pro_interfaces.ErrDeploymentWindowOverrideForbidden
 	}
 	if p.deploymentWindowAdmission != nil {
@@ -137,6 +138,9 @@ func (p *TaskPool) addTaskWithExecutionPreflightPlan(
 			ProjectID: projectID, DecisionKey: "manual-" + random.String(32), Source: pro_interfaces.DeploymentWindowSourceManual,
 			Origin: pro_interfaces.DeploymentWindowOriginUser, TemplateID: &templateID, ActorUserID: &actorID, Override: override,
 		}); err != nil {
+			if errors.Is(err, pro_interfaces.ErrDeploymentWindowOverrideForbidden) {
+				p.recordDeploymentWindowOverrideForbidden(projectID, actorID)
+			}
 			return db.Task{}, snapshot.Plan, err
 		}
 	}

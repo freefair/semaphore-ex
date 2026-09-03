@@ -83,6 +83,7 @@ type TaskPool struct {
 	taskControlLifecycle      TaskControlLifecycle
 	crossProjectTaskStore     pro_interfaces.CrossProjectWorkflowTaskStore
 	deploymentWindowAdmission pro_interfaces.DeploymentWindowAdmissionService
+	deploymentWindowAudit     pro_interfaces.AuditServiceFacade
 	executionPreflightIssuer  *ExecutionPreflightReviewTokenIssuer
 	// stop signals the background loops started by Run to exit. Closing it (via
 	// Stop) terminates the runner-task reconcile loop and Run's own select.

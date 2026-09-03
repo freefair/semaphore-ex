@@ -15,3 +15,9 @@ func configureExecutionPreflightAudit(controller any, audit pro_interfaces.Audit
 		configurable.ConfigureExecutionPreflightAudit(audit)
 	}
 }
+
+func configureDeploymentWindowAudit(target any, audit pro_interfaces.AuditServiceFacade) {
+	if configurable, ok := target.(pro_interfaces.DeploymentWindowAuditConfigurer); ok {
+		configurable.ConfigureDeploymentWindowAudit(audit)
+	}
+}

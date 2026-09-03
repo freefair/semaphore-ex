@@ -175,6 +175,8 @@ func TestTaskExecutionPreflightControllerMapsDeploymentWindowOverrideFailures(t 
 
 func TestTaskOverrideCannotBeSilentlyIgnoredWithoutAdmissionService(t *testing.T) {
 	_, pool, project, actor, template, _ := createTaskExecutionPreflightControllerFixture(t)
+	audit := &executionPreflightAuditStub{}
+	pool.ConfigureDeploymentWindowAudit(audit)
 	_, _, err := pool.AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverride(
 		db.Task{TemplateID: template.ID}, &actor, project.ID, template.App.NeedTaskAlias(),
 		pro_interfaces.ExecutionPreflightReview{},
@@ -183,6 +185,19 @@ func TestTaskOverrideCannotBeSilentlyIgnoredWithoutAdmissionService(t *testing.T
 		},
 	)
 	assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden)
+	require.Len(t, audit.events, 1)
+	event := audit.events[0]
+	assert.Equal(t, pro_interfaces.AuditActionDeploymentWindowAdmission, event.Action)
+	assert.Equal(t, pro_interfaces.AuditOutcomeDenied, event.Outcome)
+	assert.Equal(t, pro_interfaces.AuditReasonDeploymentWindowOverrideForbidden, event.Reason)
+	assert.Equal(t, "project:"+strconv.Itoa(project.ID), event.TargetID)
+	assert.Equal(t, pro_interfaces.AuditSourceAPI, event.Source)
+	assert.Nil(t, event.DeploymentWindowProvenance)
+	require.NoError(t, event.Validate())
+	payload, marshalErr := json.Marshal(event)
+	require.NoError(t, marshalErr)
+	assert.NotContains(t, string(payload), "INC-41")
+	assert.NotContains(t, string(payload), "reference")
 }
 
 func createTaskExecutionPreflightControllerFixture(t *testing.T) (*sql.SqlDb, tasks.TaskPool, db.Project, db.User, db.Template, db.Repository) {
