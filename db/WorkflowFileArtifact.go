@@ -14,16 +14,19 @@ import (
 )
 
 const (
-	MaxWorkflowFileArtifactBytes          int64 = 64 * 1024 * 1024
-	MaxWorkflowFileArtifactRunBytes       int64 = 256 * 1024 * 1024
-	MaxWorkflowFileArtifactChunkBytes           = 1024 * 1024
-	MaxWorkflowFileArtifactsPerRun              = 256
-	MaxWorkflowFileArtifactRoles                = 32
-	MaxWorkflowFileArtifactCredentials          = 64
-	MaxWorkflowFileArtifactFilenameBytes        = 255
-	MaxWorkflowFileArtifactMediaTypeBytes       = 128
-	MaxWorkflowFileArtifactProducerBytes        = 128
-	MaxWorkflowFileArtifactTargetBytes          = 128
+	MaxWorkflowFileArtifactBytes            int64 = 64 * 1024 * 1024
+	MaxWorkflowFileArtifactRunBytes         int64 = 256 * 1024 * 1024
+	MaxWorkflowFileArtifactChunkBytes             = 1024 * 1024
+	MaxWorkflowFileArtifactsPerRun                = 256
+	MaxWorkflowFileArtifactRoles                  = 32
+	MaxWorkflowFileArtifactCredentials            = 64
+	MaxWorkflowFileArtifactFilenameBytes          = 255
+	MaxWorkflowFileArtifactMediaTypeBytes         = 128
+	MaxWorkflowFileArtifactProducerBytes          = 128
+	MaxWorkflowFileArtifactTargetBytes            = 128
+	MaxWorkflowFileArtifactDownloadLease          = 15 * time.Minute
+	MinWorkflowFileArtifactDownloadLease          = 30 * time.Second
+	DefaultWorkflowArtifactRetentionSeconds       = 30 * 24 * 60 * 60
 
 	MinWorkflowArtifactRetentionSeconds int64 = 60 * 60
 	MaxWorkflowArtifactRetentionSeconds int64 = 10 * 365 * 24 * 60 * 60
@@ -43,6 +46,75 @@ const (
 	WorkflowFileArtifactExpired   WorkflowFileArtifactState = "expired"
 	WorkflowFileArtifactDeleted   WorkflowFileArtifactState = "deleted"
 )
+
+// WorkflowFileArtifactChunk is one bounded content segment. Data is never
+// serialized through API metadata responses.
+type WorkflowFileArtifactChunk struct {
+	ArtifactID  int    `db:"artifact_id" json:"artifact_id"`
+	Ordinal     int    `db:"ordinal" json:"ordinal"`
+	OffsetBytes int64  `db:"offset_bytes" json:"offset_bytes"`
+	SizeBytes   int    `db:"size_bytes" json:"size_bytes"`
+	Data        []byte `db:"data" json:"-"`
+}
+
+func (chunk WorkflowFileArtifactChunk) Validate() error {
+	if chunk.ArtifactID < 1 || chunk.Ordinal < 0 || chunk.OffsetBytes < 0 ||
+		chunk.SizeBytes < 1 || chunk.SizeBytes > MaxWorkflowFileArtifactChunkBytes ||
+		len(chunk.Data) != chunk.SizeBytes {
+		return errors.New("workflow file artifact chunk is invalid")
+	}
+	return nil
+}
+
+// WorkflowFileArtifactRunUsage serializes lifetime reservations for a run.
+// Failed and expired artifacts keep their reservation so concurrent retries
+// cannot bypass the immutable per-run limit.
+type WorkflowFileArtifactRunUsage struct {
+	WorkflowRunID int   `db:"workflow_run_id" json:"workflow_run_id"`
+	ReservedBytes int64 `db:"reserved_bytes" json:"reserved_bytes"`
+	ArtifactCount int   `db:"artifact_count" json:"artifact_count"`
+	Revision      int   `db:"revision" json:"revision"`
+}
+
+func (usage WorkflowFileArtifactRunUsage) Validate() error {
+	if usage.WorkflowRunID < 1 || usage.ReservedBytes < 0 || usage.ReservedBytes > MaxWorkflowFileArtifactRunBytes ||
+		usage.ArtifactCount < 0 || usage.ArtifactCount > MaxWorkflowFileArtifactsPerRun || usage.Revision < 1 {
+		return errors.New("workflow file artifact run usage is invalid")
+	}
+	return nil
+}
+
+// WorkflowFileArtifactDownloadLease fences retention while one bounded
+// download is streaming. Tokens are server-generated 256-bit lowercase hex.
+type WorkflowFileArtifactDownloadLease struct {
+	LeaseToken string    `db:"lease_token" json:"-"`
+	ArtifactID int       `db:"artifact_id" json:"artifact_id"`
+	ExpiresAt  time.Time `db:"expires_at" json:"expires_at"`
+	CreatedAt  time.Time `db:"created_at" json:"created_at"`
+}
+
+func (lease WorkflowFileArtifactDownloadLease) Validate() error {
+	if !validWorkflowFileArtifactSHA256(lease.LeaseToken) || lease.ArtifactID < 1 ||
+		lease.CreatedAt.IsZero() || !lease.ExpiresAt.After(lease.CreatedAt) ||
+		lease.ExpiresAt.Sub(lease.CreatedAt) > MaxWorkflowFileArtifactDownloadLease {
+		return errors.New("workflow file artifact download lease is invalid")
+	}
+	return nil
+}
+
+// WorkflowFileArtifactReference is a tenant-bound garbage-collection target.
+type WorkflowFileArtifactReference struct {
+	ProjectID     int `json:"project_id"`
+	WorkflowRunID int `json:"workflow_run_id"`
+	ArtifactID    int `json:"artifact_id"`
+}
+
+func (reference WorkflowFileArtifactReference) Validate() error {
+	if reference.ProjectID < 1 || reference.WorkflowRunID < 1 || reference.ArtifactID < 1 {
+		return errors.New("workflow file artifact reference is invalid")
+	}
+	return nil
+}
 
 type WorkflowArtifactRetentionScope string
 
@@ -176,7 +248,7 @@ type WorkflowArtifactRetentionSnapshot struct {
 }
 
 func (snapshot WorkflowArtifactRetentionSnapshot) Validate() error {
-	if snapshot.GlobalRevision < 1 || snapshot.ProjectRevision < 0 ||
+	if snapshot.GlobalRevision < 0 || snapshot.ProjectRevision < 0 ||
 		snapshot.RetentionSeconds < MinWorkflowArtifactRetentionSeconds ||
 		snapshot.RetentionSeconds > MaxWorkflowArtifactRetentionSeconds ||
 		snapshot.MaxArtifactBytes < 1 || snapshot.MaxArtifactBytes > MaxWorkflowFileArtifactBytes ||
@@ -184,6 +256,17 @@ func (snapshot WorkflowArtifactRetentionSnapshot) Validate() error {
 		return errors.New("workflow artifact retention snapshot is invalid")
 	}
 	return nil
+}
+
+// DefaultWorkflowArtifactRetentionSnapshot is the immutable built-in global
+// revision 0 used until an administrator publishes revision 1.
+func DefaultWorkflowArtifactRetentionSnapshot() WorkflowArtifactRetentionSnapshot {
+	return WorkflowArtifactRetentionSnapshot{
+		GlobalRevision:   0,
+		RetentionSeconds: DefaultWorkflowArtifactRetentionSeconds,
+		MaxArtifactBytes: MaxWorkflowFileArtifactBytes,
+		MaxRunBytes:      MaxWorkflowFileArtifactRunBytes,
+	}
 }
 
 func ResolveWorkflowArtifactRetention(global WorkflowArtifactRetentionPolicy, project *WorkflowArtifactRetentionPolicy) (WorkflowArtifactRetentionSnapshot, error) {
