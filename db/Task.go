@@ -113,6 +113,10 @@ type Task struct {
 	// intentionally not persisted on the task row: the immutable decision row
 	// owns the task link and is bound in the same transaction as task creation.
 	DeploymentWindowDecisionID *int `db:"-" json:"-"`
+	// PolicyGuardrailEvaluationID is an Enhanced-only admission fence. It is
+	// intentionally not persisted on the task row: the immutable evaluation row
+	// owns the task link and is bound in the same transaction as task creation.
+	PolicyGuardrailEvaluationID *int `db:"-" json:"-"`
 	// Version is a build version.
 	// This field available only for Build tasks.
 	Version *string `db:"version" json:"version,omitempty"`
