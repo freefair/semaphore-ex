@@ -76,6 +76,13 @@ type WorkflowTrigger struct {
 	CredentialHash       string `db:"credential_hash" json:"-" backup:"-"`
 	CredentialGeneration int    `db:"credential_generation" json:"credential_generation,omitempty" backup:"-"`
 
+	// Webhook signing state is independent from API trigger credentials. Ciphertext
+	// is write-only and key IDs are non-secret rotation metadata.
+	CurrentSigningSecretEncrypted string `db:"current_signing_secret_encrypted" json:"-" backup:"-"`
+	NextSigningSecretEncrypted    string `db:"next_signing_secret_encrypted" json:"-" backup:"-"`
+	CurrentSigningKeyID           string `db:"current_signing_key_id" json:"current_signing_key_id,omitempty" backup:"-"`
+	NextSigningKeyID              string `db:"next_signing_key_id" json:"next_signing_key_id,omitempty" backup:"-"`
+
 	Created    time.Time  `db:"created" json:"created" backup:"created"`
 	Updated    time.Time  `db:"updated" json:"updated" backup:"updated"`
 	LastFired  *time.Time `db:"last_fired" json:"last_fired,omitempty" backup:"-"`
@@ -120,6 +127,12 @@ type WorkflowTriggerInvocation struct {
 	DefinitionRevision         int                                  `db:"definition_revision" json:"definition_revision"`
 	RequestKeyHash             *string                              `db:"request_key_hash" json:"-"`
 	OccurrenceIdentity         *string                              `db:"occurrence_identity" json:"occurrence_identity,omitempty"`
+	WebhookEventHash           *string                              `db:"webhook_event_hash" json:"-"`
+	WebhookEventID             string                               `db:"webhook_event_id" json:"-"`
+	WebhookKeyID               string                               `db:"webhook_key_id" json:"-"`
+	WebhookSignedAt            *time.Time                           `db:"webhook_signed_at" json:"-"`
+	WebhookReplayCount         int                                  `db:"webhook_replay_count" json:"-"`
+	WebhookLastReplayedAt      *time.Time                           `db:"webhook_last_replayed_at" json:"-"`
 	Status                     WorkflowTriggerInvocationStatus      `db:"status" json:"status"`
 	RunID                      *int                                 `db:"run_id" json:"run_id,omitempty"`
 	DeploymentWindowDecisionID *int                                 `db:"deployment_window_decision_id" json:"-"`
@@ -159,14 +172,41 @@ func ValidateWorkflowTriggerInvocation(invocation WorkflowTriggerInvocation) err
 	if invocation.TriggerRevision <= 0 || invocation.DefinitionRevision <= 0 {
 		return errors.New("workflow trigger invocation revision is invalid")
 	}
-	if invocation.RequestKeyHash != nil && invocation.OccurrenceIdentity != nil {
-		return errors.New("workflow trigger invocation cannot have request and schedule identities")
+	identities := 0
+	if invocation.RequestKeyHash != nil {
+		identities++
+	}
+	if invocation.OccurrenceIdentity != nil {
+		identities++
+	}
+	if invocation.WebhookEventHash != nil {
+		identities++
+	}
+	if identities > 1 {
+		return errors.New("workflow trigger invocation cannot have multiple identities")
 	}
 	if invocation.RequestKeyHash != nil && !validWorkflowTriggerHash(*invocation.RequestKeyHash) {
 		return errors.New("workflow trigger invocation request key hash is invalid")
 	}
 	if invocation.OccurrenceIdentity != nil && (len(*invocation.OccurrenceIdentity) != 64 || !strings.HasPrefix(*invocation.OccurrenceIdentity, "wts_")) {
 		return errors.New("workflow trigger invocation occurrence identity is invalid")
+	}
+	if invocation.WebhookEventHash != nil {
+		if !validWorkflowWebhookEventHash(*invocation.WebhookEventHash) ||
+			!validWorkflowWebhookEventID(invocation.WebhookEventID) ||
+			!validWorkflowWebhookKeyID(invocation.WebhookKeyID) ||
+			invocation.WebhookSignedAt == nil || invocation.WebhookSignedAt.IsZero() ||
+			invocation.ExpiresAt != nil {
+			return errors.New("workflow trigger invocation webhook identity is invalid")
+		}
+	} else if invocation.WebhookEventID != "" || invocation.WebhookKeyID != "" || invocation.WebhookSignedAt != nil || invocation.WebhookReplayCount != 0 || invocation.WebhookLastReplayedAt != nil {
+		return errors.New("workflow trigger invocation webhook metadata is invalid")
+	}
+	if invocation.WebhookReplayCount < 0 ||
+		(invocation.WebhookReplayCount == 0) != (invocation.WebhookLastReplayedAt == nil) ||
+		(invocation.WebhookLastReplayedAt != nil && (invocation.WebhookLastReplayedAt.Before(invocation.Created) ||
+			(invocation.WebhookSignedAt != nil && invocation.WebhookLastReplayedAt.Before(*invocation.WebhookSignedAt)))) {
+		return errors.New("workflow trigger invocation webhook replay metadata is invalid")
 	}
 	if !containsWorkflowTriggerInvocationStatus(invocation.Status) {
 		return errors.New("workflow trigger invocation status is invalid")
@@ -187,7 +227,11 @@ func ValidateWorkflowTriggerInvocation(invocation WorkflowTriggerInvocation) err
 }
 
 func (trigger WorkflowTrigger) UsesCredential() bool {
-	return trigger.Type == WorkflowTriggerAPI || trigger.Type == WorkflowTriggerWebhook
+	return trigger.Type == WorkflowTriggerAPI
+}
+
+func (trigger WorkflowTrigger) UsesWebhookSigning() bool {
+	return trigger.Type == WorkflowTriggerWebhook
 }
 
 func ValidateWorkflowTrigger(
@@ -213,15 +257,35 @@ func ValidateWorkflowTrigger(
 	} else if trigger.CronFormat != "" {
 		return errors.New("only scheduled workflow triggers can declare cron expressions")
 	}
-	if trigger.UsesCredential() {
+	switch trigger.Type {
+	case WorkflowTriggerAPI:
 		if trigger.CredentialGeneration < 0 {
 			return errors.New("workflow trigger credential generation is invalid")
 		}
 		if trigger.CredentialHash != "" && !validWorkflowTriggerHash(trigger.CredentialHash) {
 			return errors.New("workflow trigger credential hash is invalid")
 		}
-	} else if trigger.CredentialHash != "" || trigger.CredentialGeneration != 0 {
-		return errors.New("manual and scheduled workflow triggers cannot carry credentials")
+	case WorkflowTriggerWebhook:
+		if !validDormantWorkflowWebhookCredential(trigger.CredentialHash, trigger.CredentialGeneration) {
+			return errors.New("workflow trigger dormant credential metadata is invalid")
+		}
+	default:
+		if trigger.CredentialHash != "" || trigger.CredentialGeneration != 0 {
+			return errors.New("manual and scheduled workflow triggers cannot carry credentials")
+		}
+	}
+	if trigger.UsesWebhookSigning() {
+		if !validWorkflowWebhookSigningState(
+			trigger.CurrentSigningSecretEncrypted,
+			trigger.CurrentSigningKeyID,
+			trigger.NextSigningSecretEncrypted,
+			trigger.NextSigningKeyID,
+		) {
+			return errors.New("workflow trigger signing state is invalid")
+		}
+	} else if trigger.CurrentSigningSecretEncrypted != "" || trigger.CurrentSigningKeyID != "" ||
+		trigger.NextSigningSecretEncrypted != "" || trigger.NextSigningKeyID != "" {
+		return errors.New("non-webhook workflow triggers cannot carry signing material")
 	}
 	if len(trigger.InputMappings) > MaxWorkflowTriggerMappings {
 		return fmt.Errorf("workflow trigger mappings exceed maximum count %d", MaxWorkflowTriggerMappings)
@@ -319,6 +383,9 @@ func ValidateWorkflowTriggerCanFire(trigger WorkflowTrigger) error {
 	if trigger.UsesCredential() && (trigger.CredentialGeneration <= 0 || !validWorkflowTriggerHash(trigger.CredentialHash)) {
 		return errors.New("workflow trigger credential is unavailable")
 	}
+	if trigger.UsesWebhookSigning() && (trigger.CurrentSigningSecretEncrypted == "" || !validWorkflowWebhookKeyID(trigger.CurrentSigningKeyID)) {
+		return errors.New("workflow trigger signing material is unavailable")
+	}
 	return nil
 }
 
@@ -385,6 +452,75 @@ func validWorkflowTriggerHash(value string) bool {
 	}
 	_, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
 	return err == nil
+}
+
+func validWorkflowWebhookEventHash(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	for index := 0; index < len(value); index++ {
+		if !(value[index] >= '0' && value[index] <= '9') && !(value[index] >= 'a' && value[index] <= 'f') {
+			return false
+		}
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func validWorkflowWebhookSigningState(currentSecret, currentKeyID, nextSecret, nextKeyID string) bool {
+	if (currentSecret == "") != (currentKeyID == "") || (nextSecret == "") != (nextKeyID == "") {
+		return false
+	}
+	if nextSecret != "" && currentSecret == "" {
+		return false
+	}
+	if nextKeyID != "" && nextKeyID == currentKeyID {
+		return false
+	}
+	return (currentKeyID == "" || validWorkflowWebhookKeyID(currentKeyID)) &&
+		(nextKeyID == "" || validWorkflowWebhookKeyID(nextKeyID))
+}
+
+// Legacy webhook credential metadata is retained solely for a reversible
+// migration path. UsesCredential deliberately excludes webhooks, so this data
+// cannot authenticate an inbound request or bypass signing state validation.
+func validDormantWorkflowWebhookCredential(hash string, generation int) bool {
+	if hash == "" && generation == 0 {
+		return true
+	}
+	return generation > 0 && validWorkflowTriggerHash(hash)
+}
+
+func validWorkflowWebhookEventID(value string) bool {
+	if len(value) < 16 || len(value) > 128 {
+		return false
+	}
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if !(character >= 'a' && character <= 'z') &&
+			!(character >= 'A' && character <= 'Z') &&
+			!(character >= '0' && character <= '9') &&
+			character != '.' && character != '_' && character != '-' && character != ':' {
+			return false
+		}
+	}
+	return true
+}
+
+func validWorkflowWebhookKeyID(value string) bool {
+	const prefix = "swhkid_"
+	if len(value) < len(prefix)+1 || len(value) > 64 || !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	for index := len(prefix); index < len(value); index++ {
+		character := value[index]
+		if !(character >= 'a' && character <= 'z') &&
+			!(character >= 'A' && character <= 'Z') &&
+			!(character >= '0' && character <= '9') && character != '_' && character != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func containsWorkflowTriggerType(wanted WorkflowTriggerType) bool {

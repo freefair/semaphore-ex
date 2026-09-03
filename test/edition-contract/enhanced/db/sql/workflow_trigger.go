@@ -80,10 +80,12 @@ func (d *WorkflowStoreImpl) CreateWorkflowTrigger(trigger db.WorkflowTrigger) (d
 		trigger.Updated = trigger.Created
 	}
 	result, err := d.connection.Exec(
-		"insert into project__workflow_trigger(project_id, workflow_template_id, revision, name, type, owner_user_id, enabled, cron_format, input_mappings, credential_hash, credential_generation, created, updated, last_fired, last_result) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"insert into project__workflow_trigger(project_id, workflow_template_id, revision, name, type, owner_user_id, enabled, cron_format, input_mappings, credential_hash, credential_generation, current_signing_secret_encrypted, next_signing_secret_encrypted, current_signing_key_id, next_signing_key_id, created, updated, last_fired, last_result) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		trigger.ProjectID, trigger.WorkflowTemplateID, trigger.Revision, trigger.Name, trigger.Type,
 		trigger.OwnerUserID, trigger.Enabled, trigger.CronFormat, trigger.InputMappingsJSON,
-		trigger.CredentialHash, trigger.CredentialGeneration, trigger.Created, trigger.Updated,
+		trigger.CredentialHash, trigger.CredentialGeneration,
+		trigger.CurrentSigningSecretEncrypted, trigger.NextSigningSecretEncrypted,
+		trigger.CurrentSigningKeyID, trigger.NextSigningKeyID, trigger.Created, trigger.Updated,
 		trigger.LastFired, trigger.LastResult,
 	)
 	if err != nil {
@@ -103,9 +105,11 @@ func (d *WorkflowStoreImpl) UpdateWorkflowTrigger(trigger db.WorkflowTrigger, ex
 	}
 	trigger.Updated = time.Now().UTC()
 	result, err := d.connection.Exec(
-		"update project__workflow_trigger set name=?, type=?, owner_user_id=?, enabled=?, cron_format=?, input_mappings=?, credential_hash=?, credential_generation=?, updated=?, revision=revision+1 where project_id=? and workflow_template_id=? and id=? and revision=?",
+		"update project__workflow_trigger set name=?, type=?, owner_user_id=?, enabled=?, cron_format=?, input_mappings=?, credential_hash=?, credential_generation=?, current_signing_secret_encrypted=?, next_signing_secret_encrypted=?, current_signing_key_id=?, next_signing_key_id=?, updated=?, revision=revision+1 where project_id=? and workflow_template_id=? and id=? and revision=?",
 		trigger.Name, trigger.Type, trigger.OwnerUserID, trigger.Enabled, trigger.CronFormat,
-		trigger.InputMappingsJSON, trigger.CredentialHash, trigger.CredentialGeneration, trigger.Updated,
+		trigger.InputMappingsJSON, trigger.CredentialHash, trigger.CredentialGeneration,
+		trigger.CurrentSigningSecretEncrypted, trigger.NextSigningSecretEncrypted,
+		trigger.CurrentSigningKeyID, trigger.NextSigningKeyID, trigger.Updated,
 		trigger.ProjectID, trigger.WorkflowTemplateID, trigger.ID, expectedRevision,
 	)
 	if err != nil {
@@ -196,6 +200,15 @@ func (d *WorkflowStoreImpl) ClaimWorkflowTriggerInvocation(invocation db.Workflo
 		_ = tx.Rollback()
 		existing, getErr := d.selectWorkflowTriggerInvocationByIdentity(invocation)
 		if getErr == nil {
+			if invocation.WebhookEventHash != nil {
+				if replayErr := d.recordWorkflowWebhookReplay(existing.ID, invocation.WorkflowTriggerID, *invocation.WebhookEventHash, now); replayErr != nil {
+					return db.WorkflowTriggerInvocation{}, false, replayErr
+				}
+				existing, getErr = d.selectWorkflowTriggerInvocationByIdentity(invocation)
+				if getErr != nil {
+					return db.WorkflowTriggerInvocation{}, false, getErr
+				}
+			}
 			return existing, false, nil
 		}
 		return db.WorkflowTriggerInvocation{}, false, err
@@ -210,27 +223,37 @@ func (d *WorkflowStoreImpl) insertWorkflowTriggerInvocationIfCurrent(
 	tx *gorp.Transaction,
 	invocation db.WorkflowTriggerInvocation,
 ) (int, error) {
+	stateCondition := "and credential_generation=?"
+	stateArgs := []any{invocation.CredentialGeneration}
+	if invocation.WebhookEventHash != nil {
+		stateCondition = "and type=? and current_signing_secret_encrypted<>'' and current_signing_key_id<>''"
+		stateArgs = []any{db.WorkflowTriggerWebhook}
+	}
 	query := `insert into project__workflow_trigger_invocation(
 		project_id, workflow_trigger_id, workflow_template_id, trigger_revision,
 		credential_generation, definition_revision, request_key_hash, occurrence_identity,
+		webhook_event_hash, webhook_event_id, webhook_key_id, webhook_signed_at, webhook_replay_count, webhook_last_replayed_at,
 		status, run_id, deployment_window_decision_id, next_eligible_at, next_eligible_known, blocked_at,
 		actor_user_id, trigger_snapshot, input_snapshot, result, reason, created, updated, expires_at
-	) select ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+	) select ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 	where exists (
 		select 1 from project__workflow_trigger
 		where project_id=? and workflow_template_id=? and id=?
-			and revision=? and enabled=? and credential_generation=?
+			and revision=? and enabled=? ` + stateCondition + `
 	)`
 	args := []any{
 		invocation.ProjectID, invocation.WorkflowTriggerID, invocation.WorkflowTemplateID,
 		invocation.TriggerRevision, invocation.CredentialGeneration, invocation.DefinitionRevision,
-		invocation.RequestKeyHash, invocation.OccurrenceIdentity, invocation.Status, invocation.RunID,
+		invocation.RequestKeyHash, invocation.OccurrenceIdentity,
+		invocation.WebhookEventHash, invocation.WebhookEventID, invocation.WebhookKeyID, invocation.WebhookSignedAt,
+		invocation.WebhookReplayCount, invocation.WebhookLastReplayedAt, invocation.Status, invocation.RunID,
 		invocation.DeploymentWindowDecisionID, invocation.NextEligibleAt, invocation.NextEligibleKnown, invocation.BlockedAt,
 		invocation.ActorUserID, invocation.TriggerSnapshotJSON, invocation.InputSnapshotJSON,
 		invocation.Result, invocation.Reason, invocation.Created, invocation.Updated, invocation.ExpiresAt,
 		invocation.ProjectID, invocation.WorkflowTemplateID, invocation.WorkflowTriggerID,
-		invocation.TriggerRevision, true, invocation.CredentialGeneration,
+		invocation.TriggerRevision, true,
 	}
+	args = append(args, stateArgs...)
 	prepared := d.connection.PrepareQuery(query)
 	if d.connection.GetDialect() == util.DbDriverPostgres {
 		id, err := tx.SelectInt(prepared+" returning id", args...)
@@ -252,6 +275,24 @@ func (d *WorkflowStoreImpl) insertWorkflowTriggerInvocationIfCurrent(
 	}
 	id, err := result.LastInsertId()
 	return int(id), err
+}
+
+func (d *WorkflowStoreImpl) recordWorkflowWebhookReplay(invocationID, triggerID int, eventHash string, replayedAt time.Time) error {
+	result, err := d.connection.Exec(
+		"update project__workflow_trigger_invocation set webhook_replay_count=webhook_replay_count+1, webhook_last_replayed_at=?, updated=? where id=? and workflow_trigger_id=? and webhook_event_hash=?",
+		replayedAt, replayedAt, invocationID, triggerID, eventHash,
+	)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return db.ErrWorkflowTriggerStateChanged
+	}
+	return nil
 }
 
 func (d *WorkflowStoreImpl) UpdateWorkflowTriggerInvocation(invocation db.WorkflowTriggerInvocation) error {
@@ -380,6 +421,10 @@ func (d *WorkflowStoreImpl) selectWorkflowTriggerInvocationByIdentity(wanted db.
 	} else if wanted.OccurrenceIdentity != nil {
 		err = d.connection.SelectOne(&invocation,
 			"select * from project__workflow_trigger_invocation where occurrence_identity=?", *wanted.OccurrenceIdentity)
+	} else if wanted.WebhookEventHash != nil {
+		err = d.connection.SelectOne(&invocation,
+			"select * from project__workflow_trigger_invocation where workflow_trigger_id=? and webhook_event_hash=?",
+			wanted.WorkflowTriggerID, *wanted.WebhookEventHash)
 	} else {
 		return db.WorkflowTriggerInvocation{}, db.ErrNotFound
 	}

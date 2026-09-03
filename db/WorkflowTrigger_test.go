@@ -81,3 +81,28 @@ func TestDisabledWorkflowTriggerCannotFire(t *testing.T) {
 	trigger := WorkflowTrigger{Enabled: false}
 	require.ErrorContains(t, ValidateWorkflowTriggerCanFire(trigger), "disabled")
 }
+
+func TestWebhookWorkflowTriggerRequiresSigningMaterialAndDurableReplayIdentity(t *testing.T) {
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	trigger := WorkflowTrigger{
+		ProjectID: 1, WorkflowTemplateID: 2, Name: "Inbound", Type: WorkflowTriggerWebhook, OwnerUserID: 3, Enabled: true,
+		CredentialHash: HashWorkflowTriggerCredential("legacy-webhook"), CredentialGeneration: 7,
+	}
+	require.NoError(t, ValidateWorkflowTrigger(trigger, nil), "legacy webhook credential metadata is dormant but valid")
+	require.Error(t, ValidateWorkflowTriggerCanFire(trigger))
+	trigger.CurrentSigningSecretEncrypted = "ciphertext-current"
+	trigger.CurrentSigningKeyID = "swhkid_current"
+	require.NoError(t, ValidateWorkflowTriggerCanFire(trigger))
+
+	eventHash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	invocation := WorkflowTriggerInvocation{
+		ProjectID: 1, WorkflowTriggerID: 2, WorkflowTemplateID: 3, TriggerRevision: 1,
+		DefinitionRevision: 1, Status: WorkflowTriggerInvocationClaimed,
+		WebhookEventHash: &eventHash, WebhookEventID: "evt_1234567890123456",
+		WebhookKeyID: "swhkid_current", WebhookSignedAt: pointer(now),
+		TriggerSnapshotJSON: `{}`, InputSnapshotJSON: `{}`, Created: now, Updated: now,
+	}
+	require.NoError(t, ValidateWorkflowTriggerInvocation(invocation))
+	invocation.ExpiresAt = pointer(now.Add(time.Hour))
+	assert.Error(t, ValidateWorkflowTriggerInvocation(invocation), "webhook replay identities cannot expire")
+}
