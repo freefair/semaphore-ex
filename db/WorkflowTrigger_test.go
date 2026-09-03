@@ -92,7 +92,15 @@ func TestWebhookWorkflowTriggerRequiresSigningMaterialAndDurableReplayIdentity(t
 	require.Error(t, ValidateWorkflowTriggerCanFire(trigger))
 	trigger.CurrentSigningSecretEncrypted = "ciphertext-current"
 	trigger.CurrentSigningKeyID = "swhkid_current"
+	trigger.CurrentSigningGeneration = 1
 	require.NoError(t, ValidateWorkflowTriggerCanFire(trigger))
+	trigger.CurrentSigningGeneration = 0
+	require.Error(t, ValidateWorkflowTriggerCanFire(trigger))
+	trigger.CurrentSigningGeneration = 1
+	trigger.CurrentSigningSecretEncrypted = ""
+	trigger.NextSigningSecretEncrypted = "ciphertext-next"
+	trigger.NextSigningKeyID = "swhkid_next"
+	assert.Error(t, ValidateWorkflowTrigger(trigger, nil))
 
 	eventHash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	invocation := WorkflowTriggerInvocation{
@@ -105,4 +113,15 @@ func TestWebhookWorkflowTriggerRequiresSigningMaterialAndDurableReplayIdentity(t
 	require.NoError(t, ValidateWorkflowTriggerInvocation(invocation))
 	invocation.ExpiresAt = pointer(now.Add(time.Hour))
 	assert.Error(t, ValidateWorkflowTriggerInvocation(invocation), "webhook replay identities cannot expire")
+}
+
+func TestWebhookCorrelationIDIsBoundedAndRejectsMalformedIdentity(t *testing.T) {
+	hash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	invocation := WorkflowTriggerInvocation{WebhookEventHash: &hash}
+	correlationID := WorkflowTriggerInvocationCorrelationID(invocation)
+	assert.Equal(t, "swh_"+hash[:60], correlationID)
+	assert.Len(t, correlationID, 64)
+	malformed := "short"
+	invocation.WebhookEventHash = &malformed
+	assert.Empty(t, WorkflowTriggerInvocationCorrelationID(invocation))
 }

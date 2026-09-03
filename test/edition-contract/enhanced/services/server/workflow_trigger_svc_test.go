@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -14,6 +15,53 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestWorkflowTriggerSignedWebhookClaimsBeforeMappingAndNeverFallsBackToBearer(t *testing.T) {
+	fixture := newWorkflowTriggerServiceFixture(t)
+	fixture.service.(*workflowTriggerService).cipher = workflowTriggerTestCipher{}
+	created, err := fixture.service.Create(context.Background(), fixture.projectID, fixture.workflow.ID, db.WorkflowTrigger{
+		Name: "Inbound", Type: db.WorkflowTriggerWebhook, Enabled: true,
+		InputMappings: []db.WorkflowTriggerInputMapping{{Parameter: "region", Source: db.WorkflowTriggerInputRequest, Key: "target"}},
+	}, &fixture.actor)
+	require.NoError(t, err)
+	require.NotEmpty(t, created.WebhookSigningSecret)
+	require.Empty(t, created.Credential)
+
+	body := []byte(`{"inputs":{"target":"eu"}}`)
+	headers := pro_interfaces.WebhookSignatureHeaders{Version: pro_interfaces.WebhookSignatureProtocolVersion, EventID: "evt_1234567890123456", Timestamp: fmt.Sprintf("%d", time.Now().Unix()), KeyID: created.Trigger.CurrentSigningKeyID}
+	bound, err := pro_interfaces.BindWebhookSignedRequest("POST", "/api/workflow-triggers/1/2/3/webhook?exact=1", headers, body)
+	require.NoError(t, err)
+	bound.Signature, err = pro_interfaces.SignWebhookRequest(created.WebhookSigningSecret, bound)
+	require.NoError(t, err)
+	_, err = fixture.service.FireSignedWebhook(context.Background(), fixture.projectID, fixture.workflow.ID, created.Trigger.ID, bound)
+	require.NoError(t, err)
+	assert.Equal(t, 1, fixture.starter.calls)
+	_, err = fixture.service.FireSignedWebhook(context.Background(), fixture.projectID, fixture.workflow.ID, created.Trigger.ID, bound)
+	require.ErrorIs(t, err, pro_interfaces.ErrWorkflowTriggerWebhookReplay)
+	assert.Equal(t, 1, fixture.starter.calls)
+
+	invalid := bound
+	invalid.EventID = "evt_abcdefghijklmnop"
+	invalid.Payload = []byte(`{"unknown":true}`)
+	invalid.Signature, err = pro_interfaces.SignWebhookRequest(created.WebhookSigningSecret, invalid)
+	require.NoError(t, err)
+	_, err = fixture.service.FireSignedWebhook(context.Background(), fixture.projectID, fixture.workflow.ID, created.Trigger.ID, invalid)
+	require.ErrorIs(t, err, pro_interfaces.ErrWorkflowTriggerWebhookRejected)
+	assert.Equal(t, 1, fixture.starter.calls, "a verified malformed payload is claimed but never started")
+	history, err := fixture.repository.GetWorkflowTriggerInvocations(fixture.projectID, created.Trigger.ID, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, history, 2, "strict mapping failures are durably claimed after verification")
+}
+
+type workflowTriggerTestCipher struct{}
+
+func (workflowTriggerTestCipher) OptionEncryptionEnabled() bool { return true }
+func (workflowTriggerTestCipher) EncryptOption(value []byte) (string, error) {
+	return "sealed:" + string(value), nil
+}
+func (workflowTriggerTestCipher) DecryptOption(value string) ([]byte, error) {
+	return []byte(value[len("sealed:"):]), nil
+}
 
 func TestWorkflowTriggerServiceIssuesCredentialOnceAndDeduplicatesExternalStart(t *testing.T) {
 	fixture := newWorkflowTriggerServiceFixture(t)
