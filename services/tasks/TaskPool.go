@@ -1170,11 +1170,47 @@ func (p *TaskPool) AddTaskWithDeploymentWindowAdmission(
 	needAlias bool,
 	request pro_interfaces.DeploymentWindowAdmissionRequest,
 ) (db.Task, error) {
-	if p.deploymentWindowAdmission == nil {
+	if p.policyGuardrailAdmission == nil && p.deploymentWindowAdmission == nil {
 		return p.addTask(taskObj, nil, userID, username, projectID, needAlias, nil, nil)
 	}
 	if request.ProjectID != projectID || request.TemplateID == nil || *request.TemplateID != taskObj.TemplateID {
 		return db.Task{}, errors.New("deployment window admission is unavailable")
+	}
+	var policyTemplateSnapshot *db.Template
+	if p.policyGuardrailAdmission != nil {
+		template, err := p.store.GetTemplate(projectID, taskObj.TemplateID)
+		if err != nil {
+			return db.Task{}, err
+		}
+		claim, freshTemplate, executionSnapshot, err := p.claimAutomaticTaskPolicyGuardrailAdmission(taskObj, template, projectID, request.Source, request.DecisionKey)
+		if err != nil {
+			return db.Task{}, err
+		}
+		if claim.Record.TaskID != nil {
+			existing, getErr := p.store.GetTask(projectID, *claim.Record.TaskID)
+			if getErr != nil || !taskMatchesPolicyGuardrailClaim(existing, taskObj, projectID) {
+				return db.Task{}, errors.New("policy guardrail evaluation is bound to a different task")
+			}
+			return existing, nil
+		}
+		if !claim.Evaluation.Allowed {
+			return db.Task{}, &pro_interfaces.PolicyGuardrailDeniedError{Evaluation: claim.Evaluation}
+		}
+		if executionSnapshot == nil {
+			return db.Task{}, errors.New("automatic policy execution snapshot is unavailable")
+		}
+		encoded, encodeErr := db.EncodeTaskExecutionSnapshot(*executionSnapshot)
+		if encodeErr != nil {
+			return db.Task{}, errors.New("automatic policy execution snapshot is invalid")
+		}
+		taskObj.ExecutionSnapshotJSON = &encoded
+		policyEvaluationID := claim.Record.ID
+		taskObj.PolicyGuardrailEvaluationID = &policyEvaluationID
+		templateCopy := freshTemplate
+		policyTemplateSnapshot = &templateCopy
+	}
+	if p.deploymentWindowAdmission == nil {
+		return p.addTask(taskObj, policyTemplateSnapshot, userID, username, projectID, needAlias, nil, nil)
 	}
 	claim, err := p.deploymentWindowAdmission.Claim(request)
 	if err != nil {
@@ -1200,7 +1236,7 @@ func (p *TaskPool) AddTaskWithDeploymentWindowAdmission(
 	}
 	decisionID := claim.Decision.ID
 	taskObj.DeploymentWindowDecisionID = &decisionID
-	created, err := p.addTask(taskObj, nil, userID, username, projectID, needAlias, nil, nil)
+	created, err := p.addTask(taskObj, policyTemplateSnapshot, userID, username, projectID, needAlias, nil, nil)
 	if err == nil {
 		p.recordDeploymentWindowTaskBinding(claim.Decision, created)
 	}

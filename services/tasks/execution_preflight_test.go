@@ -296,6 +296,274 @@ func TestAddTaskWithExecutionPreflightPreservesHeaderlessLegacyQueueing(t *testi
 	assert.Positive(t, created.ID, "legacy clients must retain queue-and-wait behavior")
 }
 
+func TestAddTaskWithExecutionPreflightPolicyGuardrailDeniesHeaderlessStart(t *testing.T) {
+	store, pool, actor, template, _ := createTaskPreflightFixture(t)
+	pool.ConfigurePolicyGuardrailAdmission(&executionPreflightPolicyGuardrailStub{
+		effects: []pro_interfaces.PolicyGuardrailEffect{pro_interfaces.PolicyGuardrailEffectDeny},
+	})
+
+	_, plan, err := pool.AddTaskWithExecutionPreflightPlan(
+		db.Task{TemplateID: template.ID}, &actor, template.ProjectID, false,
+		pro_interfaces.ExecutionPreflightReview{},
+	)
+
+	var denied *ExecutionPreflightDeniedError
+	require.ErrorAs(t, err, &denied)
+	assert.Equal(t, plan, denied.Preflight)
+	assert.Contains(t, policyGuardrailReasonCodes(plan.Findings), pro_interfaces.ExecutionReasonPolicyDenied)
+	stored, listErr := store.GetProjectTasks(template.ProjectID, db.RetrieveQueryParams{})
+	require.NoError(t, listErr)
+	assert.Empty(t, stored)
+}
+
+func TestAddTaskWithExecutionPreflightPolicyClaimFencesReviewedAllowAndWarn(t *testing.T) {
+	for _, effect := range []pro_interfaces.PolicyGuardrailEffect{
+		pro_interfaces.PolicyGuardrailEffectAllow,
+		pro_interfaces.PolicyGuardrailEffectWarn,
+	} {
+		t.Run(string(effect), func(t *testing.T) {
+			store, pool, actor, template, _ := createTaskPreflightFixture(t)
+			issuer, err := NewExecutionPreflightReviewTokenIssuer([]byte("01234567890123456789012345678901"), time.Minute)
+			require.NoError(t, err)
+			pool.SetExecutionPreflightReviewTokenIssuer(issuer)
+			policy := &executionPreflightPolicyGuardrailStub{effects: []pro_interfaces.PolicyGuardrailEffect{effect}}
+			pool.ConfigurePolicyGuardrailAdmission(policy)
+			var persisted db.Task
+			pool.store = executionPreflightTaskStoreStub{Store: store, createTask: func(task db.Task, _ int) (db.Task, error) {
+				persisted = task
+				task.ID = 401
+				return task, nil
+			}}
+			preview, err := pool.PreviewTaskExecution(db.Task{TemplateID: template.ID}, &actor, template.ProjectID)
+			require.NoError(t, err)
+
+			created, plan, err := pool.AddTaskWithExecutionPreflightPlan(db.Task{TemplateID: template.ID}, &actor, template.ProjectID, false,
+				pro_interfaces.ExecutionPreflightReview{Fingerprint: preview.Fingerprint, ReviewToken: preview.ReviewToken},
+			)
+
+			require.NoError(t, err)
+			assert.Equal(t, 401, created.ID)
+			require.NotNil(t, persisted.PolicyGuardrailEvaluationID)
+			require.NotNil(t, persisted.ExecutionSnapshotJSON)
+			assert.Equal(t, 1, *persisted.PolicyGuardrailEvaluationID)
+			require.Len(t, policy.claimRequests, 1)
+			assert.Equal(t, "manual", policy.claimRequests[0].Source)
+			assert.Equal(t, "manual", policy.claimRequests[0].Input.Template.Source)
+			if effect == pro_interfaces.PolicyGuardrailEffectAllow {
+				assert.Contains(t, policyGuardrailReasonCodes(plan.Findings), pro_interfaces.ExecutionReasonPolicyAllowed)
+			} else {
+				assert.Contains(t, policyGuardrailReasonCodes(plan.Findings), pro_interfaces.ExecutionReasonPolicyWarning)
+			}
+		})
+	}
+}
+
+func TestAddTaskWithExecutionPreflightBindsPolicyBeforeDeploymentAdmission(t *testing.T) {
+	store, pool, actor, template, _ := createTaskPreflightFixture(t)
+	policy := &executionPreflightPolicyGuardrailStub{}
+	pool.ConfigurePolicyGuardrailAdmission(policy)
+	pool.ConfigureDeploymentWindowAdmission(executionPreflightDeploymentWindowAdmissionStub{
+		claim: pro_interfaces.DeploymentWindowAdmissionClaim{Decision: executionPreflightDeploymentWindowDecision(
+			template.ProjectID, actor.ID, pro_interfaces.DeploymentWindowDecisionAllowed,
+		)},
+	})
+	var persisted db.Task
+	pool.store = executionPreflightTaskStoreStub{Store: store, createTask: func(task db.Task, _ int) (db.Task, error) {
+		persisted = task
+		task.ID = 402
+		return task, nil
+	}}
+
+	_, _, err := pool.AddTaskWithExecutionPreflightPlan(db.Task{TemplateID: template.ID}, &actor, template.ProjectID, false, pro_interfaces.ExecutionPreflightReview{})
+
+	require.NoError(t, err)
+	require.NotNil(t, persisted.PolicyGuardrailEvaluationID)
+	require.NotNil(t, persisted.DeploymentWindowDecisionID)
+	require.NotNil(t, persisted.ExecutionSnapshotJSON, "policy-admitted headerless starts must not re-resolve mutable execution state")
+	assert.Equal(t, 1, *persisted.PolicyGuardrailEvaluationID)
+	assert.Equal(t, 97, *persisted.DeploymentWindowDecisionID)
+}
+
+func TestAddTaskWithExecutionPreflightPolicyFailuresCloseBeforeTaskPersistence(t *testing.T) {
+	for name, policy := range map[string]*executionPreflightPolicyGuardrailStub{
+		"evaluator": {err: errors.New("policy evaluator unavailable")},
+		"claim":     {claimErr: errors.New("policy claim unavailable")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, pool, actor, template, _ := createTaskPreflightFixture(t)
+			pool.ConfigurePolicyGuardrailAdmission(policy)
+			_, _, err := pool.AddTaskWithExecutionPreflightPlan(db.Task{TemplateID: template.ID}, &actor, template.ProjectID, false, pro_interfaces.ExecutionPreflightReview{})
+			require.EqualError(t, err, "policy "+name+" unavailable")
+			stored, listErr := store.GetProjectTasks(template.ProjectID, db.RetrieveQueryParams{})
+			require.NoError(t, listErr)
+			assert.Empty(t, stored)
+		})
+	}
+}
+
+func TestAddTaskWithExecutionPreflightPolicyClaimChangeMakesReviewedStartStale(t *testing.T) {
+	_, pool, actor, template, _ := createTaskPreflightFixture(t)
+	issuer, err := NewExecutionPreflightReviewTokenIssuer([]byte("01234567890123456789012345678901"), time.Minute)
+	require.NoError(t, err)
+	pool.SetExecutionPreflightReviewTokenIssuer(issuer)
+	policy := &executionPreflightPolicyGuardrailStub{revision: 1}
+	pool.ConfigurePolicyGuardrailAdmission(policy)
+	preview, err := pool.PreviewTaskExecution(db.Task{TemplateID: template.ID}, &actor, template.ProjectID)
+	require.NoError(t, err)
+	policy.revision = 2
+
+	_, _, err = pool.AddTaskWithExecutionPreflightPlan(db.Task{TemplateID: template.ID}, &actor, template.ProjectID, false,
+		pro_interfaces.ExecutionPreflightReview{Fingerprint: preview.Fingerprint, ReviewToken: preview.ReviewToken},
+	)
+
+	var stale *ExecutionPreflightStaleError
+	require.ErrorAs(t, err, &stale)
+	assert.Contains(t, stale.Changes, pro_interfaces.ExecutionChangePolicy)
+	assert.Empty(t, policy.claimRequests, "a stale review must not create an admission claim")
+}
+
+func TestAddTaskWithExecutionPreflightPolicyDoesNotBypassReviewedNativeDenial(t *testing.T) {
+	store, pool, actor, template, _ := createTaskPreflightFixture(t)
+	issuer, err := NewExecutionPreflightReviewTokenIssuer([]byte("01234567890123456789012345678901"), time.Minute)
+	require.NoError(t, err)
+	pool.SetExecutionPreflightReviewTokenIssuer(issuer)
+	policy := &executionPreflightPolicyGuardrailStub{}
+	pool.ConfigurePolicyGuardrailAdmission(policy)
+	template.RunnerTags = []string{"currently-unavailable"}
+	require.NoError(t, store.UpdateTemplate(template))
+	preview, err := pool.PreviewTaskExecution(db.Task{TemplateID: template.ID}, &actor, template.ProjectID)
+	require.NoError(t, err)
+
+	_, _, err = pool.AddTaskWithExecutionPreflightPlan(db.Task{TemplateID: template.ID}, &actor, template.ProjectID, false,
+		pro_interfaces.ExecutionPreflightReview{Fingerprint: preview.Fingerprint, ReviewToken: preview.ReviewToken},
+	)
+
+	var denied *ExecutionPreflightDeniedError
+	require.ErrorAs(t, err, &denied)
+	assert.Empty(t, policy.claimRequests, "native reviewed denials must stop before a policy admission claim")
+}
+
+func TestAddTaskWithDeploymentWindowAdmissionPolicyUsesAutomaticSourceAndDecisionKey(t *testing.T) {
+	for _, source := range []pro_interfaces.DeploymentWindowSource{
+		pro_interfaces.DeploymentWindowSourceSchedule,
+		pro_interfaces.DeploymentWindowSourceIntegration,
+		pro_interfaces.DeploymentWindowSourceAutorun,
+	} {
+		t.Run(string(source), func(t *testing.T) {
+			store, pool, _, template, _ := createTaskPreflightFixture(t)
+			policy := &executionPreflightPolicyGuardrailStub{effects: []pro_interfaces.PolicyGuardrailEffect{pro_interfaces.PolicyGuardrailEffectWarn}}
+			pool.ConfigurePolicyGuardrailAdmission(policy)
+			var persisted db.Task
+			pool.store = executionPreflightTaskStoreStub{Store: store, createTask: func(task db.Task, _ int) (db.Task, error) {
+				persisted = task
+				task.ID = 403
+				return task, nil
+			}}
+			decisionKey := string(source) + "-decision"
+			created, err := pool.AddTaskWithDeploymentWindowAdmission(db.Task{TemplateID: template.ID}, nil, "", template.ProjectID, false,
+				pro_interfaces.DeploymentWindowAdmissionRequest{ProjectID: template.ProjectID, DecisionKey: decisionKey, Source: source, TemplateID: &template.ID},
+			)
+
+			require.NoError(t, err)
+			assert.Equal(t, 403, created.ID)
+			require.NotNil(t, persisted.PolicyGuardrailEvaluationID)
+			require.Len(t, policy.claimRequests, 1)
+			assert.Equal(t, decisionKey, policy.claimRequests[0].DecisionKey)
+			assert.Equal(t, string(source), policy.claimRequests[0].Source)
+			assert.Equal(t, string(source), policy.claimRequests[0].Input.Template.Source)
+		})
+	}
+}
+
+func TestAddTaskWithDeploymentWindowAdmissionPolicyPersistsClaimedAutomaticDescriptor(t *testing.T) {
+	store, pool, _, template, environment := createTaskPreflightFixture(t)
+	policy := &executionPreflightPolicyGuardrailStub{}
+	policy.onClaim = func(pro_interfaces.PolicyGuardrailAdmissionRequest) {
+		environment.JSON = `{"stored":"changed-after-policy-claim"}`
+		require.NoError(t, store.UpdateEnvironment(environment))
+	}
+	pool.ConfigurePolicyGuardrailAdmission(policy)
+	var persisted db.Task
+	pool.store = executionPreflightTaskStoreStub{Store: store, createTask: func(task db.Task, _ int) (db.Task, error) {
+		persisted = task
+		task.ID = 404
+		return task, nil
+	}}
+
+	_, err := pool.AddTaskWithDeploymentWindowAdmission(db.Task{TemplateID: template.ID}, nil, "", template.ProjectID, false,
+		pro_interfaces.DeploymentWindowAdmissionRequest{ProjectID: template.ProjectID, DecisionKey: "integration-descriptor", Source: pro_interfaces.DeploymentWindowSourceIntegration, TemplateID: &template.ID},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, persisted.ExecutionSnapshotJSON)
+	snapshot, decodeErr := db.DecodeTaskExecutionSnapshot(*persisted.ExecutionSnapshotJSON, template.ProjectID, template.ID)
+	require.NoError(t, decodeErr)
+	require.Len(t, snapshot.Environments, 1)
+	assert.Equal(t, `{"stored":"environment-value"}`, snapshot.Environments[0].JSON)
+}
+
+func TestAddTaskWithDeploymentWindowAdmissionPolicyDenyAndClaimFailureCloseWithoutWindow(t *testing.T) {
+	for name, policy := range map[string]*executionPreflightPolicyGuardrailStub{
+		"deny":  {effects: []pro_interfaces.PolicyGuardrailEffect{pro_interfaces.PolicyGuardrailEffectDeny}},
+		"claim": {claimErr: errors.New("automatic policy claim unavailable")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, pool, _, template, _ := createTaskPreflightFixture(t)
+			pool.ConfigurePolicyGuardrailAdmission(policy)
+			_, err := pool.AddTaskWithDeploymentWindowAdmission(db.Task{TemplateID: template.ID}, nil, "", template.ProjectID, false,
+				pro_interfaces.DeploymentWindowAdmissionRequest{ProjectID: template.ProjectID, DecisionKey: "automatic-" + name, Source: pro_interfaces.DeploymentWindowSourceIntegration, TemplateID: &template.ID},
+			)
+			if name == "deny" {
+				var denied *pro_interfaces.PolicyGuardrailDeniedError
+				require.ErrorAs(t, err, &denied)
+				assert.False(t, denied.Evaluation.Allowed)
+				assert.Len(t, denied.Evaluation.Revisions, 1)
+				require.Len(t, denied.Evaluation.Findings, 1)
+				assert.Equal(t, pro_interfaces.PolicyGuardrailEffectDeny, denied.Evaluation.Findings[0].Effect)
+			} else {
+				require.EqualError(t, err, "automatic policy claim unavailable")
+			}
+			stored, listErr := store.GetProjectTasks(template.ProjectID, db.RetrieveQueryParams{})
+			require.NoError(t, listErr)
+			assert.Empty(t, stored)
+		})
+	}
+}
+
+func TestAddTaskWithDeploymentWindowAdmissionPolicyReplayReturnsOnlyMatchingTask(t *testing.T) {
+	store, pool, _, template, _ := createTaskPreflightFixture(t)
+	existing, err := store.CreateTask(db.Task{ProjectID: template.ProjectID, TemplateID: template.ID, Status: "waiting", Created: time.Now().UTC()}, 0)
+	require.NoError(t, err)
+	policy := &executionPreflightPolicyGuardrailStub{claimRecord: &db.PolicyGuardrailEvaluationRecord{
+		ID: 1, ProjectID: template.ProjectID, DecisionKey: "schedule-replay", Intent: "task", Source: "schedule",
+		TemplateID: &template.ID, TaskID: &existing.ID, Decision: db.PolicyGuardrailDecisionAllow,
+	}}
+	pool.ConfigurePolicyGuardrailAdmission(policy)
+	request := pro_interfaces.DeploymentWindowAdmissionRequest{ProjectID: template.ProjectID, DecisionKey: "schedule-replay", Source: pro_interfaces.DeploymentWindowSourceSchedule, TemplateID: &template.ID}
+
+	replayed, err := pool.AddTaskWithDeploymentWindowAdmission(db.Task{TemplateID: template.ID}, nil, "", template.ProjectID, false, request)
+
+	require.NoError(t, err)
+	assert.Equal(t, existing.ID, replayed.ID)
+
+	integrationID := 77
+	_, err = pool.AddTaskWithDeploymentWindowAdmission(db.Task{TemplateID: template.ID, IntegrationID: &integrationID}, nil, "", template.ProjectID, false,
+		pro_interfaces.DeploymentWindowAdmissionRequest{ProjectID: template.ProjectID, DecisionKey: "schedule-replay", Source: pro_interfaces.DeploymentWindowSourceSchedule, TemplateID: &template.ID},
+	)
+	require.EqualError(t, err, "policy guardrail evaluation is bound to a different task")
+}
+
+func TestAddTaskWithDeploymentWindowAdmissionPreservesCommunityPathWithoutAdmissionServices(t *testing.T) {
+	_, pool, _, template, _ := createTaskPreflightFixture(t)
+
+	created, err := pool.AddTaskWithDeploymentWindowAdmission(db.Task{TemplateID: template.ID}, nil, "", template.ProjectID, false,
+		pro_interfaces.DeploymentWindowAdmissionRequest{},
+	)
+
+	require.NoError(t, err)
+	assert.Positive(t, created.ID)
+}
+
 func TestAddTaskWithExecutionPreflightBlocksReviewedNoCandidatePlan(t *testing.T) {
 	store, pool, actor, template, _ := createTaskPreflightFixture(t)
 	issuer, err := NewExecutionPreflightReviewTokenIssuer([]byte("01234567890123456789012345678901"), time.Minute)
@@ -577,6 +845,10 @@ func TestPreviewTaskExecutionEnrichesPolicyGuardrailWithoutLeakingValues(t *test
 		pro_interfaces.ExecutionReasonPolicyDenied,
 	}, policyGuardrailReasonCodes(plan.Findings))
 	assert.Equal(t, "manual", evaluator.input.Template.Source)
+	assert.Zero(t, evaluator.input.Runner.SelectedID)
+	assert.Empty(t, evaluator.input.Runner.SelectedScope)
+	assert.Empty(t, evaluator.input.Runner.SelectedExecutor)
+	assert.Equal(t, "unknown", evaluator.input.Executor.Type)
 	assert.Equal(t, 1, evaluator.input.Template.ArgumentKeyCount)
 	assert.Equal(t, 2, evaluator.input.Template.InputKeyCount)
 	assert.Contains(t, evaluator.input.EnvironmentIDs, environment.ID)
@@ -629,10 +901,14 @@ func TestPreviewTaskExecutionPolicyGuardrailRevisionChangesFingerprintAndFailure
 }
 
 type executionPreflightPolicyGuardrailStub struct {
-	input    *pro_interfaces.PolicyGuardrailEvaluationInput
-	revision int
-	effects  []pro_interfaces.PolicyGuardrailEffect
-	err      error
+	input         *pro_interfaces.PolicyGuardrailEvaluationInput
+	claimRequests []pro_interfaces.PolicyGuardrailAdmissionRequest
+	revision      int
+	effects       []pro_interfaces.PolicyGuardrailEffect
+	err           error
+	claimErr      error
+	claimRecord   *db.PolicyGuardrailEvaluationRecord
+	onClaim       func(pro_interfaces.PolicyGuardrailAdmissionRequest)
 }
 
 func (s *executionPreflightPolicyGuardrailStub) EvaluatePolicyGuardrails(input pro_interfaces.PolicyGuardrailEvaluationInput) (pro_interfaces.PolicyGuardrailEvaluation, error) {
@@ -675,8 +951,31 @@ func (s *executionPreflightPolicyGuardrailStub) EvaluatePolicyGuardrails(input p
 	}, nil
 }
 
-func (s *executionPreflightPolicyGuardrailStub) ClaimPolicyGuardrailEvaluation(pro_interfaces.PolicyGuardrailAdmissionRequest) (pro_interfaces.PolicyGuardrailEvaluationClaim, error) {
-	return pro_interfaces.PolicyGuardrailEvaluationClaim{}, errors.New("claim is outside preview scope")
+func (s *executionPreflightPolicyGuardrailStub) ClaimPolicyGuardrailEvaluation(request pro_interfaces.PolicyGuardrailAdmissionRequest) (pro_interfaces.PolicyGuardrailEvaluationClaim, error) {
+	s.claimRequests = append(s.claimRequests, request)
+	if s.onClaim != nil {
+		s.onClaim(request)
+	}
+	if s.claimErr != nil {
+		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, s.claimErr
+	}
+	evaluation, err := s.EvaluatePolicyGuardrails(request.Input)
+	if err != nil {
+		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
+	}
+	record := db.PolicyGuardrailEvaluationRecord{
+		ID: 1, ProjectID: request.Input.ProjectID, DecisionKey: request.DecisionKey,
+		Intent: string(request.Input.Intent), Source: request.Source, TemplateID: &request.Input.Template.ID,
+		ActorUserID: request.ActorUserID, Decision: db.PolicyGuardrailDecisionAllow,
+		EvaluatedAt: evaluation.EvaluatedAt,
+	}
+	if !evaluation.Allowed {
+		record.Decision = db.PolicyGuardrailDecisionDeny
+	}
+	if s.claimRecord != nil {
+		record = *s.claimRecord
+	}
+	return pro_interfaces.PolicyGuardrailEvaluationClaim{Record: record, Evaluation: evaluation, Inserted: s.claimRecord == nil}, nil
 }
 
 func policyGuardrailReasonCodes(findings []pro_interfaces.ExecutionPreflightFinding) []pro_interfaces.ExecutionPreflightReasonCode {
