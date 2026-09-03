@@ -11,11 +11,11 @@ func TestBuiltInProjectRolePermissionsRemainDeterministic(t *testing.T) {
 		ProjectOwner: CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
 			CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
 			CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
-			CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow,
+			CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails,
 		ProjectManager: CanRunProjectTasks | CanManageProjectResources | CanViewProjectResources |
 			CanViewWorkflows | CanEditWorkflows | CanStartWorkflows | CanStopWorkflows |
 			CanAdministerWorkflows | CanListGrantedCredentials | CanConsumeGrantedCredentials |
-			CanOverrideDeploymentWindow,
+			CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails,
 		ProjectTaskRunner: CanRunProjectTasks | CanViewProjectResources |
 			CanViewWorkflows | CanStartWorkflows | CanStopWorkflows |
 			CanListGrantedCredentials | CanConsumeGrantedCredentials,
@@ -31,6 +31,12 @@ func TestBuiltInProjectRolePermissionsRemainDeterministic(t *testing.T) {
 
 	permissions[ProjectGuest] = 0
 	assert.Equal(t, CanViewProjectResources|CanViewWorkflows, ProjectGuest.GetPermissions())
+	assert.True(t, ProjectOwner.Can(CanManagePolicyGuardrails))
+	assert.True(t, ProjectOwner.Can(CanRollbackPolicyGuardrails))
+	assert.True(t, ProjectManager.Can(CanManagePolicyGuardrails))
+	assert.True(t, ProjectManager.Can(CanRollbackPolicyGuardrails))
+	assert.False(t, ProjectTaskRunner.Can(CanManagePolicyGuardrails))
+	assert.False(t, ProjectTaskRunner.Can(CanRollbackPolicyGuardrails))
 }
 
 func TestProjectRoleReferencesAreStableAndNeverUseLegacySlugs(t *testing.T) {

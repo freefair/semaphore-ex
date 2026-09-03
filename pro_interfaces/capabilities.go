@@ -33,6 +33,8 @@ const (
 	CapabilityExecutionPreflight CapabilityID = "execution_preflight"
 	// CapabilityDeploymentWindows gates Enhanced deployment-window governance.
 	CapabilityDeploymentWindows CapabilityID = "deployment_windows"
+	// CapabilityPolicyGuardrails gates Enhanced policy guardrail governance.
+	CapabilityPolicyGuardrails CapabilityID = "policy_guardrails"
 )
 
 // LimitID identifies one numeric limit in a capability decision.

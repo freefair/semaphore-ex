@@ -10,7 +10,7 @@ import (
 
 func TestProjectPermissionCatalogIsStableTypedAndIsolated(t *testing.T) {
 	catalog := ProjectPermissionCatalog()
-	require.Len(t, catalog, 13)
+	require.Len(t, catalog, 15)
 	assert.Equal(t, []PermissionID{
 		PermissionRunProjectTasks,
 		PermissionUpdateProject,
@@ -25,10 +25,12 @@ func TestProjectPermissionCatalogIsStableTypedAndIsolated(t *testing.T) {
 		PermissionListGrantedCredentials,
 		PermissionConsumeGrantedCredentials,
 		PermissionOverrideDeploymentWindow,
+		PermissionManagePolicyGuardrails,
+		PermissionRollbackPolicyGuardrails,
 	}, []PermissionID{
 		catalog[0].ID, catalog[1].ID, catalog[2].ID, catalog[3].ID, catalog[4].ID,
 		catalog[5].ID, catalog[6].ID, catalog[7].ID, catalog[8].ID, catalog[9].ID,
-		catalog[10].ID, catalog[11].ID, catalog[12].ID,
+		catalog[10].ID, catalog[11].ID, catalog[12].ID, catalog[13].ID, catalog[14].ID,
 	})
 
 	seenPermissions := make(map[db.ProjectUserPermission]struct{}, len(catalog))
@@ -57,6 +59,8 @@ func TestPermissionCatalogUsesExplicitGlobalAndTemplateScopes(t *testing.T) {
 		PermissionManageGlobalCredentialsMetadata,
 		PermissionManageGlobalCredentialsRotate,
 		PermissionManageGlobalCredentialsGrant,
+		PermissionManageGlobalPolicyGuardrails,
+		PermissionRollbackGlobalPolicyGuardrails,
 	}, permissionIDs(GlobalPermissionCatalog()))
 	assert.Equal(t, []PermissionID{
 		PermissionReadTemplate,
@@ -144,7 +148,7 @@ func TestExplainEffectiveGlobalPermissionsReturnsOnlyDecidingRoles(t *testing.T)
 	})
 
 	assert.Equal(t, db.CanManageGlobalUsers|db.CanReadGlobalAudit, result.Permissions)
-	assert.Len(t, result.Decisions, 7)
+	assert.Len(t, result.Decisions, 9)
 	assert.Equal(t, "user_manager", result.Decisions[0].Provenance.RoleID)
 	assert.Empty(t, result.Decisions[1].Provenance.RoleID)
 	assert.Empty(t, result.Decisions[2].Provenance.RoleID)

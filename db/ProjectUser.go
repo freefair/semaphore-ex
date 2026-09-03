@@ -39,17 +39,21 @@ const (
 	// admission override only; it never makes scheduled or automatic starts
 	// override-capable.
 	CanOverrideDeploymentWindow
+	// CanManagePolicyGuardrails permits ordinary project policy governance.
+	CanManagePolicyGuardrails
+	// CanRollbackPolicyGuardrails permits audited break-glass rollback only.
+	CanRollbackPolicyGuardrails
 )
 
 var rolePermissions = map[ProjectUserRole]ProjectUserPermission{
 	ProjectOwner: CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
 		CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
 		CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
-		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow,
+		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails,
 	ProjectManager: CanRunProjectTasks | CanManageProjectResources | CanViewProjectResources |
 		CanViewWorkflows | CanEditWorkflows | CanStartWorkflows | CanStopWorkflows |
 		CanAdministerWorkflows | CanListGrantedCredentials | CanConsumeGrantedCredentials |
-		CanOverrideDeploymentWindow,
+		CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails,
 	ProjectTaskRunner: CanRunProjectTasks | CanViewProjectResources |
 		CanViewWorkflows | CanStartWorkflows | CanStopWorkflows |
 		CanListGrantedCredentials | CanConsumeGrantedCredentials,

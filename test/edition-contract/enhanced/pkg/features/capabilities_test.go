@@ -71,6 +71,28 @@ func TestCapabilityLifecyclePreservesDataAndGuardsWorkers(t *testing.T) {
 	}
 }
 
+func TestEnhancedPolicyGuardrailsAreActiveWithFullAccess(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	defer store.Close()
+	snapshot, err := NewCapabilityProvider(store).Resolve(context.Background(), pro_interfaces.CapabilityRequest{UserID: 1, IsAdmin: true, At: time.Unix(1, 0).UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision := snapshot.Decision(pro_interfaces.CapabilityPolicyGuardrails)
+	if decision.State() != pro_interfaces.CapabilityStateActive {
+		t.Fatalf("unexpected state %s", decision.State())
+	}
+	for _, access := range []pro_interfaces.CapabilityAccess{
+		pro_interfaces.CapabilityAccessRead,
+		pro_interfaces.CapabilityAccessWrite,
+		pro_interfaces.CapabilityAccessExecute,
+	} {
+		if !decision.Allows(access) {
+			t.Fatalf("policy guardrails capability must allow %q", access)
+		}
+	}
+}
+
 func TestLDAPCapabilityIsAvailableInEnhancedEdition(t *testing.T) {
 	store := sqldb.InitConfigCreateTestStore()
 	defer store.Close()

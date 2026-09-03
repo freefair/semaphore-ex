@@ -19,6 +19,10 @@ const (
 	PermissionListGrantedCredentials          PermissionID = "project.credentials.granted.list"
 	PermissionConsumeGrantedCredentials       PermissionID = "project.credentials.granted.consume"
 	PermissionOverrideDeploymentWindow        PermissionID = "project.deployment_windows.override"
+	PermissionManagePolicyGuardrails          PermissionID = "project.policy_guardrails.manage"
+	PermissionRollbackPolicyGuardrails        PermissionID = "project.policy_guardrails.rollback"
+	PermissionManageGlobalPolicyGuardrails    PermissionID = "global.policy_guardrails.manage"
+	PermissionRollbackGlobalPolicyGuardrails  PermissionID = "global.policy_guardrails.rollback"
 	PermissionManageGlobalUsers               PermissionID = "global.users.manage"
 	PermissionManageGlobalRoles               PermissionID = "global.roles.manage"
 	PermissionManageGlobalSystem              PermissionID = "global.system.manage"
@@ -184,6 +188,8 @@ func permissionCatalog() []PermissionDefinition {
 			Scope: PermissionScopeProject, Permission: db.CanOverrideDeploymentWindow,
 			CapabilityPrerequisites: []CapabilityID{CapabilityDeploymentWindows},
 		},
+		{ID: PermissionManagePolicyGuardrails, Description: "Manage project policy guardrails", Scope: PermissionScopeProject, Permission: db.CanManagePolicyGuardrails, CapabilityPrerequisites: []CapabilityID{CapabilityPolicyGuardrails}},
+		{ID: PermissionRollbackPolicyGuardrails, Description: "Rollback project policy guardrails with a break-glass reason", Scope: PermissionScopeProject, Permission: db.CanRollbackPolicyGuardrails, CapabilityPrerequisites: []CapabilityID{CapabilityPolicyGuardrails}},
 		{
 			ID: PermissionManageGlobalUsers, Description: "Manage global users",
 			Scope: PermissionScopeGlobal, Permission: 1,
@@ -219,6 +225,8 @@ func permissionCatalog() []PermissionDefinition {
 			Scope: PermissionScopeGlobal, Permission: db.ProjectUserPermission(db.CanManageGlobalCredentialsGrant),
 			CapabilityPrerequisites: []CapabilityID{CapabilityProjectRoles},
 		},
+		{ID: PermissionManageGlobalPolicyGuardrails, Description: "Manage global policy guardrails", Scope: PermissionScopeGlobal, Permission: db.ProjectUserPermission(db.CanManageGlobalPolicyGuardrails), CapabilityPrerequisites: []CapabilityID{CapabilityPolicyGuardrails}},
+		{ID: PermissionRollbackGlobalPolicyGuardrails, Description: "Rollback global policy guardrails with a break-glass reason", Scope: PermissionScopeGlobal, Permission: db.ProjectUserPermission(db.CanRollbackGlobalPolicyGuardrails), CapabilityPrerequisites: []CapabilityID{CapabilityPolicyGuardrails}},
 		{
 			ID: PermissionReadTemplate, Description: "Read this template",
 			Scope: PermissionScopeTemplate, Permission: 1,

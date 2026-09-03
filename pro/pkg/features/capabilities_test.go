@@ -51,6 +51,22 @@ func TestCommunityProviderAndWorkerRemainUnavailable(t *testing.T) {
 	assertCommunityDenied(t, err, pro_interfaces.CapabilityAccessWrite)
 }
 
+func TestCommunityPolicyGuardrailsAreUnavailable(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	defer store.Close()
+	snapshot, err := NewCapabilityProvider(store).Resolve(context.Background(), pro_interfaces.CapabilityRequest{UserID: 1, IsAdmin: true, At: time.Unix(1, 0).UTC()})
+	require.NoError(t, err)
+	decision := snapshot.Decision(pro_interfaces.CapabilityPolicyGuardrails)
+	assert.Equal(t, pro_interfaces.CapabilityStateUnavailable, decision.State())
+	for _, access := range []pro_interfaces.CapabilityAccess{
+		pro_interfaces.CapabilityAccessRead,
+		pro_interfaces.CapabilityAccessWrite,
+		pro_interfaces.CapabilityAccessExecute,
+	} {
+		assert.False(t, decision.Allows(access))
+	}
+}
+
 func assertCommunityDenied(t *testing.T, err error, access pro_interfaces.CapabilityAccess) {
 	t.Helper()
 	var denied pro_interfaces.CapabilityDeniedError
