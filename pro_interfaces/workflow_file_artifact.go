@@ -58,6 +58,11 @@ type WorkflowFileArtifactLeaseRequest struct {
 	TTL           time.Duration
 }
 
+type WorkflowFileArtifactCleanupResult struct {
+	Reconciled []db.WorkflowFileArtifactReference
+	Failed     *db.WorkflowFileArtifactReference
+}
+
 func (request WorkflowFileArtifactLeaseRequest) Validate() error {
 	if request.ProjectID < 1 || request.WorkflowRunID < 1 || request.ArtifactID < 1 ||
 		request.TTL < db.MinWorkflowFileArtifactDownloadLease || request.TTL > db.MaxWorkflowFileArtifactDownloadLease {
@@ -85,4 +90,5 @@ type WorkflowFileArtifactRepository interface {
 	GetWorkflowFileArtifactExpiryCandidates(limit int) ([]db.WorkflowFileArtifactReference, error)
 	ExpireWorkflowFileArtifact(db.WorkflowFileArtifactReference) (bool, error)
 	ReconcileStaleWorkflowFileArtifactUploads(olderThan time.Duration, limit int) (int, error)
+	ReconcileStaleWorkflowFileArtifactUploadsDetailed(olderThan time.Duration, limit int) (WorkflowFileArtifactCleanupResult, error)
 }

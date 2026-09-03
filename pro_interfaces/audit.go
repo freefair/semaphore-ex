@@ -130,6 +130,10 @@ const (
 	AuditActionPolicyGuardrailDraftSave             AuditAction = "policy_guardrail_draft_save"
 	AuditActionPolicyGuardrailPublish               AuditAction = "policy_guardrail_publish"
 	AuditActionPolicyGuardrailRollback              AuditAction = "policy_guardrail_rollback"
+	AuditActionWorkflowFileArtifactDownload         AuditAction = "workflow_file_artifact_download"
+	AuditActionWorkflowFileArtifactExpire           AuditAction = "workflow_file_artifact_expire"
+	AuditActionWorkflowFileArtifactCleanup          AuditAction = "workflow_file_artifact_cleanup"
+	AuditActionWorkflowArtifactRetentionUpdate      AuditAction = "workflow_artifact_retention_update"
 )
 
 type AuditTargetType string
@@ -166,6 +170,8 @@ const (
 	AuditTargetExecutionPreflight          AuditTargetType = "execution_preflight"
 	AuditTargetDeploymentWindow            AuditTargetType = "deployment_window"
 	AuditTargetPolicyGuardrail             AuditTargetType = "policy_guardrail"
+	AuditTargetWorkflowFileArtifact        AuditTargetType = "workflow_file_artifact"
+	AuditTargetWorkflowArtifactRetention   AuditTargetType = "workflow_artifact_retention"
 )
 
 type AuditOutcome string
@@ -229,6 +235,11 @@ const (
 	AuditReasonPolicyGuardrailDraftSaved          = "policy_guardrail_draft_saved"
 	AuditReasonPolicyGuardrailPublished           = "policy_guardrail_published"
 	AuditReasonPolicyGuardrailRolledBack          = "policy_guardrail_rolled_back"
+	AuditReasonWorkflowFileArtifactDownloaded     = "workflow_file_artifact_downloaded"
+	AuditReasonWorkflowFileArtifactAccessDenied   = "workflow_file_artifact_access_denied"
+	AuditReasonWorkflowFileArtifactExpired        = "workflow_file_artifact_expired"
+	AuditReasonWorkflowFileArtifactUploadCleaned  = "workflow_file_artifact_upload_cleaned"
+	AuditReasonWorkflowArtifactRetentionUpdated   = "workflow_artifact_retention_updated"
 )
 
 // AuditRoleOrigin records how a role was effective when a workflow decision
@@ -290,28 +301,30 @@ const (
 )
 
 var (
-	correlationPattern              = regexp.MustCompile(`^(?:[a-f0-9]{32}|internal)$`)
-	eventIDPattern                  = regexp.MustCompile(`^[a-f0-9]{32}$`)
-	identifierPattern               = regexp.MustCompile(`^[a-z0-9_.:-]{1,64}$`)
-	projectRunnerTargetPattern      = regexp.MustCompile(`^(?:project|runner):[1-9][0-9]*$`)
-	projectRoleTargetPattern        = regexp.MustCompile(`^(?:project:[1-9][0-9]*|role:[a-z0-9][a-z0-9_.-]{0,49})$`)
-	projectMemberTargetPattern      = regexp.MustCompile(`^(?:project:[1-9][0-9]*|member:[1-9][0-9]*)$`)
-	globalRoleTargetPattern         = regexp.MustCompile(`^(?:roles|role:[a-z0-9][a-z0-9_.-]{0,49})$`)
-	globalAssignmentTargetPattern   = regexp.MustCompile(`^(?:user|assignment):[1-9][0-9]*$`)
-	globalUserTargetPattern         = regexp.MustCompile(`^(?:users|user:[1-9][0-9]*)$`)
-	globalSystemTargetPattern       = regexp.MustCompile(`^(?:subscription|options|cache)$`)
-	templateRoleTargetPattern       = regexp.MustCompile(`^(?:template|template-role):[1-9][0-9]*$`)
-	ldapGroupTargetPattern          = regexp.MustCompile(`^(?:(?:entryuuid|objectguid|nsuniqueid|ipauniqueid):[0-9a-f-]{36}|provider:[a-z][a-z0-9_-]{0,63})$`)
-	oidcGroupTargetPattern          = regexp.MustCompile(`^provider:[a-z][a-z0-9_-]{0,63}$`)
-	workflowTargetPattern           = regexp.MustCompile(`^(?:project|workflow):[1-9][0-9]*$`)
-	workflowRunTargetPattern        = regexp.MustCompile(`^run:[1-9][0-9]*$`)
-	workflowApprovalTargetPattern   = regexp.MustCompile(`^approval:[1-9][0-9]*$`)
-	workflowInboxTargetPattern      = regexp.MustCompile(`^project:[1-9][0-9]*$`)
-	executionPreflightTargetPattern = regexp.MustCompile(`^(?:task-template|workflow):[1-9][0-9]*$`)
-	deploymentWindowTargetPattern   = regexp.MustCompile(`^(?:project|decision):[1-9][0-9]*$`)
-	policyGuardrailTargetPattern    = regexp.MustCompile(`^(?:global|project:[1-9][0-9]*)$`)
-	notificationTargetPattern       = regexp.MustCompile(`^(?:global|project:[1-9][0-9]*)$`)
-	workflowRoleIDPattern           = regexp.MustCompile(`^(?:builtin:(?:owner|manager|task_runner|guest)|role:[a-z0-9][a-z0-9_-]{0,63})$`)
+	correlationPattern                     = regexp.MustCompile(`^(?:[a-f0-9]{32}|internal)$`)
+	eventIDPattern                         = regexp.MustCompile(`^[a-f0-9]{32}$`)
+	identifierPattern                      = regexp.MustCompile(`^[a-z0-9_.:-]{1,64}$`)
+	projectRunnerTargetPattern             = regexp.MustCompile(`^(?:project|runner):[1-9][0-9]*$`)
+	projectRoleTargetPattern               = regexp.MustCompile(`^(?:project:[1-9][0-9]*|role:[a-z0-9][a-z0-9_.-]{0,49})$`)
+	projectMemberTargetPattern             = regexp.MustCompile(`^(?:project:[1-9][0-9]*|member:[1-9][0-9]*)$`)
+	globalRoleTargetPattern                = regexp.MustCompile(`^(?:roles|role:[a-z0-9][a-z0-9_.-]{0,49})$`)
+	globalAssignmentTargetPattern          = regexp.MustCompile(`^(?:user|assignment):[1-9][0-9]*$`)
+	globalUserTargetPattern                = regexp.MustCompile(`^(?:users|user:[1-9][0-9]*)$`)
+	globalSystemTargetPattern              = regexp.MustCompile(`^(?:subscription|options|cache)$`)
+	templateRoleTargetPattern              = regexp.MustCompile(`^(?:template|template-role):[1-9][0-9]*$`)
+	ldapGroupTargetPattern                 = regexp.MustCompile(`^(?:(?:entryuuid|objectguid|nsuniqueid|ipauniqueid):[0-9a-f-]{36}|provider:[a-z][a-z0-9_-]{0,63})$`)
+	oidcGroupTargetPattern                 = regexp.MustCompile(`^provider:[a-z][a-z0-9_-]{0,63}$`)
+	workflowTargetPattern                  = regexp.MustCompile(`^(?:project|workflow):[1-9][0-9]*$`)
+	workflowRunTargetPattern               = regexp.MustCompile(`^run:[1-9][0-9]*$`)
+	workflowApprovalTargetPattern          = regexp.MustCompile(`^approval:[1-9][0-9]*$`)
+	workflowInboxTargetPattern             = regexp.MustCompile(`^project:[1-9][0-9]*$`)
+	executionPreflightTargetPattern        = regexp.MustCompile(`^(?:task-template|workflow):[1-9][0-9]*$`)
+	deploymentWindowTargetPattern          = regexp.MustCompile(`^(?:project|decision):[1-9][0-9]*$`)
+	policyGuardrailTargetPattern           = regexp.MustCompile(`^(?:global|project:[1-9][0-9]*)$`)
+	notificationTargetPattern              = regexp.MustCompile(`^(?:global|project:[1-9][0-9]*)$`)
+	workflowFileArtifactTargetPattern      = regexp.MustCompile(`^artifact:[1-9][0-9]*$`)
+	workflowArtifactRetentionTargetPattern = regexp.MustCompile(`^(?:global|project:[1-9][0-9]*)$`)
+	workflowRoleIDPattern                  = regexp.MustCompile(`^(?:builtin:(?:owner|manager|task_runner|guest)|role:[a-z0-9][a-z0-9_-]{0,63})$`)
 )
 
 var (
@@ -660,6 +673,9 @@ func (e AuditEvent) Validate() error {
 	if !validPolicyGuardrailAuditProvenance(e) {
 		return fmt.Errorf("invalid policy guardrail audit provenance")
 	}
+	if !validWorkflowFileArtifactAuditContext(e) {
+		return fmt.Errorf("invalid workflow file artifact audit context")
+	}
 	return nil
 }
 
@@ -741,6 +757,16 @@ func validAuditTarget(event AuditEvent) bool {
 		return event.ProjectID != nil && *event.ProjectID > 0 && deploymentWindowTargetPattern.MatchString(event.TargetID)
 	case AuditTargetPolicyGuardrail:
 		if !policyGuardrailTargetPattern.MatchString(event.TargetID) {
+			return false
+		}
+		if event.ProjectID == nil {
+			return event.TargetID == "global"
+		}
+		return *event.ProjectID > 0 && event.TargetID == "project:"+strconv.Itoa(*event.ProjectID)
+	case AuditTargetWorkflowFileArtifact:
+		return validScopedProjectAuditTarget(event, workflowFileArtifactTargetPattern)
+	case AuditTargetWorkflowArtifactRetention:
+		if !workflowArtifactRetentionTargetPattern.MatchString(event.TargetID) {
 			return false
 		}
 		if event.ProjectID == nil {
@@ -1149,6 +1175,12 @@ func validWorkflowAuditReason(event AuditEvent) bool {
 }
 
 func validAuditActionTarget(event AuditEvent) bool {
+	if isWorkflowFileArtifactAuditAction(event.Action) {
+		if event.Action == AuditActionWorkflowArtifactRetentionUpdate {
+			return event.TargetType == AuditTargetWorkflowArtifactRetention
+		}
+		return event.TargetType == AuditTargetWorkflowFileArtifact
+	}
 	if isPolicyGuardrailAuditAction(event.Action) {
 		if event.TargetType != AuditTargetPolicyGuardrail || event.PolicyGuardrailProvenance == nil {
 			return false
@@ -1255,6 +1287,43 @@ func isPolicyGuardrailAuditAction(action AuditAction) bool {
 	return action == AuditActionPolicyGuardrailDraftSave || action == AuditActionPolicyGuardrailPublish || action == AuditActionPolicyGuardrailRollback
 }
 
+func isWorkflowFileArtifactAuditAction(action AuditAction) bool {
+	return action == AuditActionWorkflowFileArtifactDownload || action == AuditActionWorkflowFileArtifactExpire ||
+		action == AuditActionWorkflowFileArtifactCleanup || action == AuditActionWorkflowArtifactRetentionUpdate
+}
+
+func validWorkflowFileArtifactAuditContext(event AuditEvent) bool {
+	if !isWorkflowFileArtifactAuditAction(event.Action) {
+		return true
+	}
+	switch event.Action {
+	case AuditActionWorkflowFileArtifactDownload:
+		if event.Source != AuditSourceAPI || event.ActorID == nil || *event.ActorID < 1 || event.ProjectID == nil || *event.ProjectID < 1 {
+			return false
+		}
+		return event.Outcome == AuditOutcomeAllowed && event.Reason == AuditReasonWorkflowFileArtifactDownloaded ||
+			event.Outcome == AuditOutcomeDenied && event.Reason == AuditReasonWorkflowFileArtifactAccessDenied ||
+			event.Outcome == AuditOutcomeFailure && event.Reason == AuditReasonOperationError
+	case AuditActionWorkflowFileArtifactExpire:
+		return event.Source == AuditSourceWorker && event.ActorID == nil && event.ProjectID != nil && *event.ProjectID > 0 &&
+			(event.Outcome == AuditOutcomeAllowed && event.Reason == AuditReasonWorkflowFileArtifactExpired ||
+				event.Outcome == AuditOutcomeFailure && event.Reason == AuditReasonOperationError)
+	case AuditActionWorkflowFileArtifactCleanup:
+		return event.Source == AuditSourceWorker && event.ActorID == nil && event.ProjectID != nil && *event.ProjectID > 0 &&
+			(event.Outcome == AuditOutcomeAllowed && event.Reason == AuditReasonWorkflowFileArtifactUploadCleaned ||
+				event.Outcome == AuditOutcomeFailure && event.Reason == AuditReasonOperationError)
+	case AuditActionWorkflowArtifactRetentionUpdate:
+		if event.Source != AuditSourceAPI || event.ActorID == nil || *event.ActorID < 1 {
+			return false
+		}
+		return event.Outcome == AuditOutcomeAllowed && event.Reason == AuditReasonWorkflowArtifactRetentionUpdated ||
+			event.Outcome == AuditOutcomeDenied && event.Reason == AuditReasonInvalidInput ||
+			event.Outcome == AuditOutcomeFailure && event.Reason == AuditReasonOperationError
+	default:
+		return false
+	}
+}
+
 func isCrossProjectTemplateAuditAction(action AuditAction) bool {
 	switch action {
 	case AuditActionCrossProjectTemplateVersionPublish, AuditActionCrossProjectTemplateGrantCreate, AuditActionCrossProjectTemplateGrantUpdate, AuditActionCrossProjectTemplateGrantAccept, AuditActionCrossProjectTemplateGrantRevoke, AuditActionCrossProjectTemplateGrantDelete, AuditActionCrossProjectTemplateReferenceResolve:
@@ -1356,6 +1425,9 @@ func validAuditReason(reason string) bool {
 		AuditReasonDeploymentWindowBound,
 		AuditReasonPolicyGuardrailDraftSaved, AuditReasonPolicyGuardrailPublished,
 		AuditReasonPolicyGuardrailRolledBack,
+		AuditReasonWorkflowFileArtifactDownloaded, AuditReasonWorkflowFileArtifactAccessDenied,
+		AuditReasonWorkflowFileArtifactExpired, AuditReasonWorkflowFileArtifactUploadCleaned,
+		AuditReasonWorkflowArtifactRetentionUpdated,
 		string(ExecutionReasonHiddenReference), string(ExecutionReasonPermissionDenied),
 		string(ExecutionReasonCapabilityUnavailable), string(ExecutionReasonPolicyDenied),
 		string(ExecutionReasonPlanLimitExceeded), string(ExecutionReasonNoCandidate),
@@ -1603,6 +1675,9 @@ func validAuditAction(action AuditAction) bool {
 		AuditActionDeploymentWindowAdmission, AuditActionDeploymentWindowBinding:
 		return true
 	case AuditActionPolicyGuardrailDraftSave, AuditActionPolicyGuardrailPublish, AuditActionPolicyGuardrailRollback:
+		return true
+	case AuditActionWorkflowFileArtifactDownload, AuditActionWorkflowFileArtifactExpire,
+		AuditActionWorkflowFileArtifactCleanup, AuditActionWorkflowArtifactRetentionUpdate:
 		return true
 	case AuditActionCrossProjectTemplateVersionPublish,
 		AuditActionCrossProjectTemplateGrantCreate, AuditActionCrossProjectTemplateGrantUpdate,

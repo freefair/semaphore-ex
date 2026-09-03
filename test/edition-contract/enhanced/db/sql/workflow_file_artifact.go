@@ -658,38 +658,46 @@ func (store *WorkflowFileArtifactStore) ExpireWorkflowFileArtifact(reference db.
 }
 
 func (store *WorkflowFileArtifactStore) ReconcileStaleWorkflowFileArtifactUploads(olderThan time.Duration, limit int) (int, error) {
+	result, err := store.ReconcileStaleWorkflowFileArtifactUploadsDetailed(olderThan, limit)
+	return len(result.Reconciled), err
+}
+
+func (store *WorkflowFileArtifactStore) ReconcileStaleWorkflowFileArtifactUploadsDetailed(olderThan time.Duration, limit int) (pro_interfaces.WorkflowFileArtifactCleanupResult, error) {
 	if store.invalid() || olderThan < time.Minute || olderThan > 30*24*time.Hour || limit < 1 || limit > maxWorkflowFileArtifactRepositoryBatch {
-		return 0, db.ErrInvalidOperation
+		return pro_interfaces.WorkflowFileArtifactCleanupResult{}, db.ErrInvalidOperation
 	}
 	tx, err := store.connection.Begin()
 	if err != nil {
-		return 0, err
+		return pro_interfaces.WorkflowFileArtifactCleanupResult{}, err
 	}
 	now, err := workflowFileArtifactDatabaseNow(tx, store.connection)
 	_ = tx.Rollback()
 	if err != nil {
-		return 0, err
+		return pro_interfaces.WorkflowFileArtifactCleanupResult{}, err
 	}
 	cutoff := now.Add(-olderThan)
-	var references []db.WorkflowFileArtifactReference
-	_, err = store.connection.SelectAll(&references,
+	var candidates []db.WorkflowFileArtifactReference
+	_, err = store.connection.SelectAll(&candidates,
 		"select project_id, workflow_run_id, id as artifact_id from workflow_file_artifact where state=? and created_at<=? order by created_at, id limit ?",
 		db.WorkflowFileArtifactStaging, cutoff, limit,
 	)
 	if err != nil {
-		return 0, err
+		return pro_interfaces.WorkflowFileArtifactCleanupResult{}, err
 	}
-	reconciled := 0
-	for _, reference := range references {
+	result := pro_interfaces.WorkflowFileArtifactCleanupResult{
+		Reconciled: make([]db.WorkflowFileArtifactReference, 0, len(candidates)),
+	}
+	for _, reference := range candidates {
 		changed, reconcileErr := store.failStaleUpload(reference, cutoff)
 		if reconcileErr != nil {
-			return reconciled, reconcileErr
+			result.Failed = &reference
+			return result, reconcileErr
 		}
 		if changed {
-			reconciled++
+			result.Reconciled = append(result.Reconciled, reference)
 		}
 	}
-	return reconciled, nil
+	return result, nil
 }
 
 func (store *WorkflowFileArtifactStore) failStaleUpload(reference db.WorkflowFileArtifactReference, cutoff time.Time) (bool, error) {
