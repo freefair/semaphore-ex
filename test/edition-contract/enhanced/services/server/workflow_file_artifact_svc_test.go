@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -98,9 +99,17 @@ func TestWorkflowFileArtifactServiceDerivesProvenanceAndEnforcesCurrentRoles(t *
 	assert.Equal(t, int64(len(content)), written)
 	assert.Equal(t, content, output.Bytes())
 	require.NoError(t, service.ReleaseWorkflowFileArtifactDownload(download))
-	require.Len(t, audit.events, 2)
+	failedDownload, err := service.AcquireWorkflowFileArtifactDownload(context.Background(), fixture.projectID, run.ID, created.ID, &fixture.user)
+	require.NoError(t, err)
+	require.NoError(t, service.RecordWorkflowFileArtifactDownloadFailure(failedDownload))
+	require.NoError(t, service.ReleaseWorkflowFileArtifactDownload(failedDownload))
+	require.Len(t, audit.events, 3)
 	assert.Equal(t, pro_interfaces.AuditOutcomeDenied, audit.events[0].Outcome)
 	assert.Equal(t, pro_interfaces.AuditOutcomeAllowed, audit.events[1].Outcome)
+	assert.Equal(t, pro_interfaces.AuditOutcomeFailure, audit.events[2].Outcome)
+	assert.Equal(t, pro_interfaces.AuditReasonOperationError, audit.events[2].Reason)
+	assert.Equal(t, pro_interfaces.AuditTargetWorkflowFileArtifact, audit.events[2].TargetType)
+	assert.Equal(t, "artifact:"+strconv.Itoa(created.ID), audit.events[2].TargetID)
 }
 
 func TestWorkflowFileArtifactServiceRejectsForeignProducerAndFiltersDeniedMetadata(t *testing.T) {

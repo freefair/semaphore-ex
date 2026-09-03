@@ -40,6 +40,9 @@ type WorkflowFileArtifactServiceFacade interface {
 	GetWorkflowFileArtifacts(context.Context, int, int, db.RetrieveQueryParams, *db.User) ([]db.WorkflowFileArtifactMetadata, error)
 	AcquireWorkflowFileArtifactDownload(context.Context, int, int, int, *db.User) (WorkflowFileArtifactDownload, error)
 	StreamWorkflowFileArtifactDownload(context.Context, WorkflowFileArtifactDownload, io.Writer) (int64, error)
+	// RecordWorkflowFileArtifactDownloadFailure records a controller failure
+	// after authorization has acquired a value-free download capability.
+	RecordWorkflowFileArtifactDownloadFailure(WorkflowFileArtifactDownload) error
 	ReleaseWorkflowFileArtifactDownload(WorkflowFileArtifactDownload) error
 }
 
