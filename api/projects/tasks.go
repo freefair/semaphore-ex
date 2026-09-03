@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -21,6 +22,11 @@ import (
 
 // maxTasksPageSize limits how many tasks can be requested in a single page.
 const maxTasksPageSize = 200
+
+// taskStartBodyLimit matches the bounded workflow-run transport and prevents
+// a deployment-window override envelope from making task-start parsing
+// unbounded. Existing task fields keep their established JSON contract.
+const taskStartBodyLimit int64 = 256 * 1024
 
 const (
 	defaultTaskSummaryPageSize     = 50
@@ -72,7 +78,7 @@ func (c *TaskController) AddTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newTask, planned, err := taskPool(r).AddTaskWithExecutionPreflightPlan(
+	newTask, planned, err := taskPool(r).AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverride(
 		taskObj,
 		user,
 		project.ID,
@@ -81,6 +87,7 @@ func (c *TaskController) AddTask(w http.ResponseWriter, r *http.Request) {
 			Fingerprint: r.Header.Get(taskPreflightFingerprintHeader),
 			ReviewToken: r.Header.Get(taskPreflightTokenHeader),
 		},
+		deploymentWindowOverrideInput(r),
 	)
 	if c.writeTaskExecutionPreflightError(w, r, taskObj, planned, err) {
 		return
@@ -158,6 +165,14 @@ func (c *TaskController) writeTaskExecutionPreflightError(w http.ResponseWriter,
 			State: pro_interfaces.DeploymentWindowDecisionBlocked, Reason: blocked.Reason,
 			NextEligibleAt: blocked.NextEligibleAt, NextEligibleKnown: blocked.NextEligibleKnown,
 		})
+		return true
+	}
+	if errors.Is(err, pro_interfaces.ErrDeploymentWindowOverrideForbidden) {
+		helpers.WriteErrorStatus(w, "DEPLOYMENT_WINDOW_OVERRIDE_FORBIDDEN", http.StatusForbidden)
+		return true
+	}
+	if errors.Is(err, pro_interfaces.ErrDeploymentWindowOverrideInvalid) {
+		helpers.WriteErrorStatus(w, "DEPLOYMENT_WINDOW_INVALID_INPUT", http.StatusBadRequest)
 		return true
 	}
 	var stale *tasks.ExecutionPreflightStaleError
@@ -654,15 +669,31 @@ func (c *TaskController) GetTaskSummaryErrors(w http.ResponseWriter, r *http.Req
 func (c *TaskController) NewTaskMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-		var taskObj db.Task
+		var payload struct {
+			db.Task
+			DeploymentWindowOverride *pro_interfaces.DeploymentWindowOverrideInput `json:"deployment_window_override,omitempty"`
+		}
 
-		if !helpers.Bind(w, r, &taskObj) {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, taskStartBodyLimit))
+		if err := decoder.Decode(&payload); err != nil {
+			helpers.WriteErrorStatus(w, "TASK_START_INVALID_INPUT", http.StatusBadRequest)
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			helpers.WriteErrorStatus(w, "TASK_START_INVALID_INPUT", http.StatusBadRequest)
 			return
 		}
 
-		r = helpers.SetContextValue(r, "task", taskObj)
+		r = helpers.SetContextValue(r, "task", payload.Task)
+		r = helpers.SetContextValue(r, "deployment_window_override", payload.DeploymentWindowOverride)
 		next.ServeHTTP(w, r)
 	})
+}
+
+func deploymentWindowOverrideInput(r *http.Request) *pro_interfaces.DeploymentWindowOverrideInput {
+	value, _ := helpers.GetOkFromContext(r, "deployment_window_override")
+	override, _ := value.(*pro_interfaces.DeploymentWindowOverrideInput)
+	return override
 }
 
 func (c *TaskController) GetAnsibleTaskHosts(w http.ResponseWriter, r *http.Request) {

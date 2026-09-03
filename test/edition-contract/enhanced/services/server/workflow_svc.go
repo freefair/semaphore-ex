@@ -79,6 +79,8 @@ var _ pro_interfaces.WorkflowService = (*workflowService)(nil)
 var _ pro_interfaces.WorkflowAuditConfigurer = (*workflowService)(nil)
 var _ pro_interfaces.WorkflowExecutionPreflightService = (*workflowService)(nil)
 var _ pro_interfaces.WorkflowExecutionPreflightAuditResultService = (*workflowService)(nil)
+var _ pro_interfaces.WorkflowExecutionPreflightOverrideService = (*workflowService)(nil)
+var _ pro_interfaces.WorkflowExecutionPreflightOverrideAuditResultService = (*workflowService)(nil)
 var _ pro_interfaces.WorkflowDeploymentWindowAdmissionConfigurer = (*workflowService)(nil)
 
 // ConfigureWorkflowAudit attaches the process-wide audit facade after route
@@ -154,7 +156,19 @@ func (s *workflowService) StartWorkflowWithExecutionPreflight(
 	review pro_interfaces.ExecutionPreflightReview,
 	inputs ...db.WorkflowRunInput,
 ) (db.WorkflowRun, error) {
-	run, _, err := s.StartWorkflowWithExecutionPreflightPlan(workflow, user, correlationID, review, inputs...)
+	run, _, err := s.StartWorkflowWithExecutionPreflightPlanAndDeploymentWindowOverride(workflow, user, correlationID, review, nil, inputs...)
+	return run, err
+}
+
+func (s *workflowService) StartWorkflowWithExecutionPreflightAndDeploymentWindowOverride(
+	workflow db.WorkflowTemplate,
+	user *db.User,
+	correlationID string,
+	review pro_interfaces.ExecutionPreflightReview,
+	override *pro_interfaces.DeploymentWindowOverrideInput,
+	inputs ...db.WorkflowRunInput,
+) (db.WorkflowRun, error) {
+	run, _, err := s.StartWorkflowWithExecutionPreflightPlanAndDeploymentWindowOverride(workflow, user, correlationID, review, override, inputs...)
 	return run, err
 }
 
@@ -168,6 +182,20 @@ func (s *workflowService) StartWorkflowWithExecutionPreflightPlan(
 	review pro_interfaces.ExecutionPreflightReview,
 	inputs ...db.WorkflowRunInput,
 ) (db.WorkflowRun, pro_interfaces.ExecutionPreflightPlan, error) {
+	return s.StartWorkflowWithExecutionPreflightPlanAndDeploymentWindowOverride(workflow, user, correlationID, review, nil, inputs...)
+}
+
+// StartWorkflowWithExecutionPreflightPlanAndDeploymentWindowOverride is the
+// only start path that accepts the request-local manual override envelope.
+// Historical WorkflowService callers have no way to pass one.
+func (s *workflowService) StartWorkflowWithExecutionPreflightPlanAndDeploymentWindowOverride(
+	workflow db.WorkflowTemplate,
+	user *db.User,
+	correlationID string,
+	review pro_interfaces.ExecutionPreflightReview,
+	override *pro_interfaces.DeploymentWindowOverrideInput,
+	inputs ...db.WorkflowRunInput,
+) (db.WorkflowRun, pro_interfaces.ExecutionPreflightPlan, error) {
 	planner, ok := s.enqueuer.(pro_interfaces.WorkflowExecutionPreflightPlanner)
 	if !ok {
 		return db.WorkflowRun{}, pro_interfaces.ExecutionPreflightPlan{}, errors.New("workflow execution preflight is unavailable")
@@ -178,11 +206,11 @@ func (s *workflowService) StartWorkflowWithExecutionPreflightPlan(
 		if err != nil {
 			return db.WorkflowRun{}, pro_interfaces.ExecutionPreflightPlan{}, err
 		}
-		run, startErr := s.StartWorkflow(workflow, user, correlationID, inputs...)
+		run, startErr := s.startWorkflow(workflow, user, correlationID, override, inputs...)
 		return run, snapshot.Plan, startErr
 	}
 
-	return s.startReviewedWorkflowFromExecutionSnapshot(workflow, user, correlationID, review, planner, inputs...)
+	return s.startReviewedWorkflowFromExecutionSnapshot(workflow, user, correlationID, review, override, planner, inputs...)
 }
 
 // startReviewedWorkflowFromExecutionSnapshot holds the normal start lock while
@@ -194,6 +222,7 @@ func (s *workflowService) startReviewedWorkflowFromExecutionSnapshot(
 	user *db.User,
 	correlationID string,
 	review pro_interfaces.ExecutionPreflightReview,
+	override *pro_interfaces.DeploymentWindowOverrideInput,
 	planner pro_interfaces.WorkflowExecutionPreflightPlanner,
 	inputs ...db.WorkflowRunInput,
 ) (db.WorkflowRun, pro_interfaces.ExecutionPreflightPlan, error) {
@@ -204,6 +233,9 @@ func (s *workflowService) startReviewedWorkflowFromExecutionSnapshot(
 	var plan pro_interfaces.ExecutionPreflightPlan
 	err := s.withStartLock(workflow.ProjectID, workflow.ID, func() error {
 		if existing, existingErr := s.repository.GetWorkflowRunByCorrelationID(workflow.ProjectID, workflow.ID, correlationID); existingErr == nil {
+			if override != nil {
+				return pro_interfaces.ErrDeploymentWindowOverrideConflict
+			}
 			result = existing
 			return nil
 		} else if !errors.Is(existingErr, db.ErrNotFound) {
@@ -254,7 +286,7 @@ func (s *workflowService) startReviewedWorkflowFromExecutionSnapshot(
 		}
 		runSnapshot.WorkflowVersionID = version.ID
 		runSnapshot.CorrelationID = correlationID
-		if admissionErr := s.claimWorkflowStartAdmission(&runSnapshot, canonical, user, correlationID, inputs...); admissionErr != nil {
+		if admissionErr := s.claimWorkflowStartAdmission(&runSnapshot, canonical, user, correlationID, override, inputs...); admissionErr != nil {
 			return admissionErr
 		}
 		var createErr error
@@ -560,6 +592,16 @@ func (s *workflowService) StartWorkflow(
 	correlationID string,
 	inputs ...db.WorkflowRunInput,
 ) (db.WorkflowRun, error) {
+	return s.startWorkflow(workflow, user, correlationID, nil, inputs...)
+}
+
+func (s *workflowService) startWorkflow(
+	workflow db.WorkflowTemplate,
+	user *db.User,
+	correlationID string,
+	override *pro_interfaces.DeploymentWindowOverrideInput,
+	inputs ...db.WorkflowRunInput,
+) (db.WorkflowRun, error) {
 	if user == nil || user.ID <= 0 {
 		return db.WorkflowRun{}, common_errors.NewValidationError("workflow run actor is required")
 	}
@@ -570,6 +612,9 @@ func (s *workflowService) StartWorkflow(
 	err := s.withStartLock(workflow.ProjectID, workflow.ID, func() error {
 		existing, err := s.repository.GetWorkflowRunByCorrelationID(workflow.ProjectID, workflow.ID, correlationID)
 		if err == nil {
+			if override != nil {
+				return pro_interfaces.ErrDeploymentWindowOverrideConflict
+			}
 			result = existing
 			return s.ProgressWorkflowRun(workflow.ProjectID, existing.ID, user)
 		}
@@ -621,7 +666,7 @@ func (s *workflowService) StartWorkflow(
 		if validateErr := s.validateWorkflowParameterReferences(snapshot); validateErr != nil {
 			return validateErr
 		}
-		if admissionErr := s.claimWorkflowStartAdmission(&snapshot, workflow, user, correlationID, inputs...); admissionErr != nil {
+		if admissionErr := s.claimWorkflowStartAdmission(&snapshot, workflow, user, correlationID, override, inputs...); admissionErr != nil {
 			return admissionErr
 		}
 		if len(crossProject) > 0 {
@@ -643,8 +688,11 @@ func (s *workflowService) StartWorkflow(
 	return s.repository.GetWorkflowRun(workflow.ProjectID, workflow.ID, result.ID)
 }
 
-func (s *workflowService) claimWorkflowStartAdmission(run *db.WorkflowRun, workflow db.WorkflowTemplate, user *db.User, correlationID string, inputs ...db.WorkflowRunInput) error {
+func (s *workflowService) claimWorkflowStartAdmission(run *db.WorkflowRun, workflow db.WorkflowTemplate, user *db.User, correlationID string, override *pro_interfaces.DeploymentWindowOverrideInput, inputs ...db.WorkflowRunInput) error {
 	if s.deploymentWindowAdmission == nil {
+		if override != nil {
+			return pro_interfaces.ErrDeploymentWindowOverrideForbidden
+		}
 		return nil
 	}
 	if !s.deploymentWindowRunFence || run == nil || user == nil || user.ID <= 0 {
@@ -669,11 +717,18 @@ func (s *workflowService) claimWorkflowStartAdmission(run *db.WorkflowRun, workf
 		keyMaterial = fmt.Sprintf("%s|%d|%d|%d", input.TriggerSnapshot.Type, input.TriggerSnapshot.ID, input.TriggerSnapshot.Revision, input.TriggerSnapshot.InvocationID)
 		break
 	}
+	if override != nil && (source != pro_interfaces.DeploymentWindowSourceManual || origin != pro_interfaces.DeploymentWindowOriginUser) {
+		return pro_interfaces.ErrDeploymentWindowOverrideForbidden
+	}
+	manualOverride, overrideErr := pro_interfaces.NewManualDeploymentWindowOverride(override, user.ID)
+	if overrideErr != nil {
+		return overrideErr
+	}
 	digest := sha256.Sum256([]byte(keyMaterial))
 	workflowID, actorID := workflow.ID, user.ID
 	claim, err := s.deploymentWindowAdmission.Claim(pro_interfaces.DeploymentWindowAdmissionRequest{
 		ProjectID: workflow.ProjectID, DecisionKey: "workflow-" + hex.EncodeToString(digest[:]), Source: source, Origin: origin,
-		WorkflowID: &workflowID, ActorUserID: &actorID,
+		WorkflowID: &workflowID, ActorUserID: &actorID, Override: manualOverride,
 	})
 	if err != nil {
 		return err

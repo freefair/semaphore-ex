@@ -490,7 +490,7 @@ func writeWorkflowError(
 
 func (c *workflowController) RunWorkflow(w http.ResponseWriter, r *http.Request) {
 	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
-	input, ok := readWorkflowRunInput(w, r)
+	input, override, ok := readWorkflowRunInput(w, r)
 	if !ok {
 		return
 	}
@@ -509,7 +509,25 @@ func (c *workflowController) RunWorkflow(w http.ResponseWriter, r *http.Request)
 	var run db.WorkflowRun
 	var planned pro_interfaces.ExecutionPreflightPlan
 	var err error
-	if service, supported := c.workflowService.(pro_interfaces.WorkflowExecutionPreflightAuditResultService); supported {
+	if service, supported := c.workflowService.(pro_interfaces.WorkflowExecutionPreflightOverrideAuditResultService); supported {
+		run, planned, err = service.StartWorkflowWithExecutionPreflightPlanAndDeploymentWindowOverride(
+			workflow, user, correlationID,
+			pro_interfaces.ExecutionPreflightReview{
+				Fingerprint: r.Header.Get(workflowPreflightFingerprintHeader),
+				ReviewToken: r.Header.Get(workflowPreflightTokenHeader),
+			}, override, input,
+		)
+	} else if service, supported := c.workflowService.(pro_interfaces.WorkflowExecutionPreflightOverrideService); supported {
+		run, err = service.StartWorkflowWithExecutionPreflightAndDeploymentWindowOverride(
+			workflow, user, correlationID,
+			pro_interfaces.ExecutionPreflightReview{
+				Fingerprint: r.Header.Get(workflowPreflightFingerprintHeader),
+				ReviewToken: r.Header.Get(workflowPreflightTokenHeader),
+			}, override, input,
+		)
+	} else if override != nil {
+		err = pro_interfaces.ErrDeploymentWindowOverrideInvalid
+	} else if service, supported := c.workflowService.(pro_interfaces.WorkflowExecutionPreflightAuditResultService); supported {
 		run, planned, err = service.StartWorkflowWithExecutionPreflightPlan(
 			workflow, user, correlationID,
 			pro_interfaces.ExecutionPreflightReview{
@@ -548,8 +566,12 @@ func (c *workflowController) RunWorkflow(w http.ResponseWriter, r *http.Request)
 
 func (c *workflowController) PreviewWorkflow(w http.ResponseWriter, r *http.Request) {
 	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
-	input, ok := readWorkflowRunInput(w, r)
+	input, override, ok := readWorkflowRunInput(w, r)
 	if !ok {
+		return
+	}
+	if override != nil {
+		helpers.WriteErrorStatus(w, "DEPLOYMENT_WINDOW_INVALID_INPUT", http.StatusBadRequest)
 		return
 	}
 	service, supported := c.workflowService.(pro_interfaces.WorkflowExecutionPreflightService)
@@ -572,25 +594,49 @@ func (c *workflowController) PreviewWorkflow(w http.ResponseWriter, r *http.Requ
 		workflow.ID, &plan, nil)
 }
 
-func readWorkflowRunInput(w http.ResponseWriter, r *http.Request) (db.WorkflowRunInput, bool) {
-	input := db.WorkflowRunInput{}
+func readWorkflowRunInput(w http.ResponseWriter, r *http.Request) (db.WorkflowRunInput, *pro_interfaces.DeploymentWindowOverrideInput, bool) {
+	request := struct {
+		Parameters               map[string]json.RawMessage                    `json:"parameters,omitempty"`
+		NodeOverrides            map[int]db.WorkflowNodeOverride               `json:"node_overrides,omitempty"`
+		DeploymentWindowOverride *pro_interfaces.DeploymentWindowOverrideInput `json:"deployment_window_override,omitempty"`
+	}{}
 	if r.Body == nil {
-		return input, true
+		return db.WorkflowRunInput{}, nil, true
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, workflowRunBodyLimit))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil && !errors.Is(err, io.EOF) {
+	if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {
 		helpers.WriteError(w, common_errors.NewValidationError("workflow run input is invalid"))
-		return db.WorkflowRunInput{}, false
+		return db.WorkflowRunInput{}, nil, false
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		helpers.WriteError(w, common_errors.NewValidationError("workflow run input is invalid"))
-		return db.WorkflowRunInput{}, false
+		return db.WorkflowRunInput{}, nil, false
 	}
-	return input, true
+	return db.WorkflowRunInput{UserValues: request.Parameters, NodeOverrides: request.NodeOverrides}, request.DeploymentWindowOverride, true
 }
 
 func (c *workflowController) writeWorkflowExecutionPreflightError(w http.ResponseWriter, r *http.Request, workflow db.WorkflowTemplate, planned pro_interfaces.ExecutionPreflightPlan, err error) bool {
+	var blocked *pro_interfaces.DeploymentWindowBlockedError
+	if errors.As(err, &blocked) {
+		helpers.WriteJSON(w, http.StatusConflict, pro_interfaces.DeploymentWindowPublicDecision{
+			State: pro_interfaces.DeploymentWindowDecisionBlocked, Reason: blocked.Reason,
+			NextEligibleAt: blocked.NextEligibleAt, NextEligibleKnown: blocked.NextEligibleKnown,
+		})
+		return true
+	}
+	if errors.Is(err, pro_interfaces.ErrDeploymentWindowOverrideForbidden) {
+		helpers.WriteErrorStatus(w, "DEPLOYMENT_WINDOW_OVERRIDE_FORBIDDEN", http.StatusForbidden)
+		return true
+	}
+	if errors.Is(err, pro_interfaces.ErrDeploymentWindowOverrideConflict) {
+		helpers.WriteErrorStatus(w, "DEPLOYMENT_WINDOW_OVERRIDE_CONFLICT", http.StatusConflict)
+		return true
+	}
+	if errors.Is(err, pro_interfaces.ErrDeploymentWindowOverrideInvalid) {
+		helpers.WriteErrorStatus(w, "DEPLOYMENT_WINDOW_INVALID_INPUT", http.StatusBadRequest)
+		return true
+	}
 	var stale *pro_interfaces.ExecutionPreflightStaleError
 	if errors.As(err, &stale) {
 		c.recordExecutionPreflightAudit(r, pro_interfaces.AuditActionExecutionPreflightStart,

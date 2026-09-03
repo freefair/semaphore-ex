@@ -153,6 +153,38 @@ func TestTaskExecutionPreflightControllerReturnsCoarseDeploymentWindowConflict(t
 	assert.NotContains(t, response.Body.String(), "42")
 }
 
+func TestTaskExecutionPreflightControllerMapsDeploymentWindowOverrideFailures(t *testing.T) {
+	controller := NewTaskController(nil, nil)
+	for _, tc := range []struct {
+		name string
+		err  error
+		code int
+	}{
+		{"invalid", pro_interfaces.ErrDeploymentWindowOverrideInvalid, http.StatusBadRequest},
+		{"forbidden", pro_interfaces.ErrDeploymentWindowOverrideForbidden, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handled := controller.writeTaskExecutionPreflightError(response, httptest.NewRequest(http.MethodPost, "/api/project/7/tasks", nil), db.Task{}, pro_interfaces.ExecutionPreflightPlan{}, tc.err)
+			assert.True(t, handled)
+			assert.Equal(t, tc.code, response.Code)
+			assert.NotContains(t, response.Body.String(), "reference")
+		})
+	}
+}
+
+func TestTaskOverrideCannotBeSilentlyIgnoredWithoutAdmissionService(t *testing.T) {
+	_, pool, project, actor, template, _ := createTaskExecutionPreflightControllerFixture(t)
+	_, _, err := pool.AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverride(
+		db.Task{TemplateID: template.ID}, &actor, project.ID, template.App.NeedTaskAlias(),
+		pro_interfaces.ExecutionPreflightReview{},
+		&pro_interfaces.DeploymentWindowOverrideInput{
+			Category: pro_interfaces.DeploymentWindowOverrideIncident, Reference: "INC-41",
+		},
+	)
+	assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden)
+}
+
 func createTaskExecutionPreflightControllerFixture(t *testing.T) (*sql.SqlDb, tasks.TaskPool, db.Project, db.User, db.Template, db.Repository) {
 	t.Helper()
 	store := sql.InitConfigCreateTestStore()

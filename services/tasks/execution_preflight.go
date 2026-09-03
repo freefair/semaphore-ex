@@ -57,6 +57,31 @@ func (p *TaskPool) AddTaskWithExecutionPreflightPlan(
 	needAlias bool,
 	review pro_interfaces.ExecutionPreflightReview,
 ) (db.Task, pro_interfaces.ExecutionPreflightPlan, error) {
+	return p.addTaskWithExecutionPreflightPlan(task, actor, projectID, needAlias, review, nil)
+}
+
+// AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverride is the manual
+// HTTP-only counterpart of the normal reviewed start. It keeps the request
+// override out of db.Task and attaches it only to the final admission claim.
+func (p *TaskPool) AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverride(
+	task db.Task,
+	actor *db.User,
+	projectID int,
+	needAlias bool,
+	review pro_interfaces.ExecutionPreflightReview,
+	override *pro_interfaces.DeploymentWindowOverrideInput,
+) (db.Task, pro_interfaces.ExecutionPreflightPlan, error) {
+	return p.addTaskWithExecutionPreflightPlan(task, actor, projectID, needAlias, review, override)
+}
+
+func (p *TaskPool) addTaskWithExecutionPreflightPlan(
+	task db.Task,
+	actor *db.User,
+	projectID int,
+	needAlias bool,
+	review pro_interfaces.ExecutionPreflightReview,
+	overrideInput *pro_interfaces.DeploymentWindowOverrideInput,
+) (db.Task, pro_interfaces.ExecutionPreflightPlan, error) {
 	snapshot, executionSnapshot, err := p.buildTaskExecutionPreflightSnapshot(task, actor, projectID, tz.Now())
 	if err != nil {
 		return db.Task{}, pro_interfaces.ExecutionPreflightPlan{}, err
@@ -98,12 +123,19 @@ func (p *TaskPool) AddTaskWithExecutionPreflightPlan(
 			return db.Task{}, sealed, &ExecutionPreflightStaleError{Changes: changes, Preflight: sealed}
 		}
 	}
+	templateID := task.TemplateID
+	actorID := actor.ID
+	override, overrideErr := pro_interfaces.NewManualDeploymentWindowOverride(overrideInput, actorID)
+	if overrideErr != nil {
+		return db.Task{}, snapshot.Plan, overrideErr
+	}
+	if override != nil && p.deploymentWindowAdmission == nil {
+		return db.Task{}, snapshot.Plan, pro_interfaces.ErrDeploymentWindowOverrideForbidden
+	}
 	if p.deploymentWindowAdmission != nil {
-		templateID := task.TemplateID
-		actorID := actor.ID
 		if err = p.claimDeploymentWindowTaskAdmission(&task, pro_interfaces.DeploymentWindowAdmissionRequest{
 			ProjectID: projectID, DecisionKey: "manual-" + random.String(32), Source: pro_interfaces.DeploymentWindowSourceManual,
-			Origin: pro_interfaces.DeploymentWindowOriginUser, TemplateID: &templateID, ActorUserID: &actorID,
+			Origin: pro_interfaces.DeploymentWindowOriginUser, TemplateID: &templateID, ActorUserID: &actorID, Override: override,
 		}); err != nil {
 			return db.Task{}, snapshot.Plan, err
 		}

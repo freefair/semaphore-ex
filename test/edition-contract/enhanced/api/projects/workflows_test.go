@@ -54,6 +54,7 @@ type workflowExecutionPreflightServiceStub struct {
 	previewErr error
 	startErr   error
 	reviews    []pro_interfaces.ExecutionPreflightReview
+	overrides  []*pro_interfaces.DeploymentWindowOverrideInput
 }
 
 func (s *workflowExecutionPreflightServiceStub) PreviewWorkflowExecution(
@@ -72,6 +73,22 @@ func (s *workflowExecutionPreflightServiceStub) StartWorkflowWithExecutionPrefli
 	input ...db.WorkflowRunInput,
 ) (db.WorkflowRun, error) {
 	s.reviews = append(s.reviews, review)
+	if s.startErr != nil {
+		return db.WorkflowRun{}, s.startErr
+	}
+	return s.StartWorkflow(workflow, user, correlationID, input...)
+}
+
+func (s *workflowExecutionPreflightServiceStub) StartWorkflowWithExecutionPreflightAndDeploymentWindowOverride(
+	workflow db.WorkflowTemplate,
+	user *db.User,
+	correlationID string,
+	review pro_interfaces.ExecutionPreflightReview,
+	override *pro_interfaces.DeploymentWindowOverrideInput,
+	input ...db.WorkflowRunInput,
+) (db.WorkflowRun, error) {
+	s.reviews = append(s.reviews, review)
+	s.overrides = append(s.overrides, override)
 	if s.startErr != nil {
 		return db.WorkflowRun{}, s.startErr
 	}
@@ -666,6 +683,92 @@ func TestWorkflowRunControllerRejectsUnknownOrTriggerOverrideFields(t *testing.T
 		))
 		assert.Equal(t, http.StatusBadRequest, recorder.Code, body)
 		assert.Empty(t, service.inputs)
+	}
+}
+
+func TestWorkflowRunControllerPassesOnlyStrictManualOverrideEnvelope(t *testing.T) {
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7}
+	service := &workflowExecutionPreflightServiceStub{
+		workflowServiceStub: &workflowServiceStub{run: db.WorkflowRun{ID: 91}},
+	}
+	controller := NewWorkflowController(service, &workflowManagerStub{}, &workflowDefinitionServiceStub{})
+	response := httptest.NewRecorder()
+	controller.RunWorkflow(response, workflowRawRequest(http.MethodPost, "/api/project/7/workflows/41/run", []byte(`{
+		"deployment_window_override":{"category":"incident","reference":"INC-41"}
+	}`), &workflow))
+
+	assert.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+	require.Len(t, service.overrides, 1)
+	require.NotNil(t, service.overrides[0])
+	assert.Equal(t, pro_interfaces.DeploymentWindowOverrideIncident, service.overrides[0].Category)
+	assert.Equal(t, "INC-41", service.overrides[0].Reference)
+	assert.NotContains(t, response.Body.String(), "INC-41")
+
+	reviewed := httptest.NewRecorder()
+	reviewedRequest := workflowRawRequest(http.MethodPost, "/api/project/7/workflows/41/run", []byte(`{
+		"deployment_window_override":{"category":"security","reference":"SEC-9"}
+	}`), &workflow)
+	reviewedRequest.Header.Set(workflowPreflightFingerprintHeader, "sha256:reviewed")
+	reviewedRequest.Header.Set(workflowPreflightTokenHeader, "review-token")
+	controller.RunWorkflow(reviewed, reviewedRequest)
+	assert.Equal(t, http.StatusCreated, reviewed.Code, reviewed.Body.String())
+	require.Len(t, service.overrides, 2)
+	assert.Equal(t, "SEC-9", service.overrides[1].Reference)
+	assert.Equal(t, "sha256:reviewed", service.reviews[1].Fingerprint)
+	assert.NotContains(t, reviewed.Body.String(), "SEC-9")
+
+	for _, body := range []string{
+		`{"deployment_window_override":{"category":"incident","reference":"INC-41","actor_id":99}}`,
+		`{"deployment_window_override":{"category":"incident","reference":"INC-41","authorized":true}}`,
+		`{"deployment_window_override":{"category":"incident","reference":"INC-41"}} {}`,
+	} {
+		invalid := httptest.NewRecorder()
+		controller.RunWorkflow(invalid, workflowRawRequest(http.MethodPost, "/api/project/7/workflows/41/run", []byte(body), &workflow))
+		assert.Equal(t, http.StatusBadRequest, invalid.Code, body)
+	}
+}
+
+func TestWorkflowPreviewRejectsDeploymentWindowOverride(t *testing.T) {
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7}
+	service := &workflowExecutionPreflightServiceStub{
+		workflowServiceStub: &workflowServiceStub{},
+		preview:             pro_interfaces.ExecutionPreflightPlan{},
+	}
+	controller := NewWorkflowController(service, &workflowManagerStub{}, &workflowDefinitionServiceStub{})
+	response := httptest.NewRecorder()
+	controller.PreviewWorkflow(response, workflowRawRequest(http.MethodPost, "/api/project/7/workflows/41/preflight", []byte(`{
+		"deployment_window_override":{"category":"incident","reference":"INC-41"}
+	}`), &workflow))
+
+	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	assert.NotContains(t, response.Body.String(), "INC-41")
+}
+
+func TestWorkflowRunControllerMapsDeploymentWindowOverrideFailures(t *testing.T) {
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7}
+	for _, tc := range []struct {
+		name string
+		err  error
+		code int
+	}{
+		{"invalid", pro_interfaces.ErrDeploymentWindowOverrideInvalid, http.StatusBadRequest},
+		{"forbidden", pro_interfaces.ErrDeploymentWindowOverrideForbidden, http.StatusForbidden},
+		{"existing start", pro_interfaces.ErrDeploymentWindowOverrideConflict, http.StatusConflict},
+		{"blocked", &pro_interfaces.DeploymentWindowBlockedError{DecisionID: 19, Reason: pro_interfaces.DeploymentWindowReasonFreezeActive}, http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service := &workflowExecutionPreflightServiceStub{
+				workflowServiceStub: &workflowServiceStub{}, startErr: tc.err,
+			}
+			controller := NewWorkflowController(service, &workflowManagerStub{}, &workflowDefinitionServiceStub{})
+			response := httptest.NewRecorder()
+			controller.RunWorkflow(response, workflowRawRequest(http.MethodPost, "/api/project/7/workflows/41/run", []byte(`{
+				"deployment_window_override":{"category":"incident","reference":"INC-41"}
+			}`), &workflow))
+			assert.Equal(t, tc.code, response.Code, response.Body.String())
+			assert.NotContains(t, response.Body.String(), "INC-41")
+			assert.NotContains(t, response.Body.String(), "19")
+		})
 	}
 }
 

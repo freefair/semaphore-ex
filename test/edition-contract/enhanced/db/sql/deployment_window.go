@@ -306,7 +306,13 @@ func (d *DeploymentWindowStore) ClaimDeploymentWindowAdmission(
 	request pro_interfaces.DeploymentWindowAdmissionRequest,
 	evaluate func(db.DeploymentWindowPolicy, pro_interfaces.DeploymentWindowEvaluationRequest) (pro_interfaces.DeploymentWindowDecision, error),
 ) (pro_interfaces.DeploymentWindowAdmissionClaim, error) {
-	if d == nil || d.connection == nil || evaluate == nil || request.Validate() != nil {
+	if d == nil || d.connection == nil || evaluate == nil {
+		return pro_interfaces.DeploymentWindowAdmissionClaim{}, db.ErrInvalidOperation
+	}
+	if request.Override != nil && (request.Source != pro_interfaces.DeploymentWindowSourceManual || request.Origin != pro_interfaces.DeploymentWindowOriginUser) {
+		return pro_interfaces.DeploymentWindowAdmissionClaim{}, pro_interfaces.ErrDeploymentWindowOverrideForbidden
+	}
+	if request.Validate() != nil {
 		return pro_interfaces.DeploymentWindowAdmissionClaim{}, db.ErrInvalidOperation
 	}
 	tx, err := d.connection.Begin()
@@ -322,7 +328,31 @@ func (d *DeploymentWindowStore) ClaimDeploymentWindowAdmission(
 		return pro_interfaces.DeploymentWindowAdmissionClaim{}, err
 	}
 	if found {
+		// A bound decision is a completed idempotent operation. No new work can
+		// result from returning it, so preserve retry semantics after a role is
+		// later revoked. An unbound overridden decision, however, must recheck
+		// the current permission before it can authorize first persistence.
+		if existing.State == string(pro_interfaces.DeploymentWindowDecisionOverridden) &&
+			(existing.TaskID != nil || existing.WorkflowRunID != nil) {
+			if !deploymentWindowDecisionMatchesRequest(existing, request) {
+				return pro_interfaces.DeploymentWindowAdmissionClaim{}, pro_interfaces.ErrDeploymentWindowOverrideForbidden
+			}
+			if err = tx.Commit(); err != nil {
+				return pro_interfaces.DeploymentWindowAdmissionClaim{}, err
+			}
+			return pro_interfaces.DeploymentWindowAdmissionClaim{Decision: existing}, nil
+		}
+		if request.Override != nil {
+			override, overrideErr := d.currentOverride(tx, request)
+			if overrideErr != nil {
+				return pro_interfaces.DeploymentWindowAdmissionClaim{}, overrideErr
+			}
+			request.Override = override
+		}
 		if !deploymentWindowDecisionMatchesRequest(existing, request) {
+			if existing.State == string(pro_interfaces.DeploymentWindowDecisionOverridden) && request.Override == nil {
+				return pro_interfaces.DeploymentWindowAdmissionClaim{}, pro_interfaces.ErrDeploymentWindowOverrideForbidden
+			}
 			return pro_interfaces.DeploymentWindowAdmissionClaim{}, db.ErrInvalidOperation
 		}
 		if err = tx.Commit(); err != nil {
@@ -344,9 +374,13 @@ func (d *DeploymentWindowStore) ClaimDeploymentWindowAdmission(
 	if !policyFound {
 		policy = defaultDeploymentWindowPolicy(request.ProjectID)
 	}
-	override, err := d.currentOverride(tx, request)
-	if err != nil {
-		return pro_interfaces.DeploymentWindowAdmissionClaim{}, err
+	var override *pro_interfaces.DeploymentWindowOverrideRequest
+	if request.Override != nil {
+		override, err = d.currentOverride(tx, request)
+		if err != nil {
+			return pro_interfaces.DeploymentWindowAdmissionClaim{}, err
+		}
+		request.Override = override
 	}
 	decision, err := evaluate(policy, pro_interfaces.DeploymentWindowEvaluationRequest{
 		ProjectID: request.ProjectID, TemplateID: dereferenceDeploymentWindowID(request.TemplateID), WorkflowID: dereferenceDeploymentWindowID(request.WorkflowID),
@@ -537,7 +571,10 @@ func (d *DeploymentWindowStore) currentOverride(tx *gorp.Transaction, request pr
 		Admin bool `db:"admin"`
 	}
 	if err := tx.SelectOne(&actor, d.connection.PrepareQuery(d.lockAuthorizationQuery("select admin from `user` where id=?")), *request.ActorUserID); err != nil {
-		return nil, db.ErrInvalidOperation
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, pro_interfaces.ErrDeploymentWindowOverrideForbidden
+		}
+		return nil, err
 	}
 	if actor.Admin {
 		return &pro_interfaces.DeploymentWindowOverrideRequest{ActorID: *request.ActorUserID, Authenticated: true, Authorized: true, Category: request.Override.Category, Reference: request.Override.Reference}, nil
@@ -545,7 +582,7 @@ func (d *DeploymentWindowStore) currentOverride(tx *gorp.Transaction, request pr
 	var membership db.ProjectUser
 	err := tx.SelectOne(&membership, d.connection.PrepareQuery(d.lockAuthorizationQuery("select project_id, user_id, role, role_id, revision from project__user where project_id=? and user_id=?")), request.ProjectID, *request.ActorUserID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, db.ErrInvalidOperation
+		return nil, pro_interfaces.ErrDeploymentWindowOverrideForbidden
 	}
 	if err != nil {
 		return nil, err
@@ -555,7 +592,7 @@ func (d *DeploymentWindowStore) currentOverride(tx *gorp.Transaction, request pr
 		var role db.Role
 		err = tx.SelectOne(&role, d.connection.PrepareQuery(d.lockAuthorizationQuery("select role_id, slug, name, permissions, global_permissions, project_id, revision from role where project_id=? and role_id=?")), request.ProjectID, *membership.RoleID)
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, db.ErrInvalidOperation
+			return nil, pro_interfaces.ErrDeploymentWindowOverrideForbidden
 		}
 		if err != nil {
 			return nil, err
@@ -565,7 +602,7 @@ func (d *DeploymentWindowStore) currentOverride(tx *gorp.Transaction, request pr
 		var role db.Role
 		err = tx.SelectOne(&role, d.connection.PrepareQuery(d.lockAuthorizationQuery("select role_id, slug, name, permissions, global_permissions, project_id, revision from role where slug=? and (project_id=? or project_id is null) order by case when project_id=? then 0 else 1 end limit 1")), membership.Role, request.ProjectID, request.ProjectID)
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, db.ErrInvalidOperation
+			return nil, pro_interfaces.ErrDeploymentWindowOverrideForbidden
 		}
 		if err != nil {
 			return nil, err
@@ -573,7 +610,7 @@ func (d *DeploymentWindowStore) currentOverride(tx *gorp.Transaction, request pr
 		permissions = role.Permissions
 	}
 	if !permissions.Can(db.CanOverrideDeploymentWindow) {
-		return nil, db.ErrInvalidOperation
+		return nil, pro_interfaces.ErrDeploymentWindowOverrideForbidden
 	}
 	return &pro_interfaces.DeploymentWindowOverrideRequest{ActorID: *request.ActorUserID, Authenticated: true, Authorized: true, Category: request.Override.Category, Reference: request.Override.Reference}, nil
 }

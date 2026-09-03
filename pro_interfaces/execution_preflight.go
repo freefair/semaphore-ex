@@ -283,6 +283,22 @@ type WorkflowExecutionPreflightAuditResultService interface {
 	StartWorkflowWithExecutionPreflightPlan(db.WorkflowTemplate, *db.User, string, ExecutionPreflightReview, ...db.WorkflowRunInput) (db.WorkflowRun, ExecutionPreflightPlan, error)
 }
 
+// WorkflowExecutionPreflightOverrideService is an optional manual-start seam.
+// It deliberately accepts only the request-only override envelope; the
+// implementation derives actor, source, origin, and authorization at the
+// final admission boundary. Trigger, schedule, API, and webhook callers keep
+// using WorkflowService and therefore cannot supply an override.
+type WorkflowExecutionPreflightOverrideService interface {
+	StartWorkflowWithExecutionPreflightAndDeploymentWindowOverride(db.WorkflowTemplate, *db.User, string, ExecutionPreflightReview, *DeploymentWindowOverrideInput, ...db.WorkflowRunInput) (db.WorkflowRun, error)
+}
+
+// WorkflowExecutionPreflightOverrideAuditResultService is the audit-capable
+// variant of WorkflowExecutionPreflightOverrideService. It covers both
+// reviewed and headerless manual starts because the review value may be empty.
+type WorkflowExecutionPreflightOverrideAuditResultService interface {
+	StartWorkflowWithExecutionPreflightPlanAndDeploymentWindowOverride(db.WorkflowTemplate, *db.User, string, ExecutionPreflightReview, *DeploymentWindowOverrideInput, ...db.WorkflowRunInput) (db.WorkflowRun, ExecutionPreflightPlan, error)
+}
+
 type ExecutionPreflightReview struct {
 	Fingerprint string    `json:"fingerprint"`
 	ReviewToken string    `json:"review_token"`
