@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -531,4 +532,159 @@ func executionPreflightDeploymentWindowDecision(projectID, actorID int, state pr
 		State: string(state), Reason: string(reason), MatchedRulesJSON: "[]",
 		OverrideActorID: overrideActorID, OverrideCategory: overrideCategory,
 	}
+}
+
+func TestPreviewTaskExecutionEnrichesPolicyGuardrailWithoutLeakingValues(t *testing.T) {
+	store, pool, actor, template, environment := createTaskPreflightFixture(t)
+	secret := "task-secret-value-sentinel"
+	name := "environment-name-sentinel"
+	path := "provider/path-sentinel"
+	environment.Name = name
+	environment.JSON = `{"value":"environment-value-sentinel"}`
+	require.NoError(t, store.UpdateEnvironment(environment))
+	template.SurveyVars = append(template.SurveyVars, db.SurveyVar{Name: "survey-key-sentinel", Type: db.SurveyVarStr})
+	require.NoError(t, store.UpdateTemplate(template))
+	credential, err := store.CreateAccessKey(db.AccessKey{
+		ProjectID: &template.ProjectID, EnvironmentID: &environment.ID, Owner: db.AccessKeyEnvironment,
+		Name: "credential-name-sentinel", Type: db.AccessKeyString, Secret: &secret,
+		SourceStorageKey: &path,
+	})
+	require.NoError(t, err)
+
+	evaluator := &executionPreflightPolicyGuardrailStub{effects: []pro_interfaces.PolicyGuardrailEffect{
+		pro_interfaces.PolicyGuardrailEffectAllow,
+		pro_interfaces.PolicyGuardrailEffectWarn,
+		pro_interfaces.PolicyGuardrailEffectDeny,
+	}}
+	pool.ConfigurePolicyGuardrailAdmission(evaluator)
+	issuer, err := NewExecutionPreflightReviewTokenIssuer([]byte("01234567890123456789012345678901"), time.Minute)
+	require.NoError(t, err)
+	pool.SetExecutionPreflightReviewTokenIssuer(issuer)
+	plan, err := pool.PreviewTaskExecution(db.Task{
+		TemplateID:                   template.ID,
+		Environment:                  `{"environment-value-sentinel":"task-value-sentinel"}`,
+		Secret:                       `{"secret-name-sentinel":"task-secret-value-sentinel"}`,
+		Params:                       db.MapStringAnyField{"argument-key-sentinel": "task-value-sentinel"},
+		GlobalCredentialBindingsJSON: `{"secret-name-sentinel":44}`,
+	}, &actor, template.ProjectID)
+
+	require.NoError(t, err)
+	require.NotNil(t, evaluator.input)
+	assert.Len(t, plan.PolicyRevisions, 1)
+	assert.ElementsMatch(t, []pro_interfaces.ExecutionPreflightReasonCode{
+		pro_interfaces.ExecutionReasonPolicyAllowed,
+		pro_interfaces.ExecutionReasonPolicyWarning,
+		pro_interfaces.ExecutionReasonPolicyDenied,
+	}, policyGuardrailReasonCodes(plan.Findings))
+	assert.Equal(t, "manual", evaluator.input.Template.Source)
+	assert.Equal(t, 1, evaluator.input.Template.ArgumentKeyCount)
+	assert.Equal(t, 2, evaluator.input.Template.InputKeyCount)
+	assert.Contains(t, evaluator.input.EnvironmentIDs, environment.ID)
+	assert.Contains(t, evaluator.input.Credentials, pro_interfaces.PolicyGuardrailCredentialReferenceMetadata{
+		ID: credential.ID, Scope: "local", BindingTarget: "environment",
+	})
+
+	encoded, marshalErr := json.Marshal(evaluator.input)
+	require.NoError(t, marshalErr)
+	for _, forbidden := range []string{
+		secret, name, path, "credential-name-sentinel", "environment-value-sentinel",
+		"task-value-sentinel", "secret-name-sentinel", "argument-key-sentinel", "survey-key-sentinel",
+	} {
+		assert.NotContains(t, string(encoded), forbidden)
+	}
+
+	workflowSnapshot, workflowErr := pool.BuildWorkflowTaskExecutionPreflight(
+		db.Task{TemplateID: template.ID}, template, &actor, template.ProjectID,
+		time.Date(2026, 9, 3, 9, 0, 0, 0, time.UTC),
+	)
+	require.NoError(t, workflowErr)
+	assert.Len(t, workflowSnapshot.Plan.PolicyRevisions, 1)
+	assert.Contains(t, policyGuardrailReasonCodes(workflowSnapshot.Plan.Findings), pro_interfaces.ExecutionReasonPolicyDenied)
+}
+
+func TestPreviewTaskExecutionPolicyGuardrailRevisionChangesFingerprintAndFailuresClose(t *testing.T) {
+	_, pool, actor, template, _ := createTaskPreflightFixture(t)
+	issuer, err := NewExecutionPreflightReviewTokenIssuer([]byte("01234567890123456789012345678901"), time.Minute)
+	require.NoError(t, err)
+	pool.SetExecutionPreflightReviewTokenIssuer(issuer)
+	allowed := &executionPreflightPolicyGuardrailStub{revision: 1}
+	pool.ConfigurePolicyGuardrailAdmission(allowed)
+	first, err := pool.PreviewTaskExecution(db.Task{TemplateID: template.ID}, &actor, template.ProjectID)
+	require.NoError(t, err)
+
+	pool.ConfigurePolicyGuardrailAdmission(&executionPreflightPolicyGuardrailStub{revision: 2})
+	second, err := pool.PreviewTaskExecution(db.Task{TemplateID: template.ID}, &actor, template.ProjectID)
+	require.NoError(t, err)
+	assert.NotEqual(t, first.Fingerprint, second.Fingerprint)
+
+	pool.ConfigurePolicyGuardrailAdmission(&executionPreflightPolicyGuardrailStub{err: errors.New("evaluator unavailable")})
+	_, err = pool.PreviewTaskExecution(db.Task{TemplateID: template.ID}, &actor, template.ProjectID)
+	require.EqualError(t, err, "evaluator unavailable")
+
+	pool.ConfigurePolicyGuardrailAdmission(nil)
+	withoutPolicy, err := pool.PreviewTaskExecution(db.Task{TemplateID: template.ID}, &actor, template.ProjectID)
+	require.NoError(t, err)
+	assert.Empty(t, withoutPolicy.PolicyRevisions)
+	assert.NotContains(t, policyGuardrailReasonCodes(withoutPolicy.Findings), pro_interfaces.ExecutionReasonPolicyAllowed)
+}
+
+type executionPreflightPolicyGuardrailStub struct {
+	input    *pro_interfaces.PolicyGuardrailEvaluationInput
+	revision int
+	effects  []pro_interfaces.PolicyGuardrailEffect
+	err      error
+}
+
+func (s *executionPreflightPolicyGuardrailStub) EvaluatePolicyGuardrails(input pro_interfaces.PolicyGuardrailEvaluationInput) (pro_interfaces.PolicyGuardrailEvaluation, error) {
+	if s.err != nil {
+		return pro_interfaces.PolicyGuardrailEvaluation{}, s.err
+	}
+	copy := input
+	s.input = &copy
+	fingerprint, err := pro_interfaces.FingerprintPolicyGuardrailInput(input)
+	if err != nil {
+		return pro_interfaces.PolicyGuardrailEvaluation{}, err
+	}
+	revision := s.revision
+	if revision == 0 {
+		revision = 1
+	}
+	effects := s.effects
+	if len(effects) == 0 {
+		effects = []pro_interfaces.PolicyGuardrailEffect{pro_interfaces.PolicyGuardrailEffectAllow}
+	}
+	revisions := []pro_interfaces.PolicyGuardrailRevisionRef{{
+		Scope: pro_interfaces.PolicyGuardrailScopeGlobal, Revision: revision,
+		Fingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}}
+	findings := make([]pro_interfaces.PolicyGuardrailFinding, 0, len(effects))
+	allowed := true
+	for index, effect := range effects {
+		if effect == pro_interfaces.PolicyGuardrailEffectDeny {
+			allowed = false
+		}
+		findings = append(findings, pro_interfaces.PolicyGuardrailFinding{
+			Scope: pro_interfaces.PolicyGuardrailScopeGlobal, Revision: revision,
+			RuleID: "rule-" + strconv.Itoa(index), Effect: effect,
+			Severity: pro_interfaces.PolicyGuardrailSeverityLow, Message: "Policy result.",
+		})
+	}
+	return pro_interfaces.PolicyGuardrailEvaluation{
+		Revisions: revisions, Findings: findings, Allowed: allowed,
+		InputFingerprint: fingerprint, EvaluatedAt: input.EvaluatedAt,
+	}, nil
+}
+
+func (s *executionPreflightPolicyGuardrailStub) ClaimPolicyGuardrailEvaluation(pro_interfaces.PolicyGuardrailAdmissionRequest) (pro_interfaces.PolicyGuardrailEvaluationClaim, error) {
+	return pro_interfaces.PolicyGuardrailEvaluationClaim{}, errors.New("claim is outside preview scope")
+}
+
+func policyGuardrailReasonCodes(findings []pro_interfaces.ExecutionPreflightFinding) []pro_interfaces.ExecutionPreflightReasonCode {
+	result := make([]pro_interfaces.ExecutionPreflightReasonCode, 0, len(findings))
+	for _, finding := range findings {
+		if finding.PolicyEffect != "" {
+			result = append(result, finding.Code)
+		}
+	}
+	return result
 }

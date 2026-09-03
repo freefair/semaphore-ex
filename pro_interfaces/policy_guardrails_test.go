@@ -80,6 +80,16 @@ func TestFingerprintPolicyGuardrailInputCanonicalizesSetLikeMetadataAndExcludesC
 	assert.Equal(t, first, second)
 }
 
+func TestPolicyGuardrailInputRejectsOutOfRangeTaskKeyCounts(t *testing.T) {
+	input := validPolicyGuardrailInput()
+	input.Template.ArgumentKeyCount = -1
+	require.Error(t, input.Validate())
+
+	input = validPolicyGuardrailInput()
+	input.Template.InputKeyCount = MaxPolicyGuardrailMetadataItems + 1
+	require.Error(t, input.Validate())
+}
+
 func TestExecutionPreflightPolicyProvenanceChangesPolicyComponent(t *testing.T) {
 	projectID := 7
 	plan := ExecutionPreflightPlan{

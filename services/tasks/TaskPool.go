@@ -90,6 +90,7 @@ type TaskPool struct {
 	crossProjectTaskStore     pro_interfaces.CrossProjectWorkflowTaskStore
 	deploymentWindowAdmission pro_interfaces.DeploymentWindowAdmissionService
 	deploymentWindowAudit     pro_interfaces.AuditServiceFacade
+	policyGuardrailAdmission  pro_interfaces.PolicyGuardrailAdmissionService
 	executionPreflightIssuer  *ExecutionPreflightReviewTokenIssuer
 	// stop signals the background loops started by Run to exit. Closing it (via
 	// Stop) terminates the runner-task reconcile loop and Run's own select.
@@ -103,6 +104,14 @@ type TaskPool struct {
 	// util.Config). It is never closed if Run was not started, so Stop must only
 	// be called after Run.
 	reconcileDone chan struct{}
+}
+
+// ConfigurePolicyGuardrailAdmission enables the optional Enhanced policy
+// boundary; nil preserves Community task-pool behavior.
+func (p *TaskPool) ConfigurePolicyGuardrailAdmission(service pro_interfaces.PolicyGuardrailAdmissionService) {
+	if p != nil {
+		p.policyGuardrailAdmission = service
+	}
 }
 
 func CreateTaskPool(

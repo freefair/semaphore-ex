@@ -25,9 +25,20 @@ type ExecutionPreflightDeniedError = pro_interfaces.ExecutionPreflightDeniedErro
 
 // PreviewTaskExecution builds and signs a short-lived, value-free review.
 func (p *TaskPool) PreviewTaskExecution(task db.Task, actor *db.User, projectID int) (pro_interfaces.ExecutionPreflightPlan, error) {
-	snapshot, err := p.BuildTaskExecutionPreflight(task, actor, projectID)
+	plannedAt := tz.Now()
+	snapshot, _, err := p.buildTaskExecutionPreflightSnapshot(task, actor, projectID, plannedAt)
 	if err != nil {
 		return pro_interfaces.ExecutionPreflightPlan{}, err
+	}
+	if p.policyGuardrailAdmission != nil {
+		template, templateErr := p.store.GetTemplate(projectID, task.TemplateID)
+		if templateErr != nil {
+			return pro_interfaces.ExecutionPreflightPlan{}, templateErr
+		}
+		snapshot, err = p.enrichTaskPreflightWithPolicyGuardrails(snapshot, task, template, projectID, plannedAt)
+		if err != nil {
+			return pro_interfaces.ExecutionPreflightPlan{}, err
+		}
 	}
 	return p.sealExecutionPreflight(snapshot)
 }
@@ -260,7 +271,10 @@ func (p *TaskPool) BuildWorkflowTaskExecutionPreflight(
 		return ExecutionPreflightSnapshot{}, errors.New("workflow execution preflight scope is invalid")
 	}
 	snapshot, _, err := p.buildTaskExecutionPreflight(task, template, actor, projectID, plannedAt.UTC())
-	return snapshot, err
+	if err != nil {
+		return ExecutionPreflightSnapshot{}, err
+	}
+	return p.enrichTaskPreflightWithPolicyGuardrails(snapshot, task, template, projectID, plannedAt.UTC())
 }
 
 func (p *TaskPool) BuildWorkflowTaskExecutionPreflightSnapshot(
@@ -274,6 +288,10 @@ func (p *TaskPool) BuildWorkflowTaskExecutionPreflightSnapshot(
 		return ExecutionPreflightSnapshot{}, "", errors.New("workflow execution preflight scope is invalid")
 	}
 	snapshot, executionSnapshot, err := p.buildTaskExecutionPreflight(task, template, actor, projectID, plannedAt.UTC())
+	if err != nil {
+		return ExecutionPreflightSnapshot{}, "", err
+	}
+	snapshot, err = p.enrichTaskPreflightWithPolicyGuardrails(snapshot, task, template, projectID, plannedAt.UTC())
 	if err != nil {
 		return ExecutionPreflightSnapshot{}, "", err
 	}
