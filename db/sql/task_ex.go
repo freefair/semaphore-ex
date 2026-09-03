@@ -10,38 +10,48 @@ import (
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
 
-// createTaskWithDeploymentWindowDecision binds an already-admitted Enhanced
-// decision to its execution in the same transaction as the task insert. The
-// decision table is intentionally referenced only when the private fence is
-// populated, preserving the Community schema and its established path.
-func (d *SqlDb) createTaskWithDeploymentWindowDecision(task db.Task, maxTasks int) (db.Task, error) {
-	if task.DeploymentWindowDecisionID == nil || *task.DeploymentWindowDecisionID <= 0 {
-		return db.Task{}, errors.New("deployment window task admission is invalid")
-	}
+// createTaskWithAdmissionFences binds Enhanced admission records to a task in
+// the same transaction as insertion. The private fences keep the Community
+// schema and its established path untouched when neither is present.
+func (d *SqlDb) createTaskWithAdmissionFences(task db.Task, maxTasks int) (db.Task, error) {
 	tx, err := d.connection.Begin()
 	if err != nil {
 		return db.Task{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err = validateDeploymentWindowTaskBindingTx(tx, d, task); err != nil {
-		return db.Task{}, err
+	if task.DeploymentWindowDecisionID != nil {
+		if *task.DeploymentWindowDecisionID <= 0 {
+			return db.Task{}, errors.New("deployment window task admission is invalid")
+		}
+		if err = validateDeploymentWindowTaskBindingTx(tx, d, task); err != nil {
+			return db.Task{}, err
+		}
+	}
+	if task.PolicyGuardrailEvaluationID != nil {
+		if err = validatePolicyGuardrailTaskBindingTx(tx, d, task); err != nil {
+			return db.Task{}, err
+		}
 	}
 	if err = tx.Insert(&task); err != nil {
 		return db.Task{}, err
 	}
-	result, err := d.connection.ExecTx(tx,
-		"update project__deployment_window_decision set task_id=? where id=? and project_id=? and state in (?, ?) and task_id is null",
-		task.ID, *task.DeploymentWindowDecisionID, task.ProjectID, "allowed", "overridden",
-	)
-	if err != nil {
-		return db.Task{}, err
+	if task.DeploymentWindowDecisionID != nil {
+		result, bindErr := d.connection.ExecTx(tx,
+			"update project__deployment_window_decision set task_id=? where id=? and project_id=? and state in (?, ?) and task_id is null",
+			task.ID, *task.DeploymentWindowDecisionID, task.ProjectID, "allowed", "overridden",
+		)
+		if bindErr != nil {
+			return db.Task{}, bindErr
+		}
+		bound, rowsErr := result.RowsAffected()
+		if rowsErr != nil || bound != 1 {
+			return db.Task{}, errors.New("deployment window decision cannot be bound to task")
+		}
 	}
-	bound, err := result.RowsAffected()
-	if err != nil {
-		return db.Task{}, err
-	}
-	if bound != 1 {
-		return db.Task{}, errors.New("deployment window decision cannot be bound to task")
+	if task.PolicyGuardrailEvaluationID != nil {
+		if err = bindPolicyGuardrailTaskEvaluationTx(tx, d, task); err != nil {
+			return db.Task{}, err
+		}
 	}
 	if err = attachDeploymentWindowWorkflowTaskTx(tx, d, task, nil); err != nil {
 		return db.Task{}, err
@@ -94,6 +104,72 @@ func validateDeploymentWindowTaskBindingTx(tx *gorp.Transaction, d *SqlDb, task 
 		*decision.WorkflowRunNodeID, task.ProjectID, *task.WorkflowRunID, *task.WorkflowNodeID,
 	); err != nil || nodeCount != 1 {
 		return errors.New("deployment window decision does not match task")
+	}
+	return nil
+}
+
+func validatePolicyGuardrailTaskBindingTx(tx *gorp.Transaction, d *SqlDb, task db.Task) error {
+	if task.PolicyGuardrailEvaluationID == nil || *task.PolicyGuardrailEvaluationID <= 0 {
+		return errors.New("policy guardrail task admission is invalid")
+	}
+	var evaluation struct {
+		ProjectID         int    `db:"project_id"`
+		Intent            string `db:"intent"`
+		TemplateID        *int   `db:"template_id"`
+		WorkflowRunID     *int   `db:"workflow_run_id"`
+		WorkflowRunNodeID *int   `db:"workflow_run_node_id"`
+		TaskID            *int   `db:"task_id"`
+		Decision          string `db:"decision"`
+	}
+	if err := tx.SelectOne(&evaluation, d.PrepareQuery(
+		"select project_id, intent, template_id, workflow_run_id, workflow_run_node_id, task_id, decision from policy_guardrail_evaluation where id=?"),
+		*task.PolicyGuardrailEvaluationID,
+	); err != nil {
+		return errors.New("policy guardrail evaluation is unavailable")
+	}
+	if evaluation.ProjectID != task.ProjectID || evaluation.Intent != "task" || evaluation.TemplateID == nil || *evaluation.TemplateID != task.TemplateID ||
+		evaluation.TaskID != nil || evaluation.Decision != string(db.PolicyGuardrailDecisionAllow) {
+		return errors.New("policy guardrail evaluation does not match task")
+	}
+	if task.WorkflowRunID == nil && task.WorkflowNodeID == nil {
+		if evaluation.WorkflowRunID != nil || evaluation.WorkflowRunNodeID != nil {
+			return errors.New("policy guardrail evaluation does not match task")
+		}
+		return nil
+	}
+	if task.WorkflowRunID == nil || task.WorkflowNodeID == nil || evaluation.WorkflowRunID == nil || evaluation.WorkflowRunNodeID == nil ||
+		*evaluation.WorkflowRunID != *task.WorkflowRunID {
+		return errors.New("policy guardrail evaluation does not match task")
+	}
+	var nodeCount int
+	if err := tx.SelectOne(&nodeCount, d.PrepareQuery(
+		"select count(1) from project__workflow_run_node where id=? and project_id=? and workflow_run_id=? and workflow_node_id=?"),
+		*evaluation.WorkflowRunNodeID, task.ProjectID, *task.WorkflowRunID, *task.WorkflowNodeID,
+	); err != nil || nodeCount != 1 {
+		return errors.New("policy guardrail evaluation does not match task")
+	}
+	return nil
+}
+
+func bindPolicyGuardrailTaskEvaluationTx(tx *gorp.Transaction, d *SqlDb, task db.Task) error {
+	if task.PolicyGuardrailEvaluationID == nil {
+		return nil
+	}
+	query := "update policy_guardrail_evaluation set task_id=? where id=? and project_id=? and intent=? and template_id=? and decision=? and task_id is null"
+	args := []any{task.ID, *task.PolicyGuardrailEvaluationID, task.ProjectID, "task", task.TemplateID, db.PolicyGuardrailDecisionAllow}
+	if task.WorkflowRunID == nil && task.WorkflowNodeID == nil {
+		query += " and workflow_run_id is null and workflow_run_node_id is null"
+	} else {
+		query += " and workflow_run_id=? and workflow_run_node_id in (select id from project__workflow_run_node where project_id=? and workflow_run_id=? and workflow_node_id=?)"
+		args = append(args, *task.WorkflowRunID, task.ProjectID, *task.WorkflowRunID, *task.WorkflowNodeID)
+	}
+	result, err := tx.Exec(d.PrepareQuery(query), args...)
+	if err != nil {
+		return err
+	}
+	bound, err := result.RowsAffected()
+	if err != nil || bound != 1 {
+		return errors.New("policy guardrail evaluation cannot be bound to task")
 	}
 	return nil
 }
@@ -170,6 +246,11 @@ func (d *SqlDb) CreateWorkflowTaskFenced(task db.Task, maxTasks int, lease pro_i
 			return db.Task{}, err
 		}
 	}
+	if task.PolicyGuardrailEvaluationID != nil {
+		if err = validatePolicyGuardrailTaskBindingTx(tx, d, task); err != nil {
+			return db.Task{}, err
+		}
+	}
 	if err = tx.Insert(&task); err != nil {
 		return db.Task{}, err
 	}
@@ -192,6 +273,11 @@ func (d *SqlDb) CreateWorkflowTaskFenced(task db.Task, maxTasks int, lease pro_i
 			return db.Task{}, errors.New("deployment window decision cannot be bound to fenced workflow task")
 		}
 		if err = attachDeploymentWindowWorkflowTaskTx(tx, d, task, &lease); err != nil {
+			return db.Task{}, err
+		}
+	}
+	if task.PolicyGuardrailEvaluationID != nil {
+		if err = bindPolicyGuardrailTaskEvaluationTx(tx, d, task); err != nil {
 			return db.Task{}, err
 		}
 	}
