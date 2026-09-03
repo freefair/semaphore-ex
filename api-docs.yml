@@ -1698,6 +1698,22 @@ definitions:
         items:
           $ref: "#/definitions/WorkflowNodeRunStatus"
 
+  WorkflowFileArtifactAccessPolicy:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowFileArtifactAccessPolicy"
+  WorkflowFileArtifactCredentialProvenance:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowFileArtifactCredentialProvenance"
+  WorkflowArtifactRetentionSnapshot:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowArtifactRetentionSnapshot"
+  WorkflowFileArtifact:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowFileArtifact"
+  WorkflowFileArtifactUpload:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowFileArtifactUpload"
+  WorkflowArtifactRetentionPolicy:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowArtifactRetentionPolicy"
+  WorkflowArtifactRetentionState:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowArtifactRetentionState"
+  WorkflowArtifactRetentionUpdate:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowArtifactRetentionUpdate"
   WorkflowApprovalResolveRequest:
     type: object
     required:
@@ -1884,6 +1900,14 @@ parameters:
     type: integer
     required: true
     x-example: 20
+  artifact_id:
+    name: artifact_id
+    description: Workflow file artifact ID
+    in: path
+    type: integer
+    minimum: 1
+    required: true
+    x-example: 21
   task_id:
     name: task_id
     description: task ID
@@ -3685,6 +3709,18 @@ paths:
             type: object
             additionalProperties: true
 
+  /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/file-artifacts:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1runs~1{run_id}~1file-artifacts"
+  /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/file-artifacts/{artifact_id}:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1runs~1{run_id}~1file-artifacts~1{artifact_id}"
+  /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/file-artifacts/{artifact_id}/content:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1runs~1{run_id}~1file-artifacts~1{artifact_id}~1content"
+  /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/file-artifacts/{artifact_id}/finalize:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1runs~1{run_id}~1file-artifacts~1{artifact_id}~1finalize"
+  /workflow-artifact-retention:
+    $ref: "./api-docs-ex.yml#/paths/~1workflow-artifact-retention"
+  /project/{project_id}/workflow-artifact-retention:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflow-artifact-retention"
   /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/approvals/{node_id}:
     parameters:
       - $ref: "#/parameters/project_id"
