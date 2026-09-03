@@ -1,5 +1,10 @@
 -- Binary workflow artifacts use chunked SQL staging so every supported
 -- database remains the durable authority. Only finalized metadata is visible.
+create table `workflow_artifact_retention_lock` (
+  `lock_key` varchar(32) primary key
+);
+insert into `workflow_artifact_retention_lock` (`lock_key`) values ('global');
+
 create table `workflow_artifact_retention_policy` (
   `id` integer primary key{{ if .Mysql }} auto_increment{{ else }} autoincrement{{ end }},
   `scope_key` varchar(96) not null,

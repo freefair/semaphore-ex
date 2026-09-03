@@ -61,6 +61,12 @@ func configureWorkflowFileArtifactAudit(target any, audit pro_interfaces.AuditSe
 	}
 }
 
+func configureWorkflowArtifactRetentionAudit(target any, audit pro_interfaces.AuditServiceFacade) {
+	if configurable, ok := target.(pro_interfaces.WorkflowArtifactRetentionAuditConfigurer); ok {
+		configurable.ConfigureWorkflowArtifactRetentionAudit(audit)
+	}
+}
+
 func configureDeploymentWindowAudit(target any, audit pro_interfaces.AuditServiceFacade) {
 	if configurable, ok := target.(pro_interfaces.DeploymentWindowAuditConfigurer); ok {
 		configurable.ConfigureDeploymentWindowAudit(audit)
@@ -168,10 +174,13 @@ func Route(
 	terraformInventoryController := proProjects.NewTerraformInventoryController(terraformStore)
 	workflowController := proProjects.NewWorkflowController(workflowService, workflowStore, workflowDefinitionService)
 	workflowFileArtifactIdentityStore, _ := store.(pro_interfaces.WorkflowFileArtifactIdentityStore)
+	workflowFileArtifactRepository := proFactory.NewWorkflowFileArtifactStore(store)
 	workflowFileArtifactService := proServer.NewWorkflowFileArtifactService(
-		proFactory.NewWorkflowFileArtifactStore(store), workflowStore, workflowFileArtifactIdentityStore,
+		workflowFileArtifactRepository, workflowStore, workflowFileArtifactIdentityStore,
 	)
 	workflowFileArtifactController := proProjects.NewWorkflowFileArtifactController(workflowFileArtifactService)
+	workflowArtifactRetentionService := proServer.NewWorkflowArtifactRetentionGovernanceService(workflowFileArtifactRepository)
+	workflowArtifactRetentionController := proApi.NewWorkflowArtifactRetentionController(workflowArtifactRetentionService)
 	crossProjectTemplateController := proProjects.NewCrossProjectTemplateController(proServer.NewCrossProjectTemplateService(store, workflowStore))
 	workflowTriggerController := proProjects.NewWorkflowTriggerController(workflowTriggerService)
 	workflowMiddlewareController := projects.NewWorkflowController(workflowStore)
@@ -194,6 +203,7 @@ func Route(
 	auditFacade := auditServices.NewServiceFacade(store, logWriteService, appMetrics, auditWebhookService)
 	configureWorkflowAudit(workflowService, auditFacade)
 	configureWorkflowFileArtifactAudit(workflowFileArtifactService, auditFacade)
+	configureWorkflowArtifactRetentionAudit(workflowArtifactRetentionController, auditFacade)
 	configureCrossProjectTemplateAudit(crossProjectTemplateController, auditFacade)
 	configureExecutionPreflightAudit(taskController, auditFacade)
 	configureExecutionPreflightAudit(workflowController, auditFacade)
@@ -367,6 +377,16 @@ func Route(
 			projects.GetMustHavePermissionMiddleware(db.CanViewProjectResources)(handler),
 		))
 	}
+	globalWorkflowArtifactRetentionManage := func(handler http.Handler) http.Handler {
+		return delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
+			globalSystemPermission(handler),
+		))
+	}
+	projectWorkflowArtifactRetentionManage := func(handler http.Handler) http.Handler {
+		return projects.ProjectMiddleware(EnhancedProjectPermissionAuditMiddleware(auditFacade)(
+			projects.GetMustHaveBaseProjectPermissionMiddleware(db.CanManageProjectResources)(handler),
+		))
+	}
 	projectDeploymentWindowManage := func(access pro_interfaces.CapabilityAccess, handler http.Handler) http.Handler {
 		return projects.ProjectMiddleware(EnhancedProjectPermissionAuditMiddleware(auditFacade)(
 			capabilityController.SnapshotMiddleware(capabilityController.RequireCapability(
@@ -525,6 +545,19 @@ func Route(
 	authenticatedAPI.Path("/project/{project_id}/notification-governance/deliveries").Handler(projectNotificationRead(http.HandlerFunc(notificationGovernanceController.ProjectHistory))).Methods("GET", "HEAD")
 	authenticatedAPI.Path("/project/{project_id}/notification-governance/events").Handler(projectNotificationRead(http.HandlerFunc(notificationGovernanceController.ProjectEventHistory))).Methods("GET", "HEAD")
 	authenticatedAPI.Path("/project/{project_id}/notification-governance/deliveries/{delivery_id}/retry").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.RetryProjectDelivery))).Methods("POST")
+
+	authenticatedAPI.Path("/workflow-artifact-retention").Handler(
+		globalWorkflowArtifactRetentionManage(http.HandlerFunc(workflowArtifactRetentionController.GetGlobalWorkflowArtifactRetention)),
+	).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/workflow-artifact-retention").Handler(
+		globalWorkflowArtifactRetentionManage(http.HandlerFunc(workflowArtifactRetentionController.PublishGlobalWorkflowArtifactRetention)),
+	).Methods("PUT")
+	authenticatedAPI.Path("/project/{project_id}/workflow-artifact-retention").Handler(
+		projectWorkflowArtifactRetentionManage(http.HandlerFunc(workflowArtifactRetentionController.GetProjectWorkflowArtifactRetention)),
+	).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/project/{project_id}/workflow-artifact-retention").Handler(
+		projectWorkflowArtifactRetentionManage(http.HandlerFunc(workflowArtifactRetentionController.PublishProjectWorkflowArtifactRetention)),
+	).Methods("PUT")
 
 	authenticatedAPI.Path("/project/{project_id}/deployment-windows").Handler(
 		projectDeploymentWindowManage(pro_interfaces.CapabilityAccessRead, http.HandlerFunc(deploymentWindowController.GetPolicy)),

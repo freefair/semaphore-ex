@@ -18,6 +18,7 @@ func TestWorkflowFileArtifactMigrationCreatesAndRollsBackStorageAuthority(t *tes
 
 	require.NoError(t, db.Migrate(store, nil))
 	for _, table := range []string{
+		"workflow_artifact_retention_lock",
 		"workflow_artifact_retention_policy",
 		"workflow_file_artifact_run_usage",
 		"workflow_file_artifact",
@@ -41,6 +42,7 @@ func TestWorkflowFileArtifactMigrationCreatesAndRollsBackStorageAuthority(t *tes
 		"workflow_file_artifact",
 		"workflow_file_artifact_run_usage",
 		"workflow_artifact_retention_policy",
+		"workflow_artifact_retention_lock",
 	} {
 		assert.NotContains(t, sqliteTableNames(t, store), table)
 	}
@@ -63,6 +65,8 @@ func TestWorkflowFileArtifactMigrationPreparesForEverySQLDialect(t *testing.T) {
 			prepared := strings.ToLower(store.prepareMigration(joined))
 			assert.Contains(t, joined, "workflow_file_artifact_chunk")
 			assert.Contains(t, joined, "workflow_file_artifact_download_lease")
+			assert.Contains(t, joined, "workflow_artifact_retention_lock")
+			assert.Contains(t, joined, "values ('global')")
 			assert.Contains(t, joined, "credential_provenance")
 			assert.Contains(t, prepared, test.blobType)
 			assert.NotContains(t, prepared, "sqlite")
