@@ -54,6 +54,12 @@ func configureExecutionPreflightAudit(controller any, audit pro_interfaces.Audit
 	}
 }
 
+func configureDeploymentWindowAudit(target any, audit pro_interfaces.AuditServiceFacade) {
+	if configurable, ok := target.(pro_interfaces.DeploymentWindowAuditConfigurer); ok {
+		configurable.ConfigureDeploymentWindowAudit(audit)
+	}
+}
+
 //go:embed public/*
 var publicAssets embed.FS
 
@@ -187,6 +193,9 @@ func Route(
 	ldapController := NewLDAPController(ldapService, auditFacade)
 	oidcGroupMappingController := NewOIDCGroupMappingController(oidcGroupMappingService, auditFacade)
 	deploymentWindowController := proProjects.NewDeploymentWindowController(deploymentWindowGovernanceService, workflowStore)
+	configureDeploymentWindowAudit(deploymentWindowController, auditFacade)
+	configureDeploymentWindowAudit(taskPool, auditFacade)
+	configureDeploymentWindowAudit(workflowTriggerService, auditFacade)
 
 	r := mux.NewRouter()
 	r.NotFoundHandler = http.HandlerFunc(servePublic)

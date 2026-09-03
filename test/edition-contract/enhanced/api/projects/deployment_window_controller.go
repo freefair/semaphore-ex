@@ -12,6 +12,7 @@ import (
 	coreprojects "github.com/semaphoreui/semaphore/api/projects"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -25,15 +26,24 @@ const (
 type deploymentWindowController struct {
 	service       pro_interfaces.DeploymentWindowGovernanceServiceFacade
 	workflowStore db.WorkflowManager
+	audit         pro_interfaces.AuditServiceFacade
 }
 
 var _ pro_interfaces.DeploymentWindowController = (*deploymentWindowController)(nil)
+var _ pro_interfaces.DeploymentWindowAuditConfigurer = (*deploymentWindowController)(nil)
 
 func NewDeploymentWindowController(
 	service pro_interfaces.DeploymentWindowGovernanceServiceFacade,
 	workflowStore db.WorkflowManager,
 ) pro_interfaces.DeploymentWindowController {
 	return &deploymentWindowController{service: service, workflowStore: workflowStore}
+}
+
+// ConfigureDeploymentWindowAudit installs the process audit facade after the
+// shared router has constructed it. Keeping this optional preserves the
+// Community controller's dependency surface.
+func (c *deploymentWindowController) ConfigureDeploymentWindowAudit(audit pro_interfaces.AuditServiceFacade) {
+	c.audit = audit
 }
 
 type deploymentWindowPolicyInput struct {
@@ -77,12 +87,14 @@ func (c *deploymentWindowController) SavePolicy(w http.ResponseWriter, r *http.R
 	}
 	var input deploymentWindowPolicyInput
 	if !decodeDeploymentWindowJSON(w, r, &input) || input.Revision <= 0 {
+		c.recordPolicyAudit(r, project.ID, pro_interfaces.AuditActionDeploymentWindowPolicyUpdate, pro_interfaces.AuditOutcomeDenied, pro_interfaces.AuditReasonInvalidInput)
 		if input.Revision <= 0 {
 			deploymentWindowBadRequest(w)
 		}
 		return
 	}
 	if c.service == nil {
+		c.recordPolicyAudit(r, project.ID, pro_interfaces.AuditActionDeploymentWindowPolicyUpdate, pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonOperationError)
 		deploymentWindowUnavailable(w)
 		return
 	}
@@ -90,9 +102,11 @@ func (c *deploymentWindowController) SavePolicy(w http.ResponseWriter, r *http.R
 		ProjectID: project.ID, Revision: input.Revision, Timezone: input.Timezone, Default: input.Default, Rules: input.Rules,
 	}, input.Revision)
 	if err != nil {
+		c.recordPolicyAudit(r, project.ID, pro_interfaces.AuditActionDeploymentWindowPolicyUpdate, pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonOperationError)
 		writeDeploymentWindowError(w, err)
 		return
 	}
+	c.recordPolicyAudit(r, project.ID, pro_interfaces.AuditActionDeploymentWindowPolicyUpdate, pro_interfaces.AuditOutcomeAllowed, pro_interfaces.AuditReasonDeploymentWindowPolicyUpdated)
 	helpers.WriteJSON(w, http.StatusOK, policy)
 }
 
@@ -105,17 +119,43 @@ func (c *deploymentWindowController) ResetPolicy(w http.ResponseWriter, r *http.
 	}
 	revision, ok := deploymentWindowExpectedRevision(w, r)
 	if !ok {
+		c.recordPolicyAudit(r, project.ID, pro_interfaces.AuditActionDeploymentWindowPolicyReset, pro_interfaces.AuditOutcomeDenied, pro_interfaces.AuditReasonInvalidInput)
 		return
 	}
 	if c.service == nil {
+		c.recordPolicyAudit(r, project.ID, pro_interfaces.AuditActionDeploymentWindowPolicyReset, pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonOperationError)
 		deploymentWindowUnavailable(w)
 		return
 	}
 	if err := c.service.ResetPolicy(r.Context(), project.ID, revision); err != nil {
+		c.recordPolicyAudit(r, project.ID, pro_interfaces.AuditActionDeploymentWindowPolicyReset, pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonOperationError)
 		writeDeploymentWindowError(w, err)
 		return
 	}
+	c.recordPolicyAudit(r, project.ID, pro_interfaces.AuditActionDeploymentWindowPolicyReset, pro_interfaces.AuditOutcomeAllowed, pro_interfaces.AuditReasonDeploymentWindowPolicyReset)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (c *deploymentWindowController) recordPolicyAudit(r *http.Request, projectID int, action pro_interfaces.AuditAction, outcome pro_interfaces.AuditOutcome, reason string) {
+	if c.audit == nil || r == nil || projectID <= 0 {
+		return
+	}
+	user := helpers.UserFromContext(r)
+	if user == nil || user.ID <= 0 {
+		return
+	}
+	correlationID := helpers.CorrelationID(r.Context())
+	if correlationID == "" {
+		correlationID = "internal"
+	}
+	event := pro_interfaces.AuditEvent{
+		CorrelationID: correlationID, ActorID: &user.ID, ProjectID: &projectID,
+		Action: action, TargetType: pro_interfaces.AuditTargetDeploymentWindow,
+		TargetID: "project:" + strconv.Itoa(projectID), Outcome: outcome, Source: pro_interfaces.AuditSourceAPI, Reason: reason,
+	}
+	if err := c.audit.Record(r.Context(), event); err != nil {
+		log.WithFields(event.SafeFields()).Error("Failed to record deployment window policy audit event")
+	}
 }
 
 func (c *deploymentWindowController) Preview(w http.ResponseWriter, r *http.Request) {

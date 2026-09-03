@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -88,6 +89,7 @@ type TaskPool struct {
 	taskControlLifecycle      TaskControlLifecycle
 	crossProjectTaskStore     pro_interfaces.CrossProjectWorkflowTaskStore
 	deploymentWindowAdmission pro_interfaces.DeploymentWindowAdmissionService
+	deploymentWindowAudit     pro_interfaces.AuditServiceFacade
 	executionPreflightIssuer  *ExecutionPreflightReviewTokenIssuer
 	// stop signals the background loops started by Run to exit. Closing it (via
 	// Stop) terminates the runner-task reconcile loop and Run's own select.
@@ -181,6 +183,15 @@ func (p *TaskPool) ConfigureCrossProjectWorkflowTaskStore(store pro_interfaces.C
 // fence. Community leaves it unset and continues through its existing path.
 func (p *TaskPool) ConfigureDeploymentWindowAdmission(service pro_interfaces.DeploymentWindowAdmissionService) {
 	p.deploymentWindowAdmission = service
+}
+
+// ConfigureDeploymentWindowAudit attaches an optional best-effort recorder.
+// It is separate from admission so an audit outage can never authorize,
+// reject, repeat, or roll back an execution decision.
+func (p *TaskPool) ConfigureDeploymentWindowAudit(audit pro_interfaces.AuditServiceFacade) {
+	if p != nil {
+		p.deploymentWindowAudit = audit
+	}
 }
 
 // DeploymentWindowAdmissionEnabled lets a durable scheduler fail closed when
@@ -1160,6 +1171,7 @@ func (p *TaskPool) AddTaskWithDeploymentWindowAdmission(
 	if err != nil {
 		return db.Task{}, err
 	}
+	p.recordDeploymentWindowAdmission(claim)
 	if claim.Decision.TaskID != nil {
 		existing, getErr := p.store.GetTask(projectID, *claim.Decision.TaskID)
 		if getErr != nil || existing.TemplateID != taskObj.TemplateID || existing.ProjectID != projectID ||
@@ -1171,6 +1183,7 @@ func (p *TaskPool) AddTaskWithDeploymentWindowAdmission(
 	if claim.Decision.State == string(pro_interfaces.DeploymentWindowDecisionBlocked) {
 		return db.Task{}, &pro_interfaces.DeploymentWindowBlockedError{
 			DecisionID: claim.Decision.ID, Reason: pro_interfaces.DeploymentWindowReason(claim.Decision.Reason), NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown,
+			AuditDecision: &claim.Decision, AuditInserted: claim.Inserted,
 		}
 	}
 	if claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionAllowed) && claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionOverridden) || claim.Decision.ID <= 0 {
@@ -1178,7 +1191,83 @@ func (p *TaskPool) AddTaskWithDeploymentWindowAdmission(
 	}
 	decisionID := claim.Decision.ID
 	taskObj.DeploymentWindowDecisionID = &decisionID
-	return p.addTask(taskObj, nil, userID, username, projectID, needAlias, nil, nil)
+	created, err := p.addTask(taskObj, nil, userID, username, projectID, needAlias, nil, nil)
+	if err == nil {
+		p.recordDeploymentWindowTaskBinding(claim.Decision, created)
+	}
+	return created, err
+}
+
+// RecordDeploymentWindowScheduleOccurrenceBinding records a terminal blocked
+// occurrence only after its lease CAS has committed. A replayed decision is
+// intentionally ignored, so scheduler restarts cannot multiply audit events.
+func (p *TaskPool) RecordDeploymentWindowScheduleOccurrenceBinding(blocked *pro_interfaces.DeploymentWindowBlockedError) {
+	if p == nil || blocked == nil || !blocked.AuditInserted || blocked.AuditDecision == nil {
+		return
+	}
+	p.recordDeploymentWindowAudit(*blocked.AuditDecision, pro_interfaces.AuditActionDeploymentWindowBinding)
+}
+
+func (p *TaskPool) recordDeploymentWindowAudit(decision db.DeploymentWindowDecisionRecord, action pro_interfaces.AuditAction) {
+	if p == nil || p.deploymentWindowAudit == nil {
+		return
+	}
+	event, err := pro_interfaces.NewDeploymentWindowAuditEvent(decision, action, "internal", decision.ActorUserID)
+	if err != nil {
+		return
+	}
+	if err = p.deploymentWindowAudit.Record(context.Background(), event); err != nil {
+		log.WithFields(event.SafeFields()).Error("Failed to record deployment window audit event")
+	}
+}
+
+func (p *TaskPool) recordDeploymentWindowAdmission(claim pro_interfaces.DeploymentWindowAdmissionClaim) {
+	if p == nil || p.deploymentWindowAudit == nil || !claim.Inserted {
+		return
+	}
+	actorID := claim.Decision.ActorUserID
+	event, err := pro_interfaces.NewDeploymentWindowAuditEvent(claim.Decision, pro_interfaces.AuditActionDeploymentWindowAdmission, "internal", actorID)
+	if err != nil {
+		return
+	}
+	if err = p.deploymentWindowAudit.Record(context.Background(), event); err != nil {
+		log.WithFields(event.SafeFields()).Error("Failed to record deployment window admission audit event")
+	}
+}
+
+// recordDeploymentWindowOverrideForbidden records the bounded denial without
+// copying the caller's override category or reference into the audit stream.
+func (p *TaskPool) recordDeploymentWindowOverrideForbidden(projectID, actorID int) {
+	if p == nil || p.deploymentWindowAudit == nil || projectID <= 0 || actorID <= 0 {
+		return
+	}
+	event := pro_interfaces.AuditEvent{
+		CorrelationID: "internal", ActorID: &actorID, ProjectID: &projectID,
+		Action:     pro_interfaces.AuditActionDeploymentWindowAdmission,
+		TargetType: pro_interfaces.AuditTargetDeploymentWindow,
+		TargetID:   "project:" + strconv.Itoa(projectID), Outcome: pro_interfaces.AuditOutcomeDenied,
+		Source: pro_interfaces.AuditSourceAPI, Reason: pro_interfaces.AuditReasonDeploymentWindowOverrideForbidden,
+	}
+	if err := event.Validate(); err != nil {
+		return
+	}
+	if err := p.deploymentWindowAudit.Record(context.Background(), event); err != nil {
+		log.WithFields(event.SafeFields()).Error("Failed to record forbidden deployment window override audit event")
+	}
+}
+
+func (p *TaskPool) recordDeploymentWindowTaskBinding(decision db.DeploymentWindowDecisionRecord, task db.Task) {
+	if p == nil || p.deploymentWindowAudit == nil || task.ID <= 0 {
+		return
+	}
+	decision.TaskID = &task.ID
+	event, err := pro_interfaces.NewDeploymentWindowAuditEvent(decision, pro_interfaces.AuditActionDeploymentWindowBinding, "internal", decision.ActorUserID)
+	if err != nil {
+		return
+	}
+	if err = p.deploymentWindowAudit.Record(context.Background(), event); err != nil {
+		log.WithFields(event.SafeFields()).Error("Failed to record deployment window task binding audit event")
+	}
 }
 
 func (p *TaskPool) claimDeploymentWindowTaskAdmission(task *db.Task, request pro_interfaces.DeploymentWindowAdmissionRequest) error {

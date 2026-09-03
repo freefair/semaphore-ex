@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"regexp"
@@ -122,6 +123,10 @@ const (
 	AuditActionCrossProjectTemplateReferenceResolve AuditAction = "cross_project_template_reference_resolve"
 	AuditActionExecutionPreflightPreview            AuditAction = "execution_preflight_preview"
 	AuditActionExecutionPreflightStart              AuditAction = "execution_preflight_start"
+	AuditActionDeploymentWindowPolicyUpdate         AuditAction = "deployment_window_policy_update"
+	AuditActionDeploymentWindowPolicyReset          AuditAction = "deployment_window_policy_reset"
+	AuditActionDeploymentWindowAdmission            AuditAction = "deployment_window_admission"
+	AuditActionDeploymentWindowBinding              AuditAction = "deployment_window_binding"
 )
 
 type AuditTargetType string
@@ -156,6 +161,7 @@ const (
 	AuditTargetCrossProjectTemplateGrant   AuditTargetType = "cross_project_template_grant"
 	AuditTargetCrossProjectTemplateVersion AuditTargetType = "cross_project_template_version"
 	AuditTargetExecutionPreflight          AuditTargetType = "execution_preflight"
+	AuditTargetDeploymentWindow            AuditTargetType = "deployment_window"
 )
 
 type AuditOutcome string
@@ -209,6 +215,13 @@ const (
 	AuditReasonExecutionPreflightStarted          = "execution_preflight_started"
 	AuditReasonExecutionPreflightDenied           = "execution_preflight_denied"
 	AuditReasonExecutionPreflightStale            = "execution_preflight_stale"
+	AuditReasonDeploymentWindowPolicyUpdated      = "deployment_window_policy_updated"
+	AuditReasonDeploymentWindowPolicyReset        = "deployment_window_policy_reset"
+	AuditReasonDeploymentWindowAllowed            = "deployment_window_allowed"
+	AuditReasonDeploymentWindowBlocked            = "deployment_window_blocked"
+	AuditReasonDeploymentWindowOverridden         = "deployment_window_overridden"
+	AuditReasonDeploymentWindowOverrideForbidden  = "deployment_window_override_forbidden"
+	AuditReasonDeploymentWindowBound              = "deployment_window_bound"
 )
 
 // AuditRoleOrigin records how a role was effective when a workflow decision
@@ -260,6 +273,10 @@ const (
 const (
 	AuditWorkflowPolicyRevisionMax = 1_000_000_000
 	AuditRoleProvenanceMaxEntries  = 16
+	// A deployment-window policy permits at most 64 rules. Keeping the audit
+	// bound identical means a corrupted persistence record cannot turn audit
+	// delivery into an unbounded JSON channel.
+	AuditDeploymentWindowProvenanceMaxRules = db.MaxDeploymentWindowRules
 )
 
 var (
@@ -281,6 +298,7 @@ var (
 	workflowApprovalTargetPattern   = regexp.MustCompile(`^approval:[1-9][0-9]*$`)
 	workflowInboxTargetPattern      = regexp.MustCompile(`^project:[1-9][0-9]*$`)
 	executionPreflightTargetPattern = regexp.MustCompile(`^(?:task-template|workflow):[1-9][0-9]*$`)
+	deploymentWindowTargetPattern   = regexp.MustCompile(`^(?:project|decision):[1-9][0-9]*$`)
 	notificationTargetPattern       = regexp.MustCompile(`^(?:global|project:[1-9][0-9]*)$`)
 	workflowRoleIDPattern           = regexp.MustCompile(`^(?:builtin:(?:owner|manager|task_runner|guest)|role:[a-z0-9][a-z0-9_-]{0,63})$`)
 )
@@ -326,6 +344,129 @@ type AuditEvent struct {
 	RoleProvenance                 []AuditRoleProvenance                `json:"role_provenance,omitempty"`
 	CrossProjectTemplateProvenance *AuditCrossProjectTemplateProvenance `json:"cross_project_template_provenance,omitempty"`
 	ExecutionPreflightProvenance   *AuditExecutionPreflightProvenance   `json:"execution_preflight_provenance,omitempty"`
+	DeploymentWindowProvenance     *AuditDeploymentWindowProvenance     `json:"deployment_window_provenance,omitempty"`
+}
+
+// AuditDeploymentWindowProvenance is the complete, bounded allowlist for a
+// deployment-window decision. It contains immutable identifiers and evaluator
+// output only. In particular, it intentionally has no decision key, override
+// reference, normal start actor, rule name/schedule, input, header, or secret.
+type AuditDeploymentWindowProvenance struct {
+	DecisionID        int                              `json:"decision_id"`
+	PolicyRevision    int                              `json:"policy_revision"`
+	EvaluatedAt       time.Time                        `json:"evaluated_at"`
+	EffectiveTimezone string                           `json:"effective_timezone"`
+	MatchedRules      []AuditDeploymentWindowRule      `json:"matched_rules,omitempty"`
+	State             DeploymentWindowDecisionState    `json:"state"`
+	Reason            DeploymentWindowReason           `json:"reason"`
+	Source            DeploymentWindowSource           `json:"source"`
+	Origin            DeploymentWindowOrigin           `json:"origin"`
+	OverrideActorID   int                              `json:"override_actor_id,omitempty"`
+	OverrideCategory  DeploymentWindowOverrideCategory `json:"override_category,omitempty"`
+	TaskID            int                              `json:"task_id,omitempty"`
+	WorkflowRunID     int                              `json:"workflow_run_id,omitempty"`
+	WorkflowRunNodeID int                              `json:"workflow_run_node_id,omitempty"`
+	ScheduleID        int                              `json:"schedule_id,omitempty"`
+}
+
+// AuditDeploymentWindowRule carries the minimum immutable matching evidence.
+type AuditDeploymentWindowRule struct {
+	ID       int                     `json:"id"`
+	Revision int                     `json:"revision"`
+	Kind     db.DeploymentWindowKind `json:"kind"`
+}
+
+// NewDeploymentWindowAuditProvenance projects one persisted immutable
+// decision into the audit protocol. It deliberately parses only the stored
+// rule tuple and has no API that can copy decision keys, rule names, schedule
+// definitions, user inputs, or override references into an audit record.
+func NewDeploymentWindowAuditProvenance(record db.DeploymentWindowDecisionRecord) (*AuditDeploymentWindowProvenance, error) {
+	if record.ID <= 0 || record.ProjectID <= 0 || record.PolicyRevision <= 0 ||
+		record.EvaluatedAt.IsZero() || record.EvaluatedAt.Location() != time.UTC ||
+		!validAuditDeploymentWindowTimezone(record.EffectiveTimezone) {
+		return nil, fmt.Errorf("invalid deployment window audit decision")
+	}
+	var matched []DeploymentWindowMatchedRule
+	if err := json.Unmarshal([]byte(record.MatchedRulesJSON), &matched); err != nil {
+		return nil, fmt.Errorf("decode deployment window audit rules: %w", err)
+	}
+	if len(matched) > AuditDeploymentWindowProvenanceMaxRules {
+		return nil, fmt.Errorf("too many deployment window audit rules")
+	}
+	provenance := &AuditDeploymentWindowProvenance{
+		DecisionID: record.ID, PolicyRevision: record.PolicyRevision,
+		EvaluatedAt: record.EvaluatedAt.UTC(), EffectiveTimezone: record.EffectiveTimezone,
+		State: DeploymentWindowDecisionState(record.State), Reason: DeploymentWindowReason(record.Reason),
+		Source: DeploymentWindowSource(record.Source), Origin: DeploymentWindowOrigin(record.Origin),
+	}
+	for _, rule := range matched {
+		provenance.MatchedRules = append(provenance.MatchedRules, AuditDeploymentWindowRule{ID: rule.ID, Revision: rule.Revision, Kind: rule.Kind})
+	}
+	if record.OverrideActorID != nil {
+		provenance.OverrideActorID = *record.OverrideActorID
+	}
+	if record.OverrideCategory != nil {
+		provenance.OverrideCategory = DeploymentWindowOverrideCategory(*record.OverrideCategory)
+	}
+	if record.TaskID != nil {
+		provenance.TaskID = *record.TaskID
+	}
+	if record.WorkflowRunID != nil {
+		provenance.WorkflowRunID = *record.WorkflowRunID
+	}
+	if record.WorkflowRunNodeID != nil {
+		provenance.WorkflowRunNodeID = *record.WorkflowRunNodeID
+	}
+	if record.ScheduleID != nil {
+		provenance.ScheduleID = *record.ScheduleID
+	}
+	if !validAuditDeploymentWindowProvenance(*provenance) {
+		return nil, fmt.Errorf("invalid deployment window audit provenance")
+	}
+	return provenance, nil
+}
+
+// NewDeploymentWindowAuditEvent constructs the complete bounded audit event
+// for a persisted admission decision. The decision key and override reference
+// are intentionally unavailable to this constructor.
+func NewDeploymentWindowAuditEvent(
+	record db.DeploymentWindowDecisionRecord,
+	action AuditAction,
+	correlationID string,
+	actorID *int,
+) (AuditEvent, error) {
+	provenance, err := NewDeploymentWindowAuditProvenance(record)
+	if err != nil {
+		return AuditEvent{}, err
+	}
+	source := AuditSourceWorker
+	if provenance.Source == DeploymentWindowSourceManual {
+		source = AuditSourceAPI
+	} else {
+		// Automatic sources can retain their execution identity in the private
+		// decision row, but never expose a normal actor in the audit protocol.
+		actorID = nil
+	}
+	reason := AuditReasonDeploymentWindowAllowed
+	if provenance.State == DeploymentWindowDecisionBlocked {
+		reason = AuditReasonDeploymentWindowBlocked
+	}
+	if provenance.State == DeploymentWindowDecisionOverridden {
+		reason = AuditReasonDeploymentWindowOverridden
+	}
+	if action == AuditActionDeploymentWindowBinding {
+		reason = AuditReasonDeploymentWindowBound
+	}
+	event := AuditEvent{
+		CorrelationID: correlationID, ActorID: actorID, ProjectID: &record.ProjectID,
+		Action: action, TargetType: AuditTargetDeploymentWindow,
+		TargetID: "decision:" + strconv.Itoa(record.ID), Outcome: AuditOutcomeAllowed,
+		Source: source, Reason: reason, DeploymentWindowProvenance: provenance,
+	}
+	if err := event.Validate(); err != nil {
+		return AuditEvent{}, err
+	}
+	return event, nil
 }
 
 // AuditExecutionPreflightProvenance is the complete allowlist for execution
@@ -493,6 +634,9 @@ func (e AuditEvent) Validate() error {
 	if !validExecutionPreflightAuditProvenance(e) {
 		return fmt.Errorf("invalid execution preflight audit provenance")
 	}
+	if !validDeploymentWindowAuditProvenance(e) {
+		return fmt.Errorf("invalid deployment window audit provenance")
+	}
 	return nil
 }
 
@@ -570,6 +714,8 @@ func validAuditTarget(event AuditEvent) bool {
 			return false
 		}
 		return true
+	case AuditTargetDeploymentWindow:
+		return event.ProjectID != nil && *event.ProjectID > 0 && deploymentWindowTargetPattern.MatchString(event.TargetID)
 	default:
 		return false
 	}
@@ -665,6 +811,143 @@ func validExecutionPreflightAuditProvenance(event AuditEvent) bool {
 		}
 	}
 	return false
+}
+
+func validDeploymentWindowAuditProvenance(event AuditEvent) bool {
+	if !isDeploymentWindowAuditAction(event.Action) {
+		return event.DeploymentWindowProvenance == nil
+	}
+	if event.TargetType != AuditTargetDeploymentWindow || event.ProjectID == nil || *event.ProjectID <= 0 {
+		return false
+	}
+	if event.Action == AuditActionDeploymentWindowPolicyUpdate || event.Action == AuditActionDeploymentWindowPolicyReset {
+		expectedReason := AuditReasonDeploymentWindowPolicyUpdated
+		if event.Action == AuditActionDeploymentWindowPolicyReset {
+			expectedReason = AuditReasonDeploymentWindowPolicyReset
+		}
+		if event.DeploymentWindowProvenance != nil || event.TargetID != "project:"+strconv.Itoa(*event.ProjectID) ||
+			event.Source != AuditSourceAPI || event.ActorID == nil || *event.ActorID <= 0 {
+			return false
+		}
+		return (event.Outcome == AuditOutcomeAllowed && event.Reason == expectedReason) ||
+			(event.Outcome == AuditOutcomeDenied && (event.Reason == AuditReasonInvalidInput || event.Reason == AuditReasonUnauthenticated || event.Reason == AuditReasonCrossOrigin)) ||
+			(event.Outcome == AuditOutcomeFailure && event.Reason == AuditReasonOperationError)
+	}
+	// An attempted override is intentionally useful even though no decision
+	// was inserted. It has neither provenance nor an override reference.
+	if event.Action == AuditActionDeploymentWindowAdmission &&
+		event.Outcome == AuditOutcomeDenied && event.Reason == AuditReasonDeploymentWindowOverrideForbidden {
+		return event.DeploymentWindowProvenance == nil && event.TargetID == "project:"+strconv.Itoa(*event.ProjectID) &&
+			event.Source == AuditSourceAPI && event.ActorID != nil && *event.ActorID > 0
+	}
+	if event.DeploymentWindowProvenance == nil {
+		return event.Outcome == AuditOutcomeFailure && event.Reason == AuditReasonOperationError &&
+			event.TargetID == "project:"+strconv.Itoa(*event.ProjectID)
+	}
+	p := *event.DeploymentWindowProvenance
+	if !validAuditDeploymentWindowProvenance(p) || event.TargetID != "decision:"+strconv.Itoa(p.DecisionID) ||
+		event.Source != auditSourceForDeploymentWindow(p.Source) {
+		return false
+	}
+	if p.Source == DeploymentWindowSourceManual {
+		if event.ActorID == nil || *event.ActorID <= 0 {
+			return false
+		}
+	} else if event.ActorID != nil {
+		return false
+	}
+	switch event.Action {
+	case AuditActionDeploymentWindowAdmission:
+		if event.Outcome != AuditOutcomeAllowed {
+			return false
+		}
+		switch p.State {
+		case DeploymentWindowDecisionAllowed:
+			return event.Reason == AuditReasonDeploymentWindowAllowed
+		case DeploymentWindowDecisionBlocked:
+			return event.Reason == AuditReasonDeploymentWindowBlocked
+		case DeploymentWindowDecisionOverridden:
+			return event.Reason == AuditReasonDeploymentWindowOverridden
+		default:
+			return false
+		}
+	case AuditActionDeploymentWindowBinding:
+		return event.Outcome == AuditOutcomeAllowed && event.Reason == AuditReasonDeploymentWindowBound &&
+			(p.TaskID > 0 || p.WorkflowRunID > 0 || p.WorkflowRunNodeID > 0 || p.ScheduleID > 0 ||
+				(p.State == DeploymentWindowDecisionBlocked && (p.Origin == DeploymentWindowOriginWorkflowTrigger || p.Origin == DeploymentWindowOriginSchedule)))
+	default:
+		return false
+	}
+}
+
+func validAuditDeploymentWindowProvenance(p AuditDeploymentWindowProvenance) bool {
+	if p.DecisionID <= 0 || p.PolicyRevision <= 0 || p.EvaluatedAt.IsZero() || p.EvaluatedAt.Location() != time.UTC ||
+		!validAuditDeploymentWindowTimezone(p.EffectiveTimezone) || len(p.MatchedRules) > AuditDeploymentWindowProvenanceMaxRules ||
+		!validAuditDeploymentWindowSourceOrigin(p.Source, p.Origin) {
+		return false
+	}
+	if (p.State != DeploymentWindowDecisionAllowed && p.State != DeploymentWindowDecisionBlocked && p.State != DeploymentWindowDecisionOverridden) ||
+		!validAuditDeploymentWindowReason(p.Reason) || p.TaskID < 0 || p.WorkflowRunID < 0 || p.WorkflowRunNodeID < 0 || p.ScheduleID < 0 {
+		return false
+	}
+	if p.State == DeploymentWindowDecisionOverridden {
+		if p.OverrideActorID <= 0 || !validAuditDeploymentWindowOverrideCategory(p.OverrideCategory) {
+			return false
+		}
+	} else if p.OverrideActorID != 0 || p.OverrideCategory != "" {
+		return false
+	}
+	seen := make(map[int]struct{}, len(p.MatchedRules))
+	for _, rule := range p.MatchedRules {
+		if rule.ID <= 0 || rule.Revision <= 0 || (rule.Kind != db.DeploymentWindowAllow && rule.Kind != db.DeploymentWindowFreeze) {
+			return false
+		}
+		if _, duplicate := seen[rule.ID]; duplicate {
+			return false
+		}
+		seen[rule.ID] = struct{}{}
+	}
+	return true
+}
+
+func validAuditDeploymentWindowTimezone(value string) bool {
+	if value == "UTC" {
+		return true
+	}
+	if len(value) == 0 || len(value) > 128 || strings.TrimSpace(value) != value || !strings.Contains(value, "/") || strings.Contains(value, "..") {
+		return false
+	}
+	for _, character := range value {
+		if !(unicode.IsLetter(character) || unicode.IsDigit(character) || character == '/' || character == '_' || character == '+' || character == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func validAuditDeploymentWindowSourceOrigin(source DeploymentWindowSource, origin DeploymentWindowOrigin) bool {
+	return validDeploymentWindowSourceOrigin(source, origin)
+}
+
+func auditSourceForDeploymentWindow(source DeploymentWindowSource) AuditSource {
+	if source == DeploymentWindowSourceManual {
+		return AuditSourceAPI
+	}
+	return AuditSourceWorker
+}
+
+func validAuditDeploymentWindowReason(reason DeploymentWindowReason) bool {
+	switch reason {
+	case DeploymentWindowReasonAllowWindow, DeploymentWindowReasonDefaultAllow,
+		DeploymentWindowReasonDefaultDeny, DeploymentWindowReasonFreezeActive, DeploymentWindowReasonOverride:
+		return true
+	default:
+		return false
+	}
+}
+
+func validAuditDeploymentWindowOverrideCategory(value DeploymentWindowOverrideCategory) bool {
+	return value == DeploymentWindowOverrideIncident || value == DeploymentWindowOverrideSecurity || value == DeploymentWindowOverrideCustomerImpact
 }
 
 func validExecutionPreflightAuditFingerprint(value string) bool {
@@ -792,6 +1075,18 @@ func validWorkflowAuditReason(event AuditEvent) bool {
 }
 
 func validAuditActionTarget(event AuditEvent) bool {
+	if isDeploymentWindowAuditAction(event.Action) {
+		if event.TargetType != AuditTargetDeploymentWindow || event.ProjectID == nil {
+			return false
+		}
+		if event.Action == AuditActionDeploymentWindowPolicyUpdate || event.Action == AuditActionDeploymentWindowPolicyReset {
+			return event.TargetID == "project:"+strconv.Itoa(*event.ProjectID)
+		}
+		if event.Action == AuditActionDeploymentWindowAdmission && event.Reason == AuditReasonDeploymentWindowOverrideForbidden {
+			return event.TargetID == "project:"+strconv.Itoa(*event.ProjectID)
+		}
+		return strings.HasPrefix(event.TargetID, "decision:")
+	}
 	if isExecutionPreflightAuditAction(event.Action) {
 		if event.TargetType != AuditTargetExecutionPreflight || event.ProjectID == nil {
 			return false
@@ -866,6 +1161,11 @@ func isWorkflowAuditAction(action AuditAction) bool {
 
 func isExecutionPreflightAuditAction(action AuditAction) bool {
 	return action == AuditActionExecutionPreflightPreview || action == AuditActionExecutionPreflightStart
+}
+
+func isDeploymentWindowAuditAction(action AuditAction) bool {
+	return action == AuditActionDeploymentWindowPolicyUpdate || action == AuditActionDeploymentWindowPolicyReset ||
+		action == AuditActionDeploymentWindowAdmission || action == AuditActionDeploymentWindowBinding
 }
 
 func isCrossProjectTemplateAuditAction(action AuditAction) bool {
@@ -963,6 +1263,10 @@ func validAuditReason(reason string) bool {
 		AuditReasonCrossProjectTemplateGrantDenied,
 		AuditReasonExecutionPreflightPreviewed, AuditReasonExecutionPreflightStarted,
 		AuditReasonExecutionPreflightDenied, AuditReasonExecutionPreflightStale,
+		AuditReasonDeploymentWindowPolicyUpdated, AuditReasonDeploymentWindowPolicyReset,
+		AuditReasonDeploymentWindowAllowed, AuditReasonDeploymentWindowBlocked,
+		AuditReasonDeploymentWindowOverridden, AuditReasonDeploymentWindowOverrideForbidden,
+		AuditReasonDeploymentWindowBound,
 		string(ExecutionReasonHiddenReference), string(ExecutionReasonPermissionDenied),
 		string(ExecutionReasonCapabilityUnavailable), string(ExecutionReasonPolicyDenied),
 		string(ExecutionReasonPlanLimitExceeded), string(ExecutionReasonNoCandidate),
@@ -1151,6 +1455,13 @@ type ExecutionPreflightAuditConfigurer interface {
 	ConfigureExecutionPreflightAudit(AuditServiceFacade)
 }
 
+// DeploymentWindowAuditConfigurer is an optional Enhanced seam for the
+// deployment-window governance HTTP boundary. Community controllers do not
+// acquire an audit dependency merely because they share the route contract.
+type DeploymentWindowAuditConfigurer interface {
+	ConfigureDeploymentWindowAudit(AuditServiceFacade)
+}
+
 func validAuditAction(action AuditAction) bool {
 	switch action {
 	case AuditActionCapabilityResolve, AuditActionCapabilityRead, AuditActionCapabilityWrite,
@@ -1195,6 +1506,9 @@ func validAuditAction(action AuditAction) bool {
 		AuditActionWorkflowApprovalInbox, AuditActionWorkflowApprovalContribute:
 		return true
 	case AuditActionExecutionPreflightPreview, AuditActionExecutionPreflightStart:
+		return true
+	case AuditActionDeploymentWindowPolicyUpdate, AuditActionDeploymentWindowPolicyReset,
+		AuditActionDeploymentWindowAdmission, AuditActionDeploymentWindowBinding:
 		return true
 	case AuditActionCrossProjectTemplateVersionPublish,
 		AuditActionCrossProjectTemplateGrantCreate, AuditActionCrossProjectTemplateGrantUpdate,

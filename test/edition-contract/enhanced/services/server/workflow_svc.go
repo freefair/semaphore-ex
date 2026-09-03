@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ import (
 	workflowDB "github.com/semaphoreui/semaphore/pro/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
+	log "github.com/sirupsen/logrus"
 )
 
 const workflowReconcileInterval = 2 * time.Second
@@ -666,7 +668,8 @@ func (s *workflowService) startWorkflow(
 		if validateErr := s.validateWorkflowParameterReferences(snapshot); validateErr != nil {
 			return validateErr
 		}
-		if admissionErr := s.claimWorkflowStartAdmission(&snapshot, workflow, user, correlationID, override, inputs...); admissionErr != nil {
+		admissionDecision, admissionErr := s.claimWorkflowStartAdmissionDecision(&snapshot, workflow, user, correlationID, override, inputs...)
+		if admissionErr != nil {
 			return admissionErr
 		}
 		if len(crossProject) > 0 {
@@ -680,6 +683,11 @@ func (s *workflowService) startWorkflow(
 		if err != nil {
 			return err
 		}
+		if admissionDecision != nil {
+			bound := *admissionDecision
+			bound.WorkflowRunID = &result.ID
+			s.recordDeploymentWindowAudit(bound, pro_interfaces.AuditActionDeploymentWindowBinding, correlationID)
+		}
 		return s.ProgressWorkflowRun(workflow.ProjectID, result.ID, user)
 	})
 	if err != nil {
@@ -689,14 +697,20 @@ func (s *workflowService) startWorkflow(
 }
 
 func (s *workflowService) claimWorkflowStartAdmission(run *db.WorkflowRun, workflow db.WorkflowTemplate, user *db.User, correlationID string, override *pro_interfaces.DeploymentWindowOverrideInput, inputs ...db.WorkflowRunInput) error {
+	_, err := s.claimWorkflowStartAdmissionDecision(run, workflow, user, correlationID, override, inputs...)
+	return err
+}
+
+func (s *workflowService) claimWorkflowStartAdmissionDecision(run *db.WorkflowRun, workflow db.WorkflowTemplate, user *db.User, correlationID string, override *pro_interfaces.DeploymentWindowOverrideInput, inputs ...db.WorkflowRunInput) (*db.DeploymentWindowDecisionRecord, error) {
 	if s.deploymentWindowAdmission == nil {
 		if override != nil {
-			return pro_interfaces.ErrDeploymentWindowOverrideForbidden
+			s.recordDeploymentWindowOverrideForbidden(workflow.ProjectID, user)
+			return nil, pro_interfaces.ErrDeploymentWindowOverrideForbidden
 		}
-		return nil
+		return nil, nil
 	}
 	if !s.deploymentWindowRunFence || run == nil || user == nil || user.ID <= 0 {
-		return errors.New("deployment window workflow admission is unavailable")
+		return nil, errors.New("deployment window workflow admission is unavailable")
 	}
 	source, origin := pro_interfaces.DeploymentWindowSourceManual, pro_interfaces.DeploymentWindowOriginUser
 	keyMaterial := "manual|" + correlationID
@@ -712,17 +726,18 @@ func (s *workflowService) claimWorkflowStartAdmission(run *db.WorkflowRun, workf
 		case db.WorkflowTriggerWebhook:
 			source, origin = pro_interfaces.DeploymentWindowSourceWebhook, pro_interfaces.DeploymentWindowOriginWorkflowTrigger
 		default:
-			return errors.New("deployment window workflow trigger source is invalid")
+			return nil, errors.New("deployment window workflow trigger source is invalid")
 		}
 		keyMaterial = fmt.Sprintf("%s|%d|%d|%d", input.TriggerSnapshot.Type, input.TriggerSnapshot.ID, input.TriggerSnapshot.Revision, input.TriggerSnapshot.InvocationID)
 		break
 	}
 	if override != nil && (source != pro_interfaces.DeploymentWindowSourceManual || origin != pro_interfaces.DeploymentWindowOriginUser) {
-		return pro_interfaces.ErrDeploymentWindowOverrideForbidden
+		s.recordDeploymentWindowOverrideForbidden(workflow.ProjectID, user)
+		return nil, pro_interfaces.ErrDeploymentWindowOverrideForbidden
 	}
 	manualOverride, overrideErr := pro_interfaces.NewManualDeploymentWindowOverride(override, user.ID)
 	if overrideErr != nil {
-		return overrideErr
+		return nil, overrideErr
 	}
 	digest := sha256.Sum256([]byte(keyMaterial))
 	workflowID, actorID := workflow.ID, user.ID
@@ -731,16 +746,20 @@ func (s *workflowService) claimWorkflowStartAdmission(run *db.WorkflowRun, workf
 		WorkflowID: &workflowID, ActorUserID: &actorID, Override: manualOverride,
 	})
 	if err != nil {
-		return err
+		if errors.Is(err, pro_interfaces.ErrDeploymentWindowOverrideForbidden) {
+			s.recordDeploymentWindowOverrideForbidden(workflow.ProjectID, user)
+		}
+		return nil, err
 	}
+	s.recordDeploymentWindowAdmission(claim.Decision, claim.Inserted, correlationID)
 	if claim.Decision.State == string(pro_interfaces.DeploymentWindowDecisionBlocked) {
-		return &pro_interfaces.DeploymentWindowBlockedError{DecisionID: claim.Decision.ID, NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown}
+		return &claim.Decision, &pro_interfaces.DeploymentWindowBlockedError{DecisionID: claim.Decision.ID, NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown, AuditDecision: &claim.Decision, AuditInserted: claim.Inserted}
 	}
 	if (claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionAllowed) && claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionOverridden)) || claim.Decision.ID <= 0 {
-		return errors.New("deployment window workflow admission did not allow execution")
+		return nil, errors.New("deployment window workflow admission did not allow execution")
 	}
 	run.DeploymentWindowDecisionID = &claim.Decision.ID
-	return nil
+	return &claim.Decision, nil
 }
 
 func (s *workflowService) ProgressWorkflowRun(projectID int, runID int, user *db.User) error {
@@ -1820,11 +1839,14 @@ func (s *workflowService) enqueueWorkflowNode(
 	}
 	var created db.Task
 	var enqueueErr error
+	var nodeAdmission *db.DeploymentWindowDecisionRecord
 	if s.deploymentWindowAdmission != nil {
-		if admissionErr := s.claimWorkflowNodeAdmission(&task, run, node, actorID); admissionErr != nil {
+		var admissionErr error
+		nodeAdmission, admissionErr = s.claimWorkflowNodeAdmissionDecision(&task, run, node, actorID)
+		if admissionErr != nil {
 			var blocked *pro_interfaces.DeploymentWindowBlockedError
 			if errors.As(admissionErr, &blocked) {
-				return s.blockDeploymentWindowWorkflowNode(run, node, blocked, lease)
+				return s.blockDeploymentWindowWorkflowNode(run, node, blocked, nodeAdmission, lease)
 			}
 			return admissionErr
 		}
@@ -1891,6 +1913,11 @@ func (s *workflowService) enqueueWorkflowNode(
 		if attachErr := s.attachWorkflowTask(run, node, created, root, lease); attachErr != nil {
 			return attachErr
 		}
+		if nodeAdmission != nil {
+			bound := *nodeAdmission
+			bound.TaskID = &created.ID
+			s.recordDeploymentWindowAudit(bound, pro_interfaces.AuditActionDeploymentWindowBinding, "internal")
+		}
 	}
 	if enqueueErr != nil {
 		if node.CrossProjectTemplateProvenance != nil && errors.Is(enqueueErr, db.ErrNotFound) {
@@ -1905,7 +1932,7 @@ func (s *workflowService) enqueueWorkflowNode(
 	return nil
 }
 
-func (s *workflowService) blockDeploymentWindowWorkflowNode(run db.WorkflowRun, node db.WorkflowRunNode, blocked *pro_interfaces.DeploymentWindowBlockedError, lease *pro_interfaces.WorkflowReconciliationLease) error {
+func (s *workflowService) blockDeploymentWindowWorkflowNode(run db.WorkflowRun, node db.WorkflowRunNode, blocked *pro_interfaces.DeploymentWindowBlockedError, decision *db.DeploymentWindowDecisionRecord, lease *pro_interfaces.WorkflowReconciliationLease) error {
 	if blocked == nil || blocked.DecisionID <= 0 {
 		return errors.New("workflow deployment-window block is invalid")
 	}
@@ -1924,12 +1951,22 @@ func (s *workflowService) blockDeploymentWindowWorkflowNode(run db.WorkflowRun, 
 	if !blockedNode {
 		return errors.New("workflow deployment-window block lost its reconciliation fence")
 	}
+	if decision != nil {
+		bound := *decision
+		bound.WorkflowRunID, bound.WorkflowRunNodeID = &run.ID, &node.ID
+		s.recordDeploymentWindowAudit(bound, pro_interfaces.AuditActionDeploymentWindowBinding, "internal")
+	}
 	return nil
 }
 
 func (s *workflowService) claimWorkflowNodeAdmission(task *db.Task, run db.WorkflowRun, node db.WorkflowRunNode, actorID int) error {
+	_, err := s.claimWorkflowNodeAdmissionDecision(task, run, node, actorID)
+	return err
+}
+
+func (s *workflowService) claimWorkflowNodeAdmissionDecision(task *db.Task, run db.WorkflowRun, node db.WorkflowRunNode, actorID int) (*db.DeploymentWindowDecisionRecord, error) {
 	if s.deploymentWindowAdmission == nil || task == nil || task.WorkflowRunID == nil || task.WorkflowNodeID == nil || node.ID <= 0 {
-		return errors.New("deployment window workflow-node admission is unavailable")
+		return nil, errors.New("deployment window workflow-node admission is unavailable")
 	}
 	workflowID, runID, runNodeID := run.WorkflowTemplateID, run.ID, node.ID
 	request := pro_interfaces.DeploymentWindowAdmissionRequest{
@@ -1946,16 +1983,62 @@ func (s *workflowService) claimWorkflowNodeAdmission(task *db.Task, run db.Workf
 	}
 	claim, err := s.deploymentWindowAdmission.Claim(request)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	s.recordDeploymentWindowAdmission(claim.Decision, claim.Inserted, "internal")
 	if claim.Decision.State == string(pro_interfaces.DeploymentWindowDecisionBlocked) {
-		return &pro_interfaces.DeploymentWindowBlockedError{DecisionID: claim.Decision.ID, NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown}
+		return &claim.Decision, &pro_interfaces.DeploymentWindowBlockedError{DecisionID: claim.Decision.ID, NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown, AuditDecision: &claim.Decision, AuditInserted: claim.Inserted}
 	}
 	if (claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionAllowed) && claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionOverridden)) || claim.Decision.ID <= 0 || claim.Decision.TaskID != nil {
-		return errors.New("deployment window workflow-node admission did not allow execution")
+		return nil, errors.New("deployment window workflow-node admission did not allow execution")
 	}
 	task.DeploymentWindowDecisionID = &claim.Decision.ID
-	return nil
+	return &claim.Decision, nil
+}
+
+func (s *workflowService) recordDeploymentWindowAdmission(decision db.DeploymentWindowDecisionRecord, inserted bool, correlationID string) {
+	if !inserted {
+		return
+	}
+	s.recordDeploymentWindowAudit(decision, pro_interfaces.AuditActionDeploymentWindowAdmission, correlationID)
+}
+
+func (s *workflowService) recordDeploymentWindowAudit(decision db.DeploymentWindowDecisionRecord, action pro_interfaces.AuditAction, correlationID string) {
+	if s == nil || s.audit == nil {
+		return
+	}
+	if correlationID == "" {
+		correlationID = "internal"
+	}
+	event, err := pro_interfaces.NewDeploymentWindowAuditEvent(decision, action, correlationID, decision.ActorUserID)
+	if err != nil {
+		return
+	}
+	if err = s.audit.Record(context.Background(), event); err != nil {
+		log.WithFields(event.SafeFields()).Error("Failed to record deployment window workflow audit event")
+	}
+}
+
+// recordDeploymentWindowOverrideForbidden records a deliberately provenance-free
+// denial: no admission decision exists and override input must never enter audit.
+func (s *workflowService) recordDeploymentWindowOverrideForbidden(projectID int, user *db.User) {
+	if s == nil || s.audit == nil || projectID <= 0 || user == nil || user.ID <= 0 {
+		return
+	}
+	actorID := user.ID
+	event := pro_interfaces.AuditEvent{
+		CorrelationID: "internal", ActorID: &actorID, ProjectID: &projectID,
+		Action:     pro_interfaces.AuditActionDeploymentWindowAdmission,
+		TargetType: pro_interfaces.AuditTargetDeploymentWindow,
+		TargetID:   "project:" + strconv.Itoa(projectID), Outcome: pro_interfaces.AuditOutcomeDenied,
+		Source: pro_interfaces.AuditSourceAPI, Reason: pro_interfaces.AuditReasonDeploymentWindowOverrideForbidden,
+	}
+	if err := event.Validate(); err != nil {
+		return
+	}
+	if err := s.audit.Record(context.Background(), event); err != nil {
+		log.WithFields(event.SafeFields()).Error("Failed to record forbidden deployment window override audit event")
+	}
 }
 
 func (s *workflowService) requireCrossProjectDispatchAccess(run db.WorkflowRun, _ *db.User) error {
