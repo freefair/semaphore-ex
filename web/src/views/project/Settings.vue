@@ -65,6 +65,15 @@
         :capability="deploymentWindowsDecision"
       />
 
+      <PolicyGuardrailsPanel
+        v-if="policyGuardrailsDecision
+          && (canManagePolicyGuardrails || canRollbackPolicyGuardrails)"
+        :project-id="projectId"
+        :capability="policyGuardrailsDecision"
+        :can-manage="canManagePolicyGuardrails"
+        :can-rollback="canRollbackPolicyGuardrails"
+      />
+
       <h2 class="mt-8 mb-1">{{ $t('danger_zone_settings') }}</h2>
 
       <v-divider class="mb-8" />
@@ -177,16 +186,20 @@ import YesNoDialog from '@/components/YesNoDialog.vue';
 import delay from '@/lib/delay';
 import DashboardMenu from '@/components/DashboardMenu.vue';
 import DeploymentWindowsPanel from '@/components/DeploymentWindowsPanel.vue';
+import PolicyGuardrailsPanel from '@/components/PolicyGuardrailsPanel.vue';
 import { findCapabilityDecision } from '@/lib/capabilities';
+import { USER_PERMISSIONS } from '@/lib/constants';
 
 export default {
   components: {
-    DashboardMenu, DeploymentWindowsPanel, YesNoDialog, ProjectForm,
+    DashboardMenu, DeploymentWindowsPanel, PolicyGuardrailsPanel, YesNoDialog, ProjectForm,
   },
   props: {
     projectId: Number,
     projectType: String,
     systemInfo: Object,
+    userPermissions: Number,
+    isAdmin: Boolean,
   },
 
   data() {
@@ -202,6 +215,19 @@ export default {
     deploymentWindowsDecision() {
       const decision = findCapabilityDecision(this.systemInfo, 'deployment_windows');
       return decision?.access?.includes('read') ? decision : null;
+    },
+    policyGuardrailsDecision() {
+      const decision = findCapabilityDecision(this.systemInfo, 'policy_guardrails');
+      return decision?.access?.some((access) => access === 'read' || access === 'write')
+        ? decision : null;
+    },
+    canManagePolicyGuardrails() {
+      return Boolean(this.isAdmin
+        || ((this.userPermissions || 0) & USER_PERMISSIONS.managePolicyGuardrails));
+    },
+    canRollbackPolicyGuardrails() {
+      return Boolean(this.isAdmin
+        || ((this.userPermissions || 0) & USER_PERMISSIONS.rollbackPolicyGuardrails));
     },
   },
 

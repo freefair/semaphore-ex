@@ -4,10 +4,12 @@
       <v-btn icon class="mr-4" @click="returnToProjects()" aria-label="Back to projects">
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
-      <v-toolbar-title>{{ $t('auditWebhook') }}</v-toolbar-title>
+      <v-toolbar-title>
+        {{ showAuditGovernance ? $t('auditWebhook') : $t('policyGuardrails') }}
+      </v-toolbar-title>
       <v-spacer />
       <v-chip
-        v-if="configured"
+        v-if="showAuditGovernance && configured"
         small
         :color="config.paused ? 'warning' : 'success'"
         dark
@@ -18,16 +20,28 @@
     </v-toolbar>
     <v-divider />
 
-    <v-alert v-if="unavailable" text type="info" class="PageAlert" data-testid="unavailable">
+    <v-alert
+      v-if="showAuditGovernance && unavailable"
+      text
+      type="info"
+      class="PageAlert"
+      data-testid="unavailable"
+    >
       {{ $t('auditWebhookUnavailable') }}
     </v-alert>
 
     <div class="pa-4 audit-webhook-content">
-      <v-alert v-if="error" text type="error" dismissible @input="error = ''">
+      <v-alert
+        v-if="showAuditGovernance && error"
+        text
+        type="error"
+        dismissible
+        @input="error = ''"
+      >
         {{ error }}
       </v-alert>
 
-      <template v-if="!unavailable">
+      <template v-if="showAuditGovernance && !unavailable">
       <v-card outlined class="mb-4">
         <v-card-title class="subtitle-1">
           <v-icon left>mdi-webhook</v-icon>
@@ -165,7 +179,15 @@
       </v-card>
       </template>
 
-      <NotificationGovernance />
+      <NotificationGovernance v-if="showAuditGovernance" />
+
+      <PolicyGuardrailsPanel
+        v-if="policyGuardrailsDecision
+          && (canManagePolicyGuardrails || canRollbackPolicyGuardrails)"
+        :capability="policyGuardrailsDecision"
+        :can-manage="canManagePolicyGuardrails"
+        :can-rollback="canRollbackPolicyGuardrails"
+      />
     </div>
   </div>
 </template>
@@ -175,6 +197,10 @@ import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
 import NotificationGovernance from '@/components/NotificationGovernance.vue';
+import PolicyGuardrailsPanel from '@/components/PolicyGuardrailsPanel.vue';
+import { findCapabilityDecision } from '@/lib/capabilities';
+import { GLOBAL_PERMISSIONS } from '@/lib/constants';
+import { hasGlobalPermission } from '@/lib/role-permissions';
 
 const PAGE_SIZE = 25;
 
@@ -182,7 +208,12 @@ export default {
   name: 'AuditWebhooks',
 
   components: {
-    NotificationGovernance,
+    NotificationGovernance, PolicyGuardrailsPanel,
+  },
+
+  props: {
+    systemInfo: { type: Object, default: () => ({}) },
+    isAdmin: Boolean,
   },
 
   data() {
@@ -213,6 +244,27 @@ export default {
   },
 
   computed: {
+    showAuditGovernance() {
+      const permission = GLOBAL_PERMISSIONS.manageSystem;
+      return hasGlobalPermission(this.systemInfo, permission, this.isAdmin);
+    },
+
+    canManagePolicyGuardrails() {
+      const permission = GLOBAL_PERMISSIONS.managePolicyGuardrails;
+      return hasGlobalPermission(this.systemInfo, permission, this.isAdmin);
+    },
+
+    canRollbackPolicyGuardrails() {
+      const permission = GLOBAL_PERMISSIONS.rollbackPolicyGuardrails;
+      return hasGlobalPermission(this.systemInfo, permission, this.isAdmin);
+    },
+
+    policyGuardrailsDecision() {
+      const decision = findCapabilityDecision(this.systemInfo, 'policy_guardrails');
+      return decision?.access?.some((access) => access === 'read' || access === 'write')
+        ? decision : null;
+    },
+
     configured() {
       return !!this.config.endpoint;
     },
@@ -236,7 +288,11 @@ export default {
   },
 
   async created() {
-    await this.load();
+    if (this.showAuditGovernance) {
+      await this.load();
+    } else {
+      this.loading = false;
+    }
   },
 
   methods: {

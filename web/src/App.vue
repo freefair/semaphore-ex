@@ -484,15 +484,17 @@
               <v-list-item
                 key="audit-webhooks"
                 to="/audit-webhooks"
-                v-if="isPro && canManageGlobalSystem"
+                v-if="isPro && canAccessGlobalGovernance"
                 data-testid="sidebar-audit-webhooks"
               >
                 <v-list-item-icon>
-                  <v-icon>mdi-webhook</v-icon>
+                  <v-icon>
+                    {{ canManageGlobalSystem ? 'mdi-webhook' : 'mdi-shield-check-outline' }}
+                  </v-icon>
                 </v-list-item-icon>
 
                 <v-list-item-content>
-                  {{ $t('auditWebhook') }}
+                  {{ canManageGlobalSystem ? $t('auditWebhook') : $t('policyGuardrails') }}
                 </v-list-item-content>
               </v-list-item>
 
@@ -1135,6 +1137,28 @@ export default {
         GLOBAL_PERMISSIONS.manageSystem,
         this.user?.admin,
       );
+    },
+
+    canManageGlobalPolicyGuardrails() {
+      return hasGlobalPermission(
+        this.systemInfo,
+        GLOBAL_PERMISSIONS.managePolicyGuardrails,
+        this.user?.admin,
+      );
+    },
+
+    canRollbackGlobalPolicyGuardrails() {
+      return hasGlobalPermission(
+        this.systemInfo,
+        GLOBAL_PERMISSIONS.rollbackPolicyGuardrails,
+        this.user?.admin,
+      );
+    },
+
+    canAccessGlobalGovernance() {
+      return this.canManageGlobalSystem
+        || this.canManageGlobalPolicyGuardrails
+        || this.canRollbackGlobalPolicyGuardrails;
     },
 
     canAccessGlobalCredentials() {

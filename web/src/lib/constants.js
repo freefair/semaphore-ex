@@ -31,6 +31,9 @@ export const USER_PERMISSIONS = {
   administerWorkflows: 512,
   listGrantedCredentials: 1024,
   consumeGrantedCredentials: 2048,
+  overrideDeploymentWindow: 4096,
+  managePolicyGuardrails: 8192,
+  rollbackPolicyGuardrails: 16384,
 };
 
 export const GLOBAL_PERMISSIONS = {
@@ -41,16 +44,18 @@ export const GLOBAL_PERMISSIONS = {
   manageCredentialMetadata: 16,
   rotateCredentials: 32,
   grantCredentials: 64,
+  managePolicyGuardrails: 128,
+  rollbackPolicyGuardrails: 256,
 };
 
 export const USER_ROLES = [{
   slug: 'owner',
   name: 'Owner',
-  permissions: 4095,
+  permissions: 32767,
 }, {
   slug: 'manager',
   name: 'Manager',
-  permissions: 4085,
+  permissions: 32757,
 }, {
   slug: 'task_runner',
   name: 'Task Runner',
@@ -314,6 +319,21 @@ export const ROLE_PERMISSIONS = {
     label: 'Consume granted credentials',
     color: 'indigo',
     textColor: 'white',
+  }, {
+    permission: USER_PERMISSIONS.overrideDeploymentWindow,
+    label: 'Override deployment windows',
+    color: 'orange',
+    textColor: 'white',
+  }, {
+    permission: USER_PERMISSIONS.managePolicyGuardrails,
+    label: 'Manage policy guardrails',
+    color: 'deep-purple',
+    textColor: 'white',
+  }, {
+    permission: USER_PERMISSIONS.rollbackPolicyGuardrails,
+    label: 'Rollback policy guardrails',
+    color: 'red darken-1',
+    textColor: 'white',
   }],
   global: [{
     permission: GLOBAL_PERMISSIONS.manageUsers,
@@ -349,6 +369,16 @@ export const ROLE_PERMISSIONS = {
     permission: GLOBAL_PERMISSIONS.grantCredentials,
     label: 'Grant global credentials',
     color: 'cyan darken-2',
+    textColor: 'white',
+  }, {
+    permission: GLOBAL_PERMISSIONS.managePolicyGuardrails,
+    label: 'Manage global policy guardrails',
+    color: 'deep-purple',
+    textColor: 'white',
+  }, {
+    permission: GLOBAL_PERMISSIONS.rollbackPolicyGuardrails,
+    label: 'Rollback global policy guardrails',
+    color: 'red darken-1',
     textColor: 'white',
   }],
   template: [{
