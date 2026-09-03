@@ -16,6 +16,7 @@ import (
 	proServer "github.com/semaphoreui/semaphore/pro/services/server"
 	proTasks "github.com/semaphoreui/semaphore/pro/services/tasks"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	auditServices "github.com/semaphoreui/semaphore/services/audit"
 	identityServices "github.com/semaphoreui/semaphore/services/identity"
 	"github.com/semaphoreui/semaphore/services/schedules"
 	"github.com/semaphoreui/semaphore/services/server"
@@ -147,6 +148,14 @@ func runService() {
 			log.WithError(err).Error("failed to stop audit webhook service")
 		}
 	}()
+	workflowFileArtifactRetentionWorker := proServer.NewWorkflowFileArtifactRetentionWorker(
+		proFactory.NewWorkflowFileArtifactStore(store),
+		auditServices.NewServiceFacade(store, logWriteService, appMetrics, auditWebhookService),
+	)
+	if workflowFileArtifactRetentionWorker != nil {
+		workflowFileArtifactRetentionWorker.Start()
+		defer workflowFileArtifactRetentionWorker.Stop()
+	}
 	notificationGovernanceService := proServer.NewNotificationGovernanceService(store)
 	notificationDispatcher := proServer.NewNotificationDispatcher(store)
 	notificationDispatcher.Start()

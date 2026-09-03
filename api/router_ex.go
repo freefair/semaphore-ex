@@ -16,6 +16,12 @@ func configureExecutionPreflightAudit(controller any, audit pro_interfaces.Audit
 	}
 }
 
+func configureWorkflowFileArtifactAudit(target any, audit pro_interfaces.AuditServiceFacade) {
+	if configurable, ok := target.(pro_interfaces.WorkflowFileArtifactAuditConfigurer); ok {
+		configurable.ConfigureWorkflowFileArtifactAudit(audit)
+	}
+}
+
 func configureDeploymentWindowAudit(target any, audit pro_interfaces.AuditServiceFacade) {
 	if configurable, ok := target.(pro_interfaces.DeploymentWindowAuditConfigurer); ok {
 		configurable.ConfigureDeploymentWindowAudit(audit)

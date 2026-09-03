@@ -84,7 +84,7 @@ func TestWorkflowFileArtifactControllerDownloadsWithSafeHeadersAndDeadline(t *te
 	metadata, lease, deadline := workflowFileArtifactHTTPFixture(t, content)
 	service := &workflowFileArtifactServiceStub{
 		artifact: metadata, content: content,
-		download: pro_interfaces.WorkflowFileArtifactDownload{Metadata: metadata, Lease: lease, Deadline: deadline},
+		download: pro_interfaces.WorkflowFileArtifactDownload{Metadata: metadata, Lease: lease, Deadline: deadline, ActorID: 5},
 	}
 	controller := NewWorkflowFileArtifactController(service)
 	recorder := &workflowFileArtifactDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
@@ -109,7 +109,7 @@ func TestWorkflowFileArtifactControllerRejectsRangesAndOversizedChunks(t *testin
 	metadata, lease, deadline := workflowFileArtifactHTTPFixture(t, content)
 	service := &workflowFileArtifactServiceStub{
 		artifact: metadata, content: content,
-		download: pro_interfaces.WorkflowFileArtifactDownload{Metadata: metadata, Lease: lease, Deadline: deadline},
+		download: pro_interfaces.WorkflowFileArtifactDownload{Metadata: metadata, Lease: lease, Deadline: deadline, ActorID: 5},
 	}
 	controller := NewWorkflowFileArtifactController(service)
 	rangeRequest := workflowFileArtifactRequest(http.MethodGet, "/content", nil)
@@ -132,7 +132,7 @@ func TestWorkflowFileArtifactControllerReleasesLeaseWhenDeadlineCannotBeSet(t *t
 	metadata, lease, deadline := workflowFileArtifactHTTPFixture(t, content)
 	service := &workflowFileArtifactServiceStub{
 		artifact: metadata, content: content,
-		download: pro_interfaces.WorkflowFileArtifactDownload{Metadata: metadata, Lease: lease, Deadline: deadline},
+		download: pro_interfaces.WorkflowFileArtifactDownload{Metadata: metadata, Lease: lease, Deadline: deadline, ActorID: 5},
 	}
 	controller := NewWorkflowFileArtifactController(service)
 	recorder := &workflowFileArtifactDeadlineRecorder{ResponseRecorder: httptest.NewRecorder(), err: assert.AnError}

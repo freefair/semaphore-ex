@@ -16,12 +16,14 @@ type WorkflowFileArtifactDownload struct {
 	Metadata db.WorkflowFileArtifactMetadata
 	Lease    db.WorkflowFileArtifactDownloadLease
 	Deadline time.Time
+	ActorID  int
 }
 
 func (download WorkflowFileArtifactDownload) Validate() error {
 	if download.Metadata.Validate() != nil || download.Metadata.State != db.WorkflowFileArtifactAvailable ||
 		download.Lease.Validate() != nil || download.Lease.ArtifactID != download.Metadata.ID ||
-		download.Deadline.IsZero() || !download.Deadline.Equal(download.Lease.CreatedAt.Add(db.MaxWorkflowFileArtifactDownloadLease)) {
+		download.Deadline.IsZero() || !download.Deadline.Equal(download.Lease.CreatedAt.Add(db.MaxWorkflowFileArtifactDownloadLease)) ||
+		download.ActorID < 1 {
 		return db.ErrInvalidOperation
 	}
 	return nil
@@ -48,6 +50,16 @@ type WorkflowFileArtifactController interface {
 	GetWorkflowFileArtifacts(http.ResponseWriter, *http.Request)
 	GetWorkflowFileArtifact(http.ResponseWriter, *http.Request)
 	DownloadWorkflowFileArtifact(http.ResponseWriter, *http.Request)
+}
+
+type WorkflowFileArtifactRetentionWorker interface {
+	Start()
+	Stop()
+	RunOnce(context.Context) error
+}
+
+type WorkflowFileArtifactAuditConfigurer interface {
+	ConfigureWorkflowFileArtifactAudit(AuditServiceFacade)
 }
 
 // WorkflowFileArtifactIdentityStore supplies live authorization, producer,

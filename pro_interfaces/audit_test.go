@@ -618,6 +618,38 @@ func TestDeploymentWindowBindingAllowsOnlyDurableTargetsOrBlockedTrigger(t *test
 	require.NoError(t, event.Validate())
 }
 
+func TestWorkflowFileArtifactAuditEventsAreValueFreeAndContextBound(t *testing.T) {
+	projectID, actorID := 42, 7
+	download := AuditEvent{
+		CorrelationID: "internal", ActorID: &actorID, ProjectID: &projectID,
+		Action: AuditActionWorkflowFileArtifactDownload, TargetType: AuditTargetWorkflowFileArtifact,
+		TargetID: "artifact:11", Outcome: AuditOutcomeAllowed, Source: AuditSourceAPI,
+		Reason: AuditReasonWorkflowFileArtifactDownloaded,
+	}
+	require.NoError(t, download.Validate())
+	payload, err := json.Marshal(download)
+	require.NoError(t, err)
+	for _, forbidden := range []string{"filename", "media_type", "sha256", "credential", "content", "logical_name"} {
+		assert.NotContains(t, string(payload), forbidden)
+	}
+
+	denied := download
+	denied.Outcome = AuditOutcomeDenied
+	denied.Reason = AuditReasonWorkflowFileArtifactAccessDenied
+	require.NoError(t, denied.Validate())
+	denied.ActorID = nil
+	assert.Error(t, denied.Validate())
+
+	expired := download
+	expired.ActorID = nil
+	expired.Action = AuditActionWorkflowFileArtifactExpire
+	expired.Source = AuditSourceWorker
+	expired.Reason = AuditReasonWorkflowFileArtifactExpired
+	require.NoError(t, expired.Validate())
+	expired.Source = AuditSourceAPI
+	assert.Error(t, expired.Validate())
+}
+
 func withAuditCorrelation(event AuditEvent, value string) AuditEvent {
 	event.CorrelationID = value
 	return event

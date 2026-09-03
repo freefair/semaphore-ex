@@ -158,6 +158,7 @@ func Route(
 	capabilityFacade := capabilityServices.NewServiceFacade(capabilityProvider, capabilityTestService)
 	auditFacade := auditServices.NewServiceFacade(store, logWriteService, appMetrics, auditWebhookService)
 	configureWorkflowAudit(workflowService, auditFacade)
+	configureWorkflowFileArtifactAudit(workflowFileArtifactService, auditFacade)
 	configureCrossProjectTemplateAudit(crossProjectTemplateController, auditFacade)
 	configureExecutionPreflightAudit(taskController, auditFacade)
 	configureExecutionPreflightAudit(workflowController, auditFacade)

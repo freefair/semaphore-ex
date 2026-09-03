@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"sort"
 	"strconv"
@@ -15,9 +17,11 @@ type workflowFileArtifactService struct {
 	repository      pro_interfaces.WorkflowFileArtifactRepository
 	workflowManager db.WorkflowManager
 	identityStore   pro_interfaces.WorkflowFileArtifactIdentityStore
+	audit           pro_interfaces.AuditServiceFacade
 }
 
 var _ pro_interfaces.WorkflowFileArtifactServiceFacade = (*workflowFileArtifactService)(nil)
+var _ pro_interfaces.WorkflowFileArtifactAuditConfigurer = (*workflowFileArtifactService)(nil)
 
 func NewWorkflowFileArtifactService(
 	repository pro_interfaces.WorkflowFileArtifactRepository,
@@ -30,6 +34,10 @@ func NewWorkflowFileArtifactService(
 	return &workflowFileArtifactService{
 		repository: repository, workflowManager: workflowManager, identityStore: identityStore,
 	}
+}
+
+func (service *workflowFileArtifactService) ConfigureWorkflowFileArtifactAudit(audit pro_interfaces.AuditServiceFacade) {
+	service.audit = audit
 }
 
 func (service *workflowFileArtifactService) BeginWorkflowFileArtifact(ctx context.Context, projectID int, workflowRunID int, upload db.WorkflowFileArtifactUpload, user *db.User) (db.WorkflowFileArtifactMetadata, error) {
@@ -154,6 +162,11 @@ func (service *workflowFileArtifactService) GetWorkflowFileArtifacts(ctx context
 func (service *workflowFileArtifactService) AcquireWorkflowFileArtifactDownload(ctx context.Context, projectID int, workflowRunID int, artifactID int, user *db.User) (pro_interfaces.WorkflowFileArtifactDownload, error) {
 	artifact, err := service.GetWorkflowFileArtifact(ctx, projectID, workflowRunID, artifactID, user)
 	if err != nil {
+		outcome, reason := pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonOperationError
+		if errors.Is(err, pro_interfaces.ErrWorkflowPermissionDenied) || errors.Is(err, pro_interfaces.ErrWorkflowFileArtifactNotAvailable) {
+			outcome, reason = pro_interfaces.AuditOutcomeDenied, pro_interfaces.AuditReasonWorkflowFileArtifactAccessDenied
+		}
+		service.recordDownloadAudit(projectID, artifactID, user, outcome, reason)
 		return pro_interfaces.WorkflowFileArtifactDownload{}, err
 	}
 	lease, err := service.repository.AcquireWorkflowFileArtifactDownloadLease(pro_interfaces.WorkflowFileArtifactLeaseRequest{
@@ -161,10 +174,11 @@ func (service *workflowFileArtifactService) AcquireWorkflowFileArtifactDownload(
 		TTL: db.MinWorkflowFileArtifactDownloadLease,
 	})
 	if err != nil {
+		service.recordDownloadAudit(projectID, artifactID, user, pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonOperationError)
 		return pro_interfaces.WorkflowFileArtifactDownload{}, err
 	}
 	download := pro_interfaces.WorkflowFileArtifactDownload{
-		Metadata: artifact, Lease: lease, Deadline: lease.CreatedAt.Add(db.MaxWorkflowFileArtifactDownloadLease),
+		Metadata: artifact, Lease: lease, Deadline: lease.CreatedAt.Add(db.MaxWorkflowFileArtifactDownloadLease), ActorID: user.ID,
 	}
 	if err = download.Validate(); err != nil {
 		_ = service.repository.ReleaseWorkflowFileArtifactDownloadLease(lease)
@@ -177,7 +191,29 @@ func (service *workflowFileArtifactService) StreamWorkflowFileArtifactDownload(c
 	if err := validateWorkflowFileArtifactServiceContext(ctx); err != nil || writer == nil || download.Validate() != nil {
 		return 0, db.ErrInvalidOperation
 	}
-	return service.repository.StreamWorkflowFileArtifactContent(ctx, download.Lease, writer)
+	written, err := service.repository.StreamWorkflowFileArtifactContent(ctx, download.Lease, writer)
+	actor := &db.User{ID: download.ActorID}
+	if err != nil {
+		service.recordDownloadAudit(download.Metadata.ProjectID, download.Metadata.ID, actor, pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonOperationError)
+		return written, err
+	}
+	service.recordDownloadAudit(download.Metadata.ProjectID, download.Metadata.ID, actor, pro_interfaces.AuditOutcomeAllowed, pro_interfaces.AuditReasonWorkflowFileArtifactDownloaded)
+	return written, nil
+}
+
+func (service *workflowFileArtifactService) recordDownloadAudit(projectID int, artifactID int, user *db.User, outcome pro_interfaces.AuditOutcome, reason string) {
+	if service.audit == nil || projectID < 1 || artifactID < 1 || user == nil || user.ID < 1 {
+		return
+	}
+	actorID := user.ID
+	event := pro_interfaces.AuditEvent{
+		CorrelationID: "internal", ActorID: &actorID, ProjectID: &projectID,
+		Action:     pro_interfaces.AuditActionWorkflowFileArtifactDownload,
+		TargetType: pro_interfaces.AuditTargetWorkflowFileArtifact,
+		TargetID:   fmt.Sprintf("artifact:%d", artifactID), Outcome: outcome,
+		Source: pro_interfaces.AuditSourceAPI, Reason: reason,
+	}
+	_ = service.audit.Record(context.Background(), event)
 }
 
 func (service *workflowFileArtifactService) ReleaseWorkflowFileArtifactDownload(download pro_interfaces.WorkflowFileArtifactDownload) error {

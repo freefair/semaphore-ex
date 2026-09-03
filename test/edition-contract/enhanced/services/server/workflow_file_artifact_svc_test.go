@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"testing"
 	"time"
 
@@ -42,6 +43,8 @@ func TestWorkflowFileArtifactServiceDerivesProvenanceAndEnforcesCurrentRoles(t *
 
 	repository := workflowSQL.NewWorkflowFileArtifactStore(fixture.store.GetConnection())
 	service := NewWorkflowFileArtifactService(repository, fixture.repository, fixture.store)
+	audit := &workflowFileArtifactAuditStub{}
+	service.(pro_interfaces.WorkflowFileArtifactAuditConfigurer).ConfigureWorkflowFileArtifactAudit(audit)
 	content := []byte("service-artifact")
 	created, err := service.BeginWorkflowFileArtifact(context.Background(), fixture.projectID, run.ID, db.WorkflowFileArtifactUpload{
 		WorkflowNodeID: *task.WorkflowNodeID, TaskID: task.ID, Attempt: task.AssignmentGeneration,
@@ -77,6 +80,8 @@ func TestWorkflowFileArtifactServiceDerivesProvenanceAndEnforcesCurrentRoles(t *
 	require.NoError(t, err)
 	_, err = service.GetWorkflowFileArtifact(context.Background(), fixture.projectID, run.ID, created.ID, &manager)
 	assert.ErrorIs(t, err, pro_interfaces.ErrWorkflowPermissionDenied)
+	_, err = service.AcquireWorkflowFileArtifactDownload(context.Background(), fixture.projectID, run.ID, created.ID, &manager)
+	assert.ErrorIs(t, err, pro_interfaces.ErrWorkflowPermissionDenied)
 	managerList, err := service.GetWorkflowFileArtifacts(context.Background(), fixture.projectID, run.ID, db.RetrieveQueryParams{Count: 10}, &manager)
 	require.NoError(t, err)
 	assert.Empty(t, managerList)
@@ -93,6 +98,9 @@ func TestWorkflowFileArtifactServiceDerivesProvenanceAndEnforcesCurrentRoles(t *
 	assert.Equal(t, int64(len(content)), written)
 	assert.Equal(t, content, output.Bytes())
 	require.NoError(t, service.ReleaseWorkflowFileArtifactDownload(download))
+	require.Len(t, audit.events, 2)
+	assert.Equal(t, pro_interfaces.AuditOutcomeDenied, audit.events[0].Outcome)
+	assert.Equal(t, pro_interfaces.AuditOutcomeAllowed, audit.events[1].Outcome)
 }
 
 func TestWorkflowFileArtifactServiceRejectsForeignProducerAndFiltersDeniedMetadata(t *testing.T) {
@@ -176,6 +184,35 @@ func TestWorkflowFileArtifactServiceFencesRevokedExecutionRoleAndSupersededAttem
 		ExpectedRevision: attemptArtifact.Revision, OffsetBytes: 0, Data: []byte("x"),
 	}, &fixture.user)
 	assert.ErrorIs(t, err, pro_interfaces.ErrWorkflowFileArtifactConflict)
+}
+
+type workflowFileArtifactFailingReadRepository struct {
+	pro_interfaces.WorkflowFileArtifactRepository
+	err error
+}
+
+func (repository workflowFileArtifactFailingReadRepository) GetWorkflowFileArtifact(int, int, int) (db.WorkflowFileArtifactMetadata, error) {
+	return db.WorkflowFileArtifactMetadata{}, repository.err
+}
+
+func TestWorkflowFileArtifactServiceAuditsRepositoryReadFailureAsFailure(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	t.Cleanup(fixture.store.Close)
+	run, err := fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "file-artifact-audit-failure")
+	require.NoError(t, err)
+	repositoryErr := errors.New("repository unavailable")
+	service := NewWorkflowFileArtifactService(
+		workflowFileArtifactFailingReadRepository{WorkflowFileArtifactRepository: workflowSQL.NewWorkflowFileArtifactStore(fixture.store.GetConnection()), err: repositoryErr},
+		fixture.repository,
+		fixture.store,
+	)
+	audit := &workflowFileArtifactAuditStub{}
+	service.(pro_interfaces.WorkflowFileArtifactAuditConfigurer).ConfigureWorkflowFileArtifactAudit(audit)
+	_, err = service.AcquireWorkflowFileArtifactDownload(context.Background(), fixture.projectID, run.ID, 123, &fixture.user)
+	require.ErrorIs(t, err, repositoryErr)
+	require.Len(t, audit.events, 1)
+	assert.Equal(t, pro_interfaces.AuditOutcomeFailure, audit.events[0].Outcome)
+	assert.Equal(t, pro_interfaces.AuditReasonOperationError, audit.events[0].Reason)
 }
 
 func artifactServiceSHA256(value []byte) string {
