@@ -538,13 +538,13 @@ func policyGuardrailTemplateArgumentKeyCount(value *pro_interfaces.PolicyGuardra
 	if value == nil {
 		return 0
 	}
-	return len(value.ArgumentKeys)
+	return value.ArgumentKeyCount
 }
 func policyGuardrailTemplateInputKeyCount(value *pro_interfaces.PolicyGuardrailTemplateMetadata) int {
 	if value == nil {
 		return 0
 	}
-	return len(value.InputKeys)
+	return value.InputKeyCount
 }
 func policyGuardrailInventoryID(value *pro_interfaces.PolicyGuardrailInventoryMetadata) int {
 	if value == nil {

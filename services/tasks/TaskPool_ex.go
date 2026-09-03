@@ -16,6 +16,14 @@ import (
 	"strconv"
 )
 
+// ConfigurePolicyGuardrailAdmission enables the optional Enhanced policy
+// boundary; nil preserves Community task-pool behavior.
+func (p *TaskPool) ConfigurePolicyGuardrailAdmission(service pro_interfaces.PolicyGuardrailAdmissionService) {
+	if p != nil {
+		p.policyGuardrailAdmission = service
+	}
+}
+
 // SetExecutionPreflightReviewTokenIssuer replaces the review-token issuer.
 // Production pools derive it from the shared cookie signing key; tests may
 // inject a deterministic issuer without changing process-wide configuration.

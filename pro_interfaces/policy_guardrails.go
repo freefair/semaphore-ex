@@ -351,14 +351,14 @@ func validatePolicyGuardrailRemediationURL(value string) error {
 }
 
 type PolicyGuardrailTemplateMetadata struct {
-	ID                int      `json:"id"`
-	Application       string   `json:"application"`
-	Source            string   `json:"source"`
-	InventoryOverride bool     `json:"inventory_override"`
-	BranchOverride    bool     `json:"branch_override"`
-	CommitOverride    bool     `json:"commit_override"`
-	ArgumentKeys      []string `json:"argument_keys"`
-	InputKeys         []string `json:"input_keys"`
+	ID                int    `json:"id"`
+	Application       string `json:"application"`
+	Source            string `json:"source"`
+	InventoryOverride bool   `json:"inventory_override"`
+	BranchOverride    bool   `json:"branch_override"`
+	CommitOverride    bool   `json:"commit_override"`
+	ArgumentKeyCount  int    `json:"argument_key_count"`
+	InputKeyCount     int    `json:"input_key_count"`
 }
 
 type PolicyGuardrailInventoryMetadata struct {
@@ -422,11 +422,9 @@ func (i PolicyGuardrailEvaluationInput) Validate() error {
 	}
 	if i.Template != nil {
 		if i.Template.ID <= 0 || !validPolicyGuardrailValue(i.Template.Application) || !validPolicyGuardrailValue(i.Template.Source) ||
-			len(i.Template.ArgumentKeys) > MaxPolicyGuardrailMetadataItems || len(i.Template.InputKeys) > MaxPolicyGuardrailMetadataItems {
+			i.Template.ArgumentKeyCount < 0 || i.Template.ArgumentKeyCount > MaxPolicyGuardrailMetadataItems ||
+			i.Template.InputKeyCount < 0 || i.Template.InputKeyCount > MaxPolicyGuardrailMetadataItems {
 			return errors.New("invalid policy guardrail task metadata")
-		}
-		if !validBoundedPolicyStrings(i.Template.ArgumentKeys) || !validBoundedPolicyStrings(i.Template.InputKeys) {
-			return errors.New("invalid policy guardrail task keys")
 		}
 	}
 	if i.Inventory != nil && (i.Inventory.ID <= 0 || !validPolicyGuardrailValue(i.Inventory.Type) || i.Inventory.RunnerTagCount < 0) {

@@ -194,7 +194,7 @@ func policyRule(id string, effect pro_interfaces.PolicyGuardrailEffect) pro_inte
 func completePolicyGuardrailInput() pro_interfaces.PolicyGuardrailEvaluationInput {
 	return pro_interfaces.PolicyGuardrailEvaluationInput{
 		ProjectID: 7, Intent: pro_interfaces.ExecutionPreflightTask, EvaluatedAt: time.Date(2026, 9, 3, 10, 30, 0, 0, time.UTC),
-		Template:  &pro_interfaces.PolicyGuardrailTemplateMetadata{ID: 11, Application: "ansible", Source: "manual", InventoryOverride: true, BranchOverride: true, CommitOverride: true, ArgumentKeys: []string{"limit", "tags"}, InputKeys: []string{"region", "tier"}},
+		Template:  &pro_interfaces.PolicyGuardrailTemplateMetadata{ID: 11, Application: "ansible", Source: "manual", InventoryOverride: true, BranchOverride: true, CommitOverride: true, ArgumentKeyCount: 2, InputKeyCount: 2},
 		Inventory: &pro_interfaces.PolicyGuardrailInventoryMetadata{ID: 12, Type: "static", RunnerTagCount: 2}, EnvironmentIDs: []int{3, 9},
 		Workflow:    &pro_interfaces.PolicyGuardrailWorkflowMetadata{ID: 13, Revision: 2, NodeID: 14, NodeKind: "task", TriggerSource: "api", CrossProject: true},
 		Runner:      pro_interfaces.PolicyGuardrailRunnerMetadata{SelectedID: 15, SelectedScope: "project", SelectedExecutor: "docker", RequestedTags: []string{"linux", "prod"}, CandidateCount: 2},
