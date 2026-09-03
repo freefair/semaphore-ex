@@ -104,6 +104,23 @@ func TestWorkflowFileArtifactControllerDownloadsWithSafeHeadersAndDeadline(t *te
 	assert.Equal(t, 1, service.released)
 }
 
+func TestWorkflowFileArtifactControllerAuthorizesHeadThroughDownloadLease(t *testing.T) {
+	content := []byte("safe-content")
+	metadata, lease, deadline := workflowFileArtifactHTTPFixture(t, content)
+	service := &workflowFileArtifactServiceStub{
+		artifact: metadata, content: content,
+		download: pro_interfaces.WorkflowFileArtifactDownload{Metadata: metadata, Lease: lease, Deadline: deadline, ActorID: 5},
+	}
+	controller := NewWorkflowFileArtifactController(service)
+	recorder := httptest.NewRecorder()
+	controller.DownloadWorkflowFileArtifact(recorder, workflowFileArtifactRequest(http.MethodHead, "/content", nil))
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, metadata.SHA256, recorder.Header().Get("X-Checksum-SHA256"))
+	assert.Equal(t, 1, service.acquired)
+	assert.Zero(t, service.streamed)
+	assert.Equal(t, 1, service.released)
+}
+
 func TestWorkflowFileArtifactControllerRejectsRangesAndOversizedChunks(t *testing.T) {
 	content := []byte("safe-content")
 	metadata, lease, deadline := workflowFileArtifactHTTPFixture(t, content)

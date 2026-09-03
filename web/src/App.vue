@@ -120,6 +120,7 @@
     <SystemInfoDialog
       v-model="systemInfoDialog"
       :system-info="systemInfo"
+      :is-pro="isPro"
       @totp-rollout-updated="loadUserInfo"
       v-if="user && canManageGlobalSystem"
     />

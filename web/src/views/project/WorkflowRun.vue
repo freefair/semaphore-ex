@@ -215,6 +215,83 @@
             </v-expansion-panel-header>
             <v-expansion-panel-content>
               <div class="WorkflowRun__artifactContent">
+                <section v-if="fileArtifacts.length > 0">
+                  <div class="text-subtitle-2 mb-1">
+                    {{ $t('workflowFileArtifacts') }}
+                  </div>
+                  <v-list dense class="py-0">
+                    <v-list-item
+                      v-for="artifact in fileArtifacts"
+                      :key="`file-artifact-${artifact.id}`"
+                      class="px-0 WorkflowRun__fileArtifactItem"
+                      data-testid="workflow-file-artifact"
+                    >
+                      <v-list-item-content>
+                        <v-list-item-title class="WorkflowRun__artifactTitle">
+                          <strong>{{ artifact.filename }}</strong>
+                          <span class="text--secondary">
+                            · {{ nodeLabel(artifact.workflow_node_id) }}
+                          </span>
+                          <v-chip
+                            x-small
+                            class="ml-2"
+                            :color="fileArtifactStateColor(artifact)"
+                          >{{ fileArtifactStateLabel(artifact) }}</v-chip>
+                        </v-list-item-title>
+                        <v-list-item-subtitle class="WorkflowRun__artifactDetail">
+                          {{ artifact.logical_name }} · {{ formatBytes(artifact.size_bytes) }}
+                          · {{ $t('workflowFileArtifactProducer', {
+                            template: artifact.producer_template_id,
+                            version: artifact.producer_version,
+                            task: artifact.task_id,
+                            attempt: artifact.attempt,
+                            user: artifact.producer_user_id,
+                          }) }}
+                          <span v-if="artifact.producer_runner_id">
+                            · {{ $t('workflowFileArtifactRunner', {
+                              runner: artifact.producer_runner_id,
+                            }) }}
+                          </span>
+                        </v-list-item-subtitle>
+                        <div class="WorkflowRun__checksum text-caption mt-1">
+                          <span class="text--secondary">SHA-256</span>
+                          <code class="ml-1">{{ artifact.sha256 }}</code>
+                          <v-btn
+                            text
+                            x-small
+                            color="primary"
+                            class="ml-1"
+                            @click="copyArtifactChecksum(artifact.sha256)"
+                          >{{ $t('workflowFileArtifactCopyChecksum') }}</v-btn>
+                        </div>
+                        <div class="text-caption mt-1" :class="fileArtifactExpiryClass(artifact)">
+                          {{ fileArtifactExpiryLabel(artifact) }}
+                        </div>
+                        <v-alert
+                          v-if="fileArtifactDownloadErrors[artifact.id]"
+                          type="warning"
+                          dense
+                          text
+                          class="mt-2 mb-0"
+                        >{{ fileArtifactDownloadErrors[artifact.id] }}</v-alert>
+                      </v-list-item-content>
+                      <v-list-item-action>
+                        <v-btn
+                          small
+                          outlined
+                          color="primary"
+                          :loading="downloadingArtifactId === artifact.id"
+                          :disabled="!fileArtifactDownloadable(artifact)"
+                          @click="downloadFileArtifact(artifact)"
+                        >
+                          <v-icon left small>mdi-download</v-icon>
+                          {{ $t('workflowFileArtifactDownload') }}
+                        </v-btn>
+                      </v-list-item-action>
+                    </v-list-item>
+                  </v-list>
+                </section>
+
                 <section v-if="artifacts.length > 0">
                   <div class="text-subtitle-2 mb-1">
                     {{ $t('workflowArtifactOutputs') }}
@@ -370,6 +447,11 @@
     white-space: normal;
     overflow-wrap: anywhere;
   }
+
+  &__checksum code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 
 @media (max-width: 600px) {
@@ -390,6 +472,31 @@
       min-width: 100%;
       margin-left: 0 !important;
       margin-top: 8px;
+    }
+
+    &__fileArtifactItem {
+      align-items: flex-start;
+      flex-wrap: wrap;
+
+      .v-list-item__action {
+        align-items: flex-start;
+        margin: 4px 0 8px;
+        width: 100%;
+      }
+    }
+
+    &__checksum {
+      display: flex;
+      flex-wrap: wrap;
+
+      code {
+        flex: 1 1 100%;
+        margin-left: 0 !important;
+      }
+    }
+
+    &__artifactContent {
+      max-height: 50vh;
     }
   }
 }
@@ -416,6 +523,9 @@ export default {
       workflow: null,
       templates: [],
       artifacts: [],
+      fileArtifacts: [],
+      fileArtifactDownloadErrors: {},
+      downloadingArtifactId: null,
       pollHandle: null,
       socketListenerId: null,
       stopping: false,
@@ -568,14 +678,16 @@ export default {
     async loadData() {
       try {
         const base = `/api/project/${this.projectId}/workflows/${this.workflowId}/runs/${this.runId}`;
-        const [details, artifacts] = await Promise.all([
+        const [details, artifacts, fileArtifacts] = await Promise.all([
           axios.get(base),
           axios.get(`${base}/artifacts`),
+          axios.get(`${base}/file-artifacts`),
         ]);
         this.details = details.data;
         this.workflow = details.data.workflow;
         this.templates = details.data.templates || [];
         this.artifacts = artifacts.data || [];
+        this.fileArtifacts = fileArtifacts.data || [];
       } catch (err) {
         EventBus.$emit('i-snackbar', {
           color: 'error',

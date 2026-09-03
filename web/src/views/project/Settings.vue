@@ -59,6 +59,11 @@
         ></v-progress-linear>
       </div>
 
+      <WorkflowArtifactRetentionPanel
+        v-if="isPro && canManageArtifactRetention"
+        :project-id="projectId"
+      />
+
       <DeploymentWindowsPanel
         v-if="deploymentWindowsDecision"
         :project-id="projectId"
@@ -189,10 +194,16 @@ import delay from '@/lib/delay';
 import DashboardMenu from '@/components/DashboardMenu.vue';
 import DeploymentWindowsPanel from '@/components/DeploymentWindowsPanel.vue';
 import PolicyGuardrailsPanel from '@/components/PolicyGuardrailsPanel.vue';
+import WorkflowArtifactRetentionPanel from '@/components/WorkflowArtifactRetentionPanel.vue';
 
 export default {
   components: {
-    DashboardMenu, DeploymentWindowsPanel, PolicyGuardrailsPanel, YesNoDialog, ProjectForm,
+    DashboardMenu,
+    DeploymentWindowsPanel,
+    PolicyGuardrailsPanel,
+    WorkflowArtifactRetentionPanel,
+    YesNoDialog,
+    ProjectForm,
   },
   props: {
     projectId: Number,
@@ -200,6 +211,7 @@ export default {
     systemInfo: Object,
     userPermissions: Number,
     isAdmin: Boolean,
+    isPro: Boolean,
   },
 
   data() {

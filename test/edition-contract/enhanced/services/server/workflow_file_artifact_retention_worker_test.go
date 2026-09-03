@@ -152,6 +152,10 @@ func TestWorkflowFileArtifactRetentionWorkerExpiresRealSQLContentAfterTerminalRu
 	require.NoError(t, fixture.store.GetConnection().SelectOne(&chunks,
 		"select count(1) from workflow_file_artifact_chunk where artifact_id=?", artifact.ID))
 	assert.Zero(t, chunks)
+	listed, err := service.GetWorkflowFileArtifacts(context.Background(), fixture.projectID, run.ID, db.RetrieveQueryParams{Count: 10}, &fixture.user)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, db.WorkflowFileArtifactExpired, listed[0].State)
 	require.Len(t, audit.events, 1)
 	assert.Equal(t, pro_interfaces.AuditReasonWorkflowFileArtifactExpired, audit.events[0].Reason)
 

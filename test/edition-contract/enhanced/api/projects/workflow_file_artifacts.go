@@ -166,20 +166,16 @@ func (controller *workflowFileArtifactController) DownloadWorkflowFileArtifact(w
 	if !ok {
 		return
 	}
-	if r.Method == http.MethodHead || strings.TrimSpace(r.Header.Get("Range")) != "" {
+	if strings.TrimSpace(r.Header.Get("Range")) != "" {
 		artifact, err := controller.service.GetWorkflowFileArtifact(r.Context(), project.ID, run.ID, artifactID, user)
 		if err != nil {
 			writeWorkflowFileArtifactError(w, err)
 			return
 		}
 		setWorkflowFileArtifactDownloadHeaders(w.Header(), artifact)
-		if strings.TrimSpace(r.Header.Get("Range")) != "" {
-			w.Header().Del("Content-Length")
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", artifact.SizeBytes))
-			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
+		w.Header().Del("Content-Length")
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", artifact.SizeBytes))
+		w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 		return
 	}
 	download, err := controller.service.AcquireWorkflowFileArtifactDownload(r.Context(), project.ID, run.ID, artifactID, user)
@@ -192,6 +188,11 @@ func (controller *workflowFileArtifactController) DownloadWorkflowFileArtifact(w
 			log.WithError(releaseErr).Warn("failed to release workflow file artifact download lease")
 		}
 	}()
+	if r.Method == http.MethodHead {
+		setWorkflowFileArtifactDownloadHeaders(w.Header(), download.Metadata)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	if err = http.NewResponseController(w).SetWriteDeadline(download.Deadline); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

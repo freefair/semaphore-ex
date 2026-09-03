@@ -2,6 +2,10 @@ import { findCapabilityDecision } from '@/lib/capabilities';
 import { USER_PERMISSIONS } from '@/lib/constants';
 
 const enhancedComputed = {
+  canManageArtifactRetention() {
+    return Boolean(this.isAdmin
+        || ((this.userPermissions || 0) & USER_PERMISSIONS.manageProjectResources));
+  },
   deploymentWindowsDecision() {
     const decision = findCapabilityDecision(this.systemInfo, 'deployment_windows');
     return decision?.access?.includes('read') ? decision : null;
