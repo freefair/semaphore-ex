@@ -196,7 +196,7 @@ func seedPolicyGuardrailTaskEvaluation(t *testing.T, store *coreSQL.SqlDb, proje
 	t.Helper()
 	result, err := store.Sql().Exec(
 		"insert into policy_guardrail_evaluation(project_id, decision_key, intent, source, template_id, workflow_template_id, workflow_run_id, workflow_run_node_id, task_id, actor_user_id, input_fingerprint, revisions_json, findings_json, decision, evaluated_at, created) values (?, ?, ?, ?, ?, ?, ?, ?, null, null, ?, ?, ?, ?, ?, ?)",
-		projectID, "task-binding", "task", "task-binding", templateID, nil, workflowRunID, workflowRunNodeID,
+		projectID, "task-binding-"+time.Now().UTC().Format(time.RFC3339Nano), "task", "task-binding", templateID, nil, workflowRunID, workflowRunNodeID,
 		"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "[]", "[]", decision, time.Now().UTC(), time.Now().UTC(),
 	)
 	require.NoError(t, err)

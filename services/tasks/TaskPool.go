@@ -1155,6 +1155,9 @@ func (p *TaskPool) AddTask(
 	projectID int,
 	needAlias bool,
 ) (newTask db.Task, err error) {
+	if p != nil && p.policyGuardrailAdmission != nil {
+		return db.Task{}, errors.New("policy guardrail admission is required; use a policy-aware task creation path")
+	}
 	return p.addTask(taskObj, nil, userID, username, projectID, needAlias, nil, nil)
 }
 
@@ -1357,6 +1360,9 @@ func (p *TaskPool) AddWorkflowTask(
 	projectID int,
 	needAlias bool,
 ) (newTask db.Task, err error) {
+	if err = p.requirePolicyGuardrailTaskAdmission(taskObj); err != nil {
+		return db.Task{}, err
+	}
 	if template.ID <= 0 || template.ID != taskObj.TemplateID || template.ProjectID != projectID {
 		return db.Task{}, fmt.Errorf("workflow task template snapshot does not match the task")
 	}
@@ -1381,6 +1387,9 @@ func (p *TaskPool) AddWorkflowTaskWithDeploymentWindowDecision(
 	projectID int,
 	needAlias bool,
 ) (db.Task, error) {
+	if err := p.requirePolicyGuardrailTaskAdmission(taskObj); err != nil {
+		return db.Task{}, err
+	}
 	if p.deploymentWindowAdmission == nil || taskObj.DeploymentWindowDecisionID == nil {
 		return db.Task{}, errors.New("workflow task deployment window decision is required")
 	}
@@ -1396,6 +1405,9 @@ func (p *TaskPool) AddWorkflowTaskFenced(
 	needAlias bool,
 	lease pro_interfaces.WorkflowReconciliationLease,
 ) (newTask db.Task, err error) {
+	if err = p.requirePolicyGuardrailTaskAdmission(taskObj); err != nil {
+		return db.Task{}, err
+	}
 	if template.ID <= 0 || template.ID != taskObj.TemplateID || template.ProjectID != projectID {
 		return db.Task{}, fmt.Errorf("workflow task template snapshot does not match the task")
 	}
@@ -1420,6 +1432,9 @@ func (p *TaskPool) AddWorkflowTaskFencedWithDeploymentWindowDecision(
 	needAlias bool,
 	lease pro_interfaces.WorkflowReconciliationLease,
 ) (db.Task, error) {
+	if err := p.requirePolicyGuardrailTaskAdmission(taskObj); err != nil {
+		return db.Task{}, err
+	}
 	if p.deploymentWindowAdmission == nil || taskObj.DeploymentWindowDecisionID == nil {
 		return db.Task{}, errors.New("fenced workflow task deployment window decision is required")
 	}
@@ -1438,6 +1453,9 @@ func (p *TaskPool) AddCrossProjectWorkflowTaskFenced(
 	consumerProjectID int,
 	lease *pro_interfaces.WorkflowReconciliationLease,
 ) (db.Task, error) {
+	if err := p.requirePolicyGuardrailTaskAdmission(taskObj); err != nil {
+		return db.Task{}, err
+	}
 	if p.crossProjectTaskStore == nil {
 		return db.Task{}, errors.New("cross-project workflow task fencing is unavailable")
 	}
@@ -1483,6 +1501,9 @@ func (p *TaskPool) AddCrossProjectWorkflowTaskFencedWithDeploymentWindowDecision
 	consumerProjectID int,
 	lease *pro_interfaces.WorkflowReconciliationLease,
 ) (db.Task, error) {
+	if err := p.requirePolicyGuardrailTaskAdmission(taskObj); err != nil {
+		return db.Task{}, err
+	}
 	if p.deploymentWindowAdmission == nil || taskObj.DeploymentWindowDecisionID == nil {
 		return db.Task{}, errors.New("cross-project workflow task deployment window decision is required")
 	}
@@ -1503,6 +1524,9 @@ func (p *TaskPool) addTask(
 	workflowLease *pro_interfaces.WorkflowReconciliationLease,
 	crossProjectProvenance *db.CrossProjectTemplateProvenance,
 ) (newTask db.Task, err error) {
+	if err = p.requirePolicyGuardrailTaskAdmission(taskObj); err != nil {
+		return db.Task{}, err
+	}
 	if p.deploymentWindowAdmission != nil && taskObj.DeploymentWindowDecisionID == nil {
 		return db.Task{}, errors.New("deployment window decision is required before task persistence")
 	}
@@ -1672,4 +1696,15 @@ func (p *TaskPool) addTask(
 	taskRunner.createTaskEvent()
 
 	return
+}
+
+// requirePolicyGuardrailTaskAdmission closes internal persistence paths after
+// Enhanced policy admission is configured. The evaluation record itself is
+// subsequently validated and bound atomically by the persistence store.
+func (p *TaskPool) requirePolicyGuardrailTaskAdmission(taskObj db.Task) error {
+	if p != nil && p.policyGuardrailAdmission != nil &&
+		(taskObj.PolicyGuardrailEvaluationID == nil || *taskObj.PolicyGuardrailEvaluationID <= 0) {
+		return errors.New("policy guardrail evaluation is required before task persistence")
+	}
+	return nil
 }
