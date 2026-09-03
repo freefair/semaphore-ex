@@ -40,3 +40,8 @@ func NewWorkflowStore(store db.Store) db.WorkflowManager {
 func NewWorkflowTriggerStore(db.Store) db.WorkflowTriggerManager {
 	return nil
 }
+
+// NewWorkflowFileArtifactStore is unavailable in Community.
+func NewWorkflowFileArtifactStore(db.Store) pro_interfaces.WorkflowFileArtifactRepository {
+	return nil
+}

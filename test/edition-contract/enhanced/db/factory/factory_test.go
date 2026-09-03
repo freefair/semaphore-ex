@@ -56,4 +56,14 @@ func TestPolicyGuardrailStoreIsAvailableForSQLStore(t *testing.T) {
 
 func TestPolicyGuardrailStoreIsUnavailableWithoutSQLConnection(t *testing.T) {
 	assert.Nil(t, NewPolicyGuardrailStore(nil))
+	assert.Nil(t, NewWorkflowFileArtifactStore(nil))
+}
+
+func TestWorkflowFileArtifactStoreIsAvailableForSQLStore(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+
+	repository := NewWorkflowFileArtifactStore(store)
+
+	require.NotNil(t, repository)
 }
