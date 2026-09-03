@@ -1,6 +1,7 @@
 package pro_interfaces
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/semaphoreui/semaphore/db"
 )
 
 const (
@@ -529,3 +532,110 @@ func FingerprintPolicyGuardrailInput(input PolicyGuardrailEvaluationInput) (stri
 type PolicyGuardrailEvaluator interface {
 	EvaluatePolicyGuardrails(PolicyGuardrailEvaluationInput) (PolicyGuardrailEvaluation, error)
 }
+
+type PolicyGuardrailValidationIssue struct {
+	Code    string `json:"code"`
+	Path    string `json:"path,omitempty"`
+	Message string `json:"message"`
+}
+
+type PolicyGuardrailValidationResult struct {
+	Valid       bool                             `json:"valid"`
+	Fingerprint string                           `json:"fingerprint,omitempty"`
+	RuleCount   int                              `json:"rule_count"`
+	Issues      []PolicyGuardrailValidationIssue `json:"issues"`
+}
+
+type PolicyGuardrailDraftState struct {
+	Draft  db.PolicyGuardrailDraft     `json:"draft"`
+	Active *db.PolicyGuardrailRevision `json:"active,omitempty"`
+}
+
+type PolicyGuardrailDiff struct {
+	FromRevision int      `json:"from_revision"`
+	ToRevision   int      `json:"to_revision"`
+	Added        []string `json:"added"`
+	Removed      []string `json:"removed"`
+	Changed      []string `json:"changed"`
+}
+
+type PolicyGuardrailFixtureRequest struct {
+	SourceYAML string                         `json:"source_yaml,omitempty"`
+	Input      PolicyGuardrailEvaluationInput `json:"input"`
+}
+
+type PolicyGuardrailImpactRequest struct {
+	Inputs []PolicyGuardrailEvaluationInput `json:"inputs"`
+}
+
+type PolicyGuardrailImpactResult struct {
+	Evaluations []PolicyGuardrailEvaluation `json:"evaluations"`
+	Allowed     int                         `json:"allowed"`
+	Denied      int                         `json:"denied"`
+}
+
+type PolicyGuardrailPublishRequest struct {
+	ExpectedDraftRevision int `json:"expected_draft_revision"`
+}
+
+type PolicyGuardrailRollbackRequest struct {
+	Revision              int    `json:"revision"`
+	ExpectedDraftRevision int    `json:"expected_draft_revision"`
+	Reason                string `json:"reason"`
+}
+
+type PolicyGuardrailGovernanceRepository interface {
+	GetPolicyGuardrailDraft(PolicyGuardrailScope, *int) (db.PolicyGuardrailDraft, error)
+	SavePolicyGuardrailDraft(PolicyGuardrailScope, *int, string, int, int) (db.PolicyGuardrailDraft, error)
+	PublishPolicyGuardrailRevision(PolicyGuardrailScope, *int, int, int, string, string, string, int) (db.PolicyGuardrailRevision, error)
+	RollbackPolicyGuardrailRevision(PolicyGuardrailScope, *int, int, int, int, string) (db.PolicyGuardrailRevision, error)
+	GetPolicyGuardrailRevision(PolicyGuardrailScope, *int, int) (db.PolicyGuardrailRevision, error)
+	GetPolicyGuardrailRevisions(PolicyGuardrailScope, *int, db.RetrieveQueryParams) ([]db.PolicyGuardrailRevision, error)
+	GetPolicyGuardrailEvaluationHistory(*int, db.RetrieveQueryParams) ([]db.PolicyGuardrailEvaluationRecord, error)
+}
+
+type PolicyGuardrailGovernanceServiceFacade interface {
+	Get(context.Context, PolicyGuardrailScope, *int) (PolicyGuardrailDraftState, error)
+	SaveDraft(context.Context, PolicyGuardrailScope, *int, string, int, int) (db.PolicyGuardrailDraft, error)
+	Validate(context.Context, PolicyGuardrailScope, *int, string) PolicyGuardrailValidationResult
+	TestFixture(context.Context, PolicyGuardrailScope, *int, PolicyGuardrailFixtureRequest) (PolicyGuardrailEvaluation, error)
+	Diff(context.Context, PolicyGuardrailScope, *int, int, int) (PolicyGuardrailDiff, error)
+	Publish(context.Context, PolicyGuardrailScope, *int, PolicyGuardrailPublishRequest, int) (db.PolicyGuardrailRevision, error)
+	Rollback(context.Context, PolicyGuardrailScope, *int, PolicyGuardrailRollbackRequest, int) (db.PolicyGuardrailRevision, error)
+	Impact(context.Context, PolicyGuardrailScope, *int, PolicyGuardrailImpactRequest) (PolicyGuardrailImpactResult, error)
+	Revisions(context.Context, PolicyGuardrailScope, *int, db.RetrieveQueryParams) ([]db.PolicyGuardrailRevision, error)
+	Evaluations(context.Context, *int, db.RetrieveQueryParams) ([]db.PolicyGuardrailEvaluationRecord, error)
+}
+
+type PolicyGuardrailAdmissionRequest struct {
+	DecisionKey string                         `json:"-"`
+	Source      string                         `json:"source"`
+	ActorUserID *int                           `json:"-"`
+	Input       PolicyGuardrailEvaluationInput `json:"-"`
+}
+
+type PolicyGuardrailEvaluationClaim struct {
+	Record     db.PolicyGuardrailEvaluationRecord
+	Evaluation PolicyGuardrailEvaluation
+	Inserted   bool
+}
+
+type PolicyGuardrailAdmissionRepository interface {
+	PreviewPolicyGuardrails(PolicyGuardrailEvaluationInput, func([]db.PolicyGuardrailRevision, PolicyGuardrailEvaluationInput) (PolicyGuardrailEvaluation, error)) (PolicyGuardrailEvaluation, error)
+	ClaimPolicyGuardrailEvaluation(PolicyGuardrailAdmissionRequest, func([]db.PolicyGuardrailRevision, PolicyGuardrailEvaluationInput) (PolicyGuardrailEvaluation, error)) (PolicyGuardrailEvaluationClaim, error)
+}
+
+type PolicyGuardrailAdmissionService interface {
+	PolicyGuardrailEvaluator
+	ClaimPolicyGuardrailEvaluation(PolicyGuardrailAdmissionRequest) (PolicyGuardrailEvaluationClaim, error)
+}
+
+type PolicyGuardrailAdmissionConfigurer interface {
+	ConfigurePolicyGuardrailAdmission(PolicyGuardrailAdmissionService)
+}
+
+type PolicyGuardrailDeniedError struct {
+	Evaluation PolicyGuardrailEvaluation
+}
+
+func (e *PolicyGuardrailDeniedError) Error() string { return "policy guardrail denied execution" }
