@@ -85,6 +85,15 @@ func TestPolicyGuardrailGovernancePublishesDiffsEvaluatesAndRollsBackWithSQLStor
 	require.NoError(t, err)
 	require.False(t, claim.Evaluation.Allowed)
 	require.True(t, claim.Inserted)
+	claims, err := admission.ClaimPolicyGuardrailEvaluations([]pro_interfaces.PolicyGuardrailAdmissionRequest{
+		{DecisionKey: "manual-batch-root", Source: "manual", ActorUserID: &actor.ID, Input: input},
+		{DecisionKey: "manual-batch-node", Source: "manual", ActorUserID: &actor.ID, Input: input},
+	})
+	require.NoError(t, err)
+	require.Len(t, claims, 2)
+	require.False(t, claims[0].Evaluation.Allowed)
+	require.False(t, claims[1].Evaluation.Allowed)
+	require.True(t, claims[0].Evaluation.EvaluatedAt.Equal(claims[1].Evaluation.EvaluatedAt))
 
 	secondSource := policyGuardrailServiceYAML("warn-manual", "warn", "manual")
 	draft, err = service.SaveDraft(context.Background(), pro_interfaces.PolicyGuardrailScopeProject, &projectID, secondSource, active.Draft.Revision, actor.ID)
@@ -109,7 +118,7 @@ func TestPolicyGuardrailGovernancePublishesDiffsEvaluatesAndRollsBackWithSQLStor
 	require.Len(t, revisions, 3)
 	evaluations, err := service.Evaluations(context.Background(), &projectID, db.RetrieveQueryParams{Count: 10})
 	require.NoError(t, err)
-	require.Len(t, evaluations, 1)
+	require.Len(t, evaluations, 3)
 }
 
 func policyGuardrailServiceYAML(id, effect, source string) string {

@@ -29,10 +29,26 @@ func (s *policyGuardrailAdmissionService) EvaluatePolicyGuardrails(input pro_int
 	return s.repository.PreviewPolicyGuardrails(input, evaluatePolicyGuardrailRevisions)
 }
 func (s *policyGuardrailAdmissionService) ClaimPolicyGuardrailEvaluation(request pro_interfaces.PolicyGuardrailAdmissionRequest) (pro_interfaces.PolicyGuardrailEvaluationClaim, error) {
-	if s == nil || s.repository == nil || request.Input.Validate() != nil {
+	claims, err := s.ClaimPolicyGuardrailEvaluations([]pro_interfaces.PolicyGuardrailAdmissionRequest{request})
+	if err != nil {
+		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
+	}
+	if len(claims) != 1 {
 		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, db.ErrInvalidOperation
 	}
-	return s.repository.ClaimPolicyGuardrailEvaluation(request, evaluatePolicyGuardrailRevisions)
+	return claims[0], nil
+}
+
+func (s *policyGuardrailAdmissionService) ClaimPolicyGuardrailEvaluations(requests []pro_interfaces.PolicyGuardrailAdmissionRequest) ([]pro_interfaces.PolicyGuardrailEvaluationClaim, error) {
+	if s == nil || s.repository == nil || len(requests) == 0 || len(requests) > pro_interfaces.MaxPolicyGuardrailAdmissionBatch {
+		return nil, db.ErrInvalidOperation
+	}
+	for _, request := range requests {
+		if request.Input.Validate() != nil {
+			return nil, db.ErrInvalidOperation
+		}
+	}
+	return s.repository.ClaimPolicyGuardrailEvaluations(requests, evaluatePolicyGuardrailRevisions)
 }
 
 func evaluatePolicyGuardrailRevisions(revisions []db.PolicyGuardrailRevision, input pro_interfaces.PolicyGuardrailEvaluationInput) (pro_interfaces.PolicyGuardrailEvaluation, error) {
