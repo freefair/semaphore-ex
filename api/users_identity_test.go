@@ -35,7 +35,7 @@ func TestGetAndDeleteUserIdentities(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	usersController := NewUsersController(nil)
+	usersController := NewUsersController()
 
 	// GET list
 	r := httptest.NewRequest(http.MethodGet, "/api/users/2/identities", nil)
@@ -97,7 +97,7 @@ func TestDeleteUserIdentity_AllowsUnlinkWhenMultipleIdentities(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	usersController := NewUsersController(nil)
+	usersController := NewUsersController()
 
 	r := httptest.NewRequest(http.MethodDelete, "/api/users/2/identities/ldap/ldap", nil)
 	r = helpers.SetContextValue(r, "store", store)
@@ -129,7 +129,7 @@ func TestDeleteUserIdentity_AllowsLocalUserToUnlinkLastIdentity(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	usersController := NewUsersController(nil)
+	usersController := NewUsersController()
 
 	r := httptest.NewRequest(http.MethodDelete, "/api/users/1/identities/oidc/keycloak", nil)
 	r = helpers.SetContextValue(r, "store", store)

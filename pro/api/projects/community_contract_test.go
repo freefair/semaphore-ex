@@ -10,7 +10,7 @@ import (
 )
 
 func TestCommunityProjectCollectionsAreEmpty(t *testing.T) {
-	runnerController := NewProjectRunnerController(nil, nil, nil, nil)
+	runnerController := NewProjectRunnerController(nil, nil, nil)
 	terraformController := NewTerraformInventoryController(nil)
 	workflowController := NewWorkflowController(nil, nil, nil)
 
@@ -35,7 +35,7 @@ func TestCommunityProjectCollectionsAreEmpty(t *testing.T) {
 }
 
 func TestCommunityProjectResourcesAreNotFound(t *testing.T) {
-	runnerController := NewProjectRunnerController(nil, nil, nil, nil)
+	runnerController := NewProjectRunnerController(nil, nil, nil)
 	terraformController := NewTerraformInventoryController(nil)
 	workflowController := NewWorkflowController(nil, nil, nil)
 
@@ -76,7 +76,7 @@ func TestCommunityProjectResourcesAreNotFound(t *testing.T) {
 }
 
 func TestCommunityRunnerMiddlewareHasNoSideEffects(t *testing.T) {
-	controller := NewProjectRunnerController(nil, nil, nil, nil)
+	controller := NewProjectRunnerController(nil, nil, nil)
 	called := false
 	handler := controller.RunnerMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		called = true
@@ -91,7 +91,7 @@ func TestCommunityRunnerMiddlewareHasNoSideEffects(t *testing.T) {
 }
 
 func TestCommunityRunnerTokenRegenerationReturnsNoMaterial(t *testing.T) {
-	controller := NewProjectRunnerController(nil, nil, nil, nil)
+	controller := NewProjectRunnerController(nil, nil, nil)
 	response := httptest.NewRecorder()
 
 	controller.RegenerateRegistrationToken(response, httptest.NewRequest(http.MethodPost, "/", nil))

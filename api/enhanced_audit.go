@@ -578,29 +578,6 @@ func globalRoleAuditForRoute(r *http.Request) (enhancedAuditDescriptor, bool) {
 			"events",
 		), true
 	}
-	if strings.HasSuffix(path, "/subscription") {
-		switch method {
-		case http.MethodGet, http.MethodHead:
-			return globalAuditDescriptor(
-				pro_interfaces.AuditActionGlobalSystemRead,
-				pro_interfaces.AuditTargetGlobalSystem,
-				"subscription",
-			), true
-		case http.MethodPost, http.MethodDelete:
-			return globalAuditDescriptor(
-				pro_interfaces.AuditActionGlobalSystemWrite,
-				pro_interfaces.AuditTargetGlobalSystem,
-				"subscription",
-			), true
-		}
-	}
-	if strings.HasSuffix(path, "/subscription/refresh") && method == http.MethodPost {
-		return globalAuditDescriptor(
-			pro_interfaces.AuditActionGlobalSystemWrite,
-			pro_interfaces.AuditTargetGlobalSystem,
-			"subscription",
-		), true
-	}
 	if strings.HasSuffix(path, "/options") {
 		switch method {
 		case http.MethodGet, http.MethodHead:

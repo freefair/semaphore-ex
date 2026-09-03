@@ -8,7 +8,7 @@ import (
 )
 
 func TestCommunityFeaturesAreDisabled(t *testing.T) {
-	assert.Equal(t, pro_interfaces.Features{}, GetFeatures(nil, "enhanced"))
+	assert.Equal(t, pro_interfaces.Features{}, GetFeatures())
 }
 
 func TestCommunityCompatibilityMatchesCore(t *testing.T) {

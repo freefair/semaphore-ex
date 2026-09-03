@@ -20,13 +20,10 @@ import (
 )
 
 type UserController struct {
-	subscriptionService pro_interfaces.SubscriptionService
 }
 
-func NewUserController(subscriptionService pro_interfaces.SubscriptionService) *UserController {
-	return &UserController{
-		subscriptionService: subscriptionService,
-	}
+func NewUserController() *UserController {
+	return &UserController{}
 }
 
 func (c *UserController) GetUser(w http.ResponseWriter, r *http.Request) {
@@ -43,10 +40,8 @@ func (c *UserController) GetUser(w http.ResponseWriter, r *http.Request) {
 
 	user.User = *helpers.GetFromContext(r, "user").(*db.User)
 	user.CanCreateProject = user.Admin || util.Config.NonAdminCanCreateProject
-	user.HasActiveSubscription = c.subscriptionService.HasActiveSubscription()
-	if !user.HasActiveSubscription {
-		user.Pro = false
-	}
+	user.HasActiveSubscription = false
+	user.Pro = false
 	helpers.WriteJSON(w, http.StatusOK, user)
 }
 

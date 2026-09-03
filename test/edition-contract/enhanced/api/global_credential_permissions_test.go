@@ -51,7 +51,10 @@ func TestGlobalCredentialRoutesEnforceSeparatedPermissions(t *testing.T) {
 	rotateCredential := createPermissionCredential(t, store, rotateUser.ID, "Rotate")
 	grantCredential := createPermissionCredential(t, store, grantUser.ID, "Grant")
 
-	router := rootapi.Route(store, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, globalCredentialPermissionLogWriter{}, nil, metrics.NewMetrics(), nil, nil)
+	router := rootapi.Route(store,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, globalCredentialPermissionLogWriter{}, nil, metrics.NewMetrics(), nil, nil,
+	)
 	serve := func(token, method, target, body string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, target, bytes.NewBufferString(body))
 		request.Header.Set("Authorization", "Bearer "+token)

@@ -13,7 +13,6 @@ import (
 
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
-	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
@@ -93,10 +92,6 @@ func (c *TaskController) AddTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if errors.Is(err, common_errors.ErrInvalidSubscription) {
-		helpers.WriteErrorStatus(w, "No active subscription available.", http.StatusForbidden)
-		return
-	}
 	if errors.Is(err, db.ErrExecutorImageCapabilityUnavailable) {
 		helpers.WriteErrorStatus(w, err.Error(), http.StatusForbidden)
 		return

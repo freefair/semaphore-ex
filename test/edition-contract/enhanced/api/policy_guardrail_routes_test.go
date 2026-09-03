@@ -18,7 +18,10 @@ func TestPolicyGuardrailRoutesAreRegisteredForProjectAndGlobalScopes(t *testing.
 	store := sql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
 	util.Config.Debugging = &util.DebuggingConfig{}
-	router := rootapi.Route(store, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, metrics.NewMetrics(), nil, nil)
+	router := rootapi.Route(store,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, metrics.NewMetrics(), nil, nil,
+	)
 	routes := map[string]bool{}
 	require.NoError(t, router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
 		template, err := route.GetPathTemplate()

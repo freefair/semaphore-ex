@@ -136,7 +136,7 @@ func TestProjectRolesCapabilityIsActiveInEnhancedEdition(t *testing.T) {
 		!decision.Allows(pro_interfaces.CapabilityAccessWrite) {
 		t.Fatalf("project roles capability must allow read and write, got %q", decision.State())
 	}
-	if !GetFeatures(nil, "").CustomRolesManagement {
+	if !GetFeatures().CustomRolesManagement {
 		t.Fatal("enhanced feature set must expose custom project role management")
 	}
 }
@@ -162,13 +162,13 @@ func TestExecutionPreflightCapabilityIsActiveInEnhancedEdition(t *testing.T) {
 }
 
 func TestEnhancedFeatureSetIncludesHighAvailability(t *testing.T) {
-	if !GetFeatures(nil, "").HighAvailability {
+	if !GetFeatures().HighAvailability {
 		t.Fatal("enhanced cluster dashboard must not remain behind the enterprise-only capability gate")
 	}
 }
 
 func TestEnhancedFeatureSetIncludesKubernetesExecutor(t *testing.T) {
-	if !GetFeatures(nil, "").K8sExecutor {
+	if !GetFeatures().K8sExecutor {
 		t.Fatal("enhanced feature set must expose the Kubernetes executor")
 	}
 }

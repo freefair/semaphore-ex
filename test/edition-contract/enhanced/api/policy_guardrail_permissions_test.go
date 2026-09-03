@@ -43,7 +43,10 @@ func TestPolicyGuardrailRoutesKeepManageAndRollbackPermissionsIndependent(t *tes
 	admin, err := store.CreateUserWithoutPassword(db.User{Username: "policy-guardrail-admin", Name: "Admin", Email: "policy-guardrail-admin@example.test", Admin: true})
 	require.NoError(t, err)
 
-	router := rootapi.Route(store, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, policyGuardrailPermissionLogWriter{}, nil, metrics.NewMetrics(), nil, nil)
+	router := rootapi.Route(store,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, policyGuardrailPermissionLogWriter{}, nil, metrics.NewMetrics(), nil, nil,
+	)
 	tokens := map[int]string{}
 	for _, user := range []db.User{globalManage, globalRollback, projectManage, projectRollback, admin} {
 		token := "policy-token-" + strconv.Itoa(user.ID)

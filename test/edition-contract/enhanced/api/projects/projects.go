@@ -29,7 +29,6 @@ var (
 )
 
 func NewProjectRunnerController(
-	_ pro_interfaces.SubscriptionService,
 	runnerService server.RunnerService,
 	capabilityProvider pro_interfaces.CapabilityProvider,
 	audit pro_interfaces.AuditServiceFacade,

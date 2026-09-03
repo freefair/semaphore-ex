@@ -2,10 +2,7 @@
 // enhanced-module seam. It deliberately contains no product implementation.
 package features
 
-import (
-	"github.com/semaphoreui/semaphore/db"
-	"github.com/semaphoreui/semaphore/pro_interfaces"
-)
+import "github.com/semaphoreui/semaphore/pro_interfaces"
 
 const (
 	CompatibilityVersion  = pro_interfaces.CoreContractVersion
@@ -20,7 +17,7 @@ func Compatibility() pro_interfaces.Compatibility {
 	}
 }
 
-func GetFeatures(_ *db.User, _ string) pro_interfaces.Features {
+func GetFeatures() pro_interfaces.Features {
 	return pro_interfaces.Features{
 		ProjectRunners:          true,
 		TaskSummary:             true,

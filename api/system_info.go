@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
@@ -13,7 +12,6 @@ import (
 )
 
 type SystemInfoController struct {
-	subscriptionService pro_interfaces.SubscriptionService
 }
 
 type SystemInfo struct {
@@ -46,10 +44,8 @@ type SystemInfoJWT struct {
 	MaxTTL  string `json:"max_ttl,omitempty"`
 }
 
-func NewSystemInfoController(subscriptionService pro_interfaces.SubscriptionService) *SystemInfoController {
-	return &SystemInfoController{
-		subscriptionService,
-	}
+func NewSystemInfoController() *SystemInfoController {
+	return &SystemInfoController{}
 }
 
 func (c *SystemInfoController) GetSystemInfo(w http.ResponseWriter, r *http.Request) {
@@ -96,29 +92,6 @@ func (c *SystemInfoController) GetSystemInfo(w http.ResponseWriter, r *http.Requ
 		user.Admin, globalAssignments,
 	)
 
-	var plan string
-
-	token, err := c.subscriptionService.GetToken()
-
-	switch {
-	case errors.Is(err, db.ErrNotFound):
-		err = nil
-		plan = ""
-	case err != nil:
-		log.WithFields(log.Fields{
-			"context": "system_info",
-			"user_id": user.ID,
-		}).WithError(err).Error("Failed to get subscription plan")
-		err = nil
-		plan = ""
-	default:
-		if token.State == "expired" {
-			plan = ""
-		} else {
-			plan = token.Plan
-		}
-	}
-
 	body := SystemInfo{
 		Version:           util.Version(),
 		Ansible:           util.AnsibleVersion(),
@@ -126,8 +99,8 @@ func (c *SystemInfoController) GetSystemInfo(w http.ResponseWriter, r *http.Requ
 		UseRemoteRunner:   util.Config.IsUseRemoteRunner(),
 		AuthMethods:       authMethods,
 		LoginWithPassword: !util.Config.PasswordLoginDisable,
-		Features:          proFeatures.GetFeatures(user, plan),
-		SubscriptionState: token.State,
+		Features:          proFeatures.GetFeatures(),
+		SubscriptionState: "",
 		GitClient:         util.Config.GitClientId,
 		ScheduleTimezone:  timezone,
 		Teams:             util.Config.Teams,

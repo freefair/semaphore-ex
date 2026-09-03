@@ -112,7 +112,7 @@ func TestDelegatedUserManagerCanCreateUsersButCannotGrantBreakGlassAdmin(t *test
 	})
 	require.NoError(t, err)
 
-	controller := NewUsersController(nil)
+	controller := NewUsersController()
 	request := httptest.NewRequest(http.MethodPost, "/api/users", bytes.NewBufferString(
 		`{"username":"managed-user","name":"Managed user","email":"managed@example.test","password":"strongpassword1"}`,
 	))
@@ -303,7 +303,7 @@ func TestDelegatedUserManagerCannotModifyBuiltInAdministrator(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	controller := NewUsersController(nil)
+	controller := NewUsersController()
 	update := httptest.NewRequest(http.MethodPut, "/api/users/2", bytes.NewBufferString(
 		`{"name":"Changed","username":"protected-built-in-admin","email":"protected-built-in-admin@example.test","admin":true,"password":"attacker-password"}`,
 	))
@@ -369,7 +369,7 @@ func TestDelegatedAdministratorPasswordResetDenialIsAudited(t *testing.T) {
 	require.NoError(t, err)
 
 	audit := &auditRecorderStub{}
-	controller := NewUsersController(nil)
+	controller := NewUsersController()
 	handler := controller.GetUserMiddleware(EnhancedGlobalPermissionAuditMiddleware(audit)(
 		http.HandlerFunc(controller.UpdateUserPassword),
 	))
