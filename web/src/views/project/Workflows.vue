@@ -412,6 +412,16 @@ export default {
           `/project/${this.projectId}/workflows/${workflow.id}/runs/${run.id}`,
         );
       } catch (err) {
+        if (this.$refs.workflowRunDialog?.isDeploymentWindowBlock(err)) {
+          this.$refs.workflowRunDialog.adoptDeploymentWindowBlock(err.response.data);
+          return;
+        }
+        if (err?.response?.status === 403
+          && err?.response?.data?.error === 'DEPLOYMENT_WINDOW_OVERRIDE_FORBIDDEN'
+          && this.$refs.workflowRunDialog) {
+          this.$refs.workflowRunDialog.setDeploymentWindowOverrideError();
+          return;
+        }
         const fresh = err?.response?.data?.preflight;
         if (err?.response?.status === 409 && fresh && this.$refs.workflowRunDialog) {
           this.$refs.workflowRunDialog.adoptExecutionPreflight(fresh, payload);

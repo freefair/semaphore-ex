@@ -192,6 +192,52 @@
       @change="setArgs"
     />
 
+    <v-alert
+      v-if="deploymentWindowBlock"
+      type="warning"
+      text
+      dense
+      data-testid="deployment-window-blocked"
+    >
+      <div>{{ deploymentWindowBlockMessage }}</div>
+      <div
+        v-if="deploymentWindowBlock.next_eligible_known
+          && deploymentWindowBlock.next_eligible_at"
+        class="text-caption mt-1"
+      >
+        {{ $t('deploymentWindowNextEligible') }}:
+        {{ formatDeploymentWindowDate(deploymentWindowBlock.next_eligible_at) }}
+      </div>
+    </v-alert>
+
+    <template v-if="deploymentWindowBlock">
+      <div class="text-subtitle-2 mb-2">{{ $t('deploymentWindowEmergencyOverride') }}</div>
+      <v-select
+        v-model="deploymentWindowOverrideCategory"
+        :items="deploymentWindowOverrideCategories"
+        :label="$t('deploymentWindowOverrideCategory')"
+        outlined
+        dense
+        :disabled="formSaving"
+      />
+      <v-text-field
+        v-model.trim="deploymentWindowOverrideReference"
+        :label="$t('deploymentWindowOverrideReference')"
+        :hint="$t('deploymentWindowOverrideReferenceHint')"
+        persistent-hint
+        outlined
+        dense
+        :disabled="formSaving"
+        data-testid="deployment-window-override-reference"
+      />
+      <v-checkbox
+        v-model="deploymentWindowOverrideConfirmed"
+        :label="$t('deploymentWindowOverrideConfirm')"
+        :disabled="formSaving"
+        data-testid="deployment-window-override-confirm"
+      />
+    </template>
+
     <ExecutionPreflightReview :plan="executionPreflight" />
 
   </v-form>
@@ -243,6 +289,10 @@ export default {
       inventory: null,
       executionPreflight: null,
       executionPreflightPayloadSignature: null,
+      deploymentWindowBlock: null,
+      deploymentWindowOverrideCategory: null,
+      deploymentWindowOverrideReference: '',
+      deploymentWindowOverrideConfirmed: false,
     };
   },
 
@@ -267,6 +317,27 @@ export default {
 
     app() {
       return this.template.app;
+    },
+
+    deploymentWindowOverrideCategories() {
+      return [
+        { text: this.$t('deploymentWindowOverrideIncident'), value: 'incident' },
+        { text: this.$t('deploymentWindowOverrideSecurity'), value: 'security' },
+        { text: this.$t('deploymentWindowOverrideCustomerImpact'), value: 'customer_impact' },
+      ];
+    },
+
+    deploymentWindowOverrideReady() {
+      return Boolean(this.deploymentWindowBlock
+        && this.deploymentWindowOverrideConfirmed
+        && ['incident', 'security', 'customer_impact']
+          .includes(this.deploymentWindowOverrideCategory)
+        && /^[A-Z0-9]{2,16}-[1-9][0-9]{0,9}$/
+          .test(this.deploymentWindowOverrideReference));
+    },
+
+    deploymentWindowBlockMessage() {
+      return this.$t(`deploymentWindowBlocked_${this.deploymentWindowBlock?.reason || 'unknown'}`);
     },
 
     inventory_id: {
@@ -363,6 +434,7 @@ export default {
       this.hasCommit = v.commit_hash != null;
       this.executionPreflight = null;
       this.executionPreflightPayloadSignature = null;
+      this.clearDeploymentWindowBlock();
 
       this.normalizeSelectValues();
     },
@@ -381,6 +453,41 @@ export default {
         ...this.item,
         project_id: this.projectId,
       };
+    },
+
+    taskStartPayload(payload) {
+      if (!this.deploymentWindowOverrideReady) return payload;
+      return {
+        ...payload,
+        deployment_window_override: {
+          category: this.deploymentWindowOverrideCategory,
+          reference: this.deploymentWindowOverrideReference,
+        },
+      };
+    },
+
+    isDeploymentWindowBlock(err) {
+      return err?.response?.status === 409
+        && err?.response?.data?.state === 'blocked';
+    },
+
+    adoptDeploymentWindowBlock(decision) {
+      this.deploymentWindowBlock = decision;
+      this.deploymentWindowOverrideCategory = null;
+      this.deploymentWindowOverrideReference = '';
+      this.deploymentWindowOverrideConfirmed = false;
+      this.formError = null;
+    },
+
+    clearDeploymentWindowBlock() {
+      this.deploymentWindowBlock = null;
+      this.deploymentWindowOverrideCategory = null;
+      this.deploymentWindowOverrideReference = '';
+      this.deploymentWindowOverrideConfirmed = false;
+    },
+
+    formatDeploymentWindowDate(value) {
+      return new Date(value).toLocaleString();
     },
 
     isExecutionPreflightUnavailable(err) {
@@ -409,6 +516,11 @@ export default {
         this.$emit('error', {});
         return null;
       }
+      if (this.deploymentWindowBlock && !this.deploymentWindowOverrideReady) {
+        this.formError = this.$t('deploymentWindowOverrideIncomplete');
+        this.$emit('error', { message: this.formError });
+        return null;
+      }
       this.formSaving = true;
       try {
         await this.beforeSave();
@@ -419,7 +531,7 @@ export default {
             this.executionPreflight = (await axios.post(`/api/project/${this.projectId}/tasks/preflight`, payload)).data;
           } catch (err) {
             if (this.isExecutionPreflightUnavailable(err)) {
-              return await this.submitTaskPayload(payload);
+              return await this.submitTaskPayload(this.taskStartPayload(payload));
             }
             throw err;
           }
@@ -435,11 +547,22 @@ export default {
           this.$emit('preflight', this.executionPreflight);
           return null;
         }
-        return await this.submitTaskPayload(payload, {
+        return await this.submitTaskPayload(this.taskStartPayload(payload), {
           [PREFLIGHT_FINGERPRINT_HEADER]: this.executionPreflight.fingerprint,
           [PREFLIGHT_REVIEW_HEADER]: this.executionPreflight.review_token,
         });
       } catch (err) {
+        if (this.isDeploymentWindowBlock(err)) {
+          this.adoptDeploymentWindowBlock(err.response.data);
+          this.$emit('error', {});
+          return null;
+        }
+        if (err?.response?.status === 403
+          && err?.response?.data?.error === 'DEPLOYMENT_WINDOW_OVERRIDE_FORBIDDEN') {
+          this.formError = this.$t('deploymentWindowOverrideForbidden');
+          this.$emit('error', { message: this.formError });
+          return null;
+        }
         const fresh = err?.response?.data?.preflight;
         if (err?.response?.status === 409 && fresh) {
           this.executionPreflight = fresh;
