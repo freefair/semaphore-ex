@@ -319,6 +319,53 @@ func (s *PolicyGuardrailStore) PreviewPolicyGuardrails(input pro_interfaces.Poli
 	return evaluation, nil
 }
 
+// PreviewPolicyGuardrailEvaluations evaluates a bounded workflow admission
+// batch under one read-only policy revision and database-time snapshot. It is
+// deliberately transactionally consistent with ClaimPolicyGuardrailEvaluations
+// without inserting an evaluation record or reserving a decision key.
+func (s *PolicyGuardrailStore) PreviewPolicyGuardrailEvaluations(inputs []pro_interfaces.PolicyGuardrailEvaluationInput, evaluate func([]db.PolicyGuardrailRevision, pro_interfaces.PolicyGuardrailEvaluationInput) (pro_interfaces.PolicyGuardrailEvaluation, error)) ([]pro_interfaces.PolicyGuardrailEvaluation, error) {
+	if s == nil || s.connection == nil || evaluate == nil || len(inputs) == 0 || len(inputs) > pro_interfaces.MaxPolicyGuardrailAdmissionBatch {
+		return nil, db.ErrInvalidOperation
+	}
+	projectID := inputs[0].ProjectID
+	for _, input := range inputs {
+		if !policyGuardrailInputTargetValid(input) || input.ProjectID != projectID {
+			return nil, db.ErrInvalidOperation
+		}
+	}
+	tx, err := s.connection.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = s.lockPolicyScope(tx, "global", nil); err != nil {
+		return nil, err
+	}
+	if err = s.lockPolicyScope(tx, policyGuardrailProjectKey(projectID), policyGuardrailPointer(projectID)); err != nil {
+		return nil, err
+	}
+	revisions, now, err := s.activePolicyGuardrailRevisions(tx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	evaluations := make([]pro_interfaces.PolicyGuardrailEvaluation, len(inputs))
+	for index, input := range inputs {
+		input.EvaluatedAt = now
+		evaluation, evaluateErr := evaluate(revisions, input)
+		if evaluateErr != nil {
+			return nil, evaluateErr
+		}
+		if validateErr := validatePolicyGuardrailEvaluation(revisions, input, evaluation); validateErr != nil {
+			return nil, validateErr
+		}
+		evaluations[index] = evaluation
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return evaluations, nil
+}
+
 func (s *PolicyGuardrailStore) ClaimPolicyGuardrailEvaluation(request pro_interfaces.PolicyGuardrailAdmissionRequest, evaluate func([]db.PolicyGuardrailRevision, pro_interfaces.PolicyGuardrailEvaluationInput) (pro_interfaces.PolicyGuardrailEvaluation, error)) (pro_interfaces.PolicyGuardrailEvaluationClaim, error) {
 	claims, err := s.ClaimPolicyGuardrailEvaluations([]pro_interfaces.PolicyGuardrailAdmissionRequest{request}, evaluate)
 	if err != nil {

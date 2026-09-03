@@ -28,6 +28,22 @@ func (s *policyGuardrailAdmissionService) EvaluatePolicyGuardrails(input pro_int
 	}
 	return s.repository.PreviewPolicyGuardrails(input, evaluatePolicyGuardrailRevisions)
 }
+
+// PreviewPolicyGuardrailEvaluations resolves a workflow root and its task
+// nodes against one read-only policy revision and database-time snapshot. It
+// intentionally persists nothing; final admission uses the matching claim
+// batch immediately before workflow creation.
+func (s *policyGuardrailAdmissionService) PreviewPolicyGuardrailEvaluations(inputs []pro_interfaces.PolicyGuardrailEvaluationInput) ([]pro_interfaces.PolicyGuardrailEvaluation, error) {
+	if s == nil || s.repository == nil || len(inputs) == 0 || len(inputs) > pro_interfaces.MaxPolicyGuardrailAdmissionBatch {
+		return nil, db.ErrInvalidOperation
+	}
+	for _, input := range inputs {
+		if input.Validate() != nil {
+			return nil, db.ErrInvalidOperation
+		}
+	}
+	return s.repository.PreviewPolicyGuardrailEvaluations(inputs, evaluatePolicyGuardrailRevisions)
+}
 func (s *policyGuardrailAdmissionService) ClaimPolicyGuardrailEvaluation(request pro_interfaces.PolicyGuardrailAdmissionRequest) (pro_interfaces.PolicyGuardrailEvaluationClaim, error) {
 	claims, err := s.ClaimPolicyGuardrailEvaluations([]pro_interfaces.PolicyGuardrailAdmissionRequest{request})
 	if err != nil {

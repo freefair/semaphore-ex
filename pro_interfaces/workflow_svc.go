@@ -84,6 +84,14 @@ type WorkflowDeploymentWindowAdmissionConfigurer interface {
 	ConfigureDeploymentWindowAdmission(DeploymentWindowAdmissionService)
 }
 
+// WorkflowPolicyGuardrailAdmissionConfigurer attaches the optional Enhanced
+// policy boundary without widening the Community WorkflowService contract.
+// Implementations must fail closed when the configured task enqueuer cannot
+// provide immutable workflow-node policy inputs.
+type WorkflowPolicyGuardrailAdmissionConfigurer interface {
+	ConfigurePolicyGuardrailAdmission(PolicyGuardrailAdmissionService)
+}
+
 // WorkflowApprovalIdentityStore resolves the current project role used to
 // authorize an approval decision. The request itself snapshots the required
 // permission, so later definition edits cannot weaken the pending request.
