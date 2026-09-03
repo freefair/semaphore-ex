@@ -54,8 +54,6 @@ jobs:
           path: bin/semaphore
           retention-days: 1
 
-      # Community CI never receives the enhanced repository credential. The
-      # hooks detect the disabled workflow store and skip enhanced-only cases.
       - name: Build dredd hooks
         run: task dredd:hooks
 
@@ -673,7 +671,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           images: |
-            semaphoreui/semaphore-community
+            semaphoreui/semaphore
           labels: |
             org.opencontainers.image.vendor=SemaphoreUI
             maintainer=Semaphore UI <support@semaphoreui.com>
@@ -727,7 +725,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           images: |
-            semaphoreui/runner-community
+            semaphoreui/runner
           labels: |
             org.opencontainers.image.vendor=SemaphoreUI
             maintainer=Semaphore UI <support@semaphoreui.com>

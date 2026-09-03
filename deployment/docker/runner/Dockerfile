@@ -17,22 +17,16 @@ COPY . /go/src/semaphore
 RUN --mount=type=cache,target=/go/pkg \
     go mod download -x
 
-ARG APP_BUILD_TYPE
 ARG TARGETOS
 ARG TARGETARCH
 ARG CORE_REVISION
 ARG ENHANCED_REVISION
 
-RUN if [ -n "$APP_BUILD_TYPE" ]; then \
-      test -f pro_impl/go.mod && \
-      go work init . ./pro_impl; \
-    fi
-
 RUN --mount=type=cache,target=/go/pkg \
     --mount=type=cache,target=/root/.cache/go-build \
-    task deps:be APP_BUILD_TYPE=${APP_BUILD_TYPE} && \
+    task deps:be && \
     task deps:fe && \
-    task build GOOS=${TARGETOS} GOARCH=${TARGETARCH} APP_BUILD_TYPE=${APP_BUILD_TYPE} CORE_REVISION=${CORE_REVISION} ENHANCED_REVISION=${ENHANCED_REVISION}
+    task build GOOS=${TARGETOS} GOARCH=${TARGETARCH} CORE_REVISION=${CORE_REVISION} ENHANCED_REVISION=${ENHANCED_REVISION}
 
 
 # renovate: datasource=github-releases depName=opentofu/opentofu
@@ -63,12 +57,11 @@ RUN wget -O /tmp/terragrunt https://github.com/gruntwork-io/terragrunt/releases/
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 ARG TARGETARCH="amd64"
-ARG EDITION="community"
 ARG CORE_REVISION
 ARG ENHANCED_REVISION
 
 LABEL org.opencontainers.image.revision=${CORE_REVISION} \
-      io.semaphore.edition=${EDITION} \
+      io.semaphore.edition=enhanced \
       io.semaphore.core.revision=${CORE_REVISION} \
       io.semaphore.enhanced.revision=${ENHANCED_REVISION}
 

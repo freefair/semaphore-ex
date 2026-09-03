@@ -1,0 +1,180 @@
+name: Full Product Build
+
+'on':
+  pull_request:
+    branches:
+      - develop
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.26.5'
+  NODE_VERSION: '24.19.0'
+  TASK_VERSION: '3.53.1'
+
+jobs:
+  product:
+    name: Full-product artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            go.sum
+            pro/go.sum
+            test/edition-contract/enhanced/go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            test/e2e/package-lock.json
+
+      - name: Install pinned build tools
+        run: |
+          go install github.com/go-task/task/v3/cmd/task@v"${TASK_VERSION}"
+          npm ci --prefix web
+
+      - name: Test full-product modules
+        run: |
+          go test ./... -count=1
+          (cd test/edition-contract/enhanced && go test ./... -count=1)
+
+      - name: Build full-product artifacts twice
+        env:
+          CORE_REVISION: ${{ github.sha }}
+          ENHANCED_REVISION: ${{ github.sha }}
+        run: |
+          source_date_epoch=$(git show -s --format=%ct HEAD)
+          task build:edition \
+            CORE_REVISION="$CORE_REVISION" \
+            ENHANCED_REVISION="$ENHANCED_REVISION" \
+            SOURCE_DATE_EPOCH="$source_date_epoch" \
+            OUTPUT_DIR=dist/product-first
+          task build:edition \
+            CORE_REVISION="$CORE_REVISION" \
+            ENHANCED_REVISION="$ENHANCED_REVISION" \
+            SOURCE_DATE_EPOCH="$source_date_epoch" \
+            OUTPUT_DIR=dist/product-second
+          diff -qr dist/product-first dist/product-second
+
+      - name: Browser smoke full-product presentation
+        run: |
+          npm ci --prefix test/e2e
+          npx --prefix test/e2e playwright install --with-deps chromium
+          python3 -m http.server 8080 --directory dist/product-first/web &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          (cd test/e2e && npx playwright test tests/edition.spec.ts)
+
+      - name: Build and smoke full-product containers
+        env:
+          CORE_REVISION: ${{ github.sha }}
+          ENHANCED_REVISION: ${{ github.sha }}
+        run: |
+          docker build \
+            --build-arg CORE_REVISION="$CORE_REVISION" \
+            --build-arg ENHANCED_REVISION="$ENHANCED_REVISION" \
+            --tag semaphore-product-server:ci \
+            --file deployment/docker/server/Dockerfile .
+          docker build \
+            --build-arg CORE_REVISION="$CORE_REVISION" \
+            --build-arg ENHANCED_REVISION="$ENHANCED_REVISION" \
+            --tag semaphore-product-runner:ci \
+            --file deployment/docker/runner/Dockerfile .
+          container_id=$(docker run --rm --detach \
+            --publish 3000:3000 \
+            --env SEMAPHORE_DB_DIALECT=sqlite \
+            --env SEMAPHORE_ADMIN=admin \
+            --env SEMAPHORE_ADMIN_PASSWORD=product-smoke-password \
+            --env SEMAPHORE_ADMIN_NAME='Product Smoke' \
+            --env SEMAPHORE_ADMIN_EMAIL=product-smoke@example.invalid \
+            semaphore-product-server:ci)
+          trap 'docker stop "$container_id"' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3000/api/ping >/dev/null; then
+              break
+            fi
+            test "$attempt" -lt 60
+            sleep 1
+          done
+          curl --fail --silent --cookie-jar /tmp/semaphore-cookie \
+            --header 'Content-Type: application/json' \
+            --data '{"auth":"admin","password":"product-smoke-password","method":"password"}' \
+            http://127.0.0.1:3000/api/auth/login
+          curl --fail --silent --cookie /tmp/semaphore-cookie \
+            http://127.0.0.1:3000/api/info | \
+            jq --exit-status '.edition == "enhanced" and (.features | type == "object")'
+          docker run --rm semaphore-product-runner:ci /usr/local/bin/semaphore version
+
+      - name: Upload full-product evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: product-${{ github.sha }}
+          path: |
+            dist/product-first
+            test/e2e/test-results/full-product.png
+          if-no-files-found: error
+          retention-days: 14
+
+  ha-resilience:
+    name: HA resilience contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            go.sum
+            test/edition-contract/enhanced/go.sum
+
+      - name: Verify HA harness contracts
+        run: go test ./test/ha-resilience/... -count=1
+
+      - name: Build clean-room HA images
+        run: ./test/ha-resilience/build-clean-room-images.sh
+
+      - name: Run required HA fault gate
+        env:
+          SEMAPHORE_HA_SERVER_A_IMAGE: semaphore-enhanced-server:ha-skew-old
+          SEMAPHORE_HA_SERVER_B_IMAGE: semaphore-enhanced-server:ha-candidate
+          SEMAPHORE_HA_REPLACEMENT_IMAGE: semaphore-enhanced-server:ha-candidate
+          SEMAPHORE_HA_RUNNER_IMAGE: semaphore-enhanced-server:ha-candidate
+        run: ./test/ha-resilience/run.sh --report dist/ha-resilience/report.json
+
+      - name: Validate HA result
+        if: always()
+        run: jq --exit-status '.result == "passed"' dist/ha-resilience/report.json
+
+      - name: Upload HA evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ha-resilience-${{ github.sha }}
+          path: dist/ha-resilience/report.json
+          if-no-files-found: error
+          retention-days: 14

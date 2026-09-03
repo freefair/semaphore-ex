@@ -2,25 +2,17 @@ version: "3"
 
 tasks:
   build:edition:
-    desc: Build traceable server, runner, and frontend artifacts for one edition
+    desc: Build traceable full-product server, runner, and frontend artifacts
     vars:
-      EDITION: '{{ if eq .APP_BUILD_TYPE "pro_selfhosted" }}enhanced{{ else }}community{{ end }}'
+      EDITION: enhanced
       IMPLEMENTATION_VERSION:
-        sh: if [ "{{ .EDITION }}" = "enhanced" ]; then echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'; else echo 'community-1'; fi
-      OUTPUT_DIR: '{{ .OUTPUT_DIR | default (printf "dist/%s" .EDITION) }}'
-    preconditions:
-      - sh: '[ -z "{{ .APP_BUILD_TYPE }}" ] || [ "{{ .APP_BUILD_TYPE }}" = "pro_selfhosted" ]'
-        msg: APP_BUILD_TYPE must be empty or pro_selfhosted
-      - sh: '[ "{{ .EDITION }}" = "community" ] || [ -n "{{ .ENHANCED_REVISION }}" ]'
-        msg: Enhanced builds require a pinned pro_impl checkout
+        sh: echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'
+      OUTPUT_DIR: '{{ .OUTPUT_DIR | default "dist/product" }}'
     cmds:
       - task: build:fe:edition
         vars:
-          APP_BUILD_TYPE: '{{ .APP_BUILD_TYPE }}'
           OUTPUT_DIR: '{{ .OUTPUT_DIR }}'
       - task: build:be
-        vars:
-          APP_BUILD_TYPE: '{{ .APP_BUILD_TYPE }}'
       - >-
         go run ./tools/buildmeta
         -binary "bin/semaphore"
@@ -37,14 +29,12 @@ tasks:
   build:fe:edition:
     desc: Rebuild production frontend and separate deterministic debug source maps
     dir: web
-    vars:
-      EDITION: '{{ if eq .APP_BUILD_TYPE "pro_selfhosted" }}enhanced{{ else }}community{{ end }}'
     cmds:
       - >-
-        {{ if eq OS "windows" }}set VUE_APP_BUILD_TYPE={{ .APP_BUILD_TYPE }} && set VUE_APP_EDITION={{ .EDITION }} && set VUE_APP_SOURCE_MAP_MODE=none && {{ else }}env VUE_APP_BUILD_TYPE={{ .APP_BUILD_TYPE }} VUE_APP_EDITION={{ .EDITION }} VUE_APP_SOURCE_MAP_MODE=none{{ end }}
+        {{ if eq OS "windows" }}set VUE_APP_SOURCE_MAP_MODE=none && {{ else }}env VUE_APP_SOURCE_MAP_MODE=none{{ end }}
         npm run build
       - >-
-        {{ if eq OS "windows" }}set VUE_APP_BUILD_TYPE={{ .APP_BUILD_TYPE }} && set VUE_APP_EDITION={{ .EDITION }} && set VUE_APP_SOURCE_MAP_MODE=hidden && set VUE_APP_OUTPUT_DIR={{ .ROOT_DIR }}/{{ .OUTPUT_DIR }}.frontend-debug && {{ else }}env VUE_APP_BUILD_TYPE={{ .APP_BUILD_TYPE }} VUE_APP_EDITION={{ .EDITION }} VUE_APP_SOURCE_MAP_MODE=hidden VUE_APP_OUTPUT_DIR="{{ .ROOT_DIR }}/{{ .OUTPUT_DIR }}.frontend-debug"{{ end }}
+        {{ if eq OS "windows" }}set VUE_APP_SOURCE_MAP_MODE=hidden && set VUE_APP_OUTPUT_DIR={{ .ROOT_DIR }}/{{ .OUTPUT_DIR }}.frontend-debug && {{ else }}env VUE_APP_SOURCE_MAP_MODE=hidden VUE_APP_OUTPUT_DIR="{{ .ROOT_DIR }}/{{ .OUTPUT_DIR }}.frontend-debug"{{ end }}
         npm run build
       - >-
         cd "{{ .ROOT_DIR }}" && go run ./tools/frontendmaps

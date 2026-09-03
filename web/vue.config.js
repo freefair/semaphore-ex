@@ -1,4 +1,3 @@
-const webpack = require('webpack');
 const path = require('path');
 
 const sourceMapMode = process.env.VUE_APP_SOURCE_MAP_MODE || 'none';
@@ -20,12 +19,6 @@ module.exports = {
         return `webpack://semaphore/${relativePath}`;
       },
     },
-    plugins: [
-      new webpack.DefinePlugin({
-        'process.env.VUE_APP_BUILD_TYPE': JSON.stringify(process.env.VUE_APP_BUILD_TYPE),
-        'process.env.VUE_APP_EDITION': JSON.stringify(process.env.VUE_APP_EDITION || 'community'),
-      }),
-    ],
     devServer: {
       historyApiFallback: true,
       proxy: {
@@ -40,8 +33,6 @@ module.exports = {
       .tap((args) => {
         // eslint-disable-next-line no-param-reassign
         args[0].minify = false;
-        // eslint-disable-next-line no-param-reassign
-        args[0].edition = process.env.VUE_APP_EDITION || 'community';
         return args;
       });
   },

@@ -2,10 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { expect, test } from '@playwright/test';
 
-test('production bundle exposes the expected edition', async ({ page }) => {
-  const expectedEdition = process.env.EDITION_EXPECTED;
-  test.skip(!expectedEdition, 'EDITION_EXPECTED is only set by edition smoke jobs');
-
+test('full-product production bundle loads', async ({ page }) => {
   const runtimeErrors: string[] = [];
   let submittedCredentials: Record<string, unknown> | undefined;
   page.on('pageerror', (error) => runtimeErrors.push(error.message));
@@ -48,7 +45,6 @@ test('production bundle exposes the expected edition', async ({ page }) => {
   });
 
   await page.goto('/');
-  await expect(page.locator('html')).toHaveAttribute('data-edition', expectedEdition as string);
   await expect(page.getByTestId('auth-username')).toBeVisible();
   await expect(page.getByTestId('auth-password')).toBeVisible();
   await expect(page.getByTestId('auth-signin')).toBeEnabled();
@@ -56,7 +52,7 @@ test('production bundle exposes the expected edition', async ({ page }) => {
   const evidenceDirectory = path.resolve(__dirname, '..', 'test-results');
   fs.mkdirSync(evidenceDirectory, { recursive: true });
   await page.screenshot({
-    path: path.join(evidenceDirectory, `${expectedEdition}-edition.png`),
+    path: path.join(evidenceDirectory, 'full-product.png'),
     fullPage: true,
   });
 

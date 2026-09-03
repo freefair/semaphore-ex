@@ -53,13 +53,13 @@ __debug_bin*
 /task_results.log
 /pro_impl/
 /go.work.x
-/go.work
 /go.work.sum
 /.licenses-cache
 /*-config.yaml
 /*-config.yml
 /*-config.config
 /*.sqlite*
+
 # Generated standalone API description for legacy Dredd consumers.
 /.dredd/api-docs.bundled.yml
 

@@ -13,7 +13,7 @@ vars:
   CORE_REVISION:
     sh: git rev-parse HEAD
   ENHANCED_REVISION:
-    sh: if git -C pro_impl rev-parse HEAD >/dev/null 2>&1; then git -C pro_impl rev-parse HEAD; fi
+    sh: git rev-parse HEAD
   SOURCE_DATE_EPOCH:
     sh: git show -s --format=%ct HEAD
 
@@ -27,7 +27,6 @@ tasks:
         vars:
           GOOS: ""
           GOARCH: ""
-          APP_BUILD_TYPE: ""
 
   deps:
     desc: Install all build dependencies
@@ -51,7 +50,7 @@ tasks:
   deps:be:
     desc: Vendor application dependencies
     cmds:
-      - go {{ if eq .APP_BUILD_TYPE "pro_selfhosted" }}work{{ else }}mod{{ end }} vendor
+      - go work vendor
 
   deps:fe:
     desc: Installs nodejs requirements
@@ -75,9 +74,9 @@ tasks:
         -gcflags="all=-N -l"
         -ldflags "-X {{ .IMPORT }}/util.Ver={{ .VERSION }} -X {{ .IMPORT }}/util.Commit={{ .SHA }} -X {{ .IMPORT }}/util.Date={{ .DATE }} -X {{ .IMPORT }}/util.BuildEdition={{ .EDITION }} -X {{ .IMPORT }}/util.CoreRevision={{ .CORE_REVISION }} -X {{ .IMPORT }}/util.EnhancedRevision={{ .ENHANCED_REVISION }} -X {{ .IMPORT }}/util.EditionImplementation={{ .IMPLEMENTATION_VERSION }}" ./cli
     vars:
-      EDITION: '{{ if eq .APP_BUILD_TYPE "pro_selfhosted" }}enhanced{{ else }}community{{ end }}'
+      EDITION: enhanced
       IMPLEMENTATION_VERSION:
-        sh: if [ "{{ .EDITION }}" = "enhanced" ]; then echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'; else echo 'community-1'; fi
+        sh: echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'
       TAG:
         sh: git name-rev --name-only --tags --no-undefined HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD
       SHA:
@@ -89,8 +88,6 @@ tasks:
   build:fe:
     desc: Build VueJS project
     dir: web
-    vars:
-      EDITION: '{{ if eq .APP_BUILD_TYPE "pro_selfhosted" }}enhanced{{ else }}community{{ end }}'
     sources:
       - src/*.*
       - src/**/*.*
@@ -107,7 +104,7 @@ tasks:
       - ../api/public/favicon.ico
     cmds:
       - >-
-        {{ if eq OS "windows" }}set VUE_APP_BUILD_TYPE={{ .APP_BUILD_TYPE }} && set VUE_APP_EDITION={{ .EDITION }} && set VUE_APP_SOURCE_MAP_MODE=none && {{ else }}env VUE_APP_BUILD_TYPE={{ .APP_BUILD_TYPE }} VUE_APP_EDITION={{ .EDITION }} VUE_APP_SOURCE_MAP_MODE=none{{ end }}
+        {{ if eq OS "windows" }}set VUE_APP_SOURCE_MAP_MODE=none && {{ else }}env VUE_APP_SOURCE_MAP_MODE=none{{ end }}
         npm run build
 
   build:be:
@@ -119,9 +116,9 @@ tasks:
         -tags "netgo"
         -ldflags "-s -w -X {{ .IMPORT }}/util.Ver={{ .VERSION }} -X {{ .IMPORT }}/util.Commit={{ .SHA }} -X {{ .IMPORT }}/util.Date={{ .DATE }} -X {{ .IMPORT }}/util.BuildEdition={{ .EDITION }} -X {{ .IMPORT }}/util.CoreRevision={{ .CORE_REVISION }} -X {{ .IMPORT }}/util.EnhancedRevision={{ .ENHANCED_REVISION }} -X {{ .IMPORT }}/util.EditionImplementation={{ .IMPLEMENTATION_VERSION }}" ./cli
     vars:
-      EDITION: '{{ if eq .APP_BUILD_TYPE "pro_selfhosted" }}enhanced{{ else }}community{{ end }}'
+      EDITION: enhanced
       IMPLEMENTATION_VERSION:
-        sh: if [ "{{ .EDITION }}" = "enhanced" ]; then echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'; else echo 'community-1'; fi
+        sh: echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'
       TAG:
         sh: if [ -n "${SEMAPHORE_SOURCE_TAG:-}" ]; then printf '%s\n' "${SEMAPHORE_SOURCE_TAG}"; else git name-rev --name-only --tags --no-undefined HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD; fi
       SHA:
@@ -192,12 +189,9 @@ tasks:
   release:prod:
     desc: Create and publish a release
     vars:
-      EDITION: '{{ if eq .APP_BUILD_TYPE "pro_selfhosted" }}enhanced{{ else }}community{{ end }}'
+      EDITION: enhanced
       IMPLEMENTATION_VERSION:
-        sh: if [ "{{ .EDITION }}" = "enhanced" ]; then echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'; else echo 'community-1'; fi
-    preconditions:
-      - sh: '[ "{{ .EDITION }}" = "community" ] || [ -n "{{ .ENHANCED_REVISION }}" ]'
-        msg: Enhanced releases require ENHANCED_REVISION
+        sh: echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'
     cmds:
       - >-
         env BUILD_EDITION="{{ .EDITION }}"
@@ -210,12 +204,9 @@ tasks:
   release:test:
     desc: Create a local test release
     vars:
-      EDITION: '{{ if eq .APP_BUILD_TYPE "pro_selfhosted" }}enhanced{{ else }}community{{ end }}'
+      EDITION: enhanced
       IMPLEMENTATION_VERSION:
-        sh: if [ "{{ .EDITION }}" = "enhanced" ]; then echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'; else echo 'community-1'; fi
-    preconditions:
-      - sh: '[ "{{ .EDITION }}" = "community" ] || [ -n "{{ .ENHANCED_REVISION }}" ]'
-        msg: Enhanced releases require ENHANCED_REVISION
+        sh: echo "{{ .ENHANCED_REVISION }}" | cut -c1-12 | sed 's/^/enhanced-/'
     cmds:
       - >-
         env BUILD_EDITION="{{ .EDITION }}"
