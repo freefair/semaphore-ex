@@ -9,7 +9,6 @@ import (
 
 // NewProjectRunnerController creates a new ProjectRunnerController instance.
 func NewProjectRunnerController(
-	subscriptionService pro_interfaces.SubscriptionService,
 	runnerService server.RunnerService,
 	capabilityProvider pro_interfaces.CapabilityProvider,
 	audit pro_interfaces.AuditServiceFacade,

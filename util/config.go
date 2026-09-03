@@ -717,8 +717,6 @@ type ConfigType struct {
 
 	HA *HAConfig `json:"ha,omitempty"`
 
-	Subscription *SubscriptionConfig `json:"subscription,omitempty"`
-
 	Dirs *ConfigDirs `json:"dirs,omitempty"`
 
 	Runner *RunnerConfig `json:"runner,omitempty"`
@@ -843,14 +841,6 @@ func (conf *ConfigType) RunnersReconcileInterval() time.Duration {
 	return time.Duration(sec) * time.Second
 }
 
-type SubscriptionConfig struct {
-	// Key is a subscription key or token that can be set via config.
-	// When this is set, subscription activation from the web interface is disabled.
-	Key       string `json:"key,omitempty" db:"-" env:"SEMAPHORE_SUBSCRIPTION_KEY,sensitive"`
-	KeyFile   string `json:"key_file,omitempty" db:"-" env:"SEMAPHORE_SUBSCRIPTION_KEY_FILE"`
-	ServerURL string `json:"server_url,omitempty" env:"SEMAPHORE_SUBSCRIPTION_SERVER_URL" default:"https://portal.semaphoreui.com/billing"`
-}
-
 func NewConfigType() *ConfigType {
 	return &ConfigType{
 		LdapMappings: &LdapMappings{},
@@ -972,15 +962,6 @@ func ConfigInit(configPath string, noConfigFile bool) (usedConfigPath *string) {
 		if err == nil {
 			Config.Runner.Token = strings.TrimSpace(string(runnerTokenBytes))
 		}
-	}
-
-	if Config.Subscription.KeyFile != "" {
-		subscriptionKeyBytes, err := os.ReadFile(Config.Subscription.KeyFile)
-		if err != nil {
-			panic(err)
-		}
-
-		Config.Subscription.Key = strings.TrimSpace(string(subscriptionKeyBytes))
 	}
 
 	return

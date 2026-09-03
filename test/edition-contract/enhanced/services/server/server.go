@@ -9,11 +9,9 @@ type DvlsStorageTokenDeserializer = community.DvlsStorageTokenDeserializer
 type AwsSmAccessKeyDeserializer = community.AwsSmAccessKeyDeserializer
 type AzureKvAccessKeyDeserializer = community.AzureKvAccessKeyDeserializer
 type DvlsAccessKeyDeserializer = community.DvlsAccessKeyDeserializer
-type SubscriptionServiceImpl = community.SubscriptionServiceImpl
 
 var (
 	NewAwsSmAccessKeyDeserializer   = community.NewAwsSmAccessKeyDeserializer
 	NewAzureKvAccessKeyDeserializer = community.NewAzureKvAccessKeyDeserializer
 	NewDvlsAccessKeyDeserializer    = community.NewDvlsAccessKeyDeserializer
-	NewSubscriptionService          = community.NewSubscriptionService
 )

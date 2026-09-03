@@ -11,7 +11,6 @@ import (
 	"github.com/pquerna/otp/totp"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
-	"github.com/semaphoreui/semaphore/pro_interfaces"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
 
@@ -19,14 +18,12 @@ import (
 )
 
 type UsersController struct {
-	subscriptionService pro_interfaces.SubscriptionService
-	log                 *log.Entry
+	log *log.Entry
 }
 
-func NewUsersController(subscriptionService pro_interfaces.SubscriptionService) *UsersController {
+func NewUsersController() *UsersController {
 	return &UsersController{
-		subscriptionService: subscriptionService,
-		log:                 log.WithField("context", "api.users"),
+		log: log.WithField("context", "api.users"),
 	}
 }
 
@@ -73,6 +70,8 @@ func (c *UsersController) AddUser(w http.ResponseWriter, r *http.Request) {
 	if !helpers.Bind(w, r, &user) {
 		return
 	}
+	// Commercial user entitlements are not part of the clean-room product.
+	user.Pro = false
 
 	editor := helpers.GetFromContext(r, "user").(*db.User)
 	canManageUsers, err := hasGlobalPermission(r, editor, db.CanManageGlobalUsers)
@@ -89,25 +88,6 @@ func (c *UsersController) AddUser(w http.ResponseWriter, r *http.Request) {
 		c.log.WithField("editor", editor.Username).Debug("Delegated user manager cannot grant break-glass administration")
 		w.WriteHeader(http.StatusForbidden)
 		return
-	}
-
-	if user.Pro {
-		ok, err := c.subscriptionService.CanAddProUser()
-
-		if err != nil {
-			c.log.WithError(err).Error("Failed to check Pro user limit")
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-
-		if !ok {
-			helpers.WriteErrorStatus(
-				w,
-				"You have reached the limit of Pro users for your subscription.",
-				http.StatusForbidden,
-			)
-			return
-		}
 	}
 
 	var createErr error
@@ -221,25 +201,6 @@ func (c *UsersController) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if user.Pro {
-		ok, err := c.subscriptionService.CanAddProUser()
-
-		if err != nil {
-			c.log.WithError(err).Error("Failed to check Pro user limit")
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-
-		if !ok {
-			helpers.WriteErrorStatus(
-				w,
-				"You have reached the limit of Pro users for your subscription.",
-				http.StatusForbidden,
-			)
-			return
-		}
-	}
-
 	if !canManageUsers && editor.ID != targetUser.ID {
 		c.log.WithFields(log.Fields{
 			"editor":  editor.Username,
@@ -262,6 +223,9 @@ func (c *UsersController) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
+	// Preserve the schema field while preventing legacy commercial state from
+	// influencing authorization or feature availability.
+	user.Pro = false
 
 	if targetUser.External && targetUser.Username != user.Username {
 		c.log.WithField("user_id", targetUser.ID).Debug("Username is not editable for external users")

@@ -133,7 +133,6 @@ func runService() {
 	ldapGroupScheduler := server.NewLDAPGroupReconciliationScheduler(ldapGroupService)
 	environmentService := server.NewEnvironmentService(store, encryptionService, store)
 	runnerService := server.NewRunnerService(store)
-	subscriptionService := proServer.NewSubscriptionService(store, store, store, terraformStore)
 	logWriteService := proServer.NewLogWriteServiceWithFilter(debugFilter)
 	defer func() {
 		if err := logWriteService.Close(); err != nil {
@@ -303,8 +302,6 @@ func runService() {
 	fmt.Printf("Interface %v\n", util.Config.Interface)
 	fmt.Printf("Port %v\n", util.Config.Port)
 
-	subscriptionService.StartValidationCron()
-
 	// Start the WebSocket hub before the broadcaster so that h.broadcast
 	// channel is being consumed when LocalBroadcast is called.
 	go sockets.StartWS()
@@ -336,7 +333,6 @@ func runService() {
 		secretStorageService,
 		accessKeyService,
 		environmentService,
-		subscriptionService,
 		jwtSigner,
 		runnerService,
 		workflowService,

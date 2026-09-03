@@ -12,7 +12,7 @@ func main() {
 	if compatibility.ContractVersion != pro_interfaces.CoreContractVersion {
 		panic("enhanced contract version does not match core")
 	}
-	if !features.GetFeatures(nil, "").TaskSummary {
+	if !features.GetFeatures().TaskSummary {
 		panic("clean-room enhanced capability is not active")
 	}
 	fmt.Print(compatibility.Implementation)

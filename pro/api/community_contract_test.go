@@ -10,25 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCommunitySubscriptionRoutesAreNotFound(t *testing.T) {
-	controller := NewSubscriptionController(nil, nil, nil, nil)
-	handlers := map[string]http.HandlerFunc{
-		"activate": controller.Activate,
-		"refresh":  controller.Refresh,
-		"get":      controller.GetSubscription,
-		"delete":   controller.Delete,
-	}
-
-	for name, handler := range handlers {
-		t.Run(name, func(t *testing.T) {
-			response := httptest.NewRecorder()
-			handler(response, httptest.NewRequest(http.MethodGet, "/", nil))
-			assert.Equal(t, http.StatusNotFound, response.Code)
-			assert.Empty(t, response.Body.String())
-		})
-	}
-}
-
 func TestCommunityEmailVerificationIsForbidden(t *testing.T) {
 	response := httptest.NewRecorder()
 

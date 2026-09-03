@@ -6,7 +6,6 @@ import community "github.com/semaphoreui/semaphore/community-pro/api"
 type TerraformController = community.TerraformController
 
 var (
-	NewSubscriptionController = community.NewSubscriptionController
-	NewTerraformController    = community.NewTerraformController
-	VerifySessionByEmail      = community.VerifySessionByEmail
+	NewTerraformController = community.NewTerraformController
+	VerifySessionByEmail   = community.VerifySessionByEmail
 )

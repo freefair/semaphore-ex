@@ -12,7 +12,6 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
-	communityserver "github.com/semaphoreui/semaphore/community-pro/services/server"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
@@ -66,7 +65,6 @@ func TestProjectRunnerCreateReturnsRegistrationTokenOnceAndListsOnlyOriginProjec
 	require.NoError(t, err)
 	audit := &runnerAuditRecorder{}
 	controller := NewProjectRunnerController(
-		communityserver.NewSubscriptionService(nil, nil, nil, nil),
 		server.NewRunnerService(store),
 		features.NewCapabilityProvider(store),
 		audit,
@@ -117,7 +115,7 @@ func TestProjectRunnerMiddlewareRejectsCrossProjectLookup(t *testing.T) {
 	})
 	require.NoError(t, err)
 	audit := &runnerAuditRecorder{}
-	controller := NewProjectRunnerController(nil, server.NewRunnerService(store), features.NewCapabilityProvider(store), audit)
+	controller := NewProjectRunnerController(server.NewRunnerService(store), features.NewCapabilityProvider(store), audit)
 	handler := controller.RunnerMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("cross-project runner must not reach the handler")
 	}))
@@ -140,7 +138,7 @@ func TestProjectRunnerCapabilityIsRequiredByBackend(t *testing.T) {
 	t.Cleanup(store.Close)
 	project, err := store.CreateProject(db.Project{Name: "guarded"})
 	require.NoError(t, err)
-	controller := NewProjectRunnerController(nil, server.NewRunnerService(store), nil, nil)
+	controller := NewProjectRunnerController(server.NewRunnerService(store), nil, nil)
 	request := runnerContractRequest(httptest.NewRequest(http.MethodGet, "/api/project/1/runners", nil), store, project)
 	response := httptest.NewRecorder()
 
@@ -155,7 +153,7 @@ func TestProjectRunnerCapabilityDenialIsAudited(t *testing.T) {
 	project, err := store.CreateProject(db.Project{Name: "denied"})
 	require.NoError(t, err)
 	audit := &runnerAuditRecorder{}
-	controller := NewProjectRunnerController(nil, server.NewRunnerService(store), deniedRunnerProvider{}, audit)
+	controller := NewProjectRunnerController(server.NewRunnerService(store), deniedRunnerProvider{}, audit)
 	request := runnerContractRequest(httptest.NewRequest(http.MethodGet, "/api/project/1/runners", nil), store, project)
 	response := httptest.NewRecorder()
 
@@ -178,7 +176,7 @@ func TestProjectRunnerLifecycleMutationsPersistAndAreAudited(t *testing.T) {
 	})
 	require.NoError(t, err)
 	audit := &runnerAuditRecorder{}
-	controller := NewProjectRunnerController(nil, server.NewRunnerService(store), features.NewCapabilityProvider(store), audit)
+	controller := NewProjectRunnerController(server.NewRunnerService(store), features.NewCapabilityProvider(store), audit)
 
 	update := runnerLifecycleRequest(httptest.NewRequest(http.MethodPut, "/api/project/1/runners/1",
 		bytes.NewBufferString(`{"name":"after","tags":[" GPU ","linux","gpu"],"is_default":true,"max_parallel_tasks":3}`)), store, project, runner)
@@ -268,7 +266,7 @@ func TestProjectRunnerHealthAndPaginatedHistorySurviveRestartAndDeletion(t *test
 	runner, err := store.GetRunner(project.ID, runner.ID)
 	require.NoError(t, err)
 	audit := &runnerAuditRecorder{}
-	controller := NewProjectRunnerController(nil, server.NewRunnerService(store), features.NewCapabilityProvider(store), audit)
+	controller := NewProjectRunnerController(server.NewRunnerService(store), features.NewCapabilityProvider(store), audit)
 
 	healthRequest := runnerLifecycleRequest(
 		httptest.NewRequest(http.MethodGet, "/api/project/1/runners/1/health", nil),
@@ -362,7 +360,7 @@ func TestProjectRunnerHealthAndPaginatedHistorySurviveRestartAndDeletion(t *test
 
 func TestProjectRunnerHealthAndHistoryRequireCapability(t *testing.T) {
 	store, project, runner, _ := createBusyProjectRunnerControllerFixture(t)
-	controller := NewProjectRunnerController(nil, server.NewRunnerService(store), deniedRunnerProvider{}, nil)
+	controller := NewProjectRunnerController(server.NewRunnerService(store), deniedRunnerProvider{}, nil)
 
 	healthRequest := runnerLifecycleRequest(
 		httptest.NewRequest(http.MethodGet, "/api/project/1/runners/1/health", nil),
@@ -397,7 +395,7 @@ func TestProjectRunnerDestructiveMutationsReturnAssignmentConflict(t *testing.T)
 		t.Run(name, func(t *testing.T) {
 			store, project, runner, task := createBusyProjectRunnerControllerFixture(t)
 			audit := &runnerAuditRecorder{}
-			controller := NewProjectRunnerController(nil, server.NewRunnerService(store), features.NewCapabilityProvider(store), audit)
+			controller := NewProjectRunnerController(server.NewRunnerService(store), features.NewCapabilityProvider(store), audit)
 			method, path, body := http.MethodDelete, "/api/project/1/runners/1", ""
 			switch name {
 			case "deactivate":

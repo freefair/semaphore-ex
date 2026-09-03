@@ -9,23 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCommunitySubscriptionServiceIsDisabled(t *testing.T) {
-	service := NewSubscriptionService(nil, nil, nil, nil)
-
-	assert.False(t, service.HasActiveSubscription())
-	_, err := service.GetToken()
-	require.ErrorIs(t, err, db.ErrNotFound)
-	canAddUser, err := service.CanAddProUser()
-	require.NoError(t, err)
-	assert.False(t, canAddUser)
-	canAddRunner, err := service.CanAddRunner()
-	require.NoError(t, err)
-	assert.False(t, canAddRunner)
-	canAddTerraformBackend, err := service.CanAddTerraformHTTPBackend()
-	require.NoError(t, err)
-	assert.False(t, canAddTerraformBackend)
-}
-
 func TestCommunityLogWriterHasNoSideEffects(t *testing.T) {
 	service := NewLogWriteService()
 

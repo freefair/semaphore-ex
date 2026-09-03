@@ -134,18 +134,6 @@ func registerEnhancedGovernanceRoutes(
 			projects.GetMustHavePermissionMiddleware(db.CanListGrantedCredentials)(handler),
 		)))
 	}
-	authenticatedAPI.Path("/subscription").Handler(
-		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
-			globalSystemPermission(http.HandlerFunc(subscriptionController.Activate))))).Methods("POST")
-	authenticatedAPI.Path("/subscription/refresh").Handler(
-		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
-			globalSystemPermission(http.HandlerFunc(subscriptionController.Refresh))))).Methods("POST")
-	authenticatedAPI.Path("/subscription").Handler(
-		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
-			globalSystemPermission(http.HandlerFunc(subscriptionController.GetSubscription))))).Methods("GET")
-	authenticatedAPI.Path("/subscription").Handler(
-		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
-			globalSystemPermission(http.HandlerFunc(subscriptionController.Delete))))).Methods("DELETE")
 
 	// Notification governance is deliberately independent from the legacy
 	// project alert endpoint. Global and project scopes have separate route

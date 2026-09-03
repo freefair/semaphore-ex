@@ -420,6 +420,22 @@ func TestProjectRunnerLifecycleRoutesUseSpecificAuditActions(t *testing.T) {
 	}
 }
 
+func TestRemovedSubscriptionRoutesAreNotClassifiedForAudit(t *testing.T) {
+	for _, route := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/subscription"},
+		{http.MethodPost, "/api/subscription"},
+		{http.MethodDelete, "/api/subscription"},
+		{http.MethodPost, "/api/subscription/refresh"},
+	} {
+		request := httptest.NewRequest(route.method, route.path, nil)
+		_, enhanced := enhancedAuditForRoute(request)
+		assert.False(t, enhanced, route.method+" "+route.path)
+	}
+}
+
 func TestGlobalCredentialAuditDescriptorsAreSpecificAndValueFree(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -93,7 +93,6 @@ func Route(
 	secretStorageService server.SecretStorageService,
 	accessKeyService server.AccessKeyService,
 	environmentService server.EnvironmentService,
-	subscriptionService pro_interfaces.SubscriptionService,
 	jwtSigner jwt.Signer,
 	runnerService server.RunnerService,
 	workflowService pro_interfaces.WorkflowService,
@@ -144,11 +143,10 @@ func Route(
 	workflowTriggerController := proProjects.NewWorkflowTriggerController(workflowTriggerService)
 	workflowMiddlewareController := projects.NewWorkflowController(workflowStore)
 	backupController := projects.NewBackupController(workflowStore)
-	userController := NewUserController(subscriptionService)
-	usersController := NewUsersController(subscriptionService)
-	subscriptionController := proApi.NewSubscriptionController(store, store, store, terraformStore)
+	userController := NewUserController()
+	usersController := NewUsersController()
 	globalRunnerController := NewGlobalRunnerController(runnerService)
-	executorImageResolver := capabilityServices.NewExecutorImageResolver(subscriptionService)
+	executorImageResolver := capabilityServices.NewExecutorImageResolver()
 	if taskPool != nil {
 		taskPool.SetExecutorImageCapabilityResolver(executorImageResolver)
 	}
@@ -156,7 +154,7 @@ func Route(
 	rolesController := proApi.NewRolesController(store, capabilityProvider)
 	templateController := projects.NewTemplateController(store, store, executorImageResolver)
 	templateController.ConfigureCrossProjectDeletionGuard(workflowStore)
-	systemInfoController := NewSystemInfoController(subscriptionService)
+	systemInfoController := NewSystemInfoController()
 	capabilityTestService := proFeatures.NewCapabilityTestService(store)
 	capabilityFacade := capabilityServices.NewServiceFacade(capabilityProvider, capabilityTestService)
 	auditFacade := auditServices.NewServiceFacade(store, logWriteService, appMetrics, auditWebhookService)
@@ -176,7 +174,7 @@ func Route(
 	}
 	notificationGovernanceController := NewNotificationGovernanceController(notificationGovernanceService)
 	globalCredentialController := NewGlobalCredentialController(proServer.NewGlobalCredentialService(store))
-	projectRunnerController := proProjects.NewProjectRunnerController(subscriptionService, runnerService, capabilityProvider, auditFacade)
+	projectRunnerController := proProjects.NewProjectRunnerController(runnerService, capabilityProvider, auditFacade)
 	capabilityController := NewCapabilityController(capabilityFacade, auditFacade)
 	totpController := NewTOTPController(totpService, auditFacade)
 	ldapController := NewLDAPController(ldapService, auditFacade)
