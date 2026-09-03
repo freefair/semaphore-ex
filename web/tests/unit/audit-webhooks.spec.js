@@ -58,6 +58,9 @@ describe('audit webhook administration', () => {
         hasMore: false,
         applyConfiguration: AuditWebhooks.methods.applyConfiguration,
         loadHistory: AuditWebhooks.methods.loadHistory,
+        dismissSigningSecret: AuditWebhooks.methods.dismissSigningSecret,
+        signingSecret: '',
+        signingSecretAcknowledged: false,
       };
       await AuditWebhooks.methods.load.call(context);
 
@@ -127,6 +130,93 @@ describe('audit webhook administration', () => {
       expect(context.credential).to.equal('');
       expect(context.config).not.to.have.property('credential');
       expect(context.config.credential_configured).to.equal(true);
+    } finally {
+      axios.defaults.adapter = previousAdapter;
+    }
+  });
+
+  it('keeps generated signing secrets transient and sends revision-fenced lifecycle calls', async () => {
+    const previousAdapter = axios.defaults.adapter;
+    const requests = [];
+    axios.defaults.adapter = async (config) => {
+      requests.push(config);
+      return {
+        data: {
+          secret: 'swhsec_once',
+          current_key_id: 'swhkid_current',
+          current_generation: 1,
+          signing_revision: 4,
+        },
+        status: 201,
+        statusText: 'Created',
+        headers: {},
+        config,
+      };
+    };
+
+    try {
+      const context = {
+        config: { signing_revision: 3 },
+        signingMutating: false,
+        signingSecret: '',
+        signingSecretAcknowledged: true,
+        error: '',
+        applySigningStatus: AuditWebhooks.methods.applySigningStatus,
+        revealSigningSecret: AuditWebhooks.methods.revealSigningSecret,
+      };
+      const mutate = AuditWebhooks.methods.mutateSigningSecret;
+      await mutate.call(context, 'post', '/api/audit-webhook/signing-secret', true);
+
+      expect(requests).to.have.length(1);
+      expect(requests[0].url).to.equal('/api/audit-webhook/signing-secret');
+      expect(requests[0].params).to.deep.equal({ revision: 3 });
+      expect(context.signingSecret).to.equal('swhsec_once');
+      expect(context.signingSecretAcknowledged).to.equal(false);
+      expect(context.config.current_key_id).to.equal('swhkid_current');
+      expect(JSON.stringify(context.config)).not.to.include('swhsec_once');
+
+      AuditWebhooks.methods.dismissSigningSecret.call(context);
+      expect(context.signingSecret).to.equal('');
+      expect(context.signingSecretAcknowledged).to.equal(false);
+    } finally {
+      axios.defaults.adapter = previousAdapter;
+    }
+  });
+
+  it('loads bounded redacted attempt history for one delivery', async () => {
+    const previousAdapter = axios.defaults.adapter;
+    let request;
+    axios.defaults.adapter = async (config) => {
+      request = config;
+      return {
+        data: [{
+          id: 8, attempt: 2, key_id: 'swhkid_current', outcome: 'succeeded',
+        }],
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      };
+    };
+
+    try {
+      const delivery = { id: 12, event_id: 'evt_1234567890123456' };
+      const context = {
+        attemptDelivery: null,
+        attempts: [],
+        attemptDialog: false,
+        attemptLoading: false,
+        error: '',
+      };
+      await AuditWebhooks.methods.loadAttempts.call(context, delivery);
+
+      expect(request.url).to.equal('/api/audit-webhook/deliveries/12/attempts');
+      expect(request.params).to.deep.equal({ count: 100 });
+      expect(context.attemptDialog).to.equal(true);
+      expect(context.attempts[0]).to.deep.equal({
+        id: 8, attempt: 2, key_id: 'swhkid_current', outcome: 'succeeded',
+      });
+      expect(JSON.stringify(context.attempts)).not.to.include('signature');
     } finally {
       axios.defaults.adapter = previousAdapter;
     }

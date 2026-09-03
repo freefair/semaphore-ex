@@ -80,10 +80,12 @@ describe('workflow triggers', () => {
       baseURL: '/api/project/7/workflows/9/triggers',
       formDialog: true,
       credential: '',
+      credentialAcknowledged: true,
       mutating: false,
       payload: () => ({ name: 'Deploy API', type: 'api' }),
       load: async () => {},
       notifyError: () => {},
+      revealCredential: WorkflowTriggersDialog.methods.revealCredential,
     };
 
     await WorkflowTriggersDialog.methods.save.call(context);
@@ -98,6 +100,8 @@ describe('workflow triggers', () => {
     let loaded = 0;
     const reopened = {
       credential: context.credential,
+      credentialAcknowledged: true,
+      dismissCredential: WorkflowTriggersDialog.methods.dismissCredential,
       async load() { loaded += 1; },
     };
     await WorkflowTriggersDialog.watch.value.call(reopened, true);
@@ -114,6 +118,8 @@ describe('workflow triggers', () => {
     const context = {
       baseURL: '/api/project/7/workflows/9/triggers',
       credential: 'swt_old',
+      credentialAcknowledged: true,
+      revealCredential: WorkflowTriggersDialog.methods.revealCredential,
       async mutate(operation) { await operation(); },
     };
 
@@ -124,6 +130,89 @@ describe('workflow triggers', () => {
       payload: { revision: 2 },
     });
     expect(context.credential).to.equal('swt_rotated');
+  });
+
+  it('reveals the server-generated webhook signing secret after creation', async () => {
+    axios.post = async () => ({
+      data: { trigger: { id: 14 }, webhook_signing_secret: 'swhsec_created' },
+    });
+    const context = {
+      editingId: null,
+      baseURL: '/api/project/7/workflows/9/triggers',
+      formDialog: true,
+      credential: '',
+      credentialAcknowledged: true,
+      mutating: false,
+      payload: () => ({ name: 'Deploy webhook', type: 'webhook' }),
+      load: async () => {},
+      notifyError: () => {},
+      revealCredential: WorkflowTriggersDialog.methods.revealCredential,
+    };
+
+    await WorkflowTriggersDialog.methods.save.call(context);
+
+    expect(context.credential).to.equal('swhsec_created');
+    expect(context.credentialAcknowledged).to.equal(false);
+    expect(context.formDialog).to.equal(false);
+  });
+
+  it('uses the signed webhook lifecycle without reusing the API credential route', async () => {
+    const requests = [];
+    axios.post = async (url, payload) => {
+      requests.push({ url, payload });
+      return { data: { webhook_signing_secret: 'swhsec_next' } };
+    };
+    const context = {
+      baseURL: '/api/project/7/workflows/9/triggers',
+      credential: '',
+      credentialAcknowledged: true,
+      revealCredential: WorkflowTriggersDialog.methods.revealCredential,
+      async mutate(operation) { await operation(); },
+      mutateWebhookSigning: null,
+    };
+    context.mutateWebhookSigning = (...args) => WorkflowTriggersDialog.methods
+      .mutateWebhookSigning.call(context, ...args);
+    const trigger = { id: 13, revision: 7, type: 'webhook' };
+
+    await WorkflowTriggersDialog.methods.bootstrapWebhookSigning.call(context, trigger);
+    expect(requests[0]).to.deep.equal({
+      url: '/api/project/7/workflows/9/triggers/13/webhook-signing/bootstrap',
+      payload: { revision: 7 },
+    });
+    expect(context.credential).to.equal('swhsec_next');
+    expect(context.credentialAcknowledged).to.equal(false);
+
+    await WorkflowTriggersDialog.methods.stageWebhookSigning.call(context, trigger);
+    await WorkflowTriggersDialog.methods.promoteWebhookSigning.call(context, trigger);
+    await WorkflowTriggersDialog.methods.revokeWebhookSigning.call(context, trigger);
+    expect(requests.map(({ url }) => url)).to.deep.equal([
+      '/api/project/7/workflows/9/triggers/13/webhook-signing/bootstrap',
+      '/api/project/7/workflows/9/triggers/13/webhook-signing/stage',
+      '/api/project/7/workflows/9/triggers/13/webhook-signing/promote',
+      '/api/project/7/workflows/9/triggers/13/webhook-signing/revoke',
+    ]);
+  });
+
+  it('distinguishes staged and retired webhook keys and keeps API rotation separate', () => {
+    const methods = WorkflowTriggersDialog.methods;
+    const context = {
+      hasCurrentWebhookKey: methods.hasCurrentWebhookKey,
+      hasNextWebhookKey: methods.hasNextWebhookKey,
+    };
+    const staged = {
+      type: 'webhook',
+      current_signing_key_id: 'swhkid_current',
+      current_signing_generation: 2,
+      next_signing_key_id: 'swhkid_next',
+      next_signing_generation: 3,
+    };
+    const retired = { ...staged, current_signing_generation: 3, next_signing_generation: 2 };
+
+    expect(methods.usesCredential({ type: 'api' })).to.equal(true);
+    expect(methods.usesCredential(staged)).to.equal(false);
+    expect(methods.canStageWebhookKey.call(context, staged)).to.equal(false);
+    expect(methods.hasStagedWebhookKey.call(context, staged)).to.equal(true);
+    expect(methods.hasStagedWebhookKey.call(context, retired)).to.equal(false);
   });
 
   it('initializes typed values for test-fire request mappings', () => {

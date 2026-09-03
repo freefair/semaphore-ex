@@ -21,7 +21,7 @@
         class="mx-4 mb-2"
         data-testid="workflow-trigger-credential"
       >
-        <div class="font-weight-medium">{{ $t('workflowTriggerCredentialOnce') }}</div>
+        <div class="font-weight-medium">{{ revealedSecretMessage }}</div>
         <v-text-field
           :value="credential"
           readonly
@@ -29,7 +29,21 @@
           class="mt-2"
           @focus="$event.target.select()"
         />
-        <v-btn text small class="mt-2" @click="credential = ''">
+        <v-checkbox
+          v-if="isSigningSecret"
+          v-model="credentialAcknowledged"
+          :label="$t('webhookSigningSecretStored')"
+          hide-details
+          data-testid="workflow-trigger-secret-acknowledge"
+        />
+        <v-btn
+          text
+          small
+          class="mt-2"
+          :disabled="isSigningSecret && !credentialAcknowledged"
+          data-testid="workflow-trigger-secret-dismiss"
+          @click="dismissCredential()"
+        >
           {{ $t('dismiss') }}
         </v-btn>
       </v-alert>
@@ -77,6 +91,14 @@
                   {{ triggerTypeLabel(trigger.type) }}
                   <span v-if="trigger.cron_format"> · {{ trigger.cron_format }}</span>
                 </div>
+                <div v-if="trigger.type === 'webhook'" class="text-caption">
+                  {{ $t('webhookSigningCurrentKey') }}:
+                  <code>{{ trigger.current_signing_key_id || '—' }}</code>
+                  <span v-if="trigger.next_signing_key_id" class="d-block">
+                    · {{ webhookNextKeyLabel(trigger) }}:
+                    <code>{{ trigger.next_signing_key_id }}</code>
+                  </span>
+                </div>
               </div>
               <v-spacer />
               <v-chip x-small :color="trigger.enabled ? 'success' : 'grey'" dark>
@@ -104,6 +126,35 @@
                 :disabled="!capabilityAllowsWrite || mutating"
                 @click="rotate(trigger)"
               ><v-icon small>mdi-key-sync</v-icon></v-btn>
+              <v-btn
+                v-if="trigger.type === 'webhook' && !hasCurrentWebhookKey(trigger)"
+                icon small :title="$t('webhookSigningCreate')"
+                :disabled="!capabilityAllowsWrite || mutating"
+                data-testid="workflow-trigger-signing-bootstrap"
+                @click="bootstrapWebhookSigning(trigger)"
+              ><v-icon small>mdi-key-plus</v-icon></v-btn>
+              <v-btn
+                v-if="canStageWebhookKey(trigger)"
+                icon small :title="$t('webhookSigningStage')"
+                :disabled="!capabilityAllowsWrite || mutating"
+                data-testid="workflow-trigger-signing-stage"
+                @click="stageWebhookSigning(trigger)"
+              ><v-icon small>mdi-key-chain</v-icon></v-btn>
+              <v-btn
+                v-if="hasStagedWebhookKey(trigger)"
+                icon small :title="$t('webhookSigningPromote')"
+                :disabled="!capabilityAllowsWrite || mutating
+                  || (isSigningSecret && !credentialAcknowledged)"
+                data-testid="workflow-trigger-signing-promote"
+                @click="promoteWebhookSigning(trigger)"
+              ><v-icon small>mdi-key-arrow-right</v-icon></v-btn>
+              <v-btn
+                v-if="hasNextWebhookKey(trigger)"
+                icon small :title="$t('webhookSigningRevokeNext')"
+                :disabled="!capabilityAllowsWrite || mutating"
+                data-testid="workflow-trigger-signing-revoke"
+                @click="revokeWebhookSigning(trigger)"
+              ><v-icon small>mdi-key-remove</v-icon></v-btn>
               <v-btn
                 icon small :title="$t('workflowTriggerTest')"
                 :disabled="!capabilityAllowsExecute || !trigger.enabled || mutating"
@@ -137,6 +188,14 @@
                 <div class="font-weight-medium">{{ trigger.name }}</div>
                 <div v-if="trigger.cron_format" class="text-caption">
                   {{ trigger.cron_format }}
+                </div>
+                <div v-if="trigger.type === 'webhook'" class="text-caption">
+                  {{ $t('webhookSigningCurrentKey') }}:
+                  <code>{{ trigger.current_signing_key_id || '—' }}</code>
+                  <span v-if="trigger.next_signing_key_id" class="d-block">
+                    · {{ webhookNextKeyLabel(trigger) }}:
+                    <code>{{ trigger.next_signing_key_id }}</code>
+                  </span>
                 </div>
               </td>
               <td>{{ triggerTypeLabel(trigger.type) }}</td>
@@ -174,6 +233,35 @@
                   :disabled="!capabilityAllowsWrite || mutating"
                   @click="rotate(trigger)"
                 ><v-icon small>mdi-key-sync</v-icon></v-btn>
+                <v-btn
+                  v-if="trigger.type === 'webhook' && !hasCurrentWebhookKey(trigger)"
+                  icon small :title="$t('webhookSigningCreate')"
+                  :disabled="!capabilityAllowsWrite || mutating"
+                  data-testid="workflow-trigger-signing-bootstrap"
+                  @click="bootstrapWebhookSigning(trigger)"
+                ><v-icon small>mdi-key-plus</v-icon></v-btn>
+                <v-btn
+                  v-if="canStageWebhookKey(trigger)"
+                  icon small :title="$t('webhookSigningStage')"
+                  :disabled="!capabilityAllowsWrite || mutating"
+                  data-testid="workflow-trigger-signing-stage"
+                  @click="stageWebhookSigning(trigger)"
+                ><v-icon small>mdi-key-chain</v-icon></v-btn>
+                <v-btn
+                  v-if="hasStagedWebhookKey(trigger)"
+                  icon small :title="$t('webhookSigningPromote')"
+                  :disabled="!capabilityAllowsWrite || mutating
+                    || (isSigningSecret && !credentialAcknowledged)"
+                  data-testid="workflow-trigger-signing-promote"
+                  @click="promoteWebhookSigning(trigger)"
+                ><v-icon small>mdi-key-arrow-right</v-icon></v-btn>
+                <v-btn
+                  v-if="hasNextWebhookKey(trigger)"
+                  icon small :title="$t('webhookSigningRevokeNext')"
+                  :disabled="!capabilityAllowsWrite || mutating"
+                  data-testid="workflow-trigger-signing-revoke"
+                  @click="revokeWebhookSigning(trigger)"
+                ><v-icon small>mdi-key-remove</v-icon></v-btn>
                 <v-btn
                   icon
                   small
@@ -367,8 +455,17 @@
                   {{ formatDate(entry.created) }}
                   <span v-if="entry.run_id"> · Run #{{ entry.run_id }}</span>
                 </v-list-item-subtitle>
-                <v-list-item-subtitle v-if="entry.reason">
-                  {{ entry.reason }}
+                <v-list-item-subtitle v-if="entry.webhook_event_id">
+                  {{ $t('auditWebhookEventId') }}: <code>{{ entry.webhook_event_id }}</code>
+                  <span v-if="entry.webhook_key_id">
+                    · {{ $t('webhookSigningKeyId') }}: <code>{{ entry.webhook_key_id }}</code>
+                  </span>
+                </v-list-item-subtitle>
+                <v-list-item-subtitle v-if="entry.webhook_replay_count">
+                  {{ $t('workflowTriggerWebhookReplays', { count: entry.webhook_replay_count }) }}
+                  <span v-if="entry.webhook_last_replayed_at">
+                    · {{ formatDate(entry.webhook_last_replayed_at) }}
+                  </span>
                 </v-list-item-subtitle>
               </v-list-item-content>
             </v-list-item>
@@ -428,6 +525,7 @@ export default {
       loading: false,
       mutating: false,
       credential: '',
+      credentialAcknowledged: false,
       formDialog: false,
       editingId: null,
       form: emptyForm(),
@@ -495,12 +593,21 @@ export default {
     baseURL() {
       return `/api/project/${this.projectId}/workflows/${this.workflow.id}/triggers`;
     },
+
+    revealedSecretMessage() {
+      return this.isSigningSecret
+        ? this.$t('webhookSigningSecretOnce') : this.$t('workflowTriggerCredentialOnce');
+    },
+
+    isSigningSecret() {
+      return this.credential.startsWith('swhsec_');
+    },
   },
 
   watch: {
     async value(value) {
       if (value) {
-        this.credential = '';
+        this.dismissCredential();
         await this.load();
       }
     },
@@ -622,7 +729,7 @@ export default {
       try {
         if (this.editingId == null) {
           const result = (await axios.post(this.baseURL, this.payload())).data;
-          this.credential = result.credential || '';
+          this.revealCredential(result.credential || result.webhook_signing_secret || '');
         } else {
           await axios.put(`${this.baseURL}/${this.editingId}`, this.payload());
         }
@@ -649,8 +756,46 @@ export default {
         const result = (await axios.post(`${this.baseURL}/${trigger.id}/rotate`, {
           revision: trigger.revision,
         })).data;
-        this.credential = result.credential || '';
+        this.revealCredential(result.credential || '');
       });
+    },
+
+    async bootstrapWebhookSigning(trigger) {
+      await this.mutateWebhookSigning(trigger, 'bootstrap', true);
+    },
+
+    async stageWebhookSigning(trigger) {
+      await this.mutateWebhookSigning(trigger, 'stage', true);
+    },
+
+    async promoteWebhookSigning(trigger) {
+      await this.mutateWebhookSigning(trigger, 'promote');
+    },
+
+    async revokeWebhookSigning(trigger) {
+      await this.mutateWebhookSigning(trigger, 'revoke');
+    },
+
+    async mutateWebhookSigning(trigger, action, revealsSecret = false) {
+      await this.mutate(async () => {
+        const result = (await axios.post(
+          `${this.baseURL}/${trigger.id}/webhook-signing/${action}`,
+          { revision: trigger.revision },
+        )).data;
+        if (revealsSecret) {
+          this.revealCredential(result.webhook_signing_secret || '');
+        }
+      });
+    },
+
+    revealCredential(value) {
+      this.credential = value;
+      this.credentialAcknowledged = false;
+    },
+
+    dismissCredential() {
+      this.credential = '';
+      this.credentialAcknowledged = false;
     },
 
     beginTest(trigger) {
@@ -714,7 +859,30 @@ export default {
     },
 
     usesCredential(trigger) {
-      return trigger.type === 'api' || trigger.type === 'webhook';
+      return trigger.type === 'api';
+    },
+
+    hasCurrentWebhookKey(trigger) {
+      return !!trigger.current_signing_key_id;
+    },
+
+    hasNextWebhookKey(trigger) {
+      return !!trigger.next_signing_key_id;
+    },
+
+    canStageWebhookKey(trigger) {
+      return trigger.type === 'webhook'
+        && this.hasCurrentWebhookKey(trigger) && !this.hasNextWebhookKey(trigger);
+    },
+
+    hasStagedWebhookKey(trigger) {
+      return this.hasNextWebhookKey(trigger)
+        && trigger.next_signing_generation > trigger.current_signing_generation;
+    },
+
+    webhookNextKeyLabel(trigger) {
+      return this.hasStagedWebhookKey(trigger)
+        ? this.$t('webhookSigningStagedKey') : this.$t('webhookSigningRetiredKey');
     },
 
     triggerTypeLabel(type) {
@@ -734,10 +902,6 @@ export default {
 </script>
 
 <style scoped>
-.WorkflowTriggersDialog__actions {
-  white-space: nowrap;
-}
-
 .WorkflowTriggersDialog__mapping {
   border-left: 3px solid var(--v-primary-base);
   padding-left: 12px;
