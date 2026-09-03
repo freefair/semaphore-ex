@@ -1,0 +1,531 @@
+package pro_interfaces
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"net/url"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+)
+
+const (
+	PolicyGuardrailSchemaVersion          = 1
+	PolicyGuardrailCompilerVersion        = 1
+	MaxPolicyGuardrailYAMLBytes           = 64 * 1024
+	MaxPolicyGuardrailRules               = 32
+	MaxPolicyGuardrailPredicates          = 256
+	MaxPolicyGuardrailPredicatesPerRule   = 32
+	MaxPolicyGuardrailValues              = 32
+	MaxPolicyGuardrailValueBytes          = 256
+	MaxPolicyGuardrailMessageBytes        = 512
+	MaxPolicyGuardrailRemediationBytes    = 2048
+	MaxPolicyGuardrailFindings            = 64
+	MaxPolicyGuardrailMetadataItems       = 256
+	MaxPolicyGuardrailRollbackReasonBytes = 512
+)
+
+var policyGuardrailRuleIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+
+type PolicyGuardrailScope string
+
+const (
+	PolicyGuardrailScopeGlobal  PolicyGuardrailScope = "global"
+	PolicyGuardrailScopeProject PolicyGuardrailScope = "project"
+)
+
+type PolicyGuardrailEffect string
+
+const (
+	PolicyGuardrailEffectAllow PolicyGuardrailEffect = "allow"
+	PolicyGuardrailEffectWarn  PolicyGuardrailEffect = "warn"
+	PolicyGuardrailEffectDeny  PolicyGuardrailEffect = "deny"
+)
+
+type PolicyGuardrailSeverity string
+
+const (
+	PolicyGuardrailSeverityInfo     PolicyGuardrailSeverity = "info"
+	PolicyGuardrailSeverityLow      PolicyGuardrailSeverity = "low"
+	PolicyGuardrailSeverityMedium   PolicyGuardrailSeverity = "medium"
+	PolicyGuardrailSeverityHigh     PolicyGuardrailSeverity = "high"
+	PolicyGuardrailSeverityCritical PolicyGuardrailSeverity = "critical"
+)
+
+type PolicyGuardrailMatch string
+
+const (
+	PolicyGuardrailMatchAll PolicyGuardrailMatch = "all"
+	PolicyGuardrailMatchAny PolicyGuardrailMatch = "any"
+)
+
+type PolicyGuardrailOperator string
+
+const (
+	PolicyGuardrailOperatorEquals      PolicyGuardrailOperator = "equals"
+	PolicyGuardrailOperatorOneOf       PolicyGuardrailOperator = "one_of"
+	PolicyGuardrailOperatorPresent     PolicyGuardrailOperator = "present"
+	PolicyGuardrailOperatorAbsent      PolicyGuardrailOperator = "absent"
+	PolicyGuardrailOperatorContainsAny PolicyGuardrailOperator = "contains_any"
+	PolicyGuardrailOperatorContainsAll PolicyGuardrailOperator = "contains_all"
+	PolicyGuardrailOperatorLessThan    PolicyGuardrailOperator = "lt"
+	PolicyGuardrailOperatorAtMost      PolicyGuardrailOperator = "lte"
+	PolicyGuardrailOperatorGreaterThan PolicyGuardrailOperator = "gt"
+	PolicyGuardrailOperatorAtLeast     PolicyGuardrailOperator = "gte"
+)
+
+type PolicyGuardrailField string
+
+const (
+	PolicyFieldTaskTemplateID           PolicyGuardrailField = "task.template_id"
+	PolicyFieldTaskApplication          PolicyGuardrailField = "task.application"
+	PolicyFieldTaskSource               PolicyGuardrailField = "task.source"
+	PolicyFieldTaskInventoryOverride    PolicyGuardrailField = "task.inventory_override"
+	PolicyFieldTaskBranchOverride       PolicyGuardrailField = "task.branch_override"
+	PolicyFieldTaskCommitOverride       PolicyGuardrailField = "task.commit_override"
+	PolicyFieldTaskArgumentKeyCount     PolicyGuardrailField = "task.argument_key_count"
+	PolicyFieldTaskInputKeyCount        PolicyGuardrailField = "task.input_key_count"
+	PolicyFieldInventoryPresent         PolicyGuardrailField = "inventory.present"
+	PolicyFieldInventoryID              PolicyGuardrailField = "inventory.id"
+	PolicyFieldInventoryType            PolicyGuardrailField = "inventory.type"
+	PolicyFieldInventoryRunnerTagCount  PolicyGuardrailField = "inventory.runner_tag_count"
+	PolicyFieldEnvironmentIDs           PolicyGuardrailField = "environment.ids"
+	PolicyFieldEnvironmentCount         PolicyGuardrailField = "environment.count"
+	PolicyFieldWorkflowPresent          PolicyGuardrailField = "workflow.present"
+	PolicyFieldWorkflowID               PolicyGuardrailField = "workflow.id"
+	PolicyFieldWorkflowRevision         PolicyGuardrailField = "workflow.revision"
+	PolicyFieldWorkflowNodeID           PolicyGuardrailField = "workflow.node_id"
+	PolicyFieldWorkflowNodeKind         PolicyGuardrailField = "workflow.node_kind"
+	PolicyFieldWorkflowTriggerSource    PolicyGuardrailField = "workflow.trigger_source"
+	PolicyFieldWorkflowCrossProject     PolicyGuardrailField = "workflow.cross_project"
+	PolicyFieldRunnerSelectedID         PolicyGuardrailField = "runner.selected_id"
+	PolicyFieldRunnerSelectedScope      PolicyGuardrailField = "runner.selected_scope"
+	PolicyFieldRunnerSelectedExecutor   PolicyGuardrailField = "runner.selected_executor"
+	PolicyFieldRunnerRequestedTags      PolicyGuardrailField = "runner.requested_tags"
+	PolicyFieldRunnerCandidateCount     PolicyGuardrailField = "runner.candidate_count"
+	PolicyFieldExecutorType             PolicyGuardrailField = "executor.type"
+	PolicyFieldImagePresent             PolicyGuardrailField = "image.present"
+	PolicyFieldImageReferenceKind       PolicyGuardrailField = "image.reference_kind"
+	PolicyFieldImageDigest              PolicyGuardrailField = "image.digest"
+	PolicyFieldCredentialIDs            PolicyGuardrailField = "credential.ids"
+	PolicyFieldCredentialScopes         PolicyGuardrailField = "credential.scopes"
+	PolicyFieldCredentialBindingTargets PolicyGuardrailField = "credential.binding_targets"
+	PolicyFieldCredentialCount          PolicyGuardrailField = "credential.count"
+	PolicyFieldTimeWeekday              PolicyGuardrailField = "time.weekday"
+	PolicyFieldTimeMinuteOfDay          PolicyGuardrailField = "time.minute_of_day"
+)
+
+type policyGuardrailValueKind uint8
+
+const (
+	policyGuardrailString policyGuardrailValueKind = iota + 1
+	policyGuardrailInteger
+	policyGuardrailBoolean
+	policyGuardrailStrings
+	policyGuardrailIntegers
+)
+
+var policyGuardrailFieldKinds = map[PolicyGuardrailField]policyGuardrailValueKind{
+	PolicyFieldTaskTemplateID:           policyGuardrailInteger,
+	PolicyFieldTaskApplication:          policyGuardrailString,
+	PolicyFieldTaskSource:               policyGuardrailString,
+	PolicyFieldTaskInventoryOverride:    policyGuardrailBoolean,
+	PolicyFieldTaskBranchOverride:       policyGuardrailBoolean,
+	PolicyFieldTaskCommitOverride:       policyGuardrailBoolean,
+	PolicyFieldTaskArgumentKeyCount:     policyGuardrailInteger,
+	PolicyFieldTaskInputKeyCount:        policyGuardrailInteger,
+	PolicyFieldInventoryPresent:         policyGuardrailBoolean,
+	PolicyFieldInventoryID:              policyGuardrailInteger,
+	PolicyFieldInventoryType:            policyGuardrailString,
+	PolicyFieldInventoryRunnerTagCount:  policyGuardrailInteger,
+	PolicyFieldEnvironmentIDs:           policyGuardrailIntegers,
+	PolicyFieldEnvironmentCount:         policyGuardrailInteger,
+	PolicyFieldWorkflowPresent:          policyGuardrailBoolean,
+	PolicyFieldWorkflowID:               policyGuardrailInteger,
+	PolicyFieldWorkflowRevision:         policyGuardrailInteger,
+	PolicyFieldWorkflowNodeID:           policyGuardrailInteger,
+	PolicyFieldWorkflowNodeKind:         policyGuardrailString,
+	PolicyFieldWorkflowTriggerSource:    policyGuardrailString,
+	PolicyFieldWorkflowCrossProject:     policyGuardrailBoolean,
+	PolicyFieldRunnerSelectedID:         policyGuardrailInteger,
+	PolicyFieldRunnerSelectedScope:      policyGuardrailString,
+	PolicyFieldRunnerSelectedExecutor:   policyGuardrailString,
+	PolicyFieldRunnerRequestedTags:      policyGuardrailStrings,
+	PolicyFieldRunnerCandidateCount:     policyGuardrailInteger,
+	PolicyFieldExecutorType:             policyGuardrailString,
+	PolicyFieldImagePresent:             policyGuardrailBoolean,
+	PolicyFieldImageReferenceKind:       policyGuardrailString,
+	PolicyFieldImageDigest:              policyGuardrailString,
+	PolicyFieldCredentialIDs:            policyGuardrailIntegers,
+	PolicyFieldCredentialScopes:         policyGuardrailStrings,
+	PolicyFieldCredentialBindingTargets: policyGuardrailStrings,
+	PolicyFieldCredentialCount:          policyGuardrailInteger,
+	PolicyFieldTimeWeekday:              policyGuardrailString,
+	PolicyFieldTimeMinuteOfDay:          policyGuardrailInteger,
+}
+
+type PolicyGuardrailDocument struct {
+	Version int                   `json:"version" yaml:"version"`
+	Rules   []PolicyGuardrailRule `json:"rules" yaml:"rules"`
+}
+
+type PolicyGuardrailRule struct {
+	ID             string                     `json:"id" yaml:"id"`
+	Effect         PolicyGuardrailEffect      `json:"effect" yaml:"effect"`
+	Severity       PolicyGuardrailSeverity    `json:"severity" yaml:"severity"`
+	Message        string                     `json:"message" yaml:"message"`
+	RemediationURL string                     `json:"remediation_url,omitempty" yaml:"remediation_url,omitempty"`
+	Match          PolicyGuardrailMatch       `json:"match" yaml:"match"`
+	Conditions     []PolicyGuardrailCondition `json:"conditions" yaml:"conditions"`
+}
+
+type PolicyGuardrailCondition struct {
+	Field         PolicyGuardrailField    `json:"field" yaml:"field"`
+	Operator      PolicyGuardrailOperator `json:"operator" yaml:"operator"`
+	StringValue   *string                 `json:"string_value,omitempty" yaml:"string_value,omitempty"`
+	IntegerValue  *int                    `json:"integer_value,omitempty" yaml:"integer_value,omitempty"`
+	BooleanValue  *bool                   `json:"boolean_value,omitempty" yaml:"boolean_value,omitempty"`
+	StringValues  []string                `json:"string_values,omitempty" yaml:"string_values,omitempty"`
+	IntegerValues []int                   `json:"integer_values,omitempty" yaml:"integer_values,omitempty"`
+}
+
+func (d PolicyGuardrailDocument) Validate() error {
+	if d.Version != PolicyGuardrailSchemaVersion || len(d.Rules) > MaxPolicyGuardrailRules {
+		return errors.New("invalid policy guardrail document")
+	}
+	seen := make(map[string]struct{}, len(d.Rules))
+	total := 0
+	for _, rule := range d.Rules {
+		if err := rule.Validate(); err != nil {
+			return err
+		}
+		if _, duplicate := seen[rule.ID]; duplicate {
+			return errors.New("policy guardrail rule IDs must be unique")
+		}
+		seen[rule.ID] = struct{}{}
+		total += len(rule.Conditions)
+		if total > MaxPolicyGuardrailPredicates {
+			return errors.New("policy guardrail predicate limit exceeded")
+		}
+	}
+	return nil
+}
+
+func (r PolicyGuardrailRule) Validate() error {
+	if !policyGuardrailRuleIDPattern.MatchString(r.ID) {
+		return errors.New("invalid policy guardrail rule ID")
+	}
+	if r.Effect != PolicyGuardrailEffectAllow && r.Effect != PolicyGuardrailEffectWarn && r.Effect != PolicyGuardrailEffectDeny {
+		return errors.New("invalid policy guardrail effect")
+	}
+	if r.Severity != PolicyGuardrailSeverityInfo && r.Severity != PolicyGuardrailSeverityLow &&
+		r.Severity != PolicyGuardrailSeverityMedium && r.Severity != PolicyGuardrailSeverityHigh &&
+		r.Severity != PolicyGuardrailSeverityCritical {
+		return errors.New("invalid policy guardrail severity")
+	}
+	if r.Match != PolicyGuardrailMatchAll && r.Match != PolicyGuardrailMatchAny {
+		return errors.New("invalid policy guardrail match mode")
+	}
+	if len(r.Conditions) == 0 || len(r.Conditions) > MaxPolicyGuardrailPredicatesPerRule {
+		return errors.New("invalid policy guardrail condition count")
+	}
+	if strings.TrimSpace(r.Message) == "" || len(r.Message) > MaxPolicyGuardrailMessageBytes || strings.ContainsAny(r.Message, "\x00\r\n") {
+		return errors.New("invalid policy guardrail message")
+	}
+	if err := validatePolicyGuardrailRemediationURL(r.RemediationURL); err != nil {
+		return err
+	}
+	for _, condition := range r.Conditions {
+		if err := condition.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c PolicyGuardrailCondition) Validate() error {
+	kind, known := policyGuardrailFieldKinds[c.Field]
+	if !known {
+		return errors.New("invalid policy guardrail field")
+	}
+	payloads := 0
+	if c.StringValue != nil {
+		payloads++
+	}
+	if c.IntegerValue != nil {
+		payloads++
+	}
+	if c.BooleanValue != nil {
+		payloads++
+	}
+	if c.StringValues != nil {
+		payloads++
+	}
+	if c.IntegerValues != nil {
+		payloads++
+	}
+	if c.Operator == PolicyGuardrailOperatorPresent || c.Operator == PolicyGuardrailOperatorAbsent {
+		if payloads != 0 {
+			return errors.New("presence predicates do not accept values")
+		}
+		return nil
+	}
+	if payloads != 1 {
+		return errors.New("policy guardrail predicate requires exactly one typed value")
+	}
+	if !validPolicyGuardrailOperator(kind, c.Operator) || !c.matchesOperatorPayload(kind) {
+		return errors.New("policy guardrail field, operator, and value types do not match")
+	}
+	if len(c.StringValues) > MaxPolicyGuardrailValues || len(c.IntegerValues) > MaxPolicyGuardrailValues ||
+		(c.StringValues != nil && len(c.StringValues) == 0) || (c.IntegerValues != nil && len(c.IntegerValues) == 0) {
+		return errors.New("policy guardrail value limit exceeded")
+	}
+	if c.StringValue != nil && !validPolicyGuardrailValue(*c.StringValue) {
+		return errors.New("invalid policy guardrail string value")
+	}
+	for _, value := range c.StringValues {
+		if !validPolicyGuardrailValue(value) {
+			return errors.New("invalid policy guardrail string value")
+		}
+	}
+	return nil
+}
+
+func (c PolicyGuardrailCondition) matchesOperatorPayload(kind policyGuardrailValueKind) bool {
+	switch c.Operator {
+	case PolicyGuardrailOperatorEquals:
+		return kind == policyGuardrailString && c.StringValue != nil ||
+			kind == policyGuardrailInteger && c.IntegerValue != nil ||
+			kind == policyGuardrailBoolean && c.BooleanValue != nil
+	case PolicyGuardrailOperatorOneOf:
+		return kind == policyGuardrailString && c.StringValues != nil ||
+			kind == policyGuardrailInteger && c.IntegerValues != nil
+	case PolicyGuardrailOperatorContainsAny, PolicyGuardrailOperatorContainsAll:
+		return kind == policyGuardrailStrings && c.StringValues != nil ||
+			kind == policyGuardrailIntegers && c.IntegerValues != nil
+	case PolicyGuardrailOperatorLessThan, PolicyGuardrailOperatorAtMost,
+		PolicyGuardrailOperatorGreaterThan, PolicyGuardrailOperatorAtLeast:
+		return kind == policyGuardrailInteger && c.IntegerValue != nil
+	default:
+		return false
+	}
+}
+
+func validPolicyGuardrailOperator(kind policyGuardrailValueKind, operator PolicyGuardrailOperator) bool {
+	switch operator {
+	case PolicyGuardrailOperatorEquals:
+		return kind == policyGuardrailString || kind == policyGuardrailInteger || kind == policyGuardrailBoolean
+	case PolicyGuardrailOperatorOneOf:
+		return kind == policyGuardrailString || kind == policyGuardrailInteger
+	case PolicyGuardrailOperatorContainsAny, PolicyGuardrailOperatorContainsAll:
+		return kind == policyGuardrailStrings || kind == policyGuardrailIntegers
+	case PolicyGuardrailOperatorLessThan, PolicyGuardrailOperatorAtMost, PolicyGuardrailOperatorGreaterThan, PolicyGuardrailOperatorAtLeast:
+		return kind == policyGuardrailInteger
+	default:
+		return false
+	}
+}
+
+func validPolicyGuardrailValue(value string) bool {
+	return value != "" && len(value) <= MaxPolicyGuardrailValueBytes && !strings.ContainsAny(value, "\x00\r\n")
+}
+
+func validatePolicyGuardrailRemediationURL(value string) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) > MaxPolicyGuardrailRemediationBytes || strings.ContainsAny(value, "\x00\r\n") {
+		return errors.New("invalid policy guardrail remediation URL")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		return errors.New("policy guardrail remediation URL must be an HTTPS URL without credentials or fragments")
+	}
+	return nil
+}
+
+type PolicyGuardrailTemplateMetadata struct {
+	ID                int      `json:"id"`
+	Application       string   `json:"application"`
+	Source            string   `json:"source"`
+	InventoryOverride bool     `json:"inventory_override"`
+	BranchOverride    bool     `json:"branch_override"`
+	CommitOverride    bool     `json:"commit_override"`
+	ArgumentKeys      []string `json:"argument_keys"`
+	InputKeys         []string `json:"input_keys"`
+}
+
+type PolicyGuardrailInventoryMetadata struct {
+	ID             int    `json:"id"`
+	Type           string `json:"type"`
+	RunnerTagCount int    `json:"runner_tag_count"`
+}
+
+type PolicyGuardrailWorkflowMetadata struct {
+	ID            int    `json:"id"`
+	Revision      int    `json:"revision"`
+	NodeID        int    `json:"node_id,omitempty"`
+	NodeKind      string `json:"node_kind,omitempty"`
+	TriggerSource string `json:"trigger_source,omitempty"`
+	CrossProject  bool   `json:"cross_project"`
+}
+
+type PolicyGuardrailRunnerMetadata struct {
+	SelectedID       int      `json:"selected_id,omitempty"`
+	SelectedScope    string   `json:"selected_scope,omitempty"`
+	SelectedExecutor string   `json:"selected_executor,omitempty"`
+	RequestedTags    []string `json:"requested_tags"`
+	CandidateCount   int      `json:"candidate_count"`
+}
+
+type PolicyGuardrailExecutorMetadata struct {
+	Type               string `json:"type"`
+	ImagePresent       bool   `json:"image_present"`
+	ImageReferenceKind string `json:"image_reference_kind"`
+	ImageDigest        string `json:"image_digest,omitempty"`
+}
+
+type PolicyGuardrailCredentialReferenceMetadata struct {
+	ID            int    `json:"id"`
+	Scope         string `json:"scope"`
+	BindingTarget string `json:"binding_target"`
+}
+
+type PolicyGuardrailEvaluationInput struct {
+	ProjectID      int                                          `json:"project_id"`
+	Intent         ExecutionPreflightIntent                     `json:"intent"`
+	EvaluatedAt    time.Time                                    `json:"evaluated_at"`
+	Template       *PolicyGuardrailTemplateMetadata             `json:"template,omitempty"`
+	Inventory      *PolicyGuardrailInventoryMetadata            `json:"inventory,omitempty"`
+	EnvironmentIDs []int                                        `json:"environment_ids"`
+	Workflow       *PolicyGuardrailWorkflowMetadata             `json:"workflow,omitempty"`
+	Runner         PolicyGuardrailRunnerMetadata                `json:"runner"`
+	Executor       PolicyGuardrailExecutorMetadata              `json:"executor"`
+	Credentials    []PolicyGuardrailCredentialReferenceMetadata `json:"credentials"`
+}
+
+func (i PolicyGuardrailEvaluationInput) Validate() error {
+	if i.ProjectID <= 0 || !validExecutionPreflightIntent(i.Intent) {
+		return errors.New("invalid policy guardrail evaluation scope")
+	}
+	if i.EvaluatedAt.IsZero() {
+		return errors.New("policy guardrail evaluation time is required")
+	}
+	if i.Template == nil && i.Workflow == nil {
+		return errors.New("policy guardrail evaluation requires a task or workflow")
+	}
+	if i.Template != nil {
+		if i.Template.ID <= 0 || !validPolicyGuardrailValue(i.Template.Application) || !validPolicyGuardrailValue(i.Template.Source) ||
+			len(i.Template.ArgumentKeys) > MaxPolicyGuardrailMetadataItems || len(i.Template.InputKeys) > MaxPolicyGuardrailMetadataItems {
+			return errors.New("invalid policy guardrail task metadata")
+		}
+		if !validBoundedPolicyStrings(i.Template.ArgumentKeys) || !validBoundedPolicyStrings(i.Template.InputKeys) {
+			return errors.New("invalid policy guardrail task keys")
+		}
+	}
+	if i.Inventory != nil && (i.Inventory.ID <= 0 || !validPolicyGuardrailValue(i.Inventory.Type) || i.Inventory.RunnerTagCount < 0) {
+		return errors.New("invalid policy guardrail inventory metadata")
+	}
+	if len(i.EnvironmentIDs) > MaxPolicyGuardrailMetadataItems {
+		return errors.New("policy guardrail environment limit exceeded")
+	}
+	for _, id := range i.EnvironmentIDs {
+		if id <= 0 {
+			return errors.New("invalid policy guardrail environment ID")
+		}
+	}
+	if i.Workflow != nil && (i.Workflow.ID <= 0 || i.Workflow.Revision <= 0 ||
+		(i.Workflow.NodeID < 0) || !validOptionalPolicyValue(i.Workflow.NodeKind) ||
+		!validOptionalPolicyValue(i.Workflow.TriggerSource)) {
+		return errors.New("invalid policy guardrail workflow metadata")
+	}
+	if i.Runner.SelectedID < 0 || i.Runner.CandidateCount < 0 || len(i.Runner.RequestedTags) > MaxPolicyGuardrailMetadataItems ||
+		!validOptionalPolicyValue(i.Runner.SelectedScope) || !validOptionalPolicyValue(i.Runner.SelectedExecutor) ||
+		!validBoundedPolicyStrings(i.Runner.RequestedTags) {
+		return errors.New("invalid policy guardrail runner metadata")
+	}
+	if !validPolicyGuardrailValue(i.Executor.Type) || !validPolicyGuardrailValue(i.Executor.ImageReferenceKind) ||
+		!validOptionalPolicyValue(i.Executor.ImageDigest) {
+		return errors.New("invalid policy guardrail executor metadata")
+	}
+	if len(i.Credentials) > MaxPolicyGuardrailMetadataItems {
+		return errors.New("policy guardrail credential limit exceeded")
+	}
+	for _, credential := range i.Credentials {
+		if credential.ID <= 0 || !validPolicyGuardrailValue(credential.Scope) || !validPolicyGuardrailValue(credential.BindingTarget) {
+			return errors.New("invalid policy guardrail credential reference")
+		}
+	}
+	return nil
+}
+
+func validBoundedPolicyStrings(values []string) bool {
+	for _, value := range values {
+		if !validPolicyGuardrailValue(value) {
+			return false
+		}
+	}
+	return true
+}
+
+func validOptionalPolicyValue(value string) bool {
+	return value == "" || validPolicyGuardrailValue(value)
+}
+
+type PolicyGuardrailRevisionRef struct {
+	Scope       PolicyGuardrailScope `json:"scope"`
+	ProjectID   *int                 `json:"project_id,omitempty"`
+	Revision    int                  `json:"revision"`
+	Fingerprint string               `json:"fingerprint"`
+}
+
+type PolicyGuardrailFinding struct {
+	Scope          PolicyGuardrailScope    `json:"scope"`
+	Revision       int                     `json:"revision"`
+	RuleID         string                  `json:"rule_id"`
+	Effect         PolicyGuardrailEffect   `json:"effect"`
+	Severity       PolicyGuardrailSeverity `json:"severity"`
+	Message        string                  `json:"message"`
+	RemediationURL string                  `json:"remediation_url,omitempty"`
+	NodeID         *int                    `json:"node_id,omitempty"`
+}
+
+type PolicyGuardrailEvaluation struct {
+	Revisions        []PolicyGuardrailRevisionRef `json:"revisions"`
+	Findings         []PolicyGuardrailFinding     `json:"findings"`
+	Allowed          bool                         `json:"allowed"`
+	InputFingerprint string                       `json:"input_fingerprint"`
+	EvaluatedAt      time.Time                    `json:"evaluated_at"`
+}
+
+func FingerprintPolicyGuardrailInput(input PolicyGuardrailEvaluationInput) (string, error) {
+	if err := input.Validate(); err != nil {
+		return "", err
+	}
+	copy := input
+	copy.EvaluatedAt = time.Time{}
+	copy.EnvironmentIDs = append([]int(nil), input.EnvironmentIDs...)
+	sort.Ints(copy.EnvironmentIDs)
+	copy.Runner.RequestedTags = append([]string(nil), input.Runner.RequestedTags...)
+	sort.Strings(copy.Runner.RequestedTags)
+	copy.Credentials = append([]PolicyGuardrailCredentialReferenceMetadata(nil), input.Credentials...)
+	sort.Slice(copy.Credentials, func(a, b int) bool {
+		if copy.Credentials[a].ID != copy.Credentials[b].ID {
+			return copy.Credentials[a].ID < copy.Credentials[b].ID
+		}
+		return copy.Credentials[a].BindingTarget < copy.Credentials[b].BindingTarget
+	})
+	encoded, err := json.Marshal(copy)
+	if err != nil {
+		return "", errors.New("encode policy guardrail input")
+	}
+	digest := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+type PolicyGuardrailEvaluator interface {
+	EvaluatePolicyGuardrails(PolicyGuardrailEvaluationInput) (PolicyGuardrailEvaluation, error)
+}
