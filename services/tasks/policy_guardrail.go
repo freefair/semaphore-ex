@@ -315,7 +315,9 @@ func (p *TaskPool) claimAutomaticTaskPolicyGuardrailAdmission(
 	if err != nil {
 		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, db.Template{}, nil, err
 	}
-	if err = validateTaskPolicyGuardrailEvaluation(input, preview); err != nil {
+	previewInput := input
+	previewInput.EvaluatedAt = preview.EvaluatedAt
+	if err = validateTaskPolicyGuardrailEvaluation(previewInput, preview); err != nil {
 		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, db.Template{}, nil, err
 	}
 	claim, err := p.policyGuardrailAdmission.ClaimPolicyGuardrailEvaluation(pro_interfaces.PolicyGuardrailAdmissionRequest{
