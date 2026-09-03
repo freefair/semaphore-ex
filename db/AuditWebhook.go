@@ -149,7 +149,9 @@ func ValidateAuditWebhookSigningState(config AuditWebhookConfig) error {
 	if config.NextSigningKeyID != "" && config.NextSigningKeyID == config.CurrentSigningKeyID {
 		return errors.New("audit webhook signing key ids must be distinct")
 	}
-	if config.NextSigningGeneration > 0 && config.NextSigningGeneration <= config.CurrentSigningGeneration {
+	// Next may be either a staged future key or the retired predecessor after a
+	// promotion. Both states are valid; only duplicate generations are not.
+	if config.NextSigningGeneration > 0 && config.NextSigningGeneration == config.CurrentSigningGeneration {
 		return errors.New("audit webhook next signing generation is invalid")
 	}
 	return nil
