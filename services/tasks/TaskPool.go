@@ -1270,23 +1270,27 @@ func (p *TaskPool) recordDeploymentWindowTaskBinding(decision db.DeploymentWindo
 	}
 }
 
-func (p *TaskPool) claimDeploymentWindowTaskAdmission(task *db.Task, request pro_interfaces.DeploymentWindowAdmissionRequest) error {
+func (p *TaskPool) claimDeploymentWindowTaskAdmission(task *db.Task, request pro_interfaces.DeploymentWindowAdmissionRequest) (pro_interfaces.DeploymentWindowAdmissionClaim, error) {
 	if task == nil || p.deploymentWindowAdmission == nil {
-		return errors.New("deployment window admission is unavailable")
+		return pro_interfaces.DeploymentWindowAdmissionClaim{}, errors.New("deployment window admission is unavailable")
 	}
 	claim, err := p.deploymentWindowAdmission.Claim(request)
 	if err != nil {
-		return err
+		return pro_interfaces.DeploymentWindowAdmissionClaim{}, err
 	}
+	p.recordDeploymentWindowAdmission(claim)
 	if claim.Decision.State == string(pro_interfaces.DeploymentWindowDecisionBlocked) {
-		return &pro_interfaces.DeploymentWindowBlockedError{DecisionID: claim.Decision.ID, Reason: pro_interfaces.DeploymentWindowReason(claim.Decision.Reason), NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown}
+		return pro_interfaces.DeploymentWindowAdmissionClaim{}, &pro_interfaces.DeploymentWindowBlockedError{
+			DecisionID: claim.Decision.ID, Reason: pro_interfaces.DeploymentWindowReason(claim.Decision.Reason), NextEligibleAt: claim.Decision.NextEligibleAt, NextEligibleKnown: claim.Decision.NextEligibleKnown,
+			AuditDecision: &claim.Decision, AuditInserted: claim.Inserted,
+		}
 	}
 	if (claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionAllowed) && claim.Decision.State != string(pro_interfaces.DeploymentWindowDecisionOverridden)) || claim.Decision.ID <= 0 {
-		return errors.New("deployment window admission did not allow execution")
+		return pro_interfaces.DeploymentWindowAdmissionClaim{}, errors.New("deployment window admission did not allow execution")
 	}
 	decisionID := claim.Decision.ID
 	task.DeploymentWindowDecisionID = &decisionID
-	return nil
+	return claim, nil
 }
 
 func sameTaskBindingID(left, right *int) bool {
