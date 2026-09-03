@@ -306,8 +306,8 @@ func (store *WorkflowFileArtifactStore) GetWorkflowFileArtifacts(projectID int, 
 	if count == 0 || count > maxWorkflowFileArtifactRepositoryBatch {
 		count = maxWorkflowFileArtifactRepositoryBatch
 	}
-	query := "select * from workflow_file_artifact where project_id=? and workflow_run_id=? and state=?"
-	args := []any{projectID, workflowRunID, db.WorkflowFileArtifactAvailable}
+	query := "select * from workflow_file_artifact where project_id=? and workflow_run_id=? and state in (?, ?)"
+	args := []any{projectID, workflowRunID, db.WorkflowFileArtifactAvailable, db.WorkflowFileArtifactExpired}
 	if params.BeforeID > 0 {
 		query += " and id<?"
 		args = append(args, params.BeforeID)

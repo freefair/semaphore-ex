@@ -59,6 +59,11 @@
         ></v-progress-linear>
       </div>
 
+      <WorkflowArtifactRetentionPanel
+        v-if="isPro && canManageArtifactRetention"
+        :project-id="projectId"
+      />
+
       <DeploymentWindowsPanel
         v-if="deploymentWindowsDecision"
         :project-id="projectId"
@@ -187,12 +192,18 @@ import delay from '@/lib/delay';
 import DashboardMenu from '@/components/DashboardMenu.vue';
 import DeploymentWindowsPanel from '@/components/DeploymentWindowsPanel.vue';
 import PolicyGuardrailsPanel from '@/components/PolicyGuardrailsPanel.vue';
+import WorkflowArtifactRetentionPanel from '@/components/WorkflowArtifactRetentionPanel.vue';
 import { findCapabilityDecision } from '@/lib/capabilities';
 import { USER_PERMISSIONS } from '@/lib/constants';
 
 export default {
   components: {
-    DashboardMenu, DeploymentWindowsPanel, PolicyGuardrailsPanel, YesNoDialog, ProjectForm,
+    DashboardMenu,
+    DeploymentWindowsPanel,
+    PolicyGuardrailsPanel,
+    WorkflowArtifactRetentionPanel,
+    YesNoDialog,
+    ProjectForm,
   },
   props: {
     projectId: Number,
@@ -200,6 +211,7 @@ export default {
     systemInfo: Object,
     userPermissions: Number,
     isAdmin: Boolean,
+    isPro: Boolean,
   },
 
   data() {
@@ -212,6 +224,10 @@ export default {
   },
 
   computed: {
+    canManageArtifactRetention() {
+      return Boolean(this.isAdmin
+        || ((this.userPermissions || 0) & USER_PERMISSIONS.manageProjectResources));
+    },
     deploymentWindowsDecision() {
       const decision = findCapabilityDecision(this.systemInfo, 'deployment_windows');
       return decision?.access?.includes('read') ? decision : null;

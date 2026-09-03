@@ -66,6 +66,8 @@
           @totp-rollout-updated="$emit('totp-rollout-updated')"
         />
 
+        <WorkflowArtifactRetentionPanel v-if="isPro" />
+
         <!-- Ansible -->
         <v-subheader class="px-0 mt-2">Ansible</v-subheader>
         <v-card style="background: var(--highlighted-card-bg-color)">
@@ -299,13 +301,15 @@
 <script>
 import axios from 'axios';
 import EnhancedSystemInfoPanel from '@/components/EnhancedSystemInfoPanel.vue';
+import WorkflowArtifactRetentionPanel from '@/components/WorkflowArtifactRetentionPanel.vue';
 
 export default {
-  components: { EnhancedSystemInfoPanel },
+  components: { EnhancedSystemInfoPanel, WorkflowArtifactRetentionPanel },
 
   props: {
     value: Boolean,
     systemInfo: Object,
+    isPro: Boolean,
   },
 
   data() {

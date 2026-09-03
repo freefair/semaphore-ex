@@ -61,6 +61,18 @@ describe('linear workflow run dashboard', () => {
     const requests = [];
     axios.get = async (url) => {
       requests.push(url);
+      if (url.endsWith('/file-artifacts')) {
+        return {
+          data: [{
+            id: 4,
+            workflow_node_id: 11,
+            filename: 'report.txt',
+            logical_name: 'report',
+            state: 'available',
+            expires_at: '2026-09-30T12:00:00Z',
+          }],
+        };
+      }
       if (url.endsWith('/artifacts')) {
         return {
           data: [{
@@ -91,6 +103,7 @@ describe('linear workflow run dashboard', () => {
       workflow: null,
       templates: [],
       artifacts: [],
+      fileArtifacts: [],
       $t: (key) => key,
     };
 
@@ -99,12 +112,55 @@ describe('linear workflow run dashboard', () => {
     expect(requests).to.deep.equal([
       '/api/project/7/workflows/41/runs/91',
       '/api/project/7/workflows/41/runs/91/artifacts',
+      '/api/project/7/workflows/41/runs/91/file-artifacts',
     ]);
     expect(context.workflow.name).to.equal('Frozen');
     expect(context.templates[0].name).to.equal('Frozen template');
     expect(context.artifacts[0]).to.include({
       name: 'deployment_token', sensitive: true, availability: 'available',
     });
+    expect(context.fileArtifacts[0]).to.include({
+      id: 4, filename: 'report.txt', state: 'available',
+    });
+  });
+
+  it('renders safe file metadata states and blocks stale downloads before preflight', async () => {
+    const originalHead = axios.head;
+    let headRequests = 0;
+    axios.head = async () => { headRequests += 1; };
+    const expired = { id: 4, state: 'expired', expires_at: '2026-01-01T00:00:00Z' };
+    const available = { id: 5, state: 'available', expires_at: '2999-01-01T00:00:00Z' };
+    const context = {
+      projectId: 7,
+      workflowId: 41,
+      runId: 91,
+      downloadingArtifactId: null,
+      fileArtifactDownloadErrors: {},
+      fileArtifactDownloadable: WorkflowRun.methods.fileArtifactDownloadable,
+      fileArtifactDownloadURL: WorkflowRun.methods.fileArtifactDownloadURL,
+      $delete: (target, key) => Reflect.deleteProperty(target, key),
+      $set: (target, key, value) => Reflect.set(target, key, value),
+      $t: (key) => key,
+    };
+    try {
+      expect(WorkflowRun.methods.fileArtifactDownloadURL.call(context, available))
+        .to.equal('/api/project/7/workflows/41/runs/91/file-artifacts/5/content');
+      expect(WorkflowRun.methods.fileArtifactStateLabel.call(context, expired))
+        .to.equal('workflowFileArtifactExpired');
+      await WorkflowRun.methods.downloadFileArtifact.call(context, expired);
+      expect(headRequests).to.equal(0);
+
+      axios.head = async () => {
+        headRequests += 1;
+        throw Object.assign(new Error('denied'), { response: { status: 404 } });
+      };
+      await WorkflowRun.methods.downloadFileArtifact.call(context, available);
+      expect(headRequests).to.equal(1);
+      expect(context.fileArtifactDownloadErrors[5])
+        .to.equal('workflowFileArtifactDownloadDenied');
+    } finally {
+      axios.head = originalHead;
+    }
   });
 
   it('flattens value-free resolved input provenance for the compact metadata panel', () => {
