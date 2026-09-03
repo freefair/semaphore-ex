@@ -133,17 +133,21 @@ func (p *TaskPool) addTaskWithExecutionPreflightPlan(
 		p.recordDeploymentWindowOverrideForbidden(projectID, actorID)
 		return db.Task{}, snapshot.Plan, pro_interfaces.ErrDeploymentWindowOverrideForbidden
 	}
+	var admissionClaim *pro_interfaces.DeploymentWindowAdmissionClaim
 	if p.deploymentWindowAdmission != nil {
-		if err = p.claimDeploymentWindowTaskAdmission(&task, pro_interfaces.DeploymentWindowAdmissionRequest{
+		claim, claimErr := p.claimDeploymentWindowTaskAdmission(&task, pro_interfaces.DeploymentWindowAdmissionRequest{
 			ProjectID: projectID, DecisionKey: "manual-" + random.String(32), Source: pro_interfaces.DeploymentWindowSourceManual,
 			Origin: pro_interfaces.DeploymentWindowOriginUser, TemplateID: &templateID, ActorUserID: &actorID, Override: override,
-		}); err != nil {
-			if errors.Is(err, pro_interfaces.ErrDeploymentWindowOverrideForbidden) {
+		})
+		if claimErr != nil {
+			if errors.Is(claimErr, pro_interfaces.ErrDeploymentWindowOverrideForbidden) {
 				p.recordDeploymentWindowOverrideForbidden(projectID, actorID)
 			}
-			return db.Task{}, snapshot.Plan, err
+			return db.Task{}, snapshot.Plan, claimErr
 		}
+		admissionClaim = &claim
 	}
+	var created db.Task
 	if reviewed {
 		if executionSnapshot == nil {
 			return db.Task{}, snapshot.Plan, errors.New("execution preflight snapshot is unavailable")
@@ -153,10 +157,13 @@ func (p *TaskPool) addTaskWithExecutionPreflightPlan(
 			return db.Task{}, snapshot.Plan, errors.New("execution preflight snapshot is invalid")
 		}
 		task.ExecutionSnapshotJSON = &encoded
-		created, createErr := p.addTask(task, &executionSnapshot.Template, &actor.ID, actor.Username, projectID, needAlias, nil, nil)
-		return created, snapshot.Plan, createErr
+		created, err = p.addTask(task, &executionSnapshot.Template, &actor.ID, actor.Username, projectID, needAlias, nil, nil)
+	} else {
+		created, err = p.addTask(task, nil, &actor.ID, actor.Username, projectID, needAlias, nil, nil)
 	}
-	created, err := p.addTask(task, nil, &actor.ID, actor.Username, projectID, needAlias, nil, nil)
+	if err == nil && admissionClaim != nil {
+		p.recordDeploymentWindowTaskBinding(admissionClaim.Decision, created)
+	}
 	return created, snapshot.Plan, err
 }
 

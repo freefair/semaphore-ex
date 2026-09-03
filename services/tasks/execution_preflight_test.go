@@ -1,7 +1,9 @@
 package tasks
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -377,4 +379,156 @@ func TestTaskPoolConfiguredAdmissionRejectsDirectPersistenceWithoutDecision(t *t
 	_, err := pool.addTask(db.Task{TemplateID: 1}, nil, nil, "", 1, false, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "deployment window decision is required")
+}
+
+type executionPreflightDeploymentWindowAdmissionStub struct {
+	claim pro_interfaces.DeploymentWindowAdmissionClaim
+}
+
+func (s executionPreflightDeploymentWindowAdmissionStub) Claim(pro_interfaces.DeploymentWindowAdmissionRequest) (pro_interfaces.DeploymentWindowAdmissionClaim, error) {
+	return s.claim, nil
+}
+
+type executionPreflightDeploymentWindowAuditStub struct {
+	events []pro_interfaces.AuditEvent
+}
+
+func (s *executionPreflightDeploymentWindowAuditStub) Record(_ context.Context, event pro_interfaces.AuditEvent) error {
+	s.events = append(s.events, event)
+	return nil
+}
+
+type executionPreflightTaskStoreStub struct {
+	db.Store
+	createTask func(db.Task, int) (db.Task, error)
+}
+
+func (s executionPreflightTaskStoreStub) CreateTask(task db.Task, maxTasks int) (db.Task, error) {
+	return s.createTask(task, maxTasks)
+}
+
+func TestManualExecutionPreflightDeploymentWindowAuditsSuccessfulAdmissionAndBinding(t *testing.T) {
+	for _, state := range []pro_interfaces.DeploymentWindowDecisionState{
+		pro_interfaces.DeploymentWindowDecisionAllowed,
+		pro_interfaces.DeploymentWindowDecisionOverridden,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			store, pool, actor, template, _ := createTaskPreflightFixture(t)
+			audit := &executionPreflightDeploymentWindowAuditStub{}
+			pool.ConfigureDeploymentWindowAudit(audit)
+			pool.ConfigureDeploymentWindowAdmission(executionPreflightDeploymentWindowAdmissionStub{
+				claim: pro_interfaces.DeploymentWindowAdmissionClaim{
+					Decision: executionPreflightDeploymentWindowDecision(template.ProjectID, actor.ID, state), Inserted: true,
+				},
+			})
+			pool.store = executionPreflightTaskStoreStub{Store: store, createTask: func(task db.Task, _ int) (db.Task, error) {
+				task.ID = 401
+				return task, nil
+			}}
+
+			created, _, err := pool.AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverride(
+				db.Task{TemplateID: template.ID}, &actor, template.ProjectID, false,
+				pro_interfaces.ExecutionPreflightReview{}, nil,
+			)
+
+			require.NoError(t, err)
+			assert.Equal(t, 401, created.ID)
+			require.Len(t, audit.events, 2)
+			assert.Equal(t, pro_interfaces.AuditActionDeploymentWindowAdmission, audit.events[0].Action)
+			assert.Equal(t, pro_interfaces.AuditActionDeploymentWindowBinding, audit.events[1].Action)
+			assert.Equal(t, 401, audit.events[1].DeploymentWindowProvenance.TaskID)
+		})
+	}
+}
+
+func TestManualExecutionPreflightDeploymentWindowBlockedCarriesNewAuditClaim(t *testing.T) {
+	_, pool, actor, template, _ := createTaskPreflightFixture(t)
+	audit := &executionPreflightDeploymentWindowAuditStub{}
+	decision := executionPreflightDeploymentWindowDecision(template.ProjectID, actor.ID, pro_interfaces.DeploymentWindowDecisionBlocked)
+	pool.ConfigureDeploymentWindowAudit(audit)
+	pool.ConfigureDeploymentWindowAdmission(executionPreflightDeploymentWindowAdmissionStub{
+		claim: pro_interfaces.DeploymentWindowAdmissionClaim{Decision: decision, Inserted: true},
+	})
+
+	_, _, err := pool.AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverride(
+		db.Task{TemplateID: template.ID}, &actor, template.ProjectID, false,
+		pro_interfaces.ExecutionPreflightReview{}, nil,
+	)
+
+	var blocked *pro_interfaces.DeploymentWindowBlockedError
+	require.ErrorAs(t, err, &blocked)
+	assert.Equal(t, decision.ID, blocked.DecisionID)
+	assert.True(t, blocked.AuditInserted)
+	require.NotNil(t, blocked.AuditDecision)
+	assert.Equal(t, decision.ID, blocked.AuditDecision.ID)
+	require.Len(t, audit.events, 1)
+	assert.Equal(t, pro_interfaces.AuditActionDeploymentWindowAdmission, audit.events[0].Action)
+}
+
+func TestManualExecutionPreflightDeploymentWindowSkipsBindingAfterPersistenceFailureAndReplayAdmission(t *testing.T) {
+	t.Run("persistence failure", func(t *testing.T) {
+		store, pool, actor, template, _ := createTaskPreflightFixture(t)
+		audit := &executionPreflightDeploymentWindowAuditStub{}
+		pool.ConfigureDeploymentWindowAudit(audit)
+		pool.ConfigureDeploymentWindowAdmission(executionPreflightDeploymentWindowAdmissionStub{
+			claim: pro_interfaces.DeploymentWindowAdmissionClaim{
+				Decision: executionPreflightDeploymentWindowDecision(template.ProjectID, actor.ID, pro_interfaces.DeploymentWindowDecisionAllowed), Inserted: true,
+			},
+		})
+		pool.store = executionPreflightTaskStoreStub{Store: store, createTask: func(db.Task, int) (db.Task, error) {
+			return db.Task{}, errors.New("persistence failed")
+		}}
+
+		_, _, err := pool.AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverride(
+			db.Task{TemplateID: template.ID}, &actor, template.ProjectID, false,
+			pro_interfaces.ExecutionPreflightReview{}, nil,
+		)
+
+		require.EqualError(t, err, "persistence failed")
+		require.Len(t, audit.events, 1)
+		assert.Equal(t, pro_interfaces.AuditActionDeploymentWindowAdmission, audit.events[0].Action)
+	})
+
+	t.Run("blocked replay", func(t *testing.T) {
+		_, pool, actor, template, _ := createTaskPreflightFixture(t)
+		audit := &executionPreflightDeploymentWindowAuditStub{}
+		decision := executionPreflightDeploymentWindowDecision(template.ProjectID, actor.ID, pro_interfaces.DeploymentWindowDecisionBlocked)
+		pool.ConfigureDeploymentWindowAudit(audit)
+		pool.ConfigureDeploymentWindowAdmission(executionPreflightDeploymentWindowAdmissionStub{
+			claim: pro_interfaces.DeploymentWindowAdmissionClaim{Decision: decision},
+		})
+
+		_, _, err := pool.AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverride(
+			db.Task{TemplateID: template.ID}, &actor, template.ProjectID, false,
+			pro_interfaces.ExecutionPreflightReview{}, nil,
+		)
+
+		var blocked *pro_interfaces.DeploymentWindowBlockedError
+		require.ErrorAs(t, err, &blocked)
+		assert.False(t, blocked.AuditInserted)
+		assert.Equal(t, decision.ID, blocked.AuditDecision.ID)
+		assert.Empty(t, audit.events, "replayed decisions must not multiply audit events")
+	})
+}
+
+func executionPreflightDeploymentWindowDecision(projectID, actorID int, state pro_interfaces.DeploymentWindowDecisionState) db.DeploymentWindowDecisionRecord {
+	reason := pro_interfaces.DeploymentWindowReasonDefaultAllow
+	var overrideActorID *int
+	var overrideCategory *string
+	if state == pro_interfaces.DeploymentWindowDecisionBlocked {
+		reason = pro_interfaces.DeploymentWindowReasonFreezeActive
+	}
+	if state == pro_interfaces.DeploymentWindowDecisionOverridden {
+		reason = pro_interfaces.DeploymentWindowReasonOverride
+		category := string(pro_interfaces.DeploymentWindowOverrideIncident)
+		overrideActorID = &actorID
+		overrideCategory = &category
+	}
+	return db.DeploymentWindowDecisionRecord{
+		ID: 97, ProjectID: projectID, ActorUserID: &actorID,
+		Source: string(pro_interfaces.DeploymentWindowSourceManual), Origin: string(pro_interfaces.DeploymentWindowOriginUser),
+		PolicyRevision: 1, EffectiveTimezone: "UTC", EvaluatedAt: time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC),
+		State: string(state), Reason: string(reason), MatchedRulesJSON: "[]",
+		OverrideActorID: overrideActorID, OverrideCategory: overrideCategory,
+	}
 }
