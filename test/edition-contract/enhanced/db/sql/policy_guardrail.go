@@ -267,13 +267,22 @@ func (s *PolicyGuardrailStore) GetPolicyGuardrailRevisions(scope pro_interfaces.
 }
 
 func (s *PolicyGuardrailStore) GetPolicyGuardrailEvaluationHistory(projectID *int, params db.RetrieveQueryParams) ([]db.PolicyGuardrailEvaluationRecord, error) {
-	if s == nil || s.connection == nil || projectID == nil || *projectID <= 0 || !policyGuardrailPageValid(params) {
+	if s == nil || s.connection == nil || !policyGuardrailPageValid(params) {
 		return nil, db.ErrInvalidOperation
 	}
-	if err := s.ensurePolicyProject(projectID); err != nil {
-		return nil, err
+	base := "select * from policy_guardrail_evaluation where 1=1"
+	args := []any(nil)
+	if projectID != nil {
+		if *projectID <= 0 {
+			return nil, db.ErrInvalidOperation
+		}
+		if err := s.ensurePolicyProject(projectID); err != nil {
+			return nil, err
+		}
+		base = "select * from policy_guardrail_evaluation where project_id=?"
+		args = []any{*projectID}
 	}
-	query, args := policyGuardrailHistoryQuery("select * from policy_guardrail_evaluation where project_id=?", []any{*projectID}, params)
+	query, args := policyGuardrailHistoryQuery(base, args, params)
 	var values []db.PolicyGuardrailEvaluationRecord
 	if _, err := s.connection.SelectAll(&values, query, args...); err != nil {
 		return nil, err

@@ -44,6 +44,39 @@ func TestPolicyGuardrailBatchPreviewUsesOneDatabaseTimestampWithoutPersisting(t 
 	assert.Empty(t, history, "preview must not create durable admission records")
 }
 
+func TestPolicyGuardrailGlobalEvaluationHistoryIsBoundedAcrossProjects(t *testing.T) {
+	store := coreSQL.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	repository := NewPolicyGuardrailStore(store.GetConnection())
+	actor, err := store.CreateUserWithoutPassword(coreDB.User{Username: "policy-global-history", Name: "Policy Global History", Email: "policy-global-history@example.test"})
+	require.NoError(t, err)
+	first, err := store.CreateProject(coreDB.Project{Name: "policy-global-history-first"})
+	require.NoError(t, err)
+	second, err := store.CreateProject(coreDB.Project{Name: "policy-global-history-second"})
+	require.NoError(t, err)
+	evaluate := func(_ []coreDB.PolicyGuardrailRevision, input pro_interfaces.PolicyGuardrailEvaluationInput) (pro_interfaces.PolicyGuardrailEvaluation, error) {
+		fingerprint, fingerprintErr := pro_interfaces.FingerprintPolicyGuardrailInput(input)
+		if fingerprintErr != nil {
+			return pro_interfaces.PolicyGuardrailEvaluation{}, fingerprintErr
+		}
+		return pro_interfaces.PolicyGuardrailEvaluation{Allowed: true, InputFingerprint: fingerprint, EvaluatedAt: input.EvaluatedAt}, nil
+	}
+	_, err = repository.ClaimPolicyGuardrailEvaluation(policyGuardrailBatchRequest(first.ID, actor.ID, "global-history-first", "first"), evaluate)
+	require.NoError(t, err)
+	_, err = repository.ClaimPolicyGuardrailEvaluation(policyGuardrailBatchRequest(second.ID, actor.ID, "global-history-second", "second"), evaluate)
+	require.NoError(t, err)
+
+	history, err := repository.GetPolicyGuardrailEvaluationHistory(nil, coreDB.RetrieveQueryParams{Count: 1})
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	assert.Equal(t, second.ID, history[0].ProjectID, "global history remains ordered and paginated")
+
+	projectHistory, err := repository.GetPolicyGuardrailEvaluationHistory(&first.ID, coreDB.RetrieveQueryParams{Count: 10})
+	require.NoError(t, err)
+	require.Len(t, projectHistory, 1)
+	assert.Equal(t, first.ID, projectHistory[0].ProjectID)
+}
+
 func TestPolicyGuardrailStoreDraftPublishCASAndRollbackAsNewRevision(t *testing.T) {
 	store := coreSQL.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
