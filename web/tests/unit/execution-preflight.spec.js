@@ -129,4 +129,21 @@ describe('execution preflight review', () => {
     expect(ExecutionPreflightReview.methods.findingType('warning')).to.equal('warning');
     expect(ExecutionPreflightReview.methods.findingType('info')).to.equal('info');
   });
+
+  it('shows bounded policy provenance and only safe remediation links', () => {
+    const finding = {
+      policy_scope: 'project',
+      policy_revision: 4,
+      policy_rule_id: 'deny-production',
+      remediation_url: 'https://docs.example.test/policies/production',
+    };
+    expect(ExecutionPreflightReview.methods.policyFindingLabel(finding))
+      .to.equal('project · deny-production · revision 4');
+    expect(ExecutionPreflightReview.methods.safeRemediationURL(finding.remediation_url))
+      .to.equal(finding.remediation_url);
+    expect(ExecutionPreflightReview.methods.safeRemediationURL('data:text/html,unsafe'))
+      .to.equal(null);
+    expect(ExecutionPreflightReview.methods.safeRemediationURL('https://user:pass@example.test/'))
+      .to.equal(null);
+  });
 });

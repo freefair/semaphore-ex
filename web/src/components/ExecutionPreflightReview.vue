@@ -14,7 +14,17 @@
         class="mb-2"
         :data-testid="`execution-preflight-${finding.severity}`"
       >
-        {{ finding.message }} <code>{{ finding.code }}</code>
+        <div>{{ finding.message }} <code>{{ finding.code }}</code></div>
+        <div v-if="policyFindingLabel(finding)" class="text-caption mt-1">
+          <code>{{ policyFindingLabel(finding) }}</code>
+        </div>
+        <a
+          v-if="safeRemediationURL(finding.remediation_url)"
+          :href="safeRemediationURL(finding.remediation_url)"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-caption"
+        >Remediation</a>
       </v-alert>
 
       <div class="text-caption text--secondary">{{ $t('executionDefinition') }}</div>
@@ -102,6 +112,24 @@ export default {
       if (severity === 'denial') return 'error';
       if (severity === 'warning') return 'warning';
       return 'info';
+    },
+    policyFindingLabel(finding) {
+      if (!finding?.policy_scope || !finding?.policy_rule_id || !finding?.policy_revision) {
+        return '';
+      }
+      return `${finding.policy_scope} · ${finding.policy_rule_id} · revision ${finding.policy_revision}`;
+    },
+    safeRemediationURL(value) {
+      if (!value) return null;
+      try {
+        const parsed = new URL(value);
+        if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash) {
+          return null;
+        }
+        return parsed.href;
+      } catch (error) {
+        return null;
+      }
     },
     referenceKey(reference) {
       return `${reference.kind}-${reference.id}-${reference.binding_target || ''}`;
