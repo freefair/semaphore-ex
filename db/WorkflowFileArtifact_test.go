@@ -21,6 +21,11 @@ func TestWorkflowFileArtifactUploadValidation(t *testing.T) {
 	if err := validWorkflowFileArtifactUpload().Validate(); err != nil {
 		t.Fatalf("valid upload rejected: %v", err)
 	}
+	initialAttempt := validWorkflowFileArtifactUpload()
+	initialAttempt.Attempt = 0
+	if err := initialAttempt.Validate(); err != nil {
+		t.Fatalf("initial local task attempt rejected: %v", err)
+	}
 	tests := []struct {
 		name   string
 		mutate func(*WorkflowFileArtifactUpload)
@@ -31,6 +36,7 @@ func TestWorkflowFileArtifactUploadValidation(t *testing.T) {
 		{"oversize", func(value *WorkflowFileArtifactUpload) { value.SizeBytes = MaxWorkflowFileArtifactBytes + 1 }},
 		{"invalid checksum", func(value *WorkflowFileArtifactUpload) { value.SHA256 = strings.Repeat("A", 64) }},
 		{"negative runtime node ID", func(value *WorkflowFileArtifactUpload) { value.WorkflowNodeID = -1 }},
+		{"negative attempt", func(value *WorkflowFileArtifactUpload) { value.Attempt = -1 }},
 		{"invalid role", func(value *WorkflowFileArtifactUpload) {
 			value.AccessPolicy.RoleIDs = []ProjectRoleReference{"bad role"}
 		}},
