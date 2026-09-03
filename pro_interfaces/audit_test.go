@@ -509,6 +509,21 @@ func TestExecutionPreflightAuditUsesStrictValueFreeAllowlist(t *testing.T) {
 	assert.NotContains(t, string(payload), "review_token")
 }
 
+func TestExecutionPreflightAuditAcceptsPolicyWarningProvenance(t *testing.T) {
+	plan := ExecutionPreflightPlan{
+		Intent:      ExecutionPreflightTask,
+		Fingerprint: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Findings:    []ExecutionPreflightFinding{{Code: ExecutionReasonPolicyWarning}},
+	}
+	event := NewExecutionPreflightAuditEvent(
+		7, 42, "0123456789abcdef0123456789abcdef", "192.0.2.10:443", "audit-client",
+		AuditActionExecutionPreflightPreview, AuditOutcomeAllowed, AuditReasonExecutionPreflightPreviewed,
+		ExecutionPreflightTask, 9, NewExecutionPreflightAuditProvenance(plan, nil),
+	)
+
+	require.NoError(t, event.Validate())
+}
+
 func TestDeploymentWindowAuditUsesStrictBoundedProvenance(t *testing.T) {
 	projectID, actorID := 42, 7
 	category := "incident"

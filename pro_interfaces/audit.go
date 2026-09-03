@@ -1071,7 +1071,8 @@ func validDistinctExecutionPreflightReasons(values []ExecutionPreflightReasonCod
 			ExecutionReasonNotRegistered, ExecutionReasonOffline, ExecutionReasonCapacity,
 			ExecutionReasonTagMismatch, ExecutionReasonImageUnsupported, ExecutionReasonNoCandidate,
 			ExecutionReasonHiddenReference, ExecutionReasonPermissionDenied, ExecutionReasonCapabilityUnavailable,
-			ExecutionReasonPolicyDenied, ExecutionReasonPlanLimitExceeded, ExecutionReasonInvalidInput:
+			ExecutionReasonPolicyAllowed, ExecutionReasonPolicyWarning, ExecutionReasonPolicyDenied,
+			ExecutionReasonPlanLimitExceeded, ExecutionReasonInvalidInput:
 		default:
 			return false
 		}
