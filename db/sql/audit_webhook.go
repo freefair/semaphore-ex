@@ -58,6 +58,67 @@ func (d *SqlDb) SaveAuditWebhookConfig(config db.AuditWebhookConfig) (db.AuditWe
 	return config, nil
 }
 
+// CompareAndSwapAuditWebhookSigningState persists only the versioned signing
+// state. The historical optional Bearer credential remains untouched so key
+// rotation cannot accidentally overwrite receiver authentication.
+func (d *SqlDb) CompareAndSwapAuditWebhookSigningState(config db.AuditWebhookConfig, expectedRevision int) (db.AuditWebhookConfig, error) {
+	if expectedRevision < 0 || config.SigningStateRevision != expectedRevision {
+		return db.AuditWebhookConfig{}, db.ErrAuditWebhookSigningStateConflict
+	}
+	if err := db.ValidateAuditWebhookSigningState(config); err != nil {
+		return db.AuditWebhookConfig{}, err
+	}
+	now := tz.Now()
+	nextRevision := expectedRevision + 1
+	configArgs := formatArgs([]any{
+		config.CurrentSigningSecretEncrypted, config.NextSigningSecretEncrypted,
+		config.CurrentSigningKeyID, config.NextSigningKeyID,
+		config.CurrentSigningGeneration, config.NextSigningGeneration,
+		nextRevision, now, auditWebhookConfigID, expectedRevision,
+	})
+	result, err := d.exec(
+		"update audit_webhook_config set current_signing_secret_encrypted=?, next_signing_secret_encrypted=?, current_signing_key_id=?, next_signing_key_id=?, current_signing_generation=?, next_signing_generation=?, signing_state_revision=?, updated=? where id=? and signing_state_revision=?",
+		configArgs...,
+	)
+	if err != nil {
+		return db.AuditWebhookConfig{}, err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return db.AuditWebhookConfig{}, err
+	}
+	if updated == 0 {
+		if expectedRevision != 0 {
+			return db.AuditWebhookConfig{}, db.ErrAuditWebhookSigningStateConflict
+		}
+		insertArgs := formatArgs([]any{
+			auditWebhookConfigID, config.Endpoint, config.EncryptedCredential, config.CredentialConfigured, config.Paused,
+			config.CurrentSigningSecretEncrypted, config.NextSigningSecretEncrypted,
+			config.CurrentSigningKeyID, config.NextSigningKeyID,
+			config.CurrentSigningGeneration, config.NextSigningGeneration,
+			nextRevision, now, now,
+		})
+		_, err = d.exec(
+			"insert into audit_webhook_config(id, endpoint, encrypted_credential, credential_configured, paused, current_signing_secret_encrypted, next_signing_secret_encrypted, current_signing_key_id, next_signing_key_id, current_signing_generation, next_signing_generation, signing_state_revision, created, updated) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			insertArgs...,
+		)
+		if err != nil {
+			return db.AuditWebhookConfig{}, err
+		}
+		config.Created = now
+	} else if config.Created.IsZero() {
+		persisted, getErr := d.GetAuditWebhookConfig()
+		if getErr != nil {
+			return db.AuditWebhookConfig{}, getErr
+		}
+		config.Created = persisted.Created
+	}
+	config.ID = auditWebhookConfigID
+	config.SigningStateRevision = nextRevision
+	config.Updated = now
+	return config, nil
+}
+
 func (d *SqlDb) CreateAuditWebhookDelivery(delivery db.AuditWebhookDelivery) (db.AuditWebhookDelivery, error) {
 	now := tz.Now()
 	if delivery.NextAttempt.IsZero() {
@@ -246,6 +307,158 @@ func (d *SqlDb) GetAuditWebhookQueueHealth(_ time.Time) (db.AuditWebhookQueueHea
 		return db.AuditWebhookQueueHealth{}, nil
 	}
 	return db.AuditWebhookQueueHealth{Depth: row.Depth, OldestEvent: row.OldestEvent}, err
+}
+
+func (d *SqlDb) RecordAuditWebhookDeliveryAttempt(attempt db.AuditWebhookDeliveryAttempt) (db.AuditWebhookDeliveryAttempt, error) {
+	if err := db.ValidateAuditWebhookDeliveryAttempt(attempt); err != nil {
+		return db.AuditWebhookDeliveryAttempt{}, err
+	}
+	if attempt.Outcome != db.AuditWebhookDeliveryAttemptStarted {
+		return db.AuditWebhookDeliveryAttempt{}, errors.New("audit webhook delivery attempt must start before completion")
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return db.AuditWebhookDeliveryAttempt{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	type parent struct {
+		EventID string `db:"event_id"`
+	}
+	var delivery parent
+	if err = tx.SelectOne(&delivery, d.PrepareQuery("select event_id from audit_webhook_delivery where id=?"), attempt.DeliveryID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return db.AuditWebhookDeliveryAttempt{}, db.ErrNotFound
+		}
+		return db.AuditWebhookDeliveryAttempt{}, err
+	}
+	if delivery.EventID != attempt.EventID {
+		return db.AuditWebhookDeliveryAttempt{}, db.ErrAuditWebhookDeliveryAttemptConflict
+	}
+
+	now := tz.Now()
+	updateArgs := formatArgs([]any{
+		attempt.Attempt, attempt.SignedAt, now, attempt.DeliveryID, db.AuditWebhookDeliveryRunning, attempt.Attempt - 1, attempt.SignedAt,
+	})
+	result, err := tx.Exec(d.PrepareQuery(
+		"update audit_webhook_delivery set attempts=?, last_signed_at=?, updated=? where id=? and status=? and attempts=? and (last_signed_at is null or last_signed_at<?)"),
+		updateArgs...,
+	)
+	if err != nil {
+		return db.AuditWebhookDeliveryAttempt{}, err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return db.AuditWebhookDeliveryAttempt{}, err
+	}
+	if updated != 1 {
+		return db.AuditWebhookDeliveryAttempt{}, db.ErrAuditWebhookDeliveryAttemptConflict
+	}
+
+	insertArgs := formatArgs([]any{
+		attempt.DeliveryID, attempt.EventID, attempt.Attempt, attempt.KeyID, attempt.SignedAt,
+		attempt.Outcome, attempt.HTTPStatus, attempt.Reason, now, attempt.CompletedAt,
+	})
+	insertResult, err := tx.Exec(d.PrepareQuery(
+		"insert into audit_webhook_delivery_attempt(delivery_id, event_id, attempt, key_id, signed_at, outcome, http_status, reason, created, completed_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+		insertArgs...,
+	)
+	if err != nil {
+		return db.AuditWebhookDeliveryAttempt{}, err
+	}
+	id, err := insertResult.LastInsertId()
+	if err != nil {
+		return db.AuditWebhookDeliveryAttempt{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return db.AuditWebhookDeliveryAttempt{}, err
+	}
+	attempt.ID = int(id)
+	attempt.Created = now
+	return attempt, nil
+}
+
+func (d *SqlDb) FinalizeAuditWebhookDeliveryAttempt(result db.AuditWebhookDeliveryAttemptResult) error {
+	if err := db.ValidateAuditWebhookDeliveryAttemptResult(result); err != nil {
+		return err
+	}
+	parentStatus, deliveredAt, nextAttempt := auditWebhookDeliveryAttemptParentState(result)
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	parentArgs := formatArgs([]any{
+		parentStatus, nextAttempt, result.HTTPStatus, result.Reason, result.CompletedAt, deliveredAt,
+		result.DeliveryID, db.AuditWebhookDeliveryRunning, result.Attempt,
+	})
+	updatedParent, err := tx.Exec(d.PrepareQuery(
+		"update audit_webhook_delivery set status=?, next_attempt=?, lease_until=null, http_status=?, last_error=?, updated=?, delivered_at=? where id=? and status=? and attempts=?"),
+		parentArgs...,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := updatedParent.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return db.ErrAuditWebhookDeliveryAttemptConflict
+	}
+
+	attemptArgs := formatArgs([]any{result.Outcome, result.HTTPStatus, result.Reason, result.CompletedAt, result.DeliveryID, result.Attempt, db.AuditWebhookDeliveryAttemptStarted, result.CompletedAt})
+	updatedAttempt, err := tx.Exec(d.PrepareQuery(
+		"update audit_webhook_delivery_attempt set outcome=?, http_status=?, reason=?, completed_at=? where delivery_id=? and attempt=? and outcome=? and signed_at<=?"),
+		attemptArgs...,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err = updatedAttempt.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return db.ErrAuditWebhookDeliveryAttemptConflict
+	}
+	return tx.Commit()
+}
+
+func (d *SqlDb) GetAuditWebhookDeliveryAttempts(deliveryID int, params db.RetrieveQueryParams) ([]db.AuditWebhookDeliveryAttempt, error) {
+	if deliveryID <= 0 {
+		return nil, db.ErrNotFound
+	}
+	query := squirrel.Select("*").From("audit_webhook_delivery_attempt").Where("delivery_id=?", deliveryID)
+	if params.BeforeID > 0 {
+		query = query.Where("id<?", params.BeforeID)
+	}
+	query = query.OrderBy("attempt desc", "id desc")
+	count := params.Count
+	if count <= 0 || count > db.MaxAuditWebhookDeliveryAttemptPage {
+		count = db.MaxAuditWebhookDeliveryAttemptPage
+	}
+	query = query.Limit(uint64(count))
+	sqlQuery, args, err := query.ToSql()
+	if err != nil {
+		return nil, err
+	}
+	var attempts []db.AuditWebhookDeliveryAttempt
+	_, err = d.selectAll(&attempts, sqlQuery, args...)
+	return attempts, err
+}
+
+func auditWebhookDeliveryAttemptParentState(result db.AuditWebhookDeliveryAttemptResult) (db.AuditWebhookDeliveryStatus, *time.Time, time.Time) {
+	nextAttempt := result.CompletedAt
+	switch result.Outcome {
+	case db.AuditWebhookDeliveryAttemptSucceeded:
+		return db.AuditWebhookDeliverySucceeded, &result.CompletedAt, nextAttempt
+	case db.AuditWebhookDeliveryAttemptRetrying:
+		return db.AuditWebhookDeliveryRetrying, nil, *result.NextAttempt
+	default:
+		return db.AuditWebhookDeliveryFailed, nil, nextAttempt
+	}
 }
 
 var _ db.AuditWebhookRepository = (*SqlDb)(nil)

@@ -128,3 +128,68 @@ func TestAuditWebhookDeliveryClaimRetryAndRecoveryPreserveEventID(t *testing.T) 
 	assert.Equal(t, eventID, history[0].EventID)
 	require.NotNil(t, history[0].DeliveredAt)
 }
+
+func TestAuditWebhookSigningStateCASAndAttemptHistoryAreFenced(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	defer store.Close()
+
+	legacy, err := store.SaveAuditWebhookConfig(db.AuditWebhookConfig{
+		Endpoint: "https://audit.example.test/events", EncryptedCredential: "legacy-bearer", CredentialConfigured: true,
+	})
+	require.NoError(t, err)
+	legacy.CurrentSigningSecretEncrypted = "ciphertext-current"
+	legacy.CurrentSigningKeyID = "swhkid_current"
+	legacy.CurrentSigningGeneration = 1
+	signed, err := store.CompareAndSwapAuditWebhookSigningState(legacy, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, signed.SigningStateRevision)
+	assert.Equal(t, "legacy-bearer", signed.EncryptedCredential, "legacy Bearer state remains separate")
+	_, err = store.CompareAndSwapAuditWebhookSigningState(signed, 0)
+	assert.ErrorIs(t, err, db.ErrAuditWebhookSigningStateConflict)
+
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	delivery, err := store.CreateAuditWebhookDelivery(db.AuditWebhookDelivery{
+		EventID: "evt_1234567890123456", Payload: `{}`, NextAttempt: now,
+	})
+	require.NoError(t, err)
+	claimed, err := store.ClaimAuditWebhookDeliveries(now, now.Add(time.Minute), 1)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	assert.Nil(t, claimed[0].LastSignedAt)
+
+	started, err := store.RecordAuditWebhookDeliveryAttempt(db.AuditWebhookDeliveryAttempt{
+		DeliveryID: delivery.ID, EventID: delivery.EventID, Attempt: 1, KeyID: "swhkid_current",
+		SignedAt: now, Outcome: db.AuditWebhookDeliveryAttemptStarted,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, started.ID)
+	_, err = store.RecordAuditWebhookDeliveryAttempt(db.AuditWebhookDeliveryAttempt{
+		DeliveryID: delivery.ID, EventID: delivery.EventID, Attempt: 1, KeyID: "swhkid_current",
+		SignedAt: now, Outcome: db.AuditWebhookDeliveryAttemptStarted,
+	})
+	assert.ErrorIs(t, err, db.ErrAuditWebhookDeliveryAttemptConflict, "duplicate workers cannot append one attempt")
+
+	status := 204
+	err = store.FinalizeAuditWebhookDeliveryAttempt(db.AuditWebhookDeliveryAttemptResult{
+		DeliveryID: delivery.ID, Attempt: 1, Outcome: db.AuditWebhookDeliveryAttemptSucceeded,
+		HTTPStatus: &status, CompletedAt: now.Add(-time.Second),
+	})
+	assert.ErrorIs(t, err, db.ErrAuditWebhookDeliveryAttemptConflict, "attempt result cannot predate its signed timestamp")
+	require.NoError(t, store.FinalizeAuditWebhookDeliveryAttempt(db.AuditWebhookDeliveryAttemptResult{
+		DeliveryID: delivery.ID, Attempt: 1, Outcome: db.AuditWebhookDeliveryAttemptSucceeded,
+		HTTPStatus: &status, CompletedAt: now.Add(time.Second),
+	}))
+	err = store.FinalizeAuditWebhookDeliveryAttempt(db.AuditWebhookDeliveryAttemptResult{
+		DeliveryID: delivery.ID, Attempt: 1, Outcome: db.AuditWebhookDeliveryAttemptSucceeded,
+		HTTPStatus: &status, CompletedAt: now.Add(2 * time.Second),
+	})
+	assert.ErrorIs(t, err, db.ErrAuditWebhookDeliveryAttemptConflict, "a stale worker cannot complete twice")
+
+	attempts, err := store.GetAuditWebhookDeliveryAttempts(delivery.ID, db.RetrieveQueryParams{Count: 10})
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	assert.Equal(t, db.AuditWebhookDeliveryAttemptSucceeded, attempts[0].Outcome)
+	assert.Equal(t, db.AuditWebhookDeliveryAttemptReasonNone, attempts[0].Reason)
+	assert.Equal(t, "swhkid_current", attempts[0].KeyID)
+	require.NotNil(t, attempts[0].CompletedAt)
+}
