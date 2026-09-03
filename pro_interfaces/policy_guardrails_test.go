@@ -111,6 +111,68 @@ func TestExecutionPreflightPolicyProvenanceChangesPolicyComponent(t *testing.T) 
 	assert.Equal(t, []ExecutionPreflightChangeCode{ExecutionChangePolicy}, changes)
 }
 
+func TestPolicyGuardrailEvaluationValidatesDecisionAndAppliesTypedPreflightFindings(t *testing.T) {
+	projectID := 7
+	evaluation := PolicyGuardrailEvaluation{
+		Revisions: []PolicyGuardrailRevisionRef{{
+			Scope: PolicyGuardrailScopeProject, ProjectID: &projectID, Revision: 2,
+			Fingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		}},
+		Findings: []PolicyGuardrailFinding{{
+			Scope: PolicyGuardrailScopeProject, Revision: 2, RuleID: "deny-production",
+			Effect: PolicyGuardrailEffectDeny, Severity: PolicyGuardrailSeverityHigh,
+			Message: "Production starts are denied.", RemediationURL: "https://docs.example.test/policies/production",
+		}},
+		Allowed:          false,
+		InputFingerprint: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		EvaluatedAt:      time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC),
+	}
+	require.NoError(t, evaluation.Validate(projectID))
+
+	plan := validPolicyPreflightPlan(projectID)
+	require.NoError(t, ApplyPolicyGuardrailEvaluation(&plan, evaluation))
+	require.Len(t, plan.Findings, 1)
+	assert.Equal(t, ExecutionReasonPolicyDenied, plan.Findings[0].Code)
+	assert.Equal(t, ExecutionFindingDenial, plan.Findings[0].Severity)
+	assert.Equal(t, "deny-production", plan.Findings[0].PolicyRuleID)
+	assert.Equal(t, evaluation.Revisions, plan.PolicyRevisions)
+
+	evaluation.Allowed = true
+	require.Error(t, evaluation.Validate(projectID), "a deny finding cannot be relabeled as allowed")
+}
+
+func TestApplyPolicyGuardrailEvaluationMapsAllowAndWarnWithoutOverridingDeny(t *testing.T) {
+	projectID := 7
+	evaluation := PolicyGuardrailEvaluation{
+		Revisions: []PolicyGuardrailRevisionRef{{
+			Scope: PolicyGuardrailScopeGlobal, Revision: 1,
+			Fingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		}},
+		Findings: []PolicyGuardrailFinding{
+			{Scope: PolicyGuardrailScopeGlobal, Revision: 1, RuleID: "allow-reviewed", Effect: PolicyGuardrailEffectAllow, Severity: PolicyGuardrailSeverityInfo, Message: "Reviewed target."},
+			{Scope: PolicyGuardrailScopeGlobal, Revision: 1, RuleID: "warn-runner", Effect: PolicyGuardrailEffectWarn, Severity: PolicyGuardrailSeverityMedium, Message: "Runner needs attention."},
+		},
+		Allowed:          true,
+		InputFingerprint: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		EvaluatedAt:      time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC),
+	}
+	plan := validPolicyPreflightPlan(projectID)
+	require.NoError(t, ApplyPolicyGuardrailEvaluation(&plan, evaluation))
+	assert.Equal(t, []ExecutionPreflightReasonCode{ExecutionReasonPolicyAllowed, ExecutionReasonPolicyWarning}, []ExecutionPreflightReasonCode{plan.Findings[0].Code, plan.Findings[1].Code})
+	assert.False(t, planHasPolicyGuardrailDenial(plan))
+}
+
+func validPolicyPreflightPlan(projectID int) ExecutionPreflightPlan {
+	return ExecutionPreflightPlan{
+		ContractVersion: ExecutionPreflightContractVersion,
+		Intent:          ExecutionPreflightTask, ProjectID: projectID, ActorID: 3, TemplateID: 41,
+		Definition: ExecutionPreflightDefinition{Kind: ExecutionReferenceTemplate, ID: 41, Revision: "r1", Fingerprint: "r1"},
+		Inputs:     []ExecutionPreflightInput{}, References: []ExecutionPreflightReference{},
+		Commands: []ExecutionPreflightCommand{}, Placements: []ExecutionPreflightPlacement{}, Findings: []ExecutionPreflightFinding{},
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}
+}
+
 func validPolicyGuardrailInput() PolicyGuardrailEvaluationInput {
 	return PolicyGuardrailEvaluationInput{
 		ProjectID: 7, Intent: ExecutionPreflightTask,

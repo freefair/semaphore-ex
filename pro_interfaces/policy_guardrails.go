@@ -504,6 +504,172 @@ type PolicyGuardrailEvaluation struct {
 	EvaluatedAt      time.Time                    `json:"evaluated_at"`
 }
 
+// Validate checks an evaluation before it reaches an execution preflight. The
+// policy evaluator is authoritative for matching, but provenance must still be
+// closed, ordered, and self-consistent at this contract boundary.
+func (e PolicyGuardrailEvaluation) Validate(projectID int) error {
+	if projectID <= 0 || !validExecutionPreflightFingerprint(e.InputFingerprint) || e.EvaluatedAt.IsZero() ||
+		len(e.Revisions) > 2 || len(e.Findings) > MaxPolicyGuardrailFindings {
+		return errors.New("invalid policy guardrail evaluation")
+	}
+	seenGlobal, seenProject := false, false
+	for _, revision := range e.Revisions {
+		if revision.Revision <= 0 || !validExecutionPreflightFingerprint(revision.Fingerprint) {
+			return errors.New("invalid policy guardrail evaluation revision")
+		}
+		switch revision.Scope {
+		case PolicyGuardrailScopeGlobal:
+			if seenGlobal || seenProject || revision.ProjectID != nil {
+				return errors.New("policy guardrail revisions must be global before project")
+			}
+			seenGlobal = true
+		case PolicyGuardrailScopeProject:
+			if seenProject || revision.ProjectID == nil || *revision.ProjectID != projectID {
+				return errors.New("policy guardrail evaluation project revision mismatch")
+			}
+			seenProject = true
+		default:
+			return errors.New("invalid policy guardrail evaluation revision scope")
+		}
+	}
+
+	denied := false
+	var previous *PolicyGuardrailFinding
+	for index := range e.Findings {
+		finding := e.Findings[index]
+		if !policyGuardrailFindingValid(finding, e.Revisions) {
+			return errors.New("invalid policy guardrail evaluation finding")
+		}
+		if previous != nil && !policyGuardrailFindingOrder(previous, &finding) {
+			return errors.New("policy guardrail evaluation findings are not deterministic")
+		}
+		previous = &finding
+		denied = denied || finding.Effect == PolicyGuardrailEffectDeny
+	}
+	if e.Allowed == denied {
+		return errors.New("policy guardrail evaluation decision does not match findings")
+	}
+	return nil
+}
+
+func policyGuardrailFindingValid(finding PolicyGuardrailFinding, revisions []PolicyGuardrailRevisionRef) bool {
+	if !policyGuardrailRuleIDPattern.MatchString(finding.RuleID) ||
+		strings.TrimSpace(finding.Message) == "" || len(finding.Message) > MaxPolicyGuardrailMessageBytes || strings.ContainsAny(finding.Message, "\x00\r\n") ||
+		validatePolicyGuardrailRemediationURL(finding.RemediationURL) != nil ||
+		(finding.Effect != PolicyGuardrailEffectAllow && finding.Effect != PolicyGuardrailEffectWarn && finding.Effect != PolicyGuardrailEffectDeny) ||
+		(finding.Severity != PolicyGuardrailSeverityInfo && finding.Severity != PolicyGuardrailSeverityLow && finding.Severity != PolicyGuardrailSeverityMedium && finding.Severity != PolicyGuardrailSeverityHigh && finding.Severity != PolicyGuardrailSeverityCritical) ||
+		(finding.NodeID != nil && *finding.NodeID <= 0) {
+		return false
+	}
+	for _, revision := range revisions {
+		if finding.Scope == revision.Scope && finding.Revision == revision.Revision {
+			return true
+		}
+	}
+	return false
+}
+
+func policyGuardrailFindingOrder(left, right *PolicyGuardrailFinding) bool {
+	leftScope, rightScope := policyGuardrailScopeOrder(left.Scope), policyGuardrailScopeOrder(right.Scope)
+	if leftScope != rightScope {
+		return leftScope < rightScope
+	}
+	if left.RuleID != right.RuleID {
+		return left.RuleID < right.RuleID
+	}
+	// A rule may only produce one finding in one immutable revision. Rejecting
+	// equal ordering keys avoids ambiguous persistence and fingerprinting.
+	return false
+}
+
+func policyGuardrailScopeOrder(scope PolicyGuardrailScope) int {
+	if scope == PolicyGuardrailScopeGlobal {
+		return 0
+	}
+	return 1
+}
+
+// ApplyPolicyGuardrailEvaluation appends typed policy provenance to a valid
+// plan. It never replaces findings or revisions that were already present.
+func ApplyPolicyGuardrailEvaluation(plan *ExecutionPreflightPlan, evaluation PolicyGuardrailEvaluation) error {
+	if plan == nil || plan.Validate() != nil || evaluation.Validate(plan.ProjectID) != nil ||
+		len(plan.PolicyRevisions) != 0 || planHasPolicyGuardrailFinding(*plan) ||
+		len(plan.Findings)+len(evaluation.Findings) > MaxExecutionPreflightFindings {
+		return errors.New("cannot apply policy guardrail evaluation")
+	}
+	findings := append([]ExecutionPreflightFinding(nil), plan.Findings...)
+	for _, finding := range evaluation.Findings {
+		mapped, err := policyGuardrailPreflightFinding(finding)
+		if err != nil {
+			return err
+		}
+		findings = append(findings, mapped)
+	}
+	revisions := copyPolicyGuardrailRevisionRefs(evaluation.Revisions)
+	candidate := *plan
+	candidate.Findings = findings
+	candidate.PolicyRevisions = revisions
+	if candidate.Validate() != nil {
+		return errors.New("policy guardrail evaluation exceeds preflight contract")
+	}
+	plan.Findings = findings
+	plan.PolicyRevisions = revisions
+	return nil
+}
+
+func policyGuardrailPreflightFinding(finding PolicyGuardrailFinding) (ExecutionPreflightFinding, error) {
+	result := ExecutionPreflightFinding{Message: finding.Message, PolicyScope: finding.Scope, PolicyRevision: finding.Revision, PolicyRuleID: finding.RuleID, PolicyEffect: finding.Effect, RemediationURL: finding.RemediationURL}
+	if finding.NodeID != nil {
+		nodeID := *finding.NodeID
+		result.NodeID = &nodeID
+	}
+	switch finding.Effect {
+	case PolicyGuardrailEffectAllow:
+		result.Severity, result.Code = ExecutionFindingInfo, ExecutionReasonPolicyAllowed
+	case PolicyGuardrailEffectWarn:
+		result.Severity, result.Code = ExecutionFindingWarning, ExecutionReasonPolicyWarning
+	case PolicyGuardrailEffectDeny:
+		result.Severity, result.Code = ExecutionFindingDenial, ExecutionReasonPolicyDenied
+	default:
+		return ExecutionPreflightFinding{}, errors.New("invalid policy guardrail effect")
+	}
+	return result, nil
+}
+
+func copyPolicyGuardrailRevisionRefs(revisions []PolicyGuardrailRevisionRef) []PolicyGuardrailRevisionRef {
+	result := make([]PolicyGuardrailRevisionRef, len(revisions))
+	for index, revision := range revisions {
+		result[index] = revision
+		if revision.ProjectID != nil {
+			projectID := *revision.ProjectID
+			result[index].ProjectID = &projectID
+		}
+	}
+	return result
+}
+
+func planHasPolicyGuardrailFinding(plan ExecutionPreflightPlan) bool {
+	if len(plan.PolicyRevisions) != 0 {
+		return true
+	}
+	for _, finding := range plan.Findings {
+		if finding.PolicyScope != "" || finding.PolicyRevision != 0 || finding.PolicyRuleID != "" || finding.PolicyEffect != "" || finding.RemediationURL != "" ||
+			finding.Code == ExecutionReasonPolicyAllowed || finding.Code == ExecutionReasonPolicyWarning || finding.Code == ExecutionReasonPolicyDenied {
+			return true
+		}
+	}
+	return false
+}
+
+func planHasPolicyGuardrailDenial(plan ExecutionPreflightPlan) bool {
+	for _, finding := range plan.Findings {
+		if finding.Code == ExecutionReasonPolicyDenied && finding.PolicyEffect == PolicyGuardrailEffectDeny {
+			return true
+		}
+	}
+	return false
+}
+
 func FingerprintPolicyGuardrailInput(input PolicyGuardrailEvaluationInput) (string, error) {
 	if err := input.Validate(); err != nil {
 		return "", err
