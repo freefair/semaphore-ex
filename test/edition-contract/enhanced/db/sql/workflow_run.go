@@ -145,6 +145,9 @@ func (d *WorkflowStoreImpl) createWorkflowRun(run db.WorkflowRun, crossProjectRe
 	if d.deploymentWindowRequired && run.DeploymentWindowDecisionID == nil {
 		return db.WorkflowRun{}, errors.New("deployment window decision is required before workflow persistence")
 	}
+	if d.policyGuardrailRequired && run.PolicyGuardrailEvaluationID == nil {
+		return db.WorkflowRun{}, errors.New("policy guardrail evaluation is required before workflow persistence")
+	}
 	if existing, err := d.GetWorkflowRunByCorrelationID(run.ProjectID, run.WorkflowTemplateID, run.CorrelationID); err == nil {
 		return existing, nil
 	} else if !errors.Is(err, db.ErrNotFound) {
@@ -160,6 +163,22 @@ func (d *WorkflowStoreImpl) createWorkflowRun(run db.WorkflowRun, crossProjectRe
 			_ = tx.Rollback()
 		}
 	}()
+	var existingID int
+	if err = tx.SelectOne(&existingID, d.connection.PrepareQuery(
+		"select id from project__workflow_run where project_id=? and workflow_template_id=? and correlation_id=?"),
+		run.ProjectID, run.WorkflowTemplateID, run.CorrelationID,
+	); err == nil {
+		_ = tx.Rollback()
+		rollback = false
+		return d.GetWorkflowRunByCorrelationID(run.ProjectID, run.WorkflowTemplateID, run.CorrelationID)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return db.WorkflowRun{}, err
+	}
+	if d.policyGuardrailRequired {
+		if err = d.validatePolicyGuardrailWorkflowRunAdmissionTx(tx, run); err != nil {
+			return db.WorkflowRun{}, err
+		}
+	}
 	if run.TriggerSnapshotJSON == "" {
 		run.TriggerSnapshotJSON = "{}"
 	}
@@ -208,9 +227,9 @@ func (d *WorkflowStoreImpl) createWorkflowRun(run db.WorkflowRun, crossProjectRe
 			return db.WorkflowRun{}, errors.New("workflow run cross-project template provenance must be decoded before persistence")
 		}
 		node.ID, err = d.insertTx(tx,
-			"insert into project__workflow_run_node(project_id, workflow_run_id, workflow_node_id, template_id, status, task_id, template_snapshot, execution_snapshot, cross_project_template_provenance, result, artifact_inputs, override_snapshot, created, queued, start, `end`, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"insert into project__workflow_run_node(project_id, workflow_run_id, workflow_node_id, template_id, status, task_id, policy_guardrail_evaluation_id, template_snapshot, execution_snapshot, cross_project_template_provenance, result, artifact_inputs, override_snapshot, created, queued, start, `end`, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			node.ProjectID, node.WorkflowRunID, node.WorkflowNodeID, node.TemplateID, node.Status,
-			node.TaskID, node.TemplateSnapshotJSON, node.ExecutionSnapshotJSON, node.CrossProjectTemplateProvenanceJSON, node.ResultJSON, node.ArtifactInputsJSON, node.OverrideSnapshotJSON, node.Created, node.Queued, node.Start, node.End, node.Reason,
+			node.TaskID, node.PolicyGuardrailEvaluationID, node.TemplateSnapshotJSON, node.ExecutionSnapshotJSON, node.CrossProjectTemplateProvenanceJSON, node.ResultJSON, node.ArtifactInputsJSON, node.OverrideSnapshotJSON, node.Created, node.Queued, node.Start, node.End, node.Reason,
 		)
 		if err != nil {
 			return db.WorkflowRun{}, err
@@ -221,11 +240,104 @@ func (d *WorkflowStoreImpl) createWorkflowRun(run db.WorkflowRun, crossProjectRe
 			return db.WorkflowRun{}, err
 		}
 	}
+	if d.policyGuardrailRequired {
+		if err = d.bindPolicyGuardrailWorkflowRunTx(tx, run); err != nil {
+			return db.WorkflowRun{}, err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return db.WorkflowRun{}, err
 	}
 	rollback = false
 	return run, nil
+}
+
+func (d *WorkflowStoreImpl) validatePolicyGuardrailWorkflowRunAdmissionTx(tx *gorp.Transaction, run db.WorkflowRun) error {
+	if run.PolicyGuardrailEvaluationID == nil || *run.PolicyGuardrailEvaluationID <= 0 {
+		return errors.New("policy guardrail workflow admission is invalid")
+	}
+	var root struct {
+		ProjectID          int    `db:"project_id"`
+		Intent             string `db:"intent"`
+		TemplateID         *int   `db:"template_id"`
+		WorkflowTemplateID *int   `db:"workflow_template_id"`
+		WorkflowRunID      *int   `db:"workflow_run_id"`
+		WorkflowRunNodeID  *int   `db:"workflow_run_node_id"`
+		TaskID             *int   `db:"task_id"`
+		Decision           string `db:"decision"`
+	}
+	if err := tx.SelectOne(&root, d.connection.PrepareQuery(
+		"select project_id, intent, template_id, workflow_template_id, workflow_run_id, workflow_run_node_id, task_id, decision from policy_guardrail_evaluation where id=?"),
+		*run.PolicyGuardrailEvaluationID,
+	); err != nil {
+		return errors.New("policy guardrail workflow evaluation is unavailable")
+	}
+	if root.ProjectID != run.ProjectID || root.Intent != "workflow" || root.TemplateID != nil || root.WorkflowTemplateID == nil ||
+		*root.WorkflowTemplateID != run.WorkflowTemplateID || root.WorkflowRunID != nil || root.WorkflowRunNodeID != nil || root.TaskID != nil ||
+		root.Decision != string(db.PolicyGuardrailDecisionAllow) {
+		return errors.New("policy guardrail evaluation does not match workflow")
+	}
+	for _, node := range run.Nodes {
+		if node.TemplateID <= 0 {
+			continue
+		}
+		if node.PolicyGuardrailEvaluationID == nil || *node.PolicyGuardrailEvaluationID <= 0 {
+			return errors.New("policy guardrail evaluation is required for workflow task node")
+		}
+		var evaluation struct {
+			ProjectID          int    `db:"project_id"`
+			Intent             string `db:"intent"`
+			TemplateID         *int   `db:"template_id"`
+			WorkflowTemplateID *int   `db:"workflow_template_id"`
+			WorkflowRunID      *int   `db:"workflow_run_id"`
+			WorkflowRunNodeID  *int   `db:"workflow_run_node_id"`
+			TaskID             *int   `db:"task_id"`
+			Decision           string `db:"decision"`
+		}
+		if err := tx.SelectOne(&evaluation, d.connection.PrepareQuery(
+			"select project_id, intent, template_id, workflow_template_id, workflow_run_id, workflow_run_node_id, task_id, decision from policy_guardrail_evaluation where id=?"),
+			*node.PolicyGuardrailEvaluationID,
+		); err != nil {
+			return errors.New("policy guardrail workflow task evaluation is unavailable")
+		}
+		if evaluation.ProjectID != run.ProjectID || evaluation.Intent != "task" || evaluation.TemplateID == nil || *evaluation.TemplateID != node.TemplateID ||
+			evaluation.WorkflowTemplateID != nil || evaluation.WorkflowRunID != nil || evaluation.WorkflowRunNodeID != nil || evaluation.TaskID != nil ||
+			evaluation.Decision != string(db.PolicyGuardrailDecisionAllow) {
+			return errors.New("policy guardrail evaluation does not match workflow task node")
+		}
+	}
+	return nil
+}
+
+func (d *WorkflowStoreImpl) bindPolicyGuardrailWorkflowRunTx(tx *gorp.Transaction, run db.WorkflowRun) error {
+	result, err := tx.Exec(d.connection.PrepareQuery(
+		"update policy_guardrail_evaluation set workflow_run_id=? where id=? and project_id=? and intent=? and workflow_template_id=? and template_id is null and decision=? and workflow_run_id is null and workflow_run_node_id is null and task_id is null"),
+		run.ID, *run.PolicyGuardrailEvaluationID, run.ProjectID, "workflow", run.WorkflowTemplateID, db.PolicyGuardrailDecisionAllow,
+	)
+	if err != nil {
+		return err
+	}
+	bound, err := result.RowsAffected()
+	if err != nil || bound != 1 {
+		return errors.New("policy guardrail evaluation cannot be bound to workflow")
+	}
+	for _, node := range run.Nodes {
+		if node.TemplateID <= 0 {
+			continue
+		}
+		result, err = tx.Exec(d.connection.PrepareQuery(
+			"update policy_guardrail_evaluation set workflow_run_id=?, workflow_run_node_id=? where id=? and project_id=? and intent=? and template_id=? and workflow_template_id is null and decision=? and workflow_run_id is null and workflow_run_node_id is null and task_id is null"),
+			run.ID, node.ID, *node.PolicyGuardrailEvaluationID, run.ProjectID, "task", node.TemplateID, db.PolicyGuardrailDecisionAllow,
+		)
+		if err != nil {
+			return err
+		}
+		bound, err = result.RowsAffected()
+		if err != nil || bound != 1 {
+			return errors.New("policy guardrail evaluation cannot be bound to workflow task node")
+		}
+	}
+	return nil
 }
 
 func (d *WorkflowStoreImpl) bindDeploymentWindowWorkflowRunTx(tx *gorp.Transaction, run db.WorkflowRun) error {
