@@ -475,6 +475,30 @@ func TestAddTaskWithDeploymentWindowAdmissionPolicyUsesAutomaticSourceAndDecisio
 	}
 }
 
+func TestAutomaticTaskPolicyPreviewRebasesDatabaseTimestampBeforeClaim(t *testing.T) {
+	_, pool, _, template, _ := createTaskPreflightFixture(t)
+	databaseTime := time.Date(2026, 9, 3, 14, 30, 0, 0, time.UTC)
+	policy := &executionPreflightPolicyGuardrailStub{evaluatedAt: databaseTime}
+	pool.ConfigurePolicyGuardrailAdmission(policy)
+	pool.store = executionPreflightTaskStoreStub{Store: pool.store, createTask: func(task db.Task, _ int) (db.Task, error) {
+		task.ID = 404
+		return task, nil
+	}}
+
+	created, err := pool.AddTaskWithDeploymentWindowAdmission(
+		db.Task{TemplateID: template.ID}, nil, "", template.ProjectID, false,
+		pro_interfaces.DeploymentWindowAdmissionRequest{
+			ProjectID: template.ProjectID, DecisionKey: "database-time-preview",
+			Source: pro_interfaces.DeploymentWindowSourceIntegration, TemplateID: &template.ID,
+		},
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, 404, created.ID)
+	require.Len(t, policy.claimRequests, 1)
+	assert.NotEqual(t, databaseTime, policy.claimRequests[0].Input.EvaluatedAt)
+}
+
 func TestAddTaskWithDeploymentWindowAdmissionPolicyPersistsClaimedAutomaticDescriptor(t *testing.T) {
 	store, pool, _, template, environment := createTaskPreflightFixture(t)
 	policy := &executionPreflightPolicyGuardrailStub{}
