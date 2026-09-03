@@ -24,6 +24,25 @@ export const enhancedComputed = {
       this.user?.admin,
     );
   },
+  canManageGlobalPolicyGuardrails() {
+    return hasGlobalPermission(
+      this.systemInfo,
+      GLOBAL_PERMISSIONS.managePolicyGuardrails,
+      this.user?.admin,
+    );
+  },
+  canRollbackGlobalPolicyGuardrails() {
+    return hasGlobalPermission(
+      this.systemInfo,
+      GLOBAL_PERMISSIONS.rollbackPolicyGuardrails,
+      this.user?.admin,
+    );
+  },
+  canAccessGlobalGovernance() {
+    return this.canManageGlobalSystem
+        || this.canManageGlobalPolicyGuardrails
+        || this.canRollbackGlobalPolicyGuardrails;
+  },
   canAccessGlobalCredentials() {
     return hasGlobalPermission(
       this.systemInfo,

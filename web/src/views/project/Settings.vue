@@ -65,6 +65,15 @@
         :capability="deploymentWindowsDecision"
       />
 
+      <PolicyGuardrailsPanel
+        v-if="policyGuardrailsDecision
+          && (canManagePolicyGuardrails || canRollbackPolicyGuardrails)"
+        :project-id="projectId"
+        :capability="policyGuardrailsDecision"
+        :can-manage="canManagePolicyGuardrails"
+        :can-rollback="canRollbackPolicyGuardrails"
+      />
+
       <h2 class="mt-8 mb-1">{{ $t('danger_zone_settings') }}</h2>
 
       <v-divider class="mb-8" />
@@ -179,15 +188,18 @@ import YesNoDialog from '@/components/YesNoDialog.vue';
 import delay from '@/lib/delay';
 import DashboardMenu from '@/components/DashboardMenu.vue';
 import DeploymentWindowsPanel from '@/components/DeploymentWindowsPanel.vue';
+import PolicyGuardrailsPanel from '@/components/PolicyGuardrailsPanel.vue';
 
 export default {
   components: {
-    DashboardMenu, DeploymentWindowsPanel, YesNoDialog, ProjectForm,
+    DashboardMenu, DeploymentWindowsPanel, PolicyGuardrailsPanel, YesNoDialog, ProjectForm,
   },
   props: {
     projectId: Number,
     projectType: String,
     systemInfo: Object,
+    userPermissions: Number,
+    isAdmin: Boolean,
   },
 
   data() {
