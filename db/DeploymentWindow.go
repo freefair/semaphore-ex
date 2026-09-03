@@ -140,6 +140,7 @@ func (policy DeploymentWindowPolicy) Validate(validateTimezone ValidateTimezoneF
 // positive immutable rule IDs.
 func (policy DeploymentWindowPolicy) ValidateDraft(validateTimezone ValidateTimezoneFunc) error {
 	copy := policy
+	copy.Rules = append([]DeploymentWindowRule(nil), policy.Rules...)
 	seen := make(map[int]struct{}, len(copy.Rules))
 	for index := range copy.Rules {
 		if copy.Rules[index].ID < 0 {
