@@ -59,6 +59,12 @@
         ></v-progress-linear>
       </div>
 
+      <DeploymentWindowsPanel
+        v-if="deploymentWindowsDecision"
+        :project-id="projectId"
+        :capability="deploymentWindowsDecision"
+      />
+
       <h2 class="mt-8 mb-1">{{ $t('danger_zone_settings') }}</h2>
 
       <v-divider class="mb-8" />
@@ -163,6 +169,8 @@
   }
 </style>
 <script>
+import enhancedComputed from '@/lib/enhanced/settings';
+
 import EventBus from '@/event-bus';
 import ProjectForm from '@/components/ProjectForm.vue';
 import { getErrorMessage } from '@/lib/error';
@@ -170,9 +178,12 @@ import axios from 'axios';
 import YesNoDialog from '@/components/YesNoDialog.vue';
 import delay from '@/lib/delay';
 import DashboardMenu from '@/components/DashboardMenu.vue';
+import DeploymentWindowsPanel from '@/components/DeploymentWindowsPanel.vue';
 
 export default {
-  components: { DashboardMenu, YesNoDialog, ProjectForm },
+  components: {
+    DashboardMenu, DeploymentWindowsPanel, YesNoDialog, ProjectForm,
+  },
   props: {
     projectId: Number,
     projectType: String,
@@ -186,6 +197,10 @@ export default {
       clearCacheProgress: false,
       testNotificationProgress: false,
     };
+  },
+
+  computed: {
+    ...enhancedComputed,
   },
 
   methods: {

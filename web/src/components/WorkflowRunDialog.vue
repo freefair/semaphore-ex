@@ -6,6 +6,26 @@
         <v-alert v-if="preflightMessage" type="warning" dense text>
           {{ preflightMessage }}
         </v-alert>
+        <v-alert
+          v-if="deploymentWindowBlock"
+          type="warning"
+          dense
+          text
+          data-testid="deployment-window-blocked"
+        >
+          <div>{{ deploymentWindowBlockMessage }}</div>
+          <div
+            v-if="deploymentWindowBlock.next_eligible_known
+              && deploymentWindowBlock.next_eligible_at"
+            class="text-caption mt-1"
+          >
+            {{ $t('deploymentWindowNextEligible') }}:
+            {{ formatDeploymentWindowDate(deploymentWindowBlock.next_eligible_at) }}
+          </div>
+        </v-alert>
+        <v-alert v-if="deploymentWindowOverrideError" type="error" dense text>
+          {{ deploymentWindowOverrideError }}
+        </v-alert>
         <v-alert v-for="error in errors" :key="error" type="error" dense text>
           {{ error }}
         </v-alert>
@@ -138,6 +158,36 @@
           </v-card>
         </template>
 
+        <template v-if="deploymentWindowBlock">
+          <div class="text-subtitle-2 mt-3 mb-2">
+            {{ $t('deploymentWindowEmergencyOverride') }}
+          </div>
+          <v-select
+            v-model="deploymentWindowOverrideCategory"
+            :items="deploymentWindowOverrideCategories"
+            :label="$t('deploymentWindowOverrideCategory')"
+            outlined
+            dense
+            :disabled="busy"
+          />
+          <v-text-field
+            v-model.trim="deploymentWindowOverrideReference"
+            :label="$t('deploymentWindowOverrideReference')"
+            :hint="$t('deploymentWindowOverrideReferenceHint')"
+            persistent-hint
+            outlined
+            dense
+            :disabled="busy"
+            data-testid="deployment-window-override-reference"
+          />
+          <v-checkbox
+            v-model="deploymentWindowOverrideConfirmed"
+            :label="$t('deploymentWindowOverrideConfirm')"
+            :disabled="busy"
+            data-testid="deployment-window-override-confirm"
+          />
+        </template>
+
         <ExecutionPreflightReview :plan="executionPreflight" />
       </v-card-text>
       <v-card-actions>
@@ -189,6 +239,11 @@ export default {
       executionPreflightPayloadSignature: null,
       preflightLoading: false,
       preflightMessage: null,
+      deploymentWindowBlock: null,
+      deploymentWindowOverrideCategory: null,
+      deploymentWindowOverrideReference: '',
+      deploymentWindowOverrideConfirmed: false,
+      deploymentWindowOverrideError: '',
     };
   },
   computed: {
@@ -220,6 +275,24 @@ export default {
     },
     hasDenial() {
       return (this.executionPreflight?.findings || []).some(({ severity }) => severity === 'denial');
+    },
+    deploymentWindowOverrideCategories() {
+      return [
+        { text: this.$t('deploymentWindowOverrideIncident'), value: 'incident' },
+        { text: this.$t('deploymentWindowOverrideSecurity'), value: 'security' },
+        { text: this.$t('deploymentWindowOverrideCustomerImpact'), value: 'customer_impact' },
+      ];
+    },
+    deploymentWindowOverrideReady() {
+      return Boolean(this.deploymentWindowBlock
+        && this.deploymentWindowOverrideConfirmed
+        && ['incident', 'security', 'customer_impact']
+          .includes(this.deploymentWindowOverrideCategory)
+        && /^[A-Z0-9]{2,16}-[1-9][0-9]{0,9}$/
+          .test(this.deploymentWindowOverrideReference));
+    },
+    deploymentWindowBlockMessage() {
+      return this.$t(`deploymentWindowBlocked_${this.deploymentWindowBlock?.reason || 'unknown'}`);
     },
     errors() {
       const errors = [];
@@ -291,6 +364,7 @@ export default {
       this.executionPreflight = null;
       this.executionPreflightPayloadSignature = null;
       this.preflightMessage = null;
+      this.clearDeploymentWindowBlock();
     },
     parameterLabel(parameter) {
       return `${parameter.name}${parameter.required ? ' *' : ''}`;
@@ -355,6 +429,41 @@ export default {
       if (Object.keys(nodeOverrides).length) payload.node_overrides = nodeOverrides;
       return payload;
     },
+    buildStartPayload(payload) {
+      if (!this.deploymentWindowOverrideReady) return payload;
+      return {
+        ...payload,
+        deployment_window_override: {
+          category: this.deploymentWindowOverrideCategory,
+          reference: this.deploymentWindowOverrideReference,
+        },
+      };
+    },
+    isDeploymentWindowBlock(err) {
+      return err?.response?.status === 409
+        && err?.response?.data?.state === 'blocked';
+    },
+    adoptDeploymentWindowBlock(decision) {
+      this.deploymentWindowBlock = decision;
+      this.deploymentWindowOverrideCategory = null;
+      this.deploymentWindowOverrideReference = '';
+      this.deploymentWindowOverrideConfirmed = false;
+      this.deploymentWindowOverrideError = '';
+      this.preflightMessage = null;
+    },
+    setDeploymentWindowOverrideError() {
+      this.deploymentWindowOverrideError = this.$t('deploymentWindowOverrideForbidden');
+    },
+    clearDeploymentWindowBlock() {
+      this.deploymentWindowBlock = null;
+      this.deploymentWindowOverrideCategory = null;
+      this.deploymentWindowOverrideReference = '';
+      this.deploymentWindowOverrideConfirmed = false;
+      this.deploymentWindowOverrideError = '';
+    },
+    formatDeploymentWindowDate(value) {
+      return new Date(value).toLocaleString();
+    },
     isExecutionPreflightUnavailable(err) {
       const response = err?.response;
       return response?.status === 404
@@ -368,6 +477,10 @@ export default {
     },
     async submit() {
       if (this.errors.length) return;
+      if (this.deploymentWindowBlock && !this.deploymentWindowOverrideReady) {
+        this.deploymentWindowOverrideError = this.$t('deploymentWindowOverrideIncomplete');
+        return;
+      }
       const payload = this.buildPayload();
       const signature = JSON.stringify(payload);
       if (!this.executionPreflight || signature !== this.executionPreflightPayloadSignature) {
@@ -379,7 +492,7 @@ export default {
           if (this.hasDenial) this.preflightMessage = this.$t('executionPreflightDenied');
         } catch (err) {
           if (this.isExecutionPreflightUnavailable(err)) {
-            this.$emit('start', { payload, review: null });
+            this.$emit('start', { payload: this.buildStartPayload(payload), review: null });
             return;
           }
           this.preflightMessage = getErrorMessage(err);
@@ -390,7 +503,7 @@ export default {
       }
       if (this.hasDenial) return;
       this.$emit('start', {
-        payload,
+        payload: this.buildStartPayload(payload),
         review: {
           fingerprint: this.executionPreflight.fingerprint,
           reviewToken: this.executionPreflight.review_token,
