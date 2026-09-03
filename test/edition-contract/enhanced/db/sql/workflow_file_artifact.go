@@ -16,6 +16,7 @@ import (
 	"github.com/go-gorp/gorp/v3"
 	"github.com/semaphoreui/semaphore/db"
 	coresql "github.com/semaphoreui/semaphore/db/sql"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 )
@@ -237,6 +238,9 @@ func (store *WorkflowFileArtifactStore) AppendWorkflowFileArtifactChunk(request 
 		artifact.UploadedBytes != request.OffsetBytes || int64(len(request.Data)) > artifact.SizeBytes-artifact.UploadedBytes {
 		return db.WorkflowFileArtifactMetadata{}, pro_interfaces.ErrWorkflowFileArtifactConflict
 	}
+	if err = store.validateArtifactAttemptTx(tx, artifact); err != nil {
+		return db.WorkflowFileArtifactMetadata{}, err
+	}
 	var ordinal int
 	if err = tx.SelectOne(&ordinal, store.connection.PrepareQuery(
 		"select count(1) from workflow_file_artifact_chunk where artifact_id=?"), artifact.ID); err != nil {
@@ -362,6 +366,9 @@ func (store *WorkflowFileArtifactStore) FinalizeWorkflowFileArtifact(request pro
 	if current.State != db.WorkflowFileArtifactStaging || current.Revision != request.ExpectedRevision ||
 		current.UploadedBytes != current.SizeBytes || current.SHA256 != artifact.SHA256 {
 		return db.WorkflowFileArtifactMetadata{}, pro_interfaces.ErrWorkflowFileArtifactConflict
+	}
+	if err = store.validateArtifactAttemptTx(tx, current); err != nil {
+		return db.WorkflowFileArtifactMetadata{}, err
 	}
 	now, err := workflowFileArtifactDatabaseNow(tx, store.connection)
 	if err != nil {
@@ -783,6 +790,31 @@ func (store *WorkflowFileArtifactStore) validateArtifactProducerTx(tx *gorp.Tran
 		if count < 1 {
 			return db.ErrInvalidOperation
 		}
+	}
+	return nil
+}
+
+func (store *WorkflowFileArtifactStore) validateArtifactAttemptTx(tx *gorp.Transaction, artifact db.WorkflowFileArtifactMetadata) error {
+	var task struct {
+		WorkflowRunID        *int                   `db:"workflow_run_id"`
+		WorkflowNodeID       *int                   `db:"workflow_node_id"`
+		AssignmentGeneration int                    `db:"assignment_generation"`
+		Status               task_logger.TaskStatus `db:"status"`
+	}
+	err := tx.SelectOne(&task, store.connection.PrepareQuery(
+		"select workflow_run_id, workflow_node_id, assignment_generation, status from task where id=? and project_id=?"+store.forUpdate()),
+		artifact.TaskID, artifact.ProjectID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return db.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if task.WorkflowRunID == nil || *task.WorkflowRunID != artifact.WorkflowRunID ||
+		task.WorkflowNodeID == nil || *task.WorkflowNodeID != artifact.WorkflowNodeID ||
+		task.AssignmentGeneration != artifact.Attempt || task.Status.IsFinished() {
+		return pro_interfaces.ErrWorkflowFileArtifactConflict
 	}
 	return nil
 }

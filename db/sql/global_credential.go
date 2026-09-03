@@ -390,6 +390,7 @@ func (d *SqlDb) CreateGlobalCredentialUsage(usage db.GlobalCredentialUsage) (db.
 func (d *SqlDb) GetGlobalCredentialUsage(credentialID int, query db.GlobalCredentialUsageQuery) ([]db.GlobalCredentialUsage, error) {
 	if credentialID <= 0 || query.Count < 1 || query.Count > 100 || query.BeforeID < 0 ||
 		(query.ProjectID != nil && *query.ProjectID <= 0) || (query.TaskID != nil && *query.TaskID <= 0) ||
+		(query.DispatchGeneration != nil && *query.DispatchGeneration < 0) ||
 		(query.Outcome != nil && *query.Outcome == "") {
 		return nil, db.ErrInvalidOperation
 	}
@@ -402,6 +403,10 @@ func (d *SqlDb) GetGlobalCredentialUsage(credentialID int, query db.GlobalCreden
 	if query.TaskID != nil {
 		statement += " and task_id=?"
 		args = append(args, *query.TaskID)
+	}
+	if query.DispatchGeneration != nil {
+		statement += " and dispatch_generation=?"
+		args = append(args, *query.DispatchGeneration)
 	}
 	if query.Outcome != nil {
 		statement += " and outcome=?"
@@ -423,8 +428,15 @@ func (d *SqlDb) GetTaskGlobalCredentialUsage(projectID, taskID int, query db.Glo
 		query.ProjectID != nil || query.TaskID != nil || (query.Outcome != nil && *query.Outcome == "") {
 		return nil, db.ErrInvalidOperation
 	}
+	if query.DispatchGeneration != nil && *query.DispatchGeneration < 0 {
+		return nil, db.ErrInvalidOperation
+	}
 	statement := "select * from global_credential_usage where project_id=? and task_id=?"
 	args := []any{projectID, taskID}
+	if query.DispatchGeneration != nil {
+		statement += " and dispatch_generation=?"
+		args = append(args, *query.DispatchGeneration)
+	}
 	if query.Outcome != nil {
 		statement += " and outcome=?"
 		args = append(args, *query.Outcome)
