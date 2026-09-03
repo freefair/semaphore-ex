@@ -107,6 +107,9 @@ func runService() {
 	workflowTriggerStore := proFactory.NewWorkflowTriggerStore(store)
 	deploymentWindowStore := proFactory.NewDeploymentWindowStore(store)
 	deploymentWindowGovernanceService := proServer.NewDeploymentWindowGovernanceService(deploymentWindowStore)
+	policyGuardrailStore := proFactory.NewPolicyGuardrailStore(store)
+	policyGuardrailGovernanceService := proServer.NewPolicyGuardrailGovernanceService(policyGuardrailStore)
+	policyGuardrailAdmissionService := proServer.NewPolicyGuardrailAdmissionService(policyGuardrailStore)
 
 	projectService := server.NewProjectService(store, store)
 	capabilityProvider := proFeatures.NewCapabilityProvider(store)
@@ -188,6 +191,12 @@ func runService() {
 		taskPool.ConfigureDeploymentWindowAdmission(admission)
 		if configurable, ok := workflowService.(pro_interfaces.WorkflowDeploymentWindowAdmissionConfigurer); ok {
 			configurable.ConfigureDeploymentWindowAdmission(admission)
+		}
+	}
+	if policyGuardrailAdmissionService != nil {
+		taskPool.ConfigurePolicyGuardrailAdmission(policyGuardrailAdmissionService)
+		if configurable, ok := workflowService.(pro_interfaces.WorkflowPolicyGuardrailAdmissionConfigurer); ok {
+			configurable.ConfigurePolicyGuardrailAdmission(policyGuardrailAdmissionService)
 		}
 	}
 	workflowTriggerScheduler := proServer.NewWorkflowTriggerScheduler(workflowTriggerStore, workflowTriggerService)
@@ -328,6 +337,7 @@ func runService() {
 		auditWebhookService,
 		appMetrics,
 		deploymentWindowGovernanceService,
+		policyGuardrailGovernanceService,
 		notificationGovernanceService,
 	)
 

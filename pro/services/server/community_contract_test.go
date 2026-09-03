@@ -53,3 +53,8 @@ func TestCommunitySecretStorageCollectionIsEmpty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, storages)
 }
+
+func TestCommunityPolicyGuardrailServicesAreUnavailable(t *testing.T) {
+	assert.Nil(t, NewPolicyGuardrailAdmissionService(nil))
+	assert.Nil(t, NewPolicyGuardrailGovernanceService(nil))
+}

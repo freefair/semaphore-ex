@@ -241,7 +241,7 @@ func TestOIDCGroupMappingRoutesDenyNonAdministrators(t *testing.T) {
 	require.NoError(t, err)
 	_, err = store.CreateAPIToken(db.APIToken{ID: "oidc-route-token", UserID: user.ID, Name: "OIDC route security test"})
 	require.NoError(t, err)
-	router := Route(store, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := Route(store, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	for _, endpoint := range []struct {
 		method string

@@ -11,6 +11,12 @@ func NewDeploymentWindowStore(db.Store) pro_interfaces.DeploymentWindowGovernanc
 	return nil
 }
 
+// NewPolicyGuardrailStore is unavailable in Community. The Enhanced module
+// replaces this factory with the SQL-backed policy repository.
+func NewPolicyGuardrailStore(db.Store) pro_interfaces.PolicyGuardrailRepository {
+	return nil
+}
+
 func NewWorkflowTriggerStore(db.Store) db.WorkflowTriggerManager {
 	return nil
 }

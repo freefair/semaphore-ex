@@ -6,6 +6,7 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	coresql "github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,4 +41,19 @@ func TestWorkflowStoreReturnsTasksForRunDashboard(t *testing.T) {
 	assert.Equal(t, created.ID, tasks[0].ID)
 	require.NotNil(t, tasks[0].WorkflowNodeID)
 	assert.Equal(t, nodeID, *tasks[0].WorkflowNodeID)
+}
+
+func TestPolicyGuardrailStoreIsAvailableForSQLStore(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+
+	repository := NewPolicyGuardrailStore(store)
+
+	require.NotNil(t, repository)
+	_, admissionOK := repository.(pro_interfaces.PolicyGuardrailAdmissionRepository)
+	assert.True(t, admissionOK)
+}
+
+func TestPolicyGuardrailStoreIsUnavailableWithoutSQLConnection(t *testing.T) {
+	assert.Nil(t, NewPolicyGuardrailStore(nil))
 }

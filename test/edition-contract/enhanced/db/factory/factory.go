@@ -36,6 +36,16 @@ func NewDeploymentWindowStore(store db.Store) pro_interfaces.DeploymentWindowGov
 	return sql.NewDeploymentWindowStore(connectionStore.GetConnection())
 }
 
+func NewPolicyGuardrailStore(store db.Store) pro_interfaces.PolicyGuardrailRepository {
+	connectionStore, ok := store.(interface {
+		GetConnection() *coresql.SqlDbConnection
+	})
+	if !ok || connectionStore.GetConnection() == nil {
+		return nil
+	}
+	return sql.NewPolicyGuardrailStore(connectionStore.GetConnection())
+}
+
 func NewWorkflowTriggerStore(store db.Store) db.WorkflowTriggerManager {
 	connectionStore, ok := store.(interface {
 		GetConnection() *coresql.SqlDbConnection
