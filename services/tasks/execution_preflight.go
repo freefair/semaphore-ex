@@ -18,6 +18,8 @@ import (
 	"github.com/semaphoreui/semaphore/util"
 )
 
+var _ pro_interfaces.WorkflowTaskPolicyGuardrailPreflightPlanner = (*TaskPool)(nil)
+
 type ExecutionPreflightSnapshot = pro_interfaces.ExecutionPreflightSnapshot
 
 type ExecutionPreflightStaleError = pro_interfaces.ExecutionPreflightStaleError
@@ -450,6 +452,61 @@ func (p *TaskPool) BuildWorkflowTaskExecutionPreflightSnapshot(
 		return ExecutionPreflightSnapshot{}, "", errors.New("execution preflight snapshot is invalid")
 	}
 	return snapshot, encoded, nil
+}
+
+// BuildWorkflowTaskPolicyGuardrailPreflightSnapshot returns the frozen child
+// execution envelope together with the exact allow-listed policy input for one
+// workflow node. Policy evaluation stays at the workflow boundary so root and
+// child decisions can share one immutable policy revision snapshot.
+func (p *TaskPool) BuildWorkflowTaskPolicyGuardrailPreflightSnapshot(
+	task db.Task,
+	template db.Template,
+	actor *db.User,
+	projectID int,
+	plannedAt time.Time,
+	workflow pro_interfaces.PolicyGuardrailWorkflowMetadata,
+) (pro_interfaces.ExecutionPreflightSnapshot, string, error) {
+	if actor == nil || actor.ID <= 0 || projectID <= 0 || template.ID <= 0 ||
+		workflow.ID <= 0 || workflow.Revision <= 0 || workflow.NodeID <= 0 || workflow.NodeKind != string(db.WorkflowNodeTaskKind) ||
+		!workflowPolicyGuardrailTriggerSourceValid(workflow.TriggerSource) {
+		return pro_interfaces.ExecutionPreflightSnapshot{}, "", errors.New("workflow policy guardrail preflight scope is invalid")
+	}
+	snapshot, executionSnapshot, err := p.buildTaskExecutionPreflight(task, template, actor, projectID, plannedAt.UTC())
+	if err != nil {
+		return pro_interfaces.ExecutionPreflightSnapshot{}, "", err
+	}
+	input, err := p.buildTaskPolicyGuardrailEvaluationInput(
+		task, template, snapshot.Plan, projectID, plannedAt.UTC(), pro_interfaces.DeploymentWindowSourceWorkflowNode,
+	)
+	if err != nil {
+		return pro_interfaces.ExecutionPreflightSnapshot{}, "", err
+	}
+	workflowCopy := workflow
+	input.Workflow = &workflowCopy
+	if err = input.Validate(); err != nil {
+		return pro_interfaces.ExecutionPreflightSnapshot{}, "", errors.New("workflow policy guardrail input is invalid")
+	}
+	snapshot.PolicyInputs = []pro_interfaces.PolicyGuardrailEvaluationInput{input}
+	if executionSnapshot == nil {
+		return snapshot, "", nil
+	}
+	encoded, err := db.EncodeTaskExecutionSnapshot(*executionSnapshot)
+	if err != nil {
+		return pro_interfaces.ExecutionPreflightSnapshot{}, "", errors.New("execution preflight snapshot is invalid")
+	}
+	return snapshot, encoded, nil
+}
+
+func workflowPolicyGuardrailTriggerSourceValid(source string) bool {
+	switch pro_interfaces.DeploymentWindowSource(source) {
+	case pro_interfaces.DeploymentWindowSourceManual,
+		pro_interfaces.DeploymentWindowSourceSchedule,
+		pro_interfaces.DeploymentWindowSourceAPI,
+		pro_interfaces.DeploymentWindowSourceWebhook:
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *TaskPool) buildTaskExecutionPreflight(

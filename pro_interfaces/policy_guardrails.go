@@ -615,6 +615,143 @@ func ApplyPolicyGuardrailEvaluation(plan *ExecutionPreflightPlan, evaluation Pol
 	return nil
 }
 
+// ApplyWorkflowPolicyGuardrailEvaluations combines one immutable workflow-root
+// evaluation with one evaluation for every executable task node. The workflow
+// service owns context construction; this contract boundary verifies that the
+// evaluations still describe exactly that one snapshot before it adds their
+// value-free provenance to the public preflight plan.
+func ApplyWorkflowPolicyGuardrailEvaluations(
+	plan *ExecutionPreflightPlan,
+	inputs []PolicyGuardrailEvaluationInput,
+	evaluations []PolicyGuardrailEvaluation,
+) error {
+	if plan == nil || plan.Validate() != nil || plan.Intent != ExecutionPreflightWorkflow ||
+		len(plan.PolicyRevisions) != 0 || planHasPolicyGuardrailFinding(*plan) ||
+		len(inputs) == 0 || len(inputs) != len(evaluations) || len(inputs) > MaxPolicyGuardrailAdmissionBatch {
+		return errors.New("cannot apply workflow policy guardrail evaluations")
+	}
+
+	var revisions []PolicyGuardrailRevisionRef
+	findings := append([]ExecutionPreflightFinding(nil), plan.Findings...)
+	var workflowID, workflowRevision int
+	var triggerSource string
+	var evaluatedAt time.Time
+	lastNodeID := 0
+	for index, input := range inputs {
+		if err := input.Validate(); err != nil || input.ProjectID != plan.ProjectID {
+			return errors.New("invalid workflow policy guardrail input")
+		}
+		metadata := input.Workflow
+		if metadata == nil || metadata.ID != plan.WorkflowID {
+			return errors.New("workflow policy guardrail provenance mismatch")
+		}
+		if index == 0 {
+			if input.Intent != ExecutionPreflightWorkflow || input.Template != nil || metadata.NodeID != 0 || metadata.NodeKind != "" ||
+				!validWorkflowPolicyGuardrailTriggerSource(metadata.TriggerSource) {
+				return errors.New("invalid workflow root policy guardrail input")
+			}
+			workflowID, workflowRevision, triggerSource, evaluatedAt = metadata.ID, metadata.Revision, metadata.TriggerSource, input.EvaluatedAt
+		} else if input.Intent != ExecutionPreflightTask || input.Template == nil || metadata.ID != workflowID ||
+			metadata.Revision != workflowRevision || metadata.TriggerSource != triggerSource || metadata.NodeID <= lastNodeID ||
+			metadata.NodeKind != "task" || !input.EvaluatedAt.Equal(evaluatedAt) {
+			return errors.New("invalid workflow task policy guardrail input")
+		} else {
+			lastNodeID = metadata.NodeID
+		}
+
+		fingerprint, err := FingerprintPolicyGuardrailInput(input)
+		if err != nil || evaluations[index].InputFingerprint != fingerprint || !evaluations[index].EvaluatedAt.Equal(input.EvaluatedAt) ||
+			evaluations[index].Validate(plan.ProjectID) != nil {
+			return errors.New("workflow policy guardrail evaluation mismatch")
+		}
+		if index == 0 {
+			revisions = copyPolicyGuardrailRevisionRefs(evaluations[index].Revisions)
+		} else if !policyGuardrailRevisionRefsEqual(revisions, evaluations[index].Revisions) {
+			return errors.New("workflow policy guardrail revisions changed during evaluation")
+		}
+		for _, finding := range evaluations[index].Findings {
+			if finding.NodeID != nil {
+				return errors.New("workflow policy guardrail finding node is evaluator-owned")
+			}
+			mapped, mapErr := policyGuardrailPreflightFinding(finding)
+			if mapErr != nil {
+				return mapErr
+			}
+			if index > 0 {
+				mapped.NodeID = intCopyPolicyGuardrail(metadata.NodeID)
+			}
+			findings = append(findings, mapped)
+		}
+	}
+	if len(findings) > MaxExecutionPreflightFindings {
+		return errors.New("workflow policy guardrail findings exceed preflight contract")
+	}
+	sortWorkflowPolicyGuardrailFindings(findings[len(plan.Findings):])
+	candidate := *plan
+	candidate.Findings = findings
+	candidate.PolicyRevisions = revisions
+	if candidate.Validate() != nil {
+		return errors.New("workflow policy guardrail evaluation exceeds preflight contract")
+	}
+	plan.Findings = findings
+	plan.PolicyRevisions = revisions
+	return nil
+}
+
+func validWorkflowPolicyGuardrailTriggerSource(source string) bool {
+	switch source {
+	case string(DeploymentWindowSourceManual), string(DeploymentWindowSourceSchedule), string(DeploymentWindowSourceAPI), string(DeploymentWindowSourceWebhook):
+		return true
+	default:
+		return false
+	}
+}
+
+func policyGuardrailRevisionRefsEqual(left, right []PolicyGuardrailRevisionRef) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].Scope != right[index].Scope || left[index].Revision != right[index].Revision ||
+			left[index].Fingerprint != right[index].Fingerprint || (left[index].ProjectID == nil) != (right[index].ProjectID == nil) {
+			return false
+		}
+		if left[index].ProjectID != nil && *left[index].ProjectID != *right[index].ProjectID {
+			return false
+		}
+	}
+	return true
+}
+
+func sortWorkflowPolicyGuardrailFindings(findings []ExecutionPreflightFinding) {
+	sort.Slice(findings, func(left, right int) bool {
+		leftNodeID, rightNodeID := workflowPolicyFindingNodeID(findings[left]), workflowPolicyFindingNodeID(findings[right])
+		if leftNodeID != rightNodeID {
+			return leftNodeID < rightNodeID
+		}
+		leftScope, rightScope := policyGuardrailScopeOrder(findings[left].PolicyScope), policyGuardrailScopeOrder(findings[right].PolicyScope)
+		if leftScope != rightScope {
+			return leftScope < rightScope
+		}
+		if findings[left].PolicyRuleID != findings[right].PolicyRuleID {
+			return findings[left].PolicyRuleID < findings[right].PolicyRuleID
+		}
+		return findings[left].Message < findings[right].Message
+	})
+}
+
+func workflowPolicyFindingNodeID(finding ExecutionPreflightFinding) int {
+	if finding.NodeID == nil {
+		return 0
+	}
+	return *finding.NodeID
+}
+
+func intCopyPolicyGuardrail(value int) *int {
+	copy := value
+	return &copy
+}
+
 func policyGuardrailPreflightFinding(finding PolicyGuardrailFinding) (ExecutionPreflightFinding, error) {
 	result := ExecutionPreflightFinding{Message: finding.Message, PolicyScope: finding.Scope, PolicyRevision: finding.Revision, PolicyRuleID: finding.RuleID, PolicyEffect: finding.Effect, RemediationURL: finding.RemediationURL}
 	if finding.NodeID != nil {
