@@ -331,11 +331,10 @@ func (e *PolicyGuardrailEvaluator) EvaluatePolicyGuardrails(input pro_interfaces
 			if len(evaluation.Findings) >= pro_interfaces.MaxPolicyGuardrailFindings {
 				return pro_interfaces.PolicyGuardrailEvaluation{}, errors.New("policy guardrail finding limit exceeded")
 			}
+			// Node provenance belongs to the workflow preflight boundary. Keeping
+			// evaluator findings node-free makes the same compiled policy valid
+			// for standalone task admission and for deterministic workflow mapping.
 			finding := pro_interfaces.PolicyGuardrailFinding{Scope: policy.revision.Scope, Revision: policy.revision.Revision, RuleID: rule.ID, Effect: rule.Effect, Severity: rule.Severity, Message: rule.Message, RemediationURL: rule.RemediationURL}
-			if input.Workflow != nil && input.Workflow.NodeID > 0 {
-				nodeID := input.Workflow.NodeID
-				finding.NodeID = &nodeID
-			}
 			evaluation.Findings = append(evaluation.Findings, finding)
 			if rule.Effect == pro_interfaces.PolicyGuardrailEffectDeny {
 				evaluation.Allowed = false

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -1443,6 +1444,15 @@ type workflowServiceFixture struct {
 	second     db.Template
 }
 
+// workflowNoPolicyFenceRepository keeps the normal workflow store behavior
+// while deliberately omitting the optional Enhanced persistence configurer.
+// It verifies that policy admission cannot be enabled against a store which
+// would otherwise accept an unbound run.
+type workflowNoPolicyFenceRepository struct {
+	db.WorkflowManager
+	db.WorkflowVersionStore
+}
+
 func newWorkflowServiceFixture(t *testing.T) workflowServiceFixture {
 	t.Helper()
 	store := coresql.InitConfigCreateTestStore()
@@ -1617,6 +1627,132 @@ func TestWorkflowPolicyGuardrailTriggerSourcesAreClosedAndConsistent(t *testing.
 	assert.Error(t, err)
 }
 
+func TestWorkflowPolicyGuardrailDecisionKeysAreWorkflowScoped(t *testing.T) {
+	first := workflowPolicyGuardrailDecisionKey(11, 3, "shared-correlation", 0)
+	second := workflowPolicyGuardrailDecisionKey(12, 3, "shared-correlation", 0)
+	node := workflowPolicyGuardrailDecisionKey(11, 3, "shared-correlation", 7)
+	assert.NotEqual(t, first, second, "workflow correlation is scoped by workflow identity")
+	assert.NotEqual(t, first, node, "root and node admissions need independent replay keys")
+}
+
+func TestWorkflowPolicyGuardrailAdmissionClaimsAndPropagatesOneBatchBeforeRunPersistence(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	policyStore := workflowSQL.NewPolicyGuardrailStore(fixture.store.GetConnection())
+	admission := NewPolicyGuardrailAdmissionService(policyStore)
+	configurer, ok := fixture.service.(pro_interfaces.WorkflowPolicyGuardrailAdmissionConfigurer)
+	require.True(t, ok)
+	configurer.ConfigurePolicyGuardrailAdmission(admission)
+
+	run, err := fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "policy-batch-start")
+	require.NoError(t, err)
+	require.Len(t, run.Nodes, 2)
+	for _, node := range run.Nodes {
+		require.NotNil(t, node.PolicyGuardrailEvaluationID)
+	}
+	require.Len(t, fixture.enqueuer.inputTasks, 1, "the final policy-admitted path must still progress and enqueue the root")
+	require.NotNil(t, fixture.enqueuer.inputTasks[0].PolicyGuardrailEvaluationID)
+	assert.Equal(t, *run.Nodes[0].PolicyGuardrailEvaluationID, *fixture.enqueuer.inputTasks[0].PolicyGuardrailEvaluationID)
+	replayed, replayErr := fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "policy-batch-start")
+	require.NoError(t, replayErr)
+	assert.Equal(t, run.ID, replayed.ID)
+	assert.Len(t, fixture.enqueuer.inputTasks, 1, "an idempotent replay progresses the existing run once and never enqueues a second root task")
+
+	governance := NewPolicyGuardrailGovernanceService(policyStore)
+	evaluations, err := governance.Evaluations(context.Background(), &fixture.projectID, db.RetrieveQueryParams{Count: 10})
+	require.NoError(t, err)
+	require.Len(t, evaluations, 3)
+	for _, evaluation := range evaluations {
+		assert.Equal(t, "manual", evaluation.Source)
+		assert.NotNil(t, evaluation.ActorUserID)
+		assert.Equal(t, fixture.user.ID, *evaluation.ActorUserID)
+	}
+}
+
+func TestWorkflowPolicyGuardrailDenyIsPersistedBeforeItBlocksStart(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	policyStore := workflowSQL.NewPolicyGuardrailStore(fixture.store.GetConnection())
+	governance := NewPolicyGuardrailGovernanceService(policyStore)
+	state, err := governance.Get(context.Background(), pro_interfaces.PolicyGuardrailScopeProject, &fixture.projectID)
+	require.NoError(t, err)
+	source := "version: 1\nrules:\n  - id: deny-manual-workflow\n    effect: deny\n    severity: high\n    message: Manual workflow starts are denied.\n    match: all\n    conditions:\n      - field: workflow.trigger_source\n        operator: equals\n        string_value: manual\n"
+	draft, err := governance.SaveDraft(context.Background(), pro_interfaces.PolicyGuardrailScopeProject, &fixture.projectID, source, state.Draft.Revision, fixture.user.ID)
+	require.NoError(t, err)
+	_, err = governance.Publish(context.Background(), pro_interfaces.PolicyGuardrailScopeProject, &fixture.projectID, pro_interfaces.PolicyGuardrailPublishRequest{ExpectedDraftRevision: draft.Revision}, fixture.user.ID)
+	require.NoError(t, err)
+	configurer := fixture.service.(pro_interfaces.WorkflowPolicyGuardrailAdmissionConfigurer)
+	configurer.ConfigurePolicyGuardrailAdmission(NewPolicyGuardrailAdmissionService(policyStore))
+
+	_, err = fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "policy-deny-start")
+	var denied *pro_interfaces.ExecutionPreflightDeniedError
+	require.ErrorAs(t, err, &denied)
+	runs, listErr := fixture.repository.GetWorkflowRuns(fixture.projectID, fixture.workflow.ID, db.RetrieveQueryParams{})
+	require.NoError(t, listErr)
+	assert.Empty(t, runs)
+	assert.Empty(t, fixture.enqueuer.tasks)
+	evaluations, historyErr := governance.Evaluations(context.Background(), &fixture.projectID, db.RetrieveQueryParams{Count: 10})
+	require.NoError(t, historyErr)
+	require.Len(t, evaluations, 3, "a policy denial is an immutable audited batch decision")
+	for _, evaluation := range evaluations {
+		assert.Equal(t, db.PolicyGuardrailDecisionDeny, evaluation.Decision)
+	}
+}
+
+func TestWorkflowPolicyGuardrailUnreviewedAuditReturnsFinalClaimPlan(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	policyStore := workflowSQL.NewPolicyGuardrailStore(fixture.store.GetConnection())
+	governance := NewPolicyGuardrailGovernanceService(policyStore)
+	state, err := governance.Get(context.Background(), pro_interfaces.PolicyGuardrailScopeProject, &fixture.projectID)
+	require.NoError(t, err)
+	source := "version: 1\nrules:\n  - id: warn-manual-workflow\n    effect: warn\n    severity: medium\n    message: Manual workflow starts require review.\n    match: all\n    conditions:\n      - field: workflow.trigger_source\n        operator: equals\n        string_value: manual\n"
+	draft, err := governance.SaveDraft(context.Background(), pro_interfaces.PolicyGuardrailScopeProject, &fixture.projectID, source, state.Draft.Revision, fixture.user.ID)
+	require.NoError(t, err)
+	published, err := governance.Publish(context.Background(), pro_interfaces.PolicyGuardrailScopeProject, &fixture.projectID, pro_interfaces.PolicyGuardrailPublishRequest{ExpectedDraftRevision: draft.Revision}, fixture.user.ID)
+	require.NoError(t, err)
+	fixture.service.(pro_interfaces.WorkflowPolicyGuardrailAdmissionConfigurer).ConfigurePolicyGuardrailAdmission(NewPolicyGuardrailAdmissionService(policyStore))
+
+	auditService := fixture.service.(pro_interfaces.WorkflowExecutionPreflightAuditResultService)
+	run, plan, err := auditService.StartWorkflowWithExecutionPreflightPlan(fixture.workflow, &fixture.user, "policy-audit-final", pro_interfaces.ExecutionPreflightReview{})
+	require.NoError(t, err)
+	assert.Positive(t, run.ID)
+	require.Len(t, plan.PolicyRevisions, 1)
+	assert.Equal(t, published.Revision, plan.PolicyRevisions[0].Revision)
+	assert.Contains(t, plan.Findings, pro_interfaces.ExecutionPreflightFinding{
+		Severity: pro_interfaces.ExecutionFindingWarning, Code: pro_interfaces.ExecutionReasonPolicyWarning,
+		Message: "Manual workflow starts require review.", PolicyScope: pro_interfaces.PolicyGuardrailScopeProject,
+		PolicyRevision: published.Revision, PolicyRuleID: "warn-manual-workflow", PolicyEffect: pro_interfaces.PolicyGuardrailEffectWarn,
+	})
+}
+
+func TestWorkflowPolicyGuardrailReviewedStartClaimsThenBindsRun(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	policyStore := workflowSQL.NewPolicyGuardrailStore(fixture.store.GetConnection())
+	fixture.service.(pro_interfaces.WorkflowPolicyGuardrailAdmissionConfigurer).ConfigurePolicyGuardrailAdmission(NewPolicyGuardrailAdmissionService(policyStore))
+	preflight := fixture.service.(pro_interfaces.WorkflowExecutionPreflightService)
+	preview, err := preflight.PreviewWorkflowExecution(fixture.workflow, &fixture.user)
+	require.NoError(t, err)
+	require.NotEmpty(t, preview.ReviewToken)
+
+	run, err := preflight.StartWorkflowWithExecutionPreflight(
+		fixture.workflow, &fixture.user, "policy-reviewed-start",
+		pro_interfaces.ExecutionPreflightReview{Fingerprint: preview.Fingerprint, ReviewToken: preview.ReviewToken},
+	)
+	require.NoError(t, err)
+	assert.Positive(t, run.ID)
+	require.Len(t, fixture.enqueuer.inputTasks, 1)
+	require.NotNil(t, fixture.enqueuer.inputTasks[0].PolicyGuardrailEvaluationID)
+	governance := NewPolicyGuardrailGovernanceService(policyStore)
+	evaluations, err := governance.Evaluations(context.Background(), &fixture.projectID, db.RetrieveQueryParams{Count: 10})
+	require.NoError(t, err)
+	require.Len(t, evaluations, 3)
+	for _, evaluation := range evaluations {
+		require.NotNil(t, evaluation.WorkflowRunID, "reviewed start binds every allowed claim atomically to its run")
+	}
+}
+
 func TestWorkflowPreflightRetainsLegacyEnhancedEnqueuerSeamUntilPolicyAdmissionIsConfigured(t *testing.T) {
 	fixture := newWorkflowServiceFixture(t)
 	legacy := &legacyWorkflowTestEnqueuer{delegate: fixture.enqueuer}
@@ -1625,6 +1761,32 @@ func TestWorkflowPreflightRetainsLegacyEnhancedEnqueuerSeamUntilPolicyAdmissionI
 	preview, err := service.PreviewWorkflowExecution(fixture.workflow, &fixture.user)
 	require.NoError(t, err)
 	assert.NotEmpty(t, preview.Fingerprint)
+}
+
+func TestWorkflowPolicyGuardrailConfigurationFailsClosedWithoutPlannerOrPersistenceFence(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	admission := NewPolicyGuardrailAdmissionService(workflowSQL.NewPolicyGuardrailStore(fixture.store.GetConnection()))
+
+	t.Run("missing policy input planner", func(t *testing.T) {
+		legacy := &legacyWorkflowTestEnqueuer{delegate: fixture.enqueuer}
+		service := NewWorkflowService(fixture.repository, fixture.store, legacy, nil)
+		service.(pro_interfaces.WorkflowPolicyGuardrailAdmissionConfigurer).ConfigurePolicyGuardrailAdmission(admission)
+		_, err := service.StartWorkflow(fixture.workflow, &fixture.user, "policy-missing-planner")
+		require.ErrorContains(t, err, "policy guardrail admission is unavailable")
+	})
+
+	t.Run("missing persistence fence", func(t *testing.T) {
+		repository := workflowNoPolicyFenceRepository{WorkflowManager: fixture.repository, WorkflowVersionStore: fixture.repository}
+		service := NewWorkflowService(repository, fixture.store, fixture.enqueuer, nil)
+		service.(pro_interfaces.WorkflowPolicyGuardrailAdmissionConfigurer).ConfigurePolicyGuardrailAdmission(admission)
+		_, err := service.StartWorkflow(fixture.workflow, &fixture.user, "policy-missing-fence")
+		require.ErrorContains(t, err, "policy guardrail admission is unavailable")
+	})
+
+	runs, err := fixture.repository.GetWorkflowRuns(fixture.projectID, fixture.workflow.ID, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	assert.Empty(t, runs)
 }
 
 func configureWorkflowArtifactEncryption(t *testing.T) {
@@ -1881,6 +2043,7 @@ func (e *workflowTestEnqueuer) BuildWorkflowTaskPolicyGuardrailPreflightSnapshot
 
 func (e *workflowTestEnqueuer) SealExecutionPreflight(snapshot pro_interfaces.ExecutionPreflightSnapshot) (pro_interfaces.ExecutionPreflightPlan, error) {
 	plan := snapshot.Plan
+	plan.Fingerprint, _ = pro_interfaces.FingerprintExecutionPreflight(plan)
 	plan.ReviewToken = "test-review-token"
 	plan.ExpiresAt = time.Now().UTC().Add(time.Minute)
 	return plan, nil

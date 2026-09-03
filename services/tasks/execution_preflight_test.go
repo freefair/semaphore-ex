@@ -951,6 +951,18 @@ func (s *executionPreflightPolicyGuardrailStub) EvaluatePolicyGuardrails(input p
 	}, nil
 }
 
+func (s *executionPreflightPolicyGuardrailStub) PreviewPolicyGuardrailEvaluations(inputs []pro_interfaces.PolicyGuardrailEvaluationInput) ([]pro_interfaces.PolicyGuardrailEvaluation, error) {
+	evaluations := make([]pro_interfaces.PolicyGuardrailEvaluation, 0, len(inputs))
+	for _, input := range inputs {
+		evaluation, err := s.EvaluatePolicyGuardrails(input)
+		if err != nil {
+			return nil, err
+		}
+		evaluations = append(evaluations, evaluation)
+	}
+	return evaluations, nil
+}
+
 func (s *executionPreflightPolicyGuardrailStub) ClaimPolicyGuardrailEvaluation(request pro_interfaces.PolicyGuardrailAdmissionRequest) (pro_interfaces.PolicyGuardrailEvaluationClaim, error) {
 	s.claimRequests = append(s.claimRequests, request)
 	if s.onClaim != nil {

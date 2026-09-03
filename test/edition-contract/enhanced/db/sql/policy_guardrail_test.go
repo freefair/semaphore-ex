@@ -13,6 +13,37 @@ import (
 
 const emptyPolicyGuardrailYAML = "version: 1\nrules: []\n"
 
+func TestPolicyGuardrailBatchPreviewUsesOneDatabaseTimestampWithoutPersisting(t *testing.T) {
+	store := coreSQL.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	repository := NewPolicyGuardrailStore(store.GetConnection())
+	project, err := store.CreateProject(coreDB.Project{Name: "policy batch preview project"})
+	require.NoError(t, err)
+	now := time.Date(2026, time.September, 3, 10, 59, 59, 0, time.UTC)
+	inputs := []pro_interfaces.PolicyGuardrailEvaluationInput{
+		{ProjectID: project.ID, Intent: pro_interfaces.ExecutionPreflightWorkflow, EvaluatedAt: now,
+			Workflow: &pro_interfaces.PolicyGuardrailWorkflowMetadata{ID: 3, Revision: 1, TriggerSource: "manual"},
+			Executor: pro_interfaces.PolicyGuardrailExecutorMetadata{Type: "workflow", ImageReferenceKind: "none"}},
+		{ProjectID: project.ID, Intent: pro_interfaces.ExecutionPreflightTask, EvaluatedAt: now,
+			Template: &pro_interfaces.PolicyGuardrailTemplateMetadata{ID: 4, Application: "ansible", Source: "workflow_node"},
+			Workflow: &pro_interfaces.PolicyGuardrailWorkflowMetadata{ID: 3, Revision: 1, NodeID: 5, NodeKind: "task", TriggerSource: "manual"},
+			Executor: pro_interfaces.PolicyGuardrailExecutorMetadata{Type: "local", ImageReferenceKind: "none"}},
+	}
+	evaluations, err := repository.PreviewPolicyGuardrailEvaluations(inputs, func(_ []coreDB.PolicyGuardrailRevision, input pro_interfaces.PolicyGuardrailEvaluationInput) (pro_interfaces.PolicyGuardrailEvaluation, error) {
+		fingerprint, fingerprintErr := pro_interfaces.FingerprintPolicyGuardrailInput(input)
+		if fingerprintErr != nil {
+			return pro_interfaces.PolicyGuardrailEvaluation{}, fingerprintErr
+		}
+		return pro_interfaces.PolicyGuardrailEvaluation{Revisions: []pro_interfaces.PolicyGuardrailRevisionRef{}, Findings: []pro_interfaces.PolicyGuardrailFinding{}, Allowed: true, InputFingerprint: fingerprint, EvaluatedAt: input.EvaluatedAt}, nil
+	})
+	require.NoError(t, err)
+	require.Len(t, evaluations, 2)
+	assert.True(t, evaluations[0].EvaluatedAt.Equal(evaluations[1].EvaluatedAt), "time predicates must see one coherent batch time")
+	history, err := repository.GetPolicyGuardrailEvaluationHistory(&project.ID, coreDB.RetrieveQueryParams{Count: 10})
+	require.NoError(t, err)
+	assert.Empty(t, history, "preview must not create durable admission records")
+}
+
 func TestPolicyGuardrailStoreDraftPublishCASAndRollbackAsNewRevision(t *testing.T) {
 	store := coreSQL.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)

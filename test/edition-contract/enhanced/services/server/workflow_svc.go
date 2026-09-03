@@ -47,6 +47,8 @@ type workflowService struct {
 	credentialReader          pro_interfaces.WorkflowCredentialReader
 	deploymentWindowAdmission pro_interfaces.DeploymentWindowAdmissionService
 	deploymentWindowRunFence  bool
+	policyGuardrailAdmission  pro_interfaces.PolicyGuardrailAdmissionService
+	policyGuardrailRunFence   bool
 	localRunLocks             workflowLocalLocks
 	localStartLocks           workflowLocalLocks
 }
@@ -84,6 +86,7 @@ var _ pro_interfaces.WorkflowExecutionPreflightAuditResultService = (*workflowSe
 var _ pro_interfaces.WorkflowExecutionPreflightOverrideService = (*workflowService)(nil)
 var _ pro_interfaces.WorkflowExecutionPreflightOverrideAuditResultService = (*workflowService)(nil)
 var _ pro_interfaces.WorkflowDeploymentWindowAdmissionConfigurer = (*workflowService)(nil)
+var _ pro_interfaces.WorkflowPolicyGuardrailAdmissionConfigurer = (*workflowService)(nil)
 
 // ConfigureWorkflowAudit attaches the process-wide audit facade after route
 // construction. It is intentionally optional at the interface boundary.
@@ -99,6 +102,25 @@ func (s *workflowService) ConfigureDeploymentWindowAdmission(service pro_interfa
 			boundary.ConfigureDeploymentWindowAdmission()
 			s.deploymentWindowRunFence = true
 		}
+	}
+}
+
+// ConfigurePolicyGuardrailAdmission enables the final workflow admission
+// boundary only when both the immutable node planner and the SQL persistence
+// fence are present. Keeping the configuration optional preserves every
+// Community and legacy Enhanced construction path.
+func (s *workflowService) ConfigurePolicyGuardrailAdmission(service pro_interfaces.PolicyGuardrailAdmissionService) {
+	s.policyGuardrailAdmission = service
+	s.policyGuardrailRunFence = false
+	if service == nil {
+		return
+	}
+	if _, ok := s.enqueuer.(pro_interfaces.WorkflowTaskPolicyGuardrailPreflightPlanner); !ok {
+		return
+	}
+	if boundary, ok := s.repository.(interface{ ConfigurePolicyGuardrailAdmission() }); ok {
+		boundary.ConfigurePolicyGuardrailAdmission()
+		s.policyGuardrailRunFence = true
 	}
 }
 
@@ -146,6 +168,9 @@ func (s *workflowService) PreviewWorkflowExecution(
 	}
 	snapshot, err := s.buildWorkflowExecutionPreflight(workflow, user, inputs...)
 	if err != nil {
+		return pro_interfaces.ExecutionPreflightPlan{}, err
+	}
+	if err = s.enrichWorkflowPreflightWithPolicyPreview(&snapshot); err != nil {
 		return pro_interfaces.ExecutionPreflightPlan{}, err
 	}
 	return planner.SealExecutionPreflight(snapshot)
@@ -204,8 +229,14 @@ func (s *workflowService) StartWorkflowWithExecutionPreflightPlanAndDeploymentWi
 	}
 	reviewed := review.Fingerprint != "" || review.ReviewToken != ""
 	if !reviewed {
+		if s.policyGuardrailAdmission != nil {
+			return s.startWorkflowWithPolicyGuardrailsPlan(workflow, user, correlationID, override, inputs...)
+		}
 		snapshot, err := s.buildWorkflowExecutionPreflight(workflow, user, inputs...)
 		if err != nil {
+			return db.WorkflowRun{}, pro_interfaces.ExecutionPreflightPlan{}, err
+		}
+		if err = s.enrichWorkflowPreflightWithPolicyPreview(&snapshot); err != nil {
 			return db.WorkflowRun{}, pro_interfaces.ExecutionPreflightPlan{}, err
 		}
 		run, startErr := s.startWorkflow(workflow, user, correlationID, override, inputs...)
@@ -259,8 +290,11 @@ func (s *workflowService) startReviewedWorkflowFromExecutionSnapshot(
 		if buildErr != nil {
 			return buildErr
 		}
+		if buildErr = s.enrichWorkflowPreflightWithPolicyPreview(&snapshot); buildErr != nil {
+			return buildErr
+		}
 		plan = snapshot.Plan
-		if hasWorkflowPreflightDenial(snapshot.Plan) {
+		if hasNativeWorkflowPreflightDenial(snapshot.Plan) {
 			if sealed, sealErr := planner.SealExecutionPreflight(snapshot); sealErr == nil {
 				plan = sealed
 			}
@@ -288,6 +322,26 @@ func (s *workflowService) startReviewedWorkflowFromExecutionSnapshot(
 		}
 		runSnapshot.WorkflowVersionID = version.ID
 		runSnapshot.CorrelationID = correlationID
+		if admissionErr := s.claimWorkflowPolicyGuardrailAdmission(&runSnapshot, &snapshot, user, correlationID); admissionErr != nil {
+			if denied, ok := admissionErr.(*pro_interfaces.ExecutionPreflightDeniedError); ok {
+				plan = denied.Preflight
+			}
+			return admissionErr
+		}
+		plan, sealErr = planner.SealExecutionPreflight(snapshot)
+		if sealErr != nil {
+			return sealErr
+		}
+		changes, verifyErr = planner.VerifyExecutionPreflightReview(snapshot, review)
+		if verifyErr != nil {
+			return verifyErr
+		}
+		if len(changes) > 0 || review.Fingerprint != plan.Fingerprint {
+			if len(changes) == 0 {
+				changes = []pro_interfaces.ExecutionPreflightChangeCode{pro_interfaces.ExecutionChangePolicy}
+			}
+			return &pro_interfaces.ExecutionPreflightStaleError{Changes: changes, Preflight: plan}
+		}
 		if admissionErr := s.claimWorkflowStartAdmission(&runSnapshot, canonical, user, correlationID, override, inputs...); admissionErr != nil {
 			return admissionErr
 		}
@@ -347,6 +401,9 @@ func (s *workflowService) buildWorkflowExecutionPreflightWithRun(
 	}
 	snapshotPlanner, hasSnapshotPlanner := s.enqueuer.(pro_interfaces.WorkflowTaskExecutionSnapshotPlanner)
 	policySnapshotPlanner, hasPolicySnapshotPlanner := s.enqueuer.(pro_interfaces.WorkflowTaskPolicyGuardrailPreflightPlanner)
+	if s.policyGuardrailAdmission != nil && (!s.policyGuardrailRunFence || !hasPolicySnapshotPlanner) {
+		return pro_interfaces.ExecutionPreflightSnapshot{}, errors.New("workflow policy guardrail admission is unavailable")
+	}
 	fingerprint, err := pro_interfaces.WorkflowDefinitionFingerprint(workflow)
 	if err != nil {
 		return pro_interfaces.ExecutionPreflightSnapshot{}, err
@@ -614,6 +671,40 @@ func workflowTaskPolicyInputMatches(
 		actual.NodeKind == metadata.NodeKind && actual.TriggerSource == metadata.TriggerSource && actual.CrossProject == metadata.CrossProject
 }
 
+// enrichWorkflowPreflightWithPolicyPreview adds a read-only policy preview to
+// a newly built workflow snapshot. The batch preview shares one locked policy
+// revision set and one database timestamp across root and every task node;
+// the final batch claim repeats that boundary before persistence.
+func (s *workflowService) enrichWorkflowPreflightWithPolicyPreview(snapshot *pro_interfaces.ExecutionPreflightSnapshot) error {
+	if s.policyGuardrailAdmission == nil {
+		return nil
+	}
+	if !s.policyGuardrailRunFence || snapshot == nil || len(snapshot.PolicyInputs) == 0 {
+		return errors.New("workflow policy guardrail admission is unavailable")
+	}
+	evaluations, err := s.policyGuardrailAdmission.PreviewPolicyGuardrailEvaluations(snapshot.PolicyInputs)
+	if err != nil || len(evaluations) != len(snapshot.PolicyInputs) {
+		if err != nil {
+			return err
+		}
+		return errors.New("workflow policy guardrail preview is invalid")
+	}
+	inputs := make([]pro_interfaces.PolicyGuardrailEvaluationInput, len(snapshot.PolicyInputs))
+	for index, evaluation := range evaluations {
+		if index > 0 && !evaluation.EvaluatedAt.Equal(evaluations[0].EvaluatedAt) {
+			return errors.New("workflow policy guardrail preview timestamp is inconsistent")
+		}
+		input := snapshot.PolicyInputs[index]
+		input.EvaluatedAt = evaluation.EvaluatedAt
+		inputs[index] = input
+	}
+	snapshot.PolicyInputs = inputs
+	if err := pro_interfaces.ApplyWorkflowPolicyGuardrailEvaluations(&snapshot.Plan, inputs, evaluations); err != nil {
+		return fmt.Errorf("workflow policy guardrail preview is invalid: %w", err)
+	}
+	return nil
+}
+
 func (s *workflowService) workflowExecutionPermissionDigest(workflow db.WorkflowTemplate, user *db.User) string {
 	if user.Admin {
 		return executionPreflightHash("admin", user.ID, workflow.AccessPolicy.Revision)
@@ -673,13 +764,112 @@ func hasWorkflowPreflightDenial(plan pro_interfaces.ExecutionPreflightPlan) bool
 	return false
 }
 
+func hasNativeWorkflowPreflightDenial(plan pro_interfaces.ExecutionPreflightPlan) bool {
+	for _, finding := range plan.Findings {
+		if finding.Severity == pro_interfaces.ExecutionFindingDenial && finding.PolicyEffect == "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *workflowService) StartWorkflow(
 	workflow db.WorkflowTemplate,
 	user *db.User,
 	correlationID string,
 	inputs ...db.WorkflowRunInput,
 ) (db.WorkflowRun, error) {
+	if s.policyGuardrailAdmission != nil {
+		run, _, err := s.startWorkflowWithPolicyGuardrailsPlan(workflow, user, correlationID, nil, inputs...)
+		return run, err
+	}
 	return s.startWorkflow(workflow, user, correlationID, nil, inputs...)
+}
+
+// startWorkflowWithPolicyGuardrails is the headerless/automatic start path
+// once policy admission has been configured. It deliberately builds the same
+// frozen run snapshot as reviewed starts and claims the workflow root plus all
+// executable nodes in one database-timed batch before any run is persisted.
+func (s *workflowService) startWorkflowWithPolicyGuardrailsPlan(
+	workflow db.WorkflowTemplate,
+	user *db.User,
+	correlationID string,
+	override *pro_interfaces.DeploymentWindowOverrideInput,
+	inputs ...db.WorkflowRunInput,
+) (db.WorkflowRun, pro_interfaces.ExecutionPreflightPlan, error) {
+	if user == nil || user.ID <= 0 || correlationID == "" {
+		return db.WorkflowRun{}, pro_interfaces.ExecutionPreflightPlan{}, common_errors.NewValidationError("workflow run actor and correlation ID are required")
+	}
+	var result db.WorkflowRun
+	var plan pro_interfaces.ExecutionPreflightPlan
+	err := s.withStartLock(workflow.ProjectID, workflow.ID, func() error {
+		if existing, existingErr := s.repository.GetWorkflowRunByCorrelationID(workflow.ProjectID, workflow.ID, correlationID); existingErr == nil {
+			if override != nil {
+				return pro_interfaces.ErrDeploymentWindowOverrideConflict
+			}
+			result = existing
+			return nil
+		} else if !errors.Is(existingErr, db.ErrNotFound) {
+			return existingErr
+		}
+		if s.versionStore == nil {
+			return errors.New("workflow version store is unavailable")
+		}
+		version, versionErr := s.versionStore.EnsureCurrentWorkflowVersion(workflow.ProjectID, workflow.ID)
+		if versionErr != nil {
+			return versionErr
+		}
+		fingerprint, fingerprintErr := pro_interfaces.WorkflowDefinitionFingerprint(workflow)
+		if fingerprintErr != nil || version.ProjectID != workflow.ProjectID || version.WorkflowTemplateID != workflow.ID ||
+			version.VersionNumber != workflow.Revision || fingerprint != version.ContentFingerprint {
+			return pro_interfaces.ErrWorkflowRevisionConflict
+		}
+		canonical := version.DefinitionSnapshot
+		var runSnapshot db.WorkflowRun
+		snapshot, buildErr := s.buildWorkflowExecutionPreflightWithRun(canonical, user, &runSnapshot, inputs...)
+		if buildErr != nil {
+			return buildErr
+		}
+		if buildErr = s.enrichWorkflowPreflightWithPolicyPreview(&snapshot); buildErr != nil {
+			return buildErr
+		}
+		plan = snapshot.Plan
+		if hasNativeWorkflowPreflightDenial(snapshot.Plan) {
+			denied := s.workflowPolicyPreflightDenied(snapshot)
+			plan = denied.Preflight
+			return denied
+		}
+		runSnapshot.WorkflowVersionID = version.ID
+		runSnapshot.CorrelationID = correlationID
+		if admissionErr := s.claimWorkflowPolicyGuardrailAdmission(&runSnapshot, &snapshot, user, correlationID); admissionErr != nil {
+			if denied, ok := admissionErr.(*pro_interfaces.ExecutionPreflightDeniedError); ok {
+				plan = denied.Preflight
+			}
+			return admissionErr
+		}
+		plan = snapshot.Plan
+		if admissionErr := s.claimWorkflowStartAdmission(&runSnapshot, canonical, user, correlationID, override, inputs...); admissionErr != nil {
+			return admissionErr
+		}
+		var createErr error
+		if hasCrossProjectWorkflowRunNodes(runSnapshot) {
+			if s.referenceStore == nil {
+				return errors.New("cross-project workflow reference store is unavailable")
+			}
+			result, createErr = s.referenceStore.CreateWorkflowRunWithCrossProjectReferences(runSnapshot)
+		} else {
+			result, createErr = s.repository.CreateWorkflowRun(runSnapshot)
+		}
+		return createErr
+	})
+	if err != nil {
+		return result, plan, err
+	}
+	if progressErr := s.ProgressWorkflowRun(workflow.ProjectID, result.ID, user); progressErr != nil {
+		return result, plan, progressErr
+	}
+	run, getErr := s.repository.GetWorkflowRun(workflow.ProjectID, workflow.ID, result.ID)
+	return run, plan, getErr
 }
 
 func (s *workflowService) startWorkflow(
@@ -689,6 +879,10 @@ func (s *workflowService) startWorkflow(
 	override *pro_interfaces.DeploymentWindowOverrideInput,
 	inputs ...db.WorkflowRunInput,
 ) (db.WorkflowRun, error) {
+	if s.policyGuardrailAdmission != nil {
+		run, _, err := s.startWorkflowWithPolicyGuardrailsPlan(workflow, user, correlationID, override, inputs...)
+		return run, err
+	}
 	if user == nil || user.ID <= 0 {
 		return db.WorkflowRun{}, common_errors.NewValidationError("workflow run actor is required")
 	}
@@ -784,6 +978,167 @@ func (s *workflowService) startWorkflow(
 func (s *workflowService) claimWorkflowStartAdmission(run *db.WorkflowRun, workflow db.WorkflowTemplate, user *db.User, correlationID string, override *pro_interfaces.DeploymentWindowOverrideInput, inputs ...db.WorkflowRunInput) error {
 	_, err := s.claimWorkflowStartAdmissionDecision(run, workflow, user, correlationID, override, inputs...)
 	return err
+}
+
+// claimWorkflowPolicyGuardrailAdmission consumes the complete immutable root
+// and task-node input set as one claim. The repository guarantees one active
+// revision set and one database clock value for the batch; this method checks
+// every returned record before handing its IDs to workflow persistence.
+func (s *workflowService) claimWorkflowPolicyGuardrailAdmission(
+	run *db.WorkflowRun,
+	snapshot *pro_interfaces.ExecutionPreflightSnapshot,
+	user *db.User,
+	correlationID string,
+) error {
+	if s.policyGuardrailAdmission == nil {
+		return nil
+	}
+	if !s.policyGuardrailRunFence || run == nil || snapshot == nil || user == nil || user.ID <= 0 || correlationID == "" ||
+		len(snapshot.PolicyInputs) == 0 || len(snapshot.PolicyInputs) > pro_interfaces.MaxPolicyGuardrailAdmissionBatch {
+		return errors.New("workflow policy guardrail admission is unavailable")
+	}
+	root := snapshot.PolicyInputs[0]
+	if root.Workflow == nil || root.Intent != pro_interfaces.ExecutionPreflightWorkflow || root.Workflow.ID != run.WorkflowTemplateID ||
+		root.Workflow.NodeID != 0 || root.Workflow.TriggerSource == "" {
+		return errors.New("workflow policy guardrail root input is invalid")
+	}
+	source := root.Workflow.TriggerSource
+	actorID := user.ID
+	requests := make([]pro_interfaces.PolicyGuardrailAdmissionRequest, len(snapshot.PolicyInputs))
+	for index, input := range snapshot.PolicyInputs {
+		if input.ProjectID != run.ProjectID || input.Workflow == nil || input.Workflow.ID != run.WorkflowTemplateID ||
+			input.Workflow.TriggerSource != source || input.Validate() != nil {
+			return errors.New("workflow policy guardrail input is invalid")
+		}
+		nodeID := 0
+		if index == 0 {
+			if input.Intent != pro_interfaces.ExecutionPreflightWorkflow || input.Template != nil || input.Workflow.NodeID != 0 {
+				return errors.New("workflow policy guardrail root input is invalid")
+			}
+		} else {
+			nodeID = input.Workflow.NodeID
+			if input.Intent != pro_interfaces.ExecutionPreflightTask || input.Template == nil || nodeID <= 0 || input.Workflow.NodeKind != string(db.WorkflowNodeTaskKind) {
+				return errors.New("workflow policy guardrail node input is invalid")
+			}
+		}
+		requests[index] = pro_interfaces.PolicyGuardrailAdmissionRequest{
+			DecisionKey: workflowPolicyGuardrailDecisionKey(run.WorkflowTemplateID, root.Workflow.Revision, correlationID, nodeID), Source: source, ActorUserID: &actorID, Input: input,
+		}
+	}
+	claims, err := s.policyGuardrailAdmission.ClaimPolicyGuardrailEvaluations(requests)
+	if err != nil || len(claims) != len(requests) {
+		if err != nil {
+			return err
+		}
+		return errors.New("workflow policy guardrail batch claim is invalid")
+	}
+
+	inputs := make([]pro_interfaces.PolicyGuardrailEvaluationInput, len(snapshot.PolicyInputs))
+	evaluations := make([]pro_interfaces.PolicyGuardrailEvaluation, len(claims))
+	var evaluatedAt time.Time
+	for index, claim := range claims {
+		request := requests[index]
+		if !workflowPolicyGuardrailClaimMatches(request, claim) {
+			return errors.New("workflow policy guardrail claim is invalid")
+		}
+		if index == 0 {
+			evaluatedAt = claim.Evaluation.EvaluatedAt
+		} else if !claim.Evaluation.EvaluatedAt.Equal(evaluatedAt) {
+			return errors.New("workflow policy guardrail claim timestamp is inconsistent")
+		}
+		input := request.Input
+		input.EvaluatedAt = claim.Evaluation.EvaluatedAt
+		inputs[index], evaluations[index] = input, claim.Evaluation
+	}
+
+	// A preview may already contain a read-only policy result. Claims are the
+	// final provenance, so replace only policy findings before applying them.
+	snapshot.Plan = workflowPreflightWithoutPolicyFindings(snapshot.Plan)
+	if err = pro_interfaces.ApplyWorkflowPolicyGuardrailEvaluations(&snapshot.Plan, inputs, evaluations); err != nil {
+		return errors.New("workflow policy guardrail claim does not match preflight")
+	}
+	if hasWorkflowPreflightDenial(snapshot.Plan) {
+		return s.workflowPolicyPreflightDenied(*snapshot)
+	}
+
+	rootID := claims[0].Record.ID
+	run.PolicyGuardrailEvaluationID = &rootID
+	byNodeID := make(map[int]int, len(claims)-1)
+	for index := 1; index < len(claims); index++ {
+		nodeID := inputs[index].Workflow.NodeID
+		if _, duplicate := byNodeID[nodeID]; duplicate {
+			return errors.New("workflow policy guardrail node claim is duplicated")
+		}
+		byNodeID[nodeID] = claims[index].Record.ID
+	}
+	for index := range run.Nodes {
+		node := &run.Nodes[index]
+		if node.TemplateID <= 0 {
+			node.PolicyGuardrailEvaluationID = nil
+			continue
+		}
+		claimID, found := byNodeID[node.WorkflowNodeID]
+		if !found || claimID <= 0 {
+			return errors.New("workflow task node policy guardrail claim is missing")
+		}
+		node.PolicyGuardrailEvaluationID = &claimID
+		delete(byNodeID, node.WorkflowNodeID)
+	}
+	if len(byNodeID) != 0 {
+		return errors.New("workflow policy guardrail claim does not map to a task node")
+	}
+	return nil
+}
+
+func workflowPolicyGuardrailDecisionKey(workflowID, revision int, correlationID string, nodeID int) string {
+	material := fmt.Sprintf("workflow-policy-v1|%d|%d|%s|%d", workflowID, revision, correlationID, nodeID)
+	digest := sha256.Sum256([]byte(material))
+	return "workflow-policy-" + hex.EncodeToString(digest[:])
+}
+
+func workflowPolicyGuardrailClaimMatches(request pro_interfaces.PolicyGuardrailAdmissionRequest, claim pro_interfaces.PolicyGuardrailEvaluationClaim) bool {
+	record := claim.Record
+	if record.ID <= 0 || record.ProjectID != request.Input.ProjectID || record.DecisionKey != request.DecisionKey ||
+		record.Source != request.Source || !workflowPolicyGuardrailIDsEqual(record.ActorUserID, request.ActorUserID) ||
+		claim.Evaluation.Allowed != (record.Decision == db.PolicyGuardrailDecisionAllow) ||
+		record.WorkflowRunID != nil || record.WorkflowRunNodeID != nil || record.TaskID != nil {
+		return false
+	}
+	if request.Input.Intent == pro_interfaces.ExecutionPreflightWorkflow {
+		return request.Input.Workflow != nil && record.Intent == string(pro_interfaces.ExecutionPreflightWorkflow) && record.TemplateID == nil &&
+			workflowPolicyGuardrailIDsEqual(record.WorkflowTemplateID, &request.Input.Workflow.ID)
+	}
+	return request.Input.Template != nil && record.Intent == string(pro_interfaces.ExecutionPreflightTask) && record.WorkflowTemplateID == nil &&
+		workflowPolicyGuardrailIDsEqual(record.TemplateID, &request.Input.Template.ID)
+}
+
+func workflowPolicyGuardrailIDsEqual(left, right *int) bool {
+	return (left == nil && right == nil) || (left != nil && right != nil && *left == *right)
+}
+
+func workflowPreflightWithoutPolicyFindings(plan pro_interfaces.ExecutionPreflightPlan) pro_interfaces.ExecutionPreflightPlan {
+	findings := make([]pro_interfaces.ExecutionPreflightFinding, 0, len(plan.Findings))
+	for _, finding := range plan.Findings {
+		if finding.PolicyScope != "" || finding.PolicyRevision != 0 || finding.PolicyRuleID != "" || finding.PolicyEffect != "" ||
+			finding.RemediationURL != "" || finding.Code == pro_interfaces.ExecutionReasonPolicyAllowed ||
+			finding.Code == pro_interfaces.ExecutionReasonPolicyWarning || finding.Code == pro_interfaces.ExecutionReasonPolicyDenied {
+			continue
+		}
+		findings = append(findings, finding)
+	}
+	plan.Findings = findings
+	plan.PolicyRevisions = nil
+	return plan
+}
+
+func (s *workflowService) workflowPolicyPreflightDenied(snapshot pro_interfaces.ExecutionPreflightSnapshot) *pro_interfaces.ExecutionPreflightDeniedError {
+	plan := snapshot.Plan
+	if planner, ok := s.enqueuer.(pro_interfaces.WorkflowExecutionPreflightPlanner); ok {
+		if sealed, err := planner.SealExecutionPreflight(snapshot); err == nil {
+			plan = sealed
+		}
+	}
+	return &pro_interfaces.ExecutionPreflightDeniedError{Preflight: plan}
 }
 
 func (s *workflowService) claimWorkflowStartAdmissionDecision(run *db.WorkflowRun, workflow db.WorkflowTemplate, user *db.User, correlationID string, override *pro_interfaces.DeploymentWindowOverrideInput, inputs ...db.WorkflowRunInput) (*db.DeploymentWindowDecisionRecord, error) {
@@ -1899,6 +2254,13 @@ func (s *workflowService) enqueueWorkflowNode(
 	}
 	task.WorkflowRunID = &run.ID
 	task.WorkflowNodeID = &node.WorkflowNodeID
+	if s.policyGuardrailAdmission != nil {
+		if node.PolicyGuardrailEvaluationID == nil || *node.PolicyGuardrailEvaluationID <= 0 {
+			return errors.New("workflow task node policy guardrail admission is unavailable")
+		}
+		policyEvaluationID := *node.PolicyGuardrailEvaluationID
+		task.PolicyGuardrailEvaluationID = &policyEvaluationID
+	}
 	if node.ExecutionSnapshotJSON != "" {
 		encoded := node.ExecutionSnapshotJSON
 		task.ExecutionSnapshotJSON = &encoded
