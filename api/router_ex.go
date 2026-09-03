@@ -21,3 +21,9 @@ func configureDeploymentWindowAudit(target any, audit pro_interfaces.AuditServic
 		configurable.ConfigureDeploymentWindowAudit(audit)
 	}
 }
+
+func configurePolicyGuardrailAudit(controller pro_interfaces.PolicyGuardrailController, audit pro_interfaces.AuditServiceFacade) {
+	if configurable, ok := controller.(pro_interfaces.PolicyGuardrailAuditConfigurer); ok {
+		configurable.ConfigurePolicyGuardrailAudit(audit)
+	}
+}

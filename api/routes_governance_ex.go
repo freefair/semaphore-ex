@@ -17,6 +17,7 @@ func registerEnhancedGovernanceRoutes(
 	notificationGovernanceController *NotificationGovernanceController,
 	globalCredentialController *GlobalCredentialController,
 	deploymentWindowController pro_interfaces.DeploymentWindowController,
+	policyGuardrailController pro_interfaces.PolicyGuardrailController,
 	delegatedProjectRolesSnapshot func(http.Handler) http.Handler,
 	globalSystemPermission func(http.Handler) http.Handler,
 ) {
@@ -50,6 +51,20 @@ func registerEnhancedGovernanceRoutes(
 	projectDeploymentWindowStatus := func(handler http.Handler) http.Handler {
 		return projects.ProjectMiddleware(capabilityController.SnapshotMiddleware(
 			capabilityController.RequireCapability(pro_interfaces.CapabilityDeploymentWindows, pro_interfaces.CapabilityAccessExecute)(handler),
+		))
+	}
+	projectPolicyGuardrail := func(access pro_interfaces.CapabilityAccess, permission db.ProjectUserPermission, handler http.Handler) http.Handler {
+		return projects.ProjectMiddleware(EnhancedProjectPermissionAuditMiddleware(auditFacade)(
+			capabilityController.SnapshotMiddleware(capabilityController.RequireCapability(
+				pro_interfaces.CapabilityPolicyGuardrails, access,
+			)(projects.GetMustHaveBaseProjectPermissionMiddleware(permission)(handler))),
+		))
+	}
+	globalPolicyGuardrail := func(access pro_interfaces.CapabilityAccess, permission db.GlobalPermission, handler http.Handler) http.Handler {
+		return delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
+			capabilityController.SnapshotMiddleware(capabilityController.RequireCapability(
+				pro_interfaces.CapabilityPolicyGuardrails, access,
+			)(globalPermissionMiddleware(permission)(handler))),
 		))
 	}
 	globalCredentialAnyRead := func(handler http.Handler) http.Handler {
@@ -193,5 +208,67 @@ func registerEnhancedGovernanceRoutes(
 	authenticatedAPI.Path("/project/{project_id}/deployment-windows/history").Handler(
 		projectDeploymentWindowManage(pro_interfaces.CapabilityAccessRead, http.HandlerFunc(deploymentWindowController.DecisionHistory)),
 	).Methods("GET", "HEAD")
+
+	authenticatedAPI.Path("/project/{project_id}/policy-guardrails").Handler(
+		projectPolicyGuardrail(pro_interfaces.CapabilityAccessRead, db.CanManagePolicyGuardrails, http.HandlerFunc(policyGuardrailController.Get)),
+	).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/project/{project_id}/policy-guardrails/draft").Handler(
+		projectPolicyGuardrail(pro_interfaces.CapabilityAccessWrite, db.CanManagePolicyGuardrails, http.HandlerFunc(policyGuardrailController.SaveDraft)),
+	).Methods("PUT")
+	authenticatedAPI.Path("/project/{project_id}/policy-guardrails/validate").Handler(
+		projectPolicyGuardrail(pro_interfaces.CapabilityAccessWrite, db.CanManagePolicyGuardrails, http.HandlerFunc(policyGuardrailController.Validate)),
+	).Methods("POST")
+	authenticatedAPI.Path("/project/{project_id}/policy-guardrails/test").Handler(
+		projectPolicyGuardrail(pro_interfaces.CapabilityAccessExecute, db.CanManagePolicyGuardrails, http.HandlerFunc(policyGuardrailController.TestFixture)),
+	).Methods("POST")
+	authenticatedAPI.Path("/project/{project_id}/policy-guardrails/diff").Handler(
+		projectPolicyGuardrail(pro_interfaces.CapabilityAccessRead, db.CanManagePolicyGuardrails, http.HandlerFunc(policyGuardrailController.Diff)),
+	).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/project/{project_id}/policy-guardrails/publish").Handler(
+		projectPolicyGuardrail(pro_interfaces.CapabilityAccessWrite, db.CanManagePolicyGuardrails, http.HandlerFunc(policyGuardrailController.Publish)),
+	).Methods("POST")
+	authenticatedAPI.Path("/project/{project_id}/policy-guardrails/impact").Handler(
+		projectPolicyGuardrail(pro_interfaces.CapabilityAccessExecute, db.CanManagePolicyGuardrails, http.HandlerFunc(policyGuardrailController.Impact)),
+	).Methods("POST")
+	authenticatedAPI.Path("/project/{project_id}/policy-guardrails/revisions").Handler(
+		projectPolicyGuardrail(pro_interfaces.CapabilityAccessRead, db.CanManagePolicyGuardrails, http.HandlerFunc(policyGuardrailController.Revisions)),
+	).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/project/{project_id}/policy-guardrails/evaluations").Handler(
+		projectPolicyGuardrail(pro_interfaces.CapabilityAccessRead, db.CanManagePolicyGuardrails, http.HandlerFunc(policyGuardrailController.Evaluations)),
+	).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/project/{project_id}/policy-guardrails/rollback").Handler(
+		projectPolicyGuardrail(pro_interfaces.CapabilityAccessWrite, db.CanRollbackPolicyGuardrails, http.HandlerFunc(policyGuardrailController.Rollback)),
+	).Methods("POST")
+
+	authenticatedAPI.Path("/policy-guardrails").Handler(
+		globalPolicyGuardrail(pro_interfaces.CapabilityAccessRead, db.CanManageGlobalPolicyGuardrails, http.HandlerFunc(policyGuardrailController.Get)),
+	).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/policy-guardrails/draft").Handler(
+		globalPolicyGuardrail(pro_interfaces.CapabilityAccessWrite, db.CanManageGlobalPolicyGuardrails, http.HandlerFunc(policyGuardrailController.SaveDraft)),
+	).Methods("PUT")
+	authenticatedAPI.Path("/policy-guardrails/validate").Handler(
+		globalPolicyGuardrail(pro_interfaces.CapabilityAccessWrite, db.CanManageGlobalPolicyGuardrails, http.HandlerFunc(policyGuardrailController.Validate)),
+	).Methods("POST")
+	authenticatedAPI.Path("/policy-guardrails/test").Handler(
+		globalPolicyGuardrail(pro_interfaces.CapabilityAccessExecute, db.CanManageGlobalPolicyGuardrails, http.HandlerFunc(policyGuardrailController.TestFixture)),
+	).Methods("POST")
+	authenticatedAPI.Path("/policy-guardrails/diff").Handler(
+		globalPolicyGuardrail(pro_interfaces.CapabilityAccessRead, db.CanManageGlobalPolicyGuardrails, http.HandlerFunc(policyGuardrailController.Diff)),
+	).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/policy-guardrails/publish").Handler(
+		globalPolicyGuardrail(pro_interfaces.CapabilityAccessWrite, db.CanManageGlobalPolicyGuardrails, http.HandlerFunc(policyGuardrailController.Publish)),
+	).Methods("POST")
+	authenticatedAPI.Path("/policy-guardrails/impact").Handler(
+		globalPolicyGuardrail(pro_interfaces.CapabilityAccessExecute, db.CanManageGlobalPolicyGuardrails, http.HandlerFunc(policyGuardrailController.Impact)),
+	).Methods("POST")
+	authenticatedAPI.Path("/policy-guardrails/revisions").Handler(
+		globalPolicyGuardrail(pro_interfaces.CapabilityAccessRead, db.CanManageGlobalPolicyGuardrails, http.HandlerFunc(policyGuardrailController.Revisions)),
+	).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/policy-guardrails/evaluations").Handler(
+		globalPolicyGuardrail(pro_interfaces.CapabilityAccessRead, db.CanManageGlobalPolicyGuardrails, http.HandlerFunc(policyGuardrailController.Evaluations)),
+	).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/policy-guardrails/rollback").Handler(
+		globalPolicyGuardrail(pro_interfaces.CapabilityAccessWrite, db.CanRollbackGlobalPolicyGuardrails, http.HandlerFunc(policyGuardrailController.Rollback)),
+	).Methods("POST")
 
 }

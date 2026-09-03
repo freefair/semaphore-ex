@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDeploymentWindowRoutesAreRegisteredInEnhancedRouter(t *testing.T) {
+func TestPolicyGuardrailRoutesAreRegisteredForProjectAndGlobalScopes(t *testing.T) {
 	previousConfig := util.Config
 	t.Cleanup(func() { util.Config = previousConfig })
 	store := sql.InitConfigCreateTestStore()
@@ -27,12 +27,9 @@ func TestDeploymentWindowRoutesAreRegisteredInEnhancedRouter(t *testing.T) {
 		}
 		return nil
 	}))
-	for _, path := range []string{
-		"/api/project/{project_id}/deployment-windows",
-		"/api/project/{project_id}/deployment-windows/preview",
-		"/api/project/{project_id}/deployment-windows/status",
-		"/api/project/{project_id}/deployment-windows/history",
-	} {
-		assert.True(t, routes[path], path)
+	for _, base := range []string{"/api/project/{project_id}/policy-guardrails", "/api/policy-guardrails"} {
+		for _, suffix := range []string{"", "/draft", "/validate", "/test", "/diff", "/publish", "/impact", "/revisions", "/evaluations", "/rollback"} {
+			assert.True(t, routes[base+suffix], base+suffix)
+		}
 	}
 }

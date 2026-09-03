@@ -127,6 +127,9 @@ const (
 	AuditActionDeploymentWindowPolicyReset          AuditAction = "deployment_window_policy_reset"
 	AuditActionDeploymentWindowAdmission            AuditAction = "deployment_window_admission"
 	AuditActionDeploymentWindowBinding              AuditAction = "deployment_window_binding"
+	AuditActionPolicyGuardrailDraftSave             AuditAction = "policy_guardrail_draft_save"
+	AuditActionPolicyGuardrailPublish               AuditAction = "policy_guardrail_publish"
+	AuditActionPolicyGuardrailRollback              AuditAction = "policy_guardrail_rollback"
 )
 
 type AuditTargetType string
@@ -162,6 +165,7 @@ const (
 	AuditTargetCrossProjectTemplateVersion AuditTargetType = "cross_project_template_version"
 	AuditTargetExecutionPreflight          AuditTargetType = "execution_preflight"
 	AuditTargetDeploymentWindow            AuditTargetType = "deployment_window"
+	AuditTargetPolicyGuardrail             AuditTargetType = "policy_guardrail"
 )
 
 type AuditOutcome string
@@ -222,6 +226,9 @@ const (
 	AuditReasonDeploymentWindowOverridden         = "deployment_window_overridden"
 	AuditReasonDeploymentWindowOverrideForbidden  = "deployment_window_override_forbidden"
 	AuditReasonDeploymentWindowBound              = "deployment_window_bound"
+	AuditReasonPolicyGuardrailDraftSaved          = "policy_guardrail_draft_saved"
+	AuditReasonPolicyGuardrailPublished           = "policy_guardrail_published"
+	AuditReasonPolicyGuardrailRolledBack          = "policy_guardrail_rolled_back"
 )
 
 // AuditRoleOrigin records how a role was effective when a workflow decision
@@ -272,7 +279,10 @@ const (
 
 const (
 	AuditWorkflowPolicyRevisionMax = 1_000_000_000
-	AuditRoleProvenanceMaxEntries  = 16
+	// Policy governance revisions are database sequence values, never opaque
+	// caller-controlled metadata. Keep the audit protocol equally bounded.
+	AuditPolicyGuardrailRevisionMax = 1_000_000_000
+	AuditRoleProvenanceMaxEntries   = 16
 	// A deployment-window policy permits at most 64 rules. Keeping the audit
 	// bound identical means a corrupted persistence record cannot turn audit
 	// delivery into an unbounded JSON channel.
@@ -299,6 +309,7 @@ var (
 	workflowInboxTargetPattern      = regexp.MustCompile(`^project:[1-9][0-9]*$`)
 	executionPreflightTargetPattern = regexp.MustCompile(`^(?:task-template|workflow):[1-9][0-9]*$`)
 	deploymentWindowTargetPattern   = regexp.MustCompile(`^(?:project|decision):[1-9][0-9]*$`)
+	policyGuardrailTargetPattern    = regexp.MustCompile(`^(?:global|project:[1-9][0-9]*)$`)
 	notificationTargetPattern       = regexp.MustCompile(`^(?:global|project:[1-9][0-9]*)$`)
 	workflowRoleIDPattern           = regexp.MustCompile(`^(?:builtin:(?:owner|manager|task_runner|guest)|role:[a-z0-9][a-z0-9_-]{0,63})$`)
 )
@@ -345,6 +356,15 @@ type AuditEvent struct {
 	CrossProjectTemplateProvenance *AuditCrossProjectTemplateProvenance `json:"cross_project_template_provenance,omitempty"`
 	ExecutionPreflightProvenance   *AuditExecutionPreflightProvenance   `json:"execution_preflight_provenance,omitempty"`
 	DeploymentWindowProvenance     *AuditDeploymentWindowProvenance     `json:"deployment_window_provenance,omitempty"`
+	PolicyGuardrailProvenance      *AuditPolicyGuardrailProvenance      `json:"policy_guardrail_provenance,omitempty"`
+}
+
+// AuditPolicyGuardrailProvenance is intentionally limited to governance
+// scope and revision. Policy source, fixture input, findings, and error text
+// are not audit fields and cannot enter logging through this contract.
+type AuditPolicyGuardrailProvenance struct {
+	Scope    PolicyGuardrailScope `json:"scope"`
+	Revision int                  `json:"revision,omitempty"`
 }
 
 // AuditDeploymentWindowProvenance is the complete, bounded allowlist for a
@@ -637,6 +657,9 @@ func (e AuditEvent) Validate() error {
 	if !validDeploymentWindowAuditProvenance(e) {
 		return fmt.Errorf("invalid deployment window audit provenance")
 	}
+	if !validPolicyGuardrailAuditProvenance(e) {
+		return fmt.Errorf("invalid policy guardrail audit provenance")
+	}
 	return nil
 }
 
@@ -716,6 +739,56 @@ func validAuditTarget(event AuditEvent) bool {
 		return true
 	case AuditTargetDeploymentWindow:
 		return event.ProjectID != nil && *event.ProjectID > 0 && deploymentWindowTargetPattern.MatchString(event.TargetID)
+	case AuditTargetPolicyGuardrail:
+		if !policyGuardrailTargetPattern.MatchString(event.TargetID) {
+			return false
+		}
+		if event.ProjectID == nil {
+			return event.TargetID == "global"
+		}
+		return *event.ProjectID > 0 && event.TargetID == "project:"+strconv.Itoa(*event.ProjectID)
+	default:
+		return false
+	}
+}
+
+func validPolicyGuardrailAuditProvenance(event AuditEvent) bool {
+	if !isPolicyGuardrailAuditAction(event.Action) {
+		return event.PolicyGuardrailProvenance == nil
+	}
+	p := event.PolicyGuardrailProvenance
+	if p == nil || event.TargetType != AuditTargetPolicyGuardrail || event.Source != AuditSourceAPI || event.ActorID == nil || *event.ActorID <= 0 {
+		return false
+	}
+	if p.Scope != PolicyGuardrailScopeGlobal && p.Scope != PolicyGuardrailScopeProject {
+		return false
+	}
+	if p.Scope == PolicyGuardrailScopeGlobal {
+		if event.ProjectID != nil || event.TargetID != "global" {
+			return false
+		}
+	} else if event.ProjectID == nil || *event.ProjectID <= 0 || event.TargetID != "project:"+strconv.Itoa(*event.ProjectID) {
+		return false
+	}
+	if p.Revision < 0 || p.Revision > AuditPolicyGuardrailRevisionMax {
+		return false
+	}
+	if event.Outcome == AuditOutcomeDenied && event.Reason == AuditReasonInvalidInput {
+		return true
+	}
+	if p.Revision <= 0 {
+		return false
+	}
+	switch event.Action {
+	case AuditActionPolicyGuardrailDraftSave:
+		return event.Outcome == AuditOutcomeAllowed && event.Reason == AuditReasonPolicyGuardrailDraftSaved ||
+			event.Outcome == AuditOutcomeFailure && event.Reason == AuditReasonOperationError
+	case AuditActionPolicyGuardrailPublish:
+		return event.Outcome == AuditOutcomeAllowed && event.Reason == AuditReasonPolicyGuardrailPublished ||
+			event.Outcome == AuditOutcomeFailure && event.Reason == AuditReasonOperationError
+	case AuditActionPolicyGuardrailRollback:
+		return event.Outcome == AuditOutcomeAllowed && event.Reason == AuditReasonPolicyGuardrailRolledBack ||
+			event.Outcome == AuditOutcomeFailure && event.Reason == AuditReasonOperationError
 	default:
 		return false
 	}
@@ -1075,6 +1148,15 @@ func validWorkflowAuditReason(event AuditEvent) bool {
 }
 
 func validAuditActionTarget(event AuditEvent) bool {
+	if isPolicyGuardrailAuditAction(event.Action) {
+		if event.TargetType != AuditTargetPolicyGuardrail || event.PolicyGuardrailProvenance == nil {
+			return false
+		}
+		if event.PolicyGuardrailProvenance.Scope == PolicyGuardrailScopeGlobal {
+			return event.ProjectID == nil && event.TargetID == "global"
+		}
+		return event.ProjectID != nil && event.TargetID == "project:"+strconv.Itoa(*event.ProjectID)
+	}
 	if isDeploymentWindowAuditAction(event.Action) {
 		if event.TargetType != AuditTargetDeploymentWindow || event.ProjectID == nil {
 			return false
@@ -1166,6 +1248,10 @@ func isExecutionPreflightAuditAction(action AuditAction) bool {
 func isDeploymentWindowAuditAction(action AuditAction) bool {
 	return action == AuditActionDeploymentWindowPolicyUpdate || action == AuditActionDeploymentWindowPolicyReset ||
 		action == AuditActionDeploymentWindowAdmission || action == AuditActionDeploymentWindowBinding
+}
+
+func isPolicyGuardrailAuditAction(action AuditAction) bool {
+	return action == AuditActionPolicyGuardrailDraftSave || action == AuditActionPolicyGuardrailPublish || action == AuditActionPolicyGuardrailRollback
 }
 
 func isCrossProjectTemplateAuditAction(action AuditAction) bool {
@@ -1267,6 +1353,8 @@ func validAuditReason(reason string) bool {
 		AuditReasonDeploymentWindowAllowed, AuditReasonDeploymentWindowBlocked,
 		AuditReasonDeploymentWindowOverridden, AuditReasonDeploymentWindowOverrideForbidden,
 		AuditReasonDeploymentWindowBound,
+		AuditReasonPolicyGuardrailDraftSaved, AuditReasonPolicyGuardrailPublished,
+		AuditReasonPolicyGuardrailRolledBack,
 		string(ExecutionReasonHiddenReference), string(ExecutionReasonPermissionDenied),
 		string(ExecutionReasonCapabilityUnavailable), string(ExecutionReasonPolicyDenied),
 		string(ExecutionReasonPlanLimitExceeded), string(ExecutionReasonNoCandidate),
@@ -1325,6 +1413,9 @@ func (e AuditEvent) SafeFields() map[string]any {
 	}
 	if e.ExecutionPreflightProvenance != nil {
 		fields["execution_preflight_provenance"] = e.ExecutionPreflightProvenance
+	}
+	if e.PolicyGuardrailProvenance != nil {
+		fields["policy_guardrail_provenance"] = e.PolicyGuardrailProvenance
 	}
 	return fields
 }
@@ -1509,6 +1600,8 @@ func validAuditAction(action AuditAction) bool {
 		return true
 	case AuditActionDeploymentWindowPolicyUpdate, AuditActionDeploymentWindowPolicyReset,
 		AuditActionDeploymentWindowAdmission, AuditActionDeploymentWindowBinding:
+		return true
+	case AuditActionPolicyGuardrailDraftSave, AuditActionPolicyGuardrailPublish, AuditActionPolicyGuardrailRollback:
 		return true
 	case AuditActionCrossProjectTemplateVersionPublish,
 		AuditActionCrossProjectTemplateGrantCreate, AuditActionCrossProjectTemplateGrantUpdate,

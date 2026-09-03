@@ -174,6 +174,8 @@ func Route(
 	configureDeploymentWindowAudit(deploymentWindowController, auditFacade)
 	configureDeploymentWindowAudit(taskPool, auditFacade)
 	configureDeploymentWindowAudit(workflowTriggerService, auditFacade)
+	policyGuardrailController := proApi.NewPolicyGuardrailController(policyGuardrailGovernanceService)
+	configurePolicyGuardrailAudit(policyGuardrailController, auditFacade)
 
 	r := mux.NewRouter()
 	r.NotFoundHandler = http.HandlerFunc(servePublic)
@@ -319,6 +321,7 @@ func Route(
 		notificationGovernanceController,
 		globalCredentialController,
 		deploymentWindowController,
+		policyGuardrailController,
 		delegatedProjectRolesSnapshot,
 		globalSystemPermission,
 	)
