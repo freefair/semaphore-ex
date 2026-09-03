@@ -80,12 +80,12 @@ func (d *WorkflowStoreImpl) CreateWorkflowTrigger(trigger db.WorkflowTrigger) (d
 		trigger.Updated = trigger.Created
 	}
 	result, err := d.connection.Exec(
-		"insert into project__workflow_trigger(project_id, workflow_template_id, revision, name, type, owner_user_id, enabled, cron_format, input_mappings, credential_hash, credential_generation, current_signing_secret_encrypted, next_signing_secret_encrypted, current_signing_key_id, next_signing_key_id, created, updated, last_fired, last_result) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"insert into project__workflow_trigger(project_id, workflow_template_id, revision, name, type, owner_user_id, enabled, cron_format, input_mappings, credential_hash, credential_generation, current_signing_secret_encrypted, next_signing_secret_encrypted, current_signing_key_id, next_signing_key_id, current_signing_generation, next_signing_generation, created, updated, last_fired, last_result) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		trigger.ProjectID, trigger.WorkflowTemplateID, trigger.Revision, trigger.Name, trigger.Type,
 		trigger.OwnerUserID, trigger.Enabled, trigger.CronFormat, trigger.InputMappingsJSON,
 		trigger.CredentialHash, trigger.CredentialGeneration,
 		trigger.CurrentSigningSecretEncrypted, trigger.NextSigningSecretEncrypted,
-		trigger.CurrentSigningKeyID, trigger.NextSigningKeyID, trigger.Created, trigger.Updated,
+		trigger.CurrentSigningKeyID, trigger.NextSigningKeyID, trigger.CurrentSigningGeneration, trigger.NextSigningGeneration, trigger.Created, trigger.Updated,
 		trigger.LastFired, trigger.LastResult,
 	)
 	if err != nil {
@@ -105,11 +105,11 @@ func (d *WorkflowStoreImpl) UpdateWorkflowTrigger(trigger db.WorkflowTrigger, ex
 	}
 	trigger.Updated = time.Now().UTC()
 	result, err := d.connection.Exec(
-		"update project__workflow_trigger set name=?, type=?, owner_user_id=?, enabled=?, cron_format=?, input_mappings=?, credential_hash=?, credential_generation=?, current_signing_secret_encrypted=?, next_signing_secret_encrypted=?, current_signing_key_id=?, next_signing_key_id=?, updated=?, revision=revision+1 where project_id=? and workflow_template_id=? and id=? and revision=?",
+		"update project__workflow_trigger set name=?, type=?, owner_user_id=?, enabled=?, cron_format=?, input_mappings=?, credential_hash=?, credential_generation=?, current_signing_secret_encrypted=?, next_signing_secret_encrypted=?, current_signing_key_id=?, next_signing_key_id=?, current_signing_generation=?, next_signing_generation=?, updated=?, revision=revision+1 where project_id=? and workflow_template_id=? and id=? and revision=?",
 		trigger.Name, trigger.Type, trigger.OwnerUserID, trigger.Enabled, trigger.CronFormat,
 		trigger.InputMappingsJSON, trigger.CredentialHash, trigger.CredentialGeneration,
 		trigger.CurrentSigningSecretEncrypted, trigger.NextSigningSecretEncrypted,
-		trigger.CurrentSigningKeyID, trigger.NextSigningKeyID, trigger.Updated,
+		trigger.CurrentSigningKeyID, trigger.NextSigningKeyID, trigger.CurrentSigningGeneration, trigger.NextSigningGeneration, trigger.Updated,
 		trigger.ProjectID, trigger.WorkflowTemplateID, trigger.ID, expectedRevision,
 	)
 	if err != nil {
@@ -309,6 +309,21 @@ func (d *WorkflowStoreImpl) UpdateWorkflowTriggerInvocation(invocation db.Workfl
 		return err
 	}
 	if updated == 0 {
+		return db.ErrNotFound
+	}
+	return nil
+}
+
+func (d *WorkflowStoreImpl) UpdateWorkflowTriggerInvocationSnapshots(invocation db.WorkflowTriggerInvocation) error {
+	result, err := d.connection.Exec("update project__workflow_trigger_invocation set trigger_snapshot=?, input_snapshot=?, updated=? where project_id=? and workflow_trigger_id=? and id=?", invocation.TriggerSnapshotJSON, invocation.InputSnapshotJSON, invocation.Updated, invocation.ProjectID, invocation.WorkflowTriggerID, invocation.ID)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
 		return db.ErrNotFound
 	}
 	return nil

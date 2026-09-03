@@ -50,10 +50,9 @@ func TestWorkflowTriggerAPIRejectsMissingCredentialAndUnknownInput(t *testing.T)
 
 	unknown := workflowTriggerExternalRequest(`{"inputs":{},"unexpected":true}`)
 	unknown.Header.Set("Authorization", "Bearer swt_once")
-	unknown.Header.Set("Idempotency-Key", "once")
 	unknownRecorder := httptest.NewRecorder()
 	controller.InvokeWebhookTrigger(unknownRecorder, unknown)
-	assert.Equal(t, http.StatusBadRequest, unknownRecorder.Code)
+	assert.Equal(t, http.StatusUnauthorized, unknownRecorder.Code)
 	assert.Zero(t, service.fires)
 }
 
@@ -113,6 +112,9 @@ func (s *workflowTriggerAPIService) FireExternal(_ context.Context, _, _, _ int,
 	s.idempotencyKey = key
 	return pro_interfaces.WorkflowTriggerFireResult{Run: db.WorkflowRun{ID: 17}}, s.fireError
 }
+func (s *workflowTriggerAPIService) FireSignedWebhook(context.Context, int, int, int, pro_interfaces.WebhookSignedRequest) (pro_interfaces.WorkflowTriggerFireResult, error) {
+	return pro_interfaces.WorkflowTriggerFireResult{}, pro_interfaces.ErrWorkflowTriggerWebhookRejected
+}
 func (s *workflowTriggerAPIService) List(context.Context, int, int, db.RetrieveQueryParams, *db.User) ([]db.WorkflowTrigger, error) {
 	return nil, nil
 }
@@ -137,6 +139,18 @@ func (s *workflowTriggerAPIService) Test(context.Context, int, int, int, map[str
 func (s *workflowTriggerAPIService) FireScheduled(context.Context, int, int, int, time.Time) (pro_interfaces.WorkflowTriggerFireResult, error) {
 	return pro_interfaces.WorkflowTriggerFireResult{}, nil
 }
-func (s *workflowTriggerAPIService) History(context.Context, int, int, int, db.RetrieveQueryParams, *db.User) ([]db.WorkflowTriggerInvocation, error) {
+func (s *workflowTriggerAPIService) History(context.Context, int, int, int, db.RetrieveQueryParams, *db.User) ([]pro_interfaces.WorkflowTriggerHistoryEntry, error) {
 	return nil, nil
+}
+func (s *workflowTriggerAPIService) StageWebhookSigningKey(context.Context, int, int, int, int, *db.User) (pro_interfaces.WorkflowTriggerCredentialResult, error) {
+	return pro_interfaces.WorkflowTriggerCredentialResult{}, nil
+}
+func (s *workflowTriggerAPIService) BootstrapWebhookSigningKey(context.Context, int, int, int, int, *db.User) (pro_interfaces.WorkflowTriggerCredentialResult, error) {
+	return pro_interfaces.WorkflowTriggerCredentialResult{}, nil
+}
+func (s *workflowTriggerAPIService) PromoteWebhookSigningKey(context.Context, int, int, int, int, *db.User) (db.WorkflowTrigger, error) {
+	return db.WorkflowTrigger{}, nil
+}
+func (s *workflowTriggerAPIService) RevokeWebhookSigningKey(context.Context, int, int, int, int, *db.User) (db.WorkflowTrigger, error) {
+	return db.WorkflowTrigger{}, nil
 }

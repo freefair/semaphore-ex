@@ -82,6 +82,11 @@ type WorkflowTrigger struct {
 	NextSigningSecretEncrypted    string `db:"next_signing_secret_encrypted" json:"-" backup:"-"`
 	CurrentSigningKeyID           string `db:"current_signing_key_id" json:"current_signing_key_id,omitempty" backup:"-"`
 	NextSigningKeyID              string `db:"next_signing_key_id" json:"next_signing_key_id,omitempty" backup:"-"`
+	// Generations make a retired key distinguishable from a staged key. A
+	// retired next key is intentionally accepted during the overlap window but
+	// must never be promoted back to current.
+	CurrentSigningGeneration int `db:"current_signing_generation" json:"current_signing_generation,omitempty" backup:"-"`
+	NextSigningGeneration    int `db:"next_signing_generation" json:"next_signing_generation,omitempty" backup:"-"`
 
 	Created    time.Time  `db:"created" json:"created" backup:"created"`
 	Updated    time.Time  `db:"updated" json:"updated" backup:"updated"`
@@ -160,6 +165,7 @@ type WorkflowTriggerManager interface {
 	GetWorkflowTriggerInvocations(projectID int, triggerID int, params RetrieveQueryParams) ([]WorkflowTriggerInvocation, error)
 	ClaimWorkflowTriggerInvocation(invocation WorkflowTriggerInvocation, now time.Time) (WorkflowTriggerInvocation, bool, error)
 	UpdateWorkflowTriggerInvocation(invocation WorkflowTriggerInvocation) error
+	UpdateWorkflowTriggerInvocationSnapshots(invocation WorkflowTriggerInvocation) error
 	DeleteExpiredWorkflowTriggerInvocations(before time.Time, limit int) (int64, error)
 	GetActiveWorkflowScheduleTriggers() ([]WorkflowTrigger, error)
 	RecordWorkflowTriggerResult(projectID int, triggerID int, firedAt time.Time, result string) error
@@ -280,11 +286,14 @@ func ValidateWorkflowTrigger(
 			trigger.CurrentSigningKeyID,
 			trigger.NextSigningSecretEncrypted,
 			trigger.NextSigningKeyID,
+			trigger.CurrentSigningGeneration,
+			trigger.NextSigningGeneration,
 		) {
 			return errors.New("workflow trigger signing state is invalid")
 		}
 	} else if trigger.CurrentSigningSecretEncrypted != "" || trigger.CurrentSigningKeyID != "" ||
-		trigger.NextSigningSecretEncrypted != "" || trigger.NextSigningKeyID != "" {
+		trigger.NextSigningSecretEncrypted != "" || trigger.NextSigningKeyID != "" ||
+		trigger.CurrentSigningGeneration != 0 || trigger.NextSigningGeneration != 0 {
 		return errors.New("non-webhook workflow triggers cannot carry signing material")
 	}
 	if len(trigger.InputMappings) > MaxWorkflowTriggerMappings {
@@ -383,7 +392,7 @@ func ValidateWorkflowTriggerCanFire(trigger WorkflowTrigger) error {
 	if trigger.UsesCredential() && (trigger.CredentialGeneration <= 0 || !validWorkflowTriggerHash(trigger.CredentialHash)) {
 		return errors.New("workflow trigger credential is unavailable")
 	}
-	if trigger.UsesWebhookSigning() && (trigger.CurrentSigningSecretEncrypted == "" || !validWorkflowWebhookKeyID(trigger.CurrentSigningKeyID)) {
+	if trigger.UsesWebhookSigning() && (trigger.CurrentSigningSecretEncrypted == "" || trigger.CurrentSigningGeneration <= 0 || !validWorkflowWebhookKeyID(trigger.CurrentSigningKeyID)) {
 		return errors.New("workflow trigger signing material is unavailable")
 	}
 	return nil
@@ -428,6 +437,14 @@ func WorkflowTriggerScheduleOccurrenceIdentity(
 }
 
 func WorkflowTriggerInvocationCorrelationID(invocation WorkflowTriggerInvocation) string {
+	if invocation.WebhookEventHash != nil {
+		// Keep correlation IDs within the persisted varchar(64) limit while
+		// preserving the stable, rotation-independent event identity.
+		if !validWorkflowWebhookEventHash(*invocation.WebhookEventHash) {
+			return ""
+		}
+		return "swh_" + (*invocation.WebhookEventHash)[:60]
+	}
 	if invocation.OccurrenceIdentity != nil {
 		return *invocation.OccurrenceIdentity
 	}
@@ -467,14 +484,28 @@ func validWorkflowWebhookEventHash(value string) bool {
 	return err == nil
 }
 
-func validWorkflowWebhookSigningState(currentSecret, currentKeyID, nextSecret, nextKeyID string) bool {
+func validWorkflowWebhookSigningState(currentSecret, currentKeyID, nextSecret, nextKeyID string, currentGeneration, nextGeneration int) bool {
 	if (currentSecret == "") != (currentKeyID == "") || (nextSecret == "") != (nextKeyID == "") {
 		return false
+	}
+	if currentSecret == "" {
+		return currentKeyID == "" && nextSecret == "" && nextKeyID == "" && currentGeneration == 0 && nextGeneration == 0
+	}
+	if currentGeneration <= 0 {
+		return false
+	}
+	if nextSecret == "" {
+		return nextGeneration == 0
 	}
 	if nextSecret != "" && currentSecret == "" {
 		return false
 	}
 	if nextKeyID != "" && nextKeyID == currentKeyID {
+		return false
+	}
+	// A greater next generation is staged; a smaller one is retired after a
+	// promotion. Equal generations are never a meaningful rotation state.
+	if nextGeneration <= 0 || nextGeneration == currentGeneration {
 		return false
 	}
 	return (currentKeyID == "" || validWorkflowWebhookKeyID(currentKeyID)) &&

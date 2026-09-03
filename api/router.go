@@ -1096,6 +1096,10 @@ func Route(
 	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}", workflowAdmin(http.HandlerFunc(workflowTriggerController.DeleteTrigger))).Methods("DELETE")
 	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}/enabled", workflowAdmin(http.HandlerFunc(workflowTriggerController.SetTriggerEnabled))).Methods("PUT")
 	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}/rotate", workflowAdmin(http.HandlerFunc(workflowTriggerController.RotateTriggerCredential))).Methods("POST")
+	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}/webhook-signing/stage", workflowAdmin(http.HandlerFunc(workflowTriggerController.StageWebhookSigningKey))).Methods("POST")
+	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}/webhook-signing/bootstrap", workflowAdmin(http.HandlerFunc(workflowTriggerController.BootstrapWebhookSigningKey))).Methods("POST")
+	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}/webhook-signing/promote", workflowAdmin(http.HandlerFunc(workflowTriggerController.PromoteWebhookSigningKey))).Methods("POST")
+	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}/webhook-signing/revoke", workflowAdmin(http.HandlerFunc(workflowTriggerController.RevokeWebhookSigningKey))).Methods("POST")
 	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}/test", workflowAdmin(http.HandlerFunc(workflowTriggerController.TestTrigger))).Methods("POST")
 	projectWorkflowManagement.Handle("/{workflow_id}/triggers/{trigger_id}/history", workflowAdmin(http.HandlerFunc(workflowTriggerController.GetTriggerHistory))).Methods("GET", "HEAD")
 

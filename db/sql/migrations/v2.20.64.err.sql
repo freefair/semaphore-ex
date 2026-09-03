@@ -8,6 +8,8 @@ alter table `project__workflow_trigger_invocation` drop column `webhook_event_ha
 
 alter table `project__workflow_trigger` drop column `next_signing_key_id`;
 alter table `project__workflow_trigger` drop column `current_signing_key_id`;
+alter table `project__workflow_trigger` drop column `next_signing_generation`;
+alter table `project__workflow_trigger` drop column `current_signing_generation`;
 alter table `project__workflow_trigger` drop column `next_signing_secret_encrypted`;
 alter table `project__workflow_trigger` drop column `current_signing_secret_encrypted`;
 

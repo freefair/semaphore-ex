@@ -135,6 +135,49 @@ func (c *workflowTriggerController) RotateTriggerCredential(w http.ResponseWrite
 	helpers.WriteJSON(w, http.StatusOK, rotated)
 }
 
+func (c *workflowTriggerController) StageWebhookSigningKey(w http.ResponseWriter, r *http.Request) {
+	c.mutateWebhookSigningKey(w, r, func(projectID, workflowID, triggerID, revision int, actor *db.User) (any, error) {
+		return c.service.StageWebhookSigningKey(r.Context(), projectID, workflowID, triggerID, revision, actor)
+	})
+}
+
+func (c *workflowTriggerController) BootstrapWebhookSigningKey(w http.ResponseWriter, r *http.Request) {
+	c.mutateWebhookSigningKey(w, r, func(projectID, workflowID, triggerID, revision int, actor *db.User) (any, error) {
+		return c.service.BootstrapWebhookSigningKey(r.Context(), projectID, workflowID, triggerID, revision, actor)
+	})
+}
+
+func (c *workflowTriggerController) PromoteWebhookSigningKey(w http.ResponseWriter, r *http.Request) {
+	c.mutateWebhookSigningKey(w, r, func(projectID, workflowID, triggerID, revision int, actor *db.User) (any, error) {
+		return c.service.PromoteWebhookSigningKey(r.Context(), projectID, workflowID, triggerID, revision, actor)
+	})
+}
+
+func (c *workflowTriggerController) RevokeWebhookSigningKey(w http.ResponseWriter, r *http.Request) {
+	c.mutateWebhookSigningKey(w, r, func(projectID, workflowID, triggerID, revision int, actor *db.User) (any, error) {
+		return c.service.RevokeWebhookSigningKey(r.Context(), projectID, workflowID, triggerID, revision, actor)
+	})
+}
+
+func (c *workflowTriggerController) mutateWebhookSigningKey(w http.ResponseWriter, r *http.Request, mutate func(int, int, int, int, *db.User) (any, error)) {
+	project, workflow, triggerID, ok := workflowTriggerResourceContext(w, r)
+	if !ok {
+		return
+	}
+	var input struct {
+		Revision int `json:"revision"`
+	}
+	if !bindWorkflowTriggerBody(w, r, &input) {
+		return
+	}
+	result, err := mutate(project.ID, workflow.ID, triggerID, input.Revision, helpers.UserFromContext(r))
+	if err != nil {
+		writeWorkflowTriggerError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, result)
+}
+
 func (c *workflowTriggerController) TestTrigger(w http.ResponseWriter, r *http.Request) {
 	project, workflow, triggerID, ok := workflowTriggerResourceContext(w, r)
 	if !ok {
@@ -166,24 +209,46 @@ func (c *workflowTriggerController) GetTriggerHistory(w http.ResponseWriter, r *
 }
 
 func (c *workflowTriggerController) InvokeAPITrigger(w http.ResponseWriter, r *http.Request) {
-	c.invokeExternal(w, r, db.WorkflowTriggerAPI)
+	c.invokeAPITrigger(w, r)
 }
 
 func (c *workflowTriggerController) InvokeWebhookTrigger(w http.ResponseWriter, r *http.Request) {
-	c.invokeExternal(w, r, db.WorkflowTriggerWebhook)
+	projectID, workflowID, triggerID, ok := workflowTriggerExternalIDs(w, r)
+	if !ok {
+		return
+	}
+	// A webhook is authenticated only by the signed protocol. In particular an
+	// Authorization header cannot select the legacy API credential path.
+	if bearerWorkflowTriggerCredential(r.Header.Get("Authorization")) != "" {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	body, ok := readWorkflowWebhookBody(w, r)
+	if !ok {
+		return
+	}
+	bound, err := pro_interfaces.BindWebhookSignedRequestFromHTTP(r.Method, r.RequestURI, r.Header, body)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	result, err := c.service.FireSignedWebhook(r.Context(), projectID, workflowID, triggerID, bound)
+	if err != nil {
+		// Verification errors intentionally collapse to one response to avoid
+		// revealing key, freshness, or trigger state to an unauthenticated peer.
+		if errors.Is(err, pro_interfaces.ErrWorkflowTriggerWebhookReplay) {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusCreated, newWorkflowTriggerFireView(result))
 }
 
-func (c *workflowTriggerController) invokeExternal(w http.ResponseWriter, r *http.Request, triggerType db.WorkflowTriggerType) {
-	projectID, err := helpers.GetIntParam("project_id", w, r)
-	if err != nil {
-		return
-	}
-	workflowID, err := helpers.GetIntParam("workflow_id", w, r)
-	if err != nil {
-		return
-	}
-	triggerID, err := helpers.GetIntParam("trigger_id", w, r)
-	if err != nil {
+func (c *workflowTriggerController) invokeAPITrigger(w http.ResponseWriter, r *http.Request) {
+	projectID, workflowID, triggerID, ok := workflowTriggerExternalIDs(w, r)
+	if !ok {
 		return
 	}
 	credential := bearerWorkflowTriggerCredential(r.Header.Get("Authorization"))
@@ -195,10 +260,7 @@ func (c *workflowTriggerController) invokeExternal(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	result, err := c.service.FireExternal(
-		r.Context(), projectID, workflowID, triggerID, triggerType, credential,
-		strings.TrimSpace(r.Header.Get("Idempotency-Key")), input.Inputs,
-	)
+	result, err := c.service.FireExternal(r.Context(), projectID, workflowID, triggerID, db.WorkflowTriggerAPI, credential, strings.TrimSpace(r.Header.Get("Idempotency-Key")), input.Inputs)
 	if err != nil {
 		writeWorkflowTriggerError(w, err)
 		return
@@ -208,6 +270,40 @@ func (c *workflowTriggerController) invokeExternal(w http.ResponseWriter, r *htt
 		status = http.StatusOK
 	}
 	helpers.WriteJSON(w, status, newWorkflowTriggerFireView(result))
+}
+
+func workflowTriggerExternalIDs(w http.ResponseWriter, r *http.Request) (int, int, int, bool) {
+	projectID, err := helpers.GetIntParam("project_id", w, r)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	workflowID, err := helpers.GetIntParam("workflow_id", w, r)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	triggerID, err := helpers.GetIntParam("trigger_id", w, r)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	return projectID, workflowID, triggerID, true
+}
+
+func readWorkflowWebhookBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	if r.Body == nil {
+		return []byte{}, true
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, workflowTriggerBodyLimit)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var sizeError *http.MaxBytesError
+		if errors.As(err, &sizeError) {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+		} else {
+			w.WriteHeader(http.StatusBadRequest)
+		}
+		return nil, false
+	}
+	return body, true
 }
 
 type workflowTriggerInvocationView struct {

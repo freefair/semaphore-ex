@@ -54,9 +54,24 @@ func (s *workflowTriggerService) Test(context.Context, int, int, int, map[string
 func (s *workflowTriggerService) FireExternal(context.Context, int, int, int, db.WorkflowTriggerType, string, string, map[string]json.RawMessage) (pro_interfaces.WorkflowTriggerFireResult, error) {
 	return pro_interfaces.WorkflowTriggerFireResult{}, db.ErrNotFound
 }
+func (s *workflowTriggerService) FireSignedWebhook(context.Context, int, int, int, pro_interfaces.WebhookSignedRequest) (pro_interfaces.WorkflowTriggerFireResult, error) {
+	return pro_interfaces.WorkflowTriggerFireResult{}, db.ErrNotFound
+}
 func (s *workflowTriggerService) FireScheduled(context.Context, int, int, int, time.Time) (pro_interfaces.WorkflowTriggerFireResult, error) {
 	return pro_interfaces.WorkflowTriggerFireResult{}, db.ErrNotFound
 }
-func (s *workflowTriggerService) History(context.Context, int, int, int, db.RetrieveQueryParams, *db.User) ([]db.WorkflowTriggerInvocation, error) {
-	return []db.WorkflowTriggerInvocation{}, nil
+func (s *workflowTriggerService) History(context.Context, int, int, int, db.RetrieveQueryParams, *db.User) ([]pro_interfaces.WorkflowTriggerHistoryEntry, error) {
+	return []pro_interfaces.WorkflowTriggerHistoryEntry{}, nil
+}
+func (s *workflowTriggerService) StageWebhookSigningKey(context.Context, int, int, int, int, *db.User) (pro_interfaces.WorkflowTriggerCredentialResult, error) {
+	return pro_interfaces.WorkflowTriggerCredentialResult{}, db.ErrNotFound
+}
+func (s *workflowTriggerService) BootstrapWebhookSigningKey(context.Context, int, int, int, int, *db.User) (pro_interfaces.WorkflowTriggerCredentialResult, error) {
+	return pro_interfaces.WorkflowTriggerCredentialResult{}, db.ErrNotFound
+}
+func (s *workflowTriggerService) PromoteWebhookSigningKey(context.Context, int, int, int, int, *db.User) (db.WorkflowTrigger, error) {
+	return db.WorkflowTrigger{}, db.ErrNotFound
+}
+func (s *workflowTriggerService) RevokeWebhookSigningKey(context.Context, int, int, int, int, *db.User) (db.WorkflowTrigger, error) {
+	return db.WorkflowTrigger{}, db.ErrNotFound
 }
