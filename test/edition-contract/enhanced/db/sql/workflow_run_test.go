@@ -184,6 +184,8 @@ func TestCrossProjectWorkflowTaskFencePersistsConsumerTaskAndPreservesAuditAfter
 	require.NoError(t, err)
 	decisionID := claim.Decision.ID
 	firstTask.DeploymentWindowDecisionID = &decisionID
+	evaluationID := seedPolicyGuardrailTaskEvaluation(t, store, consumer.ID, ownerTemplate.ID, db.PolicyGuardrailDecisionAllow, &firstRun.ID, &firstRun.Nodes[0].ID)
+	firstTask.PolicyGuardrailEvaluationID = &evaluationID
 	created, err := repository.CreateCrossProjectWorkflowTaskFenced(firstTask, provenance, &lease)
 	require.NoError(t, err)
 	assert.Equal(t, consumer.ID, created.ProjectID)
@@ -200,6 +202,7 @@ func TestCrossProjectWorkflowTaskFencePersistsConsumerTaskAndPreservesAuditAfter
 	assert.Nil(t, decision.TemplateID, "cross-project work is admitted against the consumer workflow, never the owner template")
 	assert.Equal(t, workflow.ID, decision.WorkflowTemplateID)
 	assert.Equal(t, created.ID, decision.TaskID)
+	assertPolicyGuardrailEvaluationBoundToTask(t, store, evaluationID, created.ID)
 	firstNode, err := repository.GetWorkflowRunNode(consumer.ID, firstRun.ID, firstNodeID)
 	require.NoError(t, err)
 	require.NotNil(t, firstNode.TaskID)
@@ -216,11 +219,46 @@ func TestCrossProjectWorkflowTaskFencePersistsConsumerTaskAndPreservesAuditAfter
 	require.Error(t, err, "an already-bound workflow-only decision cannot be moved to another run node")
 	_, err = repository.GetWorkflowRunNodeTask(consumer.ID, secondRun.ID, secondNodeID)
 	assert.ErrorIs(t, err, db.ErrNotFound, "the failed binding must roll back without a task or node attachment")
+
+	workflowID, runID, runNodeID = workflow.ID, secondRun.ID, secondRun.Nodes[0].ID
+	secondClaim, err := admissions.ClaimDeploymentWindowAdmission(pro_interfaces.DeploymentWindowAdmissionRequest{
+		ProjectID: consumer.ID, DecisionKey: "cross-project-policy-mismatch", Source: pro_interfaces.DeploymentWindowSourceWorkflowNode,
+		Origin: pro_interfaces.DeploymentWindowOriginWorkflowNode, WorkflowID: &workflowID, WorkflowRunID: &runID, WorkflowRunNodeID: &runNodeID,
+	}, deploymentWindowEvaluator().Evaluate)
+	require.NoError(t, err)
+	deniedEvaluationID := seedPolicyGuardrailTaskEvaluation(t, store, consumer.ID, ownerTemplate.ID, db.PolicyGuardrailDecisionDeny, &secondRun.ID, &secondRun.Nodes[0].ID)
+	deniedPolicyTask := crossProjectDispatchTask(t, provenance, consumer.ID, secondRun.ID, secondNodeID)
+	deniedPolicyTask.DeploymentWindowDecisionID = &secondClaim.Decision.ID
+	deniedPolicyTask.PolicyGuardrailEvaluationID = &deniedEvaluationID
+	_, err = repository.CreateCrossProjectWorkflowTaskFenced(deniedPolicyTask, provenance, nil)
+	require.Error(t, err, "a denied policy evaluation must not create a task")
+	_, err = repository.GetWorkflowRunNodeTask(consumer.ID, secondRun.ID, secondNodeID)
+	assert.ErrorIs(t, err, db.ErrNotFound, "a denied policy evaluation must roll back task and node attachment")
+	assertPolicyGuardrailEvaluationUnbound(t, store, deniedEvaluationID)
+
+	mismatchedEvaluationID := seedPolicyGuardrailTaskEvaluation(t, store, consumer.ID, ownerTemplate.ID, db.PolicyGuardrailDecisionAllow, &firstRun.ID, &firstRun.Nodes[0].ID)
+	mismatchedPolicyTask := crossProjectDispatchTask(t, provenance, consumer.ID, secondRun.ID, secondNodeID)
+	mismatchedPolicyTask.DeploymentWindowDecisionID = &secondClaim.Decision.ID
+	mismatchedPolicyTask.PolicyGuardrailEvaluationID = &mismatchedEvaluationID
+	_, err = repository.CreateCrossProjectWorkflowTaskFenced(mismatchedPolicyTask, provenance, nil)
+	require.Error(t, err, "a policy evaluation for another run node must not create a task")
+	_, err = repository.GetWorkflowRunNodeTask(consumer.ID, secondRun.ID, secondNodeID)
+	assert.ErrorIs(t, err, db.ErrNotFound, "a mismatched policy evaluation must roll back task and node attachment")
+	assertPolicyGuardrailEvaluationUnbound(t, store, mismatchedEvaluationID)
+
+	reusedPolicyTask := crossProjectDispatchTask(t, provenance, consumer.ID, secondRun.ID, secondNodeID)
+	reusedPolicyTask.DeploymentWindowDecisionID = &secondClaim.Decision.ID
+	reusedPolicyTask.PolicyGuardrailEvaluationID = &evaluationID
+	_, err = repository.CreateCrossProjectWorkflowTaskFenced(reusedPolicyTask, provenance, nil)
+	require.Error(t, err, "a bound policy evaluation must not be reused")
+	_, err = repository.GetWorkflowRunNodeTask(consumer.ID, secondRun.ID, secondNodeID)
+	assert.ErrorIs(t, err, db.ErrNotFound, "a reused policy evaluation must roll back task and node attachment")
+	assertPolicyGuardrailEvaluationBoundToTask(t, store, evaluationID, created.ID)
 	grant, err = grantStore.RevokeCrossProjectTemplateGrant(ownerProjectID, grant.ID, 1, grant.Revision, "withdrawn", time.Now().UTC())
 	require.NoError(t, err)
-	_, err = repository.CreateCrossProjectWorkflowTaskFenced(
-		crossProjectDispatchTask(t, provenance, consumer.ID, secondRun.ID, secondNodeID), provenance, nil,
-	)
+	revokedTask := crossProjectDispatchTask(t, provenance, consumer.ID, secondRun.ID, secondNodeID)
+	revokedTask.PolicyGuardrailEvaluationID = &evaluationID
+	_, err = repository.CreateCrossProjectWorkflowTaskFenced(revokedTask, provenance, nil)
 	assert.ErrorIs(t, err, db.ErrNotFound)
 	_, err = repository.GetWorkflowRunNodeTask(consumer.ID, secondRun.ID, secondNodeID)
 	assert.ErrorIs(t, err, db.ErrNotFound)
@@ -278,6 +316,8 @@ func TestCrossProjectWorkflowTaskFenceSerializesDispatchWithRevocation(t *testin
 	require.NoError(t, err)
 	require.True(t, claimed)
 	task := crossProjectDispatchTask(t, provenance, consumer.ID, run.ID, nodeID)
+	evaluationID := seedPolicyGuardrailTaskEvaluation(t, store, consumer.ID, ownerTemplate.ID, db.PolicyGuardrailDecisionAllow, &run.ID, &run.Nodes[0].ID)
+	task.PolicyGuardrailEvaluationID = &evaluationID
 
 	type dispatchResult struct {
 		task db.Task

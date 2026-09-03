@@ -3,6 +3,7 @@ package tasks
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db_lib"
@@ -1056,5 +1057,8 @@ func (p *TaskPool) AddTask(
 	projectID int,
 	needAlias bool,
 ) (newTask db.Task, err error) {
+	if p != nil && p.policyGuardrailAdmission != nil {
+		return db.Task{}, errors.New("policy guardrail admission is required; use a policy-aware task creation path")
+	}
 	return p.addTask(taskObj, nil, userID, username, projectID, needAlias, nil, nil)
 }

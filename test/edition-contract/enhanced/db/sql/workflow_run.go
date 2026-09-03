@@ -345,6 +345,7 @@ func (d *WorkflowStoreImpl) CreateCrossProjectWorkflowTaskFenced(
 	lease *pro_interfaces.WorkflowReconciliationLease,
 ) (db.Task, error) {
 	if d.connection == nil || task.ProjectID <= 0 || task.WorkflowRunID == nil || task.WorkflowNodeID == nil ||
+		task.PolicyGuardrailEvaluationID == nil || *task.PolicyGuardrailEvaluationID <= 0 ||
 		provenance.Validate() != nil || task.TemplateID != provenance.Reference.TemplateID {
 		return db.Task{}, errors.New("cross-project workflow task provenance is invalid")
 	}
@@ -478,6 +479,9 @@ func (d *WorkflowStoreImpl) CreateCrossProjectWorkflowTaskFenced(
 			return db.Task{}, err
 		}
 	}
+	if err = d.validateCrossProjectPolicyGuardrailTaskBindingTx(tx, task); err != nil {
+		return db.Task{}, err
+	}
 	if err = tx.Insert(&task); err != nil {
 		_ = tx.Rollback()
 		rollback = false
@@ -495,6 +499,9 @@ func (d *WorkflowStoreImpl) CreateCrossProjectWorkflowTaskFenced(
 		if rowsErr != nil || bound != 1 {
 			return db.Task{}, errors.New("deployment window decision cannot be bound to cross-project workflow task")
 		}
+	}
+	if err = d.bindCrossProjectPolicyGuardrailTaskEvaluationTx(tx, task); err != nil {
+		return db.Task{}, err
 	}
 	attachQuery := "update project__workflow_run_node set task_id=? where project_id=? and workflow_run_id=? and workflow_node_id=? and status=? and task_id is null and exists (select 1 from project__workflow_run where project_id=? and id=? and desired_state=?)"
 	attachArgs := []any{task.ID, task.ProjectID, *task.WorkflowRunID, *task.WorkflowNodeID, db.WorkflowRunNodeQueued, task.ProjectID, *task.WorkflowRunID, db.WorkflowRunDesiredRunning}
@@ -521,6 +528,54 @@ func (d *WorkflowStoreImpl) CreateCrossProjectWorkflowTaskFenced(
 	}
 	rollback = false
 	return task, nil
+}
+
+func (d *WorkflowStoreImpl) validateCrossProjectPolicyGuardrailTaskBindingTx(tx *gorp.Transaction, task db.Task) error {
+	if task.PolicyGuardrailEvaluationID == nil || *task.PolicyGuardrailEvaluationID <= 0 || task.WorkflowRunID == nil || task.WorkflowNodeID == nil {
+		return errors.New("cross-project policy guardrail evaluation is invalid")
+	}
+	var evaluation struct {
+		ProjectID         int    `db:"project_id"`
+		Intent            string `db:"intent"`
+		TemplateID        *int   `db:"template_id"`
+		WorkflowRunID     *int   `db:"workflow_run_id"`
+		WorkflowRunNodeID *int   `db:"workflow_run_node_id"`
+		TaskID            *int   `db:"task_id"`
+		Decision          string `db:"decision"`
+	}
+	if err := tx.SelectOne(&evaluation, d.connection.PrepareQuery(
+		"select project_id, intent, template_id, workflow_run_id, workflow_run_node_id, task_id, decision from policy_guardrail_evaluation where id=?"), *task.PolicyGuardrailEvaluationID); err != nil {
+		return errors.New("cross-project policy guardrail evaluation is unavailable")
+	}
+	if evaluation.ProjectID != task.ProjectID || evaluation.Intent != "task" || evaluation.TemplateID == nil || *evaluation.TemplateID != task.TemplateID ||
+		evaluation.WorkflowRunID == nil || *evaluation.WorkflowRunID != *task.WorkflowRunID || evaluation.WorkflowRunNodeID == nil || evaluation.TaskID != nil ||
+		evaluation.Decision != string(db.PolicyGuardrailDecisionAllow) {
+		return errors.New("cross-project policy guardrail evaluation does not match task")
+	}
+	var nodeCount int
+	if err := tx.SelectOne(&nodeCount, d.connection.PrepareQuery(
+		"select count(1) from project__workflow_run_node where id=? and project_id=? and workflow_run_id=? and workflow_node_id=?"),
+		*evaluation.WorkflowRunNodeID, task.ProjectID, *task.WorkflowRunID, *task.WorkflowNodeID,
+	); err != nil || nodeCount != 1 {
+		return errors.New("cross-project policy guardrail evaluation does not match task")
+	}
+	return nil
+}
+
+func (d *WorkflowStoreImpl) bindCrossProjectPolicyGuardrailTaskEvaluationTx(tx *gorp.Transaction, task db.Task) error {
+	result, err := tx.Exec(d.connection.PrepareQuery(
+		"update policy_guardrail_evaluation set task_id=? where id=? and project_id=? and intent=? and template_id=? and workflow_run_id=? and workflow_run_node_id in (select id from project__workflow_run_node where project_id=? and workflow_run_id=? and workflow_node_id=?) and decision=? and task_id is null"),
+		task.ID, *task.PolicyGuardrailEvaluationID, task.ProjectID, "task", task.TemplateID, *task.WorkflowRunID,
+		task.ProjectID, *task.WorkflowRunID, *task.WorkflowNodeID, db.PolicyGuardrailDecisionAllow,
+	)
+	if err != nil {
+		return err
+	}
+	bound, err := result.RowsAffected()
+	if err != nil || bound != 1 {
+		return errors.New("cross-project policy guardrail evaluation cannot be bound to task")
+	}
+	return nil
 }
 
 func (d *WorkflowStoreImpl) validateCrossProjectDeploymentWindowTaskBindingTx(tx *gorp.Transaction, task db.Task) error {
