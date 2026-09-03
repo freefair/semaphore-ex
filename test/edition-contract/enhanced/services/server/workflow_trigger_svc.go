@@ -176,7 +176,11 @@ func (s *workflowTriggerService) StageWebhookSigningKey(ctx context.Context, pro
 	if err != nil {
 		return pro_interfaces.WorkflowTriggerCredentialResult{}, err
 	}
-	if !trigger.UsesWebhookSigning() || trigger.CurrentSigningGeneration <= 0 || trigger.NextSigningSecretEncrypted != "" {
+	if !trigger.UsesWebhookSigning() || !db.ValidWorkflowWebhookSigningState(
+		trigger.CurrentSigningSecretEncrypted, trigger.CurrentSigningKeyID,
+		trigger.NextSigningSecretEncrypted, trigger.NextSigningKeyID,
+		trigger.CurrentSigningGeneration, trigger.NextSigningGeneration,
+	) || trigger.NextSigningSecretEncrypted != "" {
 		return pro_interfaces.WorkflowTriggerCredentialResult{}, pro_interfaces.ErrWorkflowTriggerSigningStateConflict
 	}
 	key, encrypted, err := s.newEncryptedWorkflowSigningKey()
@@ -231,7 +235,11 @@ func (s *workflowTriggerService) PromoteWebhookSigningKey(ctx context.Context, p
 	if err != nil {
 		return db.WorkflowTrigger{}, err
 	}
-	if !trigger.UsesWebhookSigning() || trigger.NextSigningSecretEncrypted == "" || trigger.NextSigningGeneration <= trigger.CurrentSigningGeneration {
+	if !trigger.UsesWebhookSigning() || !db.ValidWorkflowWebhookSigningState(
+		trigger.CurrentSigningSecretEncrypted, trigger.CurrentSigningKeyID,
+		trigger.NextSigningSecretEncrypted, trigger.NextSigningKeyID,
+		trigger.CurrentSigningGeneration, trigger.NextSigningGeneration,
+	) || trigger.NextSigningSecretEncrypted == "" || trigger.NextSigningGeneration <= trigger.CurrentSigningGeneration {
 		return db.WorkflowTrigger{}, pro_interfaces.ErrWorkflowTriggerSigningStateConflict
 	}
 	oldSecret, oldID, oldGeneration := trigger.CurrentSigningSecretEncrypted, trigger.CurrentSigningKeyID, trigger.CurrentSigningGeneration
@@ -252,7 +260,11 @@ func (s *workflowTriggerService) RevokeWebhookSigningKey(ctx context.Context, pr
 	if err != nil {
 		return db.WorkflowTrigger{}, err
 	}
-	if !trigger.UsesWebhookSigning() || trigger.NextSigningSecretEncrypted == "" {
+	if !trigger.UsesWebhookSigning() || !db.ValidWorkflowWebhookSigningState(
+		trigger.CurrentSigningSecretEncrypted, trigger.CurrentSigningKeyID,
+		trigger.NextSigningSecretEncrypted, trigger.NextSigningKeyID,
+		trigger.CurrentSigningGeneration, trigger.NextSigningGeneration,
+	) || trigger.NextSigningSecretEncrypted == "" {
 		return db.WorkflowTrigger{}, pro_interfaces.ErrWorkflowTriggerSigningStateConflict
 	}
 	trigger.NextSigningSecretEncrypted, trigger.NextSigningKeyID, trigger.NextSigningGeneration = "", "", 0
@@ -437,7 +449,10 @@ func (s *workflowTriggerService) FireSignedWebhook(ctx context.Context, projectI
 		return pro_interfaces.WorkflowTriggerFireResult{}, pro_interfaces.ErrWorkflowTriggerWebhookRejected
 	}
 	now := s.now().UTC()
-	snapshotJSON, _ := json.Marshal(db.WorkflowTriggerSnapshot{ID: trigger.ID, Revision: trigger.Revision, Name: trigger.Name, Type: trigger.Type, OwnerUserID: trigger.OwnerUserID, TriggeredAt: now})
+	snapshotJSON, err := json.Marshal(db.WorkflowTriggerSnapshot{ID: trigger.ID, Revision: trigger.Revision, Name: trigger.Name, Type: trigger.Type, OwnerUserID: trigger.OwnerUserID, TriggeredAt: now})
+	if err != nil {
+		return pro_interfaces.WorkflowTriggerFireResult{}, pro_interfaces.ErrWorkflowTriggerWebhookRejected
+	}
 	signedAt := time.Unix(request.Timestamp, 0).UTC()
 	invocation := db.WorkflowTriggerInvocation{ProjectID: projectID, WorkflowTriggerID: trigger.ID, WorkflowTemplateID: workflowID, TriggerRevision: trigger.Revision, DefinitionRevision: workflow.Revision, WebhookEventHash: &eventHash, WebhookEventID: request.EventID, WebhookKeyID: request.KeyID, WebhookSignedAt: &signedAt, Status: db.WorkflowTriggerInvocationClaimed, ActorUserID: actor.ID, TriggerSnapshotJSON: string(snapshotJSON), InputSnapshotJSON: `{}`, Created: now, Updated: now}
 	claimed, inserted, err := s.repository.ClaimWorkflowTriggerInvocation(invocation, now)
@@ -486,7 +501,7 @@ func (s *workflowTriggerService) FireSignedWebhook(ctx context.Context, projectI
 	if marshalErr != nil {
 		claimed.Status, claimed.Result, claimed.Reason, claimed.Updated = db.WorkflowTriggerInvocationFailed, "failed", "snapshot_failed", s.now().UTC()
 		_ = s.repository.UpdateWorkflowTriggerInvocation(claimed)
-		return pro_interfaces.WorkflowTriggerFireResult{}, marshalErr
+		return pro_interfaces.WorkflowTriggerFireResult{}, pro_interfaces.ErrWorkflowTriggerWebhookRejected
 	}
 	run, err := s.workflowService.StartWorkflow(workflow, &actor, db.WorkflowTriggerInvocationCorrelationID(claimed), db.WorkflowRunInput{TriggerValues: values, TriggerSnapshot: &snapshot})
 	claimed.Updated = s.now().UTC()
@@ -519,7 +534,14 @@ func (s *workflowTriggerService) FireSignedWebhook(ctx context.Context, projectI
 }
 
 func (s *workflowTriggerService) workflowTriggerSigningKeys(trigger db.WorkflowTrigger) ([]pro_interfaces.WebhookSigningKey, error) {
-	if s.cipher == nil || !s.cipher.OptionEncryptionEnabled() || trigger.CurrentSigningSecretEncrypted == "" {
+	if s.cipher == nil || !s.cipher.OptionEncryptionEnabled() || !db.ValidWorkflowWebhookSigningState(
+		trigger.CurrentSigningSecretEncrypted,
+		trigger.CurrentSigningKeyID,
+		trigger.NextSigningSecretEncrypted,
+		trigger.NextSigningKeyID,
+		trigger.CurrentSigningGeneration,
+		trigger.NextSigningGeneration,
+	) {
 		return nil, pro_interfaces.ErrWorkflowTriggerSigningUnavailable
 	}
 	current, err := s.cipher.DecryptOption(trigger.CurrentSigningSecretEncrypted)

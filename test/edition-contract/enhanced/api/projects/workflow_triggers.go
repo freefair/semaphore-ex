@@ -417,6 +417,14 @@ func writeWorkflowTriggerError(w http.ResponseWriter, err error) {
 		helpers.WriteJSON(w, http.StatusConflict, map[string]string{
 			"code": "WORKFLOW_TRIGGER_STATE_CHANGED", "message": err.Error(),
 		})
+	case errors.Is(err, pro_interfaces.ErrWorkflowTriggerSigningStateConflict):
+		helpers.WriteJSON(w, http.StatusConflict, map[string]string{
+			"code": "WORKFLOW_TRIGGER_SIGNING_STATE_CONFLICT", "message": "Webhook signing state conflict",
+		})
+	case errors.Is(err, pro_interfaces.ErrWorkflowTriggerSigningUnavailable):
+		helpers.WriteJSON(w, http.StatusConflict, map[string]string{
+			"code": "WORKFLOW_TRIGGER_SIGNING_UNAVAILABLE", "message": "Webhook signing is unavailable",
+		})
 	default:
 		helpers.WriteError(w, err)
 	}

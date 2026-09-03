@@ -281,7 +281,7 @@ func ValidateWorkflowTrigger(
 		}
 	}
 	if trigger.UsesWebhookSigning() {
-		if !validWorkflowWebhookSigningState(
+		if !ValidWorkflowWebhookSigningState(
 			trigger.CurrentSigningSecretEncrypted,
 			trigger.CurrentSigningKeyID,
 			trigger.NextSigningSecretEncrypted,
@@ -484,7 +484,11 @@ func validWorkflowWebhookEventHash(value string) bool {
 	return err == nil
 }
 
-func validWorkflowWebhookSigningState(currentSecret, currentKeyID, nextSecret, nextKeyID string, currentGeneration, nextGeneration int) bool {
+// ValidWorkflowWebhookSigningState accepts only deliberately blank migrated
+// records, a current key, and an optional staged or retired next key. It is
+// exported so consumers never decrypt attacker-influenced persisted state
+// before validating its rotation metadata.
+func ValidWorkflowWebhookSigningState(currentSecret, currentKeyID, nextSecret, nextKeyID string, currentGeneration, nextGeneration int) bool {
 	if (currentSecret == "") != (currentKeyID == "") || (nextSecret == "") != (nextKeyID == "") {
 		return false
 	}
@@ -494,13 +498,13 @@ func validWorkflowWebhookSigningState(currentSecret, currentKeyID, nextSecret, n
 	if currentGeneration <= 0 {
 		return false
 	}
+	if !validWorkflowWebhookKeyID(currentKeyID) {
+		return false
+	}
 	if nextSecret == "" {
 		return nextGeneration == 0
 	}
-	if nextSecret != "" && currentSecret == "" {
-		return false
-	}
-	if nextKeyID != "" && nextKeyID == currentKeyID {
+	if nextKeyID == currentKeyID || !validWorkflowWebhookKeyID(nextKeyID) {
 		return false
 	}
 	// A greater next generation is staged; a smaller one is retired after a
@@ -508,8 +512,7 @@ func validWorkflowWebhookSigningState(currentSecret, currentKeyID, nextSecret, n
 	if nextGeneration <= 0 || nextGeneration == currentGeneration {
 		return false
 	}
-	return (currentKeyID == "" || validWorkflowWebhookKeyID(currentKeyID)) &&
-		(nextKeyID == "" || validWorkflowWebhookKeyID(nextKeyID))
+	return true
 }
 
 // Legacy webhook credential metadata is retained solely for a reversible
