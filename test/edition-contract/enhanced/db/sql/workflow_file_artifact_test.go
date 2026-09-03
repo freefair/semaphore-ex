@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	workflowdb "github.com/semaphoreui/semaphore/pro/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -393,6 +396,162 @@ func TestWorkflowArtifactRetentionBootstrapSerializesGlobalAndProjectPublish(t *
 	}
 }
 
+func TestWorkflowFileArtifactDatabaseMatrix(t *testing.T) {
+	if os.Getenv("SEMAPHORE_WORKFLOW_ARTIFACT_MATRIX") != "1" {
+		t.Skip("external workflow artifact database matrix is disabled")
+	}
+	store := workflowFileArtifactMatrixStore(t)
+	t.Cleanup(store.Close)
+	repository, fixture := workflowFileArtifactMatrixFixtureInStore(t, store)
+
+	now := time.Now().UTC()
+	globalPolicy := coredb.WorkflowArtifactRetentionPolicy{
+		Scope: coredb.WorkflowArtifactRetentionGlobal, Revision: 1,
+		RetentionSeconds: int64((14 * 24 * time.Hour) / time.Second),
+		MaxArtifactBytes: 32 << 20, MaxRunBytes: 128 << 20,
+		CreatedByUserID: fixture.userID, CreatedAt: now,
+	}
+	globalSuccesses, globalConflicts := concurrentRetentionPublishes(t, repository, globalPolicy, 0)
+	assert.Equal(t, 1, globalSuccesses)
+	assert.Equal(t, 1, globalConflicts)
+
+	projectID := fixture.projectID
+	projectPolicy := coredb.WorkflowArtifactRetentionPolicy{
+		Scope: coredb.WorkflowArtifactRetentionProject, ProjectID: &projectID, Revision: 1,
+		RetentionSeconds: int64((7 * 24 * time.Hour) / time.Second),
+		MaxArtifactBytes: 16 << 20, MaxRunBytes: 64 << 20,
+		CreatedByUserID: fixture.userID, CreatedAt: now,
+	}
+	projectSuccesses, projectConflicts := concurrentRetentionPublishes(t, repository, projectPolicy, 0)
+	assert.Equal(t, 1, projectSuccesses)
+	assert.Equal(t, 1, projectConflicts)
+
+	global, found, err := repository.GetWorkflowArtifactRetentionPolicy(coredb.WorkflowArtifactRetentionGlobal, nil)
+	require.NoError(t, err)
+	require.True(t, found)
+	project, found, err := repository.GetWorkflowArtifactRetentionPolicy(coredb.WorkflowArtifactRetentionProject, &projectID)
+	require.NoError(t, err)
+	require.True(t, found)
+	effective, err := coredb.ResolveWorkflowArtifactRetention(global, &project)
+	require.NoError(t, err)
+	assert.Equal(t, project.RetentionSeconds, effective.RetentionSeconds)
+	assert.Equal(t, project.MaxArtifactBytes, effective.MaxArtifactBytes)
+	assert.Equal(t, project.MaxRunBytes, effective.MaxRunBytes)
+
+	content := []byte("matrix-content")
+	metadata := fixture.metadata("matrix", content)
+	metadata.Retention = effective
+	artifact, err := repository.CreateWorkflowFileArtifact(metadata)
+	require.NoError(t, err)
+	start := make(chan struct{})
+	appendErrors := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			_, appendErr := repository.AppendWorkflowFileArtifactChunk(pro_interfaces.WorkflowFileArtifactAppendRequest{
+				ProjectID: fixture.projectID, WorkflowRunID: fixture.runID, ArtifactID: artifact.ID,
+				ExpectedRevision: artifact.Revision, OffsetBytes: 0, Data: content[:6],
+			})
+			appendErrors <- appendErr
+		}()
+	}
+	close(start)
+	appendSuccesses, appendConflicts := 0, 0
+	for range 2 {
+		switch appendErr := <-appendErrors; {
+		case appendErr == nil:
+			appendSuccesses++
+		case errors.Is(appendErr, pro_interfaces.ErrWorkflowFileArtifactConflict):
+			appendConflicts++
+		default:
+			t.Fatalf("unexpected concurrent append error: %v", appendErr)
+		}
+	}
+	assert.Equal(t, 1, appendSuccesses)
+	assert.Equal(t, 1, appendConflicts)
+
+	artifact, err = repository.GetWorkflowFileArtifact(fixture.projectID, fixture.runID, artifact.ID)
+	require.NoError(t, err)
+	artifact, err = repository.AppendWorkflowFileArtifactChunk(pro_interfaces.WorkflowFileArtifactAppendRequest{
+		ProjectID: fixture.projectID, WorkflowRunID: fixture.runID, ArtifactID: artifact.ID,
+		ExpectedRevision: artifact.Revision, OffsetBytes: artifact.UploadedBytes, Data: content[artifact.UploadedBytes:],
+	})
+	require.NoError(t, err)
+	artifact, err = repository.FinalizeWorkflowFileArtifact(pro_interfaces.WorkflowFileArtifactMutationRequest{
+		ProjectID: fixture.projectID, WorkflowRunID: fixture.runID, ArtifactID: artifact.ID,
+		ExpectedRevision: artifact.Revision,
+	})
+	require.NoError(t, err)
+	lease, err := repository.AcquireWorkflowFileArtifactDownloadLease(pro_interfaces.WorkflowFileArtifactLeaseRequest{
+		ProjectID: fixture.projectID, WorkflowRunID: fixture.runID, ArtifactID: artifact.ID, TTL: time.Minute,
+	})
+	require.NoError(t, err)
+	var downloaded bytes.Buffer
+	_, err = repository.StreamWorkflowFileArtifactContent(context.Background(), lease, &downloaded)
+	require.NoError(t, err)
+	assert.Equal(t, content, downloaded.Bytes())
+
+	expiredAt := now.Add(-24 * time.Hour)
+	finalizedAt := expiredAt.Add(-time.Duration(effective.RetentionSeconds) * time.Second)
+	createdAt := finalizedAt.Add(-time.Hour)
+	_, err = store.GetConnection().Exec("update workflow_file_artifact set created_at=?, finalized_at=?, expires_at=? where id=?", createdAt, finalizedAt, expiredAt, artifact.ID)
+	require.NoError(t, err)
+	_, err = store.GetConnection().Exec("update project__workflow_run set status=? where id=?", coredb.WorkflowRunSucceeded, fixture.runID)
+	require.NoError(t, err)
+	reference := coredb.WorkflowFileArtifactReference{ProjectID: fixture.projectID, WorkflowRunID: fixture.runID, ArtifactID: artifact.ID}
+	expired, err := repository.ExpireWorkflowFileArtifact(reference)
+	assert.False(t, expired)
+	assert.ErrorIs(t, err, pro_interfaces.ErrWorkflowFileArtifactDownloadActive)
+	require.NoError(t, repository.ReleaseWorkflowFileArtifactDownloadLease(lease))
+	expired, err = repository.ExpireWorkflowFileArtifact(reference)
+	require.NoError(t, err)
+	assert.True(t, expired)
+
+	interruptedMetadata := fixture.metadata("matrix-interrupted", []byte("incomplete"))
+	interruptedMetadata.Retention = effective
+	interrupted, err := repository.CreateWorkflowFileArtifact(interruptedMetadata)
+	require.NoError(t, err)
+	interrupted, err = repository.AppendWorkflowFileArtifactChunk(pro_interfaces.WorkflowFileArtifactAppendRequest{
+		ProjectID: fixture.projectID, WorkflowRunID: fixture.runID, ArtifactID: interrupted.ID,
+		ExpectedRevision: interrupted.Revision, OffsetBytes: 0, Data: []byte("incom"),
+	})
+	require.NoError(t, err)
+	_, err = store.GetConnection().Exec("update workflow_file_artifact set created_at=? where id=?", now.Add(-48*time.Hour), interrupted.ID)
+	require.NoError(t, err)
+	reconciled, err := repository.ReconcileStaleWorkflowFileArtifactUploads(24*time.Hour, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 1, reconciled)
+	interrupted, err = repository.GetWorkflowFileArtifact(fixture.projectID, fixture.runID, interrupted.ID)
+	require.NoError(t, err)
+	assert.Equal(t, coredb.WorkflowFileArtifactFailed, interrupted.State)
+}
+
+func concurrentRetentionPublishes(t *testing.T, repository *WorkflowFileArtifactStore, policy coredb.WorkflowArtifactRetentionPolicy, expectedRevision int) (int, int) {
+	t.Helper()
+	start := make(chan struct{})
+	errorsByPublish := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			_, err := repository.PublishWorkflowArtifactRetentionPolicy(policy, expectedRevision)
+			errorsByPublish <- err
+		}()
+	}
+	close(start)
+	successes, conflicts := 0, 0
+	for range 2 {
+		switch err := <-errorsByPublish; {
+		case err == nil:
+			successes++
+		case errors.Is(err, pro_interfaces.ErrWorkflowArtifactRetentionConflict):
+			conflicts++
+		default:
+			t.Fatalf("unexpected retention publish error: %v", err)
+		}
+	}
+	return successes, conflicts
+}
+
 type workflowFileArtifactTestFixture struct {
 	projectID          int
 	workflowTemplateID int
@@ -406,7 +565,17 @@ type workflowFileArtifactTestFixture struct {
 
 func workflowFileArtifactFixture(t *testing.T) (*coresql.SqlDb, *WorkflowFileArtifactStore, workflowFileArtifactTestFixture) {
 	t.Helper()
-	store, workflowRepository, projectID := workflowRepositoryFixture(t)
+	store := coresql.InitConfigCreateTestStore()
+	repository, fixture := workflowFileArtifactFixtureInStore(t, store)
+	return store, repository, fixture
+}
+
+func workflowFileArtifactFixtureInStore(t *testing.T, store *coresql.SqlDb) (*WorkflowFileArtifactStore, workflowFileArtifactTestFixture) {
+	t.Helper()
+	project, err := store.CreateProject(coredb.Project{Name: "Workflow file artifact test"})
+	require.NoError(t, err)
+	projectID := project.ID
+	workflowRepository := NewWorkflowStore(store.GetConnection())
 	user, templateOne, templateTwo := workflowRunResources(t, store, projectID)
 	workflow, err := workflowRepository.CreateWorkflowTemplate(linearRepositoryWorkflow(projectID, templateOne.ID, templateTwo.ID))
 	require.NoError(t, err)
@@ -426,11 +595,92 @@ func workflowFileArtifactFixture(t *testing.T) (*coresql.SqlDb, *WorkflowFileArt
 		WorkflowTemplateSnapshot: &run.Nodes[0].TemplateSnapshotJSON, Created: now,
 	}, 0)
 	require.NoError(t, err)
-	return store, NewWorkflowFileArtifactStore(store.GetConnection()), workflowFileArtifactTestFixture{
+	return NewWorkflowFileArtifactStore(store.GetConnection()), workflowFileArtifactTestFixture{
 		projectID: projectID, workflowTemplateID: workflow.ID, runID: run.ID,
 		nodeID: nodeID, taskID: task.ID, attempt: task.AssignmentGeneration,
 		producerTemplateID: templateOne.ID, userID: user.ID,
 	}
+}
+
+func workflowFileArtifactMatrixFixtureInStore(t *testing.T, store *coresql.SqlDb) (*WorkflowFileArtifactStore, workflowFileArtifactTestFixture) {
+	t.Helper()
+	project, err := store.CreateProject(coredb.Project{Name: "Workflow file artifact matrix"})
+	require.NoError(t, err)
+	projectID := project.ID
+	user, templateOne, _ := workflowRunResources(t, store, projectID)
+	workflowTemplateID, err := store.GetConnection().Insert("id",
+		"insert into project__workflow_template(project_id, name, description, start_version, definition_version, revision, max_parallel_tasks, parameter_definitions, access_policy, access_policy_revision) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		projectID, "Artifact matrix", nil, nil, coredb.WorkflowDefinitionVersion, 1, 0, "[]", "{}", 1,
+	)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	workflowRepository := NewWorkflowStore(store.GetConnection())
+	run, err := workflowRepository.CreateWorkflowRun(coredb.WorkflowRun{
+		ProjectID: projectID, WorkflowTemplateID: workflowTemplateID,
+		Status: coredb.WorkflowRunRunning, DesiredState: coredb.WorkflowRunDesiredRunning,
+		ReconciliationState: coredb.WorkflowRunReconciliationHealthy,
+		ActorUserID:         user.ID, DefinitionVersion: coredb.WorkflowDefinitionVersion, DefinitionRevision: 1,
+		DefinitionSnapshotJSON: "{}", ParameterSnapshotJSON: "{}", TriggerSnapshotJSON: "{}",
+		CorrelationID: fmt.Sprintf("artifact-matrix-%d", now.UnixNano()), Created: now,
+	})
+	require.NoError(t, err)
+	nodeID := 1
+	userID := user.ID
+	task, err := store.CreateTask(coredb.Task{
+		ProjectID: projectID, TemplateID: templateOne.ID, Status: task_logger.TaskRunningStatus,
+		WorkflowRunID: &run.ID, WorkflowNodeID: &nodeID, UserID: &userID,
+		Created: now,
+	}, 0)
+	require.NoError(t, err)
+	return NewWorkflowFileArtifactStore(store.GetConnection()), workflowFileArtifactTestFixture{
+		projectID: projectID, workflowTemplateID: workflowTemplateID, runID: run.ID,
+		nodeID: nodeID, taskID: task.ID, attempt: task.AssignmentGeneration,
+		producerTemplateID: templateOne.ID, userID: user.ID,
+	}
+}
+
+func workflowFileArtifactMatrixStore(t *testing.T) *coresql.SqlDb {
+	t.Helper()
+	dialect := os.Getenv("SEMAPHORE_WORKFLOW_ARTIFACT_MATRIX_DIALECT")
+	require.Contains(t, []string{util.DbDriverMySQL, util.DbDriverPostgres}, dialect)
+	database := os.Getenv("SEMAPHORE_WORKFLOW_ARTIFACT_MATRIX_DB_NAME")
+	require.Truef(t, strings.HasSuffix(database, "_artifact_matrix"), "matrix database %q must end in _artifact_matrix", database)
+	dbConfig := &util.DbConfig{
+		Dialect: dialect, Hostname: os.Getenv("SEMAPHORE_WORKFLOW_ARTIFACT_MATRIX_DB_HOST"),
+		DbName: database, Username: os.Getenv("SEMAPHORE_WORKFLOW_ARTIFACT_MATRIX_DB_USER"),
+		Password: os.Getenv("SEMAPHORE_WORKFLOW_ARTIFACT_MATRIX_DB_PASS"),
+	}
+	require.NotEmpty(t, dbConfig.Hostname)
+	require.NotEmpty(t, dbConfig.Username)
+	if dialect == util.DbDriverPostgres {
+		dbConfig.Options = map[string]string{"sslmode": "disable"}
+	}
+	util.Config = &util.ConfigType{
+		Dialect: dialect, MySQL: dbConfig, Postgres: dbConfig,
+		Log:     &util.ConfigLog{Events: &util.EventLogType{}, Tasks: &util.TaskLogType{}},
+		Process: &util.ConfigProcess{}, Runners: &util.RunnersConfig{},
+		Apps: map[string]util.App{"ansible": {}, "bash": {}},
+	}
+	store := coresql.CreateDb(dialect)
+	store.Connect()
+	var tableCount int
+	query := "select count(*) from information_schema.tables where table_schema=database()"
+	if dialect == util.DbDriverPostgres {
+		query = "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'"
+	}
+	require.NoError(t, store.Sql().SelectOne(&tableCount, query))
+	if os.Getenv("SEMAPHORE_WORKFLOW_ARTIFACT_MATRIX_PREMIGRATED") == "1" {
+		require.NotZero(t, tableCount, "pre-migrated workflow artifact matrix database must contain the schema")
+		var migrationCount int
+		require.NoError(t, store.Sql().SelectOne(
+			&migrationCount, store.PrepareQuery("select count(1) from migrations where version=?"), "2.20.65",
+		))
+		require.Equal(t, 1, migrationCount, "pre-migrated workflow artifact matrix database must include v2.20.65")
+	} else {
+		require.Zero(t, tableCount, "workflow artifact matrix database must be empty")
+		require.NoError(t, coredb.Migrate(store, nil))
+	}
+	return store
 }
 
 func (fixture workflowFileArtifactTestFixture) metadata(name string, content []byte) coredb.WorkflowFileArtifactMetadata {
