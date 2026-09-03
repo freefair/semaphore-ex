@@ -7,8 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
 
 const (
@@ -34,7 +37,7 @@ type auditWebhookDeliveryResult struct {
 }
 
 type auditWebhookClient interface {
-	Deliver(context.Context, string, string, []byte) auditWebhookDeliveryResult
+	Deliver(context.Context, string, string, pro_interfaces.WebhookSignedRequest) auditWebhookDeliveryResult
 }
 
 type httpsAuditWebhookClient struct {
@@ -64,18 +67,47 @@ func validateAuditWebhookEndpoint(endpoint string) error {
 	return nil
 }
 
-func (c *httpsAuditWebhookClient) Deliver(ctx context.Context, endpoint, credential string, payload []byte) auditWebhookDeliveryResult {
+// auditWebhookRequestTarget preserves the escaped path and raw query that the
+// Go HTTP transport will send. Signing any reconstructed query would make the
+// receiver verify a different request than it receives.
+func auditWebhookRequestTarget(endpoint string) (string, error) {
+	if err := validateAuditWebhookEndpoint(endpoint); err != nil {
+		return "", err
+	}
+	parsed, err := url.ParseRequestURI(endpoint)
+	if err != nil {
+		return "", err
+	}
+	target := parsed.EscapedPath()
+	if target == "" {
+		target = "/"
+	}
+	if parsed.ForceQuery || parsed.RawQuery != "" {
+		target += "?" + parsed.RawQuery
+	}
+	return target, nil
+}
+
+func (c *httpsAuditWebhookClient) Deliver(ctx context.Context, endpoint, credential string, signed pro_interfaces.WebhookSignedRequest) auditWebhookDeliveryResult {
 	if err := validateAuditWebhookEndpoint(endpoint); err != nil {
 		return auditWebhookDeliveryResult{Reason: auditWebhookReasonConfiguration}
 	}
 	requestContext, cancel := context.WithTimeout(ctx, auditWebhookRequestTimeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(requestContext, http.MethodPost, endpoint, bytes.NewReader(payload))
+	request, err := http.NewRequestWithContext(requestContext, http.MethodPost, endpoint, bytes.NewReader(signed.Payload))
 	if err != nil {
+		return auditWebhookDeliveryResult{Reason: auditWebhookReasonConfiguration}
+	}
+	if request.Method != signed.Method || request.URL.RequestURI() != signed.RequestTarget {
 		return auditWebhookDeliveryResult{Reason: auditWebhookReasonConfiguration}
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("User-Agent", "Semaphore-Audit-Webhook/1")
+	request.Header.Set(pro_interfaces.WebhookHeaderVersion, signed.Version)
+	request.Header.Set(pro_interfaces.WebhookHeaderEventID, signed.EventID)
+	request.Header.Set(pro_interfaces.WebhookHeaderTimestamp, strconv.FormatInt(signed.Timestamp, 10))
+	request.Header.Set(pro_interfaces.WebhookHeaderKeyID, signed.KeyID)
+	request.Header.Set(pro_interfaces.WebhookHeaderSignature, signed.Signature)
 	if credential != "" {
 		request.Header.Set("Authorization", "Bearer "+credential)
 	}

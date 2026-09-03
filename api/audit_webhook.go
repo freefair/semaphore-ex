@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
@@ -60,7 +61,12 @@ func (c *AuditWebhookController) Configure(w http.ResponseWriter, r *http.Reques
 }
 
 func (c *AuditWebhookController) TestDelivery(w http.ResponseWriter, r *http.Request) {
-	delivery, err := c.service.TestDelivery(r.Context())
+	slot, err := auditWebhookSigningKey(r)
+	if err != nil {
+		helpers.WriteErrorStatus(w, "Invalid signing key", http.StatusBadRequest)
+		return
+	}
+	delivery, err := c.service.TestDeliveryWithSigningKey(r.Context(), slot)
 	if err != nil {
 		c.record(r, pro_interfaces.AuditActionWebhookTest, pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonOperationError)
 		writeAuditWebhookError(w, err)
@@ -68,6 +74,70 @@ func (c *AuditWebhookController) TestDelivery(w http.ResponseWriter, r *http.Req
 	}
 	c.record(r, pro_interfaces.AuditActionWebhookTest, pro_interfaces.AuditOutcomeAllowed, string(pro_interfaces.CapabilityReasonActive))
 	helpers.WriteJSON(w, http.StatusCreated, delivery)
+}
+
+func (c *AuditWebhookController) CreateSigningSecret(w http.ResponseWriter, r *http.Request) {
+	revision, err := auditWebhookSigningRevision(r)
+	if err != nil {
+		helpers.WriteErrorStatus(w, "Invalid signing revision", http.StatusBadRequest)
+		return
+	}
+	secret, err := c.service.CreateSigningSecret(r.Context(), revision)
+	if err != nil {
+		c.record(r, pro_interfaces.AuditActionWebhookConfigure, pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonOperationError)
+		writeAuditWebhookError(w, err)
+		return
+	}
+	c.record(r, pro_interfaces.AuditActionWebhookConfigure, pro_interfaces.AuditOutcomeAllowed, string(pro_interfaces.CapabilityReasonActive))
+	helpers.WriteJSON(w, http.StatusCreated, secret)
+}
+
+func (c *AuditWebhookController) StageSigningSecret(w http.ResponseWriter, r *http.Request) {
+	revision, err := auditWebhookSigningRevision(r)
+	if err != nil {
+		helpers.WriteErrorStatus(w, "Invalid signing revision", http.StatusBadRequest)
+		return
+	}
+	secret, err := c.service.StageSigningSecret(r.Context(), revision)
+	if err != nil {
+		c.record(r, pro_interfaces.AuditActionWebhookConfigure, pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonOperationError)
+		writeAuditWebhookError(w, err)
+		return
+	}
+	c.record(r, pro_interfaces.AuditActionWebhookConfigure, pro_interfaces.AuditOutcomeAllowed, string(pro_interfaces.CapabilityReasonActive))
+	helpers.WriteJSON(w, http.StatusCreated, secret)
+}
+
+func (c *AuditWebhookController) PromoteSigningSecret(w http.ResponseWriter, r *http.Request) {
+	revision, err := auditWebhookSigningRevision(r)
+	if err != nil {
+		helpers.WriteErrorStatus(w, "Invalid signing revision", http.StatusBadRequest)
+		return
+	}
+	status, err := c.service.PromoteSigningSecret(r.Context(), revision)
+	if err != nil {
+		c.record(r, pro_interfaces.AuditActionWebhookConfigure, pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonOperationError)
+		writeAuditWebhookError(w, err)
+		return
+	}
+	c.record(r, pro_interfaces.AuditActionWebhookConfigure, pro_interfaces.AuditOutcomeAllowed, string(pro_interfaces.CapabilityReasonActive))
+	helpers.WriteJSON(w, http.StatusOK, status)
+}
+
+func (c *AuditWebhookController) RevokeNextSigningSecret(w http.ResponseWriter, r *http.Request) {
+	revision, err := auditWebhookSigningRevision(r)
+	if err != nil {
+		helpers.WriteErrorStatus(w, "Invalid signing revision", http.StatusBadRequest)
+		return
+	}
+	status, err := c.service.RevokeNextSigningSecret(r.Context(), revision)
+	if err != nil {
+		c.record(r, pro_interfaces.AuditActionWebhookConfigure, pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonOperationError)
+		writeAuditWebhookError(w, err)
+		return
+	}
+	c.record(r, pro_interfaces.AuditActionWebhookConfigure, pro_interfaces.AuditOutcomeAllowed, string(pro_interfaces.CapabilityReasonActive))
+	helpers.WriteJSON(w, http.StatusOK, status)
 }
 
 func (c *AuditWebhookController) Pause(w http.ResponseWriter, r *http.Request) {
@@ -101,6 +171,25 @@ func (c *AuditWebhookController) History(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	helpers.WriteJSON(w, http.StatusOK, deliveries)
+}
+
+func (c *AuditWebhookController) AttemptHistory(w http.ResponseWriter, r *http.Request) {
+	deliveryID, err := strconv.Atoi(mux.Vars(r)["delivery_id"])
+	if err != nil || deliveryID < 1 {
+		helpers.WriteErrorStatus(w, "Invalid delivery", http.StatusBadRequest)
+		return
+	}
+	params, err := auditWebhookPageParams(r)
+	if err != nil {
+		helpers.WriteErrorStatus(w, "Invalid pagination", http.StatusBadRequest)
+		return
+	}
+	attempts, err := c.service.DeliveryAttemptHistory(r.Context(), deliveryID, params)
+	if err != nil {
+		writeAuditWebhookError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, attempts)
 }
 
 func (c *AuditWebhookController) record(r *http.Request, action pro_interfaces.AuditAction, outcome pro_interfaces.AuditOutcome, reason string) {
@@ -147,6 +236,25 @@ func auditWebhookPageParams(r *http.Request) (db.RetrieveQueryParams, error) {
 	return db.RetrieveQueryParams{Count: count, Offset: offset}, nil
 }
 
+func auditWebhookSigningRevision(r *http.Request) (int, error) {
+	revision, err := strconv.Atoi(r.URL.Query().Get("revision"))
+	if err != nil || revision < 0 {
+		return 0, fmt.Errorf("invalid signing revision")
+	}
+	return revision, nil
+}
+
+func auditWebhookSigningKey(r *http.Request) (pro_interfaces.AuditWebhookSigningKey, error) {
+	slot := pro_interfaces.AuditWebhookSigningKey(r.URL.Query().Get("key"))
+	if slot == "" {
+		return pro_interfaces.AuditWebhookSigningKeyCurrent, nil
+	}
+	if slot != pro_interfaces.AuditWebhookSigningKeyCurrent && slot != pro_interfaces.AuditWebhookSigningKeyNext {
+		return "", fmt.Errorf("invalid signing key")
+	}
+	return slot, nil
+}
+
 func writeAuditWebhookError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, pro_interfaces.ErrAuditWebhookUnavailable):
@@ -155,6 +263,12 @@ func writeAuditWebhookError(w http.ResponseWriter, err error) {
 		helpers.WriteErrorStatus(w, "Invalid audit webhook configuration", http.StatusBadRequest)
 	case errors.Is(err, pro_interfaces.ErrAuditWebhookNotConfigured):
 		helpers.WriteErrorStatus(w, "Audit webhook is not configured", http.StatusConflict)
+	case errors.Is(err, pro_interfaces.ErrAuditWebhookSigningNotConfigured):
+		helpers.WriteErrorStatus(w, "Audit webhook signing is not configured", http.StatusConflict)
+	case errors.Is(err, pro_interfaces.ErrAuditWebhookSigningStateConflict):
+		helpers.WriteErrorStatus(w, "Audit webhook signing state changed", http.StatusConflict)
+	case errors.Is(err, pro_interfaces.ErrAuditWebhookInvalidSigningKey):
+		helpers.WriteErrorStatus(w, "Invalid audit webhook signing operation", http.StatusBadRequest)
 	default:
 		helpers.WriteErrorStatus(w, "Audit webhook operation failed", http.StatusInternalServerError)
 	}

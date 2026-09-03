@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,19 +28,41 @@ const (
 	auditWebhookSecretLimit  = 4096
 )
 
+var errAuditWebhookCredentialUnreadable = errors.New("audit webhook credential unreadable")
+var errAuditWebhookSigningSecretUnreadable = errors.New("audit webhook signing secret unreadable")
+
 type auditWebhookService struct {
 	repository db.AuditWebhookRepository
 	metrics    *metrics.Metrics
 	client     auditWebhookClient
 	now        func() time.Time
 	jitter     func() float64
-	encrypt    func([]byte) (string, error)
-	decrypt    func(string) ([]byte, error)
+	cipher     auditWebhookCipher
 	wake       chan struct{}
 	cancel     context.CancelFunc
 	wait       sync.WaitGroup
 	startOnce  sync.Once
 	closeOnce  sync.Once
+}
+
+type auditWebhookCipher interface {
+	OptionEncryptionEnabled() bool
+	EncryptOption([]byte) (string, error)
+	DecryptOption(string) ([]byte, error)
+}
+
+type auditWebhookCipherFunctions struct {
+	enabled bool
+	encrypt func([]byte) (string, error)
+	decrypt func(string) ([]byte, error)
+}
+
+func (c auditWebhookCipherFunctions) OptionEncryptionEnabled() bool { return c.enabled }
+func (c auditWebhookCipherFunctions) EncryptOption(value []byte) (string, error) {
+	return c.encrypt(value)
+}
+func (c auditWebhookCipherFunctions) DecryptOption(value string) ([]byte, error) {
+	return c.decrypt(value)
 }
 
 func NewAuditWebhookService(repository db.AuditWebhookRepository, appMetrics *metrics.Metrics) pro_interfaces.AuditWebhookService {
@@ -48,8 +72,7 @@ func NewAuditWebhookService(repository db.AuditWebhookRepository, appMetrics *me
 		newHTTPSAuditWebhookClient(),
 		time.Now,
 		rand.Float64,
-		util.Config.EncryptOption,
-		util.Config.DecryptOption,
+		util.Config,
 	)
 }
 
@@ -59,8 +82,7 @@ func newAuditWebhookService(
 	client auditWebhookClient,
 	now func() time.Time,
 	jitter func() float64,
-	encrypt func([]byte) (string, error),
-	decrypt func(string) ([]byte, error),
+	cipher auditWebhookCipher,
 ) *auditWebhookService {
 	return &auditWebhookService{
 		repository: repository,
@@ -68,8 +90,7 @@ func newAuditWebhookService(
 		client:     client,
 		now:        now,
 		jitter:     jitter,
-		encrypt:    encrypt,
-		decrypt:    decrypt,
+		cipher:     cipher,
 		wake:       make(chan struct{}, 1),
 	}
 }
@@ -138,7 +159,7 @@ func (s *auditWebhookService) Configure(_ context.Context, input pro_interfaces.
 			config.EncryptedCredential = ""
 			config.CredentialConfigured = false
 		} else {
-			encrypted, encryptErr := s.encrypt([]byte(*input.Credential))
+			encrypted, encryptErr := s.cipher.EncryptOption([]byte(*input.Credential))
 			if encryptErr != nil {
 				return pro_interfaces.AuditWebhookConfigDTO{}, fmt.Errorf("store audit webhook credential")
 			}
@@ -155,7 +176,18 @@ func (s *auditWebhookService) Configure(_ context.Context, input pro_interfaces.
 }
 
 func (s *auditWebhookService) TestDelivery(ctx context.Context) (pro_interfaces.AuditWebhookDeliveryDTO, error) {
-	config, credential, err := s.deliveryConfiguration()
+	return s.TestDeliveryWithSigningKey(ctx, pro_interfaces.AuditWebhookSigningKeyCurrent)
+}
+
+func (s *auditWebhookService) TestDeliveryWithSigningKey(ctx context.Context, slot pro_interfaces.AuditWebhookSigningKey) (pro_interfaces.AuditWebhookDeliveryDTO, error) {
+	config, err := s.repository.GetAuditWebhookConfig()
+	if errors.Is(err, db.ErrNotFound) || (err == nil && config.Endpoint == "") {
+		return pro_interfaces.AuditWebhookDeliveryDTO{}, pro_interfaces.ErrAuditWebhookNotConfigured
+	}
+	if err != nil {
+		return pro_interfaces.AuditWebhookDeliveryDTO{}, fmt.Errorf("load audit webhook configuration")
+	}
+	credential, signingKey, err := s.deliveryCredentials(config, slot)
 	if err != nil {
 		return pro_interfaces.AuditWebhookDeliveryDTO{}, err
 	}
@@ -182,37 +214,25 @@ func (s *auditWebhookService) TestDelivery(ctx context.Context) (pro_interfaces.
 		return pro_interfaces.AuditWebhookDeliveryDTO{}, fmt.Errorf("audit webhook redaction failed")
 	}
 	now := s.now().UTC()
-	result := s.client.Deliver(ctx, config.Endpoint, credential, payload)
-	s.metrics.RecordAuditWebhookAttempt()
 	delivery := db.AuditWebhookDelivery{
 		EventID:     event.EventID,
 		Payload:     string(payload),
-		Attempts:    1,
-		HTTPStatus:  result.StatusCode,
-		LastError:   result.Reason,
 		NextAttempt: now,
-	}
-	switch {
-	case result.Succeeded:
-		delivery.Status = db.AuditWebhookDeliverySucceeded
-		delivery.DeliveredAt = &now
-		s.metrics.RecordAuditWebhookSuccess()
-	case result.Retryable:
-		delivery.Status = db.AuditWebhookDeliveryRetrying
-		delivery.NextAttempt = now.Add(auditWebhookBackoff(1, s.jitter()))
-	default:
-		delivery.Status = db.AuditWebhookDeliveryFailed
-		s.metrics.RecordAuditWebhookPermanentFailure()
+		Status:      db.AuditWebhookDeliveryRunning,
 	}
 	created, err := s.repository.CreateAuditWebhookDelivery(delivery)
 	if err != nil {
 		return pro_interfaces.AuditWebhookDeliveryDTO{}, fmt.Errorf("store audit webhook test delivery")
 	}
-	if created.Status == db.AuditWebhookDeliveryRetrying {
+	finalized, err := s.processDelivery(ctx, config.Endpoint, credential, signingKey, created)
+	if err != nil {
+		return pro_interfaces.AuditWebhookDeliveryDTO{}, fmt.Errorf("deliver audit webhook test")
+	}
+	if finalized.Status == db.AuditWebhookDeliveryRetrying {
 		s.Notify()
 	}
 	s.updateQueueMetrics()
-	return auditWebhookDeliveryDTO(created), nil
+	return auditWebhookDeliveryDTO(finalized), nil
 }
 
 func (s *auditWebhookService) SetPaused(_ context.Context, paused bool) (pro_interfaces.AuditWebhookConfigDTO, error) {
@@ -244,6 +264,98 @@ func (s *auditWebhookService) DeliveryHistory(_ context.Context, params db.Retri
 		result[i] = auditWebhookDeliveryDTO(deliveries[i])
 	}
 	return result, nil
+}
+
+func (s *auditWebhookService) DeliveryAttemptHistory(_ context.Context, deliveryID int, params db.RetrieveQueryParams) ([]pro_interfaces.AuditWebhookDeliveryAttemptDTO, error) {
+	attempts, err := s.repository.GetAuditWebhookDeliveryAttempts(deliveryID, params)
+	if err != nil {
+		return nil, fmt.Errorf("load audit webhook delivery attempt history")
+	}
+	result := make([]pro_interfaces.AuditWebhookDeliveryAttemptDTO, len(attempts))
+	for index := range attempts {
+		result[index] = auditWebhookDeliveryAttemptDTO(attempts[index])
+	}
+	return result, nil
+}
+
+func (s *auditWebhookService) CreateSigningSecret(_ context.Context, expectedRevision int) (pro_interfaces.AuditWebhookSigningSecretDTO, error) {
+	config, err := s.signingConfig(expectedRevision)
+	if err != nil {
+		return pro_interfaces.AuditWebhookSigningSecretDTO{}, err
+	}
+	if config.CurrentSigningSecretEncrypted != "" || config.NextSigningSecretEncrypted != "" {
+		return pro_interfaces.AuditWebhookSigningSecretDTO{}, pro_interfaces.ErrAuditWebhookInvalidSigningKey
+	}
+	key, encrypted, err := s.newEncryptedSigningKey()
+	if err != nil {
+		return pro_interfaces.AuditWebhookSigningSecretDTO{}, err
+	}
+	config.CurrentSigningSecretEncrypted = encrypted
+	config.CurrentSigningKeyID = key.ID
+	config.CurrentSigningGeneration = 1
+	saved, err := s.repository.CompareAndSwapAuditWebhookSigningState(config, expectedRevision)
+	if err != nil {
+		return pro_interfaces.AuditWebhookSigningSecretDTO{}, mapAuditWebhookSigningStateError(err)
+	}
+	return pro_interfaces.AuditWebhookSigningSecretDTO{Secret: key.Secret, AuditWebhookSigningStatusDTO: auditWebhookSigningStatusDTO(saved)}, nil
+}
+
+func (s *auditWebhookService) StageSigningSecret(_ context.Context, expectedRevision int) (pro_interfaces.AuditWebhookSigningSecretDTO, error) {
+	config, err := s.signingConfig(expectedRevision)
+	if err != nil {
+		return pro_interfaces.AuditWebhookSigningSecretDTO{}, err
+	}
+	if config.CurrentSigningSecretEncrypted == "" || config.NextSigningSecretEncrypted != "" {
+		return pro_interfaces.AuditWebhookSigningSecretDTO{}, pro_interfaces.ErrAuditWebhookInvalidSigningKey
+	}
+	key, encrypted, err := s.newEncryptedSigningKey()
+	if err != nil {
+		return pro_interfaces.AuditWebhookSigningSecretDTO{}, err
+	}
+	config.NextSigningSecretEncrypted = encrypted
+	config.NextSigningKeyID = key.ID
+	config.NextSigningGeneration = config.CurrentSigningGeneration + 1
+	saved, err := s.repository.CompareAndSwapAuditWebhookSigningState(config, expectedRevision)
+	if err != nil {
+		return pro_interfaces.AuditWebhookSigningSecretDTO{}, mapAuditWebhookSigningStateError(err)
+	}
+	return pro_interfaces.AuditWebhookSigningSecretDTO{Secret: key.Secret, AuditWebhookSigningStatusDTO: auditWebhookSigningStatusDTO(saved)}, nil
+}
+
+func (s *auditWebhookService) PromoteSigningSecret(_ context.Context, expectedRevision int) (pro_interfaces.AuditWebhookSigningStatusDTO, error) {
+	config, err := s.signingConfig(expectedRevision)
+	if err != nil {
+		return pro_interfaces.AuditWebhookSigningStatusDTO{}, err
+	}
+	if config.CurrentSigningSecretEncrypted == "" || config.NextSigningSecretEncrypted == "" {
+		return pro_interfaces.AuditWebhookSigningStatusDTO{}, pro_interfaces.ErrAuditWebhookInvalidSigningKey
+	}
+	config.CurrentSigningSecretEncrypted, config.NextSigningSecretEncrypted = config.NextSigningSecretEncrypted, config.CurrentSigningSecretEncrypted
+	config.CurrentSigningKeyID, config.NextSigningKeyID = config.NextSigningKeyID, config.CurrentSigningKeyID
+	config.CurrentSigningGeneration, config.NextSigningGeneration = config.NextSigningGeneration, config.CurrentSigningGeneration
+	saved, err := s.repository.CompareAndSwapAuditWebhookSigningState(config, expectedRevision)
+	if err != nil {
+		return pro_interfaces.AuditWebhookSigningStatusDTO{}, mapAuditWebhookSigningStateError(err)
+	}
+	return auditWebhookSigningStatusDTO(saved), nil
+}
+
+func (s *auditWebhookService) RevokeNextSigningSecret(_ context.Context, expectedRevision int) (pro_interfaces.AuditWebhookSigningStatusDTO, error) {
+	config, err := s.signingConfig(expectedRevision)
+	if err != nil {
+		return pro_interfaces.AuditWebhookSigningStatusDTO{}, err
+	}
+	if config.NextSigningSecretEncrypted == "" {
+		return pro_interfaces.AuditWebhookSigningStatusDTO{}, pro_interfaces.ErrAuditWebhookInvalidSigningKey
+	}
+	config.NextSigningSecretEncrypted = ""
+	config.NextSigningKeyID = ""
+	config.NextSigningGeneration = 0
+	saved, err := s.repository.CompareAndSwapAuditWebhookSigningState(config, expectedRevision)
+	if err != nil {
+		return pro_interfaces.AuditWebhookSigningStatusDTO{}, mapAuditWebhookSigningStateError(err)
+	}
+	return auditWebhookSigningStatusDTO(saved), nil
 }
 
 func (s *auditWebhookService) Start() {
@@ -286,91 +398,317 @@ func (s *auditWebhookService) processOnce(ctx context.Context) {
 		s.updateQueueMetrics()
 		return
 	}
+	// A database upgraded before signing was configured has a valid empty
+	// signing state. Keep its queued events pending until an operator creates a
+	// key; claiming them here would turn normal setup into permanent loss.
+	if auditWebhookSigningKeyIsUnconfigured(config) || s.cipher == nil || !s.cipher.OptionEncryptionEnabled() {
+		s.updateQueueMetrics()
+		return
+	}
 	now := s.now().UTC()
 	deliveries, err := s.repository.ClaimAuditWebhookDeliveries(now, now.Add(auditWebhookLease), auditWebhookBatchSize)
 	if err != nil {
 		s.metrics.ObserveDependency(pro_interfaces.DependencyAuditWebhook, 0, false)
 		return
 	}
-	credential := ""
-	configurationValid := validateAuditWebhookEndpoint(config.Endpoint) == nil
-	if configurationValid && config.CredentialConfigured {
-		decrypted, decryptErr := s.decrypt(config.EncryptedCredential)
-		if decryptErr != nil {
-			configurationValid = false
-		} else {
-			credential = string(decrypted)
-		}
-	}
-	if !configurationValid {
+	credential, signingKey, configurationErr := s.deliveryCredentials(config, pro_interfaces.AuditWebhookSigningKeyCurrent)
+	if configurationErr != nil {
 		for i := range deliveries {
-			if markErr := s.repository.MarkAuditWebhookDeliveryFailed(
-				deliveries[i].ID, nil, auditWebhookReasonConfiguration, now,
-			); markErr == nil {
-				s.metrics.RecordAuditWebhookAttempt()
-				s.metrics.RecordAuditWebhookPermanentFailure()
-			}
+			_, _ = s.failClaimedDelivery(deliveries[i], config.CurrentSigningKeyID, auditWebhookConfigurationFailureReason(configurationErr))
 		}
 		s.metrics.ObserveDependency(pro_interfaces.DependencyAuditWebhook, 0, false)
 		s.updateQueueMetrics()
 		return
 	}
 	for i := range deliveries {
-		s.processDelivery(ctx, config, credential, deliveries[i])
+		_, _ = s.processDelivery(ctx, config.Endpoint, credential, signingKey, deliveries[i])
 	}
 	s.updateQueueMetrics()
 }
 
-func (s *auditWebhookService) processDelivery(ctx context.Context, config db.AuditWebhookConfig, credential string, delivery db.AuditWebhookDelivery) {
+func (s *auditWebhookService) processDelivery(
+	ctx context.Context,
+	endpoint string,
+	credential string,
+	signingKey pro_interfaces.WebhookSigningKey,
+	delivery db.AuditWebhookDelivery,
+) (db.AuditWebhookDelivery, error) {
 	started := s.now()
-	result := s.client.Deliver(ctx, config.Endpoint, credential, []byte(delivery.Payload))
+	attempt := delivery.Attempts + 1
+	signed, signedAt, err := s.signDelivery(endpoint, delivery, signingKey)
+	if err != nil {
+		return s.failClaimedDelivery(delivery, signingKey.ID, db.AuditWebhookDeliveryAttemptReasonSigningFailure)
+	}
+	if _, err = s.repository.RecordAuditWebhookDeliveryAttempt(db.AuditWebhookDeliveryAttempt{
+		DeliveryID: delivery.ID,
+		EventID:    delivery.EventID,
+		Attempt:    attempt,
+		KeyID:      signingKey.ID,
+		SignedAt:   signedAt,
+		Outcome:    db.AuditWebhookDeliveryAttemptStarted,
+	}); err != nil {
+		return db.AuditWebhookDelivery{}, err
+	}
+
+	result := s.client.Deliver(ctx, endpoint, credential, signed)
 	s.metrics.RecordAuditWebhookAttempt()
 	now := s.now().UTC()
-	attempt := delivery.Attempts + 1
-	var err error
+	finalization := db.AuditWebhookDeliveryAttemptResult{
+		DeliveryID:  delivery.ID,
+		Attempt:     attempt,
+		HTTPStatus:  result.StatusCode,
+		CompletedAt: now,
+	}
+	var finalStatus db.AuditWebhookDeliveryStatus
 	switch {
 	case result.Succeeded:
-		err = s.repository.MarkAuditWebhookDeliverySucceeded(delivery.ID, *result.StatusCode, now)
-		if err == nil {
-			s.metrics.RecordAuditWebhookSuccess()
-		}
+		finalization.Outcome = db.AuditWebhookDeliveryAttemptSucceeded
+		finalStatus = db.AuditWebhookDeliverySucceeded
 	case result.Retryable && attempt < auditWebhookMaxAttempts:
-		err = s.repository.MarkAuditWebhookDeliveryRetrying(
-			delivery.ID, result.StatusCode, result.Reason,
-			now.Add(auditWebhookBackoff(attempt, s.jitter())), now,
-		)
+		nextAttempt := now.Add(auditWebhookBackoff(attempt, s.jitter()))
+		finalization.Outcome = db.AuditWebhookDeliveryAttemptRetrying
+		finalization.Reason = auditWebhookDeliveryAttemptReason(result)
+		finalization.NextAttempt = &nextAttempt
+		finalStatus = db.AuditWebhookDeliveryRetrying
 	default:
-		reason := result.Reason
-		if result.Retryable {
-			reason = auditWebhookReasonAttemptsExhausted
-		}
-		err = s.repository.MarkAuditWebhookDeliveryFailed(delivery.ID, result.StatusCode, reason, now)
-		if err == nil {
-			s.metrics.RecordAuditWebhookPermanentFailure()
-		}
+		finalization.Outcome = db.AuditWebhookDeliveryAttemptFailed
+		finalization.Reason = auditWebhookDeliveryAttemptReason(result)
+		finalStatus = db.AuditWebhookDeliveryFailed
+	}
+	err = s.repository.FinalizeAuditWebhookDeliveryAttempt(finalization)
+	if err == nil && finalStatus == db.AuditWebhookDeliverySucceeded {
+		s.metrics.RecordAuditWebhookSuccess()
+	}
+	if err == nil && finalStatus == db.AuditWebhookDeliveryFailed {
+		s.metrics.RecordAuditWebhookPermanentFailure()
 	}
 	s.metrics.ObserveDependency(pro_interfaces.DependencyAuditWebhook, s.now().Sub(started), err == nil && result.Succeeded)
+	if err != nil {
+		return db.AuditWebhookDelivery{}, err
+	}
+	delivery.Attempts = attempt
+	delivery.Status = finalStatus
+	delivery.HTTPStatus = result.StatusCode
+	delivery.LastError = string(finalization.Reason)
+	delivery.LastSignedAt = &signedAt
+	delivery.Updated = now
+	if finalization.NextAttempt != nil {
+		delivery.NextAttempt = *finalization.NextAttempt
+	} else {
+		delivery.NextAttempt = now
+	}
+	if finalStatus == db.AuditWebhookDeliverySucceeded {
+		delivery.DeliveredAt = &now
+	}
+	return delivery, nil
 }
 
-func (s *auditWebhookService) deliveryConfiguration() (db.AuditWebhookConfig, string, error) {
+// failClaimedDelivery clears a claimed lease and records a bounded, redacted
+// failure. A signing key may be malformed in persisted configuration, so use a
+// non-secret sentinel key id only when the configured identifier is invalid.
+func (s *auditWebhookService) failClaimedDelivery(
+	delivery db.AuditWebhookDelivery,
+	keyID string,
+	reason db.AuditWebhookDeliveryAttemptReason,
+) (db.AuditWebhookDelivery, error) {
+	if !pro_interfaces.ValidWebhookSigningKeyID(keyID) {
+		keyID = "swhkid_unavailable"
+	}
+	signedAt := s.nextSignedAt(delivery)
+	attempt := delivery.Attempts + 1
+	if _, err := s.repository.RecordAuditWebhookDeliveryAttempt(db.AuditWebhookDeliveryAttempt{
+		DeliveryID: delivery.ID,
+		EventID:    delivery.EventID,
+		Attempt:    attempt,
+		KeyID:      keyID,
+		SignedAt:   signedAt,
+		Outcome:    db.AuditWebhookDeliveryAttemptStarted,
+	}); err != nil {
+		// The legacy finalizer remains a safety net if the attempt ledger cannot
+		// be written. It still clears the lease rather than repeatedly claiming a
+		// delivery that cannot be signed.
+		if markErr := s.repository.MarkAuditWebhookDeliveryFailed(delivery.ID, nil, string(reason), s.now().UTC()); markErr != nil {
+			return db.AuditWebhookDelivery{}, err
+		}
+	} else {
+		completedAt := s.now().UTC()
+		if completedAt.Before(signedAt) {
+			completedAt = signedAt
+		}
+		if err := s.repository.FinalizeAuditWebhookDeliveryAttempt(db.AuditWebhookDeliveryAttemptResult{
+			DeliveryID:  delivery.ID,
+			Attempt:     attempt,
+			Outcome:     db.AuditWebhookDeliveryAttemptFailed,
+			Reason:      reason,
+			CompletedAt: completedAt,
+		}); err != nil {
+			return db.AuditWebhookDelivery{}, err
+		}
+	}
+	s.metrics.RecordAuditWebhookAttempt()
+	s.metrics.RecordAuditWebhookPermanentFailure()
+	delivery.Attempts = attempt
+	delivery.Status = db.AuditWebhookDeliveryFailed
+	delivery.LastError = string(reason)
+	delivery.LastSignedAt = &signedAt
+	delivery.NextAttempt = s.now().UTC()
+	delivery.Updated = s.now().UTC()
+	return delivery, nil
+}
+
+func (s *auditWebhookService) deliveryCredentials(config db.AuditWebhookConfig, slot pro_interfaces.AuditWebhookSigningKey) (string, pro_interfaces.WebhookSigningKey, error) {
+	if err := validateAuditWebhookEndpoint(config.Endpoint); err != nil {
+		return "", pro_interfaces.WebhookSigningKey{}, fmt.Errorf("audit webhook configuration is invalid: %w", err)
+	}
+	if err := db.ValidateAuditWebhookSigningState(config); err != nil {
+		return "", pro_interfaces.WebhookSigningKey{}, fmt.Errorf("audit webhook signing state is invalid: %w", err)
+	}
+	credential := ""
+	if config.CredentialConfigured {
+		decrypted, err := s.cipher.DecryptOption(config.EncryptedCredential)
+		if err != nil {
+			return "", pro_interfaces.WebhookSigningKey{}, fmt.Errorf("%w: %v", errAuditWebhookCredentialUnreadable, err)
+		}
+		credential = string(decrypted)
+	}
+	key, err := s.decryptSigningKey(config, slot)
+	if err != nil {
+		return "", pro_interfaces.WebhookSigningKey{}, err
+	}
+	return credential, key, nil
+}
+
+func (s *auditWebhookService) decryptSigningKey(config db.AuditWebhookConfig, slot pro_interfaces.AuditWebhookSigningKey) (pro_interfaces.WebhookSigningKey, error) {
+	var encrypted, keyID string
+	switch slot {
+	case pro_interfaces.AuditWebhookSigningKeyCurrent:
+		encrypted, keyID = config.CurrentSigningSecretEncrypted, config.CurrentSigningKeyID
+	case pro_interfaces.AuditWebhookSigningKeyNext:
+		encrypted, keyID = config.NextSigningSecretEncrypted, config.NextSigningKeyID
+	default:
+		return pro_interfaces.WebhookSigningKey{}, pro_interfaces.ErrAuditWebhookInvalidSigningKey
+	}
+	if encrypted == "" || !pro_interfaces.ValidWebhookSigningKeyID(keyID) {
+		return pro_interfaces.WebhookSigningKey{}, pro_interfaces.ErrAuditWebhookSigningNotConfigured
+	}
+	if s.cipher == nil || !s.cipher.OptionEncryptionEnabled() {
+		return pro_interfaces.WebhookSigningKey{}, pro_interfaces.ErrAuditWebhookSigningNotConfigured
+	}
+	secret, err := s.cipher.DecryptOption(encrypted)
+	if err != nil {
+		return pro_interfaces.WebhookSigningKey{}, fmt.Errorf("%w: %v", errAuditWebhookSigningSecretUnreadable, err)
+	}
+	return pro_interfaces.WebhookSigningKey{ID: keyID, Secret: string(secret)}, nil
+}
+
+func auditWebhookSigningKeyIsUnconfigured(config db.AuditWebhookConfig) bool {
+	return config.CurrentSigningSecretEncrypted == "" &&
+		config.CurrentSigningKeyID == "" &&
+		config.CurrentSigningGeneration == 0 &&
+		config.NextSigningSecretEncrypted == "" &&
+		config.NextSigningKeyID == "" &&
+		config.NextSigningGeneration == 0
+}
+
+func auditWebhookConfigurationFailureReason(err error) db.AuditWebhookDeliveryAttemptReason {
+	if errors.Is(err, pro_interfaces.ErrAuditWebhookSigningNotConfigured) {
+		return db.AuditWebhookDeliveryAttemptReasonNoKey
+	}
+	if errors.Is(err, errAuditWebhookSigningSecretUnreadable) {
+		return db.AuditWebhookDeliveryAttemptReasonSigningFailure
+	}
+	return db.AuditWebhookDeliveryAttemptReasonConfiguration
+}
+
+func (s *auditWebhookService) signDelivery(endpoint string, delivery db.AuditWebhookDelivery, key pro_interfaces.WebhookSigningKey) (pro_interfaces.WebhookSignedRequest, time.Time, error) {
+	target, err := auditWebhookRequestTarget(endpoint)
+	if err != nil {
+		return pro_interfaces.WebhookSignedRequest{}, time.Time{}, err
+	}
+	signedAt := s.nextSignedAt(delivery)
+	request, err := pro_interfaces.BindWebhookSignedRequest(http.MethodPost, target, pro_interfaces.WebhookSignatureHeaders{
+		Version: pro_interfaces.WebhookSignatureProtocolVersion, EventID: delivery.EventID,
+		Timestamp: strconv.FormatInt(signedAt.Unix(), 10), KeyID: key.ID,
+	}, []byte(delivery.Payload))
+	if err != nil {
+		return pro_interfaces.WebhookSignedRequest{}, time.Time{}, err
+	}
+	signature, err := pro_interfaces.SignWebhookRequest(key.Secret, request)
+	if err != nil {
+		return pro_interfaces.WebhookSignedRequest{}, time.Time{}, err
+	}
+	request.Signature = signature
+	return request, signedAt, nil
+}
+
+func (s *auditWebhookService) nextSignedAt(delivery db.AuditWebhookDelivery) time.Time {
+	next := s.now().UTC().Unix()
+	if delivery.LastSignedAt != nil && next <= delivery.LastSignedAt.Unix() {
+		next = delivery.LastSignedAt.Unix() + 1
+	}
+	return time.Unix(next, 0).UTC()
+}
+
+func (s *auditWebhookService) signingConfig(expectedRevision int) (db.AuditWebhookConfig, error) {
+	if expectedRevision < 0 {
+		return db.AuditWebhookConfig{}, pro_interfaces.ErrAuditWebhookInvalidSigningKey
+	}
 	config, err := s.repository.GetAuditWebhookConfig()
-	if errors.Is(err, db.ErrNotFound) || (err == nil && config.Endpoint == "") {
-		return db.AuditWebhookConfig{}, "", pro_interfaces.ErrAuditWebhookNotConfigured
+	if errors.Is(err, db.ErrNotFound) {
+		if expectedRevision != 0 {
+			return db.AuditWebhookConfig{}, pro_interfaces.ErrAuditWebhookSigningStateConflict
+		}
+		return db.AuditWebhookConfig{}, nil
 	}
 	if err != nil {
-		return db.AuditWebhookConfig{}, "", fmt.Errorf("load audit webhook configuration")
+		return db.AuditWebhookConfig{}, fmt.Errorf("load audit webhook signing state")
 	}
-	if err = validateAuditWebhookEndpoint(config.Endpoint); err != nil {
-		return db.AuditWebhookConfig{}, "", fmt.Errorf("audit webhook configuration is invalid")
+	if config.SigningStateRevision != expectedRevision {
+		return db.AuditWebhookConfig{}, pro_interfaces.ErrAuditWebhookSigningStateConflict
 	}
-	if !config.CredentialConfigured {
-		return config, "", nil
-	}
-	credential, err := s.decrypt(config.EncryptedCredential)
+	return config, nil
+}
+
+func (s *auditWebhookService) newEncryptedSigningKey() (pro_interfaces.WebhookSigningKey, string, error) {
+	key, err := pro_interfaces.NewWebhookSigningKey()
 	if err != nil {
-		return db.AuditWebhookConfig{}, "", fmt.Errorf("read audit webhook credential")
+		return pro_interfaces.WebhookSigningKey{}, "", fmt.Errorf("generate audit webhook signing secret")
 	}
-	return config, string(credential), nil
+	if s.cipher == nil || !s.cipher.OptionEncryptionEnabled() {
+		return pro_interfaces.WebhookSigningKey{}, "", pro_interfaces.ErrAuditWebhookSigningNotConfigured
+	}
+	encrypted, err := s.cipher.EncryptOption([]byte(key.Secret))
+	if err != nil || encrypted == "" {
+		return pro_interfaces.WebhookSigningKey{}, "", fmt.Errorf("store audit webhook signing secret")
+	}
+	return key, encrypted, nil
+}
+
+func mapAuditWebhookSigningStateError(err error) error {
+	if errors.Is(err, db.ErrAuditWebhookSigningStateConflict) {
+		return pro_interfaces.ErrAuditWebhookSigningStateConflict
+	}
+	return fmt.Errorf("save audit webhook signing state")
+}
+
+func auditWebhookDeliveryAttemptReason(result auditWebhookDeliveryResult) db.AuditWebhookDeliveryAttemptReason {
+	if result.Succeeded {
+		return db.AuditWebhookDeliveryAttemptReasonNone
+	}
+	switch result.Reason {
+	case auditWebhookReasonTimeout:
+		return db.AuditWebhookDeliveryAttemptReasonTimeout
+	case auditWebhookReasonNetwork:
+		return db.AuditWebhookDeliveryAttemptReasonNetworkError
+	case auditWebhookReasonClientResponse:
+		return db.AuditWebhookDeliveryAttemptReasonHTTP4xx
+	case auditWebhookReasonServerResponse:
+		return db.AuditWebhookDeliveryAttemptReasonHTTP5xx
+	case auditWebhookReasonConfiguration:
+		return db.AuditWebhookDeliveryAttemptReasonConfiguration
+	default:
+		return db.AuditWebhookDeliveryAttemptReasonInvalidResponse
+	}
 }
 
 func (s *auditWebhookService) updateQueueMetrics() {
@@ -407,10 +745,19 @@ func auditWebhookBackoff(attempt int, jitter float64) time.Duration {
 
 func auditWebhookConfigDTO(config db.AuditWebhookConfig) pro_interfaces.AuditWebhookConfigDTO {
 	return pro_interfaces.AuditWebhookConfigDTO{
-		Endpoint:             config.Endpoint,
-		CredentialConfigured: config.CredentialConfigured,
-		Paused:               config.Paused,
-		UpdatedAt:            config.Updated,
+		Endpoint:                     config.Endpoint,
+		CredentialConfigured:         config.CredentialConfigured,
+		Paused:                       config.Paused,
+		UpdatedAt:                    config.Updated,
+		AuditWebhookSigningStatusDTO: auditWebhookSigningStatusDTO(config),
+	}
+}
+
+func auditWebhookSigningStatusDTO(config db.AuditWebhookConfig) pro_interfaces.AuditWebhookSigningStatusDTO {
+	return pro_interfaces.AuditWebhookSigningStatusDTO{
+		CurrentKeyID: config.CurrentSigningKeyID, NextKeyID: config.NextSigningKeyID,
+		CurrentGeneration: config.CurrentSigningGeneration, NextGeneration: config.NextSigningGeneration,
+		Revision: config.SigningStateRevision,
 	}
 }
 
@@ -426,6 +773,14 @@ func auditWebhookDeliveryDTO(delivery db.AuditWebhookDelivery) pro_interfaces.Au
 		CreatedAt:   delivery.Created,
 		UpdatedAt:   delivery.Updated,
 		DeliveredAt: delivery.DeliveredAt,
+	}
+}
+
+func auditWebhookDeliveryAttemptDTO(attempt db.AuditWebhookDeliveryAttempt) pro_interfaces.AuditWebhookDeliveryAttemptDTO {
+	return pro_interfaces.AuditWebhookDeliveryAttemptDTO{
+		ID: attempt.ID, DeliveryID: attempt.DeliveryID, EventID: attempt.EventID, Attempt: attempt.Attempt,
+		KeyID: attempt.KeyID, SignedAt: attempt.SignedAt, Outcome: attempt.Outcome,
+		HTTPStatus: attempt.HTTPStatus, Reason: attempt.Reason, CreatedAt: attempt.Created, CompletedAt: attempt.CompletedAt,
 	}
 }
 

@@ -27,11 +27,29 @@ func (*communityAuditWebhookService) Configure(context.Context, pro_interfaces.A
 func (*communityAuditWebhookService) TestDelivery(context.Context) (pro_interfaces.AuditWebhookDeliveryDTO, error) {
 	return pro_interfaces.AuditWebhookDeliveryDTO{}, pro_interfaces.ErrAuditWebhookUnavailable
 }
+func (*communityAuditWebhookService) TestDeliveryWithSigningKey(context.Context, pro_interfaces.AuditWebhookSigningKey) (pro_interfaces.AuditWebhookDeliveryDTO, error) {
+	return pro_interfaces.AuditWebhookDeliveryDTO{}, pro_interfaces.ErrAuditWebhookUnavailable
+}
 func (*communityAuditWebhookService) SetPaused(context.Context, bool) (pro_interfaces.AuditWebhookConfigDTO, error) {
 	return pro_interfaces.AuditWebhookConfigDTO{}, pro_interfaces.ErrAuditWebhookUnavailable
 }
 func (*communityAuditWebhookService) DeliveryHistory(context.Context, db.RetrieveQueryParams) ([]pro_interfaces.AuditWebhookDeliveryDTO, error) {
 	return nil, pro_interfaces.ErrAuditWebhookUnavailable
+}
+func (*communityAuditWebhookService) DeliveryAttemptHistory(context.Context, int, db.RetrieveQueryParams) ([]pro_interfaces.AuditWebhookDeliveryAttemptDTO, error) {
+	return nil, pro_interfaces.ErrAuditWebhookUnavailable
+}
+func (*communityAuditWebhookService) CreateSigningSecret(context.Context, int) (pro_interfaces.AuditWebhookSigningSecretDTO, error) {
+	return pro_interfaces.AuditWebhookSigningSecretDTO{}, pro_interfaces.ErrAuditWebhookUnavailable
+}
+func (*communityAuditWebhookService) StageSigningSecret(context.Context, int) (pro_interfaces.AuditWebhookSigningSecretDTO, error) {
+	return pro_interfaces.AuditWebhookSigningSecretDTO{}, pro_interfaces.ErrAuditWebhookUnavailable
+}
+func (*communityAuditWebhookService) PromoteSigningSecret(context.Context, int) (pro_interfaces.AuditWebhookSigningStatusDTO, error) {
+	return pro_interfaces.AuditWebhookSigningStatusDTO{}, pro_interfaces.ErrAuditWebhookUnavailable
+}
+func (*communityAuditWebhookService) RevokeNextSigningSecret(context.Context, int) (pro_interfaces.AuditWebhookSigningStatusDTO, error) {
+	return pro_interfaces.AuditWebhookSigningStatusDTO{}, pro_interfaces.ErrAuditWebhookUnavailable
 }
 func (*communityAuditWebhookService) Start()       {}
 func (*communityAuditWebhookService) Close() error { return nil }

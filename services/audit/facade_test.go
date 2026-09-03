@@ -67,11 +67,29 @@ func (*auditWebhookStub) Configure(context.Context, pro_interfaces.AuditWebhookC
 func (*auditWebhookStub) TestDelivery(context.Context) (pro_interfaces.AuditWebhookDeliveryDTO, error) {
 	return pro_interfaces.AuditWebhookDeliveryDTO{}, nil
 }
+func (*auditWebhookStub) TestDeliveryWithSigningKey(context.Context, pro_interfaces.AuditWebhookSigningKey) (pro_interfaces.AuditWebhookDeliveryDTO, error) {
+	return pro_interfaces.AuditWebhookDeliveryDTO{}, nil
+}
 func (*auditWebhookStub) SetPaused(context.Context, bool) (pro_interfaces.AuditWebhookConfigDTO, error) {
 	return pro_interfaces.AuditWebhookConfigDTO{}, nil
 }
 func (*auditWebhookStub) DeliveryHistory(context.Context, db.RetrieveQueryParams) ([]pro_interfaces.AuditWebhookDeliveryDTO, error) {
 	return nil, nil
+}
+func (*auditWebhookStub) DeliveryAttemptHistory(context.Context, int, db.RetrieveQueryParams) ([]pro_interfaces.AuditWebhookDeliveryAttemptDTO, error) {
+	return nil, nil
+}
+func (*auditWebhookStub) CreateSigningSecret(context.Context, int) (pro_interfaces.AuditWebhookSigningSecretDTO, error) {
+	return pro_interfaces.AuditWebhookSigningSecretDTO{}, nil
+}
+func (*auditWebhookStub) StageSigningSecret(context.Context, int) (pro_interfaces.AuditWebhookSigningSecretDTO, error) {
+	return pro_interfaces.AuditWebhookSigningSecretDTO{}, nil
+}
+func (*auditWebhookStub) PromoteSigningSecret(context.Context, int) (pro_interfaces.AuditWebhookSigningStatusDTO, error) {
+	return pro_interfaces.AuditWebhookSigningStatusDTO{}, nil
+}
+func (*auditWebhookStub) RevokeNextSigningSecret(context.Context, int) (pro_interfaces.AuditWebhookSigningStatusDTO, error) {
+	return pro_interfaces.AuditWebhookSigningStatusDTO{}, nil
 }
 func (*auditWebhookStub) Start()       {}
 func (*auditWebhookStub) Close() error { return nil }

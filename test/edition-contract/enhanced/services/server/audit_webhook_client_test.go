@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,7 +37,7 @@ func TestAuditWebhookClientSendsBoundedAuthenticatedRequest(t *testing.T) {
 	defer receiver.Close()
 	client := testAuditWebhookClient(receiver, time.Second)
 
-	result := client.Deliver(context.Background(), receiver.URL, "write-only-secret", []byte(`{"event_id":"event"}`))
+	result := client.Deliver(context.Background(), receiver.URL, "write-only-secret", signedAuditWebhookRequest(t, receiver.URL, []byte(`{"event_id":"event"}`)))
 
 	assert.True(t, result.Succeeded)
 	require.NotNil(t, result.StatusCode)
@@ -66,7 +67,7 @@ func TestAuditWebhookClientClassifiesRetryAndTerminalResponses(t *testing.T) {
 			defer receiver.Close()
 			client := testAuditWebhookClient(receiver, time.Second)
 
-			result := client.Deliver(context.Background(), receiver.URL, "", []byte(`{}`))
+			result := client.Deliver(context.Background(), receiver.URL, "", signedAuditWebhookRequest(t, receiver.URL, []byte(`{}`)))
 
 			assert.False(t, result.Succeeded)
 			assert.Equal(t, test.retryable, result.Retryable)
@@ -84,7 +85,7 @@ func TestAuditWebhookClientBoundsTimeoutAndResponseSize(t *testing.T) {
 		defer receiver.Close()
 		client := testAuditWebhookClient(receiver, 10*time.Millisecond)
 
-		result := client.Deliver(context.Background(), receiver.URL, "", []byte(`{}`))
+		result := client.Deliver(context.Background(), receiver.URL, "", signedAuditWebhookRequest(t, receiver.URL, []byte(`{}`)))
 
 		assert.True(t, result.Retryable)
 		assert.Equal(t, auditWebhookReasonTimeout, result.Reason)
@@ -98,7 +99,7 @@ func TestAuditWebhookClientBoundsTimeoutAndResponseSize(t *testing.T) {
 		defer receiver.Close()
 		client := testAuditWebhookClient(receiver, time.Second)
 
-		result := client.Deliver(context.Background(), receiver.URL, "", []byte(`{}`))
+		result := client.Deliver(context.Background(), receiver.URL, "", signedAuditWebhookRequest(t, receiver.URL, []byte(`{}`)))
 
 		assert.True(t, result.Retryable)
 		assert.Equal(t, auditWebhookReasonResponseTooLarge, result.Reason)
@@ -120,4 +121,17 @@ func testAuditWebhookClient(server *httptest.Server, timeout time.Duration) *htt
 			return http.ErrUseLastResponse
 		},
 	}}
+}
+
+func signedAuditWebhookRequest(t *testing.T, endpoint string, payload []byte) pro_interfaces.WebhookSignedRequest {
+	t.Helper()
+	target, err := auditWebhookRequestTarget(endpoint)
+	require.NoError(t, err)
+	request, err := pro_interfaces.BindWebhookSignedRequest(http.MethodPost, target, pro_interfaces.WebhookSignatureHeaders{
+		Version: pro_interfaces.WebhookSignatureProtocolVersion, EventID: "evt_0123456789abcdef",
+		Timestamp: "1700000000", KeyID: "swhkid_client_test",
+	}, payload)
+	require.NoError(t, err)
+	request.Signature = "v1=" + strings.Repeat("0", 64)
+	return request
 }
