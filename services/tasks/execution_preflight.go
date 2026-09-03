@@ -35,7 +35,7 @@ func (p *TaskPool) PreviewTaskExecution(task db.Task, actor *db.User, projectID 
 		if templateErr != nil {
 			return pro_interfaces.ExecutionPreflightPlan{}, templateErr
 		}
-		snapshot, err = p.enrichTaskPreflightWithPolicyGuardrails(snapshot, task, template, projectID, plannedAt)
+		snapshot, err = p.enrichTaskPreflightWithPolicyGuardrails(snapshot, task, template, projectID, plannedAt, pro_interfaces.DeploymentWindowSourceManual)
 		if err != nil {
 			return pro_interfaces.ExecutionPreflightPlan{}, err
 		}
@@ -93,12 +93,26 @@ func (p *TaskPool) addTaskWithExecutionPreflightPlan(
 	review pro_interfaces.ExecutionPreflightReview,
 	overrideInput *pro_interfaces.DeploymentWindowOverrideInput,
 ) (db.Task, pro_interfaces.ExecutionPreflightPlan, error) {
-	snapshot, executionSnapshot, err := p.buildTaskExecutionPreflightSnapshot(task, actor, projectID, tz.Now())
+	plannedAt := tz.Now()
+	snapshot, executionSnapshot, err := p.buildTaskExecutionPreflightSnapshot(task, actor, projectID, plannedAt)
 	if err != nil {
 		return db.Task{}, pro_interfaces.ExecutionPreflightPlan{}, err
 	}
+	var template db.Template
+	if p.policyGuardrailAdmission != nil {
+		template, err = p.store.GetTemplate(projectID, task.TemplateID)
+		if err != nil {
+			return db.Task{}, pro_interfaces.ExecutionPreflightPlan{}, err
+		}
+		snapshot, err = p.enrichTaskPreflightWithPolicyGuardrails(
+			snapshot, task, template, projectID, plannedAt, pro_interfaces.DeploymentWindowSourceManual,
+		)
+		if err != nil {
+			return db.Task{}, pro_interfaces.ExecutionPreflightPlan{}, err
+		}
+	}
 	reviewed := review.Fingerprint != "" || review.ReviewToken != ""
-	if reviewed && planHasExecutionDenial(snapshot.Plan) {
+	if reviewed && planHasNativeExecutionDenial(snapshot.Plan) {
 		plan := snapshot.Plan
 		if p.executionPreflightIssuer != nil {
 			if sealed, sealErr := p.sealExecutionPreflight(snapshot); sealErr == nil {
@@ -134,6 +148,59 @@ func (p *TaskPool) addTaskWithExecutionPreflightPlan(
 			return db.Task{}, sealed, &ExecutionPreflightStaleError{Changes: changes, Preflight: sealed}
 		}
 	}
+
+	decisionKey := "manual-" + random.String(32)
+	if p.policyGuardrailAdmission != nil {
+		claim, freshSnapshot, freshExecutionSnapshot, claimErr := p.claimTaskPolicyGuardrailAdmission(
+			task, actor, template, snapshot, projectID, pro_interfaces.DeploymentWindowSourceManual, decisionKey, &actor.ID,
+		)
+		if claimErr != nil {
+			return db.Task{}, snapshot.Plan, claimErr
+		}
+		if claim.Record.TaskID != nil {
+			existing, getErr := p.store.GetTask(projectID, *claim.Record.TaskID)
+			if getErr != nil || !taskMatchesPolicyGuardrailClaim(existing, task, projectID) {
+				return db.Task{}, freshSnapshot.Plan, errors.New("policy guardrail evaluation is bound to a different task")
+			}
+			return existing, freshSnapshot.Plan, nil
+		}
+		if !claim.Evaluation.Allowed {
+			plan := p.sealDeniedExecutionPreflight(freshSnapshot)
+			return db.Task{}, plan, &ExecutionPreflightDeniedError{Preflight: plan}
+		}
+		if reviewed && planHasNativeExecutionDenial(freshSnapshot.Plan) {
+			plan := p.sealDeniedExecutionPreflight(freshSnapshot)
+			return db.Task{}, plan, &ExecutionPreflightDeniedError{Preflight: plan}
+		}
+		if reviewed {
+			binding := pro_interfaces.ExecutionPreflightReviewBinding{
+				ActorID: actor.ID, ProjectID: projectID, Intent: pro_interfaces.ExecutionPreflightTask,
+				TemplateID: task.TemplateID, Fingerprint: review.Fingerprint,
+			}
+			claims, verifyErr := p.executionPreflightIssuer.Verify(review.ReviewToken, binding)
+			if verifyErr != nil {
+				return db.Task{}, freshSnapshot.Plan, verifyErr
+			}
+			changes, diffErr := p.executionPreflightIssuer.DiffVerifiedComponents(claims, freshSnapshot.Plan, freshSnapshot.Components)
+			if diffErr != nil {
+				return db.Task{}, freshSnapshot.Plan, diffErr
+			}
+			sealed, sealErr := p.sealExecutionPreflight(freshSnapshot)
+			if sealErr != nil {
+				return db.Task{}, freshSnapshot.Plan, sealErr
+			}
+			if len(changes) > 0 || review.Fingerprint != sealed.Fingerprint {
+				if len(changes) == 0 {
+					changes = []pro_interfaces.ExecutionPreflightChangeCode{pro_interfaces.ExecutionChangePolicy}
+				}
+				return db.Task{}, sealed, &ExecutionPreflightStaleError{Changes: changes, Preflight: sealed}
+			}
+		}
+		policyEvaluationID := claim.Record.ID
+		task.PolicyGuardrailEvaluationID = &policyEvaluationID
+		snapshot = freshSnapshot
+		executionSnapshot = freshExecutionSnapshot
+	}
 	templateID := task.TemplateID
 	actorID := actor.ID
 	override, overrideErr := pro_interfaces.NewManualDeploymentWindowOverride(overrideInput, actorID)
@@ -147,7 +214,7 @@ func (p *TaskPool) addTaskWithExecutionPreflightPlan(
 	var admissionClaim *pro_interfaces.DeploymentWindowAdmissionClaim
 	if p.deploymentWindowAdmission != nil {
 		claim, claimErr := p.claimDeploymentWindowTaskAdmission(&task, pro_interfaces.DeploymentWindowAdmissionRequest{
-			ProjectID: projectID, DecisionKey: "manual-" + random.String(32), Source: pro_interfaces.DeploymentWindowSourceManual,
+			ProjectID: projectID, DecisionKey: decisionKey, Source: pro_interfaces.DeploymentWindowSourceManual,
 			Origin: pro_interfaces.DeploymentWindowOriginUser, TemplateID: &templateID, ActorUserID: &actorID, Override: override,
 		})
 		if claimErr != nil {
@@ -159,7 +226,7 @@ func (p *TaskPool) addTaskWithExecutionPreflightPlan(
 		admissionClaim = &claim
 	}
 	var created db.Task
-	if reviewed {
+	if reviewed || p.policyGuardrailAdmission != nil {
 		if executionSnapshot == nil {
 			return db.Task{}, snapshot.Plan, errors.New("execution preflight snapshot is unavailable")
 		}
@@ -176,6 +243,77 @@ func (p *TaskPool) addTaskWithExecutionPreflightPlan(
 		p.recordDeploymentWindowTaskBinding(admissionClaim.Decision, created)
 	}
 	return created, snapshot.Plan, err
+}
+
+// claimTaskPolicyGuardrailAdmission turns a read-only value-free preflight into
+// a DB-timed admission record, then rebuilds the plan from the claim's exact
+// provenance. The fresh plan is the only plan that may fence task insertion.
+func (p *TaskPool) claimTaskPolicyGuardrailAdmission(
+	task db.Task,
+	actor *db.User,
+	template db.Template,
+	snapshot ExecutionPreflightSnapshot,
+	projectID int,
+	source pro_interfaces.DeploymentWindowSource,
+	decisionKey string,
+	actorID *int,
+) (pro_interfaces.PolicyGuardrailEvaluationClaim, ExecutionPreflightSnapshot, *db.TaskExecutionSnapshot, error) {
+	if p == nil || p.policyGuardrailAdmission == nil || actor == nil || actor.ID < 0 || !taskPolicyGuardrailSourceValid(source) {
+		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, ExecutionPreflightSnapshot{}, nil, errors.New("policy guardrail admission is unavailable")
+	}
+	input, err := p.buildTaskPolicyGuardrailEvaluationInput(task, template, snapshot.Plan, projectID, tz.Now(), source)
+	if err != nil {
+		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, ExecutionPreflightSnapshot{}, nil, err
+	}
+	claim, err := p.policyGuardrailAdmission.ClaimPolicyGuardrailEvaluation(pro_interfaces.PolicyGuardrailAdmissionRequest{
+		DecisionKey: decisionKey, Source: string(source), ActorUserID: actorID, Input: input,
+	})
+	if err != nil {
+		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, ExecutionPreflightSnapshot{}, nil, err
+	}
+	if claim.Record.ID <= 0 || claim.Record.ProjectID != projectID || claim.Record.Source != string(source) ||
+		claim.Record.DecisionKey != decisionKey || (claim.Evaluation.Allowed != (claim.Record.Decision == db.PolicyGuardrailDecisionAllow)) {
+		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, ExecutionPreflightSnapshot{}, nil, errors.New("policy guardrail admission claim is invalid")
+	}
+	freshSnapshot, executionSnapshot, err := p.buildTaskExecutionPreflightSnapshot(task, actor, projectID, claim.Evaluation.EvaluatedAt)
+	if err != nil {
+		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, ExecutionPreflightSnapshot{}, nil, err
+	}
+	freshTemplate, err := p.store.GetTemplate(projectID, task.TemplateID)
+	if err != nil {
+		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, ExecutionPreflightSnapshot{}, nil, err
+	}
+	freshInput, err := p.buildTaskPolicyGuardrailEvaluationInput(task, freshTemplate, freshSnapshot.Plan, projectID, claim.Evaluation.EvaluatedAt, source)
+	if err != nil {
+		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, ExecutionPreflightSnapshot{}, nil, err
+	}
+	fingerprint, err := pro_interfaces.FingerprintPolicyGuardrailInput(freshInput)
+	if err != nil {
+		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, ExecutionPreflightSnapshot{}, nil, err
+	}
+	freshSnapshot, err = applyTaskPolicyGuardrailEvaluation(freshSnapshot, freshInput, claim.Evaluation, fingerprint)
+	if err != nil {
+		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, ExecutionPreflightSnapshot{}, nil, err
+	}
+	return claim, freshSnapshot, executionSnapshot, nil
+}
+
+func (p *TaskPool) sealDeniedExecutionPreflight(snapshot ExecutionPreflightSnapshot) pro_interfaces.ExecutionPreflightPlan {
+	if p != nil && p.executionPreflightIssuer != nil {
+		if sealed, err := p.sealExecutionPreflight(snapshot); err == nil {
+			return sealed
+		}
+	}
+	return snapshot.Plan
+}
+
+func taskMatchesPolicyGuardrailClaim(existing, requested db.Task, projectID int) bool {
+	return existing.ProjectID == projectID && existing.TemplateID == requested.TemplateID &&
+		sameTaskBindingID(existing.WorkflowRunID, requested.WorkflowRunID) &&
+		sameTaskBindingID(existing.WorkflowNodeID, requested.WorkflowNodeID) &&
+		sameTaskBindingID(existing.IntegrationID, requested.IntegrationID) &&
+		sameTaskBindingID(existing.ScheduleID, requested.ScheduleID) &&
+		sameTaskBindingID(existing.BuildTaskID, requested.BuildTaskID)
 }
 
 func (p *TaskPool) sealExecutionPreflight(snapshot ExecutionPreflightSnapshot) (pro_interfaces.ExecutionPreflightPlan, error) {
@@ -216,6 +354,15 @@ func (p *TaskPool) VerifyExecutionPreflightReview(
 func planHasExecutionDenial(plan pro_interfaces.ExecutionPreflightPlan) bool {
 	for _, finding := range plan.Findings {
 		if finding.Severity == pro_interfaces.ExecutionFindingDenial {
+			return true
+		}
+	}
+	return false
+}
+
+func planHasNativeExecutionDenial(plan pro_interfaces.ExecutionPreflightPlan) bool {
+	for _, finding := range plan.Findings {
+		if finding.Severity == pro_interfaces.ExecutionFindingDenial && finding.PolicyEffect == "" {
 			return true
 		}
 	}
@@ -274,7 +421,7 @@ func (p *TaskPool) BuildWorkflowTaskExecutionPreflight(
 	if err != nil {
 		return ExecutionPreflightSnapshot{}, err
 	}
-	return p.enrichTaskPreflightWithPolicyGuardrails(snapshot, task, template, projectID, plannedAt.UTC())
+	return p.enrichTaskPreflightWithPolicyGuardrails(snapshot, task, template, projectID, plannedAt.UTC(), pro_interfaces.DeploymentWindowSourceWorkflowNode)
 }
 
 func (p *TaskPool) BuildWorkflowTaskExecutionPreflightSnapshot(
@@ -291,7 +438,7 @@ func (p *TaskPool) BuildWorkflowTaskExecutionPreflightSnapshot(
 	if err != nil {
 		return ExecutionPreflightSnapshot{}, "", err
 	}
-	snapshot, err = p.enrichTaskPreflightWithPolicyGuardrails(snapshot, task, template, projectID, plannedAt.UTC())
+	snapshot, err = p.enrichTaskPreflightWithPolicyGuardrails(snapshot, task, template, projectID, plannedAt.UTC(), pro_interfaces.DeploymentWindowSourceWorkflowNode)
 	if err != nil {
 		return ExecutionPreflightSnapshot{}, "", err
 	}
