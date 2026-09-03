@@ -64,6 +64,9 @@ func (store *WorkflowFileArtifactStore) PublishWorkflowArtifactRetentionPolicy(p
 		return db.WorkflowArtifactRetentionPolicy{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err = store.lockWorkflowArtifactRetentionGlobal(tx); err != nil {
+		return db.WorkflowArtifactRetentionPolicy{}, err
+	}
 	if policy.Scope == db.WorkflowArtifactRetentionProject {
 		if err = store.lockProject(tx, *policy.ProjectID); err != nil {
 			return db.WorkflowArtifactRetentionPolicy{}, err
@@ -969,6 +972,26 @@ func (store *WorkflowFileArtifactStore) lockProject(tx *gorp.Transaction, projec
 		return db.ErrNotFound
 	}
 	return err
+}
+
+// lockWorkflowArtifactRetentionGlobal is the durable serialization point for
+// global and project policy publishes, including bootstrap before revision 1
+// exists. Every publish takes it before an optional project-row lock.
+func (store *WorkflowFileArtifactStore) lockWorkflowArtifactRetentionGlobal(tx *gorp.Transaction) error {
+	var lockKey string
+	err := tx.SelectOne(&lockKey, store.connection.PrepareQuery(
+		"select lock_key from workflow_artifact_retention_lock where lock_key=?"+store.forUpdate(),
+	), "global")
+	if errors.Is(err, sql.ErrNoRows) {
+		return db.ErrInvalidOperation
+	}
+	if err != nil {
+		return err
+	}
+	if lockKey != "global" {
+		return db.ErrInvalidOperation
+	}
+	return nil
 }
 
 func (store *WorkflowFileArtifactStore) forUpdate() string {

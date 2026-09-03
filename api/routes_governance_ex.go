@@ -16,6 +16,7 @@ func registerEnhancedGovernanceRoutes(
 	auditFacade pro_interfaces.AuditServiceFacade,
 	notificationGovernanceController *NotificationGovernanceController,
 	globalCredentialController *GlobalCredentialController,
+	workflowArtifactRetentionController pro_interfaces.WorkflowArtifactRetentionController,
 	deploymentWindowController pro_interfaces.DeploymentWindowController,
 	policyGuardrailController pro_interfaces.PolicyGuardrailController,
 	delegatedProjectRolesSnapshot func(http.Handler) http.Handler,
@@ -39,6 +40,16 @@ func registerEnhancedGovernanceRoutes(
 	projectNotificationRead := func(handler http.Handler) http.Handler {
 		return projects.ProjectMiddleware(EnhancedProjectPermissionAuditMiddleware(auditFacade)(
 			projects.GetMustHavePermissionMiddleware(db.CanViewProjectResources)(handler),
+		))
+	}
+	globalWorkflowArtifactRetentionManage := func(handler http.Handler) http.Handler {
+		return delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
+			globalSystemPermission(handler),
+		))
+	}
+	projectWorkflowArtifactRetentionManage := func(handler http.Handler) http.Handler {
+		return projects.ProjectMiddleware(EnhancedProjectPermissionAuditMiddleware(auditFacade)(
+			projects.GetMustHaveBaseProjectPermissionMiddleware(db.CanManageProjectResources)(handler),
 		))
 	}
 	projectDeploymentWindowManage := func(access pro_interfaces.CapabilityAccess, handler http.Handler) http.Handler {
@@ -189,6 +200,19 @@ func registerEnhancedGovernanceRoutes(
 	authenticatedAPI.Path("/project/{project_id}/notification-governance/deliveries").Handler(projectNotificationRead(http.HandlerFunc(notificationGovernanceController.ProjectHistory))).Methods("GET", "HEAD")
 	authenticatedAPI.Path("/project/{project_id}/notification-governance/events").Handler(projectNotificationRead(http.HandlerFunc(notificationGovernanceController.ProjectEventHistory))).Methods("GET", "HEAD")
 	authenticatedAPI.Path("/project/{project_id}/notification-governance/deliveries/{delivery_id}/retry").Handler(projectNotificationManage(http.HandlerFunc(notificationGovernanceController.RetryProjectDelivery))).Methods("POST")
+
+	authenticatedAPI.Path("/workflow-artifact-retention").Handler(
+		globalWorkflowArtifactRetentionManage(http.HandlerFunc(workflowArtifactRetentionController.GetGlobalWorkflowArtifactRetention)),
+	).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/workflow-artifact-retention").Handler(
+		globalWorkflowArtifactRetentionManage(http.HandlerFunc(workflowArtifactRetentionController.PublishGlobalWorkflowArtifactRetention)),
+	).Methods("PUT")
+	authenticatedAPI.Path("/project/{project_id}/workflow-artifact-retention").Handler(
+		projectWorkflowArtifactRetentionManage(http.HandlerFunc(workflowArtifactRetentionController.GetProjectWorkflowArtifactRetention)),
+	).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/project/{project_id}/workflow-artifact-retention").Handler(
+		projectWorkflowArtifactRetentionManage(http.HandlerFunc(workflowArtifactRetentionController.PublishProjectWorkflowArtifactRetention)),
+	).Methods("PUT")
 
 	authenticatedAPI.Path("/project/{project_id}/deployment-windows").Handler(
 		projectDeploymentWindowManage(pro_interfaces.CapabilityAccessRead, http.HandlerFunc(deploymentWindowController.GetPolicy)),

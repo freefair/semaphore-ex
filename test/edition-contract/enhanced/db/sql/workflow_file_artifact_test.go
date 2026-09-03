@@ -334,6 +334,65 @@ func TestWorkflowArtifactRetentionPolicyIsAppendOnlyAndCannotWiden(t *testing.T)
 	assert.ErrorIs(t, err, pro_interfaces.ErrWorkflowArtifactRetentionConflict)
 }
 
+func TestWorkflowArtifactRetentionBootstrapSerializesGlobalAndProjectPublish(t *testing.T) {
+	store, repository, fixture := workflowFileArtifactFixture(t)
+	t.Cleanup(store.Close)
+	now := time.Now().UTC()
+	projectID := fixture.projectID
+	global := coredb.WorkflowArtifactRetentionPolicy{
+		Scope: coredb.WorkflowArtifactRetentionGlobal, Revision: 1,
+		RetentionSeconds: int64((5 * 24 * time.Hour) / time.Second),
+		MaxArtifactBytes: 8 << 20, MaxRunBytes: 32 << 20,
+		CreatedByUserID: fixture.userID, CreatedAt: now,
+	}
+	project := coredb.WorkflowArtifactRetentionPolicy{
+		Scope: coredb.WorkflowArtifactRetentionProject, ProjectID: &projectID, Revision: 1,
+		RetentionSeconds: int64((7 * 24 * time.Hour) / time.Second),
+		MaxArtifactBytes: 16 << 20, MaxRunBytes: 64 << 20,
+		CreatedByUserID: fixture.userID, CreatedAt: now,
+	}
+	type publishResult struct {
+		scope coredb.WorkflowArtifactRetentionScope
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan publishResult, 2)
+	for _, policy := range []coredb.WorkflowArtifactRetentionPolicy{global, project} {
+		policy := policy
+		go func() {
+			<-start
+			_, publishErr := repository.PublishWorkflowArtifactRetentionPolicy(policy, 0)
+			results <- publishResult{scope: policy.Scope, err: publishErr}
+		}()
+	}
+	close(start)
+	first, second := <-results, <-results
+	close(results)
+	resultSet := []publishResult{first, second}
+	successes, conflicts := 0, 0
+	for _, result := range resultSet {
+		switch {
+		case result.err == nil:
+			successes++
+		case errors.Is(result.err, pro_interfaces.ErrWorkflowArtifactRetentionConflict):
+			conflicts++
+		default:
+			t.Fatalf("unexpected %s bootstrap result: %v", result.scope, result.err)
+		}
+	}
+	assert.Equal(t, 1, successes)
+	assert.Equal(t, 1, conflicts)
+
+	storedGlobal, globalFound, err := repository.GetWorkflowArtifactRetentionPolicy(coredb.WorkflowArtifactRetentionGlobal, nil)
+	require.NoError(t, err)
+	storedProject, projectFound, err := repository.GetWorkflowArtifactRetentionPolicy(coredb.WorkflowArtifactRetentionProject, &projectID)
+	require.NoError(t, err)
+	if globalFound && projectFound {
+		_, err = coredb.ResolveWorkflowArtifactRetention(storedGlobal, &storedProject)
+		require.NoError(t, err)
+	}
+}
+
 type workflowFileArtifactTestFixture struct {
 	projectID          int
 	workflowTemplateID int

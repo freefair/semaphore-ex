@@ -133,10 +133,13 @@ func Route(
 	terraformInventoryController := proProjects.NewTerraformInventoryController(terraformStore)
 	workflowController := proProjects.NewWorkflowController(workflowService, workflowStore, workflowDefinitionService)
 	workflowFileArtifactIdentityStore, _ := store.(pro_interfaces.WorkflowFileArtifactIdentityStore)
+	workflowFileArtifactRepository := proFactory.NewWorkflowFileArtifactStore(store)
 	workflowFileArtifactService := proServer.NewWorkflowFileArtifactService(
-		proFactory.NewWorkflowFileArtifactStore(store), workflowStore, workflowFileArtifactIdentityStore,
+		workflowFileArtifactRepository, workflowStore, workflowFileArtifactIdentityStore,
 	)
 	workflowFileArtifactController := proProjects.NewWorkflowFileArtifactController(workflowFileArtifactService)
+	workflowArtifactRetentionService := proServer.NewWorkflowArtifactRetentionGovernanceService(workflowFileArtifactRepository)
+	workflowArtifactRetentionController := proApi.NewWorkflowArtifactRetentionController(workflowArtifactRetentionService)
 	crossProjectTemplateController := proProjects.NewCrossProjectTemplateController(proServer.NewCrossProjectTemplateService(store, workflowStore))
 	workflowTriggerController := proProjects.NewWorkflowTriggerController(workflowTriggerService)
 	workflowMiddlewareController := projects.NewWorkflowController(workflowStore)
@@ -159,6 +162,7 @@ func Route(
 	auditFacade := auditServices.NewServiceFacade(store, logWriteService, appMetrics, auditWebhookService)
 	configureWorkflowAudit(workflowService, auditFacade)
 	configureWorkflowFileArtifactAudit(workflowFileArtifactService, auditFacade)
+	configureWorkflowArtifactRetentionAudit(workflowArtifactRetentionController, auditFacade)
 	configureCrossProjectTemplateAudit(crossProjectTemplateController, auditFacade)
 	configureExecutionPreflightAudit(taskController, auditFacade)
 	configureExecutionPreflightAudit(workflowController, auditFacade)
@@ -327,6 +331,7 @@ func Route(
 		auditFacade,
 		notificationGovernanceController,
 		globalCredentialController,
+		workflowArtifactRetentionController,
 		deploymentWindowController,
 		policyGuardrailController,
 		delegatedProjectRolesSnapshot,

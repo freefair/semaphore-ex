@@ -22,6 +22,12 @@ func configureWorkflowFileArtifactAudit(target any, audit pro_interfaces.AuditSe
 	}
 }
 
+func configureWorkflowArtifactRetentionAudit(target any, audit pro_interfaces.AuditServiceFacade) {
+	if configurable, ok := target.(pro_interfaces.WorkflowArtifactRetentionAuditConfigurer); ok {
+		configurable.ConfigureWorkflowArtifactRetentionAudit(audit)
+	}
+}
+
 func configureDeploymentWindowAudit(target any, audit pro_interfaces.AuditServiceFacade) {
 	if configurable, ok := target.(pro_interfaces.DeploymentWindowAuditConfigurer); ok {
 		configurable.ConfigureDeploymentWindowAudit(audit)
