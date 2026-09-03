@@ -28,6 +28,8 @@ tags:
     description: Workflows
   - name: global-credential
     description: Enhanced global credential metadata, versions, and project grants
+  - name: policy-guardrail
+    description: Enhanced global and project execution-admission policy governance
 
 schemes:
   - http
@@ -43,6 +45,36 @@ definitions:
     $ref: "./api-docs-ex.yml#/definitions/ExecutionPreflightPlan"
   ExecutionPreflightStale:
     $ref: "./api-docs-ex.yml#/definitions/ExecutionPreflightStale"
+  PolicyGuardrailDraft:
+    $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailDraft"
+  PolicyGuardrailRevision:
+    $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailRevision"
+  PolicyGuardrailState:
+    $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailState"
+  PolicyGuardrailDraftRequest:
+    $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailDraftRequest"
+  PolicyGuardrailSourceRequest:
+    $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailSourceRequest"
+  PolicyGuardrailValidation:
+    $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailValidation"
+  PolicyGuardrailEvaluationInput:
+    $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailEvaluationInput"
+  PolicyGuardrailEvaluation:
+    $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailEvaluation"
+  PolicyGuardrailFixtureRequest:
+    $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailFixtureRequest"
+  PolicyGuardrailImpactRequest:
+    $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailImpactRequest"
+  PolicyGuardrailImpact:
+    $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailImpact"
+  PolicyGuardrailPublishRequest:
+    $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailPublishRequest"
+  PolicyGuardrailRollbackRequest:
+    $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailRollbackRequest"
+  PolicyGuardrailDiff:
+    $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailDiff"
+  PolicyGuardrailEvaluationRecord:
+    $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailEvaluationRecord"
   Option:
     type: object
     properties:
@@ -1722,6 +1754,22 @@ security:
   - cookie: []
 
 parameters:
+  history_count:
+    name: count
+    description: Maximum number of newest history records to return
+    in: query
+    required: false
+    type: integer
+    minimum: 1
+    maximum: 100
+    default: 25
+  history_before:
+    name: before
+    description: Return history records with an ID lower than this cursor
+    in: query
+    required: false
+    type: integer
+    minimum: 1
   project_id:
     name: project_id
     description: Project ID
@@ -4203,3 +4251,43 @@ paths:
     $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1{credential_id}~1grants~1{grant_id}~1restore"
   /project/{project_id}/granted-credentials:
     $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1granted-credentials"
+  /project/{project_id}/policy-guardrails:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1policy-guardrails"
+  /project/{project_id}/policy-guardrails/draft:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1policy-guardrails~1draft"
+  /project/{project_id}/policy-guardrails/validate:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1policy-guardrails~1validate"
+  /project/{project_id}/policy-guardrails/test:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1policy-guardrails~1test"
+  /project/{project_id}/policy-guardrails/diff:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1policy-guardrails~1diff"
+  /project/{project_id}/policy-guardrails/publish:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1policy-guardrails~1publish"
+  /project/{project_id}/policy-guardrails/impact:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1policy-guardrails~1impact"
+  /project/{project_id}/policy-guardrails/revisions:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1policy-guardrails~1revisions"
+  /project/{project_id}/policy-guardrails/evaluations:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1policy-guardrails~1evaluations"
+  /project/{project_id}/policy-guardrails/rollback:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1policy-guardrails~1rollback"
+  /policy-guardrails:
+    $ref: "./api-docs-ex.yml#/paths/~1policy-guardrails"
+  /policy-guardrails/draft:
+    $ref: "./api-docs-ex.yml#/paths/~1policy-guardrails~1draft"
+  /policy-guardrails/validate:
+    $ref: "./api-docs-ex.yml#/paths/~1policy-guardrails~1validate"
+  /policy-guardrails/test:
+    $ref: "./api-docs-ex.yml#/paths/~1policy-guardrails~1test"
+  /policy-guardrails/diff:
+    $ref: "./api-docs-ex.yml#/paths/~1policy-guardrails~1diff"
+  /policy-guardrails/publish:
+    $ref: "./api-docs-ex.yml#/paths/~1policy-guardrails~1publish"
+  /policy-guardrails/impact:
+    $ref: "./api-docs-ex.yml#/paths/~1policy-guardrails~1impact"
+  /policy-guardrails/revisions:
+    $ref: "./api-docs-ex.yml#/paths/~1policy-guardrails~1revisions"
+  /policy-guardrails/evaluations:
+    $ref: "./api-docs-ex.yml#/paths/~1policy-guardrails~1evaluations"
+  /policy-guardrails/rollback:
+    $ref: "./api-docs-ex.yml#/paths/~1policy-guardrails~1rollback"
