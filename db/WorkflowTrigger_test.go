@@ -115,6 +115,15 @@ func TestWebhookWorkflowTriggerRequiresSigningMaterialAndDurableReplayIdentity(t
 	assert.Error(t, ValidateWorkflowTriggerInvocation(invocation), "webhook replay identities cannot expire")
 }
 
+func TestValidWorkflowWebhookSigningStateRejectsMalformedCurrentBeforeOptionalNext(t *testing.T) {
+	currentSecret, currentID := "sealed-current", "swhkid_current"
+	assert.False(t, ValidWorkflowWebhookSigningState(currentSecret, "malformed", "", "", 1, 0), "current-only state still requires a valid key ID")
+	assert.False(t, ValidWorkflowWebhookSigningState("", "", "sealed-next", "swhkid_next", 0, 2), "a next key cannot exist without current material")
+	assert.False(t, ValidWorkflowWebhookSigningState(currentSecret, currentID, "sealed-next", "swhkid_next", 1, 1), "equal generations are not a rotation state")
+	assert.True(t, ValidWorkflowWebhookSigningState(currentSecret, currentID, "sealed-next", "swhkid_next", 1, 2), "a newer next key is staged")
+	assert.True(t, ValidWorkflowWebhookSigningState(currentSecret, currentID, "sealed-retired", "swhkid_retired", 2, 1), "an older next key is retained after promotion")
+}
+
 func TestWebhookCorrelationIDIsBoundedAndRejectsMalformedIdentity(t *testing.T) {
 	hash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	invocation := WorkflowTriggerInvocation{WebhookEventHash: &hash}

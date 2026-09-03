@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -56,6 +58,85 @@ func TestWorkflowTriggerAPIRejectsMissingCredentialAndUnknownInput(t *testing.T)
 	assert.Zero(t, service.fires)
 }
 
+func TestWorkflowTriggerAPIForwardsExactSignedWebhookRequest(t *testing.T) {
+	service := &workflowTriggerAPIService{}
+	controller := NewWorkflowTriggerController(service)
+	key, err := pro_interfaces.NewWebhookSigningKey()
+	require.NoError(t, err)
+	body := []byte("{ \"inputs\" : { \"target\" : \"eu\" } }\n")
+	target := "/api/workflow-triggers/7/9/13/webhook?exact=%2Fvalue&space=%20"
+	headers := pro_interfaces.WebhookSignatureHeaders{Version: pro_interfaces.WebhookSignatureProtocolVersion, EventID: "evt_1234567890123456", Timestamp: fmt.Sprintf("%d", time.Now().Unix()), KeyID: key.ID}
+	bound, err := pro_interfaces.BindWebhookSignedRequest(http.MethodPost, target, headers, body)
+	require.NoError(t, err)
+	bound.Signature, err = pro_interfaces.SignWebhookRequest(key.Secret, bound)
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPost, "http://example.test"+target, bytes.NewReader(body))
+	request.RequestURI = target
+	request = mux.SetURLVars(request, map[string]string{"project_id": "7", "workflow_id": "9", "trigger_id": "13"})
+	request.Header.Set(pro_interfaces.WebhookHeaderVersion, headers.Version)
+	request.Header.Set(pro_interfaces.WebhookHeaderEventID, headers.EventID)
+	request.Header.Set(pro_interfaces.WebhookHeaderTimestamp, headers.Timestamp)
+	request.Header.Set(pro_interfaces.WebhookHeaderKeyID, headers.KeyID)
+	request.Header.Set(pro_interfaces.WebhookHeaderSignature, bound.Signature)
+	recorder := httptest.NewRecorder()
+	controller.InvokeWebhookTrigger(recorder, request)
+	require.Equal(t, http.StatusCreated, recorder.Code)
+	require.Equal(t, target, service.signed.RequestTarget)
+	assert.Equal(t, body, service.signed.Payload)
+
+	for _, test := range []struct{ name, header string }{{"missing", pro_interfaces.WebhookHeaderSignature}, {"duplicate", pro_interfaces.WebhookHeaderEventID}} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := httptest.NewRequest(http.MethodPost, "http://example.test"+target, bytes.NewReader(body))
+			candidate.RequestURI = target
+			candidate = mux.SetURLVars(candidate, map[string]string{"project_id": "7", "workflow_id": "9", "trigger_id": "13"})
+			candidate.Header = request.Header.Clone()
+			if test.name == "missing" {
+				candidate.Header.Del(test.header)
+			} else {
+				candidate.Header.Add(test.header, headers.EventID)
+			}
+			before := service.signedFires
+			rec := httptest.NewRecorder()
+			controller.InvokeWebhookTrigger(rec, candidate)
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+			assert.Equal(t, before, service.signedFires)
+		})
+	}
+
+	bearer := httptest.NewRequest(http.MethodPost, "http://example.test"+target, bytes.NewReader(body))
+	bearer = mux.SetURLVars(bearer, map[string]string{"project_id": "7", "workflow_id": "9", "trigger_id": "13"})
+	bearer.Header = request.Header.Clone()
+	bearer.Header.Set("Authorization", "Bearer swt_once")
+	beforeBearer := service.signedFires
+	bearerRec := httptest.NewRecorder()
+	controller.InvokeWebhookTrigger(bearerRec, bearer)
+	assert.Equal(t, http.StatusUnauthorized, bearerRec.Code)
+	assert.Equal(t, beforeBearer, service.signedFires)
+
+	overflow := httptest.NewRequest(http.MethodPost, "http://example.test"+target, bytes.NewReader(make([]byte, workflowTriggerBodyLimit+1)))
+	overflow = mux.SetURLVars(overflow, map[string]string{"project_id": "7", "workflow_id": "9", "trigger_id": "13"})
+	overflowRec := httptest.NewRecorder()
+	controller.InvokeWebhookTrigger(overflowRec, overflow)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, overflowRec.Code)
+
+	service.signedError = pro_interfaces.ErrWorkflowTriggerWebhookReplay
+	replay := httptest.NewRequest(http.MethodPost, "http://example.test"+target, bytes.NewReader(body))
+	replay.RequestURI = target
+	replay = mux.SetURLVars(replay, map[string]string{"project_id": "7", "workflow_id": "9", "trigger_id": "13"})
+	replay.Header = request.Header.Clone()
+	replayRec := httptest.NewRecorder()
+	controller.InvokeWebhookTrigger(replayRec, replay)
+	assert.Equal(t, http.StatusConflict, replayRec.Code)
+	service.signedError = errors.New("internal signed service failure")
+	failure := httptest.NewRequest(http.MethodPost, "http://example.test"+target, bytes.NewReader(body))
+	failure.RequestURI = target
+	failure = mux.SetURLVars(failure, map[string]string{"project_id": "7", "workflow_id": "9", "trigger_id": "13"})
+	failure.Header = request.Header.Clone()
+	failureRec := httptest.NewRecorder()
+	controller.InvokeWebhookTrigger(failureRec, failure)
+	assert.Equal(t, http.StatusUnauthorized, failureRec.Code)
+}
+
 func TestWorkflowTriggerAPIMapsCredentialRevisionCapabilityAndPermissionErrors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -66,6 +147,8 @@ func TestWorkflowTriggerAPIMapsCredentialRevisionCapabilityAndPermissionErrors(t
 		{name: "permission", err: pro_interfaces.ErrWorkflowTriggerPermissionDenied, want: http.StatusForbidden},
 		{name: "revision", err: db.ErrWorkflowTriggerRevisionConflict, want: http.StatusConflict},
 		{name: "state changed", err: db.ErrWorkflowTriggerStateChanged, want: http.StatusConflict},
+		{name: "signing conflict", err: pro_interfaces.ErrWorkflowTriggerSigningStateConflict, want: http.StatusConflict},
+		{name: "signing unavailable", err: pro_interfaces.ErrWorkflowTriggerSigningUnavailable, want: http.StatusConflict},
 		{name: "not found", err: db.ErrNotFound, want: http.StatusNotFound},
 	}
 	for _, test := range tests {
@@ -101,6 +184,9 @@ type workflowTriggerAPIService struct {
 	idempotencyKey string
 	fires          int
 	fireError      error
+	signed         pro_interfaces.WebhookSignedRequest
+	signedFires    int
+	signedError    error
 }
 
 func (s *workflowTriggerAPIService) Create(context.Context, int, int, db.WorkflowTrigger, *db.User) (pro_interfaces.WorkflowTriggerCredentialResult, error) {
@@ -112,8 +198,10 @@ func (s *workflowTriggerAPIService) FireExternal(_ context.Context, _, _, _ int,
 	s.idempotencyKey = key
 	return pro_interfaces.WorkflowTriggerFireResult{Run: db.WorkflowRun{ID: 17}}, s.fireError
 }
-func (s *workflowTriggerAPIService) FireSignedWebhook(context.Context, int, int, int, pro_interfaces.WebhookSignedRequest) (pro_interfaces.WorkflowTriggerFireResult, error) {
-	return pro_interfaces.WorkflowTriggerFireResult{}, pro_interfaces.ErrWorkflowTriggerWebhookRejected
+func (s *workflowTriggerAPIService) FireSignedWebhook(_ context.Context, _ int, _ int, _ int, request pro_interfaces.WebhookSignedRequest) (pro_interfaces.WorkflowTriggerFireResult, error) {
+	s.signedFires++
+	s.signed = request
+	return pro_interfaces.WorkflowTriggerFireResult{Invocation: db.WorkflowTriggerInvocation{ID: 19}, Run: db.WorkflowRun{ID: 17}}, s.signedError
 }
 func (s *workflowTriggerAPIService) List(context.Context, int, int, db.RetrieveQueryParams, *db.User) ([]db.WorkflowTrigger, error) {
 	return nil, nil

@@ -36,7 +36,7 @@ func TestSignedWebhookPersistenceMigrationFailsClosedForLegacyInboundRows(t *tes
 	for table, columns := range map[string][]string{
 		"audit_webhook_config":                 {"current_signing_secret_encrypted", "next_signing_secret_encrypted", "current_signing_key_id", "next_signing_key_id", "current_signing_generation", "next_signing_generation", "signing_state_revision"},
 		"audit_webhook_delivery":               {"last_signed_at"},
-		"project__workflow_trigger":            {"current_signing_secret_encrypted", "next_signing_secret_encrypted", "current_signing_key_id", "next_signing_key_id"},
+		"project__workflow_trigger":            {"current_signing_secret_encrypted", "next_signing_secret_encrypted", "current_signing_key_id", "next_signing_key_id", "current_signing_generation", "next_signing_generation"},
 		"project__workflow_trigger_invocation": {"webhook_event_hash", "webhook_event_id", "webhook_key_id", "webhook_signed_at", "webhook_replay_count", "webhook_last_replayed_at"},
 	} {
 		for _, column := range columns {
@@ -57,6 +57,8 @@ func TestSignedWebhookPersistenceMigrationFailsClosedForLegacyInboundRows(t *tes
 	require.NoError(t, db.Rollback(store, legacyVersion))
 	assert.NotContains(t, sqliteTableNames(t, store), "audit_webhook_delivery_attempt")
 	assert.NotContains(t, sqliteColumnNames(t, store, "project__workflow_trigger_invocation"), "webhook_event_hash")
+	assert.NotContains(t, sqliteColumnNames(t, store, "project__workflow_trigger"), "current_signing_generation")
+	assert.NotContains(t, sqliteColumnNames(t, store, "project__workflow_trigger"), "next_signing_generation")
 }
 
 func TestSignedWebhookPersistenceMigrationPreparesForEverySQLDialect(t *testing.T) {
