@@ -442,7 +442,7 @@
 
               <v-list-item
                 key="subscription"
-                v-if="isPro && canManageGlobalSystem"
+                v-if="isPro && canManageGlobalSystem && user.has_active_subscription"
                 @click="subscriptionDialog = true"
               >
                 <v-list-item-icon>
