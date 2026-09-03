@@ -900,10 +900,28 @@ func TestPreviewTaskExecutionPolicyGuardrailRevisionChangesFingerprintAndFailure
 	assert.NotContains(t, policyGuardrailReasonCodes(withoutPolicy.Findings), pro_interfaces.ExecutionReasonPolicyAllowed)
 }
 
+func TestPreviewTaskExecutionRebasesPolicyInputToDatabaseTimestamp(t *testing.T) {
+	_, pool, actor, template, _ := createTaskPreflightFixture(t)
+	issuer, err := NewExecutionPreflightReviewTokenIssuer([]byte("01234567890123456789012345678901"), time.Minute)
+	require.NoError(t, err)
+	pool.SetExecutionPreflightReviewTokenIssuer(issuer)
+	databaseTime := time.Date(2026, 9, 3, 14, 30, 0, 0, time.UTC)
+	policy := &executionPreflightPolicyGuardrailStub{evaluatedAt: databaseTime}
+	pool.ConfigurePolicyGuardrailAdmission(policy)
+
+	plan, err := pool.PreviewTaskExecution(db.Task{TemplateID: template.ID}, &actor, template.ProjectID)
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, plan.PolicyRevisions)
+	require.NotNil(t, policy.input)
+	assert.NotEqual(t, databaseTime, policy.input.EvaluatedAt)
+}
+
 type executionPreflightPolicyGuardrailStub struct {
 	input         *pro_interfaces.PolicyGuardrailEvaluationInput
 	claimRequests []pro_interfaces.PolicyGuardrailAdmissionRequest
 	revision      int
+	evaluatedAt   time.Time
 	effects       []pro_interfaces.PolicyGuardrailEffect
 	err           error
 	claimErr      error
@@ -945,9 +963,13 @@ func (s *executionPreflightPolicyGuardrailStub) EvaluatePolicyGuardrails(input p
 			Severity: pro_interfaces.PolicyGuardrailSeverityLow, Message: "Policy result.",
 		})
 	}
+	evaluatedAt := input.EvaluatedAt
+	if !s.evaluatedAt.IsZero() {
+		evaluatedAt = s.evaluatedAt
+	}
 	return pro_interfaces.PolicyGuardrailEvaluation{
 		Revisions: revisions, Findings: findings, Allowed: allowed,
-		InputFingerprint: fingerprint, EvaluatedAt: input.EvaluatedAt,
+		InputFingerprint: fingerprint, EvaluatedAt: evaluatedAt,
 	}, nil
 }
 
