@@ -65,6 +65,8 @@ const (
 	ExecutionReasonHiddenReference       ExecutionPreflightReasonCode = "hidden_reference"
 	ExecutionReasonPermissionDenied      ExecutionPreflightReasonCode = "permission_denied"
 	ExecutionReasonCapabilityUnavailable ExecutionPreflightReasonCode = "capability_unavailable"
+	ExecutionReasonPolicyAllowed         ExecutionPreflightReasonCode = "policy_allowed"
+	ExecutionReasonPolicyWarning         ExecutionPreflightReasonCode = "policy_warning"
 	ExecutionReasonPolicyDenied          ExecutionPreflightReasonCode = "policy_denied"
 	ExecutionReasonPlanLimitExceeded     ExecutionPreflightReasonCode = "plan_limit_exceeded"
 	ExecutionReasonInvalidInput          ExecutionPreflightReasonCode = "invalid_input"
@@ -221,10 +223,15 @@ type ExecutionPreflightPlacement struct {
 }
 
 type ExecutionPreflightFinding struct {
-	Severity ExecutionPreflightFindingSeverity `json:"severity"`
-	Code     ExecutionPreflightReasonCode      `json:"code"`
-	Message  string                            `json:"message"`
-	NodeID   *int                              `json:"node_id,omitempty"`
+	Severity       ExecutionPreflightFindingSeverity `json:"severity"`
+	Code           ExecutionPreflightReasonCode      `json:"code"`
+	Message        string                            `json:"message"`
+	NodeID         *int                              `json:"node_id,omitempty"`
+	PolicyScope    PolicyGuardrailScope              `json:"policy_scope,omitempty"`
+	PolicyRevision int                               `json:"policy_revision,omitempty"`
+	PolicyRuleID   string                            `json:"policy_rule_id,omitempty"`
+	PolicyEffect   PolicyGuardrailEffect             `json:"policy_effect,omitempty"`
+	RemediationURL string                            `json:"remediation_url,omitempty"`
 }
 
 type ExecutionPreflightPlan struct {
@@ -240,6 +247,7 @@ type ExecutionPreflightPlan struct {
 	Commands        []ExecutionPreflightCommand   `json:"commands"`
 	Placements      []ExecutionPreflightPlacement `json:"placements"`
 	Findings        []ExecutionPreflightFinding   `json:"findings"`
+	PolicyRevisions []PolicyGuardrailRevisionRef  `json:"policy_revisions,omitempty"`
 	Fingerprint     string                        `json:"fingerprint"`
 	ExpiresAt       time.Time                     `json:"expires_at"`
 	ReviewToken     string                        `json:"review_token,omitempty"`
@@ -342,7 +350,7 @@ func (p ExecutionPreflightPlan) Validate() error {
 	}
 	if len(p.Inputs) > MaxExecutionPreflightInputs || len(p.References) > MaxExecutionPreflightReferences ||
 		len(p.Commands) > MaxExecutionPreflightCommands || len(p.Placements) > MaxExecutionPreflightPlacements ||
-		len(p.Findings) > MaxExecutionPreflightFindings {
+		len(p.Findings) > MaxExecutionPreflightFindings || len(p.PolicyRevisions) > 2 {
 		return errors.New("execution preflight plan limit exceeded")
 	}
 	if err := validatePreflightString(p.Definition.Name); err != nil {
@@ -372,6 +380,22 @@ func (p ExecutionPreflightPlan) Validate() error {
 		}
 		if err := validatePreflightString(finding.Message); err != nil {
 			return errors.New("invalid execution preflight finding")
+		}
+		if finding.PolicyScope != "" || finding.PolicyRevision != 0 || finding.PolicyRuleID != "" || finding.PolicyEffect != "" || finding.RemediationURL != "" {
+			if finding.PolicyScope != PolicyGuardrailScopeGlobal && finding.PolicyScope != PolicyGuardrailScopeProject ||
+				finding.PolicyRevision <= 0 || !policyGuardrailRuleIDPattern.MatchString(finding.PolicyRuleID) ||
+				(finding.PolicyEffect != PolicyGuardrailEffectAllow && finding.PolicyEffect != PolicyGuardrailEffectWarn && finding.PolicyEffect != PolicyGuardrailEffectDeny) ||
+				validatePolicyGuardrailRemediationURL(finding.RemediationURL) != nil {
+				return errors.New("invalid execution preflight policy finding")
+			}
+		}
+	}
+	for _, revision := range p.PolicyRevisions {
+		if revision.Scope != PolicyGuardrailScopeGlobal && revision.Scope != PolicyGuardrailScopeProject ||
+			revision.Revision <= 0 || !validExecutionPreflightFingerprint(revision.Fingerprint) ||
+			(revision.Scope == PolicyGuardrailScopeGlobal && revision.ProjectID != nil) ||
+			(revision.Scope == PolicyGuardrailScopeProject && (revision.ProjectID == nil || *revision.ProjectID != p.ProjectID)) {
+			return errors.New("invalid execution preflight policy revision")
 		}
 	}
 	return nil
@@ -428,7 +452,10 @@ func ExecutionPreflightComponentDigests(plan ExecutionPreflightPlan) ([]Executio
 		{ExecutionChangePlacement, canonical.Placements},
 		{ExecutionChangePermission, preflightFindingsForCode(canonical.Findings, ExecutionReasonPermissionDenied)},
 		{ExecutionChangeCapability, preflightFindingsForCode(canonical.Findings, ExecutionReasonCapabilityUnavailable)},
-		{ExecutionChangePolicy, preflightPolicyFindings(canonical.Findings)},
+		{ExecutionChangePolicy, struct {
+			Revisions []PolicyGuardrailRevisionRef
+			Findings  []ExecutionPreflightFinding
+		}{Revisions: canonical.PolicyRevisions, Findings: preflightPolicyFindings(canonical.Findings)}},
 	}
 	result := make([]ExecutionPreflightComponentDigest, 0, len(components))
 	for _, component := range components {
@@ -483,7 +510,7 @@ func DiffExecutionPreflight(previous, current ExecutionPreflightPlan) []Executio
 	appendChange(!preflightJSONEqual(canonicalExecutionPreflight(previous).Placements, canonicalExecutionPreflight(current).Placements), ExecutionChangePlacement)
 	appendChange(preflightFindingsChanged(previous, current, ExecutionReasonPermissionDenied), ExecutionChangePermission)
 	appendChange(preflightFindingsChanged(previous, current, ExecutionReasonCapabilityUnavailable), ExecutionChangeCapability)
-	appendChange(preflightPolicyChanged(previous, current), ExecutionChangePolicy)
+	appendChange(preflightPolicyChanged(previous, current) || !preflightJSONEqual(canonicalExecutionPreflight(previous).PolicyRevisions, canonicalExecutionPreflight(current).PolicyRevisions), ExecutionChangePolicy)
 	return changes
 }
 
@@ -494,6 +521,7 @@ func canonicalExecutionPreflight(plan ExecutionPreflightPlan) ExecutionPreflight
 	result.Commands = append([]ExecutionPreflightCommand(nil), plan.Commands...)
 	result.Placements = append([]ExecutionPreflightPlacement(nil), plan.Placements...)
 	result.Findings = append([]ExecutionPreflightFinding(nil), plan.Findings...)
+	result.PolicyRevisions = append([]PolicyGuardrailRevisionRef(nil), plan.PolicyRevisions...)
 	sort.Slice(result.Inputs, func(i, j int) bool {
 		if result.Inputs[i].Name != result.Inputs[j].Name {
 			return result.Inputs[i].Name < result.Inputs[j].Name
@@ -543,6 +571,12 @@ func canonicalExecutionPreflight(plan ExecutionPreflightPlan) ExecutionPreflight
 		return preflightNodeID(result.Placements[i].NodeID) < preflightNodeID(result.Placements[j].NodeID)
 	})
 	sort.Slice(result.Findings, func(i, j int) bool {
+		if result.Findings[i].PolicyScope != result.Findings[j].PolicyScope {
+			return result.Findings[i].PolicyScope < result.Findings[j].PolicyScope
+		}
+		if result.Findings[i].PolicyRuleID != result.Findings[j].PolicyRuleID {
+			return result.Findings[i].PolicyRuleID < result.Findings[j].PolicyRuleID
+		}
 		if result.Findings[i].Severity != result.Findings[j].Severity {
 			return result.Findings[i].Severity < result.Findings[j].Severity
 		}
@@ -550,6 +584,12 @@ func canonicalExecutionPreflight(plan ExecutionPreflightPlan) ExecutionPreflight
 			return result.Findings[i].Code < result.Findings[j].Code
 		}
 		return result.Findings[i].Message < result.Findings[j].Message
+	})
+	sort.Slice(result.PolicyRevisions, func(i, j int) bool {
+		if result.PolicyRevisions[i].Scope != result.PolicyRevisions[j].Scope {
+			return result.PolicyRevisions[i].Scope < result.PolicyRevisions[j].Scope
+		}
+		return result.PolicyRevisions[i].Revision < result.PolicyRevisions[j].Revision
 	})
 	return result
 }
@@ -582,6 +622,8 @@ func preflightFindingsChanged(previous, current ExecutionPreflightPlan, code Exe
 
 func preflightPolicyChanged(previous, current ExecutionPreflightPlan) bool {
 	policyCodes := map[ExecutionPreflightReasonCode]bool{
+		ExecutionReasonPolicyAllowed:     true,
+		ExecutionReasonPolicyWarning:     true,
 		ExecutionReasonPolicyDenied:      true,
 		ExecutionReasonPlanLimitExceeded: true,
 		ExecutionReasonInvalidInput:      true,
@@ -661,6 +703,8 @@ func preflightFindingsForCode(findings []ExecutionPreflightFinding, code Executi
 
 func preflightPolicyFindings(findings []ExecutionPreflightFinding) []ExecutionPreflightFinding {
 	policyCodes := map[ExecutionPreflightReasonCode]bool{
+		ExecutionReasonPolicyAllowed:     true,
+		ExecutionReasonPolicyWarning:     true,
 		ExecutionReasonPolicyDenied:      true,
 		ExecutionReasonPlanLimitExceeded: true,
 		ExecutionReasonInvalidInput:      true,
