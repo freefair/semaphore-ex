@@ -185,7 +185,7 @@ type WorkflowFileArtifactUpload struct {
 }
 
 func (upload WorkflowFileArtifactUpload) Validate() error {
-	if upload.WorkflowNodeID < 1 || upload.TaskID < 1 || upload.Attempt < 1 ||
+	if upload.WorkflowNodeID < 1 || upload.TaskID < 1 || upload.Attempt < 0 ||
 		!workflowFileArtifactNamePattern.MatchString(upload.LogicalName) ||
 		upload.SizeBytes < 1 || upload.SizeBytes > MaxWorkflowFileArtifactBytes ||
 		!validWorkflowFileArtifactSHA256(upload.SHA256) {
@@ -362,7 +362,7 @@ func (artifact *WorkflowFileArtifactMetadata) CanonicalizeForPersistence() error
 func (artifact WorkflowFileArtifactMetadata) Validate() error {
 	if artifact.ID < 1 || artifact.ProjectID < 1 || artifact.WorkflowTemplateID < 1 ||
 		artifact.WorkflowRunID < 1 || artifact.WorkflowNodeID < 1 ||
-		artifact.WorkflowDefinitionRevision < 1 || artifact.TaskID < 1 || artifact.Attempt < 1 ||
+		artifact.WorkflowDefinitionRevision < 1 || artifact.TaskID < 1 || artifact.Attempt < 0 ||
 		artifact.SizeBytes < 1 || artifact.SizeBytes > MaxWorkflowFileArtifactBytes ||
 		artifact.UploadedBytes < 0 || artifact.UploadedBytes > artifact.SizeBytes ||
 		artifact.Revision < 1 || artifact.ProducerUserID < 1 || artifact.ProducerTemplateID < 1 ||
