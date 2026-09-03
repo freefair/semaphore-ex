@@ -125,6 +125,7 @@ func Route(
 	auditWebhookService pro_interfaces.AuditWebhookService,
 	appMetrics *metrics.Metrics,
 	deploymentWindowGovernanceService pro_interfaces.DeploymentWindowGovernanceServiceFacade,
+	policyGuardrailGovernanceService pro_interfaces.PolicyGuardrailGovernanceServiceFacade,
 	notificationGovernanceServices ...pro_interfaces.NotificationGovernanceServiceFacade,
 ) *mux.Router {
 

@@ -17,6 +17,12 @@ func NewDeploymentWindowStore(db.Store) pro_interfaces.DeploymentWindowGovernanc
 	return nil
 }
 
+// NewPolicyGuardrailStore is unavailable in Community. The Enhanced module
+// replaces this factory with the SQL-backed policy repository.
+func NewPolicyGuardrailStore(db.Store) pro_interfaces.PolicyGuardrailRepository {
+	return nil
+}
+
 func NewAnsibleTaskRepository(store db.Store) db.AnsibleTaskRepository {
 	connectionStore, ok := store.(interface {
 		GetConnection() *coresql.SqlDbConnection

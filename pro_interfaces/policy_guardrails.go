@@ -932,6 +932,15 @@ type PolicyGuardrailAdmissionRepository interface {
 	ClaimPolicyGuardrailEvaluations([]PolicyGuardrailAdmissionRequest, func([]db.PolicyGuardrailRevision, PolicyGuardrailEvaluationInput) (PolicyGuardrailEvaluation, error)) ([]PolicyGuardrailEvaluationClaim, error)
 }
 
+// PolicyGuardrailRepository joins the narrow start-admission and governance
+// storage contracts for the edition factory. Start paths still receive only
+// PolicyGuardrailAdmissionRepository; this composite type merely ensures both
+// services share one SQL-backed policy snapshot store at process wiring time.
+type PolicyGuardrailRepository interface {
+	PolicyGuardrailGovernanceRepository
+	PolicyGuardrailAdmissionRepository
+}
+
 type PolicyGuardrailAdmissionService interface {
 	PolicyGuardrailEvaluator
 	PreviewPolicyGuardrailEvaluations([]PolicyGuardrailEvaluationInput) ([]PolicyGuardrailEvaluation, error)

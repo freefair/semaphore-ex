@@ -9,6 +9,7 @@ import (
 	coreSQL "github.com/semaphoreui/semaphore/db/sql"
 	proSQL "github.com/semaphoreui/semaphore/pro/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,6 +43,15 @@ func TestPolicyGuardrailGovernanceRejectsOversizedImpactAndFixtureUsesProvidedYA
 	require.Error(t, err)
 	_, err = service.TestFixture(context.Background(), pro_interfaces.PolicyGuardrailScopeGlobal, nil, pro_interfaces.PolicyGuardrailFixtureRequest{SourceYAML: "invalid", Input: completePolicyGuardrailInput()})
 	require.Error(t, err)
+}
+
+func TestPolicyGuardrailServiceFactoriesAreAvailableForSQLStore(t *testing.T) {
+	store := coreSQL.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	repository := proSQL.NewPolicyGuardrailStore(store.GetConnection())
+
+	assert.NotNil(t, NewPolicyGuardrailAdmissionService(repository))
+	assert.NotNil(t, NewPolicyGuardrailGovernanceService(repository))
 }
 
 func TestPolicyGuardrailGovernancePublishesDiffsEvaluatesAndRollsBackWithSQLStore(t *testing.T) {
