@@ -606,8 +606,8 @@ export default {
 
   watch: {
     async value(value) {
+      this.dismissCredential();
       if (value) {
-        this.dismissCredential();
         await this.load();
       }
     },
