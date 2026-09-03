@@ -109,6 +109,19 @@ describe('workflow triggers', () => {
     expect(reopened.credential).to.equal('');
   });
 
+  it('clears transient credentials when the trigger dialog closes', async () => {
+    const closed = {
+      credential: 'swhsec_once',
+      credentialAcknowledged: true,
+      dismissCredential: WorkflowTriggersDialog.methods.dismissCredential,
+    };
+
+    await WorkflowTriggersDialog.watch.value.call(closed, false);
+
+    expect(closed.credential).to.equal('');
+    expect(closed.credentialAcknowledged).to.equal(false);
+  });
+
   it('rotates through the lifecycle endpoint and replaces the transient credential', async () => {
     const requests = [];
     axios.post = async (url, payload) => {
