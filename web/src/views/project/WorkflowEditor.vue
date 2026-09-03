@@ -534,9 +534,10 @@
                     v-model="output.name"
                     :label="$t('workflowArtifactName')"
                     :disabled="!canManage"
+                    outlined
                     dense
                     hide-details="auto"
-                    class="mr-1"
+                    class="mr-1 mb-3"
                     @input="applyNodeEdit"
                   />
                   <v-btn
@@ -556,8 +557,10 @@
                   item-text="text"
                   :label="$t('workflowArtifactSchema')"
                   :disabled="!canManage"
+                  outlined
                   dense
                   hide-details="auto"
+                  class="mb-3"
                   @change="setArtifactOutputType(index, $event)"
                 />
                 <v-text-field
@@ -567,8 +570,10 @@
                   max="65536"
                   :label="$t('workflowArtifactMaxBytes')"
                   :disabled="!canManage"
+                  outlined
                   dense
                   hide-details="auto"
+                  class="mb-2"
                   @input="applyNodeEdit"
                 />
                 <v-switch
@@ -615,9 +620,10 @@
                     v-model="input.name"
                     :label="$t('workflowArtifactInputName')"
                     :disabled="!canManage"
+                    outlined
                     dense
                     hide-details="auto"
-                    class="mr-1"
+                    class="mr-1 mb-3"
                     @input="applyNodeEdit"
                   />
                   <v-btn
@@ -637,8 +643,10 @@
                   item-text="text"
                   :label="$t('workflowArtifactSource')"
                   :disabled="!canManage"
+                  outlined
                   dense
                   hide-details="auto"
+                  class="mb-2"
                   @change="setArtifactReference(index, $event)"
                 />
                 <v-switch
