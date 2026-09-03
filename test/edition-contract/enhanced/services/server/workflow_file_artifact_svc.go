@@ -201,6 +201,14 @@ func (service *workflowFileArtifactService) StreamWorkflowFileArtifactDownload(c
 	return written, nil
 }
 
+func (service *workflowFileArtifactService) RecordWorkflowFileArtifactDownloadFailure(download pro_interfaces.WorkflowFileArtifactDownload) error {
+	if download.Validate() != nil {
+		return db.ErrInvalidOperation
+	}
+	service.recordDownloadAudit(download.Metadata.ProjectID, download.Metadata.ID, &db.User{ID: download.ActorID}, pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonOperationError)
+	return nil
+}
+
 func (service *workflowFileArtifactService) recordDownloadAudit(projectID int, artifactID int, user *db.User, outcome pro_interfaces.AuditOutcome, reason string) {
 	if service.audit == nil || projectID < 1 || artifactID < 1 || user == nil || user.ID < 1 {
 		return

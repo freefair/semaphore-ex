@@ -19,15 +19,16 @@ import (
 
 type workflowFileArtifactServiceStub struct {
 	pro_interfaces.WorkflowFileArtifactServiceFacade
-	artifact    db.WorkflowFileArtifactMetadata
-	download    pro_interfaces.WorkflowFileArtifactDownload
-	content     []byte
-	err         error
-	acquired    int
-	streamed    int
-	released    int
-	beginCalls  int
-	appendCalls int
+	artifact      db.WorkflowFileArtifactMetadata
+	download      pro_interfaces.WorkflowFileArtifactDownload
+	content       []byte
+	err           error
+	acquired      int
+	streamed      int
+	released      int
+	beginCalls    int
+	appendCalls   int
+	failureAudits int
 }
 
 func (stub *workflowFileArtifactServiceStub) BeginWorkflowFileArtifact(context.Context, int, int, db.WorkflowFileArtifactUpload, *db.User) (db.WorkflowFileArtifactMetadata, error) {
@@ -65,6 +66,11 @@ func (stub *workflowFileArtifactServiceStub) StreamWorkflowFileArtifactDownload(
 
 func (stub *workflowFileArtifactServiceStub) ReleaseWorkflowFileArtifactDownload(pro_interfaces.WorkflowFileArtifactDownload) error {
 	stub.released++
+	return nil
+}
+
+func (stub *workflowFileArtifactServiceStub) RecordWorkflowFileArtifactDownloadFailure(pro_interfaces.WorkflowFileArtifactDownload) error {
+	stub.failureAudits++
 	return nil
 }
 
@@ -156,6 +162,7 @@ func TestWorkflowFileArtifactControllerReleasesLeaseWhenDeadlineCannotBeSet(t *t
 	controller.DownloadWorkflowFileArtifact(recorder, workflowFileArtifactRequest(http.MethodGet, "/content", nil))
 	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
 	assert.Zero(t, service.streamed)
+	assert.Equal(t, 1, service.failureAudits)
 	assert.Equal(t, 1, service.released)
 }
 

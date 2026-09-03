@@ -48,6 +48,10 @@ func (*workflowFileArtifactService) StreamWorkflowFileArtifactDownload(context.C
 	return 0, db.ErrNotFound
 }
 
+func (*workflowFileArtifactService) RecordWorkflowFileArtifactDownloadFailure(pro_interfaces.WorkflowFileArtifactDownload) error {
+	return db.ErrNotFound
+}
+
 func (*workflowFileArtifactService) ReleaseWorkflowFileArtifactDownload(pro_interfaces.WorkflowFileArtifactDownload) error {
 	return db.ErrNotFound
 }

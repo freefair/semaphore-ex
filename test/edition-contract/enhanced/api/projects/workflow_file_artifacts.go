@@ -194,6 +194,9 @@ func (controller *workflowFileArtifactController) DownloadWorkflowFileArtifact(w
 		return
 	}
 	if err = http.NewResponseController(w).SetWriteDeadline(download.Deadline); err != nil {
+		if auditErr := controller.service.RecordWorkflowFileArtifactDownloadFailure(download); auditErr != nil {
+			log.WithError(auditErr).Warn("failed to record workflow file artifact download failure")
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
