@@ -241,11 +241,12 @@ type GlobalCredentialUsage struct {
 }
 
 type GlobalCredentialUsageQuery struct {
-	ProjectID *int
-	TaskID    *int
-	Outcome   *string
-	BeforeID  int
-	Count     int
+	ProjectID          *int
+	TaskID             *int
+	DispatchGeneration *int
+	Outcome            *string
+	BeforeID           int
+	Count              int
 }
 
 type GlobalCredentialImpact struct {

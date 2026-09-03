@@ -16,6 +16,7 @@ import (
 	"github.com/semaphoreui/semaphore/api/helpers"
 	proApi "github.com/semaphoreui/semaphore/pro/api"
 	proProjects "github.com/semaphoreui/semaphore/pro/api/projects"
+	proFactory "github.com/semaphoreui/semaphore/pro/db/factory"
 	proFeatures "github.com/semaphoreui/semaphore/pro/pkg/features"
 	proHA "github.com/semaphoreui/semaphore/pro/services/ha"
 	proServer "github.com/semaphoreui/semaphore/pro/services/server"
@@ -160,6 +161,11 @@ func Route(
 	terraformController := proApi.NewTerraformController(encryptionService, terraformStore, store)
 	terraformInventoryController := proProjects.NewTerraformInventoryController(terraformStore)
 	workflowController := proProjects.NewWorkflowController(workflowService, workflowStore, workflowDefinitionService)
+	workflowFileArtifactIdentityStore, _ := store.(pro_interfaces.WorkflowFileArtifactIdentityStore)
+	workflowFileArtifactService := proServer.NewWorkflowFileArtifactService(
+		proFactory.NewWorkflowFileArtifactStore(store), workflowStore, workflowFileArtifactIdentityStore,
+	)
+	workflowFileArtifactController := proProjects.NewWorkflowFileArtifactController(workflowFileArtifactService)
 	crossProjectTemplateController := proProjects.NewCrossProjectTemplateController(proServer.NewCrossProjectTemplateService(store, workflowStore))
 	workflowTriggerController := proProjects.NewWorkflowTriggerController(workflowTriggerService)
 	workflowMiddlewareController := projects.NewWorkflowController(workflowStore)
@@ -1128,6 +1134,12 @@ func Route(
 	projectWorkflowRunManagement.Handle("/{run_id}/stop", workflowStop(http.HandlerFunc(workflowController.StopWorkflowRun))).Methods("POST")
 	projectWorkflowRunManagement.Handle("/{run_id}/retry-reconcile", workflowAdmin(http.HandlerFunc(workflowController.RetryWorkflowRunReconciliation))).Methods("POST")
 	projectWorkflowRunManagement.HandleFunc("/{run_id}/artifacts", workflowController.GetWorkflowRunArtifacts).Methods("GET", "HEAD")
+	projectWorkflowRunManagement.HandleFunc("/{run_id}/file-artifacts", workflowFileArtifactController.GetWorkflowFileArtifacts).Methods("GET", "HEAD")
+	projectWorkflowRunManagement.HandleFunc("/{run_id}/file-artifacts", workflowFileArtifactController.BeginWorkflowFileArtifact).Methods("POST")
+	projectWorkflowRunManagement.HandleFunc("/{run_id}/file-artifacts/{artifact_id}", workflowFileArtifactController.GetWorkflowFileArtifact).Methods("GET", "HEAD")
+	projectWorkflowRunManagement.HandleFunc("/{run_id}/file-artifacts/{artifact_id}/content", workflowFileArtifactController.DownloadWorkflowFileArtifact).Methods("GET", "HEAD")
+	projectWorkflowRunManagement.HandleFunc("/{run_id}/file-artifacts/{artifact_id}/content", workflowFileArtifactController.AppendWorkflowFileArtifact).Methods("PUT")
+	projectWorkflowRunManagement.HandleFunc("/{run_id}/file-artifacts/{artifact_id}/finalize", workflowFileArtifactController.FinalizeWorkflowFileArtifact).Methods("POST")
 	projectWorkflowRunManagement.HandleFunc("/{run_id}/approvals", workflowController.GetWorkflowApprovals).Methods("GET", "HEAD")
 	// Approval decisions are authorized again by the workflow service against
 	// the immutable request snapshot and current role eligibility. Do not apply

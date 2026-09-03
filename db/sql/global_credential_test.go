@@ -156,6 +156,7 @@ func TestGlobalCredentialUsageHistoryIsBoundedAndTaskScoped(t *testing.T) {
 	require.NoError(t, err)
 	for index, usage := range []db.GlobalCredentialUsage{
 		{TaskID: 41, ProjectID: firstProject.ID, ActorID: owner.ID, Target: "token", CredentialID: credential.ID, Outcome: "allowed", Reason: "allowed"},
+		{TaskID: 41, ProjectID: firstProject.ID, ActorID: owner.ID, DispatchGeneration: 1, Target: "retry_token", CredentialID: credential.ID, Outcome: "allowed", Reason: "allowed"},
 		{TaskID: 41, ProjectID: secondProject.ID, ActorID: owner.ID, Target: "token", CredentialID: credential.ID, Outcome: "denied", Reason: "grant_unavailable"},
 		{TaskID: 42, ProjectID: firstProject.ID, ActorID: owner.ID, Target: "token", CredentialID: credential.ID, Outcome: "failure", Reason: "provider_unavailable"},
 	} {
@@ -166,9 +167,14 @@ func TestGlobalCredentialUsageHistoryIsBoundedAndTaskScoped(t *testing.T) {
 
 	firstTask, err := store.GetTaskGlobalCredentialUsage(firstProject.ID, 41, db.GlobalCredentialUsageQuery{Count: 10})
 	require.NoError(t, err)
-	require.Len(t, firstTask, 1)
+	require.Len(t, firstTask, 2)
 	assert.Equal(t, firstProject.ID, firstTask[0].ProjectID)
 	assert.Equal(t, "allowed", firstTask[0].Outcome)
+	initialGeneration := 0
+	initialTask, err := store.GetTaskGlobalCredentialUsage(firstProject.ID, 41, db.GlobalCredentialUsageQuery{Count: 10, DispatchGeneration: &initialGeneration})
+	require.NoError(t, err)
+	require.Len(t, initialTask, 1)
+	assert.Equal(t, 0, initialTask[0].DispatchGeneration)
 
 	failures := "failure"
 	filtered, err := store.GetGlobalCredentialUsage(credential.ID, db.GlobalCredentialUsageQuery{
@@ -180,10 +186,10 @@ func TestGlobalCredentialUsageHistoryIsBoundedAndTaskScoped(t *testing.T) {
 
 	impact, err := store.GetGlobalCredentialImpact(credential.ID, now.Add(time.Hour))
 	require.NoError(t, err)
-	assert.Equal(t, 3, impact.UsageCount)
+	assert.Equal(t, 4, impact.UsageCount)
 	assert.Equal(t, 2, impact.ProjectCount)
 	require.NotNil(t, impact.LastUsedAt)
-	assert.Equal(t, now.Add(2*time.Minute), *impact.LastUsedAt)
+	assert.Equal(t, now.Add(3*time.Minute), *impact.LastUsedAt)
 }
 
 func TestGlobalCredentialGrantProjectSelectorIsOrderedAndBounded(t *testing.T) {

@@ -278,6 +278,20 @@ func TestWorkflowFileArtifactStoreSerializesConcurrentAppendsAndReservations(t *
 	assert.Equal(t, 1, quotaFailures)
 }
 
+func TestWorkflowFileArtifactStoreFencesSupersededAttemptInsideMutation(t *testing.T) {
+	store, repository, fixture := workflowFileArtifactFixture(t)
+	t.Cleanup(store.Close)
+	artifact, err := repository.CreateWorkflowFileArtifact(fixture.metadata("attempt-fence", []byte("x")))
+	require.NoError(t, err)
+	_, err = store.GetConnection().Exec("update task set assignment_generation=assignment_generation+1 where id=?", fixture.taskID)
+	require.NoError(t, err)
+	_, err = repository.AppendWorkflowFileArtifactChunk(pro_interfaces.WorkflowFileArtifactAppendRequest{
+		ProjectID: fixture.projectID, WorkflowRunID: fixture.runID, ArtifactID: artifact.ID,
+		ExpectedRevision: artifact.Revision, OffsetBytes: 0, Data: []byte("x"),
+	})
+	assert.ErrorIs(t, err, pro_interfaces.ErrWorkflowFileArtifactConflict)
+}
+
 func TestWorkflowArtifactRetentionPolicyIsAppendOnlyAndCannotWiden(t *testing.T) {
 	store, repository, fixture := workflowFileArtifactFixture(t)
 	t.Cleanup(store.Close)
