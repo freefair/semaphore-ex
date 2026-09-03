@@ -89,7 +89,7 @@
                 code.
               </div>
 
-              <div v-else-if="isPortal && verificationMethod === 'email'" class="text-center mb-4">
+              <div v-else-if="verificationMethod === 'email'" class="text-center mb-4">
                 Check your email for the verification code we just sent you.
               </div>
 
@@ -115,7 +115,7 @@
                   small
                   :disabled="verificationEmailSending"
                   color="primary"
-                  v-if="isPortal && verificationMethod === 'email'"
+                  v-if="verificationMethod === 'email'"
                   @click="resendEmailVerification()"
                 >
                   {{
@@ -219,42 +219,9 @@
                 </v-btn>
               </div>
 
-              <div v-else-if="isPortal">
-                <v-text-field
-                  v-model="email"
-                  :label="$t('Email')"
-                  :rules="[(v) => !!v || $t('email_required')]"
-                  type="email"
-                  required
-                  :disabled="signInProcess"
-                  @keyup.enter.native="signInWithEmail"
-                  style="margin-bottom: 20px"
-                  data-testid="auth-password"
-                  outlined
-                  class="mb-0"
-                ></v-text-field>
-
-                <v-btn
-                  large
-                  color="primary"
-                  @click="signInWithEmail"
-                  :disabled="signInProcess"
-                  block
-                  rounded
-                  data-testid="auth-signin-with-eamil"
-                >
-                  <v-icon left dark> mdi-email </v-icon>
-
-                  {{ $t('Continue with Email') }}
-                </v-btn>
-              </div>
-
               <div
                 class="auth__divider"
-                v-if="
-                  (loginWithPassword || ldapProviders.length > 0 || isPortal) &&
-                  oidcProviders.length > 0
-                "
+                v-if="(loginWithPassword || ldapProviders.length > 0) && oidcProviders.length > 0"
               >
                 or
               </div>
@@ -382,13 +349,9 @@ export default {
   },
 
   computed: {
-    isPortal() {
-      return process.env.VUE_APP_BUILD_TYPE === 'pro_portal';
-    },
-
     loginTabs() {
       const tabs = [];
-      if (this.loginWithPassword || this.isPortal) {
+      if (this.loginWithPassword) {
         tabs.push({ id: null, name: this.$t('signIn') });
       }
       this.ldapProviders.forEach((p) => tabs.push({ id: p.id, name: p.name, ldap: true }));

@@ -60,7 +60,7 @@
       </div>
 
       <WorkflowArtifactRetentionPanel
-        v-if="isPro && canManageArtifactRetention"
+        v-if="canManageArtifactRetention"
         :project-id="projectId"
       />
 
@@ -211,7 +211,6 @@ export default {
     systemInfo: Object,
     userPermissions: Number,
     isAdmin: Boolean,
-    isPro: Boolean,
   },
 
   data() {

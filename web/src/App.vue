@@ -73,34 +73,6 @@
     </EditDialog>
 
     <EditDialog
-      v-model="subscriptionDialog"
-      hide-buttons
-      v-if="user"
-      event-name="i-user"
-      dont-close-on-save
-    >
-      <template v-slot:title="{}">
-        {{
-          user.has_active_subscription ? 'Subscription &amp; Billing' : 'Upgrade to Semaphore PRO'
-        }}
-      </template>
-
-      <template v-slot:form="{ onSave, onError, needSave, needReset }">
-        <SubscriptionForm
-          item-id="new"
-          @save="
-            onSave();
-            onSubscriptionKeyUpdates();
-          "
-          @error="onError"
-          :need-save="needSave"
-          :need-reset="needReset"
-          :feature="subscriptionDialog_feature"
-        />
-      </template>
-    </EditDialog>
-
-    <EditDialog
       v-model="restoreProjectDialog"
       save-button-text="Restore"
       :title="$t('restoreProject')"
@@ -120,7 +92,6 @@
     <SystemInfoDialog
       v-model="systemInfoDialog"
       :system-info="systemInfo"
-      :is-pro="isPro"
       @totp-rollout-updated="loadUserInfo"
       v-if="user && canManageGlobalSystem"
     />
@@ -440,26 +411,6 @@
                 </v-list-item-content>
               </v-list-item>
 
-              <v-list-item
-                key="subscription"
-                v-if="isPro && canManageGlobalSystem && user.has_active_subscription"
-                @click="subscriptionDialog = true"
-              >
-                <v-list-item-icon>
-                  <v-icon color="#f14668" style="transform: scale(1.4)">
-                    mdi-professional-hexagon
-                  </v-icon>
-                </v-list-item-icon>
-
-                <v-list-item-content>
-                  {{
-                    user.has_active_subscription
-                      ? 'Subscription &amp; Billing'
-                      : 'Upgrade to PRO or EE'
-                  }}
-                </v-list-item-content>
-              </v-list-item>
-
               <v-divider />
 
               <v-list-item key="runners" to="/runners" v-if="canManageGlobalSystem">
@@ -485,7 +436,7 @@
               <v-list-item
                 key="audit-webhooks"
                 to="/audit-webhooks"
-                v-if="isPro && canAccessGlobalGovernance"
+                v-if="canAccessGlobalGovernance"
                 data-testid="sidebar-audit-webhooks"
               >
                 <v-list-item-icon>
@@ -502,7 +453,7 @@
               <v-list-item
                 key="global-credentials"
                 to="/global-credentials"
-                v-if="isPro && canAccessGlobalCredentials"
+                v-if="canAccessGlobalCredentials"
                 data-testid="sidebar-global-credentials"
               >
                 <v-list-item-icon>
@@ -534,7 +485,7 @@
                 </v-list-item-content>
               </v-list-item>
 
-              <v-list-item key="roles" to="/roles" v-if="isPro && canManageGlobalRoles">
+              <v-list-item key="roles" to="/roles" v-if="canManageGlobalRoles">
                 <v-list-item-icon>
                   <v-icon>mdi-account-cog</v-icon>
                 </v-list-item-icon>
@@ -591,7 +542,6 @@
         :userRole="(userRole || {}).role"
         :userId="(user || {}).id"
         :isAdmin="(user || {}).admin"
-        :isPro="isPro"
         :user="user"
         :features="(systemInfo || { features: {} }).features"
         :authMethods="(systemInfo || { auth_methods: {} }).auth_methods"
@@ -929,13 +879,11 @@ import UserForm from '@/components/UserForm.vue';
 import EventBus from '@/event-bus';
 import socket from '@/socket';
 
-import SubscriptionForm from '@/components/SubscriptionForm.vue';
 import RestoreProjectForm from '@/components/RestoreProjectForm.vue';
 import YesNoDialog from '@/components/YesNoDialog.vue';
 import TaskLogDialog from '@/components/TaskLogDialog.vue';
 import SystemInfoDialog from '@/components/SystemInfoDialog.vue';
 import delay from '@/lib/delay';
-import { isEnhancedEdition } from '@/lib/edition';
 
 const PROJECT_COLORS = ['red', 'blue', 'orange', 'green'];
 
@@ -1010,7 +958,6 @@ function getSystemLang() {
 export default {
   name: 'App',
   components: {
-    SubscriptionForm,
     TaskLogDialog,
     YesNoDialog,
     RestoreProjectForm,
@@ -1035,8 +982,6 @@ export default {
       userDialog: null,
       hideUserDialogButtons: false,
 
-      subscriptionDialog: null,
-      subscriptionDialog_feature: null,
       systemInfoDialog: null,
 
       restoreProjectDialog: null,
@@ -1112,9 +1057,6 @@ export default {
 
   computed: {
     ...enhancedComputed,
-    isPro() {
-      return isEnhancedEdition(this.systemInfo?.edition, process.env.VUE_APP_EDITION);
-    },
 
     lang() {
       return getLangInfo(this.$i18n.locale);
@@ -1215,7 +1157,7 @@ export default {
         testId: 'sidebar-team',
       });
 
-      if (this.isPro && this.project.type === '') {
+      if (this.project.type === '') {
         items.push({
           key: 'runners',
           icon: 'mdi-cogs',
@@ -1272,11 +1214,6 @@ export default {
   },
 
   mounted() {
-    EventBus.$on('i-subscription', (e) => {
-      this.subscriptionDialog_feature = e.feature;
-      this.subscriptionDialog = true;
-    });
-
     EventBus.$on('i-snackbar', (e) => {
       this.snackbar = true;
       this.snackbarColor = e.color;
@@ -1403,15 +1340,6 @@ export default {
 
   methods: {
     ...enhancedMethods,
-
-    async onSubscriptionKeyUpdates() {
-      EventBus.$emit('i-snackbar', {
-        color: 'success',
-        text: 'Subscription activated',
-      });
-
-      await this.loadUserInfo();
-    },
 
     showNewProjectDialogue(projectType = '') {
       this.newProjectDialog = true;

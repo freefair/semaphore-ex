@@ -40,12 +40,6 @@ export default {
     canUpdateProject: Boolean,
   },
 
-  computed: {
-    isPro() {
-      return (process.env.VUE_APP_BUILD_TYPE || '').startsWith('pro_');
-    },
-  },
-
   data() {
     return {
       id: null,

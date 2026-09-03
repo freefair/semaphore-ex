@@ -75,6 +75,11 @@ describe('runner reconciliation task details', () => {
     const requests = [];
     axios.defaults.adapter = async (config) => {
       requests.push(config.url);
+      if (config.url.includes('/credential-usage')) {
+        return {
+          data: [], status: 200, statusText: 'OK', headers: {}, config,
+        };
+      }
       return {
         data: config.url.endsWith('/recovery') ? {
           controlled: true,
@@ -106,12 +111,15 @@ describe('runner reconciliation task details', () => {
         runnerAttemptsError: null,
         recoveryDiagnostics: null,
         recoveryDiagnosticsError: null,
+        credentialUsage: [],
+        credentialUsageError: null,
         loadedTaskId: null,
         loadedTaskStatus: null,
         loadedAssignmentGeneration: null,
         loadRevision: 0,
         loadTaskRecoveryDiagnostics:
           TaskRunnerDetails.methods.loadTaskRecoveryDiagnostics,
+        loadCredentialUsage: TaskRunnerDetails.methods.loadCredentialUsage,
       };
 
       await TaskRunnerDetails.methods.loadRunnerAttempts.call(context);
@@ -126,6 +134,7 @@ describe('runner reconciliation task details', () => {
       expect(requests).to.deep.equal([
         '/api/project/3/tasks/41/runner-attempts',
         '/api/project/3/tasks/41/recovery',
+        '/api/project/3/tasks/41/credential-usage?count=100',
       ]);
     } finally {
       axios.defaults.adapter = previousAdapter;
@@ -146,9 +155,12 @@ describe('runner reconciliation task details', () => {
         runnerAttemptsError: null,
         recoveryDiagnostics: null,
         recoveryDiagnosticsError: null,
+        credentialUsage: [],
+        credentialUsageError: null,
         loadRevision: 0,
         loadTaskRecoveryDiagnostics:
           TaskRunnerDetails.methods.loadTaskRecoveryDiagnostics,
+        loadCredentialUsage: TaskRunnerDetails.methods.loadCredentialUsage,
       };
       await TaskRunnerDetails.methods.loadRunnerAttempts.call(context);
 
@@ -157,6 +169,8 @@ describe('runner reconciliation task details', () => {
         .to.equal('Runner attempt history could not be loaded.');
       expect(context.recoveryDiagnosticsError)
         .to.equal('HA task recovery diagnostics could not be loaded.');
+      expect(context.credentialUsageError)
+        .to.equal('Credential provenance could not be loaded.');
     } finally {
       axios.defaults.adapter = previousAdapter;
     }

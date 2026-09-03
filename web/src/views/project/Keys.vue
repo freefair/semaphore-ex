@@ -118,8 +118,7 @@
       >{{ $t('newKey') }}</v-btn>
     </v-toolbar>
 
-    <KeyStoreMenu v-if="isPro" :project-id="projectId" />
-    <v-divider v-else />
+    <KeyStoreMenu :project-id="projectId" />
 
     <v-data-table
       :headers="headers"
@@ -187,12 +186,6 @@ export default {
 
   props: {
     systemInfo: Object,
-  },
-
-  computed: {
-    isPro() {
-      return (process.env.VUE_APP_BUILD_TYPE || '').startsWith('pro_');
-    },
   },
 
   data() {

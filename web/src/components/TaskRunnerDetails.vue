@@ -337,9 +337,6 @@ export default {
     placementRejected() {
       return this.placementDecision?.selected_runner_id == null;
     },
-    isPro() {
-      return (process.env.VUE_APP_BUILD_TYPE || '').startsWith('pro_');
-    },
   },
   watch: {
     item: {
@@ -480,7 +477,7 @@ export default {
         this.runnerAttemptsError = 'Runner attempt history could not be loaded.';
       }
       await this.loadTaskRecoveryDiagnostics(taskId, revision);
-      if (this.isPro) await this.loadCredentialUsage(taskId, revision);
+      await this.loadCredentialUsage(taskId, revision);
       this.loadedTaskId = taskId;
       this.loadedTaskStatus = this.item?.status;
       this.loadedAssignmentGeneration = this.item?.assignment_generation;

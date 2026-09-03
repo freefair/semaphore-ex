@@ -59,22 +59,7 @@
     <v-divider />
 
     <v-alert v-if="!features.high_availability" text color="amber darken-3" class="PageAlert">
-      <span class="mr-1" v-html="$t('ha_only_enterprise')"></span>
-
-      <v-btn
-        dark
-        depressed
-        v-if="isAdmin"
-        color="amber darken-3"
-        href="https://semaphoreui.com/enterprise?utm_source=app&utm_content=feature_cluster"
-        target="_blank"
-      >
-        {{ $t('upgrade_to_pro') }}
-      </v-btn>
-
-      <span v-else style="font-weight: bold">
-        {{ $t('contact_admin_to_upgrade_enterprise') }}
-      </span>
+      High availability is not enabled.
     </v-alert>
 
     <v-alert v-if="status && !status.ha_enabled" type="info" dense text>

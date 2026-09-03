@@ -31,7 +31,7 @@
     ></EditTemplateDialog>
 
     <CrossProjectTemplateGrantsDialog
-      v-if="isPro && canUpdate"
+      v-if="canUpdate"
       v-model="crossProjectGrantsDialog"
       :project-id="projectId"
       :template-id="itemId"
@@ -137,7 +137,7 @@
       </v-btn>
 
       <v-btn
-        v-if="isPro && canUpdate"
+        v-if="canUpdate"
         icon
         :title="$t('crossProjectTemplates')"
         data-testid="cross-project-template-grants"
@@ -167,7 +167,7 @@
         }/templates/${item.id}/details`">{{ $t('template_details') }}
       </v-tab>
       <v-tab
-        v-if="isPro && can(USER_PERMISSIONS.manageProjectResources)"
+        v-if="can(USER_PERMISSIONS.manageProjectResources)"
         :to="`/project/${item.project_id}${
           $route.params.viewId ? `/views/${$route.params.viewId}` : ''
         }/templates/${item.id}/perms`">{{ $t('Permissions') }}
@@ -311,9 +311,6 @@ export default {
       return this.item && this.inventory && this.environment && this.repositories;
     },
 
-    isPro() {
-      return (process.env.VUE_APP_BUILD_TYPE || '').startsWith('pro_');
-    },
   },
 
   watch: {

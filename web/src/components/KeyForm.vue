@@ -27,7 +27,6 @@
           >Local</v-tab
         >
         <v-tab
-          v-if="isPro"
           :disabled="formSaving || !canEditSecrets || isSynced || !runtimeCanWrite"
           style="padding: 0"
           >
@@ -48,10 +47,7 @@
           class="PageAlert PageAlert--flat-top"
           v-if="!supportStorages && sourceStorageType === 'vault'"
         >
-          <span v-html="$t('project_runners_only_pro')"></span>
-          <v-btn dark class="ml-2" color="hsl(348deg, 86%, 61%)" @click="upgradeToPro()">
-            {{ $t('upgrade_to_pro') }}
-          </v-btn>
+          Storage-backed keys are not enabled.
         </v-alert>
 
         <v-autocomplete
@@ -331,10 +327,6 @@ export default {
 
   computed: {
     ...enhancedComputed,
-
-    isPro() {
-      return (process.env.VUE_APP_BUILD_TYPE || '').startsWith('pro_');
-    },
 
     sourceStorageType() {
       return this.item?.source_storage_type;

@@ -6,7 +6,7 @@ import WorkflowRunDialog from '@/components/WorkflowRunDialog.vue';
 import Settings from '@/views/project/Settings.vue';
 
 describe('deployment window UI contracts', () => {
-  it('keeps Community settings unchanged when the capability is absent', () => {
+  it('keeps settings unchanged when the capability is absent', () => {
     expect(Settings.computed.deploymentWindowsDecision.call({ systemInfo: {} })).to.equal(null);
     const decision = {
       id: 'deployment_windows', access: ['read', 'write', 'execute'],

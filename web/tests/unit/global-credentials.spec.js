@@ -274,7 +274,7 @@ describe('Project granted credential selection', () => {
     expect(called).to.equal(false);
   });
 
-  it('keeps the Granted tab out of Community builds', () => {
-    expect(SecretStorages.props.isPro.default).to.equal(false);
+  it('keeps the Granted tab independent from an edition prop', () => {
+    expect(SecretStorages.props).not.to.have.property('isPro');
   });
 });

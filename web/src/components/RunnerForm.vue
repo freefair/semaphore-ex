@@ -70,9 +70,8 @@
         small
         label
         style="position: absolute; top: -10px; right: 15px"
-        @click="upgradeToPro('runners')"
       >
-        Upgrade to PRO
+        Not enabled
       </v-chip>
     </div>
 
