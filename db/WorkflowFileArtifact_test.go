@@ -46,6 +46,56 @@ func TestWorkflowFileArtifactUploadValidation(t *testing.T) {
 	}
 }
 
+func TestWorkflowFileArtifactStoragePrimitivesAreBounded(t *testing.T) {
+	chunk := WorkflowFileArtifactChunk{
+		ArtifactID: 1, Ordinal: 0, OffsetBytes: 0,
+		SizeBytes: 3, Data: []byte("abc"),
+	}
+	if err := chunk.Validate(); err != nil {
+		t.Fatalf("valid chunk rejected: %v", err)
+	}
+	chunk.SizeBytes++
+	if err := chunk.Validate(); err == nil {
+		t.Fatal("chunk with mismatched declared size accepted")
+	}
+
+	created := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	lease := WorkflowFileArtifactDownloadLease{
+		LeaseToken: strings.Repeat("a", 64), ArtifactID: 1,
+		CreatedAt: created, ExpiresAt: created.Add(MaxWorkflowFileArtifactDownloadLease),
+	}
+	if err := lease.Validate(); err != nil {
+		t.Fatalf("valid download lease rejected: %v", err)
+	}
+	lease.ExpiresAt = created.Add(MaxWorkflowFileArtifactDownloadLease + time.Second)
+	if err := lease.Validate(); err == nil {
+		t.Fatal("download lease beyond the hard maximum accepted")
+	}
+
+	usage := WorkflowFileArtifactRunUsage{
+		WorkflowRunID: 5, ReservedBytes: MaxWorkflowFileArtifactRunBytes,
+		ArtifactCount: MaxWorkflowFileArtifactsPerRun, Revision: 1,
+	}
+	if err := usage.Validate(); err != nil {
+		t.Fatalf("valid run usage rejected: %v", err)
+	}
+	usage.ReservedBytes++
+	if err := usage.Validate(); err == nil {
+		t.Fatal("run usage beyond the hard maximum accepted")
+	}
+}
+
+func TestDefaultWorkflowArtifactRetentionSnapshotUsesBuiltInRevision(t *testing.T) {
+	snapshot := DefaultWorkflowArtifactRetentionSnapshot()
+	if err := snapshot.Validate(); err != nil {
+		t.Fatalf("built-in retention snapshot rejected: %v", err)
+	}
+	if snapshot.GlobalRevision != 0 || snapshot.RetentionSeconds != DefaultWorkflowArtifactRetentionSeconds ||
+		snapshot.MaxArtifactBytes != MaxWorkflowFileArtifactBytes || snapshot.MaxRunBytes != MaxWorkflowFileArtifactRunBytes {
+		t.Fatalf("unexpected built-in retention snapshot: %+v", snapshot)
+	}
+}
+
 func TestResolveWorkflowArtifactRetentionRequiresProjectNarrowing(t *testing.T) {
 	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 	global := WorkflowArtifactRetentionPolicy{
