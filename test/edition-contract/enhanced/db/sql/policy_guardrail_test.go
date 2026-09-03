@@ -132,4 +132,158 @@ func TestPolicyGuardrailStoreLoadsGlobalBeforeProjectAndClaimsIdempotently(t *te
 	assert.Equal(t, claim.Record.ID, history[0].ID)
 }
 
+func TestPolicyGuardrailStoreClaimsBatchWithOneSnapshotAndAtomicReplay(t *testing.T) {
+	store := coreSQL.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	repository := NewPolicyGuardrailStore(store.GetConnection())
+	actor, err := store.CreateUserWithoutPassword(coreDB.User{Username: "policy-batch", Name: "Policy Batch", Email: "policy-batch@example.test"})
+	require.NoError(t, err)
+	project, err := store.CreateProject(coreDB.Project{Name: "policy batch project"})
+	require.NoError(t, err)
+	policyGuardrailPublishEmptyBatchPolicies(t, repository, actor.ID, project.ID)
+
+	requests := []pro_interfaces.PolicyGuardrailAdmissionRequest{
+		policyGuardrailBatchRequest(project.ID, actor.ID, "root", "root"),
+		policyGuardrailBatchRequest(project.ID, actor.ID, "node-1", "node-1"),
+	}
+	var snapshotTime time.Time
+	var snapshotRevisions []coreDB.PolicyGuardrailRevision
+	evaluate := func(revisions []coreDB.PolicyGuardrailRevision, input pro_interfaces.PolicyGuardrailEvaluationInput) (pro_interfaces.PolicyGuardrailEvaluation, error) {
+		if snapshotTime.IsZero() {
+			snapshotTime = input.EvaluatedAt
+			snapshotRevisions = make([]coreDB.PolicyGuardrailRevision, len(revisions))
+			copy(snapshotRevisions, revisions)
+		} else {
+			require.True(t, snapshotTime.Equal(input.EvaluatedAt), "every batch input uses the one database timestamp")
+			require.Equal(t, snapshotRevisions, revisions, "every batch input uses the one active revision set")
+		}
+		fingerprint, fingerprintErr := pro_interfaces.FingerprintPolicyGuardrailInput(input)
+		if fingerprintErr != nil {
+			return pro_interfaces.PolicyGuardrailEvaluation{}, fingerprintErr
+		}
+		return pro_interfaces.PolicyGuardrailEvaluation{Revisions: policyGuardrailBatchRevisionRefs(revisions), Allowed: true, InputFingerprint: fingerprint, EvaluatedAt: input.EvaluatedAt}, nil
+	}
+
+	claims, err := repository.ClaimPolicyGuardrailEvaluations(requests, evaluate)
+	require.NoError(t, err)
+	require.Len(t, claims, 2)
+	assert.True(t, claims[0].Inserted)
+	assert.True(t, claims[1].Inserted)
+	assert.Equal(t, "root", claims[0].Record.DecisionKey)
+	assert.Equal(t, "node-1", claims[1].Record.DecisionKey)
+	assert.True(t, claims[0].Evaluation.EvaluatedAt.Equal(claims[1].Evaluation.EvaluatedAt))
+	require.Len(t, snapshotRevisions, 2)
+	assert.Equal(t, coreDB.PolicyGuardrailScopeGlobal, snapshotRevisions[0].Scope)
+	assert.Equal(t, coreDB.PolicyGuardrailScopeProject, snapshotRevisions[1].Scope)
+
+	replay, err := repository.ClaimPolicyGuardrailEvaluations(requests, evaluate)
+	require.NoError(t, err)
+	require.Len(t, replay, 2)
+	assert.False(t, replay[0].Inserted)
+	assert.False(t, replay[1].Inserted)
+	assert.Equal(t, claims[0].Record.ID, replay[0].Record.ID)
+	assert.Equal(t, claims[1].Record.ID, replay[1].Record.ID)
+	projectID := policyGuardrailIntPointer(project.ID)
+	draft, err := repository.GetPolicyGuardrailDraft(pro_interfaces.PolicyGuardrailScopeProject, projectID)
+	require.NoError(t, err)
+	draft, err = repository.SavePolicyGuardrailDraft(pro_interfaces.PolicyGuardrailScopeProject, projectID, emptyPolicyGuardrailYAML, draft.Revision, actor.ID)
+	require.NoError(t, err)
+	_, err = repository.PublishPolicyGuardrailRevision(pro_interfaces.PolicyGuardrailScopeProject, projectID, draft.Revision, actor.ID, emptyPolicyGuardrailYAML, `{"version":1,"rules":[]}`, "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", 1)
+	require.NoError(t, err)
+	_, err = repository.ClaimPolicyGuardrailEvaluations(requests, evaluate)
+	require.ErrorIs(t, err, coreDB.ErrInvalidOperation, "a replay cannot reuse an outdated active revision set")
+
+	mixed := append(append([]pro_interfaces.PolicyGuardrailAdmissionRequest(nil), requests[:1]...), policyGuardrailBatchRequest(project.ID, actor.ID, "node-2", "node-2"))
+	_, err = repository.ClaimPolicyGuardrailEvaluations(mixed, evaluate)
+	require.ErrorIs(t, err, coreDB.ErrInvalidOperation, "mixed replay/new batches are rejected before any insert")
+	history, err := repository.GetPolicyGuardrailEvaluationHistory(policyGuardrailIntPointer(project.ID), coreDB.RetrieveQueryParams{Count: 10})
+	require.NoError(t, err)
+	assert.Len(t, history, 2)
+}
+
+func TestPolicyGuardrailStoreRejectsInvalidBatchWithoutPartialWrites(t *testing.T) {
+	store := coreSQL.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	repository := NewPolicyGuardrailStore(store.GetConnection())
+	actor, err := store.CreateUserWithoutPassword(coreDB.User{Username: "policy-batch-invalid", Name: "Policy Batch Invalid", Email: "policy-batch-invalid@example.test"})
+	require.NoError(t, err)
+	project, err := store.CreateProject(coreDB.Project{Name: "policy batch invalid project"})
+	require.NoError(t, err)
+	requests := []pro_interfaces.PolicyGuardrailAdmissionRequest{
+		policyGuardrailBatchRequest(project.ID, actor.ID, "first", "first"),
+		policyGuardrailBatchRequest(project.ID, actor.ID, "corrupt", "corrupt"),
+	}
+	evaluate := func(_ []coreDB.PolicyGuardrailRevision, input pro_interfaces.PolicyGuardrailEvaluationInput) (pro_interfaces.PolicyGuardrailEvaluation, error) {
+		fingerprint, fingerprintErr := pro_interfaces.FingerprintPolicyGuardrailInput(input)
+		if fingerprintErr != nil {
+			return pro_interfaces.PolicyGuardrailEvaluation{}, fingerprintErr
+		}
+		evaluation := pro_interfaces.PolicyGuardrailEvaluation{Allowed: true, InputFingerprint: fingerprint, EvaluatedAt: input.EvaluatedAt}
+		if input.Template.Source == "corrupt" {
+			evaluation.InputFingerprint = "sha256:corrupt"
+		}
+		return evaluation, nil
+	}
+	_, err = repository.ClaimPolicyGuardrailEvaluations(requests, evaluate)
+	require.ErrorIs(t, err, coreDB.ErrInvalidOperation)
+	history, err := repository.GetPolicyGuardrailEvaluationHistory(policyGuardrailIntPointer(project.ID), coreDB.RetrieveQueryParams{Count: 10})
+	require.NoError(t, err)
+	assert.Empty(t, history)
+
+	duplicate := append([]pro_interfaces.PolicyGuardrailAdmissionRequest(nil), requests...)
+	duplicate[1].DecisionKey = duplicate[0].DecisionKey
+	duplicate[1].Input.Template.Source = duplicate[0].Input.Template.Source
+	_, err = repository.ClaimPolicyGuardrailEvaluations(duplicate, evaluate)
+	require.ErrorIs(t, err, coreDB.ErrInvalidOperation)
+
+	overLimit := make([]pro_interfaces.PolicyGuardrailAdmissionRequest, pro_interfaces.MaxPolicyGuardrailAdmissionBatch+1)
+	_, err = repository.ClaimPolicyGuardrailEvaluations(overLimit, evaluate)
+	require.ErrorIs(t, err, coreDB.ErrInvalidOperation)
+}
+
+func policyGuardrailBatchRequest(projectID, actorID int, decisionKey, source string) pro_interfaces.PolicyGuardrailAdmissionRequest {
+	return pro_interfaces.PolicyGuardrailAdmissionRequest{
+		DecisionKey: decisionKey,
+		Source:      "workflow",
+		ActorUserID: policyGuardrailIntPointer(actorID),
+		Input: pro_interfaces.PolicyGuardrailEvaluationInput{
+			ProjectID:   projectID,
+			Intent:      pro_interfaces.ExecutionPreflightTask,
+			EvaluatedAt: time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC),
+			Template:    &pro_interfaces.PolicyGuardrailTemplateMetadata{ID: 1, Application: "ansible", Source: source},
+			Executor:    pro_interfaces.PolicyGuardrailExecutorMetadata{Type: "local", ImageReferenceKind: "none"},
+		},
+	}
+}
+
+func policyGuardrailPublishEmptyBatchPolicies(t *testing.T, repository *PolicyGuardrailStore, actorID, projectID int) {
+	t.Helper()
+	for _, policy := range []struct {
+		scope       pro_interfaces.PolicyGuardrailScope
+		projectID   *int
+		fingerprint string
+	}{
+		{scope: pro_interfaces.PolicyGuardrailScopeGlobal, fingerprint: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+		{scope: pro_interfaces.PolicyGuardrailScopeProject, projectID: policyGuardrailIntPointer(projectID), fingerprint: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+	} {
+		draft, err := repository.GetPolicyGuardrailDraft(policy.scope, policy.projectID)
+		require.NoError(t, err)
+		draft, err = repository.SavePolicyGuardrailDraft(policy.scope, policy.projectID, emptyPolicyGuardrailYAML, draft.Revision, actorID)
+		require.NoError(t, err)
+		_, err = repository.PublishPolicyGuardrailRevision(policy.scope, policy.projectID, draft.Revision, actorID, emptyPolicyGuardrailYAML, `{"version":1,"rules":[]}`, policy.fingerprint, 1)
+		require.NoError(t, err)
+	}
+}
+
+func policyGuardrailBatchRevisionRefs(revisions []coreDB.PolicyGuardrailRevision) []pro_interfaces.PolicyGuardrailRevisionRef {
+	refs := make([]pro_interfaces.PolicyGuardrailRevisionRef, len(revisions))
+	for index, revision := range revisions {
+		refs[index] = pro_interfaces.PolicyGuardrailRevisionRef{Scope: pro_interfaces.PolicyGuardrailScope(revision.Scope), Revision: revision.Revision, Fingerprint: revision.Fingerprint}
+		if revision.ProjectID != nil {
+			refs[index].ProjectID = policyGuardrailIntPointer(*revision.ProjectID)
+		}
+	}
+	return refs
+}
+
 func policyGuardrailIntPointer(value int) *int { return &value }

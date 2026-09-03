@@ -978,6 +978,18 @@ func (s *executionPreflightPolicyGuardrailStub) ClaimPolicyGuardrailEvaluation(r
 	return pro_interfaces.PolicyGuardrailEvaluationClaim{Record: record, Evaluation: evaluation, Inserted: s.claimRecord == nil}, nil
 }
 
+func (s *executionPreflightPolicyGuardrailStub) ClaimPolicyGuardrailEvaluations(requests []pro_interfaces.PolicyGuardrailAdmissionRequest) ([]pro_interfaces.PolicyGuardrailEvaluationClaim, error) {
+	claims := make([]pro_interfaces.PolicyGuardrailEvaluationClaim, 0, len(requests))
+	for _, request := range requests {
+		claim, err := s.ClaimPolicyGuardrailEvaluation(request)
+		if err != nil {
+			return nil, err
+		}
+		claims = append(claims, claim)
+	}
+	return claims, nil
+}
+
 func policyGuardrailReasonCodes(findings []pro_interfaces.ExecutionPreflightFinding) []pro_interfaces.ExecutionPreflightReasonCode {
 	result := make([]pro_interfaces.ExecutionPreflightReasonCode, 0, len(findings))
 	for _, finding := range findings {

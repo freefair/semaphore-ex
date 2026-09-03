@@ -320,81 +320,126 @@ func (s *PolicyGuardrailStore) PreviewPolicyGuardrails(input pro_interfaces.Poli
 }
 
 func (s *PolicyGuardrailStore) ClaimPolicyGuardrailEvaluation(request pro_interfaces.PolicyGuardrailAdmissionRequest, evaluate func([]db.PolicyGuardrailRevision, pro_interfaces.PolicyGuardrailEvaluationInput) (pro_interfaces.PolicyGuardrailEvaluation, error)) (pro_interfaces.PolicyGuardrailEvaluationClaim, error) {
-	if s == nil || s.connection == nil || evaluate == nil || !policyGuardrailInputTargetValid(request.Input) || !policyGuardrailAdmissionRequestValid(request) {
-		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, db.ErrInvalidOperation
-	}
-	inputFingerprint, err := pro_interfaces.FingerprintPolicyGuardrailInput(request.Input)
+	claims, err := s.ClaimPolicyGuardrailEvaluations([]pro_interfaces.PolicyGuardrailAdmissionRequest{request}, evaluate)
 	if err != nil {
 		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
+	}
+	if len(claims) != 1 {
+		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, db.ErrInvalidOperation
+	}
+	return claims[0], nil
+}
+
+// ClaimPolicyGuardrailEvaluations captures one active revision set and database
+// timestamp for a single workflow admission. A batch is either a complete
+// replay, or entirely new; mixed replay/new batches are rejected so a retry
+// cannot create only a suffix of its original admission decision.
+func (s *PolicyGuardrailStore) ClaimPolicyGuardrailEvaluations(requests []pro_interfaces.PolicyGuardrailAdmissionRequest, evaluate func([]db.PolicyGuardrailRevision, pro_interfaces.PolicyGuardrailEvaluationInput) (pro_interfaces.PolicyGuardrailEvaluation, error)) ([]pro_interfaces.PolicyGuardrailEvaluationClaim, error) {
+	if s == nil || s.connection == nil || evaluate == nil || len(requests) == 0 || len(requests) > pro_interfaces.MaxPolicyGuardrailAdmissionBatch {
+		return nil, db.ErrInvalidOperation
+	}
+	projectID := requests[0].Input.ProjectID
+	fingerprints := make([]string, len(requests))
+	keys := make(map[string]struct{}, len(requests))
+	for index, request := range requests {
+		if !policyGuardrailInputTargetValid(request.Input) || !policyGuardrailAdmissionRequestValid(request) || request.Input.ProjectID != projectID {
+			return nil, db.ErrInvalidOperation
+		}
+		key := request.Source + "\x00" + request.DecisionKey
+		if _, duplicate := keys[key]; duplicate {
+			return nil, db.ErrInvalidOperation
+		}
+		keys[key] = struct{}{}
+		fingerprint, err := pro_interfaces.FingerprintPolicyGuardrailInput(request.Input)
+		if err != nil {
+			return nil, err
+		}
+		fingerprints[index] = fingerprint
 	}
 	tx, err := s.connection.Begin()
 	if err != nil {
-		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
+		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	if err = s.lockPolicyScope(tx, "global", nil); err != nil {
-		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
+		return nil, err
 	}
-	if err = s.lockPolicyScope(tx, policyGuardrailProjectKey(request.Input.ProjectID), policyGuardrailPointer(request.Input.ProjectID)); err != nil {
-		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
+	if err = s.lockPolicyScope(tx, policyGuardrailProjectKey(projectID), policyGuardrailPointer(projectID)); err != nil {
+		return nil, err
 	}
-	if err = s.ensurePolicyProjectTx(tx, policyGuardrailPointer(request.Input.ProjectID)); err != nil {
-		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
-	}
-	existing, found, err := s.getPolicyEvaluation(tx, request.Input.ProjectID, request.Source, request.DecisionKey)
+	revisions, now, err := s.activePolicyGuardrailRevisions(tx, projectID)
 	if err != nil {
-		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
+		return nil, err
 	}
-	if found {
-		if !policyGuardrailRecordMatchesRequest(existing, request, inputFingerprint) {
-			return pro_interfaces.PolicyGuardrailEvaluationClaim{}, db.ErrInvalidOperation
+
+	claims := make([]pro_interfaces.PolicyGuardrailEvaluationClaim, len(requests))
+	existingCount := 0
+	for index, request := range requests {
+		record, found, getErr := s.getPolicyEvaluation(tx, projectID, request.Source, request.DecisionKey)
+		if getErr != nil {
+			return nil, getErr
 		}
-		evaluation, decodeErr := policyGuardrailEvaluationFromRecord(existing)
-		if decodeErr != nil {
-			return pro_interfaces.PolicyGuardrailEvaluationClaim{}, db.ErrInvalidOperation
+		if !found {
+			continue
 		}
-		activeRevisions, _, activeErr := s.activePolicyGuardrailRevisions(tx, request.Input.ProjectID)
-		if activeErr != nil {
-			return pro_interfaces.PolicyGuardrailEvaluationClaim{}, activeErr
+		existingCount++
+		if !policyGuardrailRecordMatchesRequest(record, request, fingerprints[index]) {
+			return nil, db.ErrInvalidOperation
 		}
-		if !policyGuardrailRevisionRefsMatchActive(evaluation.Revisions, activeRevisions) {
-			return pro_interfaces.PolicyGuardrailEvaluationClaim{}, db.ErrInvalidOperation
+		evaluation, decodeErr := policyGuardrailEvaluationFromRecord(record)
+		if decodeErr != nil || !policyGuardrailRevisionRefsMatchActive(evaluation.Revisions, revisions) {
+			return nil, db.ErrInvalidOperation
+		}
+		claims[index] = pro_interfaces.PolicyGuardrailEvaluationClaim{Record: record, Evaluation: evaluation}
+	}
+	if existingCount != 0 {
+		if existingCount != len(requests) {
+			return nil, db.ErrInvalidOperation
 		}
 		if err = tx.Commit(); err != nil {
-			return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
+			return nil, err
 		}
-		return pro_interfaces.PolicyGuardrailEvaluationClaim{Record: existing, Evaluation: evaluation}, nil
+		return claims, nil
 	}
-	if request.ActorUserID != nil {
-		if err = s.ensurePolicyActor(tx, *request.ActorUserID); err != nil {
-			return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
+
+	actors := make(map[int]struct{}, len(requests))
+	for _, request := range requests {
+		if request.ActorUserID != nil {
+			actors[*request.ActorUserID] = struct{}{}
 		}
 	}
-	revisions, now, err := s.activePolicyGuardrailRevisions(tx, request.Input.ProjectID)
-	if err != nil {
-		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
+	for actorID := range actors {
+		if err = s.ensurePolicyActor(tx, actorID); err != nil {
+			return nil, err
+		}
 	}
-	request.Input.EvaluatedAt = now
-	evaluation, err := evaluate(revisions, request.Input)
-	if err != nil {
-		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
+	for index, request := range requests {
+		input := request.Input
+		input.EvaluatedAt = now
+		evaluation, evaluateErr := evaluate(revisions, input)
+		if evaluateErr != nil {
+			return nil, evaluateErr
+		}
+		if validateErr := validatePolicyGuardrailEvaluation(revisions, input, evaluation); validateErr != nil {
+			return nil, validateErr
+		}
+		record, recordErr := policyGuardrailRecord(request, fingerprints[index], evaluation, now)
+		if recordErr != nil {
+			return nil, recordErr
+		}
+		claims[index] = pro_interfaces.PolicyGuardrailEvaluationClaim{Record: record, Evaluation: evaluation, Inserted: true}
 	}
-	if err = validatePolicyGuardrailEvaluation(revisions, request.Input, evaluation); err != nil {
-		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
+	for index := range claims {
+		id, insertErr := s.insertPolicyEvaluation(tx, claims[index].Record)
+		if insertErr != nil {
+			return nil, insertErr
+		}
+		claims[index].Record.ID = id
 	}
-	record, err := policyGuardrailRecord(request, inputFingerprint, evaluation, now)
-	if err != nil {
-		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
-	}
-	id, err := s.insertPolicyEvaluation(tx, record)
-	if err != nil {
-		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
-	}
-	record.ID = id
 	if err = tx.Commit(); err != nil {
-		return pro_interfaces.PolicyGuardrailEvaluationClaim{}, err
+		return nil, err
 	}
-	return pro_interfaces.PolicyGuardrailEvaluationClaim{Record: record, Evaluation: evaluation, Inserted: true}, nil
+	return claims, nil
 }
 
 func (s *PolicyGuardrailStore) policyScope(scope pro_interfaces.PolicyGuardrailScope, projectID *int) (string, *int, error) {

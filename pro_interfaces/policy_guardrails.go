@@ -784,14 +784,20 @@ type PolicyGuardrailEvaluationClaim struct {
 	Inserted   bool
 }
 
+// MaxPolicyGuardrailAdmissionBatch bounds one atomic admission snapshot to a
+// workflow root plus its maximum number of nodes.
+const MaxPolicyGuardrailAdmissionBatch = 201
+
 type PolicyGuardrailAdmissionRepository interface {
 	PreviewPolicyGuardrails(PolicyGuardrailEvaluationInput, func([]db.PolicyGuardrailRevision, PolicyGuardrailEvaluationInput) (PolicyGuardrailEvaluation, error)) (PolicyGuardrailEvaluation, error)
 	ClaimPolicyGuardrailEvaluation(PolicyGuardrailAdmissionRequest, func([]db.PolicyGuardrailRevision, PolicyGuardrailEvaluationInput) (PolicyGuardrailEvaluation, error)) (PolicyGuardrailEvaluationClaim, error)
+	ClaimPolicyGuardrailEvaluations([]PolicyGuardrailAdmissionRequest, func([]db.PolicyGuardrailRevision, PolicyGuardrailEvaluationInput) (PolicyGuardrailEvaluation, error)) ([]PolicyGuardrailEvaluationClaim, error)
 }
 
 type PolicyGuardrailAdmissionService interface {
 	PolicyGuardrailEvaluator
 	ClaimPolicyGuardrailEvaluation(PolicyGuardrailAdmissionRequest) (PolicyGuardrailEvaluationClaim, error)
+	ClaimPolicyGuardrailEvaluations([]PolicyGuardrailAdmissionRequest) ([]PolicyGuardrailEvaluationClaim, error)
 }
 
 type PolicyGuardrailAdmissionConfigurer interface {
