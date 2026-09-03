@@ -341,11 +341,12 @@ func (s *workflowService) buildWorkflowExecutionPreflightWithRun(
 	if err := s.requireWorkflowAccess(workflow, user, pro_interfaces.PermissionStartWorkflow, true); err != nil {
 		return pro_interfaces.ExecutionPreflightSnapshot{}, err
 	}
-	planner, ok := s.enqueuer.(pro_interfaces.WorkflowExecutionPreflightPlanner)
-	if !ok {
+	planner, hasPlanner := s.enqueuer.(pro_interfaces.WorkflowExecutionPreflightPlanner)
+	if !hasPlanner {
 		return pro_interfaces.ExecutionPreflightSnapshot{}, errors.New("workflow execution preflight is unavailable")
 	}
 	snapshotPlanner, hasSnapshotPlanner := s.enqueuer.(pro_interfaces.WorkflowTaskExecutionSnapshotPlanner)
+	policySnapshotPlanner, hasPolicySnapshotPlanner := s.enqueuer.(pro_interfaces.WorkflowTaskPolicyGuardrailPreflightPlanner)
 	fingerprint, err := pro_interfaces.WorkflowDefinitionFingerprint(workflow)
 	if err != nil {
 		return pro_interfaces.ExecutionPreflightSnapshot{}, err
@@ -374,6 +375,25 @@ func (s *workflowService) buildWorkflowExecutionPreflightWithRun(
 	)
 	if err != nil {
 		return pro_interfaces.ExecutionPreflightSnapshot{}, err
+	}
+	triggerSource := ""
+	policyInputs := make([]pro_interfaces.PolicyGuardrailEvaluationInput, 0, len(run.Nodes)+1)
+	if hasPolicySnapshotPlanner {
+		triggerSource, err = workflowPolicyGuardrailTriggerSource(run.TriggerSnapshot)
+		if err != nil {
+			return pro_interfaces.ExecutionPreflightSnapshot{}, err
+		}
+		rootPolicyInput := pro_interfaces.PolicyGuardrailEvaluationInput{
+			ProjectID: workflow.ProjectID, Intent: pro_interfaces.ExecutionPreflightWorkflow, EvaluatedAt: now,
+			Workflow: &pro_interfaces.PolicyGuardrailWorkflowMetadata{
+				ID: run.WorkflowTemplateID, Revision: run.DefinitionRevision, TriggerSource: triggerSource, CrossProject: len(crossProject) > 0,
+			},
+			Executor: pro_interfaces.PolicyGuardrailExecutorMetadata{Type: "workflow", ImageReferenceKind: "none"},
+		}
+		if err = rootPolicyInput.Validate(); err != nil {
+			return pro_interfaces.ExecutionPreflightSnapshot{}, errors.New("workflow policy guardrail root input is invalid")
+		}
+		policyInputs = append(policyInputs, rootPolicyInput)
 	}
 	plan := pro_interfaces.ExecutionPreflightPlan{
 		ContractVersion: pro_interfaces.ExecutionPreflightContractVersion,
@@ -417,14 +437,17 @@ func (s *workflowService) buildWorkflowExecutionPreflightWithRun(
 		})
 	}
 	childComponents := make(map[pro_interfaces.ExecutionPreflightChangeCode][]string)
-	for nodeIndex := range run.Nodes {
+	for _, nodeIndex := range workflowPreflightNodeIndexes(run.Nodes) {
 		node := &run.Nodes[nodeIndex]
-		if node.TemplateID <= 0 {
-			continue
-		}
 		definitionNode, definitionErr := workflowDefinitionNode(run.DefinitionSnapshot, node.WorkflowNodeID)
 		if definitionErr != nil {
 			return pro_interfaces.ExecutionPreflightSnapshot{}, definitionErr
+		}
+		if definitionNode.EffectiveKind() != db.WorkflowNodeTaskKind {
+			continue
+		}
+		if node.TemplateID <= 0 {
+			return pro_interfaces.ExecutionPreflightSnapshot{}, errors.New("workflow task policy guardrail template is invalid")
 		}
 		task := db.Task{TemplateID: node.TemplateID}
 		if definitionNode.TaskParams != nil {
@@ -444,7 +467,20 @@ func (s *workflowService) buildWorkflowExecutionPreflightWithRun(
 		}
 		var child pro_interfaces.ExecutionPreflightSnapshot
 		var childErr error
-		if hasSnapshotPlanner {
+		var workflowMetadata pro_interfaces.PolicyGuardrailWorkflowMetadata
+		if hasPolicySnapshotPlanner {
+			workflowMetadata = pro_interfaces.PolicyGuardrailWorkflowMetadata{
+				ID: run.WorkflowTemplateID, Revision: run.DefinitionRevision, NodeID: node.WorkflowNodeID,
+				NodeKind: string(definitionNode.EffectiveKind()), TriggerSource: triggerSource, CrossProject: crossProjectNode,
+			}
+			var encoded string
+			child, encoded, childErr = policySnapshotPlanner.BuildWorkflowTaskPolicyGuardrailPreflightSnapshot(
+				task, template, user, workflow.ProjectID, now, workflowMetadata,
+			)
+			if childErr == nil {
+				node.ExecutionSnapshotJSON = encoded
+			}
+		} else if hasSnapshotPlanner {
 			var encoded string
 			child, encoded, childErr = snapshotPlanner.BuildWorkflowTaskExecutionPreflightSnapshot(task, template, user, workflow.ProjectID, now)
 			if childErr == nil {
@@ -459,6 +495,12 @@ func (s *workflowService) buildWorkflowExecutionPreflightWithRun(
 				continue
 			}
 			return pro_interfaces.ExecutionPreflightSnapshot{}, childErr
+		}
+		if hasPolicySnapshotPlanner {
+			if !workflowTaskPolicyInputMatches(child.PolicyInputs, workflowMetadata, workflow.ProjectID, now) {
+				return pro_interfaces.ExecutionPreflightSnapshot{}, errors.New("workflow task policy guardrail input is invalid")
+			}
+			policyInputs = append(policyInputs, child.PolicyInputs[0])
 		}
 		for commandIndex := range child.Plan.Commands {
 			child.Plan.Commands[commandIndex].NodeID = intCopy(node.WorkflowNodeID)
@@ -508,7 +550,7 @@ func (s *workflowService) buildWorkflowExecutionPreflightWithRun(
 	if err = plan.Validate(); err != nil {
 		return pro_interfaces.ExecutionPreflightSnapshot{}, err
 	}
-	result := pro_interfaces.ExecutionPreflightSnapshot{Plan: plan, Components: components}
+	result := pro_interfaces.ExecutionPreflightSnapshot{Plan: plan, Components: components, PolicyInputs: policyInputs}
 	if capture != nil {
 		*capture = run
 	}
@@ -527,6 +569,49 @@ func workflowPreflightInputs(parameters map[string]db.WorkflowParameterSnapshot)
 		})
 	}
 	return result
+}
+
+func workflowPolicyGuardrailTriggerSource(snapshot db.WorkflowTriggerSnapshot) (string, error) {
+	if snapshot.ID == 0 && snapshot.Type == "" {
+		return string(pro_interfaces.DeploymentWindowSourceManual), nil
+	}
+	switch snapshot.Type {
+	case db.WorkflowTriggerSchedule:
+		return string(pro_interfaces.DeploymentWindowSourceSchedule), nil
+	case db.WorkflowTriggerAPI:
+		return string(pro_interfaces.DeploymentWindowSourceAPI), nil
+	case db.WorkflowTriggerWebhook:
+		return string(pro_interfaces.DeploymentWindowSourceWebhook), nil
+	default:
+		return "", errors.New("workflow policy guardrail trigger source is invalid")
+	}
+}
+
+func workflowPreflightNodeIndexes(nodes []db.WorkflowRunNode) []int {
+	indexes := make([]int, len(nodes))
+	for index := range nodes {
+		indexes[index] = index
+	}
+	sort.Slice(indexes, func(left, right int) bool {
+		return nodes[indexes[left]].WorkflowNodeID < nodes[indexes[right]].WorkflowNodeID
+	})
+	return indexes
+}
+
+func workflowTaskPolicyInputMatches(
+	inputs []pro_interfaces.PolicyGuardrailEvaluationInput,
+	metadata pro_interfaces.PolicyGuardrailWorkflowMetadata,
+	projectID int,
+	evaluatedAt time.Time,
+) bool {
+	if len(inputs) != 1 || inputs[0].Validate() != nil || inputs[0].ProjectID != projectID ||
+		inputs[0].Intent != pro_interfaces.ExecutionPreflightTask || inputs[0].Template == nil ||
+		inputs[0].Workflow == nil || !inputs[0].EvaluatedAt.Equal(evaluatedAt) {
+		return false
+	}
+	actual := inputs[0].Workflow
+	return actual.ID == metadata.ID && actual.Revision == metadata.Revision && actual.NodeID == metadata.NodeID &&
+		actual.NodeKind == metadata.NodeKind && actual.TriggerSource == metadata.TriggerSource && actual.CrossProject == metadata.CrossProject
 }
 
 func (s *workflowService) workflowExecutionPermissionDigest(workflow db.WorkflowTemplate, user *db.User) string {

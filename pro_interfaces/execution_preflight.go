@@ -258,6 +258,10 @@ type ExecutionPreflightPlan struct {
 type ExecutionPreflightSnapshot struct {
 	Plan       ExecutionPreflightPlan
 	Components map[ExecutionPreflightChangeCode]string
+	// PolicyInputs are private, value-free evaluator inputs retained only while
+	// a workflow preview is recomputed or admitted. They are intentionally not
+	// part of the public plan or review token.
+	PolicyInputs []PolicyGuardrailEvaluationInput
 }
 
 // WorkflowExecutionPreflightPlanner is the narrow task-planning seam used by
@@ -275,6 +279,15 @@ type WorkflowExecutionPreflightPlanner interface {
 // dispatch never re-reads mutable resource configuration after review.
 type WorkflowTaskExecutionSnapshotPlanner interface {
 	BuildWorkflowTaskExecutionPreflightSnapshot(db.Task, db.Template, *db.User, int, time.Time) (ExecutionPreflightSnapshot, string, error)
+}
+
+// WorkflowTaskPolicyGuardrailPreflightPlanner builds the same child preflight
+// and frozen execution envelope as WorkflowTaskExecutionSnapshotPlanner, while
+// also returning the exact value-free policy input for that workflow node. The
+// workflow service supplies workflow provenance so task planning cannot infer
+// mutable trigger or cross-project context on its own.
+type WorkflowTaskPolicyGuardrailPreflightPlanner interface {
+	BuildWorkflowTaskPolicyGuardrailPreflightSnapshot(db.Task, db.Template, *db.User, int, time.Time, PolicyGuardrailWorkflowMetadata) (ExecutionPreflightSnapshot, string, error)
 }
 
 // WorkflowExecutionPreflightService is an optional Enhanced seam. Keeping it
@@ -574,14 +587,26 @@ func canonicalExecutionPreflight(plan ExecutionPreflightPlan) ExecutionPreflight
 		if result.Findings[i].PolicyScope != result.Findings[j].PolicyScope {
 			return result.Findings[i].PolicyScope < result.Findings[j].PolicyScope
 		}
+		if result.Findings[i].PolicyRevision != result.Findings[j].PolicyRevision {
+			return result.Findings[i].PolicyRevision < result.Findings[j].PolicyRevision
+		}
 		if result.Findings[i].PolicyRuleID != result.Findings[j].PolicyRuleID {
 			return result.Findings[i].PolicyRuleID < result.Findings[j].PolicyRuleID
+		}
+		if preflightNodeID(result.Findings[i].NodeID) != preflightNodeID(result.Findings[j].NodeID) {
+			return preflightNodeID(result.Findings[i].NodeID) < preflightNodeID(result.Findings[j].NodeID)
 		}
 		if result.Findings[i].Severity != result.Findings[j].Severity {
 			return result.Findings[i].Severity < result.Findings[j].Severity
 		}
 		if result.Findings[i].Code != result.Findings[j].Code {
 			return result.Findings[i].Code < result.Findings[j].Code
+		}
+		if result.Findings[i].PolicyEffect != result.Findings[j].PolicyEffect {
+			return result.Findings[i].PolicyEffect < result.Findings[j].PolicyEffect
+		}
+		if result.Findings[i].RemediationURL != result.Findings[j].RemediationURL {
+			return result.Findings[i].RemediationURL < result.Findings[j].RemediationURL
 		}
 		return result.Findings[i].Message < result.Findings[j].Message
 	})

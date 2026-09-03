@@ -1568,6 +1568,65 @@ func TestWorkflowExecutionPreflightRejectsStaleReviewBeforeRunCreation(t *testin
 	assert.Empty(t, fixture.enqueuer.tasks)
 }
 
+func TestWorkflowPolicyGuardrailPreflightCapturesImmutableRootAndTaskContexts(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	service := fixture.service.(*workflowService)
+	workflow := fixture.workflow
+	workflow.Nodes[0], workflow.Nodes[1] = workflow.Nodes[1], workflow.Nodes[0]
+
+	snapshot, err := service.buildWorkflowExecutionPreflight(workflow, &fixture.user)
+	require.NoError(t, err)
+	require.Len(t, snapshot.PolicyInputs, 3)
+	root := snapshot.PolicyInputs[0]
+	require.NotNil(t, root.Workflow)
+	assert.Equal(t, pro_interfaces.ExecutionPreflightWorkflow, root.Intent)
+	assert.Nil(t, root.Template)
+	assert.Equal(t, workflow.ID, root.Workflow.ID)
+	assert.Equal(t, workflow.Revision, root.Workflow.Revision)
+	assert.Equal(t, "manual", root.Workflow.TriggerSource)
+	assert.Zero(t, root.Workflow.NodeID)
+
+	first, second := snapshot.PolicyInputs[1], snapshot.PolicyInputs[2]
+	require.NotNil(t, first.Workflow)
+	require.NotNil(t, second.Workflow)
+	assert.Less(t, first.Workflow.NodeID, second.Workflow.NodeID)
+	assert.Equal(t, "task", first.Workflow.NodeKind)
+	assert.Equal(t, "workflow_node", first.Template.Source)
+	assert.Empty(t, first.Credentials)
+	assert.NotEmpty(t, first.Template.Application, "task policy metadata must retain an allow-listed application")
+}
+
+func TestWorkflowPolicyGuardrailTriggerSourcesAreClosedAndConsistent(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		snapshot db.WorkflowTriggerSnapshot
+		want     string
+	}{
+		{name: "manual", want: "manual"},
+		{name: "schedule", snapshot: db.WorkflowTriggerSnapshot{ID: 1, Type: db.WorkflowTriggerSchedule}, want: "schedule"},
+		{name: "api", snapshot: db.WorkflowTriggerSnapshot{ID: 1, Type: db.WorkflowTriggerAPI}, want: "api"},
+		{name: "webhook", snapshot: db.WorkflowTriggerSnapshot{ID: 1, Type: db.WorkflowTriggerWebhook}, want: "webhook"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			actual, err := workflowPolicyGuardrailTriggerSource(testCase.snapshot)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.want, actual)
+		})
+	}
+	_, err := workflowPolicyGuardrailTriggerSource(db.WorkflowTriggerSnapshot{ID: 1, Type: "unknown"})
+	assert.Error(t, err)
+}
+
+func TestWorkflowPreflightRetainsLegacyEnhancedEnqueuerSeamUntilPolicyAdmissionIsConfigured(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	legacy := &legacyWorkflowTestEnqueuer{delegate: fixture.enqueuer}
+	service := NewWorkflowService(fixture.repository, fixture.store, legacy, nil).(pro_interfaces.WorkflowExecutionPreflightService)
+
+	preview, err := service.PreviewWorkflowExecution(fixture.workflow, &fixture.user)
+	require.NoError(t, err)
+	assert.NotEmpty(t, preview.Fingerprint)
+}
+
 func configureWorkflowArtifactEncryption(t *testing.T) {
 	t.Helper()
 	previous := util.Config.AccessKeyEncryption
@@ -1673,6 +1732,41 @@ type workflowTestEnqueuer struct {
 	preflightChanges []pro_interfaces.ExecutionPreflightChangeCode
 }
 
+// legacyWorkflowTestEnqueuer deliberately implements only the existing
+// preflight seams. It protects installations that configure an Enhanced
+// workflow service before policy admission wiring is introduced.
+type legacyWorkflowTestEnqueuer struct {
+	delegate *workflowTestEnqueuer
+}
+
+func (e *legacyWorkflowTestEnqueuer) AddTask(task db.Task, userID *int, username string, projectID int, needAlias bool) (db.Task, error) {
+	return e.delegate.AddTask(task, userID, username, projectID, needAlias)
+}
+
+func (e *legacyWorkflowTestEnqueuer) AddWorkflowTask(task db.Task, template db.Template, userID *int, username string, projectID int, needAlias bool) (db.Task, error) {
+	return e.delegate.AddWorkflowTask(task, template, userID, username, projectID, needAlias)
+}
+
+func (e *legacyWorkflowTestEnqueuer) StopTasksByWorkflowRun(projectID int, runID int, forceStop bool) {
+	e.delegate.StopTasksByWorkflowRun(projectID, runID, forceStop)
+}
+
+func (e *legacyWorkflowTestEnqueuer) BuildWorkflowTaskExecutionPreflight(task db.Task, template db.Template, user *db.User, projectID int, now time.Time) (pro_interfaces.ExecutionPreflightSnapshot, error) {
+	return e.delegate.BuildWorkflowTaskExecutionPreflight(task, template, user, projectID, now)
+}
+
+func (e *legacyWorkflowTestEnqueuer) BuildWorkflowTaskExecutionPreflightSnapshot(task db.Task, template db.Template, user *db.User, projectID int, now time.Time) (pro_interfaces.ExecutionPreflightSnapshot, string, error) {
+	return e.delegate.BuildWorkflowTaskExecutionPreflightSnapshot(task, template, user, projectID, now)
+}
+
+func (e *legacyWorkflowTestEnqueuer) SealExecutionPreflight(snapshot pro_interfaces.ExecutionPreflightSnapshot) (pro_interfaces.ExecutionPreflightPlan, error) {
+	return e.delegate.SealExecutionPreflight(snapshot)
+}
+
+func (e *legacyWorkflowTestEnqueuer) VerifyExecutionPreflightReview(snapshot pro_interfaces.ExecutionPreflightSnapshot, review pro_interfaces.ExecutionPreflightReview) ([]pro_interfaces.ExecutionPreflightChangeCode, error) {
+	return e.delegate.VerifyExecutionPreflightReview(snapshot, review)
+}
+
 type workflowReconcileFailingService struct {
 	pro_interfaces.WorkflowService
 }
@@ -1757,6 +1851,32 @@ func (e *workflowTestEnqueuer) BuildWorkflowTaskExecutionPreflightSnapshot(
 		return pro_interfaces.ExecutionPreflightSnapshot{}, "", err
 	}
 	return snapshot, "test-reviewed-execution-snapshot", nil
+}
+
+func (e *workflowTestEnqueuer) BuildWorkflowTaskPolicyGuardrailPreflightSnapshot(
+	task db.Task,
+	template db.Template,
+	user *db.User,
+	projectID int,
+	now time.Time,
+	workflow pro_interfaces.PolicyGuardrailWorkflowMetadata,
+) (pro_interfaces.ExecutionPreflightSnapshot, string, error) {
+	snapshot, encoded, err := e.BuildWorkflowTaskExecutionPreflightSnapshot(task, template, user, projectID, now)
+	if err != nil {
+		return pro_interfaces.ExecutionPreflightSnapshot{}, "", err
+	}
+	application := string(template.App)
+	if application == "" {
+		application = string(db.AppAnsible)
+	}
+	workflowCopy := workflow
+	snapshot.PolicyInputs = []pro_interfaces.PolicyGuardrailEvaluationInput{{
+		ProjectID: projectID, Intent: pro_interfaces.ExecutionPreflightTask, EvaluatedAt: now.UTC(),
+		Template: &pro_interfaces.PolicyGuardrailTemplateMetadata{ID: template.ID, Application: application, Source: string(pro_interfaces.DeploymentWindowSourceWorkflowNode)},
+		Workflow: &workflowCopy,
+		Executor: pro_interfaces.PolicyGuardrailExecutorMetadata{Type: "local", ImageReferenceKind: "none"},
+	}}
+	return snapshot, encoded, nil
 }
 
 func (e *workflowTestEnqueuer) SealExecutionPreflight(snapshot pro_interfaces.ExecutionPreflightSnapshot) (pro_interfaces.ExecutionPreflightPlan, error) {

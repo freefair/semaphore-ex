@@ -172,6 +172,77 @@ func TestApplyPolicyGuardrailEvaluationMapsAllowAndWarnWithoutOverridingDeny(t *
 	assert.False(t, planHasPolicyGuardrailDenial(plan))
 }
 
+func TestApplyWorkflowPolicyGuardrailEvaluationsBindsRootAndTaskFindingsDeterministically(t *testing.T) {
+	projectID := 7
+	now := time.Date(2026, time.September, 3, 12, 0, 0, 0, time.UTC)
+	plan := validPolicyPreflightPlan(projectID)
+	plan.Intent, plan.TemplateID, plan.WorkflowID = ExecutionPreflightWorkflow, 0, 13
+	plan.Definition = ExecutionPreflightDefinition{Kind: ExecutionReferenceWorkflow, ID: 13, Revision: "2", Fingerprint: "workflow-r2"}
+
+	revisions := []PolicyGuardrailRevisionRef{{
+		Scope: PolicyGuardrailScopeProject, ProjectID: &projectID, Revision: 2, Fingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}}
+	rootInput := PolicyGuardrailEvaluationInput{
+		ProjectID: projectID, Intent: ExecutionPreflightWorkflow, EvaluatedAt: now,
+		Workflow: &PolicyGuardrailWorkflowMetadata{ID: 13, Revision: 2, TriggerSource: "manual"},
+		Executor: PolicyGuardrailExecutorMetadata{Type: "workflow", ImageReferenceKind: "none"},
+	}
+	nodeInput := PolicyGuardrailEvaluationInput{
+		ProjectID: projectID, Intent: ExecutionPreflightTask, EvaluatedAt: now,
+		Template: &PolicyGuardrailTemplateMetadata{ID: 41, Application: "ansible", Source: "workflow_node"},
+		Workflow: &PolicyGuardrailWorkflowMetadata{ID: 13, Revision: 2, NodeID: 14, NodeKind: "task", TriggerSource: "manual"},
+		Executor: PolicyGuardrailExecutorMetadata{Type: "local", ImageReferenceKind: "none"},
+	}
+	rootFingerprint, err := FingerprintPolicyGuardrailInput(rootInput)
+	require.NoError(t, err)
+	nodeFingerprint, err := FingerprintPolicyGuardrailInput(nodeInput)
+	require.NoError(t, err)
+	evaluations := []PolicyGuardrailEvaluation{
+		{Revisions: revisions, Findings: []PolicyGuardrailFinding{{Scope: PolicyGuardrailScopeProject, Revision: 2, RuleID: "warn-root", Effect: PolicyGuardrailEffectWarn, Severity: PolicyGuardrailSeverityMedium, Message: "Root warning."}}, Allowed: true, InputFingerprint: rootFingerprint, EvaluatedAt: now},
+		{Revisions: revisions, Findings: []PolicyGuardrailFinding{{Scope: PolicyGuardrailScopeProject, Revision: 2, RuleID: "deny-node", Effect: PolicyGuardrailEffectDeny, Severity: PolicyGuardrailSeverityHigh, Message: "Node denied."}}, Allowed: false, InputFingerprint: nodeFingerprint, EvaluatedAt: now},
+	}
+
+	require.NoError(t, ApplyWorkflowPolicyGuardrailEvaluations(&plan, []PolicyGuardrailEvaluationInput{rootInput, nodeInput}, evaluations))
+	require.Equal(t, revisions, plan.PolicyRevisions)
+	require.Len(t, plan.Findings, 2)
+	assert.Nil(t, plan.Findings[0].NodeID)
+	require.NotNil(t, plan.Findings[1].NodeID)
+	assert.Equal(t, 14, *plan.Findings[1].NodeID)
+	assert.Equal(t, ExecutionReasonPolicyDenied, plan.Findings[1].Code)
+
+	invalid := validPolicyPreflightPlan(projectID)
+	invalid.Intent, invalid.TemplateID, invalid.WorkflowID = ExecutionPreflightWorkflow, 0, 13
+	invalid.Definition = plan.Definition
+	changed := append([]PolicyGuardrailRevisionRef(nil), revisions...)
+	changed[0].Revision = 3
+	evaluations[1].Revisions = changed
+	assert.Error(t, ApplyWorkflowPolicyGuardrailEvaluations(&invalid, []PolicyGuardrailEvaluationInput{rootInput, nodeInput}, evaluations))
+	assert.Empty(t, invalid.PolicyRevisions)
+	assert.Empty(t, invalid.Findings)
+}
+
+func TestFingerprintExecutionPreflightCanonicalizesRepeatedPolicyRuleFindingsByNodeID(t *testing.T) {
+	projectID := 7
+	plan := validPolicyPreflightPlan(projectID)
+	plan.PolicyRevisions = []PolicyGuardrailRevisionRef{{
+		Scope: PolicyGuardrailScopeProject, ProjectID: &projectID, Revision: 2, Fingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}}
+	nodeNine, nodeTen := 9, 10
+	first := ExecutionPreflightFinding{
+		Severity: ExecutionFindingWarning, Code: ExecutionReasonPolicyWarning, Message: "Review this node.",
+		PolicyScope: PolicyGuardrailScopeProject, PolicyRevision: 2, PolicyRuleID: "warn-node", PolicyEffect: PolicyGuardrailEffectWarn, NodeID: &nodeNine,
+	}
+	second := first
+	second.NodeID = &nodeTen
+	plan.Findings = []ExecutionPreflightFinding{second, first}
+	left, err := FingerprintExecutionPreflight(plan)
+	require.NoError(t, err)
+	plan.Findings = []ExecutionPreflightFinding{first, second}
+	right, err := FingerprintExecutionPreflight(plan)
+	require.NoError(t, err)
+	assert.Equal(t, left, right)
+}
+
 func validPolicyPreflightPlan(projectID int) ExecutionPreflightPlan {
 	return ExecutionPreflightPlan{
 		ContractVersion: ExecutionPreflightContractVersion,
