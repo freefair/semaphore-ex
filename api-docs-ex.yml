@@ -989,6 +989,406 @@ definitions:
       end:
         type: string
         format: date-time
+  WebhookSigningStatus:
+    type: object
+    description: Non-secret current/next signing metadata. A next generation greater than current is staged; a lower
+      next generation is the retired predecessor.
+    required:
+    - signing_revision
+    properties:
+      current_key_id:
+        type: string
+        pattern: ^swhkid_[-_A-Za-z0-9]+$
+        maxLength: 64
+      next_key_id:
+        type: string
+        pattern: ^swhkid_[-_A-Za-z0-9]+$
+        maxLength: 64
+      current_generation:
+        type: integer
+        minimum: 0
+      next_generation:
+        type: integer
+        minimum: 0
+      signing_revision:
+        type: integer
+        minimum: 0
+  AuditWebhookSigningSecret:
+    type: object
+    description: One-time response. The secret is never returned by status or history reads.
+    required:
+    - secret
+    - signing_revision
+    properties:
+      secret:
+        type: string
+        format: password
+        pattern: ^swhsec_[-_A-Za-z0-9]+$
+      current_key_id:
+        type: string
+      next_key_id:
+        type: string
+      current_generation:
+        type: integer
+      next_generation:
+        type: integer
+      signing_revision:
+        type: integer
+  AuditWebhookConfigurationInput:
+    type: object
+    additionalProperties: false
+    required:
+    - endpoint
+    properties:
+      endpoint:
+        type: string
+        format: uri
+        description: Absolute HTTPS endpoint without embedded credentials or a fragment.
+      credential:
+        type: string
+        format: password
+        maxLength: 4096
+        description: Optional write-only legacy Bearer credential. Omit to preserve it or send an empty string to
+          remove it.
+  AuditWebhookConfiguration:
+    type: object
+    required:
+    - endpoint
+    - credential_configured
+    - paused
+    - signing_revision
+    properties:
+      endpoint:
+        type: string
+        format: uri
+      credential_configured:
+        type: boolean
+      paused:
+        type: boolean
+      updated_at:
+        type: string
+        format: date-time
+      current_key_id:
+        type: string
+      next_key_id:
+        type: string
+      current_generation:
+        type: integer
+      next_generation:
+        type: integer
+      signing_revision:
+        type: integer
+  AuditWebhookDelivery:
+    type: object
+    required:
+    - id
+    - event_id
+    - status
+    - attempts
+    - created_at
+    - updated_at
+    properties:
+      id:
+        type: integer
+      event_id:
+        type: string
+        minLength: 16
+        maxLength: 128
+      status:
+        type: string
+        enum:
+        - pending
+        - delivering
+        - retrying
+        - succeeded
+        - failed
+      attempts:
+        type: integer
+        minimum: 0
+      next_attempt:
+        type: string
+        format: date-time
+      http_status:
+        type: integer
+      last_error:
+        type: string
+        description: Bounded reason code; never a raw transport error or response body.
+      created_at:
+        type: string
+        format: date-time
+      updated_at:
+        type: string
+        format: date-time
+      delivered_at:
+        type: string
+        format: date-time
+  AuditWebhookDeliveryAttempt:
+    type: object
+    description: Redacted attempt metadata; payloads, credentials, signatures, headers, bodies, and raw errors are
+      omitted.
+    required:
+    - id
+    - delivery_id
+    - event_id
+    - attempt
+    - key_id
+    - signed_at
+    - outcome
+    - created_at
+    properties:
+      id:
+        type: integer
+      delivery_id:
+        type: integer
+      event_id:
+        type: string
+        minLength: 16
+        maxLength: 128
+      attempt:
+        type: integer
+        minimum: 1
+      key_id:
+        type: string
+        pattern: ^swhkid_[-_A-Za-z0-9]+$
+      signed_at:
+        type: string
+        format: date-time
+      outcome:
+        type: string
+        enum:
+        - started
+        - succeeded
+        - retrying
+        - failed
+      http_status:
+        type: integer
+      reason:
+        type: string
+        enum:
+        - network_error
+        - timeout
+        - http_4xx
+        - http_5xx
+        - invalid_response
+        - no_key
+        - signing_failure
+        - configuration_error
+        - delivery_failed
+      created_at:
+        type: string
+        format: date-time
+      completed_at:
+        type: string
+        format: date-time
+  WorkflowTriggerInputMapping:
+    type: object
+    required:
+    - parameter
+    - source
+    properties:
+      parameter:
+        type: string
+      source:
+        type: string
+        enum:
+        - fixed
+        - request
+      key:
+        type: string
+      value:
+        description: Typed fixed value matching the workflow parameter declaration.
+  WorkflowTrigger:
+    type: object
+    required:
+    - id
+    - project_id
+    - workflow_template_id
+    - revision
+    - name
+    - type
+    - owner_user_id
+    - enabled
+    properties:
+      id:
+        type: integer
+      project_id:
+        type: integer
+      workflow_template_id:
+        type: integer
+      revision:
+        type: integer
+      name:
+        type: string
+        maxLength: 128
+      type:
+        type: string
+        enum:
+        - manual
+        - schedule
+        - api
+        - webhook
+      owner_user_id:
+        type: integer
+      enabled:
+        type: boolean
+      cron_format:
+        type: string
+      input_mappings:
+        type: array
+        maxItems: 64
+        items:
+          $ref: ./api-docs.yml#/definitions/WorkflowTriggerInputMapping
+      credential_generation:
+        type: integer
+        description: API-trigger credential generation only.
+      current_signing_key_id:
+        type: string
+      next_signing_key_id:
+        type: string
+      current_signing_generation:
+        type: integer
+      next_signing_generation:
+        type: integer
+      created:
+        type: string
+        format: date-time
+      updated:
+        type: string
+        format: date-time
+      last_fired:
+        type: string
+        format: date-time
+      last_result:
+        type: string
+  WorkflowTriggerMutation:
+    type: object
+    additionalProperties: false
+    required:
+    - name
+    - type
+    - enabled
+    properties:
+      name:
+        type: string
+        maxLength: 128
+      type:
+        type: string
+        enum:
+        - manual
+        - schedule
+        - api
+        - webhook
+      enabled:
+        type: boolean
+      cron_format:
+        type: string
+      revision:
+        type: integer
+      input_mappings:
+        type: array
+        maxItems: 64
+        items:
+          $ref: ./api-docs.yml#/definitions/WorkflowTriggerInputMapping
+  WorkflowTriggerCredentialResult:
+    type: object
+    required:
+    - trigger
+    properties:
+      trigger:
+        $ref: ./api-docs.yml#/definitions/WorkflowTrigger
+      credential:
+        type: string
+        format: password
+        description: One-time `swt_` API-trigger credential.
+      webhook_signing_secret:
+        type: string
+        format: password
+        description: One-time `swhsec_` webhook signing secret.
+  WorkflowTriggerRevisionRequest:
+    type: object
+    additionalProperties: false
+    required:
+    - revision
+    properties:
+      revision:
+        type: integer
+        minimum: 1
+  WorkflowTriggerInvocationInput:
+    type: object
+    additionalProperties: false
+    properties:
+      inputs:
+        type: object
+        description: Only request keys explicitly mapped by the trigger are accepted.
+  WorkflowTriggerHistoryEntry:
+    type: object
+    description: Safe invocation history without payloads, event hashes, signatures, secrets, headers, input snapshots,
+      or internal failure details.
+    required:
+    - id
+    - workflow_trigger_id
+    - status
+    - created
+    - updated
+    properties:
+      id:
+        type: integer
+      workflow_trigger_id:
+        type: integer
+      status:
+        type: string
+        enum:
+        - claimed
+        - running
+        - succeeded
+        - failed
+        - rejected
+        - blocked
+      run_id:
+        type: integer
+      result:
+        type: string
+      webhook_event_id:
+        type: string
+      webhook_key_id:
+        type: string
+      webhook_signed_at:
+        type: string
+        format: date-time
+      webhook_replay_count:
+        type: integer
+        minimum: 0
+      webhook_last_replayed_at:
+        type: string
+        format: date-time
+      created:
+        type: string
+        format: date-time
+      updated:
+        type: string
+        format: date-time
+  WorkflowTriggerFireResult:
+    type: object
+    properties:
+      invocation:
+        type: object
+        properties:
+          id:
+            type: integer
+          workflow_trigger_id:
+            type: integer
+          status:
+            type: string
+          run_id:
+            type: integer
+          result:
+            type: string
+          reason:
+            type: string
+      run:
+        $ref: ./api-docs.yml#/definitions/WorkflowRun
+      duplicate:
+        type: boolean
   GlobalCredentialExternalReference:
     type: object
     description: Value-free Vault or OpenBao reference. The server stores but does not resolve it in this API layer.
@@ -1413,6 +1813,470 @@ paths:
           description: Rotation not confirmed or key is not eligible
         403:
           description: Project-resource management permission required
+  /audit-webhook:
+    get:
+      tags:
+      - signed-webhook
+      summary: Read the non-secret audit webhook configuration and signing status
+      responses:
+        200:
+          description: Safe configuration and current/next signing metadata
+          schema:
+            $ref: ./api-docs.yml#/definitions/AuditWebhookConfiguration
+        403:
+          description: Administrator permission required
+        404:
+          description: Audit webhook export is unavailable in this edition
+    put:
+      tags:
+      - signed-webhook
+      summary: Configure the HTTPS audit receiver and optional legacy Bearer credential
+      parameters:
+      - name: configuration
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/AuditWebhookConfigurationInput
+      responses:
+        200:
+          description: Updated non-secret configuration
+          schema:
+            $ref: ./api-docs.yml#/definitions/AuditWebhookConfiguration
+        400:
+          description: Invalid endpoint, credential, unknown field, or body
+        403:
+          description: Administrator permission required
+        404:
+          description: Audit webhook export is unavailable in this edition
+  /audit-webhook/signing-secret:
+    post:
+      tags:
+      - signed-webhook
+      summary: Create and reveal the initial audit signing secret once
+      parameters:
+      - name: revision
+        in: query
+        required: true
+        type: integer
+        minimum: 0
+      responses:
+        201:
+          description: One-time secret and safe signing status
+          schema:
+            $ref: ./api-docs.yml#/definitions/AuditWebhookSigningSecret
+        400:
+          description: Invalid revision or signing operation
+        403:
+          description: Administrator permission required
+        409:
+          description: Signing state changed or already has a current key
+  /audit-webhook/signing-secret/stage:
+    post:
+      tags:
+      - signed-webhook
+      summary: Stage and reveal the next audit signing secret once
+      parameters:
+      - name: revision
+        in: query
+        required: true
+        type: integer
+        minimum: 0
+      responses:
+        201:
+          description: One-time next secret and safe signing status
+          schema:
+            $ref: ./api-docs.yml#/definitions/AuditWebhookSigningSecret
+        400:
+          description: Invalid revision or signing operation
+        403:
+          description: Administrator permission required
+        409:
+          description: Signing state changed or next-key slot is occupied
+  /audit-webhook/signing-secret/promote:
+    post:
+      tags:
+      - signed-webhook
+      summary: Promote a staged audit key and retain the old current key for overlap
+      parameters:
+      - name: revision
+        in: query
+        required: true
+        type: integer
+        minimum: 0
+      responses:
+        200:
+          description: Safe signing status after promotion
+          schema:
+            $ref: ./api-docs.yml#/definitions/WebhookSigningStatus
+        400:
+          description: Invalid revision or signing operation
+        403:
+          description: Administrator permission required
+        409:
+          description: Signing state changed or next key is not staged
+  /audit-webhook/signing-secret/next:
+    delete:
+      tags:
+      - signed-webhook
+      summary: Revoke the staged or retired audit next key
+      parameters:
+      - name: revision
+        in: query
+        required: true
+        type: integer
+        minimum: 0
+      responses:
+        200:
+          description: Safe signing status after revocation
+          schema:
+            $ref: ./api-docs.yml#/definitions/WebhookSigningStatus
+        400:
+          description: Invalid revision or signing operation
+        403:
+          description: Administrator permission required
+        409:
+          description: Signing state changed
+  /audit-webhook/test:
+    post:
+      tags:
+      - signed-webhook
+      summary: Persist and send one controlled signed audit delivery
+      parameters:
+      - name: key
+        in: query
+        required: false
+        type: string
+        default: current
+        enum:
+        - current
+        - next
+      responses:
+        201:
+          description: Persisted delivery; inspect its status and attempt history
+          schema:
+            $ref: ./api-docs.yml#/definitions/AuditWebhookDelivery
+        400:
+          description: Invalid key selection
+        403:
+          description: Administrator permission required
+        409:
+          description: Endpoint or selected signing key is not configured
+  /audit-webhook/pause:
+    post:
+      tags:
+      - signed-webhook
+      summary: Pause background audit delivery claims
+      responses:
+        200:
+          description: Updated non-secret configuration
+          schema:
+            $ref: ./api-docs.yml#/definitions/AuditWebhookConfiguration
+        403:
+          description: Administrator permission required
+        409:
+          description: Audit webhook is not configured
+  /audit-webhook/resume:
+    post:
+      tags:
+      - signed-webhook
+      summary: Resume background audit delivery claims
+      responses:
+        200:
+          description: Updated non-secret configuration
+          schema:
+            $ref: ./api-docs.yml#/definitions/AuditWebhookConfiguration
+        403:
+          description: Administrator permission required
+        409:
+          description: Audit webhook is not configured
+  /audit-webhook/deliveries:
+    get:
+      tags:
+      - signed-webhook
+      summary: List newest audit webhook deliveries without payloads or signing material
+      parameters:
+      - name: count
+        in: query
+        required: false
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+      - name: offset
+        in: query
+        required: false
+        type: integer
+        minimum: 0
+        default: 0
+      responses:
+        200:
+          description: Bounded delivery history
+          schema:
+            type: array
+            maxItems: 100
+            items:
+              $ref: ./api-docs.yml#/definitions/AuditWebhookDelivery
+        400:
+          description: Invalid pagination
+        403:
+          description: Administrator permission required
+  /audit-webhook/deliveries/{delivery_id}/attempts:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/delivery_id
+    get:
+      tags:
+      - signed-webhook
+      summary: List redacted signed attempts for one audit delivery
+      parameters:
+      - name: count
+        in: query
+        required: false
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+      - name: offset
+        in: query
+        required: false
+        type: integer
+        minimum: 0
+        default: 0
+      responses:
+        200:
+          description: Attempt metadata without payloads, secrets, signatures, headers, bodies, or raw errors
+          schema:
+            type: array
+            maxItems: 100
+            items:
+              $ref: ./api-docs.yml#/definitions/AuditWebhookDeliveryAttempt
+        400:
+          description: Invalid delivery ID or pagination
+        403:
+          description: Administrator permission required
+        404:
+          description: Delivery does not exist
+  /project/{project_id}/workflows/{workflow_id}/triggers:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/workflow_id
+    get:
+      tags:
+      - workflow
+      - signed-webhook
+      summary: List safe workflow trigger resources
+      responses:
+        200:
+          description: Triggers including non-secret webhook key metadata
+          schema:
+            type: array
+            maxItems: 64
+            items:
+              $ref: ./api-docs.yml#/definitions/WorkflowTrigger
+        403:
+          description: Workflow administration permission required
+    post:
+      tags:
+      - workflow
+      - signed-webhook
+      summary: Create a trigger and reveal its API credential or webhook signing secret once
+      parameters:
+      - name: trigger
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/WorkflowTriggerMutation
+      responses:
+        201:
+          description: Trigger plus one-time credential material when its type requires it
+          schema:
+            $ref: ./api-docs.yml#/definitions/WorkflowTriggerCredentialResult
+        400:
+          description: Invalid or unexpected input
+        403:
+          description: Workflow administration permission required
+        409:
+          description: Trigger limit or state conflict
+  /project/{project_id}/workflows/{workflow_id}/triggers/{trigger_id}/webhook-signing/bootstrap:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/workflow_id
+    - $ref: ./api-docs.yml#/parameters/trigger_id
+    post:
+      tags:
+      - workflow
+      - signed-webhook
+      summary: Create and reveal a current signing secret once for a migrated webhook trigger
+      parameters:
+      - name: revision
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/WorkflowTriggerRevisionRequest
+      responses:
+        200:
+          description: Updated trigger and one-time signing secret
+          schema:
+            $ref: ./api-docs.yml#/definitions/WorkflowTriggerCredentialResult
+        403:
+          description: Workflow administration permission required
+        409:
+          description: Stale revision, invalid signing state, or encryption unavailable
+  /project/{project_id}/workflows/{workflow_id}/triggers/{trigger_id}/webhook-signing/stage:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/workflow_id
+    - $ref: ./api-docs.yml#/parameters/trigger_id
+    post:
+      tags:
+      - workflow
+      - signed-webhook
+      summary: Stage and reveal the next workflow webhook signing secret once
+      parameters:
+      - name: revision
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/WorkflowTriggerRevisionRequest
+      responses:
+        200:
+          description: Updated trigger and one-time next signing secret
+          schema:
+            $ref: ./api-docs.yml#/definitions/WorkflowTriggerCredentialResult
+        403:
+          description: Workflow administration permission required
+        409:
+          description: Stale revision, occupied next-key slot, or encryption unavailable
+  /project/{project_id}/workflows/{workflow_id}/triggers/{trigger_id}/webhook-signing/promote:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/workflow_id
+    - $ref: ./api-docs.yml#/parameters/trigger_id
+    post:
+      tags:
+      - workflow
+      - signed-webhook
+      summary: Promote a staged workflow webhook key and retain the old key for overlap
+      parameters:
+      - name: revision
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/WorkflowTriggerRevisionRequest
+      responses:
+        200:
+          description: Updated trigger with safe key IDs and generations
+          schema:
+            $ref: ./api-docs.yml#/definitions/WorkflowTrigger
+        403:
+          description: Workflow administration permission required
+        409:
+          description: Stale revision or next key is not staged
+  /project/{project_id}/workflows/{workflow_id}/triggers/{trigger_id}/webhook-signing/revoke:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/workflow_id
+    - $ref: ./api-docs.yml#/parameters/trigger_id
+    post:
+      tags:
+      - workflow
+      - signed-webhook
+      summary: Revoke a staged or retired workflow webhook next key
+      parameters:
+      - name: revision
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/WorkflowTriggerRevisionRequest
+      responses:
+        200:
+          description: Updated trigger with safe key metadata
+          schema:
+            $ref: ./api-docs.yml#/definitions/WorkflowTrigger
+        403:
+          description: Workflow administration permission required
+        409:
+          description: Stale revision or invalid signing state
+  /project/{project_id}/workflows/{workflow_id}/triggers/{trigger_id}/history:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/workflow_id
+    - $ref: ./api-docs.yml#/parameters/trigger_id
+    get:
+      tags:
+      - workflow
+      - signed-webhook
+      summary: List safe trigger invocation and webhook replay history
+      parameters:
+      - $ref: ./api-docs.yml#/parameters/history_count
+      - $ref: ./api-docs.yml#/parameters/history_before
+      responses:
+        200:
+          description: Newest safe invocation records first
+          schema:
+            type: array
+            maxItems: 100
+            items:
+              $ref: ./api-docs.yml#/definitions/WorkflowTriggerHistoryEntry
+        403:
+          description: Workflow administration permission required
+  /workflow-triggers/{project_id}/{workflow_id}/{trigger_id}/webhook:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/workflow_id
+    - $ref: ./api-docs.yml#/parameters/trigger_id
+    post:
+      tags:
+      - signed-webhook
+      summary: Start a workflow from an authenticated, fresh, replay-protected webhook
+      description: The HMAC binds POST, the exact raw path and query, event ID, Unix timestamp, key ID, and exact
+        body bytes using the semaphore.webhook.v1 binary framing. Every protocol header is required exactly once.
+        Bearer fallback is rejected.
+      security: []
+      parameters:
+      - name: X-Semaphore-Webhook-Version
+        in: header
+        required: true
+        type: string
+        enum:
+        - semaphore.webhook.v1
+      - name: X-Semaphore-Event-ID
+        in: header
+        required: true
+        type: string
+        minLength: 16
+        maxLength: 128
+      - name: X-Semaphore-Timestamp
+        in: header
+        required: true
+        type: string
+        description: Canonical Unix seconds within five minutes of server UTC time.
+      - name: X-Semaphore-Key-ID
+        in: header
+        required: true
+        type: string
+        pattern: ^swhkid_[-_A-Za-z0-9]+$
+      - name: X-Semaphore-Signature
+        in: header
+        required: true
+        type: string
+        pattern: ^v1=[0-9a-f]{64}$
+      - name: payload
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/WorkflowTriggerInvocationInput
+      responses:
+        201:
+          description: Event claimed durably and workflow start recorded
+          schema:
+            $ref: ./api-docs.yml#/definitions/WorkflowTriggerFireResult
+        401:
+          description: Authentication, signature, key, timestamp, trigger state, or authorization rejected without
+            detail
+        409:
+          description: Event ID was already claimed; no second workflow is started
+        413:
+          description: Body exceeds 256 KiB
   /project/{project_id}/workflows/{workflow_id}/preflight:
     parameters:
     - $ref: ./api-docs.yml#/parameters/project_id

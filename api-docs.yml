@@ -26,6 +26,8 @@ tags:
     description: Runner management (project and global runners)
   - name: workflow
     description: Workflows
+  - name: signed-webhook
+    description: Enhanced audit and workflow webhook signing, rotation, and redacted history
   - name: global-credential
     description: Enhanced global credential metadata, versions, and project grants
   - name: policy-guardrail
@@ -1705,6 +1707,34 @@ definitions:
         type: string
         enum: [approved, rejected]
 
+  WebhookSigningStatus:
+    $ref: "./api-docs-ex.yml#/definitions/WebhookSigningStatus"
+  AuditWebhookSigningSecret:
+    $ref: "./api-docs-ex.yml#/definitions/AuditWebhookSigningSecret"
+  AuditWebhookConfigurationInput:
+    $ref: "./api-docs-ex.yml#/definitions/AuditWebhookConfigurationInput"
+  AuditWebhookConfiguration:
+    $ref: "./api-docs-ex.yml#/definitions/AuditWebhookConfiguration"
+  AuditWebhookDelivery:
+    $ref: "./api-docs-ex.yml#/definitions/AuditWebhookDelivery"
+  AuditWebhookDeliveryAttempt:
+    $ref: "./api-docs-ex.yml#/definitions/AuditWebhookDeliveryAttempt"
+  WorkflowTriggerInputMapping:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowTriggerInputMapping"
+  WorkflowTrigger:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowTrigger"
+  WorkflowTriggerMutation:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowTriggerMutation"
+  WorkflowTriggerCredentialResult:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowTriggerCredentialResult"
+  WorkflowTriggerRevisionRequest:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowTriggerRevisionRequest"
+  WorkflowTriggerInvocationInput:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowTriggerInvocationInput"
+  WorkflowTriggerHistoryEntry:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowTriggerHistoryEntry"
+  WorkflowTriggerFireResult:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowTriggerFireResult"
   GlobalCredentialExternalReference:
     $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialExternalReference"
   GlobalCredentialMaterialInput:
@@ -1826,6 +1856,20 @@ parameters:
     type: integer
     required: true
     x-example: 18
+  trigger_id:
+    name: trigger_id
+    description: Workflow trigger ID
+    in: path
+    type: integer
+    required: true
+    x-example: 23
+  delivery_id:
+    name: delivery_id
+    description: Audit webhook delivery ID
+    in: path
+    type: integer
+    required: true
+    x-example: 24
   run_id:
     name: run_id
     description: workflow run ID
@@ -3436,6 +3480,26 @@ paths:
           description: template removed
 
   # project workflows
+  /audit-webhook:
+    $ref: "./api-docs-ex.yml#/paths/~1audit-webhook"
+  /audit-webhook/signing-secret:
+    $ref: "./api-docs-ex.yml#/paths/~1audit-webhook~1signing-secret"
+  /audit-webhook/signing-secret/stage:
+    $ref: "./api-docs-ex.yml#/paths/~1audit-webhook~1signing-secret~1stage"
+  /audit-webhook/signing-secret/promote:
+    $ref: "./api-docs-ex.yml#/paths/~1audit-webhook~1signing-secret~1promote"
+  /audit-webhook/signing-secret/next:
+    $ref: "./api-docs-ex.yml#/paths/~1audit-webhook~1signing-secret~1next"
+  /audit-webhook/test:
+    $ref: "./api-docs-ex.yml#/paths/~1audit-webhook~1test"
+  /audit-webhook/pause:
+    $ref: "./api-docs-ex.yml#/paths/~1audit-webhook~1pause"
+  /audit-webhook/resume:
+    $ref: "./api-docs-ex.yml#/paths/~1audit-webhook~1resume"
+  /audit-webhook/deliveries:
+    $ref: "./api-docs-ex.yml#/paths/~1audit-webhook~1deliveries"
+  /audit-webhook/deliveries/{delivery_id}/attempts:
+    $ref: "./api-docs-ex.yml#/paths/~1audit-webhook~1deliveries~1{delivery_id}~1attempts"
   /project/{project_id}/workflows:
     parameters:
       - $ref: "#/parameters/project_id"
@@ -3500,6 +3564,20 @@ paths:
         204:
           description: workflow removed
 
+  /project/{project_id}/workflows/{workflow_id}/triggers:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1triggers"
+  /project/{project_id}/workflows/{workflow_id}/triggers/{trigger_id}/webhook-signing/bootstrap:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1triggers~1{trigger_id}~1webhook-signing~1bootstrap"
+  /project/{project_id}/workflows/{workflow_id}/triggers/{trigger_id}/webhook-signing/stage:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1triggers~1{trigger_id}~1webhook-signing~1stage"
+  /project/{project_id}/workflows/{workflow_id}/triggers/{trigger_id}/webhook-signing/promote:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1triggers~1{trigger_id}~1webhook-signing~1promote"
+  /project/{project_id}/workflows/{workflow_id}/triggers/{trigger_id}/webhook-signing/revoke:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1triggers~1{trigger_id}~1webhook-signing~1revoke"
+  /project/{project_id}/workflows/{workflow_id}/triggers/{trigger_id}/history:
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1triggers~1{trigger_id}~1history"
+  /workflow-triggers/{project_id}/{workflow_id}/{trigger_id}/webhook:
+    $ref: "./api-docs-ex.yml#/paths/~1workflow-triggers~1{project_id}~1{workflow_id}~1{trigger_id}~1webhook"
   /project/{project_id}/workflows/{workflow_id}/run:
     parameters:
       - $ref: "#/parameters/project_id"
