@@ -8,4 +8,5 @@ import (
 
 func TestCommunityPolicyGuardrailStoreIsUnavailable(t *testing.T) {
 	assert.Nil(t, NewPolicyGuardrailStore(nil))
+	assert.Nil(t, NewWorkflowFileArtifactStore(nil))
 }

@@ -55,3 +55,13 @@ func NewWorkflowTriggerStore(store db.Store) db.WorkflowTriggerManager {
 	}
 	return sql.NewWorkflowStore(connectionStore.GetConnection())
 }
+
+func NewWorkflowFileArtifactStore(store db.Store) pro_interfaces.WorkflowFileArtifactRepository {
+	connectionStore, ok := store.(interface {
+		GetConnection() *coresql.SqlDbConnection
+	})
+	if !ok || connectionStore.GetConnection() == nil {
+		return nil
+	}
+	return sql.NewWorkflowFileArtifactStore(connectionStore.GetConnection())
+}

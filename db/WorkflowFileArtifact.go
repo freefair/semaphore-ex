@@ -104,9 +104,9 @@ func (lease WorkflowFileArtifactDownloadLease) Validate() error {
 
 // WorkflowFileArtifactReference is a tenant-bound garbage-collection target.
 type WorkflowFileArtifactReference struct {
-	ProjectID     int `json:"project_id"`
-	WorkflowRunID int `json:"workflow_run_id"`
-	ArtifactID    int `json:"artifact_id"`
+	ProjectID     int `db:"project_id" json:"project_id"`
+	WorkflowRunID int `db:"workflow_run_id" json:"workflow_run_id"`
+	ArtifactID    int `db:"artifact_id" json:"artifact_id"`
 }
 
 func (reference WorkflowFileArtifactReference) Validate() error {
