@@ -2511,6 +2511,277 @@ definitions:
         items:
           $ref: "#/definitions/WorkflowNodeRunStatus"
 
+  WorkflowFileArtifactAccessPolicy:
+    type: object
+    additionalProperties: false
+    required: [revision]
+    properties:
+      revision:
+        type: integer
+        minimum: 1
+      role_ids:
+        type: array
+        maxItems: 32
+        description: Optional current-role allow-list that can only narrow workflow-run visibility.
+        items:
+          type: string
+          maxLength: 64
+
+  WorkflowFileArtifactCredentialProvenance:
+    type: object
+    description: Value-free credential reference captured from the producing task attempt.
+    required: [credential_id, grant_id, credential_version, version_fingerprint, target]
+    properties:
+      credential_id:
+        type: integer
+        minimum: 1
+      grant_id:
+        type: integer
+        minimum: 1
+      credential_version:
+        type: integer
+        minimum: 1
+      version_fingerprint:
+        type: string
+        pattern: '^[a-f0-9]{64}$'
+      provider_version:
+        type: integer
+        minimum: 0
+      target:
+        type: string
+        maxLength: 128
+
+  WorkflowArtifactRetentionSnapshot:
+    type: object
+    description: Immutable policy provenance and limits captured when the artifact is created.
+    required: [global_revision, retention_seconds, max_artifact_bytes, max_run_bytes]
+    properties:
+      global_revision:
+        type: integer
+        minimum: 0
+      project_revision:
+        type: integer
+        minimum: 0
+      retention_seconds:
+        type: integer
+        format: int64
+        minimum: 3600
+        maximum: 315360000
+      max_artifact_bytes:
+        type: integer
+        format: int64
+        minimum: 1
+        maximum: 67108864
+      max_run_bytes:
+        type: integer
+        format: int64
+        minimum: 1
+        maximum: 268435456
+
+  WorkflowFileArtifact:
+    type: object
+    description: Immutable file metadata and value-free provenance. Binary content is never embedded.
+    required: [id, project_id, workflow_template_id, workflow_run_id, workflow_node_id, workflow_definition_revision, task_id, attempt, logical_name, filename, media_type, size_bytes, uploaded_bytes, sha256, state, revision, producer_user_id, producer_template_id, producer_version, access_policy, retention, created_at]
+    properties:
+      id:
+        type: integer
+        minimum: 1
+      project_id:
+        type: integer
+        minimum: 1
+      workflow_template_id:
+        type: integer
+        minimum: 1
+      workflow_run_id:
+        type: integer
+        minimum: 1
+      workflow_node_id:
+        type: integer
+        minimum: 1
+      workflow_definition_revision:
+        type: integer
+        minimum: 1
+      task_id:
+        type: integer
+        minimum: 1
+      attempt:
+        type: integer
+        minimum: 0
+      logical_name:
+        type: string
+        pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+      filename:
+        type: string
+        minLength: 1
+        maxLength: 255
+      media_type:
+        type: string
+        minLength: 3
+        maxLength: 128
+      size_bytes:
+        type: integer
+        format: int64
+        minimum: 1
+        maximum: 67108864
+      uploaded_bytes:
+        type: integer
+        format: int64
+        minimum: 0
+        maximum: 67108864
+      sha256:
+        type: string
+        pattern: '^[a-f0-9]{64}$'
+      state:
+        type: string
+        enum: [staging, available, failed, expired, deleted]
+      revision:
+        type: integer
+        minimum: 1
+      producer_user_id:
+        type: integer
+        minimum: 1
+      producer_runner_id:
+        type: integer
+        minimum: 1
+      producer_template_id:
+        type: integer
+        minimum: 1
+      producer_version:
+        type: string
+        minLength: 1
+        maxLength: 128
+      credential_provenance:
+        type: array
+        maxItems: 64
+        items:
+          $ref: '#/definitions/WorkflowFileArtifactCredentialProvenance'
+      access_policy:
+        $ref: '#/definitions/WorkflowFileArtifactAccessPolicy'
+      retention:
+        $ref: '#/definitions/WorkflowArtifactRetentionSnapshot'
+      created_at:
+        type: string
+        format: date-time
+      finalized_at:
+        type: string
+        format: date-time
+      expires_at:
+        type: string
+        format: date-time
+      deleted_at:
+        type: string
+        format: date-time
+
+  WorkflowFileArtifactUpload:
+    type: object
+    additionalProperties: false
+    required: [workflow_node_id, task_id, attempt, logical_name, filename, media_type, size_bytes, sha256, access_policy]
+    properties:
+      workflow_node_id:
+        type: integer
+        minimum: 1
+      task_id:
+        type: integer
+        minimum: 1
+      attempt:
+        type: integer
+        minimum: 0
+      logical_name:
+        type: string
+        pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+      filename:
+        type: string
+        minLength: 1
+        maxLength: 255
+      media_type:
+        type: string
+        minLength: 3
+        maxLength: 128
+      size_bytes:
+        type: integer
+        format: int64
+        minimum: 1
+        maximum: 67108864
+      sha256:
+        type: string
+        pattern: '^[a-f0-9]{64}$'
+      access_policy:
+        $ref: '#/definitions/WorkflowFileArtifactAccessPolicy'
+
+  WorkflowArtifactRetentionPolicy:
+    type: object
+    description: One immutable published governance revision.
+    required: [id, scope, revision, retention_seconds, max_artifact_bytes, max_run_bytes, created_by_user_id, created_at]
+    properties:
+      id:
+        type: integer
+        minimum: 1
+      scope:
+        type: string
+        enum: [global, project]
+      project_id:
+        type: integer
+        minimum: 1
+      revision:
+        type: integer
+        minimum: 1
+      retention_seconds:
+        type: integer
+        format: int64
+        minimum: 3600
+        maximum: 315360000
+      max_artifact_bytes:
+        type: integer
+        format: int64
+        minimum: 1
+        maximum: 67108864
+      max_run_bytes:
+        type: integer
+        format: int64
+        minimum: 1
+        maximum: 268435456
+      created_by_user_id:
+        type: integer
+        minimum: 1
+      created_at:
+        type: string
+        format: date-time
+
+  WorkflowArtifactRetentionState:
+    type: object
+    required: [effective]
+    properties:
+      global_policy:
+        $ref: '#/definitions/WorkflowArtifactRetentionPolicy'
+      project_policy:
+        $ref: '#/definitions/WorkflowArtifactRetentionPolicy'
+      effective:
+        $ref: '#/definitions/WorkflowArtifactRetentionSnapshot'
+
+  WorkflowArtifactRetentionUpdate:
+    type: object
+    additionalProperties: false
+    required: [expected_revision, retention_seconds, max_artifact_bytes, max_run_bytes]
+    properties:
+      expected_revision:
+        type: integer
+        minimum: 0
+      retention_seconds:
+        type: integer
+        format: int64
+        minimum: 3600
+        maximum: 315360000
+      max_artifact_bytes:
+        type: integer
+        format: int64
+        minimum: 1
+        maximum: 67108864
+      max_run_bytes:
+        type: integer
+        format: int64
+        minimum: 1
+        maximum: 268435456
+
   WorkflowApprovalResolveRequest:
     type: object
     required:
@@ -3267,6 +3538,14 @@ parameters:
     type: integer
     required: true
     x-example: 20
+  artifact_id:
+    name: artifact_id
+    description: Workflow file artifact ID
+    in: path
+    type: integer
+    minimum: 1
+    required: true
+    x-example: 21
   task_id:
     name: task_id
     description: task ID
@@ -5564,6 +5843,270 @@ paths:
           schema:
             type: object
             additionalProperties: true
+
+  /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/file-artifacts:
+    parameters:
+      - $ref: '#/parameters/project_id'
+      - $ref: '#/parameters/workflow_id'
+      - $ref: '#/parameters/run_id'
+    get:
+      tags: [workflow]
+      summary: List authorized file artifact metadata for a workflow run
+      description: Returns only available or expired metadata after current workflow and artifact-role authorization. Staging and failed uploads are never visible.
+      responses:
+        200:
+          description: Newest authorized file artifact metadata first
+          schema:
+            type: array
+            maxItems: 100
+            items:
+              $ref: '#/definitions/WorkflowFileArtifact'
+        404:
+          description: Workflow run is hidden or does not exist
+    post:
+      tags: [workflow]
+      summary: Begin a bounded file artifact upload for the current task attempt
+      description: Workflow, run, node, task attempt, producer, credentials, and retention provenance are revalidated and derived by the server. The request reserves the immutable run quota.
+      parameters:
+        - name: artifact
+          in: body
+          required: true
+          schema:
+            $ref: '#/definitions/WorkflowFileArtifactUpload'
+      responses:
+        201:
+          description: Staging metadata with revision 1
+          schema:
+            $ref: '#/definitions/WorkflowFileArtifact'
+        400:
+          description: Invalid metadata or task-attempt binding
+        404:
+          description: Workflow run or producer is hidden or unavailable
+        409:
+          description: Artifact identity or task attempt conflicts with current state
+        413:
+          description: Metadata body, per-artifact, per-run, or artifact-count limit exceeded
+
+  /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/file-artifacts/{artifact_id}:
+    parameters:
+      - $ref: '#/parameters/project_id'
+      - $ref: '#/parameters/workflow_id'
+      - $ref: '#/parameters/run_id'
+      - $ref: '#/parameters/artifact_id'
+    get:
+      tags: [workflow]
+      summary: Read one available file artifact metadata record
+      responses:
+        200:
+          description: Authorized available metadata
+          schema:
+            $ref: '#/definitions/WorkflowFileArtifact'
+        404:
+          description: Artifact is missing, hidden, partial, failed, expired, or deleted
+
+  /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/file-artifacts/{artifact_id}/content:
+    parameters:
+      - $ref: '#/parameters/project_id'
+      - $ref: '#/parameters/workflow_id'
+      - $ref: '#/parameters/run_id'
+      - $ref: '#/parameters/artifact_id'
+    get:
+      tags: [workflow]
+      summary: Stream an authorized available file artifact
+      produces: [application/octet-stream]
+      parameters:
+        - name: Range
+          in: header
+          required: false
+          type: string
+          description: Byte ranges are not supported; any non-empty value returns 416.
+      responses:
+        200:
+          description: Exact immutable file bytes
+          headers:
+            Content-Disposition:
+              type: string
+              description: Safe attachment filename generated by the server
+            Content-Length:
+              type: integer
+              format: int64
+              description: Immutable artifact size
+            X-Checksum-SHA256:
+              type: string
+              description: Lowercase SHA-256 checksum of the streamed bytes
+            X-Content-Type-Options:
+              type: string
+              description: Always nosniff
+            Cache-Control:
+              type: string
+              description: Always private, no-store
+            Accept-Ranges:
+              type: string
+              description: Always none
+          schema:
+            type: string
+            format: binary
+        404:
+          description: Artifact is missing, hidden, partial, failed, expired, or deleted
+        416:
+          description: Range requests are unsupported
+    head:
+      tags: [workflow]
+      summary: Authorize and inspect an available file artifact without streaming content
+      responses:
+        200:
+          description: The same safe content headers as GET, without a response body
+        404:
+          description: Artifact is missing, hidden, partial, failed, expired, or deleted
+        416:
+          description: Range requests are unsupported
+    put:
+      tags: [workflow]
+      summary: Append one exact-offset bounded chunk to a staging artifact
+      consumes: [application/octet-stream]
+      parameters:
+        - name: revision
+          in: query
+          required: true
+          type: integer
+          minimum: 1
+        - name: offset
+          in: query
+          required: true
+          type: integer
+          format: int64
+          minimum: 0
+        - name: chunk
+          in: body
+          required: true
+          schema:
+            type: string
+            format: binary
+            maxLength: 1048576
+      responses:
+        200:
+          description: Updated staging metadata and next revision
+          schema:
+            $ref: '#/definitions/WorkflowFileArtifact'
+        400:
+          description: Invalid revision, offset, empty body, or task-attempt binding
+        404:
+          description: Artifact or producer is hidden or unavailable
+        409:
+          description: Revision, offset, state, or task-attempt conflict
+        413:
+          description: Chunk exceeds 1 MiB
+
+  /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/file-artifacts/{artifact_id}/finalize:
+    parameters:
+      - $ref: '#/parameters/project_id'
+      - $ref: '#/parameters/workflow_id'
+      - $ref: '#/parameters/run_id'
+      - $ref: '#/parameters/artifact_id'
+    post:
+      tags: [workflow]
+      summary: Atomically finalize and expose a complete staging artifact
+      parameters:
+        - name: revision
+          in: query
+          required: true
+          type: integer
+          minimum: 1
+      responses:
+        200:
+          description: Available immutable metadata
+          schema:
+            $ref: '#/definitions/WorkflowFileArtifact'
+        400:
+          description: Invalid revision or task-attempt binding
+        404:
+          description: Artifact or producer is hidden or unavailable
+        409:
+          description: Revision, state, or task-attempt conflict
+        422:
+          description: Content is incomplete or its SHA-256 checksum does not match
+
+  /workflow-artifact-retention:
+    get:
+      tags: [workflow]
+      summary: Read global workflow file artifact retention
+      description: Requires global system-management permission. A missing global policy is represented by effective built-in revision 0.
+      responses:
+        200:
+          description: Published global policy, if any, and effective limits
+          schema:
+            $ref: '#/definitions/WorkflowArtifactRetentionState'
+        403:
+          description: Missing global system-management permission
+        404:
+          description: Enhanced retention governance is unavailable
+    put:
+      tags: [workflow]
+      summary: Publish a new global workflow file artifact retention revision
+      description: Scope, revision, actor, and database timestamp are derived by the server. A tighter global policy cannot invalidate a current project policy.
+      parameters:
+        - name: retention
+          in: body
+          required: true
+          schema:
+            $ref: '#/definitions/WorkflowArtifactRetentionUpdate'
+      responses:
+        200:
+          description: Published global policy and effective limits
+          schema:
+            $ref: '#/definitions/WorkflowArtifactRetentionState'
+        400:
+          description: Invalid or unexpected input
+        403:
+          description: Missing global system-management permission
+        409:
+          description: Expected revision is stale or a current project policy would be widened
+        413:
+          description: Request exceeds 16 KiB
+        404:
+          description: Enhanced retention governance is unavailable
+
+  /project/{project_id}/workflow-artifact-retention:
+    parameters:
+      - $ref: '#/parameters/project_id'
+    get:
+      tags: [workflow, project]
+      summary: Read effective project workflow file artifact retention
+      description: Requires project resource-management permission.
+      responses:
+        200:
+          description: Current global/project policies and effective narrowed limits
+          schema:
+            $ref: '#/definitions/WorkflowArtifactRetentionState'
+        403:
+          description: Missing project resource-management permission
+        404:
+          description: Project or Enhanced retention governance is unavailable
+    put:
+      tags: [workflow, project]
+      summary: Publish a new project workflow file artifact retention revision
+      description: The project policy may only narrow the current global or built-in limits. Scope, project, revision, actor, and database timestamp are derived by the server.
+      parameters:
+        - name: retention
+          in: body
+          required: true
+          schema:
+            $ref: '#/definitions/WorkflowArtifactRetentionUpdate'
+      responses:
+        200:
+          description: Published project policy and effective narrowed limits
+          schema:
+            $ref: '#/definitions/WorkflowArtifactRetentionState'
+        400:
+          description: Invalid or unexpected input
+        403:
+          description: Missing project resource-management permission
+        404:
+          description: Project or Enhanced retention governance is unavailable
+        409:
+          description: Expected revision is stale or the project policy widens global limits
+        413:
+          description: Request exceeds 16 KiB
 
   /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/approvals/{node_id}:
     parameters:
