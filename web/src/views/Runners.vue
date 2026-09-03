@@ -403,19 +403,7 @@ semaphore runner start --config ./config.runner.json</pre
       color="hsl(348deg, 86%, 61%)"
       class="PageAlert"
     >
-      <span v-html="$t('project_runners_only_pro')"></span>
-      <v-btn
-        dark
-        v-if="isAdmin"
-        class="ml-2"
-        color="hsl(348deg, 86%, 61%)"
-        @click="upgradeToPro('project_runners')"
-      >
-        {{ $t('upgrade_to_pro') }}
-      </v-btn>
-      <span v-else style="font-weight: bold">
-        {{ $t('contact_admin_to_upgrade') }}
-      </span>
+      Project runners are not enabled.
     </v-alert>
 
     <v-alert

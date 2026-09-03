@@ -43,10 +43,7 @@
     <v-tabs class="task-log-view__tabs" right v-model="tab">
       <v-tab>Log</v-tab>
       <v-tab>Details</v-tab>
-      <v-tab
-        v-if="isPro"
-        :disabled="!isTaskStopped"
-      >
+      <v-tab :disabled="!isTaskStopped">
         Summary
       </v-tab>
     </v-tabs>
@@ -325,9 +322,6 @@ export default {
       ].includes(this.item.status);
     },
 
-    isPro() {
-      return (process.env.VUE_APP_BUILD_TYPE || '').startsWith('pro_');
-    },
   },
 
   async created() {

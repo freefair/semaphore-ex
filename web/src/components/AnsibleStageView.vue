@@ -28,10 +28,7 @@
       class="PageAlert"
       data-testid="task-summary-unavailable"
     >
-      <span class="mr-2">Task summaries are available in the enhanced edition.</span>
-      <v-btn small text color="primary" @click="upgradeToPro('task_summary')">
-        {{ $t('upgrade_to_pro') }}
-      </v-btn>
+      Task summaries are not enabled.
     </v-alert>
 
     <div

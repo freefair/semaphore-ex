@@ -38,7 +38,6 @@
     </v-toolbar>
 
     <TeamMenu
-      v-if="isPro"
       :project-id="projectId"
       :system-info="systemInfo"
       :can-manage-roles="can(USER_PERMISSIONS.manageProjectUsers)"
@@ -116,9 +115,6 @@ export default {
       }));
     },
 
-    isPro() {
-      return (process.env.VUE_APP_BUILD_TYPE || '').startsWith('pro_');
-    },
   },
 
   async created() {

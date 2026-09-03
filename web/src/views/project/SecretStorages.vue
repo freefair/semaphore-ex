@@ -154,7 +154,6 @@
       </v-tab>
 
       <v-tab
-        v-if="isPro"
         key="granted-credentials"
         :to="`/project/${projectId}/granted-credentials`"
         data-testid="keystore-granted-credentials"
@@ -171,20 +170,7 @@
       color="hsl(348deg, 86%, 61%)"
       class="PageAlert"
     >
-      <span class="mr-1" v-html="$t('secret_storage_only_pro')"></span>
-
-      <v-btn
-        dark
-        v-if="isAdmin"
-        color="hsl(348deg, 86%, 61%)"
-        @click="upgradeToPro('secret_storage_management')"
-      >
-        {{ $t('upgrade_to_pro') }}
-      </v-btn>
-
-      <span v-else style="font-weight: bold">
-        {{ $t('contact_admin_to_upgrade') }}
-      </span>
+      Managed secret storage is not enabled.
     </v-alert>
 
     <v-alert
@@ -294,10 +280,6 @@ export default {
 
   props: {
     systemInfo: Object,
-    isPro: {
-      type: Boolean,
-      default: false,
-    },
   },
 
   computed: {

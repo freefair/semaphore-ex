@@ -66,7 +66,7 @@
           @totp-rollout-updated="$emit('totp-rollout-updated')"
         />
 
-        <WorkflowArtifactRetentionPanel v-if="isPro" />
+        <WorkflowArtifactRetentionPanel />
 
         <!-- Ansible -->
         <v-subheader class="px-0 mt-2">Ansible</v-subheader>
@@ -309,7 +309,6 @@ export default {
   props: {
     value: Boolean,
     systemInfo: Object,
-    isPro: Boolean,
   },
 
   data() {

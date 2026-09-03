@@ -95,15 +95,6 @@
                 :label="$t('adminUser')"
               ></v-checkbox>
             </v-col>
-            <v-col cols="6" v-if="isPro">
-              <v-checkbox
-                :disabled="!isAdmin"
-                dense
-                hide-details
-                v-model="item.pro"
-                :label="$t('Pro user')"
-              ></v-checkbox>
-            </v-col>
             <v-col cols="6" v-if="isAdmin">
               <v-checkbox
                 :disabled="!isNew"
@@ -388,10 +379,6 @@ export default {
   },
 
   computed: {
-    isPro() {
-      return (process.env.VUE_APP_BUILD_TYPE || '').startsWith('pro_');
-    },
-
     canChangePassword() {
       return !this.isNew && !this.item.external && this.LoginWithPassword;
     },

@@ -393,9 +393,8 @@
               small
               label
               style="position: absolute; top: -10px; right: 15px"
-              @click="upgradeToPro('docker_executor')"
             >
-              Upgrade to PRO
+              Not enabled
             </v-chip>
           </div>
 
