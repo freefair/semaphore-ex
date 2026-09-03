@@ -3,9 +3,11 @@ package sql
 import (
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/go-gorp/gorp/v3"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	workflowDB "github.com/semaphoreui/semaphore/pro/db"
@@ -121,6 +123,189 @@ func TestConfiguredWorkflowRepositoryRejectsUnboundRun(t *testing.T) {
 	_, err = repository.CreateWorkflowRun(run)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "deployment window decision is required")
+}
+
+func TestConfiguredWorkflowRepositoryAtomicallyBindsPolicyGuardrailEvaluations(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	user, first, second := workflowRunResources(t, store, projectID)
+	workflow, err := repository.CreateWorkflowTemplate(linearRepositoryWorkflow(projectID, first.ID, second.ID))
+	require.NoError(t, err)
+	run, err := workflowDB.BuildWorkflowRunSnapshot(workflow, map[int]db.Template{first.ID: first, second.ID: second}, user.ID, "policy-workflow-success", time.Now().UTC())
+	require.NoError(t, err)
+
+	rootEvaluationID := seedPolicyGuardrailWorkflowEvaluation(t, store, projectID, workflow.ID, db.PolicyGuardrailDecisionAllow)
+	firstNodeEvaluationID := seedPolicyGuardrailTaskEvaluation(t, store, projectID, first.ID, db.PolicyGuardrailDecisionAllow, nil, nil)
+	secondNodeEvaluationID := seedPolicyGuardrailTaskEvaluation(t, store, projectID, second.ID, db.PolicyGuardrailDecisionAllow, nil, nil)
+	run.PolicyGuardrailEvaluationID = &rootEvaluationID
+	run.Nodes[0].PolicyGuardrailEvaluationID = &firstNodeEvaluationID
+	run.Nodes[1].PolicyGuardrailEvaluationID = &secondNodeEvaluationID
+	repository.ConfigurePolicyGuardrailAdmission()
+
+	created, err := repository.CreateWorkflowRun(run)
+	require.NoError(t, err)
+	require.Positive(t, created.ID)
+	reloaded, err := repository.GetWorkflowRun(projectID, workflow.ID, created.ID)
+	require.NoError(t, err)
+	require.Len(t, reloaded.Nodes, 2)
+	require.NotNil(t, reloaded.Nodes[0].PolicyGuardrailEvaluationID)
+	require.NotNil(t, reloaded.Nodes[1].PolicyGuardrailEvaluationID)
+	assert.Equal(t, firstNodeEvaluationID, *reloaded.Nodes[0].PolicyGuardrailEvaluationID)
+	assert.Equal(t, secondNodeEvaluationID, *reloaded.Nodes[1].PolicyGuardrailEvaluationID)
+	assertPolicyGuardrailEvaluationBoundToWorkflowRun(t, store, rootEvaluationID, created.ID)
+	assertPolicyGuardrailEvaluationBoundToWorkflowNode(t, store, firstNodeEvaluationID, created.ID, reloaded.Nodes[0].ID)
+	assertPolicyGuardrailEvaluationBoundToWorkflowNode(t, store, secondNodeEvaluationID, created.ID, reloaded.Nodes[1].ID)
+}
+
+func TestConfiguredWorkflowRepositoryRejectsInvalidPolicyGuardrailAdmissionWithoutRun(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		rootDecision     db.PolicyGuardrailDecision
+		rootProjectDelta int
+		nodeTemplateID   func(first, second db.Template) int
+		duplicateNode    bool
+	}{
+		{name: "missing root evaluation"},
+		{name: "denied root evaluation", rootDecision: db.PolicyGuardrailDecisionDeny},
+		{name: "foreign root evaluation", rootDecision: db.PolicyGuardrailDecisionAllow, rootProjectDelta: 1},
+		{name: "wrong node template", rootDecision: db.PolicyGuardrailDecisionAllow, nodeTemplateID: func(first, second db.Template) int { return first.ID }},
+		{name: "reused node evaluation", rootDecision: db.PolicyGuardrailDecisionAllow, duplicateNode: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, repository, projectID := workflowRepositoryFixture(t)
+			defer store.Close()
+			user, first, second := workflowRunResources(t, store, projectID)
+			workflow, err := repository.CreateWorkflowTemplate(linearRepositoryWorkflow(projectID, first.ID, second.ID))
+			require.NoError(t, err)
+			run, err := workflowDB.BuildWorkflowRunSnapshot(workflow, map[int]db.Template{first.ID: first, second.ID: second}, user.ID, "invalid-policy-"+test.name, time.Now().UTC())
+			require.NoError(t, err)
+			repository.ConfigurePolicyGuardrailAdmission()
+			if test.name != "missing root evaluation" {
+				evaluationProjectID := projectID
+				if test.rootProjectDelta != 0 {
+					foreign, foreignErr := store.CreateProject(db.Project{Name: "foreign workflow policy evaluation"})
+					require.NoError(t, foreignErr)
+					evaluationProjectID = foreign.ID
+				}
+				decision := test.rootDecision
+				if decision == "" {
+					decision = db.PolicyGuardrailDecisionAllow
+				}
+				rootEvaluationID := seedPolicyGuardrailWorkflowEvaluation(t, store, evaluationProjectID, workflow.ID, decision)
+				run.PolicyGuardrailEvaluationID = &rootEvaluationID
+			}
+			firstNodeEvaluationID := seedPolicyGuardrailTaskEvaluation(t, store, projectID, first.ID, db.PolicyGuardrailDecisionAllow, nil, nil)
+			secondNodeTemplateID := second.ID
+			if test.nodeTemplateID != nil {
+				secondNodeTemplateID = test.nodeTemplateID(first, second)
+			}
+			secondNodeEvaluationID := seedPolicyGuardrailTaskEvaluation(t, store, projectID, secondNodeTemplateID, db.PolicyGuardrailDecisionAllow, nil, nil)
+			if test.duplicateNode {
+				secondNodeEvaluationID = firstNodeEvaluationID
+			}
+			run.Nodes[0].PolicyGuardrailEvaluationID = &firstNodeEvaluationID
+			run.Nodes[1].PolicyGuardrailEvaluationID = &secondNodeEvaluationID
+
+			_, err = repository.CreateWorkflowRun(run)
+			require.Error(t, err)
+			assertWorkflowRunAbsent(t, repository, projectID, workflow.ID, run.CorrelationID)
+			assertPolicyGuardrailEvaluationUnbound(t, store, firstNodeEvaluationID)
+			if secondNodeEvaluationID != firstNodeEvaluationID {
+				assertPolicyGuardrailEvaluationUnbound(t, store, secondNodeEvaluationID)
+			}
+		})
+	}
+}
+
+func TestConfiguredWorkflowRepositoryExemptsApprovalNodesAndCombinesAdmissions(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	user, first, second := workflowRunResources(t, store, projectID)
+	workflowDefinition := linearRepositoryWorkflow(projectID, first.ID, second.ID)
+	workflowDefinition.Nodes[1] = db.WorkflowNode{ID: -2, Kind: db.WorkflowNodeApprovalKind, DisplayName: "Approval"}
+	workflow, err := repository.CreateWorkflowTemplate(workflowDefinition)
+	require.NoError(t, err)
+	run, err := workflowDB.BuildWorkflowRunSnapshot(workflow, map[int]db.Template{first.ID: first}, user.ID, "combined-workflow-admission", time.Now().UTC())
+	require.NoError(t, err)
+	require.Len(t, run.Nodes, 2)
+
+	rootEvaluationID := seedPolicyGuardrailWorkflowEvaluation(t, store, projectID, workflow.ID, db.PolicyGuardrailDecisionAllow)
+	taskEvaluationID := seedPolicyGuardrailTaskEvaluation(t, store, projectID, first.ID, db.PolicyGuardrailDecisionAllow, nil, nil)
+	run.PolicyGuardrailEvaluationID = &rootEvaluationID
+	run.Nodes[0].PolicyGuardrailEvaluationID = &taskEvaluationID
+
+	admissions := NewDeploymentWindowStore(store.GetConnection())
+	workflowID := workflow.ID
+	claim, err := admissions.ClaimDeploymentWindowAdmission(pro_interfaces.DeploymentWindowAdmissionRequest{
+		ProjectID: projectID, DecisionKey: "combined-workflow-admission", Source: pro_interfaces.DeploymentWindowSourceManual,
+		Origin: pro_interfaces.DeploymentWindowOriginUser, WorkflowID: &workflowID,
+	}, deploymentWindowEvaluator().Evaluate)
+	require.NoError(t, err)
+	run.DeploymentWindowDecisionID = &claim.Decision.ID
+	repository.ConfigureDeploymentWindowAdmission()
+	repository.ConfigurePolicyGuardrailAdmission()
+
+	created, err := repository.CreateWorkflowRun(run)
+	require.NoError(t, err)
+	require.Len(t, created.Nodes, 2)
+	assert.Nil(t, created.Nodes[1].PolicyGuardrailEvaluationID, "approval nodes require no task evaluation")
+	assertPolicyGuardrailEvaluationBoundToWorkflowRun(t, store, rootEvaluationID, created.ID)
+	assertPolicyGuardrailEvaluationBoundToWorkflowNode(t, store, taskEvaluationID, created.ID, created.Nodes[0].ID)
+	var decisionRunID int
+	require.NoError(t, store.Sql().SelectOne(&decisionRunID,
+		"select workflow_run_id from project__deployment_window_decision where id=?", claim.Decision.ID))
+	assert.Equal(t, created.ID, decisionRunID)
+
+	replayed, err := repository.CreateWorkflowRun(run)
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, replayed.ID, "a replay returns the committed run rather than attempting a second binding")
+}
+
+func TestConfiguredWorkflowRepositoryConcurrentReplayBindsOneGuardrailEvaluationSet(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	user, first, second := workflowRunResources(t, store, projectID)
+	workflow, err := repository.CreateWorkflowTemplate(linearRepositoryWorkflow(projectID, first.ID, second.ID))
+	require.NoError(t, err)
+	run, err := workflowDB.BuildWorkflowRunSnapshot(workflow, map[int]db.Template{first.ID: first, second.ID: second}, user.ID, "concurrent-policy-workflow", time.Now().UTC())
+	require.NoError(t, err)
+	rootEvaluationID := seedPolicyGuardrailWorkflowEvaluation(t, store, projectID, workflow.ID, db.PolicyGuardrailDecisionAllow)
+	firstNodeEvaluationID := seedPolicyGuardrailTaskEvaluation(t, store, projectID, first.ID, db.PolicyGuardrailDecisionAllow, nil, nil)
+	secondNodeEvaluationID := seedPolicyGuardrailTaskEvaluation(t, store, projectID, second.ID, db.PolicyGuardrailDecisionAllow, nil, nil)
+	run.PolicyGuardrailEvaluationID = &rootEvaluationID
+	run.Nodes[0].PolicyGuardrailEvaluationID = &firstNodeEvaluationID
+	run.Nodes[1].PolicyGuardrailEvaluationID = &secondNodeEvaluationID
+	repository.ConfigurePolicyGuardrailAdmission()
+
+	start := make(chan struct{})
+	type result struct {
+		run db.WorkflowRun
+		err error
+	}
+	results := make(chan result, 2)
+	var workers sync.WaitGroup
+	for range 2 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			attempt := run
+			attempt.Nodes = append([]db.WorkflowRunNode(nil), run.Nodes...)
+			created, createErr := repository.CreateWorkflowRun(attempt)
+			results <- result{run: created, err: createErr}
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+	var createdIDs []int
+	for result := range results {
+		require.NoError(t, result.err)
+		createdIDs = append(createdIDs, result.run.ID)
+	}
+	require.Len(t, createdIDs, 2)
+	assert.Equal(t, createdIDs[0], createdIDs[1])
+	assertPolicyGuardrailEvaluationBoundToWorkflowRun(t, store, rootEvaluationID, createdIDs[0])
 }
 
 func TestCrossProjectWorkflowTaskFencePersistsConsumerTaskAndPreservesAuditAfterRevoke(t *testing.T) {
@@ -725,4 +910,48 @@ func linearRepositoryWorkflow(projectID, firstTemplateID, secondTemplateID int) 
 		Nodes: []db.WorkflowNode{{ID: -1, TemplateID: firstTemplateID}, {ID: -2, TemplateID: secondTemplateID}},
 		Edges: []db.WorkflowEdge{{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess}},
 	}
+}
+
+func seedPolicyGuardrailWorkflowEvaluation(t *testing.T, store interface {
+	Sql() *gorp.DbMap
+}, projectID, workflowTemplateID int, decision db.PolicyGuardrailDecision) int {
+	t.Helper()
+	result, err := store.Sql().Exec(
+		"insert into policy_guardrail_evaluation(project_id, decision_key, intent, source, template_id, workflow_template_id, workflow_run_id, workflow_run_node_id, task_id, actor_user_id, input_fingerprint, revisions_json, findings_json, decision, evaluated_at, created) values (?, ?, ?, ?, null, ?, null, null, null, null, ?, ?, ?, ?, ?, ?)",
+		projectID, "workflow-binding-"+time.Now().UTC().Format(time.RFC3339Nano), "workflow", "workflow-binding", workflowTemplateID,
+		"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "[]", "[]", decision, time.Now().UTC(), time.Now().UTC(),
+	)
+	require.NoError(t, err)
+	id, err := result.LastInsertId()
+	require.NoError(t, err)
+	return int(id)
+}
+
+func assertPolicyGuardrailEvaluationBoundToWorkflowRun(t *testing.T, store interface {
+	Sql() *gorp.DbMap
+}, evaluationID, expectedRunID int) {
+	t.Helper()
+	var workflowRunID int
+	require.NoError(t, store.Sql().SelectOne(&workflowRunID, "select workflow_run_id from policy_guardrail_evaluation where id=?", evaluationID))
+	assert.Equal(t, expectedRunID, workflowRunID)
+}
+
+func assertPolicyGuardrailEvaluationBoundToWorkflowNode(t *testing.T, store interface {
+	Sql() *gorp.DbMap
+}, evaluationID, expectedRunID, expectedNodeID int) {
+	t.Helper()
+	var evaluation struct {
+		WorkflowRunID     int `db:"workflow_run_id"`
+		WorkflowRunNodeID int `db:"workflow_run_node_id"`
+	}
+	require.NoError(t, store.Sql().SelectOne(&evaluation,
+		"select workflow_run_id, workflow_run_node_id from policy_guardrail_evaluation where id=?", evaluationID))
+	assert.Equal(t, expectedRunID, evaluation.WorkflowRunID)
+	assert.Equal(t, expectedNodeID, evaluation.WorkflowRunNodeID)
+}
+
+func assertWorkflowRunAbsent(t *testing.T, repository *WorkflowStoreImpl, projectID, workflowTemplateID int, correlationID string) {
+	t.Helper()
+	_, err := repository.GetWorkflowRunByCorrelationID(projectID, workflowTemplateID, correlationID)
+	assert.ErrorIs(t, err, db.ErrNotFound)
 }

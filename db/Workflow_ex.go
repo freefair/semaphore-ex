@@ -174,10 +174,11 @@ type WorkflowRunNode struct {
 	Reason string                `db:"reason" json:"reason,omitempty" backup:"reason"`
 	// Deployment-window provenance remains private to the Enhanced admission
 	// boundary. Public workflow state exposes only the terminal blocked status.
-	DeploymentWindowDecisionID *int       `db:"deployment_window_decision_id" json:"-" backup:"-"`
-	NextEligibleAt             *time.Time `db:"next_eligible_at" json:"-" backup:"-"`
-	NextEligibleKnown          bool       `db:"next_eligible_known" json:"-" backup:"-"`
-	BlockedAt                  *time.Time `db:"blocked_at" json:"-" backup:"-"`
+	DeploymentWindowDecisionID  *int       `db:"deployment_window_decision_id" json:"-" backup:"-"`
+	PolicyGuardrailEvaluationID *int       `db:"policy_guardrail_evaluation_id" json:"-" backup:"-"`
+	NextEligibleAt              *time.Time `db:"next_eligible_at" json:"-" backup:"-"`
+	NextEligibleKnown           bool       `db:"next_eligible_known" json:"-" backup:"-"`
+	BlockedAt                   *time.Time `db:"blocked_at" json:"-" backup:"-"`
 	// ProgressionFencingToken binds task and approval attempt creation to the
 	// workflow reconciliation owner that claimed this node.
 	ProgressionFencingToken int64 `db:"progression_fencing_token" json:"-" backup:"-"`

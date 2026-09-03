@@ -206,6 +206,9 @@ type WorkflowRun struct {
 	// DeploymentWindowDecisionID is an Enhanced-only admission fence. The
 	// immutable decision row owns the workflow-run link.
 	DeploymentWindowDecisionID *int `db:"-" json:"-" backup:"-"`
+	// PolicyGuardrailEvaluationID is an Enhanced-only admission fence. The
+	// immutable evaluation row owns the workflow-run link.
+	PolicyGuardrailEvaluationID *int `db:"-" json:"-" backup:"-"`
 
 	ReconciliationOwnership *WorkflowReconciliationDiagnostics `db:"-" json:"reconciliation_ownership,omitempty" backup:"-"`
 }

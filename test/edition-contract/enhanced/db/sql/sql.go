@@ -14,6 +14,7 @@ type WorkflowStoreImpl struct {
 	notificationRouter       *coresql.NotificationTransactionRouter
 	workflowTaskStore        workflowRunTaskStore
 	deploymentWindowRequired bool
+	policyGuardrailRequired  bool
 }
 
 // ConfigureDeploymentWindowAdmission marks this Enhanced store as the final
@@ -21,6 +22,14 @@ type WorkflowStoreImpl struct {
 func (d *WorkflowStoreImpl) ConfigureDeploymentWindowAdmission() {
 	if d != nil {
 		d.deploymentWindowRequired = true
+	}
+}
+
+// ConfigurePolicyGuardrailAdmission marks this Enhanced store as the final
+// workflow-run persistence boundary. Once enabled it rejects unbound runs.
+func (d *WorkflowStoreImpl) ConfigurePolicyGuardrailAdmission() {
+	if d != nil {
+		d.policyGuardrailRequired = true
 	}
 }
 
