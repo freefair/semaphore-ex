@@ -13,7 +13,6 @@ alter table `project__workflow_trigger` drop column `current_signing_generation`
 alter table `project__workflow_trigger` drop column `next_signing_secret_encrypted`;
 alter table `project__workflow_trigger` drop column `current_signing_secret_encrypted`;
 
-{{ if .Mysql }}drop index `audit_webhook_delivery_attempt__delivery` on `audit_webhook_delivery_attempt`{{ else }}drop index `audit_webhook_delivery_attempt__delivery`{{ end }};
 drop table `audit_webhook_delivery_attempt`;
 alter table `audit_webhook_delivery` drop column `last_signed_at`;
 

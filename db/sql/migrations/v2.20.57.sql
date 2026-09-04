@@ -1,4 +1,10 @@
+{{ if .Mysql }}
+alter table `task` add column `global_credential_bindings` text null;
+update `task` set `global_credential_bindings`='{}' where `global_credential_bindings` is null;
+alter table `task` modify column `global_credential_bindings` text not null;
+{{ else }}
 alter table `task` add column `global_credential_bindings` text not null default '{}';
+{{ end }}
 
 create table `global_credential_usage` (
  `id` integer primary key{{ if .Mysql }} auto_increment{{ else }} autoincrement{{ end }},

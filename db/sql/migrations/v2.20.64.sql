@@ -9,8 +9,6 @@ alter table `audit_webhook_config` add column `current_signing_generation` int n
 alter table `audit_webhook_config` add column `next_signing_generation` int not null{{ if not .Mysql }} default 0{{ end }};
 alter table `audit_webhook_config` add column `signing_state_revision` int not null{{ if not .Mysql }} default 0{{ end }};
 {{ if .Mysql }}
-alter table `audit_webhook_config` modify column `current_signing_secret_encrypted` longtext not null default '';
-alter table `audit_webhook_config` modify column `next_signing_secret_encrypted` longtext not null default '';
 alter table `audit_webhook_config` modify column `current_signing_key_id` varchar(64) not null default '';
 alter table `audit_webhook_config` modify column `next_signing_key_id` varchar(64) not null default '';
 alter table `audit_webhook_config` modify column `current_signing_generation` int not null default 0;
@@ -43,8 +41,6 @@ alter table `project__workflow_trigger` add column `next_signing_key_id` varchar
 alter table `project__workflow_trigger` add column `current_signing_generation` int not null{{ if not .Mysql }} default 0{{ end }};
 alter table `project__workflow_trigger` add column `next_signing_generation` int not null{{ if not .Mysql }} default 0{{ end }};
 {{ if .Mysql }}
-alter table `project__workflow_trigger` modify column `current_signing_secret_encrypted` longtext not null default '';
-alter table `project__workflow_trigger` modify column `next_signing_secret_encrypted` longtext not null default '';
 alter table `project__workflow_trigger` modify column `current_signing_key_id` varchar(64) not null default '';
 alter table `project__workflow_trigger` modify column `next_signing_key_id` varchar(64) not null default '';
 alter table `project__workflow_trigger` modify column `current_signing_generation` int not null default 0;

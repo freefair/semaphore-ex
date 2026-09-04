@@ -65,9 +65,27 @@ func TestGlobalCredentialUsageMigrationKeepsBindingsPrivateAndLedgerUnconstraine
 			if strings.Contains(joined, "foreign key") || strings.Contains(joined, "encrypted_material") || strings.Contains(joined, "external_reference") {
 				t.Fatalf("usage migration must retain value-free records without lifecycle foreign keys: %s", joined)
 			}
+			if tt.dialect == "mysql" {
+				if strings.Contains(joined, "global_credential_bindings` text not null default") {
+					t.Fatalf("prepared %s migration assigns a forbidden TEXT default: %s", tt.name, joined)
+				}
+				if !strings.Contains(joined, "modify column `global_credential_bindings` text not null") {
+					t.Fatalf("prepared %s migration does not restore non-null bindings: %s", tt.name, joined)
+				}
+			}
 			for index := range queries {
 				_ = store.prepareMigration(queries[index])
 			}
 		})
+	}
+}
+
+func TestCredentialExecutionSnapshotMigrationAvoidsMySQLLOBDefaults(t *testing.T) {
+	migration := strings.ToLower(strings.Join(getVersionSQL("mysql", "v2.20.59.sql", false), ";"))
+	if strings.Contains(migration, "execution_snapshot` longtext not null default") {
+		t.Fatalf("MySQL migration assigns a forbidden LONGTEXT default: %s", migration)
+	}
+	if !strings.Contains(migration, "modify column `execution_snapshot` longtext not null") {
+		t.Fatalf("MySQL migration does not restore the non-null execution snapshot: %s", migration)
 	}
 }

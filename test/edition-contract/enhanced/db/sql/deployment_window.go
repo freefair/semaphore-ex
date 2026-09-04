@@ -658,7 +658,18 @@ func deploymentWindowDecisionRecord(request pro_interfaces.DeploymentWindowAdmis
 
 func (d *DeploymentWindowStore) insertDecision(tx *gorp.Transaction, record db.DeploymentWindowDecisionRecord) (int, error) {
 	return insertDeploymentWindowTx(tx, d.connection, "insert into project__deployment_window_decision(project_id, decision_key, source, origin, template_id, workflow_template_id, schedule_id, task_id, workflow_run_id, workflow_run_node_id, actor_user_id, policy_revision, effective_timezone, evaluated_at, state, reason, next_eligible_at, next_eligible_known, override_actor_user_id, override_category, override_reference, matched_rules, created) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		record.ProjectID, record.DecisionKey, record.Source, record.Origin, record.TemplateID, record.WorkflowTemplateID, record.ScheduleID, record.TaskID, record.WorkflowRunID, record.WorkflowRunNodeID, record.ActorUserID, record.PolicyRevision, record.EffectiveTimezone, record.EvaluatedAt, record.State, record.Reason, record.NextEligibleAt, record.NextEligibleKnown, record.OverrideActorID, record.OverrideCategory, record.OverrideReference, record.MatchedRulesJSON, record.Created)
+		deploymentWindowDecisionArgs(record)...)
+}
+
+func deploymentWindowDecisionArgs(record db.DeploymentWindowDecisionRecord) []any {
+	return []any{
+		record.ProjectID, record.DecisionKey, record.Source, record.Origin, record.TemplateID,
+		record.WorkflowTemplateID, record.ScheduleID, record.TaskID, record.WorkflowRunID,
+		record.WorkflowRunNodeID, record.ActorUserID, record.PolicyRevision, record.EffectiveTimezone,
+		record.EvaluatedAt, record.State, record.Reason, record.NextEligibleAt,
+		sqlBool(record.NextEligibleKnown), record.OverrideActorID, record.OverrideCategory,
+		record.OverrideReference, record.MatchedRulesJSON, record.Created,
+	}
 }
 
 func insertDeploymentWindowTx(tx *gorp.Transaction, connection *coresql.SqlDbConnection, query string, args ...any) (int, error) {

@@ -44,10 +44,13 @@ func TestPolicyGuardrailMigrationPreparesForEverySQLDialect(t *testing.T) {
 				prepared[index] = store.prepareMigration(query)
 			}
 			joined := strings.ToLower(strings.Join(prepared, ";"))
+			rollback := strings.ToLower(strings.Join(getVersionSQL(test.dialect, "v2.20.62.err.sql", true), ";"))
 			assert.Contains(t, joined, test.primaryKey)
 			assert.Contains(t, joined, "policy_guardrail_evaluation__project_created")
 			assert.NotContains(t, joined, "foreign key (`published_by`)")
 			assert.NotContains(t, joined, "foreign key (`updated_by`)")
+			assert.NotContains(t, rollback, "drop index")
+			assert.Contains(t, rollback, "drop table `policy_guardrail_draft`")
 		})
 	}
 }

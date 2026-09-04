@@ -60,6 +60,20 @@ func TestNotificationMigrationAddsDurableGovernanceTables(t *testing.T) {
 	assert.NotContains(t, sqliteColumnNames(t, store, "notification_delivery"), "destination_configuration_revision")
 }
 
+func TestNotificationRoutingUsesPortableIntegerBoolean(t *testing.T) {
+	query, args := notificationRoutingRuleLookup(nil)
+	assert.Contains(t, query, "project_id is null")
+	require.Len(t, args, 1)
+	assert.Equal(t, 1, args[0])
+
+	projectID := 42
+	query, args = notificationRoutingRuleLookup(&projectID)
+	assert.Contains(t, query, "project_id=?")
+	require.Len(t, args, 2)
+	assert.Equal(t, 1, args[0])
+	assert.Equal(t, projectID, args[1])
+}
+
 func TestNotificationRegionMigrationIsPortableAndReversible(t *testing.T) {
 	migration := strings.Join(getVersionSQL("mysql", "v2.20.52.sql", false), ";")
 	rollback := strings.Join(getVersionSQL("mysql", "v2.20.52.err.sql", true), ";")
@@ -84,8 +98,13 @@ func TestNotificationConfigurationRevisionMigrationIsPortableAndFailClosed(t *te
 
 func TestOpsgenieAsyncStateMigrationIsPortableAndReversible(t *testing.T) {
 	migration := strings.Join(getVersionSQL("mysql", "v2.20.54.sql", false), ";")
+	sqliteMigration := strings.Join(getVersionSQL("sqlite", "v2.20.54.sql", false), ";")
 	rollback := strings.Join(getVersionSQL("mysql", "v2.20.54.err.sql", true), ";")
-	assert.Contains(t, migration, "add column provider_config longtext not null default ''")
+	assert.Contains(t, migration, "add column provider_config longtext null")
+	assert.Contains(t, migration, "set provider_config='' where provider_config is null")
+	assert.Contains(t, migration, "modify column provider_config longtext not null")
+	assert.NotContains(t, migration, "provider_config longtext not null default")
+	assert.Contains(t, sqliteMigration, "add column provider_config longtext not null default ''")
 	assert.Contains(t, migration, "add column provider_request_id varchar(128) not null default ''")
 	assert.Contains(t, rollback, "drop column provider_request_id")
 	assert.Contains(t, rollback, "drop column provider_config")

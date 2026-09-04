@@ -1,4 +1,4 @@
-drop index if exists `project__workflow_approval__pending_deadline`;
+{{ if .Mysql }}drop index `project__workflow_approval__pending_deadline` on `project__workflow_approval`{{ else }}drop index if exists `project__workflow_approval__pending_deadline`{{ end }};
 
 alter table `project__workflow_approval` drop column `correlation_id`;
 alter table `project__workflow_approval` drop column `decision_source`;

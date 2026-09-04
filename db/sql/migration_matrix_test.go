@@ -71,6 +71,32 @@ func TestMigrationMatrix(t *testing.T) {
 	assert.True(t, report.RestartPreservedEnhancedData)
 }
 
+func TestEnhancedRollbackMigrationsUseMySQLDropIndexSyntax(t *testing.T) {
+	for _, filename := range []string{
+		"v2.20.15.err.sql",
+		"v2.20.20.err.sql",
+		"v2.20.21.err.sql",
+		"v2.20.22.err.sql",
+		"v2.20.23.err.sql",
+		"v2.20.37.err.sql",
+		"v2.20.39.err.sql",
+		"v2.20.49.err.sql",
+		"v2.20.50.err.sql",
+		"v2.20.60.err.sql",
+		"v2.20.62.err.sql",
+		"v2.20.64.err.sql",
+	} {
+		t.Run(filename, func(t *testing.T) {
+			for _, query := range getVersionSQL(util.DbDriverMySQL, filename, true) {
+				normalized := strings.ToLower(strings.TrimSpace(query))
+				if strings.HasPrefix(normalized, "drop index") {
+					assert.Contains(t, normalized, " on ", "MySQL DROP INDEX requires its table")
+				}
+			}
+		})
+	}
+}
+
 func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMatrixReport {
 	t.Helper()
 	fixture, ok := currentDevelopSchemaFixtures[config.Dialect]
