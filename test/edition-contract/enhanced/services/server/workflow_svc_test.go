@@ -1635,6 +1635,25 @@ func TestWorkflowPolicyGuardrailDecisionKeysAreWorkflowScoped(t *testing.T) {
 	assert.NotEqual(t, first, node, "root and node admissions need independent replay keys")
 }
 
+func TestWorkflowServiceRecoversConcurrentIdempotentStartAfterAdmissionRace(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	created, err := fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "concurrent-admission-replay")
+	require.NoError(t, err)
+
+	service := fixture.service.(*workflowService)
+	recovered := db.WorkflowRun{}
+	err = service.recoverConcurrentWorkflowStart(fixture.workflow, "concurrent-admission-replay", nil, &recovered, db.ErrInvalidOperation)
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, recovered.ID)
+
+	recovered = db.WorkflowRun{}
+	override := &pro_interfaces.DeploymentWindowOverrideInput{Category: pro_interfaces.DeploymentWindowOverrideIncident, Reference: "INC-41"}
+	err = service.recoverConcurrentWorkflowStart(fixture.workflow, "concurrent-admission-replay", override, &recovered, db.ErrInvalidOperation)
+	assert.ErrorIs(t, err, db.ErrInvalidOperation)
+	assert.Zero(t, recovered.ID)
+}
+
 func TestWorkflowPolicyGuardrailAdmissionClaimsAndPropagatesOneBatchBeforeRunPersistence(t *testing.T) {
 	fixture := newWorkflowServiceFixture(t)
 	defer fixture.store.Close()
