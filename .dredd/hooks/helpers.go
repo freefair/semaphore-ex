@@ -365,11 +365,29 @@ func addWorkflow() *db.WorkflowTemplate {
 }
 
 func addWorkflowRun() *db.WorkflowRun {
+	if workflow == nil {
+		panic("workflow fixture is nil; ensure addWorkflow() is called before addWorkflowRun()")
+	}
+
+	created := tz.Now()
+	nodes := make([]db.WorkflowRunNode, 0, len(workflow.Nodes))
+	for _, node := range workflow.Nodes {
+		nodes = append(nodes, db.WorkflowRunNode{
+			WorkflowNodeID: node.ID,
+			TemplateID:     node.TemplateID,
+			Status:         db.WorkflowRunNodePending,
+			Created:        created,
+		})
+	}
 	run, err := workflowStore.CreateWorkflowRun(db.WorkflowRun{
 		ProjectID:          userProject.ID,
 		WorkflowTemplateID: workflowID,
 		Status:             db.WorkflowRunRunning,
-		Start:              new(tz.Now()),
+		ActorUserID:        testRunnerUser.ID,
+		CorrelationID:      "dredd-run-" + getUUID(),
+		Created:            created,
+		Start:              new(created),
+		Nodes:              nodes,
 	})
 	if err != nil {
 		panic(err)
@@ -393,15 +411,23 @@ func addWorkflowApproval() *db.WorkflowApproval {
 		panic("no approval node found in workflow.Nodes; workflow must include at least one approval node")
 	}
 
-	approval, err := workflowStore.CreateWorkflowApproval(db.WorkflowApproval{
-		ProjectID:      userProject.ID,
-		WorkflowRunID:  workflowRunID,
-		WorkflowNodeID: approvalNodeID,
-		Status:         db.WorkflowApprovalPending,
-		Created:        tz.Now(),
+	approval, opened, err := workflowStore.OpenWorkflowApproval(db.WorkflowApproval{
+		ProjectID:          userProject.ID,
+		WorkflowRunID:      workflowRunID,
+		WorkflowNodeID:     approvalNodeID,
+		Status:             db.WorkflowApprovalPending,
+		Created:            tz.Now(),
+		Prompt:             "approve",
+		EligiblePermission: db.CanRunProjectTasks,
+		RequestActorUserID: testRunnerUser.ID,
+		TimeoutOutcome:     db.WorkflowApprovalTimeoutReject,
+		CorrelationID:      "dredd-approval-" + getUUID(),
 	})
 	if err != nil {
 		panic(err)
+	}
+	if !opened {
+		panic("workflow approval fixture could not be opened")
 	}
 	return &approval
 }
@@ -419,12 +445,9 @@ func addToken(tok string, user int) {
 	}
 }
 
-// isProBuild reports whether the hooks binary was built with the PRO
-// implementation (go.work + pro_impl). The open-source stub of
-// pro/pkg/features returns an empty Features struct, while the PRO
-// implementation enables Workflows even for the standard (empty) plan.
+// isProBuild reports whether the selected implementation exposes workflows.
 func isProBuild() bool {
-	return proFeatures.GetFeatures(&db.User{}, "").Workflows
+	return proFeatures.GetFeatures().Workflows
 }
 
 // HELPERS
