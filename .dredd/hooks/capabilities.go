@@ -2,11 +2,11 @@ package main
 
 import (
 	"encoding/json"
-	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/tools/dreddhooks"
 	trans "github.com/snikch/goodman/transaction"
 )
 
@@ -131,26 +131,12 @@ func resolveCapability(caps []string, resolved []string, uid string) {
 		case "environment":
 			pwd := "test-pass"
 			env := "{}"
-			secret := db.EnvironmentSecret{
-				Type:      db.EnvironmentSecretEnv,
-				Name:      "TEST",
-				Secret:    "VALUE",
-				Operation: "create",
-			}
 			res, err := store.CreateEnvironment(db.Environment{
 				ProjectID: userProject.ID,
 				Name:      "ITI-" + uid,
 				JSON:      "{}",
 				Password:  &pwd,
 				ENV:       &env,
-			})
-			printError(err)
-			_, err = store.CreateAccessKey(db.AccessKey{
-				String:        secret.Secret,
-				EnvironmentID: &res.ID,
-				ProjectID:     &userProject.ID,
-				Type:          db.AccessKeyString,
-				Owner:         secret.Type.GetAccessKeyOwner(),
 			})
 			printError(err)
 			environmentID = res.ID
@@ -283,6 +269,10 @@ func alterRequestBody(t *trans.Transaction) {
 		bodyFieldProcessor("project_id", userProject.ID, &request)
 	}
 	bodyFieldProcessor("json", "{}", &request)
+	if strings.Contains(t.FullPath, "/tasks") {
+		bodyFieldProcessor("environment", "{}", &request)
+		bodyFieldProcessor("arguments", "[]", &request)
+	}
 	if userKey != nil {
 		bodyFieldProcessor("ssh_key_id", userKey.ID, &request)
 		bodyFieldProcessor("become_key_id", userKey.ID, &request)
@@ -322,18 +312,8 @@ func alterRequestBody(t *trans.Transaction) {
 
 	// Inject object ID to body for PUT requests
 	if strings.ToLower(t.Request.Method) == "put" {
-
-		putRequestPathRE := regexp.MustCompile(`\w+/(\d+)/?$`)
-		m := putRequestPathRE.FindStringSubmatch(t.FullPath)
-		if len(m) > 0 {
-			objectID, err := strconv.Atoi(m[1])
-			if err != nil {
-				panic("Invalid object ID in PUT request " + t.FullPath)
-			}
+		if objectID, ok := dreddhooks.PutRequestObjectID(t.FullPath); ok {
 			request["id"] = objectID
-
-		} else {
-			panic("Unexpected PUT request " + t.FullPath)
 		}
 	}
 

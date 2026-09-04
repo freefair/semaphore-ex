@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/semaphoreui/semaphore/tools/dreddhooks"
 	"github.com/snikch/goodman/hooks"
 	trans "github.com/snikch/goodman/transaction"
 )
@@ -44,6 +45,10 @@ func main() {
 	}
 
 	h.BeforeEach(func(t *trans.Transaction) {
+		if dreddhooks.RequiresDedicatedStateFixture(t.FullPath) {
+			t.Skip = true
+			return
+		}
 		if strings.HasPrefix(t.Name, "user") {
 			addCapabilities([]string{"user"})
 		} else if strings.HasPrefix(t.Name, "project") || strings.HasPrefix(t.Name, "projects") {
@@ -129,12 +134,12 @@ func main() {
 		h.Before("workflow > /api/project/{project_id}/workflows > Get workflows > 200 > application/json", capabilityWrapper("workflow"))
 		h.Before("workflow > /api/project/{project_id}/workflows > Add workflow > 201 > application/json", capabilityWrapper("template"))
 		h.Before("workflow > /api/project/{project_id}/workflows > Add workflow > 201 > application/json", func(t *trans.Transaction) {
-			t.Request.Body = "{\"name\":\"workflow-doc-test\",\"nodes\":[{\"id\":1,\"template_id\":" + strconv.Itoa(templateID) + "},{\"id\":2,\"kind\":\"approval\"}],\"edges\":[{\"source_node_id\":1,\"destination_node_id\":2,\"condition\":\"on_success\"}]}"
+			t.Request.Body = "{\"name\":\"workflow-doc-test\",\"nodes\":[{\"id\":-1,\"template_id\":" + strconv.Itoa(templateID) + "},{\"id\":-2,\"kind\":\"approval\",\"approval_role_policy\":{\"mode\":\"any_of\",\"role_ids\":[\"builtin:owner\"],\"minimum_distinct_approvers\":1,\"initiator_separation\":false}}],\"edges\":[{\"source_node_id\":-1,\"destination_node_id\":-2,\"condition\":\"on_success\"}]}"
 		})
 		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id} > Get workflow > 200 > application/json", capabilityWrapper("workflow"))
-		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id} > Update workflow > 204 > application/json", capabilityWrapper("workflow"))
-		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id} > Update workflow > 204 > application/json", func(t *trans.Transaction) {
-			t.Request.Body = "{\"id\":" + strconv.Itoa(workflowID) + ",\"project_id\":" + strconv.Itoa(userProject.ID) + ",\"name\":\"workflow-updated\",\"nodes\":[{\"id\":1,\"template_id\":" + strconv.Itoa(templateID) + "},{\"id\":2,\"kind\":\"approval\",\"approval_timeout\":120}],\"edges\":[{\"source_node_id\":1,\"destination_node_id\":2,\"condition\":\"on_success\"}]}"
+		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id} > Update workflow > 200 > application/json", capabilityWrapper("workflow"))
+		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id} > Update workflow > 200 > application/json", func(t *trans.Transaction) {
+			t.Request.Body = "{\"id\":" + strconv.Itoa(workflowID) + ",\"project_id\":" + strconv.Itoa(userProject.ID) + ",\"revision\":" + strconv.Itoa(workflow.Revision) + ",\"name\":\"workflow-updated\",\"access_policy\":{\"revision\":1},\"nodes\":[{\"id\":-1,\"template_id\":" + strconv.Itoa(templateID) + "},{\"id\":-2,\"kind\":\"approval\",\"approval_timeout\":120,\"approval_role_policy\":{\"revision\":1,\"mode\":\"any_of\",\"role_ids\":[\"builtin:owner\"],\"minimum_distinct_approvers\":1,\"initiator_separation\":false}}],\"edges\":[{\"source_node_id\":-1,\"destination_node_id\":-2,\"condition\":\"on_success\"}]}"
 		})
 		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id} > Remove workflow > 204 > application/json", capabilityWrapper("workflow"))
 		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/run > Run workflow > 201 > application/json", capabilityWrapper("workflow"))
@@ -143,7 +148,7 @@ func main() {
 		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/runs/{run_id}/approvals > Get workflow run approvals > 200 > application/json", capabilityWrapper("workflow_approval"))
 		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/runs/{run_id}/approvals/{node_id} > Resolve workflow approval > 200 > application/json", capabilityWrapper("workflow_approval"))
 		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/runs/{run_id}/approvals/{node_id} > Resolve workflow approval > 200 > application/json", func(t *trans.Transaction) {
-			t.Request.Body = "{\"status\":\"approved\"}"
+			t.Request.Body = "{\"status\":\"approved\",\"comment\":\"Dredd contract approval\",\"source\":\"user\"}"
 		})
 
 		// project runners
@@ -195,7 +200,7 @@ func main() {
 	h.Before("task > /api/project/{project_id}/tasks/{task_id}/stop > Stop a job > 204 > application/json", capabilityWrapper("task"))
 
 	h.Before("schedule > /api/project/{project_id}/schedules/{schedule_id} > Get schedule > 200 > application/json", capabilityWrapper("schedule"))
-	h.Before("schedule > /api/project/{project_id}/schedules/{schedule_id} > Updates schedule > 204 > application/json", capabilityWrapper("schedule"))
+	h.Before("schedule > /api/project/{project_id}/schedules/{schedule_id} > Updates schedule > 200 > application/json", capabilityWrapper("schedule"))
 	h.Before("schedule > /api/project/{project_id}/schedules/{schedule_id} > Deletes schedule > 204 > application/json", capabilityWrapper("schedule"))
 
 	h.Before("project > /api/project/{project_id}/views/{view_id} > Get view > 200 > application/json", capabilityWrapper("view"))

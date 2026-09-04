@@ -242,7 +242,7 @@ func addTask() *db.Task {
 	t := db.Task{
 		ProjectID:  userProject.ID,
 		TemplateID: templateID,
-		Status:     "testing",
+		Status:     "waiting",
 		UserID:     &userPathTestUser.ID,
 		Created:    db.GetParsedTime(tz.Now()),
 	}
@@ -317,6 +317,7 @@ func addRunner() *db.Runner {
 		Name:             "ITRN-" + getUUID(),
 		Active:           true,
 		MaxParallelTasks: 1,
+		TransportTrust:   db.RunnerTransportPlaintext,
 	})
 
 	if err != nil {
@@ -333,6 +334,7 @@ func addGlobalRunner() *db.Runner {
 		Name:             "ITGRN-" + getUUID(),
 		Active:           true,
 		MaxParallelTasks: 1,
+		TransportTrust:   db.RunnerTransportPlaintext,
 	})
 
 	if err != nil {
@@ -343,12 +345,15 @@ func addGlobalRunner() *db.Runner {
 }
 
 func addWorkflow() *db.WorkflowTemplate {
+	approvalPolicy := db.WorkflowApprovalRolePolicy{
+		Mode: db.WorkflowApprovalRoleModeAnyOf, RoleIDs: []db.ProjectRoleReference{db.BuiltinProjectRoleReferenceOwner}, MinimumDistinctApprovers: 1,
+	}
 	wf, err := workflowStore.CreateWorkflowTemplate(db.WorkflowTemplate{
 		ProjectID: userProject.ID,
 		Name:      "ITW-" + getUUID(),
 		Nodes: []db.WorkflowNode{
 			{ID: 1, TemplateID: templateID},
-			{ID: 2, Kind: db.WorkflowNodeApprovalKind, ApprovalMessage: new("approve")},
+			{ID: 2, Kind: db.WorkflowNodeApprovalKind, ApprovalMessage: new("approve"), ApprovalRolePolicy: approvalPolicy},
 		},
 		Edges: []db.WorkflowEdge{
 			{

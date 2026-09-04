@@ -11,6 +11,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCreateRunnerDefaultsTransportTrustToPlaintext(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	runner, err := store.CreateRunner(db.Runner{Name: "default transport trust"})
+	require.NoError(t, err)
+	assert.Equal(t, db.RunnerTransportPlaintext, runner.TransportTrust)
+	persisted, err := store.GetGlobalRunner(runner.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.RunnerTransportPlaintext, persisted.TransportTrust)
+}
+
 func TestRegisterRunnerAtomicallyConsumesToken(t *testing.T) {
 	store := InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
