@@ -257,11 +257,11 @@ func (h *Harness) rollingReplacement(ctx context.Context) error {
 				return nil, err
 			}
 			skewObserved := oldA.Version != peer.Version || oldA.Build != peer.Build
-			status, _, err := h.api.request(ctx, http.MethodPost, fmt.Sprintf("%s/api/cluster/nodes/%s/draining", h.serverAURL, oldA.BootID), map[string]any{"draining": true})
+			status, _, err := h.api.request(ctx, http.MethodPost, fmt.Sprintf("%s/api/cluster/nodes/%s/draining", h.proxyURL, oldA.BootID), map[string]any{"draining": true})
 			if err != nil || status != http.StatusNoContent {
 				return nil, fmt.Errorf("drain server-a returned %d: %w", status, err)
 			}
-			drainStatus, _, drainErr := h.api.request(ctx, http.MethodGet, h.serverAURL+"/api/ready", nil)
+			_, drainStatus, drainErr := h.serviceReadiness(ctx, "server-a")
 			drained := drainErr == nil && drainStatus == http.StatusServiceUnavailable
 			monitor := h.startProbeMonitor(ctx)
 			h.commands.environment["SEMAPHORE_HA_SERVER_A_IMAGE"] = h.config.ReplacementImage
@@ -284,13 +284,7 @@ func (h *Harness) rollingReplacement(ctx context.Context) error {
 				monitor.Stop()
 				return nil, err
 			}
-			serverAURL, err := h.commands.port(ctx, "server-a", "3000")
-			if err != nil {
-				monitor.Stop()
-				return nil, err
-			}
-			h.serverAURL = serverAURL
-			ready := h.waitReadiness(ctx, h.serverAURL, true, 90*time.Second) == nil
+			ready := h.waitServiceReadiness(ctx, "server-a", true, 90*time.Second) == nil
 			if !ready {
 				monitor.Stop()
 				return nil, fmt.Errorf("replacement server-a did not become ready")

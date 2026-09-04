@@ -40,3 +40,12 @@ setup() {
   run grep -F "sub_filter 'http://proxy:8080/' '/';" "${BATS_TEST_DIRNAME}/nginx.conf"
   [ "${status}" -eq 0 ]
 }
+
+@test "rolling replacement avoids stale published node ports after partition recovery" {
+  scenarios="$(awk '/func \(h \*Harness\) rollingReplacement/{capture=1} capture{print} capture && /^}/{exit}' "${BATS_TEST_DIRNAME}/scenarios.go")"
+
+  [[ "${scenarios}" == *'h.proxyURL, oldA.BootID'* ]]
+  [[ "${scenarios}" == *'h.serviceReadiness(ctx, "server-a")'* ]]
+  [[ "${scenarios}" == *'h.waitServiceReadiness(ctx, "server-a", true'* ]]
+  [[ "${scenarios}" != *'h.serverAURL'* ]]
+}
