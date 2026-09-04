@@ -51,6 +51,9 @@ jobs:
           go install github.com/go-task/task/v3/cmd/task@v"${TASK_VERSION}"
           npm ci --prefix web
 
+      - name: Build embedded frontend for module tests
+        run: task build:fe
+
       - name: Test full-product modules
         run: |
           go test ./... -count=1

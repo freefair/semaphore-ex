@@ -37,9 +37,11 @@ RUN --mount=type=cache,target=/go/pkg \
       SOURCE_DATE_EPOCH="${source_date_epoch}" && \
     task deps:fe \
       CORE_REVISION="${core_revision}" \
+      ENHANCED_REVISION="${ENHANCED_REVISION}" \
       SOURCE_DATE_EPOCH="${source_date_epoch}" && \
     task build:fe \
       CORE_REVISION="${core_revision}" \
+      ENHANCED_REVISION="${ENHANCED_REVISION}" \
       SOURCE_DATE_EPOCH="${source_date_epoch}" && \
     env SEMAPHORE_SOURCE_TAG="${source_tag}" SEMAPHORE_SOURCE_SHA="${source_sha}" task build:be \
       GOOS="${TARGETOS}" \

@@ -74,3 +74,17 @@ func TestSupportedBuildInputsHaveNoEditionSelector(t *testing.T) {
 		assert.NotContains(t, string(content), "VUE_APP_BUILD_TYPE", filename)
 	}
 }
+
+func TestProductWorkflowBuildsEmbeddedFrontendBeforeModuleTests(t *testing.T) {
+	repositoryRoot, err := filepath.Abs("..")
+	require.NoError(t, err)
+	content, err := os.ReadFile(filepath.Join(repositoryRoot, ".github", "workflows", "product_build.yml"))
+	require.NoError(t, err)
+
+	workflow := string(content)
+	frontendBuild := strings.Index(workflow, "task build:fe")
+	moduleTests := strings.Index(workflow, "go test ./... -count=1")
+	require.NotEqual(t, -1, frontendBuild, "product workflow must build the embedded frontend")
+	require.NotEqual(t, -1, moduleTests, "product workflow must run the module tests")
+	assert.Less(t, frontendBuild, moduleTests, "embedded frontend must exist before Go compiles api/router.go")
+}
