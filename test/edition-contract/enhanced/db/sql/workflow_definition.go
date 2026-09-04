@@ -722,10 +722,10 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 			return fmt.Errorf("workflow node %d does not belong to workflow %d", clientID, workflow.ID)
 		}
 		newID, err := d.insertTx(tx,
-			"insert into project__workflow_node(workflow_template_id, template_id, cross_project_template_reference, kind, convergence_mode, join_mode, approval_timeout, approval_message, approval_permission, approval_timeout_outcome, approval_separation_of_duties, approval_role_policy, approval_role_policy_revision, task_params_id, note, position_x, position_y, display_name, override_policy) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"insert into project__workflow_node(workflow_template_id, template_id, cross_project_template_reference, kind, convergence_mode, join_mode, approval_timeout, approval_message, approval_permission, approval_timeout_outcome, approval_separation_of_duties, approval_role_policy, approval_role_policy_revision, task_params_id, note, position_x, position_y, display_name, artifact_outputs, artifact_inputs, override_policy) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			workflow.ID, node.TemplateID, node.CrossProjectTemplateReferenceJSON, node.Kind, node.ConvergenceMode, node.JoinMode, node.ApprovalTimeout,
 			node.ApprovalMessage, node.ApprovalPermission, node.ApprovalTimeoutOutcome, sqlBool(node.ApprovalSeparationOfDuties),
-			node.ApprovalRolePolicyJSON, node.ApprovalRolePolicyRevision, node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, node.OverridePolicyJSON,
+			node.ApprovalRolePolicyJSON, node.ApprovalRolePolicyRevision, node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, "[]", "[]", node.OverridePolicyJSON,
 		)
 		if err != nil {
 			return err
@@ -768,7 +768,7 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 		}
 		if _, exists := existingEdges[clientID]; exists && clientID > 0 {
 			if _, err := tx.Exec(d.connection.PrepareQuery(
-				"update project__workflow_edge set source_node_id=?, destination_node_id=?, condition=?, label=?, condition_expression=?, condition_program=? where workflow_template_id=? and id=?"),
+				"update project__workflow_edge set source_node_id=?, destination_node_id=?, `condition`=?, label=?, condition_expression=?, condition_program=? where workflow_template_id=? and id=?"),
 				edge.SourceNodeID, edge.DestinationNodeID, edge.Condition, edge.Label, edge.Expression, edge.ConditionProgramJSON, workflow.ID, clientID,
 			); err != nil {
 				return err
@@ -780,7 +780,7 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 			return fmt.Errorf("workflow edge %d does not belong to workflow %d", clientID, workflow.ID)
 		}
 		newID, err := d.insertTx(tx,
-			"insert into project__workflow_edge(workflow_template_id, source_node_id, destination_node_id, condition, label, condition_expression, condition_program) values (?, ?, ?, ?, ?, ?, ?)",
+			"insert into project__workflow_edge(workflow_template_id, source_node_id, destination_node_id, `condition`, label, condition_expression, condition_program) values (?, ?, ?, ?, ?, ?, ?)",
 			workflow.ID, edge.SourceNodeID, edge.DestinationNodeID, edge.Condition, edge.Label, edge.Expression, edge.ConditionProgramJSON,
 		)
 		if err != nil {
