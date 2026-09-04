@@ -177,14 +177,16 @@ func (h *Harness) restartRedis(ctx context.Context) error {
 			if _, err := h.commands.compose(ctx, "stop", "redis"); err != nil {
 				return nil, err
 			}
-			a, errA := h.readiness(ctx, h.serverAURL)
-			b, errB := h.readiness(ctx, h.serverBURL)
-			degraded := errA == nil && errB == nil && a.Ready && b.Ready && !a.AcceptingCoordinatedWork && !b.AcceptingCoordinatedWork
+			a, statusA, errA := h.serviceReadiness(ctx, "server-a")
+			b, statusB, errB := h.serviceReadiness(ctx, "server-b")
+			degraded := errA == nil && errB == nil && statusA == http.StatusOK && statusB == http.StatusOK &&
+				a.Ready && b.Ready && !a.AcceptingCoordinatedWork && !b.AcceptingCoordinatedWork
 			available := h.projectRead(ctx, h.proxyURL) == nil
 			if _, err := h.commands.compose(ctx, "start", "redis"); err != nil {
 				return nil, err
 			}
-			recovered := h.waitReadiness(ctx, h.serverAURL, true, 60*time.Second) == nil && h.waitReadiness(ctx, h.serverBURL, true, 60*time.Second) == nil
+			recovered := h.waitServiceReadiness(ctx, "server-a", true, 60*time.Second) == nil &&
+				h.waitServiceReadiness(ctx, "server-b", true, 60*time.Second) == nil
 			return []Assertion{
 				{Name: "traffic_ready_while_redis_down", Passed: degraded && available, Evidence: fmt.Sprintf("server states %s/%s and authenticated read succeeded", a.State, b.State)},
 				{Name: "coordinated_work_recovers", Passed: recovered, Evidence: "both nodes accept coordinated work after Redis restart"},
@@ -200,16 +202,18 @@ func (h *Harness) loseDatabase(ctx context.Context) error {
 				return nil, err
 			}
 			ping := h.api.waitStatus(ctx, h.proxyURL+"/api/ping", http.StatusOK) == nil
-			statusA, _, errA := h.api.request(ctx, http.MethodGet, h.serverAURL+"/api/ready", nil)
-			statusB, _, errB := h.api.request(ctx, http.MethodGet, h.serverBURL+"/api/ready", nil)
-			failedClosed := errA == nil && errB == nil && statusA == http.StatusServiceUnavailable && statusB == http.StatusServiceUnavailable
+			a, statusA, errA := h.serviceReadiness(ctx, "server-a")
+			b, statusB, errB := h.serviceReadiness(ctx, "server-b")
+			failedClosed := errA == nil && errB == nil && statusA == http.StatusServiceUnavailable && statusB == http.StatusServiceUnavailable &&
+				!a.Ready && !b.Ready
 			if _, err := h.commands.compose(ctx, "start", "postgres"); err != nil {
 				return nil, err
 			}
-			recovered := h.waitReadiness(ctx, h.serverAURL, true, 90*time.Second) == nil && h.waitReadiness(ctx, h.serverBURL, true, 90*time.Second) == nil
+			recovered := h.waitServiceReadiness(ctx, "server-a", true, 90*time.Second) == nil &&
+				h.waitServiceReadiness(ctx, "server-b", true, 90*time.Second) == nil
 			return []Assertion{
 				{Name: "liveness_without_database", Passed: ping, Evidence: "proxy /api/ping remained HTTP 200"},
-				{Name: "readiness_fails_closed", Passed: failedClosed, Evidence: fmt.Sprintf("direct readiness statuses %d/%d", statusA, statusB)},
+				{Name: "readiness_fails_closed", Passed: failedClosed, Evidence: fmt.Sprintf("internal readiness statuses %d/%d", statusA, statusB)},
 				{Name: "database_recovery_converges", Passed: recovered, Evidence: "both nodes ready after PostgreSQL restart"},
 			}, nil
 		})
@@ -379,15 +383,7 @@ func (h *Harness) waitServiceReadiness(ctx context.Context, service string, acce
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		output, err := h.commands.compose(
-			waitCtx,
-			"exec", "--no-TTY", service,
-			"curl", "--silent", "--show-error", "http://127.0.0.1:3000/api/ready",
-		)
-		var readiness readinessView
-		if err == nil {
-			err = json.Unmarshal([]byte(output), &readiness)
-		}
+		readiness, _, err := h.serviceReadiness(waitCtx, service)
 		if err == nil && readiness.Ready && readiness.AcceptingCoordinatedWork == accepting {
 			return nil
 		}
@@ -397,6 +393,30 @@ func (h *Harness) waitServiceReadiness(ctx context.Context, service string, acce
 		case <-ticker.C:
 		}
 	}
+}
+
+func (h *Harness) serviceReadiness(ctx context.Context, service string) (readinessView, int, error) {
+	output, err := h.commands.compose(
+		ctx,
+		"exec", "--no-TTY", service,
+		"curl", "--silent", "--show-error", "--write-out", "\n%{http_code}", "http://127.0.0.1:3000/api/ready",
+	)
+	if err != nil {
+		return readinessView{}, 0, err
+	}
+	separator := strings.LastIndex(output, "\n")
+	if separator <= 0 {
+		return readinessView{}, 0, fmt.Errorf("decode %s internal readiness response", service)
+	}
+	status, err := strconv.Atoi(strings.TrimSpace(output[separator+1:]))
+	if err != nil {
+		return readinessView{}, 0, fmt.Errorf("decode %s internal readiness status: %w", service, err)
+	}
+	var readiness readinessView
+	if err = json.Unmarshal([]byte(output[:separator]), &readiness); err != nil {
+		return readinessView{}, 0, fmt.Errorf("decode %s internal readiness body: %w", service, err)
+	}
+	return readiness, status, nil
 }
 
 func (h *Harness) clusterNodes(ctx context.Context, baseURL string) ([]clusterNode, error) {
