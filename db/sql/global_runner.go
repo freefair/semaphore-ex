@@ -222,6 +222,9 @@ func (d *SqlDb) UpdateRunner(runner db.Runner) (err error) {
 	if err != nil {
 		return
 	}
+	if runner.TransportTrust == "" {
+		runner.TransportTrust = db.RunnerTransportPlaintext
+	}
 	var current db.Runner
 	if runner.ProjectID == nil {
 		current, err = d.GetGlobalRunner(runner.ID)
@@ -410,6 +413,9 @@ func (d *SqlDb) CreateRunner(runner db.Runner) (newRunner db.Runner, err error) 
 	runner.RegistrationPolicy, err = db.NormalizeRunnerRegistrationPolicy(runner.RegistrationPolicy)
 	if err != nil {
 		return
+	}
+	if runner.TransportTrust == "" {
+		runner.TransportTrust = db.RunnerTransportPlaintext
 	}
 	if runner.RegistrationTokenHash != nil {
 		runner.RegistrationKind = db.RunnerRegistrationOneTime
