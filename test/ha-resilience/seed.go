@@ -80,13 +80,7 @@ func (h *Harness) seed(ctx context.Context) error {
 	}
 	message := "Approve the HA resilience fixture?"
 	var workflow identifier
-	if err := h.api.json(ctx, http.MethodPost, fmt.Sprintf("%s/api/project/%d/workflows", h.proxyURL, h.projectID), map[string]any{
-		"name": "HA approval workflow", "definition_version": 1,
-		"nodes": []map[string]any{{
-			"id": -1, "kind": "approval", "display_name": "HA gate", "approval_message": message,
-		}},
-		"edges": []any{},
-	}, &workflow, http.StatusCreated); err != nil {
+	if err := h.api.json(ctx, http.MethodPost, fmt.Sprintf("%s/api/project/%d/workflows", h.proxyURL, h.projectID), approvalWorkflowRequest(message), &workflow, http.StatusCreated); err != nil {
 		return err
 	}
 	h.workflowID = workflow.ID
@@ -97,6 +91,20 @@ func (h *Harness) seed(ctx context.Context) error {
 		return err
 	}
 	return h.stageRecoveryTask(ctx)
+}
+
+func approvalWorkflowRequest(message string) map[string]any {
+	return map[string]any{
+		"name": "HA approval workflow", "definition_version": 1,
+		"nodes": []map[string]any{{
+			"id": -1, "kind": "approval", "display_name": "HA gate", "approval_message": message,
+			"approval_role_policy": map[string]any{
+				"revision": 0, "mode": "any_of", "role_ids": []string{"builtin:owner"},
+				"minimum_distinct_approvers": 1, "initiator_separation": false,
+			},
+		}},
+		"edges": []any{},
+	}
 }
 
 func (h *Harness) stageRecoveryTask(ctx context.Context) error {

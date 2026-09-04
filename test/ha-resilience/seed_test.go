@@ -1,6 +1,24 @@
 package haresilience
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestApprovalWorkflowRequestUsesExplicitOwnerPolicy(t *testing.T) {
+	request := approvalWorkflowRequest("approve?")
+	nodes, ok := request["nodes"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, nodes, 1)
+	policy, ok := nodes[0]["approval_role_policy"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "any_of", policy["mode"])
+	assert.Equal(t, []string{"builtin:owner"}, policy["role_ids"])
+	assert.Equal(t, 1, policy["minimum_distinct_approvers"])
+	assert.Equal(t, false, policy["initiator_separation"])
+}
 
 func TestParseRecoveryAssignment(t *testing.T) {
 	assignment, err := parseRecoveryAssignment("42|server-b|0123456789abcdef0123456789abcdef\n")

@@ -356,6 +356,7 @@ func (s *workflowService) startReviewedWorkflowFromExecutionSnapshot(
 		}
 		return createErr
 	})
+	err = s.recoverConcurrentWorkflowStart(workflow, correlationID, override, &result, err)
 	if err != nil {
 		return db.WorkflowRun{}, plan, err
 	}
@@ -862,6 +863,7 @@ func (s *workflowService) startWorkflowWithPolicyGuardrailsPlan(
 		}
 		return createErr
 	})
+	err = s.recoverConcurrentWorkflowStart(workflow, correlationID, override, &result, err)
 	if err != nil {
 		return result, plan, err
 	}
@@ -969,10 +971,23 @@ func (s *workflowService) startWorkflow(
 		}
 		return s.ProgressWorkflowRun(workflow.ProjectID, result.ID, user)
 	})
+	err = s.recoverConcurrentWorkflowStart(workflow, correlationID, override, &result, err)
 	if err != nil {
 		return result, err
 	}
 	return s.repository.GetWorkflowRun(workflow.ProjectID, workflow.ID, result.ID)
+}
+
+func (s *workflowService) recoverConcurrentWorkflowStart(workflow db.WorkflowTemplate, correlationID string, override *pro_interfaces.DeploymentWindowOverrideInput, result *db.WorkflowRun, startErr error) error {
+	if startErr == nil || override != nil || result == nil || result.ID != 0 {
+		return startErr
+	}
+	existing, err := s.repository.GetWorkflowRunByCorrelationID(workflow.ProjectID, workflow.ID, correlationID)
+	if err != nil {
+		return startErr
+	}
+	*result = existing
+	return nil
 }
 
 func (s *workflowService) claimWorkflowStartAdmission(run *db.WorkflowRun, workflow db.WorkflowTemplate, user *db.User, correlationID string, override *pro_interfaces.DeploymentWindowOverrideInput, inputs ...db.WorkflowRunInput) error {
