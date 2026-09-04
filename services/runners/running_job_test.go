@@ -105,7 +105,7 @@ func TestRunningJob_LogCmdUsesWaitDelayForInheritedPipes(t *testing.T) {
 	require.ErrorIs(t, err, exec.ErrWaitDelay)
 	assert.Less(t, time.Since(startedAt), 1500*time.Millisecond)
 
-	_, logs, _ := rj.getProgress()
+	_, logs, _, _ := rj.getProgress()
 	require.Len(t, logs, 2)
 	assert.ElementsMatch(t, []string{"stdout", "stderr"}, []string{logs[0].Message, logs[1].Message})
 }
