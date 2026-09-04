@@ -77,15 +77,20 @@ func (h *Harness) killNode(ctx context.Context) error {
 				return nil, err
 			}
 			available := h.projectRead(ctx, h.proxyURL) == nil
-			if _, err := h.commands.compose(ctx, "start", "runner"); err != nil {
-				return nil, fmt.Errorf("restart runner for post-revocation evidence: %w", err)
-			}
-			runnerStarted = true
 			transferQuery := fmt.Sprintf(
 				"select count(*) from cluster__task_control where task_id=%d and owner_boot_id <> '%s' and previous_owner_boot_id='%s' and ownership_transferred_at is not null and fencing_token > 1;",
 				h.recoveryTaskID, h.recoveryOwnerBootID, h.recoveryOwnerBootID,
 			)
 			ownerTransferred := h.waitSQL(ctx, transferQuery, 1, 45*time.Second) == nil
+			revocationQuery := fmt.Sprintf(
+				"select count(*) from task t join cluster__task_control c on c.task_id=t.id where t.id=%d and t.assignment_generation=1 and t.runner_id is null and c.assignment_revoked_at is not null;",
+				h.recoveryTaskID,
+			)
+			assignmentRevoked := h.waitSQL(ctx, revocationQuery, 1, 45*time.Second) == nil
+			if _, err := h.commands.compose(ctx, "start", "runner"); err != nil {
+				return nil, fmt.Errorf("restart runner for post-revocation evidence: %w", err)
+			}
+			runnerStarted = true
 
 			terminalQuery := fmt.Sprintf(
 				"select count(*) from task where id=%d and assignment_generation=2 and status in ('success','error','stopped');",
@@ -125,7 +130,7 @@ func (h *Harness) killNode(ctx context.Context) error {
 			ready := h.waitReadiness(ctx, ownerURL, true, 60*time.Second) == nil
 			return []Assertion{
 				{Name: "proxy_api_available", Passed: available, Evidence: "authenticated read succeeded after SIGKILL"},
-				{Name: "task_owner_recovered", Passed: ownerTransferred && requeued == 1, Evidence: fmt.Sprintf("task %d owner %s/%s transferred with one safe requeue", h.recoveryTaskID, owner, h.recoveryOwnerBootID)},
+				{Name: "task_owner_recovered", Passed: ownerTransferred && assignmentRevoked && requeued == 1, Evidence: fmt.Sprintf("task %d owner %s/%s transferred, revoked, and safely requeued once", h.recoveryTaskID, owner, h.recoveryOwnerBootID)},
 				{Name: "runner_attempt_generations_unique", Passed: attemptCount == 2 && uniqueGenerations == 2, Evidence: fmt.Sprintf("task %d has %d attempts across %d expected generations", h.recoveryTaskID, attemptCount, uniqueGenerations)},
 				{Name: "recovered_task_terminal", Passed: terminal, Evidence: fmt.Sprintf("task %d reached a terminal state on assignment generation 2", h.recoveryTaskID)},
 				{Name: "original_dispatch_race_absent", Passed: originalRaceAbsent, Evidence: "server logs contain neither duplicate runner-attempt generation nor stale assignment conflict"},

@@ -219,6 +219,29 @@ func TestManagedClusterInspectorReadinessFailsClosedForDrainEditionAndDatabase(t
 	}
 }
 
+func TestManagedClusterInspectorBoundsUnresponsiveDatabase(t *testing.T) {
+	inspector := NewManagedClusterInspector(contextBlockingClusterNodeRepository{}, nil,
+		pro_interfaces.ClusterCompatibilityRequirements{},
+		pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-a"})
+	inspector.dependencyTimeout = 20 * time.Millisecond
+	started := time.Now()
+
+	readiness := inspector.Readiness()
+
+	assert.False(t, readiness.Ready)
+	assert.Equal(t, pro_interfaces.ClusterServiceDatabaseUnavailable, readiness.State)
+	assert.Less(t, time.Since(started), 250*time.Millisecond)
+}
+
+type contextBlockingClusterNodeRepository struct {
+	pro_interfaces.ClusterNodeRepository
+}
+
+func (contextBlockingClusterNodeRepository) ListClusterNodes(ctx context.Context) ([]pro_interfaces.ClusterNodeRegistration, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 type unavailableHeartbeatStore struct{}
 
 func (unavailableHeartbeatStore) Publish(context.Context, pro_interfaces.ClusterNodeIdentity, time.Duration) (time.Time, error) {
@@ -266,7 +289,7 @@ type clusterNodeRepositoryFake struct {
 	listErr error
 }
 
-func (f *clusterNodeRepositoryFake) UpsertClusterNode(node pro_interfaces.ClusterNodeRegistration) error {
+func (f *clusterNodeRepositoryFake) UpsertClusterNode(_ context.Context, node pro_interfaces.ClusterNodeRegistration) error {
 	for index := range f.nodes {
 		if f.nodes[index].BootID == node.BootID {
 			f.nodes[index] = node
@@ -277,14 +300,14 @@ func (f *clusterNodeRepositoryFake) UpsertClusterNode(node pro_interfaces.Cluste
 	return nil
 }
 
-func (f *clusterNodeRepositoryFake) ListClusterNodes() ([]pro_interfaces.ClusterNodeRegistration, error) {
+func (f *clusterNodeRepositoryFake) ListClusterNodes(_ context.Context) ([]pro_interfaces.ClusterNodeRegistration, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
 	return append([]pro_interfaces.ClusterNodeRegistration{}, f.nodes...), nil
 }
 
-func (f *clusterNodeRepositoryFake) SetClusterNodeDraining(bootID string, draining bool) error {
+func (f *clusterNodeRepositoryFake) SetClusterNodeDraining(_ context.Context, bootID string, draining bool) error {
 	for index := range f.nodes {
 		if f.nodes[index].BootID == bootID {
 			f.nodes[index].Draining = draining
@@ -293,7 +316,7 @@ func (f *clusterNodeRepositoryFake) SetClusterNodeDraining(bootID string, draini
 	return nil
 }
 
-func (f *clusterNodeRepositoryFake) DeleteClusterNodesLastSeenBefore(before time.Time) (int, error) {
+func (f *clusterNodeRepositoryFake) DeleteClusterNodesLastSeenBefore(_ context.Context, before time.Time) (int, error) {
 	kept := f.nodes[:0]
 	deleted := 0
 	for _, node := range f.nodes {

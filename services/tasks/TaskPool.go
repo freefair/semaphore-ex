@@ -465,7 +465,7 @@ func (p *TaskPool) onTaskRun(t *TaskRunner) {
 
 func (p *TaskPool) onTaskStop(t *TaskRunner) {
 	if p.taskControlLifecycle != nil {
-		p.taskControlLifecycle.ReleaseTaskControl(t.Task.ID)
+		p.taskControlLifecycle.ReleaseTaskControl(t.Task)
 	}
 	p.state.RemoveActive(t.Task.ProjectID, t.Task.ID)
 	p.state.DeleteRunning(t.Task.ID)

@@ -1,9 +1,11 @@
 package sql
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/Masterminds/squirrel"
 	"github.com/go-gorp/gorp/v3"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
@@ -367,4 +369,30 @@ func taskTerminalNotification(task db.Task) pro_interfaces.NotificationEvent {
 		Severity: severity, LifecycleAction: action,
 		Details: pro_interfaces.NotificationDetails{TaskID: &taskID, TemplateID: &templateID, Status: status},
 	}
+}
+
+// GetUnfinishedRunnerTasks returns SQL-authoritative assignments so any HA
+// node serving a runner poll can recover from missing local task state.
+func (d *SqlDb) GetUnfinishedRunnerTasks(ctx context.Context, runnerID int) ([]db.Task, error) {
+	if runnerID <= 0 {
+		return nil, db.ErrInvalidOperation
+	}
+	query, args, err := squirrel.Select("task.*").
+		From("task").
+		Where(squirrel.Eq{"task.runner_id": runnerID, "task.status": task_logger.UnfinishedTaskStatuses()}).
+		OrderBy("task.id").
+		ToSql()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]db.Task, 0)
+	if _, err = d.connection.SelectAllContext(ctx, &result, query, args...); err != nil {
+		return nil, err
+	}
+	for index := range result {
+		if err = result[index].DecodeWorkflowTemplateProvenance(); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }

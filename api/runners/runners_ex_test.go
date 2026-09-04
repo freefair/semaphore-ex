@@ -292,6 +292,37 @@ func TestGetRunnerPersistsBoundedHealthReportAndRestart(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, invalid.Code)
 }
 
+func TestGetRunnerHydratesSQLAssignmentOnAnotherHANode(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
+	fixture := newRunnerMetadataAPIFixture(t)
+	util.Config.HA = &util.HAConfig{Enabled: true}
+	_, err := fixture.store.Sql().Exec(fixture.store.PrepareQuery(
+		"update runner set executor_type=? where id=?"), db.RunnerExecutorLocal, fixture.runner.ID)
+	require.NoError(t, err)
+	fixture.runner.ExecutorType = db.RunnerExecutorLocal
+	encryption := server.NewAccessKeyEncryptionService(fixture.store, nil, nil, nil)
+	emptyNodePool := tasks.CreateTaskPool(
+		fixture.store, tasks.NewMemoryTaskStateStore(), nil, nil, encryption, nil, nil, nil, nil,
+	)
+	controller := NewRunnerController(
+		fixture.store, &emptyNodePool, encryption, nil,
+	)
+	request := httptest.NewRequest(http.MethodGet, "/api/internal/runners", nil)
+	request = helpers.SetContextValue(request, "store", fixture.store)
+	request = helpers.SetContextValue(request, "runner", fixture.runner)
+	response := httptest.NewRecorder()
+
+	controller.GetRunner(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var state runners.RunnerState
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &state))
+	require.Len(t, state.NewJobs, 1)
+	assert.Equal(t, fixture.task.ID, state.NewJobs[0].Task.ID)
+	assert.Equal(t, fixture.task.AssignmentGeneration, state.NewJobs[0].Task.AssignmentGeneration)
+}
+
 func TestGetRunnerAcknowledgesEqualTimestampCacheClearOnce(t *testing.T) {
 	previousConfig := util.Config
 	t.Cleanup(func() { util.Config = previousConfig })

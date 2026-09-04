@@ -298,10 +298,10 @@ type ClusterNodeCompatibility struct {
 // ClusterNodeRepository persists durable membership history separately from
 // the Redis live-heartbeat projection.
 type ClusterNodeRepository interface {
-	UpsertClusterNode(node ClusterNodeRegistration) error
-	ListClusterNodes() ([]ClusterNodeRegistration, error)
-	SetClusterNodeDraining(bootID string, draining bool) error
-	DeleteClusterNodesLastSeenBefore(before time.Time) (int, error)
+	UpsertClusterNode(ctx context.Context, node ClusterNodeRegistration) error
+	ListClusterNodes(ctx context.Context) ([]ClusterNodeRegistration, error)
+	SetClusterNodeDraining(ctx context.Context, bootID string, draining bool) error
+	DeleteClusterNodesLastSeenBefore(ctx context.Context, before time.Time) (int, error)
 }
 
 // EvaluateClusterNodeCompatibility is deterministic and deliberately separate

@@ -7,5 +7,5 @@ import "github.com/semaphoreui/semaphore/db"
 // assignment; release is idempotent and happens on every pool-stop path.
 type TaskControlLifecycle interface {
 	RegisterTaskControl(task db.Task) error
-	ReleaseTaskControl(taskID int)
+	ReleaseTaskControl(task db.Task)
 }

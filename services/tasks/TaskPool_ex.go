@@ -78,6 +78,54 @@ func (p *TaskPool) SetTaskControlLifecycle(lifecycle TaskControlLifecycle) {
 	p.taskControlLifecycle = lifecycle
 }
 
+type unfinishedRunnerTaskSource interface {
+	GetUnfinishedRunnerTasks(context.Context, int) ([]db.Task, error)
+}
+
+// GetRunnerTasks returns the SQL-authoritative assignments in HA mode. Local
+// task state is only a process cache and cannot decide which node a runner's
+// long-lived HTTP connection reaches after owner recovery.
+func (p *TaskPool) GetRunnerTasks(ctx context.Context, runnerID int) ([]*TaskRunner, error) {
+	local := make(map[int]*TaskRunner)
+	for _, task := range p.state.RunningRange() {
+		if task.Task.RunnerID != nil && *task.Task.RunnerID == runnerID {
+			local[task.Task.ID] = task
+		}
+	}
+	if !util.HAEnabled() {
+		result := make([]*TaskRunner, 0, len(local))
+		for _, task := range local {
+			result = append(result, task)
+		}
+		return result, nil
+	}
+	source, ok := p.store.(unfinishedRunnerTaskSource)
+	if !ok {
+		return nil, errors.New("HA runner task recovery is unavailable")
+	}
+	assigned, err := source.GetUnfinishedRunnerTasks(ctx, runnerID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]*TaskRunner, 0, len(assigned))
+	for _, task := range assigned {
+		if current := local[task.ID]; current != nil &&
+			current.Task.AssignmentGeneration == task.AssignmentGeneration && current.Task.Status == task.Status {
+			result = append(result, current)
+			continue
+		}
+		hydrated, hydrateErr := p.HydrateTaskRunnerFromDB(task.ID)
+		if hydrateErr != nil {
+			return nil, hydrateErr
+		}
+		if hydrated.Task.RunnerID == nil || *hydrated.Task.RunnerID != runnerID || hydrated.Task.Status.IsFinished() {
+			continue
+		}
+		result = append(result, hydrated)
+	}
+	return result, nil
+}
+
 // GetOwnedRunningTasks returns only work whose task-state claim belongs to
 // this process. Enhanced HA uses it to backfill durable task controls during
 // rolling upgrades without claiming another node's shared running work.

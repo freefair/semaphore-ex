@@ -139,7 +139,9 @@ func NewOrphanCleaner(store db.Store, pool *tasks.TaskPool) OrphanCleaner {
 		RequiredCapabilities: []string{"cluster-dashboard"},
 	}
 	readiness := func() (bool, error) {
-		nodes, registrationErr := repository.ListClusterNodes()
+		ctx, cancel := context.WithTimeout(context.Background(), clusterDependencyTimeout)
+		defer cancel()
+		nodes, registrationErr := repository.ListClusterNodes(ctx)
 		if registrationErr != nil {
 			return false, registrationErr
 		}
@@ -155,7 +157,7 @@ func NewOrphanCleaner(store db.Store, pool *tasks.TaskPool) OrphanCleaner {
 		if !found {
 			return false, nil
 		}
-		live, _, heartbeatErr := heartbeats.IsLive(context.Background(), identity)
+		live, _, heartbeatErr := heartbeats.IsLive(ctx, identity)
 		if heartbeatErr != nil || !live {
 			return false, heartbeatErr
 		}
