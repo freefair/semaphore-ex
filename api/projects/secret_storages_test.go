@@ -33,6 +33,24 @@ type runtimeSecretAPIStore struct {
 	sync db.SecretSync
 }
 
+type secretStorageMiddlewareStore struct {
+	db.Store
+	storage db.SecretStorage
+	keys    []db.AccessKey
+}
+
+func (s secretStorageMiddlewareStore) GetSecretStorage(int, int) (db.SecretStorage, error) {
+	return s.storage, nil
+}
+
+func (s secretStorageMiddlewareStore) GetAccessKeys(
+	int,
+	db.GetAccessKeyOptions,
+	db.RetrieveQueryParams,
+) ([]db.AccessKey, error) {
+	return s.keys, nil
+}
+
 func (runtimeSecretAPIStore) CreateEvent(event db.Event) (db.Event, error) { return event, nil }
 func (s runtimeSecretAPIStore) GetStorageSecretSync(int) (db.SecretSync, error) {
 	return s.sync, nil
@@ -134,6 +152,50 @@ func (p projectRuntimeCapabilityProvider) Configure(
 	pro_interfaces.CapabilityConfiguration,
 ) (pro_interfaces.CapabilitySnapshot, error) {
 	return pro_interfaces.CapabilitySnapshot{}, nil
+}
+
+func TestSecretStorageMiddlewareRequiresKeysUnlessAmbientCredentialsAreExplicit(t *testing.T) {
+	tests := []struct {
+		name       string
+		storage    db.SecretStorage
+		wantStatus int
+		wantNext   bool
+	}{
+		{
+			name:       "Vault without bootstrap credential",
+			storage:    db.SecretStorage{ID: 9, ProjectID: 3, Type: db.SecretStorageTypeVault},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "AWS with explicit IAM role",
+			storage: db.SecretStorage{
+				ID: 9, ProjectID: 3, Type: db.SecretStorageTypeAwsSm,
+				Params: db.MapStringAnyField{"use_iam_role": true},
+			},
+			wantStatus: http.StatusNoContent,
+			wantNext:   true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			handler := SecretStorageMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			request := httptest.NewRequest(http.MethodGet, "/api/project/3/secret_storages/9", nil)
+			request = mux.SetURLVars(request, map[string]string{"storage_id": "9"})
+			request = helpers.SetContextValue(request, "project", db.Project{ID: 3})
+			request = helpers.SetContextValue(request, "store", secretStorageMiddlewareStore{storage: test.storage})
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, request)
+
+			assert.Equal(t, test.wantStatus, recorder.Code)
+			assert.Equal(t, test.wantNext, called)
+		})
+	}
 }
 
 func TestSecretStorageCreateAndUpdateKeepCredentialsWriteOnly(t *testing.T) {

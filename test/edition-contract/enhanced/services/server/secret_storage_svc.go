@@ -25,6 +25,13 @@ func GetSecretStorages(repo db.SecretStorageRepository, projectID int) ([]db.Sec
 	return result, nil
 }
 
+// StorageRequiresSecret preserves the core secret-storage contract while
+// defaulting every unknown or malformed configuration to credential-required.
+func StorageRequiresSecret(storage db.SecretStorage) bool {
+	useIAMRole, _ := storage.Params["use_iam_role"].(bool)
+	return storage.Type != db.SecretStorageTypeAwsSm || !useIAMRole
+}
+
 func SyncSecrets(
 	ctx context.Context,
 	sync db.SecretSync,

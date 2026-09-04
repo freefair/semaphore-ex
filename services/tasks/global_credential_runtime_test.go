@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"os/exec"
 	"testing"
 
 	"github.com/semaphoreui/semaphore/db"
@@ -86,6 +87,28 @@ func TestTaskRunnerRedactsResolvedCredentialBeforeServerLogSink(t *testing.T) {
 
 	record := <-pool.logger
 	assert.NotContains(t, record.output, "server-secret-value")
+	assert.Contains(t, record.output, "[REDACTED]")
+}
+
+func TestTaskRunnerLogCmdFinalizerPreservesCredentialRedaction(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh is not available")
+	}
+
+	pool := &TaskPool{logger: make(chan logRecord, 1)}
+	runner := &TaskRunner{
+		Task: db.Task{ID: 3, ProjectID: 4, GlobalCredentialBindings: map[string]int{"deploy_token": 7}},
+		pool: pool,
+	}
+	runner.SetTaskCredentialRedaction(`{"deploy_token":"command-secret-value"}`)
+	command := exec.Command("sh", "-c", "printf 'credential=command-secret-value'")
+	finishLog := runner.LogCmd(command)
+
+	require.NoError(t, command.Run())
+	finishLog()
+
+	record := <-pool.logger
+	assert.NotContains(t, record.output, "command-secret-value")
 	assert.Contains(t, record.output, "[REDACTED]")
 }
 
