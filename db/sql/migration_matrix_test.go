@@ -116,6 +116,7 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	assertWorkflowProgressionSchema(t, store, true)
 	assertGlobalTemplateRoleSchema(t, store, true)
 	assertDeploymentWindowSchema(t, store, true)
+	assertProjectRoleMutationLock(t, store, config.Dialect)
 
 	user, err := store.CreateUserWithoutPassword(fixture.User)
 	require.NoError(t, err)
@@ -203,6 +204,24 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 		CommunityDataSurvivedRollbackAndUpgrade: communityDataSurvived,
 		RestartPreservedEnhancedData:            restartPreserved,
 	}
+}
+
+func assertProjectRoleMutationLock(t testing.TB, store *SqlDb, dialect string) {
+	t.Helper()
+	project, err := store.CreateProject(db.Project{Name: "Role lock " + dialect})
+	require.NoError(t, err)
+	user, err := store.CreateUserWithoutPassword(db.User{
+		Username: "role-lock-" + dialect,
+		Name:     "Role lock " + dialect,
+		Email:    "role-lock-" + dialect + "@example.test",
+	})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUser(db.ProjectUser{
+		ProjectID: project.ID,
+		UserID:    user.ID,
+		Role:      db.ProjectOwner,
+	})
+	require.NoError(t, err)
 }
 
 func assertGlobalTemplateRoleSchema(t testing.TB, store *SqlDb, expected bool) {
