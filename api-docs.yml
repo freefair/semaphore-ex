@@ -5236,6 +5236,7 @@ paths:
           required: true
           type: integer
           minimum: 0
+          x-example: 0
       responses:
         201:
           description: One-time secret and safe signing status
@@ -5258,6 +5259,7 @@ paths:
           required: true
           type: integer
           minimum: 0
+          x-example: 0
       responses:
         201:
           description: One-time next secret and safe signing status
@@ -5280,6 +5282,7 @@ paths:
           required: true
           type: integer
           minimum: 0
+          x-example: 0
       responses:
         200:
           description: Safe signing status after promotion
@@ -5302,6 +5305,7 @@ paths:
           required: true
           type: integer
           minimum: 0
+          x-example: 0
       responses:
         200:
           description: Safe signing status after revocation
@@ -5970,12 +5974,14 @@ paths:
           required: true
           type: integer
           minimum: 1
+          x-example: 1
         - name: offset
           in: query
           required: true
           type: integer
           format: int64
           minimum: 0
+          x-example: 0
         - name: chunk
           in: body
           required: true
@@ -6012,6 +6018,7 @@ paths:
           required: true
           type: integer
           minimum: 1
+          x-example: 1
       responses:
         200:
           description: Available immutable metadata
@@ -7066,6 +7073,7 @@ paths:
           required: true
           type: integer
           minimum: 1
+          x-example: 1
       responses:
         204:
           description: Credential deleted
@@ -7284,6 +7292,7 @@ paths:
           required: true
           type: integer
           minimum: 1
+          x-example: 1
       responses:
         204:
           description: Grant deleted
@@ -7481,11 +7490,13 @@ paths:
         required: true
         type: integer
         minimum: 1
+        x-example: 1
       - name: to_revision
         in: query
         required: true
         type: integer
         minimum: 1
+        x-example: 2
     get:
       tags: [policy-guardrail, project]
       summary: Compare two immutable project policy revisions
@@ -7710,11 +7721,13 @@ paths:
         required: true
         type: integer
         minimum: 1
+        x-example: 1
       - name: to_revision
         in: query
         required: true
         type: integer
         minimum: 1
+        x-example: 2
     get:
       tags: [policy-guardrail]
       summary: Compare two immutable global policy revisions
