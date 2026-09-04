@@ -2,6 +2,7 @@ package haresilience
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -161,7 +162,7 @@ func (h *Harness) partitionNode(ctx context.Context) error {
 				return nil, err
 			}
 			connected = true
-			ready := h.waitReadiness(ctx, h.serverAURL, true, 60*time.Second) == nil
+			ready := h.waitServiceReadiness(ctx, "server-a", true, 60*time.Second) == nil
 			return []Assertion{
 				{Name: "peer_api_available", Passed: available, Evidence: "server-b served the authenticated read"},
 				{Name: "partitioned_node_converges", Passed: ready, Evidence: "server-a restored SQL/Redis readiness"},
@@ -367,6 +368,32 @@ func (h *Harness) waitReadiness(ctx context.Context, baseURL string, accepting b
 		select {
 		case <-waitCtx.Done():
 			return fmt.Errorf("wait for readiness at %s: %w", baseURL, waitCtx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func (h *Harness) waitServiceReadiness(ctx context.Context, service string, accepting bool, timeout time.Duration) error {
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		output, err := h.commands.compose(
+			waitCtx,
+			"exec", "--no-TTY", service,
+			"curl", "--silent", "--show-error", "http://127.0.0.1:3000/api/ready",
+		)
+		var readiness readinessView
+		if err == nil {
+			err = json.Unmarshal([]byte(output), &readiness)
+		}
+		if err == nil && readiness.Ready && readiness.AcceptingCoordinatedWork == accepting {
+			return nil
+		}
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("wait for %s internal readiness: %w", service, waitCtx.Err())
 		case <-ticker.C:
 		}
 	}
