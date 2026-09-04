@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/util"
 	"strings"
 )
 
@@ -124,7 +125,18 @@ func (d *SqlDb) DeleteProjectRole(projectID int, roleID db.ProjectRoleID, expect
 
 func lockProjectRoleMutations(tx interface {
 	Exec(string, ...any) (sql.Result, error)
+	SelectOne(any, string, ...any) error
 }, d *SqlDb, projectID int) error {
+	if d.GetDialect() != util.DbDriverSQLite {
+		var project struct {
+			ID int `db:"id"`
+		}
+		err := tx.SelectOne(&project, d.PrepareQuery("select id from project where id=? for update"), projectID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return db.ErrNotFound
+		}
+		return err
+	}
 	result, err := tx.Exec(d.PrepareQuery("update project set id=id where id=?"), projectID)
 	if err != nil {
 		return err
