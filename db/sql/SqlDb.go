@@ -266,6 +266,15 @@ func (d *SqlDbConnection) QueryContext(ctx context.Context, query string, args .
 	return d.sql.Db.QueryContext(ctx, d.PrepareQuery(query), formatArgs(args)...)
 }
 
+// ExecContext exposes bounded mutations without leaking the underlying
+// database handle across the replaceable-edition boundary.
+func (d *SqlDbConnection) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	if d == nil || d.sql == nil || d.sql.Db == nil || ctx == nil {
+		return nil, db.ErrInvalidOperation
+	}
+	return d.sql.Db.ExecContext(ctx, d.PrepareQuery(query), formatArgs(args)...)
+}
+
 func (d *SqlDbConnection) Begin() (*gorp.Transaction, error) {
 	return d.sql.Begin()
 }
@@ -283,6 +292,15 @@ func (d *SqlDbConnection) SelectOne(holder any, query string, args ...any) error
 func (d *SqlDbConnection) SelectAll(i any, query string, args ...any) ([]any, error) {
 	q := d.PrepareQuery(query)
 	return d.sql.Select(i, q, args...)
+}
+
+// SelectAllContext exposes context-bound gorp mapping to replaceable-edition
+// repositories without leaking the underlying database handle.
+func (d *SqlDbConnection) SelectAllContext(ctx context.Context, i any, query string, args ...any) ([]any, error) {
+	if d == nil || d.sql == nil || d.sql.Db == nil || ctx == nil {
+		return nil, db.ErrInvalidOperation
+	}
+	return d.sql.WithContext(ctx).Select(i, d.PrepareQuery(query), args...)
 }
 
 func (d *SqlDbConnection) DeleteObject(projectID int, props db.ObjectProps, objectID any) error {

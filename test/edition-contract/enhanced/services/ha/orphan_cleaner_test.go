@@ -1,6 +1,7 @@
 package ha
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -80,11 +81,11 @@ func (*blockingOrphanCleanerDrainer) TaskRecoveryDiagnostics(int) (pro_interface
 }
 func (*blockingOrphanCleanerDrainer) RetryTaskRecovery(int) error { return nil }
 
-func (r *signalingClusterNodeRepository) SetClusterNodeDraining(bootID string, draining bool) error {
+func (r *signalingClusterNodeRepository) SetClusterNodeDraining(ctx context.Context, bootID string, draining bool) error {
 	if !draining {
 		close(r.resumePersisted)
 	}
-	return r.base.SetClusterNodeDraining(bootID, draining)
+	return r.base.SetClusterNodeDraining(ctx, bootID, draining)
 }
 
 func (f *orphanCleanerPoolFake) GetOwnedRunningTasks() []*tasks.TaskRunner {
@@ -128,6 +129,33 @@ func TestManagedOrphanCleanerRelinquishesOwnershipWhenReadinessIsLost(t *testing
 	ready = false
 	cleaner.tick()
 	current, err := repository.IsCurrentTaskControlLease(record.Lease)
+	require.NoError(t, err)
+	assert.False(t, current)
+}
+
+func TestManagedOrphanCleanerIgnoresStaleGenerationRelease(t *testing.T) {
+	database := coresql.InitConfigCreateTestStore()
+	t.Cleanup(database.Close)
+	repository := clusterSQL.NewTaskControlStore(database.GetConnection())
+	cleaner := NewManagedOrphanCleaner(repository, &orphanCleanerPoolFake{}, "boot-a", func() (bool, error) {
+		return true, nil
+	}, time.Hour, time.Minute, time.Minute)
+	runnerID := 7
+	currentTask := coredb.Task{ID: 17, RunnerID: &runnerID, AssignmentGeneration: 2}
+	require.NoError(t, cleaner.RegisterTaskControl(currentTask))
+	recovery, found, err := repository.GetTaskControlRecovery(currentTask.ID)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	staleTask := currentTask
+	staleTask.AssignmentGeneration = 1
+	cleaner.ReleaseTaskControl(staleTask)
+
+	current, err := repository.IsCurrentTaskControlLease(recovery.Lease)
+	require.NoError(t, err)
+	assert.True(t, current)
+	cleaner.ReleaseTaskControl(currentTask)
+	current, err = repository.IsCurrentTaskControlLease(recovery.Lease)
 	require.NoError(t, err)
 	assert.False(t, current)
 }
@@ -496,7 +524,7 @@ type failingDrainClusterNodeRepository struct {
 	*clusterNodeRepositoryFake
 }
 
-func (r *failingDrainClusterNodeRepository) SetClusterNodeDraining(string, bool) error {
+func (r *failingDrainClusterNodeRepository) SetClusterNodeDraining(context.Context, string, bool) error {
 	return errors.New("persist drain failed")
 }
 

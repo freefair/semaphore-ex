@@ -26,7 +26,7 @@ func (s *taskControlLifecycleSpy) RegisterTaskControl(db.Task) error {
 	return s.err
 }
 
-func (s *taskControlLifecycleSpy) ReleaseTaskControl(int) {
+func (s *taskControlLifecycleSpy) ReleaseTaskControl(db.Task) {
 	s.released.Add(1)
 }
 

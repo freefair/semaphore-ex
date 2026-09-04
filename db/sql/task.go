@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -748,6 +749,32 @@ func (d *SqlDb) GetTaskByID(taskID int) (task db.Task, err error) {
 		err = task.DecodeWorkflowTemplateProvenance()
 	}
 	return
+}
+
+// GetUnfinishedRunnerTasks returns SQL-authoritative assignments so any HA
+// node serving a runner poll can recover from missing local task state.
+func (d *SqlDb) GetUnfinishedRunnerTasks(ctx context.Context, runnerID int) ([]db.Task, error) {
+	if runnerID <= 0 {
+		return nil, db.ErrInvalidOperation
+	}
+	query, args, err := squirrel.Select("task.*").
+		From("task").
+		Where(squirrel.Eq{"task.runner_id": runnerID, "task.status": task_logger.UnfinishedTaskStatuses()}).
+		OrderBy("task.id").
+		ToSql()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]db.Task, 0)
+	if _, err = d.connection.SelectAllContext(ctx, &result, query, args...); err != nil {
+		return nil, err
+	}
+	for index := range result {
+		if err = result[index].DecodeWorkflowTemplateProvenance(); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }
 
 func (d *SqlDb) GetTemplateTasks(projectID int, templateID int, params db.RetrieveQueryParams) (tasks []db.TaskWithTpl, err error) {

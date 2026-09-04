@@ -3,9 +3,12 @@ package ha
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
+
+const clusterDependencyTimeout = 5 * time.Second
 
 type managedClusterInspector struct {
 	repository        pro_interfaces.ClusterNodeRepository
@@ -17,6 +20,7 @@ type managedClusterInspector struct {
 	workflowHealth    pro_interfaces.WorkflowProgressionHealthSource
 	drainers          []pro_interfaces.ClusterDrainer
 	drainMu           sync.Mutex
+	dependencyTimeout time.Duration
 }
 
 var _ pro_interfaces.ClusterInspector = (*managedClusterInspector)(nil)
@@ -29,7 +33,10 @@ func NewManagedClusterInspector(
 	self pro_interfaces.ClusterNodeIdentity,
 	diagnostics ...pro_interfaces.ClusterRedisDiagnosticsClient,
 ) *managedClusterInspector {
-	inspector := &managedClusterInspector{repository: repository, heartbeats: heartbeats, requirements: requirements, self: self}
+	inspector := &managedClusterInspector{
+		repository: repository, heartbeats: heartbeats, requirements: requirements, self: self,
+		dependencyTimeout: clusterDependencyTimeout,
+	}
 	if len(diagnostics) > 0 {
 		inspector.diagnostics = diagnostics[0]
 	}
@@ -37,13 +44,15 @@ func NewManagedClusterInspector(
 }
 
 func (i *managedClusterInspector) Nodes() ([]pro_interfaces.NodeInfo, error) {
-	nodes, err := i.repository.ListClusterNodes()
+	ctx, cancel := context.WithTimeout(context.Background(), i.timeout())
+	defer cancel()
+	nodes, err := i.repository.ListClusterNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]pro_interfaces.NodeInfo, 0, len(nodes))
 	for _, node := range nodes {
-		alive, observedAt, livenessErr := i.heartbeats.IsLive(context.Background(), node.ClusterNodeIdentity)
+		alive, observedAt, livenessErr := i.heartbeats.IsLive(ctx, node.ClusterNodeIdentity)
 		compatibility := pro_interfaces.EvaluateClusterNodeCompatibility(node, i.requirements)
 		if livenessErr != nil || !alive {
 			compatibility = pro_interfaces.ClusterNodeCompatibility{State: pro_interfaces.ClusterNodeStale, Reason: "redis heartbeat expired"}
@@ -64,7 +73,9 @@ func (i *managedClusterInspector) RedisInfo() (pro_interfaces.RedisInfo, error) 
 	if i.diagnostics == nil {
 		return pro_interfaces.RedisInfo{Connected: false, KeyGroups: map[string]int{}}, nil
 	}
-	return i.diagnostics.RedisDiagnostics(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), i.timeout())
+	defer cancel()
+	return i.diagnostics.RedisDiagnostics(ctx)
 }
 
 func (i *managedClusterInspector) CoordinatorHealth() pro_interfaces.ClusterCoordinatorHealth {
@@ -84,7 +95,9 @@ func (i *managedClusterInspector) CoordinatorHealth() pro_interfaces.ClusterCoor
 
 func (i *managedClusterInspector) Readiness() pro_interfaces.ClusterServiceReadiness {
 	result := pro_interfaces.ClusterServiceReadiness{NodeID: i.self.NodeID, BootID: i.self.BootID}
-	nodes, err := i.repository.ListClusterNodes()
+	ctx, cancel := context.WithTimeout(context.Background(), i.timeout())
+	defer cancel()
+	nodes, err := i.repository.ListClusterNodes(ctx)
 	if err != nil {
 		result.State = pro_interfaces.ClusterServiceDatabaseUnavailable
 		result.Reason = "cluster registration database is unavailable"
@@ -101,7 +114,7 @@ func (i *managedClusterInspector) Readiness() pro_interfaces.ClusterServiceReadi
 			return result
 		}
 		result.Ready = true
-		alive, _, heartbeatErr := i.heartbeats.IsLive(context.Background(), i.self)
+		alive, _, heartbeatErr := i.heartbeats.IsLive(ctx, i.self)
 		if heartbeatErr != nil || !alive {
 			result.State = pro_interfaces.ClusterServiceDegradedLiveEvents
 			result.Reason = "redis heartbeat is unavailable; SQL API traffic remains available"
@@ -138,7 +151,9 @@ func (i *managedClusterInspector) SetNodeDraining(bootID string, draining bool) 
 			drained = append(drained, drainer)
 		}
 	}
-	if err := i.repository.SetClusterNodeDraining(bootID, draining); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), i.timeout())
+	defer cancel()
+	if err := i.repository.SetClusterNodeDraining(ctx, bootID, draining); err != nil {
 		if self && draining {
 			resumeDrained()
 		}
@@ -152,4 +167,11 @@ func (i *managedClusterInspector) SetNodeDraining(bootID string, draining bool) 
 		}
 	}
 	return nil
+}
+
+func (i *managedClusterInspector) timeout() time.Duration {
+	if i.dependencyTimeout > 0 {
+		return i.dependencyTimeout
+	}
+	return clusterDependencyTimeout
 }

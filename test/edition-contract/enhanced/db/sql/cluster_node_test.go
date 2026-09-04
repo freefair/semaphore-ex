@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -14,21 +15,22 @@ func TestClusterNodeStoreRetainsProcessBootHistory(t *testing.T) {
 	store := coresql.InitConfigCreateTestStore()
 	defer store.Close()
 	repository := NewClusterNodeStore(store.GetConnection())
+	ctx := context.Background()
 	started := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	first := pro_interfaces.ClusterNodeRegistration{
 		ClusterNodeIdentity: pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-1"},
 		Edition:             "enhanced", Version: "1.2.3", Build: "abc123", ProtocolVersion: 1,
 		SchemaVersion: "2.20.23", Capabilities: []string{"workflows"}, StartedAt: started, LastSeenAt: started,
 	}
-	require.NoError(t, repository.UpsertClusterNode(first))
+	require.NoError(t, repository.UpsertClusterNode(ctx, first))
 
 	second := first
 	second.BootID = "boot-2"
 	second.StartedAt = started.Add(time.Hour)
 	second.LastSeenAt = second.StartedAt
-	require.NoError(t, repository.UpsertClusterNode(second))
+	require.NoError(t, repository.UpsertClusterNode(ctx, second))
 
-	nodes, err := repository.ListClusterNodes()
+	nodes, err := repository.ListClusterNodes(ctx)
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 	assert.Equal(t, []string{"boot-2", "boot-1"}, []string{nodes[0].BootID, nodes[1].BootID})
@@ -39,6 +41,7 @@ func TestClusterNodeStorePersistsDrainAndRemovesOnlyExpiredHistory(t *testing.T)
 	store := coresql.InitConfigCreateTestStore()
 	defer store.Close()
 	repository := NewClusterNodeStore(store.GetConnection())
+	ctx := context.Background()
 	old := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
 	first := pro_interfaces.ClusterNodeRegistration{
 		ClusterNodeIdentity: pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-old"},
@@ -49,20 +52,20 @@ func TestClusterNodeStorePersistsDrainAndRemovesOnlyExpiredHistory(t *testing.T)
 	recent.BootID = "boot-recent"
 	recent.LastSeenAt = old.Add(30 * 24 * time.Hour)
 	recent.StartedAt = recent.LastSeenAt
-	require.NoError(t, repository.UpsertClusterNode(first))
-	require.NoError(t, repository.UpsertClusterNode(recent))
+	require.NoError(t, repository.UpsertClusterNode(ctx, first))
+	require.NoError(t, repository.UpsertClusterNode(ctx, recent))
 
-	require.NoError(t, repository.SetClusterNodeDraining("boot-recent", true))
+	require.NoError(t, repository.SetClusterNodeDraining(ctx, "boot-recent", true))
 	recent.LastSeenAt = recent.LastSeenAt.Add(time.Minute)
-	require.NoError(t, repository.UpsertClusterNode(recent))
-	nodes, err := repository.ListClusterNodes()
+	require.NoError(t, repository.UpsertClusterNode(ctx, recent))
+	nodes, err := repository.ListClusterNodes(ctx)
 	require.NoError(t, err)
 	assert.True(t, nodes[0].Draining)
 
-	removed, err := repository.DeleteClusterNodesLastSeenBefore(old.Add(7 * 24 * time.Hour))
+	removed, err := repository.DeleteClusterNodesLastSeenBefore(ctx, old.Add(7*24*time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, 1, removed)
-	nodes, err = repository.ListClusterNodes()
+	nodes, err = repository.ListClusterNodes(ctx)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	assert.Equal(t, "boot-recent", nodes[0].BootID)

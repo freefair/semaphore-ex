@@ -20,11 +20,12 @@ var (
 const clusterHistoryRetention = 7 * 24 * time.Hour
 
 type managedNodeRegistry struct {
-	repository pro_interfaces.ClusterNodeRepository
-	heartbeats pro_interfaces.ClusterHeartbeatStore
-	node       pro_interfaces.ClusterNodeRegistration
-	interval   time.Duration
-	ttl        time.Duration
+	repository        pro_interfaces.ClusterNodeRepository
+	heartbeats        pro_interfaces.ClusterHeartbeatStore
+	node              pro_interfaces.ClusterNodeRegistration
+	interval          time.Duration
+	ttl               time.Duration
+	dependencyTimeout time.Duration
 
 	mutex     sync.RWMutex
 	startOnce sync.Once
@@ -50,11 +51,12 @@ func NewManagedNodeRegistry(
 		interval = 10 * time.Second
 	}
 	return &managedNodeRegistry{
-		repository: repository,
-		heartbeats: heartbeats,
-		node:       node,
-		interval:   interval,
-		ttl:        ttl,
+		repository:        repository,
+		heartbeats:        heartbeats,
+		node:              node,
+		interval:          interval,
+		ttl:               ttl,
+		dependencyTimeout: clusterDependencyTimeout,
 	}
 }
 
@@ -95,7 +97,9 @@ func (r *managedNodeRegistry) NodeCount() int {
 	if r.repository == nil {
 		return 0
 	}
-	nodes, err := r.repository.ListClusterNodes()
+	ctx, cancel := context.WithTimeout(context.Background(), r.dependencyTimeout)
+	defer cancel()
+	nodes, err := r.repository.ListClusterNodes(ctx)
 	if err != nil {
 		return 0
 	}
@@ -119,7 +123,9 @@ func (r *managedNodeRegistry) run(ctx context.Context) {
 }
 
 func (r *managedNodeRegistry) refresh(ctx context.Context, starting bool) error {
-	lastSeen, err := r.heartbeats.Publish(ctx, r.node.ClusterNodeIdentity, r.ttl)
+	operationCtx, cancel := context.WithTimeout(ctx, r.dependencyTimeout)
+	defer cancel()
+	lastSeen, err := r.heartbeats.Publish(operationCtx, r.node.ClusterNodeIdentity, r.ttl)
 	if err != nil {
 		return err
 	}
@@ -130,9 +136,9 @@ func (r *managedNodeRegistry) refresh(ctx context.Context, starting bool) error 
 	r.node.LastSeenAt = lastSeen
 	node := r.node
 	r.mutex.Unlock()
-	if err := r.repository.UpsertClusterNode(node); err != nil {
+	if err := r.repository.UpsertClusterNode(operationCtx, node); err != nil {
 		return err
 	}
-	_, err = r.repository.DeleteClusterNodesLastSeenBefore(lastSeen.Add(-clusterHistoryRetention))
+	_, err = r.repository.DeleteClusterNodesLastSeenBefore(operationCtx, lastSeen.Add(-clusterHistoryRetention))
 	return err
 }

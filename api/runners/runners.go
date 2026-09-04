@@ -229,7 +229,11 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 		data.CacheCleanProjectID = runner.ProjectID
 	}
 
-	runningTasks := c.taskPool.GetRunningTasks()
+	runningTasks, err := c.taskPool.GetRunnerTasks(r.Context(), runner.ID)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
 
 	for _, tsk := range runningTasks {
 		if tsk.Task.RunnerID == nil || *tsk.Task.RunnerID != runner.ID {

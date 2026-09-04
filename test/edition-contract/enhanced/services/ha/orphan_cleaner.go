@@ -197,19 +197,25 @@ func (c *managedOrphanCleaner) RegisterTaskControl(task db.Task) error {
 	return nil
 }
 
-func (c *managedOrphanCleaner) ReleaseTaskControl(taskID int) {
+func (c *managedOrphanCleaner) ReleaseTaskControl(task db.Task) {
 	if !c.beginOperation() {
 		return
 	}
 	defer c.endOperation()
+	execution, err := taskExecutionIdentity(task)
+	if err != nil {
+		return
+	}
 	c.mu.Lock()
-	lease, exists := c.leases[taskID]
-	delete(c.leases, taskID)
+	lease, exists := c.leases[task.ID]
+	if exists && lease.Execution == execution {
+		delete(c.leases, task.ID)
+	} else {
+		exists = false
+	}
 	c.mu.Unlock()
 	if exists {
-		if _, err := c.repository.ReleaseTaskControlLease(lease); err != nil {
-			log.WithError(err).WithField("task_id", taskID).Warn("failed to release task control")
-		}
+		c.releaseLease(lease)
 	}
 }
 
@@ -331,7 +337,7 @@ func (c *managedOrphanCleaner) recoverLease(lease pro_interfaces.TaskControlLeas
 		return nil
 	}
 	if task.Task.Status.IsFinished() {
-		c.ReleaseTaskControl(task.Task.ID)
+		c.releaseTrackedLease(lease)
 		return nil
 	}
 	if task.Task.AssignmentGeneration != lease.Execution.Generation || runnerIdentity(task.Task) != lease.Execution.RunnerID {
@@ -411,7 +417,7 @@ func (c *managedOrphanCleaner) recordAndApply(task *tasks.TaskRunner, lease pro_
 		return false
 	}
 	if assessment.Decision == pro_interfaces.TaskRecoveryRecover {
-		c.ReleaseTaskControl(lease.TaskID)
+		c.releaseTrackedLease(lease)
 	}
 	return true
 }
@@ -441,6 +447,26 @@ func (c *managedOrphanCleaner) releaseAll() error {
 		}
 	}
 	return result
+}
+
+func (c *managedOrphanCleaner) releaseTrackedLease(lease pro_interfaces.TaskControlLease) {
+	c.mu.Lock()
+	current, exists := c.leases[lease.TaskID]
+	if exists && current == lease {
+		delete(c.leases, lease.TaskID)
+	} else {
+		exists = false
+	}
+	c.mu.Unlock()
+	if exists {
+		c.releaseLease(lease)
+	}
+}
+
+func (c *managedOrphanCleaner) releaseLease(lease pro_interfaces.TaskControlLease) {
+	if _, err := c.repository.ReleaseTaskControlLease(lease); err != nil {
+		log.WithError(err).WithField("task_id", lease.TaskID).Warn("failed to release task control")
+	}
 }
 
 func (c *managedOrphanCleaner) track(lease pro_interfaces.TaskControlLease) {
@@ -482,4 +508,8 @@ func runnerIdentity(task db.Task) int {
 		return *task.RunnerSnapshotID
 	}
 	return 0
+}
+
+func taskExecutionIdentity(task db.Task) (pro_interfaces.TaskExecutionIdentity, error) {
+	return pro_interfaces.NewTaskExecutionIdentity(task.ID, runnerIdentity(task), task.AssignmentGeneration)
 }
