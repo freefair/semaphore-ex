@@ -334,12 +334,7 @@ func (d *SqlDb) routeNotificationTx(tx *gorp.Transaction, event pro_interfaces.N
 		return err
 	}
 	var rules []db.NotificationRule
-	scopeQuery := "select * from notification_rule where enabled=? and project_id is null"
-	args := []any{true}
-	if event.ProjectID != nil {
-		scopeQuery = "select * from notification_rule where enabled=? and project_id=?"
-		args = append(args, *event.ProjectID)
-	}
+	scopeQuery, args := notificationRoutingRuleLookup(event.ProjectID)
 	if _, err = tx.Select(&rules, d.PrepareQuery(scopeQuery), args...); err != nil {
 		return err
 	}
@@ -397,6 +392,16 @@ func (d *SqlDb) routeNotificationTx(tx *gorp.Transaction, event pro_interfaces.N
 		RoutingOutcome: routingOutcome, OccurredAt: event.OccurredAt,
 	}, deliveries)
 	return err
+}
+
+func notificationRoutingRuleLookup(projectID *int) (string, []any) {
+	query := "select * from notification_rule where enabled=? and project_id is null"
+	args := []any{1}
+	if projectID != nil {
+		query = "select * from notification_rule where enabled=? and project_id=?"
+		args = append(args, *projectID)
+	}
+	return query, args
 }
 
 func notificationSourceKinds(value string) []pro_interfaces.NotificationSourceKind {

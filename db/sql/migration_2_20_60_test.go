@@ -36,12 +36,13 @@ func TestMigration22060CreatesAndRollsBackDeploymentWindowStorage(t *testing.T) 
 	}
 }
 
-func TestMigration22060UsesPortableMySQLIndexRollback(t *testing.T) {
+func TestMigration22060LetsTableRollbackRemoveMySQLForeignKeyIndexes(t *testing.T) {
 	migration := strings.Join(getVersionSQL("mysql", "v2.20.60.sql", false), ";")
 	rollback := strings.Join(getVersionSQL("mysql", "v2.20.60.err.sql", true), ";")
 	assert.Contains(t, migration, "`matched_rules` longtext not null")
-	assert.Contains(t, rollback, "drop index `project__deployment_window_decision__project_created` on `project__deployment_window_decision`")
-	assert.Contains(t, rollback, "drop index `project__deployment_window_rule__policy` on `project__deployment_window_rule`")
+	assert.NotContains(t, rollback, "drop index")
+	assert.Contains(t, rollback, "drop table `project__deployment_window_decision`")
+	assert.Contains(t, rollback, "drop table `project__deployment_window_rule`")
 	assert.Contains(t, migration, "foreign key (`project_id`) references `project`(`id`) on delete cascade")
 }
 

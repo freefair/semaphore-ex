@@ -53,6 +53,15 @@ func TestDeploymentWindowStoreStartsWithLazyDefaultAndCASPersistsTenantScopedRul
 	assert.ErrorIs(t, err, coreDB.ErrDeploymentWindowTenantMismatch)
 }
 
+func TestDeploymentWindowDecisionArgsUsePortableIntegerBoolean(t *testing.T) {
+	args := deploymentWindowDecisionArgs(coreDB.DeploymentWindowDecisionRecord{NextEligibleKnown: true})
+	require.Len(t, args, 23)
+	assert.Equal(t, 1, args[17])
+
+	args = deploymentWindowDecisionArgs(coreDB.DeploymentWindowDecisionRecord{NextEligibleKnown: false})
+	assert.Equal(t, 0, args[17])
+}
+
 func TestDeploymentWindowAdmissionUsesDatabaseTimeAndPersistsOneImmutableDecision(t *testing.T) {
 	store := coreSQL.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)

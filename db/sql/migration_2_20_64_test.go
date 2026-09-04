@@ -77,7 +77,13 @@ func TestSignedWebhookPersistenceMigrationPreparesForEverySQLDialect(t *testing.
 			assert.Contains(t, joined, "audit_webhook_delivery_attempt")
 			assert.Contains(t, joined, "webhook_event_hash")
 			assert.Contains(t, joined, "current_signing_secret_encrypted")
+			if test.dialect == "mysql" {
+				assert.NotContains(t, joined, "longtext not null default")
+			}
 			assert.NotContains(t, store.prepareMigration(joined), "sqlite")
 		})
 	}
+	rollback := strings.ToLower(strings.Join(getVersionSQL("mysql", "v2.20.64.err.sql", true), ";"))
+	assert.NotContains(t, rollback, "drop index `audit_webhook_delivery_attempt__delivery`")
+	assert.Contains(t, rollback, "drop table `audit_webhook_delivery_attempt`")
 }

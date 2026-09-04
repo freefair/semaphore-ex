@@ -1,12 +1,9 @@
-drop index if exists `task__workflow_run_node_unique`;
+{{ if .Mysql }}drop index `task__workflow_run_node_unique` on `task`{{ else }}drop index if exists `task__workflow_run_node_unique`{{ end }};
 alter table `task` drop column `workflow_template_snapshot`;
 
-drop index if exists `project__workflow_run_node__task_id`;
-drop index if exists `project__workflow_run_node__project_run`;
-drop index if exists `project__workflow_run_node__run_node`;
 drop table if exists `project__workflow_run_node`;
 
-drop index if exists `project__workflow_run__correlation`;
+{{ if .Mysql }}drop index `project__workflow_run__correlation` on `project__workflow_run`{{ else }}drop index if exists `project__workflow_run__correlation`{{ end }};
 alter table `project__workflow_run` drop column `reason`;
 alter table `project__workflow_run` drop column `created`;
 alter table `project__workflow_run` drop column `correlation_id`;
