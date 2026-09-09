@@ -405,6 +405,13 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 			if node.TemplateID != 0 {
 				add("WORKFLOW_NOTE_TEMPLATE_FORBIDDEN", "Note nodes cannot reference a template.", path+".template_id", &id, nil)
 			}
+		case coreDB.WorkflowNodeDelayKind:
+			if node.TemplateID != 0 {
+				add("WORKFLOW_DELAY_TEMPLATE_FORBIDDEN", "Delay nodes cannot reference a template.", path+".template_id", &id, nil)
+			}
+			if err := node.ValidateDelay(); err != nil {
+				add("WORKFLOW_DELAY_DURATION_INVALID", "Delay duration must be a positive supported number of seconds.", path+".delay_seconds", &id, nil)
+			}
 		}
 	}
 
@@ -769,7 +776,7 @@ func validateRunnableWorkflow(workflow coreDB.WorkflowTemplate) error {
 		if node.EffectiveKind() == coreDB.WorkflowNodeNoteKind {
 			continue
 		}
-		if node.EffectiveKind() != coreDB.WorkflowNodeTaskKind && node.EffectiveKind() != coreDB.WorkflowNodeApprovalKind {
+		if node.EffectiveKind() != coreDB.WorkflowNodeTaskKind && node.EffectiveKind() != coreDB.WorkflowNodeApprovalKind && node.EffectiveKind() != coreDB.WorkflowNodeDelayKind {
 			return common_errors.NewValidationError("workflow run node kind is invalid")
 		}
 		executable++

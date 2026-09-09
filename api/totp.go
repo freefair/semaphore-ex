@@ -97,8 +97,8 @@ func (c *TOTPController) SessionQR(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *TOTPController) qr(w http.ResponseWriter, r *http.Request, actorID int, userID int) {
-	totpID, err := helpers.GetIntParam("totp_id", w, r)
-	if err != nil {
+	totpID, ok := helpers.GetIntParamOrAbort("totp_id", w, r)
+	if !ok {
 		return
 	}
 	uri, err := c.service.ProvisioningURI(r.Context(), actorID, userID, totpID)
@@ -151,8 +151,8 @@ func (c *TOTPController) confirm(w http.ResponseWriter, r *http.Request, actorID
 			pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonInvalidInput)
 		return
 	}
-	totpID, err := helpers.GetIntParam("totp_id", w, r)
-	if err != nil {
+	totpID, ok := helpers.GetIntParamOrAbort("totp_id", w, r)
+	if !ok {
 		return
 	}
 	status, err := c.service.ConfirmEnrollment(r.Context(), pro_interfaces.TOTPConfirmationRequest{
@@ -205,8 +205,8 @@ func (c *TOTPController) acknowledge(
 			pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonInvalidInput)
 		return
 	}
-	totpID, err := helpers.GetIntParam("totp_id", w, r)
-	if err != nil {
+	totpID, ok := helpers.GetIntParamOrAbort("totp_id", w, r)
+	if !ok {
 		return
 	}
 	status, err := c.service.AcknowledgeRecoveryCodes(
@@ -236,11 +236,11 @@ func (c *TOTPController) Reset(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil && r.ContentLength != 0 && !helpers.Bind(w, r, &body) {
 		return
 	}
-	totpID, err := helpers.GetIntParam("totp_id", w, r)
-	if err != nil {
+	totpID, ok := helpers.GetIntParamOrAbort("totp_id", w, r)
+	if !ok {
 		return
 	}
-	err = c.service.ResetEnrollment(r.Context(), pro_interfaces.TOTPResetRequest{
+	err := c.service.ResetEnrollment(r.Context(), pro_interfaces.TOTPResetRequest{
 		ActorID: actor.ID, ActorIsAdmin: actor.Admin, TargetUserID: target.ID,
 		EnrollmentID: totpID, Reauthentication: body.Reauthentication, Now: tz.Now(),
 	})

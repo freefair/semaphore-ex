@@ -33,6 +33,7 @@ var (
 type TemplateVersionExecution struct {
 	Name                      string             `json:"name"`
 	Playbook                  string             `json:"playbook"`
+	WorkingDirectory          *string            `json:"working_directory,omitempty"`
 	Arguments                 *string            `json:"arguments,omitempty"`
 	AllowOverrideArgsInTask   bool               `json:"allow_override_args_in_task,omitempty"`
 	Description               *string            `json:"description,omitempty"`
@@ -212,7 +213,7 @@ func (snapshot TemplateVersionSnapshot) Validate() error {
 func NewTemplateVersionSnapshot(template Template) (TemplateVersionSnapshot, error) {
 	snapshot := TemplateVersionSnapshot{
 		Execution: TemplateVersionExecution{
-			Name: template.Name, Playbook: template.Playbook, Arguments: template.Arguments,
+			Name: template.Name, Playbook: template.Playbook, WorkingDirectory: template.WorkingDirectory, Arguments: template.Arguments,
 			AllowOverrideArgsInTask: template.AllowOverrideArgsInTask, Description: template.Description,
 			Type: template.Type, StartVersion: template.StartVersion, Autorun: template.Autorun,
 			GitBranch: template.GitBranch, SurveyVars: template.SurveyVars,
@@ -269,6 +270,7 @@ func (snapshot TemplateVersionSnapshot) ReconstructTemplate(ownerProjectID int, 
 		InventoryID:    immutable.Dependencies.InventoryID,
 		EnvironmentIDs: immutable.Dependencies.EnvironmentIDs,
 		Name:           immutable.Execution.Name, Playbook: immutable.Execution.Playbook,
+		WorkingDirectory:        immutable.Execution.WorkingDirectory,
 		Arguments:               immutable.Execution.Arguments,
 		AllowOverrideArgsInTask: immutable.Execution.AllowOverrideArgsInTask,
 		Description:             immutable.Execution.Description, Type: immutable.Execution.Type,
@@ -298,6 +300,7 @@ func (snapshot TemplateVersionSnapshot) ReconstructTemplate(ownerProjectID int, 
 
 func deepCopyTemplateVersionSnapshot(snapshot TemplateVersionSnapshot) (TemplateVersionSnapshot, error) {
 	copy := snapshot
+	copy.Execution.WorkingDirectory = cloneTemplateVersionString(snapshot.Execution.WorkingDirectory)
 	copy.Execution.Arguments = cloneTemplateVersionString(snapshot.Execution.Arguments)
 	copy.Execution.Description = cloneTemplateVersionString(snapshot.Execution.Description)
 	copy.Execution.StartVersion = cloneTemplateVersionString(snapshot.Execution.StartVersion)

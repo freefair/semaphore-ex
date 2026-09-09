@@ -1243,6 +1243,16 @@ func (s *workflowService) ProgressWorkflowRun(projectID int, runID int, user *db
 
 func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *db.User, lease *pro_interfaces.WorkflowReconciliationLease) error {
 	for iteration := 0; iteration <= len(run.Nodes); iteration++ {
+		delaysChanged, err := s.reconcileWorkflowDelays(run, lease)
+		if err != nil {
+			return err
+		}
+		if delaysChanged {
+			run, err = s.repository.GetWorkflowRunByID(run.ProjectID, run.ID)
+			if err != nil {
+				return err
+			}
+		}
 		approvalChanged, err := s.reconcileWorkflowApprovals(run, lease)
 		if err != nil {
 			return err
@@ -1257,7 +1267,7 @@ func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *d
 		if err != nil {
 			return err
 		}
-		changed := approvalChanged
+		changed := delaysChanged || approvalChanged
 		for _, decision := range decisions {
 			if decision.kind != workflowNodeSkipped && decision.kind != workflowNodeBlocked {
 				continue
@@ -1305,6 +1315,14 @@ func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *d
 				changed = changed || opened
 				continue
 			}
+			if definitionNode.EffectiveKind() == db.WorkflowNodeDelayKind {
+				opened, openErr := s.openWorkflowDelay(run, decision.node, definitionNode, lease)
+				if openErr != nil {
+					return openErr
+				}
+				changed = changed || opened
+				continue
+			}
 			if slots == 0 {
 				continue
 			}
@@ -1331,6 +1349,9 @@ func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *d
 				if node.Status == db.WorkflowRunNodeRunning {
 					status = db.WorkflowRunRunning
 					break
+				}
+				if node.Status == db.WorkflowRunNodeWaiting {
+					status = db.WorkflowRunRunning
 				}
 			}
 			return s.setRunStatus(current, status, "", nil, lease)
@@ -1537,6 +1558,14 @@ func (s *workflowService) stopWorkflowRunNow(run db.WorkflowRun, lease *pro_inte
 		if node.Status == db.WorkflowRunNodeApproval {
 			if _, cancelErr := s.finalizeWorkflowRunApprovalNode(run, node.WorkflowNodeID, db.WorkflowRunNodeCanceled, "Canceled because the workflow was stopped.", resultJSON, now, lease); cancelErr != nil {
 				return db.WorkflowRun{}, cancelErr
+			}
+		} else if node.Status == db.WorkflowRunNodeWaiting {
+			store, ok := s.repository.(workflowDelayCompletionStore)
+			if !ok {
+				return db.WorkflowRun{}, errors.New("workflow delay completion store is unavailable")
+			}
+			if _, stopErr := store.StopWorkflowDelayIfWaitingWithNode(lease, projectID, runID, node.WorkflowNodeID, resultJSON); stopErr != nil {
+				return db.WorkflowRun{}, stopErr
 			}
 		} else if node.TaskID == nil {
 			if _, cancelErr := s.finalizeWorkflowRunNode(run, node.WorkflowNodeID, db.WorkflowRunNodeCanceled, "Canceled because the workflow was stopped.", resultJSON, now, lease); cancelErr != nil {
@@ -1875,6 +1904,79 @@ func contributionRoleOrigin(origin db.ProjectWorkflowRoleOrigin) db.WorkflowAppr
 	default:
 		return db.WorkflowApprovalRoleOriginManual
 	}
+}
+
+type workflowDelayFencedStore interface {
+	OpenWorkflowDelayFenced(pro_interfaces.WorkflowReconciliationLease, db.WorkflowDelay) (db.WorkflowDelay, bool, error)
+	ResolveWorkflowDelayIfWaitingFenced(pro_interfaces.WorkflowReconciliationLease, int, time.Time, string) (bool, error)
+}
+
+type workflowDelayCompletionStore interface {
+	ResolveWorkflowDelayIfWaitingWithNode(db.WorkflowDelay, string) (bool, error)
+	StopWorkflowDelayIfWaitingWithNode(*pro_interfaces.WorkflowReconciliationLease, int, int, int, string) (bool, error)
+}
+
+func (s *workflowService) openWorkflowDelay(run db.WorkflowRun, runNode db.WorkflowRunNode, definitionNode db.WorkflowNode, lease *pro_interfaces.WorkflowReconciliationLease) (bool, error) {
+	if err := definitionNode.ValidateDelay(); err != nil {
+		return false, err
+	}
+	now := tz.Now()
+	delay := db.WorkflowDelay{
+		ProjectID: run.ProjectID, WorkflowRunID: run.ID, WorkflowNodeID: runNode.WorkflowNodeID,
+		Status: db.WorkflowDelayWaiting, Created: now,
+		ResumeAt: now.Add(time.Duration(*definitionNode.DelaySeconds) * time.Second),
+	}
+	if lease != nil {
+		store, ok := s.repository.(workflowDelayFencedStore)
+		if !ok {
+			return false, errors.New("workflow delay fencing is unavailable")
+		}
+		_, opened, err := store.OpenWorkflowDelayFenced(*lease, delay)
+		return opened, err
+	}
+	if _, err := s.repository.CreateWorkflowDelay(delay); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *workflowService) reconcileWorkflowDelays(run db.WorkflowRun, lease *pro_interfaces.WorkflowReconciliationLease) (bool, error) {
+	delays, err := s.repository.GetWorkflowDelays(run.ProjectID, run.ID)
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	for _, delay := range delays {
+		if delay.Status != db.WorkflowDelayWaiting {
+			continue
+		}
+		resultJSON, marshalErr := marshalWorkflowNodeResult(db.WorkflowNodeResult{Status: db.WorkflowRunNodeSucceeded, Successful: true})
+		if marshalErr != nil {
+			return false, marshalErr
+		}
+		if lease != nil {
+			store, ok := s.repository.(workflowDelayFencedStore)
+			if !ok {
+				return false, errors.New("workflow delay fencing is unavailable")
+			}
+			resolved, resolveErr := store.ResolveWorkflowDelayIfWaitingFenced(*lease, delay.WorkflowNodeID, tz.Now(), resultJSON)
+			if resolveErr != nil {
+				return false, resolveErr
+			}
+			changed = changed || resolved
+			continue
+		}
+		store, ok := s.repository.(workflowDelayCompletionStore)
+		if !ok {
+			return false, errors.New("workflow delay completion store is unavailable")
+		}
+		resolved, resolveErr := store.ResolveWorkflowDelayIfWaitingWithNode(delay, resultJSON)
+		if resolveErr != nil {
+			return false, resolveErr
+		}
+		changed = changed || resolved
+	}
+	return changed, nil
 }
 
 func (s *workflowService) openWorkflowApproval(run db.WorkflowRun, node db.WorkflowNode, lease *pro_interfaces.WorkflowReconciliationLease) (bool, error) {

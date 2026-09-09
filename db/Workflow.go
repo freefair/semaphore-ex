@@ -2,6 +2,7 @@ package db
 
 import (
 	"encoding/json"
+	"math"
 	"time"
 
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
@@ -24,6 +25,8 @@ const (
 	WorkflowNodeNoteKind     WorkflowNodeKind = "note"
 	WorkflowNodeDelayKind    WorkflowNodeKind = "delay"
 )
+
+const MaxWorkflowDelaySeconds = math.MaxInt32
 
 type WorkflowConvergenceMode string
 
@@ -355,6 +358,7 @@ const (
 	WorkflowRunNodePending   WorkflowRunNodeStatus = "pending"
 	WorkflowRunNodeQueued    WorkflowRunNodeStatus = "queued"
 	WorkflowRunNodeRunning   WorkflowRunNodeStatus = "running"
+	WorkflowRunNodeWaiting   WorkflowRunNodeStatus = "waiting"
 	WorkflowRunNodeApproval  WorkflowRunNodeStatus = "approval"
 	WorkflowRunNodeSucceeded WorkflowRunNodeStatus = "succeeded"
 	WorkflowRunNodeFailed    WorkflowRunNodeStatus = "failed"
@@ -671,6 +675,16 @@ func (kind WorkflowNodeKind) Validate() error {
 	default:
 		return common_errors.NewValidationError("workflow node kind is invalid")
 	}
+}
+
+func (node WorkflowNode) ValidateDelay() error {
+	if node.EffectiveKind() != WorkflowNodeDelayKind {
+		return nil
+	}
+	if node.DelaySeconds == nil || *node.DelaySeconds <= 0 || *node.DelaySeconds > MaxWorkflowDelaySeconds {
+		return common_errors.NewValidationError("workflow delay duration is invalid")
+	}
+	return nil
 }
 
 func (node WorkflowNode) EffectiveKind() WorkflowNodeKind {

@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import {
   validateWorkflowDefinition,
   WORKFLOW_DEFINITION_VERSION,
+  WORKFLOW_DELAY_MAX_SECONDS,
 } from '@/lib/workflowValidation';
 
 function validWorkflow() {
@@ -24,9 +25,9 @@ describe('workflow definition validation', () => {
   it('accepts delay nodes and rejects missing or nonpositive integer durations', () => {
     const workflow = { name: 'Wait', nodes: [{ id: 1, kind: 'delay', delay_seconds: 60 }], edges: [] };
     expect(validateWorkflowDefinition(workflow)).to.deep.equal([]);
-    [null, 0, -1, 1.5].forEach((seconds) => {
+    [null, 0, -1, 1.5, WORKFLOW_DELAY_MAX_SECONDS + 1].forEach((seconds) => {
       workflow.nodes[0].delay_seconds = seconds;
-      expect(validateWorkflowDefinition(workflow).map((entry) => entry.code)).to.include('WORKFLOW_DELAY_INVALID');
+      expect(validateWorkflowDefinition(workflow).map((entry) => entry.code)).to.include('WORKFLOW_DELAY_DURATION_INVALID');
     });
   });
 

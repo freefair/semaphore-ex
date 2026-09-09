@@ -140,8 +140,13 @@ type workflowManagerStub struct {
 	db.WorkflowManager
 	runs      []db.WorkflowRun
 	run       db.WorkflowRun
+	delays    []db.WorkflowDelay
 	tasks     []db.TaskWithTpl
 	approvals []db.WorkflowApproval
+}
+
+func (s *workflowManagerStub) GetWorkflowDelays(projectID int, runID int) ([]db.WorkflowDelay, error) {
+	return s.delays, nil
 }
 
 func (s *workflowManagerStub) GetWorkflowRuns(_ int, _ int, _ db.RetrieveQueryParams) ([]db.WorkflowRun, error) {

@@ -14,13 +14,16 @@ func TestScheduleTimezoneMigrationPreservesExistingRowsAndRollsBack(t *testing.T
 	t.Cleanup(store.Close)
 
 	projectID, repositoryID := newTemplateTestProject(t, store)
-	template, err := store.CreateTemplate(db.Template{
-		ProjectID: projectID, RepositoryID: repositoryID, Name: "Scheduled", Playbook: "site.yml",
-	})
+	// Seed the historical schema directly: the current template writer includes
+	// working_directory, which is introduced only in migration 2.20.67.
+	templateID, err := store.insert("id",
+		"insert into project__template (project_id, repository_id, name, playbook, app) values (?, ?, 'Scheduled', 'site.yml', '')",
+		projectID, repositoryID)
+
 	require.NoError(t, err)
 	_, err = store.exec(
 		"insert into project__schedule (project_id, template_id, cron_format, `name`, `active`, `type`, delete_after_run) values (?, ?, ?, ?, ?, ?, ?)",
-		projectID, template.ID, "0 9 * * *", "Legacy", true, "", false,
+		projectID, templateID, "0 9 * * *", "Legacy", true, "", false,
 	)
 	require.NoError(t, err)
 	assert.NotContains(t, sqliteColumnNames(t, store, "project__schedule"), "timezone")

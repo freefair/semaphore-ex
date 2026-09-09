@@ -133,11 +133,12 @@ func crossWriteServiceError(w http.ResponseWriter, err error) {
 }
 
 func crossID(w http.ResponseWriter, r *http.Request, name string) (int, bool) {
-	value, err := helpers.GetIntParam(name, w, r)
-	if err != nil || value <= 0 {
-		if err == nil {
-			crossBadRequest(w)
-		}
+	value, ok := helpers.GetIntParamOrAbort(name, w, r)
+	if !ok {
+		return 0, false
+	}
+	if value <= 0 {
+		crossBadRequest(w)
 		return 0, false
 	}
 	return value, true

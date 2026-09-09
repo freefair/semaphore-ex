@@ -2258,6 +2258,7 @@ definitions:
       delay_seconds:
         type: integer
         minimum: 1
+        maximum: 2147483647
         description: Number of seconds to wait before continuing (delay kind only).
       note:
         type: string

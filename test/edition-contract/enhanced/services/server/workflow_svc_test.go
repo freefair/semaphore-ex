@@ -75,6 +75,135 @@ func TestWorkflowServiceRunsTwoNodesInOrderFromImmutableSnapshot(t *testing.T) {
 	assert.Len(t, fixture.enqueuer.tasks, 2)
 }
 
+func TestWorkflowServiceDelayWaitsWithoutRunnerAndUsesRunSnapshot(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	delaySeconds := 60
+	workflow, err := fixture.repository.CreateWorkflowTemplate(db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Durable delay", DefinitionVersion: db.WorkflowDefinitionVersion,
+		MaxParallelTasks: 1,
+		Nodes: []db.WorkflowNode{
+			{ID: -1, Kind: db.WorkflowNodeDelayKind, DisplayName: "Wait", DelaySeconds: &delaySeconds},
+			{ID: -2, TemplateID: fixture.first.ID, DisplayName: "Deploy"},
+		},
+		Edges: []db.WorkflowEdge{{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess}},
+	})
+	require.NoError(t, err)
+	reloadedDefinition, err := fixture.repository.GetWorkflowTemplate(fixture.projectID, workflow.ID)
+	require.NoError(t, err)
+	require.NotNil(t, reloadedDefinition.Nodes[0].DelaySeconds)
+	assert.Equal(t, 60, *reloadedDefinition.Nodes[0].DelaySeconds)
+
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "delay-no-runner")
+	require.NoError(t, err)
+	assert.Empty(t, fixture.enqueuer.tasks, "a delay must not create a runner task")
+	waitNode := workflowRunNodeNamed(t, run, "Wait")
+	require.NotNil(t, waitNode)
+	assert.Equal(t, db.WorkflowRunNodeWaiting, waitNode.Status)
+	delay, err := fixture.repository.GetWorkflowDelay(fixture.projectID, run.ID, waitNode.WorkflowNodeID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowDelayWaiting, delay.Status)
+	assert.WithinDuration(t, delay.Created.Add(time.Minute), delay.ResumeAt, time.Second)
+	expired, err := fixture.repository.GetExpiredWorkflowDelays()
+	require.NoError(t, err)
+	assert.Empty(t, expired)
+	_, err = fixture.store.GetConnection().Exec(
+		"insert into project__workflow_delay(project_id, workflow_run_id, workflow_node_id, status, resume_at, created) values (?, ?, ?, ?, ?, ?)",
+		fixture.projectID, run.ID, waitNode.WorkflowNodeID+999999, db.WorkflowDelayWaiting, delay.ResumeAt, delay.Created,
+	)
+	assert.Error(t, err, "a delay node must belong to the immutable snapshot for its run")
+
+	workflow.Nodes[0].DelaySeconds = workflowDelayPointer(3600)
+	_, err = fixture.repository.UpdateWorkflowTemplate(workflow)
+	require.NoError(t, err)
+	_, err = fixture.store.GetConnection().Exec("update project__workflow_delay set resume_at=? where id=?", time.Now().UTC().Add(-time.Second), delay.ID)
+	require.NoError(t, err)
+	expired, err = fixture.repository.GetExpiredWorkflowDelays()
+	require.NoError(t, err)
+	require.Len(t, expired, 1)
+	assert.Equal(t, waitNode.WorkflowNodeID, expired[0].WorkflowNodeID)
+	restarted := NewWorkflowService(fixture.repository, fixture.store, fixture.enqueuer, nil)
+	require.NoError(t, restarted.ProgressWorkflowRun(fixture.projectID, run.ID, nil))
+	assert.Len(t, fixture.enqueuer.tasks, 1, "one downstream task is released exactly once")
+	require.NoError(t, restarted.ProgressWorkflowRun(fixture.projectID, run.ID, nil))
+	assert.Len(t, fixture.enqueuer.tasks, 1, "restart replay must not duplicate downstream work")
+}
+
+func TestWorkflowServiceStopWinsOverElapsedDelay(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	delaySeconds := 60
+	workflow, err := fixture.repository.CreateWorkflowTemplate(db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "Stopped delay", DefinitionVersion: db.WorkflowDefinitionVersion,
+		Nodes: []db.WorkflowNode{
+			{ID: -1, Kind: db.WorkflowNodeDelayKind, DisplayName: "Wait", DelaySeconds: &delaySeconds},
+			{ID: -2, TemplateID: fixture.first.ID, DisplayName: "Never runs"},
+		},
+		Edges: []db.WorkflowEdge{{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess}},
+	})
+	require.NoError(t, err)
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "delay-stop-race")
+	require.NoError(t, err)
+	waitNode := workflowRunNodeNamed(t, run, "Wait")
+	require.NotNil(t, waitNode)
+	delay, err := fixture.repository.GetWorkflowDelay(fixture.projectID, run.ID, waitNode.WorkflowNodeID)
+	require.NoError(t, err)
+	_, err = fixture.service.RequestWorkflowRunStop(fixture.projectID, run.ID, &fixture.user)
+	require.NoError(t, err)
+	_, err = fixture.store.GetConnection().Exec("update project__workflow_delay set resume_at=? where id=?", time.Now().UTC().Add(-time.Second), delay.ID)
+	require.NoError(t, err)
+	stopped, err := fixture.service.ReconcileWorkflowRun(fixture.projectID, run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowRunCanceled, stopped.Status)
+	assert.Empty(t, fixture.enqueuer.tasks, "a stopped delay must never release downstream work")
+	reloadedDelay, err := fixture.repository.GetWorkflowDelay(fixture.projectID, run.ID, waitNode.WorkflowNodeID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowDelayStopped, reloadedDelay.Status)
+	require.NoError(t, fixture.repository.UpdateWorkflowDelay(reloadedDelay), "a persisted terminal record supports portable idempotent reads")
+	mutatedDelay := reloadedDelay
+	mutatedDelay.ResumeAt = mutatedDelay.ResumeAt.Add(time.Second)
+	assert.ErrorContains(t, fixture.repository.UpdateWorkflowDelay(mutatedDelay), "immutable")
+}
+
+func TestWorkflowDelayRejectsStaleHAOwnerBeforeRelease(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	delaySeconds := 60
+	workflow, err := fixture.repository.CreateWorkflowTemplate(db.WorkflowTemplate{
+		ProjectID: fixture.projectID, Name: "HA delay", DefinitionVersion: db.WorkflowDefinitionVersion,
+		Nodes: []db.WorkflowNode{
+			{ID: -1, Kind: db.WorkflowNodeDelayKind, DisplayName: "Wait", DelaySeconds: &delaySeconds},
+			{ID: -2, TemplateID: fixture.first.ID, DisplayName: "Deploy"},
+		}, Edges: []db.WorkflowEdge{{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess}},
+	})
+	require.NoError(t, err)
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "delay-stale-owner")
+	require.NoError(t, err)
+	waitNode := workflowRunNodeNamed(t, run, "Wait")
+	require.NotNil(t, waitNode)
+	delay, err := fixture.repository.GetWorkflowDelay(fixture.projectID, run.ID, waitNode.WorkflowNodeID)
+	require.NoError(t, err)
+	ownership := workflowSQL.NewWorkflowReconciliationStore(fixture.store.GetConnection())
+	stale, claimed, err := ownership.ClaimWorkflowReconciliation(fixture.projectID, run.ID, "delay-stale-owner", time.Minute)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	resolved, err := fixture.repository.ResolveWorkflowDelayIfWaitingFenced(stale, delay.WorkflowNodeID, time.Now().UTC().Add(24*time.Hour), `{"status":"succeeded","successful":true}`)
+	require.NoError(t, err)
+	assert.False(t, resolved, "a forged future application timestamp must not complete a database-timed delay")
+	_, err = fixture.store.GetConnection().Exec("update cluster__workflow_reconciliation set lease_expires_at=? where project_id=? and workflow_run_id=?", time.Now().UTC().Add(-time.Second), fixture.projectID, run.ID)
+	require.NoError(t, err)
+	_, claimed, err = ownership.ClaimWorkflowReconciliation(fixture.projectID, run.ID, "delay-new-owner", time.Minute)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	_, err = fixture.repository.ResolveWorkflowDelayIfWaitingFenced(stale, delay.WorkflowNodeID, time.Now().UTC(), `{"status":"succeeded","successful":true}`)
+	require.ErrorContains(t, err, "stale workflow reconciliation owner")
+	reloaded, err := fixture.repository.GetWorkflowDelay(fixture.projectID, run.ID, waitNode.WorkflowNodeID)
+	require.NoError(t, err)
+	assert.Equal(t, db.WorkflowDelayWaiting, reloaded.Status)
+}
+
+func workflowDelayPointer(value int) *int { return &value }
+
 func TestWorkflowServiceStartBindsCurrentImmutableVersionAndRejectsTampering(t *testing.T) {
 	fixture := newWorkflowServiceFixture(t)
 	defer fixture.store.Close()
