@@ -3,8 +3,11 @@ package db
 import (
 	"encoding/json"
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
+	"math"
 	"time"
 )
+
+const MaxWorkflowDelaySeconds = math.MaxInt32
 
 type WorkflowJoinMode string
 
@@ -146,6 +149,7 @@ const (
 	WorkflowRunNodePending   WorkflowRunNodeStatus = "pending"
 	WorkflowRunNodeQueued    WorkflowRunNodeStatus = "queued"
 	WorkflowRunNodeRunning   WorkflowRunNodeStatus = "running"
+	WorkflowRunNodeWaiting   WorkflowRunNodeStatus = "waiting"
 	WorkflowRunNodeApproval  WorkflowRunNodeStatus = "approval"
 	WorkflowRunNodeSucceeded WorkflowRunNodeStatus = "succeeded"
 	WorkflowRunNodeFailed    WorkflowRunNodeStatus = "failed"
@@ -403,6 +407,16 @@ func validateWorkflowRoleReferences(references []ProjectRoleReference) error {
 			return common_errors.NewValidationError("workflow role policy contains duplicate role reference")
 		}
 		seen[reference] = struct{}{}
+	}
+	return nil
+}
+
+func (node WorkflowNode) ValidateDelay() error {
+	if node.EffectiveKind() != WorkflowNodeDelayKind {
+		return nil
+	}
+	if node.DelaySeconds == nil || *node.DelaySeconds <= 0 || *node.DelaySeconds > MaxWorkflowDelaySeconds {
+		return common_errors.NewValidationError("workflow delay duration is invalid")
 	}
 	return nil
 }

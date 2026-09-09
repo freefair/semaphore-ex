@@ -1,20 +1,14 @@
 package api
 
 import (
-	"bytes"
 	"fmt"
-	"image/png"
 	"net/http"
 
 	"github.com/gorilla/mux"
-	"github.com/pquerna/otp"
-	"github.com/pquerna/otp/totp"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
-
-	"github.com/semaphoreui/semaphore/util"
 )
 
 type UsersController struct {

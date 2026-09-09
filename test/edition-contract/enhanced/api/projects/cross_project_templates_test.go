@@ -37,6 +37,29 @@ func (r *crossProjectTemplateAuditRecorder) all() []pro_interfaces.AuditEvent {
 	return append([]pro_interfaces.AuditEvent(nil), r.events...)
 }
 
+func TestCrossIDAbortsMalformedRouteParameterAndRejectsNonpositiveID(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		value string
+	}{
+		{name: "malformed", value: "not-an-id"},
+		{name: "nonpositive", value: "0"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/project/1/templates/1", nil)
+			request.Header.Set("Accept", "application/json")
+			request = mux.SetURLVars(request, map[string]string{"template_id": testCase.value})
+			response := httptest.NewRecorder()
+
+			id, ok := crossID(response, request, "template_id")
+
+			assert.False(t, ok)
+			assert.Zero(t, id)
+			assert.Equal(t, http.StatusBadRequest, response.Code)
+		})
+	}
+}
+
 type crossProjectTemplateServiceStub struct {
 	version db.TemplateVersion
 	grant   db.CrossProjectTemplateGrant

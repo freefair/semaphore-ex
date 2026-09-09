@@ -114,8 +114,8 @@ func (c *ProjectRunnerControllerImpl) AddRunner(w http.ResponseWriter, r *http.R
 func (c *ProjectRunnerControllerImpl) RunnerMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		project := helpers.GetFromContext(r, "project").(db.Project)
-		runnerID, err := helpers.GetIntParam("runner_id", w, r)
-		if err != nil {
+		runnerID, ok := helpers.GetIntParamOrAbort("runner_id", w, r)
+		if !ok {
 			return
 		}
 		runner, err := helpers.Store(r).GetRunner(project.ID, runnerID)
@@ -158,8 +158,8 @@ func (c *ProjectRunnerControllerImpl) GetRunnerHealth(w http.ResponseWriter, r *
 
 func (c *ProjectRunnerControllerImpl) GetRunnerHistory(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
-	runnerID, err := helpers.GetIntParam("runner_id", w, r)
-	if err != nil {
+	runnerID, ok := helpers.GetIntParamOrAbort("runner_id", w, r)
+	if !ok {
 		return
 	}
 	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead,

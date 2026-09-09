@@ -273,16 +273,16 @@ func (c *workflowTriggerController) invokeAPITrigger(w http.ResponseWriter, r *h
 }
 
 func workflowTriggerExternalIDs(w http.ResponseWriter, r *http.Request) (int, int, int, bool) {
-	projectID, err := helpers.GetIntParam("project_id", w, r)
-	if err != nil {
+	projectID, ok := helpers.GetIntParamOrAbort("project_id", w, r)
+	if !ok {
 		return 0, 0, 0, false
 	}
-	workflowID, err := helpers.GetIntParam("workflow_id", w, r)
-	if err != nil {
+	workflowID, ok := helpers.GetIntParamOrAbort("workflow_id", w, r)
+	if !ok {
 		return 0, 0, 0, false
 	}
-	triggerID, err := helpers.GetIntParam("trigger_id", w, r)
-	if err != nil {
+	triggerID, ok := helpers.GetIntParamOrAbort("trigger_id", w, r)
+	if !ok {
 		return 0, 0, 0, false
 	}
 	return projectID, workflowID, triggerID, true
@@ -385,8 +385,8 @@ func workflowTriggerResourceContext(w http.ResponseWriter, r *http.Request) (db.
 	if !ok {
 		return db.Project{}, db.WorkflowTemplate{}, 0, false
 	}
-	triggerID, err := helpers.GetIntParam("trigger_id", w, r)
-	if err != nil {
+	triggerID, ok := helpers.GetIntParamOrAbort("trigger_id", w, r)
+	if !ok {
 		return db.Project{}, db.WorkflowTemplate{}, 0, false
 	}
 	return project, workflow, triggerID, true

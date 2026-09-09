@@ -74,8 +74,8 @@ func getClusterNode(w http.ResponseWriter, r *http.Request) {
 		helpers.WriteErrorStatus(w, "cluster inspection is unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	bootID, err := helpers.GetStrParam("boot_id", w, r)
-	if err != nil {
+	bootID, ok := helpers.GetStrParamOrAbort("boot_id", w, r)
+	if !ok {
 		return
 	}
 	nodes, err := ci.Nodes()
@@ -102,8 +102,8 @@ func setClusterNodeDraining(w http.ResponseWriter, r *http.Request) {
 		helpers.WriteErrorStatus(w, "cluster inspection is unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	bootID, err := helpers.GetStrParam("boot_id", w, r)
-	if err != nil {
+	bootID, ok := helpers.GetStrParamOrAbort("boot_id", w, r)
+	if !ok {
 		return
 	}
 	var request clusterNodeDrainRequest

@@ -1,6 +1,7 @@
 export const WORKFLOW_DEFINITION_VERSION = 1;
 export const WORKFLOW_NODE_LIMIT = 200;
 export const WORKFLOW_EDGE_LIMIT = 1000;
+export const WORKFLOW_DELAY_MAX_SECONDS = 2 ** 31 - 1;
 export const WORKFLOW_MAX_PARALLEL_TASKS = 32;
 
 function issue(code, messageKey, path, nodeId = null, edgeId = null, args = {}) {
@@ -110,8 +111,9 @@ export function validateWorkflowDefinition(workflow, templateIds = []) {
         issues.push(issue('WORKFLOW_TEMPLATE_NOT_IN_PROJECT', 'workflowErrorTemplateNotInProject', `${path}.template_id`, node.id));
       }
     }
-    if (kind === 'delay' && (!Number.isSafeInteger(node.delay_seconds) || node.delay_seconds <= 0)) {
-      issues.push(issue('WORKFLOW_DELAY_INVALID', 'workflowErrorDelayPositive', `${path}.delay_seconds`, node.id));
+    if (kind === 'delay' && (!Number.isSafeInteger(node.delay_seconds)
+      || node.delay_seconds <= 0 || node.delay_seconds > WORKFLOW_DELAY_MAX_SECONDS)) {
+      issues.push(issue('WORKFLOW_DELAY_DURATION_INVALID', 'workflowErrorDelayPositive', `${path}.delay_seconds`, node.id));
     }
     if (kind === 'approval' && node.approval_timeout != null && node.approval_timeout <= 0) {
       issues.push(issue('WORKFLOW_APPROVAL_TIMEOUT_INVALID', 'workflowErrorApprovalTimeoutPositive', `${path}.approval_timeout`, node.id));

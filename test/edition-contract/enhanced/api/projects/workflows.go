@@ -96,6 +96,13 @@ type workflowRunNodeDetails struct {
 	ArtifactInputs []db.WorkflowArtifactInputSnapshot `json:"artifact_inputs,omitempty"`
 	Overrides      db.WorkflowNodeOverride            `json:"overrides,omitempty"`
 	Task           *workflowRunTaskView               `json:"task,omitempty"`
+	Delay          *workflowDelayView                 `json:"delay,omitempty"`
+}
+
+type workflowDelayView struct {
+	Status   db.WorkflowDelayStatus `json:"status"`
+	ResumeAt time.Time              `json:"resume_at"`
+	Resolved *time.Time             `json:"resolved,omitempty"`
 }
 
 type workflowRunView struct {
@@ -148,6 +155,7 @@ type workflowRunNodeView struct {
 	ApprovalPermission         db.ProjectUserPermission          `json:"approval_permission,omitempty"`
 	ApprovalTimeoutOutcome     db.WorkflowApprovalTimeoutOutcome `json:"approval_timeout_outcome,omitempty"`
 	ApprovalSeparationOfDuties bool                              `json:"approval_separation_of_duties,omitempty"`
+	DelaySeconds               *int                              `json:"delay_seconds,omitempty"`
 	Note                       *string                           `json:"note,omitempty"`
 	PositionX                  int                               `json:"position_x"`
 	PositionY                  int                               `json:"position_y"`
@@ -350,8 +358,8 @@ func (c *workflowController) GetWorkflowVersions(w http.ResponseWriter, r *http.
 func (c *workflowController) GetWorkflowVersion(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
-	versionNumber, err := helpers.GetIntParam("version_number", w, r)
-	if err != nil {
+	versionNumber, ok := helpers.GetIntParamOrAbort("version_number", w, r)
+	if !ok {
 		return
 	}
 	version, err := c.definitionService.GetVersion(
@@ -386,8 +394,8 @@ func (c *workflowController) DiffWorkflowVersions(w http.ResponseWriter, r *http
 func (c *workflowController) RestoreWorkflowVersion(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
-	versionNumber, err := helpers.GetIntParam("version_number", w, r)
-	if err != nil {
+	versionNumber, ok := helpers.GetIntParamOrAbort("version_number", w, r)
+	if !ok {
 		return
 	}
 	var request struct {
@@ -780,6 +788,10 @@ func (c *workflowController) workflowRunDetails(r *http.Request, run db.Workflow
 	if err != nil {
 		return workflowRunDetails{}, err
 	}
+	delays, err := c.workflowManager.GetWorkflowDelays(run.ProjectID, run.ID)
+	if err != nil {
+		return workflowRunDetails{}, err
+	}
 	tasksByNode := make(map[int]db.TaskWithTpl, len(tasks))
 	for _, task := range tasks {
 		if task.WorkflowNodeID != nil {
@@ -787,6 +799,10 @@ func (c *workflowController) workflowRunDetails(r *http.Request, run db.Workflow
 		}
 	}
 	statesByNode := make(map[int]db.WorkflowRunNode, len(run.Nodes))
+	delaysByNode := make(map[int]db.WorkflowDelay, len(delays))
+	for _, delay := range delays {
+		delaysByNode[delay.WorkflowNodeID] = delay
+	}
 	templates := make([]workflowRunTemplateView, 0, len(run.Nodes))
 	for _, node := range run.Nodes {
 		statesByNode[node.WorkflowNodeID] = node
@@ -813,6 +829,9 @@ func (c *workflowController) workflowRunDetails(r *http.Request, run db.Workflow
 				ID: task.ID, Status: task.Status,
 				UsedRunnerID: task.UsedRunnerID, UsedRunnerName: task.UsedRunnerName,
 			}
+		}
+		if delay, delayExists := delaysByNode[state.WorkflowNodeID]; delayExists {
+			detail.Delay = &workflowDelayView{Status: delay.Status, ResumeAt: delay.ResumeAt, Resolved: delay.Resolved}
 		}
 		nodes = append(nodes, detail)
 	}
@@ -935,6 +954,7 @@ func newWorkflowRunNodeView(node db.WorkflowNode) workflowRunNodeView {
 		ApprovalPermission:         node.ApprovalPermission,
 		ApprovalTimeoutOutcome:     node.ApprovalTimeoutOutcome,
 		ApprovalSeparationOfDuties: node.ApprovalSeparationOfDuties,
+		DelaySeconds:               node.DelaySeconds,
 		Note:                       node.Note,
 		PositionX:                  node.PositionX,
 		PositionY:                  node.PositionY,
@@ -1032,18 +1052,18 @@ func (c *workflowController) ResolveWorkflowApproval(w http.ResponseWriter, r *h
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
 	run := helpers.GetFromContext(r, "workflow_run").(db.WorkflowRun)
-	nodeID, err := helpers.GetIntParam("node_id", w, r)
-	if err != nil {
+	nodeID, ok := helpers.GetIntParamOrAbort("node_id", w, r)
+	if !ok {
 		return
 	}
 	var input db.WorkflowApprovalDecision
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, workflowRunBodyLimit))
 	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(&input); err != nil {
+	if err := decoder.Decode(&input); err != nil {
 		helpers.WriteError(w, common_errors.NewValidationError("workflow approval decision is invalid"))
 		return
 	}
-	if err = decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		helpers.WriteError(w, common_errors.NewValidationError("workflow approval decision is invalid"))
 		return
 	}
