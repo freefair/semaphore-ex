@@ -1,0 +1,51 @@
+source_commit: 15fe38f624ee899c3813d808cf119f384b7bd9f8
+platform: darwin
+architecture: arm64
+node: v26.8.1
+logical_cpus: 18
+memory_bytes: 51539607552
+measurement: >-
+  200ms samples of summed RSS for npm and all descendant processes; shared pages may be counted more than once; elapsed
+  wall time includes command startup.
+runs:
+  - mode: serial
+    exit_code: 0
+    elapsed_seconds: 336.36
+    sampled_peak_tree_rss_kib: 5051776
+    samples: 1435
+  - mode: parallel-2
+    exit_code: 0
+    elapsed_seconds: 45.15
+    sampled_peak_tree_rss_kib: 5504832
+    samples: 196
+  - mode: serial-warm
+    exit_code: 0
+    elapsed_seconds: 39.96
+    sampled_peak_tree_rss_kib: 2652288
+    samples: 174
+  - mode: parallel-2-warm
+    exit_code: 0
+    elapsed_seconds: 54.92
+    sampled_peak_tree_rss_kib: 2842208
+    samples: 197
+reproduction_runs:
+  - mode: serial-first
+    exit_code: 0
+    elapsed_seconds: 281.55
+    sampled_peak_tree_rss_kib: 5622608
+    samples: 1394
+  - mode: parallel-2-first
+    exit_code: 0
+    elapsed_seconds: 40.7
+    sampled_peak_tree_rss_kib: 5866992
+    samples: 201
+  - mode: serial-warm
+    exit_code: 0
+    elapsed_seconds: 32.17
+    sampled_peak_tree_rss_kib: 2260528
+    samples: 159
+  - mode: parallel-2-warm
+    exit_code: 0
+    elapsed_seconds: 27.15
+    sampled_peak_tree_rss_kib: 2917888
+    samples: 134

@@ -1,5 +1,10 @@
 # Claude Code Instructions
 
+Read the repository-root `CLAUDE.md` for the full-product model and upstream
+maintenance policy. Routine updates merge upstream into the long-lived fork; use
+`maintenance/README.md` and `tools/upstream-sync/` for ownership, contract, and
+verification gates. Preserve published history and shipped migration identities.
+
 # Documentation
 
 The documentation stored in /docs directory. It is a submodule with official Semaphore UI documentation

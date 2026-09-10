@@ -27,6 +27,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -53,6 +54,11 @@ jobs:
 
       - name: Build embedded frontend for module tests
         run: task build:fe
+
+      - name: Check upstream-maintenance contracts
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+        run: go run ./tools/upstreamcheck -mode check -base-ref "$BASE_REF"
 
       - name: Test full-product modules
         run: |

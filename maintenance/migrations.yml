@@ -1,0 +1,1036 @@
+# Shipped entries are immutable; append reviewed changes. Bootstrap upstream: 9cd15a7604eb3486134eaa32944d5dcf16a24655
+format: 1
+migrations:
+  - registered: true
+    id: 0.0.0
+    owner: upstream
+    files:
+      v0.0.0.sql: 9669386fd21475bad9223fac5a744a92ec5ba129c32552b312c9faa53a2e5f19
+    upstream_id: 0.0.0
+  - registered: true
+    id: 1.0.0
+    owner: upstream
+    files:
+      v1.0.0.sql: c1cc86ac052f7e18abfd584e3252fdc50734daba650bca87b178c5ec4e398e2f
+    upstream_id: 1.0.0
+  - registered: true
+    id: 1.2.0
+    owner: upstream
+    files:
+      v1.2.0.sql: 004afe4581990fec47d9a245134aa487d578fff43946373ff8fa719fc3339399
+    upstream_id: 1.2.0
+  - registered: true
+    id: 1.3.0
+    owner: upstream
+    files:
+      v1.3.0.sql: a8b02bed9720f24e8264f7eddcf4afc95cdb23d952b9b7d554ff5364dcaaaaf7
+    upstream_id: 1.3.0
+  - registered: true
+    id: 1.4.0
+    owner: upstream
+    files:
+      v1.4.0.sql: 0b6cfd94e0fcdcb3552af6443ce69b79064b6a9382bd22c20e7072e17f89accf
+    upstream_id: 1.4.0
+  - registered: true
+    id: 1.5.0
+    owner: upstream
+    files:
+      v1.5.0.sql: 50cb56a955cde92dd23ae461b1f78bc3024cc89fae239c128c7b982d1c7c995e
+    upstream_id: 1.5.0
+  - registered: true
+    id: 1.6.0
+    owner: upstream
+    files:
+      v1.6.0.sql: 760bbd7570518c025f4d14101642aace5306e18ded2e619b40093ea1d662ff90
+    upstream_id: 1.6.0
+  - registered: true
+    id: 1.7.0
+    owner: upstream
+    files:
+      v1.7.0.sql: 261bfabe91b73bd7444e8305d83409415c6ec2d170b558203732921f0f9b8c8e
+    upstream_id: 1.7.0
+  - registered: true
+    id: 1.8.0
+    owner: upstream
+    files:
+      v1.8.0.sql: 8e71f1b4f4c799eecce75263ff729555590d1885bd137b5ff071d296ff1c41f3
+    upstream_id: 1.8.0
+  - registered: true
+    id: 1.9.0
+    owner: upstream
+    files:
+      v1.9.0.sql: 9a842eb9e82283ca59601372b0fca719d67664bde4ef9d02e87361776e448902
+    upstream_id: 1.9.0
+  - registered: true
+    id: 2.10.12
+    owner: upstream
+    files:
+      v2.10.12.sql: 3b8161cd297a93e93e1593c3707fb7d4121c91d527035aff80eed9b0bf8b8af8
+    upstream_id: 2.10.12
+  - registered: true
+    id: 2.10.15
+    owner: upstream
+    files:
+      v2.10.15.sql: e7e78e492f3337a526e0d35287e2a5069692e3bf98a25181f936158f6bb3fd15
+    upstream_id: 2.10.15
+  - registered: true
+    id: 2.10.16
+    owner: upstream
+    files:
+      v2.10.16.sql: 19dc8b53d7815f5af25b16ba772545d1d532a2e731a3faf52226bb81ab5d0d49
+    upstream_id: 2.10.16
+  - registered: true
+    id: 2.10.24
+    owner: upstream
+    files:
+      v2.10.24.sql: bd0cfdb2bf2e6e67c1d3cbb497b090a971629cf9d3b9cdf6806cf6698e1fd517
+    upstream_id: 2.10.24
+  - registered: true
+    id: 2.10.26
+    owner: upstream
+    files:
+      v2.10.26.sql: 04ee7a0cb17d6d629cd9eddcc35ebc4739fbe61cc29e8dacd13625d5310e8b44
+    upstream_id: 2.10.26
+  - registered: true
+    id: 2.10.28
+    owner: upstream
+    files:
+      v2.10.28.sql: d6a75fd3daeaaeeb419b8caeb47753ff3e50a6cb9e132bc808dd4e8e05fce9b6
+    upstream_id: 2.10.28
+  - registered: true
+    id: 2.10.33
+    owner: upstream
+    files:
+      v2.10.33.sql: defcc3481c2ff7e1bc7d06997577855e234e34984f8a20a7529cc5e15706502c
+    upstream_id: 2.10.33
+  - registered: true
+    id: 2.10.46
+    owner: upstream
+    files:
+      v2.10.46.sql: 3b6cb9d62a3e3eaa803fab55b77b7f9f4da1e119f6e2bd6ece04f4685d2d434c
+    upstream_id: 2.10.46
+  - registered: true
+    id: 2.11.5
+    owner: upstream
+    files:
+      v2.11.5.sql: eeced384cdd486eabcfccf2ba79b20c045d0b3b25cb37d2f1c2e5a9883a53bf1
+    upstream_id: 2.11.5
+  - registered: true
+    id: 2.12.0
+    owner: upstream
+    files:
+      v2.12.0.sql: 9ade3e952253ed3c6ad1cb6e24c5c4353b4f8b5fdcc680b6cc615aa6c2840a66
+    upstream_id: 2.12.0
+  - registered: true
+    id: 2.12.15
+    owner: upstream
+    files:
+      v2.12.15.sql: 301f9979a372e4b152a84ded53f8e108a3d995830ffd333171ab7989aba41ee5
+    upstream_id: 2.12.15
+  - registered: true
+    id: 2.12.3
+    owner: upstream
+    files:
+      v2.12.3.sql: 60e86f853d86ce6299599b7c05a0264dc83e22aa6b1b75b8cd36d6c1fbafdf70
+    upstream_id: 2.12.3
+  - registered: true
+    id: 2.12.4
+    owner: upstream
+    files:
+      v2.12.4.sql: 7a58ca66fd341fe7ae600be25e2cd0b65f0c39cb73ce8af872e10928848cfe08
+    upstream_id: 2.12.4
+  - registered: true
+    id: 2.12.5
+    owner: upstream
+    files:
+      v2.12.5.sql: bf7a796aa6ed23c1e7ebeb452745199d744c7f65ce49ad90b75ebc840c1ea8e3
+    upstream_id: 2.12.5
+  - registered: true
+    id: 2.13.0
+    owner: upstream
+    files:
+      v2.13.0.sql: 06977640ab736a7300f863d8937a508731b7d555e1b3dd7a92aaa7dafb8b1cb6
+    upstream_id: 2.13.0
+  - registered: true
+    id: 2.14.0
+    owner: upstream
+    files:
+      v2.14.0.err.sql: b0096440ac9a8402d0e8d648d56e2fb4d5d908a8ecc1381572bc1123988371ba
+      v2.14.0.sql: 98ba8fc07f5cbbcf897befba2f3c222ae5c632260ee2aa18a215316089625bd1
+    upstream_id: 2.14.0
+  - registered: true
+    id: 2.14.1
+    owner: upstream
+    files:
+      v2.14.1.err.sql: 37c0d4397ac46c10c2e09a9a5138643652b850c39e656cc6262c7d1885979d37
+      v2.14.1.sql: 7f3d6897c8fd14b59ff979293c5c0b60febdad407fc65c64d7efa81eec199eee
+    upstream_id: 2.14.1
+  - registered: true
+    id: 2.14.12
+    owner: upstream
+    files:
+      v2.14.12.err.sql: cff947ddb287a57ced09dba5c105935348d291af629fd3bfe4b3c49a7e31e9a4
+      v2.14.12.sql: 2855ba702616b17b25207aeeced66941586332dabf40898f088c50bb7e81ce87
+    upstream_id: 2.14.12
+  - registered: true
+    id: 2.14.5
+    owner: upstream
+    files:
+      v2.14.5.sql: 0b13062c33640031cb1b03636d5b89bffbf13f44e0ac3ae846d3f4033fece65f
+    upstream_id: 2.14.5
+  - registered: true
+    id: 2.14.7
+    owner: upstream
+    files:
+      v2.14.7.sql: 1ab74da452c34fe6ce2b3dac794b087d4a5c73654174c55c68be40420c458403
+    upstream_id: 2.14.7
+  - registered: true
+    id: 2.15.0
+    owner: upstream
+    files:
+      v2.15.0.err.sql: 281dbe7f3c426de48f43b1cabd0514ba388a62f5e3e8d4ba6e8eb13273bf3962
+      v2.15.0.sql: 82bdfd00c7cbb2528603fa1d780560a0b6b283f00f6003f85fbe93b141354cbe
+    upstream_id: 2.15.0
+  - registered: true
+    id: 2.15.1
+    owner: upstream
+    files:
+      v2.15.1.err.sql: f5fee19523b21a4cfe8c8865b504cae6d0c59b79ef8159e7cf6a887f4e9a98f7
+      v2.15.1.sql: 7dcd8c16c1d47801eda54533b33d1147f0e7f91caaf016e13bb1c23e5a5bb5b9
+    upstream_id: 2.15.1
+  - registered: true
+    id: 2.15.1.sqlite
+    owner: upstream
+    files:
+      v2.15.1.sqlite.sql: 4646cbb39aaaa6b19ae3b2c3d328fb894a36515b296c2afc2ac780bddd4a5a06
+    upstream_id: 2.15.1.sqlite
+  - registered: true
+    id: 2.15.2
+    owner: upstream
+    files:
+      v2.15.2.err.sql: 848f60dd9e6e590db7ed2f327563d6919dd76d469e0d8ed20ab3422d4214536d
+      v2.15.2.sql: 285c9dceb631796bfa886098e336bdb6d176103e45dac8cb9136169cb5bc396e
+    upstream_id: 2.15.2
+  - registered: true
+    id: 2.15.3
+    owner: upstream
+    files:
+      v2.15.3.err.sql: 0eea5988f16e0fcc6eb9750a91671b997d5c02caee0b02a77c58ba437554d027
+      v2.15.3.sql: 79a24961638cba45447152db2b0cda10fbb00dc695fc731f037d6fd1e79450b3
+    upstream_id: 2.15.3
+  - registered: true
+    id: 2.15.4
+    owner: upstream
+    files:
+      v2.15.4.err.sql: 3e9373e5b266e01b916024980dc85b9199d6c5db37c1bfff9665c1e1f12fda3f
+      v2.15.4.sql: fc6ae9a3f6bf223dd4158ce3fd8135c8186d916be8ef6d4ed6080da691125cd1
+    upstream_id: 2.15.4
+  - registered: true
+    id: 2.16.0
+    owner: upstream
+    files:
+      v2.16.0.err.sql: a2617113dcf0e84308ca2cd72cd8a4547e453d6775dd07129b5008d91963c578
+      v2.16.0.sql: accab37c1c29ef0db4cfc72cefd8258e025945db7f95795826c4ffd7cdc6ed94
+    upstream_id: 2.16.0
+  - registered: true
+    id: 2.16.1
+    owner: upstream
+    files:
+      v2.16.1.err.sql: ce8ca3e998529e7ec09f2bf7588b32c8581f848e035ceb9ce62b8dbe02dd2600
+      v2.16.1.sql: c225079d5a3eac1c03c16eee8ff821ce9aab321f1061e20ed63244794090439a
+    upstream_id: 2.16.1
+  - registered: true
+    id: 2.16.2
+    owner: upstream
+    files:
+      v2.16.2.err.sql: 5d8ff74ddd25286cdce9e37eac2a1d40419d8e28f7c7765352e7e03e4e61612c
+      v2.16.2.sql: 0aae29d07761768bb99445d9ba1fd9e8292c2006dab5b474eb882f925fb9cc5e
+    upstream_id: 2.16.2
+  - registered: true
+    id: 2.16.3
+    owner: upstream
+    files:
+      v2.16.3.err.sql: 5faf4ca23d0c2bfde644ccd25fbf6a49ca11690961c127d9d6851b7f99b58b8c
+      v2.16.3.sql: f7e0217b3d1b7fa88aaddf9266f30405b115fca8fc9cb2507b5b59b06ade3407
+    upstream_id: 2.16.3
+  - registered: true
+    id: 2.16.50
+    owner: upstream
+    files:
+      v2.16.50.err.sql: ad271edeab670b51269a5da38f43c42d9815bd75db435dfd1326177f9f678ddf
+      v2.16.50.sql: 8c1c571eec330f2d98a80e0f4218d38ee1db6a15f2a3ebe286c39974102aed76
+    upstream_id: 2.16.50
+  - registered: true
+    id: 2.16.8
+    owner: upstream
+    files:
+      v2.16.8.err.sql: 7fdb5f42302647236a161a231747b4467e58cfe04862c2ef1ef9fb19bcd0d890
+      v2.16.8.sql: 5c8535c941695163b0c7380a68b0f6bf2d03da1ba08b8992dd8c8cbde843d96e
+    upstream_id: 2.16.8
+  - registered: true
+    id: 2.17.0
+    owner: upstream
+    files:
+      v2.17.0.err.sql: 648a779167ebf68ccc1202fdc18befc1f9801e71d084b432b8b50282a1213921
+      v2.17.0.sql: 984a91a60292bd996027b89b861529c305440f249e742f37907ca1393a8e6d3b
+    upstream_id: 2.17.0
+  - registered: true
+    id: 2.17.1
+    owner: upstream
+    files:
+      v2.17.1.err.sql: 0b03c4de4d71e6d6cffcb98b7ca50b8cd3427a4cddafb5e2e49bad67930cd399
+      v2.17.1.sql: 83143045e90340126e4d38743e6f24e2b0046885e1b55ff4a3fc81e9d093f98c
+    upstream_id: 2.17.1
+  - registered: true
+    id: 2.17.15
+    owner: upstream
+    files:
+      v2.17.15.err.sql: b9fb3c31bfb92a7fefa04f38be49d218bfd0dbfebb0ae8c7f7608e4651ae51df
+      v2.17.15.sql: e6be2069dcc50aa3bd76031b02e6b06bbf33bc2d33f1a06dc2bd3ec3f9f17c9f
+    upstream_id: 2.17.15
+  - registered: true
+    id: 2.17.16
+    owner: upstream
+    files:
+      v2.17.16.err.sql: a78379aa2420119f4fc95a181e5cfc5e39de49c43549e0ddf678afb63c778422
+      v2.17.16.sql: ba73b75440f10508c4271df70115313af2d721492587b8df4d60f2347465d667
+    upstream_id: 2.17.16
+  - registered: true
+    id: 2.17.17
+    owner: upstream
+    files:
+      v2.17.17.err.sql: 5c1cd41037afae49de929f959b02f93276e98df242037c46fe50becbd093307a
+      v2.17.17.sql: b739bbd9e90f23ec1d6fdc8ede5b25980b48b27686233e1f235ec08378432c8c
+    upstream_id: 2.17.17
+  - registered: true
+    id: 2.17.2
+    owner: upstream
+    files:
+      v2.17.2.err.sql: 7fafd1e2d324c820b61fff73d06ba42843e5bcf4776b11bbb6d0a90c7465b382
+      v2.17.2.sql: 2651d63c180c1e8b5d53d0db9608cae323fe02c04b268b4d0121b897ea01c3d3
+    upstream_id: 2.17.2
+  - registered: true
+    id: 2.18.1
+    owner: upstream
+    files:
+      v2.18.1.err.sql: 2f51ba70484179c34c728089aa3cd653a700cebdb3ad00d071c897ea7dae6426
+      v2.18.1.sql: 2dbe834581d45ce2437b2c0ae545dd6d07fe9a2e71fa17b0019b037b616e0719
+    upstream_id: 2.18.1
+  - registered: true
+    id: 2.18.15
+    owner: upstream
+    files:
+      v2.18.15.err.sql: e8471e971715acf2a4b9f6cad80e893294be155a2ca5beeb107cca9627eccff2
+      v2.18.15.sql: 2babe3746742d3a79aca49dcc54f2238f4f4b3efe3691573d106a1d1ad92d6eb
+    upstream_id: 2.18.15
+  - registered: true
+    id: 2.18.2
+    owner: upstream
+    files:
+      v2.18.2.err.sql: 9f991802acc7f4e289a8f46fba857d9579feb3e905feb831296b5cff63c3d1ee
+      v2.18.2.sql: 76abc5ad2b722df4f4c50956e39aefea18423d1b511817dd1df29a4a5693e360
+    upstream_id: 2.18.2
+  - registered: true
+    id: 2.18.4
+    owner: upstream
+    files:
+      v2.18.4.err.sql: b7f52337bcdc99b6fa60d889110e39ff3f8d36533ccc23a2fe7029ba9f990573
+      v2.18.4.sql: 52674f79fbbdf3cc411548e1f48e2685fbd92a14f661fefad77cbf07754b82a4
+    upstream_id: 2.18.4
+  - registered: true
+    id: 2.18.5
+    owner: upstream
+    files:
+      v2.18.5.err.sql: bfaefdc43af8b681d798e15a35ae82278d56ee4aebc4d9b39a5e6207f113214c
+      v2.18.5.sql: 1c538378e15a0e086ffa06864ae67e82e41d48da8cdbf6c1d32629243af5633b
+    upstream_id: 2.18.5
+  - registered: true
+    id: 2.18.6
+    owner: upstream
+    files:
+      v2.18.6.err.sql: e260e90f1f88dfacccd837b0b50c292f2b10bdd9439aa215b7e7d8e1dae84308
+      v2.18.6.sql: e536404173ccf9f7dd2a4d3f8adf1a9b3a41b377fe422072d37744f15cedd7e7
+    upstream_id: 2.18.6
+  - registered: true
+    id: 2.18.7
+    owner: upstream
+    files:
+      v2.18.7.err.sql: 9fa59c9519f81b6cd0336210f096104955535715a904c667d4f0685f2135b645
+      v2.18.7.sql: 8bb506ffc034e9c9964a21a9ac4edb94c3160aa8b3c551950da3458febeec4d3
+    upstream_id: 2.18.7
+  - registered: true
+    id: 2.19.11
+    owner: upstream
+    files:
+      v2.19.11.err.sql: 8a7008fe1143cf912204b6056b135dba47828a700e6479ecfdc8880225064c38
+      v2.19.11.sql: cf2060710e750cf4ab21c69d4e92d901b081fbfeda5da3c61a60fc65c9e9a5ba
+    upstream_id: 2.19.11
+  - registered: true
+    id: 2.19.12
+    owner: upstream
+    files:
+      v2.19.12.err.sql: c5c833b411632e477bc575b6b3580c99ee21d1ca827dfd051d98836658f251b8
+      v2.19.12.sql: c7478cc3c7848a41c48fd40c9660e2c06dc0af75e252ec4990d464e09ca2bd61
+    upstream_id: 2.19.12
+  - registered: true
+    id: 2.19.14
+    owner: upstream
+    files:
+      v2.19.14.err.sql: ae6dbaf1f2e4f78296a407a3b555be5653b5a2e071017112ba965f322dd9f1b3
+      v2.19.14.sql: 43933783f77d3eebd90b8da105bdd44c7d7b9007930e215b3f8f132aac9ecae4
+    upstream_id: 2.19.14
+  - registered: true
+    id: 2.19.2
+    owner: upstream
+    files:
+      v2.19.2.err.sql: 97b49488b9767cd8764255d5c2838fcb552b28ac69ed99612311866b1cfcdc4c
+      v2.19.2.sql: a3acd2276a5de2d89d9d78c9604960e5ee2fdc3487515a151c118e6748096cef
+    upstream_id: 2.19.2
+  - registered: true
+    id: 2.2.1
+    owner: upstream
+    files:
+      v2.2.1.sql: 357eb8e9979daa9bd615901df789eda442d16ebcde7b367e7e1748138aac332a
+    upstream_id: 2.2.1
+  - registered: true
+    id: 2.20.0
+    owner: upstream
+    files:
+      v2.20.0.err.sql: 0ad64f85cdb518db96bd4b020fbdde64ec2ef47a611616feef9f2287bb198a4d
+      v2.20.0.sql: 882d5fd2835cd5afcaffa3f83473fca2e9de9d64cd53012d3cff8695bbd66f3e
+    upstream_id: 2.20.0
+  - registered: true
+    id: 2.20.1
+    owner: upstream
+    files:
+      v2.20.1.err.sql: 3466369a48fc64bece8be71396e9ebdba73a1c69a3344be7a9ce9c156c0ea22a
+      v2.20.1.sql: 511f1cd60a8127d21e5c0c662453482735aa4a0aa6eaaaf4b6a0475443b745f7
+    upstream_id: 2.20.1
+  - registered: true
+    id: 2.20.10
+    owner: fork
+    files:
+      v2.20.10.err.sql: 3fc29423195fb67eb65feb04b91b2994704441f42e85660128e2b8a00b135a53
+      v2.20.10.sql: 2f0d1ad4afce94f798c80b9b6f293e2d0fb7bb6df7d7dc33a19fea98af5694b0
+  - registered: true
+    id: 2.20.11
+    owner: fork
+    files:
+      v2.20.11.err.sql: 08b9f116188ad75fd1ee89d83fbd0e4a9995ebe347ffa31f63c462de907a1e29
+      v2.20.11.sql: c36be16a185ed327250ee0c2eb7d1ae350e189cda48fda9b66a6e6c68764bf35
+  - registered: true
+    id: 2.20.12
+    owner: fork
+    files:
+      v2.20.12.err.sql: e0fb92feebb52318d8a9922b6561328365e77574bc27a7630f148876ce4dffb1
+      v2.20.12.sql: 5d70e3441ae2083dae854eca470a3918ba72526d11f6153e714d76e1c99f4242
+  - registered: true
+    id: 2.20.13
+    owner: fork
+    files:
+      v2.20.13.err.sql: 8885876ee1c2e1cdcaa75b891234e8e483e2d70b9201698e3b458ad5940c4931
+      v2.20.13.sql: b89baa7cbcd7ab8b47996b12cab594da37c4ab8038b00e43c08604178e23c1e7
+  - registered: true
+    id: 2.20.14
+    owner: fork
+    files:
+      v2.20.14.err.sql: 9cd0965590a3f2a6ae68155cd8ccbf5cafbe8ee63e76d222b20b48408e0e140a
+      v2.20.14.sql: 127bd264153eda2f43807ca223676d14402c5e6824f5af8be876c37ee76b6841
+  - registered: true
+    id: 2.20.15
+    owner: fork
+    files:
+      v2.20.15.err.sql: 09ad1afd826d4acf8f378414782cb790166c680f79ddb41949e6a5cf68bc7caa
+      v2.20.15.sql: abf71614618ba6fc1b1753d65ccd7bed8d5fe4b44615807afbbf864a1576ece7
+  - registered: true
+    id: 2.20.16
+    owner: fork
+    files:
+      v2.20.16.err.sql: 56cf8714d819e8f713935d58f48ed6ee5a1975f224167756554c1f5f297b93b7
+      v2.20.16.sql: 3a6e18a5d4b3202c7448805d36b5a1d0042a122c69489dcb7212ee923fee066a
+  - registered: true
+    id: 2.20.17
+    owner: fork
+    files:
+      v2.20.17.err.sql: f04bec973d2dee61fe4e55bec08217fad4a64beec922ad676d65db4f2672d627
+      v2.20.17.sql: a128cd4df7a32628d1615357cca1bbb730975667a18f1197a0b5ddc62be16602
+  - registered: true
+    id: 2.20.18
+    owner: fork
+    files:
+      v2.20.18.err.sql: 64db67fe3c2fea6228570600f389f08ffb291cae3cbdd8bf850ff4b9e01f68fe
+      v2.20.18.sql: 9083e44d052fe48ebc4e7ef039662e0431ea8396f40d78cbf4f5006237c0e7eb
+  - registered: true
+    id: 2.20.19
+    owner: fork
+    files:
+      v2.20.19.err.sql: 49fba8ee8001d2a58db9dadac252e8e1dba86b1f9e2a09bc573a016c5fa3ac42
+      v2.20.19.sql: 603bbcf4dc7a42a6482e8b12600f0c5a9380ea718efa8b01ca27d25fa4507d4c
+  - registered: true
+    id: 2.20.2
+    owner: fork
+    files:
+      v2.20.2.err.sql: e94b75e2a33bd8c0f2d6f3450b6f6bc3e82646f5780ca4df5e2d67e84bb22f21
+      v2.20.2.sql: d6f469b4d4d472e04fc0ded8b31633988b8cf10f8ceb539c0218164bb534f021
+  - registered: true
+    id: 2.20.20
+    owner: fork
+    files:
+      v2.20.20.err.sql: e5435762386c0ab47151e687edffa5f18023c605ca7e1b0169a52ea754c7fe67
+      v2.20.20.sql: 066af274fbd454ae3fe3b4552288016eb5a9d2f362c7e7d49e4b5dcb1f147e26
+  - registered: true
+    id: 2.20.21
+    owner: fork
+    files:
+      v2.20.21.err.sql: b881711ab895185208d557099525212e806d6c03a75d3af18a42aeb46525cd6e
+      v2.20.21.sql: 2649a0bc40eecaa1494451fefb9a8155a6678c7b7010f853e7cd44aa4898f6ec
+  - registered: true
+    id: 2.20.22
+    owner: fork
+    files:
+      v2.20.22.err.sql: 8918cc9100f110966ae17cee10f4244ac396362602e83c3ae780799d709c04f0
+      v2.20.22.sql: b4060ffaad13aa907a37b8bbb43380f164263e19ac8acc7192a0dcb81b19fecb
+  - registered: true
+    id: 2.20.23
+    owner: fork
+    files:
+      v2.20.23.err.sql: 53e5679b50e7dd880d61a0073c26f89bf1525eef05c1ab6d9d3ce52290b1130f
+      v2.20.23.sql: 6ceeebda211a8bd253c58d66650d16ae5efc2b4482851b9f71f20c2f9d1cd666
+  - registered: true
+    id: 2.20.24
+    owner: fork
+    files:
+      v2.20.24.err.sql: 5a2f48ebf730780c9a563c955a6204df758252c5a78a273fd4918dba41a15b7b
+      v2.20.24.sql: d141a35794f843f8813a3b00ce1eb9f545f28c949ba9836050788c0446d63a45
+  - registered: true
+    id: 2.20.25
+    owner: fork
+    files:
+      v2.20.25.err.sql: 154151160f9ba6f6981c39acd7abc8a638ea2db98af16e6b7546f18e3611e8a1
+      v2.20.25.sql: a66742e302248b37ceff4fa90a6166b7f5974261872d20ff18b2b846f1f00701
+  - registered: true
+    id: 2.20.26
+    owner: fork
+    files:
+      v2.20.26.err.sql: 5cc9c0c5461e782e1132f8618e0b6fe0b305225d0439b97dbbb886cc9d23324f
+      v2.20.26.sql: 67407800b58ca1a733ebf5167cc6d3f1e3f034f9a1a45d714301af602fe22ef1
+  - registered: true
+    id: 2.20.27
+    owner: fork
+    files:
+      v2.20.27.err.sql: c2f2ac8ee85d63c3e1040500b353a0834c1742fb30fa3987e877c407bada1780
+      v2.20.27.sql: 6613698c97c328187f883a758672ab4320b211a5bcd4423584cd05f41c342d64
+  - registered: true
+    id: 2.20.28
+    owner: fork
+    files:
+      v2.20.28.err.sql: 4e5c134daef431ae88ac14b42bdf73ea428e01d6b8d584facb865c754c1c5f6a
+      v2.20.28.sql: d4aed534ebf6af717d3b1e0b5e353f97a9801c635eb3016740ba8ac2055aa404
+  - registered: true
+    id: 2.20.29
+    owner: fork
+    files:
+      v2.20.29.err.sql: 10c85276a8bded8448a4259065bd8cbce78231cad82e47d2d59851e6ae851cfc
+      v2.20.29.sql: 7c70edfd4a1130f84a5520e536fa4a190cadc32ad6671fc112b02ec58719d359
+  - registered: true
+    id: 2.20.3
+    owner: fork
+    files:
+      v2.20.3.err.sql: 4d35dec34b67e4e01f8e70e40e822766d37fbad3252cd8980394a37466faed97
+      v2.20.3.sql: d6690a71ca732577be2d8219b175bd2c451a965ee68bbbb098ebb819a55fc667
+  - registered: true
+    id: 2.20.30
+    owner: fork
+    files:
+      v2.20.30.err.sql: 789a26fb0ba2c7679d5024e86ca210642ae3dbcd01f5ac32554a0d39b137e80e
+      v2.20.30.sql: ac9e371dd9138794c19b05bfeddc677ae6db2bb70c927d5b35d5b88bff20aadb
+  - registered: true
+    id: 2.20.31
+    owner: fork
+    files:
+      v2.20.31.err.sql: 7a249d3f3abee86138ee64524d4653622f052020398d3b7c1694764f997668ce
+      v2.20.31.sql: e26a65bae66db0b35c0f7aed779bf021d72f51d0a478ec0cca6c1b8d979a1467
+  - registered: true
+    id: 2.20.32
+    owner: fork
+    files:
+      v2.20.32.err.sql: 47884e3caa4d6499163c54a0a4d2e7466fcb6765d88a51743954391eb2801a16
+      v2.20.32.sql: 2b314cc9b047dee2f420e35ffab3e0836f071f6e31a0df1c0c878e50df1d8bd5
+  - registered: true
+    id: 2.20.33
+    owner: fork
+    files:
+      v2.20.33.err.sql: 8c7b4db33caeef54ee86439c2e8237a8afaf8153a27466a0db2348a77e3b8ca0
+      v2.20.33.sql: 88302e004bef028a3882c709396e190b43bed000b498d5d38f6f3a71c6846a5d
+  - registered: true
+    id: 2.20.34
+    owner: fork
+    files:
+      v2.20.34.err.sql: 0cefa2156181037e9bee4ec9bd1b2c395badbe8aec3d507a32356431cd6b4cce
+      v2.20.34.sql: e764ea20e447b271af46a867c6c3b4929622359d2b3834226636878eabb05b3f
+  - registered: true
+    id: 2.20.35
+    owner: fork
+    files:
+      v2.20.35.err.sql: 39e533f7e563571fdce5a41aa0c5acaae96155651a69a538575a7b9adaf6599f
+      v2.20.35.sql: 3e84a1e00c826b2ac12ca89071f60f98e7772f81b80a2595d7d769132fa24a7f
+  - registered: true
+    id: 2.20.36
+    owner: fork
+    files:
+      v2.20.36.err.sql: 5d4f07391e3b0cc601dddda5a3111ca41312e8a4203a9521ce3e93d20a36a4a2
+      v2.20.36.sql: cca68c234ef56f1dc8ae3b009df2dc1ef440d8046277fb3906e2054af052fe1f
+  - registered: true
+    id: 2.20.37
+    owner: fork
+    files:
+      v2.20.37.err.sql: f93119f681a97a21b31028ea2371f226ca1c13363d6f2d6db6266d91b40a53fa
+      v2.20.37.sql: 6b5390dbc3331f51bf42fe72c2295ef0e226eebf0671aa0c19f69c37ed735309
+  - registered: true
+    id: 2.20.38
+    owner: fork
+    files:
+      v2.20.38.err.sql: cb3df8e7131320210e3f1706fff0f88c156b869d9921034b79d012767a488852
+      v2.20.38.sql: 07398ae02e7beef572f0daf14ee02ba8e0f1d3410a1872f98411a0132b24ffe7
+  - registered: true
+    id: 2.20.39
+    owner: fork
+    files:
+      v2.20.39.err.sql: 4cb07e0f78431539013b8fdf4bd48fc86bb54e3df24b8ca8e75151e6b6827355
+      v2.20.39.sql: c7613d576060cce1861e967815022397bafeb49c28b9094e1720725649358a7f
+  - registered: true
+    id: 2.20.4
+    owner: fork
+    files:
+      v2.20.4.err.sql: 3ca9a17a9956a225cf41926a34de17cd08e7b6b1b3a7dea706394644457559ee
+      v2.20.4.sql: 63c4eb86f84932d7cd0e565ed00566912b329b3daf7a72978b21dd69fccc7d4d
+  - registered: true
+    id: 2.20.40
+    owner: fork
+    files:
+      v2.20.40.err.sql: 9c3507847f59bf812de943e57dc01027075c415ec6b972fa7e730961fa303b6d
+      v2.20.40.sql: d496d03d06fef2c32e0f7317aeb561088786c07da4965117c53f1ee206133790
+  - registered: true
+    id: 2.20.41
+    owner: fork
+    files:
+      v2.20.41.err.sql: c64b25a183ed7c4d60c7c4c3ef610e29638735e5bbdf67b47693271cca7c2708
+      v2.20.41.sql: 0044861148c35c1973a8cc2e9751c290050613623d6a07705ae2d02d1497928a
+  - registered: true
+    id: 2.20.42
+    owner: fork
+    files:
+      v2.20.42.err.sql: dacf739e73ba349d143704767efb0790273db3f8f07821ea45572c7ab430200d
+      v2.20.42.sql: 1a8da01dabee43f50d04daf984134e67609bd6a17bf7d92082d68e2d57ea27b3
+  - registered: true
+    id: 2.20.43
+    owner: fork
+    files:
+      v2.20.43.err.sql: fc0381dd172fcbd3620dc2d3caf5e168ccc9fc8b7710c2910ce662bd9f6e781f
+      v2.20.43.sql: dc6d123c9f7ef8b1403670da3d87f0d75571bf6e7491a0465b64c9407b3aa9db
+  - registered: true
+    id: 2.20.44
+    owner: fork
+    files:
+      v2.20.44.err.sql: bc010525bc2905e105d33155a10504d3defcfa8a138a8749e3cdd1d561bbf721
+      v2.20.44.sql: 4c09b2fda464ce83d9dd1611a9d3f42a49171ac17f9d0e65ee8837842809ceb2
+  - registered: true
+    id: 2.20.45
+    owner: fork
+    files:
+      v2.20.45.err.sql: 3271e3d39785ad4c483345be7ade7012c37d3b49d248022dbbeaaeb381b5d4a2
+      v2.20.45.sql: 3882272edd4fe2c3c7d307d62e5e02e743d13e8defedc6691eb39865260d250a
+  - registered: true
+    id: 2.20.46
+    owner: fork
+    files:
+      v2.20.46.err.sql: e903fc9398d24a93d8dce145ead3ca731f0839a5e769c2494e56c8b631e8418a
+      v2.20.46.sql: 92019150ba705d85a8206778f4c66e934ed0bd592c78db1e74f6fc30b0d593bd
+  - registered: true
+    id: 2.20.47
+    owner: fork
+    files:
+      v2.20.47.err.sql: f2da8c9a5c8650a8fc53fdcb81b0ddeaa2f8dfe89c6126f88b8531b2d26c1e1d
+      v2.20.47.sql: c082fa4f9778af8390ed9cf6ecc90e82e51236c1e3e4eac89d57ebc3cb6d6042
+  - registered: true
+    id: 2.20.48
+    owner: fork
+    files:
+      v2.20.48.err.sql: b93891c391a0eeb9a6a74e0d2f82456b9197bd201cb76b95977d9ca65b3523d4
+      v2.20.48.sql: b1401ad12c5b6ee904a216d2bd851c296baae490a9800e4786ca17170ef49d9c
+  - registered: true
+    id: 2.20.49
+    owner: fork
+    files:
+      v2.20.49.err.sql: 0fd19d15ff5e1e77283295723632f8984b836d983de6140646a1687566f14668
+      v2.20.49.sql: 4ce7120821f6e91c2ecf9f161e3b82eb0583ab4034822e543dc560745199ce67
+  - registered: true
+    id: 2.20.5
+    owner: fork
+    files:
+      v2.20.5.err.sql: e8af3e35067bfebbd7e1064b7fbe3661e1085abe09f02da338eb99a58ed7261a
+      v2.20.5.sql: 6c105ef6c57ec5735940cbfe3b24c19800cfe8ddcde87f2f03ea9d2c7f341e92
+  - registered: true
+    id: 2.20.50
+    owner: fork
+    files:
+      v2.20.50.err.sql: 72ffa9d4f94d65befc44d6cc2df03fd132d7ec4848609b0b81b68e9f5faa1c08
+      v2.20.50.sql: d2706547266d1614b4d673b26d2ff44ebb69d4fe3f332d500496efe56b08daf5
+  - registered: true
+    id: 2.20.51
+    owner: fork
+    files:
+      v2.20.51.err.sql: c30d077b23780ba093d3e1b421cdcbf1bd626062bbc41183d8fc63ba81a78065
+      v2.20.51.sql: 4fea3fc7049f86093cc7a5401d24b9e38d7e9438497bc5294d82669f2c3e327c
+  - registered: true
+    id: 2.20.52
+    owner: fork
+    files:
+      v2.20.52.err.sql: d4238b4f8ac291272c5b6a8e43f3f9879990851d25bca4a58a035703ffbf4eb8
+      v2.20.52.sql: c3c4fc408e213a4923c4d18ed1f9fdd5eeb1f7d4eb3eb818a2fab463bda0a106
+  - registered: true
+    id: 2.20.53
+    owner: fork
+    files:
+      v2.20.53.err.sql: cc6238188f9be3097ca33322e99290c8b4acef01ba8d33541f20e9f0a3ef6d06
+      v2.20.53.sql: e036aecd0c109d79717bd568a4737de216b67b38cb95536816e5fd6eb3576bf5
+  - registered: true
+    id: 2.20.54
+    owner: fork
+    files:
+      v2.20.54.err.sql: c0e61449cfb6edced2dfca5a6a4f1ea71105e739389def273635cab93f5c3ca5
+      v2.20.54.sql: 106fdb2544c8da3ea370348d1e9ade16df47845b11d7253cd6eac475349ab98e
+  - registered: true
+    id: 2.20.55
+    owner: fork
+    files:
+      v2.20.55.err.sql: 34a80ef24efc1776f37935c30a1dcfe988061402f2695777fd2b3248823c8894
+      v2.20.55.sql: e5259259e9fd3e6a057a17288d49085c04c1e0fdc43317a931815f0891d0037b
+  - registered: true
+    id: 2.20.56
+    owner: fork
+    files:
+      v2.20.56.err.sql: 7343f2f4bc3d84f024bc1ec8fe99bf0c9aa23ba771165bba77fd0ab645d7280b
+      v2.20.56.sql: a24fb2cf7ae901f9f29d697ae92a06d1db2c56c8681732f615dab619b69e6481
+  - registered: true
+    id: 2.20.57
+    owner: fork
+    files:
+      v2.20.57.err.sql: 06e5c22431ac8666218ec4eb59e833ea09709040059fdb75d2261576d5607c3b
+      v2.20.57.sql: 772ca810d261a7a016c38ef2e279cb5581826cfa493a986329545fe0c038b4c5
+  - registered: true
+    id: 2.20.58
+    owner: fork
+    files:
+      v2.20.58.err.sql: 959fc3da0b3c73c5fe63515abb31e648ae085be9f5ad8513cafbfc6f9b221ab4
+      v2.20.58.sql: 54a3c30a34d630875f71adf537727e192f068426f9f176ebe52677731f328e60
+  - registered: true
+    id: 2.20.59
+    owner: fork
+    files:
+      v2.20.59.err.sql: d38e00ee66bb68406876d94458dd2e94a8cadc626f76769e8474e216e06c7cd4
+      v2.20.59.sql: aceaf8a9f939b1d63ad316272602ae963df6f17666b17f666cd343bbffc737e1
+  - registered: true
+    id: 2.20.6
+    owner: fork
+    files:
+      v2.20.6.err.sql: d0f8c5bc7af3992cdbf66030a92e4fde6c791cc4b276ad97f7290f03e9bd2980
+      v2.20.6.sql: 8bc97cbefc0bc365205f922b12a7ba7022ae114e02995e9eb76a57436f842330
+  - registered: true
+    id: 2.20.60
+    owner: fork
+    files:
+      v2.20.60.err.sql: 05525b6290313e42c5b0c5eabc4f20c1f76c765d935b29750309b71be0534b32
+      v2.20.60.sql: e95aef7ceecddc6bbd403b5c05d9ec85dc55ff846893dff1c9b8431dd821e6a6
+  - registered: true
+    id: 2.20.61
+    owner: fork
+    files:
+      v2.20.61.err.sql: 21e071e707d0ba40f6e25d0e706fad8927baafc0698a2c265e31f9b6545096e8
+      v2.20.61.sql: 734d0cbbfb0c7ff5d3d10c13497fa9c093fa22b030f6f13a0ca6b12bd7e9b711
+  - registered: true
+    id: 2.20.62
+    owner: fork
+    files:
+      v2.20.62.err.sql: b663c7d30a98ea73f2c1af763d48f8b8e175a11286037685222dc06cf512f12c
+      v2.20.62.sql: d02a139078d747eec8f8e85d8ad74fefc4e9fe182c574127e1d284a6063bde02
+  - registered: true
+    id: 2.20.63
+    owner: fork
+    files:
+      v2.20.63.err.sql: 27393a21af568658998435cd16b21223a61cc62e2c317970b14354e023abac67
+      v2.20.63.sql: f129ffff9169d29d05c07af28d281fcbe49be6c7b8642ce929227293e71a1808
+  - registered: true
+    id: 2.20.64
+    owner: fork
+    files:
+      v2.20.64.err.sql: a872727216e82b5996cda2e592e5f5079fb14bb9c007520f7b0e225713bca77c
+      v2.20.64.sql: 8e2b994810a4ba2116abd7743be57c127fde5c4ed0dcf6bd09aafb5450d489b6
+  - registered: true
+    id: 2.20.65
+    owner: fork
+    files:
+      v2.20.65.err.sql: be33c8de7fec114f49d768f067789d21ae5e9ffd4e4e36ba50469d92aa19a0f4
+      v2.20.65.sql: 042f7c4b57348dada488e762c44b4c8b089de7c91786a5ebe3b068a4aaf8c9ba
+  - registered: true
+    id: 2.20.66
+    owner: upstream-adapted
+    files:
+      v2.20.66.err.sql: 26e6105d9736b23bd7e5e90660375052c1af0f17f61838aac9155964d4c6d971
+      v2.20.66.sql: 44d7b9de2c7fbb3ba5bc33782e188dcc4809b8288cacdfe94f57281b4e909aad
+    upstream_id: 2.20.2
+    rationale: Upstream delay schema appended after shipped fork IDs; FK targets immutable workflow-run nodes.
+  - registered: true
+    id: 2.20.67
+    owner: upstream-adapted
+    files:
+      v2.20.67.err.sql: bb47317bd3e9cf9177a45708a09767fa7333ddfa29cc0140a2699cfe343c5144
+      v2.20.67.sql: 7fe0c7bc31a5ce9609d2a87492fd128a7805bd1d1ade7aae744070e010c99fa3
+    upstream_id: 2.20.3
+    rationale: Upstream working_directory schema appended because fork 2.20.3 is already shipped.
+  - registered: true
+    id: 2.20.7
+    owner: fork
+    files:
+      v2.20.7.err.sql: 90859cd2bbc9b5adaaa9f35434980eb3fa56e87a6f45f74e0fa260bc942e256f
+      v2.20.7.sql: acada7c97ebbc56965e14886fbc4ef4c51bcae740f524b436793a973d64d9c23
+  - registered: true
+    id: 2.20.8
+    owner: fork
+    files:
+      v2.20.8.err.sql: 2ef3874a09e5b1c5ac1ef43a33a171f5f8f26a9e70347adf74243c5e695a2b2c
+      v2.20.8.sql: 9862975bbc2a9cfe33a79644e0839cfd02c23a60fdf5d2de4d8a65ace2a6bb57
+  - registered: true
+    id: 2.20.9
+    owner: fork
+    files:
+      v2.20.9.err.sql: 3c03568a91e9d790d1ae1d39a61c02ee6a131393d8b2567c4a4e58c2f59e75ae
+      v2.20.9.sql: 3be413c5821736dbfa02fb5ba1bed42adb3f89da76d42fa58912ec336ddfab71
+  - registered: true
+    id: 2.3.0
+    owner: upstream
+    files:
+      v2.3.0.sql: 7ddb0e9c65904231a242856a02a164354a851e392d65e67d82bbe74f813b69c0
+    upstream_id: 2.3.0
+  - registered: true
+    id: 2.3.1
+    owner: upstream
+    files:
+      v2.3.1.sql: b398f263dd34b1c7e62cbc9c550003cf376d348970a73acce73363f8b6ad7816
+    upstream_id: 2.3.1
+  - registered: true
+    id: 2.3.2
+    owner: upstream
+    files:
+      v2.3.2.sql: 8b3169df1e16d16b912828e3e47931c9aa31506e88ca6c7ef465742050d8cd2c
+    upstream_id: 2.3.2
+  - registered: true
+    id: 2.4.0
+    owner: upstream
+    files:
+      v2.4.0.sql: 6a74f47cd27b361b2539c49b8cc93551473570e7891a29fcf67f6de310798217
+    upstream_id: 2.4.0
+  - registered: true
+    id: 2.5.0
+    owner: upstream
+    files:
+      v2.5.0.sql: 956d82ae244320b3245ef0648db9d7b2d6085599b2cab64231d8e17837f8ac99
+    upstream_id: 2.5.0
+  - registered: true
+    id: 2.5.2
+    owner: upstream
+    files:
+      v2.5.2.sql: 64e511da446efb5cbc7e6b2a48c5bf9af31b9c01808d5949ccd184780647906c
+    upstream_id: 2.5.2
+  - registered: true
+    id: 2.7.1
+    owner: upstream
+    files:
+      v2.7.1.sql: f0004299d78ca8744252ce1c965be8d4129fda42e6a16a5324f62fa6010ecb61
+    upstream_id: 2.7.1
+  - registered: true
+    id: 2.7.10
+    owner: upstream
+    files:
+      v2.7.10.sql: ccfd0d03c604e20b7b96e47ab47701c6c34185c496bbde65ca833b9ba70c832b
+    upstream_id: 2.7.10
+  - registered: true
+    id: 2.7.12
+    owner: upstream
+    files:
+      v2.7.12.sql: 1d9475704be99cc3a06ea6477257c86f993e97f595314b8e4a9dde61e45d383e
+    upstream_id: 2.7.12
+  - registered: true
+    id: 2.7.13
+    owner: upstream
+    files:
+      v2.7.13.sql: 2aa79b91279e3c13fb4ea5ca391a4f32781b1939df50196661b364ee82489e09
+    upstream_id: 2.7.13
+  - registered: true
+    id: 2.7.4
+    owner: upstream
+    files:
+      v2.7.4.sql: 8b84ae374639e086f53d48685b207e02d5794423c18d7e5694606636be41feff
+    upstream_id: 2.7.4
+  - registered: true
+    id: 2.7.6
+    owner: upstream
+    files:
+      v2.7.6.sql: b4e5bed7e03fd269ed3ddbd9e9e27f3666bdb294a6a253027e6b2e76880cbe5a
+    upstream_id: 2.7.6
+  - registered: true
+    id: 2.7.8
+    owner: upstream
+    files:
+      v2.7.8.sql: 3f2005a64401a6e8e1cce35d7168a2bbf14b643220b2a232f5f70043ff969983
+    upstream_id: 2.7.8
+  - registered: true
+    id: 2.7.9
+    owner: upstream
+    files:
+      v2.7.9.sql: 19f869228e7c3dd3bdb5790c7b1f5c5bc7aef150f193163e10f9b22f4e35ea2c
+    upstream_id: 2.7.9
+  - registered: true
+    id: 2.8.0
+    owner: upstream
+    files:
+      v2.8.0.sql: ae8ffc71a8f5a959ba0f524e0adf35333d9e308271a32c12e4aca1b156ab2e2b
+    upstream_id: 2.8.0
+  - registered: true
+    id: 2.8.1
+    owner: upstream
+    files:
+      v2.8.1.sql: 5a45d305a572fd8fe80fd1734ca1551d4c92b04320425ea972baf89f80368b13
+    upstream_id: 2.8.1
+  - registered: true
+    id: 2.8.20
+    owner: upstream
+    files:
+      v2.8.20.sql: 4860515d44974bf9cb19e9362c706b4d78f6cacbc2a4e577ee7af31a40d99db6
+    upstream_id: 2.8.20
+  - registered: true
+    id: 2.8.25
+    owner: upstream
+    files:
+      v2.8.25.sql: eebb3cd3b34824047d6a433ad2f15f2db25942d863f23b8c47cd30cffe1a6865
+    upstream_id: 2.8.25
+  - registered: true
+    id: 2.8.26
+    owner: upstream
+    files:
+      v2.8.26.sql: de1a2ad978d3437602b36595ae18941031c868520812e37a1d64d4bdae86ef70
+    upstream_id: 2.8.26
+  - registered: true
+    id: 2.8.36
+    owner: upstream
+    files:
+      v2.8.36.sql: a7a18841434c6ca10ac02e730634ded5a6c668d5e66922f751c632d9773d80ed
+    upstream_id: 2.8.36
+  - registered: true
+    id: 2.8.38
+    owner: upstream
+    files:
+      v2.8.38.sql: 1e2b19d2f988d185a377879e73fe41fc2980bc2db4d8743d74ff4e9c7ff6b29a
+    upstream_id: 2.8.38
+  - registered: true
+    id: 2.8.39
+    owner: upstream
+    files:
+      v2.8.39.sql: bbdc313555ca58d9eb517bb409bceef0866b148479644c5ad3f4349f52c06cbb
+    upstream_id: 2.8.39
+  - registered: true
+    id: 2.8.40
+    owner: upstream
+    files:
+      v2.8.40.sql: 785c35856aae8c127d6b64edb1ad6703f896fb6c9e10c433c87cf51c5dc02883
+    upstream_id: 2.8.40
+  - registered: true
+    id: 2.8.42
+    owner: upstream
+    files:
+      v2.8.42.sql: 17ec22810797d1852a644196021274c20037bd777f2cf30d264161b5f3d6d20a
+    upstream_id: 2.8.42
+  - registered: true
+    id: 2.8.51
+    owner: upstream
+    files:
+      v2.8.51.sql: c0301807cb8e1a2d15274f570ea1cb19f0aea5a5524c26897b5c70f57bcf0cf5
+    upstream_id: 2.8.51
+  - registered: true
+    id: 2.8.57
+    owner: upstream
+    files:
+      v2.8.57.sql: 00e2c35761bd429a4f1f5c99a30ef745fee2d1388ea7cd37ef6180d511efbb23
+    upstream_id: 2.8.57
+  - registered: true
+    id: 2.8.58
+    owner: upstream
+    files:
+      v2.8.58.sql: aff4bd70f6562f21268b8f96dbd1ab3ac27501dd50d9e5bf488c11e3c8cf92a7
+    upstream_id: 2.8.58
+  - registered: true
+    id: 2.8.7
+    owner: upstream
+    files:
+      v2.8.7.sql: eb1cc68b4d563ae6dcb2a25ec6eb40265d7798f03c2829e76a25c3aff88222de
+    upstream_id: 2.8.7
+  - registered: true
+    id: 2.8.8
+    owner: upstream
+    files:
+      v2.8.8.sql: 16119e3f1ddf1b2707b40a36f86971ba03f14cae3aaf58d092bedd354c3e843d
+    upstream_id: 2.8.8
+  - registered: true
+    id: 2.8.91
+    owner: upstream
+    files:
+      v2.8.91.sql: a9083539e3466ab2ebfc0c20143c2683f1f8dde5efdd8430f9ee00cbd4be955e
+    upstream_id: 2.8.91
+  - registered: true
+    id: 2.9.100
+    owner: upstream
+    files:
+      v2.9.100.sql: 8fa7d5180eee97ccac66e64ed9a78e1be82b83c07e08f5ebf005c65b48fad58d
+    upstream_id: 2.9.100
+  - registered: true
+    id: 2.9.46
+    owner: upstream
+    files:
+      v2.9.46.sql: 6a4e7945e654dd831c0961af10638c693ea687e674817ed655f0d590c040f64f
+    upstream_id: 2.9.46
+  - registered: true
+    id: 2.9.6
+    owner: upstream
+    files:
+      v2.9.6.sql: 7cc77685fd72e071a175ca94f8901ba6acb17abeb4ae37ca990601c61273c097
+    upstream_id: 2.9.6
+  - registered: true
+    id: 2.9.60
+    owner: upstream
+    files:
+      v2.9.60.sql: 549df7676aba2f23ab217f210e31aeeba41aa20ce046fa5a673e67ccd643d734
+    upstream_id: 2.9.60
+  - registered: true
+    id: 2.9.61
+    owner: upstream
+    files:
+      v2.9.61.sql: 84d4ea1b347c35df4979663a5ae78ea0dc410b1d87ebdcfe7e64576cb04ee8ed
+    upstream_id: 2.9.61
+  - registered: true
+    id: 2.9.62
+    owner: upstream
+    files:
+      v2.9.62.sql: f976bfa3d14467340bdebb5472c495c2fe38e71446106fb6c80c6ebab2fcad22
+    upstream_id: 2.9.62
+  - registered: true
+    id: 2.9.70
+    owner: upstream
+    files:
+      v2.9.70.sql: 82387c8822cb728679d6a98148c6628af80cad38dc7095d5345c4d71a6f586d6
+    upstream_id: 2.9.70
+  - registered: true
+    id: 2.9.97
+    owner: upstream
+    files:
+      v2.9.97.sql: 1bda1da7c698f62bf3a918aded43f7a0241f4efeadf081f77bf7c87d1b3078c2
+    upstream_id: 2.9.97
