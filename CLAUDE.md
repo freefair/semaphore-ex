@@ -31,6 +31,11 @@ Run security scans, security-focused investigation, security-relevant implementa
 
 ## Upstream Maintenance
 
+Maintain the project-specific sync skill in
+`.claude/skills/semaphore-upstream-sync/`. The Codex discovery entry under
+`.agents/skills/` links to that same source. Keep skill instructions, metadata,
+and helpers in this repository so policy changes and the skill stay aligned.
+
 Use regular upstream merges into the long-lived `develop` branch and the docs
 fork's `main` branch. Preserve published fork history. A sync request authorizes
 preparing the merge and scope-preserving compatibility fixes; obtain publication

@@ -40,6 +40,23 @@ Assessment requires new source files to be reviewed and staged, and rejects sour
 The checker uses Go export data and therefore needs dependencies and the embedded
 frontend available. Run it with the committed workspace enabled.
 
+## Project Skill
+
+The canonical `semaphore-upstream-sync` skill lives in
+[`../.claude/skills/semaphore-upstream-sync/`](../.claude/skills/semaphore-upstream-sync/SKILL.md),
+including its UI metadata and optional read-only diagnostic. Edit and commit
+that source alongside changes to the maintenance policy. The relative symlink
+at `.agents/skills/semaphore-upstream-sync` exposes the same source to Codex
+without a separate copy. Both entries travel with a clone.
+
+An existing personal installation may link to this directory for compatibility;
+it is not the source of truth. Preserve an existing real directory outside skill
+discovery before replacing it with a link. If the checkout moves, update that
+personal link; the repository's relative discovery link remains portable.
+
+The skill's optional diagnostic does not replace the repository-owned retained
+assessment and verification commands above.
+
 ## Migration Ownership
 
 `migrations.yml` records every SQL migration family, whether it is registered,
