@@ -80,7 +80,7 @@ A change to already applied upstream SQL becomes a new corrective local migratio
 not a rewrite of a shipped file.
 
 `-base-ref` makes old ledger entries append-only. The first ledger is checked
-against the original SQL at product commit `7472edea`; subsequent checks compare
+against the immutable product baseline recorded in `tools/upstreamcheck/baseline.go`; subsequent checks compare
 against the prior reviewed ledger. The CI gate uses the push predecessor or PR
 base, so changing a SQL checksum and its ledger entry together still fails.
 
@@ -98,15 +98,19 @@ choose a migration identity. Review new entries and retain existing entries verb
 `pro_interfaces`, and the root `db` package. It includes public type shapes,
 interface methods, constants, functions, exported receiver methods, and the selected
 implementation's signature and origin. Private controller types remain behind
-their inventoried public factory/interface contracts.
+their inventoried public factory/interface contracts. Receiver-method origin tracking
+applies to replaceable `pro` types. For core `db` and `pro_interfaces`, the inventory
+records package-level declarations and type shapes, including interface method
+signatures; concrete core receiver methods are not enumerated separately.
 
 The checker derives method origins from Go's method sets. A promoted method from
 `community-pro` remains visible as `community` even when the Enhanced type compiles.
 Function-valued aliases are also identified from their declarations. A new export,
 removed export, signature change, or implementation-origin change requires review.
 
-Community origin is not automatically a defect: shared task-summary repositories,
-parsers, and synchronized task-state factories are functional implementations.
+Community origin is not automatically a defect: shared parsers and synchronized
+task-state factories are functional implementations. Task-summary persistence is
+owned by the selected Enhanced SQL module and tested there.
 Unselected Terraform-state and external-secret-provider scaffolding remains unwired.
 Legacy email verification intentionally denies access. Every retained Community
 alias and missing legacy concrete type has a specific rationale in the inventory.
@@ -151,3 +155,8 @@ The script does not turn a failed test into an automatic pass.
 Browser verification of changed UI, semantic conflict review, security review when
 applicable, and exact-head remote CI results remain explicit maintenance steps.
 Ordinary verification never pushes, merges, rebases, or modifies SQL state.
+
+## Fork-Owned Source Boundaries
+
+See [source boundaries](source-boundaries.md) for the Enhanced module, same-package
+Go files, focused UI components, locale additions, and API bundling workflow.

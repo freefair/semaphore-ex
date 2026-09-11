@@ -1,0 +1,3321 @@
+upstream: 9cd15a7604eb3486134eaa32944d5dcf16a24655
+policies:
+  local-memory: Exclude journal/generated-rule files from rebuilt trees; preserve local originals and recovery refs.
+    Empty resulting commits map to their parent.
+  docs-pointer: Retain the historically selected docs revision. The final maintenance commit selects the separately
+    reviewed docs update.
+  fork-owned: Retain the feature or regression in its existing fork-only namespace; moving it again would not reduce
+    overlap with the recorded upstream tree.
+  shipped-migration: Retain SQL bytes, numeric registry and ownership ledger at every snapshot. Runtime namespacing
+    is a separate design and upgrade task.
+  api-fragments: Move new definitions and paths into api-docs-ex.yml at introduction; keep reference entries and
+    changes to existing upstream contracts in the main document. Expanded values remain identical.
+  locale-boundary: Move added English/German messages into lang/enhanced and merge them at initialization. Preserve
+    intentional changes to existing keys and exact merged values.
+  selected-summary: Select the Enhanced SQL implementation/factory and EnhancedTaskSummary component; restore the
+    corresponding upstream compatibility sources. Preserve implementation bodies and selected behavior tests.
+  declaration-or-option-extraction: Extract whole new Go declarations into same-package files or independent Vue
+    options into explicit imported spreads. Keep type identity, existing callers, module-local dependencies, initialization
+    and host templates intact.
+  single-product: Retain removal of commercial runtime/UI and separate-edition delivery. Restoring these changes
+    to reduce the diff would change the requested product.
+  contract-and-tooling: Retain owned contract checks and feature tooling. The approved API bundler scope provides
+    standalone Dredd compatibility; routine syncs still keep helper changes separate.
+  existing-test-contract: Keep regression expectations aligned with the selected public interfaces and behavior.
+    Preserve baseline failures as failures; extracted tests follow their same-package source.
+  authoritative-integration: Retain edits to existing request, serialization, SQL transaction, dispatch, permission,
+    admission, redaction, logging or configuration boundaries. Existing upstream declarations remain owned there;
+    whole new declarations are extracted where safe.
+  host-integration: Retain props, state, lifecycle and template wiring for selected behavior and permissions. New
+    independent options are extracted; methods closing over local helpers/constants stay with those bindings.
+  published-swagger-contract: Retain this existing public Swagger document and its selected API additions; normalize
+    only semantically identical formatting. Replacing it with the broader root API document would change its exposed
+    contract.
+  build-and-repository-integration: Keep minimal workspace, source-map, selected-product build, Docker, workflow
+    and fork-remote integration. Fork-only Task targets move to Taskfile.ex.yml without renaming their public commands.
+files:
+- path: api-docs.yml
+  decision: api-fragments
+  introducing_or_modifying_commits:
+  - 5d293a23
+  - c9b0803e
+  - 9a98bc9e
+  - 9af7fd68
+  - 884aa258
+  - 5aa2bd9e
+  - fe70f659
+  - 9a238904
+  - 4e1764a4
+  - c35cd3e8
+  - 6c8cf763
+  - 8c9d3f0b
+  - 5da29b75
+  - bcfda24a
+  - b627caee
+  - 1abf37d3
+  - 99fac511
+  - 7472edea
+- path: web/src/views/project/WorkflowEditor.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - aa399ae4
+  - 3fce54a6
+  - 0c7dbe0d
+  - '27420140'
+  - 50e3f859
+  - b9077d21
+  - fe1cbf42
+  - b4bd2abb
+  extraction:
+    source: web/src/views/project/WorkflowEditor.vue
+    target: web/src/lib/enhanced/workflow-editor.js
+    properties:
+      computed:
+      - canAdminister
+      - canManageCrossProjectTemplates
+      - workflowTemplateChoices
+      - workflowGraphTemplates
+      - editingNodeTemplateChoice
+      - editingNodeCrossProjectReference
+      - workflowRoleOptions
+      - approvalRoleModeOptions
+      - joinOptions
+      - approvalTimeoutOutcomeOptions
+      - artifactOutputTypes
+      - reachableArtifactOutputs
+      - clientIssues
+      - versionMessageTooLong
+      methods:
+      - clone
+      - prepareItem
+      - clearSelection
+      - resetEditorState
+      - applyTemplateChoice
+      - includePersistedCrossProjectReferences
+      - refreshCrossProjectReferences
+      - defaultApprovalRolePolicy
+      - onApprovalPolicyChanged
+      - addArtifactOutput
+      - removeArtifactOutput
+      - setArtifactOutputType
+      - artifactReferenceKey
+      - addArtifactInput
+      - removeArtifactInput
+      - setArtifactReference
+      - onEdgeConditionChanged
+      - markDirty
+      - problemText
+      - payload
+      - validate
+      - discard
+      - reload
+      - reloadAfterConflict
+      - onVersionRestored
+- path: api/router.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 65898bc1
+  - dbd092c7
+  - 1898efb2
+  - f7b1da98
+  - 5d293a23
+  - c9b0803e
+  - 9af7fd68
+  - bb9bd36b
+  - c7cf5a5b
+  - f39d3fc1
+  - 085f0b98
+  - e58eff15
+  - aa399ae4
+  - 859357cb
+  - 50e3f859
+  - f41f0671
+  - 84a30f60
+  - a40302fc
+  - da904af8
+  - b006a53c
+  - e55a50b0
+  - b4b58095
+  - 7722f8dd
+  - b65fe604
+  - '47221959'
+  - b06b0090
+  - 5d4bc514
+  - 8b01affe
+  - 2020d62b
+  - 35dd13a0
+  - fe1cbf42
+  - ca4ba829
+  - 600151d8
+  - 9a238904
+  - c6379c51
+  - 304d5843
+  - 730e27ac
+  - 9a3d6ebb
+  - e9ea7722
+  - 199bcb81
+  - df11cc70
+  - 58a496b2
+  - eb79e8f9
+  - cd9a57b8
+  - ac10d05c
+  - f4aa2376
+  extraction:
+    source: api/router.go
+    target: api/router_ex.go
+    moved:
+    - configureCrossProjectTemplateAudit
+    - configureExecutionPreflightAudit
+    - configureWorkflowFileArtifactAudit
+    - configureWorkflowArtifactRetentionAudit
+    - configureDeploymentWindowAudit
+    - configurePolicyGuardrailAudit
+- path: web/src/components/AnsibleStageView.vue
+  decision: selected-summary
+  introducing_or_modifying_commits:
+  - 9af7fd68
+  - 6fa8199c
+- path: api/runners/runners_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 1898efb2
+  - 35452da0
+  - f7b1da98
+  - 5d293a23
+  - c9b0803e
+  - 9a98bc9e
+  - a40302fc
+  - da904af8
+  - '44290861'
+  - '47221959'
+  - fe24770f
+  - 5d4bc514
+  - a644bc71
+  - 2020d62b
+  - ca4ba829
+  - a02259b1
+  extraction:
+    source: api/runners/runners_test.go
+    target: api/runners/runners_ex_test.go
+    moved:
+    - TestRegisterRunnerConsumesProjectTokenOnceAndPreservesBinding
+    - TestSecureRunnerRegistrationAndVersionRejectionContract
+    - TestSecureRunnerReconnectRejectsDowngradeAndStandardRunnerStaysCompatible
+    - TestRegisterRunnerRejectsExpiredProjectToken
+    - TestGetRunnerAcknowledgesCacheClearOnceAcrossRepeatedPolls
+    - TestGetRunnerPersistsBoundedHealthReportAndRestart
+    - TestGetRunnerHydratesSQLAssignmentOnAnotherHANode
+    - TestGetRunnerAcknowledgesEqualTimestampCacheClearOnce
+    - taskExecutionEvidenceRecorderSpy
+    - taskExecutionEvidenceRecorderSpy.RecordTaskExecutionSnapshot
+    - TestUpdateRunnerRecordsOnlyExplicitCompleteExecutionSnapshots
+    - TestNormalizeReportedGenerationAllowsOnlyLegacyFirstAssignment
+    - TestUpdateRunner_StaleGenerationFromSameRunnerReportedAsTerminated
+    - TestUpdateRunner_CancelingTaskAcceptsInflightNonTerminalProgress
+    - TestUpdateRunner_RejectedTaskRejectsNonTerminalProgress
+    - runnerMetadataAPIFixture
+    - newRunnerMetadataAPIFixture
+    - TestUpdateRunnerPersistsBoundedDockerExecutorMetadata
+    - TestUpdateRunnerPersistsBoundedKubernetesExecutorMetadata
+    - TestUpdateRunnerRejectsRawKubernetesTerminalReason
+    - TestUpdateRunnerPersistsDockerOrphanCandidateOutsideScanReadiness
+    - TestUpdateRunnerAcknowledgesDockerTelemetryOnlyOnce
+    - TestUpdateRunnerRoundTripsOnlyAllowListedDockerDenialRuleID
+    - TestUpdateRunnerRejectsExecutorMetadataForAnotherRunnerType
+- path: services/tasks/TaskPool.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 5d293a23
+  - 65c22d13
+  - c9b0803e
+  - '57530021'
+  - 884aa258
+  - 0c7dbe0d
+  - da904af8
+  - cf1ca4f5
+  - b006a53c
+  - fe1cbf42
+  - 9a238904
+  - 304d5843
+  - cee920f2
+  - da2d45fd
+  - 730e27ac
+  - 9a3d6ebb
+  - 0d1b0760
+  - 57f79384
+  - fdb0459d
+  - 28d288b0
+  - a02259b1
+  extraction:
+    source: services/tasks/TaskPool.go
+    target: services/tasks/TaskPool_ex.go
+    moved:
+    - TaskPool.ConfigurePolicyGuardrailAdmission
+    - TaskPool.SetExecutionPreflightReviewTokenIssuer
+    - TaskPool.SetGlobalCredentialRuntimeResolver
+    - TaskPool.ConfigureCrossProjectWorkflowTaskStore
+    - TaskPool.ConfigureDeploymentWindowAdmission
+    - TaskPool.ConfigureDeploymentWindowAudit
+    - TaskPool.DeploymentWindowAdmissionEnabled
+    - TaskPool.SetExecutorImageCapabilityResolver
+    - TaskPool.SetTaskControlLifecycle
+    - unfinishedRunnerTaskSource
+    - TaskPool.GetRunnerTasks
+    - TaskPool.GetOwnedRunningTasks
+    - TaskPool.writeStructuredDebug
+    - TaskPool.discardSupersededTask
+    - TaskPool.AddTaskWithDeploymentWindowAdmission
+    - TaskPool.RecordDeploymentWindowScheduleOccurrenceBinding
+    - TaskPool.recordDeploymentWindowAudit
+    - TaskPool.recordDeploymentWindowAdmission
+    - TaskPool.recordDeploymentWindowOverrideForbidden
+    - TaskPool.recordDeploymentWindowTaskBinding
+    - TaskPool.claimDeploymentWindowTaskAdmission
+    - sameTaskBindingID
+    - TaskPool.AddWorkflowTask
+    - TaskPool.AddWorkflowTaskWithDeploymentWindowDecision
+    - TaskPool.AddWorkflowTaskFenced
+    - TaskPool.AddWorkflowTaskFencedWithDeploymentWindowDecision
+    - TaskPool.AddCrossProjectWorkflowTaskFenced
+    - TaskPool.AddCrossProjectWorkflowTaskFencedWithDeploymentWindowDecision
+    - stringPointer
+    - TaskPool.addTask
+    - TaskPool.requirePolicyGuardrailTaskAdmission
+- path: services/runners/job_pool.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - f7b1da98
+  - 5d293a23
+  - c9b0803e
+  - 9a98bc9e
+  - 44a34b73
+  - a40302fc
+  - '44290861'
+  - '47221959'
+  - fe24770f
+  - b06b0090
+  - 5d4bc514
+  - 80c3b5b0
+  - 2020d62b
+  - 884d3aa4
+  - 9a238904
+  extraction:
+    source: services/runners/job_pool.go
+    target: services/runners/job_pool_ex.go
+    moved:
+    - runnerTransportTrust
+    - maxDockerReconciliationQuarantinesPerProgress
+    - JobPool.currentDockerPolicyAck
+    - JobPool.currentKubernetesPolicyAck
+    - JobPool.applyKubernetesPolicy
+    - JobPool.applyDockerPolicy
+    - JobPool.applyDockerRunnerIdentity
+    - JobPool.applyRunnerIdentity
+    - JobPool.dockerDispatchReady
+    - JobPool.kubernetesDispatchReady
+    - JobPool.canDispatchQueuedJob
+    - JobPool.applyDockerRemediationCommands
+    - JobPool.applyKubernetesRemediationCommands
+    - JobPool.finishStoppedJob
+- path: db/Workflow.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - aa399ae4
+  - 884aa258
+  - 3fce54a6
+  - 0c7dbe0d
+  - '27420140'
+  - 859357cb
+  - 50e3f859
+  - f41f0671
+  - cf1ca4f5
+  - 35dd13a0
+  - fe1cbf42
+  - ca4ba829
+  - 9a238904
+  - 304d5843
+  - cee920f2
+  - da2d45fd
+  - 8cf7ee8a
+  - 7472edea
+  extraction:
+    source: db/Workflow.go
+    target: db/Workflow_ex.go
+    moved:
+    - MaxWorkflowDelaySeconds
+    - WorkflowJoinMode
+    - WorkflowJoinAllSuccessful
+    - WorkflowJoinAllComplete
+    - WorkflowJoinAnySuccessful
+    - WorkflowConditionValueType
+    - WorkflowConditionBoolean
+    - WorkflowConditionInteger
+    - WorkflowConditionString
+    - WorkflowConditionInstruction
+    - WorkflowConditionProgram
+    - WorkflowNodeResultSummary
+    - WorkflowNodeResult
+    - MaxWorkflowVersionMessageBytes
+    - WorkflowVersion
+    - WorkflowVersionMutation
+    - WorkflowDefinitionVersion
+    - WorkflowValidationIssue
+    - WorkflowValidationResult
+    - WorkflowRunDesiredState
+    - WorkflowRunDesiredRunning
+    - WorkflowRunDesiredStopping
+    - WorkflowRunDesiredStopped
+    - WorkflowRunReconciliationState
+    - WorkflowRunReconciliationHealthy
+    - WorkflowRunReconciliationRecovering
+    - WorkflowRunReconciliationQuarantined
+    - WorkflowReconciliationDiagnostics
+    - WorkflowRunNodeStatus
+    - WorkflowRunNodePending
+    - WorkflowRunNodeQueued
+    - WorkflowRunNodeRunning
+    - WorkflowRunNodeWaiting
+    - WorkflowRunNodeApproval
+    - WorkflowRunNodeSucceeded
+    - WorkflowRunNodeFailed
+    - WorkflowRunNodeStopped
+    - WorkflowRunNodeCanceled
+    - WorkflowRunNodeBlocked
+    - WorkflowRunNodeSkipped
+    - WorkflowRunNodeStatus.IsFinished
+    - WorkflowRunNode
+    - WorkflowRunInput
+    - WorkflowApprovalTimeoutOutcome
+    - WorkflowApprovalTimeoutReject
+    - WorkflowApprovalTimeoutApprove
+    - WorkflowApprovalDecisionSource
+    - WorkflowApprovalDecisionSourceUser
+    - WorkflowApprovalDecisionSourceTimeout
+    - WorkflowApprovalDecisionSourceCancel
+    - MaxWorkflowApprovalPromptBytes
+    - MaxWorkflowApprovalCommentBytes
+    - MaxWorkflowApprovalCorrelationIDBytes
+    - MaxWorkflowApprovalDirectoryRevisionFingerprintBytes
+    - WorkflowApprovalDecision
+    - WorkflowAccessPolicy
+    - WorkflowApprovalRoleMode
+    - WorkflowApprovalRoleModeAnyOf
+    - WorkflowApprovalRoleModeAllOf
+    - WorkflowApprovalRolePolicy
+    - WorkflowApprovalRolePolicySnapshot
+    - WorkflowApprovalRoleOrigin
+    - WorkflowApprovalRoleOriginBuiltIn
+    - WorkflowApprovalRoleOriginManual
+    - WorkflowApprovalRoleOriginLDAP
+    - WorkflowApprovalRoleOriginOIDC
+    - WorkflowApprovalContribution
+    - WorkflowApprovalContribution.Validate
+    - isCanonicalSHA256Fingerprint
+    - WorkflowAccessPolicy.Validate
+    - WorkflowApprovalRolePolicy.Validate
+    - validateWorkflowRoleReferences
+    - WorkflowNode.ValidateDelay
+    - WorkflowJoinMode.Validate
+    - WorkflowNode.EffectiveJoinMode
+    - WorkflowNode.EffectiveApprovalPermission
+    - WorkflowNode.EffectiveApprovalTimeoutOutcome
+    - WorkflowApprovalTimeoutOutcome.Validate
+    - WorkflowApprovalDecision.Validate
+    - WorkflowParameterValidationStore
+    - WorkflowGlobalCredentialValidationStore
+    - WorkflowNodeResultStore
+- path: web/src/views/project/WorkflowRun.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 884aa258
+  - 3fce54a6
+  - 0c7dbe0d
+  - '27420140'
+  - 50e3f859
+  - f41f0671
+  - cf1ca4f5
+  - b9077d21
+  - a99a1a64
+  extraction:
+    source: web/src/views/project/WorkflowRun.vue
+    target: web/src/lib/enhanced/workflow-run.js
+    properties:
+      computed:
+      - canAdminister
+      - reconciliationQuarantined
+      - reconciliationOwnership
+      - resolvedApprovals
+      - elapsedTime
+      - parallelProgress
+      - resolvedArtifactInputs
+      - artifactMetadataCount
+      methods:
+      - workflowOwnershipSummary
+      - runStatusLabel
+      - artifactAvailabilityColor
+      - fileArtifactDownloadURL
+      - fileArtifactDownloadable
+      - fileArtifactStateLabel
+      - fileArtifactStateColor
+      - fileArtifactExpiryClass
+      - fileArtifactExpiryLabel
+      - formatBytes
+      - copyArtifactChecksum
+      - downloadFileArtifact
+      - schemaSummary
+      - nodeLabel
+      - normalizeNodeStatus
+      - isActiveRunStatus
+      - formatElapsed
+      - onWebsocketDataReceived
+      - retryReconciliation
+      - approvalStatusLabel
+      - formatDate
+- path: db/sql/template.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 65c22d13
+  - b4b58095
+  - c219aa25
+  extraction:
+    source: db/sql/template.go
+    target: db/sql/template_ex.go
+    moved:
+    - templateWithLastTask
+    - templateSearchVisibleIDChunkSize
+    - SqlDb.filterVisibleTemplateSearchCandidates
+    - templateSearchCanUseSQLCandidateFilter
+    - templateSearchSQLPattern
+    - templateSearchSQLCondition
+    - SqlDb.GetTemplatePermissionContext
+    - SqlDb.getTemplateRoleOverride
+    - SqlDb.normalizeTemplateRole
+- path: web/src/lang/en.js
+  decision: locale-boundary
+  introducing_or_modifying_commits:
+  - 65898bc1
+  - 1898efb2
+  - 35452da0
+  - f7b1da98
+  - 9a98bc9e
+  - bb9bd36b
+  - e58eff15
+  - aa399ae4
+  - 3fce54a6
+  - 0c7dbe0d
+  - '27420140'
+  - 859357cb
+  - 50e3f859
+  - f41f0671
+  - 84a30f60
+  - ca181981
+  - cf1ca4f5
+  - e55a50b0
+  - b9077d21
+  - fe1cbf42
+  - 8560d954
+  - a235a527
+  - 9bb0d601
+  - 4ce1d30f
+  - 4f3b2f3a
+  - '84425813'
+  - 3f97169a
+  - 1d608ca2
+  - 88e301e3
+  - b7549e6d
+  - a99a1a64
+- path: api/login.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 085f0b98
+  - e58eff15
+  - b65fe604
+  extraction:
+    source: api/login.go
+    target: api/login_ex.go
+    moved:
+    - loginWithTOTPService
+    - loginWithIdentityServices
+    - managedLDAPProviders
+    - passwordLoginAllowed
+    - loginByLegacyLDAP
+    - authenticateLegacyLDAPProfile
+    - loginLegacyCompatible
+    - oidcGroupClaimConfiguration
+    - parseOIDCGroupClaim
+    - oidcRedirectWithTOTPService
+    - oidcRedirectWithIdentityServices
+- path: api/runners/runners.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 35452da0
+  - f7b1da98
+  - 5d293a23
+  - c9b0803e
+  - 9a98bc9e
+  - a40302fc
+  - da904af8
+  - '44290861'
+  - '47221959'
+  - fe24770f
+  - b06b0090
+  - 5d4bc514
+  - 2020d62b
+  - 884d3aa4
+  - 9a238904
+  - a02259b1
+  extraction:
+    source: api/runners/runners.go
+    target: api/runners/runners_ex.go
+    moved:
+    - RunnerController.SetMetrics
+    - kubernetesNamespaceAllowed
+    - RunnerController.persistTaskExecutionEvidence
+    - taskExecutionEvidenceFromSnapshot
+    - normalizeReportedGeneration
+- path: services/runners/job_pool_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - f7b1da98
+  - 5d293a23
+  - 44a34b73
+  - a40302fc
+  - '47221959'
+  - fe24770f
+  - b06b0090
+  - 80c3b5b0
+  - 078d2f21
+  - 9a238904
+  extraction:
+    source: services/runners/job_pool_test.go
+    target: services/runners/job_pool_ex_test.go
+    moved:
+    - TestJobPool_CommonHeadersReportHealthMetadata
+    - dockerPolicyConsumerStub
+    - kubernetesTelemetryReporterStub
+    - kubernetesTelemetryReporterStub.NewExecutor
+    - kubernetesTelemetryReporterStub.PendingKubernetesTelemetry
+    - kubernetesTelemetryReporterStub.AcknowledgeKubernetesTelemetry
+    - runnerIdentityConsumerStub
+    - runnerIdentityConsumerStub.ApplyRunnerIdentity
+    - TestJobPoolAppliesOptionalRunnerIdentityBeforeExecutorConstruction
+    - dockerPolicyConsumerStub.NewExecutor
+    - dockerPolicyConsumerStub.ApplyDockerExecutionPolicy
+    - dockerPolicyConsumerStub.DockerExecutionPolicyAcknowledgement
+    - dockerPolicyConsumerStub.ApplyDockerRunnerIdentity
+    - dockerPolicyConsumerStub.ApplyDockerReconciliationSession
+    - dockerPolicyConsumerStub.DockerReconciliationSession
+    - dockerPolicyConsumerStub.ScanDockerReconciliation
+    - dockerPolicyConsumerStub.RemediateDockerReconciliation
+    - denyingDockerPolicyProvider
+    - denyingDockerPolicyProvider.NewExecutor
+    - TestJobPoolAcknowledgesDockerPolicyBeforeDispatch
+    - TestJobPoolSubmitsDockerScanBeforeDispatch
+    - TestJobPoolAcknowledgesKubernetesTelemetryOnlyForCurrentFence
+    - TestJobPoolInstallsPollSessionBeforeExecutingDockerRemediation
+    - ptrDockerPolicy
+    - TestJobPoolRejectsQueuedDockerJobWithSupersededPolicySnapshot
+    - TestJobPoolQueuesOneTerminalReportForDockerPolicyDenial
+    - confirmedStopExecutor
+    - failingRoundTripper
+    - failingRoundTripper.RoundTrip
+    - confirmedStopExecutor.ConfirmStop
+    - confirmedStopExecutor.DockerCancellationQuarantine
+    - TestJobPoolApplyTerminatedDockerJobRequiresConfirmedStop
+    - TestJobPoolBoundsAndAcknowledgesDockerQuarantineProgressPrefix
+    - TestJobPoolRetainsDockerQuarantinesAfterRejectedOrFailedProgress
+    - TestJobPool_SendProgressIncludesAssignmentGeneration
+    - TestJobProgressWireKeepsLegacyKeysWhileAddingGeneration
+    - TestJobPoolSendProgressMarksAnEmptyKnownJobsSnapshotAsComplete
+    - TestJobPool_DuplicatePollDoesNotQueueAssignmentTwice
+- path: api/projects/tasks.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 5d293a23
+  - c9b0803e
+  - 9af7fd68
+  - da904af8
+  - b4b58095
+  - 35dd13a0
+  - 304d5843
+  - 730e27ac
+  - 5c0a7178
+  - f4aa2376
+  extraction:
+    source: api/projects/tasks.go
+    target: api/projects/tasks_ex.go
+    moved:
+    - taskStartBodyLimit
+    - defaultTaskSummaryPageSize
+    - maxTaskSummaryPageSize
+    - taskPreflightFingerprintHeader
+    - taskPreflightTokenHeader
+    - TaskController.ConfigureExecutionPreflightAudit
+    - TaskController.PreviewTask
+    - TaskController.writeTaskExecutionPreflightError
+    - TaskController.recordExecutionPreflightAudit
+    - TaskController.refillVisibleWorkflowTaskPage
+    - TaskController.WorkflowTaskAccessMiddleware
+    - TaskController.WorkflowTaskControlAccessMiddleware
+    - TaskController.filterWorkflowTasksForRead
+    - TaskController.authorizeWorkflowTask
+    - parseTaskSummaryPageParams
+    - TaskController.GetTaskRunnerAttempts
+    - taskRecoveryManager
+    - TaskController.GetTaskRecoveryDiagnostics
+    - TaskController.RetryTaskRecovery
+    - TaskController.GetTaskReadPermissionMiddleware
+    - TaskController.GetTaskSummary
+    - TaskController.GetTaskSummaryHosts
+    - TaskController.GetTaskSummaryStages
+    - TaskController.GetTaskSummaryErrors
+    - deploymentWindowOverrideInput
+- path: db/sql/task.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 35452da0
+  - f7b1da98
+  - 5d293a23
+  - 65c22d13
+  - da904af8
+  - cf1ca4f5
+  - fe1cbf42
+  - ca4ba829
+  - cee920f2
+  - f7c99a43
+  - a02259b1
+  extraction:
+    source: db/sql/task.go
+    target: db/sql/task_ex.go
+    moved:
+    - SqlDb.createTaskWithAdmissionFences
+    - validateDeploymentWindowTaskBindingTx
+    - validatePolicyGuardrailTaskBindingTx
+    - bindPolicyGuardrailTaskEvaluationTx
+    - sameTaskBindingID
+    - attachDeploymentWindowWorkflowTaskTx
+    - SqlDb.CreateWorkflowTaskFenced
+    - SqlDb.UpdateTaskFenced
+    - taskUpdateStatement
+    - taskTerminalNotification
+    - SqlDb.GetUnfinishedRunnerTasks
+- path: services/tasks/runner_reconciler_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 5d293a23
+  - 65c22d13
+  - 44a34b73
+  - da904af8
+  - b006a53c
+  - fe24770f
+  extraction:
+    source: services/tasks/runner_reconciler_test.go
+    target: services/tasks/runner_reconciler_ex_test.go
+    moved:
+    - TestApplyOrphanRecoveryOnlyReplacesExecutionWhenEvidenceProvesItAbsent
+    - TestRevokeOrphanedTaskAssignmentWaitsBeforeRequeue
+    - TestApplyOrphanRecoveryReconcilesExactTerminalResult
+    - TestApplyOrphanRecoveryStateMatrix
+    - reconcilerStoreStub.UpdateTaskRunner
+    - installRecoveryFence
+    - createGenerationAwareReconcilerTask
+    - TestFailTaskRunnerLost_FinalizesConcurrentTerminalWinner
+    - TestStopTaskRunnerLost
+    - TestStopTaskRunnerLostQuarantinesDockerWithoutDaemonEvidence
+- path: pro_interfaces/ha.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 84a30f60
+  - ca181981
+  - 220dac49
+  - da904af8
+  - cf1ca4f5
+  - b006a53c
+  - da2d45fd
+  - a02259b1
+  extraction:
+    source: pro_interfaces/ha.go
+    target: pro_interfaces/ha_ex.go
+    moved:
+    - ClusterNodeIdentity
+    - NewClusterNodeIdentity
+    - ScheduleOccurrenceKey
+    - ScheduleOccurrence
+    - NewScheduleOccurrence
+    - DeploymentWindowScheduleDecisionKey
+    - ScheduleOccurrenceLease
+    - ScheduleOccurrenceLeaseRepository
+    - TaskExecutionIdentity
+    - NewTaskExecutionIdentity
+    - TaskControlLease
+    - TaskControlLeaseRepository
+    - TaskExecutionState
+    - TaskExecutionRunning
+    - TaskExecutionTerminal
+    - TaskExecutionAbsent
+    - TaskExecutionUnknown
+    - TaskExecutionEvidence
+    - TaskRecoveryDecision
+    - TaskRecoveryObserve
+    - TaskRecoveryRecover
+    - TaskRecoveryQuarantine
+    - TaskRecoveryAssessment
+    - DecideTaskRecovery
+    - TaskControlRecoveryRecord
+    - TaskControlRecoveryRepository
+    - ClusterHeartbeatRedisClient
+    - ClusterRedisDiagnosticsClient
+    - ClusterHeartbeatStore
+    - ClusterNodeCompatibilityState
+    - ClusterNodeCompatible
+    - ClusterNodeDraining
+    - ClusterNodeIncompatibleEdition
+    - ClusterNodeIncompatibleSchema
+    - ClusterNodeIncompatibleProtocol
+    - ClusterNodeIncompatibleCapabilities
+    - ClusterNodeStale
+    - ClusterNodeRegistration
+    - ClusterCompatibilityRequirements
+    - ClusterNodeCompatibility
+    - ClusterNodeRepository
+    - EvaluateClusterNodeCompatibility
+    - ClusterDrainer
+    - TaskRecoveryDiagnostics
+    - ClusterServiceReadinessState
+    - ClusterServiceReady
+    - ClusterServiceDegradedLiveEvents
+    - ClusterServiceRegistrationPending
+    - ClusterServiceDatabaseUnavailable
+    - ClusterServiceReadiness
+    - ClusterReadinessProvider
+    - ClusterCoordinatorHealth
+    - WorkflowProgressionHealth
+    - WorkflowProgressionHealthSource
+    - ClusterCoordinatorHealthSource
+- path: services/tasks/runner_reconciler.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 5d293a23
+  - 44a34b73
+  - da904af8
+  - b006a53c
+  - fe24770f
+  extraction:
+    source: services/tasks/runner_reconciler.go
+    target: services/tasks/runner_reconciler_ex.go
+    moved:
+    - taskRecoveryFencedStore
+    - TaskPool.ApplyOrphanRecovery
+    - TaskPool.RevokeOrphanedTaskAssignment
+    - TaskPool.applyFencedRecoveryTransition
+    - TaskPool.quarantineOrphanedTask
+    - taskMatchesRecoveryLease
+    - runnerIDFromSnapshot
+    - TaskPool.applyPersistedRunnerStatus
+    - TaskPool.finalizeConcurrentRunnerWinner
+    - TaskPool.stopTaskRunnerLost
+    - TaskPool.isDockerCancellation
+- path: pro/db/sql/ansible_task.go
+  decision: selected-summary
+  introducing_or_modifying_commits:
+  - 68191e61
+  - 9af7fd68
+  extraction:
+    source: pro/db/sql/ansible_task.go
+    target: pro/db/sql/ansible_task_ex.go
+    moved:
+    - defaultSummaryPageSize
+    - maxSummaryPageSize
+    - AnsibleTaskStoreImpl.IngestTaskSummaryEvent
+    - AnsibleTaskStoreImpl.FinalizeTaskSummary
+    - AnsibleTaskStoreImpl.RepairTaskSummary
+    - AnsibleTaskStoreImpl.recompute
+    - AnsibleTaskStoreImpl.GetTaskSummary
+    - AnsibleTaskStoreImpl.GetTaskSummaryHosts
+    - AnsibleTaskStoreImpl.GetTaskSummaryStages
+    - AnsibleTaskStoreImpl.GetTaskSummaryErrors
+    - AnsibleTaskStoreImpl.requireTask
+    - requireTask
+    - ensureSummary
+    - insertIgnoreQuery
+    - recomputeSummary
+    - taskStatus
+    - summaryPageSize
+    - trimPage
+    - nullableTime
+    - hostStatus
+- path: web/src/components/SubscriptionForm.vue
+  decision: single-product
+  introducing_or_modifying_commits:
+  - 6fa8199c
+- path: db/sql/user.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 085f0b98
+  - e55a50b0
+  - b4b58095
+  extraction:
+    source: db/sql/user.go
+    target: db/sql/user_ex.go
+    moved:
+    - SqlDb.updateUserFields
+    - normalizeProjectRoleAssignmentTx
+    - projectRoleAssignmentPermissionsTx
+    - requireAnotherProjectAdministratorTx
+- path: db/Task.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 35452da0
+  - f7b1da98
+  - 5d293a23
+  - 65c22d13
+  - c9b0803e
+  - 884aa258
+  - ca181981
+  - a40302fc
+  - da904af8
+  - '44290861'
+  - '47221959'
+  - a644bc71
+  - 2020d62b
+  - fe1cbf42
+  - ca4ba829
+  - 9a238904
+  - 304d5843
+  - cee920f2
+  - f7c99a43
+  extraction:
+    source: db/Task.go
+    target: db/Task_ex.go
+    moved:
+    - Task.DecodeWorkflowTemplateProvenance
+    - RunnerAttemptOutcome
+    - RunnerAttemptActive
+    - RunnerAttemptRequeued
+    - RunnerAttemptSucceeded
+    - RunnerAttemptFailed
+    - RunnerAttemptStopped
+    - RunnerAttempt
+    - RunnerExecutorMetadata
+    - MaxRunnerContainerIdentityLength
+    - RunnerExecutorMetadata.Validate
+    - RunnerExecutorMetadata.validateKubernetes
+    - RunnerExecutorMetadata.hasKubernetesProvenance
+    - immutableSHA256Image
+    - safeDNSLabel
+    - safeExecutorIdentity
+    - TaskExecutionEvidenceState
+    - TaskExecutionEvidenceRunning
+    - TaskExecutionEvidenceTerminal
+    - TaskExecutionEvidenceAbsent
+    - TaskExecutionEvidenceUnknown
+    - TaskExecutionEvidence
+    - TaskExecutionEvidenceRecorder
+- path: services/tasks/TaskRunner.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 5d293a23
+  - 65c22d13
+  - c9b0803e
+  - 9af7fd68
+  - 884aa258
+  - b006a53c
+  - fe1cbf42
+  - 9a238904
+  - 304d5843
+  - cee920f2
+  extraction:
+    source: services/tasks/TaskRunner.go
+    target: services/tasks/TaskRunner_ex.go
+    moved:
+    - TaskRunner.publishStatus
+    - TaskRunner.addAutorunTask
+    - valueOrEmpty
+    - TaskRunner.resolveExecutionSnapshotInventory
+    - TaskRunner.resolveExecutionSnapshotTemplateVaults
+    - TaskRunner.resolveCrossProjectTemplateVaults
+    - TaskRunner.loadExecutionSnapshotEnvironments
+    - TaskRunner.mergeEnvironmentLayers
+    - TaskRunner.resolveExecutionSnapshotEnvironmentSecrets
+- path: api/projects/tasks_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 5d293a23
+  - 65c22d13
+  - 9af7fd68
+  - da904af8
+  - 5c0a7178
+  extraction:
+    source: api/projects/tasks_test.go
+    target: api/projects/tasks_ex_test.go
+    moved:
+    - taskSummaryRepositoryStub
+    - taskSummaryRepositoryStub.CreateAnsibleTaskHost
+    - taskSummaryRepositoryStub.CreateAnsibleTaskError
+    - taskSummaryRepositoryStub.GetAnsibleTaskHosts
+    - taskSummaryRepositoryStub.GetAnsibleTaskErrors
+    - taskSummaryRepositoryStub.IngestTaskSummaryEvent
+    - taskSummaryRepositoryStub.FinalizeTaskSummary
+    - taskSummaryRepositoryStub.RepairTaskSummary
+    - taskSummaryRepositoryStub.GetTaskSummary
+    - TestTaskStartOverrideEnvelopeIsStrictAndTransportLocal
+    - taskSummaryRepositoryStub.GetTaskSummaryHosts
+    - taskSummaryRepositoryStub.GetTaskSummaryStages
+    - taskSummaryRepositoryStub.GetTaskSummaryErrors
+    - TestParseTaskSummaryPageParamsBoundsCursor
+    - TestTaskSummaryAPIStatesAndRepairContract
+    - TestTaskSummaryAPIUsesBoundedPersistedPages
+    - TestTaskSummaryRouteHidesForbiddenProjectAndReturnsMissingTask
+    - TestGetTaskRunnerAttemptsIsScopedToContextTask
+    - TestGetTaskReturnsRedactedPlacementDecision
+    - taskRecoveryManagerFake
+    - taskRecoveryManagerFake.Start
+    - taskRecoveryManagerFake.Stop
+    - taskRecoveryManagerFake.Drain
+    - taskRecoveryManagerFake.Resume
+    - taskRecoveryManagerFake.TaskRecoveryDiagnostics
+    - taskRecoveryManagerFake.RetryTaskRecovery
+    - TestTaskRecoveryDiagnosticsAreValueFreeAndRetryUsesScopedTask
+    - TestTaskRecoveryEndpointsAreUnavailableWithoutEnhancedManager
+- path: db/sql/role.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - e55a50b0
+  - b4b58095
+  - 35dd13a0
+  - f82069ed
+  extraction:
+    source: db/sql/role.go
+    target: db/sql/role_ex.go
+    moved:
+    - SqlDb.GetProjectRoleByID
+    - SqlDb.CreateProjectRole
+    - SqlDb.UpdateProjectRole
+    - SqlDb.DeleteProjectRole
+    - lockProjectRoleMutations
+    - SqlDb.ResolveProjectWorkflowRoleIdentity
+    - SqlDb.projectWorkflowRoleIdentityBase
+    - workflowRoleDirectoryProvenance
+    - SqlDb.resolveLDAPProjectWorkflowRoleIdentity
+    - SqlDb.resolveOIDCProjectWorkflowRoleIdentity
+    - directoryWorkflowRoleIdentity
+- path: web/public/swagger/api-docs.yml
+  decision: published-swagger-contract
+  introducing_or_modifying_commits:
+  - d28a7509
+- path: web/src/views/project/Templates.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 4f3b2f3a
+  extraction:
+    source: web/src/views/project/Templates.vue
+    target: web/src/lib/enhanced/templates.js
+    properties:
+      methods:
+      - normalizeTemplateSearch
+      - cancelQueuedTemplateSearch
+      - queueTemplateSearch
+      - applyTemplateSearch
+      - clearTemplateSearch
+      - onTemplateSearchShortcut
+      - cancelTemplateSearchRequest
+      - loadItems
+      - highlightTemplateSearch
+      - templateSearchFields
+      - templateSearchSecondaryMatch
+- path: api/projects/keys_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+  - c6379c51
+  extraction:
+    source: api/projects/keys_test.go
+    target: api/projects/keys_ex_test.go
+    moved:
+    - TestGetKeyExposesValueFreeRuntimeSecretReference
+    - TestUpdateKeyRejectsGenericSecretOverrideForGeneratedSSHKey
+    - generatedSSHKeyServiceMock
+    - generatedSSHKeyServiceMock.CreateGeneratedSSHKey
+    - generatedSSHKeyServiceMock.RotateGeneratedSSHKey
+    - generatedSSHKeyAPIStore
+    - generatedSSHKeyAPIStore.GetRepositories
+    - generatedSSHKeyAPIStore.GetAccessKeys
+    - generatedSSHKeyAPIStore.CreateEvent
+    - generatedSSHKeyLogWriter
+    - generatedSSHKeyLogWriter.WriteEventLog
+    - generatedSSHKeyLogWriter.WriteTaskLog
+    - generatedSSHKeyLogWriter.WriteResult
+    - generatedSSHKeyMetadata
+    - generatedSSHKeyRequestWithContext
+    - TestGeneratedSSHKeyRequestRejectsUnknownAndOversizedBodies
+    - TestAccessKeyReadDTORedactsEverySecretFieldAndExposesGeneratedMetadata
+    - TestGetKeysHandlersRedactPrivateFieldsAndExposeGeneratedMetadataAfterReopen
+    - TestGenerateSSHKeyReturnsOnlyPublicMaterialAndAuditsSuccess
+    - TestGenerateSSHKeyFailureDoesNotCreateEventOrSuccessResponse
+    - TestRotateGeneratedSSHKeyClearsRepositoryCacheAndRequiresManagerPermission
+    - TestRotateGeneratedSSHKeyRejectsBeforeInvalidatingRepositoryCache
+- path: api/runners.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - '47221959'
+  - b06b0090
+  - 8b01affe
+  - 2020d62b
+  extraction:
+    source: api/runners.go
+    target: api/runners_ex.go
+    moved:
+    - dockerReconciliationDiagnosticsResponse
+    - kubernetesReconciliationDiagnosticsResponse
+    - dockerReconciliationDiagnosticDTO
+    - dockerReconciliationQuarantineDTO
+    - dockerReconciliationCandidateDTO
+    - dockerReconciliationTargetDTO
+    - dockerReconciliationCandidateTargetDTO
+    - dockerReconciliationPage
+    - GlobalRunnerController.GetDockerReconciliationQuarantines
+    - GlobalRunnerController.GetDockerReconciliationCandidates
+    - GlobalRunnerController.GetDockerReconciliationDiagnostics
+    - GlobalRunnerController.RequestDockerReconciliationRemediation
+    - GlobalRunnerController.GetKubernetesReconciliationDiagnostics
+    - GlobalRunnerController.RequestKubernetesReconciliationRemediation
+    - GlobalRunnerController.GetDockerExecutionPolicy
+    - GlobalRunnerController.UpdateDockerExecutionPolicy
+    - GlobalRunnerController.TestDockerExecutionPolicy
+    - kubernetesPolicyAlias
+    - GlobalRunnerController.GetKubernetesExecutionPolicy
+    - GlobalRunnerController.UpdateKubernetesExecutionPolicy
+    - GlobalRunnerController.TestKubernetesExecutionPolicy
+- path: web/src/components/KeyForm.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+  - 969e38b7
+  - 6fa8199c
+  extraction:
+    source: web/src/components/KeyForm.vue
+    target: web/src/lib/enhanced/key-form.js
+    properties:
+      computed:
+      - runtimeDecision
+      - runtimeCanExecute
+      - runtimeCanWrite
+      - runtimeReferenceDisabled
+      - runtimeTypeDisabled
+      - runtimeSecretStorages
+      - canGenerateSSHKey
+      - generatedSSHKeyMetadata
+      methods:
+      - afterReset
+      - save
+      - saveGeneratedSSHKey
+      - clearGeneratedSSHKeyInput
+      - generatedSSHKeyRequest
+- path: db/Runner.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 1898efb2
+  - 35452da0
+  - f7b1da98
+  - 65c22d13
+  - c9b0803e
+  - 9a98bc9e
+  - '47221959'
+  - 2020d62b
+  - 304d5843
+  extraction:
+    source: db/Runner.go
+    target: db/Runner_ex.go
+    moved:
+    - RunnerHeartbeatState
+    - RunnerExecutorType
+    - RunnerTagMatchMode
+    - MaxRunnerTags
+    - MaxRunnerTagLength
+    - NormalizeRunnerTags
+    - ValidateRunnerTags
+    - Runner.EffectiveExecutorType
+    - Runner.SupportsExecutorImage
+    - NormalizeRunnerExecutorType
+    - Runner.IsCacheClearPending
+    - Runner.HeartbeatState
+    - RunnerHealth
+    - Runner.Health
+    - RunnerPlacementScope
+    - RunnerPlacementReasonCode
+    - RunnerPlacementProject
+    - RunnerPlacementGlobal
+    - RunnerPlacementReasonSelected
+    - RunnerPlacementReasonScopeAccepted
+    - RunnerPlacementReasonDifferentProject
+    - RunnerPlacementReasonActive
+    - RunnerPlacementReasonInactive
+    - RunnerPlacementReasonRegistered
+    - RunnerPlacementReasonNotRegistered
+    - RunnerPlacementReasonOnline
+    - RunnerPlacementReasonOffline
+    - RunnerPlacementReasonCapacityAvailable
+    - RunnerPlacementReasonCapacity
+    - RunnerPlacementReasonTagMatched
+    - RunnerPlacementReasonTagMismatch
+    - RunnerPlacementReasonImageSupported
+    - RunnerPlacementReasonImageUnsupported
+    - RunnerPlacementReasonNoCandidate
+    - RunnerPlacementEvaluation
+    - RunnerPlacementDecision
+    - RunnerPlacementDecision.Scan
+    - RunnerPlacementDecision.Value
+    - RunnerTaskAssignment
+    - RunnerTaskHistoryItem
+    - RunnerLifecycleConflictError
+    - RunnerLifecycleConflictError.Error
+- path: web/src/components/UserForm.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 085f0b98
+  - b4b58095
+  - 6fa8199c
+  extraction:
+    source: web/src/components/UserForm.vue
+    target: web/src/lib/enhanced/user-form.js
+    properties:
+      computed:
+      - availableGlobalRoles
+      methods:
+      - loadGlobalRoleData
+      - addGlobalRoleAssignment
+      - removeGlobalRoleAssignment
+      - globalPermissionDescription
+      - globalPermissionProvenance
+- path: web/src/components/SecretStorageForm.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+  - f39d3fc1
+  extraction:
+    source: web/src/components/SecretStorageForm.vue
+    target: web/src/lib/enhanced/secret-storage-form.js
+    properties:
+      computed:
+      - isRuntimeProvider
+      - isManagedOutbound
+      - managedLocalKeys
+      - runtimeProviderNotice
+      - runtimeCredentialLabel
+      - connectionHealthMessage
+      methods:
+      - testConnection
+- path: .github/workflows/pro_selfhosted_beta.yml
+  decision: single-product
+  introducing_or_modifying_commits:
+  - '21966423'
+  - 0cd24f8d
+- path: .github/workflows/pro_selfhosted_release.yml
+  decision: single-product
+  introducing_or_modifying_commits:
+  - '21966423'
+  - 0cd24f8d
+- path: pkg/metrics/metrics.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - dbd092c7
+  - bb9bd36b
+  - 5d4bc514
+  - 884d3aa4
+  extraction:
+    source: pkg/metrics/metrics.go
+    target: pkg/metrics/metrics_ex.go
+    moved:
+    - Metrics.RecordKubernetesTelemetry
+    - Metrics.RecordDockerTelemetry
+    - Metrics.RecordEnhancedAction
+    - Metrics.ObserveDependency
+    - Metrics.SetQueueDepth
+    - Metrics.SetAuditWebhookQueueHealth
+    - Metrics.RecordAuditWebhookAttempt
+    - Metrics.RecordAuditWebhookSuccess
+    - Metrics.RecordAuditWebhookPermanentFailure
+    - Metrics.RecordAuditWebhookRedactionFailure
+    - Metrics.RecordDroppedRecord
+    - validDependency
+    - validSink
+    - validDropReason
+- path: api/projects/templates.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c9b0803e
+  - b4b58095
+  - fe1cbf42
+  - c219aa25
+  extraction:
+    source: api/projects/templates.go
+    target: api/projects/templates_ex.go
+    moved:
+    - TemplateController.ConfigureCrossProjectDeletionGuard
+    - validateTemplateExecutorImage
+    - applyTemplateSearchQuery
+    - TemplateController.AddTemplate
+    - addTemplate
+    - TemplateController.UpdateTemplate
+    - updateTemplate
+    - TemplateController.RemoveTemplate
+    - removeTemplate
+    - writeTemplateDeleteEvent
+    - TemplateController.GetEffectiveTemplatePermissions
+    - projectPermissionIDs
+    - templatePermissionIDs
+    - writeTemplateRoleError
+- path: web/src/views/project/SecretStorages.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+  - f39d3fc1
+  - 5b3a1223
+  - 5868d8a3
+  - 77ba85e7
+  - 6fa8199c
+  extraction:
+    source: web/src/views/project/SecretStorages.vue
+    target: web/src/lib/enhanced/secret-storages.js
+    properties:
+      computed:
+      - runtimeDecision
+      - dialogStorageType
+      - runtimeCanRead
+      - runtimeCanWrite
+      - runtimeCanExecute
+      methods:
+      - beforeLoadItems
+      - formatCapabilityValue
+      - createSyncRequestID
+      - openSyncHistory
+      - formatTimestamp
+      - lastAttempt
+- path: pkg/debuglog/filter.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - '57530021'
+  extraction:
+    source: pkg/debuglog/filter.go
+    target: pkg/debuglog/filter_ex.go
+    moved:
+    - DebugFilterDefaultAll
+    - DebugFilterDefaultConfigured
+    - compiledFilter
+    - Manager
+    - NewManager
+    - NewManagerWithReloadError
+    - Manager.Reload
+    - Manager.RecordReloadError
+    - denyAll
+    - Manager.Enabled
+    - Manager.Diagnostics
+    - compile
+    - splitSpec
+    - validatePattern
+    - matches
+    - sanitizeReloadError
+    - cloneDiagnostics
+- path: api/users.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - 085f0b98
+  - b4b58095
+  - f4aa2376
+  - 7472edea
+- path: db/sql/global_runner.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 1898efb2
+  - 35452da0
+  - f7b1da98
+  - 65c22d13
+  - c9b0803e
+  - 9a98bc9e
+  - '47221959'
+  - 2020d62b
+  - 99fac511
+  extraction:
+    source: db/sql/global_runner.go
+    target: db/sql/global_runner_ex.go
+    moved:
+    - SqlDb.UpdateRunnerSecurity
+    - SqlDb.ResetProjectRunnerRegistration
+- path: db/Role.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - e55a50b0
+  - b4b58095
+  - 7722f8dd
+  - b65fe604
+  - 35dd13a0
+  - fb818f79
+  - 3135834e
+  - 18da776d
+  extraction:
+    source: db/Role.go
+    target: db/Role_ex.go
+    moved:
+    - ProjectRoleID
+    - GlobalPermission
+    - CanManageGlobalUsers
+    - CanManageGlobalRoles
+    - CanManageGlobalSystem
+    - CanReadGlobalAudit
+    - CanManageGlobalCredentialsMetadata
+    - CanManageGlobalCredentialsRotate
+    - CanManageGlobalCredentialsGrant
+    - CanManageGlobalPolicyGuardrails
+    - CanRollbackGlobalPolicyGuardrails
+    - AllGlobalPermissions
+    - GlobalPermission.Can
+    - TemplatePermission
+    - CanReadTemplate
+    - CanRunTemplate
+    - CanEditTemplate
+    - CanDeleteTemplate
+    - TemplatePermission.Can
+    - ValidateProjectRole
+    - ValidateProjectRoleReference
+    - ValidateGlobalRole
+    - GlobalRoleAssignment
+    - TemplatePermissionContext
+    - ProjectPermissionsToTemplate
+    - ApplyTemplatePermissionOverride
+    - TemplatePermissionsToProject
+    - ValidateTemplateRolePerm
+- path: api/projects/keys.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+  - c6379c51
+  extraction:
+    source: api/projects/keys.go
+    target: api/projects/keys_ex.go
+    moved:
+    - generatedSSHKeyRequestMaxBytes
+    - generatedSSHKeyRequest
+    - rotateGeneratedSSHKeyRequest
+    - accessKeyReadDTO
+    - generatedSSHKeyResponse
+    - accessKeyReadDTOFrom
+    - writeGeneratedSSHKeyRequestError
+    - decodeStrictGeneratedSSHKeyRequest
+    - KeyController.generatedSSHKeyService
+    - KeyController.GenerateSSHKey
+    - KeyController.RotateGeneratedSSHKey
+    - clearRepositoryCachesForKey
+- path: web/src/views/project/Keys.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+  - 969e38b7
+  - 6fa8199c
+  extraction:
+    source: web/src/views/project/Keys.vue
+    target: web/src/lib/enhanced/keys.js
+    properties:
+      methods:
+      - onKeySaved
+      - showGeneratedKeyResult
+      - canRotateSSHKey
+      - beginSSHKeyRotation
+      - rotateSSHKey
+      - rotationRequest
+- path: web/src/views/Runners.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 35452da0
+  - f7b1da98
+  - 9a98bc9e
+  - aa14a2ab
+  - 83dca213
+  - 6fa8199c
+  extraction:
+    source: web/src/views/Runners.vue
+    target: web/src/lib/enhanced/runners.js
+    properties:
+      methods:
+      - openRunnerHealth
+      - isRunnerDeleting
+      - isRunnerCacheCleaning
+      - runnerLifecycleState
+      - runnerLifecycleLabel
+      - runnerLifecycleColor
+      - lifecycleErrorMessage
+      - deleteItem
+- path: services/server/secret_storage_svc.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+  - f39d3fc1
+  extraction:
+    source: services/server/secret_storage_svc.go
+    target: services/server/secret_storage_svc_ex.go
+    moved:
+    - secretSyncOperationLease
+    - SecretStorageServiceImpl.RequestSecretSync
+    - SecretStorageServiceImpl.RunSecretSyncOperation
+    - SecretStorageServiceImpl.completeFailedSecretSync
+    - SecretStorageServiceImpl.GetSecretSyncHistory
+    - SecretStorageServiceImpl.TestConnection
+- path: cli/cmd/root.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - dbd092c7
+  - 22b64ebe
+  - bb9bd36b
+  - '57530021'
+  - c7cf5a5b
+  - aa399ae4
+  - '27420140'
+  - 859357cb
+  - 84a30f60
+  - ca181981
+  - da904af8
+  - cf1ca4f5
+  - b006a53c
+  - 7722f8dd
+  - ca4ba829
+  - 9a238904
+  - cee920f2
+  - 730e27ac
+  - e9ea7722
+  - cd9a57b8
+  - f4aa2376
+  extraction:
+    source: cli/cmd/root.go
+    target: cli/cmd/root_ex.go
+    moved:
+    - watchRuntimeConfigurationReload
+    - createStoreWithMigrationVersionAndConfigPath
+- path: services/schedules/SchedulePool.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - ca181981
+  - b006a53c
+  - 8f92dd7c
+  - cee920f2
+  - da2d45fd
+  - 9a3d6ebb
+  extraction:
+    source: services/schedules/SchedulePool.go
+    target: services/schedules/SchedulePool_ex.go
+    moved:
+    - ScheduleOccurrence
+    - ScheduleExecutionLease
+    - deploymentWindowScheduleDecisionKey
+    - NewScheduleOccurrence
+- path: db/ProjectUser.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - e55a50b0
+  - 7722f8dd
+  - b65fe604
+  - 35dd13a0
+  - fb818f79
+  - 3135834e
+  - 18da776d
+  extraction:
+    source: db/ProjectUser.go
+    target: db/ProjectUser_ex.go
+    moved:
+    - ProjectRoleReference
+    - BuiltinProjectRoleReferenceOwner
+    - BuiltinProjectRoleReferenceManager
+    - BuiltinProjectRoleReferenceTaskRunner
+    - BuiltinProjectRoleReferenceGuest
+    - customProjectRoleReferencePrefix
+    - ProjectRoleReferenceForBuiltInRole
+    - ProjectRoleReferenceForCustomRole
+    - IsBuiltInProjectRoleReference
+    - IsValidProjectRoleReferenceSyntax
+    - KnownProjectRoleReferences
+    - ProjectWorkflowRoleOrigin
+    - ProjectWorkflowRoleOriginBuiltIn
+    - ProjectWorkflowRoleOriginManual
+    - ProjectWorkflowRoleOriginLDAP
+    - ProjectWorkflowRoleOriginOIDC
+    - ProjectWorkflowRoleIdentity
+    - ProjectWorkflowRoleIdentity.Validate
+    - ProjectUserPermission.Can
+    - BuiltInProjectRolePermissions
+- path: web/src/components/TaskForm.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 3f97169a
+  - 1d608ca2
+  extraction:
+    source: web/src/components/TaskForm.vue
+    target: web/src/lib/enhanced/task-form.js
+    properties:
+      computed:
+      - deploymentWindowOverrideCategories
+      - deploymentWindowOverrideReady
+      - deploymentWindowBlockMessage
+      methods:
+      - taskSavePayload
+      - taskStartPayload
+      - isDeploymentWindowBlock
+      - adoptDeploymentWindowBlock
+      - clearDeploymentWindowBlock
+      - formatDeploymentWindowDate
+      - isExecutionPreflightUnavailable
+      - submitTaskPayload
+- path: services/tasks/RemoteJob.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - f7b1da98
+  - 5d293a23
+  - 65c22d13
+  - c9b0803e
+  - da904af8
+- path: api/auth.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - dbd092c7
+  - 085f0b98
+  - b4b58095
+  extraction:
+    source: api/auth.go
+    target: api/auth_ex.go
+    moved:
+    - globalPermissionMiddleware
+    - hasGlobalPermission
+- path: services/tasks/TaskRunner_logging.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 5d293a23
+  - 9af7fd68
+  - 22b64ebe
+  - 0c7dbe0d
+  - 9a238904
+  extraction:
+    source: services/tasks/TaskRunner_logging.go
+    target: services/tasks/TaskRunner_logging_ex.go
+    moved:
+    - TaskRunner.SetTaskCredentialRedaction
+    - taskStatusTransitionAllowed
+    - runnerAttemptOutcomeForStatus
+    - TaskRunner.ApplyRunnerProgress
+    - TaskRunner.setStatus
+    - TaskRunner.afterStatusChange
+- path: .github/workflows/community_release.yml
+  decision: single-product
+  introducing_or_modifying_commits:
+  - '21966423'
+  - 0cd24f8d
+- path: web/src/App.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - '21966423'
+  - 65898bc1
+  - bb9bd36b
+  - 085f0b98
+  - e55a50b0
+  - b4b58095
+  - 5868d8a3
+  - 88e301e3
+  - a99a1a64
+  - 94e6f39b
+  - 6fa8199c
+  extraction:
+    source: web/src/App.vue
+    target: web/src/lib/enhanced/app.js
+    properties:
+      computed:
+      - canManageGlobalUsers
+      - canManageGlobalRoles
+      - canManageGlobalSystem
+      - canManageGlobalPolicyGuardrails
+      - canRollbackGlobalPolicyGuardrails
+      - canAccessGlobalGovernance
+      - canAccessGlobalCredentials
+      methods:
+      - canViewProjectResources
+- path: api/projects/secret_storages.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+  - f39d3fc1
+  extraction:
+    source: api/projects/secret_storages.go
+    target: api/projects/secret_storages_ex.go
+    moved:
+    - SecretStorageController.TestConnection
+    - SecretStorageController.requireCapability
+    - writeRuntimeSecretCapabilityError
+    - SecretStorageController.GetSyncHistory
+- path: web/src/components/ScheduleForm.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - '84425813'
+  extraction:
+    source: web/src/components/ScheduleForm.vue
+    target: web/src/lib/enhanced/schedule-form.js
+    properties:
+      computed:
+      - inputTimezone
+      - effectiveTimezone
+      methods:
+      - getTimezoneOptions
+      - queueRunAtPreview
+      - onScheduleTimezoneChange
+- path: db/Store.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 65898bc1
+  - 35452da0
+  - f7b1da98
+  - 5d293a23
+  - 65c22d13
+  - c9b0803e
+  - 9a98bc9e
+  - 9af7fd68
+  - bb9bd36b
+  - f39d3fc1
+  - 085f0b98
+  - e58eff15
+  - b006a53c
+  - e55a50b0
+  - b4b58095
+  - 7722f8dd
+  - b65fe604
+  - '44290861'
+  - '47221959'
+  - fe24770f
+  - 5d4bc514
+  - 2020d62b
+  - 884d3aa4
+  - 35dd13a0
+  - ca4ba829
+  - fb818f79
+  - 9a238904
+  extraction:
+    source: db/Store.go
+    target: db/Store_ex.go
+    moved:
+    - TOTPRepository
+    - LDAPRepository
+    - OIDCGroupMappingRepository
+    - GlobalCredentialRepository
+    - ProjectWorkflowRoleIdentityResolver
+- path: api/cluster_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 84a30f60
+  - ca181981
+  - 1f60695e
+  extraction:
+    source: api/cluster_test.go
+    target: api/cluster_ex_test.go
+    moved:
+    - TestGetClusterNodesPaginatesAdminInspectorResults
+    - TestGetClusterStatusAggregatesReadyStaleIncompatibleAndDrainingNodes
+    - TestGetClusterStatusKeepsCoordinatorAndDisconnectedRedisVisibleDuringOutage
+    - TestGetClusterNodeReturnsOnlyTheRequestedBootIdentity
+    - TestSetClusterNodeDrainingUsesAdminInspector
+    - TestSetClusterNodeDrainingRejectsOmittedState
+    - clusterInspectorFake
+    - clusterInspectorRedisOutageFake
+    - clusterInspectorRedisOutageFake.Nodes
+    - clusterInspectorRedisOutageFake.RedisInfo
+    - clusterInspectorRedisOutageFake.CoordinatorHealth
+    - clusterInspectorRedisOutageFake.SetNodeDraining
+    - clusterInspectorFake.Nodes
+    - clusterInspectorFake.RedisInfo
+    - clusterInspectorFake.CoordinatorHealth
+    - clusterInspectorFake.SetNodeDraining
+- path: pro_interfaces/workflow_svc.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 884aa258
+  - 0c7dbe0d
+  - '27420140'
+  - 50e3f859
+  - f41f0671
+  - cf1ca4f5
+  - 35dd13a0
+  - fe1cbf42
+  - cee920f2
+  - da2d45fd
+  - 281933b7
+  extraction:
+    source: pro_interfaces/workflow_svc.go
+    target: pro_interfaces/workflow_svc_ex.go
+    moved:
+    - WorkflowReconciliationLease
+    - WorkflowReconciliationRepository
+    - WorkflowProgressionRepository
+    - WorkflowRunFairScanner
+    - WorkflowAuditConfigurer
+    - WorkflowDeploymentWindowAdmissionConfigurer
+    - WorkflowPolicyGuardrailAdmissionConfigurer
+    - WorkflowApprovalIdentityStore
+    - WorkflowTaskFencedEnqueuer
+    - WorkflowDeploymentWindowTaskDecisionEnqueuer
+    - WorkflowDeploymentWindowTaskFencedDecisionEnqueuer
+    - WorkflowDeploymentWindowNodeBlocker
+    - CrossProjectWorkflowTaskStore
+    - CrossProjectWorkflowTaskStoreConfigurer
+    - CrossProjectWorkflowTaskFencedEnqueuer
+    - CrossProjectWorkflowDeploymentWindowTaskFencedDecisionEnqueuer
+    - WorkflowCredentialReader
+- path: web/src/components/EditRoleForm.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - e55a50b0
+  - b4b58095
+  extraction:
+    source: web/src/components/EditRoleForm.vue
+    target: web/src/lib/enhanced/edit-role-form.js
+    properties:
+      methods:
+      - hasPermission
+      - setPermission
+      - beforeLoadData
+- path: db/sql/runner.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 35452da0
+  - f7b1da98
+  - 65c22d13
+  extraction:
+    source: db/sql/runner.go
+    target: db/sql/runner_ex.go
+    moved:
+    - SqlDb.GetRunnerTaskHistory
+    - SqlDb.SetProjectRunnerActive
+    - unfinishedRunnerStatusArgs
+    - SqlDb.runnerLifecycleConflict
+- path: .github/workflows/community_beta.yml
+  decision: single-product
+  introducing_or_modifying_commits:
+  - '21966423'
+  - 0cd24f8d
+- path: web/src/views/project/Workflows.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - '27420140'
+  - 50e3f859
+  - b9077d21
+  - 3f97169a
+  - 1d608ca2
+  extraction:
+    source: web/src/views/project/Workflows.vue
+    target: web/src/lib/enhanced/workflows.js
+    properties:
+      methods:
+      - allowActions
+      - hasRunInputs
+      - startSelectedWorkflow
+      - openApprovalInbox
+      - openApprovalRun
+- path: db/SecretSync.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - f39d3fc1
+  extraction:
+    source: db/SecretSync.go
+    target: db/SecretSync_ex.go
+    moved:
+    - SecretSyncDirection
+    - SecretSyncDirectionReadOnly
+    - SecretSyncDirectionOutbound
+    - SecretSyncDirection.Validate
+    - SecretSyncPath.ValidateManaged
+    - SecretSyncOperationStatus
+    - SecretSyncOperationPending
+    - SecretSyncOperationRunning
+    - SecretSyncOperationSucceeded
+    - SecretSyncOperationFailed
+    - SecretSyncOperationConflict
+    - SecretSyncItemStatus
+    - SecretSyncItemChanged
+    - SecretSyncItemSkipped
+    - SecretSyncItemConflict
+    - SecretSyncItemFailed
+    - SecretSyncItemOutcome
+    - SecretSyncOperation
+    - SecretSyncExecution
+- path: services/server/runner_svc.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 1898efb2
+  - 35452da0
+  - f7b1da98
+  - 65c22d13
+  - 9a98bc9e
+  extraction:
+    source: services/server/runner_svc.go
+    target: services/server/runner_svc_ex.go
+    moved:
+    - RunnerSecureRegistrationTokenPrefix
+    - RunnerServiceImpl.CreateProjectRunner
+    - RunnerServiceImpl.UpdateProjectRunner
+    - RunnerServiceImpl.SetProjectRunnerActive
+    - RunnerServiceImpl.DeleteProjectRunner
+    - RunnerServiceImpl.ClearProjectRunnerCache
+    - RunnerServiceImpl.GetProjectRunnerHealth
+    - RunnerServiceImpl.GetProjectRunnerHistory
+- path: .github/workflows/dev.yml
+  decision: build-and-repository-integration
+  introducing_or_modifying_commits:
+  - '21966423'
+  - 0fd5d2a1
+  - 0cd24f8d
+- path: api/cluster.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 84a30f60
+  - ca181981
+  - 1f60695e
+  - 7472edea
+  extraction:
+    source: api/cluster.go
+    target: api/cluster_ex.go
+    moved:
+    - defaultClusterNodePageSize
+    - maxClusterNodePageSize
+    - clusterNodePage
+    - clusterHealthSummary
+    - summarizeClusterHealth
+    - getClusterNodes
+    - getClusterNode
+    - clusterNodeDrainRequest
+    - setClusterNodeDraining
+    - boundedClusterNodeQuery
+- path: db/sql/secret_sync.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - f39d3fc1
+  extraction:
+    source: db/sql/secret_sync.go
+    target: db/sql/secret_sync_ex.go
+    moved:
+    - SqlDb.GetSecretSync
+    - SqlDb.saveSecretSyncPaths
+- path: web/src/components/SecretStorageSyncOptionsForm.vue
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - f39d3fc1
+- path: db/Template.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 65c22d13
+  - c9b0803e
+  - c219aa25
+  extraction:
+    source: db/Template.go
+    target: db/Template_ex.go
+    moved:
+    - MaxTemplateSearchLength
+    - TemplateFilter.ValidateSearch
+    - NormalizeTemplateSearch
+    - Template.MatchesSearch
+    - Template.ResolveExecutorImage
+    - Template.EffectiveRunnerTags
+    - Template.EffectiveRunnerTagMatchMode
+- path: api/projects/users.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - e55a50b0
+  extraction:
+    source: api/projects/users.go
+    target: api/projects/users_ex.go
+    moved:
+    - resolveProjectMembershipRole
+    - writeProjectMembershipError
+- path: web/src/lib/constants.js
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - e55a50b0
+  - b4b58095
+  - b9077d21
+  - 5868d8a3
+  - 88e301e3
+- path: web/src/views/Cluster.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 84a30f60
+  - ca181981
+  - 1f60695e
+  - cf1ca4f5
+  - 6fa8199c
+  extraction:
+    source: web/src/views/Cluster.vue
+    target: web/src/lib/enhanced/cluster.js
+    properties:
+      computed:
+      - canClearClusterTasks
+      methods:
+      - nodeState
+      - nodeStateColor
+      - nodeVersion
+      - coordinatorState
+      - coordinatorStateColor
+      - workflowProgressionLabel
+- path: db/ansible.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 9af7fd68
+  - 0c7dbe0d
+  extraction:
+    source: db/ansible.go
+    target: db/ansible_ex.go
+    moved:
+    - TaskSummarySchemaVersion
+    - TaskSummaryState
+    - TaskSummaryCollecting
+    - TaskSummaryComplete
+    - TaskSummaryPartial
+    - TaskSummaryEmpty
+    - TaskSummaryUnsupported
+    - TaskSummaryEventKind
+    - TaskSummaryEventResult
+    - TaskSummaryEventHost
+    - TaskSummaryEventComplete
+    - TaskSummaryEventFailure
+    - TaskSummaryEventWorkflowOutputs
+    - TaskSummaryEvent
+    - TaskSummary
+    - TaskSummaryHost
+    - TaskSummaryStage
+    - TaskSummaryError
+    - TaskSummaryPage
+- path: services/tasks/executor.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - '44290861'
+  - '47221959'
+  - fe24770f
+  - b06b0090
+  - 5d4bc514
+  - 80c3b5b0
+  - 2020d62b
+  - 884d3aa4
+  - 9a238904
+  extraction:
+    source: services/tasks/executor.go
+    target: services/tasks/executor_ex.go
+    moved:
+    - ExecutorMetadataProvider
+    - RunnerIdentityConsumer
+    - DockerExecutionPolicyConsumer
+    - KubernetesExecutionPolicyConsumer
+    - KubernetesReconciliationConsumer
+    - KubernetesReconciliationScanner
+    - KubernetesReconciliationRemediator
+    - KubernetesTelemetryReporter
+    - DockerRunnerIdentityConsumer
+    - DockerReconciliationScanner
+    - DockerReconciliationRemediator
+    - DockerTelemetryReporter
+    - StopConfirmation
+    - StopPending
+    - StopConfirmed
+    - StopQuarantined
+    - ConfirmedStopper
+    - DockerReconciliationQuarantineReporter
+- path: cli/cmd/user_totp.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - 085f0b98
+- path: db/WorkflowStore_pro.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - aa399ae4
+  - 884aa258
+  - 3fce54a6
+  - 0c7dbe0d
+  - 50e3f859
+  - f41f0671
+  - 35dd13a0
+  - fe1cbf42
+  extraction:
+    source: db/WorkflowStore_pro.go
+    target: db/WorkflowStore_pro_ex.go
+    moved:
+    - WorkflowVersionStore
+    - TemplateVersionStore
+    - CrossProjectTemplateGrantStore
+    - CrossProjectWorkflowReferenceStore
+    - CrossProjectTemplateDeletionStore
+    - WorkflowApprovalContributionStore
+    - WorkflowApprovalContributionSubmission
+    - WorkflowApprovalContributionResult
+- path: api/system_info.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - '21966423'
+  - 65898bc1
+  - 085f0b98
+  - b4b58095
+  - f4aa2376
+  extraction:
+    source: api/system_info.go
+    target: api/system_info_ex.go
+    moved:
+    - totpAuthMethod
+- path: web/src/views/project/WorkflowView.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - '27420140'
+  - 859357cb
+  - b9077d21
+  - 3f97169a
+  - 1d608ca2
+  extraction:
+    source: web/src/views/project/WorkflowView.vue
+    target: web/src/lib/enhanced/workflow-view.js
+    properties:
+      computed:
+      - canAdminister
+      - triggerDecision
+      - triggersAvailable
+      methods:
+      - hasRunInputs
+- path: web/src/views/project/template/TemplatePerms.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - b4b58095
+  - 6fa8199c
+  extraction:
+    source: web/src/views/project/template/TemplatePerms.vue
+    target: web/src/lib/enhanced/template-perms.js
+    properties:
+      methods:
+      - beforeLoadItems
+      - getDeleteItemUrl
+      - loadEffectivePermissions
+      - permissionName
+      - permissionProvenance
+- path: Taskfile.yml
+  decision: build-and-repository-integration
+  introducing_or_modifying_commits:
+  - '21966423'
+  - b006a53c
+  - 0cd24f8d
+- path: api/projects/project.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - e55a50b0
+  - b4b58095
+  extraction:
+    source: api/projects/project.go
+    target: api/projects/project_ex.go
+    moved:
+    - GetMustHaveBaseProjectPermissionMiddleware
+    - applyEffectiveTemplatePermissions
+    - GetMustHaveTemplatePermissionMiddleware
+    - GetMustHavePermissionMiddleware
+- path: web/src/components/EditTemplatePermissionForm.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - b4b58095
+  extraction:
+    source: web/src/components/EditTemplatePermissionForm.vue
+    target: web/src/lib/enhanced/edit-template-permission-form.js
+    properties:
+      methods:
+      - beforeLoadData
+      - permissionEffect
+      - permissionLabel
+      - setPermissionEffect
+- path: web/src/components/WorkflowGraph.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - aa399ae4
+  - 884aa258
+  - 3fce54a6
+  extraction:
+    source: web/src/components/WorkflowGraph.vue
+    target: web/src/lib/enhanced/workflow-graph.js
+    properties:
+      methods:
+      - syncEdge
+      - nextEdgeId
+- path: util/config.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 9a98bc9e
+  - 22b64ebe
+  - '57530021'
+  - 84a30f60
+  - '47221959'
+  - 80c3b5b0
+  - 9a238904
+  - f4aa2376
+  extraction:
+    source: util/config.go
+    target: util/config_ex.go
+    moved:
+    - DebugLogType
+    - GlobalCredentialProviderConfig
+- path: web/src/views/Auth.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 085f0b98
+  - e58eff15
+  - 5b3a1223
+  - 6fa8199c
+  extraction:
+    source: web/src/views/Auth.vue
+    target: web/src/lib/enhanced/auth.js
+    properties:
+      methods:
+      - authenticationErrorMessage
+- path: web/src/views/Roles.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - e55a50b0
+  - b4b58095
+  - 6fa8199c
+  extraction:
+    source: web/src/views/Roles.vue
+    target: web/src/lib/enhanced/roles.js
+    properties:
+      computed:
+      - canManageRoles
+      methods:
+      - allowActions
+      - getDeleteItemUrl
+      - loadItems
+- path: pro_interfaces/log_write_svc.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - dbd092c7
+  - 22b64ebe
+  - bb9bd36b
+  - '57530021'
+  extraction:
+    source: pro_interfaces/log_write_svc.go
+    target: pro_interfaces/log_write_svc_ex.go
+    moved:
+    - LogWriteServiceLifecycle
+    - StructuredLogState
+    - StructuredLogDisabled
+    - StructuredLogHealthy
+    - StructuredLogDropping
+    - StructuredLogFailed
+    - StructuredLogDestinationDiagnostics
+    - StructuredLogDiagnostics
+    - ResultLogRecord
+    - StructuredLogEnvelope
+- path: services/runners/types.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - 5d293a23
+  - c9b0803e
+  - 9a98bc9e
+  - 44a34b73
+  - '44290861'
+  - '47221959'
+  - fe24770f
+  - b06b0090
+  - 5d4bc514
+  - 2020d62b
+  - 884d3aa4
+  - 9a238904
+- path: config.schema.yaml
+  decision: build-and-repository-integration
+  introducing_or_modifying_commits:
+  - 22b64ebe
+  - '57530021'
+  - b65fe604
+  - 9a238904
+- path: web/src/views/project/Team.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - e55a50b0
+  - 6fa8199c
+  extraction:
+    source: web/src/views/project/Team.vue
+    target: web/src/lib/enhanced/team.js
+    properties:
+      methods:
+      - roleName
+      - rolePermissions
+- path: pkg/metrics/metrics_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - dbd092c7
+  - bb9bd36b
+  - 5d4bc514
+  - 884d3aa4
+  extraction:
+    source: pkg/metrics/metrics_test.go
+    target: pkg/metrics/metrics_ex_test.go
+    moved:
+    - TestMetricsEnhancedSignalsUseBoundedLabels
+    - TestMetricsDockerTelemetryUsesOnlyFixedLabels
+    - TestMetricsKubernetesTelemetryUsesOnlyFixedLabels
+- path: services/schedules/SchedulePool_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - ca181981
+  - b006a53c
+  - cee920f2
+  - da2d45fd
+  extraction:
+    source: services/schedules/SchedulePool_test.go
+    target: services/schedules/SchedulePool_ex_test.go
+    moved:
+    - mockScheduleLease
+    - mockScheduleLease.OccurrenceKey
+    - mockScheduleLease.IsCurrent
+    - mockScheduleLease.Complete
+    - mockScheduleLease.Block
+    - mockScheduleLease.Release
+    - mockDeduplicator.ClaimScheduleOccurrence
+    - TestCreateSchedulePoolKeepsOneIdentityForScheduledJobsAndDeduplicator
+    - TestScheduleSkippedWhenOccurrenceClaimReturnsFalse
+    - TestScheduleProceedsWhenOccurrenceClaimReturnsTrue
+    - TestNewScheduleOccurrenceBindsMutableScheduleSettings
+    - TestDeploymentWindowScheduleDecisionKeySeparatesIdenticalSchedules
+- path: services/server/access_key_svc.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+  - c6379c51
+  extraction:
+    source: services/server/access_key_svc.go
+    target: services/server/access_key_svc_ex.go
+    moved:
+    - GeneratedSSHKeyService
+    - AccessKeyServiceImpl.requireRuntimeSecretWrite
+- path: db/Migration.go
+  decision: shipped-migration
+  introducing_or_modifying_commits:
+  - 65898bc1
+  - 35452da0
+  - f7b1da98
+  - 5d293a23
+  - 65c22d13
+  - c9b0803e
+  - 9a98bc9e
+  - 9af7fd68
+  - bb9bd36b
+  - f39d3fc1
+  - 085f0b98
+  - e58eff15
+  - aa399ae4
+  - 884aa258
+  - 3fce54a6
+  - 0c7dbe0d
+  - '27420140'
+  - 859357cb
+  - 50e3f859
+  - f41f0671
+  - 84a30f60
+  - ca181981
+  - 220dac49
+  - a40302fc
+  - da904af8
+  - cf1ca4f5
+  - e55a50b0
+  - b4b58095
+  - 7722f8dd
+  - b65fe604
+  - '44290861'
+  - '47221959'
+  - fe24770f
+  - b06b0090
+  - 5d4bc514
+  - a644bc71
+  - 2020d62b
+  - 884d3aa4
+  - 35dd13a0
+  - fe1cbf42
+  - ca4ba829
+  - db74d999
+  - b4397a2d
+  - dab89aa2
+  - fb818f79
+  - 9a238904
+  - 8f92dd7c
+  - 304d5843
+  - 3135834e
+  - da2d45fd
+  - bddffe2f
+  - 8cf7ee8a
+  - aedac92f
+  - 82f8f54b
+- path: deployment/docker/server/Dockerfile
+  decision: build-and-repository-integration
+  introducing_or_modifying_commits:
+  - '21966423'
+  - b006a53c
+  - 0cd24f8d
+  - 4b4f79af
+- path: web/src/lang/de.js
+  decision: locale-boundary
+  introducing_or_modifying_commits:
+  - 4f3b2f3a
+  - '84425813'
+  - 3f97169a
+  - 88e301e3
+  - a99a1a64
+- path: services/server/access_key_encryption_svc.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+  - f39d3fc1
+  extraction:
+    source: services/server/access_key_encryption_svc.go
+    target: services/server/access_key_encryption_svc_ex.go
+    moved:
+    - RuntimeSecretProviderTester
+    - accessKeyEncryptionServiceImpl.TestRuntimeSecretProvider
+    - accessKeyEncryptionServiceImpl.ReadManagedSecretField
+    - accessKeyEncryptionServiceImpl.WriteManagedSecretField
+- path: pro/db/sql/workflow.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 68191e61
+  - aa399ae4
+  - 884aa258
+  - 3fce54a6
+  - 0c7dbe0d
+  - 50e3f859
+  - f41f0671
+  extraction:
+    source: pro/db/sql/workflow.go
+    target: pro/db/sql/workflow_ex.go
+    moved:
+    - WorkflowStoreImpl.GetWorkflowRunByCorrelationID
+    - WorkflowStoreImpl.GetWorkflowRunNodeTask
+    - WorkflowStoreImpl.UpdateWorkflowRunReconciliation
+    - WorkflowStoreImpl.RequestWorkflowRunStop
+    - WorkflowStoreImpl.GetWorkflowRunNode
+    - WorkflowStoreImpl.ClaimWorkflowRunNode
+    - WorkflowStoreImpl.AttachWorkflowRunNodeTask
+    - WorkflowStoreImpl.UpdateWorkflowRunNodeFromTask
+    - WorkflowStoreImpl.FinalizeWorkflowRunNode
+    - WorkflowStoreImpl.BlockWorkflowRunNode
+    - WorkflowStoreImpl.UpdateWorkflowRunNodeArtifactInputs
+    - WorkflowStoreImpl.ReplaceWorkflowTaskArtifacts
+    - WorkflowStoreImpl.GetWorkflowRunArtifacts
+    - WorkflowStoreImpl.GetPendingWorkflowApprovals
+    - WorkflowStoreImpl.OpenWorkflowApproval
+    - WorkflowStoreImpl.FinalizeWorkflowRunApprovalNode
+- path: pro/services/server/access_key_serializer_vault.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+  - f39d3fc1
+  extraction:
+    source: pro/services/server/access_key_serializer_vault.go
+    target: pro/services/server/access_key_serializer_vault_ex.go
+    moved:
+    - VaultAccessKeyDeserializer.ResolveRuntimeSecret
+    - VaultAccessKeyDeserializer.TestRuntimeSecretProvider
+    - VaultAccessKeyDeserializer.ReadManagedSecretField
+    - VaultAccessKeyDeserializer.WriteManagedSecretField
+    - VaultAccessKeyDeserializer.denied
+- path: api/projects/schedules.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - b006a53c
+  - 106e6f5e
+  extraction:
+    source: api/projects/schedules.go
+    target: api/projects/schedules_ex.go
+    moved:
+    - configuredScheduleTimezone
+    - applyScheduleTiming
+- path: db/ProjectUser_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - e55a50b0
+  - 35dd13a0
+  - fb818f79
+  - 3135834e
+  - 18da776d
+  extraction:
+    source: db/ProjectUser_test.go
+    target: db/ProjectUser_ex_test.go
+    moved:
+    - TestBuiltInProjectRolePermissionsRemainDeterministic
+    - TestProjectRoleReferencesAreStableAndNeverUseLegacySlugs
+    - TestProjectWorkflowRoleIdentityRejectsNonCanonicalDirectoryFingerprint
+- path: web/src/components/RunnerForm.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 1898efb2
+  - 35452da0
+  - 65c22d13
+  - 9a98bc9e
+  - 6fa8199c
+  extraction:
+    source: web/src/components/RunnerForm.vue
+    target: web/src/lib/enhanced/runner-form.js
+    properties:
+      methods:
+      - onRegistrationPolicyChange
+- path: web/src/views/project/TemplateView.vue
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - b4b58095
+  - fe1cbf42
+  - 6fa8199c
+- path: db/Runner_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 1898efb2
+  - f7b1da98
+  - 9a98bc9e
+  extraction:
+    source: db/Runner_test.go
+    target: db/Runner_ex_test.go
+    moved:
+    - TestRunnerRegistrationMaterialIsExcludedFromSerializationAndBackups
+    - TestRunner_HealthDerivesHeartbeatAndUptime
+    - TestRunner_HealthClampsFutureReportTimes
+- path: web/src/views/project/Settings.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 1d608ca2
+  - 88e301e3
+  - a99a1a64
+  - 6fa8199c
+  extraction:
+    source: web/src/views/project/Settings.vue
+    target: web/src/lib/enhanced/settings.js
+    properties:
+      computed:
+      - canManageArtifactRetention
+      - deploymentWindowsDecision
+      - policyGuardrailsDecision
+      - canManagePolicyGuardrails
+      - canRollbackPolicyGuardrails
+- path: .dredd/hooks/helpers.go
+  decision: existing-test-contract
+  introducing_or_modifying_commits:
+  - 4b4f79af
+  - 99fac511
+- path: web/src/components/TemplateForm.vue
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - 65c22d13
+  - c9b0803e
+  - 6fa8199c
+- path: db/sql/migration.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - b4b58095
+  extraction:
+    source: db/sql/migration.go
+    target: db/sql/migration_ex.go
+    moved:
+    - SqlDb.preflightMigration22030Rollback
+- path: web/src/views/Users.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - b4b58095
+  extraction:
+    source: web/src/views/Users.vue
+    target: web/src/lib/enhanced/users.js
+    properties:
+      computed:
+      - canManageUsers
+      - canManageGlobalRoles
+      methods:
+      - allowActions
+      - refreshHeaders
+      - loadItems
+- path: pro/services/server/log_write_svc.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 68191e61
+  - 22b64ebe
+  - '57530021'
+  extraction:
+    source: pro/services/server/log_write_svc.go
+    target: pro/services/server/log_write_svc_ex.go
+    moved:
+    - NewLogWriteServiceWithFilter
+    - LogWriteServiceImpl.WriteDebug
+    - LogWriteServiceImpl.DebugFilterDiagnostics
+    - LogWriteServiceImpl.Diagnostics
+    - LogWriteServiceImpl.Close
+- path: api/users_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - f4aa2376
+  extraction:
+    source: api/users_test.go
+    target: api/users_ex_test.go
+    moved:
+    - TestUsersControllerNormalizesCommercialProState
+- path: deployment/docker/runner/Dockerfile
+  decision: build-and-repository-integration
+  introducing_or_modifying_commits:
+  - '21966423'
+  - 0cd24f8d
+- path: pro/services/ha/ha.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 68191e61
+  - 84a30f60
+  - ca181981
+  - a40302fc
+  - da904af8
+  - cf1ca4f5
+  extraction:
+    source: pro/services/ha/ha.go
+    target: pro/services/ha/ha_ex.go
+    moved:
+    - NewTaskExecutionEvidenceRecorder
+- path: api/user.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - e58eff15
+  - f4aa2376
+  extraction:
+    source: api/user.go
+    target: api/user_ex.go
+    moved:
+    - linkLdapIdentityWithService
+- path: services/tasks/local_executor.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 9af7fd68
+  - '44290861'
+  extraction:
+    source: services/tasks/local_executor.go
+    target: services/tasks/local_executor_ex.go
+    moved:
+    - LocalExecutor.prepare
+- path: services/runners/running_job_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - '44290861'
+  - 9a238904
+  - 1594a337
+  extraction:
+    source: services/runners/running_job_test.go
+    target: services/runners/running_job_ex_test.go
+    moved:
+    - TestRunningJobRedactsGlobalCredentialBeforeProgressUpload
+    - TestRunningJob_GetProgressIncludesBoundedExecutorMetadata
+    - metadataExecutor
+    - metadataExecutor.ExecutorMetadata
+- path: api/projects/environment.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+  extraction:
+    source: api/projects/environment.go
+    target: api/projects/environment_ex.go
+    moved:
+    - firstStorageID
+- path: db/User.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 085f0b98
+  - e55a50b0
+  extraction:
+    source: db/User.go
+    target: db/User_ex.go
+    moved:
+    - TOTPRecoveryCode
+    - TOTPAttempt
+    - TOTPCapabilityTransition
+- path: pro/services/server/subscription_svc.go
+  decision: single-product
+  introducing_or_modifying_commits:
+  - 68191e61
+  - f4aa2376
+- path: api/admin_info.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - 22b64ebe
+  - '57530021'
+- path: db/sql/SqlDb.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 9af7fd68
+  - ca4ba829
+  - dab89aa2
+  - fb818f79
+  - 0d02bd96
+  - a02259b1
+  extraction:
+    source: db/sql/SqlDb.go
+    target: db/sql/SqlDb_ex.go
+    moved:
+    - SqlDbConnection.QueryContext
+    - SqlDbConnection.ExecContext
+    - SqlDbConnection.Begin
+    - SqlDbConnection.SelectAllContext
+- path: services/server/secret_storage_sync_scheduler.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - f39d3fc1
+- path: services/runners/executor_factory_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c9b0803e
+  - 9a238904
+  extraction:
+    source: services/runners/executor_factory_test.go
+    target: services/runners/executor_factory_ex_test.go
+    moved:
+    - TestJobDataCarriesTaskSecretOutsideTheTaskDTO
+    - TestValidateExecutorImageCompatibility
+- path: pro/api/projects/workflows.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 68191e61
+  - aa399ae4
+  - 50e3f859
+  - f41f0671
+  - fe1cbf42
+  - 304d5843
+  extraction:
+    source: pro/api/projects/workflows.go
+    target: pro/api/projects/workflows_ex.go
+    moved:
+    - workflowController.ValidateWorkflow
+    - workflowController.GetWorkflowVersions
+    - workflowController.GetWorkflowVersion
+    - workflowController.DiffWorkflowVersions
+    - workflowController.RestoreWorkflowVersion
+    - workflowController.PreviewWorkflow
+    - workflowController.RetryWorkflowRunReconciliation
+    - workflowController.GetWorkflowApprovalInbox
+- path: pro/api/subscriptions.go
+  decision: single-product
+  introducing_or_modifying_commits:
+  - 68191e61
+  - f4aa2376
+- path: pro/services/server/workflow_svc.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 68191e61
+  - 884aa258
+  - 0c7dbe0d
+  - '27420140'
+  - 50e3f859
+  - f41f0671
+  extraction:
+    source: pro/services/server/workflow_svc.go
+    target: pro/services/server/workflow_svc_ex.go
+    moved:
+    - workflowService.RequestWorkflowRunStop
+    - workflowService.ReconcileWorkflowRun
+    - workflowService.RetryWorkflowRunReconciliation
+    - workflowService.GetWorkflowApprovalInbox
+    - workflowService.HandleWorkflowTaskOutputs
+- path: util/OdbcProvider.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - b65fe604
+- path: .dredd/hooks/capabilities.go
+  decision: existing-test-contract
+  introducing_or_modifying_commits:
+  - 99fac511
+- path: pro/api/roles.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - e55a50b0
+  - b4b58095
+  extraction:
+    source: pro/api/roles.go
+    target: pro/api/roles_ex.go
+    moved:
+    - RolesController.GetGlobalPermissionCatalog
+    - RolesController.GetGlobalRoleAssignments
+    - RolesController.AddGlobalRoleAssignment
+    - RolesController.DeleteGlobalRoleAssignment
+    - RolesController.GetEffectiveGlobalPermissions
+    - RolesController.GetProjectPermissionCatalog
+- path: pro/db/factory/factory.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 9af7fd68
+  - 859357cb
+  - cee920f2
+  - 730e27ac
+  - e9ea7722
+  - 0d02bd96
+  extraction:
+    source: pro/db/factory/factory.go
+    target: pro/db/factory/factory_ex.go
+    moved:
+    - NewDeploymentWindowStore
+    - NewPolicyGuardrailStore
+    - NewWorkflowTriggerStore
+    - NewWorkflowFileArtifactStore
+- path: web/src/components/TaskDetails.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - f7b1da98
+  - 5d293a23
+  - 65c22d13
+  - c9b0803e
+  - 5b3a1223
+  extraction:
+    source: web/src/components/TaskDetails.vue
+    target: web/src/lib/enhanced/task-details.js
+    properties:
+      computed:
+      - runnerIdentity
+- path: db/Role_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 35dd13a0
+  - 18da776d
+  extraction:
+    source: db/Role_test.go
+    target: db/Role_ex_test.go
+    moved:
+    - TestValidateProjectRoleReferenceRejectsLegacyAndMalformedValues
+    - TestValidateProjectRoleAcceptsWorkflowPermissions
+    - TestPolicyGuardrailRoleBitsAreIndependentAndBounded
+- path: web/src/components/NewTaskDialog.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 3f97169a
+  extraction:
+    source: web/src/components/NewTaskDialog.vue
+    target: web/src/lib/enhanced/new-task-dialog.js
+    properties:
+      computed:
+      - saveButtonText
+      methods:
+      - handlePreflight
+- path: db/sql/migrations/v2.20.2.sql
+  decision: shipped-migration
+  introducing_or_modifying_commits:
+  - 65898bc1
+- path: pro_interfaces/subscription_svc.go
+  decision: single-product
+  introducing_or_modifying_commits:
+  - f4aa2376
+- path: db/sql/runner_tag.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - 65c22d13
+- path: web/src/components/SubscriptionLabel.vue
+  decision: single-product
+  introducing_or_modifying_commits:
+  - 6fa8199c
+- path: web/vue.config.js
+  decision: build-and-repository-integration
+  introducing_or_modifying_commits:
+  - '21966423'
+  - 0cd24f8d
+- path: api/auth_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - dbd092c7
+  extraction:
+    source: api/auth_test.go
+    target: api/auth_ex_test.go
+    moved:
+    - TestCsrfDenialLogDoesNotIncludeRequestHeaders
+- path: api/projects/environment_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+  extraction:
+    source: api/projects/environment_test.go
+    target: api/projects/environment_ex_test.go
+    moved:
+    - TestUpdateEnvironmentRejectsInvalidRuntimeReference
+- path: api/options.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - b4b58095
+- path: db/Schedule.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - 8f92dd7c
+- path: db/sql/template_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 65c22d13
+  extraction:
+    source: db/sql/template_test.go
+    target: db/sql/template_ex_test.go
+    moved:
+    - TestTemplateRunnerTagPolicyRoundTrip
+- path: pro/services/server/secret_storage_svc.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - f39d3fc1
+- path: web/src/views/project/Schedule.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - '84425813'
+  extraction:
+    source: web/src/views/project/Schedule.vue
+    target: web/src/lib/enhanced/schedule.js
+    properties:
+      methods:
+      - formatNextRun
+- path: api/login_ldap_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - e58eff15
+  extraction:
+    source: api/login_ldap_test.go
+    target: api/login_ldap_ex_test.go
+    moved:
+    - TestLegacyDefaultMethodLDAPFailureRemainsUnauthorized
+- path: db/sql/migration_2_19_14_test.go
+  decision: existing-test-contract
+  introducing_or_modifying_commits:
+  - 35452da0
+- path: util/keyring_test.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 085f0b98
+  - 0c7dbe0d
+  extraction:
+    source: util/keyring_test.go
+    target: util/keyring_ex_test.go
+    moved:
+    - TestKeyset_OptionEncryptionEnabledRequiresAnActiveKey
+    - TestAccessKeyEncryptionEnabledRequiresActiveKey
+- path: .dredd/hooks/main.go
+  decision: existing-test-contract
+  introducing_or_modifying_commits:
+  - 99fac511
+- path: services/runners/running_job.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - 5d293a23
+  - '44290861'
+  - 9a238904
+- path: api/api_test.go
+  decision: existing-test-contract
+  introducing_or_modifying_commits:
+  - dbd092c7
+  - bb9bd36b
+  - aa399ae4
+  - 859357cb
+  - '44290861'
+  - 730e27ac
+  - e9ea7722
+- path: web/src/router/index.js
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - bb9bd36b
+  - 5868d8a3
+- path: services/runners/executor_factory.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c9b0803e
+  - '44290861'
+  - 9a238904
+  extraction:
+    source: services/runners/executor_factory.go
+    target: services/runners/executor_factory_ex.go
+    moved:
+    - validateExecutorImageCompatibility
+- path: util/keyring.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 085f0b98
+  - 0c7dbe0d
+  extraction:
+    source: util/keyring.go
+    target: util/keyring_ex.go
+    moved:
+    - ConfigType.AccessKeyEncryptionEnabled
+    - ConfigType.OptionEncryptionEnabled
+- path: .dockerignore
+  decision: build-and-repository-integration
+  introducing_or_modifying_commits:
+  - '21966423'
+- path: pro/api/projects/runners.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - 68191e61
+  - 1898efb2
+  - f7b1da98
+  - f4aa2376
+  extraction:
+    source: pro/api/projects/runners.go
+    target: pro/api/projects/runners_ex.go
+    moved:
+    - ProjectRunnerControllerImpl.GetRunnerHealth
+    - ProjectRunnerControllerImpl.GetRunnerHistory
+- path: web/src/components/SystemInfoDialog.vue
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - 65898bc1
+  - 22b64ebe
+  - '57530021'
+  - 085f0b98
+  - e58eff15
+  - 5b3a1223
+  - a99a1a64
+  - 6fa8199c
+- path: db/SecretStorage.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - f39d3fc1
+- path: pkg/task_logger/task_logger.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - 9a238904
+- path: web/src/components/TemplatePermissionsChips.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - b4b58095
+  extraction:
+    source: web/src/components/TemplatePermissionsChips.vue
+    target: web/src/lib/enhanced/template-permissions-chips.js
+    properties:
+      methods:
+      - permissionLabel
+- path: api/cache.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - b4b58095
+- path: cli/cmd/syslog.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - '57530021'
+- path: pro_interfaces/subscription_ctl.go
+  decision: single-product
+  introducing_or_modifying_commits:
+  - f4aa2376
+- path: util/version.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - '21966423'
+- path: api/events.go
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - b4b58095
+  extraction:
+    source: api/events.go
+    target: api/events_ex.go
+    moved:
+    - getGlobalAuditEvents
+- path: api/integration.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - cee920f2
+- path: api/projects/views.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - c219aa25
+- path: go.sum
+  decision: build-and-repository-integration
+  introducing_or_modifying_commits:
+  - 84a30f60
+- path: pro_interfaces/workflow_ctl.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - aa399ae4
+  - 50e3f859
+  - f41f0671
+  - fe1cbf42
+  - 304d5843
+- path: web/src/components/EnvironmentForm.vue
+  decision: declaration-or-option-extraction
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+  extraction:
+    source: web/src/components/EnvironmentForm.vue
+    target: web/src/lib/enhanced/environment-form.js
+    properties:
+      computed:
+      - managedSecretStorages
+- path: web/src/components/KeyStoreMenu.vue
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - 5868d8a3
+- path: web/src/components/TaskLogView.vue
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - 6fa8199c
+- path: db/sql/schedule.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - 8f92dd7c
+- path: pro/pkg/features/features.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - f4aa2376
+- path: web/src/components/PageMixin.js
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - 6fa8199c
+- path: web/src/components/TaskStatus.vue
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - 372b7505
+- path: web/src/components/TeamMemberForm.vue
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - e55a50b0
+- path: api/users_identity_test.go
+  decision: existing-test-contract
+  introducing_or_modifying_commits:
+  - f4aa2376
+- path: db/sql/migrations/v2.20.2.err.sql
+  decision: shipped-migration
+  introducing_or_modifying_commits:
+  - 65898bc1
+- path: db/sql/secret_storage.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - f39d3fc1
+- path: web/src/components/DashboardMenu.vue
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - 6fa8199c
+- path: web/src/components/ItemListPageBase.js
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - e55a50b0
+- path: web/src/views/project/Invites.vue
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - e55a50b0
+- path: .claude/CLAUDE.md
+  decision: build-and-repository-integration
+  introducing_or_modifying_commits:
+  - f8fdd5af
+- path: .goreleaser.yml
+  decision: build-and-repository-integration
+  introducing_or_modifying_commits:
+  - '21966423'
+- path: api/helpers/write_response.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - f4aa2376
+- path: db/AccessKey.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+- path: db/Environment.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - c7cf5a5b
+- path: db/sql/session.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - 085f0b98
+- path: web/src/components/ObjectRefsView.vue
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - 969e38b7
+- path: web/src/components/ProjectMixin.js
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - 6fa8199c
+- path: go.mod
+  decision: build-and-repository-integration
+  introducing_or_modifying_commits:
+  - 84a30f60
+- path: pkg/debuglog/filter_test.go
+  decision: existing-test-contract
+  introducing_or_modifying_commits:
+  - '57530021'
+- path: pkg/debuglog/formatter.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - '57530021'
+- path: pkg/debuglog/hook.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - '57530021'
+- path: pro/go.mod
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - 68191e61
+- path: services/tasks/local_executor_provider.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - 9a238904
+- path: .gitignore
+  decision: build-and-repository-integration
+  introducing_or_modifying_commits:
+  - 0cd24f8d
+- path: cli/cmd/syslog_windows.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - '57530021'
+- path: db/Event.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - dbd092c7
+  - d5c9ec0a
+  - f39d3fc1
+- path: db/sql/event.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - d5c9ec0a
+- path: pro/services/tasks/docker/config.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - '44290861'
+- path: util/config_test.go
+  decision: existing-test-contract
+  introducing_or_modifying_commits:
+  - 80c3b5b0
+- path: web/src/views/project/workflow/WorkflowRuns.vue
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - 884aa258
+- path: .gitmodules
+  decision: build-and-repository-integration
+  introducing_or_modifying_commits:
+  - 8fd65466
+- path: api/user_options_test.go
+  decision: existing-test-contract
+  introducing_or_modifying_commits:
+  - f4aa2376
+- path: db/sql/migrations/v2.20.3.err.sql
+  decision: shipped-migration
+  introducing_or_modifying_commits:
+  - 35452da0
+- path: db/sql/migrations/v2.20.3.sql
+  decision: shipped-migration
+  introducing_or_modifying_commits:
+  - 35452da0
+- path: docs
+  decision: docs-pointer
+  introducing_or_modifying_commits:
+  - 0237b52d
+  - 13bbf5c5
+  - 68191e61
+  - '21966423'
+  - 65898bc1
+  - 0fd5d2a1
+  - dbd092c7
+  - 1898efb2
+  - d5c9ec0a
+  - 35452da0
+  - f7b1da98
+  - 5d293a23
+  - 65c22d13
+  - c9b0803e
+  - 9a98bc9e
+  - 9af7fd68
+  - 22b64ebe
+  - bb9bd36b
+  - '57530021'
+  - c7cf5a5b
+  - f39d3fc1
+  - 085f0b98
+  - a976e877
+  - 3cb59a1f
+  - aa399ae4
+  - 884aa258
+  - 5aa2bd9e
+  - 30a02415
+  - b670bd68
+  - 3fce54a6
+  - 7a33ff89
+  - 957f5741
+  - a95c91f6
+  - 176ef085
+  - b85d7669
+  - e91c93f3
+  - f1955aa3
+  - a22704c0
+  - bba0a951
+  - 8c82d9c8
+  - de9a72ae
+  - be3655c4
+  - ddd507e5
+  - edf48cff
+  - 76422a2b
+  - 089ac590
+  - ca9b58cd
+  - 3b003456
+  - 3c53a922
+  - 0dff6737
+  - 84a5808a
+  - 13c03551
+  - f604ad28
+  - 338da4e7
+  - 9424d899
+  - 7417a2e7
+  - e55a50b0
+  - ed0558ca
+  - b4b58095
+  - 7722f8dd
+  - b65fe604
+  - '44290861'
+  - 610a6621
+  - d81b2b33
+  - b2834b7f
+  - c707b57e
+  - fe1cbf42
+  - ed69d89b
+  - 4123fff9
+  - e0a9a517
+  - f25145dc
+  - 065ed222
+  - 5caab21e
+  - fe70f659
+  - 9c60d2ea
+  - 6e00a0de
+  - 5a65d8a0
+  - ba445cca
+  - a6ea74ee
+  - f0ff9cbe
+  - 8c9d3f0b
+  - 1c44a612
+  - f970cf34
+  - bcfda24a
+  - b15017b4
+  - d9a2c972
+  - 1c3b3e0d
+  - c853560d
+  - '32810938'
+  - bc5e5770
+  - 03bee443
+  - cd995610
+  - d10a815b
+  - 0fadc914
+  - 088a6016
+  - '97969990'
+  - f59fb5c5
+  - f7a582d6
+  - 36f5c006
+  - 0f9277b9
+  - 172f3e98
+  - bf5e9043
+  - 6a3e468c
+  - e2fdc1d6
+  - 7472edea
+  - f8fdd5af
+- path: pkg/common_errors/common_errors.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - f4aa2376
+- path: pro/api/projects/terraform_inventory.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - 68191e61
+- path: pro/db/sql/terraform_inventory.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - 68191e61
+- path: pro_interfaces/project_runner_ctl.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - f7b1da98
+- path: web/src/components/TeamMenu.vue
+  decision: host-integration
+  introducing_or_modifying_commits:
+  - e55a50b0
+- path: db/Session.go
+  decision: authoritative-integration
+  introducing_or_modifying_commits:
+  - 085f0b98
+- path: services/project/backup_test.go
+  decision: existing-test-contract
+  introducing_or_modifying_commits:
+  - f39d3fc1

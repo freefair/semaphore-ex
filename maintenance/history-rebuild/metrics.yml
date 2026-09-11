@@ -1,0 +1,8 @@
+original:
+  shared_text_paths: 219
+  added_lines: 30765
+  removed_lines: 7737
+reconstructed:
+  shared_text_paths: 220
+  added_lines: 9975
+  removed_lines: 6008

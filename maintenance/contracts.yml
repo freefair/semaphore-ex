@@ -5812,7 +5812,7 @@ symbols:
     signature: func(repository db.AnsibleTaskRepository, projectID int, taskID int, line string, outputTime time.Time) (bool, error)
     selected_signature: func(repository db.AnsibleTaskRepository, projectID int, taskID int, line string, outputTime time.Time) (bool, error)
     implementation: community
-    rationale: Intentional reuse of functional shared task-summary parsing and persistence, covered by the shared repository/parser tests.
+    rationale: Intentional reuse of functional shared task-summary parsing and ingestion; persistence is supplied through the selected Enhanced repository and covered by parser and Enhanced repository tests.
   - name: pkg/stage_parsers:MoveToNextStage
     signature: >-
       func(store db.Store, ansibleTaskRepo db.AnsibleTaskRepository, logWriter pro_interfaces.LogWriteService, app db.TemplateApp, projectID
@@ -5823,27 +5823,27 @@ symbols:
       int, currentState any, currentStage *db.TaskStage, currentOutput *db.TaskOutput, newOutput db.TaskOutput) (newStage *db.TaskStage,
       newState any, err error)
     implementation: community
-    rationale: Intentional reuse of functional shared task-summary parsing and persistence, covered by the shared repository/parser tests.
+    rationale: Intentional reuse of functional shared task-summary parsing and ingestion; persistence is supplied through the selected Enhanced repository and covered by parser and Enhanced repository tests.
   - name: pkg/stage_parsers:ParseTaskSummaryEvent
     signature: func(line string) (db.TaskSummaryEvent, bool, error)
     selected_signature: func(line string) (db.TaskSummaryEvent, bool, error)
     implementation: community
-    rationale: Intentional reuse of functional shared task-summary parsing and persistence, covered by the shared repository/parser tests.
+    rationale: Intentional reuse of functional shared task-summary parsing and ingestion; persistence is supplied through the selected Enhanced repository and covered by parser and Enhanced repository tests.
   - name: pkg/stage_parsers:RedactTaskSummaryError
     signature: func(value string) string
     selected_signature: func(value string) string
     implementation: community
-    rationale: Intentional reuse of functional shared task-summary parsing and persistence, covered by the shared repository/parser tests.
+    rationale: Intentional reuse of functional shared task-summary parsing and ingestion; persistence is supplied through the selected Enhanced repository and covered by parser and Enhanced repository tests.
   - name: pkg/stage_parsers:TaskSummaryCallbackEnvironment
     signature: func(directory string, environment []string) ([]string, error)
     selected_signature: func(directory string, environment []string) ([]string, error)
     implementation: community
-    rationale: Intentional reuse of functional shared task-summary parsing and persistence, covered by the shared repository/parser tests.
+    rationale: Intentional reuse of functional shared task-summary parsing and ingestion; persistence is supplied through the selected Enhanced repository and covered by parser and Enhanced repository tests.
   - name: pkg/stage_parsers:TaskSummaryCollectionFailureOutput
     signature: func(collectionError error) string
     selected_signature: func(collectionError error) string
     implementation: community
-    rationale: Intentional reuse of functional shared task-summary parsing and persistence, covered by the shared repository/parser tests.
+    rationale: Intentional reuse of functional shared task-summary parsing and ingestion; persistence is supplied through the selected Enhanced repository and covered by parser and Enhanced repository tests.
   - name: pro_interfaces:ApplyPolicyGuardrailEvaluation
     signature: func(plan *pro_interfaces.ExecutionPreflightPlan, evaluation pro_interfaces.PolicyGuardrailEvaluation) error
     implementation: core

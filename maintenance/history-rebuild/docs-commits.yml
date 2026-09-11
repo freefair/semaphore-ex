@@ -1,0 +1,1488 @@
+source: 516b00df81c4d41161990f2a36ffdfdf81a17331
+base: b1f309193c66800463c8e68f25c729e091535323
+commits:
+- original: ae464252170d1e88189c3d9b015b446163faea29
+  retained: ae464252170d1e88189c3d9b015b446163faea29
+  subject: Document enhanced edition implementation plan
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/adr/0001-preserve-enhanced-module-boundary.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/adr/0002-backend-authoritative-capabilities.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/adr/0003-sql-authority-and-redis-coordination.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/adr/0004-secure-terraform-http-state.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/feature-branch-assessment.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-feature-selection.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-implementation-plan.md
+    decision: retain dedicated feature documentation
+- original: 553aea90d8762b3a512b99b23fb88f8800f400d5
+  retained: 553aea90d8762b3a512b99b23fb88f8800f400d5
+  subject: Document selected enhanced edition slices
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/adr/0005-snapshot-and-reconcile-workflows.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/adr/0006-resolve-secret-references-at-execution.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/adr/0007-generate-executor-workloads-from-policy.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/adr/0008-use-iana-schedule-timezones.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/adr/0009-store-bounded-artifacts-in-sql.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-feature-selection.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-implementation-plan.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/001-core-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/002-dual-build.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/003-capability-lifecycle.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/004-migration-matrix.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/005-security-observability.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/010-project-runner-registration.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/011-runner-lifecycle.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/012-runner-health-history.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/013-runner-reconciliation.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/014-tag-placement.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/015-executor-image.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/016-runner-secure-mode.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/020-task-summary.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/021-structured-file-logs.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/022-audit-webhook-export.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/023-debug-log-filter.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/024-vault-openbao-runtime.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/025-secret-storage-management.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/026-totp-capability.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/027-ldap-capability.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/030-workflow-editor-validation.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/031-workflow-linear-run.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/032-workflow-conditional-parallel.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/033-workflow-artifacts.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/034-workflow-parameters-overrides.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/035-workflow-triggers.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/036-workflow-approvals.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/037-workflow-reconciliation.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/040-ha-cluster-dashboard.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/041-ha-cross-node-coordination.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/042-ha-task-recovery.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/043-ha-workflows.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/044-ha-resilience.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/045-project-roles.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/046-global-template-roles.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/047-ldap-group-mapping.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/048-oidc-group-mapping.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/050-docker-executor.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/051-docker-executor-hardening.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/052-kubernetes-executor.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/053-kubernetes-executor-hardening.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/054-workflow-rbac-approvals.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/055-workflow-versions-cross-project.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/056-notification-governance.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/057-pagerduty.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/058-opsgenie.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/059-servicenow.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/060-global-credential-grants.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/061-credential-resolution-audit.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/062-generated-ssh-keys.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/063-template-search.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/064-schedule-timezones.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/070-preflight-preview.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/071-deployment-windows.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/072-policy-guardrails.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/073-signed-webhooks.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/074-artifact-retention.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/README.md
+    decision: retain dedicated feature documentation
+- original: bd4ee693d9e8556801003d79cbcd31d0787e96f5
+  retained: bd4ee693d9e8556801003d79cbcd31d0787e96f5
+  subject: Document enhanced module contract
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/001-core-contract.md
+    decision: retain dedicated feature documentation
+- original: baf1bdc244ac17a860323a7e1625e5c10c4db1a5
+  retained: baf1bdc244ac17a860323a7e1625e5c10c4db1a5
+  subject: Document reproducible edition builds
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/edition-builds.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/002-dual-build.md
+    decision: retain dedicated feature documentation
+- original: 24ec37a7af39975381173bb739ab62ff523a60a1
+  retained: 24ec37a7af39975381173bb739ab62ff523a60a1
+  subject: Document capability lifecycle contract
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/adr/0002-backend-authoritative-capabilities.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/capability-lifecycle.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/edition-builds.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/003-capability-lifecycle.md
+    decision: retain dedicated feature documentation
+- original: 8aaec26d15eb5a5cd65779cb3220c7ac45fe19c8
+  retained: 8aaec26d15eb5a5cd65779cb3220c7ac45fe19c8
+  subject: Document cross-dialect migration policy
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/cli/migrations.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/capability-lifecycle.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/migration-policy.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/004-migration-matrix.md
+    decision: retain dedicated feature documentation
+- original: ae9e17aefddc8e33ca19169be8745e0e71c469a6
+  retained: ae9e17aefddc8e33ca19169be8745e0e71c469a6
+  subject: Document enhanced observability baseline
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/capability-lifecycle.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/005-security-observability.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/security-observability.md
+    decision: retain dedicated feature documentation
+- original: c2d112a3f81c229c74d4b99642e2905536023e84
+  retained: c2d112a3f81c229c74d4b99642e2905536023e84
+  subject: Document project runner registration
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/010-project-runner-registration.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-runner-registration.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/security-observability.md
+    decision: retain dedicated feature documentation
+- original: 1ea2a1a23e8d5f337eea576c48049cb5e1fe1c48
+  retained: 1ea2a1a23e8d5f337eea576c48049cb5e1fe1c48
+  subject: Document project-scoped runner audits
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-runner-registration.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/security-observability.md
+    decision: retain dedicated feature documentation
+- original: 39cbeb536889780b5fe353ef3b08ee1097eb1eb9
+  retained: 39cbeb536889780b5fe353ef3b08ee1097eb1eb9
+  subject: Document project runner lifecycle
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/011-runner-lifecycle.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-runner-lifecycle.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-runner-registration.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/security-observability.md
+    decision: retain dedicated feature documentation
+- original: f7e491992bc4c9d1b2d71016401efe56cdfd6324
+  retained: f7e491992bc4c9d1b2d71016401efe56cdfd6324
+  subject: Document runner health and assignment history
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/configuration.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/012-runner-health-history.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-runner-health-history.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-runner-lifecycle.md
+    decision: retain dedicated feature documentation
+- original: c7f4d9186f295eaa19ce378024112c6da6e628f6
+  retained: c7f4d9186f295eaa19ce378024112c6da6e628f6
+  subject: Document deterministic runner reconciliation
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/configuration.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/013-runner-reconciliation.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-runner-lifecycle.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-runner-reconciliation.md
+    decision: retain dedicated feature documentation
+- original: d9ccfbf3bc69589cf16ba9da9d589df296a02962
+  retained: d9ccfbf3bc69589cf16ba9da9d589df296a02962
+  subject: Document deterministic runner tag placement
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/014-tag-placement.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-runner-lifecycle.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-runner-placement.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-runner-reconciliation.md
+    decision: retain dedicated feature documentation
+- original: 63a8cc76ba24e7f1d68a715bb942923f1ccedeb5
+  retained: 63a8cc76ba24e7f1d68a715bb942923f1ccedeb5
+  subject: Document runner executor image contract
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/015-executor-image.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-runner-executor-images.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-runner-placement.md
+    decision: retain dedicated feature documentation
+- original: 920e6790477954357a8429f726238b6285684d3d
+  retained: 920e6790477954357a8429f726238b6285684d3d
+  subject: Document runner secure mode
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/cli/runners.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/admin-guide/runners.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/plans/pro-slices/016-runner-secure-mode.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-runner-secure-mode.md
+    decision: retain dedicated feature documentation
+- original: c66aa3eaf9bd85d50e043a75c9d597850a194faa
+  retained: c66aa3eaf9bd85d50e043a75c9d597850a194faa
+  subject: Document persisted task summaries
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/020-task-summary.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/task-summary.md
+    decision: retain dedicated feature documentation
+  - path: docs/user-guide/tasks.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+- original: adb16b832ec37c6845ab14087901bf0e3929ad84
+  retained: adb16b832ec37c6845ab14087901bf0e3929ad84
+  subject: Document structured file logging
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/configuration.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/admin-guide/logs.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/021-structured-file-logs.md
+    decision: retain dedicated feature documentation
+- original: 23feb006109b15fe3d7ad777824dd2afefbae188
+  retained: 23feb006109b15fe3d7ad777824dd2afefbae188
+  subject: Document audit webhook export
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/audit-webhook-export.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/022-audit-webhook-export.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/security-observability.md
+    decision: retain dedicated feature documentation
+- original: d480ffd35cb525f231c471b027dbb76a6ab8fe60
+  retained: d480ffd35cb525f231c471b027dbb76a6ab8fe60
+  subject: Document debug log filtering
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/configuration.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/admin-guide/logs.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/debug-log-filtering.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/023-debug-log-filter.md
+    decision: retain dedicated feature documentation
+- original: f192f5c4111b07cae002e9f79dbd2f214282f5c9
+  retained: f192f5c4111b07cae002e9f79dbd2f214282f5c9
+  subject: Document runtime secret resolution
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/024-vault-openbao-runtime.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/runtime-secrets.md
+    decision: retain dedicated feature documentation
+- original: 54dc019837d10a6b1899311cd66466fd89342e64
+  retained: 54dc019837d10a6b1899311cd66466fd89342e64
+  subject: Document managed secret synchronization
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/025-secret-storage-management.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/runtime-secrets.md
+    decision: retain dedicated feature documentation
+- original: 5241d21888771dda4e437cb686d35a5ba38f27de
+  retained: 5241d21888771dda4e437cb686d35a5ba38f27de
+  subject: Document TOTP capability lifecycle
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/cli/users.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/admin-guide/configuration.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/admin-guide/security.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/026-totp-capability.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/totp-capability-lifecycle.md
+    decision: retain dedicated feature documentation
+- original: 6e61ae6c4975454875fb848f684033692481ac11
+  retained: 6e61ae6c4975454875fb848f684033692481ac11
+  subject: Clarify TOTP downgrade protection
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/totp-capability-lifecycle.md
+    decision: retain dedicated feature documentation
+- original: 0f2f2216a899302310471291d61ada7a19b2f106
+  retained: 0f2f2216a899302310471291d61ada7a19b2f106
+  subject: Document LDAP capability lifecycle
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/ldap-capability-lifecycle.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/027-ldap-capability.md
+    decision: retain dedicated feature documentation
+- original: 341955af3ba1b9e41637f487d250255ec9a35dce
+  retained: 341955af3ba1b9e41637f487d250255ec9a35dce
+  subject: Document workflow definition authoring
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/030-workflow-editor-validation.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/workflow-editor-validation.md
+    decision: retain dedicated feature documentation
+- original: a3a577f988be23aadf6afe4e904c262af7c6ec8c
+  retained: a3a577f988be23aadf6afe4e904c262af7c6ec8c
+  subject: Document workflow payload limit
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/workflow-editor-validation.md
+    decision: retain dedicated feature documentation
+- original: 8777d0812a511f431726441414ce4b54d5068c8c
+  retained: 8777d0812a511f431726441414ce4b54d5068c8c
+  subject: Document linear workflow run completion
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/031-workflow-linear-run.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 53d1d6dc7aa2b598eb70220f01705aa3c27de955
+  retained: 53d1d6dc7aa2b598eb70220f01705aa3c27de955
+  subject: Record linear workflow verification
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 22abdaf9fffdf8ad16705ab35e4c68ab88a32624
+  retained: 22abdaf9fffdf8ad16705ab35e4c68ab88a32624
+  subject: Record workflow response hardening
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 633021991a2f135e8dbff3affbae2b0534a3d899
+  retained: 633021991a2f135e8dbff3affbae2b0534a3d899
+  subject: Start upstream UI compatibility audit
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 0c3b720e3741a775a2361b1414302176663a05b5
+  retained: 0c3b720e3741a775a2361b1414302176663a05b5
+  subject: Document the completed upstream UI compatibility audit
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/README.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: d73be833162cac120f96806569373d2f642efe32
+  retained: d73be833162cac120f96806569373d2f642efe32
+  subject: Document conditional parallel workflows
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/032-workflow-conditional-parallel.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/workflow-conditional-parallel.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/workflow-editor-validation.md
+    decision: retain dedicated feature documentation
+- original: bb39c1ca2b2394e248612d4e139e628eab33efe9
+  retained: bb39c1ca2b2394e248612d4e139e628eab33efe9
+  subject: Advance enhanced plan to workflow artifacts
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 4e74f512a46128939f3345935a46b967ada436b0
+  retained: 4e74f512a46128939f3345935a46b967ada436b0
+  subject: Document workflow artifact contracts
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/033-workflow-artifacts.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/workflow-artifacts.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/workflow-conditional-parallel.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/workflow-editor-validation.md
+    decision: retain dedicated feature documentation
+- original: 03f7784205b29d902fe5f97026360fcf7dedd5a1
+  retained: 03f7784205b29d902fe5f97026360fcf7dedd5a1
+  subject: Advance enhanced slice status
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: b1523a95db1fae211aa2a9e831f136d6ee6e9afa
+  retained: b1523a95db1fae211aa2a9e831f136d6ee6e9afa
+  subject: Document workflow parameters and overrides
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/034-workflow-parameters-overrides.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/workflow-parameters-overrides.md
+    decision: retain dedicated feature documentation
+- original: 8cead37ae43a7fdf37e8ccff99c53b06481b7c6e
+  retained: 8cead37ae43a7fdf37e8ccff99c53b06481b7c6e
+  subject: Track Slice 034 verification progress
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 362ad1c6755e3c33e2d21b3d264bc2f4bb5ed3dc
+  retained: 362ad1c6755e3c33e2d21b3d264bc2f4bb5ed3dc
+  subject: Complete Slice 034 status
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: fa7218ce19e0aa1a7e266c5d18d7334662e16a60
+  retained: fa7218ce19e0aa1a7e266c5d18d7334662e16a60
+  subject: Document workflow trigger contract
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/035-workflow-triggers.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/workflow-triggers.md
+    decision: retain dedicated feature documentation
+- original: 30f646151ca119f180b7deb9eebe2c5d5813565d
+  retained: 30f646151ca119f180b7deb9eebe2c5d5813565d
+  subject: Document trigger claim revocation guard
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/workflow-triggers.md
+    decision: retain dedicated feature documentation
+- original: b81adb9982aada6259f040f83538e1eb8bc298f4
+  retained: b81adb9982aada6259f040f83538e1eb8bc298f4
+  subject: Advance approval slice status
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 90f572139474ed0be02cf7ed09b47211e7b6aa45
+  retained: 90f572139474ed0be02cf7ed09b47211e7b6aa45
+  subject: Document workflow approval contract
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/036-workflow-approvals.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/workflow-approvals.md
+    decision: retain dedicated feature documentation
+- original: 0a5a0bb59543e18423fd35594f3aa21044835c83
+  retained: 0a5a0bb59543e18423fd35594f3aa21044835c83
+  subject: Record workflow approval completion
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/036-workflow-approvals.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: a5d177bfbb4f8a058fb1f1763c67f0a6cf1e8268
+  retained: a5d177bfbb4f8a058fb1f1763c67f0a6cf1e8268
+  subject: Correct approval verification status
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: e0455501bd54512d4afc989340b23a42903a4d22
+  retained: e0455501bd54512d4afc989340b23a42903a4d22
+  subject: Document workflow reconciliation
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/workflow-reconciliation.md
+    decision: retain dedicated feature documentation
+- original: c8a41de52856f6143a147d853de338828760d379
+  retained: c8a41de52856f6143a147d853de338828760d379
+  subject: Record workflow reconciliation completion
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 036dd9b221047c1f555bffd351113c88a020a46c
+  retained: 036dd9b221047c1f555bffd351113c88a020a46c
+  subject: Document cluster membership dashboard
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/ha.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: c342f2743852be98670fe36bca8911aa06e10685
+  retained: c342f2743852be98670fe36bca8911aa06e10685
+  subject: Record cluster dashboard completion
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: ffa86e1e871fb93c0b252b34e9bda45f97337973
+  retained: ffa86e1e871fb93c0b252b34e9bda45f97337973
+  subject: Document HA coordination
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/ha.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 4f31a46949c54847f74d35fefb6a5dfdf129d899
+  retained: 4f31a46949c54847f74d35fefb6a5dfdf129d899
+  subject: Record HA coordination completion
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 91e5f4fbb9ca0f3a042325d799c5c8f807d7227e
+  retained: 91e5f4fbb9ca0f3a042325d799c5c8f807d7227e
+  subject: Start HA task recovery slice
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 859bfbbaa96bfdeda1305ae66ef82950572f674a
+  retained: 859bfbbaa96bfdeda1305ae66ef82950572f674a
+  subject: Advance HA task recovery status
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 08c2aa136a153571c65f1558f77685e876acd3d1
+  retained: 08c2aa136a153571c65f1558f77685e876acd3d1
+  subject: Document fenced HA task recovery
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/ha.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/plans/pro-slices/042-ha-task-recovery.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: a2c23160ed77c9fd4f631dd2e9a3551d40e170aa
+  retained: a2c23160ed77c9fd4f631dd2e9a3551d40e170aa
+  subject: Advance HA workflow progression status
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 93f1400b711f689717b52ed69392a85a680cc776
+  retained: 93f1400b711f689717b52ed69392a85a680cc776
+  subject: Document HA workflow progression ownership
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/ha.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/plans/pro-slices/043-ha-workflows.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/workflow-reconciliation.md
+    decision: retain dedicated feature documentation
+- original: 771924b497fe8f65ea614fec0a015296b47d9ee1
+  retained: 771924b497fe8f65ea614fec0a015296b47d9ee1
+  subject: Advance enhanced plan to HA resilience
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: f6da4fd0b88d3ed86c3fd23640fa7d0d42f05368
+  retained: f6da4fd0b88d3ed86c3fd23640fa7d0d42f05368
+  subject: Document HA resilience operations
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/ha.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/edition-builds.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/044-ha-resilience.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 94526f51498d9d724a3267612a1fee22d00870a7
+  retained: 94526f51498d9d724a3267612a1fee22d00870a7
+  subject: Advance enhanced plan to project roles
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 0895e88ae1bb5c366c3e3b28d117de47de9ba65f
+  retained: 0895e88ae1bb5c366c3e3b28d117de47de9ba65f
+  subject: Simplify enhanced implementation status
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: eb4f2d2fa82e398fbaf8b309aab743c9c69d6649
+  retained: eb4f2d2fa82e398fbaf8b309aab743c9c69d6649
+  subject: Document custom project roles
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/045-project-roles.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-roles.md
+    decision: retain dedicated feature documentation
+- original: a26532d2d55a64b9c352b6f2657d036927933bd3
+  retained: a26532d2d55a64b9c352b6f2657d036927933bd3
+  subject: Document global and template roles
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/global-template-roles.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-roles.md
+    decision: retain dedicated feature documentation
+  - path: docs/user-guide/team.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+- original: 78b9dedb8ee08ae479887557bb02fde71d3bc5ca
+  retained: 78b9dedb8ee08ae479887557bb02fde71d3bc5ca
+  subject: Document global and template role security controls
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/global-template-roles.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 9641f490406cc3cfb8c6d72497ccdc604189d257
+  retained: 9641f490406cc3cfb8c6d72497ccdc604189d257
+  subject: Document LDAP group mapping
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/ldap-capability-lifecycle.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/user-guide/team.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+- original: 54f00fd1068fd16a6794474f6da021cbd0c4a4a4
+  retained: 54f00fd1068fd16a6794474f6da021cbd0c4a4a4
+  subject: Document OIDC group role mapping
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/openid.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/oidc-group-mapping.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/048-oidc-group-mapping.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/user-guide/team.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+- original: 61713d32fd9d64478ccc6691d33e0e2ef1f5b4bd
+  retained: 61713d32fd9d64478ccc6691d33e0e2ef1f5b4bd
+  subject: Document Docker executor lifecycle and trust boundary
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/configuration.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/docker-executor.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/050-docker-executor.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 5a52af1779c07735b8f32830ce6c7f33ecb73261
+  retained: 5a52af1779c07735b8f32830ce6c7f33ecb73261
+  subject: Document Docker executor hardening
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/docker-executor.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/051-docker-executor-hardening.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 6646f629118a9bc319bf5555d0e23bab583002e2
+  retained: 6646f629118a9bc319bf5555d0e23bab583002e2
+  subject: Document Kubernetes executor
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/configuration.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/kubernetes-executor.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/052-kubernetes-executor.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 4c1e62503a9da05b7a5aeeb4ad44cc290f349be9
+  retained: 4c1e62503a9da05b7a5aeeb4ad44cc290f349be9
+  subject: Document Kubernetes executor hardening
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/kubernetes-executor.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/053-kubernetes-executor-hardening.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 48d456193ace1b6f60ffd985c19b95262760d60c
+  retained: 48d456193ace1b6f60ffd985c19b95262760d60c
+  subject: Complete workflow RBAC slice documentation
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/054-workflow-rbac-approvals.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: d5374dc9746ee390a582d47c95702326fcc17f71
+  retained: d5374dc9746ee390a582d47c95702326fcc17f71
+  subject: Document workflow version contracts
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/055-workflow-versions-cross-project.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 1cc7271a10affa5bc6a7f41c3fc21c08ad3cf519
+  retained: 1cc7271a10affa5bc6a7f41c3fc21c08ad3cf519
+  subject: Document notification governance
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/056-notification-governance.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 632e70c8d6878301cb0e1e15ef9e16980920b2a7
+  retained: 632e70c8d6878301cb0e1e15ef9e16980920b2a7
+  subject: Document PagerDuty delivery
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/057-pagerduty.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 12dc88b538fc43108a8dadd873647f73f737cdad
+  retained: 12dc88b538fc43108a8dadd873647f73f737cdad
+  subject: Document immutable notification snapshots
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/057-pagerduty.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: eb4ee9cdce9005072abb7730ac568b7a675d1dd6
+  retained: eb4ee9cdce9005072abb7730ac568b7a675d1dd6
+  subject: Advance enhanced plan to Opsgenie
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 943097c31ecf63067d9265d6a07bf2ee3baea1bc
+  retained: 943097c31ecf63067d9265d6a07bf2ee3baea1bc
+  subject: Document Opsgenie delivery contract
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/058-opsgenie.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 4991eb7fe81534a8f8741d761e21e0bd25d09204
+  retained: 4991eb7fe81534a8f8741d761e21e0bd25d09204
+  subject: Document ServiceNow delivery contract
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/059-servicenow.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 07acc7d24f46772bd875fe90f09b7011f9bd0dbc
+  retained: 07acc7d24f46772bd875fe90f09b7011f9bd0dbc
+  subject: Document global credential grants
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/global-credential-grants.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/user-guide/key-store.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+- original: ffdcdf147b91a3c634622a5b3470f07b16f2f7ba
+  retained: ffdcdf147b91a3c634622a5b3470f07b16f2f7ba
+  subject: Document credential resolution and audit
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/configuration.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/global-credential-grants.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: cc74a112102b5bc5d4588cdaf0107e13946e9178
+  retained: cc74a112102b5bc5d4588cdaf0107e13946e9178
+  subject: Advance enhanced plan to SSH key generation
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: c004ebff9de4ec865cd85247f172f5968315fb37
+  retained: c004ebff9de4ec865cd85247f172f5968315fb37
+  subject: Document server-generated SSH keys
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/generated-ssh-keys.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/062-generated-ssh-keys.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/user-guide/key-store.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+- original: 0383cfd8d72c81051c06f7ba5951bc96ad0fea86
+  retained: 0383cfd8d72c81051c06f7ba5951bc96ad0fea86
+  subject: Complete server-generated SSH key slice
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/062-generated-ssh-keys.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 75a6d6fdeb7e284882c1c332392f6ff38c63ff16
+  retained: 75a6d6fdeb7e284882c1c332392f6ff38c63ff16
+  subject: Document permission-safe template search
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/template-search.md
+    decision: retain dedicated feature documentation
+  - path: docs/user-guide/task-templates/README.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+- original: b8617f7e7fb6f93785aaab532e0b02fa9b9950cd
+  retained: b8617f7e7fb6f93785aaab532e0b02fa9b9950cd
+  subject: Complete template search slice
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/063-template-search.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 2adeaf5a1ca48d149cf771c93c2170cac2f2b82c
+  retained: 2adeaf5a1ca48d149cf771c93c2170cac2f2b82c
+  subject: Document per-schedule timezones
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/adr/0008-use-iana-schedule-timezones.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/064-schedule-timezones.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/user-guide/schedules.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+- original: 850fe09e78a9de3b2191559af7921823ab8feb35
+  retained: 850fe09e78a9de3b2191559af7921823ab8feb35
+  subject: Advance plan to execution preflight
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 8e0996631bc98e25927397b9e53f36f93779709a
+  retained: 8e0996631bc98e25927397b9e53f36f93779709a
+  subject: Document execution preflight review
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/execution-preflight.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/user-guide/execution-review.md
+    decision: retain dedicated feature documentation
+  - path: sidebars.js
+    decision: retain selected-product navigation and generated content policy
+- original: ed64a5eaaf77de9045978ce01bd20aa7b5fc244e
+  retained: ed64a5eaaf77de9045978ce01bd20aa7b5fc244e
+  subject: Document deployment windows
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/deployment-windows.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/071-deployment-windows.md
+    decision: retain dedicated feature documentation
+- original: 49cb52718215a7f912632ee30509f3f234ae47a4
+  retained: 49cb52718215a7f912632ee30509f3f234ae47a4
+  subject: Complete deployment windows slice
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 28e1ff1d8b77a85fc91d4b0e80bbbfb696c4ee36
+  retained: 28e1ff1d8b77a85fc91d4b0e80bbbfb696c4ee36
+  subject: Document policy guardrails
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/072-policy-guardrails.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/policy-guardrails.md
+    decision: retain dedicated feature documentation
+- original: 3d480e75c19b46a62e362993f683742a3ac3c1d7
+  retained: 3d480e75c19b46a62e362993f683742a3ac3c1d7
+  subject: Advance plan to signed webhooks
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 9a7d06236d64c9e6565fdc95c715baf440c913e9
+  retained: 9a7d06236d64c9e6565fdc95c715baf440c913e9
+  subject: Document signed webhook operations
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/audit-webhook-export.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/073-signed-webhooks.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/signed-webhooks.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/workflow-triggers.md
+    decision: retain dedicated feature documentation
+- original: c518c111da6798cebeca5b5d2d14cc214b60e811
+  retained: c518c111da6798cebeca5b5d2d14cc214b60e811
+  subject: Advance enhanced plan to artifact retention
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: a23bdb21875c1570519721c7ffaa9f68e5b08d75
+  retained: a23bdb21875c1570519721c7ffaa9f68e5b08d75
+  subject: Track artifact retention implementation
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: d4ade414bc085432924abed2f05a605f874be385
+  retained: d4ade414bc085432924abed2f05a605f874be385
+  subject: Advance artifact retention to service integration
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 800c6a688868c247c5643cfe08dfff97303d037c
+  retained: 800c6a688868c247c5643cfe08dfff97303d037c
+  subject: Advance artifact retention to lifecycle worker
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: f291b684d222d9af06871eff51976e97c116b651
+  retained: f291b684d222d9af06871eff51976e97c116b651
+  subject: Update artifact retention progress
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: c78193e4c8ef4912afc49816c56719f0f575c552
+  retained: c78193e4c8ef4912afc49816c56719f0f575c552
+  subject: Update artifact governance progress
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 96b8fbea4f2f9ca3179ee7d54d7b4695fed7bc52
+  retained: 96b8fbea4f2f9ca3179ee7d54d7b4695fed7bc52
+  subject: Update artifact UI progress
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 904f55ae32998ffd17d36f42686261979bc3938a
+  retained: 904f55ae32998ffd17d36f42686261979bc3938a
+  subject: Document workflow file artifacts
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/workflow-artifacts.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/workflow-file-artifacts.md
+    decision: retain dedicated feature documentation
+- original: 9780a2edaa3b4b02b44ce0312336a27bb6ff70b6
+  retained: 9780a2edaa3b4b02b44ce0312336a27bb6ff70b6
+  subject: Advance artifact retention release gates
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 6ac92c0dcdff781151a932fe9cb39f016f47ed3a
+  retained: 6ac92c0dcdff781151a932fe9cb39f016f47ed3a
+  subject: Complete artifact retention slice
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: c741025fb5cebc723d8d2d8433c5a6a7a7fa83b8
+  retained: c741025fb5cebc723d8d2d8433c5a6a7a7fa83b8
+  subject: Document the single full-product build
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/admin-guide/README.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/admin-guide/configuration.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/admin-guide/license.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docs/developer-guide/adr/0001-preserve-enhanced-module-boundary.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/adr/0002-backend-authoritative-capabilities.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/adr/0010-ship-one-full-featured-product.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/edition-builds.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/README.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/project-runner-executor-images.md
+    decision: retain dedicated feature documentation
+  - path: docs/user-guide/admin/subscription.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: sidebars.js
+    decision: retain selected-product navigation and generated content policy
+- original: bff0574d57929054c2809384c2637d88e66a4c31
+  retained: bff0574d57929054c2809384c2637d88e66a4c31
+  subject: Complete full-product consolidation status
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 0072f68c825d3fe1b382acea5d90c367fb4c7a50
+  retained: 0072f68c825d3fe1b382acea5d90c367fb4c7a50
+  subject: Document upstream maintenance workflow
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/README.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/upstream-maintenance.md
+    decision: retain dedicated feature documentation
+- original: 90c8220fba0fc4c3171cf9974d17970f4aa1c60e
+  retained: 90c8220fba0fc4c3171cf9974d17970f4aa1c60e
+  subject: Track upstream rebase maintenance
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 4a4e1edf3288dcd7b592bd10db37d02e9482673c
+  retained: 4a4e1edf3288dcd7b592bd10db37d02e9482673c
+  subject: Record final upstream rebase verification
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 1f279f15f7664c17ca775aa77da1f1da2393ab8d
+  retained: 1f279f15f7664c17ca775aa77da1f1da2393ab8d
+  subject: Track post-rebase pipeline repairs
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 719b83cd4b00ba7bf9b303a350ce9588fc39d82e
+  retained: 719b83cd4b00ba7bf9b303a350ce9588fc39d82e
+  subject: Document post-rebase recovery contracts
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/upstream-maintenance.md
+    decision: retain dedicated feature documentation
+- original: 5c377a95c17a2f39f79c38c68b50036dd370242a
+  retained: 5c377a95c17a2f39f79c38c68b50036dd370242a
+  subject: Document final pipeline recovery contracts
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/upstream-maintenance.md
+    decision: retain dedicated feature documentation
+- original: b8915e7e4962f99c631a06311f282242dc9d9258
+  retained: b8915e7e4962f99c631a06311f282242dc9d9258
+  subject: Document workflow SQL portability
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/upstream-maintenance.md
+    decision: retain dedicated feature documentation
+- original: f36a98f44a7928e076f1e44b1cf21669cac47b0c
+  retained: f36a98f44a7928e076f1e44b1cf21669cac47b0c
+  subject: Document stable rolling replacement probes
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/upstream-maintenance.md
+    decision: retain dedicated feature documentation
+- original: 9f118786fc81e63fc219a0fa5e25f9da240ead1e
+  retained: 9f118786fc81e63fc219a0fa5e25f9da240ead1e
+  subject: Complete upstream maintenance status
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+- original: 4ff70940c3a2587b49bec087d7a765fc8db5e364
+  retained: 4ff70940c3a2587b49bec087d7a765fc8db5e364
+  subject: Keep localized documentation aligned with the full product
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/user-guide/team.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+  - path: docusaurus.config.js
+    decision: retain selected-product navigation and generated content policy
+  - path: i18n/de/docusaurus-plugin-content-docs/current/admin-guide/cli/runners.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/de/docusaurus-plugin-content-docs/current/admin-guide/cli/users.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/de/docusaurus-plugin-content-docs/current/admin-guide/configuration.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/de/docusaurus-plugin-content-docs/current/admin-guide/runners.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/de/docusaurus-plugin-content-docs/current/admin-guide/security.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/de/docusaurus-plugin-content-docs/current/user-guide/team.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/es/docusaurus-plugin-content-docs/current/admin-guide/cli/runners.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/es/docusaurus-plugin-content-docs/current/admin-guide/cli/users.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/es/docusaurus-plugin-content-docs/current/admin-guide/configuration.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/es/docusaurus-plugin-content-docs/current/admin-guide/runners.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/es/docusaurus-plugin-content-docs/current/admin-guide/security.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/es/docusaurus-plugin-content-docs/current/user-guide/team.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/fr/docusaurus-plugin-content-docs/current/admin-guide/cli/runners.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/fr/docusaurus-plugin-content-docs/current/admin-guide/cli/users.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/fr/docusaurus-plugin-content-docs/current/admin-guide/configuration.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/fr/docusaurus-plugin-content-docs/current/admin-guide/runners.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/fr/docusaurus-plugin-content-docs/current/admin-guide/security.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/fr/docusaurus-plugin-content-docs/current/user-guide/team.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/it/docusaurus-plugin-content-docs/current/admin-guide/cli/runners.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/it/docusaurus-plugin-content-docs/current/admin-guide/cli/users.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/it/docusaurus-plugin-content-docs/current/admin-guide/configuration.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/it/docusaurus-plugin-content-docs/current/admin-guide/runners.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/it/docusaurus-plugin-content-docs/current/admin-guide/security.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/it/docusaurus-plugin-content-docs/current/user-guide/team.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ja/docusaurus-plugin-content-docs/current/admin-guide/cli/runners.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ja/docusaurus-plugin-content-docs/current/admin-guide/cli/users.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ja/docusaurus-plugin-content-docs/current/admin-guide/configuration.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ja/docusaurus-plugin-content-docs/current/admin-guide/runners.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ja/docusaurus-plugin-content-docs/current/admin-guide/security.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ja/docusaurus-plugin-content-docs/current/user-guide/team.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ko/docusaurus-plugin-content-docs/current/admin-guide/cli/runners.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ko/docusaurus-plugin-content-docs/current/admin-guide/cli/users.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ko/docusaurus-plugin-content-docs/current/admin-guide/configuration.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ko/docusaurus-plugin-content-docs/current/admin-guide/runners.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ko/docusaurus-plugin-content-docs/current/admin-guide/security.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ko/docusaurus-plugin-content-docs/current/user-guide/team.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/pt/docusaurus-plugin-content-docs/current/admin-guide/configuration.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/pt/docusaurus-plugin-content-docs/current/admin-guide/security.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/pt/docusaurus-plugin-content-docs/current/user-guide/team.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ru/docusaurus-plugin-content-docs/current/admin-guide/cli/runners.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ru/docusaurus-plugin-content-docs/current/admin-guide/cli/users.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ru/docusaurus-plugin-content-docs/current/admin-guide/configuration.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ru/docusaurus-plugin-content-docs/current/admin-guide/runners.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ru/docusaurus-plugin-content-docs/current/admin-guide/security.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: i18n/ru/docusaurus-plugin-content-docs/current/user-guide/team.md
+    decision: retain canonical fallback for stale translated product/security instructions; generated-page gate
+      remains required
+  - path: tests/full-product-navigation.test.cjs
+    decision: retain dedicated feature documentation
+- original: 15fe38f624ee899c3813d808cf119f384b7bd9f8
+  retained: 15fe38f624ee899c3813d808cf119f384b7bd9f8
+  subject: Document upstream compatibility and future update options
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/upstream-maintenance.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/upstream-update-options.md
+    decision: retain dedicated feature documentation
+  - path: docs/user-guide/workflows.md
+    decision: retain corrections/additions to the existing user-facing page and anchors; restoring upstream prose
+      would misdescribe selected behavior
+- original: 516b00df81c4d41161990f2a36ffdfdf81a17331
+  retained: 516b00df81c4d41161990f2a36ffdfdf81a17331
+  subject: Document regular merges and bounded maintenance verification
+  disposition: retain history; content already isolated or required at its existing page
+  paths:
+  - path: docs/developer-guide/enhanced-module-contract.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/migration-policy.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/STATUS.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/upstream-maintenance.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/plans/pro-slices/upstream-update-options.md
+    decision: retain dedicated feature documentation
+  - path: docs/developer-guide/upstream-maintenance-tooling.md
+    decision: retain dedicated feature documentation
+  - path: scripts/benchmark-builds.cjs
+    decision: retain dedicated feature documentation
+  - path: scripts/build-parallel.sh
+    decision: retain measured opt-in two-worker bound; serial eleven-locale default remains
+  - path: tests/security-fallbacks.test.cjs
+    decision: retain dedicated feature documentation

@@ -65,6 +65,11 @@ For future product changes, prefer `test/edition-contract/enhanced` and focused 
 components behind existing interfaces, props, and events. Shared-file edits must
 be the smallest integration needed. Keep refactors and unrelated fixes outside
 upstream syncs; document any shared-file change and its contract coverage.
+Follow `maintenance/source-boundaries.md`: use same-package `_ex.go` files when
+public API identity prevents a module move; keep authoritative integration calls
+in their original execution order. Extend `api-docs-ex.yml` for fork-only API
+paths and definitions and run the bundled-spec checks. Preserve the upstream
+locale dictionaries and add fork messages under `web/src/lang/enhanced`.
 
 Run `tools/upstream-sync/verify.sh` and retain failed as well as successful results.
 Build the embedded frontend before Go verification and keep source stable throughout
