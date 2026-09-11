@@ -1,0 +1,55 @@
+@import '~vuetify/src/styles/settings/variables';
+
+.template-search-bar {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+}
+
+.template-search-bar .v-input {
+  flex: 0 1 520px;
+}
+
+.template-search-results {
+  color: var(--text-color, rgba(0, 0, 0, 0.6));
+  flex: 0 0 auto;
+  font-size: 0.875rem;
+}
+
+.template-search-context {
+  color: rgba(0, 0, 0, 0.6);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  max-width: 48rem;
+  overflow-wrap: anywhere;
+}
+
+.theme--dark .template-search-context,
+.theme--dark .template-search-results {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.template-search-match {
+  background: #fff2a8;
+  border-radius: 2px;
+  color: inherit;
+  padding: 0;
+}
+
+.theme--dark .template-search-match {
+  background: #675d20;
+}
+
+@media #{map-get($display-breakpoints, 'sm-and-down')} {
+  .template-search-bar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .template-search-bar .v-input {
+    flex-basis: auto;
+    width: 100%;
+  }
+
+}

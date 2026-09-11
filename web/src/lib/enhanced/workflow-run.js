@@ -1,6 +1,7 @@
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
+import artifactPresentation from './workflow-artifact-presentation';
 
 export const enhancedComputed = {
   canAdminister() {
@@ -45,6 +46,7 @@ export const enhancedComputed = {
 };
 
 export const enhancedMethods = {
+  ...artifactPresentation,
   workflowOwnershipSummary(ownership) {
     return this.$t('workflowReconciliationOwnershipTransferred', {
       owner: (ownership.owner_boot_id || '').slice(0, 8),
@@ -59,41 +61,8 @@ export const enhancedMethods = {
     };
     return labels[status] || status;
   },
-  artifactAvailabilityColor(availability) {
-    if (availability === 'available') return 'success';
-    if (availability === 'invalid') return 'error';
-    return 'grey';
-  },
   fileArtifactDownloadURL(artifact) {
     return `/api/project/${this.projectId}/workflows/${this.workflowId}/runs/${this.runId}/file-artifacts/${artifact.id}/content`;
-  },
-  fileArtifactDownloadable(artifact) {
-    return artifact.state === 'available'
-        && (!artifact.expires_at || new Date(artifact.expires_at).getTime() > Date.now());
-  },
-  fileArtifactStateLabel(artifact) {
-    return this.fileArtifactDownloadable(artifact)
-      ? this.$t('workflowFileArtifactAvailable')
-      : this.$t('workflowFileArtifactExpired');
-  },
-  fileArtifactStateColor(artifact) {
-    if (!this.fileArtifactDownloadable(artifact)) return 'grey';
-    const expiresAt = artifact.expires_at ? new Date(artifact.expires_at).getTime() : 0;
-    return expiresAt && expiresAt - Date.now() <= 24 * 60 * 60 * 1000
-      ? 'warning' : 'success';
-  },
-  fileArtifactExpiryClass(artifact) {
-    return this.fileArtifactDownloadable(artifact) ? 'text--secondary' : 'error--text';
-  },
-  fileArtifactExpiryLabel(artifact) {
-    if (!this.fileArtifactDownloadable(artifact)) return this.$t('workflowFileArtifactNoLongerAvailable');
-    return this.$t('workflowFileArtifactExpires', { value: this.formatDate(artifact.expires_at) });
-  },
-  formatBytes(value) {
-    const bytes = Number(value) || 0;
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-    return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
   },
   async copyArtifactChecksum(checksum) {
     try {
@@ -129,13 +98,6 @@ export const enhancedMethods = {
     } finally {
       this.downloadingArtifactId = null;
     }
-  },
-  schemaSummary(schema) {
-    return JSON.stringify(schema || {});
-  },
-  nodeLabel(nodeId) {
-    const node = (this.workflow?.nodes || []).find((entry) => entry.id === nodeId);
-    return node?.display_name ? `#${nodeId} ${node.display_name}` : `#${nodeId}`;
   },
   normalizeNodeStatus(status) {
     switch (status) {
@@ -187,8 +149,5 @@ export const enhancedMethods = {
       canceled: this.$t('workflowApprovalCanceled'),
     };
     return labels[status] || status;
-  },
-  formatDate(value) {
-    return value ? new Date(value).toLocaleString() : '';
   },
 };

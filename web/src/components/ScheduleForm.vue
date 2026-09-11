@@ -322,6 +322,8 @@
 </style>
 
 <script>
+import createEnhancedState from '@/lib/enhanced/schedule-form-state';
+
 import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/schedule-form';
 
 import ItemFormBase from '@/components/ItemFormBase';
@@ -497,10 +499,7 @@ export default {
       showInfo: true,
       cronFormatError: null,
       runAtInput: '',
-      timezoneOptions: [],
-      schedulePreview: null,
-      schedulePreviewRequest: 0,
-      runAtPreviewTimer: null,
+      ...createEnhancedState(),
     };
   },
 

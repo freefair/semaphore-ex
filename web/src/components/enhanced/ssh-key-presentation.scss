@@ -1,0 +1,25 @@
+.generated-ssh-key-metadata,
+.generated-ssh-key-metadata ::v-deep .v-alert__content,
+.generated-ssh-key-result,
+.generated-ssh-key-rotation,
+.generated-ssh-key-result ::v-deep .v-alert__content,
+.generated-ssh-key-rotation ::v-deep .v-alert__content {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.generated-ssh-key-fingerprint,
+.generated-ssh-key-fingerprint code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.generated-ssh-key-public {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

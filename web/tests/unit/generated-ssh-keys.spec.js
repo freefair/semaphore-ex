@@ -3,11 +3,13 @@ import axios from 'axios';
 import KeyForm from '@/components/KeyForm.vue';
 import Keys from '@/views/project/Keys.vue';
 import ObjectRefsView from '@/components/ObjectRefsView.vue';
+import RotateSSHKeyDialog from '@/components/enhanced/RotateSSHKeyDialog.vue';
 
 describe('generated SSH key UI', () => {
   it('suppresses the delete-only reference warning only when requested', () => {
     expect(ObjectRefsView.props.hideWarning.default).to.equal(false);
-    expect(Keys.components.ObjectRefsView).to.equal(ObjectRefsView);
+    expect(Keys.components.RotateSSHKeyDialog).to.equal(RotateSSHKeyDialog);
+    expect(RotateSSHKeyDialog.components.ObjectRefsView).to.equal(ObjectRefsView);
   });
 
   it('uses the narrow server-generation payload and leaves imported defaults unchanged', () => {

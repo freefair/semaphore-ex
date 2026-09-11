@@ -197,6 +197,8 @@
 }
 </style>
 <script>
+import createEnhancedState from '@/lib/enhanced/workflows-state';
+
 import enhancedMethods from '@/lib/enhanced/workflows';
 
 import ItemListPageBase from '@/components/ItemListPageBase';
@@ -224,12 +226,7 @@ export default {
       openedItems: [],
       runs: {},
       runsLoading: {},
-      selectedWorkflow: null,
-      runDialog: false,
-      starting: false,
-      approvalInboxDialog: false,
-      approvalInboxLoading: false,
-      approvalInbox: [],
+      ...createEnhancedState(),
     };
   },
 

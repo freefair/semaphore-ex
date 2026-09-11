@@ -70,77 +70,17 @@
         dense
       ></v-text-field>
 
-      <v-textarea
-        v-model="item.params.ca_certificate"
-        label="Custom CA certificate (PEM, optional)"
-        :disabled="formSaving"
-        data-testid="secretStorage-vaultCACertificate"
-        rows="3"
-        outlined
-        dense
-      ></v-textarea>
-
-      <v-text-field
-        v-model="item.params.timeout"
-        label="Request timeout"
-        hint="Go duration up to 30s, for example 5s"
-        :disabled="formSaving"
-        data-testid="secretStorage-vaultTimeout"
-        outlined
-        dense
-      ></v-text-field>
-
-      <v-select
-        v-model="item.params.auth_method"
-        label="Authentication method"
-        :items="runtimeAuthMethods"
-        item-value="value"
-        item-text="text"
-        :disabled="formSaving"
-        data-testid="secretStorage-vaultAuthMethod"
-        outlined
-        dense
-      ></v-select>
-
-      <v-text-field
-        v-if="item.params.auth_method !== 'token'"
-        v-model="item.params.auth_mount"
-        label="Authentication mount"
-        :hint="
-          item.params.auth_method === 'approle' ? 'approle by default' : 'kubernetes by default'
-        "
-        :disabled="formSaving"
-        data-testid="secretStorage-vaultAuthMount"
-        outlined
-        dense
-      ></v-text-field>
-
-      <v-text-field
-        v-if="item.params.auth_method === 'approle'"
-        v-model="item.params.role_id"
-        label="AppRole role ID"
-        :rules="[(v) => !!v || 'Role ID is required']"
-        :disabled="formSaving"
-        data-testid="secretStorage-vaultRoleId"
-        outlined
-        dense
-      ></v-text-field>
-
-      <v-text-field
-        v-if="item.params.auth_method === 'kubernetes'"
-        v-model="item.params.role"
-        label="Kubernetes role"
-        :rules="[(v) => !!v || 'Kubernetes role is required']"
-        :disabled="formSaving"
-        data-testid="secretStorage-vaultKubernetesRole"
-        outlined
-        dense
-      ></v-text-field>
-
-      <SecretSourceToggle
-        v-model="secretStorage"
-        :label="runtimeCredentialLabel"
-        :disabled="formSaving"
+      <RuntimeProviderAuthFields
+        :ca-certificate.sync="item.params.ca_certificate"
+        :timeout.sync="item.params.timeout"
+        :auth-method.sync="item.params.auth_method"
+        :auth-mount.sync="item.params.auth_mount"
+        :role-id.sync="item.params.role_id"
+        :role.sync="item.params.role"
+        :secret-storage.sync="secretStorage"
+        :runtime-credential-label="runtimeCredentialLabel"
+        :runtime-auth-methods="runtimeAuthMethods"
+        :form-saving="formSaving"
       />
 
       <v-text-field
@@ -475,6 +415,9 @@
   </v-form>
 </template>
 <script>
+import { createEnhancedState, enhancedWatch } from '@/lib/enhanced/secret-storage-form-state';
+
+import RuntimeProviderAuthFields from '@/components/enhanced/RuntimeProviderAuthFields.vue';
 import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/secret-storage-form';
 
 import ItemFormBase from '@/components/ItemFormBase';
@@ -482,7 +425,7 @@ import SecretStorageSyncOptionsForm from '@/components/SecretStorageSyncOptionsF
 import SecretSourceToggle from '@/components/SecretSourceToggle.vue';
 
 export default {
-  components: { SecretStorageSyncOptionsForm, SecretSourceToggle },
+  components: { RuntimeProviderAuthFields, SecretStorageSyncOptionsForm, SecretSourceToggle },
 
   props: {
     itemType: String,
@@ -501,18 +444,7 @@ export default {
       syncSettingsDialog: false,
       // IAM role state of the storage at load time.
       initialUseIamRole: false,
-      connectionTesting: false,
-      connectionHealth: null,
-      runtimeAuthMethods: [
-        { value: 'token', text: 'Token' },
-        { value: 'approle', text: 'AppRole' },
-        { value: 'kubernetes', text: 'Kubernetes JWT' },
-      ],
-      runtimeSyncDirections: [
-        { value: 'read_only', text: 'Read-only runtime resolution (recommended)' },
-        { value: 'outbound', text: 'Outbound managed synchronization' },
-      ],
-      localKeys: [],
+      ...createEnhancedState(),
     };
   },
 
@@ -606,18 +538,7 @@ export default {
   },
 
   watch: {
-    'item.sync_direction': {
-      handler: function syncDirectionChanged(value) {
-        if (!this.isRuntimeProvider) {
-          return;
-        }
-        this.item.readonly = value !== 'outbound';
-        if (value !== 'outbound') {
-          this.item.sync_enabled = false;
-          this.item.sync_interval = 0;
-        }
-      },
-    },
+    ...enhancedWatch,
     secretStorage(value, oldValue) {
       this.item.source_storage_type = value === 'database' ? undefined : value;
 
@@ -654,22 +575,4 @@ export default {
   }
 }
 
-@media (max-width: 600px) {
-  .runtime-credential-source {
-    align-items: stretch !important;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .runtime-credential-source .v-btn-toggle {
-    display: flex;
-    width: 100%;
-  }
-
-  .runtime-credential-source .v-btn {
-    flex: 1 1 0;
-    min-width: 0 !important;
-    padding: 0 6px !important;
-  }
-}
 </style>

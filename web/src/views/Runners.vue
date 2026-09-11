@@ -692,6 +692,8 @@ semaphore runner start --config ./config.runner.json</pre
   </div>
 </template>
 <script>
+import createEnhancedState from '@/lib/enhanced/runners-state';
+
 import enhancedMethods from '@/lib/enhanced/runners';
 
 import EventBus from '@/event-bus';
@@ -870,10 +872,7 @@ ${advancedOptions}-d semaphoreui/runner:${this.version}`;
       resetRegistrationDialog: false,
       resetRegistrationRunner: null,
       advancedOptions: null,
-      deletingRunnerIds: [],
-      cacheCleaningRunnerIds: [],
-      runnerHealthDialog: false,
-      selectedHealthRunner: null,
+      ...createEnhancedState(),
     };
   },
 

@@ -136,82 +136,32 @@
 
         <div class="WorkflowEditor__sideScroll">
           <template v-if="!sideCollapsed">
-            <div class="pa-3">
-              <v-text-field
-                v-model="item.version_message"
-                :label="$t('workflowVersionMessage')"
-                :hint="$t('workflowVersionMessageHint')"
-                :counter="512"
-                :error-messages="versionMessageTooLong ? [$t('workflowVersionMessageTooLong')] : []"
-                :disabled="!canManage"
-                outlined
-                dense
-                @input="markDirty"
-              />
-              <v-text-field
-                v-model="item.start_version"
-                :label="$t('startVersion')"
-                :hint="$t('workflowStartVersionHint')"
-                persistent-hint
-                :disabled="!canManage"
-                outlined
-                dense
-                @input="markDirty"
-              />
-              <v-text-field
-                v-model.number="item.max_parallel_tasks"
-                type="number"
-                min="1"
-                max="32"
-                :label="$t('workflowMaxParallelTasks')"
-                :hint="$t('workflowMaxParallelTasksHint')"
-                persistent-hint
-                :disabled="!canManage"
-                outlined
-                dense
-                @input="markDirty"
-              />
-              <v-select
-                v-model="item.access_policy.view_role_ids"
-                :items="workflowRoleOptions"
-                item-value="value"
-                item-text="text"
-                :label="$t('workflowViewRoles')"
-                :hint="$t('workflowRoleRestrictionHint')"
-                persistent-hint
-                multiple
-                chips
-                small-chips
-                deletable-chips
-                :disabled="!canAdminister"
-                outlined
-                dense
-                @change="markDirty"
-              />
-              <v-select
-                v-model="item.access_policy.start_role_ids"
-                :items="workflowRoleOptions"
-                item-value="value"
-                item-text="text"
-                :label="$t('workflowStartRoles')"
-                :hint="$t('workflowRoleRestrictionHint')"
-                persistent-hint
-                multiple
-                chips
-                small-chips
-                deletable-chips
-                :disabled="!canAdminister"
-                outlined
-                dense
-                @change="markDirty"
-              />
-              <WorkflowParameterEditor
-                v-model="item.parameters"
-                :project-id="projectId"
-                :disabled="!canManage"
-                @input="markDirty"
-              />
-            </div>
+            <WorkflowDefinitionSettings
+              :version-message.sync="item.version_message"
+              :max-parallel-tasks.sync="item.max_parallel_tasks"
+              :view-role-ids.sync="item.access_policy.view_role_ids"
+              :start-role-ids.sync="item.access_policy.start_role_ids"
+              :parameters.sync="item.parameters"
+              :project-id="projectId"
+              :workflow-role-options="workflowRoleOptions"
+              :version-message-too-long="versionMessageTooLong"
+              :can-manage="canManage"
+              :can-administer="canAdminister"
+              @dirty="markDirty"
+            >
+              <template #start-version>
+                <v-text-field
+                  v-model="item.start_version"
+                  :label="$t('startVersion')"
+                  :hint="$t('workflowStartVersionHint')"
+                  persistent-hint
+                  :disabled="!canManage"
+                  outlined
+                  dense
+                  @input="markDirty"
+                />
+              </template>
+            </WorkflowDefinitionSettings>
 
             <v-divider />
           </template>
@@ -505,163 +455,37 @@
               @input="applyNodeEdit"
             />
 
-            <template v-if="editingNode.kind === 'task'">
-              <div
-                class="d-flex align-center mb-2"
-                data-testid="workflow-artifact-outputs"
-              >
-                <span class="text-subtitle-2">{{ $t('workflowArtifactOutputs') }}</span>
-                <v-spacer />
-                <v-btn
-                  icon
-                  small
-                  :title="$t('workflowArtifactAddOutput')"
-                  :disabled="!canManage"
-                  @click="addArtifactOutput"
-                >
-                  <v-icon small>mdi-plus</v-icon>
-                </v-btn>
-              </div>
+            <WorkflowNodeArtifactsEditor
+              v-if="editingNode.kind === 'task'"
+              :outputs="editingNode.artifact_outputs"
+              :inputs="editingNode.artifact_inputs"
+              :artifact-output-types="artifactOutputTypes"
+              :reachable-artifact-outputs="reachableArtifactOutputs"
+              :artifact-reference-key="artifactReferenceKey"
+              :can-manage="canManage"
+              @add-output="addArtifactOutput"
+              @remove-output="removeArtifactOutput"
+              @output-type="setArtifactOutputType"
+              @output-field="updateArtifactOutputField"
+              @add-input="addArtifactInput"
+              @remove-input="removeArtifactInput"
+              @input-reference="setArtifactReference"
+              @input-field="updateArtifactInputField"
+            />
 
-              <v-card
-                v-for="(output, index) in editingNode.artifact_outputs"
-                :key="`artifact-output-${index}`"
-                outlined
-                class="pa-2 mb-2"
-              >
-                <div class="d-flex align-start">
-                  <v-text-field
-                    v-model="output.name"
-                    :label="$t('workflowArtifactName')"
-                    :disabled="!canManage"
-                    outlined
-                    dense
-                    hide-details="auto"
-                    class="mr-1 mb-3"
-                    @input="applyNodeEdit"
-                  />
-                  <v-btn
-                    icon
-                    small
-                    :title="$t('workflowArtifactRemoveOutput')"
-                    :disabled="!canManage"
-                    @click="removeArtifactOutput(index)"
-                  >
-                    <v-icon small>mdi-close</v-icon>
-                  </v-btn>
-                </div>
-                <v-select
-                  :value="output.schema.type"
-                  :items="artifactOutputTypes"
-                  item-value="value"
-                  item-text="text"
-                  :label="$t('workflowArtifactSchema')"
-                  :disabled="!canManage"
-                  outlined
-                  dense
-                  hide-details="auto"
-                  class="mb-3"
-                  @change="setArtifactOutputType(index, $event)"
-                />
-                <v-text-field
-                  v-model.number="output.max_bytes"
-                  type="number"
-                  min="1"
-                  max="65536"
-                  :label="$t('workflowArtifactMaxBytes')"
-                  :disabled="!canManage"
-                  outlined
-                  dense
-                  hide-details="auto"
-                  class="mb-2"
-                  @input="applyNodeEdit"
-                />
-                <v-switch
-                  v-model="output.sensitive"
-                  :label="$t('workflowArtifactSensitive')"
-                  :disabled="!canManage"
-                  dense
-                  hide-details
-                  class="mt-1"
-                  @change="applyNodeEdit"
-                />
-              </v-card>
-
-              <div
-                class="d-flex align-center mt-4 mb-2"
-                data-testid="workflow-artifact-inputs"
-              >
-                <span class="text-subtitle-2">{{ $t('workflowArtifactInputs') }}</span>
-                <v-spacer />
-                <v-btn
-                  icon
-                  small
-                  :title="$t('workflowArtifactAddInput')"
-                  :disabled="!canManage || reachableArtifactOutputs.length === 0"
-                  @click="addArtifactInput"
-                >
-                  <v-icon small>mdi-plus</v-icon>
-                </v-btn>
-              </div>
-
-              <div
-                v-if="reachableArtifactOutputs.length === 0"
-                class="text-caption text--secondary mb-3"
-              >{{ $t('workflowArtifactNoReachableOutputs') }}</div>
-
-              <v-card
-                v-for="(input, index) in editingNode.artifact_inputs"
-                :key="`artifact-input-${index}`"
-                outlined
-                class="pa-2 mb-2"
-              >
-                <div class="d-flex align-start">
-                  <v-text-field
-                    v-model="input.name"
-                    :label="$t('workflowArtifactInputName')"
-                    :disabled="!canManage"
-                    outlined
-                    dense
-                    hide-details="auto"
-                    class="mr-1 mb-3"
-                    @input="applyNodeEdit"
-                  />
-                  <v-btn
-                    icon
-                    small
-                    :title="$t('workflowArtifactRemoveInput')"
-                    :disabled="!canManage"
-                    @click="removeArtifactInput(index)"
-                  >
-                    <v-icon small>mdi-close</v-icon>
-                  </v-btn>
-                </div>
-                <v-select
-                  :value="artifactReferenceKey(input)"
-                  :items="reachableArtifactOutputs"
-                  item-value="value"
-                  item-text="text"
-                  :label="$t('workflowArtifactSource')"
-                  :disabled="!canManage"
-                  outlined
-                  dense
-                  hide-details="auto"
-                  class="mb-2"
-                  @change="setArtifactReference(index, $event)"
-                />
-                <v-switch
-                  v-model="input.required"
-                  :label="$t('workflowArtifactRequired')"
-                  :disabled="!canManage"
-                  dense
-                  hide-details
-                  class="mt-1"
-                  @change="applyNodeEdit"
-                />
-              </v-card>
-            </template>
-
-            <template v-if="editingNode.kind === 'approval'">
+            <WorkflowNodeApprovalPolicy
+              v-if="editingNode.kind === 'approval'"
+              :policy="editingNode.approval_role_policy"
+              :timeout-outcome.sync="editingNode.approval_timeout_outcome"
+              :workflow-role-options="workflowRoleOptions"
+              :approval-role-mode-options="approvalRoleModeOptions"
+              :approval-timeout-outcome-options="approvalTimeoutOutcomeOptions"
+              :can-manage="canManage"
+              :can-administer="canAdminister"
+              @policy-field="updateApprovalPolicyField"
+              @policy-change="onApprovalPolicyChanged"
+              @edit="applyNodeEdit"
+            >
               <v-text-field
                 v-model.number="editingNode.approval_timeout"
                 type="number"
@@ -683,71 +507,7 @@
                 hide-details="auto"
                 @change="applyNodeEdit"
               />
-              <v-select
-                v-model="editingNode.approval_role_policy.role_ids"
-                :items="workflowRoleOptions"
-                item-value="value"
-                item-text="text"
-                :label="$t('workflowApprovalRoles')"
-                :disabled="!canAdminister"
-                multiple
-                chips
-                small-chips
-                deletable-chips
-                outlined
-                dense
-                hide-details="auto"
-                class="mb-2"
-                @change="onApprovalPolicyChanged"
-              />
-              <v-select
-                v-model="editingNode.approval_role_policy.mode"
-                :items="approvalRoleModeOptions"
-                item-value="value"
-                item-text="text"
-                :label="$t('workflowApprovalRoleMode')"
-                :disabled="!canAdminister"
-                outlined
-                dense
-                hide-details="auto"
-                class="mb-2"
-                @change="onApprovalPolicyChanged"
-              />
-              <v-text-field
-                v-model.number="editingNode.approval_role_policy.minimum_distinct_approvers"
-                type="number"
-                min="1"
-                :label="$t('workflowApprovalMinimumApprovers')"
-                :disabled="!canAdminister"
-                outlined
-                dense
-                hide-details="auto"
-                class="mb-2"
-                @change="onApprovalPolicyChanged"
-              />
-              <v-select
-                v-model="editingNode.approval_timeout_outcome"
-                :items="approvalTimeoutOutcomeOptions"
-                item-value="value"
-                item-text="text"
-                :label="$t('workflowApprovalTimeoutOutcome')"
-                :disabled="!canManage"
-                outlined
-                dense
-                hide-details="auto"
-                class="mb-2"
-                @change="applyNodeEdit"
-              />
-              <v-switch
-                v-model="editingNode.approval_role_policy.initiator_separation"
-                :label="$t('workflowApprovalSeparationOfDuties')"
-                :disabled="!canAdminister"
-                dense
-                hide-details
-                class="mt-0"
-                @change="onApprovalPolicyChanged"
-              />
-            </template>
+            </WorkflowNodeApprovalPolicy>
             <template v-if="editingNode.kind === 'delay'">
               <v-text-field
                 v-model.number="editingNode.delay_seconds"
@@ -818,6 +578,11 @@
 </template>
 
 <script>
+import createEnhancedState from '@/lib/enhanced/workflow-editor-state';
+
+import WorkflowDefinitionSettings from '@/components/enhanced/workflow/DefinitionSettings.vue';
+import WorkflowNodeArtifactsEditor from '@/components/enhanced/workflow/NodeArtifactsEditor.vue';
+import WorkflowNodeApprovalPolicy from '@/components/enhanced/workflow/NodeApprovalPolicy.vue';
 import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/workflow-editor';
 
 import axios from 'axios';
@@ -826,7 +591,6 @@ import { getErrorMessage } from '@/lib/error';
 import TaskParamsForm from '@/components/TaskParamsForm.vue';
 import WorkflowGraph from '@/components/WorkflowGraph.vue';
 import WorkflowNodeOverridePolicyEditor from '@/components/WorkflowNodeOverridePolicyEditor.vue';
-import WorkflowParameterEditor from '@/components/WorkflowParameterEditor.vue';
 import WorkflowVersionsDialog from '@/components/WorkflowVersionsDialog.vue';
 import CrossProjectTemplateGrantsDialog from '@/components/CrossProjectTemplateGrantsDialog.vue';
 import ProjectMixin from '@/components/ProjectMixin';
@@ -837,10 +601,12 @@ import { WORKFLOW_DEFINITION_VERSION } from '@/lib/workflowValidation';
 
 export default {
   components: {
+    WorkflowDefinitionSettings,
+    WorkflowNodeArtifactsEditor,
+    WorkflowNodeApprovalPolicy,
     TaskParamsForm,
     WorkflowGraph,
     WorkflowNodeOverridePolicyEditor,
-    WorkflowParameterEditor,
     WorkflowVersionsDialog,
     CrossProjectTemplateGrantsDialog,
   },
@@ -855,15 +621,7 @@ export default {
       templates: null,
       projectRoles: [],
       saving: false,
-      validating: false,
-      dirty: false,
-      validationState: 'idle',
-      validationIssues: [],
-      conflict: null,
-      versionsDialog: false,
-      crossProjectGrantsDialog: false,
-      crossProjectReferences: [],
-      crossProjectReferencesLoading: false,
+      ...createEnhancedState(),
       graphKey: 0,
       // Set before navigating new -> /edit after a create, so the route watcher
       // does not reload (which would reset the selection and rebuild the canvas).

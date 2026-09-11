@@ -192,72 +192,36 @@
       @change="setArgs"
     />
 
-    <v-alert
-      v-if="deploymentWindowBlock"
-      type="warning"
-      text
-      dense
-      data-testid="deployment-window-blocked"
-    >
-      <div>{{ deploymentWindowBlockMessage }}</div>
-      <div
-        v-if="deploymentWindowBlock.next_eligible_known
-          && deploymentWindowBlock.next_eligible_at"
-        class="text-caption mt-1"
-      >
-        {{ $t('deploymentWindowNextEligible') }}:
-        {{ formatDeploymentWindowDate(deploymentWindowBlock.next_eligible_at) }}
-      </div>
-    </v-alert>
-
-    <template v-if="deploymentWindowBlock">
-      <div class="text-subtitle-2 mb-2">{{ $t('deploymentWindowEmergencyOverride') }}</div>
-      <v-select
-        v-model="deploymentWindowOverrideCategory"
-        :items="deploymentWindowOverrideCategories"
-        :label="$t('deploymentWindowOverrideCategory')"
-        outlined
-        dense
-        :disabled="formSaving"
-      />
-      <v-text-field
-        v-model.trim="deploymentWindowOverrideReference"
-        :label="$t('deploymentWindowOverrideReference')"
-        :hint="$t('deploymentWindowOverrideReferenceHint')"
-        persistent-hint
-        outlined
-        dense
-        :disabled="formSaving"
-        data-testid="deployment-window-override-reference"
-      />
-      <v-checkbox
-        v-model="deploymentWindowOverrideConfirmed"
-        :label="$t('deploymentWindowOverrideConfirm')"
-        :disabled="formSaving"
-        data-testid="deployment-window-override-confirm"
-      />
-    </template>
+    <DeploymentWindowOverride
+      :block="deploymentWindowBlock"
+      :message="deploymentWindowBlockMessage"
+      :categories="deploymentWindowOverrideCategories"
+      :category.sync="deploymentWindowOverrideCategory"
+      :reference.sync="deploymentWindowOverrideReference"
+      :confirmed.sync="deploymentWindowOverrideConfirmed"
+      :disabled="formSaving"
+      :format-date="formatDeploymentWindowDate"
+    />
 
     <ExecutionPreflightReview :plan="executionPreflight" />
 
   </v-form>
 </template>
 <script>
+import DeploymentWindowOverride from '@/components/enhanced/DeploymentWindowOverride.vue';
+import createEnhancedState from '@/lib/enhanced/task-form-state';
+
 import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/task-form';
 
 /* eslint-disable import/no-extraneous-dependencies,import/extensions */
 
 import ItemFormBase from '@/components/ItemFormBase';
 import axios from 'axios';
-import { getErrorMessage } from '@/lib/error';
 import ArgsPicker from '@/components/ArgsPicker.vue';
 import AppFieldsMixin from '@/components/AppFieldsMixin';
 import TaskParamsAnsibleForm from '@/components/TaskParamsAnsibleForm.vue';
 import TaskParamsTerraformForm from '@/components/TaskParamsTerraformForm.vue';
 import ExecutionPreflightReview from '@/components/ExecutionPreflightReview.vue';
-
-const PREFLIGHT_FINGERPRINT_HEADER = 'X-Semaphore-Preflight-Fingerprint';
-const PREFLIGHT_REVIEW_HEADER = ['X-Semaphore-Preflight', 'Token'].join('-');
 
 export default {
   mixins: [ItemFormBase, AppFieldsMixin],
@@ -268,6 +232,7 @@ export default {
   },
 
   components: {
+    DeploymentWindowOverride,
     TaskParamsAnsibleForm,
     TaskParamsTerraformForm,
     ArgsPicker,
@@ -289,12 +254,7 @@ export default {
         indentWithTabs: false,
       },
       inventory: null,
-      executionPreflight: null,
-      executionPreflightPayloadSignature: null,
-      deploymentWindowBlock: null,
-      deploymentWindowOverrideCategory: null,
-      deploymentWindowOverrideReference: '',
-      deploymentWindowOverrideConfirmed: false,
+      ...createEnhancedState(),
     };
   },
 
@@ -429,75 +389,6 @@ export default {
     beforeSave() {
       this.item.environment = JSON.stringify(this.editedEnvironment);
       this.item.secret = JSON.stringify(this.editedSecretEnvironment);
-    },
-
-    async save() {
-      this.formError = null;
-      if (!this.$refs.form.validate()) {
-        this.$emit('error', {});
-        return null;
-      }
-      if (this.deploymentWindowBlock && !this.deploymentWindowOverrideReady) {
-        this.formError = this.$t('deploymentWindowOverrideIncomplete');
-        this.$emit('error', { message: this.formError });
-        return null;
-      }
-      this.formSaving = true;
-      try {
-        await this.beforeSave();
-        const payload = this.taskSavePayload();
-        const signature = JSON.stringify(payload);
-        if (!this.executionPreflight || signature !== this.executionPreflightPayloadSignature) {
-          try {
-            this.executionPreflight = (await axios.post(`/api/project/${this.projectId}/tasks/preflight`, payload)).data;
-          } catch (err) {
-            if (this.isExecutionPreflightUnavailable(err)) {
-              return await this.submitTaskPayload(this.taskStartPayload(payload));
-            }
-            throw err;
-          }
-          this.executionPreflightPayloadSignature = signature;
-          this.$emit('preflight', this.executionPreflight);
-          if ((this.executionPreflight.findings || []).some(({ severity }) => severity === 'denial')) {
-            this.formError = this.$t('executionPreflightDenied');
-          }
-          return null;
-        }
-        if ((this.executionPreflight.findings || []).some(({ severity }) => severity === 'denial')) {
-          this.formError = this.$t('executionPreflightDenied');
-          this.$emit('preflight', this.executionPreflight);
-          return null;
-        }
-        return await this.submitTaskPayload(this.taskStartPayload(payload), {
-          [PREFLIGHT_FINGERPRINT_HEADER]: this.executionPreflight.fingerprint,
-          [PREFLIGHT_REVIEW_HEADER]: this.executionPreflight.review_token,
-        });
-      } catch (err) {
-        if (this.isDeploymentWindowBlock(err)) {
-          this.adoptDeploymentWindowBlock(err.response.data);
-          this.$emit('error', {});
-          return null;
-        }
-        if (err?.response?.status === 403
-          && err?.response?.data?.error === 'DEPLOYMENT_WINDOW_OVERRIDE_FORBIDDEN') {
-          this.formError = this.$t('deploymentWindowOverrideForbidden');
-          this.$emit('error', { message: this.formError });
-          return null;
-        }
-        const fresh = err?.response?.data?.preflight;
-        if (err?.response?.status === 409 && fresh) {
-          this.executionPreflight = fresh;
-          this.executionPreflightPayloadSignature = JSON.stringify(this.taskSavePayload());
-          this.formError = this.$t('executionPreflightChanged');
-          this.$emit('preflight', fresh);
-          return null;
-        }
-        this.formError = getErrorMessage(err);
-        this.$emit('error', { message: this.formError });
-        return null;
-      } finally {
-        this.formSaving = false;
-      }
     },
 
     refreshItem() {

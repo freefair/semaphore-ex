@@ -64,57 +64,27 @@
           clearable
         />
 
-        <v-text-field
-          v-if="supportStorages && sourceStorageType === 'vault' && item.source_storage_id != null"
-          v-model="item.source_storage_mount"
-          label="KV v2 mount"
-          :rules="[(v) => !!v || 'Mount is required']"
+        <RuntimeKeyReferenceFields
+          :active="supportStorages && sourceStorageType === 'vault'
+              && item.source_storage_id != null"
           :disabled="runtimeReferenceDisabled"
-          data-testid="key-runtimeMount"
-          outlined
-          dense
-        />
-
-        <v-text-field
-          v-if="supportStorages && sourceStorageType === 'vault' && item.source_storage_id != null"
-          v-model="item.source_storage_key"
-          label="Secret path"
-          hint="Path within the mount; values are not browsed"
-          :rules="[(v) => !!v || 'Secret path is required']"
-          :disabled="runtimeReferenceDisabled"
-          data-testid="key-runtimePath"
-          outlined
-          dense
-        />
-
-        <v-row
-          v-if="supportStorages && sourceStorageType === 'vault' && item.source_storage_id != null"
+          :mount.sync="item.source_storage_mount"
+          :version.sync="item.source_storage_version"
+          :field.sync="item.source_storage_field"
         >
-          <v-col cols="12" sm="5">
-            <v-text-field
-              v-model.number="item.source_storage_version"
-              label="Version (optional)"
-              type="number"
-              min="0"
-              :rules="[(v) => v == null || v >= 0 || 'Version must not be negative']"
-              :disabled="runtimeReferenceDisabled"
-              data-testid="key-runtimeVersion"
-              outlined
-              dense
-            />
-          </v-col>
-          <v-col cols="12" sm="7">
-            <v-text-field
-              v-model="item.source_storage_field"
-              label="Field"
-              :rules="[(v) => !!v || 'Field is required']"
-              :disabled="runtimeReferenceDisabled"
-              data-testid="key-runtimeField"
-              outlined
-              dense
-            />
-          </v-col>
-        </v-row>
+          <v-text-field
+            v-if="supportStorages && sourceStorageType === 'vault'
+              && item.source_storage_id != null"
+            v-model="item.source_storage_key"
+            label="Secret path"
+            hint="Path within the mount; values are not browsed"
+            :rules="[(v) => !!v || 'Secret path is required']"
+            :disabled="runtimeReferenceDisabled"
+            data-testid="key-runtimePath"
+            outlined
+            dense
+          />
+        </RuntimeKeyReferenceFields>
 
         <v-alert
           v-if="sourceStorageType === 'vault' && runtimeDecision
@@ -199,51 +169,14 @@
       dense
     />
 
-    <v-checkbox
-      v-if="canGenerateSSHKey"
-      v-model="generateSSHKey"
-      label="Generate on server"
+    <GeneratedSSHKeyControls
+      :can-generate="canGenerateSSHKey"
+      :generate.sync="generateSSHKey"
+      :algorithm.sync="generatedSSHKeyAlgorithm"
+      :algorithms="generatedSSHKeyAlgorithms"
+      :metadata="generatedSSHKeyMetadata"
       :disabled="formSaving || !canEditSecrets"
-      data-testid="key-generateServer"
     />
-
-    <v-select
-      v-if="canGenerateSSHKey && generateSSHKey"
-      v-model="generatedSSHKeyAlgorithm"
-      :items="generatedSSHKeyAlgorithms"
-      item-value="id"
-      item-text="name"
-      label="Key algorithm"
-      :disabled="formSaving || !canEditSecrets"
-      data-testid="key-generateAlgorithm"
-      outlined
-      dense
-    />
-
-    <v-alert
-      v-if="generatedSSHKeyMetadata"
-      dense
-      text
-      type="info"
-      data-testid="key-generatedMetadata"
-      class="generated-ssh-key-metadata"
-    >
-      <div><strong>Generated {{ generatedSSHKeyMetadata.algorithm }}</strong></div>
-      <div class="generated-ssh-key-fingerprint">
-        Fingerprint: <code>{{ generatedSSHKeyMetadata.fingerprint }}</code>
-      </div>
-      <div style="position: relative">
-        <pre
-          class="pa-2 mt-2 generated-ssh-key-public"
-          style="overflow: auto; background: #616161; color: white; border-radius: 6px"
-        >{{ generatedSSHKeyMetadata.public_key }}</pre>
-        <CopyClipboardButton
-          style="position: absolute; right: 0; top: 0; transform: scale(0.9);"
-          :text="generatedSSHKeyMetadata.public_key"
-        />
-      </div>
-      The private key is stored encrypted by Semaphore and is never displayed.
-    </v-alert>
 
     <v-text-field
       v-model="item.ssh.passphrase"
@@ -278,17 +211,20 @@
   </v-form>
 </template>
 <script>
+import enhancedWatch from '@/lib/enhanced/key-form-state';
+
+import RuntimeKeyReferenceFields from '@/components/enhanced/RuntimeKeyReferenceFields.vue';
+import GeneratedSSHKeyControls from '@/components/enhanced/GeneratedSSHKeyControls.vue';
 import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/key-form';
 
 import ItemFormBase from '@/components/ItemFormBase';
-
-import CopyClipboardButton from '@/components/CopyClipboardButton.vue';
 
 export default {
   mixins: [ItemFormBase],
 
   components: {
-    CopyClipboardButton,
+    RuntimeKeyReferenceFields,
+    GeneratedSSHKeyControls,
   },
 
   props: {
@@ -382,27 +318,7 @@ export default {
   },
 
   watch: {
-    'item.type': function itemType(type) {
-      if (type !== 'ssh') {
-        this.generateSSHKey = false;
-      }
-    },
-    generateSSHKey(enabled) {
-      if (enabled) {
-        this.clearGeneratedSSHKeyInput(false);
-      }
-    },
-    'item.source_storage_id': {
-      handler(storageId) {
-        if (this.item?.source_storage_type !== 'vault' || storageId == null) {
-          return;
-        }
-        const storage = this.runtimeSecretStorages.find((candidate) => candidate.id === storageId);
-        if (storage && !this.item.source_storage_mount) {
-          this.$set(this.item, 'source_storage_mount', storage.params?.mount || 'secret');
-        }
-      },
-    },
+    ...enhancedWatch,
   },
 
   async created() {
@@ -436,26 +352,3 @@ export default {
   },
 };
 </script>
-<style scoped>
-.generated-ssh-key-metadata,
-.generated-ssh-key-metadata ::v-deep .v-alert__content {
-  min-width: 0;
-  max-width: 100%;
-}
-
-.generated-ssh-key-fingerprint,
-.generated-ssh-key-fingerprint code {
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.generated-ssh-key-public {
-  box-sizing: border-box;
-  max-width: 100%;
-  min-width: 0;
-  overflow-x: auto;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-</style>

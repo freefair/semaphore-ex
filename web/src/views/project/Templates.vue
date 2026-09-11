@@ -130,42 +130,16 @@
 
     <v-divider style="margin-top: -1px;"/>
 
-    <div class="template-search-bar px-4 pt-4">
-      <v-text-field
-        ref="templateSearch"
-        v-model="templateSearchInput"
-        :label="$t('templateSearchLabel')"
-        prepend-inner-icon="mdi-magnify"
-        clearable
-        dense
-        outlined
-        hide-details
-        maxlength="256"
-        :loading="templateSearchLoading"
-        data-testid="template-search"
-        @input="queueTemplateSearch"
-        @click:clear="clearTemplateSearch"
-        @keydown.esc.stop.prevent="clearTemplateSearch"
-      />
-      <div
-        v-if="appliedTemplateSearch && !templateSearchLoading"
-        class="template-search-results"
-        data-testid="template-search-results"
-        aria-live="polite"
-      >
-        {{ $t('templateSearchResultCount', { count: items.length }) }}
-      </div>
-    </div>
-
-    <v-alert
-      v-if="templateSearchError"
-      dense
-      text
-      type="error"
-      class="mx-4 mt-3 mb-0"
-    >
-      {{ templateSearchError }}
-    </v-alert>
+    <TemplateSearchBar
+      ref="templateSearch"
+      :value.sync="templateSearchInput"
+      :applied-search="appliedTemplateSearch"
+      :loading="templateSearchLoading"
+      :count="items.length"
+      :error="templateSearchError"
+      @input="queueTemplateSearch"
+      @clear="clearTemplateSearch"
+    />
 
     <v-data-table
       ref="templatesTable"
@@ -199,44 +173,21 @@
               ? `/project/${projectId}/views/${viewId}/templates/${item.id}`
               : `/project/${projectId}/templates/${item.id}`"
         >
-          <template v-for="(segment, index) in highlightTemplateSearch(item.name)">
-            <mark
-              v-if="segment.match"
-              :key="`name-match-${item.id}-${index}`"
-              class="template-search-match"
-            >{{ segment.text }}</mark>
-            <span v-else :key="`name-text-${item.id}-${index}`">{{ segment.text }}</span>
-          </template>
+          <TemplateSearchHighlight :segments="highlightTemplateSearch(item.name)" />
         </router-link>
         <div
           v-if="templateSearchSecondaryMatch(item)"
           class="template-search-context ml-8"
         >
           {{ $t('templateSearchMatchedIn', { field: templateSearchSecondaryMatch(item).label }) }}:
-          <template
-            v-for="(segment, index) in highlightTemplateSearch(
-              templateSearchSecondaryMatch(item).value
-            )"
-          >
-            <mark
-              v-if="segment.match"
-              :key="`context-match-${item.id}-${index}`"
-              class="template-search-match"
-            >{{ segment.text }}</mark>
-            <span v-else :key="`context-text-${item.id}-${index}`">{{ segment.text }}</span>
-          </template>
+          <TemplateSearchHighlight
+            :segments="highlightTemplateSearch(templateSearchSecondaryMatch(item).value)"
+          />
         </div>
       </template>
 
       <template v-slot:item.playbook="{ item }">
-        <template v-for="(segment, index) in highlightTemplateSearch(item.playbook)">
-          <mark
-            v-if="segment.match"
-            :key="`playbook-match-${item.id}-${index}`"
-            class="template-search-match"
-          >{{ segment.text }}</mark>
-          <span v-else :key="`playbook-text-${item.id}-${index}`">{{ segment.text }}</span>
-        </template>
+        <TemplateSearchHighlight :segments="highlightTemplateSearch(item.playbook)" />
       </template>
 
       <template v-slot:item.version="{ item }">
@@ -348,64 +299,19 @@
   padding-right: 0 !important;
 }
 
-.template-search-bar {
-  align-items: center;
-  display: flex;
-  gap: 16px;
-}
-
-.template-search-bar .v-input {
-  flex: 0 1 520px;
-}
-
-.template-search-results {
-  color: var(--text-color, rgba(0, 0, 0, 0.6));
-  flex: 0 0 auto;
-  font-size: 0.875rem;
-}
-
-.template-search-context {
-  color: rgba(0, 0, 0, 0.6);
-  font-size: 0.78rem;
-  line-height: 1.35;
-  max-width: 48rem;
-  overflow-wrap: anywhere;
-}
-
-.theme--dark .template-search-context,
-.theme--dark .template-search-results {
-  color: rgba(255, 255, 255, 0.7);
-}
-
-.template-search-match {
-  background: #fff2a8;
-  border-radius: 2px;
-  color: inherit;
-  padding: 0;
-}
-
-.theme--dark .template-search-match {
-  background: #675d20;
-}
+@import '../../components/enhanced/template-search';
 
 @media #{map-get($display-breakpoints, 'sm-and-down')} {
-  .template-search-bar {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .template-search-bar .v-input {
-    flex-basis: auto;
-    width: 100%;
-  }
-
   .templates-table .v-data-table__mobile-row:first-child {
     display: none !important;
   }
 }
 </style>
 <script>
+import TemplateSearchHighlight from '@/components/enhanced/TemplateSearchHighlight.vue';
+import TemplateSearchBar from '@/components/enhanced/TemplateSearchBar.vue';
+import { createEnhancedState, enhancedWatch } from '@/lib/enhanced/templates-state';
+
 import enhancedMethods from '@/lib/enhanced/templates';
 
 import ItemListPageBase from '@/components/ItemListPageBase';
@@ -425,6 +331,8 @@ import AppsMixin from '@/components/AppsMixin';
 
 export default {
   components: {
+    TemplateSearchHighlight,
+    TemplateSearchBar,
     EditTemplateDialog,
     TableSettingsSheet,
     TaskStatus,
@@ -460,12 +368,7 @@ export default {
       itemApp: '',
       templateSearchInput: initialTemplateSearch,
       appliedTemplateSearch: initialTemplateSearch,
-      templateSearchTimer: null,
-      templateSearchAbort: null,
-      templateSearchRequest: 0,
-      templateSearchLoading: false,
-      templateSearchError: null,
-      templateTablePage: 1,
+      ...createEnhancedState(),
     };
   },
 
@@ -495,18 +398,7 @@ export default {
     },
   },
   watch: {
-    '$route.query.search': async function routeTemplateSearch(value) {
-      const normalized = this.normalizeTemplateSearch(value);
-      if (normalized === this.templateSearchInput
-        && normalized === this.appliedTemplateSearch) {
-        return;
-      }
-      this.cancelQueuedTemplateSearch();
-      this.templateSearchInput = normalized;
-      this.appliedTemplateSearch = normalized;
-      this.templateTablePage = 1;
-      await this.loadItems();
-    },
+    ...enhancedWatch,
     async viewId() {
       try {
         this.viewItemsLoading = true;
