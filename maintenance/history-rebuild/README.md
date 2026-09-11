@@ -25,6 +25,7 @@ A separate documentation commit updates the current maintenance runbook for the 
 
 [Shared-file decisions](shared-files.yml) connect the commit assessment to 219 original shared paths and their introducing/modifying commits.
 [Source boundaries](../source-boundaries.md) explains where future changes belong.
+The [follow-up separation review](../source-separation/README.md) records additional source boundaries and updated overlap measurements.
 
 - 907 new Go declaration names move into 87 focused same-package files, preserving public type identity and existing integration calls.
 - Task-summary persistence and its factory belong to the selected Enhanced module; the selected UI uses `EnhancedTaskSummary.vue`.
