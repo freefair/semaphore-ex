@@ -16,11 +16,6 @@ func (d *SqlDb) CreateTemplate(tmpl db.Template) (db.Template, error) {
 
 	tmpl.ApplyLegacyEnvironmentField()
 
-	hasRunnerTagPolicy, err := d.IsMigrationApplied(db.Migration{Version: "2.20.6"})
-	if err != nil {
-		return db.Template{}, err
-	}
-
 	fields := map[string]any{
 		"project_id":                    tmpl.ProjectID,
 		"inventory_id":                  tmpl.InventoryID,
@@ -47,9 +42,8 @@ func (d *SqlDb) CreateTemplate(tmpl db.Template) (db.Template, error) {
 		"jwt_params":                    tmpl.JWTParams,
 		"executor_image":                tmpl.NormalizedExecutorImage(),
 	}
-	if hasRunnerTagPolicy {
-		fields["runner_tags"] = &tmpl.RunnerTags
-		fields["runner_tag_match_mode"] = tmpl.RunnerTagMatchMode
+	if err := d.addTemplateRunnerTagPolicyFields(fields, tmpl); err != nil {
+		return db.Template{}, err
 	}
 
 	query, args, err := sq.Insert("project__template").
@@ -88,11 +82,6 @@ func (d *SqlDb) UpdateTemplate(tmpl db.Template) error {
 		return err
 	}
 
-	hasRunnerTagPolicy, err := d.IsMigrationApplied(db.Migration{Version: "2.20.6"})
-	if err != nil {
-		return err
-	}
-
 	fields := map[string]any{
 		"inventory_id":                  tmpl.InventoryID,
 		"repository_id":                 tmpl.RepositoryID,
@@ -118,9 +107,8 @@ func (d *SqlDb) UpdateTemplate(tmpl db.Template) error {
 		"jwt_params":                    tmpl.JWTParams,
 		"executor_image":                tmpl.NormalizedExecutorImage(),
 	}
-	if hasRunnerTagPolicy {
-		fields["runner_tags"] = &tmpl.RunnerTags
-		fields["runner_tag_match_mode"] = tmpl.RunnerTagMatchMode
+	if err := d.addTemplateRunnerTagPolicyFields(fields, tmpl); err != nil {
+		return err
 	}
 
 	query, args, err := sq.Update("project__template").

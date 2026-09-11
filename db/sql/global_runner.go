@@ -199,27 +199,8 @@ func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
 }
 
 func (d *SqlDb) UpdateRunner(runner db.Runner) (err error) {
-	if err = db.ValidateRunnerTags(runner.Tags); err != nil {
-		return
-	}
-	runner.Tags = db.NormalizeRunnerTags(runner.Tags)
-	runner.RegistrationPolicy, err = db.NormalizeRunnerRegistrationPolicy(runner.RegistrationPolicy)
+	runner, err = d.prepareRunnerForUpdate(runner)
 	if err != nil {
-		return
-	}
-	if runner.TransportTrust == "" {
-		runner.TransportTrust = db.RunnerTransportPlaintext
-	}
-	var current db.Runner
-	if runner.ProjectID == nil {
-		current, err = d.GetGlobalRunner(runner.ID)
-	} else {
-		current, err = d.GetRunner(*runner.ProjectID, runner.ID)
-	}
-	if err != nil {
-		return
-	}
-	if err = db.ValidateRunnerRegistrationPolicyChange(current, runner.RegistrationPolicy); err != nil {
 		return
 	}
 
@@ -359,38 +340,9 @@ func (d *SqlDb) ResetRunnerRegistration(runnerID int, registrationTokenHash stri
 }
 
 func (d *SqlDb) CreateRunner(runner db.Runner) (newRunner db.Runner, err error) {
-	if err = db.ValidateRunnerTags(runner.Tags); err != nil {
-		return
-	}
-	runner.Tags = db.NormalizeRunnerTags(runner.Tags)
-	runner.ExecutorType, err = db.NormalizeRunnerExecutorType(runner.ExecutorType)
+	runner, err = prepareRunnerForCreate(runner)
 	if err != nil {
-		return
-	}
-	runner.RegistrationPolicy, err = db.NormalizeRunnerRegistrationPolicy(runner.RegistrationPolicy)
-	if err != nil {
-		return
-	}
-	if runner.TransportTrust == "" {
-		runner.TransportTrust = db.RunnerTransportPlaintext
-	}
-	if runner.RegistrationTokenHash != nil {
-		runner.RegistrationKind = db.RunnerRegistrationOneTime
-	} else if runner.RegistrationKind == "" {
-		runner.RegistrationKind = db.RunnerRegistrationShared
-	}
-	decision := db.EvaluateRunnerRegistrationPolicy(runner.RegistrationPolicy, db.RunnerSecurityReport{
-		RegistrationKind: runner.RegistrationKind,
-		TransportTrust:   runner.TransportTrust,
-		RunnerVersion:    runner.Version,
-		ProtocolVersion:  runner.SecurityProtocolVersion,
-		ExecutorType:     runner.ExecutorType,
-	})
-	runner.SecurityCompliant = decision.Compliant
-	runner.SecurityReason = decision.Reason
-	runner.SecurityRemediation = decision.Remediation
-	if runner.IsRegistered() && runner.RegistrationPolicy == db.RunnerRegistrationSecure {
-		return db.Runner{}, db.RunnerSecurityViolationError{Decision: decision}
+		return db.Runner{}, err
 	}
 
 	insertID, err := d.insert(

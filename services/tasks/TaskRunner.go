@@ -214,9 +214,7 @@ func (t *TaskRunner) run() {
 		return
 	}
 
-	startedTask, started, err := t.pool.store.ClaimTaskStart(
-		t.Task.ProjectID, t.Task.ID, t.Task.AssignmentGeneration,
-	)
+	startOutcome, err := t.claimTaskStart()
 	if err != nil {
 		log.WithError(err).WithFields(log.Fields{
 			"task_id": t.Task.ID,
@@ -226,16 +224,10 @@ func (t *TaskRunner) run() {
 		requeued = true
 		return
 	}
-	if !started {
-		t.pool.refreshTaskStatusFromDB(t)
+	if startOutcome == taskStartClaimSuperseded {
 		superseded = true
 		return
 	}
-	oldStatus := t.Task.Status
-	applyDBPersistedTaskSnapshot(&t.Task, startedTask)
-	t.pool.state.UpdateRuntimeFields(t)
-	t.publishStatus()
-	t.afterStatusChange(oldStatus, t.Task.Status)
 	t.createTaskEvent()
 
 	t.Log("Started task #" + strconv.Itoa(t.Task.ID) + " of template '" + t.Template.Name + "'\n")

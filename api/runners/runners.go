@@ -87,26 +87,7 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	report.Apply(&runner)
-	securityReport := db.RunnerSecurityReport{
-		RegistrationKind: runner.RegistrationKind,
-		PublicKey:        "",
-	}
-	if runner.PublicKey != nil {
-		securityReport.PublicKey = *runner.PublicKey
-	}
-	if report.Version != nil {
-		securityReport.RunnerVersion = *report.Version
-	}
-	if report.ExecutorType != nil {
-		securityReport.ExecutorType = *report.ExecutorType
-	}
-	if report.TransportTrust != nil {
-		securityReport.TransportTrust = *report.TransportTrust
-	}
-	if report.SecurityProtocolVersion != nil {
-		securityReport.ProtocolVersion = *report.SecurityProtocolVersion
-	}
-	securityDecision := db.EvaluateRunnerRegistrationPolicy(runner.RegistrationPolicy, securityReport)
+	securityDecision := db.EvaluateRunnerRegistrationPolicy(runner.RegistrationPolicy, runnerSecurityReport(runner, report))
 	runner.SecurityCompliant = securityDecision.Compliant
 	runner.SecurityReason = securityDecision.Reason
 	runner.SecurityRemediation = securityDecision.Remediation

@@ -33,6 +33,184 @@ func (d *SqlDb) updateUserFields(
 	return err
 }
 
+// deleteUserWithGlobalRoleProtection keeps the global-role lock and the
+// last-effective-administrator invariant in one transaction.
+func (d *SqlDb) deleteUserWithGlobalRoleProtection(userID int) error {
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = lockGlobalRoleMutations(tx, d); err != nil {
+		return err
+	}
+	effectiveAdmin, err := isEffectiveGlobalAdministratorTx(tx, d, userID)
+	if err != nil {
+		return err
+	}
+	if effectiveAdmin {
+		if err = requireGlobalAdministratorWithoutUserTx(tx, d, userID); err != nil {
+			return err
+		}
+	}
+	res, err := tx.Exec(d.PrepareQuery("delete from `user` where id=?"), userID)
+	if err = validateMutationResult(res, err); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// updateUserWithGlobalRoleProtection serializes administrator demotion with
+// global-role mutations before updating the shared user fields.
+func (d *SqlDb) updateUserWithGlobalRoleProtection(user db.UserWithPwd, pwdHash []byte) error {
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = lockGlobalRoleMutations(tx, d); err != nil {
+		return err
+	}
+	var current db.User
+	err = tx.SelectOne(&current, d.PrepareQuery("select * from `user` where id=?"), user.ID)
+	if errors.Is(err, stdsql.ErrNoRows) {
+		return db.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if current.Admin && !user.Admin {
+		if err = requireGlobalAdministratorWithoutUserTx(tx, d, user.ID); err != nil {
+			return err
+		}
+	}
+	if err = d.updateUserFields(tx, user, pwdHash); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// createProjectUserWithRoleIdentity resolves a custom role and writes the
+// membership while the project-role lock prevents concurrent ambiguity.
+func (d *SqlDb) createProjectUserWithRoleIdentity(projectUser db.ProjectUser) (db.ProjectUser, error) {
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return db.ProjectUser{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = lockProjectRoleMutations(tx, d, projectUser.ProjectID); err != nil {
+		return db.ProjectUser{}, err
+	}
+	projectUser, err = normalizeProjectRoleAssignmentTx(tx, d, projectUser)
+	if err != nil {
+		return db.ProjectUser{}, err
+	}
+	_, err = tx.Exec(d.PrepareQuery(
+		"insert into project__user (project_id, user_id, `role`, role_id, revision) values (?, ?, ?, ?, ?)"),
+		projectUser.ProjectID, projectUser.UserID, projectUser.Role, projectUser.RoleID, projectUser.Revision)
+	if err != nil {
+		return db.ProjectUser{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return db.ProjectUser{}, err
+	}
+	return projectUser, nil
+}
+
+// updateProjectUserWithRoleIdentity makes a revision-checked membership
+// change without allowing the last project administrator to be removed.
+func (d *SqlDb) updateProjectUserWithRoleIdentity(projectUser db.ProjectUser) error {
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = lockProjectRoleMutations(tx, d, projectUser.ProjectID); err != nil {
+		return err
+	}
+	var current db.ProjectUser
+	err = tx.SelectOne(&current, d.PrepareQuery(
+		"select * from project__user where project_id=? and user_id=?"), projectUser.ProjectID, projectUser.UserID)
+	if errors.Is(err, stdsql.ErrNoRows) {
+		return db.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if projectUser.Revision <= 0 || projectUser.Revision != current.Revision {
+		return db.ErrProjectMembershipRevisionConflict
+	}
+	projectUser.Revision = current.Revision
+	projectUser, err = normalizeProjectRoleAssignmentTx(tx, d, projectUser)
+	if err != nil {
+		return err
+	}
+	currentPermissions, err := projectRoleAssignmentPermissionsTx(tx, d, current)
+	if err != nil {
+		return err
+	}
+	updatedPermissions, err := projectRoleAssignmentPermissionsTx(tx, d, projectUser)
+	if err != nil {
+		return err
+	}
+	if currentPermissions.Can(db.CanManageProjectUsers) && !updatedPermissions.Can(db.CanManageProjectUsers) {
+		if err = requireAnotherProjectAdministratorTx(tx, d, projectUser.ProjectID, projectUser.UserID); err != nil {
+			return err
+		}
+	}
+	result, err := tx.Exec(d.PrepareQuery(
+		`update project__user set role=?, role_id=?, revision=revision+1
+		 where project_id=? and user_id=? and revision=?`),
+		projectUser.Role, projectUser.RoleID, projectUser.ProjectID, projectUser.UserID, current.Revision)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return db.ErrProjectMembershipRevisionConflict
+	}
+	return tx.Commit()
+}
+
+// deleteProjectUserWithRoleIdentity serializes deletion with role changes and
+// checks that a project administrator remains before committing it.
+func (d *SqlDb) deleteProjectUserWithRoleIdentity(projectID int, userID int) error {
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = lockProjectRoleMutations(tx, d, projectID); err != nil {
+		return err
+	}
+	var current db.ProjectUser
+	err = tx.SelectOne(&current, d.PrepareQuery(
+		"select * from project__user where project_id=? and user_id=?"), projectID, userID)
+	if errors.Is(err, stdsql.ErrNoRows) {
+		return db.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	permissions, err := projectRoleAssignmentPermissionsTx(tx, d, current)
+	if err != nil {
+		return err
+	}
+	if permissions.Can(db.CanManageProjectUsers) {
+		if err = requireAnotherProjectAdministratorTx(tx, d, projectID, userID); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(d.PrepareQuery(
+		"delete from project__user where user_id=? and project_id=?"), userID, projectID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func normalizeProjectRoleAssignmentTx(
 	tx *gorp.Transaction,
 	d *SqlDb,

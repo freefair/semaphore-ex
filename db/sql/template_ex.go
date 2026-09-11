@@ -14,6 +14,20 @@ type templateWithLastTask struct {
 
 const templateSearchVisibleIDChunkSize = 500
 
+// addTemplateRunnerTagPolicyFields keeps template writes compatible with
+// databases that predate the runner-tag policy migration.
+func (d *SqlDb) addTemplateRunnerTagPolicyFields(fields map[string]any, tmpl db.Template) error {
+	hasRunnerTagPolicy, err := d.IsMigrationApplied(db.Migration{Version: "2.20.6"})
+	if err != nil {
+		return err
+	}
+	if hasRunnerTagPolicy {
+		fields["runner_tags"] = &tmpl.RunnerTags
+		fields["runner_tag_match_mode"] = tmpl.RunnerTagMatchMode
+	}
+	return nil
+}
+
 // filterVisibleTemplateSearchCandidates narrows already-authorized templates
 // with a portable SQL LIKE query. The caller has applied the canonical
 // per-template evaluator before passing IDs here; this function must never

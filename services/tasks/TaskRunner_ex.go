@@ -10,6 +10,34 @@ import (
 	"strconv"
 )
 
+type taskStartClaimOutcome uint8
+
+const (
+	taskStartClaimed taskStartClaimOutcome = iota
+	taskStartClaimSuperseded
+)
+
+// claimTaskStart applies the SQL-authoritative transition before any job
+// side effect, and distinguishes a stale local queue entry from a DB failure.
+func (t *TaskRunner) claimTaskStart() (taskStartClaimOutcome, error) {
+	startedTask, started, err := t.pool.store.ClaimTaskStart(
+		t.Task.ProjectID, t.Task.ID, t.Task.AssignmentGeneration,
+	)
+	if err != nil {
+		return taskStartClaimed, err
+	}
+	if !started {
+		t.pool.refreshTaskStatusFromDB(t)
+		return taskStartClaimSuperseded, nil
+	}
+	oldStatus := t.Task.Status
+	applyDBPersistedTaskSnapshot(&t.Task, startedTask)
+	t.pool.state.UpdateRuntimeFields(t)
+	t.publishStatus()
+	t.afterStatusChange(oldStatus, t.Task.Status)
+	return taskStartClaimed, nil
+}
+
 func (t *TaskRunner) publishStatus() {
 	for _, user := range t.users {
 		b, err := json.Marshal(&map[string]any{

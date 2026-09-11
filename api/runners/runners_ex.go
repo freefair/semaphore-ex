@@ -23,6 +23,31 @@ func kubernetesNamespaceAllowed(policy db.KubernetesExecutionPolicy, namespace s
 	return false
 }
 
+// runnerSecurityReport translates only validated poll metadata into the
+// non-secret input consumed by the persisted runner-registration policy.
+func runnerSecurityReport(runner db.Runner, report runners.HealthReport) db.RunnerSecurityReport {
+	securityReport := db.RunnerSecurityReport{
+		RegistrationKind: runner.RegistrationKind,
+		PublicKey:        "",
+	}
+	if runner.PublicKey != nil {
+		securityReport.PublicKey = *runner.PublicKey
+	}
+	if report.Version != nil {
+		securityReport.RunnerVersion = *report.Version
+	}
+	if report.ExecutorType != nil {
+		securityReport.ExecutorType = *report.ExecutorType
+	}
+	if report.TransportTrust != nil {
+		securityReport.TransportTrust = *report.TransportTrust
+	}
+	if report.SecurityProtocolVersion != nil {
+		securityReport.ProtocolVersion = *report.SecurityProtocolVersion
+	}
+	return securityReport
+}
+
 func (c *RunnerController) persistTaskExecutionEvidence(w http.ResponseWriter, runnerID int, evidence []db.TaskExecutionEvidence) bool {
 	if c.taskExecutionEvidenceSink == nil {
 		return true

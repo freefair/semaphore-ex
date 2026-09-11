@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"context"
 	"embed"
 	"fmt"
 	"github.com/gorilla/mux"
@@ -17,14 +16,12 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	proApi "github.com/semaphoreui/semaphore/pro/api"
 	proProjects "github.com/semaphoreui/semaphore/pro/api/projects"
-	proFactory "github.com/semaphoreui/semaphore/pro/db/factory"
 	proFeatures "github.com/semaphoreui/semaphore/pro/pkg/features"
 	proHA "github.com/semaphoreui/semaphore/pro/services/ha"
 	proServer "github.com/semaphoreui/semaphore/pro/services/server"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	auditServices "github.com/semaphoreui/semaphore/services/audit"
 	capabilityServices "github.com/semaphoreui/semaphore/services/capabilities"
-	identityServices "github.com/semaphoreui/semaphore/services/identity"
 	"github.com/semaphoreui/semaphore/services/server"
 	taskServices "github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
@@ -114,16 +111,11 @@ func Route(
 	jwksController := NewJwksController(jwtSigner)
 	integrationController := NewIntegrationController(store, integrationService)
 	environmentController := projects.NewEnvironmentController(store, encryptionService, accessKeyService, environmentService, secretStorageService)
-	capabilityProvider := proFeatures.NewCapabilityProvider(store)
-	totpService := proFeatures.NewTOTPService(store, capabilityProvider)
-	if err := totpService.Initialize(context.Background()); err != nil {
-		log.WithError(err).Panic("failed to initialize TOTP lifecycle service")
-	}
-	ldapService := proFeatures.NewLDAPService(store, capabilityProvider, identityServices.NewLDAPClient())
-	if err := ldapService.Initialize(context.Background()); err != nil {
-		log.WithError(err).Panic("failed to initialize LDAP lifecycle service")
-	}
-	oidcGroupMappingService := proFeatures.NewOIDCGroupMappingService(store)
+	identityServices := newIdentityServiceBundle(store)
+	capabilityProvider := identityServices.capabilityProvider
+	totpService := identityServices.totpService
+	ldapService := identityServices.ldapService
+	oidcGroupMappingService := identityServices.oidcGroupMappingService
 	secretStorageController := projects.NewSecretStorageController(store, secretStorageService, capabilityProvider)
 	repositoryController := projects.NewRepositoryController(accessKeyInstallationService)
 	keyController := projects.NewKeyController(accessKeyService)
@@ -131,14 +123,10 @@ func Route(
 	terraformController := proApi.NewTerraformController(encryptionService, terraformStore, store)
 	terraformInventoryController := proProjects.NewTerraformInventoryController(terraformStore)
 	workflowController := proProjects.NewWorkflowController(workflowService, workflowStore, workflowDefinitionService)
-	workflowFileArtifactIdentityStore, _ := store.(pro_interfaces.WorkflowFileArtifactIdentityStore)
-	workflowFileArtifactRepository := proFactory.NewWorkflowFileArtifactStore(store)
-	workflowFileArtifactService := proServer.NewWorkflowFileArtifactService(
-		workflowFileArtifactRepository, workflowStore, workflowFileArtifactIdentityStore,
-	)
-	workflowFileArtifactController := proProjects.NewWorkflowFileArtifactController(workflowFileArtifactService)
-	workflowArtifactRetentionService := proServer.NewWorkflowArtifactRetentionGovernanceService(workflowFileArtifactRepository)
-	workflowArtifactRetentionController := proApi.NewWorkflowArtifactRetentionController(workflowArtifactRetentionService)
+	workflowFileArtifacts := newWorkflowFileArtifactBundle(store, workflowStore)
+	workflowFileArtifactService := workflowFileArtifacts.service
+	workflowFileArtifactController := workflowFileArtifacts.controller
+	workflowArtifactRetentionController := workflowFileArtifacts.retentionController
 	crossProjectTemplateController := proProjects.NewCrossProjectTemplateController(proServer.NewCrossProjectTemplateService(store, workflowStore))
 	workflowTriggerController := proProjects.NewWorkflowTriggerController(workflowTriggerService)
 	workflowMiddlewareController := projects.NewWorkflowController(workflowStore)
@@ -402,28 +390,7 @@ func Route(
 	adminAPI.Path("/admin/info").HandlerFunc(getAdminInfo).Methods("GET", "HEAD")
 	adminAPI.Path("/capabilities/lifecycle-test").HandlerFunc(capabilityController.Configure).Methods("PUT")
 	adminAPI.Path("/capabilities/runtime-secrets").HandlerFunc(capabilityController.ConfigureRuntimeSecrets).Methods("PUT")
-	adminAPI.Path("/capabilities/totp").HandlerFunc(totpController.Configure).Methods("PUT")
-	adminAPI.Path("/capabilities/totp").HandlerFunc(totpController.Configuration).Methods("GET", "HEAD")
-	adminAPI.Path("/capabilities/totp/transitions").HandlerFunc(totpController.Transitions).Methods("GET", "HEAD")
-	adminAPI.Path("/capabilities/ldap").HandlerFunc(ldapController.Providers).Methods("GET", "HEAD")
-	adminAPI.Path("/capabilities/ldap").HandlerFunc(ldapController.Configure).Methods("PUT")
-	adminAPI.Path("/capabilities/ldap/test").HandlerFunc(ldapController.Test).Methods("POST")
-	adminAPI.Path("/capabilities/ldap/state").HandlerFunc(ldapController.SetState).Methods("PUT")
-	adminAPI.Path("/capabilities/ldap/transitions").HandlerFunc(ldapController.Transitions).Methods("GET", "HEAD")
-	adminAPI.Path("/capabilities/ldap/group-mappings").HandlerFunc(ldapController.GroupMappings).Methods("GET", "HEAD")
-	adminAPI.Path("/capabilities/ldap/group-mappings/{mapping_id}").HandlerFunc(ldapController.SaveGroupMapping).Methods("PUT")
-	adminAPI.Path("/capabilities/ldap/group-mappings/{mapping_id}").HandlerFunc(ldapController.DeleteGroupMapping).Methods("DELETE")
-	adminAPI.Path("/capabilities/ldap/group-mappings/preview").HandlerFunc(ldapController.PreviewGroupMappings).Methods("POST")
-	adminAPI.Path("/capabilities/ldap/group-mappings/apply").HandlerFunc(ldapController.ApplyGroupPreview).Methods("POST")
-	adminAPI.Path("/capabilities/ldap/group-mappings/reconcile").HandlerFunc(ldapController.ReconcileGroupMappings).Methods("POST")
-	adminAPI.Path("/capabilities/ldap/group-mappings/history").HandlerFunc(ldapController.GroupReconciliationHistory).Methods("GET", "HEAD")
-	adminAPI.Path("/capabilities/oidc/group-mapping/providers").HandlerFunc(oidcGroupMappingController.Providers).Methods("GET", "HEAD")
-	adminAPI.Path("/capabilities/oidc/group-mappings").HandlerFunc(oidcGroupMappingController.GroupMappings).Methods("GET", "HEAD")
-	adminAPI.Path("/capabilities/oidc/group-mappings/{mapping_id}").HandlerFunc(oidcGroupMappingController.SaveGroupMapping).Methods("PUT")
-	adminAPI.Path("/capabilities/oidc/group-mappings/{mapping_id}").HandlerFunc(oidcGroupMappingController.DeleteGroupMapping).Methods("DELETE")
-	adminAPI.Path("/capabilities/oidc/group-mappings/preview").HandlerFunc(oidcGroupMappingController.PreviewGroupMappings).Methods("POST")
-	adminAPI.Path("/capabilities/oidc/group-mappings/history").HandlerFunc(oidcGroupMappingController.GroupReconciliationHistory).Methods("GET", "HEAD")
-	adminAPI.Path("/capabilities/oidc/group-mappings/assignments").HandlerFunc(oidcGroupMappingController.EffectiveGroupAssignments).Methods("GET", "HEAD")
+	registerIdentityCapabilityRoutes(adminAPI, totpController, ldapController, oidcGroupMappingController)
 	adminAPI.Path("/audit-webhook").HandlerFunc(auditWebhookController.GetConfiguration).Methods("GET", "HEAD")
 	adminAPI.Path("/audit-webhook").HandlerFunc(auditWebhookController.Configure).Methods("PUT")
 	adminAPI.Path("/audit-webhook/test").HandlerFunc(auditWebhookController.TestDelivery).Methods("POST")
