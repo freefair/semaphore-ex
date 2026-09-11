@@ -52,6 +52,10 @@ Further architectural changes should be justified by the specific remaining depe
 
 ## Verification
 
+The results below describe the source-separation checkpoint. The subsequent
+[frontend test repair](../frontend-tests.md) resolves its six normal frontend failures
+in a separately authorized tooling/test change.
+
 - Maintenance inventories/checker tests, root and Enhanced Go tests, both vet runs, API bundle, Dredd compilation, product build and Dockerfile checks pass.
 - MySQL 8.4, MariaDB 10.11 and PostgreSQL 12.22 migration matrices pass; SQLite coverage runs in the Go suite.
 - Eleven-locale serial documentation build and translated security/canonical fallback tests pass.
