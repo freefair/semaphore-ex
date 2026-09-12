@@ -13,9 +13,13 @@ releases on that line, starting at 1. Release candidates are `vX.Y.Z-ex.N-rcM`.
 The suffix keeps fork tags out of upstream's tag namespace; a plain `vX.Y.Z` tag would
 collide with the upstream tag of the same name and break `git fetch upstream`.
 
-Package versions map the tag onto the Debian and RPM rules: `2.20.0-ex.1` becomes
-`2.20.0~ex.1`, `2.20.0-ex.1-rc1` becomes `2.20.0~ex.1~rc1`, so a release candidate package
-upgrades cleanly to the final package and both sort below upstream `2.20.0`.
+Package versions follow nfpm's mapping of the semver pre-release: `v2.20.0-ex.1` becomes
+deb `2.20.0~ex.1` and rpm `2.20.0~ex.1`, both below upstream `2.20.0`. A release candidate
+becomes `2.20.0~ex.1-rc1` (rpm `2.20.0~ex.1_rc1`), which dpkg and rpm consider *newer* than
+the final package because the `-rc1` part lands in the revision slot. goreleaser does not
+template the nfpm `prerelease` field, so this cannot be rewritten at build time: treat rc
+packages as verification artifacts and remove them (`apt remove semaphore-ex`) before
+installing the final package on the same host.
 
 | Tag | Workflow | GitHub release | Images |
 |---|---|---|---|

@@ -105,9 +105,6 @@ nfpms:
 
     bindir: /usr/bin
 
-    # Tags are vX.Y.Z-ex.N[-rcM]; a literal "-" in the prerelease would be read as the
-    # Debian revision and make rc packages sort newer than the final package.
-    prerelease: '{{ replace .Prerelease "-" "~" }}'
 
     # Embedded RPM signature (rpm -K). Skipped when GPG_KEY_PATH is not set
     # (e.g. local `task release:test`). Passphrase comes from the
