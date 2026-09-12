@@ -922,9 +922,11 @@ export default {
         this.$set(this.item, 'sync_interval', 0);
       }
 
-      this.json = JSON.stringify(JSON.parse(this.item?.json || '{}'), null, 2);
-
       const json = JSON.parse(this.item?.json || '{}');
+      // The mode watcher can still read the previous editor when this form is
+      // reused. Hydrate every representation before switching back to the table.
+      this.json = JSON.stringify(json, null, 2);
+      this.yaml = dumpYaml(json);
 
       const env = JSON.parse(this.item?.env || '{}');
 
