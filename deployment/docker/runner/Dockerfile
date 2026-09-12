@@ -1,6 +1,6 @@
 FROM --platform=$BUILDPLATFORM node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS builder
 
-COPY --from=golang:1.26.5-alpine3.24@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 /usr/local/go /usr/local/go
+COPY --from=golang:1.26.8-alpine3.24@sha256:ce864e7223ac17b1775e6fd0b4c0db580c2eb50e7953a427916379e4b92a1628 /usr/local/go /usr/local/go
 
 ENV GOPATH=/go
 ENV PATH=/usr/local/go/bin:/go/bin:$PATH
