@@ -142,7 +142,6 @@ jobs:
             CORE_REVISION=${{ github.sha }}
             ENHANCED_REVISION=${{ github.sha }}
             SOURCE_TAG=${{ github.ref_name }}
-            SOURCE_SHA=${{ github.sha }}
           file: deployment/docker/server/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
@@ -176,7 +175,6 @@ jobs:
             CORE_REVISION=${{ github.sha }}
             ENHANCED_REVISION=${{ github.sha }}
             SOURCE_TAG=${{ github.ref_name }}
-            SOURCE_SHA=${{ github.sha }}
           file: deployment/docker/runner/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true

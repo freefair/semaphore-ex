@@ -26,12 +26,16 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG CORE_REVISION
 ARG ENHANCED_REVISION
+ARG SOURCE_TAG
+ARG SOURCE_SHA
 
 RUN --mount=type=cache,target=/go/pkg \
     --mount=type=cache,target=/root/.cache/go-build \
+    source_tag="${SOURCE_TAG:-$(git name-rev --name-only --tags --no-undefined HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD)}" && \
+    source_sha="${SOURCE_SHA:-$(git log --pretty=format:%h -n 1)}" && \
     task deps:be && \
     task deps:fe && \
-    task build GOOS=${TARGETOS} GOARCH=${TARGETARCH} CORE_REVISION=${CORE_REVISION} ENHANCED_REVISION=${ENHANCED_REVISION}
+    env SEMAPHORE_SOURCE_TAG="${source_tag}" SEMAPHORE_SOURCE_SHA="${source_sha}" task build GOOS=${TARGETOS} GOARCH=${TARGETARCH} CORE_REVISION=${CORE_REVISION} ENHANCED_REVISION=${ENHANCED_REVISION}
 
 
 # renovate: datasource=github-releases depName=opentofu/opentofu
