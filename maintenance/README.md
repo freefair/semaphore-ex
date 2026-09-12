@@ -158,6 +158,11 @@ Browser verification of changed UI, semantic conflict review, security review wh
 applicable, and exact-head remote CI results remain explicit maintenance steps.
 Ordinary verification never pushes, merges, rebases, or modifies SQL state.
 
+## Releasing
+
+See [RELEASING.md](RELEASING.md) for the tag scheme, the release gates, artifact
+verification and the location of the signing key.
+
 ## Fork-Owned Source Boundaries
 
 See [source boundaries](source-boundaries.md) for the Enhanced module, same-package

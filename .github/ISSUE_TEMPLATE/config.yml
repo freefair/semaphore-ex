@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/freefair/semaphore-ex/security/advisories/new
+    about: Report security issues privately. See SECURITY.md for the policy and the e-mail alternative.
+  - name: Bug in upstream Semaphore UI
+    url: https://github.com/semaphoreui/semaphore/issues
+    about: Problems that reproduce on the upstream Community release belong to the upstream tracker.

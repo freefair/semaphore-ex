@@ -1,116 +1,116 @@
-# Semaphore UI
+# Semaphore EX
 
-Modern UI for Ansible, Terraform/OpenTofu/Terragrunt, PowerShell and other DevOps tools.
-<!--
-[![](https://img.shields.io/github/license/semaphoreui/semaphore)](LICENSE)
--->
+Semaphore EX is a full-featured fork of [Semaphore UI](https://github.com/semaphoreui/semaphore),
+the modern web interface for Ansible, Terraform, OpenTofu, Terragrunt, PowerShell and other
+DevOps tools. It ships one edition that contains everything implemented in this repository:
+no edition selection, no license activation, no subscription quotas. Features that are
+optional or need external infrastructure have ordinary configuration switches instead.
 
-[![Dev](https://github.com/semaphoreui/semaphore/actions/workflows/dev.yml/badge.svg)](https://github.com/semaphoreui/semaphore/actions/workflows/dev.yml)
-[![](https://img.shields.io/docker/pulls/semaphoreui/semaphore.svg)](https://hub.docker.com/r/semaphoreui/semaphore)
+[![Full Product Build](https://github.com/freefair/semaphore-ex/actions/workflows/product_build.yml/badge.svg)](https://github.com/freefair/semaphore-ex/actions/workflows/product_build.yml)
+[![Dev](https://github.com/freefair/semaphore-ex/actions/workflows/dev.yml/badge.svg)](https://github.com/freefair/semaphore-ex/actions/workflows/dev.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-<!-- 
-[![roadmap](https://img.shields.io/badge/roadmap-gray?style=for-the-badge&logo=github)](https://github.com/orgs/semaphoreui/projects/11)
-[![telegram](https://img.shields.io/badge/discord_community-510b80?style=for-the-badge&logo=discord)](https://discord.gg/5R6k7hNGcH) 
-[![youtube](https://img.shields.io/badge/youtube_channel-red?style=for-the-badge&logo=youtube)](https://www.youtube.com/@semaphoreui) 
-[![docker](https://img.shields.io/badge/container_configurator-white?style=for-the-badge&logo=docker)](https://semaphoreui.com/install/docker/)
--->
+## Quick Start
 
+Run the server with SQLite and log in as `admin` / `changeme` at <http://localhost:3000>:
 
-![responsive-ui-phone1](https://user-images.githubusercontent.com/914224/134777345-8789d9e4-ff0d-439c-b80e-ddc56b74fcee.png)
-
-If your project has grown and deploying from the terminal is no longer feasible, then Semaphore UI is the tool you need.
-
-## Demo
-
-[Try Semaphore UI online](https://portal.semaphoreui.com/demo)
-
-<!--
-## Live Demo
-
-Try the latest version of Semaphore at [https://portal.semaphoreui.com](https://portal.semaphoreui.com).
--->
-
-## What is Semaphore UI?
-
-Semaphore UI is a modern web interface for managing popular DevOps tools.
-
-Semaphore UI allows you to:
-* Easily run Ansible playbooks, Terraform and OpenTofu code, as well as Bash and PowerShell scripts.
-* Receive notifications about failed tasks.
-* Control access to your deployment system.
-
-## Key Concepts
-
-1. **Projects** is a collection of related resources, configurations, and tasks.
-2. **Task Templates** are reusable definitions of tasks that can be executed on demand or scheduled.
-3. **Task** is a specific instance of a job or operation executed by Semaphore.
-4. **Schedules** allow you to automate task execution at specified times or intervals.
-5. **Inventory** is a collection of target hosts (servers, virtual machines, containers, etc.) on which tasks will be executed.
-6. **Variable Group** refers to a configuration context that holds sensitive information such as environment variables and secrets used by tasks during execution.
-
-## Getting Started
-
-You can install Semaphore using the following methods:
-* [Docker](https://semaphoreui.com/install/docker)
-* Deploy a VM from a marketplace:
-  * [AWS](https://aws.amazon.com/marketplace/pp/prodview-xavlsdkqybxtq)
-  * [Cloudzy](https://cloudzy.com/marketplace/semaphore-ui)
-  * [DigitalOcean](https://marketplace.digitalocean.com/apps/semaphore?refcode=b55d7c0077b8&action=deploy)
-  * [Vultr](https://www.vultr.com/marketplace/apps/semaphore)
-  * [Yandex Cloud](https://yandex.cloud/ru/marketplace/products/fastlix/semaphore)
-  * [RepoCloud](https://repocloud.io/details/Semaphore/)
-* [Snap](http://snapcraft.io/semaphore)
-* [Binary file](https://semaphoreui.com/install/binary)
-* [Debian or RPM package](https://semaphoreui.com/install/binary)
-
-### Docker
-
-The most popular way to install Semaphore is via Docker.
-
-```
-docker run -p 3000:3000 --name semaphore \
-	-e SEMAPHORE_DB_DIALECT=sqlite \
-	-e SEMAPHORE_ADMIN=admin \
-	-e SEMAPHORE_ADMIN_PASSWORD=changeme \
-	-e SEMAPHORE_ADMIN_NAME=Admin \
-	-e SEMAPHORE_ADMIN_EMAIL=admin@localhost \
-	-d semaphoreui/semaphore:latest
+```bash
+docker run -d --name semaphore-ex -p 3000:3000 \
+  -e SEMAPHORE_DB_DIALECT=sqlite \
+  -e SEMAPHORE_ADMIN=admin \
+  -e SEMAPHORE_ADMIN_PASSWORD=changeme \
+  -e SEMAPHORE_ADMIN_NAME=Admin \
+  -e SEMAPHORE_ADMIN_EMAIL=admin@localhost \
+  -v semaphore-ex:/var/lib/semaphore \
+  ghcr.io/freefair/semaphore-ex:latest
 ```
 
-We recommend using the [Container Configurator](https://semaphoreui.com/install/docker/) to get the ideal Docker configuration for Semaphore.
+Verify the instance reports the full edition:
 
-<!--
-### SaaS
+```bash
+curl -s -c cookie -H 'Content-Type: application/json' \
+  -d '{"auth":"admin","password":"changeme","method":"password"}' \
+  http://localhost:3000/api/auth/login
+curl -s -b cookie http://localhost:3000/api/info | jq '{edition, core_revision, enhanced_revision}'
+```
 
-We offer a SaaS solution for using Semaphore UI without installation. Check it out at [Semaphore Cloud](https://portal.semaphoreui.com).
--->
+Other installation paths:
 
-### Other Installation Methods
+- **Docker Compose**: snippets for server, runner and databases live in
+  [`deployment/compose`](deployment/compose/README.md).
+- **Remote runner image**: `ghcr.io/freefair/semaphore-ex-runner`, configured as described in the
+  [runner guide](https://freefair.github.io/semaphore-docs/administration-guide/runners/).
+- **Debian/RPM package or binary**: download from
+  [GitHub Releases](https://github.com/freefair/semaphore-ex/releases). The package is named
+  `semaphore-ex`, installs `/usr/bin/semaphore` and a `semaphore` systemd unit, and conflicts
+  with the upstream `semaphore` package. Verify the checksums before installing:
 
-For more installation options, visit our [Installation page](https://semaphoreui.com/install).
+  ```bash
+  gpg --import deployment/packaging/semaphore-ex-release.asc
+  gpg --verify semaphore-ex_<version>_checksums.txt.sig semaphore-ex_<version>_checksums.txt
+  sha256sum --check --ignore-missing semaphore-ex_<version>_checksums.txt
+  ```
+
+Images are published for `linux/amd64` and `linux/arm64` with SBOM and provenance attestations.
+Every release tag is `vX.Y.Z-ex.N`, where `X.Y.Z` is the upstream line the release is based on.
+
+## What the fork adds
+
+All of upstream Semaphore UI, plus the features below. Each feature group has a specification
+under [`docs/docs/developer-guide/plans/pro-slices`](docs/docs/developer-guide/plans/pro-slices/README.md).
+
+| Area | Features |
+|---|---|
+| Runners and placement | Project runner registration, lifecycle, health and history, reconciliation, tag placement, executor images, secure mode |
+| Task diagnostics and secrets | Task summaries, structured file logs, audit webhook export, debug log filtering, Vault and OpenBao runtime secrets, managed secret storage, TOTP and LDAP lifecycles |
+| Workflows | Graphical editor with validation, linear and conditional parallel runs, artifacts, parameters and overrides, triggers, approvals, reconciliation, versions, cross-project references, workflow RBAC |
+| High availability | Cluster dashboard, cross-node coordination, task recovery, workflow progression, resilience gate in CI |
+| Roles and identity | Custom project roles, global and template roles, LDAP and OIDC group mapping |
+| Container executors | Docker and Kubernetes executors with hardening policies |
+| Governance and delivery | Notification governance, PagerDuty, Opsgenie and ServiceNow delivery, signed webhooks |
+| Credentials | Global credential grants, dispatch-time resolution and audit, server-generated SSH keys, template search, per-schedule time zones |
+| Policy controls | Execution preflight, deployment windows, policy guardrails, artifact retention and provenance |
+
+Backend authorization, role permissions, safety policy and configured enablement stay enforced;
+they are security controls, not edition gates.
 
 ## Documentation
 
-* [User Guide](https://docs.semaphoreui.com)
-* [API Reference](https://semaphoreui.com/api-docs)
-* [Postman Collection](https://www.postman.com/semaphoreui)
+- [User and administration guide](https://freefair.github.io/semaphore-docs/) (fork of the upstream docs,
+  all eleven locales)
+- [Changelog](CHANGELOG.md) and [release procedure](maintenance/RELEASING.md)
+- [Upstream maintenance policy](maintenance/README.md): how upstream is merged, how migrations and
+  exported contracts are protected, and how changes are verified
+- API reference: `api-docs.yml` plus the fork additions in `api-docs-ex.yml`
 
-## Awesome Semaphore
+## Relationship to upstream
 
-A curated list of awesome things related to Semaphore UI.
+`develop` is the long-lived fork branch. Upstream `semaphoreui/semaphore` is merged regularly;
+published history is never rewritten. Fork code lives in the Enhanced module
+(`test/edition-contract/enhanced`), in same-package `*_ex.go` files and in focused UI components,
+so upstream files change as little as possible. Bugs that reproduce on the upstream Community
+release belong in the [upstream tracker](https://github.com/semaphoreui/semaphore/issues);
+everything else goes to [this repository's issues](https://github.com/freefair/semaphore-ex/issues).
 
-* [Ebdruplab — Ansible Collections](https://github.com/Ebdruplab/ansible-collection_ebdruplab) &mdash; Ansible modules and a role for managing Semaphore.
-* [SemaphoreUI MCP Server](https://github.com/cloin/semaphore-mcp) &mdash; A Model Context Protocol (MCP) server that provides AI assistants with powerful automation capabilities for SemaphoreUI.
-* [Terraform SemaphoreUI Provider](https://github.com/CruGlobal/terraform-provider-semaphoreui) &mdash; Manage Semaphore UI resources using Terraform.
-* [PSSemaphore](https://github.com/robinmalik/PSSemaphore) &mdash; A PowerShell module designed to work against the Ansible Semaphore REST API.
+## Development
 
-[//]: # (* [Ansible UI Semaphore]&#40;https://github.com/morbidick/ansible-role-semaphore&#41; &mdash; Ansible role to install and configure the Ansible UI Semaphore.)
+```bash
+git clone --recursive git@github.com:freefair/semaphore-ex.git && cd semaphore-ex
+task deps          # Go workspace vendoring, frontend packages, goreleaser
+task build         # embedded frontend + server binary in bin/semaphore
+task test          # Go test suites
+(cd web && npm run test:unit)
+```
 
-## Contribution
+Toolchain versions are pinned in `.github/workflows/product_build.yml` and the Dockerfiles.
+`tools/upstream-sync/verify.sh` runs the complete release gate set locally.
 
-* [Contribution Guide](https://github.com/semaphoreui/semaphore/blob/develop/CONTRIBUTING.md)
-* [Dev Container](https://codespaces.new/semaphoreui/semaphore) (default user `admin` / `changeme`)
+## Security
+
+See [SECURITY.md](SECURITY.md) for supported versions, how to report a vulnerability and the
+known inherited risks.
 
 ## License
 
-MIT © [Denis Gukov](https://github.com/fiftin)
+MIT. Upstream Semaphore UI is © [Denis Gukov](https://github.com/fiftin); the fork additions are
+© freefair. Third-party notices are listed in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).

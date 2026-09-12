@@ -77,6 +77,10 @@ the run. Classify baseline failures only with exact-upstream reproduction. Verif
 changed UI in the browser and wait for the required workflows on the exact pushed
 head. Preserve recovery branches and stashes until their deletion is authorized.
 
+Releases follow `maintenance/RELEASING.md`: a `vX.Y.Z-ex.N` tag on a green `develop` head
+runs the product gate, then goreleaser and the ghcr.io image publish. Never tag a plain
+`vX.Y.Z`; it collides with upstream tags.
+
 Use the serial docs build by default. Parallel locale builds are opt-in and capped
 at two workers; raising that bound requires memory and elapsed-time measurements.
 Verify the canonical security fallbacks against generated HTML in either mode.

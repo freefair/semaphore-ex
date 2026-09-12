@@ -1,32 +1,61 @@
 # Security Policy
 
-## Supported Versions
+## Supported versions
 
-| Version | Supported          |
-|---------| ------------------ |
-| 2.19.x  | :white_check_mark: |
-| 2.18.x  | :white_check_mark: |
-| < 2.18  | :x:                |
+Semaphore EX is released as `vX.Y.Z-ex.N` tags. Security fixes land on the most recent
+release line only; older fork releases and release candidates are not patched.
 
-## Reporting a Vulnerability
+| Version | Supported |
+|---|---|
+| latest `vX.Y.Z-ex.N` release | yes |
+| earlier fork releases, `-rc` tags, `develop` snapshots | no |
 
-If you believe you’ve found a security vulnerability in Semaphore UI, we encourage you to let us know as soon as possible.
+## Reporting a vulnerability
 
-Please email us at security@semaphoreui.com with:
+Report vulnerabilities privately, not in public issues:
 
-- A clear description of the vulnerability
-- Steps to reproduce the issue
-- Any related logs, screenshots, or payloads
+- GitHub private vulnerability reporting:
+  <https://github.com/freefair/semaphore-ex/security/advisories/new>
+- E-mail: <security@freefair.io>
 
-We take security seriously and will respond as quickly as possible. We aim to confirm receipt within 7 business days and provide a full response within 30 business days.
-
-We ask that you **do not publicly disclose** the issue until we’ve had a chance to investigate and release a fix.
+Include a description, steps to reproduce, affected version (`semaphore version` or
+`/api/info`) and any logs or payloads. We confirm receipt within 7 days and aim to
+provide an assessment within 30 days. Please do not disclose the issue publicly until a
+fix is released.
 
 ## Scope
 
-This policy applies to:
+- The Semaphore EX server and runner binaries, container images and packages published
+  from this repository.
+- The Enhanced module under `test/edition-contract/enhanced` and the fork-owned code in
+  this repository.
 
-- Semaphore UI (self-hosted)
-- Official installers, containers, and packages distributed through our GitHub or website
+Issues in code shared with upstream Semaphore UI are coordinated with the upstream
+maintainers; we may forward a report to <security@semaphoreui.com> and ship the fix with
+the next fork release. Issues that reproduce only on upstream Community releases should be
+reported upstream directly.
 
-This policy does **not** apply to third-party plugins or custom modifications.
+## Known inherited risks
+
+The web frontend is built on Vue 2 and Vuetify 2, both end of life upstream. Their open
+advisories have no fix inside the 2.x lines; the fix is a migration to Vue 3 and Vuetify 3,
+which is an upstream project and not part of the fork. The fork ships these dependencies
+knowingly and re-evaluates them at every upstream sync.
+
+| Advisory | Package | Severity | Notes |
+|---|---|---|---|
+| [GHSA-3jp5-5f8r-q2wg](https://github.com/advisories/GHSA-3jp5-5f8r-q2wg) | vuetify 2.x | high | Prototype pollution; no 2.x fix |
+| [GHSA-9w3x-85mw-4fwm](https://github.com/advisories/GHSA-9w3x-85mw-4fwm) | vuetify 2.x | medium | XSS in `VDatePicker`; no 2.x fix |
+| [GHSA-5j4c-8p2g-v4jx](https://github.com/advisories/GHSA-5j4c-8p2g-v4jx) | vue 2.x | low | ReDoS in `parseHTML`; no 2.x fix |
+
+All other production dependency advisories known at release time are fixed in the
+shipped lockfile. Development-only advisories (build tooling, test runner) do not reach the
+shipped artifacts and are tracked through Dependabot.
+
+## Verification at release time
+
+Every release runs the full product gate (Go and frontend tests, reproducible double
+build, browser and container smoke tests, HA resilience gate), `govulncheck` on the pinned
+Go toolchain, and `npm audit --omit=dev`. Release checksums are signed with the key in
+`deployment/packaging/semaphore-ex-release.asc`; container images carry SBOM and
+provenance attestations.
