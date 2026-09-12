@@ -695,6 +695,7 @@ semaphore runner start --config ./config.runner.json</pre
 import createEnhancedState from '@/lib/enhanced/runners-state';
 
 import enhancedMethods from '@/lib/enhanced/runners';
+import { RUNNER_IMAGE, runnerImageTag } from '@/lib/enhanced/runner-image';
 
 import EventBus from '@/event-bus';
 import YesNoDialog from '@/components/YesNoDialog.vue';
@@ -735,7 +736,7 @@ export default {
     },
 
     version() {
-      return (this.systemInfo?.version || '').split('-')[0];
+      return runnerImageTag(this.systemInfo?.version);
     },
 
     itemProjectId() {
@@ -789,7 +790,7 @@ semaphore runner start --config ./config.runner.json`;
       return `docker run \\
 -e SEMAPHORE_WEB_ROOT=${this.webHost} \\
 -e SEMAPHORE_RUNNER_REGISTRATION_TOKEN=${(this.newRunner || {}).registration_token} \\
-${advancedOptions}-d semaphoreui/runner:${this.version}`;
+${advancedOptions}-d ${RUNNER_IMAGE}:${this.version}`;
     },
 
     runnerConfigCommand() {
@@ -852,7 +853,7 @@ semaphore runner start --no-config`;
       return `docker run \\
 -e SEMAPHORE_WEB_ROOT=${this.webHost} \\
 -e SEMAPHORE_RUNNER_TOKEN=${(this.newRunner || {}).token} \\
-${advancedOptions}-d semaphoreui/runner:${this.version}`;
+${advancedOptions}-d ${RUNNER_IMAGE}:${this.version}`;
     },
   },
 
