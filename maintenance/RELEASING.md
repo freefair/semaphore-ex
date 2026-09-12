@@ -21,6 +21,7 @@ upgrades cleanly to the final package and both sort below upstream `2.20.0`.
 |---|---|---|---|
 | `v2.20.0-ex.1-rc1` | `Full Product Beta` | draft, marked pre-release | `:v2.20.0-ex.1-rc1` |
 | `v2.20.0-ex.1` | `Full Product Release` | draft, final | `:v2.20.0-ex.1` and `:latest` |
+| manual run of `Full Product Beta` | dry run | none; signed snapshot as workflow artifact | built, not pushed |
 
 Both workflows first run `Full Product Build` as a gate (tests, reproducible double build,
 browser smoke, container smoke, HA resilience) and only then build the release.
@@ -31,7 +32,11 @@ browser smoke, container smoke, HA resilience) and only then build the release.
    (`gh run list --branch develop --limit 4`).
 2. `CHANGELOG.md` has a `## [vX.Y.Z-ex.N]` section. `bash tools/release-notes.sh vX.Y.Z-ex.N`
    must succeed; the release job fails without it.
-3. Local dry run of the goreleaser pipeline: `task release:test` (snapshot, unsigned).
+3. Dry run in GitHub Actions: `gh workflow run "Full Product Beta" --ref develop`. It runs the
+   full gate, imports the signing key, builds a signed goreleaser snapshot and uploads it as
+   the `release-dry-run-<sha>` artifact, and builds both images without pushing. Download
+   the artifact and verify the checksum signature. (`task release:test` is the unsigned local
+   equivalent; it builds every target in parallel, so throttle it with `GOFLAGS=-p=4`.)
 4. Go toolchain current: `GOTOOLCHAIN=go<pinned> go run golang.org/x/vuln/cmd/govulncheck@latest ./...`
    reports no reachable findings. The pin lives in the workflows and Dockerfiles.
 5. `npm audit --omit=dev --prefix web` shows only the documented inherited findings.

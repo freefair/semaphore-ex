@@ -200,7 +200,7 @@ tasks:
         ENHANCED_REVISION="{{ .ENHANCED_REVISION }}"
         EDITION_IMPLEMENTATION="{{ .IMPLEMENTATION_VERSION }}"
         SOURCE_DATE_EPOCH="{{ .SOURCE_DATE_EPOCH }}"
-        goreleaser {{ .GORELEASER_ARGS }}
+        goreleaser release {{ .GORELEASER_ARGS }}
 
   release:test:
     desc: Create a local test release
