@@ -39,7 +39,7 @@ Other installation paths:
 - **Docker Compose**: snippets for server, runner and databases live in
   [`deployment/compose`](deployment/compose/README.md).
 - **Remote runner image**: `ghcr.io/freefair/semaphore-ex-runner`, configured as described in the
-  [runner guide](https://freefair.github.io/semaphore-docs/admin-guide/runners/).
+  [runner guide](https://freefair.io/semaphore-docs/admin-guide/runners/).
 - **Debian/RPM package or binary**: download from
   [GitHub Releases](https://github.com/freefair/semaphore-ex/releases). The package is named
   `semaphore-ex`, installs `/usr/bin/semaphore` and conflicts with the upstream `semaphore`
@@ -76,7 +76,7 @@ they are security controls, not edition gates.
 
 ## Documentation
 
-- [User and administration guide](https://freefair.github.io/semaphore-docs/) (fork of the upstream docs,
+- [User and administration guide](https://freefair.io/semaphore-docs/) (fork of the upstream docs,
   all eleven locales)
 - [Changelog](CHANGELOG.md) and [release procedure](maintenance/RELEASING.md)
 - [Upstream maintenance policy](maintenance/README.md): how upstream is merged, how migrations and
