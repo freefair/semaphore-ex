@@ -5,7 +5,7 @@ volumes:
 
 services:
   server:
-    image: docker.io/semaphoreui/semaphore:${SEMAPHORE_VERSION:-latest}
+    image: ghcr.io/freefair/semaphore-ex:${SEMAPHORE_VERSION:-latest}
     restart: always
     environment:
       SEMAPHORE_ADMIN_NAME: ${SEMAPHORE_ADMIN_NAME:-Admin}

@@ -82,11 +82,11 @@ snapshot:
 nfpms:
   - id: semaphore
     file_name_template: "{{ .Env.PROJECT_NAME }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    package_name: "semaphore"
-    description: Modern UI and powerful API for Ansible, Terraform, OpenTofu, PowerShell and other DevOps tools.
-    homepage: https://github.com/semaphoreui/semaphore
-    vendor: Semaphore UI
-    maintainer: Denis Gukov <denis@semaphoreui.com>
+    package_name: "semaphore-ex"
+    description: Semaphore EX - full-featured fork of Semaphore UI for Ansible, Terraform, OpenTofu, PowerShell and other DevOps tools.
+    homepage: https://github.com/freefair/semaphore-ex
+    vendor: freefair
+    maintainer: Semaphore EX <semaphore-ex@freefair.io>
     license: MIT
 
     formats:
@@ -99,6 +99,10 @@ nfpms:
     suggests:
       - ansible
 
+    # The upstream package installs the same /usr/bin/semaphore binary.
+    conflicts:
+      - semaphore
+
     bindir: /usr/bin
 
     # Embedded RPM signature (rpm -K). Skipped when GPG_KEY_PATH is not set
@@ -108,7 +112,13 @@ nfpms:
       signature:
         key_file: '{{ envOrDefault "GPG_KEY_PATH" "" }}'
 
+changelog:
+  # Release notes come from the CHANGELOG.md section selected by `task release:notes`.
+  disable: true
+
 release:
   draft: true
   use_existing_draft: true
-  name_template: "{{.Tag}}"
+  # Release candidates set GORELEASER_PRERELEASE=true; final releases set it to false.
+  prerelease: '{{ envOrDefault "GORELEASER_PRERELEASE" "auto" }}'
+  name_template: "Semaphore EX {{ .Tag }}"

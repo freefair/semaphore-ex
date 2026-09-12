@@ -6,9 +6,9 @@ includes:
     flatten: true
 
 vars:
-  DOCKER_ORG: semaphoreui
-  DOCKER_SERVER: semaphore
-  DOCKER_RUNNER: runner
+  DOCKER_ORG: ghcr.io/freefair
+  DOCKER_SERVER: semaphore-ex
+  DOCKER_RUNNER: semaphore-ex-runner
   DOCKER_CMD: docker
   CORE_REVISION:
     sh: git rev-parse HEAD
@@ -200,7 +200,7 @@ tasks:
         ENHANCED_REVISION="{{ .ENHANCED_REVISION }}"
         EDITION_IMPLEMENTATION="{{ .IMPLEMENTATION_VERSION }}"
         SOURCE_DATE_EPOCH="{{ .SOURCE_DATE_EPOCH }}"
-        goreleaser
+        goreleaser {{ .GORELEASER_ARGS }}
 
   release:test:
     desc: Create a local test release

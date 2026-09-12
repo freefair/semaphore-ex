@@ -3,16 +3,32 @@ name: Full Product Beta
 'on':
   push:
     tags:
-      - v*-alpha*
-      - v*-beta*
-      - v*-rc*
+      - 'v[0-9]+.[0-9]+.[0-9]+-ex.[0-9]+-rc[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-ex.[0-9]+-beta[0-9]+'
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  GO_VERSION: '1.26.8'
+  NODE_VERSION: '24.19.0'
+  TASK_VERSION: '3.53.1'
 
 jobs:
-  prerelease:
+  gate:
+    name: Release gate
+    uses: ./.github/workflows/product_build.yml
+    permissions:
+      contents: read
+    with:
+      base_ref: HEAD^
+
+  release:
+    name: Signed archives and packages
     runs-on: ubuntu-latest
+    needs: gate
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout source
@@ -23,34 +39,18 @@ jobs:
       - name: Setup golang
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26.5'
-
-      - name: Cache Go build
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum', 'go.work.sum') }}
-          restore-keys: |
-            go-build-${{ runner.os }}-
-
-      - name: Cache go-task fingerprints
-        uses: actions/cache@v6
-        with:
-          path: .task
-          key: task-${{ runner.os }}-${{ hashFiles('web/src/**', 'web/package-lock.json') }}
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Setup nodejs
         uses: actions/setup-node@v7
         with:
-          node-version: '24.19.0'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
       - name: Install go-task
         run: |
-          go install github.com/go-task/task/v3/cmd/task@v3.53.1
+          go install github.com/go-task/task/v3/cmd/task@v"${TASK_VERSION}"
 
       - name: Install rpm
         run: |
@@ -71,6 +71,10 @@ jobs:
         run: |
           git reset --hard
 
+      - name: Release notes
+        run: |
+          task release:notes
+
       - name: Run release
         run: |
           GITHUB_TOKEN=${{ github.token }} \
@@ -78,12 +82,21 @@ jobs:
           GPG_KEY_ID_3="${{ vars.GPG_KEY_ID_3 }}" \
           GPG_KEY_PATH="$RUNNER_TEMP/gpg.key" \
           NFPM_SEMAPHORE_PASSPHRASE="${{ secrets.GPG_PASS_3 }}" \
-          PROJECT_NAME=semaphore \
-            task release:prod
+          GORELEASER_PRERELEASE=true \
+          PROJECT_NAME=semaphore-ex \
+            task release:prod GORELEASER_ARGS="--release-notes dist/release-notes.md"
 
-  deploy-beta:
+  images:
+    name: Container images
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'semaphoreui'
+    needs: gate
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      SERVER_IMAGE: ghcr.io/freefair/semaphore-ex
+      RUNNER_IMAGE: ghcr.io/freefair/semaphore-ex-runner
 
     steps:
       - name: Checkout source
@@ -92,45 +105,32 @@ jobs:
           fetch-depth: 0
 
       - name: Setup qemu
-        id: qemu
         uses: docker/setup-qemu-action@v4
 
       - name: Setup buildx
         id: buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Hub login
+      - name: Registry login
         uses: docker/login-action@v4
-        if: github.event_name != 'pull_request'
         with:
-          registry: public.ecr.aws
-          username: ${{ vars.AWS_ACCESS_KEY_ID }}
-          password: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        env:
-          AWS_REGION: us-east-1
-
-      - name: Docker Hub login
-        uses: docker/login-action@v4
-        if: github.event_name != 'pull_request'
-        with:
-          username: ${{ secrets.DOCKER_USER }}
-          password: ${{ secrets.DOCKER_PASS }}
-
-
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Server meta
         id: server
         uses: docker/metadata-action@v6
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          images: |
-            public.ecr.aws/semaphore/server
-            semaphoreui/semaphore
+          images: ${{ env.SERVER_IMAGE }}
           labels: |
-            org.opencontainers.image.vendor=SemaphoreUI
-            maintainer=Semaphore UI <support@semaphoreui.com>
+            org.opencontainers.image.title=Semaphore EX
+            org.opencontainers.image.vendor=freefair
+            maintainer=Semaphore EX <semaphore-ex@freefair.io>
           tags: |
             type=raw,value=${{ github.ref_name }}
+          flavor: |
+            latest=false
 
       - name: Server build
         uses: docker/build-push-action@v7
@@ -141,8 +141,8 @@ jobs:
             CORE_REVISION=${{ github.sha }}
             ENHANCED_REVISION=${{ github.sha }}
           file: deployment/docker/server/Dockerfile
-          platforms: linux/amd64,linux/arm64 # ,linux/arm/v6
-          push: ${{ github.event_name != 'pull_request' }}
+          platforms: linux/amd64,linux/arm64
+          push: true
           labels: ${{ steps.server.outputs.labels }}
           tags: ${{ steps.server.outputs.tags }}
           cache-from: type=gha
@@ -150,63 +150,19 @@ jobs:
           provenance: mode=max
           sbom: true
 
-      - name: Server build with Ansible 2.16.5
-        uses: docker/build-push-action@v7
-        with:
-          builder: ${{ steps.buildx.outputs.name }}
-          context: .
-          build-args: |
-            ANSIBLE_VERSION=9.4.0
-            CORE_REVISION=${{ github.sha }}
-            ENHANCED_REVISION=${{ github.sha }}
-          file: deployment/docker/server/Dockerfile
-          platforms: linux/amd64,linux/arm64 # ,linux/arm/v6
-          push: ${{ github.event_name != 'pull_request' }}
-          labels: ${{ steps.server.outputs.labels }}
-          tags: |
-            public.ecr.aws/semaphore/server:${{ github.ref_name }}-ansible2.16.5
-            semaphoreui/semaphore:${{ github.ref_name }}-ansible2.16.5
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: mode=max
-          sbom: true
-
-      - name: Server build with PowerShell 7.5.0
-        uses: docker/build-push-action@v7
-        with:
-          builder: ${{ steps.buildx.outputs.name }}
-          context: .
-          build-args: |
-            POWERSHELL_VERSION=7.5.0
-            SEMAPHORE_IMAGE=public.ecr.aws/semaphore/server
-            SEMAPHORE_VERSION=${{ github.ref_name }}
-          file: deployment/docker/server/powershell/Dockerfile
-          platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
-          labels: ${{ steps.server.outputs.labels }}
-          tags: |
-            public.ecr.aws/semaphore/server:${{ github.ref_name }}-powershell7.5.0
-            semaphoreui/semaphore:${{ github.ref_name }}-powershell7.5.0
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: mode=max
-          sbom: true
-
-
-
       - name: Runner meta
         id: runner
         uses: docker/metadata-action@v6
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          images: |
-            public.ecr.aws/semaphore/runner
-            semaphoreui/runner
+          images: ${{ env.RUNNER_IMAGE }}
           labels: |
-            org.opencontainers.image.vendor=SemaphoreUI
-            maintainer=Semaphore UI <support@semaphoreui.com>
+            org.opencontainers.image.title=Semaphore EX runner
+            org.opencontainers.image.vendor=freefair
+            maintainer=Semaphore EX <semaphore-ex@freefair.io>
           tags: |
             type=raw,value=${{ github.ref_name }}
+          flavor: |
+            latest=false
 
       - name: Runner build
         uses: docker/build-push-action@v7
@@ -217,52 +173,10 @@ jobs:
             CORE_REVISION=${{ github.sha }}
             ENHANCED_REVISION=${{ github.sha }}
           file: deployment/docker/runner/Dockerfile
-          platforms: linux/amd64,linux/arm64 #,linux/arm/v6
-          push: ${{ github.event_name != 'pull_request' }}
+          platforms: linux/amd64,linux/arm64
+          push: true
           labels: ${{ steps.runner.outputs.labels }}
           tags: ${{ steps.runner.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: mode=max
-          sbom: true
-
-      - name: Runner build with Ansible 2.16.5
-        uses: docker/build-push-action@v7
-        with:
-          builder: ${{ steps.buildx.outputs.name }}
-          context: .
-          build-args: |
-            ANSIBLE_VERSION=9.4.0
-            CORE_REVISION=${{ github.sha }}
-            ENHANCED_REVISION=${{ github.sha }}
-          file: deployment/docker/runner/Dockerfile
-          platforms: linux/amd64,linux/arm64 #,linux/arm/v6
-          push: ${{ github.event_name != 'pull_request' }}
-          labels: ${{ steps.runner.outputs.labels }}
-          tags: |
-            public.ecr.aws/semaphore/runner:${{ github.ref_name }}-ansible2.16.5
-            semaphoreui/runner:${{ github.ref_name }}-ansible2.16.5
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: mode=max
-          sbom: true
-
-      - name: Runner build with PowerShell 7.5.0
-        uses: docker/build-push-action@v7
-        with:
-          builder: ${{ steps.buildx.outputs.name }}
-          context: .
-          build-args: |
-            POWERSHELL_VERSION=7.5.0
-            SEMAPHORE_IMAGE=public.ecr.aws/semaphore/runner
-            SEMAPHORE_VERSION=${{ github.ref_name }}
-          file: deployment/docker/server/powershell/Dockerfile
-          platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
-          labels: ${{ steps.runner.outputs.labels }}
-          tags: |
-            public.ecr.aws/semaphore/runner:${{ github.ref_name }}-powershell7.5.0
-            semaphoreui/runner:${{ github.ref_name }}-powershell7.5.0
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: mode=max

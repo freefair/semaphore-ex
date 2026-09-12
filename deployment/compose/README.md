@@ -23,7 +23,7 @@ docker-compose -f deployment/compose/server/base.yml -f deployment/compose/serve
 
 ### Image
 
-This simply downloads the defined image from DockerHub and starts/configures it
+This simply downloads the defined image from the GitHub Container Registry and starts/configures it
 properly based on the integrated bootstrapping scripts.
 
 ```console
@@ -76,7 +76,7 @@ docker-compose <server from above> -f deployment/compose/runner/base.yml -f depl
 
 ### Image
 
-This simply downloads the defined image from DockerHub and starts/configures it
+This simply downloads the defined image from the GitHub Container Registry and starts/configures it
 properly based on the integrated bootstrapping scripts.
 
 ```console

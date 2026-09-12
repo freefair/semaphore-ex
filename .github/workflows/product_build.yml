@@ -8,12 +8,19 @@ name: Full Product Build
     branches:
       - develop
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      base_ref:
+        description: Git ref the maintenance contract check compares against
+        type: string
+        required: false
+        default: HEAD^
 
 permissions:
   contents: read
 
 env:
-  GO_VERSION: '1.26.5'
+  GO_VERSION: '1.26.8'
   NODE_VERSION: '24.19.0'
   TASK_VERSION: '3.53.1'
 
@@ -57,7 +64,7 @@ jobs:
 
       - name: Check upstream-maintenance contracts
         env:
-          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+          BASE_REF: ${{ inputs.base_ref || github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
         run: |
           if ! git cat-file -e "${BASE_REF}^{commit}" 2>/dev/null; then
             git fetch --no-tags origin "$BASE_REF"

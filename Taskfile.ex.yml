@@ -41,3 +41,8 @@ tasks:
         -production "api/public"
         -debug "{{ .OUTPUT_DIR }}.frontend-debug"
         -output "{{ .OUTPUT_DIR }}.source-maps"
+
+  release:notes:
+    desc: Extract the CHANGELOG.md section of the current tag into dist/release-notes.md
+    cmds:
+      - bash tools/release-notes.sh
