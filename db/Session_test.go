@@ -1,6 +1,7 @@
 package db
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -72,4 +73,12 @@ func TestSession_IsExpiredAt(t *testing.T) {
 			assert.Equal(t, tt.expected, tt.session.IsExpiredAt(now, tt.maxLife, SessionInactivityTimeout))
 		})
 	}
+}
+
+func TestSession_IsExpiredAtWithLargestRepresentableLifetime(t *testing.T) {
+	now := time.Date(2500, time.January, 1, 0, 0, 0, 0, time.UTC)
+	maxLife := time.Duration(int64(math.MaxInt64)/int64(time.Hour)) * time.Hour
+
+	session := Session{Created: now.Add(-maxLife).Add(-time.Hour), LastActive: now}
+	assert.True(t, session.IsExpiredAt(now, maxLife, SessionInactivityTimeout))
 }

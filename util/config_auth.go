@@ -1,6 +1,15 @@
 package util
 
-import "time"
+import (
+	"fmt"
+	"math"
+	"time"
+)
+
+// maxSessionLifeHours is the largest whole-hour duration Go can represent.
+// Keeping the limit in hours matches the public configuration field while
+// preventing a positive setting from overflowing into a disabled duration.
+const maxSessionLifeHours = int64(math.MaxInt64) / int64(time.Hour)
 
 // AuthConfig holds settings that apply to every login method.
 type AuthConfig struct {
@@ -19,7 +28,28 @@ func (c *ConfigType) MaxSessionLife() time.Duration {
 	if c == nil || c.Auth == nil || c.Auth.MaxSessionLifeHours <= 0 {
 		return 0
 	}
+	if int64(c.Auth.MaxSessionLifeHours) > maxSessionLifeHours {
+		// ConfigInit rejects this value. Saturating here keeps callers that
+		// construct ConfigType directly fail-closed as well.
+		return time.Duration(maxSessionLifeHours) * time.Hour
+	}
 	return time.Duration(c.Auth.MaxSessionLifeHours) * time.Hour
+}
+
+func validateAuthConfig(config *AuthConfig) error {
+	if config == nil {
+		return nil
+	}
+	if err := validate(config); err != nil {
+		return err
+	}
+	if int64(config.MaxSessionLifeHours) > maxSessionLifeHours {
+		return fmt.Errorf(
+			"auth.max_session_life_hours must not exceed %d hours",
+			maxSessionLifeHours,
+		)
+	}
+	return nil
 }
 
 type RecaptchaConfig struct {

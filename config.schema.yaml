@@ -379,6 +379,7 @@ $defs:
       max_session_life_hours:
         type: integer
         minimum: 0
+        maximum: 2562047
         default: 0
         description: >-
           Absolute lifetime of a login session in hours, counted from login.

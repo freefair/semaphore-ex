@@ -1853,7 +1853,7 @@ func validateConfig() {
 	}
 
 	if Config.Auth != nil {
-		if err := validate(Config.Auth); err != nil {
+		if err := validateAuthConfig(Config.Auth); err != nil {
 			panic(err)
 		}
 	}
