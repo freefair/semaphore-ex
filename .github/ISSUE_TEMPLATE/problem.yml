@@ -12,8 +12,8 @@ body:
         Please make sure to go through these steps **before opening an issue**:
         
         - [ ] Read the [documentation](https://freefair.github.io/semaphore-docs/)
-          - [ ] Read the [troubleshooting guide](https://freefair.github.io/semaphore-docs/administration-guide/troubleshooting)
-          - [ ] Read the [documentation regarding manual installations](https://freefair.github.io/semaphore-docs/administration-guide/installation_manually) if you don't use docker
+          - [ ] Read the [troubleshooting guide](https://freefair.github.io/semaphore-docs/admin-guide/troubleshooting)
+          - [ ] Read the [documentation regarding manual installations](https://freefair.github.io/semaphore-docs/admin-guide/installation_manually) if you don't use docker
 
         - [ ] Check if there are existing [issues](https://github.com/freefair/semaphore-ex/issues) regarding your topic
 

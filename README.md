@@ -39,11 +39,11 @@ Other installation paths:
 - **Docker Compose**: snippets for server, runner and databases live in
   [`deployment/compose`](deployment/compose/README.md).
 - **Remote runner image**: `ghcr.io/freefair/semaphore-ex-runner`, configured as described in the
-  [runner guide](https://freefair.github.io/semaphore-docs/administration-guide/runners/).
+  [runner guide](https://freefair.github.io/semaphore-docs/admin-guide/runners/).
 - **Debian/RPM package or binary**: download from
   [GitHub Releases](https://github.com/freefair/semaphore-ex/releases). The package is named
-  `semaphore-ex`, installs `/usr/bin/semaphore` and a `semaphore` systemd unit, and conflicts
-  with the upstream `semaphore` package. Verify the checksums before installing:
+  `semaphore-ex`, installs `/usr/bin/semaphore` and conflicts with the upstream `semaphore`
+  package. A sample systemd unit and environment file live in [`deployment/systemd`](deployment/systemd/README.md). Verify the checksums before installing:
 
   ```bash
   gpg --import deployment/packaging/semaphore-ex-release.asc
