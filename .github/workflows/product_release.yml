@@ -72,23 +72,25 @@ jobs:
 
       - name: Release notes
         run: |
-          task release:notes
+          task release:notes OUTPUT="$RUNNER_TEMP/release-notes.md"
 
       - name: Run release
         run: |
           GITHUB_TOKEN=${{ github.token }} \
+          GORELEASER_CURRENT_TAG="${{ github.ref_name }}" \
           GPG_PASS_3="${{ secrets.GPG_PASS_3 }}" \
           GPG_KEY_ID_3="${{ vars.GPG_KEY_ID_3 }}" \
           GPG_KEY_PATH="$RUNNER_TEMP/gpg.key" \
           NFPM_SEMAPHORE_PASSPHRASE="${{ secrets.GPG_PASS_3 }}" \
-          GORELEASER_PRERELEASE=false \
           PROJECT_NAME=semaphore-ex \
-            task release:prod GORELEASER_ARGS="--release-notes dist/release-notes.md"
+            task release:prod GORELEASER_ARGS="--release-notes $RUNNER_TEMP/release-notes.md"
 
   images:
     name: Container images
     runs-on: ubuntu-latest
-    needs: gate
+    needs:
+      - gate
+      - release
     permissions:
       contents: read
       packages: write
@@ -139,6 +141,8 @@ jobs:
           build-args: |
             CORE_REVISION=${{ github.sha }}
             ENHANCED_REVISION=${{ github.sha }}
+            SOURCE_TAG=${{ github.ref_name }}
+            SOURCE_SHA=${{ github.sha }}
           file: deployment/docker/server/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
@@ -171,6 +175,8 @@ jobs:
           build-args: |
             CORE_REVISION=${{ github.sha }}
             ENHANCED_REVISION=${{ github.sha }}
+            SOURCE_TAG=${{ github.ref_name }}
+            SOURCE_SHA=${{ github.sha }}
           file: deployment/docker/runner/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true

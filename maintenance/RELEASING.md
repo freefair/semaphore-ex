@@ -13,6 +13,10 @@ releases on that line, starting at 1. Release candidates are `vX.Y.Z-ex.N-rcM`.
 The suffix keeps fork tags out of upstream's tag namespace; a plain `vX.Y.Z` tag would
 collide with the upstream tag of the same name and break `git fetch upstream`.
 
+Package versions map the tag onto the Debian and RPM rules: `2.20.0-ex.1` becomes
+`2.20.0~ex.1`, `2.20.0-ex.1-rc1` becomes `2.20.0~ex.1~rc1`, so a release candidate package
+upgrades cleanly to the final package and both sort below upstream `2.20.0`.
+
 | Tag | Workflow | GitHub release | Images |
 |---|---|---|---|
 | `v2.20.0-ex.1-rc1` | `Full Product Beta` | draft, marked pre-release | `:v2.20.0-ex.1-rc1` |

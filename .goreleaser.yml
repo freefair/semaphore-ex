@@ -105,6 +105,10 @@ nfpms:
 
     bindir: /usr/bin
 
+    # Tags are vX.Y.Z-ex.N[-rcM]; a literal "-" in the prerelease would be read as the
+    # Debian revision and make rc packages sort newer than the final package.
+    prerelease: '{{ replace .Prerelease "-" "~" }}'
+
     # Embedded RPM signature (rpm -K). Skipped when GPG_KEY_PATH is not set
     # (e.g. local `task release:test`). Passphrase comes from the
     # NFPM_SEMAPHORE_PASSPHRASE environment variable.
@@ -112,13 +116,10 @@ nfpms:
       signature:
         key_file: '{{ envOrDefault "GPG_KEY_PATH" "" }}'
 
-changelog:
-  # Release notes come from the CHANGELOG.md section selected by `task release:notes`.
-  disable: true
-
 release:
   draft: true
   use_existing_draft: true
-  # Release candidates set GORELEASER_PRERELEASE=true; final releases set it to false.
-  prerelease: '{{ envOrDefault "GORELEASER_PRERELEASE" "auto" }}'
+  # goreleaser 2.11 does not template this field and "auto" would flag every
+  # vX.Y.Z-ex.N tag; the beta workflow marks release candidates with gh instead.
+  prerelease: false
   name_template: "Semaphore EX {{ .Tag }}"

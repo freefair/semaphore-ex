@@ -43,6 +43,8 @@ tasks:
         -output "{{ .OUTPUT_DIR }}.source-maps"
 
   release:notes:
-    desc: Extract the CHANGELOG.md section of the current tag into dist/release-notes.md
+    desc: Extract the CHANGELOG.md section of the current tag (OUTPUT defaults to dist/release-notes.md)
+    vars:
+      OUTPUT: '{{ .OUTPUT | default "dist/release-notes.md" }}'
     cmds:
-      - bash tools/release-notes.sh
+      - bash tools/release-notes.sh --output "{{ .OUTPUT }}"
