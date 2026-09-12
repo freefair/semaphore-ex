@@ -70,6 +70,8 @@ The two identities are deliberately separate:
 |---|---|---|
 | `2.20.2` | `2.20.66` | Fork `2.20.2` already configures capabilities |
 | `2.20.3` | `2.20.67` | Fork `2.20.3` already adds runner names |
+| `2.20.4` | `2.20.68` | Fork `2.20.4` is shipped; append unique template names |
+| `2.20.5` | `2.20.69` | Fork `2.20.5` is shipped; append error-alert suppression |
 
 The runtime registry and deployed `migrations` table keep their existing numeric
 IDs. New fork migrations receive the next free local tail ID and `owner: fork`.

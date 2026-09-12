@@ -9,6 +9,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/jwt"
 	"github.com/semaphoreui/semaphore/pkg/metrics"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/services/runners"
 	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/services/tasks"
@@ -22,10 +23,13 @@ import (
 
 func RunnerMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
+		runnerLog := log.WithFields(log.Fields{
+			"context": "runner",
+		})
 		token := r.Header.Get("X-Runner-Token")
 
 		if token == "" {
+			runnerLog.Debug("Runner authentication rejected: no token provided")
 			helpers.WriteJSON(w, http.StatusUnauthorized, map[string]string{
 				"error": "Invalid token",
 			})
@@ -37,6 +41,11 @@ func RunnerMiddleware(next http.Handler) http.Handler {
 		runner, err := store.GetRunnerByToken(token)
 
 		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				runnerLog.Debug("Runner authentication rejected: no runner matches token")
+			} else {
+				runnerLog.WithError(err).Error("Runner authentication lookup failed")
+			}
 			helpers.WriteJSON(w, http.StatusNotFound, map[string]string{
 				"error": "Runner not found",
 			})
@@ -79,6 +88,10 @@ func NewRunnerController(runnerRepo db.RunnerManager, taskPool *tasks.TaskPool, 
 
 func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 	runner := helpers.GetFromContext(r, "runner").(db.Runner)
+	runnerLog := log.WithFields(log.Fields{
+		"context":   "runner",
+		"runner_id": runner.ID,
+	})
 
 	clearCache := false
 	report, err := runners.ParseHealthReport(r.Header)
@@ -106,22 +119,25 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 	// can detect runners that restarted and lost their in-memory job pool.
 	if v := r.Header.Get("X-Runner-Started-At"); v != "" {
 		if startedAt, parseErr := time.Parse(time.RFC3339, v); parseErr == nil {
+			if runner.StartedAt != nil && startedAt.After(*runner.StartedAt) {
+				runnerLog.Debug("Runner process restart detected")
+			}
 			runner.StartedAt = &startedAt
 		} else {
-			log.WithFields(log.Fields{
-				"runner_id": runner.ID,
-				"context":   "runner",
-			}).WithError(parseErr).Warn("invalid X-Runner-Started-At header")
+			runnerLog.WithError(parseErr).Warn("invalid X-Runner-Started-At header")
 		}
 	}
 
+	wasOffline := !runner.IsOnline(tz.Now(), util.Config.RunnersOfflineTimeout())
+
 	if err := c.runnerRepo.TouchRunner(runner); err != nil {
-		log.WithFields(log.Fields{
-			"runner_id": runner.ID,
-			"context":   "runner",
-		}).WithError(err).Error("runner touch failed")
+		runnerLog.WithError(err).Error("runner touch failed")
 		helpers.WriteError(w, err)
 		return
+	}
+
+	if wasOffline {
+		runnerLog.Debug("Runner became online")
 	}
 
 	if runner.IsCacheClearPending() {
@@ -466,10 +482,15 @@ func (c *RunnerController) collectTaskAccessKeys(tsk *tasks.TaskRunner, runnerID
 func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) {
 
 	runner := helpers.GetFromContext(r, "runner").(db.Runner)
+	runnerLog := log.WithFields(log.Fields{
+		"context":   "runner",
+		"runner_id": runner.ID,
+	})
 
 	var body runners.RunnerProgress
 
 	if !helpers.Bind(w, r, &body) {
+		runnerLog.Debug("Rejecting runner task update: invalid request body")
 		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "Invalid format",
 		})
@@ -642,20 +663,20 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	logRecordCount := 0
+
 	for _, job := range body.Jobs {
+		jobLog := runnerLog.WithField("task_id", job.ID)
 		tsk, err := taskPool.GetTask(job.ID)
 
 		if err != nil {
 			if errors.Is(err, db.ErrNotFound) {
 				// The task no longer exists at all — the runner's job is orphaned.
+				jobLog.Debug("Discarding runner task update: task does not exist")
 				response.TerminatedJobs = append(response.TerminatedJobs, job.ID)
 				continue
 			}
-			log.WithError(err).WithFields(log.Fields{
-				"task_id":   job.ID,
-				"runner_id": runner.ID,
-				"context":   "runner",
-			}).Warn("runner progress: task not in local pool and could not be loaded from database")
+			jobLog.WithError(err).Warn("runner progress: task not in local pool and could not be loaded from database")
 			continue
 		}
 
@@ -667,21 +688,18 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			switch {
 			case rowErr != nil && errors.Is(rowErr, db.ErrNotFound):
 				// The task no longer exists at all — the runner's job is orphaned.
+				jobLog.Debug("Discarding runner task update: task does not exist")
 				response.TerminatedJobs = append(response.TerminatedJobs, job.ID)
 			case rowErr == nil && row.Status.IsFinished():
+				jobLog.WithFields(log.Fields{
+					"task_status":     string(row.Status),
+					"reported_status": string(job.Status),
+				}).Debug("Discarding runner task update: task is already finished")
 				response.TerminatedJobs = append(response.TerminatedJobs, job.ID)
 			case rowErr != nil:
-				log.WithError(rowErr).WithFields(log.Fields{
-					"task_id":   job.ID,
-					"runner_id": runner.ID,
-					"context":   "runner",
-				}).Warn("runner progress: task not in pool and could not be loaded from database")
+				jobLog.WithError(rowErr).Warn("runner progress: task not in pool and could not be loaded from database")
 			default:
-				log.WithFields(log.Fields{
-					"task_id":   job.ID,
-					"runner_id": runner.ID,
-					"context":   "runner",
-				}).Warn("runner progress: task not found in pool")
+				jobLog.Warn("runner progress: task not found in pool")
 			}
 			continue
 		}
@@ -692,6 +710,10 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			// rejecting the whole progress batch with 400 — sendProgress treats
 			// >=400 as total failure and never applies terminated_jobs, so the
 			// old runner would keep executing alongside the new assignee.
+			if tsk.Task.RunnerID != nil {
+				jobLog = jobLog.WithField("assigned_runner_id", *tsk.Task.RunnerID)
+			}
+			jobLog.Debug("Discarding stale runner task update: task is no longer assigned to this runner")
 			response.TerminatedJobs = append(response.TerminatedJobs, job.ID)
 			continue
 		}
@@ -704,6 +726,7 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 		}
 
 		if !job.Status.IsValid() {
+			jobLog.WithField("reported_status", string(job.Status)).Debug("Rejecting runner task update: invalid status")
 			helpers.WriteErrorStatus(w, "Invalid task status", http.StatusBadRequest)
 			return
 		}
@@ -713,6 +736,10 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 		// Reject the report — logs included — and tell the runner to
 		// emergency-stop the job.
 		if tsk.Task.Status.IsFinished() {
+			jobLog.WithFields(log.Fields{
+				"task_status":     string(tsk.Task.Status),
+				"reported_status": string(job.Status),
+			}).Debug("Discarding runner task update: task is already finished")
 			response.TerminatedJobs = append(response.TerminatedJobs, job.ID)
 			continue
 		}
@@ -764,6 +791,7 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 		for _, logRecord := range job.LogRecords {
 			tsk.LogWithTime(logRecord.Time, logRecord.Message)
 		}
+		logRecordCount += len(job.LogRecords)
 
 		// When the runner reports a terminal status, finalize the task here:
 		// finish webhook, autorun children, and pool/Redis state cleanup.
@@ -776,6 +804,14 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.KnownJobs != nil && !c.persistTaskExecutionEvidence(w, runner.ID, executionEvidence) {
 		return
+	}
+
+	if len(body.Jobs) > 0 {
+		runnerLog.WithFields(log.Fields{
+			"reported_jobs":        len(body.Jobs),
+			"accepted_log_records": logRecordCount,
+			"terminated_jobs":      len(response.TerminatedJobs),
+		}).Debug("Runner task update processed")
 	}
 
 	helpers.WriteJSON(w, http.StatusOK, response)

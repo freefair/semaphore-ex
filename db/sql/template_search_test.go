@@ -145,19 +145,23 @@ func TestTemplateSearchKeepsStableIDTieBreakAndEmptyQueryOrdering(t *testing.T) 
 	t.Cleanup(store.Close)
 	projectID, repositoryID := newTemplateTestProject(t, store)
 
-	first, err := store.CreateTemplate(db.Template{ProjectID: projectID, RepositoryID: repositoryID, Name: "same-name", Playbook: "first.yml"})
+	// Names are unique after 2.20.68; equal playbooks still require an ID tie-break.
+	first, err := store.CreateTemplate(db.Template{ProjectID: projectID, RepositoryID: repositoryID, Name: "same-name-b", Playbook: "site.yml"})
 	require.NoError(t, err)
-	second, err := store.CreateTemplate(db.Template{ProjectID: projectID, RepositoryID: repositoryID, Name: "same-name", Playbook: "second.yml"})
+	second, err := store.CreateTemplate(db.Template{ProjectID: projectID, RepositoryID: repositoryID, Name: "same-name-a", Playbook: "site.yml"})
 	require.NoError(t, err)
 
 	for _, filter := range []db.TemplateFilter{{}, {Search: "same-name"}} {
-		items, err := store.GetTemplates(projectID, filter, db.RetrieveQueryParams{})
+		items, err := store.GetTemplates(projectID, filter, db.RetrieveQueryParams{SortBy: "playbook"})
 		require.NoError(t, err)
 		require.Len(t, items, 2)
 		assert.Equal(t, []int{first.ID, second.ID}, []int{items[0].ID, items[1].ID})
 	}
-
-	items, err := store.GetTemplates(projectID, db.TemplateFilter{}, db.RetrieveQueryParams{Count: 1, Offset: 1})
+	items, err := store.GetTemplates(projectID, db.TemplateFilter{}, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	assert.Equal(t, []int{second.ID, first.ID}, []int{items[0].ID, items[1].ID})
+	items, err = store.GetTemplates(projectID, db.TemplateFilter{}, db.RetrieveQueryParams{SortBy: "playbook", Count: 1, Offset: 1})
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	assert.Equal(t, second.ID, items[0].ID)

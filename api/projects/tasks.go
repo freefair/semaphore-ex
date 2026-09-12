@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
@@ -46,12 +47,40 @@ func taskPool(r *http.Request) *tasks.TaskPool {
 }
 
 // AddTask inserts a task into the database and returns a header or returns error
+// resolveTaskTemplate returns the template of the task, which may be referenced
+// either by id or by name. The resolved id is written back to the task so the
+// rest of the pipeline only deals with ids.
+func (c *TaskController) resolveTaskTemplate(projectID int, task *db.Task) (tpl db.Template, err error) {
+	// The name is resolved to an id here, so it is cleared to keep it out of the
+	// stored task and the response.
+	name := task.TemplateName
+	task.TemplateName = ""
+
+	if task.TemplateID == 0 && name == "" {
+		err = common_errors.NewValidationError("template_id or template_name is required")
+		return
+	}
+
+	if task.TemplateID != 0 {
+		tpl, err = c.store.GetTemplate(projectID, task.TemplateID)
+		return
+	}
+
+	tpl, err = c.store.GetTemplateByName(projectID, name)
+	if err != nil {
+		return
+	}
+
+	task.TemplateID = tpl.ID
+	return
+}
+
 func (c *TaskController) AddTask(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	user := helpers.GetFromContext(r, "user").(*db.User)
 	taskObj := helpers.GetFromContext(r, "task").(db.Task)
 
-	tpl, err := c.store.GetTemplate(project.ID, taskObj.TemplateID)
+	tpl, err := c.resolveTaskTemplate(project.ID, &taskObj)
 	if err != nil {
 		helpers.WriteError(w, err)
 		return
@@ -211,6 +240,15 @@ func (c *TaskController) GetTaskPermissionsMiddleware(next http.Handler) http.Ha
 		project := helpers.GetFromContext(r, "project").(db.Project)
 		user := helpers.GetFromContext(r, "user").(*db.User)
 		task := helpers.GetFromContext(r, "task").(db.Task)
+
+		// Resolve a name before querying template permissions. The router runs this
+		// middleware before AddTask, so waiting until the handler would otherwise
+		// authorize a synthetic template ID 0.
+		if _, err := c.resolveTaskTemplate(project.ID, &task); err != nil {
+			helpers.WriteError(w, err)
+			return
+		}
+		r = helpers.SetContextValue(r, "task", task)
 
 		permissions := helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
 

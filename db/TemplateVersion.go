@@ -43,6 +43,7 @@ type TemplateVersionExecution struct {
 	GitBranch                 *string            `json:"git_branch,omitempty"`
 	SurveyVars                []SurveyVar        `json:"survey_vars,omitempty"`
 	SuppressSuccessAlerts     bool               `json:"suppress_success_alerts,omitempty"`
+	SuppressErrorAlerts       bool               `json:"suppress_error_alerts,omitempty"`
 	App                       TemplateApp        `json:"app,omitempty"`
 	TaskParams                MapStringAnyField  `json:"task_params,omitempty"`
 	RunnerTag                 *string            `json:"runner_tag,omitempty"`
@@ -218,6 +219,7 @@ func NewTemplateVersionSnapshot(template Template) (TemplateVersionSnapshot, err
 			Type: template.Type, StartVersion: template.StartVersion, Autorun: template.Autorun,
 			GitBranch: template.GitBranch, SurveyVars: template.SurveyVars,
 			SuppressSuccessAlerts: template.SuppressSuccessAlerts,
+			SuppressErrorAlerts:   template.SuppressErrorAlerts,
 			App:                   template.App, TaskParams: template.TaskParams, RunnerTag: template.RunnerTag,
 			RunnerTags: template.RunnerTags, RunnerTagMatchMode: template.RunnerTagMatchMode,
 			ExecutorImage: template.ExecutorImage, AllowOverrideBranchInTask: template.AllowOverrideBranchInTask,
@@ -277,6 +279,7 @@ func (snapshot TemplateVersionSnapshot) ReconstructTemplate(ownerProjectID int, 
 		StartVersion: immutable.Execution.StartVersion, Autorun: immutable.Execution.Autorun,
 		GitBranch: immutable.Execution.GitBranch, SurveyVars: immutable.Execution.SurveyVars,
 		SuppressSuccessAlerts: immutable.Execution.SuppressSuccessAlerts,
+		SuppressErrorAlerts:   immutable.Execution.SuppressErrorAlerts,
 		App:                   immutable.Execution.App, TaskParams: immutable.Execution.TaskParams,
 		RunnerTag: immutable.Execution.RunnerTag, RunnerTags: immutable.Execution.RunnerTags,
 		RunnerTagMatchMode:        immutable.Execution.RunnerTagMatchMode,

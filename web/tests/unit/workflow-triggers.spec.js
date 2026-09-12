@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import { shallowMount } from '@vue/test-utils';
 import axios from 'axios';
+import Vuetify from 'vuetify';
 import WorkflowTriggersDialog from '@/components/WorkflowTriggersDialog.vue';
 import WorkflowView from '@/views/project/WorkflowView.vue';
 
@@ -24,6 +25,7 @@ describe('workflow triggers', () => {
 
   it('offers exactly the four trigger resource types in one focused component', () => {
     const wrapper = shallowMount(WorkflowTriggersDialog, {
+      vuetify: new Vuetify(),
       propsData: {
         value: false,
         projectId: 7,
@@ -31,13 +33,13 @@ describe('workflow triggers', () => {
       },
       mocks: {
         $t: (key) => key,
-        $vuetify: { breakpoint: { xsOnly: false } },
       },
     });
 
     expect(wrapper.vm.triggerTypes.map(({ value }) => value)).to.deep.equal([
       'manual', 'schedule', 'api', 'webhook',
     ]);
+    wrapper.destroy();
   });
 
   it('serializes only explicit fixed and request mappings', () => {

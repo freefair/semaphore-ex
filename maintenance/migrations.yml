@@ -789,6 +789,22 @@ migrations:
     upstream_id: 2.20.3
     rationale: Upstream working_directory schema appended because fork 2.20.3 is already shipped.
   - registered: true
+    id: 2.20.68
+    owner: upstream-adapted
+    files:
+      v2.20.68.err.sql: ca775e9781651d4bcfc60a4d138ba934000fba4e2667d7b81b54719ab96af96d
+      v2.20.68.sql: 5fd516c8218da6ea8164d3cd53b29a825398ce54118aa0109c228f6c6f6774e6
+    upstream_id: 2.20.4
+    rationale: Upstream unique template names appended after shipped fork IDs; retain database-collation duplicate renaming, use name-first uniqueness to preserve the MySQL FK index, and add portable rollback.
+  - registered: true
+    id: 2.20.69
+    owner: upstream-adapted
+    files:
+      v2.20.69.err.sql: ed1530fd62d023aa6352e09df4ecec2fcfbb17748937cb1196e566ddd9fb94fe
+      v2.20.69.sql: 81e86534e1d48d56ee22952e48eed455be39e1a5e2802cdb2b44443507ba0460
+    upstream_id: 2.20.5
+    rationale: Upstream error-alert suppression appended because fork 2.20.5 is already shipped.
+  - registered: true
     id: 2.20.7
     owner: fork
     files:

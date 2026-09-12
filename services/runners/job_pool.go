@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db_lib"
@@ -57,6 +58,9 @@ func newHTTPClient() *http.Client {
 	}
 	return &http.Client{
 		Transport: &http.Transport{TLSClientConfig: tlsConfig},
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("runner API redirects are not allowed")
+		},
 	}
 }
 
@@ -293,6 +297,7 @@ func (p *JobPool) Unregister() (err error) {
 	if err != nil {
 		return
 	}
+	p.setCommonHeaders(req)
 
 	log.WithFields(log.Fields{
 		"context": "unregistration",

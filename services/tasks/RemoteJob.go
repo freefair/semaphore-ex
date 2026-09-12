@@ -2,16 +2,21 @@ package tasks
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/debuglog"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/util"
+	log "github.com/sirupsen/logrus"
 )
 
 // ErrAllRunnersBusy is returned when all available runners are busy. Used for logic
@@ -71,16 +76,131 @@ func callRunnerWebhook(runner *db.Runner, tsk *TaskRunner, action string) (err e
 		return
 	}
 
-	if resp != nil {
-		defer resp.Body.Close() //nolint:errcheck
-	}
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != 200 && resp.StatusCode != 204 {
-		err = fmt.Errorf("webhook returned incorrect status")
+		err = fmt.Errorf("webhook returned status %d", resp.StatusCode)
 		return
 	}
 
 	return
+}
+
+func shuffleRunners(rs []db.Runner) []db.Runner {
+	if len(rs) < 2 {
+		return rs
+	}
+
+	// Work on a copy so that if randomness fails, we can safely return the original order.
+	shuffled := make([]db.Runner, len(rs))
+	copy(shuffled, rs)
+
+	// Fisher–Yates shuffle using crypto/rand: for each i, pick j in [0, i].
+	for i := len(shuffled) - 1; i > 0; i-- {
+		max := big.NewInt(int64(i + 1))
+		j, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			log.WithError(err).Warn("failed to shuffle runners, using original order")
+			return rs
+		}
+
+		ji := int(j.Int64())
+		shuffled[i], shuffled[ji] = shuffled[ji], shuffled[i]
+	}
+
+	return shuffled
+}
+
+// selectRunner returns the first runner that is online (see db.Runner.IsOnline)
+// and has free capacity, or nil when there is none. Offline runners are
+// excluded outright — dispatching to a silent runner is exactly how tasks used
+// to hang forever; a task with no online runner stays queued instead and is
+// retried by the pool.
+func selectRunner(
+	runners []db.Runner,
+	now time.Time,
+	offlineTimeout time.Duration,
+	busyTasks func(runnerID int) int,
+) *db.Runner {
+	for i := range runners {
+		r := &runners[i]
+		if !r.IsOnline(now, offlineTimeout) {
+			continue
+		}
+		if r.HasFreeCapacity(busyTasks(r.ID)) {
+			return r
+		}
+	}
+	return nil
+}
+
+func runnerExclusionReason(
+	r db.Runner,
+	runnerTag *string,
+	now time.Time,
+	offlineTimeout time.Duration,
+	runningTasks int,
+) string {
+	switch {
+	case !r.Active:
+		return "inactive"
+	case !r.IsRegistered():
+		return "not_registered"
+	case runnerTag == nil && !r.IsDefault:
+		return "not_default"
+	case runnerTag != nil && !r.HasTag(*runnerTag):
+		return "tag_mismatch"
+	case !r.IsOnline(now, offlineTimeout):
+		return "offline"
+	case !r.HasFreeCapacity(runningTasks):
+		return "at_capacity"
+	default:
+		return ""
+	}
+}
+
+func (t *RemoteJob) logDispatchFailure(message string) {
+	if !debuglog.Enabled(log.StandardLogger(), "runner") {
+		return
+	}
+
+	fields := log.Fields{
+		"context":        "runner",
+		"task_id":        t.Task.ID,
+		"selection_mode": "default",
+	}
+	if t.RunnerTag != nil {
+		fields["selection_mode"] = "tag"
+		fields["runner_tag"] = *t.RunnerTag
+	}
+	dispatchLog := log.WithFields(fields)
+
+	projectRunners, err := t.taskPool.store.GetRunners(t.Task.ProjectID, false, db.RunnerFilterIgnoreTags, nil)
+	if err != nil {
+		dispatchLog.WithError(err).Debug("Runner dispatch diagnostics unavailable: failed to load project runners")
+		return
+	}
+	globalRunners, err := t.taskPool.store.GetAllRunners(false, true, db.RunnerFilterIgnoreTags, nil)
+	if err != nil {
+		dispatchLog.WithError(err).Debug("Runner dispatch diagnostics unavailable: failed to load global runners")
+		return
+	}
+
+	runners := slices.Concat(projectRunners, globalRunners)
+	dispatchLog.WithField("configured_runner_count", len(runners)).Debug(message)
+
+	now := tz.Now()
+	offlineTimeout := util.Config.RunnersOfflineTimeout()
+	runningTasks := countRunningTasksByRunner(t.taskPool.state.RunningRange())
+	for _, r := range runners {
+		reason := runnerExclusionReason(r, t.RunnerTag, now, offlineTimeout, runningTasks[r.ID])
+		runnerLog := dispatchLog.WithField("runner_id", r.ID)
+		if reason == "" {
+			runnerLog.Debug("Runner passes dispatch filters")
+		} else {
+			runnerLog.WithField("exclusion_reason", reason).Debug("Runner excluded from task dispatch")
+		}
+	}
 }
 
 func (t *RemoteJob) Run(username string, incomingVersion *string, alias string) (err error) {
@@ -136,6 +256,7 @@ func (t *RemoteJob) Run(username string, incomingVersion *string, alias string) 
 			tz.Now(), util.Config.RunnersOfflineTimeout(), t.ExecutorImage,
 		)
 		if decision.SelectedRunnerID == nil {
+			t.logDispatchFailure("No runner satisfied dispatch placement policy")
 			persisted, persistErr := t.taskPool.store.SetTaskRunnerPlacement(
 				tsk.Task.ProjectID, tsk.Task.ID, decision,
 			)

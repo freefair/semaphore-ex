@@ -751,12 +751,16 @@ symbols:
     implementation: core
   - name: db:AnsibleTemplateParams
     signature: >-
-      struct{AllowDebug bool "json:\"allow_debug\""; AllowOverrideInventory bool "json:\"allow_override_inventory\""; AllowOverrideLimit
-      bool "json:\"allow_override_limit\""; AllowOverrideTags bool "json:\"allow_override_tags\""; AllowOverrideSkipTags bool
-      "json:\"allow_override_skip_tags\""; Limit []string "json:\"limit\""; Tags []string "json:\"tags\""; SkipTags []string
-      "json:\"skip_tags\""; SkipGalaxyInstall bool "json:\"skip_galaxy_install\""; AllowOverrideSkipGalaxyInstall bool
-      "json:\"allow_override_skip_galaxy_install\""}
+      struct{AllowDebug bool "json:\"allow_debug\""; AllowOverrideInventory bool "json:\"allow_override_inventory\"";
+      AllowOverrideLimit bool "json:\"allow_override_limit\""; AllowOverrideTags bool "json:\"allow_override_tags\"";
+      AllowOverrideSkipTags bool "json:\"allow_override_skip_tags\""; Limit []string "json:\"limit\""; Tags []string
+      "json:\"tags\""; SkipTags []string "json:\"skip_tags\""; SkipGalaxyInstall bool "json:\"skip_galaxy_install\"";
+      AllowOverrideSkipGalaxyInstall bool "json:\"allow_override_skip_galaxy_install\""; HideDryRun bool
+      "json:\"hide_dry_run\""; HideDiff bool "json:\"hide_diff\""; GalaxyRoleArgs []string "json:\"galaxy_role_args\"";
+      GalaxyCollectionArgs []string "json:\"galaxy_collection_args\""}
     implementation: core
+    behavior_tests:
+      - db/Template_test.go::TestTemplateValidate_GalaxyArgs
   - name: db:AppAnsible
     signature: db.TemplateApp = "ansible"
     implementation: core
@@ -4083,6 +4087,9 @@ symbols:
       db.SessionVerificationMethod "db:\"verification_method\" json:\"verification_method\""; Verified bool "db:\"verified\"
       json:\"verified\""}
     implementation: core
+  - name: db:SessionInactivityTimeout
+    signature: time.Duration = 604800000000000
+    implementation: core
   - name: db:SessionManager
     signature: >-
       interface{CreateSession(session db.Session) (db.Session, error); ExpireSession(userID int, sessionID int) error; GetSession(userID
@@ -4196,33 +4203,40 @@ symbols:
     implementation: core
   - name: db:Task
     signature: >-
-      struct{ID int "db:\"id\" json:\"id\""; TemplateID int "db:\"template_id\" json:\"template_id\" binding:\"required\""; ProjectID int
-      "db:\"project_id\" json:\"project_id\""; Status pkg/task_logger.TaskStatus "db:\"status\" json:\"status\""; NotificationRevision int
-      "db:\"notification_revision\" json:\"-\""; Playbook string "db:\"playbook\" json:\"playbook\""; Environment string "db:\"environment\"
-      json:\"environment,omitempty\""; Secret string "db:\"-\" json:\"secret,omitempty\""; GlobalCredentialBindingsJSON string
-      "db:\"global_credential_bindings\" json:\"-\""; GlobalCredentialBindings map[string]int "db:\"-\" json:\"-\""; Arguments *string
-      "db:\"arguments\" json:\"arguments,omitempty\""; GitBranch *string "db:\"git_branch\" json:\"git_branch,omitempty\""; UserID *int
-      "db:\"user_id\" json:\"user_id,omitempty\""; IntegrationID *int "db:\"integration_id\" json:\"integration_id,omitempty\""; ScheduleID
-      *int "db:\"schedule_id\" json:\"schedule_id,omitempty\""; ScheduleOccurrenceKey *string "db:\"schedule_occurrence_key\" json:\"-\"";
-      RunnerID *int "db:\"runner_id\" json:\"-\""; RunnerSnapshotID *int "db:\"runner_id_snapshot\" json:\"-\""; RunnerName *string
-      "db:\"runner_name\" json:\"-\""; AssignmentGeneration int "db:\"assignment_generation\" json:\"assignment_generation,omitempty\"";
-      TaskControlFencingToken int64 "db:\"task_control_fencing_token\" json:\"-\""; RunnerAssignedAt *time.Time "db:\"runner_assigned_at\"
-      json:\"runner_assigned_at,omitempty\""; RecoveryReason string "db:\"recovery_reason\" json:\"recovery_reason,omitempty\"";
-      PlacementDecision *db.RunnerPlacementDecision "db:\"placement_decision\" json:\"placement_decision,omitempty\"";
-      RequestedExecutorImage *string "db:\"requested_executor_image\" json:\"requested_executor_image,omitempty\""; ResolvedExecutorImage
-      *string "db:\"resolved_executor_image\" json:\"resolved_executor_image,omitempty\""; Created time.Time "db:\"created\"
-      json:\"created\""; Start *time.Time "db:\"start\" json:\"start,omitempty\""; End *time.Time "db:\"end\" json:\"end,omitempty\"";
-      Message string "db:\"message\" json:\"message,omitempty\""; CommitHash *string "db:\"commit_hash\" json:\"commit_hash,omitempty\"";
-      CommitMessage string "db:\"commit_message\" json:\"commit_message,omitempty\""; BuildTaskID *int "db:\"build_task_id\"
-      json:\"build_task_id,omitempty\""; WorkflowRunID *int "db:\"workflow_run_id\" json:\"workflow_run_id,omitempty\""; WorkflowNodeID *int
-      "db:\"workflow_node_id\" json:\"workflow_node_id,omitempty\""; WorkflowTemplateSnapshot *string "db:\"workflow_template_snapshot\"
-      json:\"-\""; ExecutionSnapshotJSON *string "db:\"execution_snapshot\" json:\"-\""; WorkflowTemplateProvenanceJSON *string
-      "db:\"workflow_template_provenance\" json:\"-\""; WorkflowTemplateProvenance *db.WorkflowTemplateProvenance "db:\"-\" json:\"-\"";
-      DeploymentWindowDecisionID *int "db:\"-\" json:\"-\""; PolicyGuardrailEvaluationID *int "db:\"-\" json:\"-\""; Version *string
-      "db:\"version\" json:\"version,omitempty\""; InventoryID *int "db:\"inventory_id\" json:\"inventory_id,omitempty\""; Params
-      db.MapStringAnyField "db:\"params\" json:\"params,omitempty\""; Artifacts *string "db:\"artifacts\" json:\"artifacts,omitempty\"";
-      Limit string "db:\"-\" json:\"limit\""}
+      struct{ID int "db:\"id\" json:\"id\""; TemplateID int "db:\"template_id\" json:\"template_id\""; ProjectID int
+      "db:\"project_id\" json:\"project_id\""; TemplateName string "db:\"-\" json:\"template_name,omitempty\""; Status
+      pkg/task_logger.TaskStatus "db:\"status\" json:\"status\""; NotificationRevision int "db:\"notification_revision\"
+      json:\"-\""; Playbook string "db:\"playbook\" json:\"playbook\""; Environment string "db:\"environment\"
+      json:\"environment,omitempty\""; Secret string "db:\"-\" json:\"secret,omitempty\""; GlobalCredentialBindingsJSON
+      string "db:\"global_credential_bindings\" json:\"-\""; GlobalCredentialBindings map[string]int "db:\"-\"
+      json:\"-\""; Arguments *string "db:\"arguments\" json:\"arguments,omitempty\""; GitBranch *string "db:\"git_branch\"
+      json:\"git_branch,omitempty\""; UserID *int "db:\"user_id\" json:\"user_id,omitempty\""; IntegrationID *int
+      "db:\"integration_id\" json:\"integration_id,omitempty\""; ScheduleID *int "db:\"schedule_id\"
+      json:\"schedule_id,omitempty\""; ScheduleOccurrenceKey *string "db:\"schedule_occurrence_key\" json:\"-\""; RunnerID
+      *int "db:\"runner_id\" json:\"-\""; RunnerSnapshotID *int "db:\"runner_id_snapshot\" json:\"-\""; RunnerName *string
+      "db:\"runner_name\" json:\"-\""; AssignmentGeneration int "db:\"assignment_generation\"
+      json:\"assignment_generation,omitempty\""; TaskControlFencingToken int64 "db:\"task_control_fencing_token\"
+      json:\"-\""; RunnerAssignedAt *time.Time "db:\"runner_assigned_at\" json:\"runner_assigned_at,omitempty\"";
+      RecoveryReason string "db:\"recovery_reason\" json:\"recovery_reason,omitempty\""; PlacementDecision
+      *db.RunnerPlacementDecision "db:\"placement_decision\" json:\"placement_decision,omitempty\"";
+      RequestedExecutorImage *string "db:\"requested_executor_image\" json:\"requested_executor_image,omitempty\"";
+      ResolvedExecutorImage *string "db:\"resolved_executor_image\" json:\"resolved_executor_image,omitempty\""; Created
+      time.Time "db:\"created\" json:\"created\""; Start *time.Time "db:\"start\" json:\"start,omitempty\""; End
+      *time.Time "db:\"end\" json:\"end,omitempty\""; Message string "db:\"message\" json:\"message,omitempty\"";
+      CommitHash *string "db:\"commit_hash\" json:\"commit_hash,omitempty\""; CommitMessage string "db:\"commit_message\"
+      json:\"commit_message,omitempty\""; BuildTaskID *int "db:\"build_task_id\" json:\"build_task_id,omitempty\"";
+      WorkflowRunID *int "db:\"workflow_run_id\" json:\"workflow_run_id,omitempty\""; WorkflowNodeID *int
+      "db:\"workflow_node_id\" json:\"workflow_node_id,omitempty\""; WorkflowTemplateSnapshot *string
+      "db:\"workflow_template_snapshot\" json:\"-\""; ExecutionSnapshotJSON *string "db:\"execution_snapshot\"
+      json:\"-\""; WorkflowTemplateProvenanceJSON *string "db:\"workflow_template_provenance\" json:\"-\"";
+      WorkflowTemplateProvenance *db.WorkflowTemplateProvenance "db:\"-\" json:\"-\""; DeploymentWindowDecisionID *int
+      "db:\"-\" json:\"-\""; PolicyGuardrailEvaluationID *int "db:\"-\" json:\"-\""; Version *string "db:\"version\"
+      json:\"version,omitempty\""; InventoryID *int "db:\"inventory_id\" json:\"inventory_id,omitempty\""; Params
+      db.MapStringAnyField "db:\"params\" json:\"params,omitempty\""; Artifacts *string "db:\"artifacts\"
+      json:\"artifacts,omitempty\""; Limit string "db:\"-\" json:\"limit\""}
     implementation: core
+    behavior_tests:
+      - api/projects/tasks_test.go::TestResolveTaskTemplate
   - name: db:TaskExecutionEvidence
     signature: >-
       struct{TaskID int "json:\"task_id\""; Generation int "json:\"generation\""; State db.TaskExecutionEvidenceState "json:\"state\"";
@@ -4456,28 +4470,35 @@ symbols:
     implementation: core
   - name: db:Template
     signature: >-
-      struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; ProjectID int "db:\"project_id\" json:\"project_id\" backup:\"-\""; InventoryID
-      *int "db:\"inventory_id\" json:\"inventory_id,omitempty\" backup:\"-\""; RepositoryID int "db:\"repository_id\" json:\"repository_id\"
-      backup:\"-\""; EnvironmentIDs []int "db:\"-\" json:\"environment_ids\" backup:\"-\""; EnvironmentID int "db:\"-\"
-      json:\"environment_id\" backup:\"-\""; Name string "db:\"name\" json:\"name\""; Playbook string "db:\"playbook\" json:\"playbook\"";
-      WorkingDirectory *string "db:\"working_directory\" json:\"working_directory,omitempty\""; Arguments *string "db:\"arguments\"
+      struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; ProjectID int "db:\"project_id\" json:\"project_id\"
+      backup:\"-\""; InventoryID *int "db:\"inventory_id\" json:\"inventory_id,omitempty\" backup:\"-\""; RepositoryID int
+      "db:\"repository_id\" json:\"repository_id\" backup:\"-\""; EnvironmentIDs []int "db:\"-\" json:\"environment_ids\"
+      backup:\"-\""; EnvironmentID int "db:\"-\" json:\"environment_id\" backup:\"-\""; Name string "db:\"name\"
+      json:\"name\""; Playbook string "db:\"playbook\" json:\"playbook\""; WorkingDirectory *string
+      "db:\"working_directory\" json:\"working_directory,omitempty\""; Arguments *string "db:\"arguments\"
       json:\"arguments,omitempty\""; AllowOverrideArgsInTask bool "db:\"allow_override_args_in_task\"
-      json:\"allow_override_args_in_task,omitempty\""; Description *string "db:\"description\" json:\"description,omitempty\""; Vaults
-      []db.TemplateVault "db:\"-\" json:\"vaults,omitempty\" backup:\"-\""; Type db.TemplateType "db:\"type\" json:\"type,omitempty\"";
-      StartVersion *string "db:\"start_version\" json:\"start_version,omitempty\""; BuildTemplateID *int "db:\"build_template_id\"
-      json:\"build_template_id,omitempty\" backup:\"-\""; ViewID *int "db:\"view_id\" json:\"view_id,omitempty\" backup:\"-\""; LastTask
-      *db.TaskWithTpl "db:\"-\" json:\"last_task,omitempty\" backup:\"-\""; Autorun bool "db:\"autorun\" json:\"autorun,omitempty\"";
-      GitBranch *string "db:\"git_branch\" json:\"git_branch,omitempty\""; SurveyVarsJSON *string "db:\"survey_vars\" json:\"-\"
-      backup:\"-\""; SurveyVars []db.SurveyVar "db:\"-\" json:\"survey_vars,omitempty\" backup:\"survey_vars\""; SuppressSuccessAlerts bool
-      "db:\"suppress_success_alerts\" json:\"suppress_success_alerts,omitempty\""; App db.TemplateApp "db:\"app\" json:\"app,omitempty\"";
-      Tasks int "db:\"tasks\" json:\"tasks\" backup:\"-\""; TaskParams db.MapStringAnyField "db:\"task_params\"
-      json:\"task_params,omitempty\""; RunnerTag *string "db:\"runner_tag\" json:\"runner_tag,omitempty\""; RunnerTags db.StringArrayField
-      "db:\"runner_tags\" json:\"runner_tags,omitempty\""; RunnerTagMatchMode db.RunnerTagMatchMode "db:\"runner_tag_match_mode\"
-      json:\"runner_tag_match_mode,omitempty\""; ExecutorImage *string "db:\"executor_image\" json:\"executor_image,omitempty\"";
-      AllowOverrideBranchInTask bool "db:\"allow_override_branch_in_task\" json:\"allow_override_branch_in_task,omitempty\"";
-      AllowParallelTasks bool "db:\"allow_parallel_tasks\" json:\"allow_parallel_tasks,omitempty\""; JWTParams *db.TemplateJWTParams
+      json:\"allow_override_args_in_task,omitempty\""; Description *string "db:\"description\"
+      json:\"description,omitempty\""; Vaults []db.TemplateVault "db:\"-\" json:\"vaults,omitempty\" backup:\"-\""; Type
+      db.TemplateType "db:\"type\" json:\"type,omitempty\""; StartVersion *string "db:\"start_version\"
+      json:\"start_version,omitempty\""; BuildTemplateID *int "db:\"build_template_id\"
+      json:\"build_template_id,omitempty\" backup:\"-\""; ViewID *int "db:\"view_id\" json:\"view_id,omitempty\"
+      backup:\"-\""; LastTask *db.TaskWithTpl "db:\"-\" json:\"last_task,omitempty\" backup:\"-\""; Autorun bool
+      "db:\"autorun\" json:\"autorun,omitempty\""; GitBranch *string "db:\"git_branch\" json:\"git_branch,omitempty\"";
+      SurveyVarsJSON *string "db:\"survey_vars\" json:\"-\" backup:\"-\""; SurveyVars []db.SurveyVar "db:\"-\"
+      json:\"survey_vars,omitempty\" backup:\"survey_vars\""; SuppressSuccessAlerts bool "db:\"suppress_success_alerts\"
+      json:\"suppress_success_alerts,omitempty\""; SuppressErrorAlerts bool "db:\"suppress_error_alerts\"
+      json:\"suppress_error_alerts,omitempty\""; App db.TemplateApp "db:\"app\" json:\"app,omitempty\""; Tasks int
+      "db:\"tasks\" json:\"tasks\" backup:\"-\""; TaskParams db.MapStringAnyField "db:\"task_params\"
+      json:\"task_params,omitempty\""; RunnerTag *string "db:\"runner_tag\" json:\"runner_tag,omitempty\""; RunnerTags
+      db.StringArrayField "db:\"runner_tags\" json:\"runner_tags,omitempty\""; RunnerTagMatchMode db.RunnerTagMatchMode
+      "db:\"runner_tag_match_mode\" json:\"runner_tag_match_mode,omitempty\""; ExecutorImage *string
+      "db:\"executor_image\" json:\"executor_image,omitempty\""; AllowOverrideBranchInTask bool
+      "db:\"allow_override_branch_in_task\" json:\"allow_override_branch_in_task,omitempty\""; AllowParallelTasks bool
+      "db:\"allow_parallel_tasks\" json:\"allow_parallel_tasks,omitempty\""; JWTParams *db.TemplateJWTParams
       "db:\"jwt_params\" json:\"jwt_params,omitempty\""}
     implementation: core
+    behavior_tests:
+      - db/sql/template_test.go::TestTemplateSuppressAlertsRoundTrip
   - name: db:TemplateApp
     signature: string
     implementation: core
@@ -4498,20 +4519,26 @@ symbols:
   - name: db:TemplateManager
     signature: >-
       interface{CreateTemplate(template db.Template) (db.Template, error); CreateTemplateRole(role db.TemplateRolePerm)
-      (db.TemplateRolePerm, error); CreateTemplateVault(vault db.TemplateVault) (db.TemplateVault, error); DeleteTemplate(projectID int,
-      templateID int) error; DeleteTemplateRole(projectID int, templateID int, permID int, expectedRevision int) error;
-      GetTemplate(projectID int, templateID int) (db.Template, error); GetTemplateEnvironments(projectID int, templateID int) ([]int,
-      error); GetTemplatePermission(projectID int, templateID int, userID int) (db.ProjectUserPermission, error);
-      GetTemplatePermissionContext(projectID int, templateID int, userID int) (db.TemplatePermissionContext, error);
-      GetTemplateRefs(projectID int, templateID int) (db.ObjectReferrers, error); GetTemplateRole(projectID int, templateID int, permID int)
-      (db.TemplateRolePerm, error); GetTemplateRoles(projectID int, templateID int) ([]db.TemplateRolePerm, error);
-      GetTemplateVaults(projectID int, templateID int) ([]db.TemplateVault, error); GetTemplates(projectID int, filter db.TemplateFilter,
-      params db.RetrieveQueryParams) ([]db.Template, error); GetTemplatesWithPermissions(projectID int, userID int, filter
-      db.TemplateFilter, params db.RetrieveQueryParams) ([]db.TemplateWithPerms, error); SetTemplateDescription(projectID int, templateID
-      int, description string) error; UpdateTemplate(template db.Template) error; UpdateTemplateEnvironments(projectID int, templateID int,
-      environmentIDs []int) error; UpdateTemplateRole(role db.TemplateRolePerm, expectedRevision int) (db.TemplateRolePerm, error);
-      UpdateTemplateVaults(projectID int, templateID int, vaults []db.TemplateVault) error}
+      (db.TemplateRolePerm, error); CreateTemplateVault(vault db.TemplateVault) (db.TemplateVault, error);
+      DeleteTemplate(projectID int, templateID int) error; DeleteTemplateRole(projectID int, templateID int, permID int,
+      expectedRevision int) error; GetTemplate(projectID int, templateID int) (db.Template, error);
+      GetTemplateByName(projectID int, name string) (db.Template, error); GetTemplateEnvironments(projectID int,
+      templateID int) ([]int, error); GetTemplatePermission(projectID int, templateID int, userID int)
+      (db.ProjectUserPermission, error); GetTemplatePermissionContext(projectID int, templateID int, userID int)
+      (db.TemplatePermissionContext, error); GetTemplateRefs(projectID int, templateID int) (db.ObjectReferrers, error);
+      GetTemplateRole(projectID int, templateID int, permID int) (db.TemplateRolePerm, error); GetTemplateRoles(projectID
+      int, templateID int) ([]db.TemplateRolePerm, error); GetTemplateVaults(projectID int, templateID int)
+      ([]db.TemplateVault, error); GetTemplates(projectID int, filter db.TemplateFilter, params db.RetrieveQueryParams)
+      ([]db.Template, error); GetTemplatesWithPermissions(projectID int, userID int, filter db.TemplateFilter, params
+      db.RetrieveQueryParams) ([]db.TemplateWithPerms, error); SetTemplateDescription(projectID int, templateID int,
+      description string) error; UpdateTemplate(template db.Template) error; UpdateTemplateEnvironments(projectID int,
+      templateID int, environmentIDs []int) error; UpdateTemplateRole(role db.TemplateRolePerm, expectedRevision int)
+      (db.TemplateRolePerm, error); UpdateTemplateVaults(projectID int, templateID int, vaults []db.TemplateVault) error}
     implementation: core
+    behavior_tests:
+      - api/projects/tasks_test.go::TestResolveTaskTemplate
+      - db/sql/template_test.go::TestTemplateNameUniqueness
+      - db/sql/upstream_template_migrations_ex_test.go::TestUpstreamTemplateMigrationsPreserveForkUpgradeAndRollback
   - name: db:TemplatePermission
     signature: int64
     implementation: core
@@ -4577,16 +4604,20 @@ symbols:
   - name: db:TemplateVersionExecution
     signature: >-
       struct{Name string "json:\"name\""; Playbook string "json:\"playbook\""; WorkingDirectory *string
-      "json:\"working_directory,omitempty\""; Arguments *string "json:\"arguments,omitempty\""; AllowOverrideArgsInTask bool
-      "json:\"allow_override_args_in_task,omitempty\""; Description *string "json:\"description,omitempty\""; Type db.TemplateType
-      "json:\"type,omitempty\""; StartVersion *string "json:\"start_version,omitempty\""; Autorun bool "json:\"autorun,omitempty\"";
-      GitBranch *string "json:\"git_branch,omitempty\""; SurveyVars []db.SurveyVar "json:\"survey_vars,omitempty\""; SuppressSuccessAlerts
-      bool "json:\"suppress_success_alerts,omitempty\""; App db.TemplateApp "json:\"app,omitempty\""; TaskParams db.MapStringAnyField
-      "json:\"task_params,omitempty\""; RunnerTag *string "json:\"runner_tag,omitempty\""; RunnerTags db.StringArrayField
-      "json:\"runner_tags,omitempty\""; RunnerTagMatchMode db.RunnerTagMatchMode "json:\"runner_tag_match_mode,omitempty\""; ExecutorImage
-      *string "json:\"executor_image,omitempty\""; AllowOverrideBranchInTask bool "json:\"allow_override_branch_in_task,omitempty\"";
-      AllowParallelTasks bool "json:\"allow_parallel_tasks,omitempty\""; JWTParams *db.TemplateJWTParams "json:\"jwt_params,omitempty\""}
+      "json:\"working_directory,omitempty\""; Arguments *string "json:\"arguments,omitempty\""; AllowOverrideArgsInTask
+      bool "json:\"allow_override_args_in_task,omitempty\""; Description *string "json:\"description,omitempty\""; Type
+      db.TemplateType "json:\"type,omitempty\""; StartVersion *string "json:\"start_version,omitempty\""; Autorun bool
+      "json:\"autorun,omitempty\""; GitBranch *string "json:\"git_branch,omitempty\""; SurveyVars []db.SurveyVar
+      "json:\"survey_vars,omitempty\""; SuppressSuccessAlerts bool "json:\"suppress_success_alerts,omitempty\"";
+      SuppressErrorAlerts bool "json:\"suppress_error_alerts,omitempty\""; App db.TemplateApp "json:\"app,omitempty\"";
+      TaskParams db.MapStringAnyField "json:\"task_params,omitempty\""; RunnerTag *string "json:\"runner_tag,omitempty\"";
+      RunnerTags db.StringArrayField "json:\"runner_tags,omitempty\""; RunnerTagMatchMode db.RunnerTagMatchMode
+      "json:\"runner_tag_match_mode,omitempty\""; ExecutorImage *string "json:\"executor_image,omitempty\"";
+      AllowOverrideBranchInTask bool "json:\"allow_override_branch_in_task,omitempty\""; AllowParallelTasks bool
+      "json:\"allow_parallel_tasks,omitempty\""; JWTParams *db.TemplateJWTParams "json:\"jwt_params,omitempty\""}
     implementation: core
+    behavior_tests:
+      - db/alert_snapshot_ex_test.go::TestTemplateVersionSnapshotPreservesErrorAlertSuppression
   - name: db:TemplateVersionFingerprint
     signature: func(snapshot db.TemplateVersionSnapshot) (string, error)
     implementation: core
