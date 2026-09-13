@@ -11,6 +11,17 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+### Changed
+
+- Transitive build and test dependencies of the web frontend are pinned to patched versions
+  through an `overrides` block; `npm audit` now reports only the documented inherited Vue 2
+  findings. The shipped bundle is unchanged.
+- `THIRD-PARTY-LICENSES.md` names Semaphore EX and the fork issue tracker.
+
+### Removed
+
+- The unused `qrterminal` and `rsc.io/qr` Go modules.
+
 ## [v2.20.0-ex.1] - 2026-09-13
 
 First published release of the fork.

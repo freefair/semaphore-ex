@@ -30,6 +30,7 @@ Direct Dredd invocations must generate it first.
 | Fork-only API definitions and paths | `api-docs-ex.yml` | `api-docs.yml` retains reference entries and changes to existing upstream contracts |
 | Embedded Swagger additions | `web/public/swagger/api-docs-ex.yml` | The public Swagger entry retains references and its narrower API surface; resolve fragments in the shipped Swagger UI |
 | Fork-only build targets | `Taskfile.ex.yml` | The flattened include keeps public task names unchanged |
+| Dependency manifests | `overrides` block in `web/package.json` for transitive build and test advisories; ESLint overrides for gulp scripts in `web/.eslintrc.js` | Upstream requirement lines in `go.mod` keep their order; unused upstream modules are dropped line by line instead of a full `go mod tidy`, which would rewrite the shared file and widen merge conflicts |
 
 Same-package files reduce textual overlap without changing dependency direction.
 A module move is appropriate only when the existing replaceable interface supports it.
