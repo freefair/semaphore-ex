@@ -11,7 +11,7 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
-## [v2.20.0-ex.1] - 2026-09-12
+## [v2.20.0-ex.1] - 2026-09-13
 
 First published release of the fork.
 
