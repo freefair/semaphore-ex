@@ -47,10 +47,12 @@ knowingly and re-evaluates them at every upstream sync.
 | [GHSA-3jp5-5f8r-q2wg](https://github.com/advisories/GHSA-3jp5-5f8r-q2wg) | vuetify 2.x | high | Prototype pollution; no 2.x fix |
 | [GHSA-9w3x-85mw-4fwm](https://github.com/advisories/GHSA-9w3x-85mw-4fwm) | vuetify 2.x | medium | XSS in `VDatePicker`; no 2.x fix |
 | [GHSA-5j4c-8p2g-v4jx](https://github.com/advisories/GHSA-5j4c-8p2g-v4jx) | vue 2.x | low | ReDoS in `parseHTML`; no 2.x fix |
+| [GHSA-g3ch-rx76-35fx](https://github.com/advisories/GHSA-g3ch-rx76-35fx) | vue-template-compiler 2.x | medium | Build-time only: templates are compiled from the repository at build, never from user input; no 2.x fix |
 
 All other production dependency advisories known at release time are fixed in the
 shipped lockfile. Development-only advisories (build tooling, test runner) do not reach the
-shipped artifacts and are tracked through Dependabot.
+shipped artifacts; the `overrides` block in `web/package.json` pins the transitive build
+and test dependencies to patched versions, and anything left is tracked through Dependabot.
 
 ## Verification at release time
 
