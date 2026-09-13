@@ -44,6 +44,13 @@ browser smoke, container smoke, HA resilience) and only then build the release.
 4. Go toolchain current: `GOTOOLCHAIN=go<pinned> go run golang.org/x/vuln/cmd/govulncheck@latest ./...`
    reports no reachable findings. The pin lives in the workflows and Dockerfiles.
 5. `npm audit --omit=dev --prefix web` shows only the documented inherited findings.
+6. `THIRD-PARTY-LICENSES.md` matches the dependency set. The generator is the upstream
+   `semaphore-third-party-licenses` skill; run it with the fork's wording:
+
+   ```bash
+   PRODUCT_NAME="Semaphore EX" ISSUES_URL="https://github.com/freefair/semaphore-ex/issues" CONTRACT_CLAUSE="" \
+     python3 .claude/skills/semaphore-third-party-licenses/scripts/generate_md.py .licenses-cache/ > THIRD-PARTY-LICENSES.md
+   ```
 
 ## Release candidate
 

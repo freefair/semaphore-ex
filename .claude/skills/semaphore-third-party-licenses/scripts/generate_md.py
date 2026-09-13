@@ -9,10 +9,21 @@ Reads <cache-dir>/classified.json (produced by check_policy.py) and emits
 the human-readable attribution document.
 """
 import json
+import os
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Forks ship the same generator under their own product name and issue tracker.
+# Defaults keep the upstream wording; set the variables to empty to drop a clause.
+PRODUCT_NAME = os.environ.get("PRODUCT_NAME", "Semaphore UI")
+ISSUES_URL = os.environ.get("ISSUES_URL", "https://github.com/semaphoreui/semaphore/issues")
+CONTRACT_CLAUSE = os.environ.get(
+    "CONTRACT_CLAUSE",
+    " and with §3.6 of our Master Service Agreement (identification of "
+    "open-source components by name, version, and license type)",
+)
 
 
 def section_header(title: str, level: int = 2) -> str:
@@ -23,7 +34,7 @@ def render_summary(deps_by_ecosystem: dict) -> str:
     lines = ["## Summary\n"]
     total = sum(len(v) for v in deps_by_ecosystem.values())
     lines.append(f"This document lists **{total}** third-party components ")
-    lines.append("distributed with Semaphore UI, grouped by ecosystem.\n\n")
+    lines.append(f"distributed with {PRODUCT_NAME}, grouped by ecosystem.\n\n")
 
     lines.append("| Ecosystem | Components |\n")
     lines.append("|-----------|------------|\n")
@@ -114,12 +125,10 @@ def main():
     out = []
     out.append("# Third-Party Licenses\n\n")
     out.append(
-        "Semaphore UI is built on the work of many open-source projects. "
+        f"{PRODUCT_NAME} is built on the work of many open-source projects. "
         "This document identifies every third-party component distributed "
-        "with Semaphore UI, in compliance with the attribution requirements "
-        "of the respective licenses and with §3.6 of our Master Service "
-        "Agreement (identification of open-source components by name, "
-        "version, and license type).\n\n"
+        f"with {PRODUCT_NAME}, in compliance with the attribution requirements "
+        f"of the respective licenses{CONTRACT_CLAUSE}.\n\n"
     )
     out.append(f"_Generated on **{timestamp}** by `scripts/collect_licenses.sh`._\n\n")
     out.append(
@@ -137,7 +146,7 @@ def main():
     # Backend
     out.append(render_ecosystem(
         "Go Backend Dependencies",
-        "Modules statically linked into the Semaphore UI server binary. "
+        f"Modules statically linked into the {PRODUCT_NAME} server binary. "
         "Sourced from `go.mod` (production dependencies only).",
         by_ecosystem.get("go", []),
     ))
@@ -160,12 +169,12 @@ def main():
         "URLs listed above. For permissively-licensed packages (MIT, BSD, "
         "ISC, Apache-2.0), the original LICENSE and NOTICE files are "
         "preserved in their respective package directories within the "
-        "Semaphore UI distribution.\n\n"
+        f"{PRODUCT_NAME} distribution.\n\n"
     )
     out.append(
         "If you believe a component is missing from this list or "
         "incorrectly attributed, please open an issue at "
-        "https://github.com/semaphoreui/semaphore/issues.\n\n"
+        f"{ISSUES_URL}.\n\n"
     )
     out.append("<!-- end of generated file -->\n")
 
