@@ -15,16 +15,18 @@ function gptTranslate(options) {
 
   const openai = new OpenAI();
 
-  return through.obj(function (file, enc, cb) {
+  return through.obj(function transform(file, enc, cb) {
     const self = this;
 
     if (file.isNull()) {
-      return cb(null, file); // Pass along if no contents
+      cb(null, file); // Pass along if no contents
+      return;
     }
 
     if (file.isStream()) {
       self.emit('error', new PluginError(PLUGIN_NAME, 'Streaming not supported.'));
-      return cb();
+      cb();
+      return;
     }
 
     (async () => {

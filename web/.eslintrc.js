@@ -37,6 +37,14 @@ module.exports = {
         mocha: true,
       },
     },
+    {
+      files: ['gulpfile.js', 'gulp-*.js'],
+      rules: {
+        'import/no-extraneous-dependencies': ['error', { devDependencies: true }],
+        // Gulp plugins mutate the vinyl file they receive; that is the plugin contract.
+        'no-param-reassign': ['error', { props: true, ignorePropertyModificationsFor: ['file'] }],
+      },
+    },
   ],
 
   settings: {
