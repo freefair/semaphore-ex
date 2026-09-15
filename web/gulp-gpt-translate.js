@@ -1,5 +1,8 @@
+// eslint-disable-next-line import/no-extraneous-dependencies
 const through = require('through2');
+// eslint-disable-next-line import/no-extraneous-dependencies
 const PluginError = require('plugin-error');
+// eslint-disable-next-line import/no-extraneous-dependencies
 const { OpenAI } = require('openai');
 
 const PLUGIN_NAME = 'gulp-gpt-translate';
@@ -46,6 +49,7 @@ function gptTranslate(options) {
           ],
         });
 
+        // eslint-disable-next-line no-param-reassign
         file.contents = Buffer.from(`${response.choices[0].message.content}\n`, enc);
 
         self.push(file);

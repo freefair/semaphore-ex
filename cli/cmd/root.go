@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -68,11 +69,16 @@ Complete documentation is available at https://semaphoreui.com.`,
 	},
 }
 
-func Execute() {
+// Both execution and documentation generation register the same flags.
+var registerPersistentFlags = sync.OnceFunc(func() {
 	rootCmd.PersistentFlags().StringVar(&persistentFlags.logLevel, "log-level", "", "Log level: DEBUG, INFO, WARN, ERROR, FATAL, PANIC")
 	rootCmd.PersistentFlags().StringVar(&persistentFlags.debugFilter, "debug-filter", "", "Debug component filter, e.g. 'runner,task_*' or '*,-db'")
 	rootCmd.PersistentFlags().StringVar(&persistentFlags.configPath, "config", "", "Configuration file path")
 	rootCmd.PersistentFlags().BoolVar(&persistentFlags.noConfig, "no-config", false, "Don't use configuration file")
+})
+
+func Execute() {
+	registerPersistentFlags()
 	if err := rootCmd.Execute(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

@@ -301,6 +301,7 @@ func (p *TaskPool) Run() {
 			log.WithFields(log.Fields{
 				"task_id":   task.Task.ID,
 				"task_name": task.Template.Name,
+				"username":  task.Username,
 			}).Info("Task added to queue")
 			p.writeStructuredDebug(pro_interfaces.DebugLogRecord{
 				Component: pro_interfaces.DebugComponentTaskPool, EventType: "task_queued", ProjectID: &task.Task.ProjectID,
@@ -487,6 +488,7 @@ func runTask(task *TaskRunner, p *TaskPool) {
 		"context":   "task_pool",
 		"task_id":   task.Task.ID,
 		"task_name": task.Template.Name,
+		"username":  task.Username,
 	}).Info("Set resource locker")
 	p.onTaskRun(task)
 
@@ -494,6 +496,7 @@ func runTask(task *TaskRunner, p *TaskPool) {
 		"context":   "task_pool",
 		"task_id":   task.Task.ID,
 		"task_name": task.Template.Name,
+		"username":  task.Username,
 	}).Info("Task started")
 	p.writeStructuredDebug(pro_interfaces.DebugLogRecord{
 		Component: pro_interfaces.DebugComponentTaskPool, EventType: "task_started", ProjectID: &task.Task.ProjectID,
