@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/semaphoreui/semaphore/db"
 	proFactory "github.com/semaphoreui/semaphore/pro/db/factory"
@@ -20,6 +21,41 @@ func TerraformBackendEnvironment(store db.Store, encryption server.AccessKeyEncr
 	if err != nil {
 		return nil, fmt.Errorf("terraform backend alias is unavailable")
 	}
+	return terraformBackendEnvironmentForAlias(store, encryption, projectID, aliasID, alias)
+}
+
+// TerraformBackendOverrideEnvironment resolves a persisted inventory alias
+// only for templates that explicitly request Semaphore's internal HTTP
+// backend. TaskPool's random lifecycle alias is never a backend alias.
+func TerraformBackendOverrideEnvironment(store db.Store, encryption server.AccessKeyEncryptionService, projectID int, template db.Template, inventory db.Inventory) ([]string, error) {
+	if !template.App.IsTerraform() {
+		return nil, nil
+	}
+	var params db.TerraformTemplateParams
+	if err := template.FillParams(&params); err != nil {
+		return nil, fmt.Errorf("terraform backend configuration is invalid")
+	}
+	if !params.OverrideBackend {
+		return nil, nil
+	}
+	if inventory.ID <= 0 || inventory.ProjectID != projectID {
+		return nil, fmt.Errorf("terraform backend inventory is unavailable")
+	}
+	aliases, err := proFactory.NewTerraformStore(store).GetTerraformInventoryAliases(projectID, inventory.ID)
+	if err != nil || len(aliases) == 0 {
+		return nil, fmt.Errorf("terraform backend alias is unavailable")
+	}
+	sort.Slice(aliases, func(i, j int) bool { return aliases[i].Alias < aliases[j].Alias })
+	selected := aliases[0]
+	for _, alias := range aliases {
+		if alias.ProjectID != projectID || alias.InventoryID != inventory.ID || alias.AuthKeyID != selected.AuthKeyID {
+			return nil, fmt.Errorf("terraform backend aliases are ambiguous")
+		}
+	}
+	return terraformBackendEnvironmentForAlias(store, encryption, projectID, selected.Alias, selected)
+}
+
+func terraformBackendEnvironmentForAlias(store db.Store, encryption server.AccessKeyEncryptionService, projectID int, aliasID string, alias db.TerraformInventoryAlias) ([]string, error) {
 	key, err := store.GetAccessKey(projectID, alias.AuthKeyID)
 	if err != nil {
 		return nil, fmt.Errorf("terraform backend credential is unavailable")

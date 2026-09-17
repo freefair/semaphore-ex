@@ -252,14 +252,10 @@ func (t *TaskRunner) run() {
 	// can be exposed to the playbook as SEMAPHORE_JWT. Remote runners receive
 	// the JWT inside the JobData payload returned by the API.
 	if localJob, ok := t.job.(*LocalExecutor); ok {
-		if t.Template.App.IsTerraform() && t.Alias != "" {
-			backendEnvironment, backendErr := TerraformBackendEnvironment(t.pool.store, t.pool.encryptionService, t.Task.ProjectID, t.Alias)
-			if backendErr != nil {
-				t.Log("Terraform backend credential is unavailable.")
-				t.SetStatus(task_logger.TaskFailStatus)
-				return
-			}
-			localJob.TerraformBackendEnvironment = backendEnvironment
+		if backendErr := t.configureTerraformBackend(localJob); backendErr != nil {
+			t.Log(backendErr.Error())
+			t.SetStatus(task_logger.TaskFailStatus)
+			return
 		}
 
 		secret, sErr := t.pool.encryptionService.GetTaskSurveySecrets(t.Task.ProjectID, t.Task.ID)
@@ -364,6 +360,21 @@ func (t *TaskRunner) run() {
 	}
 
 	t.startAutorunTasks()
+}
+
+// configureTerraformBackend is the local dispatch boundary: lifecycle aliases
+// never trigger backend credentials unless the template opts into the internal
+// backend and a persisted inventory alias can be resolved.
+func (t *TaskRunner) configureTerraformBackend(localJob *LocalExecutor) error {
+	if !t.Template.App.IsTerraform() {
+		return nil
+	}
+	backend, err := TerraformBackendOverrideEnvironment(t.pool.store, t.pool.encryptionService, t.Task.ProjectID, t.Template, t.Inventory)
+	if err != nil {
+		return err
+	}
+	localJob.TerraformBackendEnvironment = backend
+	return nil
 }
 
 // finishRun records the end of a task run, persists it, and notifies the pool

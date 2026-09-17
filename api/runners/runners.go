@@ -321,33 +321,40 @@ func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Ru
 		ExecutorImage:       tsk.Task.ResolvedExecutorImage,
 	}
 	jobData.Template.ExecutorImage = jobData.ExecutorImage
-	if tsk.Template.App.IsTerraform() && tsk.Alias != "" {
-		backendEnvironment, backendErr := tasks.TerraformBackendEnvironment(c.taskPool.Store(), c.encryptionService, tsk.Task.ProjectID, tsk.Alias)
+	if tsk.Template.App.IsTerraform() {
+		backendEnvironment, backendErr := tasks.TerraformBackendOverrideEnvironment(c.taskPool.Store(), c.encryptionService, tsk.Task.ProjectID, tsk.Template, tsk.Inventory)
 		if backendErr != nil {
-			tsk.Log("Terraform backend credential is unavailable.")
+			tsk.Log(backendErr.Error())
 			tsk.SetStatus(task_logger.TaskFailStatus)
 			c.taskPool.FinalizeRemoteTask(tsk, runner)
 			return
 		}
-		var variables map[string]string
-		if jobData.Environment.ENV != nil {
-			_ = json.Unmarshal([]byte(*jobData.Environment.ENV), &variables)
+		if len(backendEnvironment) > 0 {
+			var variables map[string]string
+			if jobData.Environment.ENV != nil {
+				if unmarshalErr := json.Unmarshal([]byte(*jobData.Environment.ENV), &variables); unmarshalErr != nil {
+					tsk.Log("Terraform task environment is invalid.")
+					tsk.SetStatus(task_logger.TaskFailStatus)
+					c.taskPool.FinalizeRemoteTask(tsk, runner)
+					return
+				}
+			}
+			if variables == nil {
+				variables = map[string]string{}
+			}
+			for _, value := range backendEnvironment {
+				parts := strings.SplitN(value, "=", 2)
+				variables[parts[0]] = parts[1]
+			}
+			encoded, marshalErr := json.Marshal(variables)
+			if marshalErr != nil {
+				tsk.SetStatus(task_logger.TaskFailStatus)
+				c.taskPool.FinalizeRemoteTask(tsk, runner)
+				return
+			}
+			encodedString := string(encoded)
+			jobData.Environment.ENV = &encodedString
 		}
-		if variables == nil {
-			variables = map[string]string{}
-		}
-		for _, value := range backendEnvironment {
-			parts := strings.SplitN(value, "=", 2)
-			variables[parts[0]] = parts[1]
-		}
-		encoded, marshalErr := json.Marshal(variables)
-		if marshalErr != nil {
-			tsk.SetStatus(task_logger.TaskFailStatus)
-			c.taskPool.FinalizeRemoteTask(tsk, runner)
-			return
-		}
-		encodedString := string(encoded)
-		jobData.Environment.ENV = &encodedString
 	}
 
 	// Always overwrite through the dedicated runner-only field. db.Task.Secret

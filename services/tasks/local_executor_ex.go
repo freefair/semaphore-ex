@@ -61,7 +61,7 @@ func (t *LocalExecutor) prepare(username string, incomingVersion *string, alias 
 		return
 	}
 
-	environmentVariables = terraformBackendProcessEnvironment(t.Template.App.IsTerraform(), alias, environmentVariables, t.TerraformBackendEnvironment)
+	environmentVariables = terraformBackendProcessEnvironment(t.Template.App.IsTerraform(), environmentVariables, t.TerraformBackendEnvironment)
 
 	// For Terraform apps, get args first so we can pass init args to prepareRun
 	var argsMap map[string][]string
@@ -177,8 +177,8 @@ func (t *LocalExecutor) prepare(username string, incomingVersion *string, alias 
 	return nil
 }
 
-func terraformBackendProcessEnvironment(terraformApp bool, alias string, environment, backend []string) []string {
-	if !terraformApp || alias == "" {
+func terraformBackendProcessEnvironment(terraformApp bool, environment, backend []string) []string {
+	if !terraformApp || len(backend) == 0 {
 		return environment
 	}
 	return append(environment, backend...)
