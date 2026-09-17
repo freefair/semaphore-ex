@@ -153,6 +153,9 @@ func (c *EnvironmentController) updateEnvironmentSecrets(env db.Environment) err
 				updateKey.OverrideSecret = true
 			} else if secret.Secret != "" {
 				updateKey.String = secret.Secret
+				updateKey.SourceStorageID = nil
+				updateKey.SourceStorageType = nil
+				updateKey.SourceStorageKey = nil
 				updateKey.OverrideSecret = true
 			}
 
@@ -250,6 +253,7 @@ func (c *EnvironmentController) UpdateEnvironment(w http.ResponseWriter, r *http
 		})
 		return
 	}
+	preserveOmittedEnvironmentSecretStorage(&env, oldEnv)
 
 	if err := helpers.Store(r).UpdateEnvironment(env); err != nil {
 		helpers.WriteError(w, err)
@@ -270,6 +274,15 @@ func (c *EnvironmentController) UpdateEnvironment(w http.ResponseWriter, r *http
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func preserveOmittedEnvironmentSecretStorage(env *db.Environment, oldEnv db.Environment) {
+	if !env.SecretStorageIDSet {
+		env.SecretStorageID = oldEnv.SecretStorageID
+	}
+	if !env.SecretStorageKeyPrefixSet {
+		env.SecretStorageKeyPrefix = oldEnv.SecretStorageKeyPrefix
+	}
 }
 
 // AddEnvironment creates an environment in the database

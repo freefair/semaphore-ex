@@ -161,7 +161,7 @@ type WorkflowTriggerManager interface {
 	GetWorkflowTrigger(projectID int, workflowTemplateID int, triggerID int) (WorkflowTrigger, error)
 	CreateWorkflowTrigger(trigger WorkflowTrigger) (WorkflowTrigger, error)
 	UpdateWorkflowTrigger(trigger WorkflowTrigger, expectedRevision int) (WorkflowTrigger, error)
-	DeleteWorkflowTrigger(projectID int, workflowTemplateID int, triggerID int) error
+	DeleteWorkflowTrigger(projectID int, workflowTemplateID int, triggerID int, expectedRevision ...int) error
 	GetWorkflowTriggerInvocations(projectID int, triggerID int, params RetrieveQueryParams) ([]WorkflowTriggerInvocation, error)
 	ClaimWorkflowTriggerInvocation(invocation WorkflowTriggerInvocation, now time.Time) (WorkflowTriggerInvocation, bool, error)
 	UpdateWorkflowTriggerInvocation(invocation WorkflowTriggerInvocation) error

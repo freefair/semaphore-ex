@@ -7,7 +7,6 @@ import (
 	coresql "github.com/semaphoreui/semaphore/db/sql"
 )
 
-type TerraformStoreImpl = community.TerraformStoreImpl
 type WorkflowStoreImpl struct {
 	community.WorkflowStoreImpl
 	connection               *coresql.SqlDbConnection

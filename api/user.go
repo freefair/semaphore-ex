@@ -18,6 +18,25 @@ import (
 type UserController struct {
 }
 
+// apiTokenResponse separates the public token reference from the credential.
+// The credential is full only in the one-time create response; list responses
+// retain the legacy abbreviated id field.
+type apiTokenResponse struct {
+	db.APIToken
+	TokenRef string `json:"token_ref"`
+}
+
+func newAPITokenResponse(token db.APIToken, includeCredential bool) apiTokenResponse {
+	response := apiTokenResponse{
+		APIToken: token,
+		TokenRef: token.StableID(),
+	}
+	if !includeCredential && len(response.ID) >= 8 {
+		response.ID = response.ID[:8]
+	}
+	return response
+}
+
 func NewUserController() *UserController {
 	return &UserController{}
 }
@@ -56,14 +75,12 @@ func getAPITokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for i := range tokens {
-		if len(tokens[i].ID) >= 8 {
-			tokens[i].ID = tokens[i].ID[:8]
-		}
-		// If ID is shorter than 8 chars, leave it as-is
+	responses := make([]apiTokenResponse, len(tokens))
+	for i, token := range tokens {
+		responses[i] = newAPITokenResponse(token, false)
 	}
 
-	helpers.WriteJSON(w, http.StatusOK, tokens)
+	helpers.WriteJSON(w, http.StatusOK, responses)
 }
 
 func createAPIToken(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +117,7 @@ func createAPIToken(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 
-	helpers.WriteJSON(w, http.StatusCreated, token)
+	helpers.WriteJSON(w, http.StatusCreated, newAPITokenResponse(token, true))
 }
 
 func deleteAPIToken(w http.ResponseWriter, r *http.Request) {

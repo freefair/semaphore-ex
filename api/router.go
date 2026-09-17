@@ -258,6 +258,7 @@ func Route(
 	terraformWebhookRouter.Use(terraformController.TerraformInventoryAliasMiddleware)
 	terraformWebhookRouter.Path("/{alias}").HandlerFunc(terraformController.GetTerraformState).Methods("GET")
 	terraformWebhookRouter.Path("/{alias}").HandlerFunc(terraformController.AddTerraformState).Methods("POST")
+	terraformWebhookRouter.Path("/{alias}").HandlerFunc(terraformController.DeleteTerraformState).Methods("DELETE")
 	terraformWebhookRouter.Path("/{alias}").HandlerFunc(terraformController.LockTerraformState).Methods("LOCK")
 	terraformWebhookRouter.Path("/{alias}").HandlerFunc(terraformController.UnlockTerraformState).Methods("UNLOCK")
 
@@ -341,6 +342,7 @@ func Route(
 		globalPermissionMiddleware(db.CanManageGlobalRoles),
 	)
 	globalRolesAPI.Path("/permissions").HandlerFunc(rolesController.GetGlobalPermissionCatalog).Methods("GET", "HEAD")
+	globalRolesAPI.Path("/project-permissions").HandlerFunc(rolesController.GetGlobalProjectPermissionCatalog).Methods("GET", "HEAD")
 	globalRolesAPI.Path("").HandlerFunc(rolesController.GetRoles).Methods("GET", "HEAD")
 	globalRolesAPI.Path("").HandlerFunc(rolesController.AddRole).Methods("POST")
 	globalRolesAPI.Path("/{role_id}").HandlerFunc(rolesController.GetGlobalRole).Methods("GET", "HEAD")
@@ -767,6 +769,8 @@ func Route(
 		templateACLManage(http.HandlerFunc(templateController.GetTemplatePerms))).Methods("GET")
 	projectTmplManagement.Path("/{template_id}/perms").Handler(
 		templateACLManage(http.HandlerFunc(templateController.AddTemplatePerm))).Methods("POST")
+	projectTmplManagement.Path("/{template_id}/perms/catalog").Handler(
+		templateACLManage(http.HandlerFunc(templateController.GetTemplatePermissionCatalog))).Methods("GET", "HEAD")
 	projectTmplManagement.Path("/{template_id}/perms/{perm_id}").Handler(
 		templateACLManage(http.HandlerFunc(templateController.GetTemplatePerm))).Methods("GET")
 	projectTmplManagement.Path("/{template_id}/perms/{perm_id}").Handler(

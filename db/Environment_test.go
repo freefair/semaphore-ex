@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,6 +16,20 @@ func Test_EnvironmentValidate_EmptyName_ReturnsError(t *testing.T) {
 	err := env.Validate()
 	assert.Error(t, err)
 	assert.Equal(t, "Environment name can not be empty", err.Error())
+}
+
+func TestEnvironmentUnmarshalTracksSecretStorageFieldPresence(t *testing.T) {
+	var omitted Environment
+	assert.NoError(t, json.Unmarshal([]byte(`{"name":"environment"}`), &omitted))
+	assert.False(t, omitted.SecretStorageIDSet)
+	assert.False(t, omitted.SecretStorageKeyPrefixSet)
+
+	var cleared Environment
+	assert.NoError(t, json.Unmarshal([]byte(`{"secret_storage_id":null,"secret_storage_key_prefix":null}`), &cleared))
+	assert.True(t, cleared.SecretStorageIDSet)
+	assert.True(t, cleared.SecretStorageKeyPrefixSet)
+	assert.Nil(t, cleared.SecretStorageID)
+	assert.Nil(t, cleared.SecretStorageKeyPrefix)
 }
 
 func Test_EnvironmentValidate_InvalidJSON_ReturnsError(t *testing.T) {

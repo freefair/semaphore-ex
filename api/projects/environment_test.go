@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"github.com/semaphoreui/semaphore/db"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 type mockAccessKeyRepo struct {
@@ -212,6 +214,54 @@ func TestUpdateEnvironmentSecrets_DeleteErrorIsReported(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when Delete fails, got nil")
 	}
+}
+
+func TestUpdateEnvironmentSecretsPlaintextUpdateClearsRuntimeReference(t *testing.T) {
+	environmentID := 1
+	storageID := 9
+	storageType := db.AccessKeySourceStorageVault
+	storageKey := "runtime-reference"
+	repo := &mockAccessKeyRepo{keys: map[int]db.AccessKey{
+		42: {
+			ID: 42, ProjectID: &environmentID, EnvironmentID: &environmentID,
+			SourceStorageID: &storageID, SourceStorageType: &storageType, SourceStorageKey: &storageKey,
+		},
+	}}
+	service := &mockAccessKeyService{}
+	controller := &EnvironmentController{accessKeyRepo: repo, accessKeyService: service}
+
+	err := controller.updateEnvironmentSecrets(db.Environment{
+		ID: 1, ProjectID: 1,
+		Secrets: []db.EnvironmentSecret{{
+			ID: 42, Name: "TOKEN", Type: db.EnvironmentSecretEnv,
+			Operation: db.EnvironmentSecretUpdate, Secret: "plaintext",
+		}},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, service.updated, 1)
+	updated := service.updated[0]
+	require.Equal(t, "plaintext", updated.String)
+	require.True(t, updated.OverrideSecret)
+	require.Nil(t, updated.SourceStorageID)
+	require.Nil(t, updated.SourceStorageType)
+	require.Nil(t, updated.SourceStorageKey)
+}
+
+func TestPreserveOmittedEnvironmentSecretStorage(t *testing.T) {
+	storageID := 9
+	prefix := "managed-"
+	oldEnv := db.Environment{SecretStorageID: &storageID, SecretStorageKeyPrefix: &prefix}
+
+	omitted := db.Environment{}
+	preserveOmittedEnvironmentSecretStorage(&omitted, oldEnv)
+	require.Same(t, &storageID, omitted.SecretStorageID)
+	require.Same(t, &prefix, omitted.SecretStorageKeyPrefix)
+
+	cleared := db.Environment{SecretStorageIDSet: true, SecretStorageKeyPrefixSet: true}
+	preserveOmittedEnvironmentSecretStorage(&cleared, oldEnv)
+	require.Nil(t, cleared.SecretStorageID)
+	require.Nil(t, cleared.SecretStorageKeyPrefix)
 }
 
 type mockAccessKeyServiceWithDeleteError struct {

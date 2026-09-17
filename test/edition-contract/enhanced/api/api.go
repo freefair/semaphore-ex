@@ -3,9 +3,4 @@ package api
 
 import community "github.com/semaphoreui/semaphore/community-pro/api"
 
-type TerraformController = community.TerraformController
-
-var (
-	NewTerraformController = community.NewTerraformController
-	VerifySessionByEmail   = community.VerifySessionByEmail
-)
+var VerifySessionByEmail = community.VerifySessionByEmail

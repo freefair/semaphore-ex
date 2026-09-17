@@ -152,6 +152,9 @@ func setApp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Publish the complete replacement, including fields cleared from storage.
+	util.Config.Apps[appID] = app
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

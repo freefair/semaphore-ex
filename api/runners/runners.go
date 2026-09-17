@@ -2,6 +2,7 @@ package runners
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/semaphoreui/semaphore/api/helpers"
@@ -320,6 +321,34 @@ func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Ru
 		ExecutorImage:       tsk.Task.ResolvedExecutorImage,
 	}
 	jobData.Template.ExecutorImage = jobData.ExecutorImage
+	if tsk.Template.App.IsTerraform() && tsk.Alias != "" {
+		backendEnvironment, backendErr := tasks.TerraformBackendEnvironment(c.taskPool.Store(), c.encryptionService, tsk.Task.ProjectID, tsk.Alias)
+		if backendErr != nil {
+			tsk.Log("Terraform backend credential is unavailable.")
+			tsk.SetStatus(task_logger.TaskFailStatus)
+			c.taskPool.FinalizeRemoteTask(tsk, runner)
+			return
+		}
+		var variables map[string]string
+		if jobData.Environment.ENV != nil {
+			_ = json.Unmarshal([]byte(*jobData.Environment.ENV), &variables)
+		}
+		if variables == nil {
+			variables = map[string]string{}
+		}
+		for _, value := range backendEnvironment {
+			parts := strings.SplitN(value, "=", 2)
+			variables[parts[0]] = parts[1]
+		}
+		encoded, marshalErr := json.Marshal(variables)
+		if marshalErr != nil {
+			tsk.SetStatus(task_logger.TaskFailStatus)
+			c.taskPool.FinalizeRemoteTask(tsk, runner)
+			return
+		}
+		encodedString := string(encoded)
+		jobData.Environment.ENV = &encodedString
+	}
 
 	// Always overwrite through the dedicated runner-only field. db.Task.Secret
 	// is intentionally excluded from JSON and ordinary task APIs.

@@ -92,7 +92,8 @@ func AddInventory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch inventory.Type {
-	case db.InventoryStatic,
+	case db.InventoryTerragruntWorkspace,
+		db.InventoryStatic,
 		db.InventoryStaticYaml,
 		db.InventoryFile,
 		db.InventoryTofuWorkspace,
@@ -175,7 +176,7 @@ func UpdateInventory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch inventory.Type {
-	case db.InventoryTerraformWorkspace, db.InventoryTofuWorkspace:
+	case db.InventoryTerraformWorkspace, db.InventoryTofuWorkspace, db.InventoryTerragruntWorkspace:
 	case db.InventoryStatic, db.InventoryStaticYaml:
 	case db.InventoryFile:
 		if !IsValidInventoryPath(inventory.Inventory) {

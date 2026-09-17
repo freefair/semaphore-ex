@@ -126,11 +126,20 @@ func (d *WorkflowStoreImpl) UpdateWorkflowTrigger(trigger db.WorkflowTrigger, ex
 	return trigger, nil
 }
 
-func (d *WorkflowStoreImpl) DeleteWorkflowTrigger(projectID int, workflowTemplateID int, triggerID int) error {
-	result, err := d.connection.Exec(
-		"delete from project__workflow_trigger where project_id=? and workflow_template_id=? and id=?",
-		projectID, workflowTemplateID, triggerID,
-	)
+func (d *WorkflowStoreImpl) DeleteWorkflowTrigger(projectID int, workflowTemplateID int, triggerID int, expectedRevision ...int) error {
+	query := "delete from project__workflow_trigger where project_id=? and workflow_template_id=? and id=?"
+	args := []any{projectID, workflowTemplateID, triggerID}
+	if len(expectedRevision) > 1 {
+		return db.ErrWorkflowTriggerRevisionConflict
+	}
+	if len(expectedRevision) == 1 {
+		if expectedRevision[0] < 1 {
+			return db.ErrWorkflowTriggerRevisionConflict
+		}
+		query += " and revision=?"
+		args = append(args, expectedRevision[0])
+	}
+	result, err := d.connection.Exec(query, args...)
 	if err != nil {
 		return err
 	}
@@ -139,6 +148,9 @@ func (d *WorkflowStoreImpl) DeleteWorkflowTrigger(projectID int, workflowTemplat
 		return err
 	}
 	if deleted == 0 {
+		if len(expectedRevision) == 1 {
+			return db.ErrWorkflowTriggerRevisionConflict
+		}
 		return db.ErrNotFound
 	}
 	return nil

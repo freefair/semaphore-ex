@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/semaphoreui/semaphore/db"
+	proFactory "github.com/semaphoreui/semaphore/pro/db/factory"
 	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/spf13/cobra"
@@ -70,6 +71,11 @@ var vaultRekeyCmd = &cobra.Command{
 
 		if err := util.RekeyJWTSigningKey(store, targetVaultArgs.oldKey); err != nil {
 			panic(err)
+		}
+		if states, ok := proFactory.NewTerraformStore(store).(db.TerraformStateCipherStore); ok {
+			if err := states.RekeyTerraformStates(targetVaultArgs.oldKey); err != nil {
+				panic(err)
+			}
 		}
 
 		fmt.Println("Rekey complete.")

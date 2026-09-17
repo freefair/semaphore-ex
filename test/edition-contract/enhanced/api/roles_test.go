@@ -163,6 +163,16 @@ func TestGlobalRoleControllerCRUDCatalogAssignmentsAndProvenance(t *testing.T) {
 	assert.Equal(t, pro_interfaces.PermissionManageGlobalPolicyGuardrails, catalog[7].ID)
 	assert.Equal(t, pro_interfaces.PermissionRollbackGlobalPolicyGuardrails, catalog[8].ID)
 
+	projectCatalogResponse := serveGlobalRoleRequest(
+		t, store, admin, http.MethodGet, "/api/roles/project-permissions", nil, nil,
+		controller.GetGlobalProjectPermissionCatalog,
+	)
+	assert.Equal(t, http.StatusOK, projectCatalogResponse.Code)
+	var projectCatalog []pro_interfaces.PermissionDefinition
+	require.NoError(t, json.Unmarshal(projectCatalogResponse.Body.Bytes(), &projectCatalog))
+	require.NotEmpty(t, projectCatalog)
+	assert.Equal(t, pro_interfaces.PermissionScopeProject, projectCatalog[0].Scope)
+
 	createResponse := serveGlobalRoleRequest(
 		t, store, admin, http.MethodPost, "/api/roles",
 		map[string]any{
@@ -274,6 +284,11 @@ func TestGlobalRoleControllerFailsClosedWhenCapabilityIsUnavailable(t *testing.T
 	response := serveGlobalRoleRequest(
 		t, nil, db.User{ID: 1}, http.MethodGet, "/api/roles/permissions", nil, nil,
 		controller.GetGlobalPermissionCatalog,
+	)
+	assert.Equal(t, http.StatusForbidden, response.Code)
+	response = serveGlobalRoleRequest(
+		t, nil, db.User{ID: 1}, http.MethodGet, "/api/roles/project-permissions", nil, nil,
+		controller.GetGlobalProjectPermissionCatalog,
 	)
 	assert.Equal(t, http.StatusForbidden, response.Code)
 }

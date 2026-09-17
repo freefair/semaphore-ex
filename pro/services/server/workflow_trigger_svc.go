@@ -39,7 +39,7 @@ func (s *workflowTriggerService) Create(context.Context, int, int, db.WorkflowTr
 func (s *workflowTriggerService) Update(context.Context, int, int, int, db.WorkflowTrigger, *db.User) (db.WorkflowTrigger, error) {
 	return db.WorkflowTrigger{}, db.ErrNotFound
 }
-func (s *workflowTriggerService) Delete(context.Context, int, int, int, *db.User) error {
+func (s *workflowTriggerService) Delete(context.Context, int, int, int, *db.User, ...int) error {
 	return db.ErrNotFound
 }
 func (s *workflowTriggerService) SetEnabled(context.Context, int, int, int, int, bool, *db.User) (db.WorkflowTrigger, error) {

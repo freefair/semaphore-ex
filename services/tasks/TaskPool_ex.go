@@ -16,6 +16,10 @@ import (
 	"strconv"
 )
 
+// Store exposes the pool's project-scoped persistence boundary to dispatch
+// adapters that need to resolve a short-lived runtime integration credential.
+func (p *TaskPool) Store() db.Store { return p.store }
+
 // ConfigurePolicyGuardrailAdmission enables the optional Enhanced policy
 // boundary; nil preserves Community task-pool behavior.
 func (p *TaskPool) ConfigurePolicyGuardrailAdmission(service pro_interfaces.PolicyGuardrailAdmissionService) {

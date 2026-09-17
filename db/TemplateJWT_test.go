@@ -122,3 +122,14 @@ func TestTemplateJWTParams_ScanValue(t *testing.T) {
 	require.NoError(t, zero.Scan(nil))
 	assert.Equal(t, TemplateJWTParams{}, zero)
 }
+
+func TestTemplateJWTParams_ScanValueSingleAudience(t *testing.T) {
+	original := &TemplateJWTParams{Enabled: true, Audience: []string{"deploy"}, TTL: "30m"}
+
+	value, err := original.Value()
+	require.NoError(t, err)
+
+	var restored TemplateJWTParams
+	require.NoError(t, restored.Scan(value))
+	assert.Equal(t, *original, restored)
+}

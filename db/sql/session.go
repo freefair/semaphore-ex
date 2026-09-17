@@ -51,6 +51,26 @@ func validateAPIToken(token string) error {
 }
 
 func (d *SqlDb) DeleteAPIToken(userID int, tokenPrefix string) (err error) {
+	if db.IsAPITokenStableID(tokenPrefix) {
+		tokens, err := d.GetAPITokens(userID)
+		if errors.Is(err, db.ErrNotFound) {
+			// Preserve the legacy DELETE no-op behavior for an owner without tokens.
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		for _, token := range tokens {
+			if token.StableID() == tokenPrefix {
+				_, err = d.exec("DELETE FROM user__token WHERE id=? AND user_id=?", token.ID, userID)
+				return err
+			}
+		}
+
+		// Preserve the legacy DELETE no-op behavior for an unknown reference.
+		return nil
+	}
 
 	err = validateAPIToken(tokenPrefix)
 	if err != nil {

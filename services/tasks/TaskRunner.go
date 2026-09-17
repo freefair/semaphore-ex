@@ -252,6 +252,15 @@ func (t *TaskRunner) run() {
 	// can be exposed to the playbook as SEMAPHORE_JWT. Remote runners receive
 	// the JWT inside the JobData payload returned by the API.
 	if localJob, ok := t.job.(*LocalExecutor); ok {
+		if t.Template.App.IsTerraform() && t.Alias != "" {
+			backendEnvironment, backendErr := TerraformBackendEnvironment(t.pool.store, t.pool.encryptionService, t.Task.ProjectID, t.Alias)
+			if backendErr != nil {
+				t.Log("Terraform backend credential is unavailable.")
+				t.SetStatus(task_logger.TaskFailStatus)
+				return
+			}
+			localJob.TerraformBackendEnvironment = backendEnvironment
+		}
 
 		secret, sErr := t.pool.encryptionService.GetTaskSurveySecrets(t.Task.ProjectID, t.Task.ID)
 		if sErr != nil {

@@ -104,6 +104,20 @@ func TestDefaultKubernetesExecutionPolicyRequiresExplicitNetworkEnforcement(t *t
 	assert.Equal(t, KubernetesPolicyRuleNetworkProfileUnsupported, result.Rule)
 }
 
+func TestFailClosedKubernetesDefaultCanPersistButDeniesEveryExecution(t *testing.T) {
+	policy := DefaultKubernetesExecutionPolicy("qa-cluster")
+	require.NoError(t, policy.Canonicalize())
+	assert.True(t, policy.IsFailClosedDefault())
+	assert.NotEmpty(t, policy.Hash)
+	assert.False(t, policy.Test(testKubernetesExecutionRequest(testKubernetesExecutionPolicy())).Allowed)
+
+	policy = DefaultKubernetesExecutionPolicy("bad alias")
+	require.ErrorContains(t, policy.Canonicalize(), "cluster alias")
+	policy = DefaultKubernetesExecutionPolicy("qa-cluster")
+	policy.AllowedNamespaces = []string{"semaphore-jobs"}
+	require.ErrorContains(t, policy.Canonicalize(), "allow-lists")
+}
+
 func TestKubernetesExecutionPolicyRejectsUnsafeAliasesAndUnboundedRetention(t *testing.T) {
 	policy := testKubernetesExecutionPolicy()
 	policy.ClusterAlias = "qa cluster"

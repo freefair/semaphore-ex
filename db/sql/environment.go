@@ -73,11 +73,13 @@ func (d *SqlDb) UpdateEnvironment(env db.Environment) error {
 	}
 
 	_, err = d.exec(
-		"update project__environment set name=?, json=?, env=?, password=? where id=?",
+		"update project__environment set name=?, json=?, env=?, password=?, secret_storage_id=?, secret_storage_key_prefix=? where id=?",
 		env.Name,
 		env.JSON,
 		env.ENV,
 		env.Password,
+		env.SecretStorageID,
+		env.SecretStorageKeyPrefix,
 		env.ID)
 
 	if err != nil {
@@ -176,6 +178,10 @@ func (d *SqlDb) fillEnvironmentSync(env *db.Environment) error {
 // require a linked SecretStorage; without one, any pending sync row is
 // removed.
 func (d *SqlDb) saveEnvironmentSync(env db.Environment) error {
+	return d.SaveSecretSync(environmentSecretSync(env))
+}
+
+func environmentSecretSync(env db.Environment) db.SecretSync {
 	envID := env.ID
 	sync := db.SecretSync{
 		ProjectID:     env.ProjectID,
@@ -186,6 +192,9 @@ func (d *SqlDb) saveEnvironmentSync(env db.Environment) error {
 		sync.SyncEnabled = env.SyncEnabled
 		sync.SyncInterval = env.SyncInterval
 		sync.Paths = env.SyncPaths
+		if len(sync.Paths) > 0 {
+			sync.Direction = db.SecretSyncDirectionOutbound
+		}
 	}
-	return d.SaveSecretSync(sync)
+	return sync
 }

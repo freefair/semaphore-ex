@@ -19,6 +19,7 @@ func Compatibility() pro_interfaces.Compatibility {
 
 func GetFeatures() pro_interfaces.Features {
 	return pro_interfaces.Features{
+		TerraformBackend:        true,
 		ProjectRunners:          true,
 		TaskSummary:             true,
 		SecretStorages:          true,

@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
-	community "github.com/semaphoreui/semaphore/community-pro/api/projects"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
@@ -23,10 +22,6 @@ type ProjectRunnerControllerImpl struct {
 	capabilityProvider pro_interfaces.CapabilityProvider
 	audit              pro_interfaces.AuditServiceFacade
 }
-
-var (
-	NewTerraformInventoryController = community.NewTerraformInventoryController
-)
 
 func NewProjectRunnerController(
 	runnerService server.RunnerService,

@@ -177,6 +177,19 @@ func DefaultKubernetesExecutionPolicy(clusterAlias string) KubernetesExecutionPo
 	return KubernetesExecutionPolicy{ClusterAlias: strings.TrimSpace(clusterAlias), NetworkPolicyEnforcement: KubernetesNetworkPolicyEnforcementUnsupported}
 }
 
+// IsFailClosedDefault identifies the documented administrative reset value.
+// It may be stored while retaining denial for every execution request.
+func (p KubernetesExecutionPolicy) IsFailClosedDefault() bool {
+	return ValidateKubernetesClusterAlias(p.ClusterAlias) == nil &&
+		p.Revision >= 0 &&
+		len(p.AllowedNamespaces) == 0 && len(p.AllowedImages) == 0 &&
+		len(p.AllowedServiceAccounts) == 0 && len(p.AllowedRuntimeClasses) == 0 &&
+		p.RuntimeClass == "" && len(p.AllowedVolumeTypes) == 0 &&
+		len(p.AllowedNetworkProfiles) == 0 && p.NetworkProfile == "" &&
+		p.NetworkPolicyEnforcement == KubernetesNetworkPolicyEnforcementUnsupported &&
+		p.Resources == (KubernetesExecutionResources{}) && p.TerminalRetentionSeconds == 0
+}
+
 func (p *KubernetesExecutionPolicy) Canonicalize() error {
 	p.ClusterAlias = strings.TrimSpace(p.ClusterAlias)
 	p.AllowedNamespaces = canonicalKubernetesStringSet(p.AllowedNamespaces, false)
@@ -188,7 +201,7 @@ func (p *KubernetesExecutionPolicy) Canonicalize() error {
 	p.RuntimeClass = strings.TrimSpace(p.RuntimeClass)
 	p.NetworkProfile = strings.TrimSpace(p.NetworkProfile)
 	p.NetworkPolicyEnforcement = KubernetesNetworkPolicyEnforcement(strings.TrimSpace(string(p.NetworkPolicyEnforcement)))
-	if err := p.Validate(); err != nil {
+	if err := p.Validate(); err != nil && !p.IsFailClosedDefault() {
 		return err
 	}
 	canonical := struct {

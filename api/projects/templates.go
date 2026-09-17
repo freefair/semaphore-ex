@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"net/http"
 	"strconv"
 )
@@ -223,6 +224,10 @@ func (c *TemplateController) GetTemplatePerms(w http.ResponseWriter, r *http.Req
 	}
 
 	helpers.WriteJSON(w, http.StatusOK, perms)
+}
+
+func (c *TemplateController) GetTemplatePermissionCatalog(w http.ResponseWriter, r *http.Request) {
+	helpers.WriteJSON(w, http.StatusOK, pro_interfaces.TemplatePermissionCatalog())
 }
 
 func (c *TemplateController) AddTemplatePerm(w http.ResponseWriter, r *http.Request) {

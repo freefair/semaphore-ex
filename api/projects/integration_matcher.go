@@ -32,9 +32,7 @@ func GetIntegrationMatcher(w http.ResponseWriter, r *http.Request) {
 
 	_, matcher, err := getIntergrationMatcherFromRequest(r)
 	if err != nil {
-		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "Invalid Matcher ID",
-		})
+		helpers.WriteError(w, err)
 		return
 	}
 

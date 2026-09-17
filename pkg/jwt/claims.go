@@ -1,7 +1,9 @@
 package jwt
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -20,6 +22,39 @@ func (a Audience) MarshalJSON() ([]byte, error) {
 	default:
 		return json.Marshal([]string(a))
 	}
+}
+
+// UnmarshalJSON accepts only the RFC 7519 audience shapes: a string, an array
+// of strings, or null. In particular, null array elements must not silently
+// become empty strings because that would bypass the claim's JSON contract.
+func (a *Audience) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if bytes.Equal(data, []byte("null")) {
+		*a = nil
+		return nil
+	}
+
+	var single string
+	if err := json.Unmarshal(data, &single); err == nil {
+		*a = Audience{single}
+		return nil
+	}
+
+	var values []json.RawMessage
+	if err := json.Unmarshal(data, &values); err != nil {
+		return fmt.Errorf("JWT audience must be a string, an array of strings, or null")
+	}
+	result := make(Audience, len(values))
+	for index, value := range values {
+		if len(value) == 0 || bytes.Equal(value, []byte("null")) {
+			return fmt.Errorf("JWT audience array entries must be strings")
+		}
+		if err := json.Unmarshal(value, &result[index]); err != nil {
+			return fmt.Errorf("JWT audience array entries must be strings")
+		}
+	}
+	*a = result
+	return nil
 }
 
 // IsZero lets `omitempty` skip an empty audience claim.

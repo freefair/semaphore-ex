@@ -2088,6 +2088,73 @@ definitions:
         type: string
         format: date-time
 paths:
+  /roles/project-permissions:
+    get:
+      tags: [user]
+      summary: List project permissions available to global roles
+      description: Returns the authoritative project permission catalog without selecting an arbitrary project. Requires global role management and the project_roles capability.
+      responses:
+        '200':
+          description: Project permission catalog for global roles
+          schema:
+            type: array
+            items:
+              type: object
+              required: [id, description, scope, permission, capability_prerequisites]
+              properties:
+                id:
+                  type: string
+                description:
+                  type: string
+                scope:
+                  type: string
+                  enum: [project]
+                permission:
+                  type: integer
+                  format: int64
+                capability_prerequisites:
+                  type: array
+                  x-nullable: true
+                  items:
+                    type: string
+        '403':
+          description: Permission denied or capability unavailable
+  /project/{project_id}/templates/{template_id}/perms/catalog:
+    parameters:
+    - $ref: './api-docs.yml#/parameters/project_id'
+    - $ref: './api-docs.yml#/parameters/template_id'
+    get:
+      tags: [template]
+      summary: List assignable template permissions
+      description: Returns the backend-authoritative catalog. Requires template ACL management permission.
+      responses:
+        '200':
+          description: Template permission catalog
+          schema:
+            type: array
+            items:
+              type: object
+              required: [id, description, scope, permission, capability_prerequisites]
+              properties:
+                id:
+                  type: string
+                description:
+                  type: string
+                scope:
+                  type: string
+                  enum: [template]
+                permission:
+                  type: integer
+                  format: int64
+                capability_prerequisites:
+                  type: array
+                  x-nullable: true
+                  items:
+                    type: string
+        '403':
+          description: Permission denied
+        '404':
+          description: Project or template not found
   /project/{project_id}/keys/generate:
     parameters:
     - $ref: ./api-docs.yml#/parameters/project_id
@@ -4064,3 +4131,93 @@ paths:
           description: Source global revision does not exist
         409:
           description: Draft revision conflict
+  /terraform/{alias}:
+    parameters:
+    - name: alias
+      in: path
+      required: true
+      type: string
+      maxLength: 100
+    get:
+      tags: [terraform-state]
+      summary: Read the current encrypted Terraform HTTP backend state
+      responses:
+        200: {description: Current state JSON}
+        401: {description: Invalid alias credentials}
+        404: {description: Alias or state not found}
+    post:
+      tags: [terraform-state]
+      summary: Append a new encrypted Terraform HTTP backend state version
+      responses:
+        200: {description: State stored}
+        409: {description: State locked by another client}
+        401: {description: Invalid alias credentials}
+    delete:
+      tags: [terraform-state]
+      summary: Append a deletion tombstone for the current Terraform state
+      responses:
+        200: {description: State deleted}
+        409: {description: State locked by another client}
+        401: {description: Invalid alias credentials}
+    x-lock:
+      summary: Acquire Terraform state lock
+      responses:
+        200: {description: Lock acquired}
+        409: {description: State already locked; lock info is returned}
+    x-unlock:
+      summary: Release Terraform state lock with the matching lock ID
+      responses:
+        200: {description: Lock released}
+        409: {description: Lock ID does not own the state lock}
+  /project/{project_id}/inventory/{inventory_id}/terraform/aliases:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - name: inventory_id
+      in: path
+      required: true
+      type: integer
+    get:
+      tags: [terraform-state]
+      summary: List Terraform HTTP backend aliases for one workspace inventory
+      responses:
+        200: {description: Alias metadata without credential material}
+        403: {description: Project-resource management permission required}
+    post:
+      tags: [terraform-state]
+      summary: Create a generated Terraform HTTP backend alias
+      parameters:
+      - name: alias
+        in: body
+        required: true
+        schema:
+          type: object
+          required: [auth_key_id]
+          properties:
+            auth_key_id: {type: integer}
+      responses:
+        201: {description: Generated alias metadata}
+        400: {description: Invalid or cross-project credential binding}
+        403: {description: Project-resource management permission required}
+  /project/{project_id}/inventory/{inventory_id}/terraform/aliases/{alias_id}:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - name: inventory_id
+      in: path
+      required: true
+      type: integer
+    - name: alias_id
+      in: path
+      required: true
+      type: string
+    get:
+      tags: [terraform-state]
+      summary: Read Terraform HTTP backend alias metadata
+      responses: {200: {description: Alias metadata}, 404: {description: Alias not found}}
+    put:
+      tags: [terraform-state]
+      summary: Change the project login-password credential used by an alias
+      responses: {200: {description: Updated alias metadata}, 400: {description: Invalid credential binding}}
+    delete:
+      tags: [terraform-state]
+      summary: Delete a Terraform HTTP backend alias
+      responses: {204: {description: Alias deleted}, 404: {description: Alias not found}}

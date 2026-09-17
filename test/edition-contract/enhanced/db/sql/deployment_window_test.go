@@ -53,6 +53,25 @@ func TestDeploymentWindowStoreStartsWithLazyDefaultAndCASPersistsTenantScopedRul
 	assert.ErrorIs(t, err, coreDB.ErrDeploymentWindowTenantMismatch)
 }
 
+func TestDeploymentWindowPolicyDeleteAcceptsOnlyTheUnmaterializedDefaultRevision(t *testing.T) {
+	store := coreSQL.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	repository := NewDeploymentWindowStore(store.GetConnection())
+	project, err := store.CreateProject(coreDB.Project{Name: "unmaterialized default policy"})
+	require.NoError(t, err)
+
+	require.NoError(t, repository.DeleteDeploymentWindowPolicy(project.ID, 1))
+	err = repository.DeleteDeploymentWindowPolicy(project.ID, 2)
+	assert.ErrorIs(t, err, coreDB.ErrDeploymentWindowRevisionConflict)
+
+	persisted, err := repository.SaveDeploymentWindowPolicy(coreDB.DeploymentWindowPolicy{
+		ProjectID: project.ID, Revision: 1, Timezone: "UTC", Default: coreDB.DeploymentWindowDefaultDeny,
+	}, 1)
+	require.NoError(t, err)
+	err = repository.DeleteDeploymentWindowPolicy(project.ID, persisted.Revision-1)
+	assert.ErrorIs(t, err, coreDB.ErrDeploymentWindowRevisionConflict)
+}
+
 func TestDeploymentWindowDecisionArgsUsePortableIntegerBoolean(t *testing.T) {
 	args := deploymentWindowDecisionArgs(coreDB.DeploymentWindowDecisionRecord{NextEligibleKnown: true})
 	require.Len(t, args, 23)

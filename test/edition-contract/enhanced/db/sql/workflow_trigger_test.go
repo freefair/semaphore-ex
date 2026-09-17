@@ -40,6 +40,12 @@ func TestWorkflowTriggerRepositoryRoundTripAndRevisionGuard(t *testing.T) {
 	require.Len(t, triggers, 1)
 	assert.False(t, triggers[0].Enabled)
 	assert.ErrorIs(t, repository.DeleteWorkflowTrigger(projectID+1, workflow.ID, created.ID), db.ErrNotFound)
+	assert.ErrorIs(t, repository.DeleteWorkflowTrigger(projectID, workflow.ID, created.ID, updated.Revision-1), db.ErrWorkflowTriggerRevisionConflict)
+	_, err = repository.GetWorkflowTrigger(projectID, workflow.ID, created.ID)
+	require.NoError(t, err, "a stale revision must not delete the trigger")
+	assert.NoError(t, repository.DeleteWorkflowTrigger(projectID, workflow.ID, created.ID, updated.Revision))
+	_, err = repository.GetWorkflowTrigger(projectID, workflow.ID, created.ID)
+	assert.ErrorIs(t, err, db.ErrNotFound)
 }
 
 func TestWorkflowTriggerRepositoryClaimsExternalAndScheduledInvocationsOnce(t *testing.T) {

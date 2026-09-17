@@ -805,6 +805,13 @@ migrations:
     upstream_id: 2.20.5
     rationale: Upstream error-alert suppression appended because fork 2.20.5 is already shipped.
   - registered: true
+    id: 2.20.70
+    owner: fork
+    files:
+      v2.20.70.err.sql: 7baa842e91f785806cd2a7703e959ec47360093650fed3f46c8abf0aac0be751
+      v2.20.70.sql: db64bb23d6e68fa26a2daa28d6c9df0420a45cb06d53578c0529016fbd969744
+    rationale: Durable encrypted Terraform HTTP state locking and append-only deletion tombstones.
+  - registered: true
     id: 2.20.7
     owner: fork
     files:

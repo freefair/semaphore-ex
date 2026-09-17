@@ -317,11 +317,12 @@ func (s *workflowTriggerService) Delete(
 	workflowID int,
 	triggerID int,
 	actor *db.User,
+	expectedRevision ...int,
 ) error {
 	if err := s.authorizeWorkflow(ctx, actor, projectID, workflowID, pro_interfaces.PermissionAdministerWorkflow); err != nil {
 		return err
 	}
-	return s.repository.DeleteWorkflowTrigger(projectID, workflowID, triggerID)
+	return s.repository.DeleteWorkflowTrigger(projectID, workflowID, triggerID, expectedRevision...)
 }
 
 func (s *workflowTriggerService) SetEnabled(

@@ -1,0 +1,2 @@
+drop table project__terraform_inventory_state_tombstone;
+drop table project__terraform_inventory_lock;

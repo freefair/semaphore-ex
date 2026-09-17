@@ -65,7 +65,7 @@ type WorkflowTriggerService interface {
 	Get(context.Context, int, int, int, *db.User) (db.WorkflowTrigger, error)
 	Create(context.Context, int, int, db.WorkflowTrigger, *db.User) (WorkflowTriggerCredentialResult, error)
 	Update(context.Context, int, int, int, db.WorkflowTrigger, *db.User) (db.WorkflowTrigger, error)
-	Delete(context.Context, int, int, int, *db.User) error
+	Delete(context.Context, int, int, int, *db.User, ...int) error
 	SetEnabled(context.Context, int, int, int, int, bool, *db.User) (db.WorkflowTrigger, error)
 	RotateCredential(context.Context, int, int, int, int, *db.User) (WorkflowTriggerCredentialResult, error)
 	Test(context.Context, int, int, int, map[string]json.RawMessage, *db.User) (WorkflowTriggerFireResult, error)

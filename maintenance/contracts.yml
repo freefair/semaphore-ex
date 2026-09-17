@@ -1,4 +1,3 @@
-# Reviewed exported pro, pro_interfaces, and db contracts. Generate candidates; review before replacement.
 format: 1
 symbols:
   - name: api/projects:NewCrossProjectTemplateController
@@ -21,9 +20,11 @@ symbols:
     implementation: local
   - name: api/projects:NewTerraformInventoryController
     signature: func(terraformRepo db.TerraformStore) pro_interfaces.TerraformInventoryController
-    selected_signature: func(terraformRepo db.TerraformStore) pro_interfaces.TerraformInventoryController
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; compatibility factory remains unwired.
+    selected_signature: func(store db.TerraformStore) pro_interfaces.TerraformInventoryController
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
+    - test/edition-contract/enhanced/api/projects/terraform_inventory_test.go::TestTerraformInventoryAliasCreateUsesRouteScopeAndGeneratedIdentifier
   - name: api/projects:NewWorkflowController
     signature: >-
       func(_ pro_interfaces.WorkflowService, _ db.WorkflowManager, _ pro_interfaces.WorkflowDefinitionService)
@@ -101,14 +102,14 @@ symbols:
     selected_signature: func(store db.Store, capabilityProvider pro_interfaces.CapabilityProvider) *pro/api.RolesController
     implementation: local
   - name: api:NewTerraformController
-    signature: >-
-      func(encryptionServices services/server.AccessKeyEncryptionService, terraformRepo db.TerraformStore, keyRepo db.AccessKeyManager)
+    signature: func(encryptionServices services/server.AccessKeyEncryptionService, terraformRepo db.TerraformStore, keyRepo db.AccessKeyManager)
       *pro/api.TerraformController
-    selected_signature: >-
-      func(encryptionServices services/server.AccessKeyEncryptionService, terraformRepo db.TerraformStore, keyRepo db.AccessKeyManager)
+    selected_signature: func(encryption services/server.AccessKeyEncryptionService, aliases db.TerraformStore, keys db.AccessKeyManager)
       *pro/api.TerraformController
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; compatibility factory remains unwired.
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
+    - test/edition-contract/enhanced/api/projects/terraform_inventory_test.go::TestTerraformInventoryAliasCreateUsesRouteScopeAndGeneratedIdentifier
   - name: api:NewWorkflowArtifactRetentionController
     signature: func(pro_interfaces.WorkflowArtifactRetentionGovernanceServiceFacade) pro_interfaces.WorkflowArtifactRetentionController
     selected_signature: func(service pro_interfaces.WorkflowArtifactRetentionGovernanceServiceFacade) pro_interfaces.WorkflowArtifactRetentionController
@@ -188,33 +189,45 @@ symbols:
   - name: api:TerraformController
     signature: struct{}
     selected_signature: struct{}
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
+    - test/edition-contract/enhanced/api/projects/terraform_inventory_test.go::TestTerraformInventoryAliasCreateUsesRouteScopeAndGeneratedIdentifier
   - name: api:TerraformController.AddTerraformState
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
+    - test/edition-contract/enhanced/api/projects/terraform_inventory_test.go::TestTerraformInventoryAliasCreateUsesRouteScopeAndGeneratedIdentifier
   - name: api:TerraformController.GetTerraformState
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
+    - test/edition-contract/enhanced/api/projects/terraform_inventory_test.go::TestTerraformInventoryAliasCreateUsesRouteScopeAndGeneratedIdentifier
   - name: api:TerraformController.LockTerraformState
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
+    - test/edition-contract/enhanced/api/projects/terraform_inventory_test.go::TestTerraformInventoryAliasCreateUsesRouteScopeAndGeneratedIdentifier
   - name: api:TerraformController.TerraformInventoryAliasMiddleware
     signature: func(next net/http.Handler) net/http.Handler
     selected_signature: func(next net/http.Handler) net/http.Handler
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
+    - test/edition-contract/enhanced/api/projects/terraform_inventory_test.go::TestTerraformInventoryAliasCreateUsesRouteScopeAndGeneratedIdentifier
   - name: api:TerraformController.UnlockTerraformState
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
+    - test/edition-contract/enhanced/api/projects/terraform_inventory_test.go::TestTerraformInventoryAliasCreateUsesRouteScopeAndGeneratedIdentifier
   - name: api:VerifySessionByEmail
     signature: func(session *db.Session, w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(session *db.Session, w net/http.ResponseWriter, r *net/http.Request)
@@ -238,8 +251,9 @@ symbols:
   - name: db/factory:NewTerraformStore
     signature: func(store db.Store) db.TerraformStore
     selected_signature: func(store db.Store) db.TerraformStore
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; compatibility factory remains unwired.
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
   - name: db/factory:NewWorkflowFileArtifactStore
     signature: func(db.Store) pro_interfaces.WorkflowFileArtifactRepository
     selected_signature: func(store db.Store) pro_interfaces.WorkflowFileArtifactRepository
@@ -351,63 +365,75 @@ symbols:
   - name: db/sql:TerraformStoreImpl
     signature: struct{}
     selected_signature: struct{}
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
   - name: db/sql:TerraformStoreImpl.CreateTerraformInventoryAlias
     signature: func(alias db.TerraformInventoryAlias) (res db.TerraformInventoryAlias, err error)
-    selected_signature: func(alias db.TerraformInventoryAlias) (res db.TerraformInventoryAlias, err error)
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    selected_signature: func(alias db.TerraformInventoryAlias) (db.TerraformInventoryAlias, error)
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
   - name: db/sql:TerraformStoreImpl.CreateTerraformInventoryState
     signature: func(state db.TerraformInventoryState) (res db.TerraformInventoryState, err error)
-    selected_signature: func(state db.TerraformInventoryState) (res db.TerraformInventoryState, err error)
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    selected_signature: func(state db.TerraformInventoryState) (db.TerraformInventoryState, error)
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
   - name: db/sql:TerraformStoreImpl.DeleteTerraformInventoryAlias
     signature: func(projectID int, inventoryID int, aliasID string) (err error)
-    selected_signature: func(projectID int, inventoryID int, aliasID string) (err error)
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    selected_signature: func(projectID int, inventoryID int, aliasID string) error
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
   - name: db/sql:TerraformStoreImpl.DeleteTerraformInventoryState
     signature: func(projectID int, inventoryID int, stateID int) (err error)
-    selected_signature: func(projectID int, inventoryID int, stateID int) (err error)
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    selected_signature: func(projectID int, inventoryID int, stateID int) error
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
   - name: db/sql:TerraformStoreImpl.GetTerraformInventoryAlias
     signature: func(projectID int, inventoryID int, aliasID string) (res db.TerraformInventoryAlias, err error)
-    selected_signature: func(projectID int, inventoryID int, aliasID string) (res db.TerraformInventoryAlias, err error)
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    selected_signature: func(projectID int, inventoryID int, aliasID string) (result db.TerraformInventoryAlias, err error)
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
   - name: db/sql:TerraformStoreImpl.GetTerraformInventoryAliasByAlias
     signature: func(alias string) (res db.TerraformInventoryAlias, err error)
-    selected_signature: func(alias string) (res db.TerraformInventoryAlias, err error)
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    selected_signature: func(alias string) (result db.TerraformInventoryAlias, err error)
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
   - name: db/sql:TerraformStoreImpl.GetTerraformInventoryAliases
     signature: func(projectID int, inventoryID int) (res []db.TerraformInventoryAlias, err error)
-    selected_signature: func(projectID int, inventoryID int) (res []db.TerraformInventoryAlias, err error)
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    selected_signature: func(projectID int, inventoryID int) (result []db.TerraformInventoryAlias, err error)
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
   - name: db/sql:TerraformStoreImpl.GetTerraformInventoryState
     signature: func(projectID int, inventoryId int, stateID int) (res db.TerraformInventoryState, err error)
-    selected_signature: func(projectID int, inventoryId int, stateID int) (res db.TerraformInventoryState, err error)
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    selected_signature: func(projectID int, inventoryID int, stateID int) (state db.TerraformInventoryState, err error)
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
   - name: db/sql:TerraformStoreImpl.GetTerraformInventoryStates
     signature: func(projectID int, inventoryID int, params db.RetrieveQueryParams) (res []db.TerraformInventoryState, err error)
-    selected_signature: func(projectID int, inventoryID int, params db.RetrieveQueryParams) (res []db.TerraformInventoryState, err error)
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    selected_signature: func(projectID int, inventoryID int, _ db.RetrieveQueryParams) (states []db.TerraformInventoryState, err error)
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
   - name: db/sql:TerraformStoreImpl.GetTerraformStateCount
     signature: func() (n int, err error)
-    selected_signature: func() (n int, err error)
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    selected_signature: func() (count int, err error)
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
   - name: db/sql:TerraformStoreImpl.UpdateTerraformInventoryAlias
     signature: func(alias db.TerraformInventoryAlias) (err error)
-    selected_signature: func(alias db.TerraformInventoryAlias) (err error)
-    implementation: community
-    rationale: Terraform state is outside the selected product scope; this compatibility scaffold is unwired.
+    selected_signature: func(alias db.TerraformInventoryAlias) error
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
   - name: db/sql:WorkflowStoreImpl
     signature: struct{}
     selected_signature: struct{pro/db/sql.WorkflowStoreImpl}
@@ -620,6 +646,11 @@ symbols:
       json:\"expired\""; ExpiresAt *time.Time "db:\"expires_at\" json:\"expires_at,omitempty\""; UserID int "db:\"user_id\"
       json:\"user_id\""; Name string "db:\"name\" json:\"name\""}
     implementation: core
+  - name: db:APITokenStableIDPrefix
+    signature: untyped string = "semaphore-token-sha256-"
+    implementation: core
+    behavior_tests:
+    - api/user_token_contract_ex_test.go::TestDeleteAPIToken_StableReferenceDeletesOnlyExactOwnedToken
   - name: db:AccessKey
     signature: >-
       struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; Name string "db:\"name\" json:\"name\" binding:\"required\""; Type
@@ -1672,15 +1703,15 @@ symbols:
     signature: func(snapshot db.TaskExecutionSnapshot) (string, error)
     implementation: core
   - name: db:Environment
-    signature: >-
-      struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; Name string "db:\"name\" json:\"name\" binding:\"required\""; ProjectID int
-      "db:\"project_id\" json:\"project_id\" backup:\"-\""; Password *string "db:\"password\" json:\"password\""; JSON string "db:\"json\"
+    signature: struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; Name string "db:\"name\" json:\"name\" binding:\"required\""; ProjectID
+      int "db:\"project_id\" json:\"project_id\" backup:\"-\""; Password *string "db:\"password\" json:\"password\""; JSON string "db:\"json\"
       json:\"json\" binding:\"required\""; ENV *string "db:\"env\" json:\"env\" binding:\"required\""; Secrets []db.EnvironmentSecret
-      "db:\"-\" json:\"secrets,omitempty\" backup:\"-\""; SecretStorageID *int "db:\"secret_storage_id\"
-      json:\"secret_storage_id,omitempty\" backup:\"-\""; SecretStorageKeyPrefix *string "db:\"secret_storage_key_prefix\"
-      json:\"secret_storage_key_prefix,omitempty\""; SyncEnabled bool "db:\"-\" json:\"sync_enabled\""; SyncInterval int "db:\"-\"
-      json:\"sync_interval\""; LastSyncedAt *time.Time "db:\"-\" json:\"last_synced_at,omitempty\""; LastSyncFailedAt *time.Time "db:\"-\"
-      json:\"last_sync_failed_at,omitempty\""; SyncPaths []db.SecretSyncPath "db:\"-\" json:\"sync_paths\""}
+      "db:\"-\" json:\"secrets,omitempty\" backup:\"-\""; SecretStorageID *int "db:\"secret_storage_id\" json:\"secret_storage_id,omitempty\"
+      backup:\"-\""; SecretStorageKeyPrefix *string "db:\"secret_storage_key_prefix\" json:\"secret_storage_key_prefix,omitempty\"";
+      SecretStorageIDSet bool "db:\"-\" json:\"-\" backup:\"-\""; SecretStorageKeyPrefixSet bool "db:\"-\" json:\"-\" backup:\"-\"";
+      SyncEnabled bool "db:\"-\" json:\"sync_enabled\""; SyncInterval int "db:\"-\" json:\"sync_interval\""; LastSyncedAt *time.Time
+      "db:\"-\" json:\"last_synced_at,omitempty\""; LastSyncFailedAt *time.Time "db:\"-\" json:\"last_sync_failed_at,omitempty\""; SyncPaths
+      []db.SecretSyncPath "db:\"-\" json:\"sync_paths\""}
     implementation: core
   - name: db:EnvironmentManager
     signature: >-
@@ -2331,6 +2362,11 @@ symbols:
   - name: db:InventoryType
     signature: string
     implementation: core
+  - name: db:IsAPITokenStableID
+    signature: func(value string) bool
+    implementation: core
+    behavior_tests:
+    - api/user_token_contract_ex_test.go::TestDeleteAPIToken_StableReferenceDeletesOnlyExactOwnedToken
   - name: db:IsBuiltInProjectRoleReference
     signature: func(reference db.ProjectRoleReference) bool
     implementation: core
@@ -4663,6 +4699,16 @@ symbols:
   - name: db:TerraformInventoryStateProps
     signature: db.ObjectProps
     implementation: core
+  - name: db:TerraformStateCipherStore
+    signature: interface{ListTerraformStateCiphertexts() ([]string, error); RekeyTerraformStates(oldKey string) error}
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
+  - name: db:TerraformStateLock
+    signature: struct{ID string "db:\"id\""; Info string "db:\"info\""}
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/terraform_inventory_test.go::TestTerraformStateStoreKeepsEncryptedVersionsAndFencesLocks
   - name: db:TerraformStore
     signature: >-
       interface{CreateTerraformInventoryAlias(alias db.TerraformInventoryAlias) (db.TerraformInventoryAlias, error);
@@ -5738,18 +5784,19 @@ symbols:
     signature: db.WorkflowTriggerInvocationStatus = "succeeded"
     implementation: core
   - name: db:WorkflowTriggerManager
-    signature: >-
-      interface{ClaimWorkflowTriggerInvocation(invocation db.WorkflowTriggerInvocation, now time.Time) (db.WorkflowTriggerInvocation, bool,
-      error); CreateWorkflowTrigger(trigger db.WorkflowTrigger) (db.WorkflowTrigger, error); DeleteExpiredWorkflowTriggerInvocations(before
-      time.Time, limit int) (int64, error); DeleteWorkflowTrigger(projectID int, workflowTemplateID int, triggerID int) error;
-      GetActiveWorkflowScheduleTriggers() ([]db.WorkflowTrigger, error); GetWorkflowTrigger(projectID int, workflowTemplateID int, triggerID
-      int) (db.WorkflowTrigger, error); GetWorkflowTriggerInvocations(projectID int, triggerID int, params db.RetrieveQueryParams)
+    signature: interface{ClaimWorkflowTriggerInvocation(invocation db.WorkflowTriggerInvocation, now time.Time) (db.WorkflowTriggerInvocation,
+      bool, error); CreateWorkflowTrigger(trigger db.WorkflowTrigger) (db.WorkflowTrigger, error); DeleteExpiredWorkflowTriggerInvocations(before
+      time.Time, limit int) (int64, error); DeleteWorkflowTrigger(projectID int, workflowTemplateID int, triggerID int, expectedRevision
+      ...int) error; GetActiveWorkflowScheduleTriggers() ([]db.WorkflowTrigger, error); GetWorkflowTrigger(projectID int, workflowTemplateID
+      int, triggerID int) (db.WorkflowTrigger, error); GetWorkflowTriggerInvocations(projectID int, triggerID int, params db.RetrieveQueryParams)
       ([]db.WorkflowTriggerInvocation, error); GetWorkflowTriggers(projectID int, workflowTemplateID int, params db.RetrieveQueryParams)
       ([]db.WorkflowTrigger, error); RecordWorkflowTriggerResult(projectID int, triggerID int, firedAt time.Time, result string) error;
-      UpdateWorkflowTrigger(trigger db.WorkflowTrigger, expectedRevision int) (db.WorkflowTrigger, error);
-      UpdateWorkflowTriggerInvocation(invocation db.WorkflowTriggerInvocation) error; UpdateWorkflowTriggerInvocationSnapshots(invocation
-      db.WorkflowTriggerInvocation) error}
+      UpdateWorkflowTrigger(trigger db.WorkflowTrigger, expectedRevision int) (db.WorkflowTrigger, error); UpdateWorkflowTriggerInvocation(invocation
+      db.WorkflowTriggerInvocation) error; UpdateWorkflowTriggerInvocationSnapshots(invocation db.WorkflowTriggerInvocation) error}
     implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/workflow_trigger_test.go::TestWorkflowTriggerRepositoryRoundTripAndRevisionGuard
+    - test/edition-contract/enhanced/api/projects/workflow_triggers_test.go::TestWorkflowTriggerAPIDeleteForwardsOptionalRevision
   - name: db:WorkflowTriggerManual
     signature: db.WorkflowTriggerType = "manual"
     implementation: core
@@ -10206,23 +10253,24 @@ symbols:
     signature: interface{RunOnce(context.Context, time.Time); Start(); Stop()}
     implementation: core
   - name: pro_interfaces:WorkflowTriggerService
-    signature: >-
-      interface{BootstrapWebhookSigningKey(context.Context, int, int, int, int, *db.User) (pro_interfaces.WorkflowTriggerCredentialResult,
+    signature: interface{BootstrapWebhookSigningKey(context.Context, int, int, int, int, *db.User) (pro_interfaces.WorkflowTriggerCredentialResult,
       error); Create(context.Context, int, int, db.WorkflowTrigger, *db.User) (pro_interfaces.WorkflowTriggerCredentialResult, error);
-      Delete(context.Context, int, int, int, *db.User) error; FireExternal(context.Context, int, int, int, db.WorkflowTriggerType, string,
-      string, map[string]encoding/json.RawMessage) (pro_interfaces.WorkflowTriggerFireResult, error); FireScheduled(context.Context, int,
-      int, int, time.Time) (pro_interfaces.WorkflowTriggerFireResult, error); FireSignedWebhook(context.Context, int, int, int,
+      Delete(context.Context, int, int, int, *db.User, ...int) error; FireExternal(context.Context, int, int, int, db.WorkflowTriggerType,
+      string, string, map[string]encoding/json.RawMessage) (pro_interfaces.WorkflowTriggerFireResult, error); FireScheduled(context.Context,
+      int, int, int, time.Time) (pro_interfaces.WorkflowTriggerFireResult, error); FireSignedWebhook(context.Context, int, int, int,
       pro_interfaces.WebhookSignedRequest) (pro_interfaces.WorkflowTriggerFireResult, error); Get(context.Context, int, int, int, *db.User)
-      (db.WorkflowTrigger, error); History(context.Context, int, int, int, db.RetrieveQueryParams, *db.User)
-      ([]pro_interfaces.WorkflowTriggerHistoryEntry, error); List(context.Context, int, int, db.RetrieveQueryParams, *db.User)
-      ([]db.WorkflowTrigger, error); PromoteWebhookSigningKey(context.Context, int, int, int, int, *db.User) (db.WorkflowTrigger, error);
-      RevokeWebhookSigningKey(context.Context, int, int, int, int, *db.User) (db.WorkflowTrigger, error); RotateCredential(context.Context,
-      int, int, int, int, *db.User) (pro_interfaces.WorkflowTriggerCredentialResult, error); SetEnabled(context.Context, int, int, int, int,
-      bool, *db.User) (db.WorkflowTrigger, error); StageWebhookSigningKey(context.Context, int, int, int, int, *db.User)
-      (pro_interfaces.WorkflowTriggerCredentialResult, error); Test(context.Context, int, int, int, map[string]encoding/json.RawMessage,
+      (db.WorkflowTrigger, error); History(context.Context, int, int, int, db.RetrieveQueryParams, *db.User) ([]pro_interfaces.WorkflowTriggerHistoryEntry,
+      error); List(context.Context, int, int, db.RetrieveQueryParams, *db.User) ([]db.WorkflowTrigger, error); PromoteWebhookSigningKey(context.Context,
+      int, int, int, int, *db.User) (db.WorkflowTrigger, error); RevokeWebhookSigningKey(context.Context, int, int, int, int, *db.User)
+      (db.WorkflowTrigger, error); RotateCredential(context.Context, int, int, int, int, *db.User) (pro_interfaces.WorkflowTriggerCredentialResult,
+      error); SetEnabled(context.Context, int, int, int, int, bool, *db.User) (db.WorkflowTrigger, error); StageWebhookSigningKey(context.Context,
+      int, int, int, int, *db.User) (pro_interfaces.WorkflowTriggerCredentialResult, error); Test(context.Context, int, int, int, map[string]encoding/json.RawMessage,
       *db.User) (pro_interfaces.WorkflowTriggerFireResult, error); Update(context.Context, int, int, int, db.WorkflowTrigger, *db.User)
       (db.WorkflowTrigger, error)}
     implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/workflow_trigger_test.go::TestWorkflowTriggerRepositoryRoundTripAndRevisionGuard
+    - test/edition-contract/enhanced/api/projects/workflow_triggers_test.go::TestWorkflowTriggerAPIDeleteForwardsOptionalRevision
   - name: pro_interfaces:WorkflowTriggerWorkflowStore
     signature: >-
       interface{GetWorkflowRunByID(projectID int, runID int) (db.WorkflowRun, error); GetWorkflowTemplate(projectID int, workflowID int)

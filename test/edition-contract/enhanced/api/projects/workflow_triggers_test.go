@@ -42,6 +42,19 @@ func TestWorkflowTriggerAPIRevealsCredentialOnceAndAuthenticatesExternalFire(t *
 	assert.Equal(t, "deploy-once", service.idempotencyKey)
 }
 
+func TestWorkflowTriggerAPIDeleteForwardsOptionalRevision(t *testing.T) {
+	service := &workflowTriggerAPIService{}
+	controller := NewWorkflowTriggerController(service)
+	recorder := httptest.NewRecorder()
+	controller.DeleteTrigger(recorder, workflowTriggerManagementRequest(http.MethodDelete, "/api/project/7/workflows/9/triggers/13?expected_revision=4", ""))
+	require.Equal(t, http.StatusNoContent, recorder.Code)
+	require.Equal(t, []int{4}, service.deleteRevision)
+
+	recorder = httptest.NewRecorder()
+	controller.DeleteTrigger(recorder, workflowTriggerManagementRequest(http.MethodDelete, "/api/project/7/workflows/9/triggers/13?expected_revision=bad", ""))
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
 func TestWorkflowTriggerAPIRejectsMissingCredentialAndUnknownInput(t *testing.T) {
 	service := &workflowTriggerAPIService{}
 	controller := NewWorkflowTriggerController(service)
@@ -187,6 +200,7 @@ type workflowTriggerAPIService struct {
 	signed         pro_interfaces.WebhookSignedRequest
 	signedFires    int
 	signedError    error
+	deleteRevision []int
 }
 
 func (s *workflowTriggerAPIService) Create(context.Context, int, int, db.WorkflowTrigger, *db.User) (pro_interfaces.WorkflowTriggerCredentialResult, error) {
@@ -212,7 +226,8 @@ func (s *workflowTriggerAPIService) Get(context.Context, int, int, int, *db.User
 func (s *workflowTriggerAPIService) Update(context.Context, int, int, int, db.WorkflowTrigger, *db.User) (db.WorkflowTrigger, error) {
 	return db.WorkflowTrigger{}, nil
 }
-func (s *workflowTriggerAPIService) Delete(context.Context, int, int, int, *db.User) error {
+func (s *workflowTriggerAPIService) Delete(_ context.Context, _ int, _ int, _ int, _ *db.User, expectedRevision ...int) error {
+	s.deleteRevision = expectedRevision
 	return nil
 }
 func (s *workflowTriggerAPIService) SetEnabled(context.Context, int, int, int, int, bool, *db.User) (db.WorkflowTrigger, error) {

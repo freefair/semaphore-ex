@@ -34,6 +34,16 @@ func (c *RolesController) GetGlobalPermissionCatalog(w http.ResponseWriter, r *h
 	helpers.WriteJSON(w, http.StatusOK, pro_interfaces.GlobalPermissionCatalog())
 }
 
+// GetGlobalProjectPermissionCatalog exposes the project permission definitions
+// usable by a global role. Global roles are not tied to an arbitrary project,
+// so this deliberately uses the authoritative project catalog directly.
+func (c *RolesController) GetGlobalProjectPermissionCatalog(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead) {
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, pro_interfaces.ProjectPermissionCatalog())
+}
+
 func (c *RolesController) GetGlobalRole(w http.ResponseWriter, r *http.Request) {
 	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead) {
 		return

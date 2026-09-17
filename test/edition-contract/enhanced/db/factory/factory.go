@@ -2,16 +2,21 @@
 package factory
 
 import (
-	community "github.com/semaphoreui/semaphore/community-pro/db/factory"
 	"github.com/semaphoreui/semaphore/db"
 	coresql "github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pro/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
 
-var (
-	NewTerraformStore = community.NewTerraformStore
-)
+func NewTerraformStore(store db.Store) db.TerraformStore {
+	connectionStore, ok := store.(interface {
+		GetConnection() *coresql.SqlDbConnection
+	})
+	if !ok {
+		return sql.NewTerraformStore(nil)
+	}
+	return sql.NewTerraformStore(connectionStore.GetConnection())
+}
 
 func NewWorkflowStore(store db.Store) db.WorkflowManager {
 	connectionStore, ok := store.(interface {

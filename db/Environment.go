@@ -61,6 +61,9 @@ type Environment struct {
 
 	SecretStorageID        *int    `db:"secret_storage_id" json:"secret_storage_id,omitempty" backup:"-"`
 	SecretStorageKeyPrefix *string `db:"secret_storage_key_prefix" json:"secret_storage_key_prefix,omitempty"`
+	// These flags distinguish omitted update fields from explicit JSON null.
+	SecretStorageIDSet        bool `db:"-" json:"-" backup:"-"`
+	SecretStorageKeyPrefixSet bool `db:"-" json:"-" backup:"-"`
 
 	// Sync fields are transfer-only; persisted in project__secret_sync.
 	SyncEnabled      bool             `db:"-" json:"sync_enabled"`
@@ -68,6 +71,22 @@ type Environment struct {
 	LastSyncedAt     *time.Time       `db:"-" json:"last_synced_at,omitempty"`
 	LastSyncFailedAt *time.Time       `db:"-" json:"last_sync_failed_at,omitempty"`
 	SyncPaths        []SecretSyncPath `db:"-" json:"sync_paths"`
+}
+
+func (env *Environment) UnmarshalJSON(data []byte) error {
+	type environmentAlias Environment
+	var decoded environmentAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*env = Environment(decoded)
+	_, env.SecretStorageIDSet = fields["secret_storage_id"]
+	_, env.SecretStorageKeyPrefixSet = fields["secret_storage_key_prefix"]
+	return nil
 }
 
 func (s *EnvironmentSecret) Validate() error {

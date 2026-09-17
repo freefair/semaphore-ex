@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
@@ -89,7 +90,16 @@ func (c *workflowTriggerController) DeleteTrigger(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	if err := c.service.Delete(r.Context(), project.ID, workflow.ID, triggerID, helpers.UserFromContext(r)); err != nil {
+	expectedRevision := []int(nil)
+	if rawRevision := r.URL.Query().Get("expected_revision"); rawRevision != "" {
+		revision, err := strconv.Atoi(rawRevision)
+		if err != nil || revision < 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		expectedRevision = []int{revision}
+	}
+	if err := c.service.Delete(r.Context(), project.ID, workflow.ID, triggerID, helpers.UserFromContext(r), expectedRevision...); err != nil {
 		writeWorkflowTriggerError(w, err)
 		return
 	}

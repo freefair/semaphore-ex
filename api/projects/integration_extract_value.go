@@ -2,7 +2,6 @@ package projects
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
@@ -21,9 +20,7 @@ func GetIntegrationExtractValue(w http.ResponseWriter, r *http.Request) {
 	value, err := helpers.Store(r).GetIntegrationExtractValue(project.ID, valueId, integration.ID)
 
 	if err != nil {
-		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("Failed to get IntegrationExtractValue, %v", err),
-		})
+		helpers.WriteError(w, err)
 		return
 	}
 

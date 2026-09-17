@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/semaphoreui/semaphore/db"
+	proFactory "github.com/semaphoreui/semaphore/pro/db/factory"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/spf13/cobra"
 )
@@ -49,6 +50,21 @@ var vaultCheckCmd = &cobra.Command{
 		})
 		if err != nil {
 			panic(err)
+		}
+		if states, ok := proFactory.NewTerraformStore(store).(db.TerraformStateCipherStore); ok {
+			ciphertexts, stateErr := states.ListTerraformStateCiphertexts()
+			if stateErr != nil {
+				panic(stateErr)
+			}
+			for _, ciphertext := range ciphertexts {
+				total++
+				id := util.SecretKeyID(ciphertext)
+				counts[id]++
+				if id == "" || !util.Config.HasKeyID(id) {
+					missing++
+				}
+			}
+			fmt.Printf("Terraform states: %d total\n", len(ciphertexts))
 		}
 
 		fmt.Printf("Access keys: %d total\n", total)

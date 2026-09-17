@@ -282,7 +282,16 @@ func (d *DeploymentWindowStore) DeleteDeploymentWindowPolicy(projectID int, expe
 	if err != nil {
 		return err
 	}
-	if !found || expectedRevision != current.Revision {
+	if !found {
+		// Import may model the lazy default as revision one even though it has
+		// never been materialized. Under the project lock this delete is already
+		// complete; other revisions still fence stale callers.
+		if expectedRevision == 1 {
+			return tx.Commit()
+		}
+		return db.ErrDeploymentWindowRevisionConflict
+	}
+	if expectedRevision != current.Revision {
 		return db.ErrDeploymentWindowRevisionConflict
 	}
 	if _, err = tx.Exec(d.connection.PrepareQuery("delete from project__deployment_window_rule where project_id=?"), projectID); err != nil {

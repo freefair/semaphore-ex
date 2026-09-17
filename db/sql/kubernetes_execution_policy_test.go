@@ -26,6 +26,24 @@ func TestKubernetesExecutionPolicyStoreUsesAliasScopedRevisionFence(t *testing.T
 	assert.Equal(t, saved, loaded)
 }
 
+func TestKubernetesExecutionPolicyStorePersistsRevisionFencedFailClosedReset(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	active, err := store.SaveKubernetesExecutionPolicy(testKubernetesExecutionPolicyRecord("qa-cluster"), 0)
+	require.NoError(t, err)
+	reset := db.DefaultKubernetesExecutionPolicy("qa-cluster")
+	reset, err = store.SaveKubernetesExecutionPolicy(reset, active.Revision)
+	require.NoError(t, err)
+	assert.Equal(t, active.Revision+1, reset.Revision)
+	assert.True(t, reset.IsFailClosedDefault())
+	_, err = store.SaveKubernetesExecutionPolicy(testKubernetesExecutionPolicyRecord("qa-cluster"), active.Revision)
+	assert.ErrorIs(t, err, db.ErrKubernetesExecutionPolicyRevisionConflict)
+	loaded, err := store.GetKubernetesExecutionPolicy("qa-cluster")
+	require.NoError(t, err)
+	assert.Equal(t, reset, loaded)
+	assert.False(t, loaded.Test(db.KubernetesExecutionPolicyTestRequest{ClusterAlias: "qa-cluster", NetworkProfile: "deny-all"}).Allowed)
+}
+
 func testKubernetesExecutionPolicyRecord(alias string) db.KubernetesExecutionPolicy {
 	p := db.DefaultKubernetesExecutionPolicy(alias)
 	p.AllowedNamespaces = []string{"semaphore-jobs"}

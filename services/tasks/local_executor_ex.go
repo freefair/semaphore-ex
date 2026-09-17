@@ -8,7 +8,6 @@ import (
 	proFeatures "github.com/semaphoreui/semaphore/pro/pkg/features"
 	"github.com/semaphoreui/semaphore/pro/pkg/stage_parsers"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
-	"github.com/semaphoreui/semaphore/util"
 	"path"
 )
 
@@ -62,9 +61,7 @@ func (t *LocalExecutor) prepare(username string, incomingVersion *string, alias 
 		return
 	}
 
-	if t.Template.App.IsTerraform() && alias != "" {
-		environmentVariables = append(environmentVariables, "TF_HTTP_ADDRESS="+util.GetPublicAliasURL("terraform", alias))
-	}
+	environmentVariables = terraformBackendProcessEnvironment(t.Template.App.IsTerraform(), alias, environmentVariables, t.TerraformBackendEnvironment)
 
 	// For Terraform apps, get args first so we can pass init args to prepareRun
 	var argsMap map[string][]string
@@ -178,4 +175,11 @@ func (t *LocalExecutor) prepare(username string, incomingVersion *string, alias 
 	t.prepared = true
 
 	return nil
+}
+
+func terraformBackendProcessEnvironment(terraformApp bool, alias string, environment, backend []string) []string {
+	if !terraformApp || alias == "" {
+		return environment
+	}
+	return append(environment, backend...)
 }

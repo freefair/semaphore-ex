@@ -43,7 +43,8 @@ type LocalExecutor struct {
 	// (runner). Must be non-nil when Prepare is called for a git repository.
 	RepoLock *KeyLock
 
-	WorkflowArtifacts map[string]any
+	WorkflowArtifacts           map[string]any
+	TerraformBackendEnvironment []string
 
 	// Prepared state — populated by Prepare(), consumed by Run(). Lifted out of Run()
 	// local variables so the lifecycle phases (Prepare / underlying App.Run / Cleanup)
