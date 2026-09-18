@@ -2,7 +2,7 @@
 
 Semaphore EX is built on the work of many open-source projects. This document identifies every third-party component distributed with Semaphore EX, in compliance with the attribution requirements of the respective licenses.
 
-_Generated on **2026-09-13 07:37 UTC** by `scripts/collect_licenses.sh`._
+_Generated on **2026-09-18 12:09 UTC** by `scripts/collect_licenses.sh`._
 
 To regenerate this file, run:
 
@@ -133,7 +133,7 @@ Modules statically linked into the Semaphore EX server binary. Sourced from `go.
 | `go.opentelemetry.io/otel/metric` | v1.35.0 | Apache-2.0 | [link](https://github.com/open-telemetry/opentelemetry-go/blob/metric/v1.35.0/metric/LICENSE) |
 | `go.opentelemetry.io/otel/trace` | v1.35.0 | Apache-2.0 | [link](https://github.com/open-telemetry/opentelemetry-go/blob/trace/v1.35.0/trace/LICENSE) |
 | `go.uber.org/atomic` | v1.11.0 | MIT | [link](https://github.com/uber-go/atomic/blob/v1.11.0/LICENSE.txt) |
-| `go.yaml.in/yaml/v2` | v2.4.2 | Apache-2.0 | [link](https://github.com/yaml/go-yaml/blob/v2.4.2/LICENSE) |
+| `go.yaml.in/yaml/v2` | v2.4.4 | Apache-2.0 | [link](https://github.com/yaml/go-yaml/blob/v2.4.4/LICENSE) |
 | `go.yaml.in/yaml/v3` | v3.0.5 | MIT | [link](https://github.com/yaml/go-yaml/blob/v3.0.5/LICENSE) |
 | `golang.org/x/crypto` | v0.57.0 | BSD-3-Clause | [link](https://cs.opensource.google/go/x/crypto/+/v0.57.0:LICENSE) |
 | `golang.org/x/net` | v0.58.0 | BSD-3-Clause | [link](https://cs.opensource.google/go/x/net/+/v0.58.0:LICENSE) |
@@ -142,7 +142,7 @@ Modules statically linked into the Semaphore EX server binary. Sourced from `go.
 | `golang.org/x/term` | v0.46.0 | BSD-3-Clause | [link](https://cs.opensource.google/go/x/term/+/v0.46.0:LICENSE) |
 | `golang.org/x/text` | v0.42.0 | BSD-3-Clause | [link](https://cs.opensource.google/go/x/text/+/v0.42.0:LICENSE) |
 | `golang.org/x/time` | v0.15.0 | BSD-3-Clause | [link](https://cs.opensource.google/go/x/time/+/v0.15.0:LICENSE) |
-| `google.golang.org/protobuf` | v1.36.8 | BSD-3-Clause | [link](https://github.com/protocolbuffers/protobuf-go/blob/v1.36.8/LICENSE) |
+| `google.golang.org/protobuf` | v1.36.12-0.20260120151049-f2248ac996af | BSD-3-Clause | [link](https://github.com/protocolbuffers/protobuf-go/blob/f2248ac996af/LICENSE) |
 | `gopkg.in/evanphx/json-patch.v4` | v4.13.0 | BSD-3-Clause | [link](https://github.com/evanphx/json-patch/blob/v4.13.0/LICENSE) |
 | `gopkg.in/inf.v0` | v0.9.1 | BSD-3-Clause | [link](https://github.com/go-inf/inf/blob/v0.9.1/LICENSE) |
 | `gopkg.in/natefinch/lumberjack.v2` | v2.2.1 | MIT | [link](https://github.com/natefinch/lumberjack/blob/v2.2.1/LICENSE) |
@@ -184,7 +184,7 @@ Packages bundled into the web UI assets, which are embedded in the server binary
 | `codemirror` | 5.65.21 | MIT | [link](https://github.com/codemirror/CodeMirror) |
 | `combined-stream` | 1.0.8 | MIT | [link](https://github.com/felixge/node-combined-stream) |
 | `core-js` | 3.50.0 | MIT | [link](https://github.com/zloirock/core-js) |
-| `cron-parser` | 5.10.0 | MIT | [link](https://github.com/harrisiirak/cron-parser) |
+| `cron-parser` | 5.10.1 | MIT | [link](https://github.com/harrisiirak/cron-parser) |
 | `csstype` | 3.2.3 | MIT | [link](https://github.com/frenic/csstype) |
 | `dayjs` | 1.11.23 | MIT | [link](https://github.com/iamkun/dayjs) |
 | `debug` | 4.4.3 | MIT | [link](https://github.com/debug-js/debug) |
@@ -206,7 +206,7 @@ Packages bundled into the web UI assets, which are embedded in the server binary
 | `has-tostringtag` | 1.0.2 | MIT | [link](https://github.com/inspect-js/has-tostringtag) |
 | `hasown` | 2.0.4 | MIT | [link](https://github.com/inspect-js/hasOwn) |
 | `https-proxy-agent` | 5.0.1 | MIT | [link](https://github.com/TooTallNate/node-https-proxy-agent) |
-| `js-yaml` | 5.4.1 | MIT | [link](https://github.com/nodeca/js-yaml) |
+| `js-yaml` | 5.4.2 | MIT | [link](https://github.com/nodeca/js-yaml) |
 | `luxon` | 3.7.2 | MIT | [link](https://github.com/moment/luxon) |
 | `math-intrinsics` | 1.1.0 | MIT | [link](https://github.com/es-shims/math-intrinsics) |
 | `mime-db` | 1.52.0 | MIT | [link](https://github.com/jshttp/mime-db) |

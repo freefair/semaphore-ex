@@ -11,12 +11,42 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+## [v2.20.0-ex.2] - 2026-09-18
+
+### Added
+
+- Task-scoped SSH agents offer the template Repository key alongside the
+  Inventory SSH key. Requirements installation and nested Git commands can use
+  the Repository identity for private collections, modules and dependencies.
+- Additional SSH keys can be selected through project defaults, always-included
+  keys, template overrides and authorized per-run overrides. Migration `2.20.71`
+  persists these bindings; execution snapshots and project backups retain them.
+- Automatic SSH host selection works on local, remote and container runners.
+  Host lists are optional below five distinct public-key identities and required
+  from five onward; explicit host lists apply at every size.
+- Encrypted Terraform HTTP state with workspace aliases, credential bindings,
+  append-only versions and durable locks. Migration `2.20.70` adds the backend
+  tables; legacy plaintext state requires the documented vault rekey procedure.
+- Provider-facing API contracts for environment storage bindings, Terragrunt
+  inventories, stable API-token references and permission catalogs.
+
+### Fixed
+
+- Terraform backend aliases are resolved only when backend override is enabled;
+  tasks using an external backend retain their configuration.
+- API integration fixtures exercise Terraform state and alias operations on
+  MySQL, MariaDB, PostgreSQL and SQLite, including persisted results and
+  credential rebinding.
+
 ### Changed
 
+- Upstream reference generation, documentation navigation, task logging and
+  frontend dependency updates are merged while preserving the EX product
+  contracts.
 - Transitive build and test dependencies of the web frontend are pinned to patched versions
   through an `overrides` block; `npm audit` now reports only the documented inherited Vue 2
-  findings. The shipped bundle is unchanged.
-- `THIRD-PARTY-LICENSES.md` names Semaphore EX and the fork issue tracker.
+  findings. These overrides affect build and test tooling.
+- `THIRD-PARTY-LICENSES.md` reflects the current dependency versions.
 
 ### Removed
 
