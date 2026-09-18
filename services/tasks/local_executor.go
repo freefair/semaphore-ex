@@ -30,9 +30,13 @@ type LocalExecutor struct {
 	killed  bool // killed means that API request to stop the job has been received
 	Process *os.Process
 
-	sshKeyInstallation     ssh.AccessKeyInstallation
-	becomeKeyInstallation  ssh.AccessKeyInstallation
-	vaultFileInstallations map[string]ssh.AccessKeyInstallation
+	sshKeyInstallation         ssh.AccessKeyInstallation
+	taskSSHAgent               *ssh.Agent
+	taskSSHIdentityFiles       []string
+	repositorySSHIdentityFiles []string
+	inventorySSHIdentityFiles  []string
+	becomeKeyInstallation      ssh.AccessKeyInstallation
+	vaultFileInstallations     map[string]ssh.AccessKeyInstallation
 
 	KeyInstaller db_lib.AccessKeyInstaller
 
@@ -857,14 +861,16 @@ func (t *LocalExecutor) prepareRun(installingArgs db_lib.LocalAppInstallingArgs,
 		}
 	}
 
+	if err := t.startTaskSSHAgent(); err != nil {
+		return err
+	}
+
 	if err := t.installInventory(); err != nil {
 		t.Log("Failed to install inventory: " + err.Error())
 		return err
 	}
 
-	if sshEnv := t.getSSHAgentEnv(); sshEnv != "" {
-		installingArgs.EnvironmentVars = append(installingArgs.EnvironmentVars, sshEnv)
-	}
+	installingArgs.EnvironmentVars = append(installingArgs.EnvironmentVars, t.getTaskSSHAgentEnvironment(installingArgs.EnvironmentVars)...)
 
 	if installRequirements {
 		if err := t.App.InstallRequirements(installingArgs); err != nil {
@@ -913,14 +919,16 @@ func (t *LocalExecutor) prepareRunTerraform(tfApp *db_lib.TerraformApp, installi
 		}
 	}
 
+	if err := t.startTaskSSHAgent(); err != nil {
+		return err
+	}
+
 	if err := t.installInventory(); err != nil {
 		t.Log("Failed to install inventory: " + err.Error())
 		return err
 	}
 
-	if sshEnv := t.getSSHAgentEnv(); sshEnv != "" {
-		installingArgs.EnvironmentVars = append(installingArgs.EnvironmentVars, sshEnv)
-	}
+	installingArgs.EnvironmentVars = append(installingArgs.EnvironmentVars, t.getTaskSSHAgentEnvironment(installingArgs.EnvironmentVars)...)
 
 	if installRequirements {
 		// Call Terraform-specific install with init args.
@@ -1069,8 +1077,45 @@ func (t *LocalExecutor) installVaultKeyFiles() (err error) {
 }
 
 func (t *LocalExecutor) getSSHAgentEnv() string {
-	if t.Inventory.SSHKey.Type == db.AccessKeySSH && t.Inventory.SSHKeyID != nil && t.sshKeyInstallation.SSHAgent != nil {
-		return fmt.Sprintf("SSH_AUTH_SOCK=%s", t.sshKeyInstallation.SSHAgent.SocketFile)
+	if t.taskSSHAgent != nil {
+		return fmt.Sprintf("SSH_AUTH_SOCK=%s", t.taskSSHAgent.SocketFile)
 	}
 	return ""
+}
+
+func (t *LocalExecutor) getTaskSSHAgentEnvironment(existingValues ...[]string) []string {
+	var existing []string
+	if len(existingValues) > 0 {
+		existing = existingValues[0]
+	}
+	sshAuthSock := t.getSSHAgentEnv()
+	if sshAuthSock == "" {
+		return nil
+	}
+	environment := []string{sshAuthSock}
+	gitIdentities := append(append([]string(nil), t.repositorySSHIdentityFiles...), t.inventorySSHIdentityFiles...)
+	if len(gitIdentities) > 0 && !environmentHasName(existing, "GIT_SSH_COMMAND") {
+		environment = append(environment, "GIT_SSH_COMMAND="+ssh.TaskGitSSHCommand(t.taskSSHAgent.SocketFile, gitIdentities))
+	}
+	return environment
+}
+
+func environmentHasName(environment []string, name string) bool {
+	for _, variable := range environment {
+		if strings.HasPrefix(variable, name+"=") {
+			return true
+		}
+	}
+	if util.Config == nil {
+		return false
+	}
+	if _, exists := util.Config.EnvVars[name]; exists {
+		return true
+	}
+	for _, forwarded := range util.Config.ForwardedEnvVars {
+		if forwarded == name && os.Getenv(name) != "" {
+			return true
+		}
+	}
+	return false
 }

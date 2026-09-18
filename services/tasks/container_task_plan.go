@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/ssh"
 	"github.com/semaphoreui/semaphore/util"
 )
 
@@ -64,6 +65,7 @@ func (p ContainerTaskPlan) Command(stage ContainerTaskStage) []string {
 // commands to the isolated container.
 func (t *LocalExecutor) PrepareContainerTask(username string, incomingVersion *string, alias string) (*ContainerTaskPlan, error) {
 	if err := t.prepare(username, incomingVersion, alias, false); err != nil {
+		t.Cleanup()
 		return nil, err
 	}
 
@@ -333,13 +335,22 @@ func (t *LocalExecutor) containerEnvironment() ([]string, error) {
 		if !ok || !containerEnvironmentName.MatchString(name) {
 			return nil, fmt.Errorf("invalid container environment variable %q", name)
 		}
-		if name == "SSH_AUTH_SOCK" {
+		if name == "SSH_AUTH_SOCK" ||
+			(name == "GIT_SSH_COMMAND" && t.isGeneratedTaskGitSSHCommand(value)) {
 			continue
 		}
 		value = t.rewriteContainerPath(value)
 		result = append(result, name+"="+value)
 	}
 	return result, nil
+}
+
+func (t *LocalExecutor) isGeneratedTaskGitSSHCommand(value string) bool {
+	if t.taskSSHAgent == nil {
+		return false
+	}
+	identities := append(append([]string(nil), t.repositorySSHIdentityFiles...), t.inventorySSHIdentityFiles...)
+	return len(identities) > 0 && value == ssh.TaskGitSSHCommand(t.taskSSHAgent.SocketFile, identities)
 }
 
 func renderContainerEnvironment(environment []string) string {

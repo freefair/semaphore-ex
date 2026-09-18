@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"path"
+	"strings"
+	"sync"
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/random"
@@ -25,9 +27,16 @@ type AgentKey struct {
 type Agent struct {
 	Keys       []AgentKey
 	Logger     task_logger.Logger
-	listener   net.Listener
 	SocketFile string
-	done       chan struct{}
+	runtime    *agentRuntime
+}
+
+type agentRuntime struct {
+	listener      net.Listener
+	done          chan struct{}
+	closeOnce     sync.Once
+	connectionsMu sync.Mutex
+	connections   map[net.Conn]struct{}
 }
 
 func NewAgent() Agent {
@@ -35,6 +44,10 @@ func NewAgent() Agent {
 }
 
 func (a *Agent) Listen() error {
+	if err := os.MkdirAll(path.Dir(a.SocketFile), 0o755); err != nil {
+		return fmt.Errorf("creating socket directory: %w", err)
+	}
+
 	keyring := agent.NewKeyring()
 
 	for _, k := range a.Keys {
@@ -58,10 +71,7 @@ func (a *Agent) Listen() error {
 		}); err != nil {
 			return fmt.Errorf("adding private key: %w", err)
 		}
-	}
 
-	if err := os.MkdirAll(path.Dir(a.SocketFile), 0o755); err != nil {
-		return fmt.Errorf("creating socket directory: %w", err)
 	}
 
 	l, err := net.ListenUnix(
@@ -76,15 +86,15 @@ func (a *Agent) Listen() error {
 	}
 
 	l.SetUnlinkOnClose(true)
-	a.listener = l
-	a.done = make(chan struct{})
+	runtime := &agentRuntime{listener: l, done: make(chan struct{}), connections: make(map[net.Conn]struct{})}
+	a.runtime = runtime
 
 	go func() {
 		for {
-			conn, err := a.listener.Accept()
+			conn, err := runtime.listener.Accept()
 			if err != nil {
 				select {
-				case <-a.done:
+				case <-runtime.done:
 					return
 				default:
 					a.Logger.Logf("error accepting socket connection: %w", err)
@@ -92,8 +102,23 @@ func (a *Agent) Listen() error {
 				}
 			}
 
+			runtime.connectionsMu.Lock()
+			select {
+			case <-runtime.done:
+				runtime.connectionsMu.Unlock()
+				_ = conn.Close()
+				return
+			default:
+				runtime.connections[conn] = struct{}{}
+				runtime.connectionsMu.Unlock()
+			}
 			go func(conn net.Conn) {
-				defer conn.Close() //nolint:errcheck
+				defer func() {
+					runtime.connectionsMu.Lock()
+					delete(runtime.connections, conn)
+					runtime.connectionsMu.Unlock()
+					_ = conn.Close()
+				}()
 
 				// ServeAgent only returns once the connection breaks; io.EOF just
 				// means the client went away. staticcheck knows ServeAgent never
@@ -109,39 +134,105 @@ func (a *Agent) Listen() error {
 }
 
 func (a *Agent) Close() error {
-	if a.done != nil {
-		close(a.done)
+	if a.runtime == nil {
+		return nil
 	}
-	if a.listener != nil {
-		return a.listener.Close()
-	}
-	return nil
+	var closeErr error
+	a.runtime.closeOnce.Do(func() {
+		close(a.runtime.done)
+		if a.runtime.listener != nil {
+			closeErr = a.runtime.listener.Close()
+		}
+		a.runtime.connectionsMu.Lock()
+		for connection := range a.runtime.connections {
+			if err := connection.Close(); err != nil && closeErr == nil {
+				closeErr = err
+			}
+		}
+		a.runtime.connectionsMu.Unlock()
+	})
+	return closeErr
 }
 
 func StartSSHAgent(key db.AccessKey, logger task_logger.Logger) (Agent, error) {
+	return StartSSHAgentWithKeys(AgentKeys(key), key.ProjectID, logger)
+}
 
-	socketFilename := fmt.Sprintf("ssh-agent-%d-%s.sock", key.ID, random.String(10))
+// AgentKeys returns SSH key material suitable for one in-process agent. It skips
+// non-SSH access keys and keeps the first occurrence of duplicate key material so
+// callers can safely compose credentials from independent task bindings.
+func AgentKeys(keys ...db.AccessKey) []AgentKey {
+	result := make([]AgentKey, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		if key.Type != db.AccessKeySSH {
+			continue
+		}
+		identity := key.SshKey.PrivateKey + "\x00" + key.SshKey.Passphrase
+		if _, exists := seen[identity]; exists {
+			continue
+		}
+		seen[identity] = struct{}{}
+		result = append(result, AgentKey{Key: []byte(key.SshKey.PrivateKey), Passphrase: []byte(key.SshKey.Passphrase)})
+	}
+	return result
+}
+
+// StartSSHAgentWithKeys starts one task-scoped SSH agent for a composed key set.
+// The private material remains only in the in-process keyring after Listen parses it.
+func StartSSHAgentWithKeys(keys []AgentKey, projectID *int, logger task_logger.Logger) (Agent, error) {
+	if len(keys) == 0 {
+		return Agent{}, nil
+	}
+
+	socketFilename := fmt.Sprintf("ssh-agent-%s.sock", random.String(10))
 
 	var socketFile string
 
-	if key.ProjectID == nil {
+	if projectID == nil {
 		socketFile = path.Join(util.Config.TmpPath, socketFilename)
 	} else {
-		socketFile = path.Join(util.Config.GetProjectTmpDir(*key.ProjectID), socketFilename)
+		socketFile = path.Join(util.Config.GetProjectTmpDir(*projectID), socketFilename)
 	}
 
 	sshAgent := Agent{
-		Logger: logger,
-		Keys: []AgentKey{
-			{
-				Key:        []byte(key.SshKey.PrivateKey),
-				Passphrase: []byte(key.SshKey.Passphrase),
-			},
-		},
+		Logger:     logger,
+		Keys:       keys,
 		SocketFile: socketFile,
 	}
 
-	return sshAgent, sshAgent.Listen()
+	err := sshAgent.Listen()
+	return sshAgent, err
+}
+
+// TaskGitSSHCommand preserves the configured host-key policy while selecting
+// task-scoped agent identities explicitly.
+func TaskGitSSHCommand(socketFile string, identityFiles []string) string {
+	command := "ssh -o IdentitiesOnly=yes -o IdentityAgent=" + shellQuote(socketFile)
+	for _, identityFile := range identityFiles {
+		command += " -i " + shellQuote(identityFile)
+	}
+	if util.Config == nil || util.Config.Ssh == nil {
+		return command
+	}
+	switch util.Config.Ssh.StrictHostKeyChecking {
+	case util.SshStrictHostKeyCheckingYes:
+		command += " -o StrictHostKeyChecking=yes -o UserKnownHostsFile=" + shellQuote(util.Config.Ssh.KnownHostsFile)
+	case util.SshStrictHostKeyCheckingNo:
+		command += " -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+	case util.SshStrictHostKeyCheckingAcceptNew:
+		command += " -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + shellQuote(util.Config.Ssh.KnownHostsFile)
+	default:
+		panic("Unknown SSH strict host key check option")
+	}
+	if util.Config.GetSshConfigPath() != "" {
+		command += " -F " + shellQuote(util.Config.GetSshConfigPath())
+	}
+	return command
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 type AccessKeyInstallation struct {

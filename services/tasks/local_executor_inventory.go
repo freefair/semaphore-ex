@@ -1,22 +1,31 @@
 package tasks
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"strconv"
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db_lib"
+	"github.com/semaphoreui/semaphore/pkg/ssh"
 	log "github.com/sirupsen/logrus"
+	sshcrypto "golang.org/x/crypto/ssh"
 
 	"github.com/semaphoreui/semaphore/util"
 )
 
 func (t *LocalExecutor) installInventory() (err error) {
 	if t.Inventory.SSHKeyID != nil {
-		t.sshKeyInstallation, err = t.KeyInstaller.Install(t.Inventory.SSHKey, db.AccessKeyRoleAnsibleUser, t.Logger)
-		if err != nil {
-			return
+		if t.Inventory.SSHKey.Type == db.AccessKeySSH {
+			// The task-scoped agent is created before requirements installation so
+			// every subprocess can use the same inventory and repository key set.
+			t.sshKeyInstallation.Login = t.Inventory.SSHKey.SshKey.Login
+		} else {
+			t.sshKeyInstallation, err = t.KeyInstaller.Install(t.Inventory.SSHKey, db.AccessKeyRoleAnsibleUser, t.Logger)
+			if err != nil {
+				return
+			}
 		}
 	}
 
@@ -35,6 +44,67 @@ func (t *LocalExecutor) installInventory() (err error) {
 	}
 
 	return
+}
+
+func (t *LocalExecutor) startTaskSSHAgent() error {
+	keys := ssh.AgentKeys(t.Inventory.SSHKey, t.Repository.SSHKey)
+	if len(keys) == 0 {
+		return nil
+	}
+	agent, err := ssh.StartSSHAgentWithKeys(keys, &t.Template.ProjectID, t.Logger)
+	if err != nil {
+		return fmt.Errorf("starting task SSH agent: %w", err)
+	}
+	t.taskSSHAgent = &agent
+	t.inventorySSHIdentityFiles, err = t.writeTaskSSHIdentityFiles("inventory", t.Inventory.SSHKey)
+	if err != nil {
+		_ = t.taskSSHAgent.Close()
+		t.taskSSHAgent = nil
+		return err
+	}
+	t.repositorySSHIdentityFiles, err = t.writeTaskSSHIdentityFiles("repository", t.Repository.SSHKey)
+	if err != nil {
+		t.removeTaskSSHIdentityFiles()
+		_ = t.taskSSHAgent.Close()
+		t.taskSSHAgent = nil
+		return err
+	}
+	return nil
+}
+
+func (t *LocalExecutor) writeTaskSSHIdentityFiles(role string, key db.AccessKey) ([]string, error) {
+	if key.Type != db.AccessKeySSH || t.taskSSHAgent == nil {
+		return nil, nil
+	}
+	var privateKey any
+	var err error
+	if key.SshKey.Passphrase == "" {
+		privateKey, err = sshcrypto.ParseRawPrivateKey([]byte(key.SshKey.PrivateKey))
+	} else {
+		privateKey, err = sshcrypto.ParseRawPrivateKeyWithPassphrase([]byte(key.SshKey.PrivateKey), []byte(key.SshKey.Passphrase))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s SSH public identity: %w", role, err)
+	}
+	signer, err := sshcrypto.NewSignerFromKey(privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("creating %s SSH public identity: %w", role, err)
+	}
+	filename := t.taskSSHAgent.SocketFile + "." + role + ".pub"
+	if err := os.WriteFile(filename, sshcrypto.MarshalAuthorizedKey(signer.PublicKey()), 0o600); err != nil {
+		return nil, fmt.Errorf("writing %s SSH public identity: %w", role, err)
+	}
+	t.taskSSHIdentityFiles = append(t.taskSSHIdentityFiles, filename)
+	return []string{filename}, nil
+}
+
+func (t *LocalExecutor) removeTaskSSHIdentityFiles() {
+	for _, filename := range t.taskSSHIdentityFiles {
+		_ = os.Remove(filename)
+	}
+	t.taskSSHIdentityFiles = nil
+	t.inventorySSHIdentityFiles = nil
+	t.repositorySSHIdentityFiles = nil
 }
 
 func (t *LocalExecutor) tmpInventoryFilename() string {
@@ -122,6 +192,13 @@ func (t *LocalExecutor) destroyInventoryFile() {
 }
 
 func (t *LocalExecutor) destroyKeys() {
+	t.removeTaskSSHIdentityFiles()
+	if t.taskSSHAgent != nil {
+		if err := t.taskSSHAgent.Close(); err != nil {
+			t.Log("Can't destroy task SSH agent, error: " + err.Error())
+		}
+		t.taskSSHAgent = nil
+	}
 	err := t.sshKeyInstallation.Destroy()
 	if err != nil {
 		t.Log("Can't destroy inventory user key, error: " + err.Error())

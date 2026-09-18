@@ -12,6 +12,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/ssh"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/util"
 )
@@ -132,20 +133,19 @@ func (t *TerraformApp) SetLogger(logger task_logger.Logger) task_logger.Logger {
 }
 
 func (t *TerraformApp) init(environmentVars []string, keyInstaller AccessKeyInstaller, params *db.TerraformTaskParams, extraArgs []string) error {
-
-	keyInstallation, err := keyInstaller.Install(t.Inventory.SSHKey, db.AccessKeyRoleGit, t.Logger)
-	if err != nil {
-		return err
-	}
-
-	defer func() {
-		if err := keyInstallation.Destroy(); err != nil {
-			log.WithFields(log.Fields{
-				"context": "app.terraform.init",
-				"key_id":  t.Inventory.SSHKey.ID,
-			}).WithError(err).Error("failed to destroy key")
+	var err error
+	var keyInstallation ssh.AccessKeyInstallation
+	if !hasEnvironmentVariable(environmentVars, "SSH_AUTH_SOCK") {
+		keyInstallation, err = keyInstaller.Install(t.Inventory.SSHKey, db.AccessKeyRoleGit, t.Logger)
+		if err != nil {
+			return err
 		}
-	}()
+		defer func() {
+			if destroyErr := keyInstallation.Destroy(); destroyErr != nil {
+				log.WithFields(log.Fields{"context": "app.terraform.init", "key_id": t.Inventory.SSHKey.ID}).WithError(destroyErr).Error("failed to destroy key")
+			}
+		}()
+	}
 
 	args := []string{"init", "-lock=false"}
 
@@ -191,6 +191,16 @@ func (t *TerraformApp) init(environmentVars []string, keyInstaller AccessKeyInst
 	}
 
 	return nil
+}
+
+func hasEnvironmentVariable(environment []string, name string) bool {
+	prefix := name + "="
+	for index := len(environment) - 1; index >= 0; index-- {
+		if strings.HasPrefix(environment[index], prefix) {
+			return strings.TrimPrefix(environment[index], prefix) != ""
+		}
+	}
+	return false
 }
 
 func (t *TerraformApp) isWorkspacesSupported(environmentVars []string) bool {

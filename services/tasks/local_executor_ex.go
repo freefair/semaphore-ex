@@ -146,9 +146,7 @@ func (t *LocalExecutor) prepare(username string, incomingVersion *string, alias 
 		environmentVariables = append(environmentVariables, t.getShellEnvironmentExtraENV(username, incomingVersion)...)
 	}
 
-	if sshEnv := t.getSSHAgentEnv(); sshEnv != "" {
-		environmentVariables = append(environmentVariables, sshEnv)
-	}
+	environmentVariables = append(environmentVariables, t.getTaskSSHAgentEnvironment(environmentVariables)...)
 
 	if t.Template.Type != db.TemplateTask {
 
