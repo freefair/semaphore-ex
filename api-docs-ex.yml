@@ -2111,7 +2111,6 @@ paths:
                   enum: [project]
                 permission:
                   type: integer
-                  format: int64
                 capability_prerequisites:
                   type: array
                   x-nullable: true
@@ -2145,7 +2144,6 @@ paths:
                   enum: [template]
                 permission:
                   type: integer
-                  format: int64
                 capability_prerequisites:
                   type: array
                   x-nullable: true
@@ -4138,6 +4136,7 @@ paths:
       required: true
       type: string
       maxLength: 100
+      x-example: terraform-backend-example
     get:
       tags: [terraform-state]
       summary: Read the current encrypted Terraform HTTP backend state
@@ -4148,6 +4147,14 @@ paths:
     post:
       tags: [terraform-state]
       summary: Append a new encrypted Terraform HTTP backend state version
+      parameters:
+      - name: state
+        in: body
+        required: true
+        schema:
+          type: object
+          additionalProperties: true
+          example: {version: 4, serial: 1, lineage: terraform-backend-example}
       responses:
         200: {description: State stored}
         409: {description: State locked by another client}
@@ -4172,10 +4179,7 @@ paths:
   /project/{project_id}/inventory/{inventory_id}/terraform/aliases:
     parameters:
     - $ref: ./api-docs.yml#/parameters/project_id
-    - name: inventory_id
-      in: path
-      required: true
-      type: integer
+    - $ref: ./api-docs.yml#/parameters/inventory_id
     get:
       tags: [terraform-state]
       summary: List Terraform HTTP backend aliases for one workspace inventory
@@ -4201,14 +4205,12 @@ paths:
   /project/{project_id}/inventory/{inventory_id}/terraform/aliases/{alias_id}:
     parameters:
     - $ref: ./api-docs.yml#/parameters/project_id
-    - name: inventory_id
-      in: path
-      required: true
-      type: integer
+    - $ref: ./api-docs.yml#/parameters/inventory_id
     - name: alias_id
       in: path
       required: true
       type: string
+      x-example: terraform-backend-example
     get:
       tags: [terraform-state]
       summary: Read Terraform HTTP backend alias metadata
@@ -4216,6 +4218,15 @@ paths:
     put:
       tags: [terraform-state]
       summary: Change the project login-password credential used by an alias
+      parameters:
+      - name: alias
+        in: body
+        required: true
+        schema:
+          type: object
+          required: [auth_key_id]
+          properties:
+            auth_key_id: {type: integer}
       responses: {200: {description: Updated alias metadata}, 400: {description: Invalid credential binding}}
     delete:
       tags: [terraform-state]

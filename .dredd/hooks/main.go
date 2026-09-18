@@ -45,8 +45,15 @@ func main() {
 	}
 
 	h.BeforeEach(func(t *trans.Transaction) {
+		if t.Skip {
+			return
+		}
 		if dreddhooks.RequiresDedicatedStateFixture(t.FullPath) {
 			t.Skip = true
+			return
+		}
+		if strings.HasPrefix(t.FullPath, "/api/terraform/") || strings.Contains(t.FullPath, "/terraform/aliases") {
+			addCapabilities([]string{"project"})
 			return
 		}
 		if strings.HasPrefix(t.Name, "user") {
@@ -129,6 +136,9 @@ func main() {
 	h.Before("template > /api/project/{project_id}/templates/{template_id} > Get template > 200 > application/json", capabilityWrapper("template"))
 	h.Before("template > /api/project/{project_id}/templates/{template_id} > Updates template > 204 > application/json", capabilityWrapper("template"))
 	h.Before("template > /api/project/{project_id}/templates/{template_id} > Removes template > 204 > application/json", capabilityWrapper("template"))
+	h.Before("template > /api/project/{project_id}/templates/{template_id}/perms/catalog > List assignable template permissions > 200 > application/json", func(t *trans.Transaction) {
+		addCapabilities([]string{"project", "template"})
+	})
 
 	if isProBuild() {
 		h.Before("workflow > /api/project/{project_id}/workflows > Get workflows > 200 > application/json", capabilityWrapper("workflow"))
@@ -218,11 +228,14 @@ func main() {
 	h.Before("runner > /api/runners/{runner_id}/active > Set global runner active state > 204 > application/json", capabilityWrapper("global_runner"))
 	h.Before("runner > /api/runners/{runner_id}/cache > Clear global runner cache > 204 > application/json", capabilityWrapper("global_runner"))
 
+	terraformDreddFixtureSetup := registerTerraformDreddFixtures(h)
+
 	//Add these last as they normalize the requests and path values after hook processing
 	h.BeforeAll(func(transactions []*trans.Transaction) {
 		for _, t := range transactions {
 			h.Before(t.Name, setupObjectsAndPaths)
 		}
+		terraformDreddFixtureSetup()
 	})
 
 	// Delete the test runner user so adding him next time does not result in errors

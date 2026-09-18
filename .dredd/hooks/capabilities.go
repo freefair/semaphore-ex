@@ -1,12 +1,19 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/semaphoreui/semaphore/db"
+	proFactory "github.com/semaphoreui/semaphore/pro/db/factory"
+	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/tools/dreddhooks"
+	"github.com/semaphoreui/semaphore/util"
+	"github.com/snikch/goodman/hooks"
 	trans "github.com/snikch/goodman/transaction"
 )
 
@@ -329,4 +336,306 @@ func bodyFieldProcessor(id string, sub any, request *map[string]any) {
 	if _, ok := (*request)[id]; ok {
 		(*request)[id] = sub
 	}
+}
+
+type terraformDreddFixture struct {
+	workspace             db.Inventory
+	credential            db.AccessKey
+	replacementCredential db.AccessKey
+	alias                 db.TerraformInventoryAlias
+	initialState          string
+	postedState           string
+}
+
+type terraformStateWriter interface {
+	PutTerraformState(projectID, inventoryID int, ciphertext, lockID string) error
+	GetLatestTerraformState(projectID, inventoryID int) (db.TerraformInventoryState, error)
+}
+
+type terraformFixtureRegistration struct {
+	name       string
+	backend    bool
+	needsState bool
+}
+
+func registerTerraformDreddFixtures(h *hooks.Hooks) func() {
+	registrations := []terraformFixtureRegistration{
+		{"terraform-state > /api/terraform/{alias} > Read the current encrypted Terraform HTTP backend state > 200 > application/json", true, true},
+		{"terraform-state > /api/terraform/{alias} > Append a new encrypted Terraform HTTP backend state version > 200 > application/json", true, false},
+		{"terraform-state > /api/terraform/{alias} > Append a deletion tombstone for the current Terraform state > 200 > application/json", true, true},
+		{"terraform-state > /api/project/{project_id}/inventory/{inventory_id}/terraform/aliases > List Terraform HTTP backend aliases for one workspace inventory > 200 > application/json", false, false},
+		{"terraform-state > /api/project/{project_id}/inventory/{inventory_id}/terraform/aliases > Create a generated Terraform HTTP backend alias > 201 > application/json", false, false},
+		{"terraform-state > /api/project/{project_id}/inventory/{inventory_id}/terraform/aliases/{alias_id} > Read Terraform HTTP backend alias metadata > 200 > application/json", false, false},
+		{"terraform-state > /api/project/{project_id}/inventory/{inventory_id}/terraform/aliases/{alias_id} > Change the project login-password credential used by an alias > 200 > application/json", false, false},
+		{"terraform-state > /api/project/{project_id}/inventory/{inventory_id}/terraform/aliases/{alias_id} > Delete a Terraform HTTP backend alias > 204 > application/json", false, false},
+	}
+
+	fixtures := make([]terraformDreddFixture, len(registrations))
+	for index := range registrations {
+		registration := registrations[index]
+		fixture := &fixtures[index]
+		h.Before(registration.name, func(t *trans.Transaction) {
+			fixture.setup(registration, t)
+		})
+		h.After(registration.name, func(t *trans.Transaction) {
+			fixture.assertResult(registration, t)
+		})
+	}
+
+	return func() {
+		for index := range registrations {
+			registration := registrations[index]
+			fixture := &fixtures[index]
+			h.Before(registration.name, func(t *trans.Transaction) {
+				fixture.configureRequest(registration, t)
+			})
+		}
+	}
+}
+
+func (fixture *terraformDreddFixture) setup(registration terraformFixtureRegistration, t *trans.Transaction) {
+	if t.Skip {
+		return
+	}
+	if userProject == nil || userProject.ID <= 0 {
+		panic("terraform Dredd fixture requires a project")
+	}
+	if util.Config == nil || !util.Config.AccessKeyEncryptionEnabled() {
+		panic("terraform Dredd fixture requires access-key encryption")
+	}
+
+	dbConnect()
+	defer store.Close()
+
+	workspace, err := store.CreateInventory(db.Inventory{
+		ProjectID: userProject.ID,
+		Name:      "ITTW-" + getUUID(),
+		Type:      db.InventoryTerraformWorkspace,
+	})
+	if err != nil {
+		panic(fmt.Errorf("create Terraform workspace fixture: %w", err))
+	}
+	fixture.workspace = workspace
+
+	fixture.credential = createTerraformDreddCredential("terraform-dredd", "terraform-dredd-password")
+
+	terraformStore := proFactory.NewTerraformStore(store)
+	alias := db.TerraformInventoryAlias{
+		ProjectID: userProject.ID, InventoryID: workspace.ID, AuthKeyID: fixture.credential.ID,
+		Alias: "terraform-dredd-" + getUUID(),
+	}
+	created, err := terraformStore.CreateTerraformInventoryAlias(alias)
+	if err != nil {
+		panic(fmt.Errorf("create Terraform backend alias: %w", err))
+	}
+	if created != alias {
+		panic("Terraform backend alias creation returned unexpected data")
+	}
+	persisted, err := terraformStore.GetTerraformInventoryAlias(userProject.ID, workspace.ID, alias.Alias)
+	if err != nil {
+		panic(fmt.Errorf("read Terraform backend alias fixture: %w", err))
+	}
+	if persisted != alias {
+		panic("Terraform backend alias fixture differs from its persisted value")
+	}
+	fixture.alias = persisted
+
+	if t.Request.Method == "PUT" {
+		fixture.replacementCredential = createTerraformDreddCredential("terraform-dredd-replacement", "terraform-dredd-replacement-password")
+	}
+
+	if !registration.needsState {
+		return
+	}
+	stateWriter, ok := terraformStore.(terraformStateWriter)
+	if !ok {
+		panic("Terraform backend store does not support state fixtures")
+	}
+	fixture.initialState = `{"version":4,"serial":1,"lineage":"terraform-dredd"}`
+	ciphertext, err := util.Config.EncryptAccessSecret([]byte(fixture.initialState))
+	if err != nil {
+		panic(fmt.Errorf("encrypt Terraform backend state: %w", err))
+	}
+	if util.SecretKeyID(ciphertext) == "" {
+		panic("Terraform backend state was not encrypted")
+	}
+	if err = stateWriter.PutTerraformState(userProject.ID, workspace.ID, ciphertext, ""); err != nil {
+		panic(fmt.Errorf("create Terraform backend state: %w", err))
+	}
+	state, err := stateWriter.GetLatestTerraformState(userProject.ID, workspace.ID)
+	if err != nil || state.ID <= 0 || state.State != ciphertext {
+		panic(fmt.Errorf("verify Terraform backend state fixture: %w", err))
+	}
+}
+
+func createTerraformDreddCredential(login, password string) db.AccessKey {
+	credential := db.AccessKey{
+		Name:      "ITTK-" + getUUID(),
+		Type:      db.AccessKeyLoginPassword,
+		ProjectID: &userProject.ID,
+		LoginPassword: db.LoginPassword{
+			Login:    login,
+			Password: password,
+		},
+	}
+	if err := server.NewLocalAccessKeyDeserializer().SerializeSecret(&credential); err != nil {
+		panic(fmt.Errorf("encrypt Terraform backend credential: %w", err))
+	}
+	if credential.Secret == nil || util.SecretKeyID(*credential.Secret) == "" {
+		panic("Terraform backend credential was not encrypted")
+	}
+	created, err := store.CreateAccessKey(credential)
+	if err != nil {
+		panic(fmt.Errorf("create Terraform backend credential: %w", err))
+	}
+	return created
+}
+
+func (fixture *terraformDreddFixture) configureRequest(registration terraformFixtureRegistration, t *trans.Transaction) {
+	if t.Skip {
+		return
+	}
+	if registration.backend {
+		t.FullPath = "/api/terraform/" + fixture.alias.Alias
+		t.Request.URI = t.FullPath
+		if t.Request.Headers == nil {
+			t.Request.Headers = map[string]interface{}{}
+		}
+		t.Request.Headers["Authorization"] = "Basic " + base64.StdEncoding.EncodeToString([]byte(fixture.credential.LoginPassword.Login+":"+fixture.credential.LoginPassword.Password))
+		if t.Request.Method == "POST" {
+			fixture.postedState = `{"version":4,"serial":2,"lineage":"terraform-dredd"}`
+			t.Request.Body = fixture.postedState
+		}
+		return
+	}
+
+	path := fmt.Sprintf("/api/project/%d/inventory/%d/terraform/aliases", userProject.ID, fixture.workspace.ID)
+	if strings.Contains(t.FullPath, "/aliases/") {
+		path += "/" + fixture.alias.Alias
+	}
+	t.FullPath = path
+	t.Request.URI = path
+	if t.Request.Method == "POST" || t.Request.Method == "PUT" {
+		credential := fixture.credential
+		if t.Request.Method == "PUT" {
+			credential = fixture.replacementCredential
+			if credential.ID <= 0 || credential.ID == fixture.credential.ID {
+				panic("Terraform alias update fixture requires a replacement credential")
+			}
+		}
+		t.Request.Body = fmt.Sprintf(`{"auth_key_id":%d}`, credential.ID)
+	}
+}
+
+func (fixture *terraformDreddFixture) assertResult(registration terraformFixtureRegistration, t *trans.Transaction) {
+	if t.Skip || t.Real == nil || t.Real.StatusCode < 200 || t.Real.StatusCode >= 300 {
+		return
+	}
+	if registration.backend {
+		fixture.assertBackendResult(t)
+		return
+	}
+	fixture.assertAliasResult(t)
+}
+
+func (fixture *terraformDreddFixture) assertBackendResult(t *trans.Transaction) {
+	switch t.Request.Method {
+	case "GET":
+		if t.Real.Body != fixture.initialState {
+			failTerraformDredd(t, "Terraform state GET response did not match the fixture state")
+		}
+	case "POST":
+		state, err := fixture.latestState()
+		if err != nil {
+			failTerraformDredd(t, fmt.Sprintf("read Terraform state after POST: %v", err))
+			return
+		}
+		plain, err := util.Config.DecryptAccessSecret(state.State)
+		if err != nil || string(plain) != fixture.postedState {
+			failTerraformDredd(t, "Terraform state POST did not persist the submitted encrypted state")
+		}
+	case "DELETE":
+		_, err := fixture.latestState()
+		if !errors.Is(err, db.ErrNotFound) {
+			failTerraformDredd(t, "Terraform state DELETE did not create a state tombstone")
+		}
+	}
+}
+
+func (fixture *terraformDreddFixture) assertAliasResult(t *trans.Transaction) {
+	switch t.Request.Method {
+	case "GET":
+		if strings.HasSuffix(t.FullPath, "/aliases") {
+			var aliases []map[string]any
+			if err := json.Unmarshal([]byte(t.Real.Body), &aliases); err != nil || !containsTerraformAlias(aliases, fixture.alias) {
+				failTerraformDredd(t, "Terraform alias list response did not contain the fixture alias metadata")
+			}
+			return
+		}
+		if !matchesTerraformAliasResponse(t.Real.Body, fixture.alias) {
+			failTerraformDredd(t, "Terraform alias GET response did not match the fixture alias metadata")
+		}
+	case "POST":
+		var response struct {
+			ID        string `json:"id"`
+			AuthKeyID int    `json:"auth_key_id"`
+		}
+		if err := json.Unmarshal([]byte(t.Real.Body), &response); err != nil || response.ID == "" || response.AuthKeyID != fixture.credential.ID {
+			failTerraformDredd(t, "Terraform alias POST response did not return generated metadata")
+			return
+		}
+		persisted, err := fixture.readAlias(response.ID)
+		if err != nil || persisted.AuthKeyID != fixture.credential.ID || persisted.ProjectID != userProject.ID || persisted.InventoryID != fixture.workspace.ID {
+			failTerraformDredd(t, fmt.Sprintf("read Terraform alias created by POST: %v", err))
+		}
+	case "PUT":
+		persisted, err := fixture.readAlias(fixture.alias.Alias)
+		if err != nil || persisted.AuthKeyID != fixture.replacementCredential.ID || !matchesTerraformAliasResponse(t.Real.Body, persisted) {
+			failTerraformDredd(t, "Terraform alias PUT did not persist the replacement credential")
+		}
+	case "DELETE":
+		_, err := fixture.readAlias(fixture.alias.Alias)
+		if !errors.Is(err, db.ErrNotFound) {
+			failTerraformDredd(t, "Terraform alias DELETE did not remove the fixture alias")
+		}
+	}
+}
+
+func (fixture *terraformDreddFixture) latestState() (db.TerraformInventoryState, error) {
+	dbConnect()
+	defer store.Close()
+	stateWriter, ok := proFactory.NewTerraformStore(store).(terraformStateWriter)
+	if !ok {
+		return db.TerraformInventoryState{}, errors.New("Terraform backend store does not support state fixtures")
+	}
+	return stateWriter.GetLatestTerraformState(userProject.ID, fixture.workspace.ID)
+}
+
+func (fixture *terraformDreddFixture) readAlias(alias string) (db.TerraformInventoryAlias, error) {
+	dbConnect()
+	defer store.Close()
+	return proFactory.NewTerraformStore(store).GetTerraformInventoryAlias(userProject.ID, fixture.workspace.ID, alias)
+}
+
+func containsTerraformAlias(aliases []map[string]any, expected db.TerraformInventoryAlias) bool {
+	for _, alias := range aliases {
+		if alias["id"] == expected.Alias && alias["project_id"] == float64(expected.ProjectID) &&
+			alias["inventory_id"] == float64(expected.InventoryID) && alias["auth_key_id"] == float64(expected.AuthKeyID) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesTerraformAliasResponse(body string, expected db.TerraformInventoryAlias) bool {
+	var alias map[string]any
+	if err := json.Unmarshal([]byte(body), &alias); err != nil {
+		return false
+	}
+	return alias["id"] == expected.Alias && alias["project_id"] == float64(expected.ProjectID) &&
+		alias["inventory_id"] == float64(expected.InventoryID) && alias["auth_key_id"] == float64(expected.AuthKeyID)
+}
+
+func failTerraformDredd(t *trans.Transaction, message string) {
+	t.Fail = message
 }
