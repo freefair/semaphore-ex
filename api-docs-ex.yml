@@ -3,6 +3,7 @@ definitions:
   TaskSSHKeyBindings:
     type: array
     x-nullable: true
+    example: []
     maxItems: 64
     description: >
       Additional SSH key references and their exact hosts. On templates and tasks,
