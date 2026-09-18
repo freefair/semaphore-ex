@@ -519,6 +519,13 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 	if err := task.ValidateNewTask(template); err != nil {
 		return ExecutionPreflightSnapshot{}, nil, err
 	}
+	if template.ProjectID != projectID && task.SSHKeys != nil {
+		return ExecutionPreflightSnapshot{}, nil, errors.New("cross-project task SSH key overrides are not authorized")
+	}
+	sshKeyBindings, sshKeyProjectID, err := p.resolveTaskSSHKeyBindings(template, task)
+	if err != nil {
+		return ExecutionPreflightSnapshot{}, nil, err
+	}
 
 	templateVersionSnapshot, err := db.NewTemplateVersionSnapshot(template)
 	if err != nil {
@@ -563,7 +570,13 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 		),
 	}
 
-	resourceState := make([]any, 0, 4+len(template.EnvironmentIDs)+len(template.Vaults))
+	resourceState := make([]any, 0, 4+len(template.EnvironmentIDs)+len(template.Vaults)+len(sshKeyBindings)*2)
+	resourceState = append(resourceState, sshKeyProjectID, sshKeyBindings)
+	for _, binding := range sshKeyBindings {
+		if err = p.appendExecutionPreflightCredentialState(&resourceState, sshKeyProjectID, &binding.AccessKeyID); err != nil {
+			return ExecutionPreflightSnapshot{}, nil, err
+		}
+	}
 	var snapshotInventory *db.Inventory
 	var snapshotInventoryRepository *db.Repository
 	var snapshotRepository *db.Repository
@@ -748,6 +761,8 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 		InventoryRepository: snapshotInventoryRepository,
 		Repository:          *snapshotRepository,
 		Environments:        snapshotEnvironments,
+		SSHKeyProjectID:     sshKeyProjectID,
+		SSHKeys:             sshKeyBindings,
 	}
 	return finalized, &executionSnapshot, nil
 }

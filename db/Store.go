@@ -68,7 +68,9 @@ type ObjectReferrer struct {
 }
 
 type ObjectReferrers struct {
+	Projects     []ObjectReferrer `json:"projects"`
 	Templates    []ObjectReferrer `json:"templates"`
+	Tasks        []ObjectReferrer `json:"tasks"`
 	Inventories  []ObjectReferrer `json:"inventories"`
 	Repositories []ObjectReferrer `json:"repositories"`
 	Integrations []ObjectReferrer `json:"integrations"`

@@ -10,7 +10,7 @@ func TestUpstreamSeamMigrationsPreserveExistingForkTemplates(t *testing.T) {
 	version := "2.20.65"
 	store := InitConfigCreateTestStoreAt(&version)
 	t.Cleanup(store.Close)
-	projectID, repositoryID := newTemplateTestProject(t, store)
+	projectID, repositoryID := newLegacyTemplateTestProject(t, store)
 	templateID, err := store.insert("id", "insert into project__template (project_id, repository_id, name, playbook, app) values (?, ?, 'Preserved', 'site.yml', 'ansible')", projectID, repositoryID)
 	require.NoError(t, err)
 	require.NotContains(t, sqliteColumnNames(t, store, "project__template"), "working_directory")

@@ -25,6 +25,10 @@ type JobData struct {
 	CredentialTargets []string `json:"credential_targets,omitempty"`
 	JWT               string   `json:"jwt,omitempty"`
 	ExecutorImage     *string  `json:"executor_image,omitempty"`
+	// SSHKeyBindings are value-free host/key descriptors sent only to an
+	// authenticated runner with this job. Private material remains in
+	// RunnerState.AccessKeys.
+	SSHKeyBindings db.SSHKeyBindings `json:"ssh_key_bindings,omitempty"`
 }
 
 type RunnerState struct {

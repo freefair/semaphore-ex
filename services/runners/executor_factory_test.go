@@ -127,7 +127,7 @@ func TestHydrateJobAccessKeys_WiresKeysIntoJobData(t *testing.T) {
 		},
 	}
 
-	hydrateJobAccessKeys(&jobData, accessKeys)
+	require.NoError(t, hydrateJobAccessKeys(&jobData, accessKeys))
 
 	assert.Equal(t, 7, jobData.Repository.SSHKey.ID, "template repo SSH key wired")
 	assert.Equal(t, sshKeyID, jobData.Inventory.SSHKey.ID, "inventory SSH key wired")
@@ -136,4 +136,16 @@ func TestHydrateJobAccessKeys_WiresKeysIntoJobData(t *testing.T) {
 	require.NotNil(t, jobData.Template.Vaults[0].Vault)
 	assert.Equal(t, vaultKeyID, jobData.Template.Vaults[0].Vault.ID, "vault key wired")
 	assert.Equal(t, inventoryRepoSSHKeyID, jobData.Inventory.Repository.SSHKey.ID, "inventory repo SSH key wired")
+}
+
+func TestHydrateJobAccessKeysWiresTaskSSHBindingsAndRejectsMissingKey(t *testing.T) {
+	jobData := JobData{SSHKeyBindings: db.SSHKeyBindings{{AccessKeyID: 71, Hosts: []string{"git.example.test"}}}}
+	accessKeys := map[int]db.AccessKey{71: {ID: 71, Type: db.AccessKeySSH}}
+	require.NoError(t, hydrateJobAccessKeys(&jobData, accessKeys))
+	require.Len(t, jobData.Task.ResolvedSSHKeys, 1)
+	assert.Equal(t, 71, jobData.Task.ResolvedSSHKeys[0].Key.ID)
+	assert.Equal(t, "git.example.test", jobData.Task.ResolvedSSHKeys[0].Binding.Hosts[0])
+
+	err := hydrateJobAccessKeys(&JobData{SSHKeyBindings: jobData.SSHKeyBindings}, map[int]db.AccessKey{})
+	require.ErrorContains(t, err, "71")
 }

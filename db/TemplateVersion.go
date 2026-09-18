@@ -53,6 +53,9 @@ type TemplateVersionExecution struct {
 	AllowOverrideBranchInTask bool               `json:"allow_override_branch_in_task,omitempty"`
 	AllowParallelTasks        bool               `json:"allow_parallel_tasks,omitempty"`
 	JWTParams                 *TemplateJWTParams `json:"jwt_params,omitempty"`
+	// Keep null distinct from []: null inherits project defaults, while []
+	// explicitly clears them for a versioned or cross-project execution.
+	SSHKeys SSHKeyBindings `json:"ssh_keys"`
 }
 
 // TemplateVersionVaultDescriptor preserves the authored vault association
@@ -191,6 +194,9 @@ func (snapshot TemplateVersionSnapshot) Validate() error {
 	if snapshot.Dependencies.InventoryID != nil && *snapshot.Dependencies.InventoryID <= 0 {
 		return errors.New("template version snapshot inventory is invalid")
 	}
+	if err := ValidateSSHKeyBindings(snapshot.Execution.SSHKeys); err != nil {
+		return err
+	}
 	if snapshot.Dependencies.BuildTemplateVersion != nil {
 		reference := snapshot.Dependencies.BuildTemplateVersion
 		if reference.OwnerProjectID <= 0 || reference.TemplateID <= 0 || reference.VersionNumber <= 0 ||
@@ -224,6 +230,7 @@ func NewTemplateVersionSnapshot(template Template) (TemplateVersionSnapshot, err
 			RunnerTags: template.RunnerTags, RunnerTagMatchMode: template.RunnerTagMatchMode,
 			ExecutorImage: template.ExecutorImage, AllowOverrideBranchInTask: template.AllowOverrideBranchInTask,
 			AllowParallelTasks: template.AllowParallelTasks, JWTParams: template.JWTParams,
+			SSHKeys: template.SSHKeys,
 		},
 		Dependencies: TemplateVersionDependencies{
 			RepositoryID: template.RepositoryID, InventoryID: template.InventoryID,
@@ -287,6 +294,7 @@ func (snapshot TemplateVersionSnapshot) ReconstructTemplate(ownerProjectID int, 
 		AllowOverrideBranchInTask: immutable.Execution.AllowOverrideBranchInTask,
 		AllowParallelTasks:        immutable.Execution.AllowParallelTasks,
 		JWTParams:                 immutable.Execution.JWTParams,
+		SSHKeys:                   immutable.Execution.SSHKeys,
 	}
 	if len(template.EnvironmentIDs) > 0 {
 		template.EnvironmentID = template.EnvironmentIDs[0]
@@ -311,6 +319,7 @@ func deepCopyTemplateVersionSnapshot(snapshot TemplateVersionSnapshot) (Template
 	copy.Execution.RunnerTag = cloneTemplateVersionString(snapshot.Execution.RunnerTag)
 	copy.Execution.ExecutorImage = cloneTemplateVersionString(snapshot.Execution.ExecutorImage)
 	copy.Execution.RunnerTags = slices.Clone(snapshot.Execution.RunnerTags)
+	copy.Execution.SSHKeys = copySSHKeyBindings(snapshot.Execution.SSHKeys)
 	if snapshot.Execution.JWTParams != nil {
 		jwtParams := *snapshot.Execution.JWTParams
 		jwtParams.Audience = slices.Clone(snapshot.Execution.JWTParams.Audience)

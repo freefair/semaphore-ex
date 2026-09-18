@@ -47,7 +47,11 @@ func (t *LocalExecutor) installInventory() (err error) {
 }
 
 func (t *LocalExecutor) startTaskSSHAgent() error {
-	keys := ssh.AgentKeys(t.Inventory.SSHKey, t.Repository.SSHKey)
+	allKeys := []db.AccessKey{t.Inventory.SSHKey, t.Repository.SSHKey}
+	for _, resolved := range t.Task.ResolvedSSHKeys {
+		allKeys = append(allKeys, resolved.Key)
+	}
+	keys := ssh.AgentKeys(allKeys...)
 	if len(keys) == 0 {
 		return nil
 	}
@@ -64,6 +68,22 @@ func (t *LocalExecutor) startTaskSSHAgent() error {
 	}
 	t.repositorySSHIdentityFiles, err = t.writeTaskSSHIdentityFiles("repository", t.Repository.SSHKey)
 	if err != nil {
+		t.removeTaskSSHIdentityFiles()
+		_ = t.taskSSHAgent.Close()
+		t.taskSSHAgent = nil
+		return err
+	}
+	for _, resolved := range t.Task.ResolvedSSHKeys {
+		selectors, selectorErr := t.writeTaskSSHIdentityFiles("task-"+strconv.Itoa(resolved.Binding.AccessKeyID), resolved.Key)
+		if selectorErr != nil {
+			t.removeTaskSSHIdentityFiles()
+			_ = t.taskSSHAgent.Close()
+			t.taskSSHAgent = nil
+			return selectorErr
+		}
+		t.extraSSHIdentityFiles = append(t.extraSSHIdentityFiles, firstSelector(selectors))
+	}
+	if err = t.prepareTaskSSHRouting(); err != nil {
 		t.removeTaskSSHIdentityFiles()
 		_ = t.taskSSHAgent.Close()
 		t.taskSSHAgent = nil
@@ -105,6 +125,7 @@ func (t *LocalExecutor) removeTaskSSHIdentityFiles() {
 	t.taskSSHIdentityFiles = nil
 	t.inventorySSHIdentityFiles = nil
 	t.repositorySSHIdentityFiles = nil
+	t.extraSSHIdentityFiles = nil
 }
 
 func (t *LocalExecutor) tmpInventoryFilename() string {
@@ -192,6 +213,7 @@ func (t *LocalExecutor) destroyInventoryFile() {
 }
 
 func (t *LocalExecutor) destroyKeys() {
+	t.removeTaskSSHRoutingFiles()
 	t.removeTaskSSHIdentityFiles()
 	if t.taskSSHAgent != nil {
 		if err := t.taskSSHAgent.Close(); err != nil {

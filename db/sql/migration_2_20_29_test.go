@@ -13,8 +13,7 @@ func TestMigration22029BackfillsProjectRoleIdentityAndAssignments(t *testing.T) 
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 
-	project, err := store.CreateProject(db.Project{Name: "Legacy project roles"})
-	require.NoError(t, err)
+	project := createLegacyProject(t, store, "Legacy project roles")
 	user, err := store.CreateUserWithoutPassword(db.User{
 		Username: "legacy-role-user",
 		Name:     "Legacy Role User",
@@ -52,8 +51,7 @@ func TestMigration22029BackfillsProjectRoleIdentityAndAssignments(t *testing.T) 
 	assert.Equal(t, role.ID, *assignment.RoleID)
 	assert.Equal(t, 1, assignment.Revision)
 
-	secondProject, err := store.CreateProject(db.Project{Name: "Second project"})
-	require.NoError(t, err)
+	secondProject := createLegacyProject(t, store, "Second project")
 	_, err = store.exec(
 		"insert into `role` (role_id, slug, name, permissions, project_id, revision) values (?, ?, ?, ?, ?, ?)",
 		"role_second", "second-viewer", role.Name, db.CanViewProjectResources, secondProject.ID, 1,

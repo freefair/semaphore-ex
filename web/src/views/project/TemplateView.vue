@@ -4,6 +4,8 @@
   </div>
   <div v-else>
     <NewTaskDialog
+      :user-permissions="userPermissions"
+      :is-admin="isAdmin"
       v-model="newTaskDialog"
       :project-id="projectId"
       :template="item"

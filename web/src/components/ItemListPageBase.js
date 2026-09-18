@@ -102,7 +102,8 @@ export default {
           responseType: 'json',
         })).data;
 
-        if (this.itemRefs.templates.length > 0
+        if ((this.itemRefs.projects || []).length > 0
+          || this.itemRefs.templates.length > 0
           || this.itemRefs.repositories.length > 0
           || this.itemRefs.inventories.length > 0
           || this.itemRefs.access_keys.length > 0

@@ -61,6 +61,12 @@ type Task struct {
 	GlobalCredentialBindings     map[string]int `db:"-" json:"-"`
 	Arguments                    *string        `db:"arguments" json:"arguments,omitempty"`
 	GitBranch                    *string        `db:"git_branch" json:"git_branch,omitempty"`
+	// SSHKeys overrides the template and project default SSH key selection.
+	// Nil inherits; an empty slice explicitly selects no default keys.
+	SSHKeys SSHKeyBindings `db:"ssh_keys" json:"ssh_keys"`
+	// ResolvedSSHKeys is runner-only hydrated key material. It never persists
+	// or crosses public task APIs; the immutable snapshot stores only bindings.
+	ResolvedSSHKeys []ResolvedTaskSSHKey `db:"-" json:"-" backup:"-"`
 
 	UserID        *int `db:"user_id" json:"user_id,omitempty"`
 	IntegrationID *int `db:"integration_id" json:"integration_id,omitempty"`

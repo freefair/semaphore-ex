@@ -13,8 +13,7 @@ func TestMigration22016BackfillsConditionalWorkflowDefaultsAndRollsBack(t *testi
 	legacyVersion := "2.20.15"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
-	project, err := store.CreateProject(db.Project{Name: "Legacy conditional workflow"})
-	require.NoError(t, err)
+	project := createLegacyProject(t, store, "Legacy conditional workflow")
 	result, err := store.Sql().Exec(
 		"insert into project__workflow_template(project_id, name, definition_version, revision) values (?, ?, ?, ?)",
 		project.ID, "Legacy", 1, 1,

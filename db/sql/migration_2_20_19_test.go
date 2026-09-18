@@ -13,8 +13,7 @@ func TestMigration22019AddsWorkflowTriggerPersistenceAndRollsBack(t *testing.T) 
 	legacyVersion := "2.20.18"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
-	project, err := store.CreateProject(db.Project{Name: "Legacy workflow triggers"})
-	require.NoError(t, err)
+	project := createLegacyProject(t, store, "Legacy workflow triggers")
 	result, err := store.Sql().Exec(
 		"insert into project__workflow_template(project_id, name, definition_version, revision, parameter_definitions) values (?, ?, ?, ?, ?)",
 		project.ID, "Legacy", 1, 1, "[]",

@@ -3322,10 +3322,13 @@ symbols:
     implementation: core
   - name: db:ObjectReferrers
     signature: >-
-      struct{Templates []db.ObjectReferrer "json:\"templates\""; Inventories []db.ObjectReferrer "json:\"inventories\""; Repositories
-      []db.ObjectReferrer "json:\"repositories\""; Integrations []db.ObjectReferrer "json:\"integrations\""; Schedules []db.ObjectReferrer
+      struct{Projects []db.ObjectReferrer "json:\"projects\""; Templates []db.ObjectReferrer "json:\"templates\""; Tasks
+      []db.ObjectReferrer "json:\"tasks\""; Inventories []db.ObjectReferrer "json:\"inventories\""; Repositories []db.ObjectReferrer
+      "json:\"repositories\""; Integrations []db.ObjectReferrer "json:\"integrations\""; Schedules []db.ObjectReferrer
       "json:\"schedules\""; AccessKeys []db.ObjectReferrer "json:\"access_keys\""}
     implementation: core
+    behavior_tests:
+    - db/sql/task_ssh_key_refs_test.go::TestGetAccessKeyRefsIncludesSSHBindingOwners
   - name: db:ObjectToJSON
     signature: func(obj any) *string
     implementation: core
@@ -3396,12 +3399,17 @@ symbols:
     implementation: core
   - name: db:Project
     signature: >-
-      struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; Name string "db:\"name\" json:\"name\" binding:\"required\""; Created time.Time
-      "db:\"created\" json:\"created\" backup:\"-\""; Alert bool "db:\"alert\" json:\"alert,omitempty\""; AlertChat *string
-      "db:\"alert_chat\" json:\"alert_chat,omitempty\""; MaxParallelTasks int "db:\"max_parallel_tasks\"
+      struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; Name string "db:\"name\" json:\"name\" binding:\"required\""; Created
+      time.Time "db:\"created\" json:\"created\" backup:\"-\""; Alert bool "db:\"alert\" json:\"alert,omitempty\""; AlertChat
+      *string "db:\"alert_chat\" json:\"alert_chat,omitempty\""; MaxParallelTasks int "db:\"max_parallel_tasks\"
       json:\"max_parallel_tasks,omitempty\""; Type string "db:\"type\" json:\"type\""; DefaultSecretStorageID *int
-      "db:\"default_secret_storage_id\" json:\"default_secret_storage_id,omitempty\" backup:\"-\""}
+      "db:\"default_secret_storage_id\" json:\"default_secret_storage_id,omitempty\" backup:\"-\""; DefaultSSHKeys db.SSHKeyBindings
+      "db:\"default_ssh_keys\" json:\"default_ssh_keys\" backup:\"-\""; AlwaysSSHKeys db.SSHKeyBindings "db:\"always_ssh_keys\"
+      json:\"always_ssh_keys\" backup:\"-\""}
     implementation: core
+    behavior_tests:
+    - db/sql/task_ssh_key_persistence_test.go::TestProjectSSHKeyBindingsRoundTrip
+    - services/project/backup_test.go::TestBackupProject
   - name: db:ProjectGuest
     signature: db.ProjectUserRole = "guest"
     implementation: core
@@ -3561,6 +3569,12 @@ symbols:
   - name: db:RepositoryType
     signature: string
     implementation: core
+  - name: db:ResolveTaskSSHKeys
+    signature: func(projectDefault db.SSHKeyBindings, projectAlways db.SSHKeyBindings, template db.SSHKeyBindings, task db.SSHKeyBindings) (db.SSHKeyBindings, error)
+    implementation: core
+    behavior_tests:
+    - db/task_ssh_keys_ex_test.go::TestResolveTaskSSHKeysInheritanceAndConflicts
+    - db/task_ssh_keys_ex_test.go::TestResolveTaskSSHKeysPrecedenceAndInputIsolation
   - name: db:ResolveWorkflowArtifactRetention
     signature: >-
       func(global db.WorkflowArtifactRetentionPolicy, project *db.WorkflowArtifactRetentionPolicy) (db.WorkflowArtifactRetentionSnapshot,
@@ -3574,6 +3588,11 @@ symbols:
   - name: db:ResolveWorkflowTriggerValues
     signature: func(trigger db.WorkflowTrigger, requestValues map[string]encoding/json.RawMessage) (map[string]encoding/json.RawMessage, error)
     implementation: core
+  - name: db:ResolvedTaskSSHKey
+    signature: struct{Binding db.SSHKeyBinding "json:\"binding\""; Key db.AccessKey "json:\"-\""}
+    implementation: core
+    behavior_tests:
+    - services/runners/executor_factory_ex_test.go::TestRunnerPayloadNeverSerializesResolvedTaskSSHKeyMaterial
   - name: db:RetrieveQueryParams
     signature: >-
       struct{Offset int; Count int; SortBy string; SortInverted bool; Filter string; Ownership db.OwnershipFilter; TaskFilter
@@ -3938,6 +3957,17 @@ symbols:
   - name: db:RunnerTransportTrust
     signature: string
     implementation: core
+  - name: db:SSHKeyBinding
+    signature: struct{AccessKeyID int "json:\"access_key_id\""; Hosts []string "json:\"hosts\""}
+    implementation: core
+    behavior_tests:
+    - db/task_ssh_keys_ex_test.go::TestSSHKeyBindingsValidation
+  - name: db:SSHKeyBindings
+    signature: '[]db.SSHKeyBinding'
+    implementation: core
+    behavior_tests:
+    - db/task_ssh_keys_ex_test.go::TestSSHKeyBindingsNilAndEmptyPersistence
+    - db/task_ssh_keys_ex_test.go::TestSSHKeyBindingsPreserveOptionalHostLists
   - name: db:Schedule
     signature: >-
       struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; ProjectID int "db:\"project_id\" json:\"project_id\" backup:\"-\""; TemplateID int
@@ -4243,36 +4273,36 @@ symbols:
       "db:\"project_id\" json:\"project_id\""; TemplateName string "db:\"-\" json:\"template_name,omitempty\""; Status
       pkg/task_logger.TaskStatus "db:\"status\" json:\"status\""; NotificationRevision int "db:\"notification_revision\"
       json:\"-\""; Playbook string "db:\"playbook\" json:\"playbook\""; Environment string "db:\"environment\"
-      json:\"environment,omitempty\""; Secret string "db:\"-\" json:\"secret,omitempty\""; GlobalCredentialBindingsJSON
-      string "db:\"global_credential_bindings\" json:\"-\""; GlobalCredentialBindings map[string]int "db:\"-\"
-      json:\"-\""; Arguments *string "db:\"arguments\" json:\"arguments,omitempty\""; GitBranch *string "db:\"git_branch\"
-      json:\"git_branch,omitempty\""; UserID *int "db:\"user_id\" json:\"user_id,omitempty\""; IntegrationID *int
-      "db:\"integration_id\" json:\"integration_id,omitempty\""; ScheduleID *int "db:\"schedule_id\"
-      json:\"schedule_id,omitempty\""; ScheduleOccurrenceKey *string "db:\"schedule_occurrence_key\" json:\"-\""; RunnerID
-      *int "db:\"runner_id\" json:\"-\""; RunnerSnapshotID *int "db:\"runner_id_snapshot\" json:\"-\""; RunnerName *string
-      "db:\"runner_name\" json:\"-\""; AssignmentGeneration int "db:\"assignment_generation\"
-      json:\"assignment_generation,omitempty\""; TaskControlFencingToken int64 "db:\"task_control_fencing_token\"
-      json:\"-\""; RunnerAssignedAt *time.Time "db:\"runner_assigned_at\" json:\"runner_assigned_at,omitempty\"";
-      RecoveryReason string "db:\"recovery_reason\" json:\"recovery_reason,omitempty\""; PlacementDecision
-      *db.RunnerPlacementDecision "db:\"placement_decision\" json:\"placement_decision,omitempty\"";
+      json:\"environment,omitempty\""; Secret string "db:\"-\" json:\"secret,omitempty\""; GlobalCredentialBindingsJSON string
+      "db:\"global_credential_bindings\" json:\"-\""; GlobalCredentialBindings map[string]int "db:\"-\" json:\"-\""; Arguments
+      *string "db:\"arguments\" json:\"arguments,omitempty\""; GitBranch *string "db:\"git_branch\" json:\"git_branch,omitempty\"";
+      SSHKeys db.SSHKeyBindings "db:\"ssh_keys\" json:\"ssh_keys\""; ResolvedSSHKeys []db.ResolvedTaskSSHKey "db:\"-\" json:\"-\"
+      backup:\"-\""; UserID *int "db:\"user_id\" json:\"user_id,omitempty\""; IntegrationID *int "db:\"integration_id\"
+      json:\"integration_id,omitempty\""; ScheduleID *int "db:\"schedule_id\" json:\"schedule_id,omitempty\""; ScheduleOccurrenceKey
+      *string "db:\"schedule_occurrence_key\" json:\"-\""; RunnerID *int "db:\"runner_id\" json:\"-\""; RunnerSnapshotID *int
+      "db:\"runner_id_snapshot\" json:\"-\""; RunnerName *string "db:\"runner_name\" json:\"-\""; AssignmentGeneration int
+      "db:\"assignment_generation\" json:\"assignment_generation,omitempty\""; TaskControlFencingToken int64
+      "db:\"task_control_fencing_token\" json:\"-\""; RunnerAssignedAt *time.Time "db:\"runner_assigned_at\"
+      json:\"runner_assigned_at,omitempty\""; RecoveryReason string "db:\"recovery_reason\" json:\"recovery_reason,omitempty\"";
+      PlacementDecision *db.RunnerPlacementDecision "db:\"placement_decision\" json:\"placement_decision,omitempty\"";
       RequestedExecutorImage *string "db:\"requested_executor_image\" json:\"requested_executor_image,omitempty\"";
-      ResolvedExecutorImage *string "db:\"resolved_executor_image\" json:\"resolved_executor_image,omitempty\""; Created
-      time.Time "db:\"created\" json:\"created\""; Start *time.Time "db:\"start\" json:\"start,omitempty\""; End
-      *time.Time "db:\"end\" json:\"end,omitempty\""; Message string "db:\"message\" json:\"message,omitempty\"";
-      CommitHash *string "db:\"commit_hash\" json:\"commit_hash,omitempty\""; CommitMessage string "db:\"commit_message\"
-      json:\"commit_message,omitempty\""; BuildTaskID *int "db:\"build_task_id\" json:\"build_task_id,omitempty\"";
-      WorkflowRunID *int "db:\"workflow_run_id\" json:\"workflow_run_id,omitempty\""; WorkflowNodeID *int
-      "db:\"workflow_node_id\" json:\"workflow_node_id,omitempty\""; WorkflowTemplateSnapshot *string
-      "db:\"workflow_template_snapshot\" json:\"-\""; ExecutionSnapshotJSON *string "db:\"execution_snapshot\"
-      json:\"-\""; WorkflowTemplateProvenanceJSON *string "db:\"workflow_template_provenance\" json:\"-\"";
-      WorkflowTemplateProvenance *db.WorkflowTemplateProvenance "db:\"-\" json:\"-\""; DeploymentWindowDecisionID *int
+      ResolvedExecutorImage *string "db:\"resolved_executor_image\" json:\"resolved_executor_image,omitempty\""; Created time.Time
+      "db:\"created\" json:\"created\""; Start *time.Time "db:\"start\" json:\"start,omitempty\""; End *time.Time "db:\"end\"
+      json:\"end,omitempty\""; Message string "db:\"message\" json:\"message,omitempty\""; CommitHash *string "db:\"commit_hash\"
+      json:\"commit_hash,omitempty\""; CommitMessage string "db:\"commit_message\" json:\"commit_message,omitempty\""; BuildTaskID
+      *int "db:\"build_task_id\" json:\"build_task_id,omitempty\""; WorkflowRunID *int "db:\"workflow_run_id\"
+      json:\"workflow_run_id,omitempty\""; WorkflowNodeID *int "db:\"workflow_node_id\" json:\"workflow_node_id,omitempty\"";
+      WorkflowTemplateSnapshot *string "db:\"workflow_template_snapshot\" json:\"-\""; ExecutionSnapshotJSON *string
+      "db:\"execution_snapshot\" json:\"-\""; WorkflowTemplateProvenanceJSON *string "db:\"workflow_template_provenance\"
+      json:\"-\""; WorkflowTemplateProvenance *db.WorkflowTemplateProvenance "db:\"-\" json:\"-\""; DeploymentWindowDecisionID *int
       "db:\"-\" json:\"-\""; PolicyGuardrailEvaluationID *int "db:\"-\" json:\"-\""; Version *string "db:\"version\"
       json:\"version,omitempty\""; InventoryID *int "db:\"inventory_id\" json:\"inventory_id,omitempty\""; Params
       db.MapStringAnyField "db:\"params\" json:\"params,omitempty\""; Artifacts *string "db:\"artifacts\"
       json:\"artifacts,omitempty\""; Limit string "db:\"-\" json:\"limit\""}
     implementation: core
     behavior_tests:
-      - api/projects/tasks_test.go::TestResolveTaskTemplate
+    - api/projects/tasks_test.go::TestResolveTaskTemplate
+    - db/sql/task_ssh_key_persistence_test.go::TestTaskSSHKeyBindingsRoundTrip
   - name: db:TaskExecutionEvidence
     signature: >-
       struct{TaskID int "json:\"task_id\""; Generation int "json:\"generation\""; State db.TaskExecutionEvidenceState "json:\"state\"";
@@ -4298,11 +4328,15 @@ symbols:
     implementation: core
   - name: db:TaskExecutionSnapshot
     signature: >-
-      struct{Version int "json:\"version\""; ProjectID int "json:\"project_id\""; Fingerprint string "json:\"fingerprint\""; Template
-      db.Template "json:\"template\""; Inventory *db.Inventory "json:\"inventory,omitempty\""; InventoryRepository *db.Repository
-      "json:\"inventory_repository,omitempty\""; Repository db.Repository "json:\"repository\""; Environments []db.Environment
-      "json:\"environments\""}
+      struct{Version int "json:\"version\""; ProjectID int "json:\"project_id\""; Fingerprint string "json:\"fingerprint\"";
+      Template db.Template "json:\"template\""; Inventory *db.Inventory "json:\"inventory,omitempty\""; InventoryRepository
+      *db.Repository "json:\"inventory_repository,omitempty\""; Repository db.Repository "json:\"repository\""; Environments
+      []db.Environment "json:\"environments\""; SSHKeyProjectID int "json:\"ssh_key_project_id,omitempty\""; SSHKeys
+      db.SSHKeyBindings "json:\"ssh_keys,omitempty\""}
     implementation: core
+    behavior_tests:
+    - services/tasks/execution_preflight_test.go::TestTaskExecutionPreflightSnapshotsInheritedSSHBindingsAndDetectsRotation
+    - services/tasks/execution_preflight_test.go::TestLegacyExecutionSnapshotDoesNotGainNewSSHDefaults
   - name: db:TaskExecutionSnapshotVersion
     signature: untyped int = 1
     implementation: core
@@ -4506,35 +4540,33 @@ symbols:
     implementation: core
   - name: db:Template
     signature: >-
-      struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; ProjectID int "db:\"project_id\" json:\"project_id\"
-      backup:\"-\""; InventoryID *int "db:\"inventory_id\" json:\"inventory_id,omitempty\" backup:\"-\""; RepositoryID int
-      "db:\"repository_id\" json:\"repository_id\" backup:\"-\""; EnvironmentIDs []int "db:\"-\" json:\"environment_ids\"
-      backup:\"-\""; EnvironmentID int "db:\"-\" json:\"environment_id\" backup:\"-\""; Name string "db:\"name\"
-      json:\"name\""; Playbook string "db:\"playbook\" json:\"playbook\""; WorkingDirectory *string
-      "db:\"working_directory\" json:\"working_directory,omitempty\""; Arguments *string "db:\"arguments\"
-      json:\"arguments,omitempty\""; AllowOverrideArgsInTask bool "db:\"allow_override_args_in_task\"
-      json:\"allow_override_args_in_task,omitempty\""; Description *string "db:\"description\"
-      json:\"description,omitempty\""; Vaults []db.TemplateVault "db:\"-\" json:\"vaults,omitempty\" backup:\"-\""; Type
-      db.TemplateType "db:\"type\" json:\"type,omitempty\""; StartVersion *string "db:\"start_version\"
-      json:\"start_version,omitempty\""; BuildTemplateID *int "db:\"build_template_id\"
-      json:\"build_template_id,omitempty\" backup:\"-\""; ViewID *int "db:\"view_id\" json:\"view_id,omitempty\"
-      backup:\"-\""; LastTask *db.TaskWithTpl "db:\"-\" json:\"last_task,omitempty\" backup:\"-\""; Autorun bool
-      "db:\"autorun\" json:\"autorun,omitempty\""; GitBranch *string "db:\"git_branch\" json:\"git_branch,omitempty\"";
-      SurveyVarsJSON *string "db:\"survey_vars\" json:\"-\" backup:\"-\""; SurveyVars []db.SurveyVar "db:\"-\"
-      json:\"survey_vars,omitempty\" backup:\"survey_vars\""; SuppressSuccessAlerts bool "db:\"suppress_success_alerts\"
-      json:\"suppress_success_alerts,omitempty\""; SuppressErrorAlerts bool "db:\"suppress_error_alerts\"
-      json:\"suppress_error_alerts,omitempty\""; App db.TemplateApp "db:\"app\" json:\"app,omitempty\""; Tasks int
-      "db:\"tasks\" json:\"tasks\" backup:\"-\""; TaskParams db.MapStringAnyField "db:\"task_params\"
-      json:\"task_params,omitempty\""; RunnerTag *string "db:\"runner_tag\" json:\"runner_tag,omitempty\""; RunnerTags
-      db.StringArrayField "db:\"runner_tags\" json:\"runner_tags,omitempty\""; RunnerTagMatchMode db.RunnerTagMatchMode
-      "db:\"runner_tag_match_mode\" json:\"runner_tag_match_mode,omitempty\""; ExecutorImage *string
-      "db:\"executor_image\" json:\"executor_image,omitempty\""; AllowOverrideBranchInTask bool
-      "db:\"allow_override_branch_in_task\" json:\"allow_override_branch_in_task,omitempty\""; AllowParallelTasks bool
-      "db:\"allow_parallel_tasks\" json:\"allow_parallel_tasks,omitempty\""; JWTParams *db.TemplateJWTParams
-      "db:\"jwt_params\" json:\"jwt_params,omitempty\""}
+      struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; ProjectID int "db:\"project_id\" json:\"project_id\" backup:\"-\"";
+      InventoryID *int "db:\"inventory_id\" json:\"inventory_id,omitempty\" backup:\"-\""; RepositoryID int "db:\"repository_id\"
+      json:\"repository_id\" backup:\"-\""; EnvironmentIDs []int "db:\"-\" json:\"environment_ids\" backup:\"-\""; EnvironmentID int
+      "db:\"-\" json:\"environment_id\" backup:\"-\""; Name string "db:\"name\" json:\"name\""; Playbook string "db:\"playbook\"
+      json:\"playbook\""; WorkingDirectory *string "db:\"working_directory\" json:\"working_directory,omitempty\""; Arguments
+      *string "db:\"arguments\" json:\"arguments,omitempty\""; AllowOverrideArgsInTask bool "db:\"allow_override_args_in_task\"
+      json:\"allow_override_args_in_task,omitempty\""; Description *string "db:\"description\" json:\"description,omitempty\"";
+      Vaults []db.TemplateVault "db:\"-\" json:\"vaults,omitempty\" backup:\"-\""; Type db.TemplateType "db:\"type\"
+      json:\"type,omitempty\""; StartVersion *string "db:\"start_version\" json:\"start_version,omitempty\""; BuildTemplateID *int
+      "db:\"build_template_id\" json:\"build_template_id,omitempty\" backup:\"-\""; ViewID *int "db:\"view_id\"
+      json:\"view_id,omitempty\" backup:\"-\""; LastTask *db.TaskWithTpl "db:\"-\" json:\"last_task,omitempty\" backup:\"-\"";
+      Autorun bool "db:\"autorun\" json:\"autorun,omitempty\""; GitBranch *string "db:\"git_branch\" json:\"git_branch,omitempty\"";
+      SSHKeys db.SSHKeyBindings "db:\"ssh_keys\" json:\"ssh_keys\" backup:\"-\""; SurveyVarsJSON *string "db:\"survey_vars\"
+      json:\"-\" backup:\"-\""; SurveyVars []db.SurveyVar "db:\"-\" json:\"survey_vars,omitempty\" backup:\"survey_vars\"";
+      SuppressSuccessAlerts bool "db:\"suppress_success_alerts\" json:\"suppress_success_alerts,omitempty\""; SuppressErrorAlerts
+      bool "db:\"suppress_error_alerts\" json:\"suppress_error_alerts,omitempty\""; App db.TemplateApp "db:\"app\"
+      json:\"app,omitempty\""; Tasks int "db:\"tasks\" json:\"tasks\" backup:\"-\""; TaskParams db.MapStringAnyField
+      "db:\"task_params\" json:\"task_params,omitempty\""; RunnerTag *string "db:\"runner_tag\" json:\"runner_tag,omitempty\"";
+      RunnerTags db.StringArrayField "db:\"runner_tags\" json:\"runner_tags,omitempty\""; RunnerTagMatchMode db.RunnerTagMatchMode
+      "db:\"runner_tag_match_mode\" json:\"runner_tag_match_mode,omitempty\""; ExecutorImage *string "db:\"executor_image\"
+      json:\"executor_image,omitempty\""; AllowOverrideBranchInTask bool "db:\"allow_override_branch_in_task\"
+      json:\"allow_override_branch_in_task,omitempty\""; AllowParallelTasks bool "db:\"allow_parallel_tasks\"
+      json:\"allow_parallel_tasks,omitempty\""; JWTParams *db.TemplateJWTParams "db:\"jwt_params\" json:\"jwt_params,omitempty\""}
     implementation: core
     behavior_tests:
-      - db/sql/template_test.go::TestTemplateSuppressAlertsRoundTrip
+    - db/sql/template_test.go::TestTemplateSuppressAlertsRoundTrip
+    - db/sql/task_ssh_key_persistence_test.go::TestTemplateSSHKeyBindingsRoundTrip
   - name: db:TemplateApp
     signature: string
     implementation: core
@@ -4640,20 +4672,21 @@ symbols:
   - name: db:TemplateVersionExecution
     signature: >-
       struct{Name string "json:\"name\""; Playbook string "json:\"playbook\""; WorkingDirectory *string
-      "json:\"working_directory,omitempty\""; Arguments *string "json:\"arguments,omitempty\""; AllowOverrideArgsInTask
-      bool "json:\"allow_override_args_in_task,omitempty\""; Description *string "json:\"description,omitempty\""; Type
-      db.TemplateType "json:\"type,omitempty\""; StartVersion *string "json:\"start_version,omitempty\""; Autorun bool
-      "json:\"autorun,omitempty\""; GitBranch *string "json:\"git_branch,omitempty\""; SurveyVars []db.SurveyVar
-      "json:\"survey_vars,omitempty\""; SuppressSuccessAlerts bool "json:\"suppress_success_alerts,omitempty\"";
-      SuppressErrorAlerts bool "json:\"suppress_error_alerts,omitempty\""; App db.TemplateApp "json:\"app,omitempty\"";
-      TaskParams db.MapStringAnyField "json:\"task_params,omitempty\""; RunnerTag *string "json:\"runner_tag,omitempty\"";
-      RunnerTags db.StringArrayField "json:\"runner_tags,omitempty\""; RunnerTagMatchMode db.RunnerTagMatchMode
-      "json:\"runner_tag_match_mode,omitempty\""; ExecutorImage *string "json:\"executor_image,omitempty\"";
-      AllowOverrideBranchInTask bool "json:\"allow_override_branch_in_task,omitempty\""; AllowParallelTasks bool
-      "json:\"allow_parallel_tasks,omitempty\""; JWTParams *db.TemplateJWTParams "json:\"jwt_params,omitempty\""}
+      "json:\"working_directory,omitempty\""; Arguments *string "json:\"arguments,omitempty\""; AllowOverrideArgsInTask bool
+      "json:\"allow_override_args_in_task,omitempty\""; Description *string "json:\"description,omitempty\""; Type db.TemplateType
+      "json:\"type,omitempty\""; StartVersion *string "json:\"start_version,omitempty\""; Autorun bool "json:\"autorun,omitempty\"";
+      GitBranch *string "json:\"git_branch,omitempty\""; SurveyVars []db.SurveyVar "json:\"survey_vars,omitempty\"";
+      SuppressSuccessAlerts bool "json:\"suppress_success_alerts,omitempty\""; SuppressErrorAlerts bool
+      "json:\"suppress_error_alerts,omitempty\""; App db.TemplateApp "json:\"app,omitempty\""; TaskParams db.MapStringAnyField
+      "json:\"task_params,omitempty\""; RunnerTag *string "json:\"runner_tag,omitempty\""; RunnerTags db.StringArrayField
+      "json:\"runner_tags,omitempty\""; RunnerTagMatchMode db.RunnerTagMatchMode "json:\"runner_tag_match_mode,omitempty\"";
+      ExecutorImage *string "json:\"executor_image,omitempty\""; AllowOverrideBranchInTask bool
+      "json:\"allow_override_branch_in_task,omitempty\""; AllowParallelTasks bool "json:\"allow_parallel_tasks,omitempty\"";
+      JWTParams *db.TemplateJWTParams "json:\"jwt_params,omitempty\""; SSHKeys db.SSHKeyBindings "json:\"ssh_keys\""}
     implementation: core
     behavior_tests:
-      - db/alert_snapshot_ex_test.go::TestTemplateVersionSnapshotPreservesErrorAlertSuppression
+    - db/alert_snapshot_ex_test.go::TestTemplateVersionSnapshotPreservesErrorAlertSuppression
+    - db/task_ssh_keys_ex_test.go::TestTemplateVersionSnapshotPreservesEmptySSHKeyOverride
   - name: db:TemplateVersionFingerprint
     signature: func(snapshot db.TemplateVersionSnapshot) (string, error)
     implementation: core
@@ -4865,6 +4898,12 @@ symbols:
   - name: db:ValidateRunnerTags
     signature: func(tags []string) error
     implementation: core
+  - name: db:ValidateSSHKeyBindings
+    signature: func(bindings db.SSHKeyBindings) error
+    implementation: core
+    behavior_tests:
+    - db/task_ssh_keys_ex_test.go::TestSSHKeyBindingsValidation
+    - db/task_ssh_keys_ex_test.go::TestSSHKeyBindingsAcceptIPv6AndRejectOversizedEncodedValues
   - name: db:ValidateSurveyVar
     signature: func(v db.SurveyVar) error
     implementation: core

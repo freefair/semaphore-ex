@@ -13,7 +13,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/ssh"
@@ -63,6 +65,42 @@ func TestLocalExecutorRepositoryAgentAuthenticatesNestedGitWithInventoryKey(t *t
 
 	output := runRepositoryAgentCommand(t, "", taskEnvironment(executor.getTaskSSHAgentEnvironment()), "git", "ls-remote", server.url)
 	assert.NotEmpty(t, output, "a dependency authorized by inventory key I must remain reachable when repository key K is also loaded")
+}
+
+func TestLocalExecutorHostRoutingDoesNotOfferScopedExtraKeyToUnknownHost(t *testing.T) {
+	configureRepositoryAgentTest(t)
+	util.Config.Ssh = &util.SshConfig{StrictHostKeyChecking: util.SshStrictHostKeyCheckingNo}
+	repositoryPrivateKey, repositorySigner := repositoryAgentTestPrivateKey(t)
+	extraPrivateKey, _ := repositoryAgentTestPrivateKey(t)
+	executor := repositoryAgentTestExecutor(repositoryPrivateKey, "")
+	executor.Task.ResolvedSSHKeys = []db.ResolvedTaskSSHKey{{
+		Binding: db.SSHKeyBinding{AccessKeyID: 17, Hosts: []string{"127.0.0.1"}},
+		Key:     db.AccessKey{ID: 17, Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: extraPrivateKey}},
+	}}
+	server := startRepositoryAgentGitServerAtWithMaxAuthTries(t, "127.0.0.1", "localhost", repositorySigner.PublicKey(), createRepositoryAgentFixture(t, "unknown-host"), 1)
+	require.NoError(t, executor.startTaskSSHAgent())
+	t.Cleanup(executor.destroyKeys)
+
+	output := runRepositoryAgentCommand(t, "", repositoryAgentRuntimeEnvironment(executor.getTaskSSHAgentEnvironment()), "git", "ls-remote", server.url)
+	assert.NotEmpty(t, output)
+}
+
+func TestLocalExecutorHostRoutingOffersOnlyMappedExtraKey(t *testing.T) {
+	configureRepositoryAgentTest(t)
+	util.Config.Ssh = &util.SshConfig{StrictHostKeyChecking: util.SshStrictHostKeyCheckingNo}
+	repositoryPrivateKey, _ := repositoryAgentTestPrivateKey(t)
+	extraPrivateKey, extraSigner := repositoryAgentTestPrivateKey(t)
+	executor := repositoryAgentTestExecutor(repositoryPrivateKey, "")
+	executor.Task.ResolvedSSHKeys = []db.ResolvedTaskSSHKey{{
+		Binding: db.SSHKeyBinding{AccessKeyID: 18, Hosts: []string{"127.0.0.1"}},
+		Key:     db.AccessKey{ID: 18, Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: extraPrivateKey}},
+	}}
+	server := startRepositoryAgentGitServerAtWithMaxAuthTries(t, "127.0.0.1", "127.0.0.1", extraSigner.PublicKey(), createRepositoryAgentFixture(t, "mapped-host"), 1)
+	require.NoError(t, executor.startTaskSSHAgent())
+	t.Cleanup(executor.destroyKeys)
+
+	output := runRepositoryAgentCommand(t, "", repositoryAgentRuntimeEnvironment(executor.getTaskSSHAgentEnvironment()), "git", "ls-remote", server.url)
+	assert.NotEmpty(t, output)
 }
 
 func TestLocalExecutorRepositoryAgentCleanupRemovesSocketAndSelectors(t *testing.T) {
@@ -195,6 +233,18 @@ func repositoryAgentTestPrivateKey(t *testing.T) (string, sshcrypto.Signer) {
 	return string(pemKey), signer
 }
 
+func repositoryAgentTestEncryptedPrivateKey(t *testing.T, passphrase string) (string, sshcrypto.Signer) {
+	t.Helper()
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	encoded, err := sshcrypto.MarshalPrivateKeyWithPassphrase(privateKey, "repository-agent-test", []byte(passphrase))
+	require.NoError(t, err)
+	pemKey := pem.EncodeToMemory(encoded)
+	signer, err := sshcrypto.ParsePrivateKeyWithPassphrase(pemKey, []byte(passphrase))
+	require.NoError(t, err)
+	return string(pemKey), signer
+}
+
 func createRepositoryAgentFixture(t *testing.T, name string) string {
 	t.Helper()
 	workingDirectory := t.TempDir()
@@ -239,15 +289,46 @@ func pushRepositoryAgentFixture(t *testing.T, workingDirectory, repository strin
 }
 
 type repositoryAgentGitServer struct {
-	url  string
-	port int
+	url      string
+	port     int
+	attempts *[]string
+	mu       *sync.Mutex
 }
 
+func (server repositoryAgentGitServer) attemptedPublicKeys() []string {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	return append([]string(nil), (*server.attempts)...)
+}
+
+const (
+	repositoryAgentGitMaxConnections   = 8
+	repositoryAgentGitHandshakeTimeout = 5 * time.Second
+)
+
 func startRepositoryAgentGitServer(t *testing.T, allowedKey sshcrypto.PublicKey, repository string) repositoryAgentGitServer {
+	return startRepositoryAgentGitServerAtWithMaxAuthTries(t, "127.0.0.1", "127.0.0.1", allowedKey, repository, 0)
+}
+
+func startRepositoryAgentGitServerForContainer(t *testing.T, allowedKey sshcrypto.PublicKey, repository string) repositoryAgentGitServer {
+	return startRepositoryAgentGitServerAtWithMaxAuthTries(t, "0.0.0.0", "host.docker.internal", allowedKey, repository, 1)
+}
+
+func startRepositoryAgentGitServerAt(t *testing.T, bindHost, advertisedHost string, allowedKey sshcrypto.PublicKey, repository string) repositoryAgentGitServer {
+	return startRepositoryAgentGitServerAtWithMaxAuthTries(t, bindHost, advertisedHost, allowedKey, repository, 0)
+}
+
+func startRepositoryAgentGitServerAtWithMaxAuthTries(t *testing.T, bindHost, advertisedHost string, allowedKey sshcrypto.PublicKey, repository string, maxAuthTries int) repositoryAgentGitServer {
 	t.Helper()
 	_, hostSigner := repositoryAgentTestPrivateKey(t)
+	attempts := make([]string, 0)
+	attemptsMu := sync.Mutex{}
 	config := &sshcrypto.ServerConfig{
+		MaxAuthTries: maxAuthTries,
 		PublicKeyCallback: func(_ sshcrypto.ConnMetadata, key sshcrypto.PublicKey) (*sshcrypto.Permissions, error) {
+			attemptsMu.Lock()
+			attempts = append(attempts, sshcrypto.FingerprintSHA256(key))
+			attemptsMu.Unlock()
 			if bytes.Equal(key.Marshal(), allowedKey.Marshal()) {
 				return nil, nil
 			}
@@ -255,10 +336,20 @@ func startRepositoryAgentGitServer(t *testing.T, allowedKey sshcrypto.PublicKey,
 		},
 	}
 	config.AddHostKey(hostSigner)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", net.JoinHostPort(bindHost, "0"))
 	require.NoError(t, err)
 	address := listener.Addr().(*net.TCPAddr)
-	t.Cleanup(func() { require.NoError(t, listener.Close()) })
+	connections := make(map[net.Conn]struct{})
+	connectionsMu := sync.Mutex{}
+	connectionSlots := make(chan struct{}, repositoryAgentGitMaxConnections)
+	t.Cleanup(func() {
+		require.NoError(t, listener.Close())
+		connectionsMu.Lock()
+		defer connectionsMu.Unlock()
+		for connection := range connections {
+			_ = connection.Close()
+		}
+	})
 
 	go func() {
 		for {
@@ -266,18 +357,38 @@ func startRepositoryAgentGitServer(t *testing.T, allowedKey sshcrypto.PublicKey,
 			if acceptErr != nil {
 				return
 			}
-			go serveRepositoryAgentGitConnection(connection, config, repository)
+			select {
+			case connectionSlots <- struct{}{}:
+			default:
+				_ = connection.Close()
+				continue
+			}
+			connectionsMu.Lock()
+			connections[connection] = struct{}{}
+			connectionsMu.Unlock()
+			go func() {
+				defer func() { <-connectionSlots }()
+				defer func() {
+					connectionsMu.Lock()
+					delete(connections, connection)
+					connectionsMu.Unlock()
+				}()
+				serveRepositoryAgentGitConnection(connection, config, repository)
+			}()
 		}
 	}()
 
-	return repositoryAgentGitServer{url: "ssh://git@127.0.0.1:" + strconv.Itoa(address.Port) + repository, port: address.Port}
+	return repositoryAgentGitServer{url: "ssh://git@" + advertisedHost + ":" + strconv.Itoa(address.Port) + repository, port: address.Port, attempts: &attempts, mu: &attemptsMu}
 }
 
 func serveRepositoryAgentGitConnection(connection net.Conn, config *sshcrypto.ServerConfig, repository string) {
+	_ = connection.SetDeadline(time.Now().Add(repositoryAgentGitHandshakeTimeout))
 	serverConnection, channels, requests, err := sshcrypto.NewServerConn(connection, config)
 	if err != nil {
+		_ = connection.Close()
 		return
 	}
+	_ = connection.SetDeadline(time.Time{})
 	defer serverConnection.Close()
 	go sshcrypto.DiscardRequests(requests)
 	for channelRequest := range channels {

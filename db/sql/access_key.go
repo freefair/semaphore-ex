@@ -14,7 +14,57 @@ func (d *SqlDb) GetAccessKey(projectID int, accessKeyID int) (key db.AccessKey, 
 }
 
 func (d *SqlDb) GetAccessKeyRefs(projectID int, keyID int) (db.ObjectReferrers, error) {
-	return d.getObjectRefs(projectID, db.AccessKeyProps, keyID)
+	refs, err := d.getObjectRefs(projectID, db.AccessKeyProps, keyID)
+	if err != nil {
+		return refs, err
+	}
+	project, err := d.GetProject(projectID)
+	if err != nil {
+		return refs, err
+	}
+	if sshKeyBindingsReference(project.DefaultSSHKeys, keyID) || sshKeyBindingsReference(project.AlwaysSSHKeys, keyID) {
+		refs.Projects = append(refs.Projects, db.ObjectReferrer{ID: project.ID, Name: project.Name})
+	}
+	templates, err := d.GetTemplates(projectID, db.TemplateFilter{}, db.RetrieveQueryParams{})
+	if err != nil {
+		return refs, err
+	}
+	templateIDs := make(map[int]struct{}, len(refs.Templates))
+	for _, reference := range refs.Templates {
+		templateIDs[reference.ID] = struct{}{}
+	}
+	for _, template := range templates {
+		if sshKeyBindingsReference(template.SSHKeys, keyID) {
+			if _, exists := templateIDs[template.ID]; exists {
+				continue
+			}
+			refs.Templates = append(refs.Templates, db.ObjectReferrer{ID: template.ID, Name: template.Name})
+			templateIDs[template.ID] = struct{}{}
+		}
+	}
+	var tasks []struct {
+		ID      int               `db:"id"`
+		Name    string            `db:"name"`
+		SSHKeys db.SSHKeyBindings `db:"ssh_keys"`
+	}
+	if _, err = d.selectAll(&tasks, "select id, playbook as name, ssh_keys from task where project_id=? and ssh_keys is not null", projectID); err != nil {
+		return refs, err
+	}
+	for _, task := range tasks {
+		if sshKeyBindingsReference(task.SSHKeys, keyID) {
+			refs.Tasks = append(refs.Tasks, db.ObjectReferrer{ID: task.ID, Name: task.Name})
+		}
+	}
+	return refs, nil
+}
+
+func sshKeyBindingsReference(bindings db.SSHKeyBindings, keyID int) bool {
+	for _, binding := range bindings {
+		if binding.AccessKeyID == keyID {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *SqlDb) GetAccessKeys(projectID int, options db.GetAccessKeyOptions, params db.RetrieveQueryParams) (keys []db.AccessKey, err error) {

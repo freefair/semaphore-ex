@@ -30,10 +30,9 @@ func TestMigration_2_19_11(t *testing.T) {
 	target := "2.19.2"
 	require.NoError(t, db.Migrate(store, &target))
 
-	proj, err := store.CreateProject(db.Project{Name: "p"})
-	require.NoError(t, err)
+	proj := createLegacyProject(t, store, "p")
 
-	_, err = store.Sql().Exec(
+	_, err := store.Sql().Exec(
 		"insert into project__workflow_template (project_id, name) values (?, ?)", proj.ID, "wf")
 	require.NoError(t, err)
 	workflowID, err := store.Sql().SelectInt("select id from project__workflow_template where name = 'wf'")

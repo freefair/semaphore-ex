@@ -21,6 +21,19 @@ func TestJobDataCarriesTaskSecretOutsideTheTaskDTO(t *testing.T) {
 	assert.Empty(t, decoded.Task.Secret)
 }
 
+func TestRunnerPayloadNeverSerializesResolvedTaskSSHKeyMaterial(t *testing.T) {
+	private := "private-key-material"
+	payload, err := json.Marshal(JobData{Task: db.Task{
+		ResolvedSSHKeys: []db.ResolvedTaskSSHKey{{
+			Binding: db.SSHKeyBinding{AccessKeyID: 7, Hosts: []string{"git.example.test"}},
+			Key:     db.AccessKey{ID: 7, Plain: &private},
+		}},
+	}})
+	require.NoError(t, err)
+	assert.NotContains(t, string(payload), "private-key-material")
+	assert.NotContains(t, string(payload), "resolved_ssh_keys")
+}
+
 func TestValidateExecutorImageCompatibility(t *testing.T) {
 	image := "registry.example.com/team/job:v1"
 	for _, executorType := range []util.ExecutorType{util.ExecutorTypeDocker, util.ExecutorTypeKubernetes} {

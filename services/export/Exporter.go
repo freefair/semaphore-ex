@@ -97,6 +97,13 @@ type TypeExporter interface {
 	setUniqueKeys(uniqueKeys bool)
 }
 
+// postRestoreExporter handles references whose targets are created only after
+// the owning entity. It is optional to keep existing backup formats and
+// exporters unchanged.
+type postRestoreExporter interface {
+	postRestore(store db.Store, exporter DataExporter) error
+}
+
 var KeyNotFound = -1
 var GlobalScope = ""
 
@@ -545,6 +552,17 @@ func (p *ExporterChain) Restore(store db.Store, errLogSize int) error {
 			}
 		}
 		exporter.clear()
+	}
+
+	for _, name := range keys {
+		exporter := p.exporters[name]
+		post, ok := exporter.(postRestoreExporter)
+		if !ok {
+			continue
+		}
+		if err := post.postRestore(store, p); err != nil {
+			return fmt.Errorf("failed to finalize import %s: %s", name, err.Error())
+		}
 	}
 
 	return nil

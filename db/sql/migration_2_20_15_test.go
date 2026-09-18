@@ -14,8 +14,7 @@ func TestMigration22015BackfillsMultipleLegacyWorkflowRuns(t *testing.T) {
 	legacyVersion := "2.20.14"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
-	project, err := store.CreateProject(db.Project{Name: "Legacy workflow runs"})
-	require.NoError(t, err)
+	project := createLegacyProject(t, store, "Legacy workflow runs")
 	result, err := store.Sql().Exec(
 		"insert into project__workflow_template(project_id, name, definition_version, revision) values (?, ?, ?, ?)",
 		project.ID, "Legacy", 1, 1,

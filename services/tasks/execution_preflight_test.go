@@ -62,6 +62,74 @@ func TestBuildTaskExecutionPreflightIsSideEffectFreeAndValueFree(t *testing.T) {
 	assert.Equal(t, []pro_interfaces.ExecutionPreflightChangeCode{pro_interfaces.ExecutionChangeInput, pro_interfaces.ExecutionChangeReference}, componentChanges(snapshot.Components, changed.Components))
 }
 
+func TestTaskExecutionPreflightSnapshotsInheritedSSHBindingsAndDetectsRotation(t *testing.T) {
+	store, pool, actor, template, _ := createTaskPreflightFixture(t)
+	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &template.ProjectID, Name: "dependency", Type: db.AccessKeySSH})
+	require.NoError(t, err)
+	project, err := store.GetProject(template.ProjectID)
+	require.NoError(t, err)
+	project.DefaultSSHKeys = db.SSHKeyBindings{{AccessKeyID: key.ID, Hosts: []string{"git.example.test"}}}
+	require.NoError(t, store.UpdateProject(project))
+
+	preflight, execution, err := pool.buildTaskExecutionPreflight(db.Task{TemplateID: template.ID}, template, &actor, template.ProjectID, time.Now().UTC())
+	require.NoError(t, err)
+	require.NotNil(t, execution)
+	assert.Equal(t, template.ProjectID, execution.SSHKeyProjectID)
+	assert.Equal(t, project.DefaultSSHKeys, execution.SSHKeys)
+
+	key.Name = "dependency rotated"
+	require.NoError(t, store.UpdateAccessKey(key))
+	rotated, _, err := pool.buildTaskExecutionPreflight(db.Task{TemplateID: template.ID}, template, &actor, template.ProjectID, time.Now().UTC())
+	require.NoError(t, err)
+	assert.NotEqual(t, preflight.Components[pro_interfaces.ExecutionChangeReference], rotated.Components[pro_interfaces.ExecutionChangeReference])
+}
+
+func TestTaskExecutionPreflightSnapshotsBindingWithoutHostMapping(t *testing.T) {
+	store, pool, actor, template, _ := createTaskPreflightFixture(t)
+	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &template.ProjectID, Name: "optional mapping", Type: db.AccessKeySSH})
+	require.NoError(t, err)
+	template.SSHKeys = db.SSHKeyBindings{{AccessKeyID: key.ID}}
+	require.NoError(t, store.UpdateTemplate(template))
+	_, execution, err := pool.buildTaskExecutionPreflight(db.Task{TemplateID: template.ID}, template, &actor, template.ProjectID, time.Now().UTC())
+	require.NoError(t, err)
+	require.Len(t, execution.SSHKeys, 1)
+	assert.Empty(t, execution.SSHKeys[0].Hosts)
+}
+
+func TestCrossProjectTaskPreflightRejectsCallerSSHKeyOverride(t *testing.T) {
+	store, pool, actor, template, _ := createTaskPreflightFixture(t)
+	consumer, err := store.CreateProject(db.Project{Name: "consumer"})
+	require.NoError(t, err)
+	_, _, err = pool.buildTaskExecutionPreflight(db.Task{
+		ProjectID: consumer.ID, TemplateID: template.ID,
+		SSHKeys: db.SSHKeyBindings{{AccessKeyID: 1, Hosts: []string{"git.example.test"}}},
+	}, template, &actor, consumer.ID, time.Now().UTC())
+	require.ErrorContains(t, err, "cross-project task SSH key overrides")
+}
+
+func TestLegacyExecutionSnapshotDoesNotGainNewSSHDefaults(t *testing.T) {
+	store, pool, _, template, _ := createTaskPreflightFixture(t)
+	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &template.ProjectID, Name: "new default", Type: db.AccessKeySSH})
+	require.NoError(t, err)
+	project, err := store.GetProject(template.ProjectID)
+	require.NoError(t, err)
+	project.DefaultSSHKeys = db.SSHKeyBindings{{AccessKeyID: key.ID, Hosts: []string{"git.example.test"}}}
+	require.NoError(t, store.UpdateProject(project))
+	repository, err := store.GetRepository(template.ProjectID, template.RepositoryID)
+	require.NoError(t, err)
+	encoded, err := db.EncodeTaskExecutionSnapshot(db.TaskExecutionSnapshot{
+		Version: db.TaskExecutionSnapshotVersion, ProjectID: template.ProjectID, Fingerprint: "legacy",
+		Template: sanitizedExecutionSnapshotTemplate(template), Repository: sanitizedExecutionSnapshotRepository(repository),
+	})
+	require.NoError(t, err)
+	task, err := store.CreateTask(db.Task{ProjectID: template.ProjectID, TemplateID: template.ID, ExecutionSnapshotJSON: &encoded}, 0)
+	require.NoError(t, err)
+	runner := NewTaskRunner(task, &pool, "", nil)
+	require.NoError(t, runner.populateDetails())
+	assert.Empty(t, runner.ResolvedSSHKeys)
+	assert.Empty(t, runner.Task.ResolvedSSHKeys)
+}
+
 func TestBuildTaskExecutionPreflightReturnsBoundedNoCandidateFinding(t *testing.T) {
 	store, pool, actor, template, _ := createTaskPreflightFixture(t)
 	now := time.Date(2026, 9, 2, 16, 0, 0, 0, time.UTC)

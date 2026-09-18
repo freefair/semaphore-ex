@@ -225,7 +225,7 @@ func (c *KeyController) RemoveKey(w http.ResponseWriter, r *http.Request) {
 	err := c.accessKeyService.Delete(*key.ProjectID, key.ID)
 	if errors.Is(err, db.ErrInvalidOperation) {
 		helpers.WriteJSON(w, http.StatusBadRequest, map[string]any{
-			"error": "Access Key is in use by one or more templates",
+			"error": "Access Key is in use by project settings or templates",
 			"inUse": true,
 		})
 		return

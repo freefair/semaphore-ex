@@ -812,6 +812,13 @@ migrations:
       v2.20.70.sql: db64bb23d6e68fa26a2daa28d6c9df0420a45cb06d53578c0529016fbd969744
     rationale: Durable encrypted Terraform HTTP state locking and append-only deletion tombstones.
   - registered: true
+    id: 2.20.71
+    owner: fork
+    files:
+      v2.20.71.err.sql: f2df22e0acb42dd75d8a2b75cfb464f6227f6a808d2fc428696dd28173428a19
+      v2.20.71.sql: 6846b77ea755531b030d1157e3de1a86bbda147913fbd13d74f5cccac454617b
+    rationale: Persist value-free task SSH key bindings with nullable inheritance and explicit empty overrides.
+  - registered: true
     id: 2.20.7
     owner: fork
     files:

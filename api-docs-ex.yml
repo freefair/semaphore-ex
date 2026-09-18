@@ -1,5 +1,43 @@
 # Fork-owned API definitions and paths, referenced by api-docs.yml.
 definitions:
+  TaskSSHKeyBindings:
+    type: array
+    x-nullable: true
+    maxItems: 64
+    description: >
+      Additional SSH key references and their exact hosts. On templates and tasks,
+      null inherits the parent selection and an empty array explicitly replaces
+      it. Project always_ssh_keys are added in either case. Task overrides are
+      restricted to users who can manage project resources and rejected for
+      cross-project execution. Key IDs must identify project-owned
+      SSH credentials. The complete encoded selection is bounded to 64 KiB.
+      New projects accept only null or empty lists; assign bindings after creating
+      their SSH credentials.
+      Host lists are optional below five distinct task-agent identities, counting
+      Repository and Inventory keys; runtime host routing is required from five.
+      Explicit host lists apply at every size. This configures client selection,
+      not an enforcement boundary against task-controlled SSH clients.
+    items:
+      $ref: "#/definitions/TaskSSHKeyBinding"
+  TaskSSHKeyBinding:
+    type: object
+    required: [access_key_id]
+    properties:
+      access_key_id:
+        type: integer
+        minimum: 1
+      hosts:
+        type: array
+        x-nullable: true
+        minItems: 0
+        maxItems: 64
+        description: >
+          Canonical lowercase DNS hostnames or IP literals, without URLs, ports,
+          usernames, paths or wildcard patterns. Different keys cannot claim the
+          same host in an effective selection.
+        items:
+          type: string
+        example: [github.com, gitlab.com]
   ExecutionPreflightPlan:
     type: object
     required:
@@ -3055,6 +3093,8 @@ paths:
           required:
           - template_id
           properties:
+            ssh_keys:
+              $ref: '#/definitions/TaskSSHKeyBindings'
             template_id:
               type: integer
       responses:

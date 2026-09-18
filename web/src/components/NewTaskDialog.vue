@@ -17,6 +17,8 @@
 
     <template v-slot:form="{ onSave, onError, needSave, needReset }">
       <TaskForm
+        :user-permissions="userPermissions"
+        :is-admin="isAdmin"
         :project-id="projectId"
         item-id="new"
         :template="template"
@@ -45,6 +47,8 @@ export default {
     EditDialog,
   },
   props: {
+    userPermissions: Number,
+    isAdmin: Boolean,
     value: Boolean,
     projectId: Number,
     template: Object,

@@ -85,6 +85,17 @@ func (c *TaskController) AddTask(w http.ResponseWriter, r *http.Request) {
 		helpers.WriteError(w, err)
 		return
 	}
+	if taskObj.SSHKeys != nil {
+		permissions, ok := helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
+		if !user.Admin && (!ok || !permissions.Can(db.CanManageProjectResources)) {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+	}
+	if err := validateSSHKeyBindingsForProject(c.store, tpl.ProjectID, taskObj.SSHKeys); err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
 
 	newTask, planned, err := taskPool(r).AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverride(
 		taskObj,

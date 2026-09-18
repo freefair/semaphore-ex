@@ -32,6 +32,10 @@ schemes:
 basePath: /api
 
 definitions:
+  TaskSSHKeyBindings:
+    $ref: "./api-docs-ex.yml#/definitions/TaskSSHKeyBindings"
+  TaskSSHKeyBinding:
+    $ref: "./api-docs-ex.yml#/definitions/TaskSSHKeyBinding"
   App:
     type: object
 
@@ -377,6 +381,10 @@ definitions:
   ProjectRequest:
     type: object
     properties:
+      default_ssh_keys:
+        $ref: "./api-docs-ex.yml#/definitions/TaskSSHKeyBindings"
+      always_ssh_keys:
+        $ref: "./api-docs-ex.yml#/definitions/TaskSSHKeyBindings"
       name:
         type: string
         example: Test
@@ -398,6 +406,10 @@ definitions:
   Project:
     type: object
     properties:
+      default_ssh_keys:
+        $ref: "./api-docs-ex.yml#/definitions/TaskSSHKeyBindings"
+      always_ssh_keys:
+        $ref: "./api-docs-ex.yml#/definitions/TaskSSHKeyBindings"
       id:
         type: integer
         minimum: 1
@@ -802,6 +814,8 @@ definitions:
   Task:
     type: object
     properties:
+      ssh_keys:
+        $ref: "./api-docs-ex.yml#/definitions/TaskSSHKeyBindings"
       id:
         type: integer
         example: 23
@@ -899,6 +913,8 @@ definitions:
   TemplateRequest:
     type: object
     properties:
+      ssh_keys:
+        $ref: "./api-docs-ex.yml#/definitions/TaskSSHKeyBindings"
       id:
         type: integer
         example: 1
@@ -968,6 +984,8 @@ definitions:
   Template:
     type: object
     properties:
+      ssh_keys:
+        $ref: "./api-docs-ex.yml#/definitions/TaskSSHKeyBindings"
       id:
         type: integer
         minimum: 1
@@ -2785,6 +2803,8 @@ paths:
           schema:
             type: object
             properties:
+              ssh_keys:
+                $ref: "./api-docs-ex.yml#/definitions/TaskSSHKeyBindings"
               template_id:
                 type: integer
               template_name:

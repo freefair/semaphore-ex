@@ -79,6 +79,10 @@ func (e *TaskExporter) restoreValue(val EntityObject[db.Task], store db.Store, e
 	if err != nil {
 		return err
 	}
+	old.SSHKeys, err = remapSSHKeyBindings(exporter, val.scope, old.SSHKeys)
+	if err != nil {
+		return err
+	}
 
 	newObj, err := store.CreateTask(old, 0)
 	if err != nil {
@@ -97,5 +101,5 @@ func (e *TaskExporter) exportDependsOn() []string {
 }
 
 func (e *TaskExporter) importDependsOn() []string {
-	return []string{Project, Template, Inventory, Integration, Schedule, User}
+	return []string{Project, AccessKey, Template, Inventory, Integration, Schedule, User}
 }

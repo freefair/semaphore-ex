@@ -38,6 +38,13 @@ func (c *TaskController) PreviewTask(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	user := helpers.GetFromContext(r, "user").(*db.User)
 	taskObj := helpers.GetFromContext(r, "task").(db.Task)
+	if taskObj.SSHKeys != nil {
+		permissions, ok := helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
+		if !user.Admin && (!ok || !permissions.Can(db.CanManageProjectResources)) {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+	}
 	plan, err := taskPool(r).PreviewTaskExecution(taskObj, user, project.ID)
 	if err != nil {
 		log.WithFields(log.Fields{

@@ -44,6 +44,13 @@ func (s *AccessKeyServiceImpl) Delete(projectID int, keyID int) (err error) {
 	if err != nil {
 		return
 	}
+	refs, refsErr := s.accessKeyRepo.GetAccessKeyRefs(projectID, keyID)
+	if refsErr != nil {
+		return refsErr
+	}
+	if len(refs.Projects) > 0 || len(refs.Templates) > 0 {
+		return db.ErrInvalidOperation
+	}
 
 	if key.SourceStorageID != nil {
 		var storage db.SecretStorage

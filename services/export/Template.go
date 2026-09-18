@@ -67,6 +67,10 @@ func (e *TemplateExporter) restoreValue(val EntityObject[db.Template], store db.
 	if err != nil {
 		return err
 	}
+	old.SSHKeys, err = remapSSHKeyBindings(exporter, val.scope, old.SSHKeys)
+	if err != nil {
+		return err
+	}
 
 	old.ViewID, err = exporter.getNewKeyIntRef(View, val.scope, old.ViewID, e)
 	if err != nil {
@@ -95,5 +99,5 @@ func (e *TemplateExporter) exportDependsOn() []string {
 }
 
 func (e *TemplateExporter) importDependsOn() []string {
-	return []string{Project, Inventory, Environment, Repository, View}
+	return []string{Project, AccessKey, Inventory, Environment, Repository, View}
 }

@@ -38,6 +38,9 @@ type TaskRunner struct {
 	Inventory   db.Inventory
 	Repository  db.Repository
 	Environment db.Environment
+	// ResolvedSSHKeys are private, live key-store descriptors for this task.
+	// They are never exposed through db.Task or ordinary task API responses.
+	ResolvedSSHKeys []db.ResolvedTaskSSHKey
 
 	currentStage  *db.TaskStage
 	currentOutput *db.TaskOutput
@@ -571,6 +574,22 @@ func (t *TaskRunner) populateDetails() error {
 	t.users = []int{}
 	for userID := range users {
 		t.users = append(t.users, userID)
+	}
+
+	if executionSnapshot != nil {
+		if executionSnapshot.SSHKeyProjectID != 0 {
+			if err = t.hydrateResolvedTaskSSHKeys(executionSnapshot.SSHKeys, executionSnapshot.SSHKeyProjectID); err != nil {
+				return t.prepareError(err, "Execution SSH key bindings are unavailable!")
+			}
+		}
+	} else {
+		bindings, ownerProjectID, bindingErr := t.pool.resolveTaskSSHKeyBindings(t.Template, t.Task)
+		if bindingErr != nil {
+			return t.prepareError(bindingErr, "Task SSH key bindings are unavailable!")
+		}
+		if err = t.hydrateResolvedTaskSSHKeys(bindings, ownerProjectID); err != nil {
+			return t.prepareError(err, "Task SSH key bindings are unavailable!")
+		}
 	}
 
 	if executionSnapshot != nil {

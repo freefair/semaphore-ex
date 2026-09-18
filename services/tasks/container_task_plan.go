@@ -18,6 +18,7 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/ssh"
 	"github.com/semaphoreui/semaphore/util"
+	sshcrypto "golang.org/x/crypto/ssh"
 )
 
 const (
@@ -336,7 +337,8 @@ func (t *LocalExecutor) containerEnvironment() ([]string, error) {
 			return nil, fmt.Errorf("invalid container environment variable %q", name)
 		}
 		if name == "SSH_AUTH_SOCK" ||
-			(name == "GIT_SSH_COMMAND" && t.isGeneratedTaskGitSSHCommand(value)) {
+			(name == "GIT_SSH_COMMAND" && t.isGeneratedTaskGitSSHCommand(value)) ||
+			(name == "ANSIBLE_SSH_EXECUTABLE" && t.taskSSHRoutingCommand != "" && value == t.taskSSHRoutingCommand) {
 			continue
 		}
 		value = t.rewriteContainerPath(value)
@@ -349,7 +351,11 @@ func (t *LocalExecutor) isGeneratedTaskGitSSHCommand(value string) bool {
 	if t.taskSSHAgent == nil {
 		return false
 	}
+	if t.taskSSHRoutingCommand != "" && value == posixQuote(t.taskSSHRoutingCommand) {
+		return true
+	}
 	identities := append(append([]string(nil), t.repositorySSHIdentityFiles...), t.inventorySSHIdentityFiles...)
+	identities = append(identities, t.extraSSHIdentityFiles...)
 	return len(identities) > 0 && value == ssh.TaskGitSSHCommand(t.taskSSHAgent.SocketFile, identities)
 }
 
@@ -383,11 +389,59 @@ func (t *LocalExecutor) rewriteContainerPath(value string) string {
 
 func (t *LocalExecutor) prepareContainerCredentials(args map[string][]string) ([]containerBundleFile, error) {
 	files := make([]containerBundleFile, 0)
-	if t.Inventory.SSHKeyID != nil && t.Inventory.SSHKey.Type == db.AccessKeySSH {
+	sshKeys := []struct {
+		name          string
+		key           db.AccessKey
+		hosts         []string
+		implicitHosts []string
+	}{{"inventory", t.Inventory.SSHKey, nil, nil}, {"repository", t.Repository.SSHKey, nil, repositorySSHHosts(t.Repository.GitURL)}}
+	for _, resolved := range t.Task.ResolvedSSHKeys {
+		sshKeys = append(sshKeys, struct {
+			name          string
+			key           db.AccessKey
+			hosts         []string
+			implicitHosts []string
+		}{fmt.Sprintf("extra-%d", resolved.Binding.AccessKeyID), resolved.Key, resolved.Binding.Hosts, nil})
+	}
+	selectors := make(map[string]string)
+	keyOrder := make([]string, 0, len(sshKeys))
+	routingIdentities := make([]ssh.RoutingIdentity, 0, len(sshKeys))
+	for _, item := range sshKeys {
+		if item.key.Type != db.AccessKeySSH {
+			continue
+		}
+		identity, err := ssh.PublicIdentity(item.key)
+		if err != nil {
+			return nil, fmt.Errorf("deriving %s SSH public identity: %w", item.name, err)
+		}
+		selector, exists := selectors[identity]
+		if !exists {
+			selector = path.Join(containerBundlePath, "credentials", "ssh-key-"+item.name+".pub")
+			selectors[identity] = selector
+			publicKey, err := containerSSHPublicIdentity(item.name, item.key)
+			if err != nil {
+				return nil, err
+			}
+			files = append(files,
+				containerBundleFile{name: "credentials/ssh-key-" + item.name, mode: 0o600, data: []byte(item.key.SshKey.PrivateKey)},
+				containerBundleFile{name: "credentials/ssh-passphrase-" + item.name, mode: 0o600, data: []byte(item.key.SshKey.Passphrase)},
+				containerBundleFile{name: "credentials/ssh-key-" + item.name + ".pub", mode: 0o600, data: publicKey},
+			)
+			keyOrder = append(keyOrder, path.Join(containerBundlePath, "credentials", "ssh-key-"+item.name))
+		}
+		routingIdentities = append(routingIdentities, ssh.RoutingIdentity{PublicKey: identity, Selector: selector, Hosts: item.hosts, ImplicitHosts: item.implicitHosts})
+	}
+	if len(routingIdentities) > 0 {
+		routing, err := ssh.BuildHostRouting(routingIdentities)
+		if err != nil {
+			return nil, fmt.Errorf("building container SSH host routing: %w", err)
+		}
+		files = append(files, containerBundleFile{name: "ssh-askpass.sh", mode: 0o500, data: []byte("#!/bin/sh\nset -eu\nexec cat \"${SEMAPHORE_SSH_PASSPHRASE_FILE:?}\"\n")})
 		files = append(files,
-			containerBundleFile{name: "credentials/ssh-key", mode: 0o600, data: []byte(t.Inventory.SSHKey.SshKey.PrivateKey)},
-			containerBundleFile{name: "credentials/ssh-passphrase", mode: 0o600, data: []byte(t.Inventory.SSHKey.SshKey.Passphrase)},
-			containerBundleFile{name: "ssh-askpass.sh", mode: 0o500, data: []byte("#!/bin/sh\nset -eu\nexec cat /semaphore/bundle/credentials/ssh-passphrase\n")},
+			containerBundleFile{name: "credentials/ssh-key-order", mode: 0o600, data: []byte(strings.Join(keyOrder, "\n") + "\n")},
+			containerBundleFile{name: "credentials/ssh-route.conf", mode: 0o600, data: []byte(routing.Config(path.Join(containerWorkspacePath, ".semaphore", "ssh-agent.sock")) + taskSSHConfigIncludes("~/.ssh/config", "/etc/ssh/ssh_config"))},
+			containerBundleFile{name: "ssh-route.sh", mode: 0o500, data: []byte("#!/bin/sh\nset -eu\nexec \"${SEMAPHORE_SYSTEM_SSH:?}\" -F /semaphore/bundle/credentials/ssh-route.conf \"$@\"\n")},
+			containerBundleFile{name: "ssh-bin/ssh", mode: 0o500, data: []byte("#!/bin/sh\nset -eu\nexec \"${SEMAPHORE_SYSTEM_SSH:?}\" -F /semaphore/bundle/credentials/ssh-route.conf \"$@\"\n")},
 		)
 	}
 
@@ -451,6 +505,26 @@ func (t *LocalExecutor) prepareContainerCredentials(args map[string][]string) ([
 	return files, nil
 }
 
+func containerSSHPublicIdentity(role string, key db.AccessKey) ([]byte, error) {
+	var (
+		privateKey any
+		err        error
+	)
+	if key.SshKey.Passphrase == "" {
+		privateKey, err = sshcrypto.ParseRawPrivateKey([]byte(key.SshKey.PrivateKey))
+	} else {
+		privateKey, err = sshcrypto.ParseRawPrivateKeyWithPassphrase([]byte(key.SshKey.PrivateKey), []byte(key.SshKey.Passphrase))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s SSH public identity: %w", role, err)
+	}
+	signer, err := sshcrypto.NewSignerFromKey(privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("creating %s SSH public identity: %w", role, err)
+	}
+	return sshcrypto.MarshalAuthorizedKey(signer.PublicKey()), nil
+}
+
 func removeContainerArg(args []string, target string) []string {
 	result := make([]string, 0, len(args))
 	for _, arg := range args {
@@ -477,8 +551,8 @@ func (t *LocalExecutor) containerRunScript(args map[string][]string) (string, Co
 	script.WriteString("bundle_dir=/semaphore/bundle\nworkspace=/workspace\nhome_dir=/home/semaphore\n")
 	script.WriteString("runner_path=${PATH-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}\n")
 	script.WriteString("stage=${1-}\n")
-	script.WriteString("load_environment() {\n  . \"${bundle_dir}/credentials/environment.sh\"\n  export HOME=\"${home_dir}\"\n  export PATH=\"${runner_path}\"\n  export PWD=\"${workspace}\"\n  unset SSH_ASKPASS SSH_ASKPASS_REQUIRE\n  if [ -e \"${workspace}/.semaphore/ssh-agent.sock\" ]; then export SSH_AUTH_SOCK=\"${workspace}/.semaphore/ssh-agent.sock\"; else unset SSH_AUTH_SOCK; fi\n  export ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_FORCE_COLOR=True ANSIBLE_REMOTE_TMP=/tmp/.ansible/tmp PYTHONUNBUFFERED=1\n  export GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/workspace/.semaphore/known_hosts'\n}\n")
-	script.WriteString("start_ssh_agent() {\n  if [ ! -s \"${bundle_dir}/credentials/ssh-key\" ]; then return 0; fi\n  mkdir -p \"${workspace}/.semaphore\"\n  eval \"$(ssh-agent -a \"${workspace}/.semaphore/ssh-agent.sock\" -s)\" >/dev/null\n  if [ -s \"${bundle_dir}/credentials/ssh-passphrase\" ]; then\n    SSH_ASKPASS=\"${bundle_dir}/ssh-askpass.sh\" SSH_ASKPASS_REQUIRE=force DISPLAY=semaphore ssh-add \"${bundle_dir}/credentials/ssh-key\" </dev/null >/dev/null\n  else\n    ssh-add \"${bundle_dir}/credentials/ssh-key\" </dev/null >/dev/null\n  fi\n}\n")
+	script.WriteString("load_environment() {\n  . \"${bundle_dir}/credentials/environment.sh\"\n  export HOME=\"${home_dir}\"\n  export PATH=\"${runner_path}\"\n  export PWD=\"${workspace}\"\n  unset SSH_ASKPASS SSH_ASKPASS_REQUIRE\n  if [ -e \"${workspace}/.semaphore/ssh-agent.sock\" ]; then export SSH_AUTH_SOCK=\"${workspace}/.semaphore/ssh-agent.sock\"; else unset SSH_AUTH_SOCK; fi\n  export ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_FORCE_COLOR=True ANSIBLE_REMOTE_TMP=/tmp/.ansible/tmp PYTHONUNBUFFERED=1\n  if [ -x \"${bundle_dir}/ssh-route.sh\" ]; then\n    semaphore_system_ssh=\"$(command -v ssh)\"\n    case \"${semaphore_system_ssh}\" in /*) ;; *) semaphore_system_ssh=\"$(cd \"$(dirname \"${semaphore_system_ssh}\")\" && pwd)/$(basename \"${semaphore_system_ssh}\")\" ;; esac\n    export SEMAPHORE_SYSTEM_SSH=\"${semaphore_system_ssh}\"\n    export PATH=\"${bundle_dir}/ssh-bin:${runner_path}\"\n    if [ -z \"${GIT_SSH_COMMAND+x}\" ]; then export GIT_SSH_COMMAND=\"${bundle_dir}/ssh-route.sh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/workspace/.semaphore/known_hosts\"; fi\n    if [ -z \"${ANSIBLE_SSH_EXECUTABLE+x}\" ]; then export ANSIBLE_SSH_EXECUTABLE=\"${bundle_dir}/ssh-route.sh\"; fi\n  elif [ -z \"${GIT_SSH_COMMAND+x}\" ]; then\n    export GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/workspace/.semaphore/known_hosts'\n  fi\n}\n")
+	script.WriteString("start_ssh_agent() {\n  order_file=\"${bundle_dir}/credentials/ssh-key-order\"\n  [ -s \"${order_file}\" ] || return 0\n  mkdir -p \"${workspace}/.semaphore\"\n  eval \"$(ssh-agent -a \"${workspace}/.semaphore/ssh-agent.sock\" -s)\" >/dev/null\n  while IFS= read -r key; do\n    [ -s \"${key}\" ] || continue\n    key_name=\"${key#${bundle_dir}/credentials/ssh-key-}\"\n    passphrase=\"${bundle_dir}/credentials/ssh-passphrase-${key_name}\"\n    if [ -s \"${passphrase}\" ]; then\n      SEMAPHORE_SSH_PASSPHRASE_FILE=\"${passphrase}\" SSH_ASKPASS=\"${bundle_dir}/ssh-askpass.sh\" SSH_ASKPASS_REQUIRE=force DISPLAY=semaphore ssh-add \"${key}\" </dev/null >/dev/null\n    else\n      ssh-add \"${key}\" </dev/null >/dev/null\n    fi\n  done < \"${order_file}\"\n}\n")
 	script.WriteString("bootstrap() {\n  mkdir -p \"${workspace}\" \"${home_dir}\"\n  cp -R \"${bundle_dir}/repository/.\" \"${workspace}/\"\n  load_environment\n  start_ssh_agent\n")
 
 	terraformPlan := ContainerTerraformPlan{}

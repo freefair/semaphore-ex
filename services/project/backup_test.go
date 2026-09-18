@@ -10,6 +10,7 @@ import (
 	proFactory "github.com/semaphoreui/semaphore/pro/db/factory"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type testItem struct {
@@ -33,6 +34,12 @@ func TestBackupProject(t *testing.T) {
 		Type:      db.AccessKeyNone,
 	})
 	assert.NoError(t, err)
+	dependencyKey, err := store.CreateAccessKey(db.AccessKey{ProjectID: &proj.ID, Name: "dependency", Type: db.AccessKeySSH})
+	assert.NoError(t, err)
+	ownedKey, err := store.CreateAccessKey(db.AccessKey{ProjectID: &proj.ID, Name: "template-owned", Type: db.AccessKeySSH})
+	assert.NoError(t, err)
+	proj.DefaultSSHKeys = db.SSHKeyBindings{{AccessKeyID: dependencyKey.ID, Hosts: []string{"git.example.test"}}}
+	assert.NoError(t, store.UpdateProject(proj))
 
 	repo, err := store.CreateRepository(db.Repository{
 		ProjectID: proj.ID,
@@ -65,7 +72,13 @@ func TestBackupProject(t *testing.T) {
 		EnvironmentIDs:        []int{env.ID},
 		SuppressSuccessAlerts: true,
 		SuppressErrorAlerts:   true,
+		SSHKeys:               db.SSHKeyBindings{},
 	})
+	assert.NoError(t, err)
+	_, err = store.CreateTemplate(db.Template{Name: "inherits", Playbook: "inherit.yml", ProjectID: proj.ID, RepositoryID: repo.ID})
+	assert.NoError(t, err)
+	_, err = store.CreateTemplate(db.Template{Name: "own", Playbook: "own.yml", ProjectID: proj.ID, RepositoryID: repo.ID,
+		SSHKeys: db.SSHKeyBindings{{AccessKeyID: ownedKey.ID, Hosts: []string{"modules.example.test"}}}})
 	assert.NoError(t, err)
 
 	backup, err := GetBackup(proj.ID, store, proFactory.NewWorkflowStore(store))
@@ -74,6 +87,11 @@ func TestBackupProject(t *testing.T) {
 
 	str, err := backup.Marshal()
 	assert.NoError(t, err)
+	assert.NotContains(t, str, `"default_ssh_keys"`)
+	assert.NotContains(t, str, `"always_ssh_keys"`)
+	assert.NotContains(t, str, `"ssh_keys"`)
+	assert.Contains(t, str, `"default_ssh_key_bindings"`)
+	assert.Contains(t, str, `"ssh_key_bindings"`)
 
 	restoredBackup := &BackupFormat{}
 	err = restoredBackup.Unmarshal(str)
@@ -99,10 +117,27 @@ func TestBackupProject(t *testing.T) {
 
 	restoredTemplates, err := store.GetTemplates(restoredProj.ID, db.TemplateFilter{}, db.RetrieveQueryParams{})
 	assert.NoError(t, err)
-	assert.Len(t, restoredTemplates, 1)
-	assert.Len(t, restoredTemplates[0].EnvironmentIDs, 1)
-	assert.True(t, restoredTemplates[0].SuppressSuccessAlerts)
-	assert.True(t, restoredTemplates[0].SuppressErrorAlerts)
+	assert.Len(t, restoredTemplates, 3)
+	byName := map[string]db.Template{}
+	for _, template := range restoredTemplates {
+		byName[template.Name] = template
+	}
+	assert.Len(t, byName["Test"].EnvironmentIDs, 1)
+	assert.True(t, byName["Test"].SuppressSuccessAlerts)
+	assert.True(t, byName["Test"].SuppressErrorAlerts)
+	assert.NotNil(t, byName["Test"].SSHKeys)
+	assert.Empty(t, byName["Test"].SSHKeys)
+	assert.Nil(t, byName["inherits"].SSHKeys)
+	require.Len(t, byName["own"].SSHKeys, 1)
+	assert.Equal(t, []string{"modules.example.test"}, byName["own"].SSHKeys[0].Hosts)
+	restoredProject, err := store.GetProject(restoredProj.ID)
+	assert.NoError(t, err)
+	assert.Len(t, restoredProject.DefaultSSHKeys, 1)
+	assert.NotEqual(t, dependencyKey.ID, restoredProject.DefaultSSHKeys[0].AccessKeyID)
+	inherited, resolveErr := db.ResolveTaskSSHKeys(restoredProject.DefaultSSHKeys, restoredProject.AlwaysSSHKeys, byName["inherits"].SSHKeys, nil)
+	require.NoError(t, resolveErr)
+	assert.Equal(t, restoredProject.DefaultSSHKeys[0].AccessKeyID, inherited[0].AccessKeyID)
+	assert.NotEqual(t, restoredProject.DefaultSSHKeys[0].AccessKeyID, byName["own"].SSHKeys[0].AccessKeyID)
 
 	restoredEnvs, err := store.GetEnvironments(restoredProj.ID, db.RetrieveQueryParams{})
 	assert.NoError(t, err)

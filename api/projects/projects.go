@@ -7,12 +7,20 @@ import (
 
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 )
 
 type ProjectsController struct {
 	accessKeyService server.AccessKeyService
+}
+
+func validateProjectSSHKeyBindingsOnCreate(project db.Project) error {
+	if len(project.DefaultSSHKeys) > 0 || len(project.AlwaysSSHKeys) > 0 {
+		return common_errors.NewValidationError("SSH key bindings can be configured only after creating the project")
+	}
+	return nil
 }
 
 func NewProjectsController(
@@ -329,6 +337,10 @@ func (c *ProjectsController) AddProject(w http.ResponseWriter, r *http.Request) 
 	}
 
 	body := bodyWithDemo.Project
+	if err := validateProjectSSHKeyBindingsOnCreate(body); err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
 
 	store := helpers.Store(r)
 

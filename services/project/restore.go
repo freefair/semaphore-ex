@@ -33,6 +33,33 @@ func verifyDuplicate[T BackupEntry](name string, items []T) error {
 	return nil
 }
 
+func verifyBackupSSHKeyBindings(bindings *[]BackupSSHKeyBinding, keys []BackupAccessKey) error {
+	if bindings == nil {
+		return nil
+	}
+	for _, binding := range *bindings {
+		if binding.Key == "" || getEntryByName[BackupAccessKey](&binding.Key, keys) == nil {
+			return fmt.Errorf("SSH key binding does not exist in keys[].name")
+		}
+	}
+	return nil
+}
+
+func restoreBackupSSHKeyBindings(bindings *[]BackupSSHKeyBinding, keys []db.AccessKey) (db.SSHKeyBindings, error) {
+	if bindings == nil {
+		return nil, nil
+	}
+	result := make(db.SSHKeyBindings, len(*bindings))
+	for i, binding := range *bindings {
+		key := findEntityByName[db.AccessKey](&binding.Key, keys)
+		if key == nil {
+			return nil, fmt.Errorf("SSH key binding does not exist in restored keys")
+		}
+		result[i] = db.SSHKeyBinding{AccessKeyID: key.ID, Hosts: append([]string(nil), binding.Hosts...)}
+	}
+	return result, nil
+}
+
 func (e BackupSecretStorage) Verify(backup *BackupFormat) error {
 	return verifyDuplicate[BackupSecretStorage](e.Name, backup.SecretStorages)
 }
@@ -270,6 +297,9 @@ func (e BackupTemplate) Verify(backup *BackupFormat) error {
 	if e.View != nil && getEntryByName[BackupView](e.View, backup.Views) == nil {
 		return fmt.Errorf("view does not exist in views[].name")
 	}
+	if err := verifyBackupSSHKeyBindings(e.SSHKeyBindings, backup.Keys); err != nil {
+		return err
+	}
 
 	if buildTemplate := getEntryByName[BackupTemplate](e.BuildTemplate, backup.Templates); string(e.Type) == "deploy" && buildTemplate == nil {
 		return fmt.Errorf("deploy is build but build_template does not exist in templates[].name")
@@ -329,6 +359,11 @@ func (e BackupTemplate) Restore(b *BackupDB) error {
 	template.InventoryID = InventoryID
 	template.ViewID = ViewID
 	template.BuildTemplateID = BuildTemplateID
+	sshKeys, err := restoreBackupSSHKeyBindings(e.SSHKeyBindings, b.keys)
+	if err != nil {
+		return err
+	}
+	template.SSHKeys = sshKeys
 
 	newTemplate, err := b.store.CreateTemplate(template)
 	if err != nil {
@@ -553,6 +588,12 @@ func (backup *BackupFormat) Verify() error {
 			return fmt.Errorf("error at keys[%d]: %s", i, err.Error())
 		}
 	}
+	if err := verifyBackupSSHKeyBindings(backup.Meta.DefaultSSHKeyBindings, backup.Keys); err != nil {
+		return err
+	}
+	if err := verifyBackupSSHKeyBindings(backup.Meta.AlwaysSSHKeyBindings, backup.Keys); err != nil {
+		return err
+	}
 	for i, o := range backup.Repositories {
 		if err := o.Verify(backup); err != nil {
 			return fmt.Errorf("error at repositories[%d]: %s", i, err.Error())
@@ -650,6 +691,19 @@ func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore 
 		if err := o.Restore(&b); err != nil {
 			return nil, fmt.Errorf("error at keys[%d]: %s", i, err.Error())
 		}
+	}
+	defaultSSHKeys, err := restoreBackupSSHKeyBindings(backup.Meta.DefaultSSHKeyBindings, b.keys)
+	if err != nil {
+		return nil, err
+	}
+	alwaysSSHKeys, err := restoreBackupSSHKeyBindings(backup.Meta.AlwaysSSHKeyBindings, b.keys)
+	if err != nil {
+		return nil, err
+	}
+	newProject.DefaultSSHKeys = defaultSSHKeys
+	newProject.AlwaysSSHKeys = alwaysSSHKeys
+	if err = b.store.UpdateProject(newProject); err != nil {
+		return nil, err
 	}
 
 	for i, o := range backup.Repositories {

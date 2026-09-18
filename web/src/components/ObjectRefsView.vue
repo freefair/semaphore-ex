@@ -21,8 +21,15 @@
             class="object-refs-view__link-wrap"
             :key="t.id"
         >
+          <TaskLink
+            v-if="s.slug === 'tasks'"
+            :task-id="t.id"
+            :label="t.name || $t('taskSSHReferencedTask', { id: t.id })"
+          />
           <router-link
-            :to="`/project/${projectId}/${s.path || s.slug}/${s.pageless ? '' : t.id}`"
+            v-else
+            :to="s.slug === 'projects' ? `/project/${t.id}/settings`
+              : `/project/${projectId}/${s.path || s.slug}/${s.pageless ? '' : t.id}`"
             class="object-refs-view__link">{{ t.name }}</router-link>
         </span>
       </div>
@@ -41,7 +48,10 @@
 }
 </style>
 <script>
+import TaskLink from '@/components/TaskLink.vue';
+
 export default {
+  components: { TaskLink },
   props: {
     objectRefs: Object,
     projectId: Number,
@@ -54,6 +64,14 @@ export default {
   computed: {
     sections() {
       return [{
+        slug: 'projects',
+        title: this.$t('taskSSHKeyRefProjects'),
+        icon: 'folder-key',
+      }, {
+        slug: 'tasks',
+        title: this.$t('taskSSHKeyRefTasks'),
+        icon: 'play-circle-outline',
+      }, {
         slug: 'templates',
         title: 'Templates',
         icon: 'check-all',

@@ -11,7 +11,7 @@ func TestUpstreamTemplateMigrationsPreserveForkUpgradeAndRollback(t *testing.T) 
 	previous := "2.20.67"
 	store := InitConfigCreateTestStoreAt(&previous)
 	t.Cleanup(store.Close)
-	projectID, repositoryID := newTemplateTestProject(t, store)
+	projectID, repositoryID := newLegacyTemplateTestProject(t, store)
 	for _, name := range []string{"Build", "Build", "Build (2)"} {
 		_, err := store.exec("insert into project__template (project_id, repository_id, name, playbook, app) values (?, ?, ?, 'site.yml', '')", projectID, repositoryID, name)
 		require.NoError(t, err)

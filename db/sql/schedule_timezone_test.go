@@ -13,7 +13,7 @@ func TestScheduleTimezoneMigrationPreservesExistingRowsAndRollsBack(t *testing.T
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 
-	projectID, repositoryID := newTemplateTestProject(t, store)
+	projectID, repositoryID := newLegacyTemplateTestProject(t, store)
 	// Seed the historical schema directly: the current template writer includes
 	// working_directory, which is introduced only in migration 2.20.67.
 	templateID, err := store.insert("id",

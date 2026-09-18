@@ -35,6 +35,9 @@ type LocalExecutor struct {
 	taskSSHIdentityFiles       []string
 	repositorySSHIdentityFiles []string
 	inventorySSHIdentityFiles  []string
+	extraSSHIdentityFiles      []string
+	taskSSHRoutingFiles        []string
+	taskSSHRoutingCommand      string
 	becomeKeyInstallation      ssh.AccessKeyInstallation
 	vaultFileInstallations     map[string]ssh.AccessKeyInstallation
 
@@ -1094,10 +1097,61 @@ func (t *LocalExecutor) getTaskSSHAgentEnvironment(existingValues ...[]string) [
 	}
 	environment := []string{sshAuthSock}
 	gitIdentities := append(append([]string(nil), t.repositorySSHIdentityFiles...), t.inventorySSHIdentityFiles...)
+	for _, selector := range t.extraSSHIdentityFiles {
+		if selector != "" {
+			gitIdentities = append(gitIdentities, selector)
+		}
+	}
 	if len(gitIdentities) > 0 && !environmentHasName(existing, "GIT_SSH_COMMAND") {
-		environment = append(environment, "GIT_SSH_COMMAND="+ssh.TaskGitSSHCommand(t.taskSSHAgent.SocketFile, gitIdentities))
+		if t.taskSSHRoutingCommand != "" {
+			environment = append(environment, "GIT_SSH_COMMAND="+posixQuote(t.taskSSHRoutingCommand))
+		} else {
+			environment = append(environment, "GIT_SSH_COMMAND="+ssh.TaskGitSSHCommand(t.taskSSHAgent.SocketFile, gitIdentities))
+		}
+	}
+	if t.taskSSHRoutingCommand != "" && !environmentHasName(existing, "ANSIBLE_SSH_EXECUTABLE") {
+		environment = append(environment, "ANSIBLE_SSH_EXECUTABLE="+t.taskSSHRoutingCommand)
+	}
+	if t.taskSSHRoutingCommand != "" {
+		environment = append(environment, "PATH="+filepath.Dir(t.taskSSHRoutingCommand)+":"+taskSSHRoutingBasePath(existing))
 	}
 	return environment
+}
+
+// taskSSHRoutingBasePath matches LocalApp's environment construction before the
+// routing wrapper prepends its directory: task variables override configured
+// values, configured EnvVars override forwarded values, and PATH is otherwise
+// inherited from the Semaphore process.
+func taskSSHRoutingBasePath(existing []string) string {
+	if value, found := environmentValue(existing, "PATH"); found {
+		return value
+	}
+	if util.Config == nil {
+		return os.Getenv("PATH")
+	}
+	if value, found := util.Config.EnvVars["PATH"]; found {
+		return value
+	}
+	for _, forwarded := range util.Config.ForwardedEnvVars {
+		if forwarded == "PATH" {
+			if value := os.Getenv("PATH"); value != "" {
+				return value
+			}
+		}
+	}
+	return os.Getenv("PATH")
+}
+
+func environmentValue(environment []string, name string) (string, bool) {
+	var value string
+	var found bool
+	for _, variable := range environment {
+		if parsed, exists := strings.CutPrefix(variable, name+"="); exists {
+			value = parsed
+			found = true
+		}
+	}
+	return value, found
 }
 
 func environmentHasName(environment []string, name string) bool {

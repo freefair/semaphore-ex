@@ -501,6 +501,13 @@
           </div>
         </div>
 
+        <TaskSSHKeys
+          :project-id="projectId"
+          :value="item.ssh_keys"
+          :disabled="formSaving"
+          @input="$set(item, 'ssh_keys', $event)"
+        />
+
         <h2 class="mb-4">{{ $t('task_prompts') }}</h2>
         <div class="d-flex" style="column-gap: 20px; flex-wrap: wrap">
           <v-checkbox
@@ -708,6 +715,7 @@ import 'codemirror/addon/lint/json-lint.js';
 import 'codemirror/addon/display/placeholder.js';
 import ArgsPicker from '@/components/ArgsPicker.vue';
 import TemplateVaults from '@/components/TemplateVaults.vue';
+import TaskSSHKeys from '@/components/enhanced/TaskSSHKeys.vue';
 import { TEMPLATE_TYPE_ICONS, TEMPLATE_TYPE_TITLES } from '@/lib/constants';
 import AppFieldsMixin from '@/components/AppFieldsMixin';
 import AppsMixin from '@/components/AppsMixin';
@@ -724,6 +732,7 @@ export default {
     CollapsibleSection,
     RichEditor,
     TemplateVaults,
+    TaskSSHKeys,
     ArgsPicker,
     SurveyVars,
   },

@@ -319,6 +319,7 @@ func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Ru
 		Repository:          tsk.Repository,
 		Environment:         tsk.Environment,
 		ExecutorImage:       tsk.Task.ResolvedExecutorImage,
+		SSHKeyBindings:      resolvedTaskSSHKeyBindings(tsk.ResolvedSSHKeys),
 	}
 	jobData.Template.ExecutorImage = jobData.ExecutorImage
 	if tsk.Template.App.IsTerraform() {
@@ -438,6 +439,18 @@ func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Ru
 // and stages them into keys, so the caller publishes either all of them or
 // none. It returns the first decryption error.
 func (c *RunnerController) collectTaskAccessKeys(tsk *tasks.TaskRunner, runnerID int, keys map[int]db.AccessKey) error {
+	for _, resolved := range tsk.ResolvedSSHKeys {
+		key := resolved.Key
+		if err := c.encryptionService.DeserializeSecret(&key); err != nil {
+			log.WithFields(log.Fields{
+				"runner_id": runnerID, "task_id": tsk.Task.ID,
+				"access_key_id": resolved.Binding.AccessKeyID, "context": "runner",
+			}).WithError(err).Error("Failed to decrypt task SSH key")
+			return err
+		}
+		keys[resolved.Binding.AccessKeyID] = key
+	}
+
 	if tsk.Inventory.SSHKeyID != nil {
 		if err := c.encryptionService.DeserializeSecret(&tsk.Inventory.SSHKey); err != nil {
 			log.WithFields(log.Fields{
@@ -513,6 +526,14 @@ func (c *RunnerController) collectTaskAccessKeys(tsk *tasks.TaskRunner, runnerID
 	keys[tsk.Repository.SSHKeyID] = tsk.Repository.SSHKey
 
 	return nil
+}
+
+func resolvedTaskSSHKeyBindings(resolved []db.ResolvedTaskSSHKey) db.SSHKeyBindings {
+	bindings := make(db.SSHKeyBindings, 0, len(resolved))
+	for _, key := range resolved {
+		bindings = append(bindings, key.Binding)
+	}
+	return bindings
 }
 
 func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) {

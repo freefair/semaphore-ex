@@ -36,6 +36,8 @@
     ></EditTemplateDialog>
 
     <NewTaskDialog
+      :user-permissions="userPermissions"
+      :is-admin="isAdmin"
       v-model="newTaskDialog"
       @save="itemId = null"
       @close="itemId = null"
@@ -260,6 +262,8 @@
           v-if="openedItems.some((template) => template.id === item.id)"
         >
           <TaskList
+            :user-permissions="userPermissions"
+            :is-admin="isAdmin"
             style="border: 1px solid lightgray; border-radius: 6px; margin: 10px 0;"
             :template="item"
             :limit="5"

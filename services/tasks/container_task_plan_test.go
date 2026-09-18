@@ -8,15 +8,262 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/ssh"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sshcrypto "golang.org/x/crypto/ssh"
 )
+
+func TestContainerTaskBootstrapLoadsRepositoryAndInventoryKeys(t *testing.T) {
+	if os.Getenv("SEMAPHORE_RUN_CONTAINER_SSH_INTEGRATION") != "1" {
+		t.Skip("set SEMAPHORE_RUN_CONTAINER_SSH_INTEGRATION=1 to run Docker SSH-agent integration")
+	}
+	root := t.TempDir()
+	agentTmp, err := os.MkdirTemp("/tmp", "cts")
+	require.NoError(t, err)
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: agentTmp, Ssh: &util.SshConfig{StrictHostKeyChecking: util.SshStrictHostKeyCheckingNo}}
+	t.Cleanup(func() { util.Config = previousConfig; require.NoError(t, os.RemoveAll(agentTmp)) })
+	repositoryKey, repositorySigner := repositoryAgentTestEncryptedPrivateKey(t, "container-repository-passphrase")
+	inventoryKey, inventorySigner := repositoryAgentTestPrivateKey(t)
+	extraKey, extraSigner := repositoryAgentTestEncryptedPrivateKey(t, "container-extra-passphrase")
+	extraTwoKey, extraTwoSigner := repositoryAgentTestEncryptedPrivateKey(t, "container-extra-two-passphrase")
+	extraThreeKey, extraThreeSigner := repositoryAgentTestEncryptedPrivateKey(t, "container-extra-three-passphrase")
+	server := startRepositoryAgentGitServerForContainer(t, repositorySigner.PublicKey(), createRepositoryAgentFixture(t, "container-repository"))
+	repository := filepath.Join(root, "repository")
+	require.NoError(t, os.MkdirAll(repository, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repository, "run.sh"), []byte("#!/bin/sh\nset -eu\nif ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/workspace/.semaphore/known_hosts -p \"${SSH_TEST_SERVER_PORT}\" git@unknown.example.test 'echo unexpected'; then exit 97; fi\nssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/workspace/.semaphore/known_hosts -p \"${SSH_TEST_SERVER_PORT}\" git@host.docker.internal 'echo semaphore-inventory-marker'\ngit ls-remote \"${SSH_TEST_SERVER_URL}\"\nssh-add -l\n"), 0o700))
+	executor := &LocalExecutor{Task: db.Task{ID: 1, ResolvedSSHKeys: []db.ResolvedTaskSSHKey{{Binding: db.SSHKeyBinding{AccessKeyID: 40, Hosts: []string{"host.docker.internal"}}, Key: db.AccessKey{ID: 40, Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: repositoryKey, Passphrase: "container-repository-passphrase"}}}, {Binding: db.SSHKeyBinding{AccessKeyID: 42, Hosts: []string{"inventory.example.test"}}, Key: db.AccessKey{ID: 42, Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: inventoryKey}}}, {Binding: db.SSHKeyBinding{AccessKeyID: 41, Hosts: []string{"extra.example.test"}}, Key: db.AccessKey{ID: 41, Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: extraKey, Passphrase: "container-extra-passphrase"}}}, {Binding: db.SSHKeyBinding{AccessKeyID: 43, Hosts: []string{"extra-two.example.test"}}, Key: db.AccessKey{ID: 43, Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: extraTwoKey, Passphrase: "container-extra-two-passphrase"}}}, {Binding: db.SSHKeyBinding{AccessKeyID: 44, Hosts: []string{"extra-three.example.test"}}, Key: db.AccessKey{ID: 44, Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: extraThreeKey, Passphrase: "container-extra-three-passphrase"}}}}}, Template: db.Template{ID: 1, ProjectID: 1, App: db.AppBash, Playbook: "run.sh"}, Repository: db.Repository{ID: 1, ProjectID: 1, GitURL: repository, SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: repositoryKey, Passphrase: "container-repository-passphrase"}}}, Inventory: db.Inventory{SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: inventoryKey}}}, prepared: true, preparedEnv: []string{"SSH_TEST_SERVER_URL=" + server.url, "SSH_TEST_SERVER_PORT=" + strconv.Itoa(server.port)}, preparedArgsMap: map[string][]string{"default": {"run.sh"}}}
+	require.NoError(t, executor.startTaskSSHAgent())
+	t.Cleanup(executor.destroyKeys)
+	executor.preparedEnv = append(executor.preparedEnv, executor.getTaskSSHAgentEnvironment(executor.preparedEnv)...)
+	plan, err := executor.ContainerTaskPlan()
+	require.NoError(t, err)
+	bundle, err := io.ReadAll(plan.Bundle)
+	require.NoError(t, err)
+	require.NoError(t, plan.Bundle.Close())
+	bundleDir := filepath.Join(root, "bundle")
+	require.NoError(t, os.Mkdir(bundleDir, 0o700))
+	archive := tar.NewReader(bytes.NewReader(bundle))
+	for {
+		header, nextErr := archive.Next()
+		if nextErr == io.EOF {
+			break
+		}
+		require.NoError(t, nextErr)
+		target := filepath.Join(bundleDir, header.Name)
+		if header.FileInfo().IsDir() {
+			require.NoError(t, os.MkdirAll(target, 0o700))
+			continue
+		}
+		require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o700))
+		contents, readErr := io.ReadAll(archive)
+		require.NoError(t, readErr)
+		require.NoError(t, os.WriteFile(target, contents, os.FileMode(header.Mode)))
+	}
+	workspace := filepath.Join(root, "workspace")
+	require.NoError(t, os.Mkdir(workspace, 0o700))
+	command := exec.Command("docker", "run", "--rm", "--add-host", "unknown.example.test:host-gateway", "-v", bundleDir+":/semaphore/bundle:ro", "-v", workspace+":/workspace", "ghcr.io/freefair/semaphore-ex-runner:latest", "/bin/sh", "-c", "/semaphore/bundle/run.sh bootstrap; /semaphore/bundle/run.sh run")
+	output, err := command.CombinedOutput()
+	logDirectory := "/tmp/semaphore-task-agent-release-security"
+	require.NoError(t, os.MkdirAll(logDirectory, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(logDirectory, "container-key-auth.log"), output, 0o600))
+	require.NoError(t, err, string(output))
+	assert.Contains(t, string(output), "HEAD")
+	assert.Contains(t, string(output), "semaphore-inventory-marker")
+	assert.Contains(t, string(output), sshcrypto.FingerprintSHA256(repositorySigner.PublicKey()))
+	assert.Contains(t, string(output), sshcrypto.FingerprintSHA256(inventorySigner.PublicKey()))
+	assert.Contains(t, string(output), sshcrypto.FingerprintSHA256(extraSigner.PublicKey()))
+	assert.Contains(t, string(output), sshcrypto.FingerprintSHA256(extraTwoSigner.PublicKey()))
+	assert.Contains(t, string(output), sshcrypto.FingerprintSHA256(extraThreeSigner.PublicKey()))
+	assert.Equal(t, []string{sshcrypto.FingerprintSHA256(repositorySigner.PublicKey()), sshcrypto.FingerprintSHA256(repositorySigner.PublicKey())}, server.attemptedPublicKeys())
+}
+
+func TestContainerTaskBootstrapBelowRoutingThresholdPreservesInventoryPriority(t *testing.T) {
+	if os.Getenv("SEMAPHORE_RUN_CONTAINER_SSH_INTEGRATION") != "1" {
+		t.Skip("set SEMAPHORE_RUN_CONTAINER_SSH_INTEGRATION=1 to run Docker SSH-agent integration")
+	}
+	root := t.TempDir()
+	agentTmp, err := os.MkdirTemp("/tmp", "cts")
+	require.NoError(t, err)
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: agentTmp, Ssh: &util.SshConfig{StrictHostKeyChecking: util.SshStrictHostKeyCheckingNo}}
+	t.Cleanup(func() { util.Config = previousConfig; require.NoError(t, os.RemoveAll(agentTmp)) })
+	inventoryKey, inventorySigner := repositoryAgentTestPrivateKey(t)
+	repositoryKey, repositorySigner := repositoryAgentTestEncryptedPrivateKey(t, "below-threshold-repository-passphrase")
+	extraKey, extraSigner := repositoryAgentTestEncryptedPrivateKey(t, "below-threshold-extra-passphrase")
+	inventoryServer := startRepositoryAgentGitServerForContainer(t, inventorySigner.PublicKey(), createRepositoryAgentFixture(t, "below-threshold-inventory"))
+	extraServer := startRepositoryAgentGitServerAtWithMaxAuthTries(t, "0.0.0.0", "host.docker.internal", extraSigner.PublicKey(), createRepositoryAgentFixture(t, "below-threshold-extra"), 0)
+	repository := filepath.Join(root, "repository")
+	require.NoError(t, os.MkdirAll(repository, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repository, "run.sh"), []byte("#!/bin/sh\nset -eu\nssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/workspace/.semaphore/known_hosts -p \"${SSH_INVENTORY_PORT}\" git@host.docker.internal 'echo semaphore-inventory-marker'\ngit ls-remote \"${SSH_EXTRA_SERVER_URL}\"\nssh-add -l\n"), 0o700))
+	executor := &LocalExecutor{Task: db.Task{ID: 2, ResolvedSSHKeys: []db.ResolvedTaskSSHKey{{Binding: db.SSHKeyBinding{AccessKeyID: 51}, Key: db.AccessKey{ID: 51, Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: extraKey, Passphrase: "below-threshold-extra-passphrase"}}}}}, Template: db.Template{ID: 2, ProjectID: 1, App: db.AppBash, Playbook: "run.sh"}, Repository: db.Repository{ID: 2, ProjectID: 1, GitURL: repository, SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: repositoryKey, Passphrase: "below-threshold-repository-passphrase"}}}, Inventory: db.Inventory{SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: inventoryKey}}}, prepared: true, preparedEnv: []string{"SSH_INVENTORY_PORT=" + strconv.Itoa(inventoryServer.port), "SSH_EXTRA_SERVER_URL=" + extraServer.url}, preparedArgsMap: map[string][]string{"default": {"run.sh"}}}
+	require.NoError(t, executor.startTaskSSHAgent())
+	t.Cleanup(executor.destroyKeys)
+	executor.preparedEnv = append(executor.preparedEnv, executor.getTaskSSHAgentEnvironment(executor.preparedEnv)...)
+	plan, err := executor.ContainerTaskPlan()
+	require.NoError(t, err)
+	bundle, err := io.ReadAll(plan.Bundle)
+	require.NoError(t, err)
+	require.NoError(t, plan.Bundle.Close())
+	bundleDir := filepath.Join(root, "bundle")
+	require.NoError(t, os.Mkdir(bundleDir, 0o700))
+	archive := tar.NewReader(bytes.NewReader(bundle))
+	for {
+		header, nextErr := archive.Next()
+		if nextErr == io.EOF {
+			break
+		}
+		require.NoError(t, nextErr)
+		target := filepath.Join(bundleDir, header.Name)
+		if header.FileInfo().IsDir() {
+			require.NoError(t, os.MkdirAll(target, 0o700))
+			continue
+		}
+		require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o700))
+		contents, readErr := io.ReadAll(archive)
+		require.NoError(t, readErr)
+		require.NoError(t, os.WriteFile(target, contents, os.FileMode(header.Mode)))
+	}
+	workspace := filepath.Join(root, "workspace")
+	require.NoError(t, os.Mkdir(workspace, 0o700))
+	command := exec.Command("docker", "run", "--rm", "-v", bundleDir+":/semaphore/bundle:ro", "-v", workspace+":/workspace", "ghcr.io/freefair/semaphore-ex-runner:latest", "/bin/sh", "-c", "/semaphore/bundle/run.sh bootstrap; /semaphore/bundle/run.sh run")
+	output, err := command.CombinedOutput()
+	logDirectory := "/tmp/semaphore-task-agent-release-security"
+	require.NoError(t, os.MkdirAll(logDirectory, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(logDirectory, "container-key-below-threshold.log"), output, 0o600))
+	require.NoError(t, err, string(output))
+	assert.Contains(t, string(output), "semaphore-inventory-marker")
+	assert.Contains(t, string(output), sshcrypto.FingerprintSHA256(repositorySigner.PublicKey()))
+	assert.Contains(t, string(output), sshcrypto.FingerprintSHA256(extraSigner.PublicKey()))
+	identities := string(output)
+	assert.Less(t, strings.Index(identities, sshcrypto.FingerprintSHA256(inventorySigner.PublicKey())), strings.Index(identities, sshcrypto.FingerprintSHA256(repositorySigner.PublicKey())))
+	assert.Equal(t, []string{sshcrypto.FingerprintSHA256(inventorySigner.PublicKey())}, inventoryServer.attemptedPublicKeys())
+}
+
+func TestContainerTaskPlanUsesPublicSelectorsAndPreservesExplicitSSHSettings(t *testing.T) {
+	root := t.TempDir()
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: root}
+	t.Cleanup(func() { util.Config = previousConfig })
+	repositoryKey, repositorySigner := repositoryAgentTestPrivateKey(t)
+	inventoryKey, inventorySigner := repositoryAgentTestPrivateKey(t)
+	repository := filepath.Join(root, "repository")
+	require.NoError(t, os.MkdirAll(repository, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repository, "run.sh"), []byte("#!/bin/sh\n"), 0o700))
+	executor := &LocalExecutor{Task: db.Task{ID: 1}, Template: db.Template{ID: 1, ProjectID: 1, App: db.AppBash, Playbook: "run.sh"}, Repository: db.Repository{ID: 1, ProjectID: 1, GitURL: repository, SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: repositoryKey}}}, Inventory: db.Inventory{SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: inventoryKey}}}, prepared: true, preparedEnv: []string{"GIT_SSH_COMMAND=ssh -F /custom/ssh_config", "ANSIBLE_PRIVATE_KEY_FILE=/custom/inventory.pub", "ANSIBLE_SSH_ARGS=-o ControlMaster=auto"}, preparedArgsMap: map[string][]string{"default": {"run.sh"}}}
+
+	plan, err := executor.ContainerTaskPlan()
+	require.NoError(t, err)
+	entries := readTaskBundle(t, plan.Bundle)
+	require.NoError(t, plan.Bundle.Close())
+
+	assert.Equal(t, sshcrypto.MarshalAuthorizedKey(repositorySigner.PublicKey()), entries["credentials/ssh-key-repository.pub"])
+	assert.Equal(t, sshcrypto.MarshalAuthorizedKey(inventorySigner.PublicKey()), entries["credentials/ssh-key-inventory.pub"])
+	runScript := string(entries["run.sh"])
+	assert.Contains(t, runScript, "${bundle_dir}/ssh-route.sh")
+	assert.Contains(t, runScript, "if [ -z \"${GIT_SSH_COMMAND+x}\" ]")
+	assert.Contains(t, runScript, "if [ -z \"${ANSIBLE_SSH_EXECUTABLE+x}\" ]")
+	assert.Contains(t, string(entries["credentials/ssh-route.conf"]), "IdentityAgent \"/workspace/.semaphore/ssh-agent.sock\"")
+	assert.Contains(t, string(entries["credentials/ssh-route.conf"]), "Include \"~/.ssh/config\"")
+	assert.Contains(t, string(entries["credentials/ssh-route.conf"]), "Include \"/etc/ssh/ssh_config\"")
+	assert.Contains(t, string(entries["ssh-route.sh"]), "-F /semaphore/bundle/credentials/ssh-route.conf \"$@\"")
+	assert.Contains(t, string(entries["ssh-bin/ssh"]), "-F /semaphore/bundle/credentials/ssh-route.conf \"$@\"")
+	assert.NotContains(t, entries, "ssh")
+	assert.Contains(t, runScript, "export PATH=\"${bundle_dir}/ssh-bin:${runner_path}\"")
+	assert.Contains(t, runScript, "semaphore_system_ssh=\"$(command -v ssh)\"")
+	assert.Contains(t, string(entries["credentials/environment.sh"]), "export GIT_SSH_COMMAND='ssh -F /custom/ssh_config'")
+	assert.Contains(t, string(entries["credentials/environment.sh"]), "export ANSIBLE_PRIVATE_KEY_FILE='/custom/inventory.pub'")
+	assert.Contains(t, string(entries["credentials/environment.sh"]), "export ANSIBLE_SSH_ARGS='-o ControlMaster=auto'")
+	for name := range entries {
+		assert.NotContains(t, name, "workspace")
+	}
+}
+
+func TestContainerTaskPlanKeepsAgentlessGitHostKeyPolicy(t *testing.T) {
+	root := t.TempDir()
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: root}
+	t.Cleanup(func() { util.Config = previousConfig })
+	repository := filepath.Join(root, "repository")
+	require.NoError(t, os.MkdirAll(repository, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repository, "run.sh"), []byte("#!/bin/sh\n"), 0o700))
+	executor := &LocalExecutor{
+		Task:            db.Task{ID: 3},
+		Template:        db.Template{ID: 3, ProjectID: 1, App: db.AppBash, Playbook: "run.sh"},
+		Repository:      db.Repository{ID: 3, ProjectID: 1, GitURL: repository},
+		prepared:        true,
+		preparedEnv:     []string{"GIT_SSH_COMMAND=ssh -F /custom/ssh_config"},
+		preparedArgsMap: map[string][]string{"default": {"run.sh"}},
+	}
+
+	plan, err := executor.ContainerTaskPlan()
+	require.NoError(t, err)
+	entries := readTaskBundle(t, plan.Bundle)
+	require.NoError(t, plan.Bundle.Close())
+
+	runScript := string(entries["run.sh"])
+	assert.Contains(t, runScript, "elif [ -z \"${GIT_SSH_COMMAND+x}\" ]; then\n    export GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/workspace/.semaphore/known_hosts'")
+	assert.Contains(t, string(entries["credentials/environment.sh"]), "export GIT_SSH_COMMAND='ssh -F /custom/ssh_config'")
+}
+
+func TestContainerEnvironmentDropsGeneratedTaskRoutingVariables(t *testing.T) {
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: t.TempDir()}
+	t.Cleanup(func() { util.Config = previousConfig })
+	executor := LocalExecutor{
+		Template:                   db.Template{ID: 1},
+		Repository:                 db.Repository{ID: 1},
+		taskSSHAgent:               &ssh.Agent{SocketFile: "/tmp/task-agent.sock"},
+		taskSSHRoutingCommand:      "/tmp/task-routing/ssh",
+		repositorySSHIdentityFiles: []string{"/tmp/repository.pub"},
+		extraSSHIdentityFiles:      []string{"/tmp/extra.pub"},
+	}
+	executor.preparedEnv = append([]string{"GIT_SSH_COMMAND=ssh -F /custom/ssh", "ANSIBLE_SSH_EXECUTABLE=/custom/ssh"}, executor.getTaskSSHAgentEnvironment()...)
+	environment, err := executor.containerEnvironment()
+	require.NoError(t, err)
+	assert.Contains(t, environment, "GIT_SSH_COMMAND=ssh -F /custom/ssh")
+	assert.Contains(t, environment, "ANSIBLE_SSH_EXECUTABLE=/custom/ssh")
+	assert.NotContains(t, environment, "GIT_SSH_COMMAND="+posixQuote(executor.taskSSHRoutingCommand))
+	assert.NotContains(t, environment, "ANSIBLE_SSH_EXECUTABLE="+executor.taskSSHRoutingCommand)
+}
+
+func TestContainerTaskCredentialsRequireRoutesForFiveDistinctKeys(t *testing.T) {
+	keys := make([]string, 5)
+	for index := range keys {
+		keys[index], _ = repositoryAgentTestPrivateKey(t)
+	}
+	executor := &LocalExecutor{
+		Repository: db.Repository{GitURL: "ssh://git@repository.example.test/repository.git", SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: keys[0]}}},
+		Inventory:  db.Inventory{SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: keys[1]}}},
+		Task: db.Task{ResolvedSSHKeys: []db.ResolvedTaskSSHKey{
+			{Binding: db.SSHKeyBinding{AccessKeyID: 2, Hosts: []string{"inventory.example.test"}}, Key: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: keys[1]}}},
+			{Binding: db.SSHKeyBinding{AccessKeyID: 3, Hosts: []string{"extra-3.example.test"}}, Key: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: keys[2]}}},
+			{Binding: db.SSHKeyBinding{AccessKeyID: 4, Hosts: []string{"extra-4.example.test"}}, Key: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: keys[3]}}},
+			{Binding: db.SSHKeyBinding{AccessKeyID: 5, Hosts: []string{"extra-5.example.test"}}, Key: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: keys[4]}}},
+		}},
+	}
+	files, err := executor.prepareContainerCredentials(map[string][]string{"default": {}})
+	require.NoError(t, err)
+	entries := make(map[string][]byte, len(files))
+	for _, file := range files {
+		entries[file.name] = file.data
+	}
+	assert.Contains(t, string(entries["credentials/ssh-route.conf"]), "Match final host repository.example.test")
+	assert.Contains(t, string(entries["credentials/ssh-route.conf"]), "Match final host inventory.example.test")
+	assert.Contains(t, string(entries["credentials/ssh-route.conf"]), "IdentityFile none")
+
+	executor.Task.ResolvedSSHKeys = executor.Task.ResolvedSSHKeys[1:]
+	_, err = executor.prepareContainerCredentials(map[string][]string{"default": {}})
+	assert.ErrorContains(t, err, "requires an explicit host route")
+}
 
 func TestContainerTaskPlanPackagesOnlyPreparedTaskMaterial(t *testing.T) {
 	root := t.TempDir()

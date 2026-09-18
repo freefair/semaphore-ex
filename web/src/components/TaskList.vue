@@ -2,6 +2,8 @@
   <div v-if="tasks != null">
 
     <NewTaskDialog
+      :user-permissions="userPermissions"
+      :is-admin="isAdmin"
       v-model="newTaskDialog"
       :project-id="template.project_id"
       :template="template"
@@ -113,6 +115,8 @@ export default {
     TaskLink,
   },
   props: {
+    userPermissions: Number,
+    isAdmin: Boolean,
     template: Object,
     limit: Number,
     hideFooter: Boolean,

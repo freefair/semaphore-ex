@@ -13,14 +13,16 @@ const TaskExecutionSnapshotVersion = 1
 // rather than AccessKey material. Credential authority remains live at
 // dispatch, where the existing resolver applies rotation and revocation.
 type TaskExecutionSnapshot struct {
-	Version             int           `json:"version"`
-	ProjectID           int           `json:"project_id"`
-	Fingerprint         string        `json:"fingerprint"`
-	Template            Template      `json:"template"`
-	Inventory           *Inventory    `json:"inventory,omitempty"`
-	InventoryRepository *Repository   `json:"inventory_repository,omitempty"`
-	Repository          Repository    `json:"repository"`
-	Environments        []Environment `json:"environments"`
+	Version             int            `json:"version"`
+	ProjectID           int            `json:"project_id"`
+	Fingerprint         string         `json:"fingerprint"`
+	Template            Template       `json:"template"`
+	Inventory           *Inventory     `json:"inventory,omitempty"`
+	InventoryRepository *Repository    `json:"inventory_repository,omitempty"`
+	Repository          Repository     `json:"repository"`
+	Environments        []Environment  `json:"environments"`
+	SSHKeyProjectID     int            `json:"ssh_key_project_id,omitempty"`
+	SSHKeys             SSHKeyBindings `json:"ssh_keys,omitempty"`
 }
 
 // Validate checks only the structural invariants needed before a persisted
@@ -34,6 +36,13 @@ func (snapshot TaskExecutionSnapshot) Validate(projectID, templateID int) error 
 	}
 	if snapshot.Inventory != nil && (snapshot.Inventory.ID <= 0 || snapshot.Inventory.ProjectID != snapshot.Template.ProjectID) {
 		return errors.New("task execution snapshot inventory is invalid")
+	}
+	if snapshot.SSHKeyProjectID != 0 {
+		if snapshot.SSHKeyProjectID != snapshot.Template.ProjectID || ValidateSSHKeyBindings(snapshot.SSHKeys) != nil {
+			return errors.New("task execution snapshot SSH keys are invalid")
+		}
+	} else if snapshot.SSHKeys != nil {
+		return errors.New("task execution snapshot SSH keys are invalid")
 	}
 	if snapshot.Inventory != nil && snapshot.Inventory.RepositoryID != nil &&
 		(snapshot.InventoryRepository == nil || snapshot.InventoryRepository.ID != *snapshot.Inventory.RepositoryID ||

@@ -13,8 +13,7 @@ func TestMigration22017BackfillsWorkflowArtifactMetadataAndRollsBack(t *testing.
 	legacyVersion := "2.20.16"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
-	project, err := store.CreateProject(db.Project{Name: "Legacy workflow artifacts"})
-	require.NoError(t, err)
+	project := createLegacyProject(t, store, "Legacy workflow artifacts")
 	result, err := store.Sql().Exec(
 		"insert into project__workflow_template(project_id, name, definition_version, revision) values (?, ?, ?, ?)",
 		project.ID, "Legacy", 1, 1,

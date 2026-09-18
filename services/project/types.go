@@ -55,6 +55,13 @@ type BackupFormat struct {
 
 type BackupMeta struct {
 	db.Project
+	DefaultSSHKeyBindings *[]BackupSSHKeyBinding `backup:"default_ssh_key_bindings"`
+	AlwaysSSHKeyBindings  *[]BackupSSHKeyBinding `backup:"always_ssh_key_bindings"`
+}
+
+type BackupSSHKeyBinding struct {
+	Key   string   `backup:"key"`
+	Hosts []string `backup:"hosts"`
 }
 
 type BackupEnvironment struct {
@@ -96,6 +103,7 @@ type BackupTemplateRole struct {
 
 type BackupTemplate struct {
 	db.Template
+	SSHKeyBindings *[]BackupSSHKeyBinding `backup:"ssh_key_bindings"`
 
 	Inventory     *string               `backup:"inventory"`
 	Repository    string                `backup:"repository"`

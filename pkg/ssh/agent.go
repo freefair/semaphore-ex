@@ -178,6 +178,33 @@ func AgentKeys(keys ...db.AccessKey) []AgentKey {
 	return result
 }
 
+// PublicIdentity returns a stable identity derived from the public half of an
+// SSH access key. It deliberately does not use an access-key ID or PEM bytes:
+// the same public credential can appear through repository, inventory and task
+// bindings and must count only once for routing.
+func PublicIdentity(key db.AccessKey) (string, error) {
+	if key.Type != db.AccessKeySSH {
+		return "", nil
+	}
+	var (
+		privateKey any
+		err        error
+	)
+	if key.SshKey.Passphrase == "" {
+		privateKey, err = ssh.ParseRawPrivateKey([]byte(key.SshKey.PrivateKey))
+	} else {
+		privateKey, err = ssh.ParseRawPrivateKeyWithPassphrase([]byte(key.SshKey.PrivateKey), []byte(key.SshKey.Passphrase))
+	}
+	if err != nil {
+		return "", fmt.Errorf("parsing SSH public identity: %w", err)
+	}
+	signer, err := ssh.NewSignerFromKey(privateKey)
+	if err != nil {
+		return "", fmt.Errorf("creating SSH public identity: %w", err)
+	}
+	return ssh.FingerprintSHA256(signer.PublicKey()), nil
+}
+
 // StartSSHAgentWithKeys starts one task-scoped SSH agent for a composed key set.
 // The private material remains only in the in-process keyring after Listen parses it.
 func StartSSHAgentWithKeys(keys []AgentKey, projectID *int, logger task_logger.Logger) (Agent, error) {

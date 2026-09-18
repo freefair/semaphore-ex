@@ -60,7 +60,9 @@ func newExecutor(
 		return nil, fmt.Errorf("executor provider is not initialised (check runner executor config)")
 	}
 
-	hydrateJobAccessKeys(&jobData, accessKeys)
+	if err := hydrateJobAccessKeys(&jobData, accessKeys); err != nil {
+		return nil, err
+	}
 	jobData.Template.ExecutorImage = jobData.ExecutorImage
 
 	return provider.NewExecutor(
@@ -77,7 +79,7 @@ func newExecutor(
 // hydrateJobAccessKeys decrypts/wires the access keys the server sent us into the
 // per-task data. Lives in the factory (not the Provider) so the behaviour is
 // identical across strategies — every executor sees the same shape of JobData.
-func hydrateJobAccessKeys(jobData *JobData, accessKeys map[int]db.AccessKey) {
+func hydrateJobAccessKeys(jobData *JobData, accessKeys map[int]db.AccessKey) error {
 	jobData.Repository.SSHKey = accessKeys[jobData.Repository.SSHKeyID]
 
 	if jobData.Inventory.SSHKeyID != nil {
@@ -103,4 +105,17 @@ func hydrateJobAccessKeys(jobData *JobData, accessKeys map[int]db.AccessKey) {
 	if jobData.Inventory.RepositoryID != nil && jobData.Inventory.Repository != nil {
 		jobData.Inventory.Repository.SSHKey = accessKeys[jobData.Inventory.Repository.SSHKeyID]
 	}
+
+	if err := db.ValidateSSHKeyBindings(jobData.SSHKeyBindings); err != nil {
+		return err
+	}
+	jobData.Task.ResolvedSSHKeys = make([]db.ResolvedTaskSSHKey, 0, len(jobData.SSHKeyBindings))
+	for _, binding := range jobData.SSHKeyBindings {
+		key, ok := accessKeys[binding.AccessKeyID]
+		if !ok || key.ID != binding.AccessKeyID || key.Type != db.AccessKeySSH {
+			return fmt.Errorf("runner task SSH key %d is unavailable", binding.AccessKeyID)
+		}
+		jobData.Task.ResolvedSSHKeys = append(jobData.Task.ResolvedSSHKeys, db.ResolvedTaskSSHKey{Binding: binding, Key: key})
+	}
+	return nil
 }

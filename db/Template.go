@@ -332,6 +332,9 @@ type Template struct {
 
 	// override variables
 	GitBranch *string `db:"git_branch" json:"git_branch,omitempty"`
+	// SSHKeys overrides the project's default SSH key selection. Nil inherits;
+	// an empty slice explicitly selects no default keys.
+	SSHKeys SSHKeyBindings `db:"ssh_keys" json:"ssh_keys" backup:"-"`
 
 	// SurveyVarsJSON used internally for read from database.
 	// It is not used for store survey vars to database.

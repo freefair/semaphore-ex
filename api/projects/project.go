@@ -1,6 +1,7 @@
 package projects
 
 import (
+	"encoding/json"
 	"errors"
 	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
@@ -148,10 +149,26 @@ func (c *ProjectController) SendTestNotification(w http.ResponseWriter, r *http.
 
 func (c *ProjectController) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
-	var body db.Project
-
-	if !helpers.Bind(w, r, &body) {
+	var payload map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		helpers.WriteErrorStatus(w, "Invalid format", http.StatusBadRequest)
 		return
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		helpers.WriteErrorStatus(w, "Invalid format", http.StatusBadRequest)
+		return
+	}
+	var body db.Project
+	if err = json.Unmarshal(encoded, &body); err != nil {
+		helpers.WriteErrorStatus(w, "Invalid format", http.StatusBadRequest)
+		return
+	}
+	if _, present := payload["default_ssh_keys"]; !present {
+		body.DefaultSSHKeys = project.DefaultSSHKeys
+	}
+	if _, present := payload["always_ssh_keys"]; !present {
+		body.AlwaysSSHKeys = project.AlwaysSSHKeys
 	}
 
 	if body.ID != project.ID {
@@ -160,8 +177,31 @@ func (c *ProjectController) UpdateProject(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
+	if err := validateSSHKeyBindingsForProject(helpers.Store(r), project.ID, body.DefaultSSHKeys); err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	if err := validateSSHKeyBindingsForProject(helpers.Store(r), project.ID, body.AlwaysSSHKeys); err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	if _, err := db.ResolveTaskSSHKeys(body.DefaultSSHKeys, body.AlwaysSSHKeys, nil, nil); err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	templates, err := helpers.Store(r).GetTemplates(project.ID, db.TemplateFilter{}, db.RetrieveQueryParams{})
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	for _, template := range templates {
+		if _, err = db.ResolveTaskSSHKeys(body.DefaultSSHKeys, body.AlwaysSSHKeys, template.SSHKeys, nil); err != nil {
+			helpers.WriteErrorStatus(w, "SSH key bindings conflict with template "+template.Name, http.StatusBadRequest)
+			return
+		}
+	}
 
-	err := c.ProjectService.UpdateProject(body)
+	err = c.ProjectService.UpdateProject(body)
 
 	if err != nil {
 		helpers.WriteError(w, err)

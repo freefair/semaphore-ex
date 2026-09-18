@@ -385,6 +385,11 @@ func (b *BackupDB) format() (*BackupFormat, error) {
 
 	templates := make([]BackupTemplate, len(b.templates))
 	for i, o := range b.templates {
+		sshKeyBindings, bindingErr := backupSSHKeyBindings(o.SSHKeys, b.keys)
+		if bindingErr != nil {
+			return nil, bindingErr
+		}
+		o.SSHKeys = nil
 		var View *string = nil
 		if o.ViewID != nil {
 			View, _ = findNameByID[db.View](*o.ViewID, b.views)
@@ -453,14 +458,15 @@ func (b *BackupDB) format() (*BackupFormat, error) {
 		}
 
 		templates[i] = BackupTemplate{
-			Template:      o,
-			View:          View,
-			Repository:    *Repository,
-			Inventory:     Inventory,
-			Environments:  Environments,
-			BuildTemplate: BuildTemplate,
-			Vaults:        vaults,
-			Roles:         roles,
+			Template:       o,
+			View:           View,
+			Repository:     *Repository,
+			Inventory:      Inventory,
+			Environments:   Environments,
+			BuildTemplate:  BuildTemplate,
+			Vaults:         vaults,
+			Roles:          roles,
+			SSHKeyBindings: sshKeyBindings,
 		}
 	}
 
@@ -533,9 +539,20 @@ func (b *BackupDB) format() (*BackupFormat, error) {
 		}
 	}
 
+	defaultSSHKeyBindings, err := backupSSHKeyBindings(b.meta.DefaultSSHKeys, b.keys)
+	if err != nil {
+		return nil, err
+	}
+	alwaysSSHKeyBindings, err := backupSSHKeyBindings(b.meta.AlwaysSSHKeys, b.keys)
+	if err != nil {
+		return nil, err
+	}
+	meta := b.meta
+	meta.DefaultSSHKeys = nil
+	meta.AlwaysSSHKeys = nil
 	return &BackupFormat{
 		Meta: BackupMeta{
-			b.meta,
+			Project: meta, DefaultSSHKeyBindings: defaultSSHKeyBindings, AlwaysSSHKeyBindings: alwaysSSHKeyBindings,
 		},
 		Inventories:        inventories,
 		Environments:       environments,
@@ -551,6 +568,21 @@ func (b *BackupDB) format() (*BackupFormat, error) {
 		Runners:            runners,
 		Workflows:          workflows,
 	}, nil
+}
+
+func backupSSHKeyBindings(bindings db.SSHKeyBindings, keys []db.AccessKey) (*[]BackupSSHKeyBinding, error) {
+	if bindings == nil {
+		return nil, nil
+	}
+	result := make([]BackupSSHKeyBinding, len(bindings))
+	for i, binding := range bindings {
+		name, err := findNameByID[db.AccessKey](binding.AccessKeyID, keys)
+		if err != nil {
+			return nil, err
+		}
+		result[i] = BackupSSHKeyBinding{Key: *name, Hosts: append([]string(nil), binding.Hosts...)}
+	}
+	return &result, nil
 }
 
 func GetBackup(projectID int, store db.Store, workflowStore db.WorkflowManager) (*BackupFormat, error) {

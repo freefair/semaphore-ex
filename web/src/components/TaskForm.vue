@@ -62,6 +62,18 @@
       dense
     />
 
+    <TaskSSHKeys
+      v-if="canOverrideSSHKeys"
+      :project-id="template.project_id || projectId"
+      :template="template"
+      :value="item.ssh_keys"
+      :disabled="formSaving"
+      @input="$set(item, 'ssh_keys', $event)"
+    />
+    <p v-else class="text-body-2">
+      {{ $t(sameSSHKeyProject ? 'taskSSHKeysManaged' : 'taskSSHKeysCrossProject') }}
+    </p>
+
     <div v-for="(v) in template.survey_vars || []" :key="v.name">
 
       <v-text-field
@@ -222,9 +234,12 @@ import AppFieldsMixin from '@/components/AppFieldsMixin';
 import TaskParamsAnsibleForm from '@/components/TaskParamsAnsibleForm.vue';
 import TaskParamsTerraformForm from '@/components/TaskParamsTerraformForm.vue';
 import ExecutionPreflightReview from '@/components/ExecutionPreflightReview.vue';
+import TaskSSHKeys from '@/components/enhanced/TaskSSHKeys.vue';
+import PermissionsCheck from '@/components/PermissionsCheck';
+import { USER_PERMISSIONS } from '@/lib/constants';
 
 export default {
-  mixins: [ItemFormBase, AppFieldsMixin],
+  mixins: [ItemFormBase, AppFieldsMixin, PermissionsCheck],
 
   props: {
     template: Object,
@@ -237,6 +252,7 @@ export default {
     TaskParamsTerraformForm,
     ArgsPicker,
     ExecutionPreflightReview,
+    TaskSSHKeys,
   },
 
   data() {
@@ -260,6 +276,13 @@ export default {
 
   computed: {
     ...enhancedComputed,
+    sameSSHKeyProject() {
+      return !this.template?.project_id
+        || Number(this.template.project_id) === Number(this.projectId);
+    },
+    canOverrideSSHKeys() {
+      return this.sameSSHKeyProject && this.can(USER_PERMISSIONS.manageProjectResources);
+    },
     needInventory() {
       return this.needField('inventory') && this.template.task_params?.allow_override_inventory;
     },
@@ -371,6 +394,7 @@ export default {
       Object.keys(v).forEach((field) => {
         this.item[field] = v[field];
       });
+      this.$set(this.item, 'ssh_keys', this.canOverrideSSHKeys ? (v.ssh_keys ?? null) : null);
 
       this.editedEnvironment = JSON.parse(v.environment || '{}');
       this.editedSecretEnvironment = JSON.parse(v.secret || '{}');

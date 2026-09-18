@@ -1,6 +1,7 @@
 package projects
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/semaphoreui/semaphore/api/helpers"
@@ -113,17 +114,34 @@ func (c *TemplateController) AddTemplate(w http.ResponseWriter, r *http.Request)
 func addTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailable func(*db.User) bool) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 
+	var payload map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		helpers.WriteErrorStatus(w, "Invalid format", http.StatusBadRequest)
+		return
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		helpers.WriteErrorStatus(w, "Invalid format", http.StatusBadRequest)
+		return
+	}
 	var template db.Template
-	if !helpers.Bind(w, r, &template) {
+	if err = json.Unmarshal(encoded, &template); err != nil {
+		helpers.WriteErrorStatus(w, "Invalid format", http.StatusBadRequest)
 		return
 	}
 	if !validateTemplateExecutorImage(w, r, &template, executorImageAvailable) {
 		return
 	}
 
-	var err error
-
 	template.ProjectID = project.ID
+	if err := validateSSHKeyBindingsForProject(helpers.Store(r), project.ID, template.SSHKeys); err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	if _, err := db.ResolveTaskSSHKeys(project.DefaultSSHKeys, project.AlwaysSSHKeys, template.SSHKeys, nil); err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
 	newTemplate, err := helpers.Store(r).CreateTemplate(template)
 
 	if err != nil {
@@ -196,17 +214,33 @@ func (c *TemplateController) UpdateTemplate(w http.ResponseWriter, r *http.Reque
 func updateTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailable func(*db.User) bool) {
 	oldTemplate := helpers.GetFromContext(r, "template").(db.Template)
 
-	var template db.Template
-	if !helpers.Bind(w, r, &template) {
+	var payload map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		helpers.WriteErrorStatus(w, "Invalid format", http.StatusBadRequest)
 		return
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		helpers.WriteErrorStatus(w, "Invalid format", http.StatusBadRequest)
+		return
+	}
+	var template db.Template
+	if err = json.Unmarshal(encoded, &template); err != nil {
+		helpers.WriteErrorStatus(w, "Invalid format", http.StatusBadRequest)
+		return
+	}
+	if _, present := payload["ssh_keys"]; !present {
+		template.SSHKeys = oldTemplate.SSHKeys
 	}
 	if !validateTemplateExecutorImage(w, r, &template, executorImageAvailable) {
 		return
 	}
 
-	if _, ok := util.Config.Apps[string(template.App)]; !ok {
-		helpers.WriteErrorStatus(w, "Invalid app id: "+string(template.App), http.StatusBadRequest)
-		return
+	if template.App != "" {
+		if _, ok := util.Config.Apps[string(template.App)]; !ok {
+			helpers.WriteErrorStatus(w, "Invalid app id: "+string(template.App), http.StatusBadRequest)
+			return
+		}
 	}
 
 	// project ID and template ID in the body and the path must be the same
@@ -215,6 +249,15 @@ func updateTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailab
 		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "template id in URL and in body must be the same",
 		})
+		return
+	}
+	if err := validateSSHKeyBindingsForProject(helpers.Store(r), oldTemplate.ProjectID, template.SSHKeys); err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	if _, err := db.ResolveTaskSSHKeys(project.DefaultSSHKeys, project.AlwaysSSHKeys, template.SSHKeys, nil); err != nil {
+		helpers.WriteError(w, err)
 		return
 	}
 
@@ -237,7 +280,7 @@ func updateTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailab
 		template.StartVersion = nil
 	}
 
-	err := helpers.Store(r).UpdateTemplate(template)
+	err = helpers.Store(r).UpdateTemplate(template)
 	if err != nil {
 		helpers.WriteError(w, err)
 		return

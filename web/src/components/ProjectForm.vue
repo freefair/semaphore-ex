@@ -44,6 +44,15 @@
       data-testid="newProject-alert"
     ></v-checkbox>
 
+    <ProjectSSHKeys
+      v-if="item.id && itemId !== 'new'"
+      :key="item.id"
+      :project="item"
+      :disabled="formSaving"
+      @defaults="$set(item, 'default_ssh_keys', $event)"
+      @always="$set(item, 'always_ssh_keys', $event)"
+    />
+
     <v-switch
       data-testid="newProject-demo"
       v-if="itemId === 'new' && !hideDemoSwitch"
@@ -56,8 +65,10 @@
 </template>
 <script>
 import ItemFormBase from '@/components/ItemFormBase';
+import ProjectSSHKeys from '@/components/enhanced/ProjectSSHKeys.vue';
 
 export default {
+  components: { ProjectSSHKeys },
   mixins: [ItemFormBase],
   props: {
     projectNameTitle: {

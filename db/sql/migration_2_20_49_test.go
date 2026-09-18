@@ -13,8 +13,7 @@ func TestMigration22049AddsWorkflowRolePolicyStorageAndMigratesRoleBits(t *testi
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 
-	project, err := store.CreateProject(db.Project{Name: "workflow policy migration"})
-	require.NoError(t, err)
+	project := createLegacyProject(t, store, "workflow policy migration")
 	legacyRole, err := store.CreateProjectRole(db.Role{
 		ID: "role_legacyworkflow", Slug: "role_legacyworkflow", Name: "Legacy workflow",
 		ProjectID: &project.ID, Permissions: db.CanRunProjectTasks | db.CanManageProjectResources |
