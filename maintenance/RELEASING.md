@@ -30,6 +30,30 @@ installing the final package on the same host.
 Both workflows first run `Full Product Build` as a gate (tests, reproducible double build,
 browser smoke, container smoke, HA resilience) and only then build the release.
 
+## Image cache policy
+
+Server and runner builds restore inline cache metadata from their own GHCR
+`:latest` image. Each published image carries its own refreshed metadata; Docker
+image builds do not write GitHub Actions caches or separate cache images.
+Go and npm retain their existing Actions caches.
+
+Final releases update `latest`. Tagged Beta releases use the last stable cache
+and embed metadata in their versioned image without changing `latest`.
+Manual Beta dry runs restore only: they omit cache export because they do not
+publish images.
+
+A missing cache reports an import diagnostic in the build log and falls back to
+a cold build. Older images without inline metadata also build without remote
+cache hits. A failed build or image push still fails the workflow; no separate
+cache upload can turn a successful image push into a failed release step.
+
+Inline cache retains final-stage reuse rather than all intermediate stages
+(`mode=max`), so multi-stage builds can take longer. It avoids duplicate cache
+layers and growth of the shared Actions cache store. Existing GHA image caches
+are no longer refreshed and expire normally; no quota or billing increase is
+required. The rationale is recorded in
+[ADR 0014](../docs/docs/developer-guide/adr/0014-keep-build-cache-with-published-images.md).
+
 ## Before tagging
 
 1. `develop` head: `Dev` and `Full Product Build` are green on exactly that SHA

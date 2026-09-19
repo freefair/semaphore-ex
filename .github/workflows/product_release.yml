@@ -147,8 +147,9 @@ jobs:
           push: true
           labels: ${{ steps.server.outputs.labels }}
           tags: ${{ steps.server.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Keep cache metadata in the image; a separate cache upload cannot block release.
+          cache-from: type=registry,ref=${{ env.SERVER_IMAGE }}:latest
+          cache-to: type=inline
           provenance: mode=max
           sbom: true
 
@@ -180,7 +181,7 @@ jobs:
           push: true
           labels: ${{ steps.runner.outputs.labels }}
           tags: ${{ steps.runner.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=${{ env.RUNNER_IMAGE }}:latest
+          cache-to: type=inline
           provenance: mode=max
           sbom: true

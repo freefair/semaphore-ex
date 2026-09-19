@@ -185,8 +185,9 @@ jobs:
           push: ${{ env.DRY_RUN != 'true' }}
           labels: ${{ steps.server.outputs.labels }}
           tags: ${{ steps.server.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Dry runs restore only: inline cache requires an exported image.
+          cache-from: type=registry,ref=${{ env.SERVER_IMAGE }}:latest
+          cache-to: ${{ env.DRY_RUN != 'true' && 'type=inline' || '' }}
           provenance: mode=max
           sbom: true
 
@@ -218,7 +219,7 @@ jobs:
           push: ${{ env.DRY_RUN != 'true' }}
           labels: ${{ steps.runner.outputs.labels }}
           tags: ${{ steps.runner.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=${{ env.RUNNER_IMAGE }}:latest
+          cache-to: ${{ env.DRY_RUN != 'true' && 'type=inline' || '' }}
           provenance: mode=max
           sbom: true
