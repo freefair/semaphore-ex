@@ -120,3 +120,11 @@ contracts are required before committing the local implementation.
 Retain failing and passing regression evidence in the task journal while work
 is active, and report the published release tag and verified assets.
 Clean up disposable servers, credentials, containers and temporary tooling.
+
+## Approved release blocker correction
+
+Fix the independently reproduced duration-label clock race in a separate
+commit before publishing. Add a deterministic advancing-clock regression,
+use one Day.js reference in `web/src/plugins/filters.js`, and record the
+decision in ADR 0013. Re-run the frontend suite, browser verification and full
+release gates against the final source before tagging `v2.20.0-ex.2`.

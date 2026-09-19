@@ -11,7 +11,7 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
-## [v2.20.0-ex.2] - 2026-09-18
+## [v2.20.0-ex.2] - 2026-09-19
 
 ### Added
 
@@ -32,6 +32,8 @@ release, so every release needs its section here before the tag is pushed.
 
 ### Fixed
 
+- Duration labels use one clock reference so rounding boundaries, such as
+  90 seconds becoming two minutes, remain stable during rendering.
 - Terraform backend aliases are resolved only when backend override is enabled;
   tasks using an external backend retain their configuration.
 - API integration fixtures exercise Terraform state and alias operations on

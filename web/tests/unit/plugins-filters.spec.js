@@ -20,6 +20,32 @@ describe('plugins/filters', () => {
       expect(formatMilliseconds(3000)).to.equal('a few seconds');
     });
 
+    it('keeps rounding stable when the clock advances during formatting', () => {
+      const OriginalDate = global.Date;
+      const start = Date.UTC(2026, 0, 1);
+      let tick = 0;
+      const advancingNow = () => {
+        tick += 1;
+        return start + tick;
+      };
+      global.Date = class extends OriginalDate {
+        constructor(...args) {
+          super(...(args.length ? args : [advancingNow()]));
+        }
+
+        static now() {
+          return advancingNow();
+        }
+      };
+      try {
+        expect(formatMilliseconds(90000)).to.equal('2 minutes');
+        expect(formatMilliseconds('90000')).to.equal('2 minutes');
+        expect(formatMilliseconds(-90000)).to.equal('2 minutes');
+      } finally {
+        global.Date = OriginalDate;
+      }
+    });
+
     it('humanizes a start/end pair', () => {
       expect(formatMilliseconds(['2026-01-01T10:00:00Z', '2026-01-01T10:45:00Z'])).to.equal('an hour');
       expect(formatMilliseconds(['2026-01-01T10:00:00Z', '2026-01-03T10:00:00Z'])).to.equal('2 days');

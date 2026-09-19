@@ -89,7 +89,9 @@ export function formatMilliseconds(value) {
     throw new Error('formatMilliseconds: unsupported value type');
   }
 
-  return dayjs.duration(ms).humanize();
+  // One reference prevents clock ticks from changing rounding at duration boundaries.
+  const reference = dayjs();
+  return reference.add(ms, 'millisecond').from(reference, true);
 }
 
 export const filters = {
