@@ -1,7 +1,7 @@
 # Task SSH agent offers the repository key
 
 **Date:** 2026-09-18
-**Status:** In progress — implementation and regression verification on `feat/task-agent-repository-key`
+**Status:** Implemented and regression-verified — signed release verification in progress
 **Requested by:** a consuming deployment that runs Ansible and Terraform pipelines on a local runner
 **Size:** M
 

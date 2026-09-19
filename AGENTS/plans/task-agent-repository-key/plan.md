@@ -128,3 +128,9 @@ commit before publishing. Add a deterministic advancing-clock regression,
 use one Day.js reference in `web/src/plugins/filters.js`, and record the
 decision in ADR 0013. Re-run the frontend suite, browser verification and full
 release gates against the final source before tagging `v2.20.0-ex.2`.
+
+The user also approved the documentation build correction exposed by the new
+ADR. Pin the Docusaurus package family to 3.7.0, which contains upstream PR
+10727's route-hash collision handling. Verify the exact Pages URL/base path,
+all eleven locales, navigation and browser rendering before publishing docs
+and updating the application's submodule reference.

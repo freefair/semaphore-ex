@@ -34,6 +34,8 @@ release, so every release needs its section here before the tag is pushed.
 
 - Duration labels use one clock reference so rounding boundaries, such as
   90 seconds becoming two minutes, remain stable during rendering.
+- Documentation builds preserve distinct route contexts when generated route
+  hashes collide, including the German GitHub Pages deployment.
 - Terraform backend aliases are resolved only when backend override is enabled;
   tasks using an external backend retain their configuration.
 - API integration fixtures exercise Terraform state and alias operations on
