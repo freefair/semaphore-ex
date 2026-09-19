@@ -1,7 +1,7 @@
 # Task SSH agent offers the repository key
 
 **Date:** 2026-09-18
-**Status:** Implemented and regression-verified — signed release verification in progress
+**Status:** Released in [v2.20.0-ex.2](https://github.com/freefair/semaphore-ex/releases/tag/v2.20.0-ex.2)
 **Requested by:** a consuming deployment that runs Ansible and Terraform pipelines on a local runner
 **Size:** M
 
