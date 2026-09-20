@@ -31,6 +31,16 @@ func testReadPID(path string) (int, error) {
 	return strconv.Atoi(strings.TrimSpace(string(value)))
 }
 
+func assertChildCannotRunAfterCleanup(t *testing.T, releaseFile, survivedFile string) {
+	t.Helper()
+
+	require.NoError(t, os.WriteFile(releaseFile, nil, 0o600))
+	assert.Never(t, func() bool {
+		_, err := os.Stat(survivedFile)
+		return err == nil
+	}, 250*time.Millisecond, 15*time.Millisecond, "child ran after process-group cleanup")
+}
+
 func Test_RunCommand_DoesNotStartWhenCancellationIsPending(t *testing.T) {
 	t.Parallel()
 
@@ -168,6 +178,7 @@ func Test_WaitCommand_CleansProcessGroup(t *testing.T) {
 	dir := t.TempDir()
 	childPIDFile := filepath.Join(dir, "child_pid")
 	childReadyFile := filepath.Join(dir, "child_ready")
+	childReleaseFile := filepath.Join(dir, "child_release")
 	childSurvivedFile := filepath.Join(dir, "child_survived")
 
 	cmd := exec.Command("sh", "-c", `
@@ -175,7 +186,9 @@ func Test_WaitCommand_CleansProcessGroup(t *testing.T) {
     # Ignore HUP from parent-shell exit and TERM so only SIGKILL can stop the child.
     trap '' HUP TERM
     touch "$CHILD_READY_FILE"
-    sleep 1
+    while [ ! -e "$CHILD_RELEASE_FILE" ]; do
+        sleep 0.01
+    done
     touch "$CHILD_SURVIVED_FILE"
 ) &
 echo "$!" > "$CHILD_PID_FILE"
@@ -189,6 +202,7 @@ exit 42
 	cmd.Env = append(os.Environ(),
 		"CHILD_PID_FILE="+childPIDFile,
 		"CHILD_READY_FILE="+childReadyFile,
+		"CHILD_RELEASE_FILE="+childReleaseFile,
 		"CHILD_SURVIVED_FILE="+childSurvivedFile,
 	)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -196,7 +210,7 @@ exit 42
 
 	commandExited := false
 	t.Cleanup(func() {
-		if !commandExited {
+		if !commandExited || t.Failed() {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		}
 	})
@@ -227,7 +241,7 @@ exit 42
 	require.Eventually(t, func() bool {
 		return errors.Is(syscall.Kill(childPID, 0), syscall.ESRCH)
 	}, 1500*time.Millisecond, 15*time.Millisecond, "background child still exists after process-group cleanup")
-	assert.NoFileExists(t, childSurvivedFile)
+	assertChildCannotRunAfterCleanup(t, childReleaseFile, childSurvivedFile)
 }
 
 func Test_StopCommand_KillsTermResistantChild(t *testing.T) {
@@ -237,6 +251,7 @@ func Test_StopCommand_KillsTermResistantChild(t *testing.T) {
 	mainReadyFile := filepath.Join(dir, "main_ready")
 	childReadyFile := filepath.Join(dir, "child_ready")
 	childPIDFile := filepath.Join(dir, "child_pid")
+	childReleaseFile := filepath.Join(dir, "child_release")
 	termFile := filepath.Join(dir, "term_received")
 	childSurvivedFile := filepath.Join(dir, "child_survived")
 
@@ -247,7 +262,9 @@ trap 'touch "$TERM_FILE"; exit 0' TERM
     # Ignore HUP from parent-shell exit and TERM so only SIGKILL can stop the child.
     trap '' HUP TERM
     touch "$CHILD_READY_FILE"
-    sleep 1
+    while [ ! -e "$CHILD_RELEASE_FILE" ]; do
+        sleep 0.01
+    done
     touch "$CHILD_SURVIVED_FILE"
 ) &
 echo "$!" > "$CHILD_PID_FILE"
@@ -263,6 +280,7 @@ done
 		"MAIN_READY_FILE="+mainReadyFile,
 		"CHILD_READY_FILE="+childReadyFile,
 		"CHILD_PID_FILE="+childPIDFile,
+		"CHILD_RELEASE_FILE="+childReleaseFile,
 		"TERM_FILE="+termFile,
 		"CHILD_SURVIVED_FILE="+childSurvivedFile,
 	)
@@ -271,7 +289,7 @@ done
 
 	commandExited := false
 	t.Cleanup(func() {
-		if !commandExited {
+		if !commandExited || t.Failed() {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		}
 	})
@@ -307,5 +325,5 @@ done
 	require.Eventually(t, func() bool {
 		return errors.Is(syscall.Kill(childPID, 0), syscall.ESRCH)
 	}, 1500*time.Millisecond, 15*time.Millisecond, "SIGTERM-resistant child still exists after process-group cleanup")
-	assert.NoFileExists(t, childSurvivedFile)
+	assertChildCannotRunAfterCleanup(t, childReleaseFile, childSurvivedFile)
 }
