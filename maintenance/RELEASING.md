@@ -10,6 +10,11 @@ The tag triggers everything; nothing is built or published by hand.
 (the next upstream release the merged `develop` precedes or matches), `N` counts fork
 releases on that line, starting at 1. Release candidates are `vX.Y.Z-ex.N-rcM`.
 
+Fork releases support one, two or three numeric EX components:
+`vX.Y.Z-ex.N`, `vX.Y.Z-ex.N.M`, and `vX.Y.Z-ex.N.M.P`.
+They use the same final-release workflow, signed packages and image tags as
+`vX.Y.Z-ex.N`; for example, `v2.20.0-ex.2.1` follows `v2.20.0-ex.2`.
+
 The suffix keeps fork tags out of upstream's tag namespace; a plain `vX.Y.Z` tag would
 collide with the upstream tag of the same name and break `git fetch upstream`.
 

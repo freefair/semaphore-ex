@@ -11,6 +11,27 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+## [v2.20.0-ex.2.1] - 2026-09-20
+
+### Fixed
+
+- Git over SSH emits a single `ssh` executable with the default `no` host-key
+  policy, restoring repository clones affected by a duplicated command prefix.
+- Git SSH commands use `known_hosts` under `tmp_path` when `yes` or `accept-new`
+  is selected without an explicit file. Both repository and task commands retain
+  the selected policy and quote configured paths consistently.
+- Task cancellation stops local process groups, prevents commands from starting
+  after cancellation, and finalizes gracefully stopped jobs. Terraform execution
+  stops after a cancelled plan, and output draining is bounded.
+- Process-group and audit retry regressions no longer depend on scheduler or TLS
+  handshake timing.
+
+### Changed
+
+- Release image caches stay with published server and runner images instead of
+  consuming the shared GitHub Actions cache quota.
+- Updated upstream SQLite, OpenAI client, dotenv and formatting dependencies.
+
 ## [v2.20.0-ex.2] - 2026-09-19
 
 ### Added

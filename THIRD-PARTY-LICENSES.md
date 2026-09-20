@@ -2,7 +2,7 @@
 
 Semaphore EX is built on the work of many open-source projects. This document identifies every third-party component distributed with Semaphore EX, in compliance with the attribution requirements of the respective licenses.
 
-_Generated on **2026-09-18 12:09 UTC** by `scripts/collect_licenses.sh`._
+_Generated on **2026-09-20 18:15 UTC** by `scripts/collect_licenses.sh`._
 
 To regenerate this file, run:
 
@@ -154,10 +154,10 @@ Modules statically linked into the Semaphore EX server binary. Sourced from `go.
 | `k8s.io/klog/v2` | v2.140.0 | Apache-2.0 | [link](https://github.com/kubernetes/klog/blob/v2.140.0/LICENSE) |
 | `k8s.io/kube-openapi` | v0.0.0-20260721132016-d427ff9ee9ad | Apache-2.0 | [link](https://github.com/kubernetes/kube-openapi/blob/d427ff9ee9ad/LICENSE) |
 | `k8s.io/utils` | v0.0.0-20260626114624-be93311217bd | Apache-2.0 | [link](https://github.com/kubernetes/utils/blob/be93311217bd/LICENSE) |
-| `modernc.org/libc` | v1.75.6 | MIT | [link](https://gitlab.com/cznic/libc/blob/v1.75.6/LICENSE-3RD-PARTY.md) |
+| `modernc.org/libc` | v1.75.7 | MIT | [link](https://gitlab.com/cznic/libc/blob/v1.75.7/LICENSE-3RD-PARTY.md) |
 | `modernc.org/mathutil` | v1.7.1 | BSD-3-Clause | [link](https://gitlab.com/cznic/mathutil/-/blob/master/LICENSE) |
 | `modernc.org/memory` | v1.12.1 | BSD-3-Clause | [link](https://gitlab.com/cznic/memory/blob/v1.12.1/LICENSE-GO) |
-| `modernc.org/sqlite` | v1.58.0 | BSD-3-Clause | [link](https://gitlab.com/cznic/sqlite/blob/v1.58.0/LICENSE) |
+| `modernc.org/sqlite` | v1.59.0 | BSD-3-Clause | [link](https://gitlab.com/cznic/sqlite/blob/v1.59.0/LICENSE) |
 | `sigs.k8s.io/json` | v0.0.0-20250730193827-2d320260d730 | Apache-2.0 | [link](https://github.com/kubernetes-sigs/json/blob/2d320260d730/LICENSE) |
 | `sigs.k8s.io/randfill` | v1.0.0 | Apache-2.0 | [link](https://github.com/kubernetes-sigs/randfill/blob/v1.0.0/LICENSE) |
 | `sigs.k8s.io/structured-merge-diff/v6` | v6.4.2 | Apache-2.0 | [link](https://github.com/kubernetes-sigs/structured-merge-diff/blob/v6.4.2/LICENSE) |

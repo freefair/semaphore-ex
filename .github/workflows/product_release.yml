@@ -4,6 +4,8 @@ name: Full Product Release
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+-ex.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-ex.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-ex.[0-9]+.[0-9]+.[0-9]+'
 
 permissions:
   contents: read
