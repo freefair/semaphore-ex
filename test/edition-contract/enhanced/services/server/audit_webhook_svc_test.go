@@ -24,29 +24,25 @@ func TestAuditWebhookServiceRetriesSameEventIDAfterTimeoutAndRecovers(t *testing
 	defer store.Close()
 
 	var mutex sync.Mutex
-	mode := "timeout"
 	receivedIDs := make([]string, 0, 2)
 	authorizations := make([]string, 0, 2)
 	receiver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var envelope pro_interfaces.AuditWebhookEnvelope
 		_ = json.NewDecoder(r.Body).Decode(&envelope)
 		mutex.Lock()
-		currentMode := mode
 		receivedIDs = append(receivedIDs, envelope.EventID)
 		authorizations = append(authorizations, r.Header.Get("Authorization"))
 		mutex.Unlock()
-		if currentMode == "timeout" {
-			time.Sleep(40 * time.Millisecond)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer receiver.Close()
 
 	now := time.Now().UTC().Truncate(time.Millisecond)
+	client := &timeoutAfterSuccessfulAuditWebhookClient{
+		delegate: testAuditWebhookClient(receiver, time.Second),
+	}
 	service := newAuditWebhookService(
-		store, metrics.NewMetrics(), testAuditWebhookClient(receiver, 10*time.Millisecond),
+		store, metrics.NewMetrics(), client,
 		func() time.Time { return now }, func() float64 { return 0 },
 		auditWebhookCipherFunctions{enabled: true, encrypt: func(secret []byte) (string, error) { return "sealed:" + string(secret), nil }, decrypt: func(encrypted string) ([]byte, error) { return []byte(strings.TrimPrefix(encrypted, "sealed:")), nil }},
 	)
@@ -83,9 +79,6 @@ func TestAuditWebhookServiceRetriesSameEventIDAfterTimeoutAndRecovers(t *testing
 	assert.Equal(t, 1, history[0].Attempts)
 	assert.Equal(t, event.EventID, history[0].EventID)
 
-	mutex.Lock()
-	mode = "success"
-	mutex.Unlock()
 	now = now.Add(time.Second)
 	service.processOnce(context.Background())
 	history, err = store.GetAuditWebhookDeliveries(db.RetrieveQueryParams{})
@@ -94,6 +87,8 @@ func TestAuditWebhookServiceRetriesSameEventIDAfterTimeoutAndRecovers(t *testing
 	assert.Equal(t, db.AuditWebhookDeliverySucceeded, history[0].Status)
 	assert.Equal(t, 2, history[0].Attempts)
 	assert.Equal(t, event.EventID, history[0].EventID)
+	assert.Equal(t, 2, client.calls)
+	assert.True(t, client.firstReceiptSucceeded)
 
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -107,6 +102,7 @@ func TestAuditWebhookServiceRetriesSameEventIDAfterTimeoutAndRecovers(t *testing
 	assert.True(t, attempts[0].SignedAt.After(attempts[1].SignedAt))
 	assert.Equal(t, db.AuditWebhookDeliveryAttemptSucceeded, attempts[0].Outcome)
 	assert.Equal(t, db.AuditWebhookDeliveryAttemptRetrying, attempts[1].Outcome)
+	assert.Equal(t, db.AuditWebhookDeliveryAttemptReasonTimeout, attempts[1].Reason)
 }
 
 func TestAuditWebhookSigningLifecycleEncryptsOneTimeSecretsAndUsesCAS(t *testing.T) {
@@ -474,6 +470,27 @@ func (c *countingAuditWebhookClient) Deliver(context.Context, string, string, pr
 	c.calls++
 	status := http.StatusNoContent
 	return auditWebhookDeliveryResult{Succeeded: true, StatusCode: &status}
+}
+
+// timeoutAfterSuccessfulAuditWebhookClient models the ambiguous outcome where a
+// receiver accepts a signed request but its response is unavailable to the caller.
+// Transport timeout classification remains covered by audit_webhook_client_test.go.
+type timeoutAfterSuccessfulAuditWebhookClient struct {
+	delegate              auditWebhookClient
+	calls                 int
+	firstReceiptSucceeded bool
+}
+
+func (c *timeoutAfterSuccessfulAuditWebhookClient) Deliver(ctx context.Context, endpoint, credential string, signed pro_interfaces.WebhookSignedRequest) auditWebhookDeliveryResult {
+	result := c.delegate.Deliver(ctx, endpoint, credential, signed)
+	c.calls++
+	if c.calls == 1 {
+		c.firstReceiptSucceeded = result.Succeeded
+	}
+	if c.calls == 1 && c.firstReceiptSucceeded {
+		return auditWebhookDeliveryResult{Retryable: true, Reason: auditWebhookReasonTimeout}
+	}
+	return result
 }
 
 func newUnencryptedAuditWebhookService(store db.AuditWebhookRepository, receiver *httptest.Server, now *time.Time) *auditWebhookService {
