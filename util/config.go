@@ -524,13 +524,13 @@ type SshConfig struct {
 	// Default path is ~/.ssh/config.
 	ConfigPath string `json:"config_path,omitempty" env:"SEMAPHORE_SSH_PATH"`
 
-	// SshKnownHostsFile is a path to the SSH known_hosts file used to verify git
-	// server host keys. When set, host-key checking is strict: a key that is
-	// missing from (or changed relative to) this file aborts the connection,
-	// preventing a network attacker from impersonating the git server. When
-	// empty, Semaphore uses a persistent trust-on-first-use file under TmpPath
-	// (StrictHostKeyChecking=accept-new): the first connection to a host is
-	// trusted and pinned, and any later host-key change is rejected.
+	// KnownHostsFile is the SSH known_hosts file used for Git host verification.
+	// When empty, it defaults to known_hosts under tmp_path. The configured
+	// strict_host_key_checking mode is preserved: yes requires a trusted key
+	// already in the file; accept-new records new keys and rejects changed keys.
+	// Mode no ignores this path and uses /dev/null. Persist the file across
+	// restarts to retain trusted keys. Runner cache clearing removes the fallback
+	// file; configure a persistent path outside tmp_path to retain trust then.
 	KnownHostsFile string `json:"known_hosts_file,omitempty" env:"SEMAPHORE_SSH_KNOWN_HOSTS_FILE"`
 
 	StrictHostKeyChecking SshStrictHostKeyChecking `json:"strict_host_key_checking,omitempty" env:"" default:"no"`

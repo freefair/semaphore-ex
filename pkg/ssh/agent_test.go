@@ -48,43 +48,108 @@ func TestAgentKeysComposesRepositoryAndInventoryKeys(t *testing.T) {
 	}
 }
 
-func TestTaskGitSSHCommandPreservesHostPolicyAndQuotesPaths(t *testing.T) {
+func TestGitSSHCommandsPreserveHostPolicyAndQuotePaths(t *testing.T) {
 	previousConfig := util.Config
 	t.Cleanup(func() { util.Config = previousConfig })
 
 	tests := []struct {
-		name     string
-		policy   util.SshStrictHostKeyChecking
-		expected string
+		name           string
+		policy         util.SshStrictHostKeyChecking
+		knownHostsFile string
 	}{
-		{"strict", util.SshStrictHostKeyCheckingYes, "-o StrictHostKeyChecking=yes -o UserKnownHostsFile='/tmp/known hosts $(literal)'"},
-		{"accept new", util.SshStrictHostKeyCheckingAcceptNew, "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile='/tmp/known hosts $(literal)'"},
-		{"disabled", util.SshStrictHostKeyCheckingNo, "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"},
+		{"strict with configured file", util.SshStrictHostKeyCheckingYes, "/tmp/known hosts $(literal)"},
+		{"strict with fallback file", util.SshStrictHostKeyCheckingYes, ""},
+		{"accept new with configured file", util.SshStrictHostKeyCheckingAcceptNew, "/tmp/known hosts $(literal)"},
+		{"accept new with fallback file", util.SshStrictHostKeyCheckingAcceptNew, ""},
+		{"disabled with configured file", util.SshStrictHostKeyCheckingNo, "/tmp/known hosts $(literal)"},
+		{"disabled with fallback file", util.SshStrictHostKeyCheckingNo, ""},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			util.Config = &util.ConfigType{Ssh: &util.SshConfig{StrictHostKeyChecking: test.policy, KnownHostsFile: "/tmp/known hosts $(literal)", ConfigPath: "/tmp/config ' $()"}}
-			command := TaskGitSSHCommand("/tmp/agent $sock", []string{"/tmp/repository'`key`"})
-			assert.Contains(t, command, "ssh -o IdentitiesOnly=yes -o IdentityAgent='/tmp/agent $sock' -i '/tmp/repository'\"'\"'`key`'")
-			assert.Contains(t, command, test.expected)
-			assert.Contains(t, command, "-F '/tmp/config '\"'\"' $()'")
-			assert.NotContains(t, command, "ssh ssh")
-
-			fakeSSHDirectory := t.TempDir()
-			fakeSSH := filepath.Join(fakeSSHDirectory, "ssh")
-			require.NoError(t, os.WriteFile(fakeSSH, []byte("#!/bin/sh\nprintf '%s\\0' \"$@\"\n"), 0o700))
-			run := exec.Command("sh", "-c", command+" fixture-host")
-			run.Env = append(os.Environ(), "PATH="+fakeSSHDirectory+":"+os.Getenv("PATH"))
-			output, err := run.Output()
-			require.NoError(t, err)
-			arguments := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
-			assert.Contains(t, arguments, "IdentityAgent=/tmp/agent $sock")
-			assert.Contains(t, arguments, "/tmp/repository'`key`")
-			if test.policy != util.SshStrictHostKeyCheckingNo {
-				assert.Contains(t, arguments, "UserKnownHostsFile=/tmp/known hosts $(literal)")
+			tmpPath := t.TempDir()
+			configPath := filepath.Join(t.TempDir(), "config ' $()")
+			require.NoError(t, os.WriteFile(configPath, nil, 0o600))
+			util.Config = &util.ConfigType{TmpPath: tmpPath, Ssh: &util.SshConfig{StrictHostKeyChecking: test.policy, KnownHostsFile: test.knownHostsFile, ConfigPath: configPath}}
+			expectedKnownHostsFile := test.knownHostsFile
+			if expectedKnownHostsFile == "" {
+				expectedKnownHostsFile = filepath.Join(tmpPath, "known_hosts")
 			}
-			assert.Contains(t, arguments, "/tmp/config ' $()")
+
+			taskCommand := TaskGitSSHCommand("/tmp/agent $sock", []string{"/tmp/repository'`key`"})
+			gitCommand := gitSSHCommand(t, (&AccessKeyInstallation{SSHAgent: &Agent{SocketFile: "/tmp/agent $sock"}}).GetGitEnv())
+
+			assert.NotContains(t, taskCommand, "ssh ssh")
+			assert.NotContains(t, gitCommand, "ssh ssh")
+			assert.Contains(t, taskCommand, "ssh -o IdentitiesOnly=yes -o IdentityAgent='/tmp/agent $sock' -i '/tmp/repository'\"'\"'`key`'")
+
+			taskArguments := sshCommandArguments(t, taskCommand)
+			gitArguments := sshCommandArguments(t, gitCommand)
+			openSSHTaskCommand := TaskGitSSHCommand("/tmp/agent-socket", []string{"/tmp/repository-key"})
+			for _, arguments := range [][]string{taskArguments, gitArguments} {
+				assert.Contains(t, arguments, "StrictHostKeyChecking="+string(test.policy))
+				expectedUserKnownHostsFile := expectedKnownHostsFile
+				if test.policy == util.SshStrictHostKeyCheckingNo {
+					expectedUserKnownHostsFile = "/dev/null"
+				}
+				assert.Contains(t, arguments, "UserKnownHostsFile="+expectedUserKnownHostsFile)
+				assert.Contains(t, arguments, configPath)
+			}
+
+			assert.Contains(t, taskArguments, "IdentityAgent=/tmp/agent $sock")
+			assert.Contains(t, taskArguments, "/tmp/repository'`key`")
+
+			assertOpenSSHHostKeyOptions(t, openSSHTaskCommand, test.policy, expectedKnownHostsFile)
+			assertOpenSSHHostKeyOptions(t, gitCommand, test.policy, expectedKnownHostsFile)
 		})
+	}
+}
+
+func gitSSHCommand(t *testing.T, env []string) string {
+	t.Helper()
+	for _, value := range env {
+		if strings.HasPrefix(value, "GIT_SSH_COMMAND=") {
+			return strings.TrimPrefix(value, "GIT_SSH_COMMAND=")
+		}
+	}
+	require.Fail(t, "GIT_SSH_COMMAND was not set")
+	return ""
+}
+
+func sshCommandArguments(t *testing.T, command string) []string {
+	t.Helper()
+	fakeSSHDirectory := t.TempDir()
+	fakeSSH := filepath.Join(fakeSSHDirectory, "ssh")
+	require.NoError(t, os.WriteFile(fakeSSH, []byte("#!/bin/sh\nprintf '%s\\0' \"$@\"\n"), 0o700))
+
+	run := exec.Command("sh", "-c", command+" fixture-host")
+	run.Env = append(os.Environ(), "PATH="+fakeSSHDirectory+":"+os.Getenv("PATH"))
+	output, err := run.Output()
+	require.NoError(t, err)
+	return strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
+}
+
+func assertOpenSSHHostKeyOptions(t *testing.T, command string, policy util.SshStrictHostKeyChecking, knownHostsFile string) {
+	t.Helper()
+	if policy == util.SshStrictHostKeyCheckingNo {
+		knownHostsFile = "/dev/null"
+	}
+
+	run := exec.Command("sh", "-c", command+" -o IdentitiesOnly=yes -G fixture-host")
+	output, err := run.CombinedOutput()
+	require.NoErrorf(t, err, "OpenSSH did not parse generated host-key options: %s", output)
+	assert.Contains(t, string(output), "host fixture-host")
+	assert.Contains(t, string(output), "stricthostkeychecking "+openSSHStrictHostKeyChecking(policy))
+	assert.Contains(t, string(output), "userknownhostsfile "+knownHostsFile)
+}
+
+func openSSHStrictHostKeyChecking(policy util.SshStrictHostKeyChecking) string {
+	switch policy {
+	case util.SshStrictHostKeyCheckingYes:
+		return "true"
+	case util.SshStrictHostKeyCheckingNo:
+		return "false"
+	default:
+		return string(policy)
 	}
 }
 

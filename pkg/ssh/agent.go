@@ -242,16 +242,7 @@ func TaskGitSSHCommand(socketFile string, identityFiles []string) string {
 	if util.Config == nil || util.Config.Ssh == nil {
 		return command
 	}
-	switch util.Config.Ssh.StrictHostKeyChecking {
-	case util.SshStrictHostKeyCheckingYes:
-		command += " -o StrictHostKeyChecking=yes -o UserKnownHostsFile=" + shellQuote(util.Config.Ssh.KnownHostsFile)
-	case util.SshStrictHostKeyCheckingNo:
-		command += " -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-	case util.SshStrictHostKeyCheckingAcceptNew:
-		command += " -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + shellQuote(util.Config.Ssh.KnownHostsFile)
-	default:
-		panic("Unknown SSH strict host key check option")
-	}
+	command += " " + gitHostKeyCheckingOpts()
 	if util.Config.GetSshConfigPath() != "" {
 		command += " -F " + shellQuote(util.Config.GetSshConfigPath())
 	}
@@ -277,7 +268,7 @@ func (key *AccessKeyInstallation) GetGitEnv() (env []string) {
 		env = append(env, fmt.Sprintf("SSH_AUTH_SOCK=%s", key.SSHAgent.SocketFile))
 		sshCmd := "ssh " + gitHostKeyCheckingOpts()
 		if util.Config.GetSshConfigPath() != "" {
-			sshCmd += " -F " + util.Config.GetSshConfigPath()
+			sshCmd += " -F " + shellQuote(util.Config.GetSshConfigPath())
 		}
 		env = append(env, fmt.Sprintf("GIT_SSH_COMMAND=%s", sshCmd))
 	}
@@ -285,20 +276,23 @@ func (key *AccessKeyInstallation) GetGitEnv() (env []string) {
 	return env
 }
 
-// gitHostKeyCheckingOpts returns the ssh host-key verification options used for
-// git operations. Host-key checking is enabled so a network attacker cannot
-// impersonate the git server. When an explicit known_hosts file is configured
-// it is used with strict checking; otherwise a persistent trust-on-first-use
-// file under TmpPath is used (accept-new): the first host key seen is pinned and
-// any subsequent change is rejected.
+// gitHostKeyCheckingOpts returns shell-quoted host-key policy arguments, without
+// an ssh executable prefix, for Git SSH commands. An empty known_hosts setting
+// uses the TmpPath fallback. The configured policy is preserved: yes remains
+// strict, accept-new pins a first-seen key, and no explicitly disables checking.
 func gitHostKeyCheckingOpts() string {
+	knownHostsFile := util.Config.Ssh.KnownHostsFile
+	if knownHostsFile == "" {
+		knownHostsFile = path.Join(util.Config.TmpPath, "known_hosts")
+	}
+
 	switch util.Config.Ssh.StrictHostKeyChecking {
 	case util.SshStrictHostKeyCheckingYes:
-		return fmt.Sprintf("-o StrictHostKeyChecking=yes -o UserKnownHostsFile=%s", util.Config.Ssh.KnownHostsFile)
+		return "-o StrictHostKeyChecking=yes -o UserKnownHostsFile=" + shellQuote(knownHostsFile)
 	case util.SshStrictHostKeyCheckingNo:
-		return "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+		return "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 	case util.SshStrictHostKeyCheckingAcceptNew:
-		return fmt.Sprintf("-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=%s", util.Config.Ssh.KnownHostsFile)
+		return "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + shellQuote(knownHostsFile)
 	default:
 		panic("Unknown SSH strict host key check option")
 	}
