@@ -23,6 +23,7 @@ func (failingSSHLifecycleInstaller) Install(db.AccessKey, db.AccessKeyRole, task
 
 type sshLifecycleApp struct {
 	runErr  error
+	ran     bool
 	cleared bool
 }
 
@@ -51,8 +52,11 @@ func TestPrepareContainerTaskCleansTaskAgentWhenInventoryPreparationFails(t *tes
 
 func (a *sshLifecycleApp) SetLogger(logger task_logger.Logger) task_logger.Logger  { return logger }
 func (a *sshLifecycleApp) InstallRequirements(db_lib.LocalAppInstallingArgs) error { return nil }
-func (a *sshLifecycleApp) Run(db_lib.LocalAppRunningArgs) error                    { return a.runErr }
-func (a *sshLifecycleApp) Clear()                                                  { a.cleared = true }
+func (a *sshLifecycleApp) Run(db_lib.LocalAppRunningArgs) error {
+	a.ran = true
+	return a.runErr
+}
+func (a *sshLifecycleApp) Clear() { a.cleared = true }
 
 func TestLocalExecutorRunCleansTaskAgentAfterFailureAndCancellation(t *testing.T) {
 	for _, test := range []struct {
@@ -71,7 +75,9 @@ func TestLocalExecutorRunCleansTaskAgentAfterFailureAndCancellation(t *testing.T
 			executor.App = app
 			executor.Template = db.Template{ProjectID: 1}
 			executor.prepared = true
-			executor.killed = test.killed
+			if test.killed {
+				executor.Kill()
+			}
 			require.NoError(t, executor.startTaskSSHAgent())
 			socketFile := executor.taskSSHAgent.SocketFile
 			selectorFiles := append([]string(nil), executor.taskSSHIdentityFiles...)
@@ -83,6 +89,7 @@ func TestLocalExecutorRunCleansTaskAgentAfterFailureAndCancellation(t *testing.T
 				assert.NoError(t, err)
 			}
 			assert.True(t, app.cleared)
+			assert.Equal(t, !test.killed, app.ran)
 			assert.Nil(t, executor.taskSSHAgent)
 			assertFileDoesNotExist(t, socketFile)
 			for _, filename := range selectorFiles {

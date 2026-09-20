@@ -41,6 +41,8 @@ tasks:
         -production "api/public"
         -debug "{{ .OUTPUT_DIR }}.frontend-debug"
         -output "{{ .OUTPUT_DIR }}.source-maps"
+      # Match upstream build:fe: Vue clears the tracked embed placeholder.
+      - echo > ../api/public/.gitkeep
 
   release:notes:
     desc: Extract the CHANGELOG.md section of the current tag (OUTPUT defaults to dist/release-notes.md)
