@@ -13,9 +13,9 @@ Resolve the repository root with Git; verify the checkout, branches, and remotes
 Read repository `AGENTS.md`, `.claude/CLAUDE.md`, and root `CLAUDE.md`, plus:
 
 - `maintenance/README.md` for the repository-owned assessment, inventories, and gates.
-- [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Developer-Guide-Plans-Implementation-Slices-Upstream-Maintenance) for the merge procedure and conflict-sensitive contracts.
-- [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Developer-Guide-Plans-Implementation-Slices) and [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Developer-Guide-Plans-Implementation-Slices-STATUS) for the complete selected slice inventory and current state.
-- [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Developer-Guide-Adr-0010-Ship-One-Full-Featured-Product) for product invariants.
+- [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Upstream-Maintenance) for the merge procedure and conflict-sensitive contracts.
+- [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Implementation-Slices) and [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Implementation-Status) for the complete selected slice inventory and current state.
+- [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/ADR-0010-Single-Product) for product invariants.
 
 Repository policy and the maintained runbook are authoritative. For each conflict, read the slice specifications whose paths or dependencies overlap it. Infer behavior from those contracts, not an inaccessible commercial repository.
 

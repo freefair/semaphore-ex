@@ -57,7 +57,7 @@ Inline cache retains final-stage reuse rather than all intermediate stages
 layers and growth of the shared Actions cache store. Existing GHA image caches
 are no longer refreshed and expire normally; no quota or billing increase is
 required. The rationale is recorded in
-[ADR 0014](https://github.com/freefair/semaphore-ex/wiki/Developer-Guide-Adr-0014-Keep-Build-Cache-With-Published-Images).
+[ADR 0014](https://github.com/freefair/semaphore-ex/wiki/ADR-0014-Image-Build-Cache).
 
 ## Before tagging
 

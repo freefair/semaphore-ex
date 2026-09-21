@@ -12,8 +12,8 @@ body:
         Please make sure to go through these steps **before opening an issue**:
         
         - [ ] Read the [documentation](https://github.com/freefair/semaphore-ex/wiki)
-          - [ ] Read the [troubleshooting guide](https://github.com/freefair/semaphore-ex/wiki/Faq-Troubleshooting)
-          - [ ] Read the [documentation regarding manual installations](https://github.com/freefair/semaphore-ex/wiki/Admin-Guide-Installation-Manually) if you did install Semaphore that way
+          - [ ] Read the [troubleshooting guide](https://github.com/freefair/semaphore-ex/wiki/Troubleshooting)
+          - [ ] Read the [documentation regarding manual installations](https://github.com/freefair/semaphore-ex/wiki/Manual-Installation) if you did install Semaphore that way
 
         - [ ] Check if there are existing [issues](https://github.com/freefair/semaphore-ex/issues) regarding your topic
 

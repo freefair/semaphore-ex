@@ -17,3 +17,11 @@ The published Wiki remains independent and unchanged; the user maintains its sid
 The Wiki is the sole documentation source. Keeping a product submodule adds an
 unwanted checkout and pinned commit to maintain. Product builds and maintenance
 therefore operate without a local documentation repository or docs pipeline.
+
+## Follow-up: retire docs CI and rename Wiki pages
+
+Delete the obsolete Markdown workflow in the retired docs repository. Rename
+Wiki pages to concise subject titles and update all page links, including sidebar
+targets, while preserving the user-maintained sidebar structure. Use a temporary
+Wiki checkout only. Check collisions and link targets, publish, then delete the
+temporary checkout. Product CI duration and other jobs are outside this request.

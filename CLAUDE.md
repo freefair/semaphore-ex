@@ -23,7 +23,7 @@ The local QA server, database, and test data were created by Codex for this plan
 
 Keep enhanced-edition work upstream-compatible. Prefer implementing existing interfaces and extension seams; leave Community behavior and shared UI untouched wherever possible. UI changes must be the smallest integration needed for the selected slice and should reuse existing routes, views, and components instead of redesigning shared surfaces.
 
-Keep [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Developer-Guide-Plans-Implementation-Slices-STATUS) up to date.
+Keep [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Implementation-Status) up to date.
 
 ## Security Execution
 
@@ -43,7 +43,7 @@ preparing the merge and scope-preserving compatibility fixes; obtain publication
 approval before pushing. History rewrites and force-pushes require a separate,
 explicit request and are not the routine update procedure.
 
-Follow [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Developer-Guide-Plans-Implementation-Slices-Upstream-Maintenance) and
+Follow [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Upstream-Maintenance) and
 `maintenance/README.md`. Run the repository-owned `tools/upstream-sync/preflight.sh`
 with retained evidence before merging. Capture exact refs, review local changes,
 and merge the reviewed upstream SHA. Maintain related documentation independently in the Wiki.
