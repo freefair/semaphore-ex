@@ -246,6 +246,7 @@ func (w *walker) walk(st *ast.StructType, prefix string) {
 					Key:         key,
 					Env:         env,
 					Type:        "object",
+					Default:     "{}",
 					Sensitive:   sensitive,
 					Description: describe(field),
 				})
@@ -258,6 +259,11 @@ func (w *walker) walk(st *ast.StructType, prefix string) {
 
 		env, sensitive := envVar(tag)
 		defaultValue := tagValue(tag, "default")
+		if pointer, ok := field.Type.(*ast.StarExpr); ok && defaultValue == "" && w.typeOf(pointer.X) == "object" && !strings.Contains(prefix, ".<id>") {
+			// External struct pointers (logger objects) are allocated by the
+			// same environment loader as directly nested local structs.
+			defaultValue = "{}"
+		}
 		if _, optional := field.Type.(*ast.StarExpr); !optional && defaultValue == "" {
 			switch w.typeOf(field.Type) {
 			case "boolean":
@@ -545,42 +551,36 @@ See [Loading and examples](../admin-guide/configuration/config-file.md) for prec
 required deployment values and YAML examples, and [Additional configuration schemas](configuration-schemas.md)
 for logger members, the encryption keys file, bootstrap environment variables and runtime settings.
 
-An empty string, zero, false, empty list or empty map is the Go zero value when no
-explicit default is listed. Pointer fields can be absent (null); consult the description
-for runtime fallbacks. Tagged defaults replace zero values, including explicitly supplied
-zero or false. Defaults inside optional objects apply when that object exists.
+Defaults show tagged or initial field values; descriptions identify additional runtime fallbacks.
+Empty arrays/maps are written as []/{}; nil collections also mean no entries.
+Environment loading allocates directly nested configuration objects even when omitted,
+then member defaults apply. Scalar pointers can remain unset (null).
+Objects inside named map entries are not allocated by environment loading;
+their defaults apply when the object exists, or a consumer supplies a fallback.
+Tagged defaults replace zero values, including explicitly supplied zero or false.
 Map members inherit the parent environment variable as a JSON object, not individual bindings.
 
 ## Contents
 
 `)
 
-	for _, g := range ov.Groups {
-		for _, o := range opts {
-			if matchesAny(o.Key, g.Prefixes) {
-				fmt.Fprintf(&b, "- [%s](#%s)\n", g.Title, anchor(g.Title))
-				break
-			}
-		}
+	type section struct {
+		group group
+		rows  []option
 	}
-	b.WriteString("\n")
+	var sections []section
 	for _, g := range ov.Groups {
 		var rows []option
 		for _, o := range opts {
-			if claimed[o.Key] {
-				continue
-			}
-			if matchesAny(o.Key, g.Prefixes) {
+			if !claimed[o.Key] && matchesAny(o.Key, g.Prefixes) {
 				claimed[o.Key] = true
 				rows = append(rows, o)
 			}
 		}
-		if len(rows) == 0 {
-			continue
+		if len(rows) > 0 {
+			sections = append(sections, section{group: g, rows: rows})
 		}
-		writeSection(&b, g, rows)
 	}
-
 	var rest []option
 	for _, o := range opts {
 		if !claimed[o.Key] {
@@ -589,10 +589,14 @@ Map members inherit the parent environment variable as a JSON object, not indivi
 	}
 	if len(rest) > 0 {
 		sort.Slice(rest, func(i, j int) bool { return rest[i].Key < rest[j].Key })
-		writeSection(&b, group{
-			Title: "Other",
-			Intro: "Options that have not been sorted into a section yet.",
-		}, rest)
+		sections = append(sections, section{group: group{Title: "Other", Intro: "Options that have not been sorted into a section yet."}, rows: rest})
+	}
+	for _, section := range sections {
+		fmt.Fprintf(&b, "- [%s](#%s)\n", section.group.Title, anchor(section.group.Title))
+	}
+	b.WriteString("\n")
+	for _, section := range sections {
+		writeSection(&b, section.group, section.rows)
 	}
 
 	page := b.String()

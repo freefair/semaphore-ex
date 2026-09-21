@@ -97,7 +97,7 @@
   "tls.http_redirect_addr": "Address (`host[:port]`) for the HTTP→HTTPS redirect listener. Mutually exclusive with `tls.http_redirect_port`.",
   "tls.http_redirect_port": "Port to redirect HTTP traffic to HTTPS. Mutually exclusive with `tls.http_redirect_addr`.",
   "tls.key_file": "Path to TLS key file.",
-  "apps.<id>.priority": "Numeric priority used when ordering configured applications; zero when omitted.",
+  "apps.<id>.priority": "Numeric ordering priority. At application discovery, zero or negative values use built-in priorities for ansible (1000), terraform (900), terragrunt (850), tofu (800), bash (700), powershell (600) and python (500). Other application IDs retain their configured value, or zero when omitted.",
   "apps.<id>.title": "Display name of the application in template forms.",
   "apps.<id>.icon": "Icon identifier displayed for the application.",
   "apps.<id>.color": "Application icon color for the light theme.",
@@ -152,6 +152,6 @@
   "interface": "Listening IP address. Empty binds on all interfaces; use `127.0.0.1` for a local reverse proxy.",
   "web_host": "Public base URL including any path prefix, for example `https://semaphore.example.org`. Used for externally visible links and redirects.",
   "cookie_hash": "Base64-encoded session-cookie authentication key. Generate once and keep it stable across restarts and identical on HA nodes.",
-  "home_dir_mode": "Task HOME isolation: `template_dir` uses a per-template home with the checkout in its src subdirectory; `project_home` uses the project directory; `user_home` preserves the process HOME. Default: `template_dir`.",
+  "home_dir_mode": "Task HOME handling: `project_home` uses the project temp directory; `template_dir` and `user_home` preserve the process HOME. Only `template_dir` additionally sets ANSIBLE_HOME to the per-template `_home/.ansible` directory, separate from the repository checkout. Default: `template_dir`.",
   "access_key_encryption": "Legacy base64-encoded key for encrypting stored access keys. For rotation, use encryption.keys_file and its keys/active fields. Keep every key needed to decrypt retained database records."
 }
