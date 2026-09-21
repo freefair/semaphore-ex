@@ -1,3 +1,0 @@
-[submodule "docs"]
-	path = docs
-	url = git@github.com:freefair/semaphore-ex.wiki.git

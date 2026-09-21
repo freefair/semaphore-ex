@@ -82,8 +82,8 @@ they are security controls, not edition gates.
 - [Changelog](CHANGELOG.md) and [release procedure](maintenance/RELEASING.md)
 - [Upstream maintenance policy](maintenance/README.md)
 
-The `docs` submodule checks out the Wiki repository itself. Edit those Markdown
-files or use GitHub's Wiki editor; there is no separate docs repository to synchronize.
+Documentation is maintained directly in the GitHub Wiki. The product repository
+contains no documentation checkout, submodule or documentation build.
 
 ## Relationship to upstream
 

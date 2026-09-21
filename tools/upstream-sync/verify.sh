@@ -8,8 +8,8 @@ Usage: verify.sh --output NEW_DIRECTORY [--quick]
 
 Run from any directory. Quick mode checks maintenance inventories and their tests.
 Full mode additionally builds the frontend, tests and vets both Go modules,
-compiles Dredd, runs the frontend suite, builds the product, checks Dockerfiles,
-and checks Markdown documentation. Requires Go, Node/npm, and Docker.
+compiles Dredd, runs the frontend suite, builds the product and checks Dockerfiles.
+Requires Go, Node/npm, and Docker.
 A failed frontend suite stays failed; baseline classification requires review.
 
 Example:
@@ -36,7 +36,7 @@ run_gate() {
 
 main() {
   [[ "${GOFLAGS-}" != *-overlay* ]] || die 'Run retained assessment/verification without Go overlays; use the checker directly for mutation experiments'
-  local quick=false repository source_before source_after docs_before docs_after baseline git_config_count product_output
+  local quick=false repository source_before source_after baseline git_config_count product_output
   local OUTPUT='' FAILED=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -50,17 +50,13 @@ main() {
   repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
   # Untracked source is outside the HEAD/diff fingerprint; require review/staging first.
   [[ -z "$(git -C "$repository" ls-files --others --exclude-standard -- . ':(exclude).claude/task-notes' ':(exclude).claude/rules' ':(exclude)dist')" ]] || die 'Stage reviewed untracked source before verification'
-  [[ -z "$(git -C "$repository/docs" ls-files --others --exclude-standard)" ]] || die 'Stage reviewed untracked documentation before verification'
   mkdir -p "$OUTPUT"; OUTPUT="$(cd "$OUTPUT" && pwd -P)"
   baseline="$(git -C "$repository" rev-parse --verify 'origin/develop^{commit}')"
   printf '%s\n' "$baseline" > "$OUTPUT/baseline.txt"
   git_config_count="${GIT_CONFIG_COUNT:-0}"
   [[ "$git_config_count" =~ ^[0-9]+$ ]] || die 'GIT_CONFIG_COUNT must be numeric'
   git -C "$repository" rev-parse HEAD > "$OUTPUT/head.txt"
-  git -C "$repository/docs" rev-parse HEAD > "$OUTPUT/docs-head.txt"
   git -C "$repository" status --porcelain=v1 > "$OUTPUT/worktree-status.txt"
-  docs_before="$(git -C "$repository/docs" diff --no-ext-diff --binary HEAD | shasum -a 256)"
-  printf '%s\n' "$docs_before" > "$OUTPUT/docs-working-diff.sha256"
   source_before="$(git -C "$repository" diff --no-ext-diff --binary HEAD -- . ':(exclude).claude/task-notes' ':(exclude).claude/rules' | shasum -a 256)"
   printf '%s\n' "$source_before" > "$OUTPUT/working-diff.sha256"
   product_output="$(node -e 'process.stdout.write(require("node:path").relative(process.argv[1], process.argv[2]))' "$repository" "$OUTPUT/product")"
@@ -70,7 +66,6 @@ main() {
     run_gate frontend-build "$repository/web" npm run build || true
   fi
   run_gate maintenance "$repository" go run ./tools/upstreamcheck -mode check -base-ref "$baseline" || true
-  run_gate docs-markdown "$repository" node tools/check-docs.mjs || true
   run_gate maintenance-tests "$repository" go test ./tools/upstreamcheck -count=1 || true
   if [[ "$quick" == false ]]; then
     run_gate root-tests "$repository" env "GIT_CONFIG_COUNT=$((git_config_count+1))" "GIT_CONFIG_KEY_$git_config_count=commit.gpgsign" "GIT_CONFIG_VALUE_$git_config_count=false" go test ./... -count=1 || true
@@ -85,12 +80,9 @@ main() {
     run_gate runner-docker "$repository" docker build --check --file deployment/docker/runner/Dockerfile . || true
   fi
   [[ "$(git -C "$repository" rev-parse HEAD)" == "$(cat "$OUTPUT/head.txt")" ]] || die 'Root HEAD changed during verification; evidence is stale'
-  [[ "$(git -C "$repository/docs" rev-parse HEAD)" == "$(cat "$OUTPUT/docs-head.txt")" ]] || die 'Docs HEAD changed during verification; evidence is stale'
-  docs_after="$(git -C "$repository/docs" diff --no-ext-diff --binary HEAD | shasum -a 256)"
-  [[ "$docs_before" == "$docs_after" ]] || die 'Documentation source changed during verification; evidence is stale'
   source_after="$(git -C "$repository" diff --no-ext-diff --binary HEAD -- . ':(exclude).claude/task-notes' ':(exclude).claude/rules' | shasum -a 256)"
   [[ "$source_before" == "$source_after" ]] || die 'Tracked source changed during verification; evidence is stale'
-  (cd "$OUTPUT" && shasum -a 256 ./*.log ./head.txt ./docs-head.txt ./baseline.txt ./working-diff.sha256 ./docs-working-diff.sha256 ./results.tsv) > "$OUTPUT/checksums.sha256"
+  (cd "$OUTPUT" && shasum -a 256 ./*.log ./head.txt ./baseline.txt ./working-diff.sha256 ./results.tsv) > "$OUTPUT/checksums.sha256"
   printf 'Verification evidence: %s\n' "$OUTPUT"
   return "$FAILED"
 }

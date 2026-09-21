@@ -6,14 +6,11 @@ not a second runtime migration engine or an automatic conflict resolver.
 
 ## Quick Start
 
-For a fresh clone, configure the product upstream and activate the product and Wiki branches:
+For a fresh clone, configure the product upstream and activate the product branch:
 
 ```bash
 git switch develop
 git remote add upstream git@github.com:semaphoreui/semaphore.git
-GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes' git submodule update --init docs
-GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes' git -C docs fetch origin master
-git -C docs switch -c master --track origin/master
 ```
 
 For an existing checkout, verify these remote identities and branch names first.
@@ -21,8 +18,7 @@ Run preflight with `--fetch` once to populate upstream refs; its retained report
 makes missing or unexpected configuration explicit.
 
 Install the repository's Go and frontend dependencies, build the embedded frontend
-(`npm --prefix web ci && npm --prefix web run build`), and initialize the docs
-submodule before running the assessment. Use the toolchain versions in `go.mod`
+(`npm --prefix web ci && npm --prefix web run build`) before running the assessment. Use the toolchain versions in `go.mod`
 and the product workflow.
 
 ```bash
@@ -32,7 +28,7 @@ bash tools/upstream-sync/verify.sh --quick --output /tmp/semaphore-quick-checks
 ```
 
 Each output directory must be new. Assessment fetches only when requested. It
-captures product local, origin, upstream and merge-base SHAs plus Wiki local/origin SHAs; source status;
+captures product local, origin, upstream and merge-base SHAs; source status;
 upstream seam/schema patches; full binary patches and fingerprints of staged/unstaged source; fork delta summaries; incoming migration decisions;
 and merge-tree conflict previews. Merge-tree writes its objects into the evidence
 directory, leaving repository objects, indexes, worktrees, and branches untouched.

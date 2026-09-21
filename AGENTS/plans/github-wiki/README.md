@@ -1,27 +1,19 @@
-# Move English documentation to the product Wiki
+# Keep documentation exclusively in the GitHub Wiki
 
 ## Scope
 
-Use `freefair/semaphore-ex.wiki.git` as the sole English documentation source.
-Retarget the product docs submodule, remove the old Pages publication, and use
-only the authenticated Codex in-app browser for UI interactions.
+Remove the product repository's local `docs` checkout and submodule registration.
+The published Wiki remains independent and unchanged; the user maintains its sidebar.
 
 ## Plan
 
-1. Move the existing English Markdown pages and assets to the Wiki with working links.
-2. Remove duplicate body titles and the custom sidebar; use GitHub page titles and native navigation, plus the full Contents page.
-3. Remove reference generators and their build/pipeline dependencies. Keep all reference content as directly edited Markdown and a read-only check.
-4. Replace obsolete commercial-edition planning with the current single-product model.
-5. Publish the Wiki, then its product pointer and integration. Inspect the rendered result in the in-app browser.
+1. Confirm the Wiki checkout has no unpublished file changes.
+2. Remove the docs CI job, task and checker, and local Wiki requirements from maintenance scripts.
+3. Replace active local documentation references with published Wiki links.
+4. Remove the docs checkout and submodule registration, check script syntax and commit the removal.
 
-## Decisions
+## Decision
 
-The Wiki itself is canonical. A second maintained repo or synchronized mirror
-would contradict the user's request. Plain Markdown needs neither reference
-generation nor a site build. The old docs repository remains historical provenance;
-its Pages publication is disabled. English content alone is migrated.
-
-## Validation
-
-Check links, anchors and assets without modifying the docs. Confirm no body H1
-or docs-generation task remains. Inspect Wiki rendering and native page navigation.
+The Wiki is the sole documentation source. Keeping a product submodule adds an
+unwanted checkout and pinned commit to maintain. Product builds and maintenance
+therefore operate without a local documentation repository or docs pipeline.

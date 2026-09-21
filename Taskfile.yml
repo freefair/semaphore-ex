@@ -140,11 +140,6 @@ tasks:
       DATE: "{{ .SOURCE_DATE_EPOCH }}"
       IMPORT: "github.com/semaphoreui/semaphore"
 
-  docs:check:
-    desc: Check Wiki Markdown links and formatting without modifying files
-    cmds:
-      - node tools/check-docs.mjs
-
   lint:
     cmds:
       - task: lint:fe

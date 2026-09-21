@@ -23,7 +23,7 @@ The local QA server, database, and test data were created by Codex for this plan
 
 Keep enhanced-edition work upstream-compatible. Prefer implementing existing interfaces and extension seams; leave Community behavior and shared UI untouched wherever possible. UI changes must be the smallest integration needed for the selected slice and should reuse existing routes, views, and components instead of redesigning shared surfaces.
 
-Keep docs/Developer-Guide-Plans-Implementation-Slices-STATUS.md up to date.
+Keep [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Developer-Guide-Plans-Implementation-Slices-STATUS) up to date.
 
 ## Security Execution
 
@@ -43,10 +43,10 @@ preparing the merge and scope-preserving compatibility fixes; obtain publication
 approval before pushing. History rewrites and force-pushes require a separate,
 explicit request and are not the routine update procedure.
 
-Follow `docs/Developer-Guide-Plans-Implementation-Slices-Upstream-Maintenance.md` and
+Follow [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Developer-Guide-Plans-Implementation-Slices-Upstream-Maintenance) and
 `maintenance/README.md`. Run the repository-owned `tools/upstream-sync/preflight.sh`
 with retained evidence before merging. Capture exact refs, review local changes,
-and merge the reviewed upstream SHA. Publish verified docs before the root pointer.
+and merge the reviewed upstream SHA. Maintain related documentation independently in the Wiki.
 Use ordinary pushes and stop to reassess if the recorded remote tip has changed.
 This repository policy supersedes older rebase instructions in personal sync skills.
 
@@ -83,7 +83,7 @@ runs the product gate, then goreleaser and the ghcr.io image publish. Never tag 
 `vX.Y.Z`; it collides with upstream tags.
 
 Publish documentation as directly readable Markdown with no dedicated docs UI or
-compilation step. Use `node tools/check-docs.mjs` to validate local links,
-anchors, navigation and source format. The product Wiki is the sole maintained English source. Incoming upstream docs
+compilation step. The product Wiki is the sole maintained English source, with no
+local checkout, submodule or docs pipeline. Incoming upstream docs
 are reviewed and adapted to its Markdown contract; do not restore a second docs
 repository, translation tree or site build.

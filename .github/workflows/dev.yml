@@ -10,20 +10,6 @@ name: Dev
       - develop
 
 jobs:
-  docs-reference:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout source and Wiki
-        uses: actions/checkout@v7
-        with:
-          submodules: true
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: '24.19.0'
-      - name: Check Wiki Markdown
-        run: node tools/check-docs.mjs
-
   build-local:
     runs-on: ubuntu-latest
 

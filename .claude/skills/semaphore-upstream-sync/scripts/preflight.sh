@@ -12,7 +12,7 @@ usage() {
   cat <<EOF
 Usage: $(basename "${BASH_SOURCE[0]}") REPOSITORY_DIR
 
-Optional read-only identity and slice check before an upstream merge.
+Optional read-only identity check before an upstream merge.
 Expects both root remotes to have been fetched. For the required retained
 assessment, run tools/upstream-sync/preflight.sh from the repository root:
   bash tools/upstream-sync/preflight.sh --fetch --output NEW_DIRECTORY .
@@ -61,21 +61,6 @@ git -C "${repository_dir}" rev-parse --verify upstream/develop >/dev/null 2>&1 \
 merge_base="$(git -C "${repository_dir}" merge-base origin/develop upstream/develop)"
 [[ -n "${merge_base}" ]] || die 'origin/develop and upstream/develop have no merge base'
 
-slice_dir="${repository_dir}/docs"
-[[ -f "${slice_dir}/Developer-Guide-Plans-Implementation-Slices.md" ]] || die 'slice index is unavailable'
-[[ -f "${slice_dir}/Developer-Guide-Plans-Implementation-Slices-Upstream-Maintenance.md" ]] || die 'upstream maintenance runbook is unavailable'
-
-spec_count="$(find "${slice_dir}" -maxdepth 1 -type f -name 'Developer-Guide-Plans-Implementation-Slices-[0-9][0-9][0-9]-*.md' | wc -l | tr -d ' ')"
-index_count="$(grep -Ec '^\| [0-9]{3} \| \[' "${slice_dir}/Developer-Guide-Plans-Implementation-Slices.md")"
-[[ "${spec_count}" == "${index_count}" ]] \
-  || die "slice inventory mismatch: ${spec_count} specs, ${index_count} index entries"
-
-docs_origin="$(git -C "${repository_dir}/docs" remote get-url origin 2>/dev/null || true)"
-case "${docs_origin}" in
-  git@github.com:freefair/semaphore-ex.wiki | git@github.com:freefair/semaphore-ex.wiki.git) ;;
-  *) die "unexpected Wiki origin URL: ${docs_origin:-missing}" ;;
-esac
-
 read -r upstream_only fork_only < <(
   git -C "${repository_dir}" rev-list --left-right --count upstream/develop...develop
 )
@@ -89,4 +74,3 @@ printf 'merge_base=%s\n' "${merge_base}"
 printf 'upstream_only=%s\n' "${upstream_only}"
 printf 'fork_only=%s\n' "${fork_only}"
 printf 'dirty_entries=%s\n' "${dirty_entries}"
-printf 'slice_specs=%s\n' "${spec_count}"

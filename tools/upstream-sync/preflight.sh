@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Assess the product fork and canonical Wiki without changing source or branch tips.
+# Assess the product fork without changing source or branch tips.
 set -Eeuo pipefail
 
 usage() {
   cat <<'HELP'
 Usage: preflight.sh [--fetch] --output NEW_DIRECTORY REPOSITORY_DIR
 
-Capture exact root/docs refs, upstream seam and migration diffs, fork changes,
+Capture exact product refs, upstream seam and migration diffs, fork changes,
 and merge conflict previews. Cached refs are used unless --fetch is supplied.
 The output directory must be new. Conflict previews are evidence, not approval.
 
@@ -73,25 +73,9 @@ capture_repository() {
   [[ "$(git -C "$repository" rev-parse HEAD)" == "$head" ]] || die "$label HEAD changed during capture"
 }
 
-# The Wiki has no upstream fork to merge; capture its exact publication state.
-capture_wiki() {
-  local repository="$1" output="$2" fetch_refs="$3" head origin fingerprint
-  if [[ "$fetch_refs" == true ]]; then
-    GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes' git -C "$repository" fetch origin master
-  fi
-  head="$(git -C "$repository" rev-parse --verify 'HEAD^{commit}')"
-  origin="$(git -C "$repository" rev-parse --verify 'origin/master^{commit}')"
-  mkdir -p "$output/docs"
-  printf 'head: %s\norigin: %s\nbranch: master\nfetched: %s\n' "$head" "$origin" "$fetch_refs" > "$output/docs/refs.yml"
-  git -C "$repository" status --porcelain=v1 > "$output/docs/worktree-status.txt"
-  git -C "$repository" diff --no-ext-diff --binary HEAD -- . ':(exclude).claude/task-notes' ':(exclude).claude/rules' > "$output/docs/working-tree.patch"
-  fingerprint="$(shasum -a 256 "$output/docs/working-tree.patch" | awk '{print $1}')"
-  printf '%s\n' "$fingerprint" > "$output/docs/working-tree.sha256"
-}
-
 main() {
   [[ "${GOFLAGS-}" != *-overlay* ]] || die 'Run retained assessment/verification without Go overlays; use the checker directly for mutation experiments'
-  local fetch_refs=false output='' repository='' option label location fingerprint
+  local fetch_refs=false output='' repository='' option fingerprint
   while [[ $# -gt 0 ]]; do
     option="$1"
     case "$option" in
@@ -105,29 +89,22 @@ main() {
   [[ -n "$repository" && -n "$output" ]] || die 'Repository and --output are required'
   repository="$(cd "$repository" && pwd -P)"
   [[ "$(git -C "$repository" rev-parse --show-toplevel)" == "$repository" ]] || die 'Use the repository root'
-  [[ "$(git -C "$repository/docs" rev-parse --show-toplevel)" == "$repository/docs" ]] || die 'Initialize the docs submodule first'
   check_remote "$repository" origin git@github.com:freefair/semaphore-ex.git
   check_remote "$repository" upstream git@github.com:semaphoreui/semaphore.git
-  check_remote "$repository/docs" origin git@github.com:freefair/semaphore-ex.wiki.git
   [[ -z "$(git -C "$repository" ls-files --others --exclude-standard -- . ':(exclude).claude/task-notes' ':(exclude).claude/rules' ':(exclude)dist')" ]] || die 'Stage reviewed untracked source before assessment'
-  [[ -z "$(git -C "$repository/docs" ls-files --others --exclude-standard)" ]] || die 'Stage reviewed untracked docs before assessment'
   [[ ! -e "$output" ]] || die 'Output already exists; preserve earlier evidence and choose a new directory'
   mkdir -p "$output"
   output="$(cd "$output" && pwd -P)"
   capture_repository "$repository" root develop "$output" "$fetch_refs"
-  capture_wiki "$repository/docs" "$output" "$fetch_refs"
   (
     cd "$repository"
     go run ./tools/upstreamcheck -root "$repository" -mode incoming -incoming-ref "$(awk '$1 == "upstream:" {print $2}' "$output/root/refs.yml")" > "$output/root/migration-decisions.yml" || exit "$?"
     go run ./tools/upstreamcheck -root "$repository" -mode check -base-ref "$(awk '$1 == "origin:" {print $2}' "$output/root/refs.yml")"
   ) > "$output/contracts-and-migrations.log" 2>&1 || die 'Ownership or contract check failed; review retained evidence'
-  for label in root docs; do
-    location="$repository"; [[ "$label" == root ]] || location="$repository/docs"
-    fingerprint="$(git -C "$location" diff --no-ext-diff --binary HEAD -- . ':(exclude).claude/task-notes' ':(exclude).claude/rules' | shasum -a 256 | awk '{print $1}')"
-    [[ "$fingerprint" == "$(cat "$output/$label/working-tree.sha256")" ]] || die "$label source changed during assessment"
-    [[ "$(git -C "$location" rev-parse HEAD)" == "$(awk '$1 == "head:" {print $2}' "$output/$label/refs.yml")" ]] || die "$label HEAD changed during assessment"
-  done
-  (cd "$output" && shasum -a 256 root/*.yml root/*.patch root/*.sha256 docs/*.yml docs/*.patch docs/*.sha256 contracts-and-migrations.log) > "$output/checksums.sha256"
+  fingerprint="$(git -C "$repository" diff --no-ext-diff --binary HEAD -- . ':(exclude).claude/task-notes' ':(exclude).claude/rules' | shasum -a 256 | awk '{print $1}')"
+  [[ "$fingerprint" == "$(cat "$output/root/working-tree.sha256")" ]] || die 'Root source changed during assessment'
+  [[ "$(git -C "$repository" rev-parse HEAD)" == "$(awk '$1 == "head:" {print $2}' "$output/root/refs.yml")" ]] || die 'Root HEAD changed during assessment'
+  (cd "$output" && shasum -a 256 root/*.yml root/*.patch root/*.sha256 contracts-and-migrations.log) > "$output/checksums.sha256"
   printf 'Assessment retained in %s\nReview conflicts and new contracts before merging; no merge or push was performed.\n' "$output"
 }
 

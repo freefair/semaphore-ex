@@ -13,9 +13,9 @@ Resolve the repository root with Git; verify the checkout, branches, and remotes
 Read repository `AGENTS.md`, `.claude/CLAUDE.md`, and root `CLAUDE.md`, plus:
 
 - `maintenance/README.md` for the repository-owned assessment, inventories, and gates.
-- `docs/Developer-Guide-Plans-Implementation-Slices-Upstream-Maintenance.md` for the merge procedure and conflict-sensitive contracts.
-- `docs/Developer-Guide-Plans-Implementation-Slices.md` and `docs/Developer-Guide-Plans-Implementation-Slices-STATUS.md` for the complete selected slice inventory and current state.
-- `docs/Developer-Guide-Adr-0010-Ship-One-Full-Featured-Product.md` for product invariants.
+- [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Developer-Guide-Plans-Implementation-Slices-Upstream-Maintenance) for the merge procedure and conflict-sensitive contracts.
+- [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Developer-Guide-Plans-Implementation-Slices) and [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Developer-Guide-Plans-Implementation-Slices-STATUS) for the complete selected slice inventory and current state.
+- [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Developer-Guide-Adr-0010-Ship-One-Full-Featured-Product) for product invariants.
 
 Repository policy and the maintained runbook are authoritative. For each conflict, read the slice specifications whose paths or dependencies overlap it. Infer behavior from those contracts, not an inaccessible commercial repository.
 
@@ -29,7 +29,7 @@ Keep helper/tooling changes in their own explicitly requested scope. Preserve un
 
 ## Assessment and Merge Workflow
 
-1. Verify root `develop`: `origin` is `freefair/semaphore-ex`, `upstream` is `semaphoreui/semaphore`. Verify the Wiki checkout: `origin` is `freefair/semaphore-ex.wiki.git`, published branch `master`; no separate docs upstream is maintained. Reconcile unexpected branches, ancestry, or local/origin divergence before merging.
+1. Verify root `develop`: `origin` is `freefair/semaphore-ex`, `upstream` is `semaphoreui/semaphore`. The Wiki is maintained independently; no local docs checkout is required. Reconcile unexpected branches, ancestry, or local/origin divergence before merging.
 2. Use `GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes'` for network Git commands.
 3. From the root, run the repository-owned preflight with a new evidence directory:
 
@@ -37,13 +37,13 @@ Keep helper/tooling changes in their own explicitly requested scope. Preserve un
    bash tools/upstream-sync/preflight.sh --fetch --output /tmp/semaphore-assessment .
    ```
 
-   Omit `--fetch` only when deliberately assessing recorded local refs. Read root/docs exact SHAs, source fingerprints, seam/schema diffs, incoming migration decisions, and merge conflict previews. The preview never chooses a semantic resolution.
-4. For an actual update, create a clearly named local `codex/` recovery branch at each pre-merge head. Preserve unrelated working state without staging it. Retain recovery points until cleanup is authorized.
-5. Review incoming documentation changes against the product contracts and adapt needed English content directly in the Wiki checkout. Do not merge or synchronize the retired docs fork. Publish verified Wiki commits to `master` once authorized and read back the remote SHA.
-6. If root upstream has commits not already included, merge its recorded SHA into `develop` using `git merge --no-ff --no-commit <recorded-root-upstream-sha>`. Point the docs submodule at the verified published docs commit. An already-contained upstream needs no artificial merge; a docs pointer update can be an ordinary commit.
+   Omit `--fetch` only when deliberately assessing recorded local refs. Read product exact SHAs, source fingerprints, seam/schema diffs, incoming migration decisions, and merge conflict previews. The preview never chooses a semantic resolution.
+4. For an actual update, create a clearly named local `codex/` recovery branch at the product pre-merge head. Preserve unrelated working state without staging it. Retain recovery points until cleanup is authorized.
+5. Review related English documentation in the published product Wiki and update it independently when product behavior changes. Do not recreate a docs submodule.
+6. If root upstream has commits not already included, merge its recorded SHA into `develop` using `git merge --no-ff --no-commit <recorded-root-upstream-sha>`. An already-contained upstream needs no artificial merge.
 7. Resolve conflicts against the relevant slice contracts and current upstream behavior. Run focused checks for each manual resolution. Review the final result against both pre-merge parents and run the complete retained gates before committing the merge and any separate compatibility changes.
 
-The skill-local `scripts/preflight.sh REPOSITORY_DIR` remains an optional read-only identity/slice diagnostic. It is not the retained assessment gate and does not replace the repository-owned tools. If required tooling is missing, report that gap rather than falling back to a rebase.
+The skill-local `scripts/preflight.sh REPOSITORY_DIR` remains an optional read-only identity diagnostic. It is not the retained assessment gate and does not replace the repository-owned tools. If required tooling is missing, report that gap rather than falling back to a rebase.
 
 ## Semantic Conflict Decisions
 
@@ -63,24 +63,23 @@ From the repository root, use a new evidence directory:
 bash tools/upstream-sync/verify.sh --output /tmp/semaphore-gates
 ```
 
-The full runner builds the embedded frontend first, checks inventories, runs root/Enhanced Go tests and vet, compiles Dredd hooks, runs the complete frontend suite, builds the product, checks both Dockerfiles, and checks Markdown documentation. Retain logs, exit codes, exact source fingerprints, and checksums. Quick mode is an intermediate check, not the completion gate.
+The full runner builds the embedded frontend first, checks inventories, runs root/Enhanced Go tests and vet, compiles Dredd hooks, runs the complete frontend suite, builds the product, checks both Dockerfiles. Retain logs, exit codes, exact source fingerprints, and checksums. Quick mode is an intermediate check, not the completion gate.
 
 Reproduce frontend failures on the exact assessed upstream SHA before classifying them as baseline failures; retain failed results and reproduction evidence. Perform desktop/mobile browser verification of visible areas changed by conflict resolution, including permissions and absence of commercial upgrade surfaces.
 
-Keep documentation as directly readable Markdown. Run `node tools/check-docs.mjs` instead of building a site. Keep the Wiki as the sole English source; adapt incoming MDX and website navigation to ordinary Markdown.
+Keep documentation as directly readable Markdown. Keep the Wiki as the sole English source; adapt incoming MDX and website navigation to ordinary Markdown.
 
 ## Publication and Completion
 
 Fetch the relevant `origin` immediately before each push and compare its tip with the assessment's recorded SHA. If it advanced, incorporate the new work and repeat affected verification. Preserve existing publication authorization for the agreed scope.
 
-Publish docs before the root submodule pointer. Use ordinary pushes from the verified branches:
+Publish the product with an ordinary push from the verified branch:
 
 ```bash
-# Inside the docs submodule:
-GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes' git push origin master:master
-# Inside the application root:
 GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes' git push origin develop:develop
 ```
+
+Wiki publication is independent and does not update a product submodule pointer.
 
 Read remote SHAs back and require equality with the corresponding local heads. Wait for required workflows on those exact commits, inspect failures, and fix in-scope root causes before reporting completion. Treat Dependabot update failures as separate scope unless they break the selected build.
 

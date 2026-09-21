@@ -10,24 +10,14 @@ verification gates. Preserve published history and shipped migration identities.
 Use the user-provided Codex in-app browser for browser interactions. Access other
 desktop applications only when the user explicitly requests that application.
 
-The `docs` submodule checks out `freefair/semaphore-ex.wiki.git`, the sole
-maintained English documentation source. Edit that checkout or GitHub's Wiki
-editor; create no second docs repository, mirror or synchronization workflow.
-Reading it requires no build, web UI, Node dependencies or hosted configurator.
-Keep headings free of visible anchor syntax. Inside Wiki pages use extensionless
-Wiki page links; product files may link to actual `.md` files in the checkout.
-Start at `docs/Home.md`; maintain `docs/Contents.md` when adding pages.
-Run `node tools/check-docs.mjs` for local links, anchors and Markdown syntax.
-
-### Wiki authoring
-
-Maintain configuration, CLI and API references directly as English Markdown.
-Documentation checks are read-only. Documentation editing and CI require no
-reference generators, compilation, frontend build or dependency installation.
-GitHub supplies each page title and native page navigation: omit body H1 titles
-and custom sidebars. Keep the full Contents page for grouped navigation.
-Describe one full-featured product. Commercial plans and edition comparisons
-are not part of the manual; technical compatibility identifiers remain intact.
+Maintain English documentation directly in the product GitHub Wiki:
+https://github.com/freefair/semaphore-ex/wiki
+The Wiki is independent of the product checkout. Product builds and maintenance
+require no local docs folder, submodule, docs pipeline or reference generators.
+Keep all documentation as directly edited Markdown with no compilation step.
+GitHub supplies page titles; omit duplicate body H1 titles.
+The user maintains the sidebar. Resume sidebar work only on an explicit request.
+Describe one full-featured product; preserve technical compatibility identifiers.
 
 ## Writing Plans
 
