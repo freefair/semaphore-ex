@@ -1,0 +1,20 @@
+{
+  "build_task_id": 8,
+  "commit_hash": "deadbeef",
+  "params": {
+    "debug": true,
+    "debug_level": 3,
+    "diff": true,
+    "dry_run": true,
+    "limit": [
+      "web"
+    ],
+    "skip_galaxy_install": true,
+    "skip_tags": [],
+    "tags": [
+      "deploy"
+    ]
+  },
+  "template_id": 2,
+  "version": "requested-version"
+}

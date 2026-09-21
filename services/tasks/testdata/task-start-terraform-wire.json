@@ -1,0 +1,13 @@
+{
+  "build_task_id": 8,
+  "commit_hash": "deadbeef",
+  "params": {
+    "auto_approve": true,
+    "destroy": true,
+    "plan": true,
+    "reconfigure": true,
+    "upgrade": true
+  },
+  "template_id": 2,
+  "version": "requested-version"
+}
