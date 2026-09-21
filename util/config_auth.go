@@ -58,11 +58,17 @@ type RecaptchaConfig struct {
 }
 
 type EmailAuthConfig struct {
-	Enabled                  bool     `json:"enabled" env:"SEMAPHORE_EMAIL_2TP_ENABLED"`
-	AllowLoginAsExternalUser bool     `json:"allow_login_as_external_user" env:"SEMAPHORE_EMAIL_2TP_ALLOW_LOGIN_AS_EXTERNAL_USER"`
-	AllowCreateExternalUsers bool     `json:"allow_create_external_user" env:"SEMAPHORE_EMAIL_2TP_ALLOW_CREATE_EXTERNAL_USER"`
-	AllowedDomains           []string `json:"allowed_domains" env:"SEMAPHORE_EMAIL_2TP_ALLOWED_DOMAINS"`
-	DisableForOidc           bool     `json:"disable_for_oidc" env:"SEMAPHORE_EMAIL_2TP_DISABLE_FOR_OIDC"`
+	// Enabled is compatibility metadata only; email MFA is not wired in the
+	// selected implementation.
+	Enabled bool `json:"enabled" env:"SEMAPHORE_EMAIL_2TP_ENABLED"`
+	// AllowLoginAsExternalUser is an unwired compatibility setting.
+	AllowLoginAsExternalUser bool `json:"allow_login_as_external_user" env:"SEMAPHORE_EMAIL_2TP_ALLOW_LOGIN_AS_EXTERNAL_USER"`
+	// AllowCreateExternalUsers is an unwired compatibility setting.
+	AllowCreateExternalUsers bool `json:"allow_create_external_user" env:"SEMAPHORE_EMAIL_2TP_ALLOW_CREATE_EXTERNAL_USER"`
+	// AllowedDomains is an unwired compatibility setting.
+	AllowedDomains []string `json:"allowed_domains" env:"SEMAPHORE_EMAIL_2TP_ALLOWED_DOMAINS"`
+	// DisableForOidc is an unwired compatibility setting.
+	DisableForOidc bool `json:"disable_for_oidc" env:"SEMAPHORE_EMAIL_2TP_DISABLE_FOR_OIDC"`
 }
 
 type MultifactorAuthConfig struct {

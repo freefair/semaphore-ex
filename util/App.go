@@ -1,6 +1,8 @@
 package util
 
 type App struct {
+	// Active controls this configured app's UI availability. Explicit map
+	// entries default to false; auto-discovered installed tools are added active.
 	Active    bool     `json:"active"`
 	Priority  int      `json:"priority"`
 	Title     string   `json:"title"`

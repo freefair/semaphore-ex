@@ -151,7 +151,9 @@ type RunnerConfig struct {
 	TokenFile             string `json:"token_file,omitempty" env:"SEMAPHORE_RUNNER_TOKEN_FILE"`
 	// IdentityPublicKey is a non-secret Ed25519 public identity registered with
 	// secure runners. The corresponding private key remains in IdentityPrivateKeyFile.
-	IdentityPublicKey      string `json:"identity_public_key,omitempty" env:"SEMAPHORE_RUNNER_IDENTITY_PUBLIC_KEY"`
+	IdentityPublicKey string `json:"identity_public_key,omitempty" env:"SEMAPHORE_RUNNER_IDENTITY_PUBLIC_KEY"`
+	// IdentityPrivateKeyFile stores the runner's Ed25519 private identity. When
+	// unset, a path beside the runner configuration file is used and created 0600.
 	IdentityPrivateKeyFile string `json:"identity_private_key_file,omitempty" env:"SEMAPHORE_RUNNER_IDENTITY_PRIVATE_KEY_FILE"`
 
 	// OneOff indicates than runner runs only one job and exit. It is very useful for dynamic runners.
@@ -163,6 +165,8 @@ type RunnerConfig struct {
 	// 4) The runner connects to the Semaphore server and handles the enqueued task(s).
 	OneOff bool `json:"one_off,omitempty" env:"SEMAPHORE_RUNNER_ONE_OFF"`
 
+	// Enabled initializes the registered runner's enabled state. It does not
+	// start, stop, or otherwise control the runner process.
 	Enabled          bool     `json:"enabled,omitempty" env:"SEMAPHORE_RUNNER_ENABLED"`
 	Webhook          string   `json:"webhook,omitempty" env:"SEMAPHORE_RUNNER_WEBHOOK"`
 	Name             string   `json:"name,omitempty" env:"SEMAPHORE_RUNNER_NAME"`
@@ -266,7 +270,8 @@ type RunnerDockerConfig struct {
 	// CleanupGraceSeconds is the timeout passed to docker stop. Defaults to 30s.
 	CleanupGraceSeconds int `json:"cleanup_grace_seconds,omitempty" default:"30" env:"SEMAPHORE_RUNNER_DOCKER_CLEANUP_GRACE_SECONDS"`
 
-	// Privileged runs the build container with --privileged. Dangerous; off by default.
+	// Privileged is retained for configuration compatibility. The selected Docker
+	// executor rejects privileged execution; false is the only supported value.
 	Privileged bool `json:"privileged,omitempty" env:"SEMAPHORE_RUNNER_DOCKER_PRIVILEGED"`
 }
 
@@ -317,15 +322,22 @@ type TLSConfig struct {
 }
 
 type TotpConfig struct {
-	Enabled       bool   `json:"enabled" env:"SEMAPHORE_TOTP_ENABLED"`
+	// Enabled is a legacy compatibility setting. The Enhanced persisted TOTP
+	// lifecycle controls enrollment and login enforcement.
+	Enabled bool `json:"enabled" env:"SEMAPHORE_TOTP_ENABLED"`
+	// AllowRecovery is a legacy compatibility setting. Enhanced recovery codes
+	// follow the persisted enrollment lifecycle instead.
 	AllowRecovery bool   `json:"allow_recovery" env:"SEMAPHORE_TOTP_ALLOW_RECOVERY"`
 	Issuer        string `json:"app_name" env:"SEMAPHORE_TOTP_ISSUER"`
 }
 
 type EventLogType struct {
-	Format  string             `json:"format,omitempty" env:"SEMAPHORE_EVENT_LOG_FORMAT"`
-	Enabled bool               `json:"enabled" env:"SEMAPHORE_EVENT_LOG_ENABLED"`
-	Logger  *lumberjack.Logger `json:"logger,omitempty" env:"SEMAPHORE_EVENT_LOGGER"`
+	// Format must be "json" when Enabled is true.
+	Format string `json:"format,omitempty" env:"SEMAPHORE_EVENT_LOG_FORMAT"`
+	// Enabled requires Format "json" and a Logger with a filename.
+	Enabled bool `json:"enabled" env:"SEMAPHORE_EVENT_LOG_ENABLED"`
+	// Logger is the file destination required when Enabled is true.
+	Logger *lumberjack.Logger `json:"logger,omitempty" env:"SEMAPHORE_EVENT_LOGGER"`
 }
 
 const (
@@ -334,20 +346,34 @@ const (
 )
 
 type TaskLogType struct {
-	Enabled      bool               `json:"enabled" env:"SEMAPHORE_TASK_LOG_ENABLED"`
-	Format       string             `json:"format,omitempty" env:"SEMAPHORE_TASK_LOG_FORMAT"`
-	Logger       *lumberjack.Logger `json:"logger,omitempty" env:"SEMAPHORE_TASK_LOGGER"`
+	// Enabled requires Format "json" and at least one filename-backed Logger or
+	// ResultLogger destination.
+	Enabled bool `json:"enabled" env:"SEMAPHORE_TASK_LOG_ENABLED"`
+	// Format must be "json" when Enabled is true.
+	Format string `json:"format,omitempty" env:"SEMAPHORE_TASK_LOG_FORMAT"`
+	// Logger is an optional task-record file destination. When enabled, each
+	// configured destination requires a filename.
+	Logger *lumberjack.Logger `json:"logger,omitempty" env:"SEMAPHORE_TASK_LOGGER"`
+	// ResultLogger is an optional task-result file destination. When enabled,
+	// each configured destination requires a filename.
 	ResultLogger *lumberjack.Logger `json:"result_logger,omitempty" env:"SEMAPHORE_TASK_RESULT_LOGGER"`
 }
 
 type ConfigLog struct {
-	QueueSize        int           `json:"queue_size,omitempty" env:"SEMAPHORE_LOG_QUEUE_SIZE" default:"1024"`
-	FlushInterval    string        `json:"flush_interval,omitempty" env:"SEMAPHORE_LOG_FLUSH_INTERVAL" default:"1s"`
-	RotationInterval string        `json:"rotation_interval,omitempty" env:"SEMAPHORE_LOG_ROTATION_INTERVAL" default:"24h"`
-	DebugFilter      string        `json:"debug_filter,omitempty" env:"SEMAPHORE_DEBUG_FILTER"`
-	Events           *EventLogType `json:"events,omitempty"`
-	Tasks            *TaskLogType  `json:"tasks,omitempty"`
-	Debug            *DebugLogType `json:"debug,omitempty"`
+	// QueueSize is the in-memory structured-log buffer capacity. Values at or
+	// below zero use the default of 1024.
+	QueueSize int `json:"queue_size,omitempty" env:"SEMAPHORE_LOG_QUEUE_SIZE" default:"1024"`
+	// FlushInterval controls periodic destination flush and sync operations.
+	// Invalid or non-positive values use the default of one second.
+	FlushInterval string `json:"flush_interval,omitempty" env:"SEMAPHORE_LOG_FLUSH_INTERVAL" default:"1s"`
+	// RotationInterval controls structured-file log rotation. Invalid or
+	// non-positive values use the default of 24 hours.
+	RotationInterval string `json:"rotation_interval,omitempty" env:"SEMAPHORE_LOG_ROTATION_INTERVAL" default:"24h"`
+	// DebugFilter selects debug-log sources for the structured logging service.
+	DebugFilter string        `json:"debug_filter,omitempty" env:"SEMAPHORE_DEBUG_FILTER"`
+	Events      *EventLogType `json:"events,omitempty"`
+	Tasks       *TaskLogType  `json:"tasks,omitempty"`
+	Debug       *DebugLogType `json:"debug,omitempty"`
 }
 
 type SyslogFormat string
@@ -449,9 +475,13 @@ const (
 )
 
 type TeamsConfig struct {
-	InvitesEnabled  bool           `json:"invites_enabled,omitempty" env:"SEMAPHORE_TEAMS_INVITES_ENABLED"`
-	InviteType      TeamInviteType `json:"invite_type,omitempty" env:"SEMAPHORE_TEAMS_INVITE_TYPE" default:"username"`
-	MembersCanLeave bool           `json:"members_can_leave,omitempty" env:"SEMAPHORE_TEAMS_MEMBERS_CAN_LEAVE"`
+	// InvitesEnabled controls invitation UI visibility. Project authorization
+	// remains enforced independently by the backend.
+	InvitesEnabled bool           `json:"invites_enabled,omitempty" env:"SEMAPHORE_TEAMS_INVITES_ENABLED"`
+	InviteType     TeamInviteType `json:"invite_type,omitempty" env:"SEMAPHORE_TEAMS_INVITE_TYPE" default:"username"`
+	// MembersCanLeave is retained for configuration compatibility and has no
+	// current runtime consumer.
+	MembersCanLeave bool `json:"members_can_leave,omitempty" env:"SEMAPHORE_TEAMS_MEMBERS_CAN_LEAVE"`
 }
 
 type ConfigDirs struct {
@@ -462,6 +492,8 @@ type ConfigDirs struct {
 
 // JWTConfig issuance for task executions (used by playbooks to authenticate to
 type JWTConfig struct {
+	// Enabled publishes the JWKS endpoint and permits task JWT issuance only for
+	// templates whose JWT parameters also enable it.
 	Enabled    bool   `json:"enabled,omitempty" env:"SEMAPHORE_JWT_ENABLED"`
 	Issuer     string `json:"issuer,omitempty" env:"SEMAPHORE_JWT_ISSUER"`
 	DefaultTTL string `json:"default_ttl,omitempty" env:"SEMAPHORE_JWT_DEFAULT_TTL" default:"1h"`
@@ -614,8 +646,8 @@ type ConfigType struct {
 	// access keyring.
 	OptionEncryption string `json:"option_encryption,omitempty" env:"SEMAPHORE_OPTION_ENCRYPTION,sensitive"`
 
-	// EmailAlert enables the e-mail notification channel. The email_* settings
-	// below describe the SMTP server it sends through.
+	// EmailAlert enables the e-mail notification channel. It also requires SMTP
+	// configuration and a task or template alert selection.
 	EmailAlert         bool   `json:"email_alert,omitempty" env:"SEMAPHORE_EMAIL_ALERT"`
 	EmailSender        string `json:"email_sender,omitempty" env:"SEMAPHORE_EMAIL_SENDER"`
 	EmailHost          string `json:"email_host,omitempty" env:"SEMAPHORE_EMAIL_HOST"`
@@ -626,9 +658,9 @@ type ConfigType struct {
 	EmailTls           bool   `json:"email_tls,omitempty" env:"SEMAPHORE_EMAIL_TLS"`
 	EmailTlsMinVersion string `json:"email_tls_min_version,omitempty" default:"1.2" rule:"^(1\\.[0123])$" env:"SEMAPHORE_EMAIL_TLS_MIN_VERSION"`
 
-	// LdapEnable turns on the legacy single-directory LDAP login configured by
-	// the flat ldap_* settings below. Use ldap_providers instead when more than
-	// one directory is involved.
+	// LdapEnable turns on the legacy single-directory LDAP fallback configured
+	// by the flat ldap_* settings below. Enhanced managed LDAP providers and
+	// their lifecycle are stored in the database, not enabled by this setting.
 	LdapEnable       bool          `json:"ldap_enable,omitempty" env:"SEMAPHORE_LDAP_ENABLE"`
 	LdapBindDN       string        `json:"ldap_binddn,omitempty" env:"SEMAPHORE_LDAP_BIND_DN"`
 	LdapBindPassword string        `json:"ldap_bindpassword,omitempty" env:"SEMAPHORE_LDAP_BIND_PASSWORD,sensitive"`
@@ -642,27 +674,33 @@ type ConfigType struct {
 	// (certificates are verified). See LdapProvider.TLSSkipVerify.
 	LdapTLSSkipVerify bool `json:"ldap_tls_skip_verify,omitempty" env:"SEMAPHORE_LDAP_TLS_SKIP_VERIFY"`
 
-	// LdapProviders configures multiple LDAP directories (like OidcProviders
-	// for OIDC). The key is the provider ID shown in identity records; the
-	// ID "ldap" is reserved for the legacy flat ldap_* config above.
+	// LdapProviders configures legacy LDAP providers. The selected Enhanced
+	// managed LDAP lifecycle uses database-backed providers instead. The key is
+	// the provider ID shown in identity records; "ldap" is reserved for the
+	// legacy flat ldap_* configuration above.
 	LdapProviders map[string]LdapProvider `json:"ldap_providers,omitempty" env:"SEMAPHORE_LDAP_PROVIDERS"`
 
-	// TelegramAlert enables the Telegram notification channel, which also needs
-	// telegram_token and a default telegram_chat.
-	TelegramAlert       bool   `json:"telegram_alert,omitempty" env:"SEMAPHORE_TELEGRAM_ALERT"`
-	TelegramChat        string `json:"telegram_chat,omitempty" env:"SEMAPHORE_TELEGRAM_CHAT"`
-	TelegramToken       string `json:"telegram_token,omitempty" env:"SEMAPHORE_TELEGRAM_TOKEN,sensitive"`
-	SlackAlert          bool   `json:"slack_alert,omitempty" env:"SEMAPHORE_SLACK_ALERT"`
-	SlackUrl            string `json:"slack_url,omitempty" env:"SEMAPHORE_SLACK_URL"`
-	RocketChatAlert     bool   `json:"rocketchat_alert,omitempty" env:"SEMAPHORE_ROCKETCHAT_ALERT"`
-	RocketChatUrl       string `json:"rocketchat_url,omitempty" env:"SEMAPHORE_ROCKETCHAT_URL"`
+	// TelegramAlert enables the Telegram notification channel. It also requires
+	// token/chat configuration and a task or template alert selection.
+	TelegramAlert bool   `json:"telegram_alert,omitempty" env:"SEMAPHORE_TELEGRAM_ALERT"`
+	TelegramChat  string `json:"telegram_chat,omitempty" env:"SEMAPHORE_TELEGRAM_CHAT"`
+	TelegramToken string `json:"telegram_token,omitempty" env:"SEMAPHORE_TELEGRAM_TOKEN,sensitive"`
+	// SlackAlert also requires a webhook URL and a task or template alert selection.
+	SlackAlert bool   `json:"slack_alert,omitempty" env:"SEMAPHORE_SLACK_ALERT"`
+	SlackUrl   string `json:"slack_url,omitempty" env:"SEMAPHORE_SLACK_URL"`
+	// RocketChatAlert also requires a webhook URL and a task or template alert selection.
+	RocketChatAlert bool   `json:"rocketchat_alert,omitempty" env:"SEMAPHORE_ROCKETCHAT_ALERT"`
+	RocketChatUrl   string `json:"rocketchat_url,omitempty" env:"SEMAPHORE_ROCKETCHAT_URL"`
+	// MicrosoftTeamsAlert also requires a webhook URL and a task or template alert selection.
 	MicrosoftTeamsAlert bool   `json:"microsoft_teams_alert,omitempty" env:"SEMAPHORE_MICROSOFT_TEAMS_ALERT"`
 	MicrosoftTeamsUrl   string `json:"microsoft_teams_url,omitempty" env:"SEMAPHORE_MICROSOFT_TEAMS_URL"`
-	DingTalkAlert       bool   `json:"dingtalk_alert,omitempty" env:"SEMAPHORE_DINGTALK_ALERT"`
-	DingTalkUrl         string `json:"dingtalk_url,omitempty" env:"SEMAPHORE_DINGTALK_URL"`
-	GotifyAlert         bool   `json:"gotify_alert,omitempty" env:"SEMAPHORE_GOTIFY_ALERT"`
-	GotifyUrl           string `json:"gotify_url,omitempty" env:"SEMAPHORE_GOTIFY_URL"`
-	GotifyToken         string `json:"gotify_token,omitempty" env:"SEMAPHORE_GOTIFY_TOKEN,sensitive"`
+	// DingTalkAlert also requires a webhook URL and a task or template alert selection.
+	DingTalkAlert bool   `json:"dingtalk_alert,omitempty" env:"SEMAPHORE_DINGTALK_ALERT"`
+	DingTalkUrl   string `json:"dingtalk_url,omitempty" env:"SEMAPHORE_DINGTALK_URL"`
+	// GotifyAlert also requires URL/token configuration and a task or template alert selection.
+	GotifyAlert bool   `json:"gotify_alert,omitempty" env:"SEMAPHORE_GOTIFY_ALERT"`
+	GotifyUrl   string `json:"gotify_url,omitempty" env:"SEMAPHORE_GOTIFY_URL"`
+	GotifyToken string `json:"gotify_token,omitempty" env:"SEMAPHORE_GOTIFY_TOKEN,sensitive"`
 
 	// OidcProviders configures OpenID Connect sign-in. The key is the provider ID
 	// that appears in identity records and in the /auth/oidc/<id>/login URL, so it
@@ -685,9 +723,9 @@ type ConfigType struct {
 
 	JWT *JWTConfig `json:"jwt,omitempty"`
 
-	// PasswordLoginDisable rejects the "password" login method, leaving LDAP and
-	// OpenID Connect as the only ways in. Set it once an identity provider is
-	// configured and working, so that local passwords stop being a second door.
+	// PasswordLoginDisable rejects ordinary password login. A configured managed
+	// LDAP provider may still allow its designated local recovery administrator.
+	// Verify that recovery path before disabling passwords.
 	PasswordLoginDisable bool `json:"password_login_disable,omitempty" env:"SEMAPHORE_PASSWORD_LOGIN_DISABLED"`
 	// ExternalAuthEmailMatching controls whether an LDAP/OIDC login may be
 	// linked to an existing user by email when no external identity record

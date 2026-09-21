@@ -55,6 +55,7 @@
         "password_login_disable",
         "non_admin_can_create_project",
         "oidc_providers",
+        "oidc_providers.",
         "ldap*",
         "totp.",
         "external_auth_email_matching"
@@ -81,6 +82,7 @@
         "env_vars",
         "forwarded_env_vars",
         "apps",
+        "apps.",
         "schedule.",
         "process."
       ]

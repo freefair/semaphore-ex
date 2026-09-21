@@ -8,7 +8,9 @@ import "sort"
 type LdapProvider struct {
 	DisplayName string `json:"display_name"`
 	Server      string `json:"server"`
-	NeedTLS     bool   `json:"need_tls"`
+	// NeedTLS enables TLS for this legacy configuration provider. It does not
+	// activate the selected database-managed LDAP lifecycle.
+	NeedTLS bool `json:"need_tls"`
 	// TLSSkipVerify disables verification of the LDAP server's TLS certificate.
 	// It defaults to false so certificates are verified: a network attacker
 	// cannot impersonate the LDAP server to capture bind or user credentials.

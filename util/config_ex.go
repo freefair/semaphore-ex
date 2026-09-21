@@ -5,9 +5,15 @@ import (
 )
 
 type DebugLogType struct {
-	Enabled bool               `json:"enabled" env:"SEMAPHORE_DEBUG_LOG_ENABLED"`
-	Format  string             `json:"format,omitempty" env:"SEMAPHORE_DEBUG_LOG_FORMAT"`
-	Logger  *lumberjack.Logger `json:"logger,omitempty" env:"SEMAPHORE_DEBUG_LOGGER"`
+	// Enabled turns on structured debug file export. Requires format=json and
+	// logger.filename; log.debug_filter selects the captured components.
+	Enabled bool `json:"enabled" env:"SEMAPHORE_DEBUG_LOG_ENABLED"`
+	// Format must be json. Empty or other formats are unsupported by the
+	// selected structured file writer.
+	Format string `json:"format,omitempty" env:"SEMAPHORE_DEBUG_LOG_FORMAT"`
+	// Logger configures the debug destination. Requires an absolute, normalized
+	// filename; see [Logs](/admin-guide/logs#logger-options) for rotation options.
+	Logger *lumberjack.Logger `json:"logger,omitempty" env:"SEMAPHORE_DEBUG_LOGGER"`
 }
 
 // GlobalCredentialProviderConfig is global connection/auth metadata for the
