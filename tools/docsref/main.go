@@ -1,5 +1,5 @@
 // Command docsref generates the configuration reference page of the
-// documentation site directly from util.ConfigType.
+// Markdown manual directly from util.ConfigType.
 //
 // The reference used to be a hand-written table in the docs repository, which
 // drifted from the code: defaults, environment variable names and whole keys
@@ -12,15 +12,11 @@
 //
 // The struct tags supply the key name, the environment variable and the
 // explicit default; non-pointer booleans also expose their false zero default.
-// The doc comment above each field supplies the description. Grouping
-// and edition badges come from groups.json next to this file, because neither
-// can be derived from the Go source.
+// The doc comment above each field supplies the description. Grouping metadata
+// comes from groups.json because it cannot be derived from the Go source.
 //
-// descriptions.json is a bridge, not a second source of truth: it holds the
-// prose that used to live in the hand-written documentation table for fields
-// that have no doc comment yet. A doc comment always wins, and the command
-// prints how many options still depend on the file, so the number can only be
-// driven down.
+// descriptions.json supplies reviewed explanations for undocumented fields and
+// corrections where source comments lag behind the runtime behavior.
 package main
 
 import (
@@ -57,20 +53,18 @@ type option struct {
 type group struct {
 	Title    string   `json:"title"`
 	Intro    string   `json:"intro,omitempty"`
-	Edition  string   `json:"edition,omitempty"` // "pro" or "enterprise": badge for every key in the group
 	Prefixes []string `json:"prefixes"`
 }
 
 type overlay struct {
-	Groups   []group           `json:"groups"`
-	Editions map[string]string `json:"editions"` // key prefix -> pro|enterprise
+	Groups []group `json:"groups"`
 }
 
 func main() {
 	var (
 		utilDir     = flag.String("util", "util", "directory of the util package")
-		overlayPath = flag.String("groups", "tools/docsref/groups.json", "grouping and edition overlay")
-		descPath    = flag.String("descriptions", "tools/docsref/descriptions.json", "descriptions for fields without a doc comment")
+		overlayPath = flag.String("groups", "tools/docsref/groups.json", "reference section grouping")
+		descPath    = flag.String("descriptions", "tools/docsref/descriptions.json", "reviewed descriptions and corrections to source comments")
 		out         = flag.String("out", "", "file to write (default: stdout)")
 	)
 	flag.Parse()
@@ -97,6 +91,11 @@ func main() {
 		fail(err)
 	}
 	applyDescriptions(w.options, descriptions)
+	for _, o := range w.options {
+		if strings.TrimSpace(o.Description) == "" {
+			fail(fmt.Errorf("configuration parameter %s has no description", o.Key))
+		}
+	}
 
 	page := render(w.options, ov)
 	if *out == "" {
@@ -114,8 +113,7 @@ func main() {
 }
 
 // reportDebt keeps the two kinds of documentation debt visible on every run:
-// options nobody has described anywhere, and descriptions.json entries that are
-// no longer needed because the Go field has grown a doc comment (or has gone).
+// missing descriptions and overrides whose configuration field no longer exists.
 func reportDebt(opts []option, descriptions map[string]string) {
 	used := map[string]bool{}
 	var undocumented []string
@@ -161,9 +159,6 @@ func readDescriptions(path string) (map[string]string, error) {
 
 func applyDescriptions(opts []option, descriptions map[string]string) {
 	for i := range opts {
-		if opts[i].Description != "" {
-			continue
-		}
 		if d, ok := descriptions[opts[i].Key]; ok {
 			opts[i].Description = strings.ReplaceAll(d, "|", `\|`)
 			opts[i].fromOverlay = true
@@ -263,8 +258,19 @@ func (w *walker) walk(st *ast.StructType, prefix string) {
 
 		env, sensitive := envVar(tag)
 		defaultValue := tagValue(tag, "default")
-		if _, optional := field.Type.(*ast.StarExpr); !optional && defaultValue == "" && w.typeOf(field.Type) == "boolean" {
-			defaultValue = "false"
+		if _, optional := field.Type.(*ast.StarExpr); !optional && defaultValue == "" {
+			switch w.typeOf(field.Type) {
+			case "boolean":
+				defaultValue = "false"
+			case "integer", "number":
+				defaultValue = "0"
+			case "string":
+				defaultValue = `""`
+			case "array":
+				defaultValue = "[]"
+			case "object":
+				defaultValue = "{}"
+			}
 		}
 		w.options = append(w.options, option{
 			Key:         key,
@@ -275,33 +281,34 @@ func (w *walker) walk(st *ast.StructType, prefix string) {
 			Sensitive:   sensitive,
 			Description: describe(field),
 		})
-		w.walkMapFlags(field.Type, key)
+		w.walkCollection(field.Type, key)
 	}
 }
 
-// Map entries have no individual environment bindings: the runtime loads the
-// map as one JSON value. Expose their boolean controls without inventing env
-// variables or expanding unrelated provider credential schemas.
-func (w *walker) walkMapFlags(expr ast.Expr, key string) {
-	mapping, ok := expr.(*ast.MapType)
-	if !ok {
+// Collection members are configured through the parent JSON value, so their
+// schema is documented without inventing individual environment bindings.
+func (w *walker) walkCollection(expr ast.Expr, key string) {
+	var elem ast.Expr
+	switch collection := expr.(type) {
+	case *ast.MapType:
+		elem = collection.Value
+		key += ".<id>"
+	case *ast.ArrayType:
+		elem = collection.Elt
+		key += "[]"
+	default:
 		return
 	}
-	nested, ok := w.structOf(mapping.Value)
+	nested, ok := w.structOf(elem)
 	if !ok || w.entered(nested.name) {
 		return
 	}
-	child := walker{
-		structs: w.structs,
-		scalars: w.scalars,
-		seen:    append(append([]string(nil), w.seen...), nested.name),
-	}
-	child.walk(nested.st, key+".<id>")
+	child := walker{structs: w.structs, scalars: w.scalars,
+		seen: append(append([]string(nil), w.seen...), nested.name)}
+	child.walk(nested.st, key)
 	for _, option := range child.options {
-		if option.Type == "boolean" {
-			option.Env = ""
-			w.options = append(w.options, option)
-		}
+		option.Env = ""
+		w.options = append(w.options, option)
 	}
 }
 
@@ -512,12 +519,7 @@ func render(opts []option, ov overlay) string {
 	claimed := map[string]bool{}
 	var b strings.Builder
 
-	b.WriteString(`---
-title: Configuration options
-description: "Every option Semaphore accepts in config.json, with its environment variable, type, default, and meaning."
----
-
-{/* Generated by tools/docsref in the application repository. Do not edit by hand. */}
+	b.WriteString(`<!-- Generated by tools/docsref. Edit source comments or descriptions.json, then regenerate. -->
 
 # Configuration options
 
@@ -527,19 +529,41 @@ Nested keys are written with
 dots: ` + "`runner.executor.type`" + ` is ` + "`{\"runner\": {\"executor\": {\"type\": ...}}}`" + `.
 
 For named maps, ` + "`<id>`" + ` stands for an application or provider name.
-Their boolean members are listed below the parent object; supply them in the
+All members are listed below the parent object; supply them in the
 configuration file or in the parent object's JSON environment value.
 They have no individual environment variables.
 Boolean defaults describe an omitted value in normal startup configuration;
 they do not imply that a parsed compatibility setting controls the running feature.
 
 This page is generated from the source for this release.
-See [Configuration](/admin-guide/configuration) for loading options and
-[Feature controls](/admin-guide/configuration#feature-controls) for the distinction
+See [Configuration](../admin-guide/configuration.md) for loading options and
+[Feature controls](../admin-guide/configuration.md#feature-controls) for the distinction
 between startup settings, persisted capability lifecycles, and permission checks.
+
+Read this checked-in Markdown file directly; generation is only a maintainer step.
+See [Loading and examples](../admin-guide/configuration/config-file.md) for precedence,
+required deployment values and YAML examples, and [Additional configuration schemas](configuration-schemas.md)
+for logger members, the encryption keys file, bootstrap environment variables and runtime settings.
+
+An empty string, zero, false, empty list or empty map is the Go zero value when no
+explicit default is listed. Pointer fields can be absent (null); consult the description
+for runtime fallbacks. Tagged defaults replace zero values, including explicitly supplied
+zero or false. Defaults inside optional objects apply when that object exists.
+Map members inherit the parent environment variable as a JSON object, not individual bindings.
+
+## Contents
 
 `)
 
+	for _, g := range ov.Groups {
+		for _, o := range opts {
+			if matchesAny(o.Key, g.Prefixes) {
+				fmt.Fprintf(&b, "- [%s](#%s)\n", g.Title, anchor(g.Title))
+				break
+			}
+		}
+	}
+	b.WriteString("\n")
 	for _, g := range ov.Groups {
 		var rows []option
 		for _, o := range opts {
@@ -554,7 +578,7 @@ between startup settings, persisted capability lifecycles, and permission checks
 		if len(rows) == 0 {
 			continue
 		}
-		writeSection(&b, g, rows, ov.Editions)
+		writeSection(&b, g, rows)
 	}
 
 	var rest []option
@@ -568,35 +592,31 @@ between startup settings, persisted capability lifecycles, and permission checks
 		writeSection(&b, group{
 			Title: "Other",
 			Intro: "Options that have not been sorted into a section yet.",
-		}, rest, ov.Editions)
+		}, rest)
 	}
 
-	return b.String()
+	page := b.String()
+	page = regexp.MustCompile(`\]\(/(admin-guide|developer-guide|user-guide)/([^#)]+)(#[^)]*)?\)`).ReplaceAllString(page, "](../$1/$2.md$3)")
+	page = strings.ReplaceAll(page, "../admin-guide/authentication.md", "../admin-guide/authentication/README.md")
+	return strings.TrimRight(page, "\n") + "\n"
 }
 
-func writeSection(b *strings.Builder, g group, rows []option, editions map[string]string) {
-	fmt.Fprintf(b, "## %s {#%s}\n\n", g.Title, anchor(g.Title))
+func writeSection(b *strings.Builder, g group, rows []option) {
+	fmt.Fprintf(b, "## %s\n\n", g.Title)
 	if g.Intro != "" {
 		fmt.Fprintf(b, "%s\n\n", g.Intro)
 	}
-	b.WriteString("| Option / Environment variable | Type / Default | Description |\n")
-	b.WriteString("|---|---|---|\n")
+	b.WriteString("| Option | Environment variable | Type | Default | Description |\n")
+	b.WriteString("|---|---|---|---|---|\n")
 	for _, o := range rows {
-		badge := ""
-		switch edition(o.Key, g.Edition, editions) {
-		case "pro":
-			badge = " <Pro />"
-		case "enterprise":
-			badge = " <Enterprise />"
-		}
-
-		optionAndEnv := "`" + o.Key + "`" + badge
+		optionAndEnv := "`" + o.Key + "`"
+		environment := "—"
 		if o.Env != "" {
-			optionAndEnv += "<br />`" + o.Env + "`"
+			environment = "`" + o.Env + "`"
 		}
-		typeAndDefault := o.Type
+		defaultValue := "Unset; see description"
 		if o.Default != "" {
-			typeAndDefault += "<br />Default: `" + o.Default + "`"
+			defaultValue = "`" + o.Default + "`"
 		}
 		desc := o.Description
 		if len(o.Values) > 0 {
@@ -612,19 +632,9 @@ func writeSection(b *strings.Builder, g group, rows []option, editions map[strin
 		if desc == "" {
 			desc = "—"
 		}
-		fmt.Fprintf(b, "| %s | %s | %s |\n", optionAndEnv, typeAndDefault, desc)
+		fmt.Fprintf(b, "| %s | %s | %s | %s | %s |\n", optionAndEnv, environment, o.Type, defaultValue, desc)
 	}
 	b.WriteString("\n")
-}
-
-func edition(key, groupEdition string, editions map[string]string) string {
-	best, bestLen := groupEdition, -1
-	for prefix, ed := range editions {
-		if matches(key, prefix) && len(prefix) > bestLen {
-			best, bestLen = ed, len(prefix)
-		}
-	}
-	return best
 }
 
 func matchesAny(key string, prefixes []string) bool {

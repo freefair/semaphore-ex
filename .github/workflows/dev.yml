@@ -10,7 +10,7 @@ name: Dev
       - develop
 
 jobs:
-  # The configuration and CLI reference pages of the documentation site are
+  # The checked-in configuration, CLI and API Markdown references are
   # generated from this repository. Regenerating them here is what stops the
   # published reference from drifting away from the code.
   docs-reference:

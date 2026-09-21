@@ -28,7 +28,7 @@
     },
     {
       "title": "Paths and storage",
-      "intro": "Directories Semaphore writes to. Everything here except the database is a cache that can be recreated.",
+      "intro": "Directories used for repositories, task workspaces, secret files and SSH sockets. Secret directories may contain persistent credentials; do not treat every directory as disposable cache.",
       "prefixes": [
         "tmp_path",
         "secrets_path",
@@ -59,6 +59,14 @@
         "ldap*",
         "totp.",
         "external_auth_email_matching"
+      ]
+    },
+    {
+      "title": "Global credential providers",
+      "intro": "Vault/OpenBao connection metadata. Bootstrap credentials are supplied separately through provider-specific environment variables; see [Additional schemas](configuration-schemas.md#native-process-variables).",
+      "prefixes": [
+        "global_credential_providers",
+        "global_credential_providers."
       ]
     },
     {
@@ -136,16 +144,8 @@
       ]
     },
     {
-      "title": "Subscription",
-      "intro": "Activating Pro or Enterprise. See [License](/admin-guide/license).",
-      "prefixes": [
-        "subscription."
-      ]
-    },
-    {
       "title": "High availability",
       "intro": "Running several nodes against one database. See [High availability](/admin-guide/ha).",
-      "edition": "enterprise",
       "prefixes": [
         "ha."
       ]
@@ -158,11 +158,5 @@
         "demo_mode"
       ]
     }
-  ],
-  "editions": {
-    "log.": "pro",
-    "syslog.": "pro",
-    "runner.executor.docker.": "pro",
-    "runner.executor.k8s.": "pro"
-  }
+  ]
 }

@@ -145,10 +145,12 @@ tasks:
     cmds:
       - go run ./tools/docsref -out docs/docs/reference/configuration.md
       - go run ./tools/clidocs -out docs/docs/reference/cli/commands.md
+      - go run ./tools/apidocs -out docs/docs/reference
 
   docs:check:
-    desc: Fail if the generated documentation pages are out of date
+    desc: Check Markdown sources and generated reference freshness
     cmds:
+      - node docs/scripts/check-docs.mjs
       - task: docs:gen
       - |
         # --porcelain rather than `diff --quiet` so that a brand new generated

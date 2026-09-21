@@ -63,11 +63,11 @@ From the repository root, use a new evidence directory:
 bash tools/upstream-sync/verify.sh --output /tmp/semaphore-gates
 ```
 
-The full runner builds the embedded frontend first, checks inventories, runs root/Enhanced Go tests and vet, compiles Dredd hooks, runs the complete frontend suite, builds the product, checks both Dockerfiles, and builds/checks documentation. Retain logs, exit codes, exact source fingerprints, and checksums. Quick mode is an intermediate check, not the completion gate.
+The full runner builds the embedded frontend first, checks inventories, runs root/Enhanced Go tests and vet, compiles Dredd hooks, runs the complete frontend suite, builds the product, checks both Dockerfiles, and checks Markdown documentation. Retain logs, exit codes, exact source fingerprints, and checksums. Quick mode is an intermediate check, not the completion gate.
 
 Reproduce frontend failures on the exact assessed upstream SHA before classifying them as baseline failures; retain failed results and reproduction evidence. Perform desktop/mobile browser verification of visible areas changed by conflict resolution, including permissions and absence of commercial upgrade surfaces.
 
-Keep documentation's serial eleven-locale build as the default. The bounded parallel build is an opt-in with at most two workers. Preserve translated security pages and canonical fallback checks. If changing concurrency is explicitly in scope, use the docs benchmark tool to measure elapsed time and process-tree peak memory under comparable cache conditions, retaining generated-page verification.
+Keep documentation as directly readable Markdown. Run `node docs/scripts/check-docs.mjs` instead of building a site. Preserve translated prose and explicit links to reviewed canonical English content; adapt incoming MDX and website navigation to Markdown.
 
 ## Publication and Completion
 

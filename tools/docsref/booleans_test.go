@@ -45,12 +45,12 @@ func TestBooleanReferenceDefaultsAndNamedEntries(t *testing.T) {
 	assert.Equal(t, "true", opts["providers.<id>.redirect"].Default)
 	assert.Empty(t, opts["providers.<id>.active"].Env, "map entries are supplied through the parent object")
 	assert.Equal(t, "PROVIDERS", opts["providers"].Env)
-	assert.NotContains(t, opts, "providers.<id>.url", "this extension documents boolean controls inside maps")
+	assert.Contains(t, opts, "providers.<id>.url", "the reference includes every named-map member")
 	assert.NotContains(t, opts, "providers.<id>.children.<id>.active", "recursive schemas must terminate")
 
 	page := render(w.options, overlay{})
 	assert.Contains(t, page, "`providers.<id>.active`")
-	assert.Contains(t, page, "Default: `false`")
+	assert.Contains(t, page, "| boolean | `false` |")
 	assert.NotContains(t, page, "NOT_AN_ENTRY_VARIABLE")
 }
 

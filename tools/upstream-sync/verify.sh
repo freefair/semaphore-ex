@@ -9,7 +9,7 @@ Usage: verify.sh --output NEW_DIRECTORY [--quick]
 Run from any directory. Quick mode checks maintenance inventories and their tests.
 Full mode additionally builds the frontend, tests and vets both Go modules,
 compiles Dredd, runs the frontend suite, builds the product, checks Dockerfiles,
-and builds/checks all documentation locales. Requires Go, Node/npm, and Docker.
+and checks Markdown documentation. Requires Go, Node/npm, and Docker.
 A failed frontend suite stays failed; baseline classification requires review.
 
 Example:
@@ -70,6 +70,7 @@ main() {
     run_gate frontend-build "$repository/web" npm run build || true
   fi
   run_gate maintenance "$repository" go run ./tools/upstreamcheck -mode check -base-ref "$baseline" || true
+  run_gate docs-markdown "$repository/docs" node scripts/check-docs.mjs || true
   run_gate maintenance-tests "$repository" go test ./tools/upstreamcheck -count=1 || true
   if [[ "$quick" == false ]]; then
     run_gate root-tests "$repository" env "GIT_CONFIG_COUNT=$((git_config_count+1))" "GIT_CONFIG_KEY_$git_config_count=commit.gpgsign" "GIT_CONFIG_VALUE_$git_config_count=false" go test ./... -count=1 || true
@@ -82,8 +83,6 @@ main() {
     run_gate product-build "$repository" go run github.com/go-task/task/v3/cmd/task@v3.53.1 build:edition "OUTPUT_DIR=$product_output" || true
     run_gate server-docker "$repository" docker build --check --file deployment/docker/server/Dockerfile . || true
     run_gate runner-docker "$repository" docker build --check --file deployment/docker/runner/Dockerfile . || true
-    run_gate docs-build "$repository/docs" npm run build || true
-    run_gate docs-fallbacks "$repository/docs" env DOCS_BUILD_DIR="$repository/docs/build" node --test tests/full-product-navigation.test.cjs tests/security-fallbacks.test.cjs || true
   fi
   [[ "$(git -C "$repository" rev-parse HEAD)" == "$(cat "$OUTPUT/head.txt")" ]] || die 'Root HEAD changed during verification; evidence is stale'
   [[ "$(git -C "$repository/docs" rev-parse HEAD)" == "$(cat "$OUTPUT/docs-head.txt")" ]] || die 'Docs HEAD changed during verification; evidence is stale'
