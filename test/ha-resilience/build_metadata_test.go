@@ -13,7 +13,7 @@ func TestCleanRoomServerBuildPassesVCSMetadataToEveryTask(t *testing.T) {
 	}
 
 	dockerfile := string(content)
-	for _, taskName := range []string{"deps:be", "deps:fe", "build:fe", "build:be"} {
+	for _, taskName := range []string{"deps:image", "build:fe", "build:be"} {
 		block := dockerTaskInvocation(dockerfile, taskName)
 		if block == "" {
 			t.Fatalf("task %s invocation not found", taskName)

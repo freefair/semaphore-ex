@@ -102,6 +102,12 @@ func (c *KeyController) AddKey(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if key.GenerateSSHKey {
+		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "Generated SSH keys must use the dedicated generation action",
+		})
+		return
+	}
 
 	// Plain cannot be passed via a request
 	key.Plain = nil
@@ -170,6 +176,12 @@ func (c *KeyController) UpdateKey(w http.ResponseWriter, r *http.Request) {
 	if oldKey.ProjectID == nil || key.ProjectID == nil || *key.ProjectID != *oldKey.ProjectID {
 		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "You can not move access key to other project",
+		})
+		return
+	}
+	if key.GenerateSSHKey {
+		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "Generated SSH keys must use the dedicated rotation action",
 		})
 		return
 	}

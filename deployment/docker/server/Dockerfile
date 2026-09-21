@@ -36,11 +36,7 @@ RUN --mount=type=cache,target=/go/pkg \
     source_date_epoch="${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct HEAD)}" && \
     source_tag="${SOURCE_TAG:-$(git name-rev --name-only --tags --no-undefined HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD)}" && \
     source_sha="${SOURCE_SHA:-$(git log --pretty=format:%h -n 1)}" && \
-    task deps:be \
-      CORE_REVISION="${core_revision}" \
-      ENHANCED_REVISION="${ENHANCED_REVISION}" \
-      SOURCE_DATE_EPOCH="${source_date_epoch}" && \
-    task deps:fe \
+    task deps:image \
       CORE_REVISION="${core_revision}" \
       ENHANCED_REVISION="${ENHANCED_REVISION}" \
       SOURCE_DATE_EPOCH="${source_date_epoch}" && \

@@ -1,11 +1,50 @@
 import { expect } from 'chai';
 import axios from 'axios';
+import { shallowMount } from '@vue/test-utils';
+import Vuetify from 'vuetify';
 import KeyForm from '@/components/KeyForm.vue';
 import Keys from '@/views/project/Keys.vue';
 import ObjectRefsView from '@/components/ObjectRefsView.vue';
 import RotateSSHKeyDialog from '@/components/enhanced/RotateSSHKeyDialog.vue';
 
 describe('generated SSH key UI', () => {
+  it('renders the dedicated server-generation control without the rejected generic checkbox', async () => {
+    const previousAdapter = axios.defaults.adapter;
+    axios.defaults.adapter = async (config) => ({
+      data: [],
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    });
+    const wrapper = shallowMount(KeyForm, {
+      propsData: {
+        supportStorages: false, systemInfo: {}, itemId: 'new', projectId: 1,
+      },
+      vuetify: new Vuetify(),
+      stubs: {
+        GeneratedSSHKeyControls: {
+          template: '<div data-testid="dedicated-ssh-generation" />',
+        },
+      },
+      mocks: {
+        $t: (key) => key,
+      },
+    });
+    try {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 0);
+      });
+      await wrapper.vm.$nextTick();
+      await wrapper.vm.$nextTick();
+      expect(wrapper.find('[data-testid="dedicated-ssh-generation"]').exists()).to.equal(true);
+      expect(wrapper.findAll('[label="Generate SSH Key"]')).to.have.length(0);
+    } finally {
+      axios.defaults.adapter = previousAdapter;
+      wrapper.destroy();
+    }
+  });
+
   it('suppresses the delete-only reference warning only when requested', () => {
     expect(ObjectRefsView.props.hideWarning.default).to.equal(false);
     expect(Keys.components.RotateSSHKeyDialog).to.equal(RotateSSHKeyDialog);

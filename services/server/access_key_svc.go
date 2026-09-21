@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
@@ -83,7 +84,19 @@ func (s *AccessKeyServiceImpl) GetAll(projectID int, options db.GetAccessKeyOpti
 	return s.accessKeyRepo.GetAccessKeys(projectID, options, params)
 }
 
+func rejectGenericSSHKeyGeneration() error {
+	return common_errors.NewUserErrorS("generated SSH keys must use the dedicated generation or rotation action")
+}
+
 func (s *AccessKeyServiceImpl) Create(key db.AccessKey) (newKey db.AccessKey, err error) {
+	if key.GenerateSSHKey {
+		err = rejectGenericSSHKeyGeneration()
+		return
+	}
+	// Plain is derived metadata and is never accepted from a generic caller.
+	key.Plain = nil
+	key.IgnorePlain = true
+
 	if err = s.requireRuntimeSecretWrite(key); err != nil {
 		return
 	}
@@ -104,6 +117,13 @@ func (s *AccessKeyServiceImpl) Create(key db.AccessKey) (newKey db.AccessKey, er
 }
 
 func (s *AccessKeyServiceImpl) Update(key db.AccessKey) (err error) {
+	if key.GenerateSSHKey {
+		return rejectGenericSSHKeyGeneration()
+	}
+	// Plain is derived metadata and is never accepted from a generic caller.
+	key.Plain = nil
+	key.IgnorePlain = true
+
 	if !key.OverrideSecret {
 		err = s.accessKeyRepo.UpdateAccessKey(key)
 		return

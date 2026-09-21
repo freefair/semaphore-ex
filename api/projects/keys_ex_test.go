@@ -62,6 +62,20 @@ func TestUpdateKeyRejectsGenericSecretOverrideForGeneratedSSHKey(t *testing.T) {
 	assert.Empty(t, service.updated)
 }
 
+func TestUpdateKeyRejectsGenericGeneratedSSHKeyRequest(t *testing.T) {
+	service := &mockAccessKeyService{}
+	controller := NewKeyController(service)
+	oldKey := db.AccessKey{ID: 10, Name: "manual", Type: db.AccessKeySSH, ProjectID: intPtr(1)}
+	request, recorder := newUpdateKeyRequest(oldKey,
+		`{"id":10,"name":"manual","type":"ssh","project_id":1,"generate_ssh_key":true}`)
+
+	controller.UpdateKey(recorder, request)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "dedicated rotation action")
+	assert.Empty(t, service.updated)
+}
+
 type generatedSSHKeyServiceMock struct {
 	mockAccessKeyService
 	createRequest server.CreateGeneratedSSHKeyRequest
