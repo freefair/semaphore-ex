@@ -39,7 +39,7 @@ Other installation paths:
 - **Docker Compose**: snippets for server, runner and databases live in
   [`deployment/compose`](deployment/compose/README.md).
 - **Remote runner image**: `ghcr.io/freefair/semaphore-ex-runner`, configured as described in the
-  [runner guide](docs/docs/admin-guide/runners.md).
+  [runner guide](https://github.com/freefair/semaphore-ex/wiki/Admin-Guide-Runners).
 - **Debian/RPM package or binary**: download from
   [GitHub Releases](https://github.com/freefair/semaphore-ex/releases). The package is named
   `semaphore-ex`, installs `/usr/bin/semaphore` and conflicts with the upstream `semaphore`
@@ -57,7 +57,7 @@ Every release tag is `vX.Y.Z-ex.N`, where `X.Y.Z` is the upstream line the relea
 ## What the fork adds
 
 All of upstream Semaphore UI, plus the features below. Each feature group has a specification
-under [`docs/docs/developer-guide/plans/pro-slices`](docs/docs/developer-guide/plans/pro-slices/README.md).
+under [implementation slices](https://github.com/freefair/semaphore-ex/wiki/Developer-Guide-Plans-Implementation-Slices).
 
 | Area | Features |
 |---|---|
@@ -76,14 +76,14 @@ they are security controls, not edition gates.
 
 ## Documentation
 
-- [User and administration guide](docs/README.md): directly readable Markdown, no docs build or website
-- [Complete configuration reference](docs/docs/reference/configuration.md) and
-  [additional schemas and Docker bootstrap settings](docs/docs/reference/configuration-schemas.md)
-- [Translations](docs/translations/README.md): existing translated guides with explicit English fallbacks
+- [GitHub Wiki](https://github.com/freefair/semaphore-ex/wiki): the sole maintained English manual
+- [Complete configuration reference](https://github.com/freefair/semaphore-ex/wiki/Reference-Configuration) and
+  [additional schemas](https://github.com/freefair/semaphore-ex/wiki/Reference-Configuration-Schemas)
 - [Changelog](CHANGELOG.md) and [release procedure](maintenance/RELEASING.md)
-- [Upstream maintenance policy](maintenance/README.md): how upstream is merged, how migrations and
-  exported contracts are protected, and how changes are verified
-- API reference: `api-docs.yml` plus the fork additions in `api-docs-ex.yml`
+- [Upstream maintenance policy](maintenance/README.md)
+
+The `docs` submodule checks out the Wiki repository itself. Edit those Markdown
+files or use GitHub's Wiki editor; there is no separate docs repository to synchronize.
 
 ## Relationship to upstream
 

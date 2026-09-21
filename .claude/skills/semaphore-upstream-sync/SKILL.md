@@ -13,9 +13,9 @@ Resolve the repository root with Git; verify the checkout, branches, and remotes
 Read repository `AGENTS.md`, `.claude/CLAUDE.md`, and root `CLAUDE.md`, plus:
 
 - `maintenance/README.md` for the repository-owned assessment, inventories, and gates.
-- `docs/docs/developer-guide/plans/pro-slices/upstream-maintenance.md` for the merge procedure and conflict-sensitive contracts.
-- `docs/docs/developer-guide/plans/pro-slices/README.md` and `STATUS.md` for the complete selected slice inventory and current state.
-- `docs/docs/developer-guide/adr/0010-ship-one-full-featured-product.md` for product invariants.
+- `docs/Developer-Guide-Plans-Implementation-Slices-Upstream-Maintenance.md` for the merge procedure and conflict-sensitive contracts.
+- `docs/Developer-Guide-Plans-Implementation-Slices.md` and `docs/Developer-Guide-Plans-Implementation-Slices-STATUS.md` for the complete selected slice inventory and current state.
+- `docs/Developer-Guide-Adr-0010-Ship-One-Full-Featured-Product.md` for product invariants.
 
 Repository policy and the maintained runbook are authoritative. For each conflict, read the slice specifications whose paths or dependencies overlap it. Infer behavior from those contracts, not an inaccessible commercial repository.
 
@@ -29,7 +29,7 @@ Keep helper/tooling changes in their own explicitly requested scope. Preserve un
 
 ## Assessment and Merge Workflow
 
-1. Verify root `develop`: `origin` is `freefair/semaphore-ex`, `upstream` is `semaphoreui/semaphore`. Verify docs `main`: `origin` is `freefair/semaphore-docs`, `upstream` is `semaphoreui/semaphore-docs`. Reconcile unexpected branches, ancestry, or local/origin divergence before merging.
+1. Verify root `develop`: `origin` is `freefair/semaphore-ex`, `upstream` is `semaphoreui/semaphore`. Verify the Wiki checkout: `origin` is `freefair/semaphore-ex.wiki.git`, published branch `master`; no separate docs upstream is maintained. Reconcile unexpected branches, ancestry, or local/origin divergence before merging.
 2. Use `GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes'` for network Git commands.
 3. From the root, run the repository-owned preflight with a new evidence directory:
 
@@ -39,7 +39,7 @@ Keep helper/tooling changes in their own explicitly requested scope. Preserve un
 
    Omit `--fetch` only when deliberately assessing recorded local refs. Read root/docs exact SHAs, source fingerprints, seam/schema diffs, incoming migration decisions, and merge conflict previews. The preview never chooses a semantic resolution.
 4. For an actual update, create a clearly named local `codex/` recovery branch at each pre-merge head. Preserve unrelated working state without staging it. Retain recovery points until cleanup is authorized.
-5. If docs upstream has commits not already included, merge its recorded SHA into docs `main` using `git merge --no-ff --no-commit <recorded-docs-upstream-sha>`. Resolve, verify, and commit. Publish docs normally once authorized and read back its exact remote SHA.
+5. Review incoming documentation changes against the product contracts and adapt needed English content directly in the Wiki checkout. Do not merge or synchronize the retired docs fork. Publish verified Wiki commits to `master` once authorized and read back the remote SHA.
 6. If root upstream has commits not already included, merge its recorded SHA into `develop` using `git merge --no-ff --no-commit <recorded-root-upstream-sha>`. Point the docs submodule at the verified published docs commit. An already-contained upstream needs no artificial merge; a docs pointer update can be an ordinary commit.
 7. Resolve conflicts against the relevant slice contracts and current upstream behavior. Run focused checks for each manual resolution. Review the final result against both pre-merge parents and run the complete retained gates before committing the merge and any separate compatibility changes.
 
@@ -67,7 +67,7 @@ The full runner builds the embedded frontend first, checks inventories, runs roo
 
 Reproduce frontend failures on the exact assessed upstream SHA before classifying them as baseline failures; retain failed results and reproduction evidence. Perform desktop/mobile browser verification of visible areas changed by conflict resolution, including permissions and absence of commercial upgrade surfaces.
 
-Keep documentation as directly readable Markdown. Run `node docs/scripts/check-docs.mjs` instead of building a site. Preserve translated prose and explicit links to reviewed canonical English content; adapt incoming MDX and website navigation to Markdown.
+Keep documentation as directly readable Markdown. Run `node tools/check-docs.mjs` instead of building a site. Keep the Wiki as the sole English source; adapt incoming MDX and website navigation to ordinary Markdown.
 
 ## Publication and Completion
 
@@ -77,7 +77,7 @@ Publish docs before the root submodule pointer. Use ordinary pushes from the ver
 
 ```bash
 # Inside the docs submodule:
-GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes' git push origin main:main
+GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes' git push origin master:master
 # Inside the application root:
 GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes' git push origin develop:develop
 ```

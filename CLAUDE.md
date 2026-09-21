@@ -23,7 +23,7 @@ The local QA server, database, and test data were created by Codex for this plan
 
 Keep enhanced-edition work upstream-compatible. Prefer implementing existing interfaces and extension seams; leave Community behavior and shared UI untouched wherever possible. UI changes must be the smallest integration needed for the selected slice and should reuse existing routes, views, and components instead of redesigning shared surfaces.
 
-Keep docs/docs/developer-guide/plans/pro-slices/STATUS.md up to date.
+Keep docs/Developer-Guide-Plans-Implementation-Slices-STATUS.md up to date.
 
 ## Security Execution
 
@@ -36,13 +36,14 @@ Maintain the project-specific sync skill in
 `.agents/skills/` links to that same source. Keep skill instructions, metadata,
 and helpers in this repository so policy changes and the skill stay aligned.
 
-Use regular upstream merges into the long-lived `develop` branch and the docs
-fork's `main` branch. Preserve published fork history. A sync request authorizes
+Use regular upstream merges into the long-lived `develop` branch.
+Maintain English docs in the product Wiki repository on `master`; there is no
+separate docs fork to merge. Preserve published fork history. A sync request authorizes
 preparing the merge and scope-preserving compatibility fixes; obtain publication
 approval before pushing. History rewrites and force-pushes require a separate,
 explicit request and are not the routine update procedure.
 
-Follow `docs/docs/developer-guide/plans/pro-slices/upstream-maintenance.md` and
+Follow `docs/Developer-Guide-Plans-Implementation-Slices-Upstream-Maintenance.md` and
 `maintenance/README.md`. Run the repository-owned `tools/upstream-sync/preflight.sh`
 with retained evidence before merging. Capture exact refs, review local changes,
 and merge the reviewed upstream SHA. Publish verified docs before the root pointer.
@@ -82,7 +83,7 @@ runs the product gate, then goreleaser and the ghcr.io image publish. Never tag 
 `vX.Y.Z`; it collides with upstream tags.
 
 Publish documentation as directly readable Markdown with no dedicated docs UI or
-compilation step. Use `node docs/scripts/check-docs.mjs` to validate local links,
-anchors, navigation and source format. Preserve reviewed English guidance through
-explicit translation links. Incoming upstream site infrastructure must be adapted
-to this Markdown-only documentation contract.
+compilation step. Use `node tools/check-docs.mjs` to validate local links,
+anchors, navigation and source format. The product Wiki is the sole maintained English source. Incoming upstream docs
+are reviewed and adapted to its Markdown contract; do not restore a second docs
+repository, translation tree or site build.

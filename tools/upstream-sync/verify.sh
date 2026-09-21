@@ -70,7 +70,7 @@ main() {
     run_gate frontend-build "$repository/web" npm run build || true
   fi
   run_gate maintenance "$repository" go run ./tools/upstreamcheck -mode check -base-ref "$baseline" || true
-  run_gate docs-markdown "$repository/docs" node scripts/check-docs.mjs || true
+  run_gate docs-markdown "$repository" node tools/check-docs.mjs || true
   run_gate maintenance-tests "$repository" go test ./tools/upstreamcheck -count=1 || true
   if [[ "$quick" == false ]]; then
     run_gate root-tests "$repository" env "GIT_CONFIG_COUNT=$((git_config_count+1))" "GIT_CONFIG_KEY_$git_config_count=commit.gpgsign" "GIT_CONFIG_VALUE_$git_config_count=false" go test ./... -count=1 || true
