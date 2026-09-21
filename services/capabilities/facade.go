@@ -35,6 +35,21 @@ func (f *serviceFacade) Configure(
 	return f.provider.Configure(ctx, request, configuration)
 }
 
+func (f *serviceFacade) GetRuntimeSecretsConfiguration(
+	ctx context.Context,
+	request pro_interfaces.CapabilityRequest,
+) (pro_interfaces.CapabilityConfigurationDTO, error) {
+	configuration, err := f.provider.GetRuntimeSecretsConfiguration(ctx, request)
+	if err != nil {
+		return pro_interfaces.CapabilityConfigurationDTO{}, err
+	}
+	return pro_interfaces.CapabilityConfigurationDTO{
+		ID:        configuration.ID,
+		State:     configuration.State,
+		ExpiresAt: configuration.ExpiresAt,
+	}, nil
+}
+
 func (f *serviceFacade) ListRecords(
 	ctx context.Context,
 	snapshot pro_interfaces.CapabilitySnapshot,

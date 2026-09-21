@@ -44,6 +44,13 @@ func (deniedProjectRoleCapabilityProvider) Configure(
 	return pro_interfaces.CapabilitySnapshot{}, nil
 }
 
+func (deniedProjectRoleCapabilityProvider) GetRuntimeSecretsConfiguration(
+	context.Context,
+	pro_interfaces.CapabilityRequest,
+) (pro_interfaces.CapabilityConfiguration, error) {
+	return pro_interfaces.CapabilityConfiguration{}, nil
+}
+
 func TestProjectRoleControllerCRUDCatalogIsolationAndStaleWrites(t *testing.T) {
 	store := coresql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)

@@ -1,5 +1,26 @@
 # Fork-owned API definitions and paths, referenced by api-docs.yml.
 definitions:
+  RuntimeSecretsCapabilityConfiguration:
+    type: object
+    required:
+    - id
+    - state
+    - expires_at
+    properties:
+      id:
+        type: string
+        enum:
+        - runtime_secrets
+      state:
+        type: string
+        enum:
+        - active
+        - disabled
+        - read_only
+      expires_at:
+        type: string
+        format: date-time
+        x-nullable: true
   TaskSSHKeyBindings:
     type: array
     x-nullable: true
@@ -2127,6 +2148,21 @@ definitions:
         type: string
         format: date-time
 paths:
+  /capabilities/runtime-secrets:
+    get:
+      tags:
+      - global-credential
+      summary: Read configured runtime-secrets lifecycle state
+      description: Returns configured lifecycle metadata only; secret values and effective expiry state are excluded.
+      responses:
+        200:
+          description: Configured runtime-secrets lifecycle state
+          schema:
+            $ref: ./api-docs.yml#/definitions/RuntimeSecretsCapabilityConfiguration
+        403:
+          description: Administrator permission required
+        500:
+          description: Runtime-secrets configuration could not be read
   /roles/project-permissions:
     get:
       tags: [user]

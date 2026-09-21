@@ -49,6 +49,16 @@ func (p *communityCapabilityProvider) Configure(
 	}
 }
 
+func (p *communityCapabilityProvider) GetRuntimeSecretsConfiguration(
+	_ context.Context,
+	_ pro_interfaces.CapabilityRequest,
+) (pro_interfaces.CapabilityConfiguration, error) {
+	return pro_interfaces.CapabilityConfiguration{}, communityDenied(
+		pro_interfaces.CapabilityRuntimeSecrets,
+		pro_interfaces.CapabilityAccessRead,
+	)
+}
+
 type communityCapabilityTestService struct{}
 
 // NewCapabilityTestService returns a Community-safe service whose entry points

@@ -204,17 +204,39 @@ func (p *capabilityProvider) Configure(
 	return p.Resolve(ctx, request)
 }
 
+func (p *capabilityProvider) GetRuntimeSecretsConfiguration(
+	_ context.Context,
+	request pro_interfaces.CapabilityRequest,
+) (pro_interfaces.CapabilityConfiguration, error) {
+	if !request.IsAdmin {
+		return pro_interfaces.CapabilityConfiguration{}, pro_interfaces.CapabilityDeniedError{
+			Decision: pro_interfaces.NewCapabilityDecision(
+				pro_interfaces.CapabilityRuntimeSecrets,
+				pro_interfaces.CapabilityStateInsufficientPermission,
+				pro_interfaces.CapabilityReasonInsufficientPermission,
+				nil,
+				nil,
+			),
+			Required: pro_interfaces.CapabilityAccessRead,
+		}
+	}
+	config, err := p.runtimeSecretsConfiguration()
+	if err != nil {
+		return pro_interfaces.CapabilityConfiguration{}, err
+	}
+	return pro_interfaces.CapabilityConfiguration{
+		ID:        pro_interfaces.CapabilityRuntimeSecrets,
+		State:     pro_interfaces.CapabilityState(config.State),
+		ExpiresAt: config.ExpiresAt,
+	}, nil
+}
+
 func (p *capabilityProvider) resolveRuntimeSecretsDecision(
 	request pro_interfaces.CapabilityRequest,
 ) (pro_interfaces.CapabilityDecision, error) {
-	config, err := p.repository.GetCapabilityConfig(string(pro_interfaces.CapabilityRuntimeSecrets))
-	if errors.Is(err, db.ErrNotFound) {
-		config = db.CapabilityConfig{
-			CapabilityID: string(pro_interfaces.CapabilityRuntimeSecrets),
-			State:        string(pro_interfaces.CapabilityStateActive),
-		}
-	} else if err != nil {
-		return pro_interfaces.CapabilityDecision{}, fmt.Errorf("load runtime secret capability: %w", err)
+	config, err := p.runtimeSecretsConfiguration()
+	if err != nil {
+		return pro_interfaces.CapabilityDecision{}, err
 	}
 	state := pro_interfaces.CapabilityState(config.State)
 	if state == pro_interfaces.CapabilityStateDisabled {
@@ -264,6 +286,20 @@ func (p *capabilityProvider) resolveRuntimeSecretsDecision(
 			"unsupported stored runtime secret capability state %q", config.State,
 		)
 	}
+}
+
+func (p *capabilityProvider) runtimeSecretsConfiguration() (db.CapabilityConfig, error) {
+	config, err := p.repository.GetCapabilityConfig(string(pro_interfaces.CapabilityRuntimeSecrets))
+	if errors.Is(err, db.ErrNotFound) {
+		return db.CapabilityConfig{
+			CapabilityID: string(pro_interfaces.CapabilityRuntimeSecrets),
+			State:        string(pro_interfaces.CapabilityStateActive),
+		}, nil
+	}
+	if err != nil {
+		return db.CapabilityConfig{}, fmt.Errorf("load runtime secret capability: %w", err)
+	}
+	return config, nil
 }
 
 func resolveLifecycleTestDecision(

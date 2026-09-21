@@ -92,6 +92,15 @@ func (p runtimeCapabilityProvider) Configure(
 	return pro_interfaces.CapabilitySnapshot{}, errors.New("not implemented")
 }
 
+func (p runtimeCapabilityProvider) GetRuntimeSecretsConfiguration(
+	context.Context,
+	pro_interfaces.CapabilityRequest,
+) (pro_interfaces.CapabilityConfiguration, error) {
+	return pro_interfaces.CapabilityConfiguration{
+		ID: pro_interfaces.CapabilityRuntimeSecrets,
+	}, nil
+}
+
 func TestVaultRuntimeReadsVersionedKVWithoutPersistingValue(t *testing.T) {
 	var requests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

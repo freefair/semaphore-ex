@@ -154,6 +154,16 @@ func (p projectRuntimeCapabilityProvider) Configure(
 	return pro_interfaces.CapabilitySnapshot{}, nil
 }
 
+func (p projectRuntimeCapabilityProvider) GetRuntimeSecretsConfiguration(
+	context.Context,
+	pro_interfaces.CapabilityRequest,
+) (pro_interfaces.CapabilityConfiguration, error) {
+	return pro_interfaces.CapabilityConfiguration{
+		ID:    pro_interfaces.CapabilityRuntimeSecrets,
+		State: p.state,
+	}, nil
+}
+
 func TestSecretStorageMiddlewareRequiresKeysUnlessAmbientCredentialsAreExplicit(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -43,6 +43,15 @@ func (p runtimeSecretWriteCapability) Configure(
 	return pro_interfaces.CapabilitySnapshot{}, nil
 }
 
+func (p runtimeSecretWriteCapability) GetRuntimeSecretsConfiguration(
+	context.Context,
+	pro_interfaces.CapabilityRequest,
+) (pro_interfaces.CapabilityConfiguration, error) {
+	return pro_interfaces.CapabilityConfiguration{
+		ID: pro_interfaces.CapabilityRuntimeSecrets,
+	}, nil
+}
+
 type capturingRuntimeAccessKeyRepo struct {
 	db.AccessKeyManager
 	created  db.AccessKey

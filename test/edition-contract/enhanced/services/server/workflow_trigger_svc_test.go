@@ -632,6 +632,13 @@ func (p *workflowTriggerCapability) Configure(context.Context, pro_interfaces.Ca
 	panic("not used")
 }
 
+func (p *workflowTriggerCapability) GetRuntimeSecretsConfiguration(
+	context.Context,
+	pro_interfaces.CapabilityRequest,
+) (pro_interfaces.CapabilityConfiguration, error) {
+	panic("not used")
+}
+
 type blockingWorkflowTriggerRepository struct {
 	db.WorkflowTriggerManager
 	claimEntered  chan struct{}

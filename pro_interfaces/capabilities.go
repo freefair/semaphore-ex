@@ -100,6 +100,15 @@ type CapabilityConfiguration struct {
 	ExpiresAt *time.Time      `json:"expires_at,omitempty"`
 }
 
+// CapabilityConfigurationDTO is the transport-safe configured lifecycle state.
+// ExpiresAt is always present so an absent expiry is unambiguously represented
+// as null rather than being confused with an omitted field.
+type CapabilityConfigurationDTO struct {
+	ID        CapabilityID    `json:"id"`
+	State     CapabilityState `json:"state"`
+	ExpiresAt *time.Time      `json:"expires_at"`
+}
+
 // CapabilityDecision is immutable after construction. Access and limits are
 // copied on input and output so one request cannot mutate another snapshot.
 type CapabilityDecision struct {
@@ -258,6 +267,7 @@ func (s CapabilitySnapshot) MarshalJSON() ([]byte, error) {
 type CapabilityProvider interface {
 	Resolve(context.Context, CapabilityRequest) (CapabilitySnapshot, error)
 	Configure(context.Context, CapabilityRequest, CapabilityConfiguration) (CapabilitySnapshot, error)
+	GetRuntimeSecretsConfiguration(context.Context, CapabilityRequest) (CapabilityConfiguration, error)
 }
 
 // CapabilityTestService protects both request and background entry points with
@@ -281,6 +291,7 @@ type CapabilityTestRecordDTO struct {
 type CapabilityServiceFacade interface {
 	Resolve(context.Context, CapabilityRequest) (CapabilitySnapshot, error)
 	Configure(context.Context, CapabilityRequest, CapabilityConfiguration) (CapabilitySnapshot, error)
+	GetRuntimeSecretsConfiguration(context.Context, CapabilityRequest) (CapabilityConfigurationDTO, error)
 	ListRecords(context.Context, CapabilitySnapshot) ([]CapabilityTestRecordDTO, error)
 	CreateRecord(context.Context, CapabilitySnapshot, string) (CapabilityTestRecordDTO, error)
 	RunBackgroundAction(context.Context, CapabilitySnapshot, string) (CapabilityTestRecordDTO, error)

@@ -391,6 +391,7 @@ func Route(
 	adminAPI.Use(EnhancedAdminAuditMiddleware(auditFacade), adminMiddleware)
 	adminAPI.Path("/admin/info").HandlerFunc(getAdminInfo).Methods("GET", "HEAD")
 	adminAPI.Path("/capabilities/lifecycle-test").HandlerFunc(capabilityController.Configure).Methods("PUT")
+	adminAPI.Path("/capabilities/runtime-secrets").HandlerFunc(capabilityController.GetRuntimeSecretsConfiguration).Methods("GET", "HEAD")
 	adminAPI.Path("/capabilities/runtime-secrets").HandlerFunc(capabilityController.ConfigureRuntimeSecrets).Methods("PUT")
 	registerIdentityCapabilityRoutes(adminAPI, totpController, ldapController, oidcGroupMappingController)
 	adminAPI.Path("/audit-webhook").HandlerFunc(auditWebhookController.GetConfiguration).Methods("GET", "HEAD")

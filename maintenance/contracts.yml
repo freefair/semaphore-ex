@@ -6782,6 +6782,11 @@ symbols:
       struct{ID pro_interfaces.CapabilityID "json:\"id\""; State pro_interfaces.CapabilityState "json:\"state\""; ExpiresAt *time.Time
       "json:\"expires_at,omitempty\""}
     implementation: core
+  - name: pro_interfaces:CapabilityConfigurationDTO
+    signature: >-
+      struct{ID pro_interfaces.CapabilityID "json:\"id\""; State pro_interfaces.CapabilityState "json:\"state\""; ExpiresAt *time.Time
+      "json:\"expires_at\""}
+    implementation: core
   - name: pro_interfaces:CapabilityDecision
     signature: struct{}
     implementation: core
@@ -6815,9 +6820,12 @@ symbols:
   - name: pro_interfaces:CapabilityProvider
     signature: >-
       interface{Configure(context.Context, pro_interfaces.CapabilityRequest, pro_interfaces.CapabilityConfiguration)
-      (pro_interfaces.CapabilitySnapshot, error); Resolve(context.Context, pro_interfaces.CapabilityRequest)
+      (pro_interfaces.CapabilitySnapshot, error); GetRuntimeSecretsConfiguration(context.Context, pro_interfaces.CapabilityRequest)
+      (pro_interfaces.CapabilityConfiguration, error); Resolve(context.Context, pro_interfaces.CapabilityRequest)
       (pro_interfaces.CapabilitySnapshot, error)}
     implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/pkg/features/capabilities_test.go::TestRuntimeSecretsConfigurationReadReturnsConfiguredStateInsteadOfEffectiveExpiry
   - name: pro_interfaces:CapabilityReasonActive
     signature: pro_interfaces.CapabilityReasonCode = "active"
     implementation: core
@@ -6861,11 +6869,14 @@ symbols:
     signature: >-
       interface{Configure(context.Context, pro_interfaces.CapabilityRequest, pro_interfaces.CapabilityConfiguration)
       (pro_interfaces.CapabilitySnapshot, error); CreateRecord(context.Context, pro_interfaces.CapabilitySnapshot, string)
-      (pro_interfaces.CapabilityTestRecordDTO, error); ListRecords(context.Context, pro_interfaces.CapabilitySnapshot)
+      (pro_interfaces.CapabilityTestRecordDTO, error); GetRuntimeSecretsConfiguration(context.Context, pro_interfaces.CapabilityRequest)
+      (pro_interfaces.CapabilityConfigurationDTO, error); ListRecords(context.Context, pro_interfaces.CapabilitySnapshot)
       ([]pro_interfaces.CapabilityTestRecordDTO, error); Resolve(context.Context, pro_interfaces.CapabilityRequest)
       (pro_interfaces.CapabilitySnapshot, error); RunBackgroundAction(context.Context, pro_interfaces.CapabilitySnapshot, string)
       (pro_interfaces.CapabilityTestRecordDTO, error)}
     implementation: core
+    behavior_tests:
+    - services/capabilities/facade_test.go::TestServiceFacadeDelegatesProviderOperations
   - name: pro_interfaces:CapabilitySnapshot
     signature: struct{}
     implementation: core

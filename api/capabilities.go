@@ -239,6 +239,21 @@ func (c *CapabilityController) ConfigureRuntimeSecrets(w http.ResponseWriter, r 
 	c.configure(w, r, pro_interfaces.CapabilityRuntimeSecrets)
 }
 
+// GetRuntimeSecretsConfiguration returns only configured runtime-secrets lifecycle metadata.
+func (c *CapabilityController) GetRuntimeSecretsConfiguration(w http.ResponseWriter, r *http.Request) {
+	request, ok := capabilityRequestFromHTTP(r)
+	if !ok {
+		helpers.WriteErrorStatus(w, "CAPABILITY_CONTEXT_ERROR", http.StatusInternalServerError)
+		return
+	}
+	configuration, err := c.facade.GetRuntimeSecretsConfiguration(r.Context(), request)
+	if err != nil {
+		writeCapabilityError(w, err)
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, configuration)
+}
+
 func (c *CapabilityController) configure(
 	w http.ResponseWriter,
 	r *http.Request,

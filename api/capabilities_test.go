@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
@@ -20,14 +21,23 @@ import (
 )
 
 type capabilityFacadeStub struct {
-	decision        pro_interfaces.CapabilityDecision
-	resolveError    error
-	resolutionCount int
-	received        pro_interfaces.CapabilitySnapshot
-	configured      pro_interfaces.CapabilityConfiguration
-	configuredBy    pro_interfaces.CapabilityRequest
-	listed          bool
-	backgroundValue string
+	decision         pro_interfaces.CapabilityDecision
+	resolveError     error
+	resolutionCount  int
+	received         pro_interfaces.CapabilitySnapshot
+	configured       pro_interfaces.CapabilityConfiguration
+	configuredBy     pro_interfaces.CapabilityRequest
+	configuration    pro_interfaces.CapabilityConfigurationDTO
+	configurationErr error
+	listed           bool
+	backgroundValue  string
+}
+
+func (f *capabilityFacadeStub) GetRuntimeSecretsConfiguration(
+	_ context.Context,
+	_ pro_interfaces.CapabilityRequest,
+) (pro_interfaces.CapabilityConfigurationDTO, error) {
+	return f.configuration, f.configurationErr
 }
 
 func (f *capabilityFacadeStub) Resolve(
@@ -104,6 +114,63 @@ func TestCapabilityControllerConfiguresThroughFacade(t *testing.T) {
 	assert.Equal(t, pro_interfaces.CapabilityStateActive, facade.configured.State)
 	assert.Equal(t, 7, facade.configuredBy.UserID)
 	assert.True(t, facade.configuredBy.IsAdmin)
+}
+
+func TestRuntimeSecretsConfigurationReadReturnsConfiguredLifecycleState(t *testing.T) {
+	expiresAt := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+	controller := NewCapabilityController(&capabilityFacadeStub{configuration: pro_interfaces.CapabilityConfigurationDTO{
+		ID: pro_interfaces.CapabilityRuntimeSecrets, State: pro_interfaces.CapabilityStateActive, ExpiresAt: &expiresAt,
+	}}, nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/capabilities/runtime-secrets", nil)
+	request = helpers.SetContextValue(request, "user", &db.User{ID: 7, Admin: true})
+	recorder := httptest.NewRecorder()
+
+	controller.GetRuntimeSecretsConfiguration(recorder, request)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.JSONEq(t, `{"id":"runtime_secrets","state":"active","expires_at":"2026-09-21T10:00:00Z"}`, recorder.Body.String())
+}
+
+func TestRuntimeSecretsConfigurationReadRequiresAdministratorPermission(t *testing.T) {
+	controller := NewCapabilityController(&capabilityFacadeStub{configuration: pro_interfaces.CapabilityConfigurationDTO{
+		ID: pro_interfaces.CapabilityRuntimeSecrets, State: pro_interfaces.CapabilityStateActive,
+	}}, nil)
+	handler := adminMiddleware(http.HandlerFunc(controller.GetRuntimeSecretsConfiguration))
+
+	for _, tt := range []struct {
+		name   string
+		user   *db.User
+		status int
+	}{
+		{name: "administrator", user: &db.User{ID: 7, Admin: true}, status: http.StatusOK},
+		{name: "authenticated user", user: &db.User{ID: 8}, status: http.StatusForbidden},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/capabilities/runtime-secrets", nil)
+			request = helpers.SetContextValue(request, "user", tt.user)
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, request)
+
+			assert.Equal(t, tt.status, recorder.Code)
+			if tt.status == http.StatusOK {
+				assert.JSONEq(t, `{"id":"runtime_secrets","state":"active","expires_at":null}`, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestRuntimeSecretsConfigurationReadHidesProviderErrors(t *testing.T) {
+	controller := NewCapabilityController(&capabilityFacadeStub{configurationErr: errors.New(securityfixtures.TripwireValues[0])}, nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/capabilities/runtime-secrets", nil)
+	request = helpers.SetContextValue(request, "user", &db.User{ID: 7, Admin: true})
+	recorder := httptest.NewRecorder()
+
+	controller.GetRuntimeSecretsConfiguration(recorder, request)
+
+	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
+	assert.JSONEq(t, `{"error":"CAPABILITY_OPERATION_ERROR"}`, recorder.Body.String())
+	securityfixtures.AssertTripwiresAbsent(t, recorder.Body.String())
 }
 
 func TestCapabilityControllerListsAndRunsBackgroundAction(t *testing.T) {

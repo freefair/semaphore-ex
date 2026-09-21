@@ -51,6 +51,13 @@ func (deniedRunnerProvider) Configure(
 	panic("not used")
 }
 
+func (deniedRunnerProvider) GetRuntimeSecretsConfiguration(
+	context.Context,
+	pro_interfaces.CapabilityRequest,
+) (pro_interfaces.CapabilityConfiguration, error) {
+	panic("not used")
+}
+
 func (r *runnerAuditRecorder) Record(_ context.Context, event pro_interfaces.AuditEvent) error {
 	r.events = append(r.events, event)
 	return nil

@@ -40,6 +40,8 @@ schemes:
 basePath: /api
 
 definitions:
+  RuntimeSecretsCapabilityConfiguration:
+    $ref: "./api-docs-ex.yml#/definitions/RuntimeSecretsCapabilityConfiguration"
   TaskSSHKeyBindings:
     $ref: "./api-docs-ex.yml#/definitions/TaskSSHKeyBindings"
   TaskSSHKeyBinding:
@@ -2031,6 +2033,8 @@ parameters:
     x-example: 22
 
 paths:
+  /capabilities/runtime-secrets:
+    $ref: './api-docs-ex.yml#/paths/~1capabilities~1runtime-secrets'
   /roles/project-permissions:
     $ref: './api-docs-ex.yml#/paths/~1roles~1project-permissions'
   /project/{project_id}/templates/{template_id}/perms/catalog:

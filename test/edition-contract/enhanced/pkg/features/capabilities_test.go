@@ -7,8 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/semaphoreui/semaphore/db"
 	sqldb "github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCapabilityLifecyclePreservesDataAndGuardsWorkers(t *testing.T) {
@@ -69,6 +72,46 @@ func TestCapabilityLifecyclePreservesDataAndGuardsWorkers(t *testing.T) {
 	if len(records) != 2 || records[0].Value != "preserved" || records[1].Source != "worker" {
 		t.Fatalf("expected preserved API and worker records, got %#v", records)
 	}
+}
+
+func TestRuntimeSecretsConfigurationReadReturnsConfiguredStateInsteadOfEffectiveExpiry(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	provider := NewCapabilityProvider(store)
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0).UTC()
+	admin := pro_interfaces.CapabilityRequest{UserID: 7, IsAdmin: true, At: now}
+
+	configuration, err := provider.GetRuntimeSecretsConfiguration(ctx, admin)
+	require.NoError(t, err)
+	assert.Equal(t, pro_interfaces.CapabilityConfiguration{
+		ID: pro_interfaces.CapabilityRuntimeSecrets, State: pro_interfaces.CapabilityStateActive,
+	}, configuration)
+
+	expiresAt := now.Add(-time.Minute)
+	require.NoError(t, store.SaveCapabilityConfig(db.CapabilityConfig{
+		CapabilityID: string(pro_interfaces.CapabilityRuntimeSecrets),
+		State:        string(pro_interfaces.CapabilityStateActive),
+		ExpiresAt:    &expiresAt,
+		Updated:      now,
+	}))
+	configuration, err = provider.GetRuntimeSecretsConfiguration(ctx, admin)
+	require.NoError(t, err)
+	assert.Equal(t, pro_interfaces.CapabilityConfiguration{
+		ID: pro_interfaces.CapabilityRuntimeSecrets, State: pro_interfaces.CapabilityStateActive, ExpiresAt: &expiresAt,
+	}, configuration)
+
+	snapshot, err := provider.Resolve(ctx, admin)
+	require.NoError(t, err)
+	assert.Equal(t, pro_interfaces.CapabilityStateExpired, snapshot.Decision(pro_interfaces.CapabilityRuntimeSecrets).State())
+
+	_, err = provider.GetRuntimeSecretsConfiguration(ctx, pro_interfaces.CapabilityRequest{UserID: 8, At: now})
+	var denied pro_interfaces.CapabilityDeniedError
+	require.ErrorAs(t, err, &denied)
+	assert.Equal(t, pro_interfaces.CapabilityRuntimeSecrets, denied.Decision.ID())
+	assert.Equal(t, pro_interfaces.CapabilityStateInsufficientPermission, denied.Decision.State())
+	assert.Equal(t, pro_interfaces.CapabilityReasonInsufficientPermission, denied.Decision.Reason())
+	assert.Equal(t, pro_interfaces.CapabilityAccessRead, denied.Required)
 }
 
 func TestEnhancedPolicyGuardrailsAreActiveWithFullAccess(t *testing.T) {

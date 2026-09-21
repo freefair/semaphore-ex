@@ -13,8 +13,13 @@ import (
 )
 
 type testProvider struct {
-	snapshot pro_interfaces.CapabilitySnapshot
-	err      error
+	snapshot      pro_interfaces.CapabilitySnapshot
+	configuration pro_interfaces.CapabilityConfiguration
+	err           error
+}
+
+func (p testProvider) GetRuntimeSecretsConfiguration(context.Context, pro_interfaces.CapabilityRequest) (pro_interfaces.CapabilityConfiguration, error) {
+	return p.configuration, p.err
 }
 
 func (p testProvider) Resolve(context.Context, pro_interfaces.CapabilityRequest) (pro_interfaces.CapabilitySnapshot, error) {
@@ -43,11 +48,15 @@ func (s testService) RunBackgroundAction(context.Context, pro_interfaces.Capabil
 }
 
 func TestServiceFacadeDelegatesProviderOperations(t *testing.T) {
+	expiresAt := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+	configuration := pro_interfaces.CapabilityConfiguration{
+		ID: pro_interfaces.CapabilityRuntimeSecrets, State: pro_interfaces.CapabilityStateActive, ExpiresAt: &expiresAt,
+	}
 	snapshot := pro_interfaces.NewCapabilitySnapshot(
 		pro_interfaces.CapabilityRequest{At: time.Now()},
 		nil,
 	)
-	facade := NewServiceFacade(testProvider{snapshot: snapshot}, testService{})
+	facade := NewServiceFacade(testProvider{snapshot: snapshot, configuration: configuration}, testService{})
 
 	resolved, err := facade.Resolve(context.Background(), pro_interfaces.CapabilityRequest{})
 	require.NoError(t, err)
@@ -60,6 +69,12 @@ func TestServiceFacadeDelegatesProviderOperations(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, snapshot.Request(), configured.Request())
+
+	readConfiguration, err := facade.GetRuntimeSecretsConfiguration(context.Background(), pro_interfaces.CapabilityRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, pro_interfaces.CapabilityConfigurationDTO{
+		ID: pro_interfaces.CapabilityRuntimeSecrets, State: pro_interfaces.CapabilityStateActive, ExpiresAt: &expiresAt,
+	}, readConfiguration)
 }
 
 func TestServiceFacadeMapsCreatedRecordsAndPropagatesErrors(t *testing.T) {
@@ -80,6 +95,8 @@ func TestServiceFacadeMapsCreatedRecordsAndPropagatesErrors(t *testing.T) {
 	expected := errors.New("service failed")
 	failing := NewServiceFacade(testProvider{err: expected}, testService{err: expected})
 	_, err = failing.Resolve(context.Background(), pro_interfaces.CapabilityRequest{})
+	assert.ErrorIs(t, err, expected)
+	_, err = failing.GetRuntimeSecretsConfiguration(context.Background(), pro_interfaces.CapabilityRequest{})
 	assert.ErrorIs(t, err, expected)
 	_, err = failing.ListRecords(context.Background(), pro_interfaces.CapabilitySnapshot{})
 	assert.ErrorIs(t, err, expected)
