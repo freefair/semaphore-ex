@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22035AddsDockerProvenance(t *testing.T) {
-	legacy := "2.20.34"
+	legacy := "2.20.1-ex1.33"
 	store := InitConfigCreateTestStoreAt(&legacy)
 	t.Cleanup(store.Close)
 	require.NoError(t, db.Migrate(store, nil))

@@ -292,11 +292,7 @@ func redisOptionsForHA(config *util.HARedisConfig) (*redis.Options, error) {
 }
 
 func currentSchemaVersion(dialect string) string {
-	migrations := db.GetMigrations(dialect)
-	if len(migrations) == 0 {
-		return ""
-	}
-	return migrations[len(migrations)-1].Version
+	return db.CurrentSchemaVersion(dialect)
 }
 
 type failedNodeRegistry struct{ err error }

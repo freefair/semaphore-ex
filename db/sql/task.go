@@ -283,13 +283,13 @@ func (d *SqlDb) getTasks(projectID int, templateID *int, workflowRunID *int, tas
 
 	fields := "task.*"
 	runnerNameField := "runner.name"
-	if applied, migrationErr := d.IsMigrationApplied(db.Migration{Version: "2.20.3"}); migrationErr != nil {
+	if applied, migrationErr := d.IsMigrationApplied(db.Migration{Version: "2.20.1-ex1.2"}); migrationErr != nil {
 		return migrationErr
 	} else if applied {
 		runnerNameField = "coalesce(runner.name, task.runner_name)"
 	}
 	usedRunnerIDField := "task.runner_id"
-	if applied, migrationErr := d.IsMigrationApplied(db.Migration{Version: "2.20.4"}); migrationErr != nil {
+	if applied, migrationErr := d.IsMigrationApplied(db.Migration{Version: "2.20.1-ex1.3"}); migrationErr != nil {
 		return migrationErr
 	} else if applied {
 		usedRunnerIDField = "coalesce(task.runner_id_snapshot, task.runner_id)"

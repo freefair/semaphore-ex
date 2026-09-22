@@ -74,7 +74,7 @@ func (d *SqlDb) ImportUser(user db.UserWithPwd) (newUser db.User, err error) {
 }
 
 func (d *SqlDb) DeleteUser(userID int) error {
-	hasGlobalRoles, err := d.IsMigrationApplied(db.Migration{Version: "2.20.30"})
+	hasGlobalRoles, err := d.IsMigrationApplied(db.Migration{Version: "2.20.1-ex1.29"})
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (d *SqlDb) UpdateUser(user db.UserWithPwd) error {
 		}
 	}
 
-	hasGlobalRoles, err := d.IsMigrationApplied(db.Migration{Version: "2.20.30"})
+	hasGlobalRoles, err := d.IsMigrationApplied(db.Migration{Version: "2.20.1-ex1.29"})
 	if err != nil {
 		return err
 	}
@@ -117,7 +117,7 @@ func (d *SqlDb) SetUserPassword(userID int, password string) error {
 }
 
 func (d *SqlDb) CreateProjectUser(projectUser db.ProjectUser) (newProjectUser db.ProjectUser, err error) {
-	hasProjectRoleIdentity, migrationErr := d.IsMigrationApplied(db.Migration{Version: "2.20.29"})
+	hasProjectRoleIdentity, migrationErr := d.IsMigrationApplied(db.Migration{Version: "2.20.1-ex1.28"})
 	if migrationErr != nil {
 		return newProjectUser, migrationErr
 	}
@@ -162,7 +162,7 @@ func (d *SqlDb) GetProjectUsers(projectID int, params db.RetrieveQueryParams) (u
 		From("project__user as pu").
 		LeftJoin("`user` as u on pu.user_id=u.id").
 		Where("pu.project_id=?", projectID)
-	hasProjectRoleIdentity, migrationErr := d.IsMigrationApplied(db.Migration{Version: "2.20.29"})
+	hasProjectRoleIdentity, migrationErr := d.IsMigrationApplied(db.Migration{Version: "2.20.1-ex1.28"})
 	if migrationErr != nil {
 		err = migrationErr
 		return
@@ -197,7 +197,7 @@ func (d *SqlDb) GetProjectUsers(projectID int, params db.RetrieveQueryParams) (u
 }
 
 func (d *SqlDb) UpdateProjectUser(projectUser db.ProjectUser) error {
-	hasProjectRoleIdentity, err := d.IsMigrationApplied(db.Migration{Version: "2.20.29"})
+	hasProjectRoleIdentity, err := d.IsMigrationApplied(db.Migration{Version: "2.20.1-ex1.28"})
 	if err != nil {
 		return err
 	}
@@ -214,7 +214,7 @@ func (d *SqlDb) UpdateProjectUser(projectUser db.ProjectUser) error {
 }
 
 func (d *SqlDb) DeleteProjectUser(projectID, userID int) error {
-	hasProjectRoleIdentity, err := d.IsMigrationApplied(db.Migration{Version: "2.20.29"})
+	hasProjectRoleIdentity, err := d.IsMigrationApplied(db.Migration{Version: "2.20.1-ex1.28"})
 	if err != nil {
 		return err
 	}

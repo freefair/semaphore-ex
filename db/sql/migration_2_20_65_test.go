@@ -12,7 +12,7 @@ import (
 )
 
 func TestWorkflowFileArtifactMigrationCreatesAndRollsBackStorageAuthority(t *testing.T) {
-	legacyVersion := "2.20.64"
+	legacyVersion := "2.20.1-ex1.63"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 
@@ -60,7 +60,7 @@ func TestWorkflowFileArtifactMigrationPreparesForEverySQLDialect(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &SqlDb{connection: SqlDbConnection{sql: &gorp.DbMap{Dialect: test.gorp}}}
-			queries := getVersionSQL(test.dialect, "v2.20.65.sql", false)
+			queries := getVersionSQL(test.dialect, "ex/v2.20.1-ex1.64.sql", false)
 			joined := strings.ToLower(strings.Join(queries, ";"))
 			prepared := strings.ToLower(store.prepareMigration(joined))
 			assert.Contains(t, joined, "workflow_file_artifact_chunk")
@@ -75,7 +75,7 @@ func TestWorkflowFileArtifactMigrationPreparesForEverySQLDialect(t *testing.T) {
 }
 
 func TestWorkflowFileArtifactMigrationKeepsActiveDownloadLeaseAsDeleteFence(t *testing.T) {
-	legacyVersion := "2.20.64"
+	legacyVersion := "2.20.1-ex1.63"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	require.NoError(t, db.Migrate(store, nil))
@@ -121,7 +121,7 @@ func TestWorkflowFileArtifactMigrationKeepsActiveDownloadLeaseAsDeleteFence(t *t
 	_, err = store.exec("delete from workflow_file_artifact where id=?", artifactID)
 	require.Error(t, err, "an unexpired download lease must fence artifact deletion")
 
-	migration := strings.ToLower(strings.Join(getVersionSQL("sqlite", "v2.20.65.sql", false), ";"))
+	migration := strings.ToLower(strings.Join(getVersionSQL("sqlite", "ex/v2.20.1-ex1.64.sql", false), ";"))
 	leaseDefinition := strings.Split(strings.Split(migration, "create table `workflow_file_artifact_download_lease`")[1], "create index")[0]
 	assert.NotContains(t, leaseDefinition, "on delete cascade")
 	assert.Contains(t, migration, "foreign key (`artifact_id`) references `workflow_file_artifact`(`id`) on delete cascade")

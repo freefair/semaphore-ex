@@ -20,7 +20,7 @@ func TestClusterNodeStoreRetainsProcessBootHistory(t *testing.T) {
 	first := pro_interfaces.ClusterNodeRegistration{
 		ClusterNodeIdentity: pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-1"},
 		Edition:             "enhanced", Version: "1.2.3", Build: "abc123", ProtocolVersion: 1,
-		SchemaVersion: "2.20.23", Capabilities: []string{"workflows"}, StartedAt: started, LastSeenAt: started,
+		SchemaVersion: "2.20.1-ex1.22", Capabilities: []string{"workflows"}, StartedAt: started, LastSeenAt: started,
 	}
 	require.NoError(t, repository.UpsertClusterNode(ctx, first))
 
@@ -45,7 +45,7 @@ func TestClusterNodeStorePersistsDrainAndRemovesOnlyExpiredHistory(t *testing.T)
 	old := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
 	first := pro_interfaces.ClusterNodeRegistration{
 		ClusterNodeIdentity: pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-old"},
-		Edition:             "enhanced", Version: "1", Build: "old", ProtocolVersion: 1, SchemaVersion: "2.20.23",
+		Edition:             "enhanced", Version: "1", Build: "old", ProtocolVersion: 1, SchemaVersion: "2.20.1-ex1.22",
 		Capabilities: []string{"cluster-dashboard"}, StartedAt: old, LastSeenAt: old,
 	}
 	recent := first

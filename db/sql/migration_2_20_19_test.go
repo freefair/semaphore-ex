@@ -10,7 +10,7 @@ import (
 )
 
 func TestMigration22019AddsWorkflowTriggerPersistenceAndRollsBack(t *testing.T) {
-	legacyVersion := "2.20.18"
+	legacyVersion := "2.20.1-ex1.17"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	project := createLegacyProject(t, store, "Legacy workflow triggers")
@@ -57,8 +57,8 @@ func TestMigration22019AddsWorkflowTriggerPersistenceAndRollsBack(t *testing.T) 
 }
 
 func TestMigration22019UsesPortableWorkflowTriggerColumns(t *testing.T) {
-	migration := strings.Join(getVersionSQL("mysql", "v2.20.19.sql", false), ";")
-	rollback := strings.Join(getVersionSQL("mysql", "v2.20.19.err.sql", true), ";")
+	migration := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.18.sql", false), ";")
+	rollback := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.18.err.sql", true), ";")
 	assert.Contains(t, migration, "`credential_hash` varchar(71)")
 	assert.Contains(t, migration, "`request_key_hash` varchar(71) null")
 	assert.Contains(t, migration, "`occurrence_identity` varchar(64) null")

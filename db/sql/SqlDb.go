@@ -360,6 +360,9 @@ create table ` + "`migrations`" + ` (
 //go:embed migrations/*.sql
 var dbAssets embed.FS
 
+//go:embed migrations_ex/*.sql
+var exDbAssets embed.FS
+
 func CreateDb(dialect string) *SqlDb {
 	return &SqlDb{
 		connection: SqlDbConnection{

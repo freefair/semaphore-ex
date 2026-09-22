@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22025AddsAndRollsBackTaskControlLeases(t *testing.T) {
-	legacyVersion := "2.20.24"
+	legacyVersion := "2.20.1-ex1.23"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	assert.NotContains(t, sqliteTableNames(t, store), "cluster__task_control")

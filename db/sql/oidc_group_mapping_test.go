@@ -212,22 +212,22 @@ func TestOIDCGroupAssignmentProjectionIdentifiesLDAPAndForeignOIDCOwners(t *test
 }
 
 func TestMigration22032AddsAndRollsBackOIDCGroupMappingTables(t *testing.T) {
-	legacy := "2.20.31"
+	legacy := "2.20.1-ex1.30"
 	store := InitConfigCreateTestStoreAt(&legacy)
 	t.Cleanup(store.Close)
-	require.NoError(t, store.ApplyMigration(db.Migration{Version: "2.20.32"}))
+	require.NoError(t, store.ApplyMigration(db.Migration{Version: "2.20.1-ex1.31"}))
 	revision, err := store.GetOIDCGroupMappingRevision("corp")
 	require.NoError(t, err)
 	assert.Equal(t, 1, revision)
 	assert.Contains(t, sqliteColumnNames(t, store, "project__user"), "oidc_group_managed_assignment_id")
-	require.NoError(t, store.TryRollbackMigration(db.Migration{Version: "2.20.32"}))
-	applied, err := store.IsMigrationApplied(db.Migration{Version: "2.20.32"})
+	require.NoError(t, store.TryRollbackMigration(db.Migration{Version: "2.20.1-ex1.31"}))
+	applied, err := store.IsMigrationApplied(db.Migration{Version: "2.20.1-ex1.31"})
 	require.NoError(t, err)
 	assert.False(t, applied)
 	assert.NotContains(t, sqliteColumnNames(t, store, "project__user"), "oidc_group_managed_assignment_id")
 }
 
 func TestMigration22032UsesMySQLCompatibleRollbackIndexSyntax(t *testing.T) {
-	rollback := strings.ToLower(strings.Join(getVersionSQL("mysql", "v2.20.32.err.sql", true), ";"))
+	rollback := strings.ToLower(strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.31.err.sql", true), ";"))
 	assert.Contains(t, rollback, "drop index `project__user__oidc_group_managed_assignment` on `project__user`")
 }

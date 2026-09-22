@@ -7,7 +7,7 @@ import (
 )
 
 func TestUpstreamSeamMigrationsPreserveExistingForkTemplates(t *testing.T) {
-	version := "2.20.65"
+	version := "2.20.1-ex1.64"
 	store := InitConfigCreateTestStoreAt(&version)
 	t.Cleanup(store.Close)
 	projectID, repositoryID := newLegacyTemplateTestProject(t, store)

@@ -1,2 +1,2 @@
-drop table `capability_test_record`;
-drop table `capability_config`;
+drop table `project__workflow_delay`;
+alter table `project__workflow_node` drop column `delay_seconds`;

@@ -220,7 +220,7 @@ func TestLDAPGroupMappingRemovalDoesNotDeleteManuallyRecreatedMembership(t *test
 }
 
 func TestMigration22031AddsAndRollsBackLDAPGroupMappingTables(t *testing.T) {
-	legacy := "2.20.30"
+	legacy := "2.20.1-ex1.29"
 	store := InitConfigCreateTestStoreAt(&legacy)
 	t.Cleanup(store.Close)
 	now := time.Unix(1_780_000_200, 0).UTC()
@@ -235,19 +235,19 @@ func TestMigration22031AddsAndRollsBackLDAPGroupMappingTables(t *testing.T) {
 		"cn=bind,dc=example,dc=test", "encrypted", "ou=users,dc=example,dc=test",
 		"(uid={{username}})", "entryUUID", "uid", "cn", "mail", "untested", "legacy", now, now)
 	require.NoError(t, err)
-	require.NoError(t, store.ApplyMigration(db.Migration{Version: "2.20.31"}))
+	require.NoError(t, store.ApplyMigration(db.Migration{Version: "2.20.1-ex1.30"}))
 	revision, err := store.GetLDAPGroupMappingRevision("legacy")
 	require.NoError(t, err)
 	assert.Equal(t, 1, revision)
 	assert.Contains(t, sqliteColumnNames(t, store, "project__user"), "ldap_group_managed_assignment_id")
-	require.NoError(t, store.TryRollbackMigration(db.Migration{Version: "2.20.31"}))
-	applied, err := store.IsMigrationApplied(db.Migration{Version: "2.20.31"})
+	require.NoError(t, store.TryRollbackMigration(db.Migration{Version: "2.20.1-ex1.30"}))
+	applied, err := store.IsMigrationApplied(db.Migration{Version: "2.20.1-ex1.30"})
 	require.NoError(t, err)
 	assert.False(t, applied)
 	assert.NotContains(t, sqliteColumnNames(t, store, "project__user"), "ldap_group_managed_assignment_id")
 }
 
 func TestMigration22031UsesMySQLCompatibleRollbackIndexSyntax(t *testing.T) {
-	rollback := strings.ToLower(strings.Join(getVersionSQL("mysql", "v2.20.31.err.sql", true), ";"))
+	rollback := strings.ToLower(strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.30.err.sql", true), ";"))
 	assert.Contains(t, rollback, "drop index `project__user__ldap_group_managed_assignment` on `project__user`")
 }

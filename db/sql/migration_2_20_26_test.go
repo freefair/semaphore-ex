@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22026AddsAndRollsBackTaskExecutionEvidence(t *testing.T) {
-	legacyVersion := "2.20.25"
+	legacyVersion := "2.20.1-ex1.24"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	assert.NotContains(t, sqliteColumnNames(t, store, "cluster__task_control"), "last_evidence_state")

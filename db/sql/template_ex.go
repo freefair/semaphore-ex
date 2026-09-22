@@ -17,7 +17,7 @@ const templateSearchVisibleIDChunkSize = 500
 // addTemplateRunnerTagPolicyFields keeps template writes compatible with
 // databases that predate the runner-tag policy migration.
 func (d *SqlDb) addTemplateRunnerTagPolicyFields(fields map[string]any, tmpl db.Template) error {
-	hasRunnerTagPolicy, err := d.IsMigrationApplied(db.Migration{Version: "2.20.6"})
+	hasRunnerTagPolicy, err := d.IsMigrationApplied(db.Migration{Version: "2.20.1-ex1.5"})
 	if err != nil {
 		return err
 	}

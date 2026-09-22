@@ -1,4 +1,1 @@
-alter table `task` drop `runner_id_snapshot`;
-alter table `runner` drop `current_load`;
-alter table `runner` drop `platform`;
-alter table `runner` drop `version`;
+{{ if .Mysql }}drop index `project__template__project_id_name` on `project__template`{{ else }}drop index `project__template__project_id_name`{{ end }};

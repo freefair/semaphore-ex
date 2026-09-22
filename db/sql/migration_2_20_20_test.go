@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22020AddsImmutableWorkflowApprovalFieldsAndRollsBack(t *testing.T) {
-	legacyVersion := "2.20.19"
+	legacyVersion := "2.20.1-ex1.18"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	assert.NotContains(t, sqliteColumnNames(t, store, "project__workflow_approval"), "deadline")

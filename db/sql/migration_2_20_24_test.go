@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22024AddsAndRollsBackScheduleOccurrenceLeases(t *testing.T) {
-	legacyVersion := "2.20.23"
+	legacyVersion := "2.20.1-ex1.22"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	assert.NotContains(t, sqliteTableNames(t, store), "cluster__schedule_occurrence")

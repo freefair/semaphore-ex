@@ -304,7 +304,7 @@ func (d *SqlDb) getTemplates(
 	// runner_tags was added after the original template schema. Keep reads from
 	// pre-policy database versions compatible while including every current tag
 	// in the literal search surface.
-	hasRunnerTagPolicy, err := d.IsMigrationApplied(db.Migration{Version: "2.20.6"})
+	hasRunnerTagPolicy, err := d.IsMigrationApplied(db.Migration{Version: "2.20.1-ex1.5"})
 	if err != nil {
 		return
 	}

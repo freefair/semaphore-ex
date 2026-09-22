@@ -8,7 +8,7 @@ import (
 )
 
 func TestMigration22045AddsKubernetesPolicyState(t *testing.T) {
-	legacyVersion := "2.20.44"
+	legacyVersion := "2.20.1-ex1.43"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	assert.NotContains(t, sqliteColumnNames(t, store, "runner"), "k8s_policy_hash")

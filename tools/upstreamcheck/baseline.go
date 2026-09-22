@@ -148,6 +148,29 @@ func checkBootstrapSQL(root, sha string) error {
 }
 
 func validateLedgerEvolution(old, current migrationLedger) error {
+	// The explicit fresh-development namespace split moves SQL unchanged and
+	// restores canonical upstream identities. No database adoption is implied.
+	if old.Format == 1 && current.Format == 2 {
+		for _, previous := range old.Entries {
+			found := false
+			for _, next := range current.Entries {
+				if previous.Owner == "fork" && next.Owner == "fork" {
+					found = sameMigrationSQL(previous.Files, next.Files)
+				} else if previous.Owner == "upstream-adapted" {
+					found = next.ID == previous.UpstreamID && (next.Owner == "upstream" || next.Owner == "upstream-adapted")
+				} else if previous.Owner == "upstream" && previous.ID == next.ID {
+					found = sameMigrationSQL(previous.Files, next.Files)
+				}
+				if found {
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("namespace split lost migration %s", previous.ID)
+			}
+		}
+		return nil
+	}
 	indexed := map[string]migrationEntry{}
 	for _, row := range current.Entries {
 		indexed[row.ID] = row
@@ -158,6 +181,25 @@ func validateLedgerEvolution(old, current migrationLedger) error {
 		}
 	}
 	return nil
+}
+
+func sameMigrationSQL(before, after map[string]string) bool {
+	if len(before) != len(after) {
+		return false
+	}
+	counts := make(map[string]int)
+	for _, sum := range before {
+		counts[sum]++
+	}
+	for _, sum := range after {
+		counts[sum]--
+	}
+	for _, count := range counts {
+		if count != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func validateContractEvolution(old, current contractInventory) error {

@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22034AddsDockerPolicyState(t *testing.T) {
-	legacyVersion := "2.20.33"
+	legacyVersion := "2.20.1-ex1.32"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 

@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22046AddsKubernetesNetworkProvenance(t *testing.T) {
-	legacyVersion := "2.20.45"
+	legacyVersion := "2.20.1-ex1.44"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	assert.NotContains(t, sqliteColumnNames(t, store, "task__runner_attempt"), "k8s_network_policy_uid")

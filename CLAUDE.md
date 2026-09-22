@@ -31,6 +31,19 @@ Run security scans, security-focused investigation, security-relevant implementa
 
 ## Upstream Maintenance
 
+### Independent migration histories
+
+Upstream and EX SQL migrations use separate source directories, registries, and
+database history tables. Upstream retains its original migration identities; EX
+has an independent sequence with upstream-anchored `X.Y.Z-exA.B.C` identities.
+Each EX step runs after its upstream anchor and before the next upstream version;
+rollback reverses the same dependency order. Development targets fresh databases. Legacy EX
+database adoption, history conversion, and compatibility with the old mixed
+history are outside the current implementation scope. Existing deployed
+databases are not modified as part of development verification.
+
+Direct communication with Dennis is in German; technical documentation remains in English.
+
 Maintain the project-specific sync skill in
 `.claude/skills/semaphore-upstream-sync/`. The Codex discovery entry under
 `.agents/skills/` links to that same source. Keep skill instructions, metadata,
@@ -50,11 +63,11 @@ and merge the reviewed upstream SHA. Maintain related documentation independentl
 Use ordinary pushes and stop to reassess if the recorded remote tip has changed.
 This repository policy supersedes older rebase instructions in personal sync skills.
 
-Preserve shipped migration IDs and SQL. Append new local migrations and record
-ownership and upstream identity in `maintenance/migrations.yml`. Validate against
-the prior reviewed ledger; an upstream change to applied SQL needs a new corrective
-migration. Let the incoming assessment expose collisions; resolve their semantics
-explicitly rather than accepting a whole side of the merge.
+Keep upstream migration IDs canonical and register new upstream SQL only in the
+upstream registry/directory. EX migrations belong only to their independent
+registry, SQL directory, and history table. Record qualified source ownership in
+`maintenance/migrations.yml`; same version numbers across namespaces are distinct.
+Development verifies fresh schemas, not conversion of old mixed histories.
 
 Review every exported seam change with `maintenance/contracts.yml`. Implement new
 behavior explicitly in the selected Enhanced module, add behavioral regressions,

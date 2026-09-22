@@ -8,7 +8,7 @@ import (
 )
 
 func TestUpstreamTemplateMigrationsPreserveForkUpgradeAndRollback(t *testing.T) {
-	previous := "2.20.67"
+	previous := "2.20.3"
 	store := InitConfigCreateTestStoreAt(&previous)
 	t.Cleanup(store.Close)
 	projectID, repositoryID := newLegacyTemplateTestProject(t, store)

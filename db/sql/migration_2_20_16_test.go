@@ -10,7 +10,7 @@ import (
 )
 
 func TestMigration22016BackfillsConditionalWorkflowDefaultsAndRollsBack(t *testing.T) {
-	legacyVersion := "2.20.15"
+	legacyVersion := "2.20.1-ex1.14"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	project := createLegacyProject(t, store, "Legacy conditional workflow")
@@ -77,7 +77,7 @@ func TestMigration22016BackfillsConditionalWorkflowDefaultsAndRollsBack(t *testi
 }
 
 func TestMigration22016UsesMySQLCompatibleLargeResultColumns(t *testing.T) {
-	migration := strings.Join(getVersionSQL("mysql", "v2.20.16.sql", false), ";")
+	migration := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.15.sql", false), ";")
 	assert.Contains(t, migration, "`condition_program` longtext null")
 	assert.Contains(t, migration, "modify column `condition_program` longtext not null")
 	assert.Contains(t, migration, "`result` longtext null")

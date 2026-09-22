@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22023AddsAndRollsBackClusterNodeHistory(t *testing.T) {
-	legacyVersion := "2.20.22"
+	legacyVersion := "2.20.1-ex1.21"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	assert.NotContains(t, sqliteTableNames(t, store), "cluster__node")

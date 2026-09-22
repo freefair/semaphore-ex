@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22022AddsWorkflowReconciliationStateAndRollsBack(t *testing.T) {
-	legacyVersion := "2.20.20"
+	legacyVersion := "2.20.1-ex1.19"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	columns := sqliteColumnNames(t, store, "project__workflow_run")

@@ -72,8 +72,8 @@ Relative external references would resolve against that upstream schema identity
 Regular updates merge upstream into the long-lived fork.
 History reconstruction is a separately authorized exception and is not part of routine syncs.
 Review new exported seams for inherited placeholders and require observable behavior tests before updating their inventory.
-Migration IDs and applied SQL remain unchanged by file separation; the ownership ledger remains the current migration policy.
-A runtime migration namespace needs its own design and upgrade verification.
+Upstream and EX migrations have independent registries, source directories, and database history tables.
+The format-2 ownership ledger enforces these boundaries. Development uses fresh databases; conversion of old mixed database histories is a separate operator decision.
 
 Reduced shared-line counts indicate less textual overlap; semantic conflicts still require explicit review.
 Keep source extraction, helper changes and compatibility repairs independently reviewable.

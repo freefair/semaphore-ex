@@ -11,7 +11,7 @@ import (
 )
 
 func TestPolicyGuardrailMigrationCreatesAndRollsBackGovernanceLedger(t *testing.T) {
-	legacyVersion := "2.20.61"
+	legacyVersion := "2.20.1-ex1.60"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	require.NoError(t, db.Migrate(store, nil))
@@ -38,13 +38,13 @@ func TestPolicyGuardrailMigrationPreparesForEverySQLDialect(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &SqlDb{connection: SqlDbConnection{sql: &gorp.DbMap{Dialect: test.gorp}}}
-			queries := getVersionSQL(test.dialect, "v2.20.62.sql", false)
+			queries := getVersionSQL(test.dialect, "ex/v2.20.1-ex1.61.sql", false)
 			prepared := make([]string, len(queries))
 			for index, query := range queries {
 				prepared[index] = store.prepareMigration(query)
 			}
 			joined := strings.ToLower(strings.Join(prepared, ";"))
-			rollback := strings.ToLower(strings.Join(getVersionSQL(test.dialect, "v2.20.62.err.sql", true), ";"))
+			rollback := strings.ToLower(strings.Join(getVersionSQL(test.dialect, "ex/v2.20.1-ex1.61.err.sql", true), ";"))
 			assert.Contains(t, joined, test.primaryKey)
 			assert.Contains(t, joined, "policy_guardrail_evaluation__project_created")
 			assert.NotContains(t, joined, "foreign key (`published_by`)")

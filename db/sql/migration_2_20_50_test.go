@@ -10,7 +10,7 @@ import (
 )
 
 func TestMigration22050AddsWorkflowVersionStorage(t *testing.T) {
-	legacyVersion := "2.20.49"
+	legacyVersion := "2.20.1-ex1.48"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 
@@ -58,8 +58,8 @@ func TestMigration22050AddsWorkflowVersionStorage(t *testing.T) {
 }
 
 func TestMigration22050UsesPortableCrossProjectProvenanceColumns(t *testing.T) {
-	migration := strings.Join(getVersionSQL("mysql", "v2.20.50.sql", false), ";")
-	rollback := strings.Join(getVersionSQL("mysql", "v2.20.50.err.sql", true), ";")
+	migration := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.49.sql", false), ";")
+	rollback := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.49.err.sql", true), ";")
 
 	for _, column := range []string{"cross_project_template_reference", "cross_project_template_provenance"} {
 		assert.Contains(t, migration, "`"+column+"` longtext null")

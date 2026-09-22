@@ -22,7 +22,7 @@ func TestCapabilityMigrationPreparesAutoIncrementForEverySQLDialect(t *testing.T
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &SqlDb{connection: SqlDbConnection{sql: &gorp.DbMap{Dialect: tt.gorp}}}
-			queries := getVersionSQL(tt.dialect, "v2.20.2.sql", false)
+			queries := getVersionSQL(tt.dialect, "ex/v2.20.1-ex1.1.sql", false)
 			prepared := make([]string, len(queries))
 			for i, query := range queries {
 				prepared[i] = store.prepareMigration(query)

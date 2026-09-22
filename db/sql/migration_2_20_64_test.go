@@ -11,7 +11,7 @@ import (
 )
 
 func TestSignedWebhookPersistenceMigrationFailsClosedForLegacyInboundRows(t *testing.T) {
-	legacyVersion := "2.20.63"
+	legacyVersion := "2.20.1-ex1.62"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	connection := store.GetConnection()
@@ -71,7 +71,7 @@ func TestSignedWebhookPersistenceMigrationPreparesForEverySQLDialect(t *testing.
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &SqlDb{connection: SqlDbConnection{sql: &gorp.DbMap{Dialect: test.gorp}}}
-			queries := getVersionSQL(test.dialect, "v2.20.64.sql", false)
+			queries := getVersionSQL(test.dialect, "ex/v2.20.1-ex1.63.sql", false)
 			joined := strings.ToLower(strings.Join(queries, ";"))
 			assert.Contains(t, joined, "audit_webhook_delivery_attempt")
 			assert.Contains(t, joined, "webhook_event_hash")
@@ -82,7 +82,7 @@ func TestSignedWebhookPersistenceMigrationPreparesForEverySQLDialect(t *testing.
 			assert.NotContains(t, store.prepareMigration(joined), "sqlite")
 		})
 	}
-	rollback := strings.ToLower(strings.Join(getVersionSQL("mysql", "v2.20.64.err.sql", true), ";"))
+	rollback := strings.ToLower(strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.63.err.sql", true), ";"))
 	assert.NotContains(t, rollback, "drop index `audit_webhook_delivery_attempt__delivery`")
 	assert.Contains(t, rollback, "drop table `audit_webhook_delivery_attempt`")
 }

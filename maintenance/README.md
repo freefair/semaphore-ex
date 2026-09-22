@@ -60,24 +60,39 @@ its owner, original upstream ID when applicable, and exact SHA-256 checksums of
 all forward/rollback/dialect files. `upstream-adapted` entries explain why their
 local form differs. Historical unregistered SQL is recorded without activating it.
 
-The two identities are deliberately separate:
+Upstream and EX are independent runtime namespaces:
 
-| Logical upstream identity | Shipped local identity | Reason |
-|---|---|---|
-| `2.20.2` | `2.20.66` | Fork `2.20.2` already configures capabilities |
-| `2.20.3` | `2.20.67` | Fork `2.20.3` already adds runner names |
-| `2.20.4` | `2.20.68` | Fork `2.20.4` is shipped; append unique template names |
-| `2.20.5` | `2.20.69` | Fork `2.20.5` is shipped; append error-alert suppression |
+| Scope | Registry | SQL directory | History table | Target |
+|---|---|---|---|---|
+| Upstream | `db.GetMigrations` | `db/sql/migrations` | `migrations` | `X.Y.Z` |
+| EX | `db.GetEXMigrations` | `db/sql/migrations_ex` | `ex_migrations` | `X.Y.Z-exA.B.C` |
 
-The runtime registry and deployed `migrations` table keep their existing numeric
-IDs. New fork migrations receive the next free local tail ID and `owner: fork`.
-New upstream migrations receive a new local tail ID and an explicit `upstream_id`,
-including when their original number collides with a shipped fork migration.
-Register them once in `db/Migration.go`; preserve ordering and all dialect gates.
-A change to already applied upstream SQL becomes a new corrective local migration,
-not a rewrite of a shipped file.
+Upstream migration identities match upstream. New upstream migrations are added
+under their original identity and never consume EX sequence numbers. EX files
+use `vX.Y.Z-exA.B.C.sql`/`.err.sql` names; `X.Y.Z` is the upstream dependency and the numeric EX suffix orders EX steps at that anchor. The versioned ownership ledger records
+fully qualified source paths and rejects cross-namespace ownership or files.
 
-`-base-ref` makes old ledger entries append-only. The first ledger is checked
+Execution interleaves the two independent registries by exact upstream anchor:
+`2.20.2`, `2.20.2-ex2.2.1`, `2.20.2-ex2.2.2`, then `2.20.3`.
+EX suffix components are compared numerically, so `.10` follows `.2`.
+Every EX anchor must exist in the upstream registry; unknown anchors and duplicate
+identities fail before execution. A failed step prevents dependent/later steps.
+PostgreSQL and MySQL/MariaDB serialize the entire interleaved plan with one
+database migration lock; SQLite is a single-host store. HA schema identity
+contains both registry heads.
+
+An apply target ends the plan at that identity, including earlier EX dependencies.
+An upstream target such as `2.20.2` stops before that anchor's EX steps. Rollback
+uses the exact reverse plan: later upstream steps are undone before earlier EX
+steps, and an anchor is undone only after all its EX dependents are undone.
+
+This development layout targets fresh databases. It provides no automatic
+conversion or adoption of the earlier mixed migration history. Existing database
+transition is a separate operator decision and is not inferred from table names.
+
+`-base-ref` checks immutable entries within the separated ledger. The explicit
+format-1 to format-2 source-layout transition verifies moved fork SQL checksums
+and restores upstream identities; it does not migrate database records. The first ledger is checked
 against the immutable product baseline recorded in `tools/upstreamcheck/baseline.go`; subsequent checks compare
 against the prior reviewed ledger. The CI gate uses the push predecessor or PR
 base, so changing a SQL checksum and its ledger entry together still fails.

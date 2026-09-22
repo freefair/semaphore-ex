@@ -1,6 +1,5 @@
-alter table `project__workflow_node` add `delay_seconds` int null;
-
-create table `project__workflow_delay` (
+{{ if .Sqlite }}
+create table `project__workflow_delay_ex_65` (
   `id` integer primary key autoincrement,
   `project_id` int not null,
   `workflow_run_id` int not null,
@@ -16,5 +15,18 @@ create table `project__workflow_delay` (
   unique (`workflow_run_id`, `workflow_node_id`)
 );
 
+insert into `project__workflow_delay_ex_65`
+  (`id`, `project_id`, `workflow_run_id`, `workflow_node_id`, `status`, `resume_at`, `created`, `resolved`)
+select `id`, `project_id`, `workflow_run_id`, `workflow_node_id`, `status`, `resume_at`, `created`, `resolved`
+from `project__workflow_delay`;
+
+drop table `project__workflow_delay`;
+alter table `project__workflow_delay_ex_65` rename to `project__workflow_delay`;
 create index `project__workflow_delay__workflow_run_id` on `project__workflow_delay`(`workflow_run_id`);
 create index `project__workflow_delay__status_resume_at` on `project__workflow_delay`(`status`, `resume_at`);
+{{ else }}
+alter table `project__workflow_delay`
+  add constraint `project__workflow_delay__run_node`
+  foreign key (`workflow_run_id`, `workflow_node_id`)
+  references `project__workflow_run_node`(`workflow_run_id`, `workflow_node_id`) on delete cascade;
+{{ end }}

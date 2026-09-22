@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22048AddsKubernetesTelemetryFenceStorage(t *testing.T) {
-	legacyVersion := "2.20.47"
+	legacyVersion := "2.20.1-ex1.46"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	require.NoError(t, db.Migrate(store, nil))

@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22030SeparatesGlobalAssignmentsAndTemplateOverrides(t *testing.T) {
-	legacyVersion := "2.20.29"
+	legacyVersion := "2.20.1-ex1.28"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 
@@ -75,7 +75,7 @@ func TestMigration22030RollbackRefusesToRemoveTheLastGlobalAdministrator(t *test
 	builtInAdmin.Admin = false
 	require.NoError(t, store.UpdateUser(db.UserWithPwd{User: builtInAdmin}))
 
-	err = db.Rollback(store, "2.20.29")
+	err = db.Rollback(store, "2.20.1-ex1.28")
 	assert.ErrorIs(t, err, db.ErrLastGlobalAdministrator)
 	assert.Contains(t, sqliteTableNames(t, store), "user__global_role")
 	_, err = store.GetGlobalRoleByID(role.ID)
@@ -102,7 +102,7 @@ func TestMigration22030RollbackRefusesToRegrantDeniedTemplatePermissions(t *test
 	})
 	require.NoError(t, err)
 
-	err = db.Rollback(store, "2.20.29")
+	err = db.Rollback(store, "2.20.1-ex1.28")
 	assert.ErrorIs(t, err, db.ErrInvalidOperation)
 	assert.Contains(t, sqliteColumnNames(t, store, "project__template_role"), "denied_permissions")
 }

@@ -46,7 +46,7 @@ func TestTwoNodeRegistriesShareSQLHistoryAndRedisLiveness(t *testing.T) {
 	client := NewGoRedisHeartbeatClient(redis.NewClient(&redis.Options{Addr: server.Addr()}))
 	heartbeats := NewRedisHeartbeatStore(client, "semaphore:cluster:node")
 	requirements := pro_interfaces.ClusterCompatibilityRequirements{
-		ProtocolVersion: 1, SchemaVersion: "2.20.23", RequiredCapabilities: []string{"cluster-dashboard"},
+		ProtocolVersion: 1, SchemaVersion: "2.20.1-ex1.22", RequiredCapabilities: []string{"cluster-dashboard"},
 	}
 	first := NewManagedNodeRegistry(repository, heartbeats, clusterRegistration("node-a", "boot-a"), time.Hour, 30*time.Second)
 	second := NewManagedNodeRegistry(repository, heartbeats, clusterRegistration("node-b", "boot-b"), time.Hour, 30*time.Second)
@@ -75,7 +75,7 @@ func clusterRegistration(nodeID string, bootID string) pro_interfaces.ClusterNod
 	return pro_interfaces.ClusterNodeRegistration{
 		ClusterNodeIdentity: pro_interfaces.ClusterNodeIdentity{NodeID: nodeID, BootID: bootID},
 		Edition:             "enhanced", Version: "1.2.3", Build: "abc", ProtocolVersion: 1,
-		SchemaVersion: "2.20.23", Capabilities: []string{"cluster-dashboard"},
+		SchemaVersion: "2.20.1-ex1.22", Capabilities: []string{"cluster-dashboard"},
 	}
 }
 
@@ -118,7 +118,7 @@ func TestManagedNodeRegistryPersistsServerTimedStartAndRemovesHeartbeat(t *testi
 	registration := pro_interfaces.ClusterNodeRegistration{
 		ClusterNodeIdentity: pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-a"},
 		Edition:             "enhanced", Version: "1.2.3", Build: "abc", ProtocolVersion: 1,
-		SchemaVersion: "2.20.23", Capabilities: []string{"workflows"},
+		SchemaVersion: "2.20.1-ex1.22", Capabilities: []string{"workflows"},
 	}
 	registry := NewManagedNodeRegistry(repository, heartbeats, registration, time.Hour, 30*time.Second)
 
@@ -140,11 +140,11 @@ func TestManagedClusterInspectorDoesNotPresentStaleOrIncompatibleNodesAsReady(t 
 	client := &heartbeatClientFake{serverTime: serverNow, exists: true}
 	heartbeats := NewRedisHeartbeatStore(client, "semaphore:cluster:node")
 	repository := &clusterNodeRepositoryFake{nodes: []pro_interfaces.ClusterNodeRegistration{
-		{ClusterNodeIdentity: pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-a"}, ProtocolVersion: 1, SchemaVersion: "2.20.23", Capabilities: []string{"workflows"}, LastSeenAt: serverNow},
-		{ClusterNodeIdentity: pro_interfaces.ClusterNodeIdentity{NodeID: "node-b", BootID: "boot-b"}, ProtocolVersion: 1, SchemaVersion: "2.20.22", Capabilities: []string{"workflows"}, LastSeenAt: serverNow},
+		{ClusterNodeIdentity: pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-a"}, ProtocolVersion: 1, SchemaVersion: "2.20.1-ex1.22", Capabilities: []string{"workflows"}, LastSeenAt: serverNow},
+		{ClusterNodeIdentity: pro_interfaces.ClusterNodeIdentity{NodeID: "node-b", BootID: "boot-b"}, ProtocolVersion: 1, SchemaVersion: "2.20.1-ex1.21", Capabilities: []string{"workflows"}, LastSeenAt: serverNow},
 	}}
 	inspector := NewManagedClusterInspector(repository, heartbeats,
-		pro_interfaces.ClusterCompatibilityRequirements{ProtocolVersion: 1, SchemaVersion: "2.20.23"},
+		pro_interfaces.ClusterCompatibilityRequirements{ProtocolVersion: 1, SchemaVersion: "2.20.1-ex1.22"},
 		pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-a"})
 
 	nodes, err := inspector.Nodes()
@@ -161,11 +161,11 @@ func TestManagedClusterInspectorKeepsSQLMembershipVisibleWhenRedisIsUnavailable(
 	repository := &clusterNodeRepositoryFake{nodes: []pro_interfaces.ClusterNodeRegistration{{
 		ClusterNodeIdentity: pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-a"},
 		ProtocolVersion:     1,
-		SchemaVersion:       "2.20.23",
+		SchemaVersion:       "2.20.1-ex1.22",
 		LastSeenAt:          serverNow,
 	}}}
 	inspector := NewManagedClusterInspector(repository, unavailableHeartbeatStore{},
-		pro_interfaces.ClusterCompatibilityRequirements{ProtocolVersion: 1, SchemaVersion: "2.20.23"},
+		pro_interfaces.ClusterCompatibilityRequirements{ProtocolVersion: 1, SchemaVersion: "2.20.1-ex1.22"},
 		pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-a"})
 
 	nodes, err := inspector.Nodes()
@@ -182,7 +182,7 @@ func TestManagedClusterInspectorKeepsSQLMembershipVisibleWhenRedisIsUnavailable(
 func TestManagedClusterInspectorReadinessFailsClosedForDrainEditionAndDatabase(t *testing.T) {
 	identity := pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "boot-a"}
 	requirements := pro_interfaces.ClusterCompatibilityRequirements{
-		Edition: "enhanced", ProtocolVersion: 1, SchemaVersion: "2.20.23",
+		Edition: "enhanced", ProtocolVersion: 1, SchemaVersion: "2.20.1-ex1.22",
 	}
 	for name, testCase := range map[string]struct {
 		repository    *clusterNodeRepositoryFake
@@ -191,14 +191,14 @@ func TestManagedClusterInspectorReadinessFailsClosedForDrainEditionAndDatabase(t
 		"draining": {
 			repository: &clusterNodeRepositoryFake{nodes: []pro_interfaces.ClusterNodeRegistration{{
 				ClusterNodeIdentity: identity, Edition: "enhanced", ProtocolVersion: 1,
-				SchemaVersion: "2.20.23", Draining: true,
+				SchemaVersion: "2.20.1-ex1.22", Draining: true,
 			}}},
 			expectedState: pro_interfaces.ClusterServiceReadinessState(pro_interfaces.ClusterNodeDraining),
 		},
 		"edition": {
 			repository: &clusterNodeRepositoryFake{nodes: []pro_interfaces.ClusterNodeRegistration{{
 				ClusterNodeIdentity: identity, Edition: "community", ProtocolVersion: 1,
-				SchemaVersion: "2.20.23",
+				SchemaVersion: "2.20.1-ex1.22",
 			}}},
 			expectedState: pro_interfaces.ClusterServiceReadinessState(pro_interfaces.ClusterNodeIncompatibleEdition),
 		},

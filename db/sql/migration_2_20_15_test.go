@@ -11,7 +11,7 @@ import (
 )
 
 func TestMigration22015BackfillsMultipleLegacyWorkflowRuns(t *testing.T) {
-	legacyVersion := "2.20.14"
+	legacyVersion := "2.20.1-ex1.13"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	project := createLegacyProject(t, store, "Legacy workflow runs")
@@ -47,7 +47,7 @@ func TestMigration22015BackfillsMultipleLegacyWorkflowRuns(t *testing.T) {
 }
 
 func TestMigration22015UsesLargeMySQLSnapshotColumns(t *testing.T) {
-	migration := strings.Join(getVersionSQL("mysql", "v2.20.15.sql", false), ";")
+	migration := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.14.sql", false), ";")
 	assert.Contains(t, migration, "`definition_snapshot` longtext")
 	assert.Contains(t, migration, "`template_snapshot` longtext")
 	assert.Contains(t, migration, "`workflow_template_snapshot` longtext")

@@ -10,7 +10,7 @@ import (
 )
 
 func TestMigration22017BackfillsWorkflowArtifactMetadataAndRollsBack(t *testing.T) {
-	legacyVersion := "2.20.16"
+	legacyVersion := "2.20.1-ex1.15"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	project := createLegacyProject(t, store, "Legacy workflow artifacts")
@@ -64,8 +64,8 @@ func TestMigration22017BackfillsWorkflowArtifactMetadataAndRollsBack(t *testing.
 }
 
 func TestMigration22017UsesMySQLCompatibleArtifactColumns(t *testing.T) {
-	migration := strings.Join(getVersionSQL("mysql", "v2.20.17.sql", false), ";")
-	rollback := strings.Join(getVersionSQL("mysql", "v2.20.17.err.sql", true), ";")
+	migration := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.16.sql", false), ";")
+	rollback := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.16.err.sql", true), ";")
 	assert.Contains(t, migration, "`artifact_outputs` longtext null")
 	assert.Contains(t, migration, "modify column `artifact_outputs` longtext not null")
 	assert.Contains(t, migration, "`artifact_inputs` longtext null")

@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22044AddsKubernetesExecutorMetadata(t *testing.T) {
-	legacyVersion := "2.20.43"
+	legacyVersion := "2.20.1-ex1.42"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 

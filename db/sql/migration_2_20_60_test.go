@@ -12,7 +12,7 @@ import (
 )
 
 func TestMigration22060CreatesAndRollsBackDeploymentWindowStorage(t *testing.T) {
-	legacyVersion := "2.20.59"
+	legacyVersion := "2.20.1-ex1.58"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	require.NoError(t, db.Migrate(store, nil))
@@ -37,8 +37,8 @@ func TestMigration22060CreatesAndRollsBackDeploymentWindowStorage(t *testing.T) 
 }
 
 func TestMigration22060LetsTableRollbackRemoveMySQLForeignKeyIndexes(t *testing.T) {
-	migration := strings.Join(getVersionSQL("mysql", "v2.20.60.sql", false), ";")
-	rollback := strings.Join(getVersionSQL("mysql", "v2.20.60.err.sql", true), ";")
+	migration := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.59.sql", false), ";")
+	rollback := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.59.err.sql", true), ";")
 	assert.Contains(t, migration, "`matched_rules` longtext not null")
 	assert.NotContains(t, rollback, "drop index")
 	assert.Contains(t, rollback, "drop table `project__deployment_window_decision`")
@@ -48,7 +48,7 @@ func TestMigration22060LetsTableRollbackRemoveMySQLForeignKeyIndexes(t *testing.
 
 func TestMigration22060PreparesForPostgres(t *testing.T) {
 	store := &SqlDb{connection: SqlDbConnection{sql: &gorp.DbMap{Dialect: gorp.PostgresDialect{}}}}
-	queries := getVersionSQL(util.DbDriverPostgres, "v2.20.60.sql", false)
+	queries := getVersionSQL(util.DbDriverPostgres, "ex/v2.20.1-ex1.59.sql", false)
 	prepared := make([]string, 0, len(queries))
 	for _, query := range queries {
 		prepared = append(prepared, store.prepareMigration(query))

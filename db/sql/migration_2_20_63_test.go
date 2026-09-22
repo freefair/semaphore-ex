@@ -11,7 +11,7 @@ import (
 )
 
 func TestWorkflowPolicyGuardrailEvaluationMigrationCreatesAndRollsBackNodeProvenance(t *testing.T) {
-	legacyVersion := "2.20.62"
+	legacyVersion := "2.20.1-ex1.61"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	require.NoError(t, db.Migrate(store, nil))
@@ -38,7 +38,7 @@ func TestWorkflowPolicyGuardrailEvaluationMigrationPreparesForEverySQLDialect(t 
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &SqlDb{connection: SqlDbConnection{sql: &gorp.DbMap{Dialect: test.gorp}}}
-			queries := getVersionSQL(test.dialect, "v2.20.63.sql", false)
+			queries := getVersionSQL(test.dialect, "ex/v2.20.1-ex1.62.sql", false)
 			joined := strings.ToLower(strings.Join(queries, ";"))
 			assert.Contains(t, joined, "policy_guardrail_evaluation_id")
 			assert.Contains(t, joined, "project__workflow_run_node__policy_guardrail_evaluation")

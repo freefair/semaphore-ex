@@ -10,7 +10,7 @@ import (
 )
 
 func TestTaskSSHKeyBindingsMigrationAddsNullableColumnsAndRollsBack(t *testing.T) {
-	legacyVersion := "2.20.70"
+	legacyVersion := "2.20.5-ex1.1"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 
@@ -30,7 +30,7 @@ func TestTaskSSHKeyBindingsMigrationAddsNullableColumnsAndRollsBack(t *testing.T
 func TestTaskSSHKeyBindingsMigrationUsesNullableLargeColumns(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
-			migration := strings.ToLower(strings.Join(getVersionSQL(dialect, "v2.20.71.sql", false), ";"))
+			migration := strings.ToLower(strings.Join(getVersionSQL(dialect, "ex/v2.20.5-ex1.2.sql", false), ";"))
 			assert.Contains(t, migration, "default_ssh_keys")
 			assert.Contains(t, migration, "always_ssh_keys")
 			assert.Contains(t, migration, "ssh_keys")

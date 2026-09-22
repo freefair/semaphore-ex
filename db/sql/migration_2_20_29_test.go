@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22029BackfillsProjectRoleIdentityAndAssignments(t *testing.T) {
-	legacyVersion := "2.20.28"
+	legacyVersion := "2.20.1-ex1.27"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 

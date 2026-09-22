@@ -73,18 +73,18 @@ func TestMigrationMatrix(t *testing.T) {
 
 func TestEnhancedRollbackMigrationsUseMySQLDropIndexSyntax(t *testing.T) {
 	for _, filename := range []string{
-		"v2.20.15.err.sql",
-		"v2.20.20.err.sql",
-		"v2.20.21.err.sql",
-		"v2.20.22.err.sql",
-		"v2.20.23.err.sql",
-		"v2.20.37.err.sql",
-		"v2.20.39.err.sql",
-		"v2.20.49.err.sql",
-		"v2.20.50.err.sql",
-		"v2.20.60.err.sql",
-		"v2.20.62.err.sql",
-		"v2.20.64.err.sql",
+		"ex/v2.20.1-ex1.14.err.sql",
+		"ex/v2.20.1-ex1.19.err.sql",
+		"ex/v2.20.1-ex1.20.err.sql",
+		"ex/v2.20.1-ex1.21.err.sql",
+		"ex/v2.20.1-ex1.22.err.sql",
+		"ex/v2.20.1-ex1.36.err.sql",
+		"ex/v2.20.1-ex1.38.err.sql",
+		"ex/v2.20.1-ex1.48.err.sql",
+		"ex/v2.20.1-ex1.49.err.sql",
+		"ex/v2.20.1-ex1.59.err.sql",
+		"ex/v2.20.1-ex1.61.err.sql",
+		"ex/v2.20.1-ex1.63.err.sql",
 	} {
 		t.Run(filename, func(t *testing.T) {
 			for _, query := range getVersionSQL(util.DbDriverMySQL, filename, true) {
@@ -196,6 +196,8 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 		persistedLDAP.State == "shadow" && persistedLDAP.ServerURL == "ldaps://ldap.example.test:636" &&
 		len(persistedGlobalAssignments) == 1 &&
 		persistedGlobalAssignments[0].RoleID == matrixRole.ID
+
+	assertCredentialBooleanMigration(t, store)
 
 	return migrationMatrixReport{
 		RollbackVersion:                         fixture.Version,

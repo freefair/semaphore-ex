@@ -13,7 +13,7 @@ import (
 )
 
 func TestNotificationMigrationAddsDurableGovernanceTables(t *testing.T) {
-	legacyVersion := "2.20.51"
+	legacyVersion := "2.20.1-ex1.50"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
@@ -75,8 +75,8 @@ func TestNotificationRoutingUsesPortableIntegerBoolean(t *testing.T) {
 }
 
 func TestNotificationRegionMigrationIsPortableAndReversible(t *testing.T) {
-	migration := strings.Join(getVersionSQL("mysql", "v2.20.52.sql", false), ";")
-	rollback := strings.Join(getVersionSQL("mysql", "v2.20.52.err.sql", true), ";")
+	migration := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.51.sql", false), ";")
+	rollback := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.51.err.sql", true), ";")
 	assert.Contains(t, migration, "add column `region` varchar(8) not null default ''")
 	assert.Contains(t, migration, "add column `destination_region` varchar(8) not null default ''")
 	assert.Contains(t, migration, "update `notification_destination` set `region`='us' where `provider`='pagerduty'")
@@ -86,8 +86,8 @@ func TestNotificationRegionMigrationIsPortableAndReversible(t *testing.T) {
 }
 
 func TestNotificationConfigurationRevisionMigrationIsPortableAndFailClosed(t *testing.T) {
-	migration := strings.Join(getVersionSQL("mysql", "v2.20.53.sql", false), ";")
-	rollback := strings.Join(getVersionSQL("mysql", "v2.20.53.err.sql", true), ";")
+	migration := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.52.sql", false), ";")
+	rollback := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.52.err.sql", true), ";")
 	assert.Contains(t, migration, "add column `configuration_revision` int not null default 1")
 	assert.Contains(t, migration, "add column `destination_configuration_revision` int not null default 0")
 	assert.Contains(t, migration, "set `configuration_revision`=1")
@@ -97,9 +97,9 @@ func TestNotificationConfigurationRevisionMigrationIsPortableAndFailClosed(t *te
 }
 
 func TestOpsgenieAsyncStateMigrationIsPortableAndReversible(t *testing.T) {
-	migration := strings.Join(getVersionSQL("mysql", "v2.20.54.sql", false), ";")
-	sqliteMigration := strings.Join(getVersionSQL("sqlite", "v2.20.54.sql", false), ";")
-	rollback := strings.Join(getVersionSQL("mysql", "v2.20.54.err.sql", true), ";")
+	migration := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.53.sql", false), ";")
+	sqliteMigration := strings.Join(getVersionSQL("sqlite", "ex/v2.20.1-ex1.53.sql", false), ";")
+	rollback := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.53.err.sql", true), ";")
 	assert.Contains(t, migration, "add column provider_config longtext null")
 	assert.Contains(t, migration, "set provider_config='' where provider_config is null")
 	assert.Contains(t, migration, "modify column provider_config longtext not null")
@@ -111,8 +111,8 @@ func TestOpsgenieAsyncStateMigrationIsPortableAndReversible(t *testing.T) {
 }
 
 func TestServiceNowBindingMigrationIsPortableAndReversible(t *testing.T) {
-	migration := strings.Join(getVersionSQL("mysql", "v2.20.55.sql", false), ";")
-	rollback := strings.Join(getVersionSQL("mysql", "v2.20.55.err.sql", true), ";")
+	migration := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.54.sql", false), ";")
+	rollback := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.54.err.sql", true), ";")
 	assert.Contains(t, migration, "create table notification_incident_binding")
 	assert.Contains(t, migration, "unique (`destination_id`, `incident_key`)")
 	assert.Contains(t, migration, "provider_record_id varchar(32)")
@@ -120,8 +120,8 @@ func TestServiceNowBindingMigrationIsPortableAndReversible(t *testing.T) {
 }
 
 func TestNotificationMigrationKeepsLOBAndRollbackPortable(t *testing.T) {
-	migration := strings.Join(getVersionSQL("mysql", "v2.20.51.sql", false), ";")
-	rollback := strings.Join(getVersionSQL("mysql", "v2.20.51.err.sql", true), ";")
+	migration := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.50.sql", false), ";")
+	rollback := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.50.err.sql", true), ";")
 	eventDefinition := strings.Split(strings.Split(migration, "create table `notification_event`")[1], "create index `notification_event__scope_history`")[0]
 	deliveryDefinition := strings.Split(strings.Split(migration, "create table `notification_delivery`")[1], "create index `notification_delivery__due`")[0]
 	assert.Contains(t, migration, "`encrypted_credential` longtext not null")

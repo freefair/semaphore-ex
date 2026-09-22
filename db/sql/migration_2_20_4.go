@@ -63,6 +63,32 @@ func (m migration_2_20_4) PreApply(tx *gorp.Transaction) error {
 	return nil
 }
 
+// PreRollback retains an explicit project_id index before undoing the unique
+// (project_id, name) index. InnoDB can use that unique index to support a
+// foreign key, then reject its removal when no other leading project_id index
+// remains.
+func (m migration_2_20_4) PreRollback(tx *gorp.Transaction) error {
+	if _, mysql := m.db.Sql().Dialect.(gorp.MySQLDialect); !mysql {
+		return nil
+	}
+
+	count, err := tx.SelectInt(m.db.PrepareQuery(
+		"select count(distinct index_name) from information_schema.statistics "+
+			"where table_schema=database() and table_name=? and column_name=? "+
+			"and seq_in_index=1 and index_name<>?"),
+		"project__template", "project_id", "project__template__project_id_name",
+	)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	_, err = tx.Exec(m.db.PrepareQuery(
+		"create index `project__template__project_id_support` on `project__template` (`project_id`)"))
+	return err
+}
+
 // freeTemplateName returns a name based on base which no template of the project
 // uses. Availability is asked of the database so that the answer follows the
 // same collation as the unique index.

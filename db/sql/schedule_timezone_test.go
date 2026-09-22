@@ -9,7 +9,7 @@ import (
 )
 
 func TestScheduleTimezoneMigrationPreservesExistingRowsAndRollsBack(t *testing.T) {
-	legacyVersion := "2.20.57"
+	legacyVersion := "2.20.1-ex1.56"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 
@@ -72,7 +72,7 @@ func TestScheduleTimezoneRoundTripsThroughRepository(t *testing.T) {
 
 func TestScheduleTimezoneMigrationPreparesForEverySupportedDialect(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
-		queries := getVersionSQL(dialect, "v2.20.58.sql", false)
+		queries := getVersionSQL(dialect, "ex/v2.20.1-ex1.57.sql", false)
 		require.NotEmpty(t, queries)
 		assert.Contains(t, queries[0], "timezone")
 		assert.Contains(t, queries[0], "varchar(128)")

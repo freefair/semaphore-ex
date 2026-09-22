@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22027AddsAndRollsBackTaskRecoveryDiagnostics(t *testing.T) {
-	legacyVersion := "2.20.26"
+	legacyVersion := "2.20.1-ex1.25"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	columns := []string{

@@ -2045,6 +2045,16 @@ symbols:
   - name: db:GetMigrations
     signature: func(dialect string) []db.Migration
     implementation: core
+  - name: db:GetEXMigrations
+    signature: func() []db.Migration
+    implementation: core
+    behavior_tests:
+      - db/migration_separation_ex_test.go::TestMigrationRegistriesAreIndependent
+  - name: db:CurrentSchemaVersion
+    signature: func(dialect string) string
+    implementation: core
+    behavior_tests:
+      - db/migration_separation_ex_test.go::TestMigrationRegistriesAreIndependent
   - name: db:GetNextBuildVersion
     signature: func(startVersion string, currentVersion string) string
     implementation: core

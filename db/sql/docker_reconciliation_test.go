@@ -296,7 +296,7 @@ func TestDockerReconciliationDiagnosticsPageIncludesHistoricalPendingOnly(t *tes
 func ptrDockerKey(value db.DockerReconciliationKey) *db.DockerReconciliationKey { return &value }
 
 func TestDockerReconciliationMigrationAddsAndRollsBackSchema(t *testing.T) {
-	legacy := "2.20.36"
+	legacy := "2.20.1-ex1.35"
 	store := InitConfigCreateTestStoreAt(&legacy)
 	t.Cleanup(store.Close)
 	assert.NotContains(t, sqliteTableNames(t, store), "docker_reconciliation_observation")
@@ -318,7 +318,7 @@ func TestDockerReconciliationMigrationAddsAndRollsBackSchema(t *testing.T) {
 func TestDockerReconciliationMigrationPreparesForSupportedDialects(t *testing.T) {
 	for _, dialect := range []string{util.DbDriverSQLite, util.DbDriverMySQL, util.DbDriverPostgres} {
 		t.Run(dialect, func(t *testing.T) {
-			queries := getVersionSQL(dialect, "v2.20.37.sql", false)
+			queries := getVersionSQL(dialect, "ex/v2.20.1-ex1.36.sql", false)
 			require.NotEmpty(t, queries)
 			for _, query := range queries {
 				assert.NotContains(t, query, "{{")

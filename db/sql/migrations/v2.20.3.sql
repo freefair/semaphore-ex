@@ -1,1 +1,1 @@
-alter table `task` add `runner_name` varchar(255) null;
+alter table `project__template` add column `working_directory` text null;

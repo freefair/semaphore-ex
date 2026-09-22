@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22061AddsAndRollsBackBlockedOutcomeFields(t *testing.T) {
-	legacyVersion := "2.20.60"
+	legacyVersion := "2.20.1-ex1.59"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	_, err := store.GetConnection().Exec("insert into cluster__schedule_occurrence(occurrence_key, schedule_id, schedule_revision, intended_at, owner_boot_id, fencing_token, lease_expires_at, task_id, completed_at, created, updated) values (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", "legacy-completed", 5, "r1", "legacy", 1, 99)

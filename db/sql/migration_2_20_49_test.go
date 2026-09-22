@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22049AddsWorkflowRolePolicyStorageAndMigratesRoleBits(t *testing.T) {
-	legacyVersion := "2.20.48"
+	legacyVersion := "2.20.1-ex1.47"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 

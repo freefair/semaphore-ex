@@ -23,6 +23,33 @@ func TestMigrationOwnershipRejectsCollisionAndChangedShippedSQL(t *testing.T) {
 	ledger.Entries[0].UpstreamID = "2.20.2"
 	assert.ErrorContains(t, validateLedger(ledger, files, registered), "mapped twice")
 }
+
+func TestSeparatedMigrationLedgerRejectsCrossNamespaceOwnership(t *testing.T) {
+	files := map[string]map[string]string{
+		"2.20.2":       {"migrations/v2.20.2.sql": "upstream"},
+		"2.20.2-ex1.1": {"migrations_ex/v2.20.2-ex1.1.sql": "ex"},
+	}
+	registered := map[string]bool{"2.20.2": true, "2.20.2-ex1.1": true}
+	ledger := migrationLedger{Format: 2, Entries: []migrationEntry{
+		{ID: "2.20.2", Owner: "upstream", UpstreamID: "2.20.2", Registered: true, Files: files["2.20.2"]},
+		{ID: "2.20.2-ex1.1", Owner: "fork", Registered: true, Files: files["2.20.2-ex1.1"]},
+	}}
+	require.NoError(t, validateLedger(ledger, files, registered))
+	assert.Empty(t, unmappedMigrations(ledger, map[string]bool{"2.20.2": true}))
+	rows := unmappedMigrations(ledger, map[string]bool{"2.20.3": true})
+	require.Len(t, rows, 1)
+	assert.NotContains(t, rows[0].Action, "Collision")
+	assert.Contains(t, rows[0].Action, "canonical upstream ID")
+	ledger.Entries[1].Owner = "upstream"
+	assert.ErrorContains(t, validateLedger(ledger, files, registered), "mixes upstream and EX")
+	ledger.Entries[1].Owner = "fork"
+	ledger.Entries[1].Files = map[string]string{"migrations/v2.sql": "ex"}
+	assert.ErrorContains(t, validateLedger(ledger, files, registered), "wrong source directory")
+}
+
+func TestSeparatedMigrationFilesMatchRegistryAndOwnership(t *testing.T) {
+	require.NoError(t, checkLedger("../.."))
+}
 func TestContractInventoryRejectsNewAndInheritedMethods(t *testing.T) {
 	fs := token.NewFileSet()
 	file, err := parser.ParseFile(fs, "stub.go", `package sql; type WorkflowStoreImpl struct{}; func (*WorkflowStoreImpl) GetExpiredWorkflowDelays() {}`, 0)

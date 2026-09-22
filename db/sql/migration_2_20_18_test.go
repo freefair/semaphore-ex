@@ -10,7 +10,7 @@ import (
 )
 
 func TestMigration22018BackfillsWorkflowParameterSnapshotsAndRollsBack(t *testing.T) {
-	legacyVersion := "2.20.17"
+	legacyVersion := "2.20.1-ex1.16"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	project := createLegacyProject(t, store, "Legacy workflow parameters")
@@ -67,8 +67,8 @@ func TestMigration22018BackfillsWorkflowParameterSnapshotsAndRollsBack(t *testin
 }
 
 func TestMigration22018UsesMySQLCompatibleSnapshotColumns(t *testing.T) {
-	migration := strings.Join(getVersionSQL("mysql", "v2.20.18.sql", false), ";")
-	rollback := strings.Join(getVersionSQL("mysql", "v2.20.18.err.sql", true), ";")
+	migration := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.17.sql", false), ";")
+	rollback := strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.17.err.sql", true), ";")
 	for _, column := range []string{"parameter_definitions", "override_policy", "parameter_snapshot", "override_snapshot"} {
 		assert.Contains(t, migration, "`"+column+"` longtext null")
 		assert.Contains(t, migration, "modify column `"+column+"` longtext not null")

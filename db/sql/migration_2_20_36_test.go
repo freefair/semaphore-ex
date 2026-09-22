@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22036AddsDenialRuleIDAndRollsBack(t *testing.T) {
-	legacy := "2.20.35"
+	legacy := "2.20.1-ex1.34"
 	store := InitConfigCreateTestStoreAt(&legacy)
 	t.Cleanup(store.Close)
 	assert.NotContains(t, sqliteColumnNames(t, store, "task__runner_attempt"), "denial_rule_id")

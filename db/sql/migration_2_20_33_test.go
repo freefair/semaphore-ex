@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22033AddsRunnerExecutorMetadata(t *testing.T) {
-	legacyVersion := "2.20.32"
+	legacyVersion := "2.20.1-ex1.31"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 

@@ -14,8 +14,8 @@ var migrationArgs struct {
 }
 
 func init() {
-	migrateCmd.PersistentFlags().StringVar(&migrationArgs.undoTo, "undo-to", "", "Undo to specific version")
-	migrateCmd.PersistentFlags().StringVar(&migrationArgs.applyTo, "apply-to", "", "Apply to specific version")
+	migrateCmd.PersistentFlags().StringVar(&migrationArgs.undoTo, "undo-to", "", "Undo the dependency-ordered migration plan to X.Y.Z or X.Y.Z-exN.M")
+	migrateCmd.PersistentFlags().StringVar(&migrationArgs.applyTo, "apply-to", "", "Apply the dependency-ordered migration plan through X.Y.Z or X.Y.Z-exN.M")
 	migrateCmd.PersistentFlags().IntVar(&migrationArgs.errLogSize, "err-log-size", 0, "Error log size")
 	migrateCmd.PersistentFlags().BoolVar(&migrationArgs.skipTaskOutput, "skip-task-output", false, "Skip task output importing during migration")
 	migrateCmd.PersistentFlags().BoolVar(&migrationArgs.mergeExistingUsers, "merge-existing-users", false, "Reuse existing users matched by username instead of failing on conflict")

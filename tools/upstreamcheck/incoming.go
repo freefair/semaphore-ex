@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -76,10 +75,10 @@ func unmappedMigrations(ledger migrationLedger, ids map[string]bool) []incomingM
 		if mapped[id] {
 			continue
 		}
-		row := incomingMigration{UpstreamID: id, Action: "Append a reviewed upstream ledger mapping and a new migration after the current tail; preserve shipped SQL."}
+		row := incomingMigration{UpstreamID: id, Action: "Add the canonical upstream ID in the upstream registry and source directory; the EX sequence is independent."}
 		if owned[id] {
 			row.LocalID = id
-			row.Action = fmt.Sprintf("Collision with shipped fork ID %s. Assign new local tail ID; retain upstream identity %s in ledger.", id, id)
+			row.Action = "Collision in legacy mixed history: migrate the development source layout to separate upstream and EX namespaces."
 		}
 		rows = append(rows, row)
 	}

@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22028AddsAndRollsBackWorkflowProgressionOwnership(t *testing.T) {
-	legacyVersion := "2.20.27"
+	legacyVersion := "2.20.1-ex1.26"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	assert.NotContains(t, sqliteTableNames(t, store), "cluster__workflow_reconciliation")

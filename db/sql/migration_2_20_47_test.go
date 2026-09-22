@@ -9,7 +9,7 @@ import (
 )
 
 func TestMigration22047AddsKubernetesReconciliationFenceTables(t *testing.T) {
-	legacyVersion := "2.20.46"
+	legacyVersion := "2.20.1-ex1.45"
 	store := InitConfigCreateTestStoreAt(&legacyVersion)
 	t.Cleanup(store.Close)
 	assert.NotContains(t, sqliteColumnNames(t, store, "runner"), "k8s_namespace")

@@ -29,58 +29,73 @@ type migrationEntry struct {
 
 func migrationFiles(root string) (map[string]map[string]string, error) {
 	result := map[string]map[string]string{}
-	paths, err := filepath.Glob(filepath.Join(root, "db/sql/migrations/*.sql"))
-	if err != nil {
-		return nil, err
-	}
-	for _, path := range paths {
-		name := filepath.Base(path)
-		stem := strings.TrimSuffix(strings.TrimPrefix(name, "v"), ".sql")
-		stem = strings.TrimSuffix(stem, ".err")
-		// Keep the SQLite bootstrap identifier; other dialect suffixes are variants of one migration.
-		for _, suffix := range []string{".mysql", ".postgres"} {
-			stem = strings.TrimSuffix(stem, suffix)
-		}
-		if strings.HasSuffix(stem, ".sqlite") && stem != "2.15.1.sqlite" {
-			stem = strings.TrimSuffix(stem, ".sqlite")
-		}
-		b, err := os.ReadFile(path)
+	for _, directory := range []string{"migrations", "migrations_ex"} {
+		paths, err := filepath.Glob(filepath.Join(root, "db/sql", directory, "*.sql"))
 		if err != nil {
 			return nil, err
 		}
-		if result[stem] == nil {
-			result[stem] = map[string]string{}
+		for _, source := range paths {
+			name := filepath.Base(source)
+			stem := strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(name, "v"), ".sql"), ".err")
+			for _, suffix := range []string{".mysql", ".postgres"} {
+				stem = strings.TrimSuffix(stem, suffix)
+			}
+			if strings.HasSuffix(stem, ".sqlite") && stem != "2.15.1.sqlite" {
+				stem = strings.TrimSuffix(stem, ".sqlite")
+			}
+			if directory == "migrations_ex" && !strings.Contains(stem, "-ex") {
+				return nil, fmt.Errorf("EX migration %s lacks upstream anchor", name)
+			}
+			if directory == "migrations" && strings.Contains(stem, "-ex") {
+				return nil, fmt.Errorf("EX migration %s is in upstream directory", name)
+			}
+
+			content, err := os.ReadFile(source)
+			if err != nil {
+				return nil, err
+			}
+			if result[stem] == nil {
+				result[stem] = map[string]string{}
+			}
+			result[stem][directory+"/"+name] = fmt.Sprintf("%x", sha256.Sum256(content))
 		}
-		result[stem][name] = fmt.Sprintf("%x", sha256.Sum256(b))
 	}
 	return result, nil
 }
 
 func registeredMigrations(root string) (map[string]bool, error) {
-	f, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, "db/Migration.go"), nil, 0)
-	if err != nil {
-		return nil, err
-	}
 	ids := map[string]bool{}
-	ast.Inspect(f, func(n ast.Node) bool {
-		pair, ok := n.(*ast.KeyValueExpr)
-		if !ok {
-			return true
+	for _, filename := range []string{"Migration.go", "migration_ex.go"} {
+		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, "db", filename), nil, 0)
+		if err != nil {
+			return nil, err
 		}
-		key, ok := pair.Key.(*ast.Ident)
-		if !ok || key.Name != "Version" {
-			return true
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || (fn.Name.Name != "GetMigrations" && fn.Name.Name != "GetEXMigrations") {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				pair, ok := n.(*ast.KeyValueExpr)
+				if !ok {
+					return true
+				}
+				key, ok := pair.Key.(*ast.Ident)
+				if !ok || key.Name != "Version" {
+					return true
+				}
+				value, ok := pair.Value.(*ast.BasicLit)
+				if !ok || value.Kind != token.STRING {
+					return true
+				}
+				id, err := strconv.Unquote(value.Value)
+				if err == nil {
+					ids[id] = true
+				}
+				return true
+			})
 		}
-		value, ok := pair.Value.(*ast.BasicLit)
-		if !ok || value.Kind != token.STRING {
-			return true
-		}
-		id, err := strconv.Unquote(value.Value)
-		if err == nil {
-			ids[id] = true
-		}
-		return true
-	})
+	}
 	return ids, nil
 }
 
@@ -93,7 +108,7 @@ func candidateLedger(root string) (migrationLedger, error) {
 	if err != nil {
 		return migrationLedger{}, err
 	}
-	ledger := migrationLedger{Format: 1}
+	ledger := migrationLedger{Format: 2}
 	var ids []string
 	for id := range files {
 		ids = append(ids, id)
@@ -106,12 +121,30 @@ func candidateLedger(root string) (migrationLedger, error) {
 }
 
 func validateLedger(ledger migrationLedger, files map[string]map[string]string, registered map[string]bool) error {
-	if ledger.Format != 1 {
+	if ledger.Format != 1 && ledger.Format != 2 {
 		return fmt.Errorf("unsupported migration ledger format %d", ledger.Format)
 	}
 	seen := map[string]bool{}
 	upstream := map[string]string{}
 	for _, entry := range ledger.Entries {
+		if ledger.Format == 2 {
+			isEX := strings.Contains(entry.ID, "-ex")
+			if isEX != (entry.Owner == "fork") {
+				return fmt.Errorf("migration %s mixes upstream and EX ownership", entry.ID)
+			}
+			directory := "migrations/"
+			if isEX {
+				directory = "migrations_ex/"
+			}
+			for name := range entry.Files {
+				if !strings.HasPrefix(name, directory) {
+					return fmt.Errorf("migration %s uses the wrong source directory", entry.ID)
+				}
+			}
+			if !isEX && entry.UpstreamID != entry.ID {
+				return fmt.Errorf("upstream migration %s was renumbered", entry.ID)
+			}
+		}
 		if seen[entry.ID] {
 			return fmt.Errorf("duplicate migration ledger ID %s", entry.ID)
 		}

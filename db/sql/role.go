@@ -32,11 +32,11 @@ func (d *SqlDb) UpdateRole(role db.Role) error {
 }
 
 func (d *SqlDb) CreateRole(role db.Role) (db.Role, error) {
-	hasScopedPermissions, err := d.IsMigrationApplied(db.Migration{Version: "2.20.30"})
+	hasScopedPermissions, err := d.IsMigrationApplied(db.Migration{Version: "2.20.1-ex1.29"})
 	if err != nil {
 		return role, err
 	}
-	hasRoleIdentity, err := d.IsMigrationApplied(db.Migration{Version: "2.20.29"})
+	hasRoleIdentity, err := d.IsMigrationApplied(db.Migration{Version: "2.20.1-ex1.28"})
 	if err != nil {
 		return role, err
 	}

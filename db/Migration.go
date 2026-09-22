@@ -1,7 +1,6 @@
 package db
 
 import (
-	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -140,72 +139,6 @@ func GetMigrations(dialect string) []Migration {
 		{Version: "2.20.3"},
 		{Version: "2.20.4"},
 		{Version: "2.20.5"},
-		{Version: "2.20.6"},
-		{Version: "2.20.7"},
-		{Version: "2.20.8"},
-		{Version: "2.20.9"},
-		{Version: "2.20.10"},
-		{Version: "2.20.11"},
-		{Version: "2.20.12"},
-		{Version: "2.20.13"},
-		{Version: "2.20.14"},
-		{Version: "2.20.15"},
-		{Version: "2.20.16"},
-		{Version: "2.20.17"},
-		{Version: "2.20.18"},
-		{Version: "2.20.19"},
-		{Version: "2.20.20"},
-		{Version: "2.20.21"},
-		{Version: "2.20.22"},
-		{Version: "2.20.23"},
-		{Version: "2.20.24"},
-		{Version: "2.20.25"},
-		{Version: "2.20.26"},
-		{Version: "2.20.27"},
-		{Version: "2.20.28"},
-		{Version: "2.20.29"},
-		{Version: "2.20.30"},
-		{Version: "2.20.31"},
-		{Version: "2.20.32"},
-		{Version: "2.20.33"},
-		{Version: "2.20.34"},
-		{Version: "2.20.35"},
-		{Version: "2.20.36"},
-		{Version: "2.20.37"},
-		{Version: "2.20.38"},
-		{Version: "2.20.39"},
-		{Version: "2.20.40"},
-		{Version: "2.20.41"},
-		{Version: "2.20.42"},
-		{Version: "2.20.43"},
-		{Version: "2.20.44"},
-		{Version: "2.20.45"},
-		{Version: "2.20.46"},
-		{Version: "2.20.47"},
-		{Version: "2.20.48"},
-		{Version: "2.20.49"},
-		{Version: "2.20.50"},
-		{Version: "2.20.51"},
-		{Version: "2.20.52"},
-		{Version: "2.20.53"},
-		{Version: "2.20.54"},
-		{Version: "2.20.55"},
-		{Version: "2.20.56"},
-		{Version: "2.20.57"},
-		{Version: "2.20.58"},
-		{Version: "2.20.59"},
-		{Version: "2.20.60"},
-		{Version: "2.20.61"},
-		{Version: "2.20.62"},
-		{Version: "2.20.63"},
-		{Version: "2.20.64"},
-		{Version: "2.20.65"},
-		{Version: "2.20.66"},
-		{Version: "2.20.67"},
-		{Version: "2.20.68"},
-		{Version: "2.20.69"},
-		{Version: "2.20.70"},
-		{Version: "2.20.71"},
 	}
 
 	return append(initScripts, commonScripts...)
@@ -226,8 +159,12 @@ type MigrationVersion struct {
 }
 
 func (m Migration) ParseVersion() (res MigrationVersion, err error) {
+	base, _, parseErr := splitEXMigrationVersion(m.Version)
+	if parseErr != nil {
+		return MigrationVersion{}, parseErr
+	}
 
-	parts := strings.Split(m.Version, ".")
+	parts := strings.Split(base, ".")
 
 	if len(parts) < 2 {
 		err = fmt.Errorf("invalid migration version format %s", m.Version)
@@ -294,19 +231,23 @@ func (m Migration) Compare(o Migration) int {
 		panic(err)
 	}
 
-	return mVer.Compare(oVer)
+	if comparison := mVer.Compare(oVer); comparison != 0 {
+		return comparison
+	}
+	_, mEX, _ := splitEXMigrationVersion(m.Version)
+	_, oEX, _ := splitEXMigrationVersion(o.Version)
+	return slices.Compare(mEX, oEX)
 }
 
-func Rollback(d Store, targetVersion string) error {
+func rollbackMigrations(d Store, target Migration, migrations []Migration) error {
 
 	didRun := false
 
-	migrations := GetMigrations(d.GetDialect())
 	slices.Reverse(migrations)
 
 	for _, version := range migrations {
 
-		if version.Compare(Migration{Version: targetVersion}) <= 0 {
+		if version.Compare(target) <= 0 {
 			break
 		}
 
@@ -333,12 +274,12 @@ func Rollback(d Store, targetVersion string) error {
 	return nil
 }
 
-func Migrate(d Store, targetVersion *string) error {
+func applyMigrations(d Store, target *Migration, migrations []Migration) error {
 	didRun := false
 
-	for _, version := range GetMigrations(d.GetDialect()) {
+	for _, version := range migrations {
 
-		if targetVersion != nil && version.Compare(Migration{Version: *targetVersion}) > 0 {
+		if target != nil && version.Compare(*target) > 0 {
 			break
 		}
 
@@ -353,10 +294,6 @@ func Migrate(d Store, targetVersion *string) error {
 		didRun = true
 		fmt.Printf("Executing migration %s (at %v)...\n", version.HumanoidVersion(), tz.Now())
 		if err := d.ApplyMigration(version); err != nil {
-			fmt.Printf("Rolling back %s (time: %v)...\n", version.HumanoidVersion(), tz.Now())
-			if rollbackErr := d.TryRollbackMigration(version); rollbackErr != nil {
-				return errors.Join(err, rollbackErr)
-			}
 			return err
 		}
 	}

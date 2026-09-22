@@ -673,7 +673,7 @@ func workflowFileArtifactMatrixStore(t *testing.T) *coresql.SqlDb {
 		require.NotZero(t, tableCount, "pre-migrated workflow artifact matrix database must contain the schema")
 		var migrationCount int
 		require.NoError(t, store.Sql().SelectOne(
-			&migrationCount, store.PrepareQuery("select count(1) from migrations where version=?"), "2.20.65",
+			&migrationCount, store.PrepareQuery("select count(1) from migrations where version=?"), "2.20.1-ex1.64",
 		))
 		require.Equal(t, 1, migrationCount, "pre-migrated workflow artifact matrix database must include v2.20.65")
 	} else {

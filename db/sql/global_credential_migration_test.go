@@ -23,7 +23,7 @@ func TestGlobalCredentialMigrationPreparesForEverySQLDialect(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &SqlDb{connection: SqlDbConnection{sql: &gorp.DbMap{Dialect: tt.gorp}}}
-			queries := getVersionSQL(tt.dialect, "v2.20.56.sql", false)
+			queries := getVersionSQL(tt.dialect, "ex/v2.20.1-ex1.55.sql", false)
 			prepared := make([]string, len(queries))
 			for index, query := range queries {
 				prepared[index] = store.prepareMigration(query)
@@ -56,7 +56,7 @@ func TestGlobalCredentialUsageMigrationKeepsBindingsPrivateAndLedgerUnconstraine
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &SqlDb{connection: SqlDbConnection{sql: &gorp.DbMap{Dialect: tt.gorp}}}
-			queries := getVersionSQL(tt.dialect, "v2.20.57.sql", false)
+			queries := getVersionSQL(tt.dialect, "ex/v2.20.1-ex1.56.sql", false)
 			joined := strings.ToLower(strings.Join(queries, ";"))
 			if !strings.Contains(joined, "global_credential_bindings") || !strings.Contains(joined, "global_credential_usage") ||
 				!strings.Contains(joined, "global_credential_usage__task") {
@@ -81,7 +81,7 @@ func TestGlobalCredentialUsageMigrationKeepsBindingsPrivateAndLedgerUnconstraine
 }
 
 func TestCredentialExecutionSnapshotMigrationAvoidsMySQLLOBDefaults(t *testing.T) {
-	migration := strings.ToLower(strings.Join(getVersionSQL("mysql", "v2.20.59.sql", false), ";"))
+	migration := strings.ToLower(strings.Join(getVersionSQL("mysql", "ex/v2.20.1-ex1.58.sql", false), ";"))
 	if strings.Contains(migration, "execution_snapshot` longtext not null default") {
 		t.Fatalf("MySQL migration assigns a forbidden LONGTEXT default: %s", migration)
 	}
