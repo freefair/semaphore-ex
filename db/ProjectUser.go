@@ -42,21 +42,31 @@ const (
 	CanManagePolicyGuardrails
 	// CanRollbackPolicyGuardrails permits audited break-glass rollback only.
 	CanRollbackPolicyGuardrails
+	// Task-group permissions are deliberately separate from generic resource
+	// management: sharing a group changes which other projects can serialize
+	// their executions with it.
+	CanReadTaskGroups
+	CanCreateTaskGroups
+	CanUpdateTaskGroups
+	CanDeleteTaskGroups
+	CanShareTaskGroups
 )
 
 var rolePermissions = map[ProjectUserRole]ProjectUserPermission{
 	ProjectOwner: CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
 		CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
 		CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
-		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails,
+		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails |
+		CanReadTaskGroups | CanCreateTaskGroups | CanUpdateTaskGroups | CanDeleteTaskGroups | CanShareTaskGroups,
 	ProjectManager: CanRunProjectTasks | CanManageProjectResources | CanViewProjectResources |
 		CanViewWorkflows | CanEditWorkflows | CanStartWorkflows | CanStopWorkflows |
 		CanAdministerWorkflows | CanListGrantedCredentials | CanConsumeGrantedCredentials |
-		CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails,
+		CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails |
+		CanReadTaskGroups | CanCreateTaskGroups | CanUpdateTaskGroups | CanDeleteTaskGroups | CanShareTaskGroups,
 	ProjectTaskRunner: CanRunProjectTasks | CanViewProjectResources |
 		CanViewWorkflows | CanStartWorkflows | CanStopWorkflows |
-		CanListGrantedCredentials | CanConsumeGrantedCredentials,
-	ProjectGuest: CanViewProjectResources | CanViewWorkflows,
+		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanReadTaskGroups,
+	ProjectGuest: CanViewProjectResources | CanViewWorkflows | CanReadTaskGroups,
 }
 
 func (r ProjectUserRole) IsValid() bool {

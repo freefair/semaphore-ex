@@ -42,6 +42,24 @@ func TestApplyOrphanRecoveryOnlyReplacesExecutionWhenEvidenceProvesItAbsent(t *t
 	assert.Equal(t, runnerID, *row.RunnerSnapshotID)
 }
 
+func TestOrphanQuarantineDoesNotRewriteIdenticalRetention(t *testing.T) {
+	setupReconcilerConfig(t)
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	state := NewMemoryTaskStateStore()
+	stub := &reconcilerStoreStub{Store: store, fencedStore: store}
+	pool := newReconcilerTestPool(stub, state)
+	task, _ := createGenerationAwareReconcilerTask(t, store, task_logger.TaskStartingStatus)
+	lease := installRecoveryFence(t, store, &task, 19)
+	tsk := &TaskRunner{Task: task, pool: &pool}
+	state.SetRunning(tsk)
+	assessment := pro_interfaces.TaskRecoveryAssessment{Decision: pro_interfaces.TaskRecoveryQuarantine, Reason: "runner query timed out"}
+
+	assert.True(t, pool.ApplyOrphanRecovery(tsk, lease, assessment))
+	assert.True(t, pool.ApplyOrphanRecovery(tsk, lease, assessment))
+	assert.Equal(t, 1, stub.updateTaskFencedCalls)
+}
+
 func TestRevokeOrphanedTaskAssignmentWaitsBeforeRequeue(t *testing.T) {
 	setupReconcilerConfig(t)
 	store := sql.InitConfigCreateTestStore()
@@ -197,11 +215,33 @@ func (s *reconcilerStoreStub) UpdateTaskRunner(
 	attemptReason string,
 	transitionedAt time.Time,
 ) (bool, error) {
+	s.updateTaskRunnerCalls++
 	if s.updateTaskErr != nil {
 		return false, s.updateTaskErr
 	}
 	return s.Store.UpdateTaskRunner(
 		task, expectedStatus, expectedRunnerID, expectedGeneration, outcome, attemptReason, transitionedAt,
+	)
+}
+
+func (s *reconcilerStoreStub) UpdateTaskFenced(task db.Task, expectedFencingToken int64) (bool, error) {
+	s.updateTaskFencedCalls++
+	return s.fencedStore.UpdateTaskFenced(task, expectedFencingToken)
+}
+
+func (s *reconcilerStoreStub) UpdateTaskRunnerFenced(
+	task db.Task,
+	expectedStatus task_logger.TaskStatus,
+	expectedRunnerID int,
+	expectedGeneration int,
+	expectedFencingToken int64,
+	outcome db.RunnerAttemptOutcome,
+	attemptReason string,
+	transitionedAt time.Time,
+) (bool, error) {
+	return s.fencedStore.UpdateTaskRunnerFenced(
+		task, expectedStatus, expectedRunnerID, expectedGeneration, expectedFencingToken,
+		outcome, attemptReason, transitionedAt,
 	)
 }
 
@@ -321,4 +361,57 @@ func TestStopTaskRunnerLostQuarantinesDockerWithoutDaemonEvidence(t *testing.T) 
 	assert.Equal(t, task_logger.TaskStoppingStatus, stored.Status)
 	assert.Nil(t, stored.End)
 	assert.Empty(t, pool.queueEvents)
+}
+
+func TestStopTaskRunnerLostQuarantinesGroupedTaskWithoutDockerEvidence(t *testing.T) {
+	setupReconcilerConfig(t)
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	state := NewMemoryTaskStateStore()
+	pool := newReconcilerTestPool(store, state)
+	now := time.Now()
+	newTask, _ := createReconcilerTestTask(t, store, task_logger.TaskStoppingStatus, &now)
+	newTask.TaskGroupKeys = db.StringArrayField{"global/production"}
+	require.NoError(t, store.UpdateTask(newTask))
+	tsk := &TaskRunner{Task: newTask, pool: &pool}
+	state.SetRunning(tsk)
+
+	pool.stopTaskRunnerLost(tsk, nil, "runner disappeared during cancellation")
+
+	assert.Equal(t, task_logger.TaskStoppingStatus, tsk.Task.Status)
+	assert.Nil(t, tsk.Task.End)
+	assert.Contains(t, tsk.Task.RecoveryReason, "quarantined")
+	stored, err := store.GetTaskByID(newTask.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task_logger.TaskStoppingStatus, stored.Status)
+	assert.Nil(t, stored.End)
+}
+
+func TestGroupedCancellationLossClearsDeletedRunnerAndQuarantinesOnce(t *testing.T) {
+	setupReconcilerConfig(t)
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	state := NewMemoryTaskStateStore()
+	stub := &reconcilerStoreStub{Store: store, fencedStore: store}
+	pool := newReconcilerTestPool(stub, state)
+	now := time.Now()
+	task, runnerID := createReconcilerTestTask(t, store, task_logger.TaskStoppingStatus, &now)
+	task.TaskGroupKeys = db.StringArrayField{"group/1"}
+	_, err := store.Sql().Exec(store.PrepareQuery("update task set task_group_keys=? where id=?"), task.TaskGroupKeys, task.ID)
+	require.NoError(t, err)
+	_, err = store.Sql().Exec(store.PrepareQuery("delete from runner where id=?"), runnerID)
+	require.NoError(t, err)
+	tsk := &TaskRunner{Task: task, pool: &pool}
+	state.SetRunning(tsk)
+
+	pool.stopTaskRunnerLost(tsk, nil, "runner deleted during cancellation")
+	pool.stopTaskRunnerLost(tsk, nil, "runner deleted during cancellation")
+
+	assert.Equal(t, task_logger.TaskStoppingStatus, tsk.Task.Status)
+	assert.Nil(t, tsk.Task.RunnerID)
+	assert.Equal(t, 1, stub.updateTaskRunnerCalls)
+	stored, err := store.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	assert.Nil(t, stored.RunnerID)
+	assert.Contains(t, stored.RecoveryReason, "cancellation quarantined")
 }

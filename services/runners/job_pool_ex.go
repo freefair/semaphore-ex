@@ -184,9 +184,9 @@ func (p *JobPool) applyKubernetesRemediationCommands(commands []db.KubernetesRec
 	}
 }
 
-// finishStoppedJob is the only runner-side stopped transition for an optional
-// Docker confirmer. A completed Run call is not daemon evidence: Docker must
-// confirm the named container stopped first.
+// finishStoppedJob asks an executor for termination evidence before reporting
+// stopped. Protected local processes and remote containers can remain pending
+// after cancellation has been requested.
 func (p *JobPool) finishStoppedJob(running *runningJob) {
 	stopper, ok := running.job.(tasks.ConfirmedStopper)
 	if !ok {

@@ -82,6 +82,7 @@ func (t *LocalExecutor) prepare(username string, incomingVersion *string, alias 
 			}
 
 			err = t.prepareRunTerraform(tfApp, db_lib.LocalAppInstallingArgs{
+				StopCh:          t.stopCh,
 				EnvironmentVars: environmentVariables,
 				TplParams:       tplParams,
 				Params:          params,

@@ -35,6 +35,23 @@ describe('TaskLogView.vue websocket handling', () => {
     http.restore();
   });
 
+  [{ tpl_app: 'terraform' }, { tpl_app: 'tofu' },
+    { tpl_app: 'terragrunt' }, { tpl_app: 'bash', task_groups: ['group/7'] }]
+    .forEach((item) => {
+      it(`waits for ${item.tpl_app} exit instead of offering force stop`, async () => {
+        await wrapper.setProps({ item: { id: 42, status: 'stopping', ...item } });
+        expect(wrapper.vm.awaitingGracefulStop).to.equal(true);
+        expect(wrapper.vm.stopLabel).to.equal('taskGracefulStopping');
+        expect(wrapper.find('v-btn-stub[color="error"]').attributes('disabled')).to.equal('true');
+      });
+    });
+
+  it('retains force stop for ungrouped shell tasks', async () => {
+    await wrapper.setProps({ item: { id: 42, status: 'stopping', tpl_app: 'bash' } });
+    expect(wrapper.vm.awaitingGracefulStop).to.equal(false);
+    expect(wrapper.vm.stopLabel).to.equal('forceStop');
+  });
+
   it('ignores messages of other tasks and projects', () => {
     wrapper.vm.onWebsocketDataReceived({
       project_id: 7, task_id: 43, type: 'log', output: 'x', time: 't',

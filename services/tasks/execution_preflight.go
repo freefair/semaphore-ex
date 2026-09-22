@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -522,6 +523,10 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 	if template.ProjectID != projectID && task.SSHKeys != nil {
 		return ExecutionPreflightSnapshot{}, nil, errors.New("cross-project task SSH key overrides are not authorized")
 	}
+	groups, groupRunnerIDs, err := p.resolveTaskPreflightGroups(template, projectID)
+	if err != nil {
+		return ExecutionPreflightSnapshot{}, nil, err
+	}
 	sshKeyBindings, sshKeyProjectID, err := p.resolveTaskSSHKeyBindings(template, task)
 	if err != nil {
 		return ExecutionPreflightSnapshot{}, nil, err
@@ -715,9 +720,9 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 	}
 
 	remote := util.Config.IsUseRemoteRunner() || len(template.EffectiveRunnerTags()) > 0 ||
-		inventory.RunnerTag != nil || requestedImage != nil
+		inventory.RunnerTag != nil || requestedImage != nil || len(groupRunnerIDs) > 0
 	if remote {
-		placement, placementState, placementErr := p.taskPreflightPlacement(template, inventory, requestedImage, projectID, plannedAt)
+		placement, placementState, placementErr := p.taskPreflightPlacement(template, inventory, requestedImage, projectID, plannedAt, groupRunnerIDs)
 		if placementErr != nil {
 			return ExecutionPreflightSnapshot{}, nil, placementErr
 		}
@@ -743,8 +748,11 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 		})
 		components[pro_interfaces.ExecutionChangePlacement] = hashPreflightComponent("local")
 	}
-	components[pro_interfaces.ExecutionChangePolicy] = hashPreflightComponent(requestedImage, template.RunnerTags,
-		template.RunnerTagMatchMode, util.Config.Runner, util.Config.MaxParallelTasks)
+	policyState := []any{requestedImage, template.RunnerTags, template.RunnerTagMatchMode, util.Config.Runner, util.Config.MaxParallelTasks}
+	if len(groups) > 0 {
+		policyState = append(policyState, taskGroupPreflightPolicyDigest(groups, groupRunnerIDs))
+	}
+	components[pro_interfaces.ExecutionChangePolicy] = hashPreflightComponent(policyState...)
 	finalized, err := finalizeTaskPreflight(plan, components)
 	if err != nil {
 		return ExecutionPreflightSnapshot{}, nil, err
@@ -873,6 +881,7 @@ func (p *TaskPool) taskPreflightPlacement(
 	requestedImage *string,
 	projectID int,
 	now time.Time,
+	groupRunnerIDs db.TaskGroupBindings,
 ) (pro_interfaces.ExecutionPreflightPlacement, string, error) {
 	projectRunners, err := p.store.GetRunners(projectID, false, db.RunnerFilterIgnoreTags, nil)
 	if err != nil {
@@ -882,19 +891,27 @@ func (p *TaskPool) taskPreflightPlacement(
 	if err != nil {
 		return pro_interfaces.ExecutionPreflightPlacement{}, "", err
 	}
-	if len(projectRunners)+len(globalRunners) > pro_interfaces.MaxExecutionPreflightCandidates {
-		return pro_interfaces.ExecutionPreflightPlacement{}, "", errors.New("execution preflight candidate limit exceeded")
-	}
 	candidates := make([]RunnerPlacementCandidate, 0, len(projectRunners)+len(globalRunners))
 	state := make([]any, 0, (len(projectRunners)+len(globalRunners))*12)
+	tags, matchMode, _ := runnerPlacementPolicy(template, inventory)
 	for _, runner := range append(projectRunners, globalRunners...) {
+		if len(groupRunnerIDs) > 0 && !slices.Contains(groupRunnerIDs, runner.ID) {
+			continue
+		}
+		// Match dispatch: explicit group runner IDs replace the default fallback,
+		// but authored template and inventory tags still restrict placement.
+		if len(groupRunnerIDs) > 0 && len(tags) == 0 {
+			runner.IsDefault = true
+		}
 		load := p.GetNumberOfRunningTasksOfRunner(runner.ID)
 		candidates = append(candidates, RunnerPlacementCandidate{Runner: runner, RunningTasks: load})
 		state = append(state, runner.ID, runner.ProjectID, runner.Active, runner.IsRegistered(), runner.Touched,
 			runner.MaxParallelTasks, load, runner.Tags, runner.ExecutorType, runner.DockerPolicyRevision,
 			runner.DockerPolicyHash, runner.K8sPolicyRevision, runner.K8sPolicyHash)
 	}
-	tags, matchMode, _ := runnerPlacementPolicy(template, inventory)
+	if len(candidates) > pro_interfaces.MaxExecutionPreflightCandidates {
+		return pro_interfaces.ExecutionPreflightPlacement{}, "", errors.New("execution preflight candidate limit exceeded")
+	}
 	decision := DecideRunnerPlacement(projectID, tags, matchMode, candidates, now, util.Config.RunnersOfflineTimeout(), requestedImage)
 	placement := pro_interfaces.ExecutionPreflightPlacement{
 		RequestedTags: decision.RequestedTags, MatchMode: decision.MatchMode,

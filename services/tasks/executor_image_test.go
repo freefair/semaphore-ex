@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/semaphoreui/semaphore/db"
@@ -97,6 +98,28 @@ func TestAddTaskFreezesResolvedExecutorImageBeforeEnqueue(t *testing.T) {
 	stored, err := store.GetTask(template.ProjectID, created.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "registry.example.com/team/job:v1", *stored.ResolvedExecutorImage)
+}
+
+func TestAddTaskOverwritesRequestTaskGroupsWithTemplateSnapshot(t *testing.T) {
+	store, pool, user, template := createExecutorImageTaskFixture(t, db.RunnerExecutorDocker, true)
+	group, err := store.CreateTaskGroup(db.TaskGroup{
+		ProjectID: template.ProjectID, Name: "production", MaxParallelTasks: 1,
+	})
+	require.NoError(t, err)
+	template.TaskGroups = db.TaskGroupBindings{group.ID}
+	require.NoError(t, store.UpdateTemplate(template))
+
+	created, err := pool.AddTask(db.Task{
+		TemplateID: template.ID, TaskGroupKeys: db.StringArrayField{"global/forged"},
+	}, &user.ID, user.Username, template.ProjectID, false)
+
+	require.NoError(t, err)
+	assert.Equal(t, db.StringArrayField{"group/" + strconv.Itoa(group.ID)}, created.TaskGroupKeys)
+	template.TaskGroups = nil
+	require.NoError(t, store.UpdateTemplate(template))
+	stored, err := store.GetTask(template.ProjectID, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created.TaskGroupKeys, stored.TaskGroupKeys)
 }
 
 func TestAddTaskRevalidatesPersistedExecutorImage(t *testing.T) {

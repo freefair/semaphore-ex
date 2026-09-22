@@ -144,7 +144,7 @@ func (t *TaskRunner) afterStatusChange(oldStatus task_logger.TaskStatus, status 
 		t.pool.metrics.RecordTaskStatusChange(oldStatus, status)
 	}
 
-	if localJob, ok := t.job.(*LocalExecutor); ok {
+	if localJob := t.localJob(); localJob != nil {
 		localJob.SetStatus(status)
 	}
 

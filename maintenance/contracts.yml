@@ -971,6 +971,16 @@ symbols:
   - name: db:CanConsumeGrantedCredentials
     signature: db.ProjectUserPermission = 2048
     implementation: core
+  - name: db:CanCreateTaskGroups
+    signature: db.ProjectUserPermission = 65536
+    implementation: core
+    behavior_tests:
+    - db/ProjectUser_ex_test.go::TestBuiltInProjectRolePermissionsRemainDeterministic
+  - name: db:CanDeleteTaskGroups
+    signature: db.ProjectUserPermission = 262144
+    implementation: core
+    behavior_tests:
+    - db/ProjectUser_ex_test.go::TestBuiltInProjectRolePermissionsRemainDeterministic
   - name: db:CanDeleteTemplate
     signature: db.TemplatePermission = 8
     implementation: core
@@ -1019,6 +1029,11 @@ symbols:
   - name: db:CanReadGlobalAudit
     signature: db.GlobalPermission = 8
     implementation: core
+  - name: db:CanReadTaskGroups
+    signature: db.ProjectUserPermission = 32768
+    implementation: core
+    behavior_tests:
+    - db/ProjectUser_ex_test.go::TestBuiltInProjectRolePermissionsRemainDeterministic
   - name: db:CanReadTemplate
     signature: db.TemplatePermission = 1
     implementation: core
@@ -1034,6 +1049,11 @@ symbols:
   - name: db:CanRunTemplate
     signature: db.TemplatePermission = 2
     implementation: core
+  - name: db:CanShareTaskGroups
+    signature: db.ProjectUserPermission = 524288
+    implementation: core
+    behavior_tests:
+    - db/ProjectUser_ex_test.go::TestBuiltInProjectRolePermissionsRemainDeterministic
   - name: db:CanStartWorkflows
     signature: db.ProjectUserPermission = 128
     implementation: core
@@ -1043,6 +1063,11 @@ symbols:
   - name: db:CanUpdateProject
     signature: db.ProjectUserPermission = 2
     implementation: core
+  - name: db:CanUpdateTaskGroups
+    signature: db.ProjectUserPermission = 131072
+    implementation: core
+    behavior_tests:
+    - db/ProjectUser_ex_test.go::TestBuiltInProjectRolePermissionsRemainDeterministic
   - name: db:CanViewProjectResources
     signature: db.ProjectUserPermission = 16
     implementation: core
@@ -1149,6 +1174,11 @@ symbols:
       db.WorkflowVersion, error); UpdateWorkflowTemplateVersionedWithCrossProjectReferences(db.WorkflowTemplate, db.WorkflowVersionMutation)
       (db.WorkflowTemplate, db.WorkflowVersion, error)}
     implementation: core
+  - name: db:CurrentSchemaVersion
+    signature: func(dialect string) string
+    implementation: core
+    behavior_tests:
+      - db/migration_separation_ex_test.go::TestMigrationRegistriesAreIndependent
   - name: db:CurrentSecureRunnerProtocol
     signature: untyped int = 1
     implementation: core
@@ -2042,19 +2072,14 @@ symbols:
   - name: db:GetAccessKeyOptions
     signature: struct{Owner db.AccessKeyOwner; IgnoreOwner bool; EnvironmentID *int; StorageID *int; SourceStorageID *int; TaskID *int}
     implementation: core
-  - name: db:GetMigrations
-    signature: func(dialect string) []db.Migration
-    implementation: core
   - name: db:GetEXMigrations
     signature: func() []db.Migration
     implementation: core
     behavior_tests:
       - db/migration_separation_ex_test.go::TestMigrationRegistriesAreIndependent
-  - name: db:CurrentSchemaVersion
-    signature: func(dialect string) string
+  - name: db:GetMigrations
+    signature: func(dialect string) []db.Migration
     implementation: core
-    behavior_tests:
-      - db/migration_separation_ex_test.go::TestMigrationRegistriesAreIndependent
   - name: db:GetNextBuildVersion
     signature: func(startVersion string, currentVersion string) string
     implementation: core
@@ -2341,6 +2366,11 @@ symbols:
   - name: db:IntegrationVariableType
     signature: string
     implementation: core
+  - name: db:IntersectTaskGroupRunners
+    signature: func(groups []db.TaskGroup) (db.TaskGroupBindings, error)
+    implementation: core
+    behavior_tests:
+    - api/projects/ssh_key_bindings_presence_test.go::TestTemplateUpdateReportsConflictingTaskGroupRunnerPolicies
   - name: db:Inventory
     signature: >-
       struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; Name string "db:\"name\" json:\"name\" binding:\"required\""; ProjectID int
@@ -3103,6 +3133,11 @@ symbols:
   - name: db:NormalizeRunnerTags
     signature: func(tags []string) []string
     implementation: core
+  - name: db:NormalizeTaskGroups
+    signature: func(bindings db.TaskGroupBindings) (db.TaskGroupBindings, error)
+    implementation: core
+    behavior_tests:
+      - db/task_groups_ex_test.go::TestNormalizeTaskGroupsCanonicalizesAndSortsBindings
   - name: db:NormalizeTemplateSearch
     signature: func(value string) string
     implementation: core
@@ -3589,6 +3624,18 @@ symbols:
   - name: db:RepositoryType
     signature: string
     implementation: core
+  - name: db:RequireFinishedTaskGroups
+    signature: >-
+      func(tx *github.com/go-gorp/gorp/v3.Transaction, prepare func(string) string, projectID int, templateID
+      int) error
+    implementation: core
+    behavior_tests:
+      - db/sql/task_groups_ex_test.go::TestTaskGroupsPreventDeletingLiveOwners
+  - name: db:RequireNoExternalTaskGroupReferences
+    signature: func(tx *github.com/go-gorp/gorp/v3.Transaction, prepare func(string) string, ownerProjectID int) error
+    implementation: core
+    behavior_tests:
+    - db/sql/task_groups_ex_test.go::TestDeleteProjectRejectsExternalTaskGroupReferences
   - name: db:ResolveTaskSSHKeys
     signature: func(projectDefault db.SSHKeyBindings, projectAlways db.SSHKeyBindings, template db.SSHKeyBindings, task db.SSHKeyBindings) (db.SSHKeyBindings, error)
     implementation: core
@@ -4288,41 +4335,13 @@ symbols:
       string, migratedAt time.Time) error}
     implementation: core
   - name: db:Task
-    signature: >-
-      struct{ID int "db:\"id\" json:\"id\""; TemplateID int "db:\"template_id\" json:\"template_id\""; ProjectID int
-      "db:\"project_id\" json:\"project_id\""; TemplateName string "db:\"-\" json:\"template_name,omitempty\""; Status
-      pkg/task_logger.TaskStatus "db:\"status\" json:\"status\""; NotificationRevision int "db:\"notification_revision\"
-      json:\"-\""; Playbook string "db:\"playbook\" json:\"playbook\""; Environment string "db:\"environment\"
-      json:\"environment,omitempty\""; Secret string "db:\"-\" json:\"secret,omitempty\""; GlobalCredentialBindingsJSON string
-      "db:\"global_credential_bindings\" json:\"-\""; GlobalCredentialBindings map[string]int "db:\"-\" json:\"-\""; Arguments
-      *string "db:\"arguments\" json:\"arguments,omitempty\""; GitBranch *string "db:\"git_branch\" json:\"git_branch,omitempty\"";
-      SSHKeys db.SSHKeyBindings "db:\"ssh_keys\" json:\"ssh_keys\""; ResolvedSSHKeys []db.ResolvedTaskSSHKey "db:\"-\" json:\"-\"
-      backup:\"-\""; UserID *int "db:\"user_id\" json:\"user_id,omitempty\""; IntegrationID *int "db:\"integration_id\"
-      json:\"integration_id,omitempty\""; ScheduleID *int "db:\"schedule_id\" json:\"schedule_id,omitempty\""; ScheduleOccurrenceKey
-      *string "db:\"schedule_occurrence_key\" json:\"-\""; RunnerID *int "db:\"runner_id\" json:\"-\""; RunnerSnapshotID *int
-      "db:\"runner_id_snapshot\" json:\"-\""; RunnerName *string "db:\"runner_name\" json:\"-\""; AssignmentGeneration int
-      "db:\"assignment_generation\" json:\"assignment_generation,omitempty\""; TaskControlFencingToken int64
-      "db:\"task_control_fencing_token\" json:\"-\""; RunnerAssignedAt *time.Time "db:\"runner_assigned_at\"
-      json:\"runner_assigned_at,omitempty\""; RecoveryReason string "db:\"recovery_reason\" json:\"recovery_reason,omitempty\"";
-      PlacementDecision *db.RunnerPlacementDecision "db:\"placement_decision\" json:\"placement_decision,omitempty\"";
-      RequestedExecutorImage *string "db:\"requested_executor_image\" json:\"requested_executor_image,omitempty\"";
-      ResolvedExecutorImage *string "db:\"resolved_executor_image\" json:\"resolved_executor_image,omitempty\""; Created time.Time
-      "db:\"created\" json:\"created\""; Start *time.Time "db:\"start\" json:\"start,omitempty\""; End *time.Time "db:\"end\"
-      json:\"end,omitempty\""; Message string "db:\"message\" json:\"message,omitempty\""; CommitHash *string "db:\"commit_hash\"
-      json:\"commit_hash,omitempty\""; CommitMessage string "db:\"commit_message\" json:\"commit_message,omitempty\""; BuildTaskID
-      *int "db:\"build_task_id\" json:\"build_task_id,omitempty\""; WorkflowRunID *int "db:\"workflow_run_id\"
-      json:\"workflow_run_id,omitempty\""; WorkflowNodeID *int "db:\"workflow_node_id\" json:\"workflow_node_id,omitempty\"";
-      WorkflowTemplateSnapshot *string "db:\"workflow_template_snapshot\" json:\"-\""; ExecutionSnapshotJSON *string
-      "db:\"execution_snapshot\" json:\"-\""; WorkflowTemplateProvenanceJSON *string "db:\"workflow_template_provenance\"
-      json:\"-\""; WorkflowTemplateProvenance *db.WorkflowTemplateProvenance "db:\"-\" json:\"-\""; DeploymentWindowDecisionID *int
-      "db:\"-\" json:\"-\""; PolicyGuardrailEvaluationID *int "db:\"-\" json:\"-\""; Version *string "db:\"version\"
-      json:\"version,omitempty\""; InventoryID *int "db:\"inventory_id\" json:\"inventory_id,omitempty\""; Params
-      db.MapStringAnyField "db:\"params\" json:\"params,omitempty\""; Artifacts *string "db:\"artifacts\"
-      json:\"artifacts,omitempty\""; Limit string "db:\"-\" json:\"limit\""}
+    signature: struct{ID int "db:\"id\" json:\"id\""; TemplateID int "db:\"template_id\" json:\"template_id\""; ProjectID int "db:\"project_id\" json:\"project_id\""; TemplateName string "db:\"-\" json:\"template_name,omitempty\""; TaskGroupKeys db.StringArrayField "db:\"task_group_keys\" json:\"task_groups,omitempty\""; TaskGroupRunnerIDs db.TaskGroupBindings "db:\"task_group_runner_ids\" json:\"-\""; Status pkg/task_logger.TaskStatus "db:\"status\" json:\"status\""; NotificationRevision int "db:\"notification_revision\" json:\"-\""; Playbook string "db:\"playbook\" json:\"playbook\""; Environment string "db:\"environment\" json:\"environment,omitempty\""; Secret string "db:\"-\" json:\"secret,omitempty\""; GlobalCredentialBindingsJSON string "db:\"global_credential_bindings\" json:\"-\""; GlobalCredentialBindings map[string]int "db:\"-\" json:\"-\""; Arguments *string "db:\"arguments\" json:\"arguments,omitempty\""; GitBranch *string "db:\"git_branch\" json:\"git_branch,omitempty\""; SSHKeys db.SSHKeyBindings "db:\"ssh_keys\" json:\"ssh_keys\""; ResolvedSSHKeys []db.ResolvedTaskSSHKey "db:\"-\" json:\"-\" backup:\"-\""; UserID *int "db:\"user_id\" json:\"user_id,omitempty\""; IntegrationID *int "db:\"integration_id\" json:\"integration_id,omitempty\""; ScheduleID *int "db:\"schedule_id\" json:\"schedule_id,omitempty\""; ScheduleOccurrenceKey *string "db:\"schedule_occurrence_key\" json:\"-\""; RunnerID *int "db:\"runner_id\" json:\"-\""; RunnerSnapshotID *int "db:\"runner_id_snapshot\" json:\"-\""; RunnerName *string "db:\"runner_name\" json:\"-\""; AssignmentGeneration int "db:\"assignment_generation\" json:\"assignment_generation,omitempty\""; TaskControlFencingToken int64 "db:\"task_control_fencing_token\" json:\"-\""; RunnerAssignedAt *time.Time "db:\"runner_assigned_at\" json:\"runner_assigned_at,omitempty\""; RecoveryReason string "db:\"recovery_reason\" json:\"recovery_reason,omitempty\""; PlacementDecision *db.RunnerPlacementDecision "db:\"placement_decision\" json:\"placement_decision,omitempty\""; RequestedExecutorImage *string "db:\"requested_executor_image\" json:\"requested_executor_image,omitempty\""; ResolvedExecutorImage *string "db:\"resolved_executor_image\" json:\"resolved_executor_image,omitempty\""; Created time.Time "db:\"created\" json:\"created\""; Start *time.Time "db:\"start\" json:\"start,omitempty\""; End *time.Time "db:\"end\" json:\"end,omitempty\""; Message string "db:\"message\" json:\"message,omitempty\""; CommitHash *string "db:\"commit_hash\" json:\"commit_hash,omitempty\""; CommitMessage string "db:\"commit_message\" json:\"commit_message,omitempty\""; BuildTaskID *int "db:\"build_task_id\" json:\"build_task_id,omitempty\""; WorkflowRunID *int "db:\"workflow_run_id\" json:\"workflow_run_id,omitempty\""; WorkflowNodeID *int "db:\"workflow_node_id\" json:\"workflow_node_id,omitempty\""; WorkflowTemplateSnapshot *string "db:\"workflow_template_snapshot\" json:\"-\""; ExecutionSnapshotJSON *string "db:\"execution_snapshot\" json:\"-\""; WorkflowTemplateProvenanceJSON *string "db:\"workflow_template_provenance\" json:\"-\""; WorkflowTemplateProvenance *db.WorkflowTemplateProvenance "db:\"-\" json:\"-\""; DeploymentWindowDecisionID *int "db:\"-\" json:\"-\""; PolicyGuardrailEvaluationID *int "db:\"-\" json:\"-\""; Version *string "db:\"version\" json:\"version,omitempty\""; InventoryID *int "db:\"inventory_id\" json:\"inventory_id,omitempty\""; Params db.MapStringAnyField "db:\"params\" json:\"params,omitempty\""; Artifacts *string "db:\"artifacts\" json:\"artifacts,omitempty\""; Limit string "db:\"-\" json:\"limit\""}
     implementation: core
     behavior_tests:
     - api/projects/tasks_test.go::TestResolveTaskTemplate
     - db/sql/task_ssh_key_persistence_test.go::TestTaskSSHKeyBindingsRoundTrip
+    - services/tasks/executor_image_test.go::TestAddTaskOverwritesRequestTaskGroupsWithTemplateSnapshot
+    - db/sql/task_groups_ex_test.go::TestTaskGroupSnapshotSurvivesTemplateChanges
   - name: db:TaskExecutionEvidence
     signature: >-
       struct{TaskID int "json:\"task_id\""; Generation int "json:\"generation\""; State db.TaskExecutionEvidenceState "json:\"state\"";
@@ -4365,6 +4384,31 @@ symbols:
       struct{Start *time.Time "json:\"start\""; End *time.Time "json:\"end\""; UserID *int "json:\"user_id\""; Status
       []pkg/task_logger.TaskStatus}
     implementation: core
+  - name: db:TaskGroup
+    signature: struct{ID int "db:\"id\" json:\"id\""; ProjectID int "db:\"project_id\" json:\"project_id\""; Name string "db:\"name\" json:\"name\""; Description string "db:\"description\" json:\"description\""; MaxParallelTasks int "db:\"max_parallel_tasks\" json:\"max_parallel_tasks\""; RunnerIDs db.TaskGroupBindings "db:\"runner_ids\" json:\"runner_ids\""; SharedProjectIDs db.TaskGroupBindings "db:\"-\" json:\"shared_project_ids\""; Revision int "db:\"revision\" json:\"revision\""}
+    implementation: core
+    behavior_tests:
+    - db/task_groups_ex_test.go::TestNormalizeTaskGroupsCanonicalizesAndSortsBindings
+    - db/sql/task_group_capacity_ex_test.go::TestTaskGroupSQLMultiConnectionAdmission
+    - db/sql/template_task_groups_ex_test.go::TestTaskGroupPolicyUpdateRejectsConflictingTemplateRunnerTags
+  - name: db:TaskGroupBindings
+    signature: '[]int'
+    implementation: core
+    behavior_tests:
+    - db/task_groups_ex_test.go::TestNormalizeTaskGroupsCanonicalizesAndSortsBindings
+    - db/task_groups_ex_test.go::TestNormalizeTaskGroupsRejectsInvalidAndDuplicateBindings
+    - db/task_groups_ex_test.go::TestTaskGroupBindingsValueAndScanRejectInvalidPersistedState
+  - name: db:TaskGroupKeys
+    signature: func(groups []db.TaskGroup) db.StringArrayField
+    implementation: core
+    behavior_tests:
+    - db/task_groups_ex_test.go::TestTaskGroupKeysUseImmutableManagedIdentifiers
+  - name: db:TaskGroupManager
+    signature: interface{CreateTaskGroup(group db.TaskGroup) (db.TaskGroup, error); DeleteTaskGroup(projectID int, groupID int, revision int) error; GetTaskGroup(projectID int, groupID int) (db.TaskGroup, error); GetTaskGroups(projectID int) ([]db.TaskGroup, error); ResolveTaskGroups(projectID int, ids db.TaskGroupBindings) ([]db.TaskGroup, error); UpdateTaskGroup(group db.TaskGroup) (db.TaskGroup, error)}
+    implementation: core
+    behavior_tests:
+    - db/sql/task_groups_ex_test.go::TestResolveTaskGroupsRequiresExplicitConsumerProjectGrant
+    - db/sql/template_task_groups_ex_test.go::TestTemplateTaskGroupsRejectConflictingRunnerTags
   - name: db:TaskManager
     signature: >-
       interface{AssignTaskRunner(projectID int, taskID int, runnerID int, runnerName string, assignedAt time.Time, placement
@@ -4560,33 +4604,41 @@ symbols:
     implementation: core
   - name: db:Template
     signature: >-
-      struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; ProjectID int "db:\"project_id\" json:\"project_id\" backup:\"-\"";
-      InventoryID *int "db:\"inventory_id\" json:\"inventory_id,omitempty\" backup:\"-\""; RepositoryID int "db:\"repository_id\"
-      json:\"repository_id\" backup:\"-\""; EnvironmentIDs []int "db:\"-\" json:\"environment_ids\" backup:\"-\""; EnvironmentID int
-      "db:\"-\" json:\"environment_id\" backup:\"-\""; Name string "db:\"name\" json:\"name\""; Playbook string "db:\"playbook\"
-      json:\"playbook\""; WorkingDirectory *string "db:\"working_directory\" json:\"working_directory,omitempty\""; Arguments
-      *string "db:\"arguments\" json:\"arguments,omitempty\""; AllowOverrideArgsInTask bool "db:\"allow_override_args_in_task\"
-      json:\"allow_override_args_in_task,omitempty\""; Description *string "db:\"description\" json:\"description,omitempty\"";
-      Vaults []db.TemplateVault "db:\"-\" json:\"vaults,omitempty\" backup:\"-\""; Type db.TemplateType "db:\"type\"
-      json:\"type,omitempty\""; StartVersion *string "db:\"start_version\" json:\"start_version,omitempty\""; BuildTemplateID *int
-      "db:\"build_template_id\" json:\"build_template_id,omitempty\" backup:\"-\""; ViewID *int "db:\"view_id\"
-      json:\"view_id,omitempty\" backup:\"-\""; LastTask *db.TaskWithTpl "db:\"-\" json:\"last_task,omitempty\" backup:\"-\"";
-      Autorun bool "db:\"autorun\" json:\"autorun,omitempty\""; GitBranch *string "db:\"git_branch\" json:\"git_branch,omitempty\"";
-      SSHKeys db.SSHKeyBindings "db:\"ssh_keys\" json:\"ssh_keys\" backup:\"-\""; SurveyVarsJSON *string "db:\"survey_vars\"
-      json:\"-\" backup:\"-\""; SurveyVars []db.SurveyVar "db:\"-\" json:\"survey_vars,omitempty\" backup:\"survey_vars\"";
-      SuppressSuccessAlerts bool "db:\"suppress_success_alerts\" json:\"suppress_success_alerts,omitempty\""; SuppressErrorAlerts
-      bool "db:\"suppress_error_alerts\" json:\"suppress_error_alerts,omitempty\""; App db.TemplateApp "db:\"app\"
-      json:\"app,omitempty\""; Tasks int "db:\"tasks\" json:\"tasks\" backup:\"-\""; TaskParams db.MapStringAnyField
-      "db:\"task_params\" json:\"task_params,omitempty\""; RunnerTag *string "db:\"runner_tag\" json:\"runner_tag,omitempty\"";
-      RunnerTags db.StringArrayField "db:\"runner_tags\" json:\"runner_tags,omitempty\""; RunnerTagMatchMode db.RunnerTagMatchMode
-      "db:\"runner_tag_match_mode\" json:\"runner_tag_match_mode,omitempty\""; ExecutorImage *string "db:\"executor_image\"
+      struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; ProjectID int "db:\"project_id\" json:\"project_id\"
+      backup:\"-\""; InventoryID *int "db:\"inventory_id\" json:\"inventory_id,omitempty\" backup:\"-\"";
+      RepositoryID int "db:\"repository_id\" json:\"repository_id\" backup:\"-\""; EnvironmentIDs []int
+      "db:\"-\" json:\"environment_ids\" backup:\"-\""; EnvironmentID int "db:\"-\" json:\"environment_id\"
+      backup:\"-\""; Name string "db:\"name\" json:\"name\""; Playbook string "db:\"playbook\"
+      json:\"playbook\""; WorkingDirectory *string "db:\"working_directory\"
+      json:\"working_directory,omitempty\""; Arguments *string "db:\"arguments\" json:\"arguments,omitempty\"";
+      AllowOverrideArgsInTask bool "db:\"allow_override_args_in_task\"
+      json:\"allow_override_args_in_task,omitempty\""; Description *string "db:\"description\"
+      json:\"description,omitempty\""; Vaults []db.TemplateVault "db:\"-\" json:\"vaults,omitempty\"
+      backup:\"-\""; Type db.TemplateType "db:\"type\" json:\"type,omitempty\""; StartVersion *string
+      "db:\"start_version\" json:\"start_version,omitempty\""; BuildTemplateID *int "db:\"build_template_id\"
+      json:\"build_template_id,omitempty\" backup:\"-\""; ViewID *int "db:\"view_id\" json:\"view_id,omitempty\"
+      backup:\"-\""; LastTask *db.TaskWithTpl "db:\"-\" json:\"last_task,omitempty\" backup:\"-\""; Autorun bool
+      "db:\"autorun\" json:\"autorun,omitempty\""; GitBranch *string "db:\"git_branch\"
+      json:\"git_branch,omitempty\""; SSHKeys db.SSHKeyBindings "db:\"ssh_keys\" json:\"ssh_keys\"
+      backup:\"-\""; SurveyVarsJSON *string "db:\"survey_vars\" json:\"-\" backup:\"-\""; SurveyVars
+      []db.SurveyVar "db:\"-\" json:\"survey_vars,omitempty\" backup:\"survey_vars\""; SuppressSuccessAlerts
+      bool "db:\"suppress_success_alerts\" json:\"suppress_success_alerts,omitempty\""; SuppressErrorAlerts bool
+      "db:\"suppress_error_alerts\" json:\"suppress_error_alerts,omitempty\""; App db.TemplateApp "db:\"app\"
+      json:\"app,omitempty\""; Tasks int "db:\"tasks\" json:\"tasks\" backup:\"-\""; TaskParams
+      db.MapStringAnyField "db:\"task_params\" json:\"task_params,omitempty\""; RunnerTag *string
+      "db:\"runner_tag\" json:\"runner_tag,omitempty\""; RunnerTags db.StringArrayField "db:\"runner_tags\"
+      json:\"runner_tags,omitempty\""; RunnerTagMatchMode db.RunnerTagMatchMode "db:\"runner_tag_match_mode\"
+      json:\"runner_tag_match_mode,omitempty\""; ExecutorImage *string "db:\"executor_image\"
       json:\"executor_image,omitempty\""; AllowOverrideBranchInTask bool "db:\"allow_override_branch_in_task\"
       json:\"allow_override_branch_in_task,omitempty\""; AllowParallelTasks bool "db:\"allow_parallel_tasks\"
-      json:\"allow_parallel_tasks,omitempty\""; JWTParams *db.TemplateJWTParams "db:\"jwt_params\" json:\"jwt_params,omitempty\""}
+      json:\"allow_parallel_tasks,omitempty\""; TaskGroups db.TaskGroupBindings "db:\"task_groups\"
+      json:\"task_groups,omitempty\""; JWTParams *db.TemplateJWTParams "db:\"jwt_params\"
+      json:\"jwt_params,omitempty\""}
     implementation: core
     behavior_tests:
-    - db/sql/template_test.go::TestTemplateSuppressAlertsRoundTrip
-    - db/sql/task_ssh_key_persistence_test.go::TestTemplateSSHKeyBindingsRoundTrip
+      - db/sql/template_test.go::TestTemplateSuppressAlertsRoundTrip
+      - db/sql/task_ssh_key_persistence_test.go::TestTemplateSSHKeyBindingsRoundTrip
+      - db/task_groups_ex_test.go::TestNormalizeTaskGroupsCanonicalizesAndSortsBindings
   - name: db:TemplateApp
     signature: string
     implementation: core
@@ -4692,21 +4744,25 @@ symbols:
   - name: db:TemplateVersionExecution
     signature: >-
       struct{Name string "json:\"name\""; Playbook string "json:\"playbook\""; WorkingDirectory *string
-      "json:\"working_directory,omitempty\""; Arguments *string "json:\"arguments,omitempty\""; AllowOverrideArgsInTask bool
-      "json:\"allow_override_args_in_task,omitempty\""; Description *string "json:\"description,omitempty\""; Type db.TemplateType
-      "json:\"type,omitempty\""; StartVersion *string "json:\"start_version,omitempty\""; Autorun bool "json:\"autorun,omitempty\"";
-      GitBranch *string "json:\"git_branch,omitempty\""; SurveyVars []db.SurveyVar "json:\"survey_vars,omitempty\"";
+      "json:\"working_directory,omitempty\""; Arguments *string "json:\"arguments,omitempty\"";
+      AllowOverrideArgsInTask bool "json:\"allow_override_args_in_task,omitempty\""; Description *string
+      "json:\"description,omitempty\""; Type db.TemplateType "json:\"type,omitempty\""; StartVersion *string
+      "json:\"start_version,omitempty\""; Autorun bool "json:\"autorun,omitempty\""; GitBranch *string
+      "json:\"git_branch,omitempty\""; SurveyVars []db.SurveyVar "json:\"survey_vars,omitempty\"";
       SuppressSuccessAlerts bool "json:\"suppress_success_alerts,omitempty\""; SuppressErrorAlerts bool
-      "json:\"suppress_error_alerts,omitempty\""; App db.TemplateApp "json:\"app,omitempty\""; TaskParams db.MapStringAnyField
-      "json:\"task_params,omitempty\""; RunnerTag *string "json:\"runner_tag,omitempty\""; RunnerTags db.StringArrayField
-      "json:\"runner_tags,omitempty\""; RunnerTagMatchMode db.RunnerTagMatchMode "json:\"runner_tag_match_mode,omitempty\"";
-      ExecutorImage *string "json:\"executor_image,omitempty\""; AllowOverrideBranchInTask bool
-      "json:\"allow_override_branch_in_task,omitempty\""; AllowParallelTasks bool "json:\"allow_parallel_tasks,omitempty\"";
-      JWTParams *db.TemplateJWTParams "json:\"jwt_params,omitempty\""; SSHKeys db.SSHKeyBindings "json:\"ssh_keys\""}
+      "json:\"suppress_error_alerts,omitempty\""; App db.TemplateApp "json:\"app,omitempty\""; TaskParams
+      db.MapStringAnyField "json:\"task_params,omitempty\""; RunnerTag *string "json:\"runner_tag,omitempty\"";
+      RunnerTags db.StringArrayField "json:\"runner_tags,omitempty\""; RunnerTagMatchMode db.RunnerTagMatchMode
+      "json:\"runner_tag_match_mode,omitempty\""; ExecutorImage *string "json:\"executor_image,omitempty\"";
+      AllowOverrideBranchInTask bool "json:\"allow_override_branch_in_task,omitempty\""; AllowParallelTasks bool
+      "json:\"allow_parallel_tasks,omitempty\""; TaskGroups db.TaskGroupBindings
+      "json:\"task_groups,omitempty\""; JWTParams *db.TemplateJWTParams "json:\"jwt_params,omitempty\""; SSHKeys
+      db.SSHKeyBindings "json:\"ssh_keys\""}
     implementation: core
     behavior_tests:
-    - db/alert_snapshot_ex_test.go::TestTemplateVersionSnapshotPreservesErrorAlertSuppression
-    - db/task_ssh_keys_ex_test.go::TestTemplateVersionSnapshotPreservesEmptySSHKeyOverride
+      - db/alert_snapshot_ex_test.go::TestTemplateVersionSnapshotPreservesErrorAlertSuppression
+      - db/task_ssh_keys_ex_test.go::TestTemplateVersionSnapshotPreservesEmptySSHKeyOverride
+      - db/task_group_snapshot_ex_test.go::TestTaskGroupsSurviveImmutableTemplateVersion
   - name: db:TemplateVersionFingerprint
     signature: func(snapshot db.TemplateVersionSnapshot) (string, error)
     implementation: core
@@ -9003,6 +9059,11 @@ symbols:
   - name: pro_interfaces:PermissionConsumeGrantedCredentials
     signature: pro_interfaces.PermissionID = "project.credentials.granted.consume"
     implementation: core
+  - name: pro_interfaces:PermissionCreateTaskGroups
+    signature: pro_interfaces.PermissionID = "project.task_groups.create"
+    implementation: core
+    behavior_tests:
+    - pro_interfaces/project_roles_test.go::TestProjectPermissionCatalogIsStableTypedAndIsolated
   - name: pro_interfaces:PermissionDefinition
     signature: >-
       struct{ID pro_interfaces.PermissionID "json:\"id\""; Description string "json:\"description\""; Scope pro_interfaces.PermissionScope
@@ -9012,6 +9073,11 @@ symbols:
   - name: pro_interfaces:PermissionDefinitionByID
     signature: func(id pro_interfaces.PermissionID) (pro_interfaces.PermissionDefinition, bool)
     implementation: core
+  - name: pro_interfaces:PermissionDeleteTaskGroups
+    signature: pro_interfaces.PermissionID = "project.task_groups.delete"
+    implementation: core
+    behavior_tests:
+    - pro_interfaces/project_roles_test.go::TestProjectPermissionCatalogIsStableTypedAndIsolated
   - name: pro_interfaces:PermissionDeleteTemplate
     signature: pro_interfaces.PermissionID = "template.delete"
     implementation: core
@@ -9098,6 +9164,11 @@ symbols:
   - name: pro_interfaces:PermissionReadGlobalAudit
     signature: pro_interfaces.PermissionID = "global.audit.read"
     implementation: core
+  - name: pro_interfaces:PermissionReadTaskGroups
+    signature: pro_interfaces.PermissionID = "project.task_groups.read"
+    implementation: core
+    behavior_tests:
+    - pro_interfaces/project_roles_test.go::TestProjectPermissionCatalogIsStableTypedAndIsolated
   - name: pro_interfaces:PermissionReadTemplate
     signature: pro_interfaces.PermissionID = "template.read"
     implementation: core
@@ -9131,6 +9202,11 @@ symbols:
   - name: pro_interfaces:PermissionScopeTemplate
     signature: pro_interfaces.PermissionScope = "template"
     implementation: core
+  - name: pro_interfaces:PermissionShareTaskGroups
+    signature: pro_interfaces.PermissionID = "project.task_groups.share"
+    implementation: core
+    behavior_tests:
+    - pro_interfaces/project_roles_test.go::TestProjectPermissionCatalogIsStableTypedAndIsolated
   - name: pro_interfaces:PermissionStartWorkflow
     signature: pro_interfaces.PermissionID = "workflow.start"
     implementation: core
@@ -9140,6 +9216,11 @@ symbols:
   - name: pro_interfaces:PermissionUpdateProject
     signature: pro_interfaces.PermissionID = "project.settings.update"
     implementation: core
+  - name: pro_interfaces:PermissionUpdateTaskGroups
+    signature: pro_interfaces.PermissionID = "project.task_groups.update"
+    implementation: core
+    behavior_tests:
+    - pro_interfaces/project_roles_test.go::TestProjectPermissionCatalogIsStableTypedAndIsolated
   - name: pro_interfaces:PermissionViewProjectResources
     signature: pro_interfaces.PermissionID = "project.resources.view"
     implementation: core

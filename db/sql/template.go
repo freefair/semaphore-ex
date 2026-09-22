@@ -65,6 +65,7 @@ func (d *SqlDb) CreateTemplate(tmpl db.Template) (db.Template, error) {
 		"app":                           tmpl.App,
 		"git_branch":                    tmpl.GitBranch,
 		"ssh_keys":                      tmpl.SSHKeys,
+		"task_groups":                   &tmpl.TaskGroups,
 		"runner_tag":                    tmpl.RunnerTag,
 		"task_params":                   tmpl.TaskParams,
 		"allow_override_branch_in_task": tmpl.AllowOverrideBranchInTask,
@@ -83,8 +84,22 @@ func (d *SqlDb) CreateTemplate(tmpl db.Template) (db.Template, error) {
 		return db.Template{}, err
 	}
 
-	tmplId, err := d.insert("id", query, args...)
+	tx, err := d.Sql().Begin()
 	if err != nil {
+		return db.Template{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = d.lockTaskGroupDispatchTx(tx); err != nil {
+		return db.Template{}, err
+	}
+	if err = d.validateTemplateTaskGroupsTx(tx, &tmpl); err != nil {
+		return db.Template{}, err
+	}
+	tmplId, err := d.insertTemplateTx(tx, query, args...)
+	if err != nil {
+		return db.Template{}, err
+	}
+	if err = tx.Commit(); err != nil {
 		return db.Template{}, err
 	}
 
@@ -136,6 +151,7 @@ func (d *SqlDb) UpdateTemplate(tmpl db.Template) error {
 		"app":                           tmpl.App,
 		"`git_branch`":                  tmpl.GitBranch,
 		"ssh_keys":                      tmpl.SSHKeys,
+		"task_groups":                   &tmpl.TaskGroups,
 		"task_params":                   tmpl.TaskParams,
 		"runner_tag":                    tmpl.RunnerTag,
 		"allow_override_branch_in_task": tmpl.AllowOverrideBranchInTask,
@@ -158,8 +174,22 @@ func (d *SqlDb) UpdateTemplate(tmpl db.Template) error {
 		return err
 	}
 
-	_, err = d.exec(query, args...)
+	tx, err := d.Sql().Begin()
 	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = d.lockTaskGroupDispatchTx(tx); err != nil {
+		return err
+	}
+	if err = d.validateTemplateTaskGroupsTx(tx, &tmpl); err != nil {
+		return err
+	}
+	_, err = d.execTx(tx, query, args...)
+	if err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
 		return err
 	}
 
@@ -554,8 +584,18 @@ func (d *SqlDb) GetTemplate(projectID int, templateID int) (template db.Template
 }
 
 func (d *SqlDb) DeleteTemplate(projectID int, templateID int) error {
-	_, err := d.exec("delete from project__template where project_id=? and id=?", projectID, templateID)
-	return err
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = db.RequireFinishedTaskGroups(tx, d.PrepareQuery, projectID, templateID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(d.PrepareQuery("delete from project__template where project_id=? and id=?"), projectID, templateID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (d *SqlDb) GetTemplateRefs(projectID int, templateID int) (db.ObjectReferrers, error) {

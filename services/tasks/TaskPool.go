@@ -599,6 +599,8 @@ func applyDBPersistedTaskSnapshot(dst *db.Task, src db.Task) {
 	dst.PlacementDecision = src.PlacementDecision
 	dst.RequestedExecutorImage = src.RequestedExecutorImage
 	dst.ResolvedExecutorImage = src.ResolvedExecutorImage
+	dst.TaskGroupKeys = src.TaskGroupKeys
+	dst.TaskGroupRunnerIDs = src.TaskGroupRunnerIDs
 	dst.Message = src.Message
 	dst.CommitHash = src.CommitHash
 	dst.CommitMessage = src.CommitMessage
@@ -666,7 +668,7 @@ func (p *TaskPool) hydrateTaskRunner(taskID int, projectID int) (*TaskRunner, er
 			RepoLock:     p.repoLock,
 		}
 	}
-	tr.job = job
+	tr.setJob(job)
 	return tr, nil
 }
 
@@ -756,12 +758,16 @@ func (p *TaskPool) RejectTask(targetTask db.Task) error {
 
 func (p *TaskPool) stopTaskRunner(t *TaskRunner, forceStop bool) {
 	prevStatus := t.Task.Status
-	if forceStop {
+	if forceStop && !taskRequiresStopEvidence(t) {
 		t.SetStatus(task_logger.TaskStoppedStatus)
 	} else {
 		t.SetStatus(task_logger.TaskStoppingStatus)
 	}
-	if prevStatus == task_logger.TaskRunningStatus {
+	// A protected task may swap from a local executor to a RemoteJob while a
+	// stop request is in flight. Kill whichever job is current after the status
+	// transition so the request cannot be consumed by the discarded executor.
+	if t.currentJob() != nil && (prevStatus == task_logger.TaskRunningStatus ||
+		taskRequiresStopEvidence(t) && !prevStatus.IsFinished()) {
 		t.kill()
 	}
 
@@ -770,9 +776,17 @@ func (p *TaskPool) stopTaskRunner(t *TaskRunner, forceStop bool) {
 	// report, so finalize (cleanup) it here — otherwise it leaks in the
 	// running/active sets. A graceful stop stays "stopping" and is finalized
 	// when the runner reports it stopped via the runner API.
-	if forceStop && t.job != nil && t.job.Async() && t.Task.Status.IsFinished() {
+	if forceStop && !taskRequiresStopEvidence(t) && t.jobIsAsync() && t.Task.Status.IsFinished() {
 		go p.FinalizeRemoteTask(t, nil)
 	}
+}
+
+// taskRequiresStopEvidence retains a task's active lifecycle state until the
+// executor proves it has stopped. Grouped tasks must not release a shared group
+// while their process may still exist; Terraform-family tasks preserve state
+// locking and graceful interrupt semantics even without a group.
+func taskRequiresStopEvidence(t *TaskRunner) bool {
+	return t != nil && (len(t.Task.TaskGroupKeys) > 0 || t.Template.App.IsTerraform())
 }
 
 // stopLocalTask force-stops a task in response to a cross-node stop broadcast
@@ -809,6 +823,11 @@ func (p *TaskPool) StopTask(targetTask db.Task, forceStop bool) error {
 		if err != nil {
 			return err
 		}
+		if taskRequiresStopEvidence(tsk) {
+			tsk.SetStatus(task_logger.TaskStoppingStatus)
+			tsk.createTaskEvent()
+			return nil
+		}
 		tsk.SetStatus(task_logger.TaskStoppedStatus)
 		tsk.createTaskEvent()
 		return nil
@@ -820,9 +839,9 @@ func (p *TaskPool) StopTask(targetTask db.Task, forceStop bool) error {
 }
 
 // StopTasksByTemplate stops all active (queued or running) tasks that belong to
-// the specified project and template. If forceStop is true, tasks are marked as
-// stopped immediately and running tasks are killed; otherwise tasks are marked
-// as stopping and will gracefully transition to stopped.
+// the specified project and template. A force stop is terminal only when no
+// task-group or Terraform execution evidence must be retained; those tasks stay
+// stopping until their executor reports completion.
 //
 // Waiting tasks (which have no running process) are dequeued and bulk-updated in
 // the database in a single query, avoiding expensive per-task hydration.
@@ -856,11 +875,7 @@ func (p *TaskPool) StopTasksByTemplate(projectID int, templateID int, forceStop 
 			continue
 		}
 
-		if forceStop {
-			t.SetStatus(task_logger.TaskStoppedStatus)
-		} else {
-			t.SetStatus(task_logger.TaskStoppingStatus)
-		}
+		p.stopTaskRunner(t, forceStop)
 		stoppedTasks[t.Task.ID] = struct{}{}
 	}
 
@@ -918,6 +933,11 @@ func (p *TaskPool) StopTasksByTemplate(projectID int, templateID int, forceStop 
 			}
 		}
 
+		if taskRequiresStopEvidence(tsk) {
+			tsk.SetStatus(task_logger.TaskStoppingStatus)
+			tsk.createTaskEvent()
+			continue
+		}
 		tsk.SetStatus(task_logger.TaskStoppedStatus)
 
 		// In HA a remote task dispatched on another node lives in the shared
@@ -929,7 +949,7 @@ func (p *TaskPool) StopTasksByTemplate(projectID int, templateID int, forceStop 
 		// until restart. FinalizeRemoteTask releases it (finishRun -> onTaskStop)
 		// and also emits the finished task event; TryFinalize dedups across nodes
 		// and against the running-tasks loop above, so it runs at most once.
-		if tsk.job != nil && tsk.job.Async() {
+		if tsk.jobIsAsync() {
 			go p.FinalizeRemoteTask(tsk, nil)
 		} else {
 			tsk.createTaskEvent()
@@ -943,10 +963,9 @@ func (p *TaskPool) StopTasksByTemplate(projectID int, templateID int, forceStop 
 // user stops a whole workflow run.
 //
 // Waiting tasks are marked stopped and dequeued from the in-memory queue (so the
-// queue loop never starts them); running tasks go through stopTaskRunner (kill +
-// status transition); tasks that exist in the DB but are not in this instance's
-// memory (HA, or a remote task dispatched elsewhere) are marked stopped and
-// finalized so their pool bookkeeping is released.
+// queue loop never starts them); running tasks go through stopTaskRunner; tasks
+// that exist in the DB but are not in this instance's memory wait for terminal
+// executor evidence when a task group or Terraform state lock may be active.
 func (p *TaskPool) StopTasksByWorkflowRun(projectID int, runID int, forceStop bool) {
 	stoppedTasks := map[int]struct{}{}
 
@@ -1023,12 +1042,17 @@ func (p *TaskPool) StopTasksByWorkflowRun(projectID int, runID int, forceStop bo
 			}
 		}
 
+		if taskRequiresStopEvidence(tsk) {
+			tsk.SetStatus(task_logger.TaskStoppingStatus)
+			tsk.createTaskEvent()
+			continue
+		}
 		tsk.SetStatus(task_logger.TaskStoppedStatus)
 
 		// A remote task has no goroutine on this node that would run finishRun,
 		// so finalize it here to release the shared pool state; a local task is
 		// already done from the pool's perspective and only needs its event.
-		if tsk.job != nil && tsk.job.Async() {
+		if tsk.jobIsAsync() {
 			go p.FinalizeRemoteTask(tsk, nil)
 		} else {
 			tsk.createTaskEvent()

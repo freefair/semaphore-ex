@@ -15,8 +15,11 @@ import (
 // reconcilerStoreStub wraps a real store and forces errors on selected methods.
 type reconcilerStoreStub struct {
 	db.Store
-	globalRunnerErr error
-	updateTaskErr   error
+	globalRunnerErr       error
+	updateTaskErr         error
+	updateTaskRunnerCalls int
+	updateTaskFencedCalls int
+	fencedStore           taskRecoveryFencedStore
 }
 
 func (s *reconcilerStoreStub) GetGlobalRunner(runnerID int) (db.Runner, error) {
@@ -481,6 +484,35 @@ func TestFailTaskRunnerLost(t *testing.T) {
 	assert.Empty(t, pool.queueEvents)
 }
 
+func TestGroupedRunnerLossClearsDeletedRunnerAndRetainsOnce(t *testing.T) {
+	setupReconcilerConfig(t)
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	state := NewMemoryTaskStateStore()
+	stub := &reconcilerStoreStub{Store: store}
+	pool := newReconcilerTestPool(stub, state)
+	now := time.Now()
+	task, runnerID := createReconcilerTestTask(t, store, task_logger.TaskRunningStatus, &now)
+	task.TaskGroupKeys = db.StringArrayField{"group/1"}
+	_, err := store.Sql().Exec(store.PrepareQuery("update task set task_group_keys=? where id=?"), task.TaskGroupKeys, task.ID)
+	require.NoError(t, err)
+	_, err = store.Sql().Exec(store.PrepareQuery("delete from runner where id=?"), runnerID)
+	require.NoError(t, err)
+	tsk := &TaskRunner{Task: task, pool: &pool}
+	state.SetRunning(tsk)
+
+	pool.failTaskRunnerLost(tsk, nil, "runner deleted")
+	pool.failTaskRunnerLost(tsk, nil, "runner deleted")
+
+	assert.Equal(t, task_logger.TaskRunningStatus, tsk.Task.Status)
+	assert.Nil(t, tsk.Task.RunnerID)
+	assert.Equal(t, 1, stub.updateTaskRunnerCalls)
+	stored, err := store.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	assert.Nil(t, stored.RunnerID)
+	assert.Contains(t, stored.RecoveryReason, "occupancy retained")
+}
+
 func TestReconcileRunnerTasks(t *testing.T) {
 	setupReconcilerConfig(t)
 
@@ -718,6 +750,30 @@ func TestRequeueTaskRunnerOffline_HA(t *testing.T) {
 }
 
 func TestFailTaskRunnerLost_HA(t *testing.T) {
+	t.Run("grouped task retains occupancy until terminal evidence", func(t *testing.T) {
+		setupReconcilerConfig(t)
+		store := sql.InitConfigCreateTestStore()
+		t.Cleanup(store.Close)
+		state := NewMemoryTaskStateStore()
+		pool := newReconcilerTestPool(store, state)
+		now := time.Now()
+		newTask, _ := createReconcilerTestTask(t, store, task_logger.TaskRunningStatus, &now)
+		newTask.TaskGroupKeys = db.StringArrayField{"global/production"}
+		require.NoError(t, store.UpdateTask(newTask))
+
+		tsk := &TaskRunner{Task: newTask, pool: &pool}
+		state.SetRunning(tsk)
+		pool.failTaskRunnerLost(tsk, nil, "runner stopped responding")
+
+		assert.Equal(t, task_logger.TaskRunningStatus, tsk.Task.Status)
+		assert.Nil(t, tsk.Task.End)
+		assert.Contains(t, tsk.Task.RecoveryReason, "occupancy retained")
+		stored, err := store.GetTaskByID(newTask.ID)
+		require.NoError(t, err)
+		assert.Equal(t, task_logger.TaskRunningStatus, stored.Status)
+		assert.Nil(t, stored.End)
+	})
+
 	t.Run("DB row still running: task failed", func(t *testing.T) {
 		setupReconcilerConfig(t)
 

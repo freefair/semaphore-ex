@@ -29,12 +29,13 @@ type LocalExecutor struct {
 
 	App db_lib.LocalApp
 
-	// mu protects terminationRequested and stopCh.
+	// mu protects terminationRequested, stopCh and runDone.
 	mu                   sync.Mutex
 	terminationRequested bool
 	// stopCh carries cancellation and remains non-nil after Run is invoked to
 	// enforce the LocalExecutor's single-use lifecycle.
-	stopCh chan struct{}
+	stopCh  chan struct{}
+	runDone chan struct{}
 
 	sshKeyInstallation         ssh.AccessKeyInstallation
 	taskSSHAgent               *ssh.Agent
@@ -771,9 +772,11 @@ func (t *LocalExecutor) Run(username string, incomingVersion *string, alias stri
 		return fmt.Errorf("local executor has already been run")
 	}
 	t.stopCh = make(chan struct{})
+	t.runDone = make(chan struct{})
 	terminationRequested := t.terminationRequested
 	t.mu.Unlock()
 
+	defer close(t.runDone)
 	defer t.Cleanup()
 
 	if terminationRequested {

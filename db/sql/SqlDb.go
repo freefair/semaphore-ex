@@ -89,6 +89,7 @@ func (d *SqlDbConnection) Connect() {
 	d.sql.AddTableWithName(db.Project{}, "project").SetKeys(true, "id")
 	d.sql.AddTableWithName(db.Repository{}, "project__repository").SetKeys(true, "id")
 	d.sql.AddTableWithName(db.Task{}, "task").SetKeys(true, "id")
+	d.sql.AddTableWithName(db.TaskGroup{}, "project__task_group").SetKeys(true, "id")
 	d.sql.AddTableWithName(db.TaskOutput{}, "task__output").SetUniqueTogether("task_id", "time")
 	d.sql.AddTableWithName(db.Template{}, "project__template").SetKeys(true, "id")
 	d.sql.AddTableWithName(db.User{}, "user").SetKeys(true, "id")

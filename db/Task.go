@@ -45,6 +45,10 @@ type Task struct {
 	// by id when it is created through the API. It is resolved to TemplateID by
 	// the API and never stored.
 	TemplateName string `db:"-" json:"template_name,omitempty"`
+	// TaskGroupKeys is a server-resolved immutable snapshot of the template's
+	// concurrency groups. Task creation overwrites any request-supplied value.
+	TaskGroupKeys      StringArrayField  `db:"task_group_keys" json:"task_groups,omitempty"`
+	TaskGroupRunnerIDs TaskGroupBindings `db:"task_group_runner_ids" json:"-"`
 
 	Status task_logger.TaskStatus `db:"status" json:"status"`
 	// NotificationRevision advances only for an emitted terminal lifecycle

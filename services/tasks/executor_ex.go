@@ -90,10 +90,9 @@ type DockerTelemetryReporter interface {
 	AcknowledgeDockerTelemetry(db.DockerTelemetryAck)
 }
 
-// StopConfirmation is the only evidence the runner may use to turn a Docker
-// cancellation into a terminal task result. A context cancellation or a
-// successful stop request is not evidence: the daemon must confirm the
-// container is no longer running.
+// StopConfirmation establishes whether executor-specific evidence permits a
+// terminal stopped result. Requesting cancellation alone is not evidence of
+// process exit or a stopped container.
 type StopConfirmation string
 
 const (
@@ -102,9 +101,8 @@ const (
 	StopQuarantined StopConfirmation = "quarantined"
 )
 
-// ConfirmedStopper is an optional executor capability. It keeps the legacy
-// Job.Kill contract intact for local and Kubernetes executors while letting a
-// Docker executor prove (or explicitly quarantine) a cancellation.
+// ConfirmedStopper is an optional executor capability that proves cancellation
+// completed, or keeps the execution pending or quarantined until it can do so.
 type ConfirmedStopper interface {
 	ConfirmStop(context.Context) StopConfirmation
 }

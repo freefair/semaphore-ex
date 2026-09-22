@@ -10,6 +10,11 @@ export const ENHANCED_USER_PERMISSIONS = {
   overrideDeploymentWindow: 4096,
   managePolicyGuardrails: 8192,
   rollbackPolicyGuardrails: 16384,
+  readTaskGroups: 32768,
+  createTaskGroups: 65536,
+  updateTaskGroups: 131072,
+  deleteTaskGroups: 262144,
+  shareTaskGroups: 524288,
 };
 
 export const GLOBAL_PERMISSIONS = {
@@ -53,6 +58,31 @@ export const ENHANCED_PROJECT_ROLE_PERMISSIONS = [{
   permission: ENHANCED_USER_PERMISSIONS.rollbackPolicyGuardrails,
   label: 'Rollback policy guardrails',
   color: 'red darken-1',
+  textColor: 'white',
+}, {
+  permission: ENHANCED_USER_PERMISSIONS.readTaskGroups,
+  label: 'Read task groups',
+  color: 'cyan',
+  textColor: 'white',
+}, {
+  permission: ENHANCED_USER_PERMISSIONS.createTaskGroups,
+  label: 'Create task groups',
+  color: 'blue darken-2',
+  textColor: 'white',
+}, {
+  permission: ENHANCED_USER_PERMISSIONS.updateTaskGroups,
+  label: 'Update task groups',
+  color: 'green darken-1',
+  textColor: 'white',
+}, {
+  permission: ENHANCED_USER_PERMISSIONS.deleteTaskGroups,
+  label: 'Delete task groups',
+  color: 'red',
+  textColor: 'white',
+}, {
+  permission: ENHANCED_USER_PERMISSIONS.shareTaskGroups,
+  label: 'Share task groups',
+  color: 'purple darken-1',
   textColor: 'white',
 }];
 

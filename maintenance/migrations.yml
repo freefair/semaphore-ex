@@ -846,6 +846,14 @@ migrations:
   rationale: Persist value-free task SSH key bindings with nullable inheritance and
     explicit empty overrides.
 - registered: true
+  id: 2.20.5-ex1.3
+  owner: fork
+  files:
+    migrations_ex/v2.20.5-ex1.3.sql: 4080258922c64cb0df421093801b3bd692aad898c13b48c07adf1fb26a99f121
+    migrations_ex/v2.20.5-ex1.3.err.sql: 9ec6f2e74e6906f20edc690b40c6d318a060146248cf97fccc1431111a4f20a1
+  rationale: Persist immutable task concurrency groups and serialize multi-group admission
+    across server nodes.
+- registered: true
   id: 2.20.5-ex1.4
   owner: fork
   files:

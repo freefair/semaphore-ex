@@ -142,6 +142,9 @@ func Route(
 	rolesController := proApi.NewRolesController(store, capabilityProvider)
 	templateController := projects.NewTemplateController(store, store, executorImageResolver)
 	templateController.ConfigureCrossProjectDeletionGuard(workflowStore)
+	taskGroupManager, _ := any(store).(db.TaskGroupManager)
+	taskGroupController := projects.NewTaskGroupController(taskGroupManager, store)
+	taskGroupController.ConfigureProjectCatalog(store)
 	systemInfoController := NewSystemInfoController()
 	capabilityTestService := proFeatures.NewCapabilityTestService(store)
 	capabilityFacade := capabilityServices.NewServiceFacade(capabilityProvider, capabilityTestService)
@@ -621,6 +624,41 @@ func Route(
 	projectRolesAPI.Path("/{role_id}").HandlerFunc(rolesController.GetProjectRole).Methods("GET", "HEAD")
 	projectRolesAPI.Path("/{role_id}").HandlerFunc(rolesController.UpdateProjectRole).Methods("PUT", "POST")
 	projectRolesAPI.Path("/{role_id}").HandlerFunc(rolesController.DeleteProjectRole).Methods("DELETE")
+
+	// Managed task groups have their own permissions: sharing grants selection
+	// to another project and therefore must not inherit generic resource access.
+	projectTaskGroupsAPI := authenticatedAPI.PathPrefix("/project/{project_id}/task_groups").Subrouter()
+	projectTaskGroupsAPI.Use(projects.ProjectMiddleware, EnhancedProjectPermissionAuditMiddleware(auditFacade))
+	projectTaskGroupsAPI.Path("").Handler(
+		projects.GetMustHavePermissionMiddleware(db.CanReadTaskGroups)(
+			http.HandlerFunc(taskGroupController.GetTaskGroups),
+		),
+	).Methods("GET", "HEAD")
+	projectTaskGroupsAPI.Path("").Handler(
+		projects.GetMustHavePermissionMiddleware(db.CanCreateTaskGroups)(
+			http.HandlerFunc(taskGroupController.CreateTaskGroup),
+		),
+	).Methods("POST")
+	projectTaskGroupsAPI.Path("/runners").Handler(
+		projects.GetMustHavePermissionMiddleware(db.CanReadTaskGroups)(
+			http.HandlerFunc(taskGroupController.GetTaskGroupRunners),
+		),
+	).Methods("GET", "HEAD")
+	projectTaskGroupsAPI.Path("/{group_id}").Handler(
+		projects.GetMustHavePermissionMiddleware(db.CanReadTaskGroups)(
+			http.HandlerFunc(taskGroupController.GetTaskGroup),
+		),
+	).Methods("GET", "HEAD")
+	projectTaskGroupsAPI.Path("/{group_id}").Handler(
+		projects.GetMustHavePermissionMiddleware(db.CanUpdateTaskGroups)(
+			http.HandlerFunc(taskGroupController.UpdateTaskGroup),
+		),
+	).Methods("PUT")
+	projectTaskGroupsAPI.Path("/{group_id}").Handler(
+		projects.GetMustHavePermissionMiddleware(db.CanDeleteTaskGroups)(
+			http.HandlerFunc(taskGroupController.DeleteTaskGroup),
+		),
+	).Methods("DELETE")
 
 	//
 	// Updating and deleting project

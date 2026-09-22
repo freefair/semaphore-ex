@@ -649,6 +649,9 @@ func (d *WorkflowStoreImpl) DeleteTemplateWithCrossProjectGrantGuard(ownerProjec
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err = db.RequireFinishedTaskGroups(tx, d.connection.PrepareQuery, ownerProjectID, templateID); err != nil {
+		return err
+	}
 	if err = ensureTemplateOwnershipTx(tx, d, ownerProjectID, templateID); err != nil {
 		return err
 	}

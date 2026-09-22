@@ -40,6 +40,12 @@ schemes:
 basePath: /api
 
 definitions:
+  TaskGroup:
+    $ref: './api-docs-ex.yml#/definitions/TaskGroup'
+  TaskGroupMutation:
+    $ref: './api-docs-ex.yml#/definitions/TaskGroupMutation'
+  TaskGroupUpdate:
+    $ref: './api-docs-ex.yml#/definitions/TaskGroupUpdate'
   RuntimeSecretsCapabilityConfiguration:
     $ref: "./api-docs-ex.yml#/definitions/RuntimeSecretsCapabilityConfiguration"
   TaskSSHKeyBindings:
@@ -887,6 +893,8 @@ definitions:
   Task:
     type: object
     properties:
+      task_groups:
+        $ref: "./api-docs-ex.yml#/definitions/TaskGroupKeys"
       ssh_keys:
         $ref: "./api-docs-ex.yml#/definitions/TaskSSHKeyBindings"
       id:
@@ -1025,6 +1033,8 @@ definitions:
   TemplateRequest:
     type: object
     properties:
+      task_groups:
+        $ref: "./api-docs-ex.yml#/definitions/TaskGroupBindings"
       ssh_keys:
         $ref: "./api-docs-ex.yml#/definitions/TaskSSHKeyBindings"
       id:
@@ -1110,6 +1120,8 @@ definitions:
   Template:
     type: object
     properties:
+      task_groups:
+        $ref: "./api-docs-ex.yml#/definitions/TaskGroupBindings"
       ssh_keys:
         $ref: "./api-docs-ex.yml#/definitions/TaskSSHKeyBindings"
       id:
@@ -2033,6 +2045,12 @@ parameters:
     x-example: 22
 
 paths:
+  /project/{project_id}/task_groups:
+    $ref: './api-docs-ex.yml#/paths/~1project~1{project_id}~1task_groups'
+  /project/{project_id}/task_groups/{group_id}:
+    $ref: './api-docs-ex.yml#/paths/~1project~1{project_id}~1task_groups~1{group_id}'
+  /project/{project_id}/task_groups/runners:
+    $ref: './api-docs-ex.yml#/paths/~1project~1{project_id}~1task_groups~1runners'
   /capabilities/runtime-secrets:
     $ref: './api-docs-ex.yml#/paths/~1capabilities~1runtime-secrets'
   /roles/project-permissions:

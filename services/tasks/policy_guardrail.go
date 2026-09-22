@@ -215,9 +215,14 @@ func (p *TaskPool) buildAutomaticTaskPolicyGuardrailDescriptor(
 	if err != nil {
 		return automaticTaskPolicyGuardrailDescriptor{}, err
 	}
-	remote := util.Config.IsUseRemoteRunner() || len(template.EffectiveRunnerTags()) > 0 || inventory.RunnerTag != nil || requestedImage != nil
+	groups, groupRunnerIDs, err := p.resolveTaskPreflightGroups(template, projectID)
+	if err != nil {
+		return automaticTaskPolicyGuardrailDescriptor{}, err
+	}
+	_ = groups
+	remote := util.Config.IsUseRemoteRunner() || len(template.EffectiveRunnerTags()) > 0 || inventory.RunnerTag != nil || requestedImage != nil || len(groupRunnerIDs) > 0
 	if remote {
-		placement, _, placementErr := p.taskPreflightPlacement(template, inventory, requestedImage, projectID, plannedAt)
+		placement, _, placementErr := p.taskPreflightPlacement(template, inventory, requestedImage, projectID, plannedAt, groupRunnerIDs)
 		if placementErr != nil {
 			return automaticTaskPolicyGuardrailDescriptor{}, placementErr
 		}

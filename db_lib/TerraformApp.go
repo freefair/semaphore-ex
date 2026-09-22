@@ -3,11 +3,11 @@ package db_lib
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -27,48 +27,16 @@ type TerraformApp struct {
 	Name             string          // Name is the name of the terraform binary
 	PlanHasNoChanges bool            // PlanHasNoChanges is true if terraform plan has no changes
 	backendFilename  string          // backendFilename is the name of the backend file
+	stopCh           <-chan struct{}
 }
 
 type terraformReader struct {
+	mu     sync.RWMutex
 	EOF    bool
 	status task_logger.TaskStatus
 	logger task_logger.Logger
-}
-
-func (r *terraformReader) Read(p []byte) (n int, err error) {
-	if r.EOF {
-		return 0, io.EOF
-	}
-
-	if r.status != task_logger.TaskWaitingConfirmation {
-		time.Sleep(time.Second * 3)
-		return 0, nil
-	}
-
-	for {
-		time.Sleep(time.Second * 3)
-		if r.status.IsFinished() ||
-			r.status == task_logger.TaskConfirmed ||
-			r.status == task_logger.TaskRejected {
-			break
-		}
-	}
-
-	r.EOF = true
-
-	switch r.status {
-	case task_logger.TaskConfirmed:
-		copy(p, "yes\n")
-		r.logger.SetStatus(task_logger.TaskRunningStatus)
-		return 4, nil
-	case task_logger.TaskRejected:
-		copy(p, "no\n")
-		r.logger.SetStatus(task_logger.TaskRunningStatus)
-		return 3, nil
-	default:
-		copy(p, "\n")
-		return 1, nil
-	}
+	stopCh <-chan struct{}
+	done   <-chan struct{}
 }
 
 func (t *TerraformApp) makeCmd(command string, args []string, environmentVars []string) *exec.Cmd {
@@ -125,7 +93,9 @@ func (t *TerraformApp) GetFullPath() string {
 
 func (t *TerraformApp) SetLogger(logger task_logger.Logger) task_logger.Logger {
 	logger.AddStatusListener(func(status task_logger.TaskStatus) {
+		t.reader.mu.Lock()
 		t.reader.status = status
+		t.reader.mu.Unlock()
 	})
 
 	t.reader.logger = logger
@@ -148,7 +118,7 @@ func (t *TerraformApp) init(environmentVars []string, keyInstaller AccessKeyInst
 		}()
 	}
 
-	args := []string{"init", "-lock=false"}
+	args := []string{"init"}
 
 	if params.Upgrade {
 		args = append(args, "-upgrade")
@@ -176,22 +146,17 @@ func (t *TerraformApp) init(environmentVars []string, keyInstaller AccessKeyInst
 			t.Logger.SetStatus(task_logger.TaskWaitingConfirmation)
 		} else if strings.Contains(msg, "has been successfully initialized!") ||
 			strings.Contains(msg, "Error:") {
-			t.reader.EOF = true
+			t.reader.closeInput()
 		}
 	})
 
+	inputDone := make(chan struct{})
+	defer close(inputDone)
+	t.reader.stopCh = t.stopCh
+	t.reader.done = inputDone
 	cmd.Stdin = &t.reader
-	err = cmd.Start()
-	if err != nil {
-		return err
-	}
-
-	err = cmd.Wait()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	cmd.WaitDelay = 250 * time.Millisecond
+	return runTerraformCommand(cmd, t.stopCh, t.Logger)
 }
 
 func hasEnvironmentVariable(environment []string, name string) bool {
@@ -208,7 +173,7 @@ func (t *TerraformApp) isWorkspacesSupported(environmentVars []string) bool {
 	args := []string{"workspace", "list"}
 
 	cmd := t.makeCmd(t.Name, args, environmentVars)
-	err := cmd.Run()
+	err := runTerraformCommand(cmd, t.stopCh, t.Logger)
 
 	return err == nil
 }
@@ -239,17 +204,7 @@ func (t *TerraformApp) selectWorkspace(workspace string, environmentVars []strin
 	finishLog := t.Logger.LogCmd(cmd)
 	defer finishLog()
 
-	err := cmd.Start()
-	if err != nil {
-		return err
-	}
-
-	err = cmd.Wait()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return runTerraformCommand(cmd, t.stopCh, t.Logger)
 }
 
 func (t *TerraformApp) Clear() {
@@ -279,6 +234,7 @@ func (t *TerraformApp) InstallRequirements(args LocalAppInstallingArgs) (err err
 }
 
 func (t *TerraformApp) InstallRequirementsWithInitArgs(args LocalAppInstallingArgs, initArgs []string) (err error) {
+	t.stopCh = args.StopCh
 
 	tpl := args.TplParams.(*db.TerraformTemplateParams)
 	p := args.Params.(*db.TerraformTaskParams)
@@ -299,6 +255,11 @@ func (t *TerraformApp) InstallRequirementsWithInitArgs(args LocalAppInstallingAr
 	if err = t.init(args.EnvironmentVars, args.Installer, p, initArgs); err != nil {
 		return
 	}
+	select {
+	case <-t.stopCh:
+		return nil
+	default:
+	}
 
 	workspace := "default"
 
@@ -317,7 +278,7 @@ func (t *TerraformApp) InstallRequirementsWithInitArgs(args LocalAppInstallingAr
 }
 
 func (t *TerraformApp) Plan(args []string, environmentVars []string, inputs map[string]string, stopCh <-chan struct{}) error {
-	planArgs := []string{"plan", "-lock=false"}
+	planArgs := []string{"plan"}
 	planArgs = append(planArgs, args...)
 	cmd := t.makeCmd(t.Name, planArgs, environmentVars)
 	cmd.WaitDelay = 250 * time.Millisecond
@@ -331,7 +292,7 @@ func (t *TerraformApp) Plan(args []string, environmentVars []string, inputs map[
 	})
 
 	cmd.Stdin = strings.NewReader("")
-	err := runCommand(cmd, stopCh, t.Logger)
+	err := runTerraformCommand(cmd, stopCh, t.Logger)
 	finishLog()
 	if errors.Is(err, exec.ErrWaitDelay) {
 		t.Logger.Logf("terraform command output draining exceeded %s and was stopped", cmd.WaitDelay)
@@ -341,14 +302,14 @@ func (t *TerraformApp) Plan(args []string, environmentVars []string, inputs map[
 }
 
 func (t *TerraformApp) Apply(args []string, environmentVars []string, inputs map[string]string, stopCh <-chan struct{}) error {
-	applyArgs := []string{"apply", "-auto-approve", "-lock=false"}
+	applyArgs := []string{"apply", "-auto-approve"}
 	applyArgs = append(applyArgs, args...)
 	cmd := t.makeCmd(t.Name, applyArgs, environmentVars)
 	cmd.WaitDelay = 250 * time.Millisecond
 	finishLog := t.Logger.LogCmd(cmd)
 	defer finishLog()
 	cmd.Stdin = strings.NewReader("")
-	err := runCommand(cmd, stopCh, t.Logger)
+	err := runTerraformCommand(cmd, stopCh, t.Logger)
 	finishLog()
 	if errors.Is(err, exec.ErrWaitDelay) {
 		t.Logger.Logf("terraform command output draining exceeded %s and was stopped", cmd.WaitDelay)
@@ -382,7 +343,7 @@ func (t *TerraformApp) Run(args LocalAppRunningArgs) error {
 		return err
 	}
 
-	// A plan may handle SIGTERM and exit successfully; do not interpret that as
+	// A plan may handle an interrupt and exit successfully; do not interpret that as
 	// normal completion or continue to the next Terraform stage.
 	select {
 	case <-args.StopCh:
@@ -406,16 +367,19 @@ func (t *TerraformApp) Run(args LocalAppRunningArgs) error {
 	t.Logger.SetStatus(task_logger.TaskWaitingConfirmation)
 
 	for {
-		time.Sleep(time.Second * 3)
-		if t.reader.status.IsFinished() ||
-			t.reader.status == task_logger.TaskConfirmed ||
-			t.reader.status == task_logger.TaskRejected ||
-			t.reader.status == task_logger.TaskStoppingStatus {
+		select {
+		case <-args.StopCh:
+			return nil
+		case <-time.After(100 * time.Millisecond):
+		}
+		status := t.reader.getStatus()
+		if status.IsFinished() || status == task_logger.TaskConfirmed ||
+			status == task_logger.TaskRejected || status == task_logger.TaskStoppingStatus {
 			break
 		}
 	}
 
-	switch t.reader.status {
+	switch t.reader.getStatus() {
 	case task_logger.TaskRejected:
 		t.Logger.SetStatus(task_logger.TaskFailStatus)
 	case task_logger.TaskConfirmed:

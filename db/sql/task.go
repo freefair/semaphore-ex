@@ -156,7 +156,12 @@ func (d *SqlDb) clearTasks(projectID int, templateID int, maxTasks int) {
 		return
 	}
 
-	_, err = d.exec("DELETE FROM task WHERE template_id=? AND created<?", templateID, oldestTask.Created)
+	// Group ownership lives on the task row. Retention must not delete a live
+	// owner while another task is waiting for its groups.
+	_, err = d.exec("DELETE FROM task WHERE template_id=? AND created<? "+
+		"AND (task_group_keys is null OR status in (?, ?, ?, ?))",
+		templateID, oldestTask.Created, task_logger.TaskStoppedStatus,
+		task_logger.TaskBlockedStatus, task_logger.TaskSuccessStatus, task_logger.TaskFailStatus)
 
 	if err != nil {
 		return
@@ -404,10 +409,13 @@ func (d *SqlDb) GetWorkflowRunTasks(projectID int, runID int, params db.Retrieve
 
 func (d *SqlDb) DeleteTaskWithOutputs(projectID int, taskID int) (err error) {
 	// check if task exists in the project
-	_, err = d.GetTask(projectID, taskID)
+	task, err := d.GetTask(projectID, taskID)
 
 	if err != nil {
 		return
+	}
+	if len(task.TaskGroupKeys) > 0 && !task.Status.IsFinished() {
+		return db.ErrInvalidOperation
 	}
 
 	_, err = d.exec("delete from task__output where task_id=?", taskID)

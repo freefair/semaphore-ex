@@ -1,10 +1,12 @@
 package export
 
 import (
+	"fmt"
 	"slices"
 	"strconv"
 
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
 )
 
 type TaskExporter struct {
@@ -53,6 +55,29 @@ func (e *TaskExporter) restoreValue(val EntityObject[db.Task], store db.Store, e
 	old.TemplateID, err = exporter.getNewKeyInt(Template, val.scope, old.TemplateID)
 	if err != nil {
 		return err
+	}
+	// Task group keys are derived runtime state. Never carry them over from an
+	// import: a backup can originate from a different project and its keys could
+	// otherwise claim arbitrary managed groups. Only waiting tasks
+	// are dispatchable after restore, so only they receive fresh keys from the
+	// remapped template.
+	old.TaskGroupKeys = nil
+	if old.Status == task_logger.TaskWaitingStatus {
+		template, templateErr := store.GetTemplate(old.ProjectID, old.TemplateID)
+		if templateErr != nil {
+			return templateErr
+		}
+		if len(template.TaskGroups) > 0 {
+			groups, ok := store.(db.TaskGroupManager)
+			if !ok {
+				return fmt.Errorf("task group catalog is unavailable")
+			}
+			resolved, resolveErr := groups.ResolveTaskGroups(template.ProjectID, template.TaskGroups)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			old.TaskGroupKeys = db.TaskGroupKeys(resolved)
+		}
 	}
 
 	old.InventoryID, err = exporter.getNewKeyIntRef(Inventory, val.scope, old.InventoryID, e)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db_lib"
+	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pkg/jwt"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/taskredaction"
@@ -17,6 +18,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
 
@@ -53,7 +55,8 @@ type TaskRunner struct {
 	keyInstaller db_lib.AccessKeyInstaller
 
 	// job executes Ansible and returns stdout to Semaphore logs
-	job Job
+	job   Job
+	jobMu sync.Mutex
 
 	Username        string
 	IncomingVersion *string
@@ -115,7 +118,53 @@ func (t *TaskRunner) saveStatus() {
 }
 
 func (t *TaskRunner) kill() {
-	t.job.Kill()
+	t.jobMu.Lock()
+	defer t.jobMu.Unlock()
+	if t.job != nil {
+		t.job.Kill()
+	}
+}
+
+func (t *TaskRunner) setJob(job Job) {
+	t.jobMu.Lock()
+	defer t.jobMu.Unlock()
+	t.job = job
+}
+
+func (t *TaskRunner) currentJob() Job {
+	t.jobMu.Lock()
+	defer t.jobMu.Unlock()
+	return t.job
+}
+
+func (t *TaskRunner) jobIsAsync() bool {
+	t.jobMu.Lock()
+	defer t.jobMu.Unlock()
+	return t.job != nil && t.job.Async()
+}
+
+func (t *TaskRunner) jobIsKilled() bool {
+	t.jobMu.Lock()
+	defer t.jobMu.Unlock()
+	return t.job != nil && t.job.IsKilled()
+}
+
+func (t *TaskRunner) localJob() *LocalExecutor {
+	t.jobMu.Lock()
+	defer t.jobMu.Unlock()
+	localJob, _ := t.job.(*LocalExecutor)
+	return localJob
+}
+
+// replaceWithRemoteJob preserves a concurrent stop request while task-group
+// policy changes dispatch from a local executor to a remote runner job.
+func (t *TaskRunner) replaceWithRemoteJob(job *RemoteJob) {
+	t.jobMu.Lock()
+	defer t.jobMu.Unlock()
+	if t.job != nil && t.job.IsKilled() {
+		job.Kill()
+	}
+	t.job = job
 }
 
 func (t *TaskRunner) createTaskEvent() {
@@ -219,6 +268,12 @@ func (t *TaskRunner) run() {
 
 	startOutcome, err := t.claimTaskStart()
 	if err != nil {
+		var invalid *common_errors.ValidationError
+		if errors.As(err, &invalid) {
+			t.Log(invalid.Error())
+			t.SetStatus(task_logger.TaskFailStatus)
+			return
+		}
 		log.WithError(err).WithFields(log.Fields{
 			"task_id": t.Task.ID,
 			"context": "task_dispatch",
@@ -230,6 +285,25 @@ func (t *TaskRunner) run() {
 	if startOutcome == taskStartClaimSuperseded {
 		superseded = true
 		return
+	}
+	if startOutcome == taskStartClaimStopped {
+		t.SetStatus(task_logger.TaskStoppedStatus)
+		return
+	}
+	if startOutcome == taskStartClaimGroupsBusy {
+		t.pool.state.Enqueue(t)
+		requeued = true
+		return
+	}
+	if len(t.Task.TaskGroupRunnerIDs) > 0 {
+		tags, mode, legacy := runnerPlacementPolicy(t.Template, t.Inventory)
+		t.replaceWithRemoteJob(&RemoteJob{RunnerTag: legacy, RunnerTags: tags, RunnerTagMatchMode: mode,
+			ExecutorImage: t.Task.ResolvedExecutorImage, Task: t.Task, taskPool: t.pool,
+		})
+		if t.jobIsKilled() {
+			t.SetStatus(task_logger.TaskStoppedStatus)
+			return
+		}
 	}
 	t.createTaskEvent()
 
@@ -254,7 +328,7 @@ func (t *TaskRunner) run() {
 	// For locally-executed tasks, mint a JWT and pass it to the LocalJob so it
 	// can be exposed to the playbook as SEMAPHORE_JWT. Remote runners receive
 	// the JWT inside the JobData payload returned by the API.
-	if localJob, ok := t.job.(*LocalExecutor); ok {
+	if localJob := t.localJob(); localJob != nil {
 		if backendErr := t.configureTerraformBackend(localJob); backendErr != nil {
 			t.Log(backendErr.Error())
 			t.SetStatus(task_logger.TaskFailStatus)
@@ -325,19 +399,24 @@ func (t *TaskRunner) run() {
 		t.SetTaskCredentialRedaction(mergedSecret)
 	}
 
-	err = t.job.Run(username, incomingVersion, t.Alias)
+	job := t.currentJob()
+	if job == nil {
+		t.SetStatus(task_logger.TaskFailStatus)
+		return
+	}
+	err = job.Run(username, incomingVersion, t.Alias)
 
 	// Remote jobs only dispatch the task to a runner; their completion is
 	// reported asynchronously via the runner API and finalized there. Hand off
 	// and let the deferred cleanup skip finalization.
-	if err == nil && t.job.Async() {
+	if err == nil && job.Async() {
 		handedOff = true
 		return
 	}
 
 	// A SIGTERM handler may exit successfully, so cancellation is independent
 	// of whether Run returns a nil or non-nil error.
-	if t.job.IsKilled() {
+	if t.jobIsKilled() || !job.Async() && t.Task.Status == task_logger.TaskStoppingStatus {
 		t.SetStatus(task_logger.TaskStoppedStatus)
 		return
 	}

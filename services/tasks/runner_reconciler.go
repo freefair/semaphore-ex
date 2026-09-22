@@ -260,6 +260,37 @@ func (p *TaskPool) failTaskRunnerLost(tsk *TaskRunner, runner *db.Runner, reason
 	if tsk.Task.Status.IsFinished() {
 		return
 	}
+	if len(tsk.Task.TaskGroupKeys) > 0 {
+		oldStatus := tsk.Task.Status
+		candidate := tsk.Task
+		candidate.Message = "Task group occupancy retained: " + reason
+		candidate.RecoveryReason = candidate.Message
+		if runner == nil {
+			// A runner deletion nulls the persisted FK. Retaining group occupancy
+			// must not restore the stale in-memory runner ID on a non-HA node.
+			candidate.RunnerID = nil
+		}
+		if tsk.Task.Message == candidate.Message && tsk.Task.RecoveryReason == candidate.RecoveryReason &&
+			(runner != nil || tsk.Task.RunnerID == nil) {
+			return
+		}
+		updated, err := p.store.UpdateTaskRunner(
+			candidate, oldStatus, runnerIDFromSnapshot(tsk.Task), tsk.Task.AssignmentGeneration,
+			db.RunnerAttemptActive, candidate.RecoveryReason, tz.Now(),
+		)
+		if err != nil {
+			log.WithError(err).WithField("task_id", tsk.Task.ID).Error("failed to retain task group occupancy after runner loss")
+			return
+		}
+		if !updated {
+			p.finalizeConcurrentRunnerWinner(tsk, runner)
+			return
+		}
+		tsk.Task = candidate
+		p.applyPersistedRunnerStatus(tsk, oldStatus)
+		tsk.Log(candidate.RecoveryReason)
+		return
+	}
 
 	fields := log.Fields{
 		"task_id": tsk.Task.ID,

@@ -9,6 +9,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/metrics"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/tz"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/runners"
 	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/services/tasks"
@@ -462,7 +463,7 @@ func TestUpdateRunner_CancelingTaskAcceptsInflightNonTerminalProgress(t *testing
 	require.NoError(t, fixture.store.UpdateTask(fixture.task))
 
 	pool := tasks.CreateTaskPool(
-		fixture.store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, nil, nil, nil,
+		fixture.store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, &runnerAPILogWriter{}, nil, nil,
 	)
 	tr := tasks.NewTaskRunner(fixture.task, &pool, "", nil)
 	pool.StateStore().SetRunning(tr)
@@ -484,6 +485,81 @@ func TestUpdateRunner_CancelingTaskAcceptsInflightNonTerminalProgress(t *testing
 	require.NotNil(t, tr.Task.CommitHash)
 	assert.Equal(t, "cancel-commit", *tr.Task.CommitHash)
 }
+
+func TestUpdateRunner_CrossNodeStopDoesNotTerminateCurrentRunner(t *testing.T) {
+	prevCfg := util.Config
+	t.Cleanup(func() { util.Config = prevCfg })
+	fixture := newRunnerMetadataAPIFixture(t)
+	staleTask := fixture.task
+	fixture.task.Status = task_logger.TaskStoppingStatus
+	require.NoError(t, fixture.store.UpdateTask(fixture.task))
+
+	pool := tasks.CreateTaskPool(
+		fixture.store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, &runnerAPILogWriter{}, nil, nil,
+	)
+	// This node received runner progress after another node persisted stopping,
+	// so its local task copy still has the pre-stop status.
+	tr := tasks.NewTaskRunner(staleTask, &pool, "", nil)
+	pool.StateStore().SetRunning(tr)
+	ctrl := NewRunnerController(fixture.store, &pool, nil, nil)
+
+	req := newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{
+		Jobs: []runners.JobProgress{{
+			ID: fixture.task.ID, Generation: fixture.task.AssignmentGeneration, Status: task_logger.TaskRunningStatus,
+			Commit: &runners.CommitInfo{Hash: "cross-node-stop", Message: "captured during cancellation"},
+		}},
+	})
+	w := httptest.NewRecorder()
+
+	ctrl.UpdateRunner(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, decodeProgressResponse(t, w).TerminatedJobs)
+	assert.Equal(t, task_logger.TaskStoppingStatus, tr.Task.Status)
+	require.NotNil(t, tr.Task.CommitHash)
+	assert.Equal(t, "cross-node-stop", *tr.Task.CommitHash)
+}
+
+func TestUpdateRunner_CrossNodeStopMapsTerminalSuccessToStopped(t *testing.T) {
+	prevCfg := util.Config
+	t.Cleanup(func() { util.Config = prevCfg })
+	fixture := newRunnerMetadataAPIFixture(t)
+	staleTask := fixture.task
+	fixture.task.Status = task_logger.TaskStoppingStatus
+	require.NoError(t, fixture.store.UpdateTask(fixture.task))
+
+	pool := tasks.CreateTaskPool(
+		fixture.store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, &runnerAPILogWriter{}, nil, nil,
+	)
+	tr := tasks.NewTaskRunner(staleTask, &pool, "", nil)
+	pool.StateStore().SetRunning(tr)
+	ctrl := NewRunnerController(fixture.store, &pool, nil, nil)
+
+	req := newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{
+		Jobs: []runners.JobProgress{{
+			ID: fixture.task.ID, Generation: fixture.task.AssignmentGeneration, Status: task_logger.TaskSuccessStatus,
+		}},
+	})
+	w := httptest.NewRecorder()
+
+	ctrl.UpdateRunner(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, decodeProgressResponse(t, w).TerminatedJobs)
+	assert.Equal(t, task_logger.TaskStoppedStatus, tr.Task.Status)
+	require.Eventually(t, func() bool {
+		stored, err := fixture.store.GetTaskByID(fixture.task.ID)
+		return err == nil && stored.End != nil
+	}, time.Second, 10*time.Millisecond)
+}
+
+type runnerAPILogWriter struct{}
+
+func (*runnerAPILogWriter) WriteEventLog(pro_interfaces.EventLogRecord) error { return nil }
+
+func (*runnerAPILogWriter) WriteTaskLog(pro_interfaces.TaskLogRecord) error { return nil }
+
+func (*runnerAPILogWriter) WriteResult(any) error { return nil }
 
 func TestUpdateRunner_RejectedTaskRejectsNonTerminalProgress(t *testing.T) {
 	prevCfg := util.Config

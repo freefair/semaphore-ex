@@ -205,6 +205,9 @@ func (p *TaskPool) quarantineOrphanedTask(
 		return false
 	}
 	reason = "Recovery quarantined: " + reason
+	if tsk.Task.RecoveryReason == reason && tsk.Task.Message == reason {
+		return true
+	}
 	candidate := tsk.Task
 	candidate.RecoveryReason = reason
 	candidate.Message = reason
@@ -272,14 +275,21 @@ func (p *TaskPool) stopTaskRunnerLost(tsk *TaskRunner, runner *db.Runner, reason
 	if tsk.Task.Status.IsFinished() {
 		return
 	}
-	if p.isDockerCancellation(tsk, runner) {
+	if p.isDockerCancellation(tsk, runner) || len(tsk.Task.TaskGroupKeys) > 0 {
 		// HA has lost contact with the only process that can ask Docker for
-		// Stop/Inspect evidence. Do not turn cancellation into "stopped" on
-		// liveness inference alone; retain a durable, reportable quarantine.
+		// Stop/Inspect evidence. A grouped task has the same safety requirement:
+		// do not release its shared execution group on liveness inference alone.
 		oldStatus := tsk.Task.Status
 		candidate := tsk.Task
-		candidate.Message = "Docker cancellation quarantined: " + reason
+		candidate.Message = "Task cancellation quarantined: " + reason
 		candidate.RecoveryReason = candidate.Message
+		if runner == nil {
+			candidate.RunnerID = nil
+		}
+		if tsk.Task.Message == candidate.Message && tsk.Task.RecoveryReason == candidate.RecoveryReason &&
+			(runner != nil || tsk.Task.RunnerID == nil) {
+			return
+		}
 		updated, err := p.store.UpdateTaskRunner(candidate, oldStatus, runnerIDFromSnapshot(tsk.Task), tsk.Task.AssignmentGeneration, db.RunnerAttemptActive, candidate.RecoveryReason, tz.Now())
 		if err != nil {
 			log.WithError(err).WithField("task_id", tsk.Task.ID).Error("failed to persist Docker cancellation quarantine")

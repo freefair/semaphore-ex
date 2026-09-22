@@ -406,6 +406,12 @@
             </template>
           </v-checkbox>
 
+          <TaskGroupsEditor
+            v-model="item.task_groups"
+            :project-id="projectId"
+            :disabled="formSaving"
+          />
+
           <template v-if="systemInfo && systemInfo.jwt && systemInfo.jwt.enabled">
             <v-checkbox class="mt-0" v-model="item.jwt_params.enabled">
               <template v-slot:label>
@@ -716,6 +722,7 @@ import 'codemirror/addon/display/placeholder.js';
 import ArgsPicker from '@/components/ArgsPicker.vue';
 import TemplateVaults from '@/components/TemplateVaults.vue';
 import TaskSSHKeys from '@/components/enhanced/TaskSSHKeys.vue';
+import TaskGroupsEditor from '@/components/enhanced/TaskGroupsEditor.vue';
 import { TEMPLATE_TYPE_ICONS, TEMPLATE_TYPE_TITLES } from '@/lib/constants';
 import AppFieldsMixin from '@/components/AppFieldsMixin';
 import AppsMixin from '@/components/AppsMixin';
@@ -733,6 +740,7 @@ export default {
     RichEditor,
     TemplateVaults,
     TaskSSHKeys,
+    TaskGroupsEditor,
     ArgsPicker,
     SurveyVars,
   },

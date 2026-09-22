@@ -6,6 +6,17 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestStringArrayFieldValuePreservesNilAndNonNilSlices(t *testing.T) {
+	var nilField StringArrayField
+	nilValue, err := nilField.Value()
+	assert.NoError(t, err)
+	assert.Nil(t, nilValue)
+
+	value, err := StringArrayField{"global/production", "project/7/deploy"}.Value()
+	assert.NoError(t, err)
+	assert.Equal(t, `["global/production","project/7/deploy"]`, string(value.([]byte)))
+}
+
 func TestObjectToJSON(t *testing.T) {
 	v := &SurveyVar{
 		Name:  "test",

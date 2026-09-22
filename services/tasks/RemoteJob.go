@@ -245,6 +245,16 @@ func (t *RemoteJob) Run(username string, incomingVersion *string, alias string) 
 	}
 	candidates := make([]RunnerPlacementCandidate, 0, len(projectRunners)+len(globalRunners))
 	for _, runner := range append(projectRunners, globalRunners...) {
+		if len(tsk.Task.TaskGroupRunnerIDs) > 0 {
+			if !slices.Contains(tsk.Task.TaskGroupRunnerIDs, runner.ID) {
+				continue
+			}
+			// Explicit group runner definitions replace the default-runner
+			// fallback, while authored template/inventory tag restrictions remain.
+			if len(requestedTags) == 0 {
+				runner.IsDefault = true
+			}
+		}
 		candidates = append(candidates, RunnerPlacementCandidate{
 			Runner: runner, RunningTasks: t.taskPool.GetNumberOfRunningTasksOfRunner(runner.ID),
 		})
@@ -353,22 +363,35 @@ func (t *RemoteJob) scheduleTimeout(runner *db.Runner) {
 	}
 	d := time.Duration(util.Config.MaxTaskDurationSec) * time.Second
 	taskID := t.Task.ID
-	pool := t.taskPool
 	time.AfterFunc(d, func() {
-		tsk, err := pool.GetTask(taskID)
-		if err != nil || tsk == nil {
-			return
-		}
-		if util.HAEnabled() {
-			pool.refreshTaskStatusFromDB(tsk)
-		}
-		if tsk.Task.Status.IsFinished() {
-			return
-		}
-		tsk.Log("Task timed out")
-		tsk.SetStatus(task_logger.TaskFailStatus)
-		pool.FinalizeRemoteTask(tsk, runner)
+		t.handleTimeout(taskID, runner)
 	})
+}
+
+// handleTimeout records a remote-task timeout. The stopping state reaches the
+// runner through its next state poll, but it cannot prove that the process has
+// stopped. Grouped and Terraform tasks therefore remain stopping until the
+// runner or recovery logic supplies terminal execution evidence; prematurely
+// finalizing either would release shared-group capacity or a Terraform lock.
+func (t *RemoteJob) handleTimeout(taskID int, runner *db.Runner) {
+	pool := t.taskPool
+	tsk, err := pool.GetTask(taskID)
+	if err != nil || tsk == nil {
+		return
+	}
+	if util.HAEnabled() {
+		pool.refreshTaskStatusFromDB(tsk)
+	}
+	if tsk.Task.Status.IsFinished() {
+		return
+	}
+	tsk.Log("Task timed out")
+	if taskRequiresStopEvidence(tsk) {
+		tsk.SetStatus(task_logger.TaskStoppingStatus)
+		return
+	}
+	tsk.SetStatus(task_logger.TaskFailStatus)
+	pool.FinalizeRemoteTask(tsk, runner)
 }
 
 func (t *RemoteJob) Kill() {

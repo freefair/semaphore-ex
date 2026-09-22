@@ -92,9 +92,10 @@
         class="task-log-action-button"
         style="right: 20px; width: 150px;"
         v-if="canStop"
+        :disabled="awaitingGracefulStop"
         @click="stopTask(item.status === 'stopping')"
       >
-        {{ item.status === 'stopping' ? $t('forceStop') : $t('stop') }}
+        {{ stopLabel }}
       </v-btn>
 
       <v-btn
@@ -308,6 +309,20 @@ export default {
 
     rawLogURL() {
       return `${this.systemInfo?.web_host || ''}/api/project/${this.projectId}/tasks/${this.itemId}/raw_output`;
+    },
+
+    requiresStopEvidence() {
+      return ['terraform', 'tofu', 'terragrunt'].includes(this.item.tpl_app)
+        || (this.item.task_groups || []).length > 0;
+    },
+
+    awaitingGracefulStop() {
+      return this.item.status === 'stopping' && this.requiresStopEvidence;
+    },
+
+    stopLabel() {
+      if (this.awaitingGracefulStop) return this.$t('taskGracefulStopping');
+      return this.item.status === 'stopping' ? this.$t('forceStop') : this.$t('stop');
     },
 
     canStop() {

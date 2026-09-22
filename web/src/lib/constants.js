@@ -38,19 +38,19 @@ export const USER_PERMISSIONS = {
 export const USER_ROLES = [{
   slug: 'owner',
   name: 'Owner',
-  permissions: 32767,
+  permissions: 1048575,
 }, {
   slug: 'manager',
   name: 'Manager',
-  permissions: 32757,
+  permissions: 1048565,
 }, {
   slug: 'task_runner',
   name: 'Task Runner',
-  permissions: 3505,
+  permissions: 36273,
 }, {
   slug: 'guest',
   name: 'Guest',
-  permissions: 48,
+  permissions: 32816,
 }];
 
 export const MATCHER_TYPE_TITLES = {

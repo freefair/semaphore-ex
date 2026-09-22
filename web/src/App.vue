@@ -1180,6 +1180,15 @@ export default {
       }
 
       // Workflows is a Pro feature; hide the nav item unless it is licensed.
+      if (this.canReadTaskGroups) {
+        items.push({
+          key: 'task_groups',
+          icon: 'mdi-group',
+          title: this.$t('taskGroupsTitle'),
+          to: `${base}/task_groups`,
+          testId: 'sidebar-task-groups',
+        });
+      }
       const features = (this.systemInfo || {}).features || {};
       return items.filter((item) => (
         (item.key !== 'workflows' || features.workflows)

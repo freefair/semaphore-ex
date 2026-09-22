@@ -88,6 +88,15 @@ func (d *SqlDb) DeleteProject(projectID int) error {
 		return err
 	}
 
+	if err = db.RequireFinishedTaskGroups(tx, d.PrepareQuery, projectID, 0); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err = db.RequireNoExternalTaskGroupReferences(tx, d.PrepareQuery, projectID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
 	statements := []string{
 		"update project__template set build_template_id = null where project_id=?",
 		"delete from project__template where project_id=?",
@@ -95,6 +104,7 @@ func (d *SqlDb) DeleteProject(projectID int) error {
 		"delete from project__repository where project_id=?",
 		"delete from project__inventory where project_id=?",
 		"delete from access_key where project_id=?",
+		"delete from project__task_group where project_id=?",
 		"delete from project where id=?",
 	}
 

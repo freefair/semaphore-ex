@@ -67,11 +67,16 @@ func TestProjectRoleControllerCRUDCatalogIsolationAndStaleWrites(t *testing.T) {
 	assert.Equal(t, http.StatusOK, catalogResponse.Code)
 	var catalog []pro_interfaces.PermissionDefinition
 	require.NoError(t, json.Unmarshal(catalogResponse.Body.Bytes(), &catalog))
-	require.Len(t, catalog, 15)
+	require.Len(t, catalog, 20)
 	assert.Equal(t, pro_interfaces.PermissionViewWorkflow, catalog[5].ID)
 	assert.Equal(t, pro_interfaces.PermissionAdministerWorkflow, catalog[9].ID)
 	assert.Equal(t, pro_interfaces.PermissionManagePolicyGuardrails, catalog[13].ID)
 	assert.Equal(t, pro_interfaces.PermissionRollbackPolicyGuardrails, catalog[14].ID)
+	assert.Equal(t, pro_interfaces.PermissionReadTaskGroups, catalog[15].ID)
+	assert.Equal(t, pro_interfaces.PermissionCreateTaskGroups, catalog[16].ID)
+	assert.Equal(t, pro_interfaces.PermissionUpdateTaskGroups, catalog[17].ID)
+	assert.Equal(t, pro_interfaces.PermissionDeleteTaskGroups, catalog[18].ID)
+	assert.Equal(t, pro_interfaces.PermissionShareTaskGroups, catalog[19].ID)
 
 	createResponse := serveProjectRoleRequest(
 		t, project, http.MethodPost, "/api/project/1/roles",

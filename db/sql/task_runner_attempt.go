@@ -24,6 +24,10 @@ func (d *SqlDb) ClaimTaskStart(
 	if err != nil {
 		return task, false, err
 	}
+	if err = d.claimTaskGroupsTx(tx, projectID, taskID, expectedGeneration); err != nil {
+		_ = tx.Rollback()
+		return task, false, err
+	}
 	result, err := tx.Exec(d.PrepareQuery(
 		"update task set status=? where id=? and project_id=? and status=? "+
 			"and runner_id is null and assignment_generation=? and `end` is null"),
@@ -111,6 +115,10 @@ func (d *SqlDb) AssignTaskRunner(
 	if capacity.MaxParallelTasks > 0 && capacity.Assignments >= capacity.MaxParallelTasks {
 		_ = tx.Rollback()
 		return task, false, nil
+	}
+	if err = d.validateTaskGroupRunnerAssignmentTx(tx, taskID, runnerID); err != nil {
+		_ = tx.Rollback()
+		return task, false, err
 	}
 
 	result, err := tx.Exec(d.PrepareQuery(

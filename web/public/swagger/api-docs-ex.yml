@@ -1,5 +1,98 @@
 # Fork-owned API definitions and paths, referenced by api-docs.yml.
 definitions:
+  TaskGroupMutation:
+    type: object
+    required: [name, max_parallel_tasks]
+    properties:
+      name:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description:
+        type: string
+        maxLength: 2048
+      max_parallel_tasks:
+        type: integer
+        minimum: 1
+        maximum: 1000
+      runner_ids:
+        type: array
+        uniqueItems: true
+        items:
+          type: integer
+          minimum: 1
+      shared_project_ids:
+        type: array
+        uniqueItems: true
+        items:
+          type: integer
+          minimum: 1
+  TaskGroupUpdate:
+    allOf:
+    - $ref: '#/definitions/TaskGroupMutation'
+    - type: object
+      required: [revision]
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+  TaskGroupBindings:
+    type: array
+    maxItems: 16
+    description: >
+      Managed group IDs selected by a template. Each group must belong to the
+      template's project or be explicitly shared with it. All group settings
+      apply. An empty runner intersection is rejected. Omission on update
+      preserves the selection; tasks cannot override it.
+    items:
+      type: integer
+      minimum: 1
+  TaskGroupKeys:
+    type: array
+    readOnly: true
+    description: Immutable server-resolved memberships such as group/42.
+    items:
+      type: string
+  TaskGroup:
+    type: object
+    required: [id, project_id, name, max_parallel_tasks, revision]
+    properties:
+      id:
+        type: integer
+        readOnly: true
+      project_id:
+        type: integer
+        description: Owning project. Project grants permit use, never mutation.
+      name:
+        type: string
+        minLength: 1
+        maxLength: 128
+      description:
+        type: string
+        maxLength: 2048
+      max_parallel_tasks:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        description: Maximum active tasks across all templates using this group.
+      runner_ids:
+        type: array
+        description: >
+          Allowed runner candidates. Empty means no additional restriction.
+          Every selected group's runner candidates are intersected.
+        items:
+          type: integer
+          minimum: 1
+      shared_project_ids:
+        type: array
+        description: Explicit project grants, managed with task_groups.share permission.
+        items:
+          type: integer
+          minimum: 1
+      revision:
+        type: integer
+        minimum: 1
+        description: Current revision required for updates and deletion.
   TaskSSHKeyBindings:
     type: array
     x-nullable: true
@@ -274,6 +367,132 @@ definitions:
         type: string
         format: date-time
 paths:
+  /project/{project_id}/task_groups:
+    parameters:
+    - $ref: './api-docs.yml#/parameters/project_id'
+    get:
+      tags: [project]
+      summary: List owned and explicitly shared task groups
+      description: Requires task_groups.read. Grants of a shared group are visible only through its owning project.
+      responses:
+        '200':
+          description: Accessible task groups
+          schema:
+            type: array
+            items:
+              $ref: '#/definitions/TaskGroup'
+        '403':
+          description: Missing task_groups.read permission
+    post:
+      tags: [project]
+      summary: Create a project-owned task group
+      description: Requires task_groups.create and, for project grants, task_groups.share. The URL fixes ownership. Revision is assigned by the server.
+      parameters:
+      - in: body
+        name: group
+        required: true
+        schema:
+          $ref: '#/definitions/TaskGroupMutation'
+      responses:
+        '201':
+          description: Created group
+          schema:
+            $ref: '#/definitions/TaskGroup'
+        '400':
+          description: Invalid group or runner policy
+        '403':
+          description: Missing permission or inaccessible grant target
+  /project/{project_id}/task_groups/{group_id}:
+    parameters:
+    - $ref: './api-docs.yml#/parameters/project_id'
+    - in: path
+      name: group_id
+      type: integer
+      minimum: 1
+      required: true
+    get:
+      tags: [project]
+      summary: Read an owned or explicitly shared task group
+      responses:
+        '200':
+          description: Group visible to this project
+          schema:
+            $ref: '#/definitions/TaskGroup'
+        '403':
+          description: Missing task_groups.read permission
+        '404':
+          description: Group unavailable to this project
+    put:
+      tags: [project]
+      summary: Update a task group using its current revision
+      description: Requires task_groups.update in the owning project, which must be the URL project. Grant changes also require task_groups.share. A project grant alone never authorizes mutation. PUT replaces the group configuration; include runner_ids and shared_project_ids to retain existing restrictions and grants. Updates preserve active execution restrictions and reject contradictory template runner policies.
+      parameters:
+      - in: body
+        name: group
+        required: true
+        schema:
+          $ref: '#/definitions/TaskGroupUpdate'
+      responses:
+        '204':
+          description: Updated; read again to obtain the new revision
+        '400':
+          description: Invalid policy, stale revision, unsafe active-task change, or referenced grant
+        '403':
+          description: Missing owning-project permission
+        '404':
+          description: Group is not owned by the URL project
+    delete:
+      tags: [project]
+      summary: Delete an unreferenced task group
+      description: Requires task_groups.delete in the owning project. Template references and queued or active task memberships prevent deletion.
+      parameters:
+      - in: body
+        name: revision
+        required: true
+        schema:
+          type: object
+          required: [revision]
+          properties:
+            revision:
+              type: integer
+              minimum: 1
+      responses:
+        '204':
+          description: Group deleted
+        '400':
+          description: Group is still referenced or its revision changed
+        '403':
+          description: Missing owning-project permission
+        '404':
+          description: Group is not owned by the URL project
+  /project/{project_id}/task_groups/runners:
+    parameters:
+    - $ref: './api-docs.yml#/parameters/project_id'
+    get:
+      tags: [project]
+      summary: List safe runner metadata for group policy selection
+      description: Requires task_groups.read. Returns project and instance runners, including temporarily unavailable candidates. Registration credentials and executor configuration are excluded.
+      responses:
+        '200':
+          description: Runner policy options
+          schema:
+            type: array
+            items:
+              type: object
+              properties:
+                id:
+                  type: integer
+                name:
+                  type: string
+                project_id:
+                  type: integer
+                  x-nullable: true
+                tags:
+                  type: array
+                  items:
+                    type: string
+        '403':
+          description: Missing task_groups.read permission
   /roles/project-permissions:
     get:
       tags: [user]

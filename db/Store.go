@@ -952,8 +952,9 @@ func (m *StringArrayField) Scan(value any) error {
 	}
 }
 
-// Value implements the driver.Valuer interface for MapStringAnyField
-func (m *StringArrayField) Value() (driver.Value, error) {
+// Value implements the driver.Valuer interface for StringArrayField. It uses a
+// value receiver so gorp can persist struct fields of this slice type directly.
+func (m StringArrayField) Value() (driver.Value, error) {
 	if m == nil {
 		return nil, nil
 	}

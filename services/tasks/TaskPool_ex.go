@@ -546,6 +546,23 @@ func (p *TaskPool) addTask(
 	} else {
 		tpl = *templateSnapshot
 	}
+	// Group IDs are authored only on the template. Resolve them through the
+	// catalog using the execution project, never the request payload. A
+	// cross-project template grant does not implicitly grant this project's use
+	// of the owner's task groups. Freeze the resulting immutable IDs onto the
+	// task.
+	taskObj.TaskGroupKeys = nil
+	if len(tpl.TaskGroups) > 0 {
+		groupsStore, ok := p.store.(db.TaskGroupManager)
+		if !ok {
+			return db.Task{}, errors.New("task group catalog is unavailable")
+		}
+		groups, groupErr := groupsStore.ResolveTaskGroups(projectID, tpl.TaskGroups)
+		if groupErr != nil {
+			return db.Task{}, groupErr
+		}
+		taskObj.TaskGroupKeys = db.TaskGroupKeys(groups)
+	}
 
 	requestedImage, err := tpl.ResolveExecutorImage()
 	if err != nil {
@@ -689,7 +706,7 @@ func (p *TaskPool) addTask(
 		}
 	}
 
-	taskRunner.job = job
+	taskRunner.setJob(job)
 
 	p.register <- taskRunner
 

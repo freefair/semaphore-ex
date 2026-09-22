@@ -21,6 +21,11 @@ const (
 	PermissionOverrideDeploymentWindow        PermissionID = "project.deployment_windows.override"
 	PermissionManagePolicyGuardrails          PermissionID = "project.policy_guardrails.manage"
 	PermissionRollbackPolicyGuardrails        PermissionID = "project.policy_guardrails.rollback"
+	PermissionReadTaskGroups                  PermissionID = "project.task_groups.read"
+	PermissionCreateTaskGroups                PermissionID = "project.task_groups.create"
+	PermissionUpdateTaskGroups                PermissionID = "project.task_groups.update"
+	PermissionDeleteTaskGroups                PermissionID = "project.task_groups.delete"
+	PermissionShareTaskGroups                 PermissionID = "project.task_groups.share"
 	PermissionManageGlobalPolicyGuardrails    PermissionID = "global.policy_guardrails.manage"
 	PermissionRollbackGlobalPolicyGuardrails  PermissionID = "global.policy_guardrails.rollback"
 	PermissionManageGlobalUsers               PermissionID = "global.users.manage"
@@ -190,6 +195,11 @@ func permissionCatalog() []PermissionDefinition {
 		},
 		{ID: PermissionManagePolicyGuardrails, Description: "Manage project policy guardrails", Scope: PermissionScopeProject, Permission: db.CanManagePolicyGuardrails, CapabilityPrerequisites: []CapabilityID{CapabilityPolicyGuardrails}},
 		{ID: PermissionRollbackPolicyGuardrails, Description: "Rollback project policy guardrails with a break-glass reason", Scope: PermissionScopeProject, Permission: db.CanRollbackPolicyGuardrails, CapabilityPrerequisites: []CapabilityID{CapabilityPolicyGuardrails}},
+		{ID: PermissionReadTaskGroups, Description: "List task concurrency groups available to this project", Scope: PermissionScopeProject, Permission: db.CanReadTaskGroups, CapabilityPrerequisites: []CapabilityID{}},
+		{ID: PermissionCreateTaskGroups, Description: "Create project-owned task concurrency groups", Scope: PermissionScopeProject, Permission: db.CanCreateTaskGroups, CapabilityPrerequisites: []CapabilityID{}},
+		{ID: PermissionUpdateTaskGroups, Description: "Update project-owned task concurrency groups", Scope: PermissionScopeProject, Permission: db.CanUpdateTaskGroups, CapabilityPrerequisites: []CapabilityID{}},
+		{ID: PermissionDeleteTaskGroups, Description: "Delete project-owned task concurrency groups", Scope: PermissionScopeProject, Permission: db.CanDeleteTaskGroups, CapabilityPrerequisites: []CapabilityID{}},
+		{ID: PermissionShareTaskGroups, Description: "Grant other projects access to task concurrency groups", Scope: PermissionScopeProject, Permission: db.CanShareTaskGroups, CapabilityPrerequisites: []CapabilityID{}},
 		{
 			ID: PermissionManageGlobalUsers, Description: "Manage global users",
 			Scope: PermissionScopeGlobal, Permission: 1,

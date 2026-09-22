@@ -33,6 +33,11 @@ describe('Enhanced permission constants', () => {
       overrideDeploymentWindow: 4096,
       managePolicyGuardrails: 8192,
       rollbackPolicyGuardrails: 16384,
+      readTaskGroups: 32768,
+      createTaskGroups: 65536,
+      updateTaskGroups: 131072,
+      deleteTaskGroups: 262144,
+      shareTaskGroups: 524288,
     });
     expect(GLOBAL_PERMISSIONS).to.deep.equal({
       manageUsers: 1,
@@ -46,10 +51,10 @@ describe('Enhanced permission constants', () => {
       rollbackPolicyGuardrails: 256,
     });
     expect(USER_ROLES).to.deep.equal([
-      { slug: 'owner', name: 'Owner', permissions: 32767 },
-      { slug: 'manager', name: 'Manager', permissions: 32757 },
-      { slug: 'task_runner', name: 'Task Runner', permissions: 3505 },
-      { slug: 'guest', name: 'Guest', permissions: 48 },
+      { slug: 'owner', name: 'Owner', permissions: 1048575 },
+      { slug: 'manager', name: 'Manager', permissions: 1048565 },
+      { slug: 'task_runner', name: 'Task Runner', permissions: 36273 },
+      { slug: 'guest', name: 'Guest', permissions: 32816 },
     ]);
     expect(ROLE_PERMISSIONS.default).to.deep.equal([
       descriptor(1, 'canRunProjectTasks', 'blue'),
@@ -62,6 +67,11 @@ describe('Enhanced permission constants', () => {
       descriptor(4096, 'Override deployment windows', 'orange'),
       descriptor(8192, 'Manage policy guardrails', 'deep-purple'),
       descriptor(16384, 'Rollback policy guardrails', 'red darken-1'),
+      descriptor(32768, 'Read task groups', 'cyan'),
+      descriptor(65536, 'Create task groups', 'blue darken-2'),
+      descriptor(131072, 'Update task groups', 'green darken-1'),
+      descriptor(262144, 'Delete task groups', 'red'),
+      descriptor(524288, 'Share task groups', 'purple darken-1'),
     ]);
     expect(ROLE_PERMISSIONS.global).to.deep.equal([
       descriptor(1, 'Manage global users', 'blue'),
@@ -80,5 +90,25 @@ describe('Enhanced permission constants', () => {
       descriptor(4, 'Edit template', 'orange'),
       descriptor(8, 'Delete template', 'red'),
     ]);
+  });
+
+  it('maps task-group permissions to the same built-in roles as the API', () => {
+    const groups = {
+      read: USER_PERMISSIONS.readTaskGroups,
+      create: USER_PERMISSIONS.createTaskGroups,
+      update: USER_PERMISSIONS.updateTaskGroups,
+      delete: USER_PERMISSIONS.deleteTaskGroups,
+      share: USER_PERMISSIONS.shareTaskGroups,
+    };
+    const manageGroups = groups.read | groups.create | groups.update
+      | groups.delete | groups.share;
+    const rolePermissions = Object.fromEntries(
+      USER_ROLES.map((role) => [role.slug, role.permissions]),
+    );
+
+    expect(rolePermissions.owner & manageGroups).to.equal(manageGroups);
+    expect(rolePermissions.manager & manageGroups).to.equal(manageGroups);
+    expect(rolePermissions.task_runner & manageGroups).to.equal(groups.read);
+    expect(rolePermissions.guest & manageGroups).to.equal(groups.read);
   });
 });

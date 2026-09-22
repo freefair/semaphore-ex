@@ -1,6 +1,7 @@
 import Vue from 'vue';
 import VueRouter from 'vue-router';
 import RestoreProject from '@/views/project/RestoreProject.vue';
+import TaskGroups from '@/views/project/TaskGroups.vue';
 import Tasks from '@/views/Tasks.vue';
 import TaskList from '@/components/TaskList.vue';
 import TemplateDetails from '@/views/project/template/TemplateDetails.vue';
@@ -44,6 +45,10 @@ import GrantedCredentials from '../views/project/GrantedCredentials.vue';
 Vue.use(VueRouter);
 
 const routes = [
+  {
+    path: '/project/:projectId/task_groups',
+    component: TaskGroups,
+  },
   {
     path: '/project/new',
     component: New,

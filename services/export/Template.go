@@ -1,6 +1,7 @@
 package export
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/semaphoreui/semaphore/db"
@@ -38,6 +39,13 @@ func (e *TemplateExporter) restore(store db.Store, exporter DataExporter, progre
 
 func (e *TemplateExporter) restoreValue(val EntityObject[db.Template], store db.Store, exporter DataExporter) (err error) {
 	old := val.value
+	old.TaskGroups, err = db.NormalizeTaskGroups(old.TaskGroups)
+	if err != nil {
+		return err
+	}
+	if err = rejectTemplateTaskGroupsForImport(old.TaskGroups); err != nil {
+		return err
+	}
 
 	old.Vaults = nil
 
@@ -88,6 +96,13 @@ func (e *TemplateExporter) restoreValue(val EntityObject[db.Template], store db.
 	}
 
 	return exporter.mapKeys(e.getName(), val.scope, old.GetDbKey(), newObj.GetDbKey())
+}
+
+func rejectTemplateTaskGroupsForImport(groups db.TaskGroupBindings) error {
+	if len(groups) == 0 {
+		return nil
+	}
+	return errors.New("generic project import cannot restore templates with task group memberships; recreate groups and explicitly rebind the template")
 }
 
 func (e *TemplateExporter) getName() string {

@@ -832,15 +832,22 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 		// the server-owned stopping state and accept the snapshot so the runner
 		// remains tracked long enough to report its terminal stopped status while
 		// still persisting commit metadata carried by the snapshot.
-		inflightCancellationProgress := tsk.Task.Status == task_logger.TaskStoppingStatus &&
-			!job.Status.IsFinished()
-		acceptedStatus := job.Status
-		if inflightCancellationProgress {
-			acceptedStatus = task_logger.TaskStoppingStatus
-		}
-		if !tsk.ApplyRunnerProgress(
+		acceptedStatus := runnerProgressStatusForStoppingTask(tsk.Task.Status, job.Status)
+		applied := tsk.ApplyRunnerProgress(
 			acceptedStatus, runner.ID, reportedGeneration, commitHash, commitMessage,
-		) {
+		)
+		if !applied && runnerProgressWasSupersededByStopping(tsk, runner.ID, reportedGeneration, job.Status) {
+			// A different server can persist stopping after this node read its
+			// local TaskRunner but before the conditional progress update. The
+			// failed CAS refreshes tsk from SQL; retry against stopping so this
+			// runner receives the next-poll cancellation state rather than an
+			// erroneous terminated_jobs emergency kill.
+			applied = tsk.ApplyRunnerProgress(
+				runnerProgressStatusForStoppingTask(tsk.Task.Status, job.Status),
+				runner.ID, reportedGeneration, commitHash, commitMessage,
+			)
+		}
+		if !applied {
 			response.TerminatedJobs = append(response.TerminatedJobs, job.ID)
 			continue
 		}
@@ -872,6 +879,32 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 	}
 
 	helpers.WriteJSON(w, http.StatusOK, response)
+}
+
+func runnerProgressStatusForStoppingTask(current, reported task_logger.TaskStatus) task_logger.TaskStatus {
+	if current != task_logger.TaskStoppingStatus {
+		return reported
+	}
+	if reported == task_logger.TaskSuccessStatus {
+		// A completion after cancellation proves the process has exited but does
+		// not overturn the user's stop outcome.
+		return task_logger.TaskStoppedStatus
+	}
+	if !reported.IsFinished() {
+		return task_logger.TaskStoppingStatus
+	}
+	return reported
+}
+
+func runnerProgressWasSupersededByStopping(
+	tsk *tasks.TaskRunner,
+	runnerID, generation int,
+	reportedStatus task_logger.TaskStatus,
+) bool {
+	return tsk != nil &&
+		tsk.Task.Status == task_logger.TaskStoppingStatus &&
+		tsk.Task.RunnerID != nil && *tsk.Task.RunnerID == runnerID &&
+		tsk.Task.AssignmentGeneration == generation
 }
 
 func RegisterRunner(w http.ResponseWriter, r *http.Request) {

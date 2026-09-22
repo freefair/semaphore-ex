@@ -10,7 +10,7 @@ import (
 
 func TestProjectPermissionCatalogIsStableTypedAndIsolated(t *testing.T) {
 	catalog := ProjectPermissionCatalog()
-	require.Len(t, catalog, 15)
+	require.Len(t, catalog, 20)
 	assert.Equal(t, []PermissionID{
 		PermissionRunProjectTasks,
 		PermissionUpdateProject,
@@ -27,10 +27,16 @@ func TestProjectPermissionCatalogIsStableTypedAndIsolated(t *testing.T) {
 		PermissionOverrideDeploymentWindow,
 		PermissionManagePolicyGuardrails,
 		PermissionRollbackPolicyGuardrails,
+		PermissionReadTaskGroups,
+		PermissionCreateTaskGroups,
+		PermissionUpdateTaskGroups,
+		PermissionDeleteTaskGroups,
+		PermissionShareTaskGroups,
 	}, []PermissionID{
 		catalog[0].ID, catalog[1].ID, catalog[2].ID, catalog[3].ID, catalog[4].ID,
 		catalog[5].ID, catalog[6].ID, catalog[7].ID, catalog[8].ID, catalog[9].ID,
 		catalog[10].ID, catalog[11].ID, catalog[12].ID, catalog[13].ID, catalog[14].ID,
+		catalog[15].ID, catalog[16].ID, catalog[17].ID, catalog[18].ID, catalog[19].ID,
 	})
 
 	seenPermissions := make(map[db.ProjectUserPermission]struct{}, len(catalog))

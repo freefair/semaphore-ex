@@ -94,6 +94,100 @@ func TestTemplateUpdatePreservesAndClearsSSHBindingsByPresence(t *testing.T) {
 	assert.Empty(t, template.SSHKeys)
 }
 
+func TestTemplateUpdateRequiresAccessibleManagedTaskGroups(t *testing.T) {
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "task group authorization"})
+	require.NoError(t, err)
+	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &project.ID, Type: db.AccessKeyNone})
+	require.NoError(t, err)
+	repo, err := store.CreateRepository(db.Repository{ProjectID: project.ID, SSHKeyID: key.ID, Name: "repo", GitURL: "https://example.test/r.git", GitBranch: "main"})
+	require.NoError(t, err)
+	group, err := store.CreateTaskGroup(db.TaskGroup{
+		ProjectID: project.ID, Name: "production", MaxParallelTasks: 1,
+	})
+	require.NoError(t, err)
+	template, err := store.CreateTemplate(db.Template{
+		ProjectID: project.ID, RepositoryID: repo.ID, Name: "deploy", Playbook: "site.yml",
+		TaskGroups: db.TaskGroupBindings{group.ID},
+	})
+	require.NoError(t, err)
+	user, err := store.CreateUserWithoutPassword(db.User{Username: "template-editor", Name: "Template editor", Email: "template-editor@example.test"})
+	require.NoError(t, err)
+
+	update := func(fields map[string]json.RawMessage) *httptest.ResponseRecorder {
+		body, marshalErr := json.Marshal(fields)
+		require.NoError(t, marshalErr)
+		req := httptest.NewRequest(http.MethodPut, "/templates", strings.NewReader(string(body)))
+		req = helpers.SetContextValue(req, "project", project)
+		req = helpers.SetContextValue(req, "template", template)
+		req = helpers.SetContextValue(req, "store", store)
+		req = helpers.SetContextValue(req, "user", &user)
+		req = helpers.SetContextValue(req, "log_writer", executorImageLogWriter{})
+		response := httptest.NewRecorder()
+		updateTemplate(response, req, nil)
+		return response
+	}
+	fields := make(map[string]json.RawMessage)
+	encoded, err := json.Marshal(template)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encoded, &fields))
+
+	delete(fields, "task_groups")
+	assert.Equal(t, http.StatusNoContent, update(fields).Code)
+	loaded, err := store.GetTemplate(project.ID, template.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.TaskGroupBindings{group.ID}, loaded.TaskGroups)
+
+	fields["task_groups"] = json.RawMessage("[]")
+	assert.Equal(t, http.StatusNoContent, update(fields).Code)
+
+	fields["task_groups"] = json.RawMessage("[999999]")
+	assert.Equal(t, http.StatusBadRequest, update(fields).Code)
+}
+
+func TestTemplateUpdateReportsConflictingTaskGroupRunnerPolicies(t *testing.T) {
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "task group runner conflict"})
+	require.NoError(t, err)
+	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &project.ID, Type: db.AccessKeyNone})
+	require.NoError(t, err)
+	repo, err := store.CreateRepository(db.Repository{ProjectID: project.ID, SSHKeyID: key.ID, Name: "repo", GitURL: "https://example.test/r.git", GitBranch: "main"})
+	require.NoError(t, err)
+	template, err := store.CreateTemplate(db.Template{ProjectID: project.ID, RepositoryID: repo.ID, Name: "deploy", Playbook: "site.yml"})
+	require.NoError(t, err)
+	runnerA, err := store.CreateRunner(db.Runner{ProjectID: &project.ID, Name: "runner-a", Active: true, Token: db.GenerateRunnerToken()})
+	require.NoError(t, err)
+	runnerB, err := store.CreateRunner(db.Runner{ProjectID: &project.ID, Name: "runner-b", Active: true, Token: db.GenerateRunnerToken()})
+	require.NoError(t, err)
+	groupA, err := store.CreateTaskGroup(db.TaskGroup{ProjectID: project.ID, Name: "runner-a-only", MaxParallelTasks: 1, RunnerIDs: db.TaskGroupBindings{runnerA.ID}})
+	require.NoError(t, err)
+	groupB, err := store.CreateTaskGroup(db.TaskGroup{ProjectID: project.ID, Name: "runner-b-only", MaxParallelTasks: 1, RunnerIDs: db.TaskGroupBindings{runnerB.ID}})
+	require.NoError(t, err)
+
+	payload, err := json.Marshal(template)
+	require.NoError(t, err)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(payload, &fields))
+	fields["task_groups"] = json.RawMessage("[" + strconv.Itoa(groupA.ID) + "," + strconv.Itoa(groupB.ID) + "]")
+	body, err := json.Marshal(fields)
+	require.NoError(t, err)
+	user := &db.User{ID: 1}
+	req := httptest.NewRequest(http.MethodPut, "/templates", strings.NewReader(string(body)))
+	req = helpers.SetContextValue(req, "project", project)
+	req = helpers.SetContextValue(req, "template", template)
+	req = helpers.SetContextValue(req, "store", store)
+	req = helpers.SetContextValue(req, "user", user)
+	req = helpers.SetContextValue(req, "log_writer", executorImageLogWriter{})
+	response := httptest.NewRecorder()
+
+	updateTemplate(response, req, nil)
+
+	assert.Equal(t, http.StatusBadRequest, response.Code)
+	assert.Contains(t, response.Body.String(), "task group runner requirements have no common runner")
+}
+
 func TestProjectUpdateRejectsAlwaysBindingConflictWithExistingTemplate(t *testing.T) {
 	store := sql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)

@@ -210,3 +210,63 @@ func TestTaskPool_StopTasksByTemplate_DequeuesWaitingTasksByID(t *testing.T) {
 	assert.Equal(t, 1, state.QueueLen(), "only the targeted template's waiting task should be dequeued")
 	assert.Equal(t, keepMe.Task.ID, state.QueueGet(0).Task.ID)
 }
+
+func TestTaskPoolForceStopKeepsGroupedAndTerraformTasksStopping(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		app     db.TemplateApp
+		grouped bool
+	}{
+		{name: "grouped", app: db.AppBash, grouped: true},
+		{name: "terraform", app: db.AppTerraform},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			setupReconcilerConfig(t)
+			store := sql.InitConfigCreateTestStore()
+			t.Cleanup(store.Close)
+			state := NewMemoryTaskStateStore()
+			pool := newReconcilerTestPool(store, state)
+			now := time.Now()
+			task, _ := createReconcilerTestTask(t, store, task_logger.TaskRunningStatus, &now)
+			if testCase.grouped {
+				task.TaskGroupKeys = db.StringArrayField{"global/production"}
+				require.NoError(t, store.UpdateTask(task))
+			}
+			runner := &TaskRunner{
+				Task: task, Template: db.Template{App: testCase.app}, pool: &pool,
+				job: &successfulKilledJob{},
+			}
+
+			pool.stopTaskRunner(runner, true)
+
+			assert.Equal(t, task_logger.TaskStoppingStatus, runner.Task.Status)
+			assert.Nil(t, runner.Task.End)
+			stored, err := store.GetTaskByID(task.ID)
+			require.NoError(t, err)
+			assert.Equal(t, task_logger.TaskStoppingStatus, stored.Status)
+			assert.Nil(t, stored.End)
+		})
+	}
+}
+
+func TestTaskPoolStopTaskFallbackKeepsGroupedTaskStopping(t *testing.T) {
+	setupReconcilerConfig(t)
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	state := NewMemoryTaskStateStore()
+	pool := CreateTaskPool(
+		store, state, nil, &InventoryServiceMock{}, &EncryptionServiceMock{},
+		&KeyInstallerMock{}, &mockLogWriteService{}, nil, nil,
+	)
+	now := time.Now()
+	task, _ := createReconcilerTestTask(t, store, task_logger.TaskRunningStatus, &now)
+	task.TaskGroupKeys = db.StringArrayField{"global/production"}
+	require.NoError(t, store.UpdateTask(task))
+
+	require.NoError(t, pool.StopTask(task, true))
+
+	stored, err := store.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task_logger.TaskStoppingStatus, stored.Status)
+	assert.Nil(t, stored.End)
+}

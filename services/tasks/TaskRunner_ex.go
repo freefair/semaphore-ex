@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/semaphoreui/semaphore/api/sockets"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 	"strconv"
@@ -15,19 +16,30 @@ type taskStartClaimOutcome uint8
 const (
 	taskStartClaimed taskStartClaimOutcome = iota
 	taskStartClaimSuperseded
+	taskStartClaimStopped
+	taskStartClaimGroupsBusy
 )
 
 // claimTaskStart applies the SQL-authoritative transition before any job
 // side effect, and distinguishes a stale local queue entry from a DB failure.
 func (t *TaskRunner) claimTaskStart() (taskStartClaimOutcome, error) {
+	expectedGeneration := t.Task.AssignmentGeneration
 	startedTask, started, err := t.pool.store.ClaimTaskStart(
-		t.Task.ProjectID, t.Task.ID, t.Task.AssignmentGeneration,
+		t.Task.ProjectID, t.Task.ID, expectedGeneration,
 	)
 	if err != nil {
+		var busy interface{ TaskGroupsBusy() bool }
+		if errors.As(err, &busy) && busy.TaskGroupsBusy() {
+			return taskStartClaimGroupsBusy, nil
+		}
 		return taskStartClaimed, err
 	}
 	if !started {
 		t.pool.refreshTaskStatusFromDB(t)
+		if t.Task.Status == task_logger.TaskStoppingStatus && t.Task.RunnerID == nil &&
+			t.Task.AssignmentGeneration == expectedGeneration {
+			return taskStartClaimStopped, nil
+		}
 		return taskStartClaimSuperseded, nil
 	}
 	oldStatus := t.Task.Status

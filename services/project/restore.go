@@ -271,6 +271,9 @@ func (e BackupTemplate) Verify(backup *BackupFormat) error {
 	if err := verifyDuplicate[BackupTemplate](e.Name, backup.Templates); err != nil {
 		return err
 	}
+	if _, err := db.NormalizeTaskGroups(e.TaskGroups); err != nil {
+		return err
+	}
 
 	if getEntryByName[BackupRepository](&e.Repository, backup.Repositories) == nil {
 		return fmt.Errorf("repository does not exist in repositories[].name")
@@ -634,6 +637,9 @@ func (backup *BackupFormat) Verify() error {
 }
 
 func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore db.WorkflowManager) (*db.Project, error) {
+	if err := backup.rejectTaskGroupsForRestore(); err != nil {
+		return nil, err
+	}
 	var b = BackupDB{store: store, workflowStore: workflowStore}
 	project := backup.Meta.Project
 
@@ -771,4 +777,20 @@ func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore 
 	}
 
 	return &newProject, nil
+}
+
+// rejectTaskGroupsForRestore keeps a backup from silently weakening a
+// template's execution policy. Group definitions and grants are not included
+// in this backup format, so IDs cannot be safely remapped at the destination.
+func (backup *BackupFormat) rejectTaskGroupsForRestore() error {
+	for index := range backup.Templates {
+		groups, err := db.NormalizeTaskGroups(backup.Templates[index].TaskGroups)
+		if err != nil {
+			return err
+		}
+		if len(groups) > 0 {
+			return fmt.Errorf("template %q has task group memberships; this backup format cannot restore managed groups, so recreate and explicitly rebind them before restoring", backup.Templates[index].Name)
+		}
+	}
+	return nil
 }

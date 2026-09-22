@@ -11,6 +11,39 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+## [v2.20.0-ex.2.1.1] - 2026-09-22
+
+### Added
+
+- Project-owned task groups with explicit project sharing, independent management
+  permissions, concurrency limits and runner constraints. Templates select one
+  or more existing groups through a searchable catalog.
+- Atomic group admission across server nodes: queued tasks reserve no partial
+  set of groups, and every selected group's capacity and runner restrictions apply.
+- API access to configured runtime-secrets lifecycle metadata.
+
+### Fixed
+
+- Terraform, OpenTofu and Terragrunt respect backend state locking during init,
+  plan and apply. Cancellation requests graceful shutdown without automatic
+  SIGKILL and waits for process exit and state unlock.
+- Protected local and remote tasks retain group capacity while stopping, including
+  cancellation during confirmation, cross-node progress races and delayed unlocks.
+- Contradictory group and template/inventory runner policies are rejected;
+  temporarily unavailable compatible runners remain a waiting condition.
+- Group policy updates, template memberships and deletion checks share atomic
+  validation. Shared groups use their owning project's mutation permissions.
+- Upstream SSH key generation changes preserve EX key creation, rotation and
+  public-key display contracts.
+
+### Changed
+
+- Upstream and EX migrations use independent registries, SQL directories and
+  history tables. Existing mixed-history EX databases require an operator-managed
+  migration; automatic adoption is not included.
+- Product documentation is maintained directly in the GitHub Wiki, without a
+  local documentation checkout or generation pipeline.
+
 ## [v2.20.0-ex.2.1] - 2026-09-20
 
 ### Fixed

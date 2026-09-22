@@ -52,6 +52,7 @@ type LocalAppRunningArgs struct {
 }
 
 type LocalAppInstallingArgs struct {
+	StopCh          <-chan struct{}
 	EnvironmentVars []string
 	TplParams       any
 	Params          any

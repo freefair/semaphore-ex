@@ -146,6 +146,92 @@ func TestBuildTaskExecutionPreflightReturnsBoundedNoCandidateFinding(t *testing.
 	assert.Contains(t, snapshot.Plan.Placements[0].Candidates[0].RejectedReasons, pro_interfaces.ExecutionReasonTagMismatch)
 }
 
+func TestTaskExecutionPreflightRestrictsRunnerCandidatesToManagedGroupPolicy(t *testing.T) {
+	store, pool, actor, template, _ := createTaskPreflightFixture(t)
+	runners, err := store.GetRunners(template.ProjectID, false, db.RunnerFilterIgnoreTags, nil)
+	require.NoError(t, err)
+	require.Len(t, runners, 1)
+	touched := time.Now().UTC()
+	allowedRunner, err := store.CreateRunner(db.Runner{
+		ProjectID: &template.ProjectID, Name: "group runner", Active: true, Token: "group-runner-token",
+		Tags: []string{"linux"}, Touched: &touched, ExecutorType: db.RunnerExecutorLocal,
+	})
+	require.NoError(t, err)
+	allowedRunner.Touched = &touched
+	require.NoError(t, store.UpdateRunner(allowedRunner))
+	group, err := store.CreateTaskGroup(db.TaskGroup{
+		ProjectID: template.ProjectID, Name: "restricted", MaxParallelTasks: 1,
+		RunnerIDs: db.TaskGroupBindings{allowedRunner.ID},
+	})
+	require.NoError(t, err)
+	template.TaskGroups = db.TaskGroupBindings{group.ID}
+	// With no template or inventory runner tag, this would normally use the
+	// local executor. The managed runner constraint must force remote planning.
+	template.RunnerTags = nil
+	template.RunnerTag = nil
+	require.NoError(t, store.UpdateTemplate(template))
+
+	snapshot, err := pool.BuildTaskExecutionPreflight(db.Task{TemplateID: template.ID}, &actor, template.ProjectID)
+
+	require.NoError(t, err)
+	require.Len(t, snapshot.Plan.Placements, 1)
+	placement := snapshot.Plan.Placements[0]
+	require.Len(t, placement.Candidates, 1)
+	assert.Equal(t, allowedRunner.ID, placement.Candidates[0].RunnerID)
+	assert.NotEqual(t, runners[0].ID, placement.Candidates[0].RunnerID)
+}
+
+func TestTaskGroupPolicyRevisionMakesReviewedPreflightStale(t *testing.T) {
+	store, pool, actor, template, _ := createTaskPreflightFixture(t)
+	issuer, err := NewExecutionPreflightReviewTokenIssuer([]byte("01234567890123456789012345678901"), time.Minute)
+	require.NoError(t, err)
+	pool.SetExecutionPreflightReviewTokenIssuer(issuer)
+	runners, err := store.GetRunners(template.ProjectID, false, db.RunnerFilterIgnoreTags, nil)
+	require.NoError(t, err)
+	require.Len(t, runners, 1)
+	group, err := store.CreateTaskGroup(db.TaskGroup{
+		ProjectID: template.ProjectID, Name: "reviewed", MaxParallelTasks: 1,
+		RunnerIDs: db.TaskGroupBindings{runners[0].ID},
+	})
+	require.NoError(t, err)
+	template.TaskGroups = db.TaskGroupBindings{group.ID}
+	require.NoError(t, store.UpdateTemplate(template))
+	preview, err := pool.PreviewTaskExecution(db.Task{TemplateID: template.ID}, &actor, template.ProjectID)
+	require.NoError(t, err)
+
+	group.Description = "changed policy revision"
+	_, err = store.UpdateTaskGroup(group)
+	require.NoError(t, err)
+	_, err = pool.AddTaskWithExecutionPreflight(db.Task{TemplateID: template.ID}, &actor, template.ProjectID, false,
+		pro_interfaces.ExecutionPreflightReview{Fingerprint: preview.Fingerprint, ReviewToken: preview.ReviewToken})
+
+	var stale *ExecutionPreflightStaleError
+	require.ErrorAs(t, err, &stale)
+	assert.Contains(t, stale.Changes, pro_interfaces.ExecutionChangePolicy)
+}
+
+func TestAutomaticPolicyGuardrailPreflightUsesManagedGroupCandidates(t *testing.T) {
+	store, pool, _, template, _ := createTaskPreflightFixture(t)
+	runners, err := store.GetRunners(template.ProjectID, false, db.RunnerFilterIgnoreTags, nil)
+	require.NoError(t, err)
+	require.Len(t, runners, 1)
+	group, err := store.CreateTaskGroup(db.TaskGroup{
+		ProjectID: template.ProjectID, Name: "automatic", MaxParallelTasks: 1,
+		RunnerIDs: db.TaskGroupBindings{runners[0].ID},
+	})
+	require.NoError(t, err)
+	template.TaskGroups = db.TaskGroupBindings{group.ID}
+	require.NoError(t, store.UpdateTemplate(template))
+
+	descriptor, err := pool.buildAutomaticTaskPolicyGuardrailDescriptor(
+		db.Task{TemplateID: template.ID}, template, template.ProjectID, time.Now().UTC())
+
+	require.NoError(t, err)
+	require.Len(t, descriptor.plan.Placements, 1)
+	require.Len(t, descriptor.plan.Placements[0].Candidates, 1)
+	assert.Equal(t, runners[0].ID, descriptor.plan.Placements[0].Candidates[0].RunnerID)
+}
+
 func TestBuildTaskExecutionPreflightHidesMissingReference(t *testing.T) {
 	_, pool, actor, template, _ := createTaskPreflightFixture(t)
 	missing := 999_999

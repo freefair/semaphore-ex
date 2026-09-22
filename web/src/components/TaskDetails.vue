@@ -120,6 +120,11 @@
                   <td><b>Runner</b></td>
                   <td data-testid="task-runner-identity">{{ runnerIdentity }}</td>
                 </tr>
+
+                <tr v-if="item.task_groups && item.task_groups.length">
+                  <td><b>{{ $t('taskGroupsTitle') }}</b></td>
+                  <td><TaskGroupMembership :value="item.task_groups" :project-id="projectId" /></td>
+                </tr>
                 <tr v-if="item.requested_executor_image">
                   <td><b>Requested executor image</b></td>
                   <td data-testid="task-requested-executor-image">
@@ -248,9 +253,10 @@ import enhancedComputed from '@/lib/enhanced/task-details';
 import ProjectMixin from '@/components/ProjectMixin';
 import AppsMixin from '@/components/AppsMixin';
 import TaskRunnerDetails from '@/components/TaskRunnerDetails.vue';
+import TaskGroupMembership from '@/components/enhanced/TaskGroupMembership.vue';
 
 export default {
-  components: { TaskRunnerDetails },
+  components: { TaskRunnerDetails, TaskGroupMembership },
 
   props: {
     item: Object,

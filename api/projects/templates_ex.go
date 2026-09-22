@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 	"net/http"
@@ -129,6 +130,9 @@ func addTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailable 
 		helpers.WriteErrorStatus(w, "Invalid format", http.StatusBadRequest)
 		return
 	}
+	if !validateTemplateTaskGroups(w, r, &template) {
+		return
+	}
 	if !validateTemplateExecutorImage(w, r, &template, executorImageAvailable) {
 		return
 	}
@@ -232,6 +236,12 @@ func updateTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailab
 	if _, present := payload["ssh_keys"]; !present {
 		template.SSHKeys = oldTemplate.SSHKeys
 	}
+	if _, present := payload["task_groups"]; !present {
+		template.TaskGroups = oldTemplate.TaskGroups
+	}
+	if !validateTemplateTaskGroups(w, r, &template) {
+		return
+	}
 	if !validateTemplateExecutorImage(w, r, &template, executorImageAvailable) {
 		return
 	}
@@ -295,6 +305,53 @@ func updateTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailab
 	})
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// validateTemplateTaskGroups accepts only catalog groups that the template's
+// project owns or was explicitly granted. The request can name IDs, but never
+// authorizes arbitrary group membership or supplies task-level keys.
+func validateTemplateTaskGroups(w http.ResponseWriter, r *http.Request, template *db.Template) bool {
+	normalized, err := db.NormalizeTaskGroups(template.TaskGroups)
+	if err != nil {
+		helpers.WriteErrorStatus(w, err.Error(), http.StatusBadRequest)
+		return false
+	}
+	template.TaskGroups = normalized
+	if len(normalized) == 0 {
+		return true
+	}
+	groups, ok := helpers.Store(r).(db.TaskGroupManager)
+	if !ok {
+		helpers.WriteError(w, errors.New("task group catalog is unavailable"))
+		return false
+	}
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	if _, err := groups.ResolveTaskGroups(project.ID, normalized); err != nil {
+		if message, safe := taskGroupSelectionValidationMessage(err); safe {
+			helpers.WriteErrorStatus(w, message, http.StatusBadRequest)
+			return false
+		}
+		// Keep missing and inaccessible IDs indistinguishable to callers.
+		helpers.WriteErrorStatus(w, "task group selection is invalid", http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
+// taskGroupSelectionValidationMessage allowlists policy contradictions that a
+// template editor can safely act on. Availability errors remain opaque so a
+// project cannot enumerate other projects' groups by ID.
+func taskGroupSelectionValidationMessage(err error) (string, bool) {
+	var validation *common_errors.ValidationError
+	if !errors.As(err, &validation) {
+		return "", false
+	}
+	switch validation.Message {
+	case "task group runner requirements have no common runner":
+		return validation.Message, true
+	default:
+		return "", false
+	}
 }
 
 func (c *TemplateController) RemoveTemplate(w http.ResponseWriter, r *http.Request) {

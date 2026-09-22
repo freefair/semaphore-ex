@@ -364,6 +364,8 @@ type Template struct {
 	AllowOverrideBranchInTask bool `db:"allow_override_branch_in_task" json:"allow_override_branch_in_task,omitempty"`
 	//AllowOverrideEnvInTask    bool `db:"allow_override_env_in_task" json:"allow_override_env_in_task,omitempty"`
 	AllowParallelTasks bool `db:"allow_parallel_tasks" json:"allow_parallel_tasks,omitempty"`
+	// TaskGroups constrain concurrent tasks independently of template parallelism.
+	TaskGroups TaskGroupBindings `db:"task_groups" json:"task_groups,omitempty"`
 
 	JWTParams *TemplateJWTParams `db:"jwt_params" json:"jwt_params,omitempty"`
 }
@@ -408,6 +410,11 @@ func (tpl *Template) CanOverrideInventory() (ok bool, err error) {
 }
 
 func (tpl *Template) Validate() error {
+	groups, err := NormalizeTaskGroups(tpl.TaskGroups)
+	if err != nil {
+		return common_errors.NewValidationError(err.Error())
+	}
+	tpl.TaskGroups = groups
 	if tpl.ExecutorImage != nil {
 		image, err := NormalizeExecutorImage(*tpl.ExecutorImage)
 		if err != nil {
