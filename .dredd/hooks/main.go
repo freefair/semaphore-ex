@@ -236,6 +236,7 @@ func main() {
 			h.Before(t.Name, setupObjectsAndPaths)
 		}
 		terraformDreddFixtureSetup()
+		registerTaskGroupDreddFixtures(h)
 	})
 
 	// Delete the test runner user so adding him next time does not result in errors

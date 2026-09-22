@@ -38,6 +38,8 @@ definitions:
           minimum: 1
   TaskGroupBindings:
     type: array
+    x-nullable: true
+    example: []
     maxItems: 16
     description: >
       Managed group IDs selected by a template. Each group must belong to the
@@ -49,6 +51,8 @@ definitions:
       minimum: 1
   TaskGroupKeys:
     type: array
+    x-nullable: true
+    example: []
     readOnly: true
     description: Immutable server-resolved memberships such as group/42.
     items:
@@ -77,6 +81,7 @@ definitions:
         description: Maximum active tasks across all templates using this group.
       runner_ids:
         type: array
+        x-nullable: true
         description: >
           Allowed runner candidates. Empty means no additional restriction.
           Every selected group's runner candidates are intersected.
@@ -85,6 +90,7 @@ definitions:
           minimum: 1
       shared_project_ids:
         type: array
+        x-nullable: true
         description: Explicit project grants, managed with task_groups.share permission.
         items:
           type: integer
@@ -2281,6 +2287,7 @@ paths:
     - $ref: './api-docs.yml#/parameters/project_id'
     - in: path
       name: group_id
+      x-example: 21
       type: integer
       minimum: 1
       required: true
@@ -2363,6 +2370,7 @@ paths:
                   x-nullable: true
                 tags:
                   type: array
+                  x-nullable: true
                   items:
                     type: string
         '403':

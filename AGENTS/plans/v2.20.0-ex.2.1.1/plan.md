@@ -75,3 +75,14 @@ Exercise real shell/Terraform fixture processes through HTTP task creation: sing
 - init and workspace setup also observe pending cancellation.
 - Existing Ansible and shell cancellation stays unchanged.
 - Release is published only after the required evidence is green.
+
+### Exact-head CI follow-up
+
+The first pushed candidate passes local product gates, the remote HA fault gate
+and provider acceptance. The Dev matrix exposes two additional integration gaps:
+Dredd requires an example for the new group path parameter and per-transaction
+managed-group fixtures; PostgreSQL 12.22 rejects the credential metadata alias
+that newer PostgreSQL accepts. Add explicit API examples and CRUD fixtures without
+skipping coverage, and quote the SQL alias through the existing dialect adapter.
+Reproduce with the pinned Dredd and PostgreSQL 12.22, retain failed and successful
+runs, and repeat the required publication gates on the corrected commit.
