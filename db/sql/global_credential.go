@@ -338,7 +338,7 @@ func (d *SqlDb) GetEffectiveGlobalCredentialMetadata(projectID int, now time.Tim
 		return nil, db.ErrInvalidOperation
 	}
 	values := make([]db.GlobalCredentialGrantedMetadata, 0)
-	query := "select c.id credential_id, c.type, c.display_name, c.current_version version, g.operations, g.id grant_id, g.revision grant_revision, g.expires_at from global_credential_grant g join global_credential c on c.id=g.credential_id where g.project_id=? and c.enabled=? and g.status=? and (g.operations & ?) = ? and (g.expires_at is null or g.expires_at>?) order by c.display_name, c.id"
+	query := "select c.id credential_id, c.type, c.display_name, c.current_version as `version`, g.operations, g.id grant_id, g.revision grant_revision, g.expires_at from global_credential_grant g join global_credential c on c.id=g.credential_id where g.project_id=? and c.enabled=? and g.status=? and (g.operations & ?) = ? and (g.expires_at is null or g.expires_at>?) order by c.display_name, c.id"
 	args := []any{projectID, true, db.GlobalCredentialGrantStatusActive, db.GlobalCredentialGrantOperationReference, db.GlobalCredentialGrantOperationReference, now}
 	if params.Count > 0 {
 		query += " limit ?"

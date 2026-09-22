@@ -29,6 +29,7 @@ func assertCredentialBooleanMigration(t testing.TB, store *SqlDb) {
 	require.NoError(t, err)
 	require.Len(t, visible, 1)
 	assert.Equal(t, records[1].ID, visible[0].CredentialID)
+	assert.Equal(t, records[1].CurrentVersion, visible[0].Version)
 
 	if store.GetDialect() == util.DbDriverPostgres {
 		var column struct {
