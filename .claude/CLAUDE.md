@@ -18,6 +18,8 @@ Keep all documentation as directly edited Markdown with no compilation step.
 GitHub supplies page titles; omit duplicate body H1 titles.
 The user maintains the sidebar. Resume sidebar work only on an explicit request.
 Describe one full-featured product; preserve technical compatibility identifiers.
+Identify the documented product as Semaphore EX, a full-featured fork of Semaphore UI with further development.
+Use Semaphore EX destinations for product downloads, setup, examples and support. Mention Semaphore UI only to explain fork provenance or a necessary technical compatibility identifier; user guides must not present Semaphore EX as Semaphore UI or direct readers to the upstream product.
 
 ## Writing Plans
 
