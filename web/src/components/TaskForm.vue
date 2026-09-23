@@ -223,7 +223,7 @@
       {{ executionPreflightError }}
       <v-btn text @click="refreshExecutionPreflight">{{ $t('retry') }}</v-btn>
     </v-alert>
-    <ExecutionPreflightReview v-if="!executionPreflightLoading" :plan="executionPreflight" />
+    <ExecutionPreflightReview :plan="executionPreflight" />
 
   </v-form>
 </template>

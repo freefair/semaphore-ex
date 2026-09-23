@@ -55,6 +55,7 @@ export const enhancedMethods = {
     this.executionPreflightPayloadSignature = null;
     this.executionPreflightError = null;
     this.executionPreflightUnavailable = false;
+    if (this.formError === this.$t('executionPreflightChanged')) this.formError = null;
     this.executionPreflightLoading = Boolean(this.executionPreflightSignature);
     if (this.executionPreflightSignature) {
       this.executionPreflightTimer = setTimeout(() => this.refreshExecutionPreflight(), 250);
@@ -71,17 +72,14 @@ export const enhancedMethods = {
     const isCurrent = () => requestId === this.executionPreflightRequestId
       && signature === this.executionPreflightSignature;
     try {
-      const { data } = await axios.post(`/api/project/${this.projectId}/tasks/preflight`, JSON.parse(signature));
+      const { data, headers } = await axios.post(`/api/project/${this.projectId}/tasks/preflight`, JSON.parse(signature));
       if (!isCurrent()) return;
+      if (this.executionPreflight && this.executionPreflight.fingerprint !== data.fingerprint) {
+        this.formError = this.$t('executionPreflightChanged');
+      }
       this.executionPreflight = data;
       this.executionPreflightPayloadSignature = signature;
-      const expiresAt = Date.parse(data.expires_at);
-      if (Number.isFinite(expiresAt)) {
-        const refreshDelay = Math.max(1000, expiresAt - Date.now() - 5000);
-        this.executionPreflightTimer = setTimeout(() => {
-          this.refreshExecutionPreflight();
-        }, refreshDelay);
-      }
+      this.scheduleExecutionPreflightExpiry(data, headers?.date);
     } catch (err) {
       if (!isCurrent()) return;
       if (this.isExecutionPreflightUnavailable(err)) {
@@ -92,6 +90,17 @@ export const enhancedMethods = {
       }
     } finally {
       if (isCurrent()) this.executionPreflightLoading = false;
+    }
+  },
+  scheduleExecutionPreflightExpiry(review, serverDate) {
+    clearTimeout(this.executionPreflightTimer);
+    // Both timestamps come from the server; a skewed browser clock must not
+    // turn review refresh into a tight polling loop.
+    const refreshDelay = Date.parse(review.expires_at) - Date.parse(serverDate) - 5000;
+    if (Number.isFinite(refreshDelay) && refreshDelay > 0) {
+      this.executionPreflightTimer = setTimeout(() => {
+        this.refreshExecutionPreflight();
+      }, refreshDelay);
     }
   },
   disposeExecutionPreflight() {
@@ -152,6 +161,7 @@ export const enhancedMethods = {
           this.executionPreflight = fresh;
           this.executionPreflightPayloadSignature = signature;
           this.formError = this.$t('executionPreflightChanged');
+          this.scheduleExecutionPreflightExpiry(fresh, err.response.headers?.date);
         } else {
           this.scheduleExecutionPreflight();
         }
