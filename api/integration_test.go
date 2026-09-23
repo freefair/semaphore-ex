@@ -1,15 +1,19 @@
 package api
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/json"
 	"errors"
-
-	"github.com/semaphoreui/semaphore/db"
-	"github.com/stretchr/testify/assert"
-
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/gorilla/mux"
+	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/db/sql"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -694,4 +698,223 @@ func TestExtractBodyAndHeaderValues(t *testing.T) {
 	if result["FULL_PAYLOAD"] != string(payload) {
 		t.Errorf("Expected FULL_PAYLOAD to match original payload")
 	}
+}
+
+func TestHmacHashPayload_SHA256AndSHA512(t *testing.T) {
+	payload := []byte(`{"ok":true}`)
+	secret := "secret"
+
+	assert.Equal(t,
+		"f6b4a2841c93f8bf2fb8f2c13d8fb0b6c8e8019f09ee405d248daa8385fad638",
+		hmacHashPayload(secret, payload, sha256.New),
+	)
+	assert.Equal(t,
+		"ebaaedc0ee1bba33d6b35bdc16cde6f350232027278da8ec5124a1a2e7d55c07a4a2be89f1c84cb059fecb793ff0c2b9b3c3beb95299f8401d1718e3683d91d2",
+		hmacHashPayload(secret, payload, sha512.New),
+	)
+}
+
+func TestIsValidHmacPayload_SHA512(t *testing.T) {
+	payload := []byte(`{"ok":true}`)
+	secret := "secret"
+	hash := hmacHashPayload(secret, payload, sha512.New)
+
+	assert.True(t, isValidHmacPayload(secret, hash, payload, "", sha512.New))
+	assert.False(t, isValidHmacPayload(secret, hash, payload, "", sha256.New))
+	assert.False(t, isValidHmacPayload(secret, "deadbeef", payload, "", sha512.New))
+}
+
+type stubIntegrationService struct {
+	authSecret db.AccessKey
+}
+
+func (s *stubIntegrationService) FillIntegration(integration *db.Integration) error {
+	integration.AuthSecret = s.authSecret
+	return nil
+}
+
+// templateProbeStore wraps a Store and records GetTemplate calls so
+// ReceiveIntegration tests can tell whether auth succeeded (RunIntegration
+// reaches GetTemplate) without needing a live task pool.
+type templateProbeStore struct {
+	db.Store
+	sqlStore         *sql.SqlDb
+	getTemplateCalls int
+	failTemplate     bool
+}
+
+func (s *templateProbeStore) GetTemplate(projectID int, templateID int) (db.Template, error) {
+	s.getTemplateCalls++
+	if s.failTemplate {
+		return db.Template{}, errors.New("stop before task pool")
+	}
+	return s.Store.GetTemplate(projectID, templateID)
+}
+
+func setupHmacSha512ReceiveIntegration(t *testing.T, authSecret db.AccessKey) (*IntegrationController, *templateProbeStore, db.Integration, string, string) {
+	t.Helper()
+
+	base := sql.InitConfigCreateTestStore()
+	store := &templateProbeStore{Store: base, sqlStore: base, failTemplate: true}
+
+	project, err := store.CreateProject(db.Project{Name: "hmac-sha512 project"})
+	require.NoError(t, err)
+
+	key, err := store.CreateAccessKey(db.AccessKey{
+		Name:      "repo key",
+		Type:      db.AccessKeyNone,
+		ProjectID: &project.ID,
+	})
+	require.NoError(t, err)
+
+	repo, err := store.CreateRepository(db.Repository{
+		Name:      "repo",
+		ProjectID: project.ID,
+		GitURL:    "git@example.com:test/test.git",
+		GitBranch: "main",
+		SSHKeyID:  key.ID,
+	})
+	require.NoError(t, err)
+
+	template, err := store.CreateTemplate(db.Template{
+		Name:         "tpl",
+		ProjectID:    project.ID,
+		RepositoryID: repo.ID,
+		Playbook:     "run.sh",
+		App:          db.AppBash,
+	})
+	require.NoError(t, err)
+
+	const authHeader = "X-Signature"
+	authSecretID := 1
+
+	integration, err := store.CreateIntegration(db.Integration{
+		Name:         "hmac-sha512 integration",
+		ProjectID:    project.ID,
+		TemplateID:   template.ID,
+		AuthMethod:   db.IntegrationAuthHmacSha512,
+		AuthSecretID: &authSecretID,
+		AuthHeader:   authHeader,
+	})
+	require.NoError(t, err)
+
+	alias := "hmac-sha512-alias"
+	_, err = store.CreateIntegrationAlias(db.IntegrationAlias{
+		Alias:         alias,
+		ProjectID:     project.ID,
+		IntegrationID: &integration.ID,
+	})
+	require.NoError(t, err)
+
+	ctrl := NewIntegrationController(store, &stubIntegrationService{authSecret: authSecret})
+	return ctrl, store, integration, alias, authHeader
+}
+
+func TestReceiveIntegration_HmacSha512_AcceptsValidSignature(t *testing.T) {
+	ctrl, store, _, alias, authHeader := setupHmacSha512ReceiveIntegration(t, db.AccessKey{
+		Type:          db.AccessKeyLoginPassword,
+		LoginPassword: db.LoginPassword{Password: "webhook-secret"},
+	})
+
+	payload := []byte(`{"event":"deploy"}`)
+	signature := hmacHashPayload("webhook-secret", payload, sha512.New)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/integrations/"+alias, bytes.NewReader(payload))
+	req.Header.Set(authHeader, signature)
+	req = mux.SetURLVars(req, map[string]string{"integration_alias": alias})
+
+	w := httptest.NewRecorder()
+	ctrl.ReceiveIntegration(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Equal(t, 1, store.getTemplateCalls, "valid hmac-sha512 must reach RunIntegration")
+}
+
+func TestReceiveIntegration_HmacSha512_RejectsInvalidSignature(t *testing.T) {
+	ctrl, store, _, alias, authHeader := setupHmacSha512ReceiveIntegration(t, db.AccessKey{
+		Type:          db.AccessKeyLoginPassword,
+		LoginPassword: db.LoginPassword{Password: "webhook-secret"},
+	})
+
+	payload := []byte(`{"event":"deploy"}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/integrations/"+alias, bytes.NewReader(payload))
+	req.Header.Set(authHeader, "deadbeef")
+	req = mux.SetURLVars(req, map[string]string{"integration_alias": alias})
+
+	w := httptest.NewRecorder()
+	ctrl.ReceiveIntegration(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Equal(t, 0, store.getTemplateCalls, "invalid hmac-sha512 must not run the integration")
+}
+
+func TestReceiveIntegration_HmacSha512_RejectsInvalidAuthenticationConfiguration(t *testing.T) {
+	tests := []struct {
+		name           string
+		authSecret     db.AccessKey
+		persistInvalid func(t *testing.T, store *templateProbeStore, integration db.Integration)
+	}{
+		{
+			name:       "missing auth secret id",
+			authSecret: db.AccessKey{Type: db.AccessKeyLoginPassword, LoginPassword: db.LoginPassword{Password: "webhook-secret"}},
+			persistInvalid: func(t *testing.T, store *templateProbeStore, integration db.Integration) {
+				t.Helper()
+				_, err := store.sqlStore.Sql().Exec("update project__integration set auth_secret_id = null where id = ?", integration.ID)
+				require.NoError(t, err)
+			},
+		},
+		{
+			name:       "wrong access key type",
+			authSecret: db.AccessKey{Type: db.AccessKeyString, String: "webhook-secret"},
+		},
+		{
+			name:       "empty resolved password",
+			authSecret: db.AccessKey{Type: db.AccessKeyLoginPassword},
+		},
+		{
+			name:       "missing auth header",
+			authSecret: db.AccessKey{Type: db.AccessKeyLoginPassword, LoginPassword: db.LoginPassword{Password: "webhook-secret"}},
+			persistInvalid: func(t *testing.T, store *templateProbeStore, integration db.Integration) {
+				t.Helper()
+				_, err := store.sqlStore.Sql().Exec("update project__integration set auth_header = '' where id = ?", integration.ID)
+				require.NoError(t, err)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl, store, integration, alias, authHeader := setupHmacSha512ReceiveIntegration(t, tt.authSecret)
+			if tt.persistInvalid != nil {
+				tt.persistInvalid(t, store, integration)
+			}
+
+			payload := []byte(`{"event":"deploy"}`)
+			signature := hmacHashPayload(tt.authSecret.LoginPassword.Password, payload, sha512.New)
+			req := httptest.NewRequest(http.MethodPost, "/api/integrations/"+alias, bytes.NewReader(payload))
+			req.Header.Set(authHeader, signature)
+			req = mux.SetURLVars(req, map[string]string{"integration_alias": alias})
+
+			w := httptest.NewRecorder()
+			ctrl.ReceiveIntegration(w, req)
+
+			assert.Equal(t, http.StatusNoContent, w.Code)
+			assert.Equal(t, 0, store.getTemplateCalls, "invalid hmac-sha512 configuration must not run the integration")
+		})
+	}
+}
+
+func TestIntegrationValidate_HmacSha512RequiresSecretAndHeader(t *testing.T) {
+	authSecretID := 1
+
+	assert.NoError(t, (&db.Integration{
+		Name: "valid hmac-sha512", AuthMethod: db.IntegrationAuthHmacSha512, AuthSecretID: &authSecretID, AuthHeader: "X-Signature",
+	}).Validate())
+	assert.Error(t, (&db.Integration{
+		Name: "missing secret", AuthMethod: db.IntegrationAuthHmacSha512, AuthHeader: "X-Signature",
+	}).Validate())
+	assert.Error(t, (&db.Integration{
+		Name: "missing header", AuthMethod: db.IntegrationAuthHmacSha512, AuthSecretID: &authSecretID,
+	}).Validate())
 }

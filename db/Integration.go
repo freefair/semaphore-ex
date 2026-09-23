@@ -10,12 +10,13 @@ import (
 type IntegrationAuthMethod string
 
 const (
-	IntegrationAuthNone      = ""
-	IntegrationAuthGitHub    = "github"
-	IntegrationAuthToken     = "token"
-	IntegrationAuthHmac      = "hmac"
-	IntegrationAuthBitbucket = "bitbucket"
-	IntegrationAuthBasic     = "basic"
+	IntegrationAuthNone       = ""
+	IntegrationAuthGitHub     = "github"
+	IntegrationAuthToken      = "token"
+	IntegrationAuthHmac       = "hmac"
+	IntegrationAuthHmacSha512 = "hmac-sha512"
+	IntegrationAuthBitbucket  = "bitbucket"
+	IntegrationAuthBasic      = "basic"
 )
 
 type IntegrationMatchType string
@@ -118,6 +119,17 @@ func (env *Integration) Validate() error {
 	if env.Name == "" {
 		return common_errors.NewValidationError("No Name set for integration")
 	}
+
+	if env.AuthMethod == IntegrationAuthHmacSha512 {
+		if env.AuthSecretID == nil {
+			return common_errors.NewValidationError("HMAC-SHA512 integration requires an auth secret")
+		}
+
+		if env.AuthHeader == "" {
+			return common_errors.NewValidationError("HMAC-SHA512 integration requires an auth header")
+		}
+	}
+
 	return nil
 }
 

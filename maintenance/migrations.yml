@@ -861,6 +861,13 @@ migrations:
     migrations_ex/v2.20.5-ex1.4.err.sql: 70346cec25016b0d35b3d916208434bf88a5ac37f2e60cfef1a12fa4a2a1d2fe
   rationale: Use PostgreSQL Boolean storage for global credential enablement.
 - registered: true
+  id: 2.20.6
+  owner: upstream
+  files:
+    migrations/v2.20.6.sql: 6b1016edb96104124f6172631da9f997fc511478243da2a72956764713872f9c
+    migrations/v2.20.6.err.sql: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  upstream_id: 2.20.6
+- registered: true
   id: 2.3.0
   owner: upstream
   files:

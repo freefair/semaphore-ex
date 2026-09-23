@@ -2258,6 +2258,14 @@ symbols:
   - name: db:IntegrationAuthHmac
     signature: untyped string = "hmac"
     implementation: core
+  - name: db:IntegrationAuthHmacSha512
+    signature: untyped string = "hmac-sha512"
+    implementation: core
+    behavior_tests:
+    - api/integration_test.go::TestReceiveIntegration_HmacSha512_AcceptsValidSignature
+    - api/integration_test.go::TestReceiveIntegration_HmacSha512_RejectsInvalidSignature
+    - api/integration_test.go::TestReceiveIntegration_HmacSha512_RejectsInvalidAuthenticationConfiguration
+    - api/integration_test.go::TestIntegrationValidate_HmacSha512RequiresSecretAndHeader
   - name: db:IntegrationAuthMethod
     signature: string
     implementation: core
