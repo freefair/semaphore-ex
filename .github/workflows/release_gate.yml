@@ -1,0 +1,28 @@
+name: Verify exact develop CI
+
+'on':
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  verify:
+    name: Verify exact commit CI evidence
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.19.0
+      - name: Verify Dev and Full Product Build evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/release/verify-ci.mjs

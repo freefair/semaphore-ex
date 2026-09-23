@@ -11,6 +11,12 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+### Changed
+
+- Release workflows reuse successful CI for the exact commit and build signed
+  packages, server images and runner images in parallel. Stable image aliases
+  advance only after all artifacts succeed; Beta dry runs are optional diagnostics.
+
 ## [v2.20.0-ex.2.1.2] - 2026-09-23
 
 ### Fixed

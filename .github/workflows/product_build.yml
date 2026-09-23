@@ -59,6 +59,9 @@ jobs:
           go install github.com/go-task/task/v3/cmd/task@v"${TASK_VERSION}"
           npm ci --prefix web
 
+      - name: Verify release gate contracts
+        run: node --test tools/release/verify-ci.test.mjs
+
       - name: Build embedded frontend for module tests
         run: task build:fe
 

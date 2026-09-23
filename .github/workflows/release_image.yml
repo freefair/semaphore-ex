@@ -1,0 +1,102 @@
+name: Release image
+
+'on':
+  workflow_call:
+    inputs:
+      kind:
+        type: string
+        required: true
+      tag:
+        type: string
+        required: true
+      publish:
+        type: boolean
+        required: true
+    outputs:
+      digest:
+        description: Exact multi-architecture image digest
+        value: ${{ jobs.image.outputs.digest }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    name: Build ${{ inputs.kind }} image once
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Select fixed image destination
+        id: image
+        shell: bash
+        env:
+          IMAGE_KIND: ${{ inputs.kind }}
+        run: |
+          set -euo pipefail
+          case "$IMAGE_KIND" in
+            server)
+              echo 'name=ghcr.io/freefair/semaphore-ex' >> "$GITHUB_OUTPUT"
+              echo 'title=Semaphore EX' >> "$GITHUB_OUTPUT"
+              ;;
+            runner)
+              echo 'name=ghcr.io/freefair/semaphore-ex-runner' >> "$GITHUB_OUTPUT"
+              echo 'title=Semaphore EX runner' >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo 'Unsupported release image kind' >&2; exit 1 ;;
+          esac
+
+      - name: Setup qemu
+        uses: docker/setup-qemu-action@v4
+      - name: Setup buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Registry login
+        if: inputs.publish
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: metadata
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.image.outputs.name }}
+          labels: |
+            org.opencontainers.image.title=${{ steps.image.outputs.title }}
+            org.opencontainers.image.vendor=freefair
+            maintainer=Semaphore EX <semaphore-ex@freefair.io>
+          tags: |
+            type=raw,value=${{ inputs.tag }}
+          # Promotion is a separate all-artifacts-success step in the final workflow.
+          flavor: |
+            latest=false
+
+      - name: Build image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          context: .
+          file: deployment/docker/${{ inputs.kind }}/Dockerfile
+          build-args: |
+            CORE_REVISION=${{ github.sha }}
+            ENHANCED_REVISION=${{ github.sha }}
+            SOURCE_TAG=${{ inputs.tag }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ inputs.publish }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          tags: ${{ steps.metadata.outputs.tags }}
+          cache-from: type=registry,ref=${{ steps.image.outputs.name }}:latest
+          cache-to: ${{ inputs.publish && 'type=inline' || '' }}
+          provenance: mode=max
+          sbom: true

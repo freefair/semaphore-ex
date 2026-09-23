@@ -91,8 +91,11 @@ the run. Classify baseline failures only with exact-upstream reproduction. Verif
 changed UI in the browser and wait for the required workflows on the exact pushed
 head. Preserve recovery branches and stashes until their deletion is authorized.
 
-Releases follow `maintenance/RELEASING.md`: a `vX.Y.Z-ex.N` tag on a green `develop` head
-runs the product gate, then goreleaser and the ghcr.io image publish. Never tag a plain
+Releases follow `maintenance/RELEASING.md`: a `vX.Y.Z-ex.N` tag verifies successful
+Dev and Full Product Build runs for that exact commit, then builds signed packages,
+server images and runner images in parallel. Promote latest only after all builds
+succeed. Beta dry runs are optional packaging diagnostics, not ordinary release
+prerequisites. Never tag a plain
 `vX.Y.Z`; it collides with upstream tags.
 
 Publish documentation as directly readable Markdown with no dedicated docs UI or

@@ -72,6 +72,13 @@ Keep documentation as directly readable Markdown. Keep the Wiki as the sole Engl
 
 ## Publication and Completion
 
+For ordinary releases, follow `maintenance/RELEASING.md`: reuse successful Dev
+and Full Product Build runs for the exact commit. The release gate verifies the
+current matching attempts; it does not rerun them. Beta is an optional packaging
+diagnostic, not a mandatory rehearsal. The full local sync gates above apply to
+sync verification and are not an additional release prerequisite once exact-commit
+CI is successful.
+
 Fetch the relevant `origin` immediately before each push and compare its tip with the assessment's recorded SHA. If it advanced, incorporate the new work and repeat affected verification. Preserve existing publication authorization for the agreed scope.
 
 Publish the product with an ordinary push from the verified branch:

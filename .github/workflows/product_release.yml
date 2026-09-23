@@ -14,15 +14,15 @@ env:
   GO_VERSION: '1.26.8'
   NODE_VERSION: '24.19.0'
   TASK_VERSION: '3.53.1'
+  GORELEASER_VERSION: '2.11.2'
 
 jobs:
   gate:
-    name: Release gate
-    uses: ./.github/workflows/product_build.yml
+    name: Reuse verified commit
+    uses: ./.github/workflows/release_gate.yml
     permissions:
       contents: read
-    with:
-      base_ref: HEAD^
+      actions: read
 
   release:
     name: Signed archives and packages
@@ -49,17 +49,18 @@ jobs:
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
-      - name: Install go-task
+      - name: Install pinned release tools
         run: |
           go install github.com/go-task/task/v3/cmd/task@v"${TASK_VERSION}"
+          go install github.com/goreleaser/goreleaser/v2@v"${GORELEASER_VERSION}"
 
       - name: Install rpm
         run: |
           sudo apt update && sudo apt-get install rpm
 
-      - name: Install deps
+      - name: Install application dependencies
         run: |
-          task deps
+          task deps:image
 
       - name: Import gnupg
         run: |
@@ -87,103 +88,58 @@ jobs:
           PROJECT_NAME=semaphore-ex \
             task release:prod GORELEASER_ARGS="--release-notes $RUNNER_TEMP/release-notes.md"
 
-  images:
-    name: Container images
-    runs-on: ubuntu-latest
-    needs:
-      - gate
-      - release
+  server:
+    name: Server image
+    needs: gate
+    uses: ./.github/workflows/release_image.yml
     permissions:
       contents: read
       packages: write
+    with:
+      kind: server
+      tag: ${{ github.ref_name }}
+      publish: true
 
+  runner:
+    name: Runner image
+    needs: gate
+    uses: ./.github/workflows/release_image.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      kind: runner
+      tag: ${{ github.ref_name }}
+      publish: true
+
+  promote:
+    name: Promote verified images to latest
+    runs-on: ubuntu-latest
+    needs: [release, server, runner]
+    permissions:
+      contents: read
+      packages: write
     env:
       SERVER_IMAGE: ghcr.io/freefair/semaphore-ex
       RUNNER_IMAGE: ghcr.io/freefair/semaphore-ex-runner
-
+      SERVER_DIGEST: ${{ needs.server.outputs.digest }}
+      RUNNER_DIGEST: ${{ needs.runner.outputs.digest }}
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Setup qemu
-        uses: docker/setup-qemu-action@v4
-
-      - name: Setup buildx
-        id: buildx
+      - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Registry login
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Server meta
-        id: server
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.SERVER_IMAGE }}
-          labels: |
-            org.opencontainers.image.title=Semaphore EX
-            org.opencontainers.image.vendor=freefair
-            maintainer=Semaphore EX <semaphore-ex@freefair.io>
-          tags: |
-            type=raw,value=${{ github.ref_name }}
-          flavor: |
-            latest=true
-
-      - name: Server build
-        uses: docker/build-push-action@v7
-        with:
-          builder: ${{ steps.buildx.outputs.name }}
-          context: .
-          build-args: |
-            CORE_REVISION=${{ github.sha }}
-            ENHANCED_REVISION=${{ github.sha }}
-            SOURCE_TAG=${{ github.ref_name }}
-          file: deployment/docker/server/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          labels: ${{ steps.server.outputs.labels }}
-          tags: ${{ steps.server.outputs.tags }}
-          # Keep cache metadata in the image; a separate cache upload cannot block release.
-          cache-from: type=registry,ref=${{ env.SERVER_IMAGE }}:latest
-          cache-to: type=inline
-          provenance: mode=max
-          sbom: true
-
-      - name: Runner meta
-        id: runner
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.RUNNER_IMAGE }}
-          labels: |
-            org.opencontainers.image.title=Semaphore EX runner
-            org.opencontainers.image.vendor=freefair
-            maintainer=Semaphore EX <semaphore-ex@freefair.io>
-          tags: |
-            type=raw,value=${{ github.ref_name }}
-          flavor: |
-            latest=true
-
-      - name: Runner build
-        uses: docker/build-push-action@v7
-        with:
-          builder: ${{ steps.buildx.outputs.name }}
-          context: .
-          build-args: |
-            CORE_REVISION=${{ github.sha }}
-            ENHANCED_REVISION=${{ github.sha }}
-            SOURCE_TAG=${{ github.ref_name }}
-          file: deployment/docker/runner/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          labels: ${{ steps.runner.outputs.labels }}
-          tags: ${{ steps.runner.outputs.tags }}
-          cache-from: type=registry,ref=${{ env.RUNNER_IMAGE }}:latest
-          cache-to: type=inline
-          provenance: mode=max
-          sbom: true
+      - name: Promote exact multi-architecture digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SERVER_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$RUNNER_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker buildx imagetools create --tag "$SERVER_IMAGE:latest" "$SERVER_IMAGE@$SERVER_DIGEST"
+          docker buildx imagetools create --tag "$RUNNER_IMAGE:latest" "$RUNNER_IMAGE@$RUNNER_DIGEST"
+          test "$(docker buildx imagetools inspect "$SERVER_IMAGE:latest" --format '{{.Manifest.Digest}}')" = "$SERVER_DIGEST"
+          test "$(docker buildx imagetools inspect "$RUNNER_IMAGE:latest" --format '{{.Manifest.Digest}}')" = "$RUNNER_DIGEST"

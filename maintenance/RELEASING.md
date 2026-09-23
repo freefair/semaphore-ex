@@ -32,8 +32,18 @@ installing the final package on the same host.
 | `v2.20.0-ex.1` | `Full Product Release` | draft, final | `:v2.20.0-ex.1` and `:latest` |
 | manual run of `Full Product Beta` | dry run | none; signed snapshot as workflow artifact | built, not pushed |
 
-Both workflows first run `Full Product Build` as a gate (tests, reproducible double build,
-browser smoke, container smoke, HA resilience) and only then build the release.
+Both workflows verify existing successful `Dev` and `Full Product Build` push runs
+for the exact release commit on `develop`. They do not rerun those workflows.
+The latest matching run and its current attempt must succeed, including the
+required jobs. Missing, failed, cancelled or pending evidence stops the release.
+`Full Product Build` still provides tests, the reproducible double build, browser
+and container smoke tests, and HA resilience as normal develop CI.
+
+After that lightweight gate, signed packages, the server image and the runner
+image build in parallel. Each final image initially receives only its versioned
+tag. A final promotion job needs all three successful builds and assigns `latest`
+to the exact image digests without rebuilding. The GitHub release remains a draft
+until artifact verification and publication.
 
 ## Image cache policy
 
@@ -42,7 +52,8 @@ Server and runner builds restore inline cache metadata from their own GHCR
 image builds do not write GitHub Actions caches or separate cache images.
 Go and npm retain their existing Actions caches.
 
-Final releases update `latest`. Tagged Beta releases use the last stable cache
+Final releases update `latest` only after packages and both images succeed.
+Tagged Beta releases use the last stable cache
 and embed metadata in their versioned image without changing `latest`.
 Manual Beta dry runs restore only: they omit cache export because they do not
 publish images.
@@ -65,21 +76,34 @@ required. The rationale is recorded in
    (`gh run list --branch develop --limit 4`).
 2. `CHANGELOG.md` has a `## [vX.Y.Z-ex.N]` section. `bash tools/release-notes.sh vX.Y.Z-ex.N`
    must succeed; the release job fails without it.
-3. Dry run in GitHub Actions: `gh workflow run "Full Product Beta" --ref develop`. It runs the
-   full gate, imports the signing key, builds a signed goreleaser snapshot and uploads it as
-   the `release-dry-run-<sha>` artifact, and builds both images without pushing. Download
-   the artifact and verify the checksum signature. (`task release:test` is the unsigned local
-   equivalent; it builds every target in parallel, so throttle it with `GOFLAGS=-p=4`.)
-4. Go toolchain current: `GOTOOLCHAIN=go<pinned> go run golang.org/x/vuln/cmd/govulncheck@latest ./...`
+3. Go toolchain current: `GOTOOLCHAIN=go<pinned> go run golang.org/x/vuln/cmd/govulncheck@latest ./...`
    reports no reachable findings. The pin lives in the workflows and Dockerfiles.
-5. `npm audit --omit=dev --prefix web` shows only the documented inherited findings.
-6. `THIRD-PARTY-LICENSES.md` matches the dependency set. The generator is the upstream
+4. `npm audit --omit=dev --prefix web` shows only the documented inherited findings.
+5. `THIRD-PARTY-LICENSES.md` matches the dependency set. The generator is the upstream
    `semaphore-third-party-licenses` skill; run it with the fork's wording:
 
    ```bash
    PRODUCT_NAME="Semaphore EX" ISSUES_URL="https://github.com/freefair/semaphore-ex/issues" CONTRACT_CLAUSE="" \
      python3 .claude/skills/semaphore-third-party-licenses/scripts/generate_md.py .licenses-cache/ > THIRD-PARTY-LICENSES.md
    ```
+
+An ordinary release reuses the exact-commit CI results. Do not repeat the full
+local verification suite or dispatch a Beta dry-run solely because a release is
+being prepared. Run focused local checks for changes under development; the
+required develop CI remains the release evidence.
+
+## Optional packaging dry run
+
+Use `gh workflow run "Full Product Beta" --ref develop` when testing packaging,
+signing or release-workflow changes that need a diagnostic run without publication.
+This is not a prerequisite for ordinary releases. It verifies existing CI for the
+dispatched commit, then builds the signed snapshot and both images in parallel.
+Dispatch it on a commit already contained in `develop` with green required CI;
+an unmerged feature branch is not a release candidate for this workflow.
+The snapshot is uploaded as `release-dry-run-<sha>`; images are not pushed.
+Download the snapshot and verify its checksum signature when this diagnostic is used.
+`task release:test` is the unsigned local equivalent; it builds every target in
+parallel, so throttle it with `GOFLAGS=-p=4`.
 
 ## Release candidate
 
