@@ -5,6 +5,17 @@ const PREFLIGHT_FINGERPRINT_HEADER = 'X-Semaphore-Preflight-Fingerprint';
 const PREFLIGHT_REVIEW_HEADER = ['X-Semaphore-Preflight', 'Token'].join('-');
 
 export const enhancedComputed = {
+  executionPreflightSignature() {
+    return this.executionPreflightInitialized && this.item
+      ? JSON.stringify(this.taskSavePayload()) : null;
+  },
+  executionReady() {
+    return Boolean(this.executionPreflightSignature
+      && this.executionPreflightSignature === this.executionPreflightPayloadSignature
+      && !this.executionPreflightLoading && !this.executionPreflightError && !this.formSaving
+      && (this.executionPreflightUnavailable || this.executionPreflight)
+      && !(this.executionPreflight?.findings || []).some(({ severity }) => severity === 'denial'));
+  },
   deploymentWindowOverrideCategories() {
     return [
       { text: this.$t('deploymentWindowOverrideIncident'), value: 'incident' },
@@ -25,8 +36,73 @@ export const enhancedComputed = {
   },
 };
 
+export const enhancedWatch = {
+  executionPreflightSignature: {
+    immediate: true,
+    handler: 'scheduleExecutionPreflight',
+  },
+  executionReady: {
+    immediate: true,
+    handler(ready) { this.$emit('execution-ready', ready); },
+  },
+};
+
 export const enhancedMethods = {
+  scheduleExecutionPreflight() {
+    clearTimeout(this.executionPreflightTimer);
+    this.executionPreflightRequestId += 1;
+    this.executionPreflight = null;
+    this.executionPreflightPayloadSignature = null;
+    this.executionPreflightError = null;
+    this.executionPreflightUnavailable = false;
+    this.executionPreflightLoading = Boolean(this.executionPreflightSignature);
+    if (this.executionPreflightSignature) {
+      this.executionPreflightTimer = setTimeout(() => this.refreshExecutionPreflight(), 250);
+    }
+  },
+  async refreshExecutionPreflight() {
+    clearTimeout(this.executionPreflightTimer);
+    const signature = this.executionPreflightSignature;
+    if (!signature) return;
+    const requestId = this.executionPreflightRequestId + 1;
+    this.executionPreflightRequestId = requestId;
+    this.executionPreflightLoading = true;
+    this.executionPreflightError = null;
+    const isCurrent = () => requestId === this.executionPreflightRequestId
+      && signature === this.executionPreflightSignature;
+    try {
+      const { data } = await axios.post(`/api/project/${this.projectId}/tasks/preflight`, JSON.parse(signature));
+      if (!isCurrent()) return;
+      this.executionPreflight = data;
+      this.executionPreflightPayloadSignature = signature;
+      const expiresAt = Date.parse(data.expires_at);
+      if (Number.isFinite(expiresAt)) {
+        const refreshDelay = Math.max(1000, expiresAt - Date.now() - 5000);
+        this.executionPreflightTimer = setTimeout(() => {
+          this.refreshExecutionPreflight();
+        }, refreshDelay);
+      }
+    } catch (err) {
+      if (!isCurrent()) return;
+      if (this.isExecutionPreflightUnavailable(err)) {
+        this.executionPreflightUnavailable = true;
+        this.executionPreflightPayloadSignature = signature;
+      } else {
+        this.executionPreflightError = getErrorMessage(err);
+      }
+    } finally {
+      if (isCurrent()) this.executionPreflightLoading = false;
+    }
+  },
+  disposeExecutionPreflight() {
+    clearTimeout(this.executionPreflightTimer);
+    this.executionPreflightRequestId += 1;
+  },
   async save() {
+    if (!this.executionReady) {
+      this.$emit('error', {});
+      return null;
+    }
     this.formError = null;
     if (!this.$refs.form.validate()) {
       this.$emit('error', {});
@@ -38,25 +114,16 @@ export const enhancedMethods = {
       return null;
     }
     this.formSaving = true;
+    const signature = this.executionPreflightSignature;
     try {
-      await this.beforeSave();
-      const payload = this.taskSavePayload();
-      const signature = JSON.stringify(payload);
-      if (!this.executionPreflight || signature !== this.executionPreflightPayloadSignature) {
-        try {
-          this.executionPreflight = (await axios.post(`/api/project/${this.projectId}/tasks/preflight`, payload)).data;
-        } catch (err) {
-          if (this.isExecutionPreflightUnavailable(err)) {
-            return await this.submitTaskPayload(this.taskStartPayload(payload));
-          }
-          throw err;
-        }
-        this.executionPreflightPayloadSignature = signature;
-        this.$emit('preflight', this.executionPreflight);
-        if ((this.executionPreflight.findings || []).some(({ severity }) => severity === 'denial')) {
-          this.formError = this.$t('executionPreflightDenied');
-        }
+      const payload = JSON.parse(signature);
+      if (signature !== this.executionPreflightPayloadSignature) {
+        this.scheduleExecutionPreflight();
+        this.$emit('error', {});
         return null;
+      }
+      if (this.executionPreflightUnavailable) {
+        return await this.submitTaskPayload(this.taskStartPayload(payload));
       }
       if ((this.executionPreflight.findings || []).some(({ severity }) => severity === 'denial')) {
         this.formError = this.$t('executionPreflightDenied');
@@ -81,9 +148,13 @@ export const enhancedMethods = {
       }
       const fresh = err?.response?.data?.preflight;
       if (err?.response?.status === 409 && fresh) {
-        this.executionPreflight = fresh;
-        this.executionPreflightPayloadSignature = JSON.stringify(this.taskSavePayload());
-        this.formError = this.$t('executionPreflightChanged');
+        if (signature === this.executionPreflightSignature) {
+          this.executionPreflight = fresh;
+          this.executionPreflightPayloadSignature = signature;
+          this.formError = this.$t('executionPreflightChanged');
+        } else {
+          this.scheduleExecutionPreflight();
+        }
         this.$emit('preflight', fresh);
         return null;
       }
@@ -98,6 +169,8 @@ export const enhancedMethods = {
     return {
       ...this.item,
       project_id: this.projectId,
+      environment: JSON.stringify(this.editedEnvironment),
+      secret: JSON.stringify(this.editedSecretEnvironment),
     };
   },
   taskStartPayload(payload) {

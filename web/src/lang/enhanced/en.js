@@ -561,6 +561,7 @@ export default {
   scheduleTimezoneHint: 'Leave empty to use the global fallback ({timezone}).',
   scheduleRunAtInvalid: 'Please provide a valid run time.',
   executionPreflightReview: 'Execution review',
+  executionPreflightLoading: 'Loading execution review…',
   executionDefinition: 'Definition',
   effectiveInputs: 'Effective inputs',
   resolvedReferences: 'Resolved references',

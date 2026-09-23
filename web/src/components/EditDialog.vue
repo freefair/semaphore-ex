@@ -83,6 +83,7 @@ Can use used in tandem with ItemFormBase.js. See KeyForm.vue for example.
           @click="needSave = true"
           v-if="saveButtonText != null"
           data-testid="editDialog-save"
+          :disabled="saveDisabled"
         >
           {{ saveButtonText }}
         </v-btn>
@@ -141,6 +142,7 @@ export default {
     dontCloseOnSave: Boolean,
     cancelButtonText: String,
     saveButtonText: String,
+    saveDisabled: Boolean,
     expandable: Boolean,
     name: {
       type: String,

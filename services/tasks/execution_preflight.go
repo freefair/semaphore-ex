@@ -905,7 +905,8 @@ func (p *TaskPool) taskPreflightPlacement(
 		}
 		load := p.GetNumberOfRunningTasksOfRunner(runner.ID)
 		candidates = append(candidates, RunnerPlacementCandidate{Runner: runner, RunningTasks: load})
-		state = append(state, runner.ID, runner.ProjectID, runner.Active, runner.IsRegistered(), runner.Touched,
+		state = append(state, runner.ID, runner.ProjectID, runner.Active, runner.IsRegistered(),
+			runner.IsOnline(now, util.Config.RunnersOfflineTimeout()),
 			runner.MaxParallelTasks, load, runner.Tags, runner.ExecutorType, runner.DockerPolicyRevision,
 			runner.DockerPolicyHash, runner.K8sPolicyRevision, runner.K8sPolicyHash)
 	}

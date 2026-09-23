@@ -215,7 +215,15 @@
       :format-date="formatDeploymentWindowDate"
     />
 
-    <ExecutionPreflightReview :plan="executionPreflight" />
+    <div v-if="executionPreflightLoading" class="mt-4" role="status">
+      <div class="text-subtitle-1 mb-2">{{ $t('executionPreflightLoading') }}</div>
+      <v-progress-linear indeterminate />
+    </div>
+    <v-alert v-if="executionPreflightError" type="error" text class="mt-4">
+      {{ executionPreflightError }}
+      <v-btn text @click="refreshExecutionPreflight">{{ $t('retry') }}</v-btn>
+    </v-alert>
+    <ExecutionPreflightReview v-if="!executionPreflightLoading" :plan="executionPreflight" />
 
   </v-form>
 </template>
@@ -223,7 +231,7 @@
 import DeploymentWindowOverride from '@/components/enhanced/DeploymentWindowOverride.vue';
 import createEnhancedState from '@/lib/enhanced/task-form-state';
 
-import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/task-form';
+import { enhancedComputed, enhancedMethods, enhancedWatch } from '@/lib/enhanced/task-form';
 
 /* eslint-disable import/no-extraneous-dependencies,import/extensions */
 
@@ -325,6 +333,7 @@ export default {
   },
 
   watch: {
+    ...enhancedWatch,
     needReset(val) {
       if (val) {
         if (this.item) {
@@ -355,6 +364,10 @@ export default {
 
   created() {
     this.refreshItem();
+  },
+
+  beforeDestroy() {
+    this.disposeExecutionPreflight();
   },
 
   methods: {
@@ -410,9 +423,8 @@ export default {
       return this.item != null && this.template != null;
     },
 
-    beforeSave() {
-      this.item.environment = JSON.stringify(this.editedEnvironment);
-      this.item.secret = JSON.stringify(this.editedSecretEnvironment);
+    beforeLoadData() {
+      this.executionPreflightInitialized = false;
     },
 
     refreshItem() {
@@ -477,6 +489,7 @@ export default {
       };
 
       this.normalizeSelectValues();
+      this.executionPreflightInitialized = true;
     },
 
     getInventoryUrl() {

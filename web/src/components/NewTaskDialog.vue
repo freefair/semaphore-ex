@@ -2,6 +2,7 @@
   <EditDialog
     v-model="dialog"
     :save-button-text="saveButtonText"
+    :save-disabled="!executionReady"
     :title="$t('newTask')"
     @save="closeDialog"
     @close="closeDialog"
@@ -17,6 +18,7 @@
 
     <template v-slot:form="{ onSave, onError, needSave, needReset }">
       <TaskForm
+        v-if="dialog"
         :user-permissions="userPermissions"
         :is-admin="isAdmin"
         :project-id="projectId"
@@ -25,6 +27,7 @@
         @save="onSave"
         @error="onError"
         @preflight="handlePreflight(onError)"
+        @execution-ready="executionReady = $event"
         :need-save="needSave"
         :need-reset="needReset"
         :source-task="sourceTask"
@@ -59,7 +62,7 @@ export default {
       dialog: false,
       TEMPLATE_TYPE_ACTION_TITLES,
       TEMPLATE_TYPE_ICONS,
-      preflightReady: false,
+      executionReady: false,
     };
   },
   watch: {
@@ -69,7 +72,7 @@ export default {
 
     async value(val) {
       this.dialog = val;
-      if (val) this.preflightReady = false;
+      if (val) this.executionReady = false;
     },
   },
 
@@ -89,7 +92,7 @@ export default {
     ...enhancedMethods,
     closeDialog(e) {
       this.dialog = false;
-      this.preflightReady = false;
+      this.executionReady = false;
       if (e) {
         EventBus.$emit('i-show-task', {
           taskId: e.item.id,

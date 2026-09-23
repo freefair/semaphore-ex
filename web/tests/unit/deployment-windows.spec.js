@@ -109,6 +109,8 @@ describe('deployment window UI contracts', () => {
       formSaving: false,
       deploymentWindowBlock: null,
       executionPreflight: { fingerprint: 'sha256:plan', review_token: 'review', findings: [] },
+      executionReady: true,
+      executionPreflightSignature: JSON.stringify(payload),
       executionPreflightPayloadSignature: JSON.stringify(payload),
       deploymentWindowOverrideReady: false,
       $refs: { form: { validate: () => true } },

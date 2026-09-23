@@ -1,7 +1,6 @@
 import { expect } from 'chai';
 import axios from 'axios';
 import NewTaskDialog from '@/components/NewTaskDialog.vue';
-import TaskForm from '@/components/TaskForm.vue';
 import WorkflowRunDialog from '@/components/WorkflowRunDialog.vue';
 import ExecutionPreflightReview from '@/components/ExecutionPreflightReview.vue';
 
@@ -16,61 +15,12 @@ describe('execution preflight review', () => {
     axios.post = originalPost;
   });
 
-  it('reviews a task before forwarding the same payload with its review headers', async () => {
-    const payload = { project_id: 7, template_id: 11, secret: '{"password":"hidden"}' };
-    const plan = {
-      fingerprint: 'sha256:reviewed', review_token: 'opaque-review', findings: [],
-    };
-    const calls = [];
-    axios.post = async (url, body) => {
-      calls.push({ url, body });
-      return { data: plan };
-    };
-    const emitted = [];
-    const context = {
-      formError: null,
-      formSaving: false,
-      executionPreflight: null,
-      executionPreflightPayloadSignature: null,
-      deploymentWindowBlock: null,
-      projectId: 7,
-      $refs: { form: { validate: () => true } },
-      $emit: (...args) => emitted.push(args),
-      $t: (key) => key,
-      beforeSave: async () => {},
-      taskSavePayload: () => payload,
-      taskStartPayload: TaskForm.methods.taskStartPayload,
-      isExecutionPreflightUnavailable: TaskForm.methods.isExecutionPreflightUnavailable,
-    };
-    let submitted;
-    context.submitTaskPayload = async (body, headers) => {
-      submitted = { body, headers };
-      return body;
-    };
-
-    await TaskForm.methods.save.call(context);
-
-    expect(calls).to.deep.equal([{
-      url: '/api/project/7/tasks/preflight', body: payload,
-    }]);
-    expect(context.executionPreflight).to.equal(plan);
-    expect(emitted[0][0]).to.equal('preflight');
-
-    await TaskForm.methods.save.call(context);
-
-    expect(submitted.body).to.equal(payload);
-    expect(submitted.headers['X-Semaphore-Preflight-Fingerprint']).to.equal('sha256:reviewed');
-    const reviewHeader = Object.keys(submitted.headers).find((name) => name.endsWith('-Token'));
-    expect(submitted.headers[reviewHeader]).to.equal('opaque-review');
-  });
-
   it('clears the dialog save request after rendering a task preview', () => {
     let cleared = 0;
-    const context = { preflightReady: false };
+    const context = {};
 
     NewTaskDialog.methods.handlePreflight.call(context, () => { cleared += 1; });
 
-    expect(context.preflightReady).to.equal(true);
     expect(cleared).to.equal(1);
   });
 

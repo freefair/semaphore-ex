@@ -12,6 +12,7 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -740,6 +741,111 @@ func TestAddTaskWithDeploymentWindowAdmissionPreservesCommunityPathWithoutAdmiss
 
 	require.NoError(t, err)
 	assert.Positive(t, created.ID)
+}
+
+func TestAddTaskWithExecutionPreflightAllowsHeartbeatRefreshButBlocksOfflineTransition(t *testing.T) {
+	t.Run("webhook heartbeat refresh", func(t *testing.T) {
+		store, pool, actor, template, _ := createTaskPreflightFixture(t)
+		issuer, err := NewExecutionPreflightReviewTokenIssuer([]byte("01234567890123456789012345678901"), time.Minute)
+		require.NoError(t, err)
+		issuedAt := time.Now().UTC()
+		issuer.now = func() time.Time { return issuedAt }
+		pool.SetExecutionPreflightReviewTokenIssuer(issuer)
+		task := db.Task{TemplateID: template.ID, Environment: `{"region":"eu-central-1"}`}
+		preview, err := pool.PreviewTaskExecution(task, &actor, template.ProjectID)
+		require.NoError(t, err)
+		runners, err := store.GetRunners(template.ProjectID, true, db.RunnerFilterIgnoreTags, nil)
+		require.NoError(t, err)
+		require.Len(t, runners, 1)
+		require.NoError(t, store.TouchRunner(runners[0]))
+
+		created, err := pool.AddTaskWithExecutionPreflight(task, &actor, template.ProjectID, false,
+			pro_interfaces.ExecutionPreflightReview{Fingerprint: preview.Fingerprint, ReviewToken: preview.ReviewToken})
+
+		require.NoError(t, err)
+		assert.Positive(t, created.ID)
+	})
+
+	t.Run("polling heartbeat refresh", func(t *testing.T) {
+		store, pool, actor, template, _ := createTaskPreflightFixture(t)
+		issuer, err := NewExecutionPreflightReviewTokenIssuer([]byte("01234567890123456789012345678901"), time.Minute)
+		require.NoError(t, err)
+		issuedAt := time.Now().UTC()
+		issuer.now = func() time.Time { return issuedAt }
+		pool.SetExecutionPreflightReviewTokenIssuer(issuer)
+		runners, err := store.GetRunners(template.ProjectID, true, db.RunnerFilterIgnoreTags, nil)
+		require.NoError(t, err)
+		require.Len(t, runners, 1)
+		runner := runners[0]
+		runner.Webhook = ""
+		timeout := util.Config.RunnersOfflineTimeout()
+		touchedBefore := time.Now().UTC().Add(-timeout / 2)
+		require.NoError(t, store.UpdateRunner(runner))
+		_, err = store.Sql().Exec(
+			store.PrepareQuery("update runner set touched=? where id=?"), touchedBefore, runner.ID,
+		)
+		require.NoError(t, err)
+		persisted, err := store.GetRunner(template.ProjectID, runner.ID)
+		require.NoError(t, err)
+		assert.True(t, persisted.IsOnline(time.Now().UTC(), timeout))
+		task := db.Task{TemplateID: template.ID, Environment: `{"region":"eu-central-1"}`}
+		preview, err := pool.PreviewTaskExecution(task, &actor, template.ProjectID)
+		require.NoError(t, err)
+		require.Len(t, preview.Placements, 1)
+		assert.NotNil(t, preview.Placements[0].SelectedRunnerID)
+		assert.False(t, planHasNativeExecutionDenial(preview))
+		require.NoError(t, store.TouchRunner(persisted))
+		refreshed, err := store.GetRunner(template.ProjectID, runner.ID)
+		require.NoError(t, err)
+		assert.True(t, refreshed.IsOnline(time.Now().UTC(), timeout))
+
+		created, err := pool.AddTaskWithExecutionPreflight(task, &actor, template.ProjectID, false,
+			pro_interfaces.ExecutionPreflightReview{Fingerprint: preview.Fingerprint, ReviewToken: preview.ReviewToken})
+
+		require.NoError(t, err)
+		assert.Positive(t, created.ID)
+	})
+
+	t.Run("offline transition", func(t *testing.T) {
+		store, pool, actor, template, _ := createTaskPreflightFixture(t)
+		issuer, err := NewExecutionPreflightReviewTokenIssuer([]byte("01234567890123456789012345678901"), time.Minute)
+		require.NoError(t, err)
+		issuer.now = func() time.Time { return time.Now().UTC() }
+		pool.SetExecutionPreflightReviewTokenIssuer(issuer)
+		runners, err := store.GetRunners(template.ProjectID, true, db.RunnerFilterIgnoreTags, nil)
+		require.NoError(t, err)
+		require.Len(t, runners, 1)
+		runner := runners[0]
+		runner.Webhook = ""
+		fresh := time.Now().UTC()
+		require.NoError(t, store.UpdateRunner(runner))
+		_, err = store.Sql().Exec(
+			store.PrepareQuery("update runner set touched=? where id=?"), fresh, runner.ID,
+		)
+		require.NoError(t, err)
+		task := db.Task{TemplateID: template.ID}
+		preview, err := pool.PreviewTaskExecution(task, &actor, template.ProjectID)
+		require.NoError(t, err)
+		require.Len(t, preview.Placements, 1)
+		assert.NotNil(t, preview.Placements[0].SelectedRunnerID)
+		assert.False(t, planHasNativeExecutionDenial(preview))
+		stale := fresh.Add(-util.Config.RunnersOfflineTimeout() - time.Second)
+		_, err = store.Sql().Exec(
+			store.PrepareQuery("update runner set touched=? where id=?"), stale, runner.ID,
+		)
+		require.NoError(t, err)
+
+		_, err = pool.AddTaskWithExecutionPreflight(task, &actor, template.ProjectID, false,
+			pro_interfaces.ExecutionPreflightReview{Fingerprint: preview.Fingerprint, ReviewToken: preview.ReviewToken})
+
+		var denied *ExecutionPreflightDeniedError
+		require.ErrorAs(t, err, &denied)
+		assert.Contains(t, denied.Preflight.Findings, pro_interfaces.ExecutionPreflightFinding{
+			Severity: pro_interfaces.ExecutionFindingDenial,
+			Code:     pro_interfaces.ExecutionReasonNoCandidate,
+			Message:  "No eligible runner is currently available.",
+		})
+	})
 }
 
 func TestAddTaskWithExecutionPreflightBlocksReviewedNoCandidatePlan(t *testing.T) {

@@ -57,6 +57,7 @@ export default {
   scheduleTimezoneHint: 'Leer lassen, um den globalen Fallback ({timezone}) zu verwenden.',
   scheduleRunAtInvalid: 'Bitte gib eine gültige Startzeit an.',
   executionPreflightReview: 'Ausführung prüfen',
+  executionPreflightLoading: 'Execution Review wird geladen…',
   executionDefinition: 'Definition',
   effectiveInputs: 'Effektive Inputs',
   resolvedReferences: 'Aufgelöste Referenzen',
