@@ -11,6 +11,25 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+## [v2.20.0-ex.2.1.2] - 2026-09-23
+
+### Fixed
+
+- Task dialogs display the execution review automatically when opened and refresh
+  it after input changes. One Run click starts the reviewed task; Run stays
+  disabled while a current review is loading, failed or denied.
+- Normal heartbeats from healthy runners no longer invalidate execution reviews.
+  Actual availability, placement and policy changes remain checked before enqueue.
+- Obsolete preview responses cannot replace a newer review or restore a closed
+  dialog. Failed previews provide an explicit Retry action.
+- Log selection excludes timestamps, and schedule timezone alerts can be dismissed
+  consistently.
+- Database migration compatibility preserves the upstream event-backup cleanup.
+
+### Added
+
+- HMAC-SHA512 authentication for incoming integration webhooks.
+
 ## [v2.20.0-ex.2.1.1] - 2026-09-22
 
 ### Added

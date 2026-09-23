@@ -23,6 +23,9 @@ Use Semaphore EX destinations for product downloads, setup, examples and support
 
 ## Writing Plans
 
+The task-dialog release `v2.20.0-ex.2.1.2` uses the existing develop lineage.
+Its scope excludes upstream fetch, merge, rebase and synchronization.
+
 All plans, tasks, researches for AI agents stored in folder AGENTS.
 
 Each plan has markdown-format and stored in folder AGENTS/plans/<version>.
