@@ -89,6 +89,42 @@ describe('automatic task execution review', () => {
     expect(calls[2].template_id).to.equal(11);
   });
 
+  it('keeps source task parameters unchanged while editing a rerun', async () => {
+    axios.post = async () => ({ data: plan('isolated') });
+    const sourceTask = { params: { plan: true, limit: ['original-host'] } };
+    const originalParams = JSON.parse(JSON.stringify(sourceTask.params));
+    open('terraform', sourceTask);
+    await settle();
+    expect(sourceTask.params).to.deep.equal(originalParams);
+
+    wrapper.vm.item.params.plan = false;
+    wrapper.vm.item.params.limit.push('new-host');
+    await wrapper.vm.$nextTick();
+    expect(sourceTask.params).to.deep.equal(originalParams);
+    expect(wrapper.vm.item.params.plan).to.equal(false);
+    expect(wrapper.vm.item.params.limit).to.deep.equal(['original-host', 'new-host']);
+
+    await wrapper.setProps({ sourceTask: { params: sourceTask.params } });
+    await settle();
+    expect(wrapper.vm.item.params.plan).to.equal(true);
+    expect(wrapper.vm.item.params.limit).to.deep.equal(['original-host']);
+    wrapper.vm.item.params.limit.splice(0, 1);
+    expect(sourceTask.params).to.deep.equal(originalParams);
+  });
+
+  [null, undefined].forEach((params) => {
+    it(`initializes missing rerun parameters (${params}) without mutating the source`, async () => {
+      axios.post = async () => ({ data: plan('empty') });
+      const sourceTask = { params };
+      open('terraform', sourceTask);
+      await settle();
+      wrapper.findComponent(TaskParamsTerraformForm).vm.$emit('input', { plan: true });
+      await settle();
+      expect(sourceTask.params).to.equal(params);
+      expect(JSON.parse(wrapper.vm.executionPreflightPayloadSignature).params.plan).to.equal(true);
+    });
+  });
+
   it('loads a review on opening and starts on the first Run click', async () => {
     const calls = [];
     axios.post = async (url, body) => {

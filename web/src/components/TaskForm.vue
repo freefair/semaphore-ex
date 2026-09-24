@@ -409,8 +409,9 @@ export default {
         inventory_id: null,
         build_task_id: null,
         commit_hash: null,
-        params: {},
         ...v,
+        // API parameters are JSON data; nested lists must also belong to this form.
+        params: JSON.parse(JSON.stringify(v.params || {})),
       };
       this.$set(this.item, 'ssh_keys', this.canOverrideSSHKeys ? (v.ssh_keys ?? null) : null);
 
