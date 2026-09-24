@@ -110,7 +110,9 @@
           {{ getAppIcon(getAppByType(item.type)) }}
         </v-icon>
 
-        {{ item.name }}
+        <router-link :to="`/project/${projectId}/inventories/${item.id}`">
+          {{ item.name }}
+        </router-link>
       </template>
 
       <template v-slot:item.type="{ item }">

@@ -40,6 +40,14 @@ schemes:
 basePath: /api
 
 definitions:
+  InventoryRefresh:
+    $ref: './api-docs-ex.yml#/definitions/InventoryRefresh'
+  InventoryHost:
+    $ref: './api-docs-ex.yml#/definitions/InventoryHost'
+  InventoryHostPage:
+    $ref: './api-docs-ex.yml#/definitions/InventoryHostPage'
+  InventoryHostSnapshot:
+    $ref: './api-docs-ex.yml#/definitions/InventoryHostSnapshot'
   TaskGroup:
     $ref: './api-docs-ex.yml#/definitions/TaskGroup'
   TaskGroupMutation:
@@ -952,6 +960,8 @@ definitions:
   AnsibleTaskParams:
     type: object
     properties:
+      inventory_refresh:
+        $ref: './api-docs-ex.yml#/definitions/InventoryRefresh'
       debug:
         type: boolean
       dry_run:
@@ -2045,6 +2055,12 @@ parameters:
     x-example: 22
 
 paths:
+  /project/{project_id}/hosts:
+    $ref: './api-docs-ex.yml#/paths/~1project~1{project_id}~1hosts'
+  /project/{project_id}/hosts/tasks:
+    $ref: './api-docs-ex.yml#/paths/~1project~1{project_id}~1hosts~1tasks'
+  /project/{project_id}/inventory/{inventory_id}/hosts/snapshots:
+    $ref: './api-docs-ex.yml#/paths/~1project~1{project_id}~1inventory~1{inventory_id}~1hosts~1snapshots'
   /project/{project_id}/task_groups:
     $ref: './api-docs-ex.yml#/paths/~1project~1{project_id}~1task_groups'
   /project/{project_id}/task_groups/{group_id}:

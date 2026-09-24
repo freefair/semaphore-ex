@@ -18,7 +18,7 @@ func TestMigrationRegistriesAreIndependent(t *testing.T) {
 	}
 	ex := GetEXMigrations()
 	require.NotEmpty(t, ex)
-	assert.Equal(t, "2.20.5-ex1.4", ex[len(ex)-1].Version)
+	assert.Equal(t, "2.20.5-ex1.5", ex[len(ex)-1].Version)
 	for i, m := range ex {
 		assert.True(t, strings.Contains(m.Version, "-ex"))
 		_, err := m.ParseVersion()
@@ -27,7 +27,7 @@ func TestMigrationRegistriesAreIndependent(t *testing.T) {
 			assert.Less(t, ex[i-1].Compare(m), 0)
 		}
 	}
-	assert.Equal(t, "upstream/2.20.6;ex/2.20.5-ex1.4", CurrentSchemaVersion(util.DbDriverSQLite))
+	assert.Equal(t, "upstream/2.20.6;ex/2.20.5-ex1.5", CurrentSchemaVersion(util.DbDriverSQLite))
 }
 
 type migrationRecordingStore struct {

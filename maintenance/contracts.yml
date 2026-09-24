@@ -774,10 +774,13 @@ symbols:
     implementation: core
   - name: db:AnsibleTaskParams
     signature: >-
-      struct{Debug bool "json:\"debug\""; DebugLevel int "json:\"debug_level\""; DryRun bool "json:\"dry_run\""; Diff bool "json:\"diff\"";
-      Limit []string "json:\"limit\""; Tags []string "json:\"tags\""; SkipTags []string "json:\"skip_tags\""; SkipGalaxyInstall bool
-      "json:\"skip_galaxy_install\""}
+      struct{InventoryRefresh bool "json:\"inventory_refresh,omitempty\""; Debug bool "json:\"debug\"";
+      DebugLevel int "json:\"debug_level\""; DryRun bool "json:\"dry_run\""; Diff bool "json:\"diff\""; Limit
+      []string "json:\"limit\""; Tags []string "json:\"tags\""; SkipTags []string "json:\"skip_tags\"";
+      SkipGalaxyInstall bool "json:\"skip_galaxy_install\""}
     implementation: core
+    behavior_tests:
+      - db/inventory_hosts_ex_test.go::TestInventoryRefreshTaskRequiresExplicitAnsibleBoolean
   - name: db:AnsibleTaskRepository
     signature: >-
       interface{CreateAnsibleTaskError(error db.AnsibleTaskError) error; CreateAnsibleTaskHost(host db.AnsibleTaskHost) error;
@@ -3701,29 +3704,38 @@ symbols:
     implementation: core
   - name: db:Runner
     signature: >-
-      struct{ID int "db:\"id\" json:\"id\""; Token string "db:\"token\" json:\"-\" backup:\"-\""; ProjectID *int "db:\"project_id\"
-      json:\"project_id\""; Webhook string "db:\"webhook\" json:\"webhook\""; MaxParallelTasks int "db:\"max_parallel_tasks\"
-      json:\"max_parallel_tasks\""; Active bool "db:\"active\" json:\"active\""; IsDefault bool "db:\"is_default\" json:\"is_default\"";
-      Name string "db:\"name\" json:\"name\""; Tags []string "db:\"-\" json:\"tags\" backup:\"tags\""; Touched *time.Time "db:\"touched\"
-      json:\"touched\""; CleaningRequested *time.Time "db:\"cleaning_requested\" json:\"cleaning_requested\""; StartedAt *time.Time
-      "db:\"started_at\" json:\"started_at\""; Version string "db:\"version\" json:\"version\" backup:\"-\""; Platform string
-      "db:\"platform\" json:\"platform\" backup:\"-\""; CurrentLoad int "db:\"current_load\" json:\"current_load\" backup:\"-\"";
-      ExecutorType db.RunnerExecutorType "db:\"executor_type\" json:\"executor_type\" backup:\"-\""; DockerPolicyRevision int
-      "db:\"docker_policy_revision\" json:\"docker_policy_revision\" backup:\"-\""; DockerPolicyHash string "db:\"docker_policy_hash\"
-      json:\"docker_policy_hash\" backup:\"-\""; K8sClusterAlias string "db:\"k8s_cluster_alias\" json:\"k8s_cluster_alias\" backup:\"-\"";
-      K8sNamespace string "db:\"k8s_namespace\" json:\"k8s_namespace\" backup:\"-\""; K8sPolicyRevision int "db:\"k8s_policy_revision\"
-      json:\"k8s_policy_revision\" backup:\"-\""; K8sPolicyHash string "db:\"k8s_policy_hash\" json:\"k8s_policy_hash\" backup:\"-\"";
-      PublicKey *string "db:\"public_key\" json:\"-\" backup:\"-\""; RegistrationPolicy db.RunnerRegistrationPolicy
-      "db:\"registration_policy\" json:\"registration_policy\""; RegistrationKind db.RunnerRegistrationKind "db:\"registration_kind\"
-      json:\"registration_kind\" backup:\"-\""; SecurityCompliant bool "db:\"security_compliant\" json:\"security_compliant\" backup:\"-\"";
-      SecurityReason string "db:\"security_reason\" json:\"security_reason\" backup:\"-\""; SecurityRemediation string
-      "db:\"security_remediation\" json:\"security_remediation\" backup:\"-\""; TransportTrust db.RunnerTransportTrust
-      "db:\"transport_trust\" json:\"transport_trust\" backup:\"-\""; SecurityProtocolVersion int "db:\"security_protocol_version\"
-      json:\"security_protocol_version\" backup:\"-\""; SecurityCheckedAt *time.Time "db:\"security_checked_at\"
-      json:\"security_checked_at\" backup:\"-\""; Registered bool "db:\"-\" json:\"registered\""; Status db.RunnerStatus "db:\"-\"
-      json:\"status\""; RegistrationTokenHash *string "db:\"registration_token\" json:\"-\" backup:\"-\""; RegistrationTokenExpiresAt
-      *time.Time "db:\"registration_token_expires_at\" json:\"-\" backup:\"-\""}
+      struct{ID int "db:\"id\" json:\"id\""; Token string "db:\"token\" json:\"-\" backup:\"-\""; ProjectID *int
+      "db:\"project_id\" json:\"project_id\""; Webhook string "db:\"webhook\" json:\"webhook\"";
+      MaxParallelTasks int "db:\"max_parallel_tasks\" json:\"max_parallel_tasks\""; Active bool "db:\"active\"
+      json:\"active\""; IsDefault bool "db:\"is_default\" json:\"is_default\""; Name string "db:\"name\"
+      json:\"name\""; Tags []string "db:\"-\" json:\"tags\" backup:\"tags\""; Touched *time.Time "db:\"touched\"
+      json:\"touched\""; CleaningRequested *time.Time "db:\"cleaning_requested\" json:\"cleaning_requested\"";
+      StartedAt *time.Time "db:\"started_at\" json:\"started_at\""; Version string "db:\"version\"
+      json:\"version\" backup:\"-\""; InventoryRefreshVersion int "db:\"inventory_refresh_version\"
+      json:\"inventory_refresh_version\" backup:\"-\""; Platform string "db:\"platform\" json:\"platform\"
+      backup:\"-\""; CurrentLoad int "db:\"current_load\" json:\"current_load\" backup:\"-\""; ExecutorType
+      db.RunnerExecutorType "db:\"executor_type\" json:\"executor_type\" backup:\"-\""; DockerPolicyRevision int
+      "db:\"docker_policy_revision\" json:\"docker_policy_revision\" backup:\"-\""; DockerPolicyHash string
+      "db:\"docker_policy_hash\" json:\"docker_policy_hash\" backup:\"-\""; K8sClusterAlias string
+      "db:\"k8s_cluster_alias\" json:\"k8s_cluster_alias\" backup:\"-\""; K8sNamespace string
+      "db:\"k8s_namespace\" json:\"k8s_namespace\" backup:\"-\""; K8sPolicyRevision int
+      "db:\"k8s_policy_revision\" json:\"k8s_policy_revision\" backup:\"-\""; K8sPolicyHash string
+      "db:\"k8s_policy_hash\" json:\"k8s_policy_hash\" backup:\"-\""; PublicKey *string "db:\"public_key\"
+      json:\"-\" backup:\"-\""; RegistrationPolicy db.RunnerRegistrationPolicy "db:\"registration_policy\"
+      json:\"registration_policy\""; RegistrationKind db.RunnerRegistrationKind "db:\"registration_kind\"
+      json:\"registration_kind\" backup:\"-\""; SecurityCompliant bool "db:\"security_compliant\"
+      json:\"security_compliant\" backup:\"-\""; SecurityReason string "db:\"security_reason\"
+      json:\"security_reason\" backup:\"-\""; SecurityRemediation string "db:\"security_remediation\"
+      json:\"security_remediation\" backup:\"-\""; TransportTrust db.RunnerTransportTrust
+      "db:\"transport_trust\" json:\"transport_trust\" backup:\"-\""; SecurityProtocolVersion int
+      "db:\"security_protocol_version\" json:\"security_protocol_version\" backup:\"-\""; SecurityCheckedAt
+      *time.Time "db:\"security_checked_at\" json:\"security_checked_at\" backup:\"-\""; Registered bool
+      "db:\"-\" json:\"registered\""; Status db.RunnerStatus "db:\"-\" json:\"status\""; RegistrationTokenHash
+      *string "db:\"registration_token\" json:\"-\" backup:\"-\""; RegistrationTokenExpiresAt *time.Time
+      "db:\"registration_token_expires_at\" json:\"-\" backup:\"-\""}
     implementation: core
+    behavior_tests:
+      - services/runners/health_report_test.go::TestParseHealthReportInventoryRefreshCapabilityReplacesPreviousValue
   - name: db:RunnerAttempt
     signature: >-
       struct{ID int "db:\"id\" json:\"id\""; ProjectID int "db:\"project_id\" json:\"project_id\""; TaskID int "db:\"task_id\"
@@ -10814,3 +10826,58 @@ symbols:
     selected_signature: func() services/tasks.TaskStateStore
     implementation: community
     rationale: Functional shared synchronized in-memory task-state factory used by the CLI TaskPool; SQL and HA reconciliation own durable state.
+  - name: db:InventoryHost
+    signature: >-
+      struct{InventoryID int "json:\"inventory_id\" db:\"inventory_id\""; InventoryName string
+      "json:\"inventory_name\" db:\"inventory_name\""; Host string "json:\"host\" db:\"host\""; Groups
+      db.StringArrayField "json:\"groups\" db:\"groups_json\""; TaskID int "json:\"snapshot_task_id\"
+      db:\"task_id\""; ResolvedAt time.Time "json:\"resolved_at\" db:\"resolved_at\""}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
+  - name: db:InventoryHostEvent
+    signature: >-
+      struct{Version int "json:\"version\""; Kind string "json:\"event\""; Host string
+      "json:\"host,omitempty\""; Groups []string "json:\"groups,omitempty\""; Count int
+      "json:\"count,omitempty\""}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
+  - name: db:InventoryHostPage
+    signature: >-
+      struct{Items []db.InventoryHost "json:\"items\""; NextInventoryID int
+      "json:\"next_inventory_id,omitempty\""; NextHost string "json:\"next_host,omitempty\""}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
+  - name: db:InventoryHostQuery
+    signature: struct{InventoryID int; Search string; AfterInventoryID int; AfterHost string; Count int}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
+  - name: db:InventoryHostRepository
+    signature: >-
+      interface{GetHostTaskIDs(projectID int, inventoryID int, host string, beforeID int, count int) ([]int,
+      error); GetInventoryHostSnapshots(projectID int, inventoryID int) ([]db.InventoryHostSnapshot, error);
+      GetInventoryHosts(projectID int, query db.InventoryHostQuery) (db.InventoryHostPage, error);
+      IngestInventoryHostEvent(task db.Task, inventory db.Inventory, event db.InventoryHostEvent) error}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
+  - name: db:InventoryHostSnapshot
+    signature: >-
+      struct{TaskID int "json:\"task_id\" db:\"task_id\""; Generation int "json:\"generation\"
+      db:\"generation\""; ProjectID int "json:\"project_id\" db:\"project_id\""; InventoryID int
+      "json:\"inventory_id\" db:\"inventory_id\""; InventoryName string "json:\"inventory_name\"
+      db:\"inventory_name\""; TemplateID int "json:\"template_id\" db:\"template_id\""; State string
+      "json:\"state\" db:\"state\""; HostCount int "json:\"host_count\" db:\"host_count\""; Created time.Time
+      "json:\"created\" db:\"created\""}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated

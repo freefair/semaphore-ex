@@ -54,9 +54,10 @@ type Runner struct {
 	// every poll (X-Runner-Started-At header) and persisted next to Touched.
 	// It changes on every restart, which is how the server detects that a
 	// runner lost its in-memory job pool while still polling.
-	StartedAt *time.Time `db:"started_at" json:"started_at"`
-	Version   string     `db:"version" json:"version" backup:"-"`
-	Platform  string     `db:"platform" json:"platform" backup:"-"`
+	StartedAt               *time.Time `db:"started_at" json:"started_at"`
+	Version                 string     `db:"version" json:"version" backup:"-"`
+	InventoryRefreshVersion int        `db:"inventory_refresh_version" json:"inventory_refresh_version" backup:"-"`
+	Platform                string     `db:"platform" json:"platform" backup:"-"`
 
 	// CurrentLoad is the bounded number of jobs reported by the runner on its
 	// latest poll. It is operational metadata, not an assignment authority.

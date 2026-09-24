@@ -548,6 +548,8 @@ func Route(
 	projectUserAPI.Path("/secret_storages").HandlerFunc(secretStorageController.Add).Methods("POST")
 
 	projectUserAPI.Path("/inventory").HandlerFunc(projects.GetInventory).Methods("GET", "HEAD")
+	projectUserAPI.Handle("/hosts", projects.GetMustHavePermissionMiddleware(db.CanViewProjectResources)(http.HandlerFunc(taskController.GetInventoryHosts))).Methods("GET", "HEAD")
+	projectUserAPI.Handle("/hosts/tasks", projects.GetMustHavePermissionMiddleware(db.CanViewProjectResources)(http.HandlerFunc(taskController.GetHostTasks))).Methods("GET", "HEAD")
 	projectUserAPI.Path("/inventory").HandlerFunc(projects.AddInventory).Methods("POST")
 
 	projectUserAPI.Path("/environment").HandlerFunc(projects.GetEnvironment).Methods("GET", "HEAD")
@@ -734,6 +736,7 @@ func Route(
 
 	projectInventoryManagement.HandleFunc("/{inventory_id}", projects.GetInventory).Methods("GET", "HEAD")
 	projectInventoryManagement.HandleFunc("/{inventory_id}/refs", projects.GetInventoryRefs).Methods("GET", "HEAD")
+	projectInventoryManagement.Handle("/{inventory_id}/hosts/snapshots", projects.GetMustHavePermissionMiddleware(db.CanViewProjectResources)(http.HandlerFunc(taskController.GetInventoryHostSnapshots))).Methods("GET", "HEAD")
 	projectInventoryManagement.HandleFunc("/{inventory_id}", projects.UpdateInventory).Methods("PUT")
 	projectInventoryManagement.HandleFunc("/{inventory_id}", projects.RemoveInventory).Methods("DELETE")
 

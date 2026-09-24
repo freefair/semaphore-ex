@@ -145,7 +145,7 @@ func TestSecureRunnerReconnectRejectsDowngradeAndStandardRunnerStaysCompatible(t
 		PublicKey: "public-key",
 	})
 	require.NoError(t, err)
-	pool := tasks.CreateTaskPool(store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, nil, nil, nil)
+	pool := tasks.CreateTaskPool(store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, &runnerAPILogWriter{}, nil, nil)
 	controller := NewRunnerController(store, &pool, nil, nil)
 	poll := func(runner db.Runner, withSecureHeaders bool) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(http.MethodGet, "/api/internal/runners", nil)
@@ -322,6 +322,32 @@ func TestGetRunnerHydratesSQLAssignmentOnAnotherHANode(t *testing.T) {
 	require.Len(t, state.NewJobs, 1)
 	assert.Equal(t, fixture.task.ID, state.NewJobs[0].Task.ID)
 	assert.Equal(t, fixture.task.AssignmentGeneration, state.NewJobs[0].Task.AssignmentGeneration)
+}
+
+func TestGetRunnerFailsInventoryRefreshBeforePublishingToLegacyRunner(t *testing.T) {
+	fixture := newRunnerMetadataAPIFixture(t)
+	go fixture.controller.taskPool.Run()
+	t.Cleanup(fixture.controller.taskPool.Stop)
+	tracked, err := fixture.controller.taskPool.GetTask(fixture.task.ID)
+	require.NoError(t, err)
+	tracked.Task.Params = map[string]any{"inventory_refresh": true}
+	fixture.task.Params = tracked.Task.Params
+	require.NoError(t, fixture.store.UpdateTask(tracked.Task))
+
+	runner, err := fixture.store.GetRunner(fixture.project.ID, fixture.runner.ID)
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodGet, "/api/internal/runners", nil)
+	request = helpers.SetContextValue(request, "store", fixture.store)
+	request = helpers.SetContextValue(request, "runner", runner)
+	response := httptest.NewRecorder()
+
+	fixture.controller.GetRunner(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var state runners.RunnerState
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &state))
+	assert.Empty(t, state.NewJobs, "a legacy runner must never receive an inventory refresh task")
+	assert.Equal(t, task_logger.TaskFailStatus, tracked.Task.Status)
 }
 
 func TestGetRunnerAcknowledgesEqualTimestampCacheClearOnce(t *testing.T) {
@@ -625,7 +651,7 @@ func newRunnerMetadataAPIFixture(t *testing.T) runnerMetadataAPIFixture {
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	pool := tasks.CreateTaskPool(store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, nil, nil, nil)
+	pool := tasks.CreateTaskPool(store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, &runnerAPILogWriter{}, nil, nil)
 	tracked := tasks.NewTaskRunner(assigned, &pool, "", nil)
 	pool.StateStore().SetRunning(tracked)
 	return runnerMetadataAPIFixture{

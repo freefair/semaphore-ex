@@ -211,3 +211,29 @@ func TestRemoteJobPersistsActionableNoRunnerDecision(t *testing.T) {
 	require.NotNil(t, stored.PlacementDecision)
 	assert.Equal(t, tsk.Task.PlacementDecision.ActionHint, stored.PlacementDecision.ActionHint)
 }
+
+func TestRemoteJobDoesNotNotifyLegacyWebhookRunnerForInventoryRefresh(t *testing.T) {
+	setupReconcilerConfig(t)
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	state := NewMemoryTaskStateStore()
+	pool := newReconcilerTestPool(store, state)
+	task := createReconcilerTestTaskNoRunner(t, store, task_logger.TaskStartingStatus)
+	task.Params = map[string]any{"inventory_refresh": true}
+	require.NoError(t, store.UpdateTask(task))
+	runner := createPlacementDispatchRunner(t, store, &task.ProjectID, "legacy webhook", nil)
+	// The capability check must reject before this webhook can be contacted.
+	// An unexpected call changes the result to a network error rather than the
+	// required placement delay.
+	runner.Webhook = "http://127.0.0.1:1"
+	runner.IsDefault = true
+	require.NoError(t, store.UpdateRunner(runner))
+	tsk := &TaskRunner{Task: task, pool: &pool}
+	state.SetRunning(tsk)
+
+	err := (&RemoteJob{Task: task, taskPool: &pool}).Run("tester", nil, "")
+
+	require.ErrorIs(t, err, ErrAllRunnersBusy)
+	require.NotNil(t, tsk.Task.PlacementDecision)
+	assert.Equal(t, "matching runners do not support inventory refresh", tsk.Task.PlacementDecision.Reason)
+}

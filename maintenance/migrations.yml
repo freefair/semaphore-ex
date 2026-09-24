@@ -1095,3 +1095,10 @@ migrations:
   files:
     migrations/v2.9.97.sql: 1bda1da7c698f62bf3a918aded43f7a0241f4efeadf081f77bf7c87d1b3078c2
   upstream_id: 2.9.97
+- registered: true
+  id: 2.20.5-ex1.5
+  owner: fork
+  files:
+    migrations_ex/v2.20.5-ex1.5.err.sql: 8f40e7b4acf260a9f60bcd4f0104b5b000e24d1c66dc2bf2825f99f8840ddc5c
+    migrations_ex/v2.20.5-ex1.5.sql: d6e3fd3fe9fc84f1877183f3d73a676b3b587cee03094e561836290a1b191dfe
+  rationale: Inventory membership snapshots and explicit runner refresh capability; independent EX schema.

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/db_lib"
 	"github.com/semaphoreui/semaphore/pkg/ssh"
 	"github.com/semaphoreui/semaphore/util"
 	sshcrypto "golang.org/x/crypto/ssh"
@@ -170,6 +171,7 @@ func (t *LocalExecutor) writeContainerBundle(
 	files := append([]containerBundleFile{
 		{name: "credentials/environment.sh", mode: 0o600, data: []byte(environmentScript)},
 		{name: "run.sh", mode: 0o500, data: []byte(runScript)},
+		{name: "inventory-resolver.py", mode: 0o500, data: []byte(db_lib.InventoryResolverScript())},
 	}, extraFiles...)
 	for _, file := range files {
 		if err := addContainerFile(archive, file.name, file.mode, file.data); err != nil {
@@ -689,7 +691,11 @@ func (t *LocalExecutor) containerRunCommand(args map[string][]string) ([]string,
 	switch t.Template.App {
 	case db.AppAnsible:
 		defaultArgs = t.rewriteContainerArgs(defaultArgs)
-		return append([]string{"ansible-playbook"}, defaultArgs...), nil
+		mode := "run"
+		if t.Task.IsInventoryRefresh() {
+			mode = "refresh"
+		}
+		return append([]string{"python3", path.Join(containerBundlePath, "inventory-resolver.py"), mode}, defaultArgs...), nil
 	case db.AppTerraform, db.AppTofu, db.AppTerragrunt:
 		return nil, nil
 	default:

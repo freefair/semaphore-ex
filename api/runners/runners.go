@@ -253,6 +253,16 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 // fails and finalizes the task in place, leaving data untouched, so a single
 // bad task does not abort the poll for the whole runner.
 func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Runner, data *runners.RunnerState) {
+	// A legacy runner ignores the refresh flag in JobData and would run the
+	// playbook. Check the capability before any credential material is resolved
+	// or appended to the poll response. Placement performs the normal check;
+	// this closes the heartbeat/downgrade race after assignment.
+	if tsk.Task.IsInventoryRefresh() && runner.InventoryRefreshVersion != 1 {
+		tsk.Log("Runner does not support inventory refresh. Upgrade the runner before retrying the refresh.")
+		tsk.SetStatus(task_logger.TaskFailStatus)
+		c.taskPool.FinalizeRemoteTask(tsk, runner)
+		return
+	}
 	if runner.EffectiveExecutorType() == db.RunnerExecutorDocker {
 		if data.DockerReconciliationSession == nil || !data.DockerReconciliationSession.Ready {
 			return

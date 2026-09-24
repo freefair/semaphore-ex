@@ -21,6 +21,8 @@ type evaluatedRunnerPlacement struct {
 	evaluation db.RunnerPlacementEvaluation
 }
 
+const runnerPlacementReasonInventoryRefreshUnsupported db.RunnerPlacementReasonCode = "inventory_refresh_unsupported"
+
 func runnerPlacementPolicy(
 	template db.Template,
 	inventory db.Inventory,
@@ -93,6 +95,35 @@ func DecideRunnerPlacement(
 	offlineTimeout time.Duration,
 	executorImages ...*string,
 ) db.RunnerPlacementDecision {
+	return decideRunnerPlacement(projectID, requestedTags, matchMode, candidates, now, offlineTimeout, false, executorImages...)
+}
+
+// DecideInventoryRefreshRunnerPlacement applies the normal placement contract
+// plus the explicit runner acknowledgement for the inventory-only operation.
+// A runner release string is not evidence of support: older binaries ignore an
+// unknown refresh flag and would run the template's playbook.
+func DecideInventoryRefreshRunnerPlacement(
+	projectID int,
+	requestedTags []string,
+	matchMode db.RunnerTagMatchMode,
+	candidates []RunnerPlacementCandidate,
+	now time.Time,
+	offlineTimeout time.Duration,
+	executorImages ...*string,
+) db.RunnerPlacementDecision {
+	return decideRunnerPlacement(projectID, requestedTags, matchMode, candidates, now, offlineTimeout, true, executorImages...)
+}
+
+func decideRunnerPlacement(
+	projectID int,
+	requestedTags []string,
+	matchMode db.RunnerTagMatchMode,
+	candidates []RunnerPlacementCandidate,
+	now time.Time,
+	offlineTimeout time.Duration,
+	requireInventoryRefresh bool,
+	executorImages ...*string,
+) db.RunnerPlacementDecision {
 	tags := db.NormalizeRunnerTags(requestedTags)
 	var executorImage *string
 	if len(executorImages) > 0 {
@@ -105,7 +136,7 @@ func DecideRunnerPlacement(
 	evaluated := make([]evaluatedRunnerPlacement, 0, len(candidates))
 	for _, candidate := range candidates {
 		evaluated = append(evaluated, evaluateRunnerPlacement(
-			projectID, tags, matchMode, candidate, now, offlineTimeout, executorImage,
+			projectID, tags, matchMode, candidate, now, offlineTimeout, requireInventoryRefresh, executorImage,
 		))
 	}
 	sort.SliceStable(evaluated, func(i, j int) bool {
@@ -144,7 +175,7 @@ func DecideRunnerPlacement(
 		return decision
 	}
 	decision.ReasonCode = db.RunnerPlacementReasonNoCandidate
-	decision.Reason, decision.ActionHint = rejectedPlacementSummary(tags, evaluated)
+	decision.Reason, decision.ActionHint = rejectedPlacementSummary(tags, evaluated, requireInventoryRefresh)
 	return decision
 }
 
@@ -155,6 +186,7 @@ func evaluateRunnerPlacement(
 	candidate RunnerPlacementCandidate,
 	now time.Time,
 	offlineTimeout time.Duration,
+	requireInventoryRefresh bool,
 	executorImage *string,
 ) evaluatedRunnerPlacement {
 	runner := candidate.Runner
@@ -192,6 +224,16 @@ func evaluateRunnerPlacement(
 	criterion(runnerTagsMatch(runner, requestedTags, matchMode),
 		"tag policy matched", db.RunnerPlacementReasonTagMatched,
 		"tag policy did not match", db.RunnerPlacementReasonTagMismatch)
+	if requireInventoryRefresh {
+		if runner.InventoryRefreshVersion == 1 {
+			// There is no public preflight reason for a positive capability
+			// acknowledgement. Do not reuse "selected": several candidates can
+			// support refresh while only one is selected.
+			evaluation.AcceptedCriteria = append(evaluation.AcceptedCriteria, "inventory refresh supported")
+		} else {
+			criterion(false, "", "", "inventory refresh unsupported", runnerPlacementReasonInventoryRefreshUnsupported)
+		}
+	}
 	if executorImage != nil {
 		criterion(runner.SupportsExecutorImage(),
 			"executor image compatible", db.RunnerPlacementReasonImageSupported,
@@ -231,6 +273,7 @@ func placementScopeRank(scope db.RunnerPlacementScope) int {
 func rejectedPlacementSummary(
 	tags []string,
 	evaluated []evaluatedRunnerPlacement,
+	requireInventoryRefresh bool,
 ) (reason string, actionHint string) {
 	if len(evaluated) == 0 {
 		return "no runners are configured", "Create and register an active project or global runner."
@@ -260,6 +303,19 @@ func rejectedPlacementSummary(
 			"Use a Docker or Kubernetes runner, or clear the template executor image."
 	}
 	matching = imageCompatible
+	if requireInventoryRefresh {
+		refreshCompatible := make([]evaluatedRunnerPlacement, 0, len(matching))
+		for _, item := range matching {
+			if !containsPlacementCriterion(item.evaluation.RejectedCriteria, "inventory refresh unsupported") {
+				refreshCompatible = append(refreshCompatible, item)
+			}
+		}
+		if len(refreshCompatible) == 0 {
+			return "matching runners do not support inventory refresh",
+				"Upgrade a matching runner that advertises inventory refresh support."
+		}
+		matching = refreshCompatible
+	}
 	blockers := make(map[string]int)
 	for _, item := range matching {
 		for _, rejected := range item.evaluation.RejectedCriteria {
@@ -280,7 +336,7 @@ func rejectedPlacementSummary(
 			return item.reason, item.hint
 		}
 	}
-	ordered := []string{"inactive", "not registered", "offline", "at capacity"}
+	ordered := []string{"inactive", "not registered", "offline", "at capacity", "inventory refresh unsupported"}
 	active := make([]string, 0, len(ordered))
 	for _, blocker := range ordered {
 		if blockers[blocker] > 0 {

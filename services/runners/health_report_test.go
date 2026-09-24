@@ -28,6 +28,7 @@ func TestParseHealthReportValidatesBoundsAndPreservesMissingFields(t *testing.T)
 		{name: "excessive load", header: http.Header{RunnerCurrentLoadHeader: []string{strconv.Itoa(maxRunnerReportedLoad + 1)}}, wantErr: "between"},
 		{name: "long version", header: http.Header{RunnerVersionHeader: []string{strings.Repeat("v", maxRunnerReportTextBytes+1)}}, wantErr: "exceeds"},
 		{name: "unknown executor", header: http.Header{RunnerExecutorTypeHeader: []string{"shell"}}, wantErr: "unsupported"},
+		{name: "unsupported inventory refresh capability", header: http.Header{RunnerInventoryRefreshHeader: []string{"2"}}, wantErr: "must be 0 or 1"},
 	}
 
 	for _, tt := range tests {
@@ -39,7 +40,7 @@ func TestParseHealthReportValidatesBoundsAndPreservesMissingFields(t *testing.T)
 			}
 			require.NoError(t, err)
 			if tt.name == "older runner" {
-				runner := db.Runner{Version: "kept", Platform: "kept", CurrentLoad: 7, ExecutorType: db.RunnerExecutorK8s}
+				runner := db.Runner{Version: "kept", Platform: "kept", CurrentLoad: 7, ExecutorType: db.RunnerExecutorK8s, InventoryRefreshVersion: 1}
 				report.Apply(&runner)
 				assert.Equal(t, db.Runner{Version: "kept", Platform: "kept", CurrentLoad: 7, ExecutorType: db.RunnerExecutorK8s}, runner)
 				return
@@ -54,6 +55,19 @@ func TestParseHealthReportValidatesBoundsAndPreservesMissingFields(t *testing.T)
 			assert.Equal(t, db.RunnerExecutorDocker, *report.ExecutorType)
 		})
 	}
+}
+
+func TestParseHealthReportInventoryRefreshCapabilityReplacesPreviousValue(t *testing.T) {
+	runner := db.Runner{InventoryRefreshVersion: 1}
+	report, err := ParseHealthReport(http.Header{RunnerInventoryRefreshHeader: []string{"1"}})
+	require.NoError(t, err)
+	report.Apply(&runner)
+	assert.Equal(t, 1, runner.InventoryRefreshVersion)
+
+	missing, err := ParseHealthReport(http.Header{})
+	require.NoError(t, err)
+	missing.Apply(&runner)
+	assert.Zero(t, runner.InventoryRefreshVersion, "a missing heartbeat capability must revoke refresh dispatch")
 }
 
 func TestParseHealthReportIncludesSecureModeMetadata(t *testing.T) {

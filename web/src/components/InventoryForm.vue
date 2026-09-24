@@ -26,6 +26,16 @@
     >{{ formError }}
     </v-alert>
 
+    <v-btn
+      v-if="item.id && ['static', 'static-yaml', 'file'].includes(item.type)"
+      :to="`/project/${projectId}/inventories/${item.id}`"
+      text
+      color="primary"
+      class="mb-4"
+    >
+      <v-icon left>mdi-server</v-icon>{{ $t('hostsView') }}
+    </v-btn>
+
     <v-text-field
       v-model="item.name"
       :label="$t('name')"

@@ -33,6 +33,7 @@ func TestJobPool_CommonHeadersReportHealthMetadata(t *testing.T) {
 	assert.Contains(t, request.Header.Get(RunnerVersionHeader), "2.20.4")
 	assert.NotEmpty(t, request.Header.Get(RunnerPlatformHeader))
 	assert.Equal(t, "1", request.Header.Get(RunnerCurrentLoadHeader))
+	assert.Equal(t, "1", request.Header.Get(RunnerInventoryRefreshHeader))
 	assert.NotEmpty(t, request.Header.Get("X-Runner-Started-At"))
 }
 

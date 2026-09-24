@@ -222,7 +222,7 @@ func (p *TaskPool) buildAutomaticTaskPolicyGuardrailDescriptor(
 	_ = groups
 	remote := util.Config.IsUseRemoteRunner() || len(template.EffectiveRunnerTags()) > 0 || inventory.RunnerTag != nil || requestedImage != nil || len(groupRunnerIDs) > 0
 	if remote {
-		placement, _, placementErr := p.taskPreflightPlacement(template, inventory, requestedImage, projectID, plannedAt, groupRunnerIDs)
+		placement, _, placementErr := p.taskPreflightPlacement(template, inventory, requestedImage, projectID, plannedAt, groupRunnerIDs, task.IsInventoryRefresh())
 		if placementErr != nil {
 			return automaticTaskPolicyGuardrailDescriptor{}, placementErr
 		}

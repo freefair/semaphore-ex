@@ -25,6 +25,7 @@ type TerraformTaskParams struct {
 }
 
 type AnsibleTaskParams struct {
+	InventoryRefresh  bool     `json:"inventory_refresh,omitempty"`
 	Debug             bool     `json:"debug"`
 	DebugLevel        int      `json:"debug_level"`
 	DryRun            bool     `json:"dry_run"`
@@ -231,6 +232,11 @@ func (task *Task) GetUrl() *string {
 }
 
 func (task *Task) ValidateNewTask(template Template) error {
+	if value, exists := task.Params["inventory_refresh"]; exists {
+		if _, valid := value.(bool); !valid || template.App != AppAnsible {
+			return errors.New("inventory_refresh requires an Ansible task and a boolean value")
+		}
+	}
 	if task.GitBranch != nil {
 		if err := git.ValidateGitBranch(*task.GitBranch, "task"); err != nil {
 			return err

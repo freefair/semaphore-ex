@@ -2,10 +2,12 @@ package db_lib
 
 import (
 	"crypto/md5"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path"
+	"strings"
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/galaxy"
@@ -65,7 +67,27 @@ func (t *AnsibleApp) SetLogger(logger task_logger.Logger) task_logger.Logger {
 func (t *AnsibleApp) Run(args LocalAppRunningArgs) error {
 	// Use "default" key for backward compatibility
 	cliArgs := args.CliArgs["default"]
-	return t.Playbook.RunPlaybook(cliArgs, args.EnvironmentVars, args.Inputs, args.StopCh)
+	resolver, err := installInventoryResolver(t.Repository.GetInternalPath(t.Template.ID))
+	if err != nil {
+		return fmt.Errorf("prepare inventory resolution: %w", err)
+	}
+	defer func() { _ = os.Remove(resolver) }()
+	mode := "run"
+	if params, ok := args.TaskParams.(*db.AnsibleTaskParams); ok && params.InventoryRefresh {
+		mode = "refresh"
+	}
+	vaultInputs := make(map[string]string)
+	for prompt, value := range args.Inputs {
+		if strings.HasPrefix(prompt, "Vault password (") {
+			vaultInputs[prompt] = value
+		}
+	}
+	encoded, err := json.Marshal(vaultInputs)
+	if err != nil {
+		return err
+	}
+	environment := append(append([]string{}, args.EnvironmentVars...), "SEMAPHORE_INVENTORY_VAULT_INPUTS="+string(encoded))
+	return t.Playbook.runPlaybookCommand("python3", append([]string{resolver, mode}, cliArgs...), environment, args.Inputs, args.StopCh)
 }
 
 func (t *AnsibleApp) Log(msg string) {

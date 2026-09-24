@@ -1,5 +1,43 @@
 # Fork-owned API definitions and paths, referenced by api-docs.yml.
 definitions:
+  InventoryRefresh:
+    type: boolean
+    default: false
+    description: >
+      Resolve Ansible inventory membership without executing a playbook.
+      Uses normal task start permissions, review, credentials and placement.
+      Remote runners must advertise inventory refresh protocol version 1.
+  InventoryHost:
+    type: object
+    required: [inventory_id, inventory_name, host, groups, snapshot_task_id, resolved_at]
+    properties:
+      inventory_id: {type: integer}
+      inventory_name: {type: string}
+      host: {type: string, maxLength: 255}
+      groups: {type: array, items: {type: string}}
+      snapshot_task_id: {type: integer}
+      resolved_at: {type: string, format: date-time}
+  InventoryHostPage:
+    type: object
+    required: [items]
+    properties:
+      items:
+        type: array
+        items: {$ref: './api-docs.yml#/definitions/InventoryHost'}
+      next_inventory_id: {type: integer}
+      next_host: {type: string}
+  InventoryHostSnapshot:
+    type: object
+    properties:
+      task_id: {type: integer}
+      generation: {type: integer}
+      project_id: {type: integer}
+      inventory_id: {type: integer}
+      inventory_name: {type: string}
+      template_id: {type: integer}
+      state: {type: string, enum: [collecting, ready, error]}
+      host_count: {type: integer}
+      created: {type: string, format: date-time}
   TaskGroupMutation:
     type: object
     required: [name, max_parallel_tasks]
@@ -373,6 +411,72 @@ definitions:
         type: string
         format: date-time
 paths:
+  /project/{project_id}/hosts:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - {name: inventory_id, in: query, type: integer, minimum: 1}
+    - {name: search, in: query, type: string, maxLength: 255}
+    - {name: after_inventory_id, in: query, type: integer, minimum: 1}
+    - {name: after_host, in: query, type: string, maxLength: 255}
+    get:
+      tags: [inventory]
+      summary: List hosts from the latest complete inventory snapshots
+      description: >
+        Returns up to 50 hosts ordered by inventory ID and hostname. Supply both
+        next cursor fields for the following page. Literal case-insensitive
+        search matches host and inventory names. The last successful snapshot
+        remains visible after a resolution failure. Project-resource view and
+        originating task/template/workflow read permissions are enforced.
+        No host variables or credentials are returned.
+      responses:
+        200:
+          description: Authorized host membership page
+          schema: {$ref: './api-docs.yml#/definitions/InventoryHostPage'}
+        400: {description: Invalid host query}
+        403: {description: Project-resource read access required}
+  /project/{project_id}/hosts/tasks:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - {name: inventory_id, in: query, type: integer, minimum: 1, required: true}
+    - {name: host, in: query, type: string, maxLength: 255, required: true}
+    - {name: before, in: query, type: integer, minimum: 1}
+    get:
+      tags: [inventory, task]
+      summary: List tasks that recorded execution on one inventory host
+      description: >
+        Returns up to 20 newest visible tasks, including template label, user,
+        schedule, integration and workflow references. Membership alone does
+        not establish execution. Older structured task results are included
+        when an immutable execution snapshot establishes inventory identity.
+        Task output uses the existing task log endpoints.
+      responses:
+        200:
+          description: Authorized host execution history
+          schema:
+            type: object
+            properties:
+              items:
+                type: array
+                items: {$ref: './api-docs.yml#/definitions/Task'}
+              next_cursor: {type: integer}
+        400: {description: Inventory and host are required}
+        403: {description: Project-resource read access required}
+  /project/{project_id}/inventory/{inventory_id}/hosts/snapshots:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/inventory_id
+    get:
+      tags: [inventory]
+      summary: Read recent inventory resolution attempts
+      description: Returns visible attempts from the latest 20 resolution records.
+      responses:
+        200:
+          description: Resolution metadata without source variables
+          schema:
+            type: array
+            items: {$ref: './api-docs.yml#/definitions/InventoryHostSnapshot'}
+        403: {description: Project-resource read access required}
+        404: {description: Inventory not found}
   /project/{project_id}/task_groups:
     parameters:
     - $ref: './api-docs.yml#/parameters/project_id'

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -176,4 +177,25 @@ func TestDecideRunnerPlacementRequiresContainerExecutorForImage(t *testing.T) {
 	assert.Nil(t, localOnly.SelectedRunnerID)
 	assert.Equal(t, "matching runners do not support executor image overrides", localOnly.Reason)
 	assert.Contains(t, localOnly.ActionHint, "Docker or Kubernetes")
+}
+
+func TestDecideInventoryRefreshRunnerPlacementRequiresExplicitCapability(t *testing.T) {
+	now := time.Now().UTC()
+	projectID := 1
+	candidates := []RunnerPlacementCandidate{
+		{Runner: db.Runner{ID: 1, ProjectID: &projectID, Active: true, Token: "legacy", IsDefault: true, Touched: &now}},
+		{Runner: db.Runner{ID: 2, ProjectID: &projectID, Active: true, Token: "supported", IsDefault: true, Touched: &now, InventoryRefreshVersion: 1}},
+	}
+
+	decision := DecideInventoryRefreshRunnerPlacement(projectID, nil, db.RunnerTagMatchAll, candidates, now, time.Minute)
+	require.NotNil(t, decision.SelectedRunnerID)
+	assert.Equal(t, 2, *decision.SelectedRunnerID)
+	assert.Contains(t, decision.Evaluations[0].RejectedCriteria, "inventory refresh unsupported")
+
+	unsupported := DecideInventoryRefreshRunnerPlacement(projectID, nil, db.RunnerTagMatchAll, candidates[:1], now, time.Minute)
+	assert.Nil(t, unsupported.SelectedRunnerID)
+	assert.Equal(t, "matching runners do not support inventory refresh", unsupported.Reason)
+	assert.Contains(t, unsupported.ActionHint, "Upgrade")
+	assert.Equal(t, []pro_interfaces.ExecutionPreflightReasonCode{pro_interfaces.ExecutionReasonCapabilityUnavailable},
+		mapPlacementReasons(unsupported.Evaluations[0].RejectedReasonCodes))
 }

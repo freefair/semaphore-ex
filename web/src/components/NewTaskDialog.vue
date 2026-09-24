@@ -13,7 +13,9 @@
       <v-icon small class="mr-4">{{ TEMPLATE_TYPE_ICONS[template?.type || ''] }}</v-icon>
       <span class="breadcrumbs__item">{{ templateTitle }}</span>
       <v-icon>mdi-chevron-right</v-icon>
-      <span class="breadcrumbs__item">{{ $t('newTask') }}</span>
+      <span class="breadcrumbs__item">
+        {{ $t(isInventoryRefresh ? 'hostsRefresh' : 'newTask') }}
+      </span>
     </template>
 
     <template v-slot:form="{ onSave, onError, needSave, needReset }">
@@ -31,6 +33,7 @@
         :need-save="needSave"
         :need-reset="needReset"
         :source-task="sourceTask"
+        :inventory-refresh="isInventoryRefresh"
       />
     </template>
   </EditDialog>
@@ -78,6 +81,7 @@ export default {
 
   computed: {
     ...enhancedComputed,
+    isInventoryRefresh() { return this.sourceTask?.params?.inventory_refresh === true; },
     templateTitle() {
       let res = this.template?.name || '';
       if (res.length > 16) {

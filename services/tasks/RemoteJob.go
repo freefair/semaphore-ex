@@ -265,6 +265,12 @@ func (t *RemoteJob) Run(username string, incomingVersion *string, alias string) 
 			t.Task.ProjectID, requestedTags, matchMode, candidates,
 			tz.Now(), util.Config.RunnersOfflineTimeout(), t.ExecutorImage,
 		)
+		if tsk.Task.IsInventoryRefresh() {
+			decision = DecideInventoryRefreshRunnerPlacement(
+				t.Task.ProjectID, requestedTags, matchMode, candidates,
+				tz.Now(), util.Config.RunnersOfflineTimeout(), t.ExecutorImage,
+			)
+		}
 		if decision.SelectedRunnerID == nil {
 			t.logDispatchFailure("No runner satisfied dispatch placement policy")
 			persisted, persistErr := t.taskPool.store.SetTaskRunnerPlacement(

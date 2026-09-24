@@ -1132,6 +1132,13 @@ export default {
             testId: 'sidebar-inventory',
           },
           {
+            key: 'hosts',
+            icon: 'mdi-server',
+            title: this.$t('hostsTitle'),
+            to: `${base}/hosts`,
+            testId: 'sidebar-hosts',
+          },
+          {
             key: 'environment',
             icon: 'mdi-code-braces',
             title: this.$t('environment'),

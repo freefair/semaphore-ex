@@ -80,7 +80,11 @@ func (p AnsiblePlaybook) runCmd(command string, args []string, environmentVars [
 }
 
 func (p AnsiblePlaybook) RunPlaybook(args []string, environmentVars []string, inputs map[string]string, stopCh <-chan struct{}) error {
-	cmd, err := p.makeCmd("ansible-playbook", args, environmentVars)
+	return p.runPlaybookCommand("ansible-playbook", args, environmentVars, inputs, stopCh)
+}
+
+func (p AnsiblePlaybook) runPlaybookCommand(command string, args []string, environmentVars []string, inputs map[string]string, stopCh <-chan struct{}) error {
+	cmd, err := p.makeCmd(command, args, environmentVars)
 	if err != nil {
 		return err
 	}

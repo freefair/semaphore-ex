@@ -42,7 +42,7 @@ func TestTaskGroupPreflightKeepsOtherRunnerRestrictions(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			p := TaskPool{store: groupPlacementStore{runners: []db.Runner{{ID: 7, Name: "candidate", Active: test.active, Token: "fixture", Touched: test.touched, Tags: []string{linux}}}}, state: NewMemoryTaskStateStore()}
-			placement, _, err := p.taskPreflightPlacement(db.Template{RunnerTags: test.tags}, db.Inventory{RunnerTag: test.inventoryTag}, nil, 1, now, test.groups)
+			placement, _, err := p.taskPreflightPlacement(db.Template{RunnerTags: test.tags}, db.Inventory{RunnerTag: test.inventoryTag}, nil, 1, now, test.groups, false)
 			require.NoError(t, err)
 			if test.selected {
 				require.NotNil(t, placement.SelectedRunnerID)
@@ -66,7 +66,7 @@ func TestTaskGroupPreflightSelectsExplicitNonDefaultRunner(t *testing.T) {
 	util.Config = &util.ConfigType{Runners: &util.RunnersConfig{}}
 	now := time.Now()
 	p := TaskPool{store: groupPlacementStore{runners: []db.Runner{{ID: 7, Name: "explicit runner", Active: true, Token: "fixture", Touched: &now}}}, state: NewMemoryTaskStateStore()}
-	placement, _, err := p.taskPreflightPlacement(db.Template{}, db.Inventory{}, nil, 1, now, db.TaskGroupBindings{7})
+	placement, _, err := p.taskPreflightPlacement(db.Template{}, db.Inventory{}, nil, 1, now, db.TaskGroupBindings{7}, false)
 	require.NoError(t, err)
 	require.NotNil(t, placement.SelectedRunnerID, "an explicit group runner must not require is_default; runtime already allows it")
 	require.Equal(t, 7, *placement.SelectedRunnerID)

@@ -140,6 +140,10 @@ func (p *JobPool) setCommonHeaders(req *http.Request) {
 	req.Header.Set(RunnerExecutorTypeHeader, string(resolveExecutorType(util.Config.Runner.Executor)))
 	req.Header.Set(RunnerTransportTrustHeader, string(runnerTransportTrust(util.Config.WebHost, util.Config.Runner.Connection)))
 	req.Header.Set(RunnerSecurityProtocolHeader, strconv.Itoa(db.CurrentSecureRunnerProtocol))
+	// This is a capability contract, deliberately independent from the release
+	// version. The server uses it to keep inventory-only refresh work away from
+	// runners that would otherwise ignore the refresh flag and run a playbook.
+	req.Header.Set(RunnerInventoryRefreshHeader, "1")
 	if ack, ready := p.currentDockerPolicyAck(); ready {
 		req.Header.Set(RunnerDockerPolicyRevisionHeader, strconv.Itoa(ack.Revision))
 		req.Header.Set(RunnerDockerPolicyHashHeader, ack.Hash)

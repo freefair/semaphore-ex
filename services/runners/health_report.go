@@ -10,12 +10,17 @@ import (
 )
 
 const (
-	RunnerVersionHeader                  = "X-Runner-Version"
-	RunnerPlatformHeader                 = "X-Runner-Platform"
-	RunnerCurrentLoadHeader              = "X-Runner-Current-Load"
-	RunnerExecutorTypeHeader             = "X-Runner-Executor-Type"
-	RunnerTransportTrustHeader           = "X-Runner-Transport-Trust"
-	RunnerSecurityProtocolHeader         = "X-Runner-Security-Protocol"
+	RunnerVersionHeader          = "X-Runner-Version"
+	RunnerPlatformHeader         = "X-Runner-Platform"
+	RunnerCurrentLoadHeader      = "X-Runner-Current-Load"
+	RunnerExecutorTypeHeader     = "X-Runner-Executor-Type"
+	RunnerTransportTrustHeader   = "X-Runner-Transport-Trust"
+	RunnerSecurityProtocolHeader = "X-Runner-Security-Protocol"
+	// RunnerInventoryRefreshHeader is an explicit, feature-scoped capability
+	// acknowledgement. It must not be inferred from a runner release string:
+	// an older runner ignores an unknown task field and would execute its
+	// playbook instead of performing an inventory-only refresh.
+	RunnerInventoryRefreshHeader         = "X-Runner-Inventory-Refresh"
 	RunnerDockerPolicyRevisionHeader     = "X-Runner-Docker-Policy-Revision"
 	RunnerDockerPolicyHashHeader         = "X-Runner-Docker-Policy-Hash"
 	RunnerKubernetesClusterAliasHeader   = "X-Runner-Kubernetes-Cluster-Alias"
@@ -44,6 +49,10 @@ type HealthReport struct {
 	KubernetesClusterAlias  *string
 	KubernetesNamespace     *string
 	KubernetesPolicyAck     *db.KubernetesExecutionPolicyAck
+	// InventoryRefreshVersion is deliberately a value, rather than a pointer.
+	// Every heartbeat replaces the persisted capability; a missing header from a
+	// downgraded or legacy runner therefore revokes support immediately.
+	InventoryRefreshVersion int
 }
 
 // ParseHealthReport validates the bounded metadata attached to a runner poll.
@@ -94,6 +103,13 @@ func ParseHealthReport(header http.Header) (HealthReport, error) {
 			return HealthReport{}, fmt.Errorf("%s contains an unsupported protocol", RunnerSecurityProtocolHeader)
 		}
 		report.SecurityProtocolVersion = &value
+	}
+	if raw, present := header[RunnerInventoryRefreshHeader]; present {
+		value, err := strconv.Atoi(strings.TrimSpace(strings.Join(raw, ",")))
+		if err != nil || (value != 0 && value != 1) {
+			return HealthReport{}, fmt.Errorf("%s must be 0 or 1", RunnerInventoryRefreshHeader)
+		}
+		report.InventoryRefreshVersion = value
 	}
 	policyRevision, revisionPresent := header[RunnerDockerPolicyRevisionHeader]
 	policyHash, hashPresent := header[RunnerDockerPolicyHashHeader]
@@ -191,4 +207,7 @@ func (report HealthReport) Apply(runner *db.Runner) {
 	if report.SecurityProtocolVersion != nil {
 		runner.SecurityProtocolVersion = *report.SecurityProtocolVersion
 	}
+	// Do not make this conditional on a header being present. A missing header
+	// is an explicit loss of the capability during a rolling downgrade.
+	runner.InventoryRefreshVersion = report.InventoryRefreshVersion
 }

@@ -6,6 +6,9 @@
     v-if="isLoaded()"
     @submit.prevent="save()"
   >
+    <v-alert v-if="inventoryRefresh" type="info" text dense>
+      {{ $t('hostsRefreshContext') }}
+    </v-alert>
     <v-alert
       :value="formError"
       color="error"
@@ -173,18 +176,18 @@
       dense
       required
       :disabled="formSaving"
-      v-if="inventory != null && needInventory"
+      v-if="inventory != null && needInventory && !inventoryRefresh"
     ></v-autocomplete>
 
     <v-skeleton-loader
-      v-else-if="needInventory"
+      v-else-if="needInventory && !inventoryRefresh"
       type="card"
       height="46"
       style="margin-bottom: 16px; margin-top: 4px;"
     ></v-skeleton-loader>
 
     <TaskParamsAnsibleForm
-      v-if="template.app === 'ansible'"
+      v-if="template.app === 'ansible' && !inventoryRefresh"
       v-model="item.params"
       :app="template.app"
       :template-params="template.task_params || {}"
@@ -252,6 +255,7 @@ export default {
   props: {
     template: Object,
     sourceTask: Object,
+    inventoryRefresh: Boolean,
   },
 
   components: {

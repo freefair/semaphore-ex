@@ -722,7 +722,7 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 	remote := util.Config.IsUseRemoteRunner() || len(template.EffectiveRunnerTags()) > 0 ||
 		inventory.RunnerTag != nil || requestedImage != nil || len(groupRunnerIDs) > 0
 	if remote {
-		placement, placementState, placementErr := p.taskPreflightPlacement(template, inventory, requestedImage, projectID, plannedAt, groupRunnerIDs)
+		placement, placementState, placementErr := p.taskPreflightPlacement(template, inventory, requestedImage, projectID, plannedAt, groupRunnerIDs, task.IsInventoryRefresh())
 		if placementErr != nil {
 			return ExecutionPreflightSnapshot{}, nil, placementErr
 		}
@@ -882,6 +882,7 @@ func (p *TaskPool) taskPreflightPlacement(
 	projectID int,
 	now time.Time,
 	groupRunnerIDs db.TaskGroupBindings,
+	requireInventoryRefresh bool,
 ) (pro_interfaces.ExecutionPreflightPlacement, string, error) {
 	projectRunners, err := p.store.GetRunners(projectID, false, db.RunnerFilterIgnoreTags, nil)
 	if err != nil {
@@ -908,12 +909,15 @@ func (p *TaskPool) taskPreflightPlacement(
 		state = append(state, runner.ID, runner.ProjectID, runner.Active, runner.IsRegistered(),
 			runner.IsOnline(now, util.Config.RunnersOfflineTimeout()),
 			runner.MaxParallelTasks, load, runner.Tags, runner.ExecutorType, runner.DockerPolicyRevision,
-			runner.DockerPolicyHash, runner.K8sPolicyRevision, runner.K8sPolicyHash)
+			runner.DockerPolicyHash, runner.K8sPolicyRevision, runner.K8sPolicyHash, runner.InventoryRefreshVersion)
 	}
 	if len(candidates) > pro_interfaces.MaxExecutionPreflightCandidates {
 		return pro_interfaces.ExecutionPreflightPlacement{}, "", errors.New("execution preflight candidate limit exceeded")
 	}
 	decision := DecideRunnerPlacement(projectID, tags, matchMode, candidates, now, util.Config.RunnersOfflineTimeout(), requestedImage)
+	if requireInventoryRefresh {
+		decision = DecideInventoryRefreshRunnerPlacement(projectID, tags, matchMode, candidates, now, util.Config.RunnersOfflineTimeout(), requestedImage)
+	}
 	placement := pro_interfaces.ExecutionPreflightPlacement{
 		RequestedTags: decision.RequestedTags, MatchMode: decision.MatchMode,
 		RequestedImage: decision.RequestedImage, SelectedRunnerID: decision.SelectedRunnerID,
@@ -1073,6 +1077,10 @@ func finalizeTaskPreflight(plan pro_interfaces.ExecutionPreflightPlan, component
 func mapPlacementReasons(values []db.RunnerPlacementReasonCode) []pro_interfaces.ExecutionPreflightReasonCode {
 	result := make([]pro_interfaces.ExecutionPreflightReasonCode, 0, len(values))
 	for _, value := range values {
+		if value == runnerPlacementReasonInventoryRefreshUnsupported {
+			result = append(result, pro_interfaces.ExecutionReasonCapabilityUnavailable)
+			continue
+		}
 		result = append(result, pro_interfaces.ExecutionPreflightReasonCode(value))
 	}
 	return result
