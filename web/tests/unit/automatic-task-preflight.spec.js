@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import { shallowMount } from '@vue/test-utils';
 import axios from 'axios';
 import TaskForm from '@/components/TaskForm.vue';
+import TaskParamsTerraformForm from '@/components/TaskParamsTerraformForm.vue';
 import ExecutionPreflightReview from '@/components/ExecutionPreflightReview.vue';
 
 const settle = () => new Promise((resolve) => { setTimeout(resolve, 350); });
@@ -18,18 +19,75 @@ describe('automatic task execution review', () => {
     axios.post = originalPost;
   });
 
-  function open() {
+  function open(app = 'bash', sourceTask = null) {
     wrapper = shallowMount(TaskForm, {
       propsData: {
         itemId: 'new',
         projectId: 7,
+        sourceTask,
         template: {
-          id: 11, project_id: 7, app: 'bash', type: '', survey_vars: [],
+          id: 11, project_id: 7, app, type: '', survey_vars: [],
         },
       },
       mocks: { $t: (key) => key },
     });
   }
+
+  ['plan', 'auto_approve', 'destroy', 'upgrade', 'reconfigure'].forEach((option) => {
+    it(`reviews and submits a changed Terraform ${option} option`, async () => {
+      const calls = [];
+      axios.post = async (url, body) => {
+        calls.push(body);
+        return { data: plan(`review-${calls.length}`) };
+      };
+      open('terraform');
+      await settle();
+      const form = wrapper.findComponent(TaskParamsTerraformForm);
+      form.vm.$emit('input', { [option]: true });
+      await wrapper.vm.$nextTick();
+      expect(wrapper.vm.executionReady, 'edits must invalidate the old review').to.equal(false);
+      await settle();
+      expect(calls).to.have.length(2);
+      expect(calls[1].params[option]).to.equal(true);
+      wrapper.vm.$refs.form.validate = () => true;
+      let submitted;
+      wrapper.vm.submitTaskPayload = async (body) => { submitted = body; };
+      await wrapper.vm.save();
+      expect(submitted.params[option]).to.equal(true);
+      form.vm.$emit('input', { [option]: false });
+      await settle();
+      expect(calls).to.have.length(3);
+      expect(calls[2].params[option]).to.equal(false);
+      await wrapper.vm.save();
+      expect(submitted.params[option]).to.equal(false);
+    });
+  });
+
+  it('reviews changed Terraform options when rerunning an existing task', async () => {
+    const calls = [];
+    axios.post = async (url, body) => {
+      calls.push(body);
+      return { data: plan(`rerun-${calls.length}`) };
+    };
+    open('terraform', { params: { plan: true, auto_approve: true }, commit_hash: 'old-commit' });
+    await settle();
+    wrapper.findComponent(TaskParamsTerraformForm).vm.$emit('input', {
+      plan: false, auto_approve: false,
+    });
+    await settle();
+    expect(calls).to.have.length(2);
+    expect(calls[1].params).to.deep.equal({ plan: false, auto_approve: false });
+    wrapper.vm.$refs.form.validate = () => true;
+    let submitted;
+    wrapper.vm.submitTaskPayload = async (body) => { submitted = body; };
+    await wrapper.vm.save();
+    expect(submitted).to.deep.equal(calls[1]);
+    await wrapper.setProps({ sourceTask: {} });
+    await settle();
+    expect(calls[2].commit_hash).to.equal(null);
+    expect(calls[2].params).to.deep.equal({});
+    expect(calls[2].template_id).to.equal(11);
+  });
 
   it('loads a review on opening and starts on the first Run click', async () => {
     const calls = [];

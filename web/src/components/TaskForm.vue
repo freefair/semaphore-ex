@@ -400,13 +400,18 @@ export default {
     assignItem(val) {
       const v = val || {};
 
-      if (this.item == null) {
-        this.item = {};
-      }
-
-      Object.keys(v).forEach((field) => {
-        this.item[field] = v[field];
-      });
+      // Vue 2 must observe editable fields before the review signature is cached.
+      this.item = {
+        template_id: this.template.id,
+        message: '',
+        arguments: null,
+        git_branch: null,
+        inventory_id: null,
+        build_task_id: null,
+        commit_hash: null,
+        params: {},
+        ...v,
+      };
       this.$set(this.item, 'ssh_keys', this.canOverrideSSHKeys ? (v.ssh_keys ?? null) : null);
 
       this.editedEnvironment = JSON.parse(v.environment || '{}');

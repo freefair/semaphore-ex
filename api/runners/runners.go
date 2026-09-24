@@ -833,6 +833,7 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 		// remains tracked long enough to report its terminal stopped status while
 		// still persisting commit metadata carried by the snapshot.
 		acceptedStatus := runnerProgressStatusForStoppingTask(tsk.Task.Status, job.Status)
+		acceptedStatus = runnerProgressStatusForConfirmation(tsk.Task.Status, acceptedStatus)
 		applied := tsk.ApplyRunnerProgress(
 			acceptedStatus, runner.ID, reportedGeneration, commitHash, commitMessage,
 		)
@@ -844,6 +845,12 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			// erroneous terminated_jobs emergency kill.
 			applied = tsk.ApplyRunnerProgress(
 				runnerProgressStatusForStoppingTask(tsk.Task.Status, job.Status),
+				runner.ID, reportedGeneration, commitHash, commitMessage,
+			)
+		}
+		if !applied && runnerProgressWasSupersededByConfirmation(tsk, runner.ID, reportedGeneration) {
+			applied = tsk.ApplyRunnerProgress(
+				runnerProgressStatusForConfirmation(tsk.Task.Status, job.Status),
 				runner.ID, reportedGeneration, commitHash, commitMessage,
 			)
 		}
