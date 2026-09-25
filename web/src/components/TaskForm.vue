@@ -453,6 +453,28 @@ export default {
       });
     },
 
+    async loadBuildTasks() {
+      const builds = [];
+      let before = 0;
+      // Refreshes are task history, but cannot supply a deployable build.
+      while (builds.length < 20) {
+        // Each page depends on the cursor returned by the previous request.
+        // eslint-disable-next-line no-await-in-loop
+        const { data, headers } = await axios({
+          method: 'get',
+          url: `/api/project/${this.projectId}/templates/${this.template.build_template_id}/tasks/last?count=20${before ? `&before=${before}` : ''}`,
+          responseType: 'json',
+        });
+        builds.push(...data.filter((task) => task.status === 'success'
+          && !task.params?.inventory_refresh));
+        if (data.length === 0 || headers['x-has-next'] === 'false') break;
+        const next = data[data.length - 1].id;
+        if (before && next >= before) break;
+        before = next;
+      }
+      return builds.slice(0, 20);
+    },
+
     async afterLoadData() {
       this.refreshItem();
 
@@ -461,11 +483,7 @@ export default {
         this.inventory,
       ] = await Promise.all([
 
-        this.template.type === 'deploy' ? (await axios({
-          keys: 'get',
-          url: `/api/project/${this.projectId}/templates/${this.template.build_template_id}/tasks?status=success&limit=20`,
-          responseType: 'json',
-        })).data.filter((task) => task.status === 'success') : [],
+        this.template.type === 'deploy' ? this.loadBuildTasks() : [],
 
         this.needInventory ? (await axios({
           keys: 'get',

@@ -546,6 +546,20 @@ func (p *TaskPool) addTask(
 	} else {
 		tpl = *templateSnapshot
 	}
+	if taskObj.IsInventoryRefresh() {
+		taskObj.Version = nil
+	}
+	if taskObj.BuildTaskID != nil {
+		buildTask, buildErr := p.store.GetTask(projectID, *taskObj.BuildTaskID)
+		if buildErr != nil {
+			err = buildErr
+			return
+		}
+		if buildTask.IsInventoryRefresh() {
+			err = errors.New("inventory refresh tasks cannot be selected as builds")
+			return
+		}
+	}
 	// Group IDs are authored only on the template. Resolve them through the
 	// catalog using the execution project, never the request payload. A
 	// cross-project template grant does not implicitly grant this project's use
@@ -601,22 +615,39 @@ func (p *TaskPool) addTask(
 		taskObj.CommitHash = nil
 	}
 
-	if tpl.Type == db.TemplateBuild { // get next version for TaskRunner if it is a Build
+	if tpl.Type == db.TemplateBuild && !taskObj.IsInventoryRefresh() { // get next version for TaskRunner if it is a Build
 		if crossProjectProvenance != nil {
 			// A consumer-owned external task must not derive its build identity
 			// from mutable owner task history. The exact published build-template
 			// dependency remains in immutable provenance instead.
 			taskObj.Version = tpl.StartVersion
 		} else {
-			var builds []db.TaskWithTpl
-			builds, err = p.store.GetTemplateTasks(tpl.ProjectID, tpl.ID, db.RetrieveQueryParams{Count: 1})
-			if err != nil {
-				return
+			var latest *string
+			beforeID := 0
+			for latest == nil {
+				builds, queryErr := p.store.GetTemplateTasks(tpl.ProjectID, tpl.ID, db.RetrieveQueryParams{Count: 100, BeforeID: beforeID})
+				if queryErr != nil {
+					err = queryErr
+					return
+				}
+				if len(builds) == 0 {
+					break
+				}
+				for _, build := range builds {
+					if !build.Task.IsInventoryRefresh() && build.Version != nil {
+						latest = build.Version
+						break
+					}
+				}
+				if latest != nil || len(builds) < 100 {
+					break
+				}
+				beforeID = builds[len(builds)-1].ID
 			}
-			if len(builds) == 0 || builds[0].Version == nil {
+			if latest == nil {
 				taskObj.Version = tpl.StartVersion
 			} else {
-				taskObj.Version = new(db.GetNextBuildVersion(*tpl.StartVersion, *builds[0].Version))
+				taskObj.Version = new(db.GetNextBuildVersion(*tpl.StartVersion, *latest))
 			}
 		}
 	}

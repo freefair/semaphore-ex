@@ -526,7 +526,7 @@ func (t *TaskRunner) finishRun() {
 // startAutorunTasks queues the autorun child templates of a successfully
 // finished build task. It is a no-op unless the task succeeded.
 func (t *TaskRunner) startAutorunTasks() {
-	if t.Task.Status != task_logger.TaskSuccessStatus {
+	if t.Task.Status != task_logger.TaskSuccessStatus || t.Task.IsInventoryRefresh() {
 		return
 	}
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db/sql"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -98,6 +99,46 @@ func TestAddTaskFreezesResolvedExecutorImageBeforeEnqueue(t *testing.T) {
 	stored, err := store.GetTask(template.ProjectID, created.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "registry.example.com/team/job:v1", *stored.ResolvedExecutorImage)
+}
+
+func TestAddTaskRefreshBuildClearsVersionAndRejectsAsDeployInput(t *testing.T) {
+	store, pool, user, template := createExecutorImageTaskFixture(t, db.RunnerExecutorDocker, true)
+	template.Type = db.TemplateBuild
+	template.App = db.AppAnsible
+	inventory, inventoryErr := store.CreateInventory(db.Inventory{ProjectID: template.ProjectID, Name: "refresh", Type: db.InventoryStatic, Inventory: "localhost"})
+	require.NoError(t, inventoryErr)
+	template.InventoryID = &inventory.ID
+	start := "1.0.0"
+	template.StartVersion = &start
+	require.NoError(t, store.UpdateTemplate(template))
+	requested := "999.9.9"
+	refresh, err := pool.AddTask(db.Task{TemplateID: template.ID, Version: &requested, Params: db.MapStringAnyField{"inventory_refresh": true}}, &user.ID, user.Username, template.ProjectID, false)
+	require.NoError(t, err)
+	assert.Nil(t, refresh.Version)
+	_, err = pool.AddTask(db.Task{TemplateID: template.ID, BuildTaskID: &refresh.ID}, &user.ID, user.Username, template.ProjectID, false)
+	assert.ErrorContains(t, err, "cannot be selected as builds")
+}
+
+func TestAddTaskBuildVersionSkipsMoreThanOnePageOfRefreshes(t *testing.T) {
+	store, pool, user, template := createExecutorImageTaskFixture(t, db.RunnerExecutorDocker, true)
+	template.Type, template.App = db.TemplateBuild, db.AppAnsible
+	start := "1.0.0"
+	template.StartVersion = &start
+	inventory, err := store.CreateInventory(db.Inventory{ProjectID: template.ProjectID, Name: "refresh", Type: db.InventoryStatic, Inventory: "localhost"})
+	require.NoError(t, err)
+	template.InventoryID = &inventory.ID
+	require.NoError(t, store.UpdateTemplate(template))
+	version := "1.0.1"
+	_, err = store.CreateTask(db.Task{ProjectID: template.ProjectID, TemplateID: template.ID, Status: task_logger.TaskSuccessStatus, Version: &version}, 0)
+	require.NoError(t, err)
+	for index := 0; index < 101; index++ {
+		_, err = store.CreateTask(db.Task{ProjectID: template.ProjectID, TemplateID: template.ID, Status: task_logger.TaskSuccessStatus, Params: db.MapStringAnyField{"inventory_refresh": true}}, 0)
+		require.NoError(t, err)
+	}
+	created, err := pool.AddTask(db.Task{TemplateID: template.ID}, &user.ID, user.Username, template.ProjectID, false)
+	require.NoError(t, err)
+	require.NotNil(t, created.Version)
+	assert.Equal(t, "1.0.2", *created.Version)
 }
 
 func TestAddTaskOverwritesRequestTaskGroupsWithTemplateSnapshot(t *testing.T) {

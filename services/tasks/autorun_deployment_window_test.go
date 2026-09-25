@@ -127,3 +127,26 @@ func TestAutorunDeploymentWindowAdmissionIsStableAndReplayReturnsExistingTask(t 
 	require.NotNil(t, capture.record.TaskID)
 	assert.Equal(t, created[0].ID, *capture.record.TaskID)
 }
+
+func TestRefreshSuccessSkipsSharedAutorunGuard(t *testing.T) {
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "refresh autorun"})
+	require.NoError(t, err)
+	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &project.ID, Type: db.AccessKeyNone})
+	require.NoError(t, err)
+	repo, err := store.CreateRepository(db.Repository{ProjectID: project.ID, SSHKeyID: key.ID, Name: "repo", GitURL: "https://example.invalid/repo.git", GitBranch: "main"})
+	require.NoError(t, err)
+	inventory, err := store.CreateInventory(db.Inventory{ProjectID: project.ID, Name: "refresh", Type: db.InventoryStatic, Inventory: "localhost"})
+	require.NoError(t, err)
+	build, err := store.CreateTemplate(db.Template{ProjectID: project.ID, RepositoryID: repo.ID, InventoryID: &inventory.ID, Name: "build", Playbook: "site.yml", Type: db.TemplateBuild, App: db.AppAnsible})
+	require.NoError(t, err)
+	_, err = store.CreateTemplate(db.Template{ProjectID: project.ID, RepositoryID: repo.ID, Name: "deploy", Playbook: "deploy.yml", BuildTemplateID: &build.ID, Autorun: true})
+	require.NoError(t, err)
+	pool := CreateTaskPool(store, NewMemoryTaskStateStore(), nil, &InventoryServiceMock{}, &EncryptionServiceMock{}, &KeyInstallerMock{}, &mockLogWriteService{}, nil, nil)
+	runner := &TaskRunner{Task: db.Task{ProjectID: project.ID, TemplateID: build.ID, Status: task_logger.TaskSuccessStatus, Params: db.MapStringAnyField{"inventory_refresh": true}}, Template: build, pool: &pool}
+	runner.startAutorunTasks()
+	tasks, listErr := store.GetProjectTasks(project.ID, db.RetrieveQueryParams{})
+	require.NoError(t, listErr)
+	assert.Empty(t, tasks)
+}

@@ -216,6 +216,9 @@ func (task *Task) GetIncomingVersion(d Store) *string {
 	}
 
 	if tpl.Type == TemplateBuild {
+		if buildTask.IsInventoryRefresh() {
+			return nil
+		}
 		return buildTask.Version
 	}
 
