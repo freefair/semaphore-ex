@@ -11,6 +11,24 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+## [v2.20.0-ex.2.1.4] - 2026-09-25
+
+### Fixed
+
+- Inventory refreshes on Build templates no longer allocate build versions or
+  trigger autorun deployments. Refresh tasks cannot be used as deployment builds;
+  version numbering and build selection retain access to older real builds.
+- Local SSH host and URL mappings can authenticate through their dedicated agents
+  when task-specific SSH keys are also configured. Container mappings preserve
+  inventory fallback keys and do not consume the task identity routing limit.
+- Container mappings accept the same host names as the API, including mixed-case
+  names and underscores. URL mappings no longer cause false conflicts for
+  repositories without an explicit SSH identity.
+- Credential redaction preserves public login names and structured inventory
+  results while continuing to hide passwords, private keys and passphrases.
+- Local inventory resolution respects configured process-user ownership without
+  weakening resolver file permissions.
+
 ## [v2.20.0-ex.2.1.3] - 2026-09-25
 
 ### Added
