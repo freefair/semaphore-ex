@@ -493,7 +493,18 @@ definitions:
 
   AccessKey:
     type: object
+    required:
+      - empty
+      - synchronized
     properties:
+      empty:
+        type: boolean
+        description: Whether the key lacks the material or source reference required by its type. Always present, including false.
+        example: false
+      synchronized:
+        type: boolean
+        description: Whether the key is synchronized with an external source. Always present, including false.
+        example: false
       id:
         type: integer
       name:

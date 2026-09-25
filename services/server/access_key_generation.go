@@ -198,6 +198,7 @@ func ensureGeneratedSSHKeyEncryption() error {
 }
 
 func generatedSSHKeyResult(key db.AccessKey, pair generatedSSHKeyPair) GeneratedSSHKeyResult {
+	key.Empty = key.IsEmpty()
 	key.Secret = nil
 	key.SshKey.PrivateKey = ""
 	key.SshKey.Passphrase = ""

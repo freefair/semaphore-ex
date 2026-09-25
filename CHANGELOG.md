@@ -11,6 +11,12 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+### Fixed
+
+- Access-key API responses always include the Boolean fields `empty` and
+  `synchronized`, including `false`, so clients can distinguish explicit values
+  from absent fields.
+
 ## [v2.20.0-ex.2.1.4] - 2026-09-25
 
 ### Fixed

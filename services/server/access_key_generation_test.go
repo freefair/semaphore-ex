@@ -98,6 +98,7 @@ func TestCreateGeneratedSSHKeyPersistsOnlyEncryptedPrivateMaterial(t *testing.T)
 	require.Empty(t, result.Key.SshKey.PrivateKey)
 	require.Empty(t, result.Key.SshKey.Passphrase)
 	require.Nil(t, result.Key.Secret)
+	require.False(t, result.Key.Empty)
 	require.NotContains(t, result.PublicKey, "PRIVATE")
 	require.Contains(t, result.PublicKey, "ssh-ed25519 ")
 	require.Contains(t, result.Fingerprint, "SHA256:")
@@ -300,6 +301,7 @@ func TestRotateGeneratedSSHKeyRetainsLoginAndClearsPriorPassphrase(t *testing.T)
 	projectID := 1
 	old := db.AccessKey{
 		ID: 9, Name: "imported", Type: db.AccessKeySSH, ProjectID: &projectID,
+		Empty:  true,
 		SshKey: db.SshKey{Login: "deploy", Passphrase: "old-passphrase", PrivateKey: "old-private-key"},
 	}
 	require.NoError(t, encryption.SerializeSecret(&old))
@@ -312,6 +314,10 @@ func TestRotateGeneratedSSHKeyRetainsLoginAndClearsPriorPassphrase(t *testing.T)
 	})
 	require.NoError(t, err)
 	require.Equal(t, GeneratedSSHKeyAlgorithmRSA3072, result.Algorithm)
+	require.False(t, result.Key.Empty)
+	require.Nil(t, result.Key.Secret)
+	require.Empty(t, result.Key.SshKey.PrivateKey)
+	require.Empty(t, result.Key.SshKey.Passphrase)
 	require.NotNil(t, repo.updated.Secret)
 	require.Empty(t, repo.updated.SshKey.PrivateKey)
 	require.Empty(t, repo.updated.SshKey.Passphrase)

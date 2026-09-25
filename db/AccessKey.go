@@ -69,7 +69,7 @@ type AccessKey struct {
 	// Enforced centrally in AccessKeyEncryptionService.DeserializeSecret.
 	ExpireAt *time.Time `db:"expire_at" json:"-" backup:"-"`
 
-	Empty bool `db:"-" json:"empty,omitempty"`
+	Empty bool `db:"-" json:"empty"`
 
 	Owner AccessKeyOwner `db:"owner" json:"owner,omitempty"`
 
@@ -87,7 +87,7 @@ type AccessKey struct {
 	SourceStorageVersion int    `db:"-" json:"source_storage_version,omitempty" backup:"-"`
 	SourceStorageField   string `db:"-" json:"source_storage_field,omitempty" backup:"-"`
 
-	Synchronized bool `db:"synchronized" json:"synchronized,omitempty"`
+	Synchronized bool `db:"synchronized" json:"synchronized"`
 }
 
 func (key *AccessKey) IsNativelyReadOnly() bool {

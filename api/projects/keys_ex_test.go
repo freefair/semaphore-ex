@@ -191,6 +191,38 @@ func TestAccessKeyReadDTORedactsEverySecretFieldAndExposesGeneratedMetadata(t *t
 	metadataResponse := readResponse["generated_ssh_key"].(map[string]any)
 	assert.Equal(t, publicKey, metadataResponse["public_key"])
 	assert.Contains(t, string(body), fingerprint)
+	assert.Equal(t, false, readResponse["empty"])
+	assert.Equal(t, false, readResponse["synchronized"])
+}
+
+func TestAccessKeyBooleanResponsesAlwaysIncludeFalseAndTrue(t *testing.T) {
+	for _, expected := range []struct {
+		empty, synchronized bool
+		value               string
+	}{{false, false, "value"}, {true, true, ""}} {
+		key := db.AccessKey{ID: 1, Name: "key", Type: db.AccessKeyString, String: expected.value, Empty: expected.empty, Synchronized: expected.synchronized}
+		for _, value := range []any{key, accessKeyReadDTOFrom(key)} {
+			body, err := json.Marshal(value)
+			assert.NoError(t, err)
+			decoded := map[string]any{}
+			assert.NoError(t, json.Unmarshal(body, &decoded))
+			assert.Equal(t, expected.empty, decoded["empty"])
+			assert.Equal(t, expected.synchronized, decoded["synchronized"])
+		}
+	}
+}
+
+func TestAccessKeyReadDTOPreservesAuthoritativeEmptyState(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		key      db.AccessKey
+		expected bool
+	}{
+		{"empty key", db.AccessKey{Type: db.AccessKeyString, Empty: true}, true},
+		{"redacted generated key", db.AccessKey{Type: db.AccessKeySSH, Empty: false}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) { assert.Equal(t, test.expected, accessKeyReadDTOFrom(test.key).Empty) })
+	}
 }
 
 func TestGetKeysHandlersRedactPrivateFieldsAndExposeGeneratedMetadataAfterReopen(t *testing.T) {
@@ -222,6 +254,8 @@ func TestGetKeysHandlersRedactPrivateFieldsAndExposeGeneratedMetadataAfterReopen
 	assert.NoError(t, json.Unmarshal(listRecorder.Body.Bytes(), &listResponse))
 	assert.Equal(t, publicKey, listResponse[0]["generated_ssh_key"].(map[string]any)["public_key"])
 	assert.Equal(t, fingerprint, listResponse[0]["generated_ssh_key"].(map[string]any)["fingerprint"])
+	assert.Equal(t, false, listResponse[0]["empty"])
+	assert.Equal(t, false, listResponse[0]["synchronized"])
 
 	singleRequest := httptest.NewRequest(http.MethodGet, "/api/project/1/keys/7", nil)
 	singleRequest = helpers.SetContextValue(singleRequest, "accessKey", key)
@@ -229,6 +263,10 @@ func TestGetKeysHandlersRedactPrivateFieldsAndExposeGeneratedMetadataAfterReopen
 	GetKeys(singleRecorder, singleRequest)
 	assert.Equal(t, http.StatusOK, singleRecorder.Code)
 	assertReadBody(singleRecorder.Body.String())
+	var detailResponse map[string]any
+	assert.NoError(t, json.Unmarshal(singleRecorder.Body.Bytes(), &detailResponse))
+	assert.Equal(t, false, detailResponse["empty"])
+	assert.Equal(t, false, detailResponse["synchronized"])
 }
 
 func TestGenerateSSHKeyReturnsOnlyPublicMaterialAndAuditsSuccess(t *testing.T) {
@@ -236,7 +274,7 @@ func TestGenerateSSHKeyReturnsOnlyPublicMaterialAndAuditsSuccess(t *testing.T) {
 	service := &generatedSSHKeyServiceMock{result: server.GeneratedSSHKeyResult{
 		Key: db.AccessKey{
 			ID: 7, Name: "generated", Type: db.AccessKeySSH, ProjectID: intPtr(1), Plain: &metadata,
-			Secret: new("ciphertext"), SshKey: db.SshKey{PrivateKey: "private-key", Passphrase: "passphrase"},
+			Empty: false,
 		},
 		PublicKey: publicKey, Fingerprint: fingerprint, Algorithm: server.GeneratedSSHKeyAlgorithmEd25519,
 	}}
@@ -253,11 +291,15 @@ func TestGenerateSSHKeyReturnsOnlyPublicMaterialAndAuditsSuccess(t *testing.T) {
 	assert.Equal(t, "deploy", service.createRequest.Login)
 	assert.NotContains(t, recorder.Body.String(), `"private_key":`)
 	assert.NotContains(t, recorder.Body.String(), `"passphrase":`)
-	assert.NotContains(t, recorder.Body.String(), "ciphertext")
 	assert.NotContains(t, recorder.Body.String(), "\"string\"")
 	var response generatedSSHKeyResponse
 	assert.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.Equal(t, publicKey, response.PublicKey)
+	generatedBody := map[string]any{}
+	assert.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &generatedBody))
+	keyBody := generatedBody["key"].(map[string]any)
+	assert.Equal(t, false, keyBody["empty"])
+	assert.Equal(t, false, keyBody["synchronized"])
 	assert.Len(t, store.events, 1)
 	assert.NotNil(t, store.events[0].Description)
 	assert.Contains(t, *store.events[0].Description, "SSH key generated")
@@ -284,7 +326,7 @@ func TestGenerateSSHKeyFailureDoesNotCreateEventOrSuccessResponse(t *testing.T) 
 func TestRotateGeneratedSSHKeyClearsRepositoryCacheAndRequiresManagerPermission(t *testing.T) {
 	metadata, publicKey, fingerprint := generatedSSHKeyMetadata(t)
 	service := &generatedSSHKeyServiceMock{result: server.GeneratedSSHKeyResult{
-		Key:       db.AccessKey{ID: 7, Name: "generated", Type: db.AccessKeySSH, ProjectID: intPtr(1), Plain: &metadata},
+		Key:       db.AccessKey{ID: 7, Name: "generated", Type: db.AccessKeySSH, ProjectID: intPtr(1), Plain: &metadata, Empty: false},
 		PublicKey: publicKey, Fingerprint: fingerprint, Algorithm: server.GeneratedSSHKeyAlgorithmEd25519,
 	}}
 	controller := NewKeyController(service)
@@ -309,6 +351,9 @@ func TestRotateGeneratedSSHKeyClearsRepositoryCacheAndRequiresManagerPermission(
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	assert.True(t, service.rotateRequest.ConfirmRotation)
 	assert.Equal(t, key.ID, service.rotateRequest.KeyID)
+	var response generatedSSHKeyResponse
+	assert.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.False(t, response.Key.Empty)
 	_, err := os.Stat(cacheDir)
 	assert.True(t, os.IsNotExist(err))
 	assert.Len(t, store.events, 1)

@@ -35,6 +35,9 @@ Plan can be split to tasks. Each task describes in details how to implement some
 ## Code Style
 
 1. Do not use global variables. Global variables are forbidden.
+2. JSON API responses serialize concrete Boolean fields explicitly, including
+   `false`. Optional Boolean fields use an explicit optional representation
+   such as `*bool` when absence has a separate meaning.
 
 ## High Availability Support
 

@@ -30,7 +30,7 @@ type accessKeyReadDTO struct {
 	Type      db.AccessKeyType  `json:"type"`
 	ProjectID *int              `json:"project_id"`
 	Plain     *string           `json:"plain,omitempty"`
-	Empty     bool              `json:"empty,omitempty"`
+	Empty     bool              `json:"empty"`
 	Owner     db.AccessKeyOwner `json:"owner,omitempty"`
 
 	SSH           struct{} `json:"ssh"`
@@ -42,7 +42,7 @@ type accessKeyReadDTO struct {
 	SourceStorageMount   string                          `json:"source_storage_mount,omitempty"`
 	SourceStorageVersion int                             `json:"source_storage_version,omitempty"`
 	SourceStorageField   string                          `json:"source_storage_field,omitempty"`
-	Synchronized         bool                            `json:"synchronized,omitempty"`
+	Synchronized         bool                            `json:"synchronized"`
 	GeneratedSSHKey      *server.GeneratedSSHKeyMetadata `json:"generated_ssh_key,omitempty"`
 }
 
