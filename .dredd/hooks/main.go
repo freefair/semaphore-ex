@@ -235,6 +235,7 @@ func main() {
 	h.Before("runner > /api/runners/{runner_id}/cache > Clear global runner cache > 204 > application/json", capabilityWrapper("global_runner"))
 
 	terraformDreddFixtureSetup := registerTerraformDreddFixtures(h)
+	inventoryHostFixtureSetup := registerInventoryHostDreddFixtures(h)
 
 	//Add these last as they normalize the requests and path values after hook processing
 	h.BeforeAll(func(transactions []*trans.Transaction) {
@@ -242,6 +243,7 @@ func main() {
 			h.Before(t.Name, setupObjectsAndPaths)
 		}
 		terraformDreddFixtureSetup()
+		inventoryHostFixtureSetup()
 		registerTaskGroupDreddFixtures(h)
 	})
 

@@ -36,3 +36,16 @@ The separate external Claude source review was previously rejected by automatic
 approval review. The user's publication request authorizes the product push;
 it does not override that source-transmission rejection. Do not retry it without
 the requested payload-specific permission.
+
+## CI repair
+
+The first candidate's Dev integration jobs fail while Dredd parses the required
+host-history query parameters because the specification has no example values.
+Add `x-example` values to both API fragments. Give all three inventory-host read
+transactions independent fixtures, including a completed membership snapshot
+and recorded host execution, and verify their returned identities. This retains
+HTTP coverage instead of skipping the new endpoints or weakening validation.
+
+Validate schema rejection before the change, successful transaction compilation
+after it, and the complete SQLite Dredd suite with the CI-pinned Node 24.19.0 and
+Go 1.26.8 toolchains. The next pushed commit requires fresh exact-head CI.

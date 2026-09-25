@@ -2311,8 +2311,8 @@ paths:
   /project/{project_id}/hosts/tasks:
     parameters:
     - $ref: ./api-docs.yml#/parameters/project_id
-    - {name: inventory_id, in: query, type: integer, minimum: 1, required: true}
-    - {name: host, in: query, type: string, maxLength: 255, required: true}
+    - {name: inventory_id, in: query, type: integer, minimum: 1, required: true, x-example: 1}
+    - {name: host, in: query, type: string, maxLength: 255, required: true, x-example: web-01}
     - {name: before, in: query, type: integer, minimum: 1}
     get:
       tags: [inventory, task]
