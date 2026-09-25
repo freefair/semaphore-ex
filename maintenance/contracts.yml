@@ -1994,6 +1994,9 @@ symbols:
   - name: db:EventEnvironment
     signature: db.EventObjectType = "environment"
     implementation: core
+  - name: db:EventHostConfig
+    signature: db.EventObjectType = "host_config"
+    implementation: core
   - name: db:EventIntegration
     signature: db.EventObjectType = "integration"
     implementation: core
@@ -2217,6 +2220,34 @@ symbols:
   - name: db:HashWorkflowTriggerRequestKey
     signature: func(triggerID int, credentialGeneration int, idempotencyKey string) string
     implementation: core
+  - name: db:HostConfig
+    signature: >-
+      struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; ProjectID int "db:\"project_id\" json:\"project_id\"
+      backup:\"-\""; Type db.HostConfigType "db:\"type\" json:\"type\""; Name string "db:\"name\" json:\"host\"
+      binding:\"required\""; SSHKeyID int "db:\"ssh_key_id\" json:\"ssh_key_id\" binding:\"required\"
+      backup:\"-\""; SSHKey db.AccessKey "db:\"-\" json:\"-\" backup:\"-\""}
+    implementation: core
+  - name: db:HostConfigHost
+    signature: db.HostConfigType = "host"
+    implementation: core
+  - name: db:HostConfigManager
+    signature: >-
+      interface{CreateHostConfig(hostConfig db.HostConfig) (db.HostConfig, error); DeleteHostConfig(projectID
+      int, hostConfigID int) error; GetHostConfig(projectID int, hostConfigID int) (db.HostConfig, error);
+      GetHostConfigs(projectID int, params db.RetrieveQueryParams) ([]db.HostConfig, error);
+      UpdateHostConfig(hostConfig db.HostConfig) error}
+    implementation: core
+    behavior_tests:
+      - db/sql/host_config_test.go::TestHostConfigCRUD
+  - name: db:HostConfigProps
+    signature: db.ObjectProps
+    implementation: core
+  - name: db:HostConfigType
+    signature: string
+    implementation: core
+  - name: db:HostConfigURL
+    signature: db.HostConfigType = "url"
+    implementation: core
   - name: db:IdentityTypeLdap
     signature: untyped string = "ldap"
     implementation: core
@@ -2395,6 +2426,61 @@ symbols:
   - name: db:InventoryFile
     signature: db.InventoryType = "file"
     implementation: core
+  - name: db:InventoryHost
+    signature: >-
+      struct{InventoryID int "json:\"inventory_id\" db:\"inventory_id\""; InventoryName string
+      "json:\"inventory_name\" db:\"inventory_name\""; Host string "json:\"host\" db:\"host\""; Groups
+      db.StringArrayField "json:\"groups\" db:\"groups_json\""; TaskID int "json:\"snapshot_task_id\"
+      db:\"task_id\""; ResolvedAt time.Time "json:\"resolved_at\" db:\"resolved_at\""}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
+  - name: db:InventoryHostEvent
+    signature: >-
+      struct{Version int "json:\"version\""; Kind string "json:\"event\""; Host string
+      "json:\"host,omitempty\""; Groups []string "json:\"groups,omitempty\""; Count int
+      "json:\"count,omitempty\""}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
+  - name: db:InventoryHostPage
+    signature: >-
+      struct{Items []db.InventoryHost "json:\"items\""; NextInventoryID int
+      "json:\"next_inventory_id,omitempty\""; NextHost string "json:\"next_host,omitempty\""}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
+  - name: db:InventoryHostQuery
+    signature: struct{InventoryID int; Search string; AfterInventoryID int; AfterHost string; Count int}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
+  - name: db:InventoryHostRepository
+    signature: >-
+      interface{GetHostTaskIDs(projectID int, inventoryID int, host string, beforeID int, count int) ([]int,
+      error); GetInventoryHostSnapshots(projectID int, inventoryID int) ([]db.InventoryHostSnapshot, error);
+      GetInventoryHosts(projectID int, query db.InventoryHostQuery) (db.InventoryHostPage, error);
+      IngestInventoryHostEvent(task db.Task, inventory db.Inventory, event db.InventoryHostEvent) error}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
+  - name: db:InventoryHostSnapshot
+    signature: >-
+      struct{TaskID int "json:\"task_id\" db:\"task_id\""; Generation int "json:\"generation\"
+      db:\"generation\""; ProjectID int "json:\"project_id\" db:\"project_id\""; InventoryID int
+      "json:\"inventory_id\" db:\"inventory_id\""; InventoryName string "json:\"inventory_name\"
+      db:\"inventory_name\""; TemplateID int "json:\"template_id\" db:\"template_id\""; State string
+      "json:\"state\" db:\"state\""; HostCount int "json:\"host_count\" db:\"host_count\""; Created time.Time
+      "json:\"created\" db:\"created\""}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
+      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
   - name: db:InventoryManager
     signature: >-
       interface{CreateInventory(inventory db.Inventory) (db.Inventory, error); DeleteInventory(projectID int, inventoryID int) error;
@@ -3388,13 +3474,16 @@ symbols:
     implementation: core
   - name: db:ObjectReferrers
     signature: >-
-      struct{Projects []db.ObjectReferrer "json:\"projects\""; Templates []db.ObjectReferrer "json:\"templates\""; Tasks
-      []db.ObjectReferrer "json:\"tasks\""; Inventories []db.ObjectReferrer "json:\"inventories\""; Repositories []db.ObjectReferrer
-      "json:\"repositories\""; Integrations []db.ObjectReferrer "json:\"integrations\""; Schedules []db.ObjectReferrer
-      "json:\"schedules\""; AccessKeys []db.ObjectReferrer "json:\"access_keys\""}
+      struct{Projects []db.ObjectReferrer "json:\"projects\""; Templates []db.ObjectReferrer
+      "json:\"templates\""; Tasks []db.ObjectReferrer "json:\"tasks\""; Inventories []db.ObjectReferrer
+      "json:\"inventories\""; Repositories []db.ObjectReferrer "json:\"repositories\""; Integrations
+      []db.ObjectReferrer "json:\"integrations\""; Schedules []db.ObjectReferrer "json:\"schedules\"";
+      AccessKeys []db.ObjectReferrer "json:\"access_keys\""; HostConfigs []db.ObjectReferrer
+      "json:\"host_configs\""}
     implementation: core
     behavior_tests:
-    - db/sql/task_ssh_key_refs_test.go::TestGetAccessKeyRefsIncludesSSHBindingOwners
+      - db/sql/task_ssh_key_refs_test.go::TestGetAccessKeyRefsIncludesSSHBindingOwners
+      - db/sql/host_config_test.go::TestHostConfigRefs
   - name: db:ObjectToJSON
     signature: func(obj any) *string
     implementation: core
@@ -4272,14 +4361,19 @@ symbols:
     implementation: core
   - name: db:Store
     signature: >-
-      interface{db.ConnectionManager; db.MigrationManager; db.OptionsManager; db.UserManager; db.ProjectStore; db.ProjectInviteRepository;
-      db.TemplateManager; db.InventoryManager; db.RepositoryManager; db.EnvironmentManager; db.AccessKeyManager; db.IntegrationManager;
-      db.SessionManager; db.TokenManager; db.ExternalIdentityManager; db.TaskManager; db.ScheduleManager; db.ViewManager; db.RunnerManager;
-      db.DockerExecutionPolicyRepository; db.KubernetesExecutionPolicyRepository; db.DockerReconciliationRepository;
-      db.DockerTelemetryRepository; db.KubernetesTelemetryRepository; db.EventManager; db.SecretStorageRepository;
-      db.GlobalCredentialRepository; db.SecretSyncRepository; db.RoleRepository; db.CapabilityRepository; db.TOTPRepository;
-      db.LDAPRepository; db.OIDCGroupMappingRepository; db.AuditWebhookRepository; db.NotificationRepository}
+      interface{db.ConnectionManager; db.MigrationManager; db.OptionsManager; db.UserManager; db.ProjectStore;
+      db.ProjectInviteRepository; db.TemplateManager; db.InventoryManager; db.RepositoryManager;
+      db.HostConfigManager; db.EnvironmentManager; db.AccessKeyManager; db.IntegrationManager;
+      db.SessionManager; db.TokenManager; db.ExternalIdentityManager; db.TaskManager; db.ScheduleManager;
+      db.ViewManager; db.RunnerManager; db.DockerExecutionPolicyRepository;
+      db.KubernetesExecutionPolicyRepository; db.DockerReconciliationRepository; db.DockerTelemetryRepository;
+      db.KubernetesTelemetryRepository; db.EventManager; db.SecretStorageRepository;
+      db.GlobalCredentialRepository; db.SecretSyncRepository; db.RoleRepository; db.CapabilityRepository;
+      db.TOTPRepository; db.LDAPRepository; db.OIDCGroupMappingRepository; db.AuditWebhookRepository;
+      db.NotificationRepository}
     implementation: core
+    behavior_tests:
+      - db/sql/host_config_test.go::TestHostConfigCRUD
   - name: db:StringArrayField
     signature: '[]string'
     implementation: core
@@ -4944,8 +5038,10 @@ symbols:
     signature: func(boot string) error
     implementation: core
   - name: db:ValidateGitURL
-    signature: func(url string, objectName string) error
+    signature: func(rawURL string, objectName string) error
     implementation: core
+    behavior_tests:
+      - db/git_url_test.go::TestValidateGitURL
   - name: db:ValidateGlobalCredential
     signature: func(credential db.GlobalCredential) error
     implementation: core
@@ -4958,6 +5054,11 @@ symbols:
   - name: db:ValidateGlobalRole
     signature: func(role db.Role) error
     implementation: core
+  - name: db:ValidateHostConfig
+    signature: func(store db.Store, hostConfig *db.HostConfig) error
+    implementation: core
+    behavior_tests:
+      - db/sql/host_config_test.go::TestValidateHostConfig_CredentialTypes
   - name: db:ValidateInventory
     signature: func(store db.Store, inventory *db.Inventory) (err error)
     implementation: core
@@ -10826,58 +10927,3 @@ symbols:
     selected_signature: func() services/tasks.TaskStateStore
     implementation: community
     rationale: Functional shared synchronized in-memory task-state factory used by the CLI TaskPool; SQL and HA reconciliation own durable state.
-  - name: db:InventoryHost
-    signature: >-
-      struct{InventoryID int "json:\"inventory_id\" db:\"inventory_id\""; InventoryName string
-      "json:\"inventory_name\" db:\"inventory_name\""; Host string "json:\"host\" db:\"host\""; Groups
-      db.StringArrayField "json:\"groups\" db:\"groups_json\""; TaskID int "json:\"snapshot_task_id\"
-      db:\"task_id\""; ResolvedAt time.Time "json:\"resolved_at\" db:\"resolved_at\""}
-    implementation: core
-    behavior_tests:
-      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
-      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
-  - name: db:InventoryHostEvent
-    signature: >-
-      struct{Version int "json:\"version\""; Kind string "json:\"event\""; Host string
-      "json:\"host,omitempty\""; Groups []string "json:\"groups,omitempty\""; Count int
-      "json:\"count,omitempty\""}
-    implementation: core
-    behavior_tests:
-      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
-      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
-  - name: db:InventoryHostPage
-    signature: >-
-      struct{Items []db.InventoryHost "json:\"items\""; NextInventoryID int
-      "json:\"next_inventory_id,omitempty\""; NextHost string "json:\"next_host,omitempty\""}
-    implementation: core
-    behavior_tests:
-      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
-      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
-  - name: db:InventoryHostQuery
-    signature: struct{InventoryID int; Search string; AfterInventoryID int; AfterHost string; Count int}
-    implementation: core
-    behavior_tests:
-      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
-      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
-  - name: db:InventoryHostRepository
-    signature: >-
-      interface{GetHostTaskIDs(projectID int, inventoryID int, host string, beforeID int, count int) ([]int,
-      error); GetInventoryHostSnapshots(projectID int, inventoryID int) ([]db.InventoryHostSnapshot, error);
-      GetInventoryHosts(projectID int, query db.InventoryHostQuery) (db.InventoryHostPage, error);
-      IngestInventoryHostEvent(task db.Task, inventory db.Inventory, event db.InventoryHostEvent) error}
-    implementation: core
-    behavior_tests:
-      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
-      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated
-  - name: db:InventoryHostSnapshot
-    signature: >-
-      struct{TaskID int "json:\"task_id\" db:\"task_id\""; Generation int "json:\"generation\"
-      db:\"generation\""; ProjectID int "json:\"project_id\" db:\"project_id\""; InventoryID int
-      "json:\"inventory_id\" db:\"inventory_id\""; InventoryName string "json:\"inventory_name\"
-      db:\"inventory_name\""; TemplateID int "json:\"template_id\" db:\"template_id\""; State string
-      "json:\"state\" db:\"state\""; HostCount int "json:\"host_count\" db:\"host_count\""; Created time.Time
-      "json:\"created\" db:\"created\""}
-    implementation: core
-    behavior_tests:
-      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostsPublishCompleteSnapshotsAndRetainLastSuccess
-      - test/edition-contract/enhanced/db/sql/inventory_hosts_test.go::TestInventoryHostQueriesAreScopedLiteralAndPaginated

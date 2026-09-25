@@ -664,8 +664,9 @@ func (p *TaskPool) hydrateTaskRunner(taskID int, projectID int) (*TaskRunner, er
 			Secret:       "",
 			Logger:       app.SetLogger(tr),
 			App:          app,
-			KeyInstaller: p.keyInstallationService,
-			RepoLock:     p.repoLock,
+		KeyInstaller: p.keyInstallationService,
+		RepoLock:     p.repoLock,
+		HostConfigs:  tr.HostConfigs,
 		}
 	}
 	tr.setJob(job)

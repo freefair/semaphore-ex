@@ -42,3 +42,20 @@ func TestRedactorRemovesGoJSONEscapedCredentialRepresentation(t *testing.T) {
 		t.Fatalf("escaped credential was not redacted: %s", redacted)
 	}
 }
+
+func TestRedactorExtraValuesProduceOneEscapedVariant(t *testing.T) {
+	credential := `quote" slash\\`
+	redactor := NewFromTaskSecretAndValues("", nil, []string{credential})
+	if len(redactor.values) != 2 {
+		t.Fatalf("expected raw and one JSON-escaped value, got %d: %#v", len(redactor.values), redactor.values)
+	}
+	escaped, err := json.Marshal(credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{credential, string(escaped[1 : len(escaped)-1])} {
+		if strings.Contains(redactor.Redact(value), credential) || !strings.Contains(redactor.Redact(value), replacement) {
+			t.Fatalf("credential variant was not redacted: %q", value)
+		}
+	}
+}

@@ -261,16 +261,29 @@ type AccessKeyInstallation struct {
 }
 
 func (key *AccessKeyInstallation) GetGitEnv() (env []string) {
+	return key.GetGitEnvWithHostConfigs(nil)
+}
+
+func (key *AccessKeyInstallation) GetGitEnvWithHostConfigs(hostConfigs *HostConfigInstallation) (env []string) {
 	env = make([]string, 0)
 
 	env = append(env, "GIT_TERMINAL_PROMPT=0")
 	if key.SSHAgent != nil {
 		env = append(env, fmt.Sprintf("SSH_AUTH_SOCK=%s", key.SSHAgent.SocketFile))
+	}
+	if key.SSHAgent != nil || hostConfigs.SSHConfigPath() != "" {
+		configPath := hostConfigs.SSHConfigPath()
+		if configPath == "" {
+			configPath = util.Config.GetSshConfigPath()
+		}
 		sshCmd := "ssh " + gitHostKeyCheckingOpts()
-		if util.Config.GetSshConfigPath() != "" {
-			sshCmd += " -F " + shellQuote(util.Config.GetSshConfigPath())
+		if configPath != "" {
+			sshCmd += " -F " + shellQuote(configPath)
 		}
 		env = append(env, fmt.Sprintf("GIT_SSH_COMMAND=%s", sshCmd))
+	}
+	if params := hostConfigs.GitConfigParameters(); params != "" {
+		env = append(env, "GIT_CONFIG_PARAMETERS="+params)
 	}
 
 	return env

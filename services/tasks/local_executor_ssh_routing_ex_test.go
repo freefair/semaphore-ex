@@ -7,10 +7,35 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/ssh"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestHostMappingRejectsExplicitTaskRoute(t *testing.T) {
+	executor := &LocalExecutor{HostConfigs: []db.HostConfig{{Type: db.HostConfigHost, Name: "git.example.test"}}}
+	require.ErrorContains(t, executor.rejectHostConfigRoutingConflicts([]string{"git.example.test"}), "conflicts")
+	require.NoError(t, executor.rejectHostConfigRoutingConflicts([]string{"other.example.test"}))
+}
+
+func TestTaskRoutingKeepsMappingAgentBeforeTaskDefault(t *testing.T) {
+	root := t.TempDir()
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: root, Ssh: &util.SshConfig{StrictHostKeyChecking: util.SshStrictHostKeyCheckingNo}}
+	t.Cleanup(func() { util.Config = previousConfig })
+	mappingConfig := filepath.Join(root, "mapping.conf")
+	require.NoError(t, os.WriteFile(mappingConfig, []byte("Host mapped.example.test\n  IdentityAgent /mapping.sock\n"), 0o600))
+	executor := &LocalExecutor{taskSSHAgent: &ssh.Agent{SocketFile: filepath.Join(root, "task.sock")}, hostConfigInstallation: &ssh.HostConfigInstallation{ConfigFile: mappingConfig}}
+	routing, err := ssh.BuildHostRouting(nil)
+	require.NoError(t, err)
+	require.NoError(t, executor.writeTaskSSHRoutingFiles(routing))
+	t.Cleanup(executor.removeTaskSSHRoutingFiles)
+	output, err := exec.Command("ssh", "-G", "-F", filepath.Join(root, "task.sock.routing", "routing.conf"), "mapped.example.test").Output()
+	require.NoError(t, err)
+	assert.Contains(t, string(output), "identityagent /mapping.sock")
+}
 
 func TestTaskSSHRoutingConfigIncludesUserBeforeSystemConfig(t *testing.T) {
 	previousConfig := util.Config

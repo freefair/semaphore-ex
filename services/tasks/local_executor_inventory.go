@@ -137,7 +137,7 @@ func (t *LocalExecutor) tmpInventoryFilename() string {
 
 func (t *LocalExecutor) tmpInventoryFullPath() string {
 	if t.Inventory.Repository != nil && t.Inventory.Repository.GetType() == db.RepositoryLocal {
-		return t.Inventory.Repository.GetGitURL(true)
+		return t.Inventory.Repository.GetGitURL(false)
 	}
 	pathname := path.Join(util.Config.GetProjectTmpDir(t.Template.ProjectID), t.tmpInventoryFilename())
 	if t.Inventory.Type == db.InventoryStaticYaml {
@@ -158,10 +158,11 @@ func (t *LocalExecutor) cloneInventoryRepo(keyInstaller db_lib.AccessKeyInstalle
 	t.Log("cloning inventory repository")
 
 	repo := db_lib.GitRepository{
-		Logger:     t.Logger,
-		TmpDirName: t.tmpInventoryFilename(),
-		Repository: *t.Inventory.Repository,
-		Client:     db_lib.CreateDefaultGitClient(keyInstaller),
+		Logger:      t.Logger,
+		TmpDirName:  t.tmpInventoryFilename(),
+		Repository:  *t.Inventory.Repository,
+		Client:      db_lib.CreateDefaultGitClient(keyInstaller),
+		HostConfigs: t.hostConfigInstallation,
 	}
 
 	// Parallel tasks of the same template share this inventory directory —
@@ -237,4 +238,9 @@ func (t *LocalExecutor) destroyKeys() {
 			t.Log("Can't destroy inventory vault password file, error: " + err.Error())
 		}
 	}
+
+	// The generated ssh config names the sockets of these agents, so it goes
+	// with them.
+	t.hostConfigInstallation.Destroy()
+	t.hostConfigInstallation = nil
 }

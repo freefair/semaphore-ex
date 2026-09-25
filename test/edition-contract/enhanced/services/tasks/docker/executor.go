@@ -204,7 +204,7 @@ func runnerBootNonce() (string, error) {
 	return hex.EncodeToString(value), nil
 }
 
-func (p *Provider) NewExecutor(task db.Task, template db.Template, inventory db.Inventory, repository db.Repository, environment db.Environment, taskSecret, jwt string) (tasks.Executor, error) {
+func (p *Provider) NewExecutor(task db.Task, template db.Template, inventory db.Inventory, repository db.Repository, environment db.Environment, taskSecret, jwt string, hostConfigs []db.HostConfig) (tasks.Executor, error) {
 	taskImage, err := p.config.taskImage(template)
 	if err != nil {
 		return nil, err
@@ -229,6 +229,7 @@ func (p *Provider) NewExecutor(task db.Task, template db.Template, inventory db.
 		App:          db_lib.CreateApp(template, repository, inventory, nil),
 		JWT:          jwt,
 		RepoLock:     p.repoLock,
+		HostConfigs:  hostConfigs,
 	}
 	runnerBoot, runnerID := p.effectiveRunnerIdentity()
 	return &DockerExecutor{

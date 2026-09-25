@@ -19,6 +19,7 @@ const (
 	SecretStorage           = "SecretStorage"
 	Inventory               = "Inventory"
 	Repository              = "Repository"
+	HostConfig              = "HostConfig"
 	View                    = "View"
 	Role                    = "Role"
 	TaskParams              = "TaskParams"
@@ -424,6 +425,7 @@ func InitProjectExporters(mapper KeyMapper, skipTaskOutput bool, mergeExistingUs
 		AccessKey:               &AccessKeyExporter{},
 		Environment:             &EnvironmentExporter{},
 		Repository:              &RepositoryExporter{},
+		HostConfig:              &HostConfigExporter{},
 		SecretStorage:           &SecretStorageExporter{},
 		Inventory:               &InventoryExporter{},
 		View:                    &ViewExporter{},

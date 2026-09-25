@@ -21,6 +21,7 @@ import InventoryDetails from '../views/project/InventoryDetails.vue';
 import Hosts from '../views/project/Hosts.vue';
 import Keys from '../views/project/Keys.vue';
 import Repositories from '../views/project/Repositories.vue';
+import HostConfig from '../views/project/HostConfig.vue';
 import Team from '../views/project/Team.vue';
 import Users from '../views/Users.vue';
 import Auth from '../views/Auth.vue';
@@ -190,6 +191,10 @@ const routes = [
   {
     path: '/project/:projectId/repositories',
     component: Repositories,
+  },
+  {
+    path: '/project/:projectId/host_config',
+    component: HostConfig,
   },
   {
     path: '/project/:projectId/keys',

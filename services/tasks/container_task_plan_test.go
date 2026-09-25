@@ -15,6 +15,7 @@ import (
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/ssh"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -263,6 +264,105 @@ func TestContainerTaskCredentialsRequireRoutesForFiveDistinctKeys(t *testing.T) 
 	executor.Task.ResolvedSSHKeys = executor.Task.ResolvedSSHKeys[1:]
 	_, err = executor.prepareContainerCredentials(map[string][]string{"default": {}})
 	assert.ErrorContains(t, err, "requires an explicit host route")
+}
+
+func TestContainerCredentialsIncludeHostAndURLMappings(t *testing.T) {
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: t.TempDir(), Ssh: &util.SshConfig{StrictHostKeyChecking: util.SshStrictHostKeyCheckingNo}}
+	t.Cleanup(func() { util.Config = previousConfig })
+	key, _ := repositoryAgentTestPrivateKey(t)
+	executor := &LocalExecutor{Template: db.Template{ProjectID: 1}, HostConfigs: []db.HostConfig{
+		{ID: 1, Type: db.HostConfigHost, Name: "mapped.example.test", SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: key}}},
+		{ID: 2, Type: db.HostConfigURL, Name: "https://git.example.test/team/", SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: key}}},
+		{ID: 3, Type: db.HostConfigURL, Name: "https://https.example.test/team/", SSHKey: db.AccessKey{Type: db.AccessKeyLoginPassword, LoginPassword: db.LoginPassword{Login: "mapping-user", Password: "mapping-password"}}},
+	}}
+	files, err := executor.prepareContainerCredentials(map[string][]string{"default": {}})
+	require.NoError(t, err)
+	entries := map[string][]byte{}
+	for _, file := range files {
+		entries[file.name] = file.data
+	}
+	config := string(entries["credentials/ssh-route.conf"])
+	assert.Contains(t, config, "mapped.example.test")
+	assert.Contains(t, config, "semaphore-mapping-2")
+	assert.Contains(t, config, "HostName git.example.test")
+	assert.NotEmpty(t, entries["credentials/ssh-key-mapping-1"])
+	installation, err := ssh.InstallHostConfigs(1, executor.HostConfigs[2:], task_logger.NopLogger{})
+	require.NoError(t, err)
+	defer installation.Destroy()
+	assert.Contains(t, installation.GitConfigParameters(), "https://mapping-user:mapping-password@https.example.test/team/")
+}
+
+func TestPrepareContainerTaskCarriesMappingsWithoutRunnerPaths(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "hcc")
+	require.NoError(t, err)
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{
+		TmpPath: root,
+		Ssh:     &util.SshConfig{StrictHostKeyChecking: util.SshStrictHostKeyCheckingAcceptNew},
+		Process: &util.ConfigProcess{},
+	}
+	t.Cleanup(func() {
+		util.Config = previousConfig
+		require.NoError(t, os.RemoveAll(root))
+	})
+
+	repositoryPath := filepath.Join(root, "repository")
+	require.NoError(t, os.MkdirAll(repositoryPath, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repositoryPath, "site.yml"), []byte("---\n- hosts: all\n  gather_facts: false\n"), 0o600))
+	arguments := `["--ssh-common-args","-o ProxyJump=bastion.example.test"]`
+	privateKey, _ := repositoryAgentTestPrivateKey(t)
+
+	newExecutor := func(hostConfigs []db.HostConfig) *LocalExecutor {
+		return &LocalExecutor{
+			Task:         db.Task{ID: 7},
+			Template:     db.Template{ID: 3, ProjectID: 2, App: db.AppAnsible, Playbook: "site.yml", Arguments: &arguments},
+			Repository:   db.Repository{ID: 4, ProjectID: 2, GitURL: repositoryPath},
+			Inventory:    db.Inventory{ID: 5, ProjectID: 2, Type: db.InventoryStatic, Inventory: "localhost ansible_connection=local"},
+			HostConfigs:  hostConfigs,
+			KeyInstaller: ssh.KeyInstaller{},
+			Logger:       task_logger.NopLogger{},
+		}
+	}
+
+	t.Run("mappings are materialized without runner paths", func(t *testing.T) {
+		executor := newExecutor([]db.HostConfig{
+			{ID: 1, Type: db.HostConfigHost, Name: "mapped.example.test", SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: privateKey}}},
+			{ID: 2, Type: db.HostConfigURL, Name: "https://git.example.test/team/", SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: privateKey}}},
+			{ID: 3, Type: db.HostConfigURL, Name: "https://password.example.test/team/", SSHKey: db.AccessKey{Type: db.AccessKeyLoginPassword, LoginPassword: db.LoginPassword{Login: "token", Password: "mapping-password"}}},
+		})
+		plan, err := executor.PrepareContainerTask("", nil, "")
+		require.NoError(t, err)
+		t.Cleanup(executor.Cleanup)
+		entries := readTaskBundle(t, plan.Bundle)
+		require.NoError(t, plan.Bundle.Close())
+
+		route := string(entries["credentials/ssh-route.conf"])
+		environment := string(entries["credentials/environment.sh"])
+		runScript := string(entries["run.sh"])
+		assert.Contains(t, route, "mapped.example.test")
+		assert.Contains(t, route, "semaphore-mapping-2")
+		assert.NotEmpty(t, entries["credentials/ssh-key-mapping-1"])
+		assert.Contains(t, environment, "GIT_CONFIG_PARAMETERS")
+		assert.Contains(t, environment, "mapping-password")
+		assert.NotContains(t, route, root)
+		assert.NotContains(t, environment, root)
+		assert.NotContains(t, runScript, root)
+		assert.Contains(t, runScript, "'--ssh-common-args' '-o ProxyJump=bastion.example.test'")
+		assert.NotContains(t, runScript, "ssh-config-")
+	})
+
+	t.Run("no mappings preserves authored SSH options", func(t *testing.T) {
+		executor := newExecutor(nil)
+		plan, err := executor.PrepareContainerTask("", nil, "")
+		require.NoError(t, err)
+		t.Cleanup(executor.Cleanup)
+		entries := readTaskBundle(t, plan.Bundle)
+		require.NoError(t, plan.Bundle.Close())
+
+		assert.Contains(t, string(entries["run.sh"]), "'--ssh-common-args' '-o ProxyJump=bastion.example.test'")
+		assert.NotContains(t, string(entries["credentials/environment.sh"]), "GIT_CONFIG_PARAMETERS")
+	})
 }
 
 func TestContainerTaskPlanPackagesOnlyPreparedTaskMaterial(t *testing.T) {

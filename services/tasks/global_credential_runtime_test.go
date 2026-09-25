@@ -90,6 +90,12 @@ func TestTaskRunnerRedactsResolvedCredentialBeforeServerLogSink(t *testing.T) {
 	assert.Contains(t, record.output, "[REDACTED]")
 }
 
+func TestTaskRunnerRedactsDispatchTimeHostMappingCredential(t *testing.T) {
+	runner := &TaskRunner{HostConfigs: []db.HostConfig{{SSHKey: db.AccessKey{LoginPassword: db.LoginPassword{Password: "mapping-secret"}}}}}
+	runner.SetTaskCredentialRedaction("")
+	assert.NotContains(t, runner.redactor.Redact("mapping-secret"), "mapping-secret")
+}
+
 func TestTaskRunnerLogCmdFinalizerPreservesCredentialRedaction(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh is not available")

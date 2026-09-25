@@ -44,6 +44,10 @@ type TaskRunner struct {
 	// They are never exposed through db.Task or ordinary task API responses.
 	ResolvedSSHKeys []db.ResolvedTaskSSHKey
 
+	// HostConfigs are the credential mappings of the project. They are resolved
+	// here, on the server, because a remote runner has no database.
+	HostConfigs []db.HostConfig
+
 	currentStage  *db.TaskStage
 	currentOutput *db.TaskOutput
 	currentState  any
@@ -294,6 +298,14 @@ func (t *TaskRunner) run() {
 		t.pool.state.Enqueue(t)
 		requeued = true
 		return
+	}
+	if err = t.refreshHostConfigs(); err != nil {
+		t.Log("Failed to load host mappings for task dispatch.")
+		t.SetStatus(task_logger.TaskFailStatus)
+		return
+	}
+	if localJob := t.localJob(); localJob != nil {
+		localJob.HostConfigs = t.HostConfigs
 	}
 	if len(t.Task.TaskGroupRunnerIDs) > 0 {
 		tags, mode, legacy := runnerPlacementPolicy(t.Template, t.Inventory)
@@ -742,6 +754,10 @@ func (t *TaskRunner) populateDetails() error {
 
 	t.Repository = withEffectiveBranch(t.Repository, t.Template, t.Task)
 
+	if err = t.loadHostConfigs(); err != nil {
+		return err
+	}
+
 	// load and merge all configured environments
 	if executionSnapshot != nil {
 		err = t.loadExecutionSnapshotEnvironments(executionSnapshot.Environments)
@@ -790,4 +806,39 @@ func checkTmpDir(path string) error {
 		}
 	}
 	return err
+}
+
+// loadHostConfigs reads mapping metadata and encrypted key records. Decryption
+// is deliberately deferred to refreshHostConfigs after the task-start claim.
+func (t *TaskRunner) loadHostConfigs() (err error) {
+	t.HostConfigs, err = t.pool.store.GetHostConfigs(t.Template.ProjectID, db.RetrieveQueryParams{})
+	if err != nil {
+		return
+	}
+
+	for i := range t.HostConfigs {
+		t.HostConfigs[i].SSHKey, err = t.pool.store.GetAccessKey(
+			t.Template.ProjectID, t.HostConfigs[i].SSHKeyID)
+		if err != nil {
+			return
+		}
+
+	}
+
+	return
+}
+
+// refreshHostConfigs resolves and decrypts mapping credentials only after this
+// node owns the task start. Queue time must not extend a credential's usable
+// lifetime or put its plaintext into a recoverable task snapshot.
+func (t *TaskRunner) refreshHostConfigs() error {
+	if err := t.loadHostConfigs(); err != nil {
+		return err
+	}
+	for i := range t.HostConfigs {
+		if err := t.pool.encryptionService.DeserializeSecret(&t.HostConfigs[i].SSHKey); err != nil {
+			return err
+		}
+	}
+	return nil
 }

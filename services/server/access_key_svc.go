@@ -19,6 +19,7 @@ type AccessKeyServiceImpl struct {
 	accessKeyRepo      db.AccessKeyManager
 	encryptionService  AccessKeyEncryptionService
 	secretStorageRepo  db.SecretStorageRepository
+	hostConfigRepo     db.HostConfigManager
 	capabilityProvider pro_interfaces.CapabilityProvider
 }
 
@@ -26,24 +27,55 @@ func NewAccessKeyService(
 	accessKeyRepo db.AccessKeyManager,
 	encryptionService AccessKeyEncryptionService,
 	secretStorageRepo db.SecretStorageRepository,
-	capabilityProviders ...pro_interfaces.CapabilityProvider,
+	dependencies ...any,
 ) GeneratedSSHKeyService {
+	var hostConfigRepo db.HostConfigManager
 	var capabilityProvider pro_interfaces.CapabilityProvider
-	if len(capabilityProviders) > 0 {
-		capabilityProvider = capabilityProviders[0]
+	for _, dependency := range dependencies {
+		switch value := dependency.(type) {
+		case db.HostConfigManager:
+			hostConfigRepo = value
+		case pro_interfaces.CapabilityProvider:
+			capabilityProvider = value
+		}
 	}
 	return &AccessKeyServiceImpl{
 		accessKeyRepo:      accessKeyRepo,
 		encryptionService:  encryptionService,
 		secretStorageRepo:  secretStorageRepo,
+		hostConfigRepo:     hostConfigRepo,
 		capabilityProvider: capabilityProvider,
 	}
+}
+
+func (s *AccessKeyServiceImpl) hostConfigsUsing(projectID int, keyID int) ([]db.HostConfig, error) {
+	if s.hostConfigRepo == nil {
+		return nil, nil
+	}
+	hostConfigs, err := s.hostConfigRepo.GetHostConfigs(projectID, db.RetrieveQueryParams{})
+	if err != nil {
+		return nil, err
+	}
+	used := make([]db.HostConfig, 0)
+	for _, hostConfig := range hostConfigs {
+		if hostConfig.SSHKeyID == keyID {
+			used = append(used, hostConfig)
+		}
+	}
+	return used, nil
 }
 
 func (s *AccessKeyServiceImpl) Delete(projectID int, keyID int) (err error) {
 	key, err := s.accessKeyRepo.GetAccessKey(projectID, keyID)
 	if err != nil {
 		return
+	}
+	used, err := s.hostConfigsUsing(projectID, keyID)
+	if err != nil {
+		return err
+	}
+	if len(used) > 0 {
+		return common_errors.NewValidationError("the credential is used by the mapping for " + used[0].Name)
 	}
 	refs, refsErr := s.accessKeyRepo.GetAccessKeyRefs(projectID, keyID)
 	if refsErr != nil {

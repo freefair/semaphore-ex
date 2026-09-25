@@ -148,6 +148,9 @@ func (t *LocalExecutor) prepare(username string, incomingVersion *string, alias 
 	}
 
 	environmentVariables = append(environmentVariables, t.getTaskSSHAgentEnvironment(environmentVariables)...)
+	if installRequirements {
+		environmentVariables = append(environmentVariables, t.hostConfigEnv()...)
+	}
 
 	if t.Template.Type != db.TemplateTask {
 

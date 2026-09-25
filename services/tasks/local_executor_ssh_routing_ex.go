@@ -26,9 +26,30 @@ func (t *LocalExecutor) prepareTaskSSHRouting() error {
 		return fmt.Errorf("building task SSH host routing: %w", err)
 	}
 	if !routing.RequiresRouting() && len(routing.RoutedHosts()) == 0 {
-		return nil
+		if t.hostConfigInstallation == nil || t.hostConfigInstallation.SSHConfigPath() == "" {
+			return nil
+		}
+	}
+	if err := t.rejectHostConfigRoutingConflicts(routing.RoutedHosts()); err != nil {
+		return err
 	}
 	return t.writeTaskSSHRoutingFiles(routing)
+}
+
+func (t *LocalExecutor) rejectHostConfigRoutingConflicts(taskHosts []string) error {
+	for _, mapping := range t.HostConfigs {
+		if mapping.Type == db.HostConfigHost {
+			for _, host := range taskHosts {
+				if strings.EqualFold(mapping.Name, host) {
+					return fmt.Errorf("host mapping %q conflicts with an explicit task SSH route", mapping.Name)
+				}
+			}
+		}
+		if mapping.Type == db.HostConfigURL && strings.HasPrefix(t.Repository.GitURL, mapping.Name) {
+			return fmt.Errorf("URL mapping %q conflicts with the task repository route", mapping.Name)
+		}
+	}
+	return nil
 }
 
 func (t *LocalExecutor) taskRoutingIdentities() ([]ssh.RoutingIdentity, error) {
@@ -97,7 +118,19 @@ func (t *LocalExecutor) writeTaskSSHRoutingFiles(routing ssh.HostRouting) error 
 		_ = os.RemoveAll(routingDirectory)
 		return fmt.Errorf("resolving system SSH client path: %w", err)
 	}
-	if err := os.WriteFile(config, []byte(taskSSHRoutingConfig(routing.Config(t.taskSSHAgent.SocketFile))), 0o600); err != nil {
+	configContents := ""
+	if t.hostConfigInstallation != nil && t.hostConfigInstallation.SSHConfigPath() != "" {
+		mapped, readErr := os.ReadFile(t.hostConfigInstallation.SSHConfigPath())
+		if readErr != nil {
+			_ = os.RemoveAll(routingDirectory)
+			return fmt.Errorf("reading host mapping SSH config: %w", readErr)
+		}
+		// OpenSSH uses the first value it reads. Mappings must precede the
+		// task routing's Host * defaults so their agent socket is effective.
+		configContents += string(mapped) + "\n"
+	}
+	configContents += routing.Config(t.taskSSHAgent.SocketFile)
+	if err := os.WriteFile(config, []byte(taskSSHRoutingConfig(configContents)), 0o600); err != nil {
 		_ = os.RemoveAll(routingDirectory)
 		return fmt.Errorf("writing task SSH routing config: %w", err)
 	}

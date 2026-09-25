@@ -29,6 +29,7 @@ type JobData struct {
 	// authenticated runner with this job. Private material remains in
 	// RunnerState.AccessKeys.
 	SSHKeyBindings db.SSHKeyBindings `json:"ssh_key_bindings,omitempty"`
+	HostConfigs    []db.HostConfig   `json:"host_configs,omitempty"`
 }
 
 type RunnerState struct {

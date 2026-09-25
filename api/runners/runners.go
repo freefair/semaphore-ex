@@ -330,6 +330,7 @@ func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Ru
 		Environment:         tsk.Environment,
 		ExecutorImage:       tsk.Task.ResolvedExecutorImage,
 		SSHKeyBindings:      resolvedTaskSSHKeyBindings(tsk.ResolvedSSHKeys),
+		HostConfigs:         tsk.HostConfigs,
 	}
 	jobData.Template.ExecutorImage = jobData.ExecutorImage
 	if tsk.Template.App.IsTerraform() {
@@ -459,6 +460,9 @@ func (c *RunnerController) collectTaskAccessKeys(tsk *tasks.TaskRunner, runnerID
 			return err
 		}
 		keys[resolved.Binding.AccessKeyID] = key
+	}
+	for _, hostConfig := range tsk.HostConfigs {
+		keys[hostConfig.SSHKeyID] = hostConfig.SSHKey
 	}
 
 	if tsk.Inventory.SSHKeyID != nil {

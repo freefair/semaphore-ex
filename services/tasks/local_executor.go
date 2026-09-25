@@ -38,6 +38,7 @@ type LocalExecutor struct {
 	runDone chan struct{}
 
 	sshKeyInstallation         ssh.AccessKeyInstallation
+	hostConfigInstallation     *ssh.HostConfigInstallation
 	taskSSHAgent               *ssh.Agent
 	taskSSHIdentityFiles       []string
 	repositorySSHIdentityFiles []string
@@ -49,6 +50,7 @@ type LocalExecutor struct {
 	vaultFileInstallations     map[string]ssh.AccessKeyInstallation
 
 	KeyInstaller db_lib.AccessKeyInstaller
+	HostConfigs  []db.HostConfig
 
 	// RepoLock serializes git operations on the shared per-template repository
 	// directory. Tasks of the same template may run in parallel
@@ -464,6 +466,9 @@ func (t *LocalExecutor) getPlaybookArgs(username string, incomingVersion *string
 	args = []string{
 		"--inventory", inventoryFile,
 	}
+	if sshCommonArgs := t.inventorySSHCommonArgs(); sshCommonArgs != "" {
+		args = append(args, "--ssh-common-args", sshCommonArgs)
+	}
 
 	if t.Inventory.SSHKeyID != nil {
 		switch t.Inventory.SSHKey.Type {
@@ -808,6 +813,9 @@ func (t *LocalExecutor) Run(username string, incomingVersion *string, alias stri
 // also performs the SetStatus(running) transition the legacy Run() did inline, since
 // callers driving the lifecycle manually still expect that signal to fire here.
 func (t *LocalExecutor) Prepare(username string, incomingVersion *string, alias string) (err error) {
+	if err = t.installHostConfigs(); err != nil {
+		return err
+	}
 	return t.prepare(username, incomingVersion, alias, true)
 }
 
@@ -816,6 +824,10 @@ func (t *LocalExecutor) Prepare(username string, incomingVersion *string, alias 
 // executor — the underlying destroyers tolerate missing state.
 func (t *LocalExecutor) Cleanup() {
 	t.destroyKeys()
+	if t.hostConfigInstallation != nil {
+		t.hostConfigInstallation.Destroy()
+		t.hostConfigInstallation = nil
+	}
 	t.destroyInventoryFile()
 	if t.App != nil {
 		t.App.Clear()
@@ -893,6 +905,7 @@ func (t *LocalExecutor) prepareRun(installingArgs db_lib.LocalAppInstallingArgs,
 	}
 
 	installingArgs.EnvironmentVars = append(installingArgs.EnvironmentVars, t.getTaskSSHAgentEnvironment(installingArgs.EnvironmentVars)...)
+	installingArgs.EnvironmentVars = append(installingArgs.EnvironmentVars, t.hostConfigEnv()...)
 
 	if installRequirements {
 		if err := t.App.InstallRequirements(installingArgs); err != nil {
@@ -951,6 +964,7 @@ func (t *LocalExecutor) prepareRunTerraform(tfApp *db_lib.TerraformApp, installi
 	}
 
 	installingArgs.EnvironmentVars = append(installingArgs.EnvironmentVars, t.getTaskSSHAgentEnvironment(installingArgs.EnvironmentVars)...)
+	installingArgs.EnvironmentVars = append(installingArgs.EnvironmentVars, t.hostConfigEnv()...)
 
 	if installRequirements {
 		// Call Terraform-specific install with init args.
@@ -994,10 +1008,11 @@ func (t *LocalExecutor) updateAndCheckoutRepository() error {
 
 func (t *LocalExecutor) updateRepository() error {
 	repo := db_lib.GitRepository{
-		Logger:     t.Logger,
-		TemplateID: t.Template.ID,
-		Repository: t.Repository,
-		Client:     db_lib.CreateDefaultGitClient(t.KeyInstaller),
+		Logger:      t.Logger,
+		TemplateID:  t.Template.ID,
+		Repository:  t.Repository,
+		Client:      db_lib.CreateDefaultGitClient(t.KeyInstaller),
+		HostConfigs: t.hostConfigInstallation,
 	}
 
 	err := repo.ValidateRepo()
@@ -1030,10 +1045,11 @@ func (t *LocalExecutor) updateRepository() error {
 func (t *LocalExecutor) checkoutRepository() error {
 
 	repo := db_lib.GitRepository{
-		Logger:     t.Logger,
-		TemplateID: t.Template.ID,
-		Repository: t.Repository,
-		Client:     db_lib.CreateDefaultGitClient(t.KeyInstaller),
+		Logger:      t.Logger,
+		TemplateID:  t.Template.ID,
+		Repository:  t.Repository,
+		Client:      db_lib.CreateDefaultGitClient(t.KeyInstaller),
+		HostConfigs: t.hostConfigInstallation,
 	}
 
 	err := repo.ValidateRepo()
@@ -1103,6 +1119,42 @@ func (t *LocalExecutor) getSSHAgentEnv() string {
 		return fmt.Sprintf("SSH_AUTH_SOCK=%s", t.taskSSHAgent.SocketFile)
 	}
 	return ""
+}
+
+func (t *LocalExecutor) hostConfigEnv() []string {
+	if t.hostConfigInstallation == nil {
+		return nil
+	}
+	if t.taskSSHRoutingCommand != "" {
+		if params := t.hostConfigInstallation.GitConfigParameters(); params != "" {
+			return []string{"GIT_CONFIG_PARAMETERS=" + params}
+		}
+		return nil
+	}
+	var noKey ssh.AccessKeyInstallation
+	return noKey.GetGitEnvWithHostConfigs(t.hostConfigInstallation)
+}
+
+func (t *LocalExecutor) inventorySSHCommonArgs() string {
+	if t.taskSSHRoutingCommand != "" {
+		// The wrapper is selected through ANSIBLE_SSH_EXECUTABLE. It is an
+		// executable path, not an ssh option; passing it here makes Ansible hand
+		// it to ssh as a destination/remote command.
+		return ""
+	}
+	if t.hostConfigInstallation == nil || t.hostConfigInstallation.SSHConfigPath() == "" {
+		return ""
+	}
+	return fmt.Sprintf("-F %s", t.hostConfigInstallation.SSHConfigPath())
+}
+
+func (t *LocalExecutor) installHostConfigs() error {
+	installation, err := ssh.InstallHostConfigs(t.Template.ProjectID, t.HostConfigs, t.Logger)
+	if err != nil {
+		return err
+	}
+	t.hostConfigInstallation = installation
+	return nil
 }
 
 func (t *LocalExecutor) getTaskSSHAgentEnvironment(existingValues ...[]string) []string {

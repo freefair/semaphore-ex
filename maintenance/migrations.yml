@@ -868,6 +868,13 @@ migrations:
     migrations/v2.20.6.err.sql: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   upstream_id: 2.20.6
 - registered: true
+  id: 2.20.7
+  owner: upstream
+  files:
+    migrations/v2.20.7.sql: 01a6f92e0c0a05099790e85bb8a528a283aec0cd2c087c4080cea692030a70e0
+    migrations/v2.20.7.err.sql: 0601a6abf6c1be974e2068cc6e2bc37ed62b2b2a047258bf517aee63c2fb40f5
+  upstream_id: 2.20.7
+- registered: true
   id: 2.3.0
   owner: upstream
   files:

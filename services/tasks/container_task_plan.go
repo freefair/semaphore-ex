@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -66,9 +67,15 @@ func (p ContainerTaskPlan) Command(stage ContainerTaskStage) []string {
 // credentials as local execution, but leaves dependency installation and task
 // commands to the isolated container.
 func (t *LocalExecutor) PrepareContainerTask(username string, incomingVersion *string, alias string) (*ContainerTaskPlan, error) {
+	if err := t.installHostConfigs(); err != nil {
+		return nil, err
+	}
 	if err := t.prepare(username, incomingVersion, alias, false); err != nil {
 		t.Cleanup()
 		return nil, err
+	}
+	if params := t.hostConfigInstallation.GitConfigParameters(); params != "" {
+		t.preparedEnv = append(t.preparedEnv, "GIT_CONFIG_PARAMETERS="+params)
 	}
 
 	plan, err := t.ContainerTaskPlan()
@@ -95,6 +102,11 @@ func (t *LocalExecutor) ContainerTaskPlan() (*ContainerTaskPlan, error) {
 	}
 
 	args := cloneStageArgs(t.preparedArgsMap)
+	if generatedSSHCommonArgs := t.generatedContainerSSHCommonArgs(); generatedSSHCommonArgs != "" {
+		for stage, stageArgs := range args {
+			args[stage] = removeContainerArgWithValue(stageArgs, "--ssh-common-args", generatedSSHCommonArgs)
+		}
+	}
 	extraFiles, err := t.prepareContainerCredentials(args)
 	if err != nil {
 		return nil, err
@@ -405,6 +417,23 @@ func (t *LocalExecutor) prepareContainerCredentials(args map[string][]string) ([
 			implicitHosts []string
 		}{fmt.Sprintf("extra-%d", resolved.Binding.AccessKeyID), resolved.Key, resolved.Binding.Hosts, nil})
 	}
+	for _, mapping := range t.HostConfigs {
+		if mapping.SSHKey.Type != db.AccessKeySSH {
+			continue
+		}
+		hosts := []string{}
+		if mapping.Type == db.HostConfigHost {
+			hosts = append(hosts, mapping.Name)
+		} else {
+			hosts = append(hosts, mapping.SSHAlias())
+		}
+		sshKeys = append(sshKeys, struct {
+			name          string
+			key           db.AccessKey
+			hosts         []string
+			implicitHosts []string
+		}{"mapping-" + fmt.Sprint(mapping.ID), mapping.SSHKey, hosts, nil})
+	}
 	selectors := make(map[string]string)
 	keyOrder := make([]string, 0, len(sshKeys))
 	routingIdentities := make([]ssh.RoutingIdentity, 0, len(sshKeys))
@@ -439,9 +468,28 @@ func (t *LocalExecutor) prepareContainerCredentials(args map[string][]string) ([
 			return nil, fmt.Errorf("building container SSH host routing: %w", err)
 		}
 		files = append(files, containerBundleFile{name: "ssh-askpass.sh", mode: 0o500, data: []byte("#!/bin/sh\nset -eu\nexec cat \"${SEMAPHORE_SSH_PASSPHRASE_FILE:?}\"\n")})
+		routeConfig := ""
+		for _, mapping := range t.HostConfigs {
+			if mapping.SSHKey.Type != db.AccessKeySSH {
+				continue
+			}
+			identity, identityErr := ssh.PublicIdentity(mapping.SSHKey)
+			if identityErr != nil {
+				return nil, identityErr
+			}
+			selector := selectors[identity]
+			if mapping.Type == db.HostConfigURL {
+				parsed, parseErr := url.Parse(mapping.Name)
+				if parseErr != nil {
+					return nil, parseErr
+				}
+				routeConfig += fmt.Sprintf("Host %s\n  HostName %s\n  IdentityFile %s\n  IdentitiesOnly yes\n", mapping.SSHAlias(), parsed.Hostname(), selector)
+			}
+		}
+		routeConfig += routing.Config(path.Join(containerWorkspacePath, ".semaphore", "ssh-agent.sock"))
 		files = append(files,
 			containerBundleFile{name: "credentials/ssh-key-order", mode: 0o600, data: []byte(strings.Join(keyOrder, "\n") + "\n")},
-			containerBundleFile{name: "credentials/ssh-route.conf", mode: 0o600, data: []byte(routing.Config(path.Join(containerWorkspacePath, ".semaphore", "ssh-agent.sock")) + taskSSHConfigIncludes("~/.ssh/config", "/etc/ssh/ssh_config"))},
+			containerBundleFile{name: "credentials/ssh-route.conf", mode: 0o600, data: []byte(routeConfig + taskSSHConfigIncludes("~/.ssh/config", "/etc/ssh/ssh_config"))},
 			containerBundleFile{name: "ssh-route.sh", mode: 0o500, data: []byte("#!/bin/sh\nset -eu\nexec \"${SEMAPHORE_SYSTEM_SSH:?}\" -F /semaphore/bundle/credentials/ssh-route.conf \"$@\"\n")},
 			containerBundleFile{name: "ssh-bin/ssh", mode: 0o500, data: []byte("#!/bin/sh\nset -eu\nexec \"${SEMAPHORE_SYSTEM_SSH:?}\" -F /semaphore/bundle/credentials/ssh-route.conf \"$@\"\n")},
 		)
@@ -535,6 +583,28 @@ func removeContainerArg(args []string, target string) []string {
 		}
 	}
 	return result
+}
+
+// removeContainerArgWithValue removes only the generated runner option whose
+// path cannot exist inside a container. User-authored SSH options remain task
+// input and must keep their original meaning.
+func removeContainerArgWithValue(args []string, target, value string) []string {
+	result := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		if args[index] == target && index+1 < len(args) && args[index+1] == value {
+			index++
+			continue
+		}
+		result = append(result, args[index])
+	}
+	return result
+}
+
+func (t *LocalExecutor) generatedContainerSSHCommonArgs() string {
+	if t.hostConfigInstallation == nil || t.hostConfigInstallation.SSHConfigPath() == "" {
+		return ""
+	}
+	return fmt.Sprintf("-F %s", t.hostConfigInstallation.SSHConfigPath())
 }
 
 func replaceContainerArg(args []string, target string, replacement string) []string {

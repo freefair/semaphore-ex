@@ -24,6 +24,7 @@ type ExecutorProvider interface {
 		environment db.Environment,
 		taskSecret string,
 		jwt string,
+		hostConfigs []db.HostConfig,
 	) (Executor, error)
 }
 

@@ -6,6 +6,7 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db_lib"
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/services/tasks"
@@ -67,12 +68,19 @@ func (r ScheduleRunner) tryUpdateScheduleCommitHash(schedule db.Schedule) (updat
 	if err != nil {
 		return
 	}
+	hostConfigs, err := db_lib.InstallProjectHostConfigs(
+		r.pool.store, r.pool.encryptionService, schedule.ProjectID, task_logger.NopLogger{})
+	if err != nil {
+		return
+	}
+	defer hostConfigs.Destroy()
 
 	remoteHash, err := db_lib.GitRepository{
-		Logger:     nil,
-		TemplateID: schedule.TemplateID,
-		Repository: repo,
-		Client:     db_lib.CreateDefaultGitClient(r.keyInstaller),
+		Logger:      nil,
+		TemplateID:  schedule.TemplateID,
+		Repository:  repo,
+		Client:      db_lib.CreateDefaultGitClient(r.keyInstaller),
+		HostConfigs: hostConfigs,
 	}.GetLastRemoteCommitHash()
 
 	if err != nil {

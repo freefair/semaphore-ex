@@ -129,7 +129,7 @@ func runService() {
 		store,
 		encryptionService,
 	)
-	accessKeyService := server.NewAccessKeyService(store, encryptionService, store, capabilityProvider)
+	accessKeyService := server.NewAccessKeyService(store, encryptionService, store, store, capabilityProvider)
 	secretStorageService := server.NewSecretStorageService(store, store, accessKeyService, encryptionService)
 	secretStorageSyncScheduler := server.NewSecretStorageSyncScheduler(store, secretStorageService)
 	ldapGroupService := proFeatures.NewLDAPService(store, capabilityProvider, identityServices.NewLDAPClient())

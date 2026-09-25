@@ -1285,7 +1285,7 @@ func (p *JobPool) checkNewJobs() {
 			taskID:          newJob.Task.ID,
 			generation:      newJob.Task.AssignmentGeneration,
 			status:          newJob.Task.Status,
-			redactor:        taskredaction.NewFromTaskSecret(newJob.TaskSecret, newJob.CredentialTargets),
+			redactor:        taskredaction.NewFromTaskSecretAndValues(newJob.TaskSecret, newJob.CredentialTargets, hostConfigSecretValues(newJob.HostConfigs)),
 		}
 		if resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeDocker {
 			ack, ready := p.currentDockerPolicyAck()
@@ -1310,4 +1310,12 @@ func (p *JobPool) checkNewJobs() {
 			"task_status": string(taskRunner.status),
 		}).Info("Task enqueued")
 	}
+}
+
+func hostConfigSecretValues(hostConfigs []db.HostConfig) []string {
+	values := make([]string, 0, len(hostConfigs)*4)
+	for _, mapping := range hostConfigs {
+		values = append(values, mapping.SSHKey.SshKey.PrivateKey, mapping.SSHKey.SshKey.Passphrase, mapping.SSHKey.LoginPassword.Login, mapping.SSHKey.LoginPassword.Password)
+	}
+	return values
 }
