@@ -1315,7 +1315,7 @@ func (p *JobPool) checkNewJobs() {
 func hostConfigSecretValues(hostConfigs []db.HostConfig) []string {
 	values := make([]string, 0, len(hostConfigs)*4)
 	for _, mapping := range hostConfigs {
-		values = append(values, mapping.SSHKey.SshKey.PrivateKey, mapping.SSHKey.SshKey.Passphrase, mapping.SSHKey.LoginPassword.Login, mapping.SSHKey.LoginPassword.Password)
+		values = append(values, mapping.SSHKey.SshKey.PrivateKey, mapping.SSHKey.SshKey.Passphrase, mapping.SSHKey.LoginPassword.Password)
 	}
 	return values
 }

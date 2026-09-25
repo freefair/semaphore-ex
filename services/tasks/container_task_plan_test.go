@@ -264,6 +264,15 @@ func TestContainerTaskCredentialsRequireRoutesForFiveDistinctKeys(t *testing.T) 
 	executor.Task.ResolvedSSHKeys = executor.Task.ResolvedSSHKeys[1:]
 	_, err = executor.prepareContainerCredentials(map[string][]string{"default": {}})
 	assert.ErrorContains(t, err, "requires an explicit host route")
+
+	executor.Task.ResolvedSSHKeys = nil
+	executor.HostConfigs = []db.HostConfig{
+		{ID: 1, Type: db.HostConfigHost, Name: "mapped-one.example.test", SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: keys[2]}}},
+		{ID: 2, Type: db.HostConfigHost, Name: "mapped-two.example.test", SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: keys[3]}}},
+		{ID: 3, Type: db.HostConfigHost, Name: "mapped-three.example.test", SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: keys[4]}}},
+	}
+	_, err = executor.prepareContainerCredentials(map[string][]string{"default": {}})
+	require.NoError(t, err, "project mappings must not consume task-routing identity capacity")
 }
 
 func TestContainerCredentialsIncludeHostAndURLMappings(t *testing.T) {
@@ -272,7 +281,7 @@ func TestContainerCredentialsIncludeHostAndURLMappings(t *testing.T) {
 	t.Cleanup(func() { util.Config = previousConfig })
 	key, _ := repositoryAgentTestPrivateKey(t)
 	executor := &LocalExecutor{Template: db.Template{ProjectID: 1}, HostConfigs: []db.HostConfig{
-		{ID: 1, Type: db.HostConfigHost, Name: "mapped.example.test", SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: key}}},
+		{ID: 1, Type: db.HostConfigHost, Name: "Mixed_Case.example.test", SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: key}}},
 		{ID: 2, Type: db.HostConfigURL, Name: "https://git.example.test/team/", SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: key}}},
 		{ID: 3, Type: db.HostConfigURL, Name: "https://https.example.test/team/", SSHKey: db.AccessKey{Type: db.AccessKeyLoginPassword, LoginPassword: db.LoginPassword{Login: "mapping-user", Password: "mapping-password"}}},
 	}}
@@ -283,14 +292,44 @@ func TestContainerCredentialsIncludeHostAndURLMappings(t *testing.T) {
 		entries[file.name] = file.data
 	}
 	config := string(entries["credentials/ssh-route.conf"])
-	assert.Contains(t, config, "mapped.example.test")
+	assert.Contains(t, config, "Mixed_Case.example.test")
 	assert.Contains(t, config, "semaphore-mapping-2")
 	assert.Contains(t, config, "HostName git.example.test")
 	assert.NotEmpty(t, entries["credentials/ssh-key-mapping-1"])
+	configPath := filepath.Join(t.TempDir(), "ssh-route.conf")
+	require.NoError(t, os.WriteFile(configPath, entries["credentials/ssh-route.conf"], 0o600))
+	output, err := exec.Command("ssh", "-G", "-F", configPath, "Mixed_Case.example.test").Output()
+	require.NoError(t, err)
+	assert.Contains(t, string(output), "identityfile /semaphore/bundle/credentials/ssh-key-mapping-1.pub")
 	installation, err := ssh.InstallHostConfigs(1, executor.HostConfigs[2:], task_logger.NopLogger{})
 	require.NoError(t, err)
 	defer installation.Destroy()
 	assert.Contains(t, installation.GitConfigParameters(), "https://mapping-user:mapping-password@https.example.test/team/")
+}
+
+func TestContainerMappingSharedWithInventoryKeyKeepsFallbackIdentity(t *testing.T) {
+	key, _ := repositoryAgentTestPrivateKey(t)
+	executor := &LocalExecutor{
+		Inventory: db.Inventory{SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: key}}},
+		HostConfigs: []db.HostConfig{{
+			ID: 1, Type: db.HostConfigHost, Name: "mapped.example.test",
+			SSHKey: db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: key}},
+		}},
+	}
+	files, err := executor.prepareContainerCredentials(map[string][]string{"default": {}})
+	require.NoError(t, err)
+	entries := make(map[string][]byte, len(files))
+	for _, file := range files {
+		entries[file.name] = file.data
+	}
+	configPath := filepath.Join(t.TempDir(), "ssh-route.conf")
+	require.NoError(t, os.WriteFile(configPath, entries["credentials/ssh-route.conf"], 0o600))
+
+	for _, host := range []string{"inventory.example.test", "mapped.example.test"} {
+		output, outputErr := exec.Command("ssh", "-G", "-F", configPath, host).Output()
+		require.NoError(t, outputErr)
+		assert.Contains(t, string(output), "identityfile /semaphore/bundle/credentials/ssh-key-inventory.pub", host)
+	}
 }
 
 func TestPrepareContainerTaskCarriesMappingsWithoutRunnerPaths(t *testing.T) {

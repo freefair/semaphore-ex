@@ -45,9 +45,6 @@ func (t *LocalExecutor) rejectHostConfigRoutingConflicts(taskHosts []string) err
 				}
 			}
 		}
-		if mapping.Type == db.HostConfigURL && strings.HasPrefix(t.Repository.GitURL, mapping.Name) {
-			return fmt.Errorf("URL mapping %q conflicts with the task repository route", mapping.Name)
-		}
 	}
 	return nil
 }

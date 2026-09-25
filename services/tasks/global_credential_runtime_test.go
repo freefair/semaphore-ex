@@ -91,9 +91,10 @@ func TestTaskRunnerRedactsResolvedCredentialBeforeServerLogSink(t *testing.T) {
 }
 
 func TestTaskRunnerRedactsDispatchTimeHostMappingCredential(t *testing.T) {
-	runner := &TaskRunner{HostConfigs: []db.HostConfig{{SSHKey: db.AccessKey{LoginPassword: db.LoginPassword{Password: "mapping-secret"}}}}}
+	runner := &TaskRunner{HostConfigs: []db.HostConfig{{SSHKey: db.AccessKey{LoginPassword: db.LoginPassword{Login: "host", Password: "mapping-secret"}}}}}
 	runner.SetTaskCredentialRedaction("")
 	assert.NotContains(t, runner.redactor.Redact("mapping-secret"), "mapping-secret")
+	assert.Equal(t, `{"host":"gitlab.example.com"}`, runner.redactor.Redact(`{"host":"gitlab.example.com"}`))
 }
 
 func TestTaskRunnerLogCmdFinalizerPreservesCredentialRedaction(t *testing.T) {

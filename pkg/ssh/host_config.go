@@ -172,7 +172,10 @@ func hostBlock(hostConfig db.HostConfig, agentSocket string) (string, error) {
 		block += fmt.Sprintf("  User %s\n", login)
 	}
 
-	return block + fmt.Sprintf("  IdentityAgent %s\n", agentSocket), nil
+	// The task routing wrapper appends a Host * block with IdentitiesOnly yes.
+	// This dedicated mapping agent has no selector file in the local executor,
+	// so make its one-key agent usable before that fallback can take effect.
+	return block + fmt.Sprintf("  IdentityAgent %s\n  IdentitiesOnly no\n", agentSocket), nil
 }
 
 // urlBlock binds the alias a URL mapping rewrites to. The alias carries the
@@ -199,7 +202,7 @@ func urlBlock(hostConfig db.HostConfig, agentSocket string) (string, error) {
 			"the login of access key %d can not be used in an ssh configuration", hostConfig.SSHKeyID)
 	}
 
-	return fmt.Sprintf("Host %s\n  HostName %s\n  User %s\n  IdentityAgent %s\n",
+	return fmt.Sprintf("Host %s\n  HostName %s\n  User %s\n  IdentityAgent %s\n  IdentitiesOnly no\n",
 		hostConfig.SSHAlias(), host, login, agentSocket), nil
 }
 

@@ -11,7 +11,7 @@ import (
 func (t *TaskRunner) SetTaskCredentialRedaction(taskSecret string) {
 	extra := make([]string, 0, len(t.HostConfigs)*2)
 	for _, mapping := range t.HostConfigs {
-		extra = append(extra, mapping.SSHKey.SshKey.PrivateKey, mapping.SSHKey.SshKey.Passphrase, mapping.SSHKey.LoginPassword.Login, mapping.SSHKey.LoginPassword.Password)
+		extra = append(extra, mapping.SSHKey.SshKey.PrivateKey, mapping.SSHKey.SshKey.Passphrase, mapping.SSHKey.LoginPassword.Password)
 	}
 	t.redactor = taskredaction.NewFromTaskSecretAndValues(taskSecret, t.GlobalCredentialBindingTargets(), extra)
 }

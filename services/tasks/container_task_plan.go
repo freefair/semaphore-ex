@@ -408,14 +408,16 @@ func (t *LocalExecutor) prepareContainerCredentials(args map[string][]string) ([
 		key           db.AccessKey
 		hosts         []string
 		implicitHosts []string
-	}{{"inventory", t.Inventory.SSHKey, nil, nil}, {"repository", t.Repository.SSHKey, nil, repositorySSHHosts(t.Repository.GitURL)}}
+		route         bool
+	}{{"inventory", t.Inventory.SSHKey, nil, nil, true}, {"repository", t.Repository.SSHKey, nil, repositorySSHHosts(t.Repository.GitURL), true}}
 	for _, resolved := range t.Task.ResolvedSSHKeys {
 		sshKeys = append(sshKeys, struct {
 			name          string
 			key           db.AccessKey
 			hosts         []string
 			implicitHosts []string
-		}{fmt.Sprintf("extra-%d", resolved.Binding.AccessKeyID), resolved.Key, resolved.Binding.Hosts, nil})
+			route         bool
+		}{fmt.Sprintf("extra-%d", resolved.Binding.AccessKeyID), resolved.Key, resolved.Binding.Hosts, nil, true})
 	}
 	for _, mapping := range t.HostConfigs {
 		if mapping.SSHKey.Type != db.AccessKeySSH {
@@ -432,7 +434,8 @@ func (t *LocalExecutor) prepareContainerCredentials(args map[string][]string) ([
 			key           db.AccessKey
 			hosts         []string
 			implicitHosts []string
-		}{"mapping-" + fmt.Sprint(mapping.ID), mapping.SSHKey, hosts, nil})
+			route         bool
+		}{"mapping-" + fmt.Sprint(mapping.ID), mapping.SSHKey, hosts, nil, false})
 	}
 	selectors := make(map[string]string)
 	keyOrder := make([]string, 0, len(sshKeys))
@@ -460,9 +463,11 @@ func (t *LocalExecutor) prepareContainerCredentials(args map[string][]string) ([
 			)
 			keyOrder = append(keyOrder, path.Join(containerBundlePath, "credentials", "ssh-key-"+item.name))
 		}
-		routingIdentities = append(routingIdentities, ssh.RoutingIdentity{PublicKey: identity, Selector: selector, Hosts: item.hosts, ImplicitHosts: item.implicitHosts})
+		if item.route {
+			routingIdentities = append(routingIdentities, ssh.RoutingIdentity{PublicKey: identity, Selector: selector, Hosts: item.hosts, ImplicitHosts: item.implicitHosts})
+		}
 	}
-	if len(routingIdentities) > 0 {
+	if len(routingIdentities) > 0 || len(selectors) > 0 {
 		routing, err := ssh.BuildHostRouting(routingIdentities)
 		if err != nil {
 			return nil, fmt.Errorf("building container SSH host routing: %w", err)
@@ -484,6 +489,8 @@ func (t *LocalExecutor) prepareContainerCredentials(args map[string][]string) ([
 					return nil, parseErr
 				}
 				routeConfig += fmt.Sprintf("Host %s\n  HostName %s\n  IdentityFile %s\n  IdentitiesOnly yes\n", mapping.SSHAlias(), parsed.Hostname(), selector)
+			} else {
+				routeConfig += fmt.Sprintf("Host %s\n  IdentityFile %s\n  IdentitiesOnly yes\n", mapping.Name, selector)
 			}
 		}
 		routeConfig += routing.Config(path.Join(containerWorkspacePath, ".semaphore", "ssh-agent.sock"))

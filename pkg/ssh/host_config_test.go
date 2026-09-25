@@ -34,6 +34,16 @@ func setupHostConfig(t *testing.T) string {
 	return tmp
 }
 
+func TestHostMappingBlocksOverrideTaskRoutingIdentitiesOnly(t *testing.T) {
+	host, err := hostBlock(db.HostConfig{Name: "mapped.example.test"}, "/mapping.sock")
+	require.NoError(t, err)
+	assert.Contains(t, host, "IdentitiesOnly no")
+
+	url, err := urlBlock(db.HostConfig{ID: 3, Type: db.HostConfigURL, Name: "https://git.example.test/team/"}, "/mapping.sock")
+	require.NoError(t, err)
+	assert.Contains(t, url, "IdentitiesOnly no")
+}
+
 func sshKey(t *testing.T, id int, name string) db.AccessKey {
 	t.Helper()
 

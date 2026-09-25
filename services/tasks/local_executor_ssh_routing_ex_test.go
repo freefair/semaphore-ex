@@ -20,13 +20,18 @@ func TestHostMappingRejectsExplicitTaskRoute(t *testing.T) {
 	require.NoError(t, executor.rejectHostConfigRoutingConflicts([]string{"other.example.test"}))
 }
 
+func TestURLMappingDoesNotConflictWithKeylessRepository(t *testing.T) {
+	executor := &LocalExecutor{Repository: db.Repository{GitURL: "https://github.com/acme/repository"}, HostConfigs: []db.HostConfig{{Type: db.HostConfigURL, Name: "https://github.com/acme/"}}}
+	require.NoError(t, executor.rejectHostConfigRoutingConflicts([]string{"inventory.example.test"}))
+}
+
 func TestTaskRoutingKeepsMappingAgentBeforeTaskDefault(t *testing.T) {
 	root := t.TempDir()
 	previousConfig := util.Config
 	util.Config = &util.ConfigType{TmpPath: root, Ssh: &util.SshConfig{StrictHostKeyChecking: util.SshStrictHostKeyCheckingNo}}
 	t.Cleanup(func() { util.Config = previousConfig })
 	mappingConfig := filepath.Join(root, "mapping.conf")
-	require.NoError(t, os.WriteFile(mappingConfig, []byte("Host mapped.example.test\n  IdentityAgent /mapping.sock\n"), 0o600))
+	require.NoError(t, os.WriteFile(mappingConfig, []byte("Host mapped.example.test\n  IdentityAgent /mapping.sock\n  IdentitiesOnly no\n"), 0o600))
 	executor := &LocalExecutor{taskSSHAgent: &ssh.Agent{SocketFile: filepath.Join(root, "task.sock")}, hostConfigInstallation: &ssh.HostConfigInstallation{ConfigFile: mappingConfig}}
 	routing, err := ssh.BuildHostRouting(nil)
 	require.NoError(t, err)
@@ -35,6 +40,7 @@ func TestTaskRoutingKeepsMappingAgentBeforeTaskDefault(t *testing.T) {
 	output, err := exec.Command("ssh", "-G", "-F", filepath.Join(root, "task.sock.routing", "routing.conf"), "mapped.example.test").Output()
 	require.NoError(t, err)
 	assert.Contains(t, string(output), "identityagent /mapping.sock")
+	assert.Contains(t, string(output), "identitiesonly no")
 }
 
 func TestTaskSSHRoutingConfigIncludesUserBeforeSystemConfig(t *testing.T) {
