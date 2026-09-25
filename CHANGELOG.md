@@ -11,6 +11,27 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+## [v2.20.0-ex.2.1.3] - 2026-09-25
+
+### Added
+
+- Inventory detail pages show resolved host membership. The project Hosts view
+  supports search, inventory filtering and grouping, with per-host task history,
+  execution timestamps, trigger information and task output.
+- Inventory membership refreshes during normal Ansible runs and through an
+  explicit refresh task. Failed refreshes retain the last complete snapshot;
+  remote runners must advertise support before accepting refresh-only tasks.
+- Project host and repository URL mappings select credentials for Git operations,
+  nested dependencies and Ansible SSH connections. Mappings participate in
+  project backup and restore, key-reference checks and executor configuration.
+
+### Fixed
+
+- Inventory links in resource-reference dialogs open a supported detail route.
+- Direct Terraform task options reach execution review and start requests.
+  Confirmation decisions survive concurrent runner progress and HA updates.
+- Rerun parameter edits no longer mutate the original task's nested data.
+
 ### Changed
 
 - Release workflows reuse successful CI for the exact commit and build signed
