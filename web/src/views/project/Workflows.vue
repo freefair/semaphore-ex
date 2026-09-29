@@ -358,7 +358,7 @@ export default {
       try {
         const run = (await axios({
           method: 'post',
-          url: `/api/project/${this.projectId}/workflows/${workflow.id}/run`,
+          url: `/api/project/${this.projectId}/workflows/${workflow.id}/runs`,
           data: payload || {},
           headers: review ? {
             [PREFLIGHT_FINGERPRINT_HEADER]: review.fingerprint,

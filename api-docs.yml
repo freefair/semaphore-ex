@@ -1706,6 +1706,9 @@ definitions:
         type: integer
       revision:
         type: integer
+      revision_id:
+        type: integer
+        description: Immutable EX workflow version ID used by the revision API.
       nodes:
         type: array
         items:
@@ -1724,6 +1727,9 @@ definitions:
         type: integer
       workflow_template_id:
         type: integer
+      revision_id:
+        type: integer
+        description: Immutable EX workflow version ID used by the revision API.
       status:
         type: string
         enum: [pending, queued, running, approval, stopping, succeeded, success, stopped, canceled, failed, blocked]
@@ -1813,6 +1819,16 @@ definitions:
         type: array
         items:
           $ref: "#/definitions/WorkflowRunTemplate"
+      workflow_name:
+        type: string
+      revision_id:
+        type: integer
+      revision:
+        type: integer
+      edges:
+        type: array
+        items:
+          $ref: "#/definitions/WorkflowEdge"
       nodes:
         type: array
         items:
@@ -1834,6 +1850,26 @@ definitions:
     $ref: "./api-docs-ex.yml#/definitions/WorkflowArtifactRetentionState"
   WorkflowArtifactRetentionUpdate:
     $ref: "./api-docs-ex.yml#/definitions/WorkflowArtifactRetentionUpdate"
+  WorkflowRevision:
+    type: object
+    properties:
+      id:
+        type: integer
+      project_id:
+        type: integer
+      workflow_template_id:
+        type: integer
+      number:
+        type: integer
+      created:
+        type: string
+        format: date-time
+      created_by_user_id:
+        type: integer
+      has_runs:
+        type: boolean
+        description: At least one run pins this revision, so it survives later saves.
+
   WorkflowApprovalResolveRequest:
     type: object
     required:
@@ -1920,6 +1956,13 @@ security:
   - cookie: []
 
 parameters:
+  revision_id:
+    name: revision_id
+    description: Immutable EX workflow version ID
+    in: path
+    type: integer
+    required: true
+    x-example: 22
   history_count:
     name: count
     description: Maximum number of newest history records to return
@@ -3826,6 +3869,51 @@ paths:
     $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1triggers~1{trigger_id}~1history"
   /workflow-triggers/{project_id}/{workflow_id}/{trigger_id}/webhook:
     $ref: "./api-docs-ex.yml#/paths/~1workflow-triggers~1{project_id}~1{workflow_id}~1{trigger_id}~1webhook"
+  /project/{project_id}/workflows/{workflow_id}/revisions:
+    parameters:
+      - $ref: "#/parameters/project_id"
+      - $ref: "#/parameters/workflow_id"
+      - name: count
+        in: query
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+        description: Maximum number of revisions in this page.
+      - name: before
+        in: query
+        type: integer
+        minimum: 1
+        description: Return revisions older than this immutable EX version ID.
+    get:
+      tags:
+        - workflow
+      summary: Get workflow revisions
+      description: Surviving graph revisions of the workflow, newest first. A revision is written on every save; Semaphore EX retains every immutable revision.
+      responses:
+        200:
+          description: workflow revisions
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/WorkflowRevision"
+
+  /project/{project_id}/workflows/{workflow_id}/revisions/{revision_id}:
+    parameters:
+      - $ref: "#/parameters/project_id"
+      - $ref: "#/parameters/workflow_id"
+      - $ref: "#/parameters/revision_id"
+    get:
+      tags:
+        - workflow
+      summary: Get workflow revision
+      description: The workflow with the nodes and edges of the given revision instead of the latest one.
+      responses:
+        200:
+          description: workflow template at the revision
+          schema:
+            $ref: "#/definitions/WorkflowTemplate"
+
   /project/{project_id}/workflows/{workflow_id}/run:
     parameters:
       - $ref: "#/parameters/project_id"
@@ -3882,6 +3970,41 @@ paths:
             type: array
             items:
               $ref: "#/definitions/WorkflowRun"
+
+    post:
+      tags:
+        - workflow
+      summary: Run workflow
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          type: string
+          maxLength: 64
+          description: Reuses the same workflow attempt when repeated for this workflow
+        - name: X-Semaphore-Preflight-Fingerprint
+          in: header
+          required: false
+          type: string
+          description: Fingerprint returned by the reviewed workflow preflight
+        - name: X-Semaphore-Preflight-Token
+          in: header
+          required: false
+          type: string
+          description: Opaque short-lived token returned by the reviewed workflow preflight
+      responses:
+        201:
+          description: workflow run created
+          headers:
+            Idempotency-Key:
+              type: string
+              description: Correlation key used for this workflow attempt
+          schema:
+            $ref: "#/definitions/WorkflowRun"
+        409:
+          description: Reviewed plan is stale, expired, invalid, or currently denied
+          schema:
+            $ref: '#/definitions/ExecutionPreflightStale'
 
   /project/{project_id}/workflows/{workflow_id}/runs/{run_id}:
     parameters:

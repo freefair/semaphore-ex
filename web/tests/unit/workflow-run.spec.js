@@ -27,7 +27,8 @@ describe('linear workflow run dashboard', () => {
       normalizeNodeStatus: WorkflowRun.methods.normalizeNodeStatus,
     };
 
-    expect(WorkflowRun.computed.nodeStatuses.call(context)).to.deep.equal({
+    expect(Object.fromEntries(Object.entries(WorkflowRun.computed.nodeRuns.call(context))
+      .map(([id, run]) => [id, run.status]))).to.deep.equal({
       11: 'success',
       12: 'blocked',
       13: 'skipped',
@@ -333,7 +334,8 @@ describe('linear workflow run dashboard', () => {
       normalizeNodeStatus: WorkflowRun.methods.normalizeNodeStatus,
     };
 
-    expect(WorkflowRun.computed.nodeStatuses.call(context)).to.deep.equal({ 21: 'approval' });
+    expect(Object.fromEntries(Object.entries(WorkflowRun.computed.nodeRuns.call(context))
+      .map(([id, run]) => [id, run.status]))).to.deep.equal({ 21: 'pending' });
     const pendingApproval = WorkflowRun.computed.pendingApprovals.call(context)
       .find((approval) => approval.nodeId === 21);
     expect(pendingApproval)

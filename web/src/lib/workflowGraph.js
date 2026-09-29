@@ -45,10 +45,103 @@ export function formatDuration(ms) {
   return `${minutes}m ${seconds}s`;
 }
 
+/** Like formatDuration, but folds full hours: "1h 2m", "3m 4s", "5s". */
+export function formatDurationLong(ms) {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
 /** Escapes a value for safe insertion into element content. */
 export function escapeHtml(value) {
   return String(value == null ? '' : value)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+/**
+ * Collapses the raw status of a task / approval / delay into the handful of
+ * visual states the node card knows how to draw.
+ */
+export function statusKind(status, nodeKind = 'task') {
+  if (nodeKind === 'approval') {
+    if (status === 'approved') return 'success';
+    if (status === 'rejected') return 'error';
+  }
+  switch (status) {
+    case 'success':
+      return 'success';
+    case 'error':
+    case 'failed':
+    case 'stopped':
+      return 'error';
+    case 'running':
+    case 'starting':
+    case 'stopping':
+      return 'running';
+    case 'waiting':
+    case 'waiting_confirmation':
+    case 'confirmed':
+    case 'rejected':
+      return 'waiting';
+    case 'pending':
+      return 'pending';
+    case 'blocked':
+    case 'skipped':
+    case 'canceled':
+      return status;
+    default:
+      return null;
+  }
+}
+
+export function isFinishedStatus(status, nodeKind = 'task') {
+  const kind = statusKind(status, nodeKind);
+  return ['success', 'error', 'blocked', 'skipped', 'canceled'].includes(kind);
+}
+
+/** True when an edge with `condition` is taken after the source ends with `status`. */
+export function edgeConditionMet(condition, status, nodeKind = 'task') {
+  const kind = statusKind(status, nodeKind);
+  if (!isFinishedStatus(status, nodeKind) || kind === 'skipped') return false;
+  if (condition === 'always') return true;
+  if (condition === 'on_failure') return kind === 'error' || kind === 'canceled';
+  return kind === 'success';
+}
+
+/**
+ * Visual state of an edge in a run view, given the run info of the nodes
+ * ({ [nodeId]: { status } }):
+ *   'active' — the source is done and the destination is in progress;
+ *   'passed' — both ends have run;
+ *   'dim'    — the destination has not started (or the edge was not taken).
+ */
+export function edgeRunState(edge, runs, nodes = {}) {
+  // Only the backend evaluates typed expressions against immutable results.
+  // A neutral edge avoids claiming a branch was taken from status alone.
+  if (edge.condition === 'expression') return null;
+  const source = runs && runs[edge.source_node_id];
+  const dest = runs && runs[edge.destination_node_id];
+  const sourceStatus = source ? source.status : null;
+  const destStatus = dest ? dest.status : null;
+  const sourceNodeKind = nodes[edge.source_node_id]?.kind;
+  const destKind = statusKind(destStatus, nodes[edge.destination_node_id]?.kind);
+
+  if (!isFinishedStatus(sourceStatus, sourceNodeKind)
+    || !edgeConditionMet(edge.condition, sourceStatus, sourceNodeKind)) {
+    return 'dim';
+  }
+  if (destKind === 'running' || destKind === 'waiting' || destKind === 'pending') {
+    return 'active';
+  }
+  if (isFinishedStatus(destStatus, nodes[edge.destination_node_id]?.kind)
+    && destKind !== 'skipped') {
+    return 'passed';
+  }
+  return 'dim';
 }

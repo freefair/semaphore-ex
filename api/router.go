@@ -848,6 +848,8 @@ func Route(
 	projectWorkflowManagement.Handle("/{workflow_id}", workflowEdit(http.HandlerFunc(workflowController.UpdateWorkflow))).Methods("PUT")
 	projectWorkflowManagement.Handle("/{workflow_id}", workflowAdmin(http.HandlerFunc(workflowController.RemoveWorkflow))).Methods("DELETE")
 	projectWorkflowManagement.Handle("/{workflow_id}", workflowView(http.HandlerFunc(workflowController.GetWorkflow))).Methods("GET", "HEAD")
+	projectWorkflowManagement.Handle("/{workflow_id}/revisions", workflowView(http.HandlerFunc(workflowController.GetWorkflowRevisions))).Methods("GET", "HEAD")
+	projectWorkflowManagement.Handle("/{workflow_id}/revisions/{revision_id}", workflowView(http.HandlerFunc(workflowController.GetWorkflowRevision))).Methods("GET", "HEAD")
 	projectWorkflowManagement.Handle("/{workflow_id}/versions", workflowView(http.HandlerFunc(workflowController.GetWorkflowVersions))).Methods("GET", "HEAD")
 	projectWorkflowManagement.Handle("/{workflow_id}/versions/diff", workflowView(http.HandlerFunc(workflowController.DiffWorkflowVersions))).Methods("GET", "HEAD")
 	projectWorkflowManagement.Handle("/{workflow_id}/versions/{version_number}", workflowView(http.HandlerFunc(workflowController.GetWorkflowVersion))).Methods("GET", "HEAD")
@@ -880,7 +882,7 @@ func Route(
 			)(http.HandlerFunc(workflowController.PreviewWorkflow)),
 		),
 	)).Methods("POST")
-	projectWorkflowRunAPI.Handle("/{workflow_id}/run", workflowStart(
+	projectWorkflowRunAPI.Handle("/{workflow_id}/{start_route:run|runs}", workflowStart(
 		capabilityController.RequireExecutionPreflightForReviewedStart(http.HandlerFunc(workflowController.RunWorkflow)),
 	)).Methods("POST")
 	projectWorkflowRunAPI.Handle("/{workflow_id}/runs", workflowView(http.HandlerFunc(workflowController.GetWorkflowRuns))).Methods("GET", "HEAD")

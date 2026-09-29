@@ -400,6 +400,7 @@ describe('workflow editor authoring lifecycle', () => {
           },
         }),
       },
+      liveData() { return this.editor.export().drawflow.Home.data; },
       edgeMetadata: {
         '18->-1': { id: 22 },
         '-1->-2': { id: -3 },
@@ -434,6 +435,7 @@ describe('workflow editor authoring lifecycle', () => {
           },
         }),
       },
+      conditions: { '11->12': 'expression' },
       edgeMetadata: {
         '11->12': {
           id: 21,

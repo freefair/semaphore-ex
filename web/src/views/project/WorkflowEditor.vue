@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="WorkflowEditor">
     <WorkflowVersionsDialog
       v-if="!isNew"
       v-model="versionsDialog"
@@ -14,7 +14,16 @@
       :project-id="projectId"
       @changed="refreshCrossProjectReferences"
     />
-    <v-toolbar flat>
+    <YesNoDialog
+      v-model="leaveDialog"
+      :title="$t('workflowUnsavedChanges')"
+      :text="$t('workflowUnsavedLeave')"
+      :yes-button-title="$t('workflowLeaveWithoutSaving')"
+      @yes="confirmLeave()"
+      @no="cancelLeave()"
+    />
+
+    <v-toolbar flat class="WorkflowEditor__toolbar">
       <v-app-bar-nav-icon @click="showDrawer()"></v-app-bar-nav-icon>
       <v-toolbar-title class="WorkflowEditor__title d-flex align-center">
         <router-link :to="`/project/${projectId}/workflows`">
@@ -39,6 +48,22 @@
             />
           </span>
         </span>
+        <v-chip
+          v-if="item != null && item.revision"
+          x-small
+          outlined
+          class="ml-3"
+          :title="$t('workflowRevisionHint')"
+        >{{ $t('workflowRevisionLabel', { number: item.revision }) }}</v-chip>
+        <v-tooltip v-if="activeRuns > 0" bottom>
+          <template v-slot:activator="{ on, attrs }">
+            <v-chip x-small outlined color="warning" class="ml-2" v-bind="attrs" v-on="on">
+              <v-icon x-small left>mdi-play-circle-outline</v-icon>
+              {{ $tc('workflowActiveRunsCount', activeRuns, { count: activeRuns }) }}
+            </v-chip>
+          </template>
+          <span>{{ $t('workflowActiveRunsHint') }}</span>
+        </v-tooltip>
       </v-toolbar-title>
 
       <v-spacer></v-spacer>
@@ -63,14 +88,11 @@
         <v-icon>mdi-share-variant-outline</v-icon>
       </v-btn>
 
-      <v-btn icon :title="$t('workflowToolbarZoomOut')" @click="zoomOut()">
-        <v-icon>mdi-magnify-minus-outline</v-icon>
+      <v-btn icon :disabled="!canUndo" :title="$t('workflowUndo')" @click="undo()">
+        <v-icon>mdi-undo</v-icon>
       </v-btn>
-      <v-btn icon :title="$t('workflowToolbarZoomIn')" @click="zoomIn()">
-        <v-icon>mdi-magnify-plus-outline</v-icon>
-      </v-btn>
-      <v-btn icon :title="$t('workflowToolbarFit')" @click="zoomReset()" class="mr-4">
-        <v-icon>mdi-fit-to-page-outline</v-icon>
+      <v-btn icon :disabled="!canRedo" :title="$t('workflowRedo')" class="mr-2" @click="redo()">
+        <v-icon>mdi-redo</v-icon>
       </v-btn>
 
       <v-btn
@@ -127,7 +149,7 @@
           type="button"
           class="WorkflowEditor__sideToggle"
           :title="$t(sideCollapsed ? 'workflowSidebarExpand' : 'workflowSidebarCollapse')"
-          @click="sideCollapsed = !sideCollapsed"
+          @click="toggleSide()"
         >
           <v-icon small>
             {{ sideCollapsed ? 'mdi-chevron-right' : 'mdi-chevron-left' }}
@@ -155,6 +177,7 @@
                   :label="$t('startVersion')"
                   :hint="$t('workflowStartVersionHint')"
                   persistent-hint
+                  class="mb-4"
                   :disabled="!canManage"
                   outlined
                   dense
@@ -168,125 +191,48 @@
 
           <div class="pa-3">
             <template v-if="!sideCollapsed">
-              <div class="text-subtitle-2 mb-2">{{ $t('workflowEditorPalette') }}</div>
-              <div class="text-caption text--secondary mb-2">
-                {{ $t('workflowDragToCanvasHint') }}
+              <div class="text-subtitle-2 mb-1">{{ $t('workflowEditorPalette') }}</div>
+              <div class="text-caption text--secondary mb-3">
+                {{ $t('workflowPaletteClickHint') }}
               </div>
             </template>
             <div
-              class="WorkflowEditor__paletteItem WorkflowEditor__paletteItem--task"
+              v-for="p in palette"
+              :key="p.kind"
+              class="WorkflowEditor__paletteItem"
+              :class="`WorkflowEditor__paletteItem--${p.kind}`"
               :draggable="canManage"
-              :title="sideCollapsed ? $t('workflowPaletteTaskNode') : null"
-              @dragstart="onDragStart($event, 'task')"
+              :title="sideCollapsed ? p.text : null"
+              @dragstart="onDragStart($event, p.kind)"
+              @click="addFromPalette(p.kind)"
             >
-              <v-icon small :left="!sideCollapsed">mdi-cog</v-icon>
-              <template v-if="!sideCollapsed">{{ $t('workflowPaletteTaskNode') }}</template>
-            </div>
-            <div
-              class="WorkflowEditor__paletteItem WorkflowEditor__paletteItem--approval"
-              :draggable="canManage"
-              :title="sideCollapsed ? $t('workflowPaletteApprovalNode') : null"
-              @dragstart="onDragStart($event, 'approval')"
-            >
-              <v-icon small :left="!sideCollapsed">mdi-account-check</v-icon>
-              <template v-if="!sideCollapsed">{{ $t('workflowPaletteApprovalNode') }}</template>
-            </div>
-            <div
-              class="WorkflowEditor__paletteItem WorkflowEditor__paletteItem--delay"
-              :draggable="canManage"
-              :title="sideCollapsed ? $t('workflowPaletteDelayNode') : null"
-              @dragstart="onDragStart($event, 'delay')"
-            >
-              <v-icon small :left="!sideCollapsed">mdi-timer-outline</v-icon>
-              <template v-if="!sideCollapsed">{{ $t('workflowPaletteDelayNode') }}</template>
-            </div>
-
-            <div
-              class="WorkflowEditor__paletteItem WorkflowEditor__paletteItem--note"
-              :draggable="canManage"
-              :title="sideCollapsed ? $t('workflowPaletteNoteNode') : null"
-              @dragstart="onDragStart($event, 'note')"
-            >
-              <v-icon small :left="!sideCollapsed">mdi-note-text-outline</v-icon>
-              <template v-if="!sideCollapsed">{{ $t('workflowPaletteNoteNode') }}</template>
+              <span
+                class="WorkflowEditor__paletteTile"
+                :class="`WorkflowEditor__paletteTile--${p.kind}`"
+              >
+                <v-icon small :color="p.color">{{ p.icon }}</v-icon>
+              </span>
+              <span v-if="!sideCollapsed" class="WorkflowEditor__paletteText">{{ p.text }}</span>
             </div>
           </div>
-
-          <v-divider />
-
-          <div class="pa-3">
-            <template v-if="!sideCollapsed">
-              <div class="text-subtitle-2 mb-1">{{ $t('workflowProblemsPanelTitle') }}</div>
-              <v-alert
-                v-if="problems.length === 0 && validationState === 'valid'"
-                type="success"
-                text
-                dense
-                class="mb-0"
-              >
-                {{ $t('workflowValidationPassed') }}
-              </v-alert>
-              <v-alert
-                v-else-if="problems.length === 0"
-                type="info"
-                text
-                dense
-                class="mb-0"
-              >
-                {{ $t('workflowValidationNotRun') }}
-              </v-alert>
-              <v-alert
-                v-for="(p, i) in problems"
-                :key="`${p.code}-${p.path || i}`"
-                type="warning"
-                text
-                dense
-                class="mb-1"
-              >{{ problemText(p) }}
-              </v-alert
-              >
-            </template>
-            <div v-else class="d-flex flex-column align-center">
-              <v-tooltip
-                v-if="problems.length === 0 && validationState === 'valid'"
-                right
-                max-width="320"
-                transition="fade-transition"
-              >
-                <template v-slot:activator="{ on, attrs }">
-                  <v-icon color="success" v-bind="attrs" v-on="on">mdi-check-circle</v-icon>
-                </template>
-                <span>{{ $t('workflowValidationPassed') }}</span>
-              </v-tooltip>
-              <v-tooltip
-                v-else-if="problems.length === 0"
-                right
-                max-width="320"
-                transition="fade-transition"
-              >
-                <template v-slot:activator="{ on, attrs }">
-                  <v-icon color="info" v-bind="attrs" v-on="on">mdi-information</v-icon>
-                </template>
-                <span>{{ $t('workflowValidationNotRun') }}</span>
-              </v-tooltip>
-              <template v-else>
-                <v-tooltip
-                  v-for="(p, i) in problems"
-                  :key="`${p.code}-${p.path || i}`"
-                  right
-                  max-width="320"
-                  transition="fade-transition"
-                >
-                  <template v-slot:activator="{ on, attrs }">
-                    <v-icon color="warning" class="mb-1" v-bind="attrs" v-on="on">
-                      mdi-alert
-                    </v-icon>
-                  </template>
-                  <span>{{ problemText(p) }}</span>
-                </v-tooltip>
-              </template>
-            </div>
+          <div v-if="!sideCollapsed" class="pa-3" data-testid="workflow-validation-status">
+            <div class="text-subtitle-2 mb-2">{{ $t('workflowProblemsPanelTitle') }}</div>
+            <v-alert v-if="problems.length === 0" text dense
+              :type="validationState === 'valid' ? 'success' : 'info'">
+              {{ validationState === 'valid'
+                ? $t('workflowValidationPassed') : $t('workflowValidationNotRun') }}
+            </v-alert>
+            <v-alert v-for="(problem, index) in problems" :key="index" text dense type="warning">
+              {{ problemText(problem) }}
+            </v-alert>
           </div>
+          <v-btn v-else-if="problems.length" icon color="warning"
+            data-testid="workflow-validation-collapsed"
+            :title="problems.map(problemText).join('\n')"
+            :aria-label="$t('workflowProblemsPanelTitle')"
+            @click="sideCollapsed = false">
+            <v-icon>mdi-alert</v-icon>
+          </v-btn>
         </div>
       </div>
 
@@ -298,7 +244,9 @@
           :nodes="item.nodes"
           :edges="item.edges"
           :templates="workflowGraphTemplates"
+          :quick-add-templates="templates || []"
           :editable="canManage"
+          :node-problems="problemsByNode"
           @change="onGraphChange"
           @node-selected="onNodeSelected"
           @connection-selected="onConnectionSelected"
@@ -588,16 +536,26 @@ import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/workflow-edito
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
-import TaskParamsForm from '@/components/TaskParamsForm.vue';
 import WorkflowGraph from '@/components/WorkflowGraph.vue';
 import WorkflowNodeOverridePolicyEditor from '@/components/WorkflowNodeOverridePolicyEditor.vue';
 import WorkflowVersionsDialog from '@/components/WorkflowVersionsDialog.vue';
 import CrossProjectTemplateGrantsDialog from '@/components/CrossProjectTemplateGrantsDialog.vue';
+import YesNoDialog from '@/components/YesNoDialog.vue';
+import TaskParamsForm from '@/components/TaskParamsForm.vue';
 import ProjectMixin from '@/components/ProjectMixin';
 import PermissionsCheck from '@/components/PermissionsCheck';
 import { USER_PERMISSIONS } from '@/lib/constants';
 import { layoutWorkflowNodes, needsAutoLayout } from '@/lib/workflowLayout';
 import { WORKFLOW_DEFINITION_VERSION } from '@/lib/workflowValidation';
+
+import WorkflowHistory from '@/lib/workflowHistory';
+import { readSideCollapsed, writeSideCollapsed } from '@/lib/workflowEditorPrefs';
+
+function isTypingTarget(target) {
+  if (!target) return false;
+  const tag = (target.tagName || '').toLowerCase();
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
+}
 
 export default {
   components: {
@@ -609,6 +567,7 @@ export default {
     WorkflowNodeOverridePolicyEditor,
     WorkflowVersionsDialog,
     CrossProjectTemplateGrantsDialog,
+    YesNoDialog,
   },
   mixins: [ProjectMixin, PermissionsCheck],
   props: {
@@ -629,7 +588,19 @@ export default {
       selectedNodeId: null,
       editingNode: null,
       editingEdge: null,
-      sideCollapsed: false,
+      // Collapses the palette and, through App.vue, the main navigation to
+      // icon-only strips. Remembered per browser; App restores the navigation
+      // when the editor is left (see beforeDestroy).
+      sideCollapsed: readSideCollapsed(),
+      canUndo: false,
+      canRedo: false,
+      // Runs still in progress: they keep executing the revision they started
+      // from, so saving is safe — the chip in the toolbar just says so.
+      activeRuns: 0,
+      // JSON of the last loaded / saved model, for the unsaved-changes guard.
+      savedSnapshot: null,
+      leaveDialog: false,
+      pendingLeave: null,
       USER_PERMISSIONS,
     };
   },
@@ -653,17 +624,40 @@ export default {
       return this.templates.find((t) => t.id === this.editingNode.template_id) || null;
     },
     kindOptions() {
-      return [
-        { value: 'task', text: this.$t('workflowNodeKindTask') },
-        { value: 'approval', text: this.$t('workflowNodeKindApproval') },
-        { value: 'delay', text: this.$t('workflowNodeKindDelay') },
-      ];
+      return ['task', 'approval', 'delay'].map((value) => ({
+        value, text: this.$t(`workflowNodeKind${value[0].toUpperCase()}${value.slice(1)}`),
+      }));
     },
     convergenceOptions() {
       return [
         { value: 'all', text: this.$t('workflowConvergenceAll') },
         { value: 'any', text: this.$t('workflowConvergenceAny') },
       ];
+    },
+    palette() {
+      return [
+        {
+          kind: 'task', icon: 'mdi-cog', color: null, text: this.$t('workflowPaletteTaskNode'),
+        },
+        {
+          kind: 'approval', icon: 'mdi-account-check', color: '#ab47bc', text: this.$t('workflowPaletteApprovalNode'),
+        },
+        {
+          kind: 'delay', icon: 'mdi-timer-outline', color: '#ff9800', text: this.$t('workflowPaletteDelayNode'),
+        },
+        {
+          kind: 'note', icon: 'mdi-note-text-outline', color: null, text: this.$t('workflowPaletteNoteNode'),
+        },
+      ];
+    },
+    modelSnapshot() {
+      if (!this.item) return null;
+      return JSON.stringify({
+        name: this.item.name,
+        start_version: this.item.start_version || '',
+        nodes: this.item.nodes,
+        edges: this.item.edges,
+      });
     },
     conditionOptions() {
       return [
@@ -685,8 +679,27 @@ export default {
         ),
       ];
     },
+    problemsByNode() {
+      const map = {};
+      this.problems.forEach((p) => {
+        const nodeId = p.nodeId ?? p.node_id;
+        if (nodeId == null || map[nodeId]) return;
+        map[nodeId] = this.problemText(p);
+      });
+      return map;
+    },
   },
   watch: {
+    baseline() {
+      if (!this.history || !this.item) return;
+      // Server-assigned IDs and restored versions start a new editing history.
+      this.history.reset({ nodes: this.item.nodes, edges: this.item.edges });
+      this.syncHistoryFlags();
+    },
+    sideCollapsed(val) {
+      writeSideCollapsed(val);
+      this.setNavMini(val);
+    },
     '$route.params.workflowId': function reloadOnRoute() {
       if (this.skipNextRouteReload) {
         this.skipNextRouteReload = false;
@@ -695,7 +708,25 @@ export default {
       this.loadData();
     },
   },
-  async created() {
+  beforeRouteLeave(to, from, next) {
+    if (!this.dirty) {
+      next();
+      return;
+    }
+    this.pendingLeave = next;
+    this.leaveDialog = true;
+  },
+  created() {
+    this.history = new WorkflowHistory(50);
+    this.pendingHistoryKey = null;
+  },
+  async mounted() {
+    window.addEventListener('keydown', this.onWindowKeyDown);
+    window.addEventListener('beforeunload', this.onBeforeUnload);
+    // The editor fills the viewport exactly; drop the always-on page
+    // scrollbar Vuetify puts on <html>, its empty track shows as a strip.
+    document.documentElement.classList.add('WorkflowEditor-html');
+    this.setNavMini(this.sideCollapsed);
     [this.templates, this.projectRoles] = await Promise.all([
       this.loadProjectResources('templates'),
       this.loadEndpoint(`/api/project/${this.projectId}/roles/all`),
@@ -703,10 +734,36 @@ export default {
     await this.loadData();
     if (this.canManageCrossProjectTemplates) await this.refreshCrossProjectReferences();
   },
+  beforeDestroy() {
+    window.removeEventListener('keydown', this.onWindowKeyDown);
+    window.removeEventListener('beforeunload', this.onBeforeUnload);
+    document.documentElement.classList.remove('WorkflowEditor-html');
+    // The collapsed navigation is an editor-only state; other pages get the
+    // full drawer back regardless of what is stored.
+    this.setNavMini(false);
+  },
   methods: {
     ...enhancedMethods,
     showDrawer() {
       EventBus.$emit('i-show-drawer');
+    },
+    toggleSide() {
+      this.sideCollapsed = !this.sideCollapsed;
+    },
+    setNavMini(mini) {
+      EventBus.$emit('i-nav-mini', { mini });
+    },
+    // Informational only (see activeRuns); a failure must not block editing.
+    async loadActiveRuns() {
+      try {
+        const runs = await this.loadEndpoint(
+          `/api/project/${this.projectId}/workflows/${this.workflowId}/runs`,
+        );
+        this.activeRuns = (runs || [])
+          .filter((r) => ['pending', 'queued', 'running', 'approval', 'stopping'].includes(r.status)).length;
+      } catch (err) {
+        this.activeRuns = 0;
+      }
     },
     getNewItem() {
       return {
@@ -737,6 +794,7 @@ export default {
           );
           this.item = this.prepareItem(loaded);
           this.autoLayout();
+          this.loadActiveRuns();
         }
       } catch (err) {
         EventBus.$emit('i-snackbar', { color: 'error', text: getErrorMessage(err) });
@@ -748,6 +806,9 @@ export default {
       );
       this.includePersistedCrossProjectReferences();
       this.dirty = false;
+      this.history.reset({ nodes: this.item.nodes, edges: this.item.edges });
+      this.syncHistoryFlags();
+      this.savedSnapshot = this.modelSnapshot;
       // Force a clean canvas rebuild matching the freshly loaded model.
       this.graphKey += 1;
     },
@@ -755,7 +816,7 @@ export default {
     // graphical editor (all coordinates 0) so the computed layout persists on
     // the next save. Uses the same algorithm as the read-only run view.
     autoLayout() {
-      const nodes = this.item.nodes;
+      const { nodes } = this.item;
       if (!needsAutoLayout(nodes)) return;
       const layout = layoutWorkflowNodes(nodes, this.item.edges);
       nodes.forEach((n, i) => {
@@ -770,6 +831,10 @@ export default {
       if (!this.canManage) return;
       ev.dataTransfer.setData('node-kind', kind);
     },
+    addFromPalette(kind) {
+      if (!this.canManage || !this.$refs.graph) return;
+      this.$refs.graph.addNodeAtCenter(kind);
+    },
     onGraphChange({ nodes, edges }) {
       this.item.nodes = nodes.map((node) => {
         if (node.kind !== 'approval' || node.approval_role_policy !== undefined) return node;
@@ -781,6 +846,9 @@ export default {
       });
       this.item.edges = edges;
       this.markDirty();
+      this.history.push({ nodes: this.item.nodes, edges }, this.pendingHistoryKey);
+      this.pendingHistoryKey = null;
+      this.syncHistoryFlags();
       // Keep the open property panel in sync with the latest model snapshot.
       if (this.selectedNodeId != null) {
         const found = nodes.find((n) => n.id === this.selectedNodeId);
@@ -788,6 +856,11 @@ export default {
           this.selectedNodeId = null;
           this.editingNode = null;
         }
+      }
+      if (this.editingEdge) {
+        const { source_node_id: s, destination_node_id: d } = this.editingEdge;
+        const found = edges.find((e) => e.source_node_id === s && e.destination_node_id === d);
+        this.editingEdge = found ? { ...found } : null;
       }
     },
     onNodeSelected(nodeId) {
@@ -813,6 +886,10 @@ export default {
       this.editingNode = clone;
     },
     onConnectionSelected(edge) {
+      if (edge == null) {
+        this.editingEdge = null;
+        return;
+      }
       this.selectedNodeId = null;
       this.editingNode = null;
       this.editingEdge = { ...edge };
@@ -857,12 +934,28 @@ export default {
       }
       this.applyNodeEdit();
     },
+    edgeKey(edge) {
+      return `edge-${edge.source_node_id}-${edge.destination_node_id}`;
+    },
+    closePanel() {
+      this.editingNode = null;
+      this.editingEdge = null;
+      this.selectedNodeId = null;
+      if (this.$refs.graph) this.$refs.graph.clearSelection();
+    },
+    focusProblem(problem) {
+      if (problem.nodeId == null || !this.$refs.graph) return;
+      this.$refs.graph.selectNode(problem.nodeId);
+    },
     applyNodeEdit() {
       if (!this.editingNode || !this.$refs.graph) return;
+      // Coalesce keystrokes on one node into a single undo step.
+      this.pendingHistoryKey = `node-${this.editingNode.id}`;
       this.$refs.graph.syncNode(this.editingNode.id, { ...this.editingNode });
     },
     applyEdgeEdit() {
       if (!this.editingEdge || !this.$refs.graph) return;
+      this.pendingHistoryKey = this.edgeKey(this.editingEdge);
       this.$refs.graph.syncEdge({ ...this.editingEdge });
     },
     deleteSelectedNode() {
@@ -871,14 +964,73 @@ export default {
       this.editingNode = null;
       this.selectedNodeId = null;
     },
-    zoomIn() {
-      this.$refs.graph?.zoomIn();
+    deleteSelectedEdge() {
+      if (this.editingEdge == null || !this.$refs.graph) return;
+      this.$refs.graph.removeEdge(
+        this.editingEdge.source_node_id,
+        this.editingEdge.destination_node_id,
+      );
+      this.editingEdge = null;
     },
-    zoomOut() {
-      this.$refs.graph?.zoomOut();
+
+    // ---- history ----------------------------------------------------------------
+    syncHistoryFlags() {
+      this.canUndo = this.history.canUndo();
+      this.canRedo = this.history.canRedo();
     },
-    zoomReset() {
-      this.$refs.graph?.zoomReset();
+    applySnapshot(snapshot) {
+      if (!snapshot) return;
+      this.item.nodes = snapshot.nodes;
+      this.item.edges = snapshot.edges;
+      this.editingNode = null;
+      this.editingEdge = null;
+      this.selectedNodeId = null;
+      this.syncHistoryFlags();
+      this.markDirty();
+      this.$nextTick(() => {
+        if (this.$refs.graph) this.$refs.graph.reload();
+      });
+    },
+    undo() {
+      if (!this.canManage) return;
+      this.applySnapshot(this.history.undo());
+    },
+    redo() {
+      if (!this.canManage) return;
+      this.applySnapshot(this.history.redo());
+    },
+    onWindowKeyDown(ev) {
+      if (!(ev.ctrlKey || ev.metaKey) || isTypingTarget(ev.target)) return;
+      const key = ev.key.toLowerCase();
+      if (key === 'z' && ev.shiftKey) {
+        ev.preventDefault();
+        this.redo();
+      } else if (key === 'z') {
+        ev.preventDefault();
+        this.undo();
+      } else if (key === 'y') {
+        ev.preventDefault();
+        this.redo();
+      }
+    },
+
+    // ---- unsaved changes guard --------------------------------------------------
+    onBeforeUnload(ev) {
+      if (!this.dirty) return undefined;
+      ev.preventDefault();
+      // eslint-disable-next-line no-param-reassign
+      ev.returnValue = '';
+      return '';
+    },
+    confirmLeave() {
+      const next = this.pendingLeave;
+      this.pendingLeave = null;
+      if (next) next();
+    },
+    cancelLeave() {
+      const next = this.pendingLeave;
+      this.pendingLeave = null;
+      if (next) next(false);
     },
 
     // ---- save -----------------------------------------------------------------
@@ -946,9 +1098,9 @@ $worklow_pallete_width_collapsed: 60px;
     overflow: visible;
   }
 
-  // Inline name editor: looks like a title, but the pencil + dashed underline +
-  // hover/focus affordances make it clear it is editable. The field auto-sizes
-  // to the width of its text via the grid-sizer trick below.
+  // Inline name editor: looks like a title, but the pencil + hover/focus
+  // affordances make it clear it is editable. The field auto-sizes to the
+  // width of its text via the grid-sizer trick below.
   &__nameWrap {
     display: inline-flex;
     align-items: center;
@@ -957,23 +1109,10 @@ $worklow_pallete_width_collapsed: 60px;
     padding: 2px 8px;
     border-radius: 4px;
     background: rgba(127, 127, 127, 0.12);
-    //border-bottom: 2px solid transparent;
-    transition: background-color 0.15s ease,
-    border-color 0.15s ease;
-
-    &:hover {
-      background: rgba(127, 127, 127, 0.12);
-      //border-bottom-color: rgba(127, 127, 127, 0.9);
-    }
-
-    &:focus-within {
-      background: rgba(127, 127, 127, 0.12);
-      //border-bottom: 2px solid var(--v-primary-base, #1976d2);
-    }
+    transition: background-color 0.15s ease, border-color 0.15s ease;
 
     &--disabled {
       pointer-events: none;
-      //border-bottom-style: solid;
       opacity: 0.7;
     }
   }
@@ -1048,6 +1187,8 @@ $worklow_pallete_width_collapsed: 60px;
     }
 
     &--right {
+      width: 360px;
+      flex: 0 0 360px;
       border-right: none;
       border-left: 1px solid rgba(127, 127, 127, 0.2);
     }
@@ -1081,6 +1222,9 @@ $worklow_pallete_width_collapsed: 60px;
     border-left: none;
     border-radius: 0 8px 8px 0;
     cursor: pointer;
+    background: inherit;
+    background: white;
+
   }
 
   &__canvas {
@@ -1092,38 +1236,97 @@ $worklow_pallete_width_collapsed: 60px;
   &__paletteItem {
     display: flex;
     align-items: center;
-    padding: 8px 10px;
+    gap: 10px;
+    padding: 6px 8px;
     margin-bottom: 8px;
-    border: 1px dashed rgba(127, 127, 127, 0.5);
-    border-radius: 6px;
+    border: 1px solid rgba(127, 127, 127, 0.3);
+    border-radius: 10px;
     cursor: grab;
     user-select: none;
     font-size: 13px;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease;
 
-    &--task {
-      border-left: 3px solid #2196f3;
+    &:hover {
+      border-color: rgba(127, 127, 127, 0.6);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
     }
 
-    &--approval {
-      border-left: 3px solid #ab47bc;
-    }
-
-    &--delay {
-      border-left: 3px solid #ff9800;
-    }
-
-    &--note {
-      border-left: 3px solid #e6d873;
+    &:active {
+      cursor: grabbing;
     }
   }
 
+  &__paletteTile {
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(127, 127, 127, 0.12);
+
+    &--approval {
+      background: rgba(171, 71, 188, 0.14);
+    }
+
+    &--delay {
+      background: rgba(255, 152, 0, 0.16);
+    }
+
+    &--note {
+      background: rgba(230, 216, 115, 0.35);
+    }
+  }
+
+  &__paletteText {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   &__side--collapsed &__paletteItem {
-    padding-left: 8px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  &__side--collapsed &__paletteTile {
+    width: 33px;
+    min-width: 33px;
+    height: 33px;
+    border-radius: 9px;
   }
 }
 
 @media (max-width: 959px) {
   .WorkflowEditor {
+    &__toolbar {
+      height: auto !important;
+
+      ::v-deep .v-toolbar__content {
+        height: auto !important;
+        min-height: 64px;
+        flex-wrap: wrap;
+        row-gap: 8px;
+      }
+    }
+
+    &__title {
+      flex: 1 1 calc(100% - 70px);
+      min-width: 0;
+      max-width: calc(100% - 70px);
+      flex-wrap: wrap;
+      gap: 4px;
+      font-size: 16px;
+    }
+
+    &__nameWrap {
+      max-width: 100%;
+      min-width: 0;
+    }
+
+    &__sideToggle { display: none; }
+
     &__body {
       flex-direction: column;
       height: auto;
@@ -1150,4 +1353,10 @@ $worklow_pallete_width_collapsed: 60px;
     }
   }
 }
+.theme--dark {
+  .WorkflowEditor__sideToggle {
+    background: #1e1e1e;
+  }
+}
+
 </style>

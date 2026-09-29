@@ -392,6 +392,7 @@ func (d *WorkflowStoreImpl) insertWorkflowVersionTx(
 ) (db.WorkflowVersion, error) {
 	workflow.CurrentVersionID = 0
 	workflow.VersionMessage = ""
+	workflow.RevisionID = 0
 	fingerprint, err := pro_interfaces.WorkflowDefinitionFingerprint(workflow)
 	if err != nil {
 		return db.WorkflowVersion{}, err

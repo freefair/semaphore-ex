@@ -348,7 +348,11 @@ func addWorkflow() *db.WorkflowTemplate {
 	approvalPolicy := db.WorkflowApprovalRolePolicy{
 		Mode: db.WorkflowApprovalRoleModeAnyOf, RoleIDs: []db.ProjectRoleReference{db.BuiltinProjectRoleReferenceOwner}, MinimumDistinctApprovers: 1,
 	}
-	wf, err := workflowStore.CreateWorkflowTemplate(db.WorkflowTemplate{
+	versionStore, ok := workflowStore.(db.WorkflowVersionStore)
+	if !ok {
+		panic("workflow version store is unavailable")
+	}
+	wf, version, err := versionStore.CreateWorkflowTemplateVersioned(db.WorkflowTemplate{
 		ProjectID: userProject.ID,
 		Name:      "ITW-" + getUUID(),
 		Nodes: []db.WorkflowNode{
@@ -362,10 +366,15 @@ func addWorkflow() *db.WorkflowTemplate {
 				Condition:         db.WorkflowEdgeOnSuccess,
 			},
 		},
+	}, db.WorkflowVersionMutation{
+		AuthorUserID: testRunnerUser.ID,
+		Message:      "Dredd workflow fixture",
 	})
 	if err != nil {
 		panic(err)
 	}
+	wf.CurrentVersionID = version.ID
+	wf.RevisionID = version.ID
 	return &wf
 }
 

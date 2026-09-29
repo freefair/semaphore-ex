@@ -1,9 +1,12 @@
 package sql
 
 import (
+	"database/sql"
+	"errors"
 	"github.com/Masterminds/squirrel"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
+	"github.com/semaphoreui/semaphore/util"
 )
 
 func (d *SqlDb) CreateProject(project db.Project) (newProject db.Project, err error) {
@@ -88,6 +91,37 @@ func (d *SqlDb) DeleteProject(projectID int) error {
 		return err
 	}
 
+	lockProjectQuery := "select id from project where id=?"
+	if d.GetDialect() != util.DbDriverSQLite {
+		lockProjectQuery += " for update"
+	}
+	var lockedProjectID int
+	if err = tx.SelectOne(&lockedProjectID, d.PrepareQuery(lockProjectQuery), projectID); err != nil {
+		_ = tx.Rollback()
+		if errors.Is(err, sql.ErrNoRows) {
+			return db.ErrNotFound
+		}
+		return err
+	}
+
+	var activeWorkflowRuns int
+	if err = tx.SelectOne(&activeWorkflowRuns, d.PrepareQuery(
+		"select count(1) from project__workflow_run where project_id=? and status in (?, ?, ?, ?, ?)"),
+		projectID,
+		db.WorkflowRunPending,
+		db.WorkflowRunQueued,
+		db.WorkflowRunRunning,
+		db.WorkflowRunApproval,
+		db.WorkflowRunStopping,
+	); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if activeWorkflowRuns > 0 {
+		_ = tx.Rollback()
+		return db.ErrInvalidOperation
+	}
+
 	if err = db.RequireFinishedTaskGroups(tx, d.PrepareQuery, projectID, 0); err != nil {
 		_ = tx.Rollback()
 		return err
@@ -98,6 +132,7 @@ func (d *SqlDb) DeleteProject(projectID int) error {
 	}
 
 	statements := []string{
+		"delete from project__workflow_run where project_id=?",
 		"update project__template set build_template_id = null where project_id=?",
 		"delete from project__template where project_id=?",
 		"delete from project__user where project_id=?",

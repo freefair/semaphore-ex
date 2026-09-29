@@ -2,6 +2,7 @@ const enhancedMethods = {
   syncEdge(edge) {
     const key = this.condKey(edge.source_node_id, edge.destination_node_id);
     this.edgeMetadata[key] = { ...this.edgeMetadata[key], ...edge };
+    this.conditions[key] = edge.condition || 'on_success';
     this.emitChange();
   },
   nextEdgeId() {

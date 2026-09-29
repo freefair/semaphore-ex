@@ -569,7 +569,13 @@ func TestWorkflowRunControllerStartStatusListStopAndArtifacts(t *testing.T) {
 	assert.Equal(t, 1, service.progressCalls)
 	assert.Contains(t, statusRecorder.Body.String(), `"workflow":{"id":41`, "the status API must return the frozen definition")
 	assert.Contains(t, statusRecorder.Body.String(), `"name":"Original snapshot"`)
-	assert.Contains(t, statusRecorder.Body.String(), `"task":{"id":301`)
+	var details workflowRunDetails
+	require.NoError(t, json.Unmarshal(statusRecorder.Body.Bytes(), &details))
+	require.Len(t, details.Nodes, 1)
+	require.NotNil(t, details.Nodes[0].Task)
+	assert.Equal(t, 301, details.Nodes[0].Task.ID)
+	assert.Equal(t, run.WorkflowVersionID, details.RevisionID)
+	assert.Equal(t, run.DefinitionRevision, details.Revision)
 
 	stopRecorder := httptest.NewRecorder()
 	controller.StopWorkflowRun(stopRecorder, workflowRunRequest(http.MethodPost, "/api/project/7/workflows/41/runs/91/stop", workflow, run))

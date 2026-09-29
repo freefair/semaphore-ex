@@ -1,6 +1,6 @@
 <template>
   <div>
-    <v-toolbar flat>
+    <v-toolbar flat class="WorkflowRun__toolbar">
       <v-app-bar-nav-icon @click="showDrawer()"></v-app-bar-nav-icon>
       <v-toolbar-title>
         <router-link :to="`/project/${projectId}/workflows`">
@@ -13,6 +13,13 @@
           </span>
           <span v-if="details && elapsedTime" class="text--secondary">
             · {{ elapsedTime }}
+          </span>
+          <span
+            v-if="details && details.revision"
+            class="text--secondary"
+            :title="$t('workflowRunRevisionHint')"
+          >
+            · {{ $t('workflowRevisionLabel', { number: details.revision }) }}
           </span>
         </span>
       </v-toolbar-title>
@@ -65,15 +72,6 @@
         {{ $t('workflowRetryReconciliation') }}
       </v-btn>
 
-      <v-btn icon :title="$t('workflowToolbarZoomOut')" @click="zoomOut()">
-        <v-icon>mdi-magnify-minus-outline</v-icon>
-      </v-btn>
-      <v-btn icon :title="$t('workflowToolbarZoomIn')" @click="zoomIn()">
-        <v-icon>mdi-magnify-plus-outline</v-icon>
-      </v-btn>
-      <v-btn icon :title="$t('workflowToolbarFit')" @click="zoomReset()">
-        <v-icon>mdi-fit-to-page-outline</v-icon>
-      </v-btn>
       <v-btn icon @click="loadData()" :title="$t('refresh')">
         <v-icon>mdi-refresh</v-icon>
       </v-btn>
@@ -118,17 +116,20 @@
 
         <div class="WorkflowRun__graph">
           <WorkflowGraph
+            :key="`${projectId}:${workflowId}:${runId}`"
             v-if="workflow"
             ref="graph"
             :nodes="workflow.nodes || []"
             :edges="workflow.edges || []"
             :templates="templates"
-            :node-statuses="nodeStatuses"
-            :node-delays="nodeDelays"
+            :node-runs="nodeRuns"
+            :can-resolve-approvals="canResolveApprovals"
             :editable="false"
-            @node-selected="onNodeClicked"
+            @node-click="onNodeClicked"
+            @resolve-approval="onResolveApproval"
           />
 
+          <!-- Narrow screens: the in-card buttons are hard to hit, keep the bar. -->
           <div
             v-if="pendingApprovals.length || resolvedApprovals.length"
             class="WorkflowRun__approvals"
@@ -268,6 +269,34 @@
 
 @media (max-width: 600px) {
   .WorkflowRun {
+    &__graph .WorkflowCanvasControls {
+      top: 12px;
+      bottom: auto;
+    }
+
+    &__toolbar {
+      height: auto !important;
+
+      .v-toolbar__content {
+        height: auto !important;
+        min-height: 64px;
+        flex-wrap: wrap;
+        row-gap: 8px;
+      }
+
+      .v-toolbar__title {
+        flex: 1 1 calc(100% - 70px);
+        max-width: calc(100% - 70px);
+        white-space: normal;
+        font-size: 16px;
+      }
+    }
+
+    &__body {
+      height: calc(100dvh - 140px);
+      min-height: 420px;
+    }
+
     &__approvals {
       left: 12px;
       right: 12px;
@@ -314,6 +343,7 @@ export default {
       templates: [],
       ...createEnhancedState(),
       pollHandle: null,
+      loadGeneration: 0,
       socketListenerId: null,
       stopping: false,
       retryingReconciliation: false,
@@ -335,27 +365,36 @@ export default {
       return this.isActiveRunStatus(this.details.run.status)
         && Boolean(this.details.effective_access?.stop);
     },
-    // node.id -> raw run status, used by the graph for color + active animation.
-    nodeStatuses() {
+    hasRemoteRunnerNodes() {
+      if (!this.details) return false;
+      return (this.details.nodes || []).some(
+        (n) => n.task && n.task.used_runner_id != null,
+      );
+    },
+    // node.id -> run info for the card: status, timing, live delay countdown,
+    // the task to open on click and the approval message.
+    nodeRuns() {
       const map = {};
       const approvals = new Map(
         (this.details?.approvals || []).map((approval) => [approval.workflow_node_id, approval]),
       );
       (this.details?.nodes || []).forEach((n) => {
-        const status = n.status || (n.task && n.task.status)
-          || approvals.get(n.node.id)?.status || (n.delay && n.delay.status);
-        if (status) map[n.node.id] = this.normalizeNodeStatus(status);
+        const approval = approvals.get(n.node.id) || n.approval;
+        const status = n.status || n.task?.status || approval?.status || n.delay?.status;
+        map[n.node.id] = {
+          status: approval?.status === 'pending' ? 'pending' : this.normalizeNodeStatus(status),
+          eligible: Boolean(approval?.eligible),
+          start: n.task?.start || n.task?.created || approval?.created || n.delay?.created,
+          end: n.task?.end || approval?.resolved || n.delay?.resolved,
+          taskId: n.task?.id,
+          message: n.node.approval_message,
+          resumeAt: n.delay?.status === 'waiting' ? n.delay.resume_at : null,
+        };
       });
       return map;
     },
-    // node.id -> resume_at, for delay nodes currently waiting — lets the graph
-    // render a live countdown between polls instead of a static duration.
-    nodeDelays() {
-      const map = {};
-      (this.details?.nodes || []).forEach((n) => {
-        if (n.delay && n.delay.status === 'waiting') map[n.node.id] = n.delay.resume_at;
-      });
-      return map;
+    canResolveApprovals() {
+      return (this.details?.approvals || []).some((approval) => approval.eligible);
     },
     pendingApprovals() {
       return (this.details?.approvals || [])
@@ -363,25 +402,44 @@ export default {
         .map((approval) => ({ ...approval, nodeId: approval.workflow_node_id }));
     },
   },
+  watch: {
+    '$route.path': 'resetRun',
+  },
   async created() {
     this.socketListenerId = socket.addListener((data) => this.onWebsocketDataReceived(data));
-    await this.loadData();
-    this.pollHandle = setInterval(() => {
-      const status = this.details && this.details.run.status;
-      if (this.isActiveRunStatus(status)) {
-        this.loadData();
-      } else if (this.pollHandle) {
-        clearInterval(this.pollHandle);
-        this.pollHandle = null;
-      }
-    }, 5000);
+    await this.resetRun();
   },
   beforeDestroy() {
+    this.loadGeneration += 1;
     if (this.pollHandle) clearInterval(this.pollHandle);
     socket.removeListener(this.socketListenerId);
   },
   methods: {
     ...enhancedMethods,
+    async resetRun() {
+      const generation = (this.loadGeneration || 0) + 1;
+      this.loadGeneration = generation;
+      if (this.pollHandle) clearInterval(this.pollHandle);
+      this.pollHandle = null;
+      this.workflow = null;
+      this.details = null;
+      this.approvalComments = {};
+      await this.loadData();
+      if (this.loadGeneration !== generation) return;
+      this.startPolling();
+    },
+    startPolling() {
+      if (this.pollHandle) clearInterval(this.pollHandle);
+      this.pollHandle = setInterval(() => {
+        const status = this.details && this.details.run.status;
+        if (this.isActiveRunStatus(status)) {
+          this.loadData();
+        } else if (this.pollHandle) {
+          clearInterval(this.pollHandle);
+          this.pollHandle = null;
+        }
+      }, 5000);
+    },
     showDrawer() {
       EventBus.$emit('i-show-drawer');
     },
@@ -392,6 +450,9 @@ export default {
       if (entry && entry.task) {
         EventBus.$emit('i-show-task', { taskId: entry.task.id });
       }
+    },
+    onResolveApproval({ nodeId, status }) {
+      this.resolveApproval(nodeId, status);
     },
     statusColor(status) {
       switch (this.normalizeNodeStatus(status)) {
@@ -417,15 +478,6 @@ export default {
         default:
           return 'grey';
       }
-    },
-    zoomIn() {
-      if (this.$refs.graph) this.$refs.graph.zoomIn();
-    },
-    zoomOut() {
-      if (this.$refs.graph) this.$refs.graph.zoomOut();
-    },
-    zoomReset() {
-      if (this.$refs.graph) this.$refs.graph.zoomReset();
     },
     async stopRun() {
       this.stopping = true;
@@ -463,6 +515,7 @@ export default {
       }
     },
     async loadData() {
+      const scope = `${this.projectId}:${this.workflowId}:${this.runId}`;
       try {
         const base = `/api/project/${this.projectId}/workflows/${this.workflowId}/runs/${this.runId}`;
         const [details, artifacts, fileArtifacts] = await Promise.all([
@@ -470,8 +523,9 @@ export default {
           axios.get(`${base}/artifacts`),
           axios.get(`${base}/file-artifacts`),
         ]);
+        if (scope !== `${this.projectId}:${this.workflowId}:${this.runId}`) return;
         this.details = details.data;
-        this.workflow = details.data.workflow;
+        if (!this.workflow) this.workflow = details.data.workflow;
         this.templates = details.data.templates || [];
         this.artifacts = artifacts.data || [];
         this.fileArtifacts = fileArtifacts.data || [];

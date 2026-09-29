@@ -3,7 +3,6 @@ package sql
 import (
 	"context"
 	"database/sql"
-	"github.com/go-gorp/gorp/v3"
 	"github.com/semaphoreui/semaphore/db"
 )
 
@@ -23,10 +22,6 @@ func (d *SqlDbConnection) ExecContext(ctx context.Context, query string, args ..
 		return nil, db.ErrInvalidOperation
 	}
 	return d.sql.Db.ExecContext(ctx, d.PrepareQuery(query), formatArgs(args)...)
-}
-
-func (d *SqlDbConnection) Begin() (*gorp.Transaction, error) {
-	return d.sql.Begin()
 }
 
 // SelectAllContext exposes context-bound gorp mapping to replaceable-edition

@@ -36,6 +36,10 @@ type workflowController struct {
 }
 
 type workflowRunDetails struct {
+	WorkflowName    string                      `json:"workflow_name"`
+	RevisionID      int                         `json:"revision_id"`
+	Revision        int                         `json:"revision"`
+	Edges           []workflowRunEdgeView       `json:"edges"`
 	Run             workflowRunView             `json:"run"`
 	Workflow        workflowRunDefinitionView   `json:"workflow"`
 	Templates       []workflowRunTemplateView   `json:"templates"`
@@ -106,6 +110,7 @@ type workflowDelayView struct {
 }
 
 type workflowRunView struct {
+	RevisionID                  int                                     `json:"revision_id"`
 	ID                          int                                     `json:"id"`
 	ProjectID                   int                                     `json:"project_id"`
 	WorkflowTemplateID          int                                     `json:"workflow_template_id"`
@@ -179,6 +184,9 @@ type workflowRunTemplateView struct {
 }
 
 type workflowRunTaskView struct {
+	Created        time.Time              `json:"created"`
+	Start          *time.Time             `json:"start,omitempty"`
+	End            *time.Time             `json:"end,omitempty"`
 	ID             int                    `json:"id"`
 	Status         task_logger.TaskStatus `json:"status"`
 	UsedRunnerID   *int                   `json:"used_runner_id,omitempty"`
@@ -826,7 +834,7 @@ func (c *workflowController) workflowRunDetails(r *http.Request, run db.Workflow
 		}
 		if task, taskExists := tasksByNode[node.ID]; taskExists {
 			detail.Task = &workflowRunTaskView{
-				ID: task.ID, Status: task.Status,
+				ID: task.ID, Status: task.Status, Created: task.Created, Start: task.Start, End: task.End,
 				UsedRunnerID: task.UsedRunnerID, UsedRunnerName: task.UsedRunnerName,
 			}
 		}
@@ -865,11 +873,15 @@ func (c *workflowController) workflowRunDetails(r *http.Request, run db.Workflow
 		}
 	}
 	return workflowRunDetails{
-		Run:       newWorkflowRunView(run),
-		Workflow:  newWorkflowRunDefinitionView(run.DefinitionSnapshot),
-		Templates: templates,
-		Nodes:     nodes,
-		Approvals: approvalViews, EffectiveAccess: workflowEffectiveAccess(r, run.DefinitionSnapshot),
+		WorkflowName: run.DefinitionSnapshot.Name,
+		RevisionID:   run.WorkflowVersionID,
+		Revision:     run.DefinitionRevision,
+		Edges:        newWorkflowRunDefinitionView(run.DefinitionSnapshot).Edges,
+		Run:          newWorkflowRunView(run),
+		Workflow:     newWorkflowRunDefinitionView(run.DefinitionSnapshot),
+		Templates:    templates,
+		Nodes:        nodes,
+		Approvals:    approvalViews, EffectiveAccess: workflowEffectiveAccess(r, run.DefinitionSnapshot),
 	}, nil
 }
 
@@ -888,6 +900,7 @@ func workflowEffectiveAccess(r *http.Request, workflow db.WorkflowTemplate) work
 
 func newWorkflowRunView(run db.WorkflowRun) workflowRunView {
 	view := workflowRunView{
+		RevisionID:                  run.WorkflowVersionID,
 		ID:                          run.ID,
 		ProjectID:                   run.ProjectID,
 		WorkflowTemplateID:          run.WorkflowTemplateID,
