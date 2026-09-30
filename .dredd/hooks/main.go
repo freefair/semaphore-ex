@@ -158,7 +158,7 @@ func main() {
 			t.Request.Body = "{\"id\":" + strconv.Itoa(workflowID) + ",\"project_id\":" + strconv.Itoa(userProject.ID) + ",\"revision\":" + strconv.Itoa(workflow.Revision) + ",\"name\":\"workflow-updated\",\"access_policy\":{\"revision\":1},\"nodes\":[{\"id\":-1,\"template_id\":" + strconv.Itoa(templateID) + "},{\"id\":-2,\"kind\":\"approval\",\"approval_timeout\":120,\"approval_role_policy\":{\"revision\":1,\"mode\":\"any_of\",\"role_ids\":[\"builtin:owner\"],\"minimum_distinct_approvers\":1,\"initiator_separation\":false}}],\"edges\":[{\"source_node_id\":-1,\"destination_node_id\":-2,\"condition\":\"on_success\"}]}"
 		})
 		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id} > Remove workflow > 204 > application/json", capabilityWrapper("workflow"))
-		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/revisions > Get workflow revisions > 200 > application/json", capabilityWrapper("workflow"))
+		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/revisions{?count,before} > Get workflow revisions > 200 > application/json", capabilityWrapper("workflow"))
 		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/revisions/{revision_id} > Get workflow revision > 200 > application/json", capabilityWrapper("workflow"))
 		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/run > Run workflow > 201 > application/json", capabilityWrapper("workflow"))
 		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/runs > Run workflow > 201 > application/json", capabilityWrapper("workflow"))
@@ -190,7 +190,7 @@ func main() {
 			"workflow > /api/project/{project_id}/workflows/{workflow_id} > Get workflow > 200 > application/json",
 			"workflow > /api/project/{project_id}/workflows/{workflow_id} > Update workflow > 204 > application/json",
 			"workflow > /api/project/{project_id}/workflows/{workflow_id} > Remove workflow > 204 > application/json",
-			"workflow > /api/project/{project_id}/workflows/{workflow_id}/revisions > Get workflow revisions > 200 > application/json",
+			"workflow > /api/project/{project_id}/workflows/{workflow_id}/revisions{?count,before} > Get workflow revisions > 200 > application/json",
 			"workflow > /api/project/{project_id}/workflows/{workflow_id}/revisions/{revision_id} > Get workflow revision > 200 > application/json",
 			"workflow > /api/project/{project_id}/workflows/{workflow_id}/run > Run workflow > 201 > application/json",
 			"workflow > /api/project/{project_id}/workflows/{workflow_id}/runs > Run workflow > 201 > application/json",
