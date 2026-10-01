@@ -287,8 +287,12 @@ type LDAPService interface {
 	Initialize(context.Context) error
 	LoginProviders(context.Context) ([]LDAPLoginProvider, error)
 	AllowLocalRecovery(context.Context, string) (bool, error)
-	Authenticate(context.Context, LDAPAuthenticationRequest) (db.User, error)
-	Link(context.Context, LDAPLinkRequest) error
+	// Authenticate returns provisioned=true only when this request created both
+	// a user and its LDAP external identity, even if later maintenance fails.
+	Authenticate(context.Context, LDAPAuthenticationRequest) (db.User, bool, error)
+	// Link returns linked=true only when this successful request created the
+	// requested external identity; an existing identity returns false, nil.
+	Link(context.Context, LDAPLinkRequest) (bool, error)
 	Providers(context.Context) ([]LDAPProviderConfiguration, error)
 	Configure(context.Context, LDAPConfigureRequest) (LDAPProviderConfiguration, error)
 	Test(context.Context, LDAPTestRequest) (LDAPReadiness, error)

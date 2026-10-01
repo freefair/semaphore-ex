@@ -15,6 +15,8 @@ import (
 	coresql "github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pro/pkg/features"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
+	"github.com/semaphoreui/semaphore/services/audit/audittest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -305,6 +307,124 @@ func TestGlobalRoleControllerFailsClosedWhenCapabilityIsUnavailable(t *testing.T
 	assert.Equal(t, http.StatusForbidden, response.Code)
 }
 
+func TestRoleControllerRecordsAuditOnlyForSuccessfulStoredMutations(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "Audited role API project"})
+	require.NoError(t, err)
+	admin, err := store.CreateUserWithoutPassword(db.User{
+		Username: "audited-role-admin", Name: "Audited role administrator",
+		Email: "audited-role-admin@example.test", Admin: true,
+	})
+	require.NoError(t, err)
+	controller := NewRolesController(store, features.NewCapabilityProvider(store))
+
+	globalCreate, globalCreateAudit := serveGlobalRoleAuditRequest(
+		t, store, admin, http.MethodPost, "/api/roles",
+		map[string]any{
+			"name":               "Global auditor",
+			"permissions":        db.CanViewWorkflows,
+			"global_permissions": db.CanManageGlobalUsers | db.CanReadGlobalAudit,
+		}, nil, controller.AddRole,
+	)
+	assert.Equal(t, http.StatusCreated, globalCreate.Code)
+	var globalRole db.Role
+	require.NoError(t, json.Unmarshal(globalCreate.Body.Bytes(), &globalRole))
+	globalCreated := onlyRoleAuditEvent(t, globalCreateAudit, audit.IAMRoleCreate)
+	assert.Equal(t, &audit.Target{Type: audit.TargetRole, ID: string(globalRole.ID), Name: globalRole.Name}, globalCreated.Event.Target)
+	assert.Equal(t, audit.RoleMetadata{Permissions: []string{
+		"workflow.view", "global.users.manage", "global.audit.read",
+	}}, globalCreated.Event.Metadata)
+
+	globalUpdate, globalUpdateAudit := serveGlobalRoleAuditRequest(
+		t, store, admin, http.MethodPut, "/api/roles/"+string(globalRole.ID),
+		map[string]any{
+			"id": globalRole.ID, "name": "Updated global auditor",
+			"permissions":        db.CanViewWorkflows | db.CanStartWorkflows,
+			"global_permissions": db.CanManageGlobalRoles,
+			"revision":           globalRole.Revision,
+		}, map[string]string{"role_id": string(globalRole.ID)}, controller.UpdateRole,
+	)
+	assert.Equal(t, http.StatusOK, globalUpdate.Code)
+	var updatedGlobalRole db.Role
+	require.NoError(t, json.Unmarshal(globalUpdate.Body.Bytes(), &updatedGlobalRole))
+	globalUpdated := onlyRoleAuditEvent(t, globalUpdateAudit, audit.IAMRoleUpdate)
+	assert.Equal(t, &audit.Target{Type: audit.TargetRole, ID: string(updatedGlobalRole.ID), Name: updatedGlobalRole.Name}, globalUpdated.Event.Target)
+	assert.Equal(t, audit.RoleMetadata{Permissions: []string{
+		"workflow.view", "workflow.start", "global.roles.manage",
+	}}, globalUpdated.Event.Metadata)
+
+	staleGlobal, staleGlobalAudit := serveGlobalRoleAuditRequest(
+		t, store, admin, http.MethodPut, "/api/roles/"+string(globalRole.ID),
+		map[string]any{"id": globalRole.ID, "name": "Stale", "revision": globalRole.Revision},
+		map[string]string{"role_id": string(globalRole.ID)}, controller.UpdateRole,
+	)
+	assert.Equal(t, http.StatusConflict, staleGlobal.Code)
+	assert.Empty(t, staleGlobalAudit.All())
+
+	globalDelete, globalDeleteAudit := serveGlobalRoleAuditRequest(
+		t, store, admin, http.MethodDelete,
+		"/api/roles/"+string(updatedGlobalRole.ID)+"?revision="+strconv.Itoa(updatedGlobalRole.Revision),
+		nil, map[string]string{"role_id": string(updatedGlobalRole.ID)}, controller.DeleteRole,
+	)
+	assert.Equal(t, http.StatusNoContent, globalDelete.Code)
+	globalDeleted := onlyRoleAuditEvent(t, globalDeleteAudit, audit.IAMRoleDelete)
+	assert.Equal(t, &audit.Target{Type: audit.TargetRole, ID: string(updatedGlobalRole.ID), Name: updatedGlobalRole.Name}, globalDeleted.Event.Target)
+
+	projectCreate, projectCreateAudit := serveProjectRoleAuditRequest(
+		t, project, http.MethodPost, "/api/project/"+strconv.Itoa(project.ID)+"/roles",
+		map[string]any{"name": "Project viewer", "permissions": db.CanViewWorkflows}, nil,
+		controller.AddProjectRole,
+	)
+	assert.Equal(t, http.StatusCreated, projectCreate.Code)
+	var projectRole db.Role
+	require.NoError(t, json.Unmarshal(projectCreate.Body.Bytes(), &projectRole))
+	projectCreated := onlyRoleAuditEvent(t, projectCreateAudit, audit.IAMProjectRoleDefinitionCreate)
+	assert.Equal(t, &audit.Target{Type: audit.TargetProjectRoleDefinition, ID: string(projectRole.ID), Name: projectRole.Name}, projectCreated.Event.Target)
+	assert.Equal(t, project.ID, projectCreated.Event.ProjectID)
+	assert.Equal(t, audit.RoleMetadata{Permissions: []string{"workflow.view"}}, projectCreated.Event.Metadata)
+
+	projectUpdate, projectUpdateAudit := serveProjectRoleAuditRequest(
+		t, project, http.MethodPut, "/api/project/"+strconv.Itoa(project.ID)+"/roles/"+string(projectRole.ID),
+		map[string]any{
+			"id": projectRole.ID, "name": "Project operator",
+			"permissions": db.CanViewWorkflows | db.CanStartWorkflows, "revision": projectRole.Revision,
+		}, map[string]string{"role_id": string(projectRole.ID)}, controller.UpdateProjectRole,
+	)
+	assert.Equal(t, http.StatusOK, projectUpdate.Code)
+	var updatedProjectRole db.Role
+	require.NoError(t, json.Unmarshal(projectUpdate.Body.Bytes(), &updatedProjectRole))
+	projectUpdated := onlyRoleAuditEvent(t, projectUpdateAudit, audit.IAMProjectRoleDefinitionUpdate)
+	assert.Equal(t, &audit.Target{Type: audit.TargetProjectRoleDefinition, ID: string(updatedProjectRole.ID), Name: updatedProjectRole.Name}, projectUpdated.Event.Target)
+	assert.Equal(t, project.ID, projectUpdated.Event.ProjectID)
+	assert.Equal(t, audit.RoleMetadata{Permissions: []string{"workflow.view", "workflow.start"}}, projectUpdated.Event.Metadata)
+
+	missingProject, missingProjectAudit := serveProjectRoleAuditRequest(
+		t, project, http.MethodDelete, "/api/project/"+strconv.Itoa(project.ID)+"/roles/missing?revision=1",
+		nil, map[string]string{"role_id": "missing"}, controller.DeleteProjectRole,
+	)
+	assert.Equal(t, http.StatusNotFound, missingProject.Code)
+	assert.Empty(t, missingProjectAudit.All())
+
+	projectDelete, projectDeleteAudit := serveProjectRoleAuditRequest(
+		t, project, http.MethodDelete,
+		"/api/project/"+strconv.Itoa(project.ID)+"/roles/"+string(updatedProjectRole.ID)+"?revision="+strconv.Itoa(updatedProjectRole.Revision),
+		nil, map[string]string{"role_id": string(updatedProjectRole.ID)}, controller.DeleteProjectRole,
+	)
+	assert.Equal(t, http.StatusNoContent, projectDelete.Code)
+	projectDeleted := onlyRoleAuditEvent(t, projectDeleteAudit, audit.IAMProjectRoleDefinitionDelete)
+	assert.Equal(t, &audit.Target{Type: audit.TargetProjectRoleDefinition, ID: string(updatedProjectRole.ID), Name: updatedProjectRole.Name}, projectDeleted.Event.Target)
+	assert.Equal(t, project.ID, projectDeleted.Event.ProjectID)
+
+	deniedController := NewRolesController(store, deniedProjectRoleCapabilityProvider{})
+	denied, deniedAudit := serveProjectRoleAuditRequest(
+		t, project, http.MethodPost, "/api/project/"+strconv.Itoa(project.ID)+"/roles",
+		map[string]any{"name": "Denied", "permissions": db.CanViewWorkflows}, nil, deniedController.AddProjectRole,
+	)
+	assert.Equal(t, http.StatusForbidden, denied.Code)
+	assert.Empty(t, deniedAudit.All())
+}
+
 func serveProjectRoleRequest(
 	t *testing.T,
 	project db.Project,
@@ -329,6 +449,34 @@ func serveProjectRoleRequest(
 	response := httptest.NewRecorder()
 	handler(response, request)
 	return response
+}
+
+func serveProjectRoleAuditRequest(
+	t *testing.T,
+	project db.Project,
+	method string,
+	path string,
+	body any,
+	vars map[string]string,
+	handler http.HandlerFunc,
+) (*httptest.ResponseRecorder, *audittest.Recorder) {
+	t.Helper()
+	var encoded []byte
+	var err error
+	if body != nil {
+		encoded, err = json.Marshal(body)
+		require.NoError(t, err)
+	}
+	request := httptest.NewRequest(method, path, bytes.NewReader(encoded))
+	request.Header.Set("Content-Type", "application/json")
+	request = helpers.SetContextValue(request, "project", project)
+	request = helpers.SetContextValue(request, "user", &db.User{ID: 1})
+	request = mux.SetURLVars(request, vars)
+	recorder := &audittest.Recorder{}
+	request = helpers.SetContextValue(request, "audit", recorder)
+	response := httptest.NewRecorder()
+	handler(response, request)
+	return response, recorder
 }
 
 func serveGlobalRoleRequest(
@@ -356,4 +504,40 @@ func serveGlobalRoleRequest(
 	response := httptest.NewRecorder()
 	handler(response, request)
 	return response
+}
+
+func serveGlobalRoleAuditRequest(
+	t *testing.T,
+	store db.Store,
+	user db.User,
+	method string,
+	path string,
+	body any,
+	vars map[string]string,
+	handler http.HandlerFunc,
+) (*httptest.ResponseRecorder, *audittest.Recorder) {
+	t.Helper()
+	var encoded []byte
+	var err error
+	if body != nil {
+		encoded, err = json.Marshal(body)
+		require.NoError(t, err)
+	}
+	request := httptest.NewRequest(method, path, bytes.NewReader(encoded))
+	request.Header.Set("Content-Type", "application/json")
+	request = helpers.SetContextValue(request, "store", store)
+	request = helpers.SetContextValue(request, "user", &user)
+	request = mux.SetURLVars(request, vars)
+	recorder := &audittest.Recorder{}
+	request = helpers.SetContextValue(request, "audit", recorder)
+	response := httptest.NewRecorder()
+	handler(response, request)
+	return response, recorder
+}
+
+func onlyRoleAuditEvent(t *testing.T, recorder *audittest.Recorder, kind audit.Kind) audittest.Recorded {
+	t.Helper()
+	recorded, err := recorder.Only(kind)
+	require.NoError(t, err)
+	return recorded
 }

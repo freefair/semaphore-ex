@@ -23,3 +23,4 @@ func NewOrphanCleaner(_ db.Store, _ *tasks.TaskPool) OrphanCleaner      { return
 
 func NewClusterInspector(_ db.Store, _ ...pro_interfaces.ClusterDrainer) ClusterInspector { return nil }
 func NewWorkflowRunLocker(_ db.Store) pro_interfaces.WorkflowRunLocker                    { return nil }
+func NewAuditExportLeaser() pro_interfaces.AuditExportLeaser                              { return nil }

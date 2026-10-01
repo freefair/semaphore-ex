@@ -145,11 +145,30 @@ func TestLDAPCollisionDoesNotMergeLocalUser(t *testing.T) {
 		Name: "Directory User", Email: "directory@example.test",
 	}
 
-	_, err = service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
+	_, _, err = service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
 		ProviderID: "corp", Username: "jdoe", Password: "directory-password", Now: now.Add(time.Minute),
 	})
 	if !errors.Is(err, pro_interfaces.ErrLDAPIdentityCollision) {
 		t.Fatalf("colliding LDAP login = %v, want identity collision", err)
+	}
+}
+
+func TestLDAPAuthenticateReportsProvisioningOnlyOnce(t *testing.T) {
+	_, service, client, now := readyActiveLDAPServiceTest(t)
+	client.result.Identity = pro_interfaces.LDAPIdentity{
+		ExternalID: "provision-once", Username: "provisioned", Name: "Provisioned", Email: "provisioned@example.test",
+	}
+	first, provisioned, err := service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
+		ProviderID: "corp", Username: "provisioned", Password: "directory-password", Now: now.Add(time.Minute),
+	})
+	if err != nil || !provisioned {
+		t.Fatalf("first LDAP authentication = user=%#v provisioned=%t err=%v", first, provisioned, err)
+	}
+	second, provisioned, err := service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
+		ProviderID: "corp", Username: "provisioned", Password: "directory-password", Now: now.Add(2 * time.Minute),
+	})
+	if err != nil || provisioned || second.ID != first.ID {
+		t.Fatalf("repeat LDAP authentication = user=%#v provisioned=%t err=%v", second, provisioned, err)
 	}
 }
 
@@ -159,7 +178,7 @@ func TestDisablingLDAPRejectsLoginAndPreservesLinkedIdentity(t *testing.T) {
 		ExternalID: "40f1c82a-b773-4d41-a587-7c4cf7f3cd67", Username: "jdoe",
 		Name: "Directory User", Email: "jdoe@example.test",
 	}
-	user, err := service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
+	user, _, err := service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
 		ProviderID: "corp", Username: "jdoe", Password: "directory-password", Now: now.Add(time.Minute),
 	})
 	if err != nil {
@@ -172,7 +191,7 @@ func TestDisablingLDAPRejectsLoginAndPreservesLinkedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("disable LDAP: %v", err)
 	}
-	_, err = service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
+	_, _, err = service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
 		ProviderID: "corp", Username: "jdoe", Password: "directory-password", Now: now.Add(3 * time.Minute),
 	})
 	if !errors.Is(err, pro_interfaces.ErrLDAPDisabled) {
@@ -195,7 +214,7 @@ func TestLDAPAuthenticationThrottlesRepeatedFailures(t *testing.T) {
 
 	var err error
 	for attempt := 0; attempt < ldapMaxFailures; attempt++ {
-		_, err = service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
+		_, _, err = service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
 			ProviderID: "corp", Username: "attacker", Password: "wrong", Now: now.Add(time.Duration(attempt) * time.Second),
 		})
 	}
@@ -203,7 +222,7 @@ func TestLDAPAuthenticationThrottlesRepeatedFailures(t *testing.T) {
 		t.Fatalf("fifth failed LDAP login = %v, want throttled", err)
 	}
 	requestCount := len(client.requests)
-	_, err = service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
+	_, _, err = service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
 		ProviderID: "corp", Username: "attacker", Password: "wrong", Now: now.Add(10 * time.Second),
 	})
 	if !errors.Is(err, pro_interfaces.ErrLDAPThrottled) || len(client.requests) != requestCount {

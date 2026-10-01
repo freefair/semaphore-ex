@@ -16,6 +16,7 @@ import (
 	proServer "github.com/semaphoreui/semaphore/pro/services/server"
 	proTasks "github.com/semaphoreui/semaphore/pro/services/tasks"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	auditServices "github.com/semaphoreui/semaphore/services/audit"
 	identityServices "github.com/semaphoreui/semaphore/services/identity"
 	"github.com/semaphoreui/semaphore/services/schedules"
@@ -106,6 +107,17 @@ func runService() {
 	}
 
 	initSyslog(util.Config.Syslog, debugFilter)
+
+	auditService, auditErr := audit.StartService(
+		store,
+		util.Config.Audit,
+		util.HANodeID(),
+		proServer.NewAuditExporter(store, util.Config.Audit, proHA.NewAuditExportLeaser()),
+	)
+	if auditErr != nil {
+		log.WithError(auditErr).Fatal("failed to start the audit log")
+	}
+	defer auditService.Stop()
 
 	state := proTasks.NewTaskStateStore()
 	terraformStore := proFactory.NewTerraformStore(store)
@@ -361,6 +373,7 @@ func runService() {
 			r = helpers.SetContextValue(r, "log_writer", logWriteService)
 			r = helpers.SetContextValue(r, "cluster_inspector", clusterInspector)
 			r = helpers.SetContextValue(r, "task_recovery_manager", orphanCleaner)
+			r = helpers.SetContextValue(r, "audit", auditService.Recorder())
 
 			next.ServeHTTP(w, r)
 		})
@@ -369,11 +382,11 @@ func runService() {
 	var router http.Handler = route
 
 	router = handlers.ProxyHeaders(router)
+	// Outside ProxyHeaders, which trusts X-Forwarded-For blindly.
+	router = auditService.Wrap(router)
 	http.Handle("/", router)
 
 	fmt.Println("Server is running")
-
-	defer store.Close()
 
 	var err error
 	if util.Config.TLS.Enabled {

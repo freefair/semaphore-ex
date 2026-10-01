@@ -445,6 +445,7 @@ type TokenManager interface {
 	CreateAPIToken(token APIToken) (APIToken, error)
 	GetAPIToken(tokenID string) (APIToken, error)
 	ExpireAPIToken(userID int, tokenID string) error
+	GetAPITokensByPrefix(userID int, tokenPrefix string) ([]APIToken, error)
 	DeleteAPIToken(userID int, tokenID string) error
 }
 
@@ -610,7 +611,7 @@ type RoleRepository interface {
 	GetGlobalRoles() ([]Role, error)
 	UpdateRole(role Role) error
 	CreateRole(role Role) (Role, error)
-	DeleteRole(slug string) error
+	DeleteRole(slug string, projectID *int) error
 	CreateProjectRole(role Role) (Role, error)
 	UpdateProjectRole(projectID int, role Role, expectedRevision int) (Role, error)
 	DeleteProjectRole(projectID int, roleID ProjectRoleID, expectedRevision int) error
@@ -661,6 +662,8 @@ type Store interface {
 	OIDCGroupMappingRepository
 	AuditWebhookRepository
 	NotificationRepository
+	AuditEventManager
+	AuditExportRepository
 }
 
 var AccessKeyProps = ObjectProps{

@@ -14,6 +14,7 @@ import (
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 	_ "modernc.org/sqlite"
+	"net/url"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -83,6 +84,7 @@ func (d *SqlDbConnection) Connect() {
 	}
 
 	d.sql.AddTableWithName(db.APIToken{}, "user__token").SetKeys(false, "id")
+	d.sql.AddTableWithName(db.AuditEvent{}, "audit_event").SetKeys(false, "seq")
 	d.sql.AddTableWithName(db.AccessKey{}, "access_key").SetKeys(true, "id")
 	d.sql.AddTableWithName(db.Environment{}, "project__environment").SetKeys(true, "id")
 	d.sql.AddTableWithName(db.Inventory{}, "project__inventory").SetKeys(true, "id")
@@ -487,6 +489,21 @@ func validateMutationResult(res sql.Result, err error) error {
 	return nil
 }
 
+// requireDeletedRow returns db.ErrNotFound when the statement removed no row, so the audit records only real deletes.
+func requireDeletedRow(res sql.Result, err error) error {
+	if err = validateMutationResult(res, err); err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return db.ErrNotFound
+	}
+	return nil
+}
+
 func (d *SqlDb) PrepareQuery(query string) string {
 	return d.connection.PrepareQuery(query)
 }
@@ -530,7 +547,27 @@ func connect() (*sql.DB, error) {
 	}
 
 	dialect := cfg.Dialect
+	if dialect == util.DbDriverSQLite {
+		connectionString, err = sqliteImmediateTransactionConnectionString(connectionString)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return sql.Open(dialect, connectionString)
+}
+
+func sqliteImmediateTransactionConnectionString(connectionString string) (string, error) {
+	connectionURL, err := url.Parse(connectionString)
+	if err != nil {
+		return "", fmt.Errorf("parse SQLite connection string: %w", err)
+	}
+	options := connectionURL.Query()
+	// A transaction that reads before it writes cannot be promoted after a
+	// competing WAL writer commits. Acquire the write reservation at Begin so
+	// task lifecycle updates wait rather than failing with SQLITE_BUSY_SNAPSHOT.
+	options.Set("_txlock", "immediate")
+	connectionURL.RawQuery = options.Encode()
+	return connectionURL.String(), nil
 }
 
 func createDb() error {

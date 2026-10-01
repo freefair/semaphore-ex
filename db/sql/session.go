@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"regexp"
+	"strings"
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
@@ -50,35 +51,36 @@ func validateAPIToken(token string) error {
 	return nil
 }
 
-func (d *SqlDb) DeleteAPIToken(userID int, tokenPrefix string) (err error) {
-	if db.IsAPITokenStableID(tokenPrefix) {
+func (d *SqlDb) DeleteAPIToken(userID int, tokenID string) (err error) {
+	if db.IsAPITokenStableID(tokenID) {
 		tokens, err := d.GetAPITokens(userID)
-		if errors.Is(err, db.ErrNotFound) {
-			// Preserve the legacy DELETE no-op behavior for an owner without tokens.
-			return nil
-		}
 		if err != nil {
 			return err
 		}
 
 		for _, token := range tokens {
-			if token.StableID() == tokenPrefix {
-				_, err = d.exec("DELETE FROM user__token WHERE id=? AND user_id=?", token.ID, userID)
-				return err
+			if token.StableID() == tokenID {
+				return requireDeletedRow(d.exec("DELETE FROM user__token WHERE id=? AND user_id=?", token.ID, userID))
 			}
 		}
-
-		// Preserve the legacy DELETE no-op behavior for an unknown reference.
-		return nil
+		return db.ErrNotFound
 	}
 
-	err = validateAPIToken(tokenPrefix)
+	err = validateAPIToken(tokenID)
 	if err != nil {
 		return
 	}
 
-	_, err = d.exec("DELETE FROM user__token WHERE id LIKE ? AND user_id=?", tokenPrefix+"%", userID)
+	return requireDeletedRow(d.exec("DELETE FROM user__token WHERE id=? AND user_id=?", tokenID, userID))
+}
 
+func (d *SqlDb) GetAPITokensByPrefix(userID int, tokenPrefix string) (tokens []db.APIToken, err error) {
+	err = validateAPIToken(tokenPrefix)
+	if err != nil {
+		return
+	}
+	escapedPrefix := strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(tokenPrefix)
+	_, err = d.selectAll(&tokens, "select * from user__token where id like ? escape '!' and user_id=?", escapedPrefix+"%", userID)
 	return
 }
 

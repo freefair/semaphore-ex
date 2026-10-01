@@ -1,9 +1,11 @@
 package projects
 
 import (
+	"errors"
 	"fmt"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"net/http"
 )
 
@@ -16,7 +18,7 @@ func UserMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		_, err := helpers.Store(r).GetProjectUser(project.ID, userID)
+		membership, err := helpers.Store(r).GetProjectUser(project.ID, userID)
 
 		if err != nil {
 			helpers.WriteError(w, err)
@@ -31,6 +33,7 @@ func UserMiddleware(next http.Handler) http.Handler {
 		}
 
 		r = helpers.SetContextValue(r, "projectUser", user)
+		r = helpers.SetContextValue(r, "projectMembership", membership)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -129,21 +132,46 @@ func AddUser(w http.ResponseWriter, r *http.Request) {
 		Description: fmt.Sprintf("User ID %d added to team", projectUser.UserID),
 	})
 
+	target := audit.UserTarget(projectUser.UserID, "")
+	if added, err := helpers.Store(r).GetUser(projectUser.UserID); err == nil {
+		target.Name = added.Username
+	}
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:      audit.IAMMembershipAdd,
+		Target:    target,
+		ProjectID: project.ID,
+		Metadata:  audit.MembershipMetadata{Role: projectMembershipRoleAuditName(r, project.ID, db.ProjectUser{Role: role, RoleID: roleID})},
+	})
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // removeUser removes a user from a project team
-func removeUser(targetUser db.User, w http.ResponseWriter, r *http.Request) {
+func removeUser(targetUser db.User, membership db.ProjectUser, w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	me := helpers.GetFromContext(r, "user").(*db.User) // logged in user
 	myRole := helpers.GetFromContext(r, "projectUserRole").(db.ProjectUserRole)
 
+	event := audit.Event{
+		Kind:      audit.IAMMembershipRemove,
+		Target:    audit.UserTarget(targetUser.ID, targetUser.Username),
+		ProjectID: project.ID,
+		Metadata:  audit.MembershipMetadata{Role: projectMembershipRoleAuditName(r, project.ID, membership), SelfRemoval: targetUser.ID == me.ID},
+	}
+
 	if !me.Admin && targetUser.ID == me.ID && myRole == db.ProjectOwner {
+		event.Outcome = audit.OutcomeFailure
+		event.Reason = audit.ReasonOwnerSelfChange
+		helpers.Audit(r).Record(r.Context(), event)
 		helpers.WriteError(w, fmt.Errorf("owner can not left the project"))
 		return
 	}
 
 	err := helpers.Store(r).DeleteProjectUser(project.ID, targetUser.ID)
+	if errors.Is(err, db.ErrNotFound) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 
 	if err != nil {
 		writeProjectMembershipError(w, err)
@@ -157,6 +185,7 @@ func removeUser(targetUser db.User, w http.ResponseWriter, r *http.Request) {
 		ObjectID:    targetUser.ID,
 		Description: fmt.Sprintf("User ID %d removed from team", targetUser.ID),
 	})
+	helpers.Audit(r).Record(r.Context(), event)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -164,13 +193,24 @@ func removeUser(targetUser db.User, w http.ResponseWriter, r *http.Request) {
 // LeftProject removes a user from a project team
 func LeftProject(w http.ResponseWriter, r *http.Request) {
 	me := helpers.GetFromContext(r, "user").(*db.User) // logged in user
-	removeUser(*me, w, r)
+	myRole := helpers.GetFromContext(r, "projectUserRole").(db.ProjectUserRole)
+	removeUser(*me, db.ProjectUser{Role: myRole}, w, r)
 }
 
 // RemoveUser removes a user from a project team
 func RemoveUser(w http.ResponseWriter, r *http.Request) {
+	project := helpers.GetFromContext(r, "project").(db.Project)
 	targetUser := helpers.GetFromContext(r, "projectUser").(db.User) // target user
-	removeUser(targetUser, w, r)
+	membership, ok := helpers.GetFromContext(r, "projectMembership").(db.ProjectUser)
+	if !ok {
+		var err error
+		membership, err = helpers.Store(r).GetProjectUser(project.ID, targetUser.ID)
+		if err != nil {
+			helpers.WriteError(w, err)
+			return
+		}
+	}
+	removeUser(targetUser, membership, w, r)
 }
 
 func UpdateUser(w http.ResponseWriter, r *http.Request) {
@@ -178,8 +218,27 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 	me := helpers.GetFromContext(r, "user").(*db.User) // logged in user
 	targetUser := helpers.GetFromContext(r, "projectUser").(db.User)
 	targetUserRole := helpers.GetFromContext(r, "projectUserRole").(db.ProjectUserRole)
+	membership, ok := helpers.GetFromContext(r, "projectMembership").(db.ProjectUser)
+	if !ok {
+		var err error
+		membership, err = helpers.Store(r).GetProjectUser(project.ID, targetUser.ID)
+		if err != nil {
+			helpers.WriteError(w, err)
+			return
+		}
+	}
+
+	event := audit.Event{
+		Kind:      audit.IAMProjectRoleChange,
+		Target:    audit.UserTarget(targetUser.ID, targetUser.Username),
+		ProjectID: project.ID,
+		Metadata:  audit.ProjectRoleMetadata{OldRole: projectMembershipRoleAuditName(r, project.ID, membership)},
+	}
 
 	if !me.Admin && targetUser.ID == me.ID && targetUserRole == db.ProjectOwner {
+		event.Outcome = audit.OutcomeFailure
+		event.Reason = audit.ReasonOwnerSelfChange
+		helpers.Audit(r).Record(r.Context(), event)
 		helpers.WriteError(w, fmt.Errorf("owner can not change his role in the project"))
 		return
 	}
@@ -222,6 +281,20 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 		ObjectID:    targetUser.ID,
 		Description: fmt.Sprintf("Changed role for User ID %d", targetUser.ID),
 	})
+	event.Metadata = audit.ProjectRoleMetadata{
+		OldRole: projectMembershipRoleAuditName(r, project.ID, membership),
+		NewRole: projectMembershipRoleAuditName(r, project.ID, db.ProjectUser{Role: role, RoleID: roleID}),
+	}
+	helpers.Audit(r).Record(r.Context(), event)
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func projectMembershipRoleAuditName(r *http.Request, projectID int, membership db.ProjectUser) string {
+	if membership.RoleID != nil {
+		if role, err := helpers.Store(r).GetProjectRoleByID(projectID, *membership.RoleID); err == nil {
+			return audit.TruncateName(role.Slug, audit.MaxNameBytes)
+		}
+	}
+	return audit.TruncateName(string(membership.Role), audit.MaxNameBytes)
 }

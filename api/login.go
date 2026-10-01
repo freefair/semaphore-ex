@@ -15,6 +15,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/random"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
@@ -34,6 +35,20 @@ func createSession(
 	r *http.Request,
 	user db.User,
 	oidc bool,
+	totpService pro_interfaces.TOTPService,
+) bool {
+	meta := audit.AuthMethodMetadata{Method: audit.LoginMethodPassword}
+	if oidc {
+		meta.Method = audit.LoginMethodOIDC
+	}
+	return createSessionWithMetadata(w, r, user, meta, totpService)
+}
+
+func createSessionWithMetadata(
+	w http.ResponseWriter,
+	r *http.Request,
+	user db.User,
+	meta audit.AuthMethodMetadata,
 	totpService pro_interfaces.TOTPService,
 ) bool {
 	var err error
@@ -94,9 +109,12 @@ func createSession(
 		return false
 	}
 
+	// The MFA step records the login with the method of the first step.
 	encoded, err := util.Cookie.Encode("semaphore", map[string]any{
-		"user":    user.ID,
-		"session": newSession.ID,
+		"user":     user.ID,
+		"session":  newSession.ID,
+		"method":   meta.Method,
+		"provider": meta.Provider,
 	})
 	if err != nil {
 		log.WithError(err).WithFields(log.Fields{
@@ -121,6 +139,14 @@ func createSession(
 		// it can still be used without TLS inside private networks.
 		Secure: isSecureWebHost(),
 	})
+	if verified {
+		ctx := audit.WithActor(r.Context(), audit.UserActor(user.ID, user.Username, audit.AuthSession, ""))
+		helpers.Audit(r).Record(ctx, audit.Event{
+			Kind:     audit.AuthLogin,
+			Target:   audit.UserTarget(user.ID, user.Username),
+			Metadata: meta,
+		})
+	}
 	return true
 }
 
@@ -132,25 +158,26 @@ func isSecureWebHost() bool {
 
 func loginByPassword(store db.Store, login string, password string) (user db.User, err error) {
 	user, err = store.GetUserByLoginOrEmail(login, login)
+	if errors.Is(err, db.ErrNotFound) {
+		err = loginError{reason: audit.ReasonUserNotFound}
+		return
+	}
 	if err != nil {
 		return
 	}
 
 	if user.External {
-		err = db.ErrNotFound
+		err = loginError{reason: audit.ReasonInvalidCredentials}
 		return
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
-	if err != nil {
-		err = db.ErrNotFound
-		return
+	if err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
+		err = loginError{reason: audit.ReasonInvalidCredentials}
 	}
-
 	return
 }
 
-func loginByLDAP(store db.Store, ldapUser db.User, userDN string, providerID string) (db.User, error) {
+func loginByLDAP(store db.Store, ldapUser db.User, userDN string, providerID string) (db.User, externalResolution, error) {
 	return resolveExternalUser(store, externalUserProfile{
 		Type:            db.IdentityTypeLdap,
 		Provider:        providerID,
@@ -161,6 +188,68 @@ func loginByLDAP(store db.Store, ldapUser db.User, userDN string, providerID str
 		MatchByUsername: true,
 		// The email comes from the directory, not the user - authoritative.
 		EmailVerified: true,
+	})
+}
+
+// Unwraps to db.ErrNotFound, so the handler answers 401.
+type loginError struct {
+	reason audit.Reason
+}
+
+func (e loginError) Error() string { return "login rejected: " + string(e.reason) }
+
+func (e loginError) Unwrap() error { return db.ErrNotFound }
+
+func ldapFailureReason(err error) audit.Reason {
+	var rejected loginError
+	switch {
+	case err == nil:
+		return audit.ReasonUserNotFound
+	case errors.Is(err, pro_interfaces.ErrLDAPInvalidCredentials):
+		return audit.ReasonInvalidCredentials
+	case errors.As(err, &rejected):
+		return rejected.reason
+	default:
+		return audit.ReasonProviderError
+	}
+}
+
+func loginFailureReason(err error) audit.Reason {
+	var rejected loginError
+	switch {
+	case errors.As(err, &rejected):
+		return rejected.reason
+	case errors.Is(err, db.ErrNotFound):
+		return audit.ReasonInvalidCredentials
+	default:
+		return audit.ReasonInternalError
+	}
+}
+
+func recordLoginFailure(r *http.Request, loginName string, meta audit.AuthMethodMetadata, reason audit.Reason) {
+	event := audit.Event{Kind: audit.AuthLogin, Outcome: audit.OutcomeFailure, Reason: reason, Metadata: meta}
+	if loginName != "" {
+		event.Target = &audit.Target{Type: audit.TargetUser, Name: audit.TruncateName(loginName, audit.MaxLoginNameBytes)}
+	}
+	helpers.Audit(r).Record(r.Context(), event)
+}
+
+func recordExternalResolution(r *http.Request, user db.User, resolution externalResolution, meta audit.AuthMethodMetadata) {
+	var kind audit.Kind
+	switch resolution {
+	case resolvedProvisioned:
+		// The identity link is part of this event.
+		kind = audit.IAMUserAutoProvision
+	case resolvedLinked:
+		kind = audit.IAMExternalIdentityLink
+	default:
+		return
+	}
+	ctx := audit.WithActor(r.Context(), audit.UserActor(user.ID, user.Username, audit.AuthSession, ""))
+	helpers.Audit(r).Record(ctx, audit.Event{
+		Kind:     kind,
+		Target:   audit.UserTarget(user.ID, user.Username),
+		Metadata: meta,
 	})
 }
 
@@ -223,6 +312,17 @@ func logout(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+
+		// The session stores only the user ID, so the name is best-effort.
+		user := db.User{ID: session.UserID}
+		if stored, getErr := helpers.Store(r).GetUser(session.UserID); getErr == nil {
+			user = stored
+		}
+		ctx := audit.WithActor(r.Context(), audit.UserActor(user.ID, user.Username, audit.AuthSession, ""))
+		helpers.Audit(r).Record(ctx, audit.Event{
+			Kind:   audit.AuthLogout,
+			Target: audit.UserTarget(user.ID, user.Username),
+		})
 	}
 
 	http.SetCookie(w, &http.Cookie{

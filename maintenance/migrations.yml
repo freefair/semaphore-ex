@@ -883,6 +883,13 @@ migrations:
   upstream_id: 2.20.8
   rationale: Preserve canonical revision schema; remove foreign keys before supporting indexes and use MySQL/MariaDB table-qualified DROP INDEX on rollback.
 - registered: true
+  id: 2.20.9
+  owner: upstream
+  files:
+    migrations/v2.20.9.err.sql: 5172078814617e9e2c4db357ef5ca65dfdb5110f61b56c2a2ddcd488815c7be3
+    migrations/v2.20.9.sql: 5aa2f5c75e08b73532bf3fe19bf800990a3e4a0d4bca21225721b20803522ef0
+  upstream_id: 2.20.9
+- registered: true
   id: 2.3.0
   owner: upstream
   files:

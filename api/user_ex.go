@@ -6,13 +6,14 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	log "github.com/sirupsen/logrus"
 	"net/http"
 )
 
 func linkLdapIdentityWithService(
 	service pro_interfaces.LDAPService,
-	audit pro_interfaces.AuditServiceFacade,
+	auditFacade pro_interfaces.AuditServiceFacade,
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
@@ -32,17 +33,21 @@ func linkLdapIdentityWithService(
 		providerID = "ldap"
 	}
 	if service != nil {
-		err := service.Link(r.Context(), pro_interfaces.LDAPLinkRequest{
+		linked, err := service.Link(r.Context(), pro_interfaces.LDAPLinkRequest{
 			ActorID: currentUser.ID, ProviderID: providerID,
 			Username: creds.Username, Password: creds.Password, Now: tz.Now(),
 		})
 		if !errors.Is(err, pro_interfaces.ErrLDAPUnavailable) {
 			outcome, reason := ldapAuditReason(err)
-			recordLDAPAudit(audit, r, &currentUser.ID,
+			recordLDAPAudit(auditFacade, r, &currentUser.ID,
 				pro_interfaces.AuditActionLDAPLink, outcome, reason)
 			if err != nil {
 				writeLDAPError(w, err)
 				return
+			}
+			if linked {
+				recordExternalResolution(r, *currentUser, resolvedLinked,
+					audit.AuthMethodMetadata{Method: audit.LoginMethodLDAP, Provider: providerID})
 			}
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -66,7 +71,7 @@ func linkLdapIdentityWithService(
 		return
 	}
 
-	err = linkExternalIdentity(helpers.Store(r), *currentUser, db.IdentityTypeLdap, providerID, userDN)
+	linked, err := linkExternalIdentity(helpers.Store(r), *currentUser, db.IdentityTypeLdap, providerID, userDN)
 	if err != nil {
 		switch {
 		case errors.Is(err, errIdentityLinkedToAnother):
@@ -82,6 +87,10 @@ func linkLdapIdentityWithService(
 			helpers.WriteErrorStatus(w, "Failed to link LDAP account", http.StatusInternalServerError)
 		}
 		return
+	}
+	if linked {
+		recordExternalResolution(r, *currentUser, resolvedLinked,
+			audit.AuthMethodMetadata{Method: audit.LoginMethodLDAP, Provider: providerID})
 	}
 
 	w.WriteHeader(http.StatusNoContent)

@@ -153,7 +153,7 @@ func TestLDAPLoginRefreshesAuthenticatedUsersManagedAssignments(t *testing.T) {
 			GroupExternalIDs: []string{"entryuuid:40112233-4455-6677-8899-aabbccddeeff"},
 		}},
 	}
-	user, err := service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
+	user, _, err := service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
 		ProviderID: "corp", Username: "login-user", Password: "password", Now: now.Add(time.Second),
 	})
 	require.NoError(t, err)

@@ -10,6 +10,7 @@ import (
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,7 @@ type ldapServiceStub struct {
 	stateRequest        pro_interfaces.LDAPStateRequest
 	authRequest         pro_interfaces.LDAPAuthenticationRequest
 	linkRequest         pro_interfaces.LDAPLinkRequest
+	linked              bool
 	recoveryAllowed     bool
 	groupMappings       []pro_interfaces.LDAPGroupMapping
 	groupPreview        pro_interfaces.LDAPGroupPreview
@@ -44,13 +46,13 @@ func (s *ldapServiceStub) AllowLocalRecovery(context.Context, string) (bool, err
 }
 func (s *ldapServiceStub) Authenticate(
 	_ context.Context, request pro_interfaces.LDAPAuthenticationRequest,
-) (db.User, error) {
+) (db.User, bool, error) {
 	s.authRequest = request
-	return s.user, s.err
+	return s.user, s.linked, s.err
 }
-func (s *ldapServiceStub) Link(_ context.Context, request pro_interfaces.LDAPLinkRequest) error {
+func (s *ldapServiceStub) Link(_ context.Context, request pro_interfaces.LDAPLinkRequest) (bool, error) {
 	s.linkRequest = request
-	return s.err
+	return s.linked, s.err
 }
 func (s *ldapServiceStub) Providers(context.Context) ([]pro_interfaces.LDAPProviderConfiguration, error) {
 	return s.providers, s.err
@@ -218,6 +220,73 @@ func TestManagedLDAPLoginMapsOutageAndAuditsOutcome(t *testing.T) {
 	assert.Equal(t, pro_interfaces.AuditActionLDAPLogin, audit.events[0].Action)
 	assert.Equal(t, pro_interfaces.AuditReasonProviderError, audit.events[0].Reason)
 	assert.NoError(t, audit.events[0].Validate())
+}
+
+func TestManagedLDAPLoginInvalidCredentialsRecordsRootLoginFailure(t *testing.T) {
+	service := &ldapServiceStub{err: pro_interfaces.ErrLDAPInvalidCredentials}
+	request := helpers.SetContextValue(httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		strings.NewReader(`{"auth":"jdoe","password":"wrong","method":"ldap","provider":"corp"}`)), "store", setupSessionTest(t))
+	request, recorded := withAuditRecorder(request)
+	recorder := httptest.NewRecorder()
+
+	loginWithIdentityServices(nil, service, nil, recorder, request)
+
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+	event := onlyEvent(t, recorded, audit.AuthLogin)
+	assert.Equal(t, audit.OutcomeFailure, event.Event.Outcome)
+	assert.Equal(t, audit.ReasonInvalidCredentials, event.Event.Reason)
+	assert.Equal(t, audit.AuthMethodMetadata{Method: audit.LoginMethodLDAP, Provider: "corp"}, event.Event.Metadata)
+}
+
+func TestManagedLDAPLoginRecordsAuthoritativeProvisioningOutcome(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		provisioned bool
+		want        []audit.Kind
+	}{
+		{name: "new identity", provisioned: true, want: []audit.Kind{audit.IAMUserAutoProvision, audit.AuthLogin}},
+		{name: "existing identity", provisioned: false, want: []audit.Kind{audit.AuthLogin}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := setupSessionTest(t)
+			user := createUserOptionsTestUser(t, store, "ldap-"+test.name)
+			request := helpers.SetContextValue(httptest.NewRequest(http.MethodPost, "/api/auth/login",
+				strings.NewReader(`{"auth":"directory","password":"secret","method":"ldap","provider":"corp"}`)), "store", store)
+			request, recorded := withAuditRecorder(request)
+
+			loginWithIdentityServices(nil, &ldapServiceStub{user: user, linked: test.provisioned}, nil, httptest.NewRecorder(), request)
+
+			kinds, err := recorded.Kinds()
+			require.NoError(t, err)
+			assert.Equal(t, test.want, kinds)
+		})
+	}
+}
+
+func TestManagedLDAPLinkRecordsOnlyCreatedIdentity(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		linked bool
+		want   []audit.Kind
+	}{
+		{name: "created", linked: true, want: []audit.Kind{audit.IAMExternalIdentityLink}},
+		{name: "existing", linked: false, want: []audit.Kind{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := setupSessionTest(t)
+			user := createUserOptionsTestUser(t, store, "ldap-link-"+test.name)
+			request := helpers.SetContextValue(httptest.NewRequest(http.MethodPost, "/api/user/identities/ldap",
+				strings.NewReader(`{"username":"`+user.Username+`","password":"secret","provider":"corp"}`)), "store", store)
+			request = helpers.SetContextValue(request, "user", &user)
+			request, recorded := withAuditRecorder(request)
+
+			linkLdapIdentityWithService(&ldapServiceStub{linked: test.linked}, nil, httptest.NewRecorder(), request)
+
+			kinds, err := recorded.Kinds()
+			require.NoError(t, err)
+			assert.Equal(t, test.want, kinds)
+		})
+	}
 }
 
 func TestManagedLDAPMetadataExposesRecoveryOnlyPasswordPath(t *testing.T) {

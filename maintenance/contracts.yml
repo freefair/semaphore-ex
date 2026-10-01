@@ -101,6 +101,8 @@ symbols:
     signature: func(store db.Store, _ pro_interfaces.CapabilityProvider) *pro/api.RolesController
     selected_signature: func(store db.Store, capabilityProvider pro_interfaces.CapabilityProvider) *pro/api.RolesController
     implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/api/roles_test.go::TestRoleControllerRecordsAuditOnlyForSuccessfulStoredMutations
   - name: api:NewTerraformController
     signature: func(encryptionServices services/server.AccessKeyEncryptionService, terraformRepo db.TerraformStore, keyRepo db.AccessKeyManager)
       *pro/api.TerraformController
@@ -126,10 +128,14 @@ symbols:
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
     implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/api/roles_test.go::TestRoleControllerRecordsAuditOnlyForSuccessfulStoredMutations
   - name: api:RolesController.AddRole
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
     implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/api/roles_test.go::TestRoleControllerRecordsAuditOnlyForSuccessfulStoredMutations
   - name: api:RolesController.DeleteGlobalRoleAssignment
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
@@ -138,10 +144,14 @@ symbols:
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
     implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/api/roles_test.go::TestRoleControllerRecordsAuditOnlyForSuccessfulStoredMutations
   - name: api:RolesController.DeleteRole
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
     implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/api/roles_test.go::TestRoleControllerRecordsAuditOnlyForSuccessfulStoredMutations
   - name: api:RolesController.GetEffectiveGlobalPermissions
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
@@ -182,10 +192,14 @@ symbols:
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
     implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/api/roles_test.go::TestRoleControllerRecordsAuditOnlyForSuccessfulStoredMutations
   - name: api:RolesController.UpdateRole
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
     implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/api/roles_test.go::TestRoleControllerRecordsAuditOnlyForSuccessfulStoredMutations
   - name: api:TerraformController
     signature: struct{}
     selected_signature: struct{}
@@ -850,6 +864,29 @@ symbols:
   - name: db:ApplyTemplatePermissionOverride
     signature: func(inherited db.TemplatePermission, override *db.TemplateRolePerm) db.TemplatePermission
     implementation: core
+  - name: db:AuditEvent
+    signature: struct{Seq int64 "db:\"seq\""; EventID string "db:\"event_id\""; Created time.Time "db:\"created\""; SchemaVersion
+      string "db:\"schema_version\""; Category string "db:\"category\""; EventCode string "db:\"event_code\""; Type string "db:\"type\"";
+      Action string "db:\"action\""; Outcome string "db:\"outcome\""; Reason string "db:\"reason\""; ActorType string "db:\"actor_type\"";
+      ActorID string "db:\"actor_id\""; ActorName string "db:\"actor_name\""; ActorAuth string "db:\"actor_auth\""; ActorTokenFingerprint
+      string "db:\"actor_token_fingerprint\""; SourceIP string "db:\"source_ip\""; UserAgent string "db:\"user_agent\""; TargetType
+      string "db:\"target_type\""; TargetID string "db:\"target_id\""; TargetName string "db:\"target_name\""; ProjectID *int
+      "db:\"project_id\""; RequestID string "db:\"request_id\""; InstanceID string "db:\"instance_id\""; NodeID string "db:\"node_id\"";
+      Metadata string "db:\"metadata\""}
+    implementation: core
+  - name: db:AuditEventManager
+    signature: interface{CreateAuditEvent(ctx context.Context, event db.AuditEvent) (db.AuditEvent, error)}
+    implementation: core
+    behavior_tests:
+    - db/sql/audit_event_test.go::TestCreateAuditEvent_RoundTripsEveryColumn
+    - db/sql/audit_event_test.go::TestCreateAuditEvent_GapFreeUnderConcurrency
+  - name: db:AuditExportRepository
+    signature: interface{AdvanceAuditExportState(ctx context.Context, destinationID string, expectedCursor int64, nextCursor
+      int64) (advanced bool, err error); GetAuditEventsAfter(ctx context.Context, cursor int64, limit int) ([]db.AuditEvent,
+      error); InitializeAuditExportState(ctx context.Context, destinationID string) (cursor int64, err error)}
+    implementation: core
+    behavior_tests:
+    - db/sql/audit_event_test.go::TestAuditExportStateStartsAtCurrentSequenceAndUsesCompareAndSwap
   - name: db:AuditWebhookConfig
     signature: >-
       struct{ID int "db:\"id\""; Endpoint string "db:\"endpoint\""; EncryptedCredential string "db:\"encrypted_credential\" json:\"-\"";
@@ -3794,18 +3831,21 @@ symbols:
     signature: db.ObjectProps
     implementation: core
   - name: db:RoleRepository
-    signature: >-
-      interface{CreateGlobalRole(role db.Role) (db.Role, error); CreateGlobalRoleAssignment(assignment db.GlobalRoleAssignment)
-      (db.GlobalRoleAssignment, error); CreateProjectRole(role db.Role) (db.Role, error); CreateRole(role db.Role) (db.Role, error);
-      DeleteGlobalRole(roleID db.ProjectRoleID, expectedRevision int) error; DeleteGlobalRoleAssignment(userID int, assignmentID int,
-      expectedRevision int) error; DeleteProjectRole(projectID int, roleID db.ProjectRoleID, expectedRevision int) error; DeleteRole(slug
-      string) error; GetEffectiveGlobalPermissions(userID int) (db.GlobalPermission, error); GetGlobalRoleAssignments(userID int)
-      ([]db.GlobalRoleAssignment, error); GetGlobalRoleByID(roleID db.ProjectRoleID) (db.Role, error); GetGlobalRoleBySlug(slug string)
-      (db.Role, error); GetGlobalRoles() ([]db.Role, error); GetProjectOrGlobalRoleBySlug(projectID int, slug string) (db.Role, error);
-      GetProjectRole(projectID int, slug string) (db.Role, error); GetProjectRoleByID(projectID int, roleID db.ProjectRoleID) (db.Role,
-      error); GetProjectRoles(projectID int) ([]db.Role, error); UpdateGlobalRole(role db.Role, expectedRevision int) (db.Role, error);
-      UpdateProjectRole(projectID int, role db.Role, expectedRevision int) (db.Role, error); UpdateRole(role db.Role) error}
+    signature: interface{CreateGlobalRole(role db.Role) (db.Role, error); CreateGlobalRoleAssignment(assignment db.GlobalRoleAssignment)
+      (db.GlobalRoleAssignment, error); CreateProjectRole(role db.Role) (db.Role, error); CreateRole(role db.Role) (db.Role,
+      error); DeleteGlobalRole(roleID db.ProjectRoleID, expectedRevision int) error; DeleteGlobalRoleAssignment(userID int,
+      assignmentID int, expectedRevision int) error; DeleteProjectRole(projectID int, roleID db.ProjectRoleID, expectedRevision
+      int) error; DeleteRole(slug string, projectID *int) error; GetEffectiveGlobalPermissions(userID int) (db.GlobalPermission,
+      error); GetGlobalRoleAssignments(userID int) ([]db.GlobalRoleAssignment, error); GetGlobalRoleByID(roleID db.ProjectRoleID)
+      (db.Role, error); GetGlobalRoleBySlug(slug string) (db.Role, error); GetGlobalRoles() ([]db.Role, error); GetProjectOrGlobalRoleBySlug(projectID
+      int, slug string) (db.Role, error); GetProjectRole(projectID int, slug string) (db.Role, error); GetProjectRoleByID(projectID
+      int, roleID db.ProjectRoleID) (db.Role, error); GetProjectRoles(projectID int) ([]db.Role, error); UpdateGlobalRole(role
+      db.Role, expectedRevision int) (db.Role, error); UpdateProjectRole(projectID int, role db.Role, expectedRevision int)
+      (db.Role, error); UpdateRole(role db.Role) error}
     implementation: core
+    behavior_tests:
+    - db/sql/role_test.go::TestDeleteRole_GlobalScopeDoesNotTouchProjectRole
+    - db/sql/role_test.go::TestUpdateRole_OtherProjectIsNotFound
   - name: db:Rollback
     signature: func(d db.Store, targetVersion string) error
     implementation: core
@@ -4378,20 +4418,16 @@ symbols:
     signature: struct{Login string "json:\"login\""; Passphrase string "json:\"passphrase\""; PrivateKey string "json:\"private_key\""}
     implementation: core
   - name: db:Store
-    signature: >-
-      interface{db.ConnectionManager; db.MigrationManager; db.OptionsManager; db.UserManager; db.ProjectStore;
-      db.ProjectInviteRepository; db.TemplateManager; db.InventoryManager; db.RepositoryManager;
-      db.HostConfigManager; db.EnvironmentManager; db.AccessKeyManager; db.IntegrationManager;
-      db.SessionManager; db.TokenManager; db.ExternalIdentityManager; db.TaskManager; db.ScheduleManager;
-      db.ViewManager; db.RunnerManager; db.DockerExecutionPolicyRepository;
-      db.KubernetesExecutionPolicyRepository; db.DockerReconciliationRepository; db.DockerTelemetryRepository;
-      db.KubernetesTelemetryRepository; db.EventManager; db.SecretStorageRepository;
-      db.GlobalCredentialRepository; db.SecretSyncRepository; db.RoleRepository; db.CapabilityRepository;
-      db.TOTPRepository; db.LDAPRepository; db.OIDCGroupMappingRepository; db.AuditWebhookRepository;
-      db.NotificationRepository}
+    signature: interface{db.ConnectionManager; db.MigrationManager; db.OptionsManager; db.UserManager; db.ProjectStore; db.ProjectInviteRepository;
+      db.TemplateManager; db.InventoryManager; db.RepositoryManager; db.HostConfigManager; db.EnvironmentManager; db.AccessKeyManager;
+      db.IntegrationManager; db.SessionManager; db.TokenManager; db.ExternalIdentityManager; db.TaskManager; db.ScheduleManager;
+      db.ViewManager; db.RunnerManager; db.DockerExecutionPolicyRepository; db.KubernetesExecutionPolicyRepository; db.DockerReconciliationRepository;
+      db.DockerTelemetryRepository; db.KubernetesTelemetryRepository; db.EventManager; db.SecretStorageRepository; db.GlobalCredentialRepository;
+      db.SecretSyncRepository; db.RoleRepository; db.CapabilityRepository; db.TOTPRepository; db.LDAPRepository; db.OIDCGroupMappingRepository;
+      db.AuditWebhookRepository; db.NotificationRepository; db.AuditEventManager; db.AuditExportRepository}
     implementation: core
     behavior_tests:
-      - db/sql/host_config_test.go::TestHostConfigCRUD
+    - db/sql/host_config_test.go::TestHostConfigCRUD
   - name: db:StringArrayField
     signature: '[]string'
     implementation: core
@@ -4974,11 +5010,12 @@ symbols:
       "json:\"backend_filename,omitempty\""}
     implementation: core
   - name: db:TokenManager
-    signature: >-
-      interface{CreateAPIToken(token db.APIToken) (db.APIToken, error); DeleteAPIToken(userID int, tokenID string) error;
-      ExpireAPIToken(userID int, tokenID string) error; GetAPIToken(tokenID string) (db.APIToken, error); GetAPITokens(userID int)
-      ([]db.APIToken, error)}
+    signature: interface{CreateAPIToken(token db.APIToken) (db.APIToken, error); DeleteAPIToken(userID int, tokenID string)
+      error; ExpireAPIToken(userID int, tokenID string) error; GetAPIToken(tokenID string) (db.APIToken, error); GetAPITokens(userID
+      int) ([]db.APIToken, error); GetAPITokensByPrefix(userID int, tokenPrefix string) ([]db.APIToken, error)}
     implementation: core
+    behavior_tests:
+    - api/users_audit_test.go::TestDeleteAPIToken_RecordsEveryTokenTheStoreDeleted
   - name: db:TokenProps
     signature: db.ObjectProps
     implementation: core
@@ -6606,6 +6643,23 @@ symbols:
       "json:\"reason_codes,omitempty\""; CandidateCount int "json:\"candidate_count,omitempty\""; SelectedRunnerID int
       "json:\"selected_runner_id,omitempty\""}
     implementation: core
+  - name: pro_interfaces:AuditExportLease
+    signature: interface{Lost() <-chan struct{}; Release(); Valid() bool}
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/ha/audit_export_lease_test.go::TestRedisAuditExportLeaseSignalsLossAtLocalExpiryWithoutValidCall
+  - name: pro_interfaces:AuditExportLeaser
+    signature: interface{TryAcquire(ctx context.Context, destinationID string) (lease pro_interfaces.AuditExportLease, ok bool,
+      err error)}
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/ha/audit_export_lease_test.go::TestRedisAuditExportLeaseReleaseAndRenewAreBoundedWhenRedisStalls
+    - test/edition-contract/enhanced/services/ha/audit_export_lease_test.go::TestLocalAuditExportLeaseAllowsOnlyOneOwnerPerDestination
+  - name: pro_interfaces:AuditExporter
+    signature: interface{DestinationIDs() []string; Start() error; Stop()}
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditExporterSkipsHistoricalEventsAndAdvancesDurableCursor
   - name: pro_interfaces:AuditOutcome
     signature: string
     implementation: core
@@ -8562,22 +8616,23 @@ symbols:
       "json:\"role_id\""}
     implementation: core
   - name: pro_interfaces:LDAPService
-    signature: >-
-      interface{AllowLocalRecovery(context.Context, string) (bool, error); ApplyGroupPreview(context.Context,
-      pro_interfaces.LDAPGroupApplyRequest) (pro_interfaces.LDAPGroupPreview, error); Authenticate(context.Context,
-      pro_interfaces.LDAPAuthenticationRequest) (db.User, error); Configure(context.Context, pro_interfaces.LDAPConfigureRequest)
-      (pro_interfaces.LDAPProviderConfiguration, error); DeleteGroupMapping(context.Context, pro_interfaces.LDAPGroupMappingDeleteRequest)
-      error; GroupMappings(context.Context, string) ([]pro_interfaces.LDAPGroupMapping, error); GroupReconciliationHistory(context.Context,
-      string, int) ([]db.LDAPGroupReconciliation, error); Initialize(context.Context) error; Link(context.Context,
-      pro_interfaces.LDAPLinkRequest) error; LoginProviders(context.Context) ([]pro_interfaces.LDAPLoginProvider, error);
-      PreviewGroupMappings(context.Context, pro_interfaces.LDAPGroupPreviewRequest) (pro_interfaces.LDAPGroupPreview, error);
-      Providers(context.Context) ([]pro_interfaces.LDAPProviderConfiguration, error); ReconcileGroupMappings(context.Context,
-      pro_interfaces.LDAPGroupPreviewRequest) (pro_interfaces.LDAPGroupPreview, error); SaveGroupMapping(context.Context,
-      pro_interfaces.LDAPGroupMappingRequest) (pro_interfaces.LDAPGroupMapping, error); SetState(context.Context,
-      pro_interfaces.LDAPStateRequest) (pro_interfaces.LDAPProviderConfiguration, error); Test(context.Context,
-      pro_interfaces.LDAPTestRequest) (pro_interfaces.LDAPReadiness, error); Transitions(context.Context, string)
-      ([]db.LDAPCapabilityTransition, error)}
+    signature: interface{AllowLocalRecovery(context.Context, string) (bool, error); ApplyGroupPreview(context.Context, pro_interfaces.LDAPGroupApplyRequest)
+      (pro_interfaces.LDAPGroupPreview, error); Authenticate(context.Context, pro_interfaces.LDAPAuthenticationRequest) (db.User,
+      bool, error); Configure(context.Context, pro_interfaces.LDAPConfigureRequest) (pro_interfaces.LDAPProviderConfiguration,
+      error); DeleteGroupMapping(context.Context, pro_interfaces.LDAPGroupMappingDeleteRequest) error; GroupMappings(context.Context,
+      string) ([]pro_interfaces.LDAPGroupMapping, error); GroupReconciliationHistory(context.Context, string, int) ([]db.LDAPGroupReconciliation,
+      error); Initialize(context.Context) error; Link(context.Context, pro_interfaces.LDAPLinkRequest) (bool, error); LoginProviders(context.Context)
+      ([]pro_interfaces.LDAPLoginProvider, error); PreviewGroupMappings(context.Context, pro_interfaces.LDAPGroupPreviewRequest)
+      (pro_interfaces.LDAPGroupPreview, error); Providers(context.Context) ([]pro_interfaces.LDAPProviderConfiguration, error);
+      ReconcileGroupMappings(context.Context, pro_interfaces.LDAPGroupPreviewRequest) (pro_interfaces.LDAPGroupPreview, error);
+      SaveGroupMapping(context.Context, pro_interfaces.LDAPGroupMappingRequest) (pro_interfaces.LDAPGroupMapping, error); SetState(context.Context,
+      pro_interfaces.LDAPStateRequest) (pro_interfaces.LDAPProviderConfiguration, error); Test(context.Context, pro_interfaces.LDAPTestRequest)
+      (pro_interfaces.LDAPReadiness, error); Transitions(context.Context, string) ([]db.LDAPCapabilityTransition, error)}
     implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/pkg/features/ldap_test.go::TestLDAPAuthenticateReportsProvisioningOnlyOnce
+    - api/ldap_test.go::TestManagedLDAPLoginRecordsAuthoritativeProvisioningOutcome
+    - api/ldap_test.go::TestManagedLDAPLinkRecordsOnlyCreatedIdentity
   - name: pro_interfaces:LDAPState
     signature: string
     implementation: core
@@ -10631,6 +10686,12 @@ symbols:
       interface{CoordinatorHealth() pro_interfaces.ClusterCoordinatorHealth; Nodes() ([]pro_interfaces.NodeInfo, error); RedisInfo()
       (pro_interfaces.RedisInfo, error); SetNodeDraining(bootID string, draining bool) error}
     implementation: local
+  - name: services/ha:NewAuditExportLeaser
+    signature: func() pro_interfaces.AuditExportLeaser
+    selected_signature: func() pro_interfaces.AuditExportLeaser
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/services/ha/audit_export_lease_test.go::TestRedisAuditExportLeaseSignalsLossAtLocalExpiryWithoutValidCall
   - name: services/ha:NewClusterInspector
     signature: func(_ db.Store, _ ...pro_interfaces.ClusterDrainer) pro/services/ha.ClusterInspector
     selected_signature: func(store db.Store, drainers ...pro_interfaces.ClusterDrainer) pro/services/ha.ClusterInspector
@@ -10798,6 +10859,14 @@ symbols:
     rationale: >-
       Legacy concrete stub type is replaced by private structuredLogService through NewLogWriteService and
       pro_interfaces.LogWriteServiceLifecycle.
+  - name: services/server:NewAuditExporter
+    signature: func(_ db.Store, _ *util.AuditConfig, _ pro_interfaces.AuditExportLeaser) pro_interfaces.AuditExporter
+    selected_signature: func(store db.Store, config *util.AuditConfig, leaser pro_interfaces.AuditExportLeaser) pro_interfaces.AuditExporter
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditSyslogDestinationDeliversVerifiedTLSRFC5424JSON
+    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditSyslogDestinationRejectsUntrustedCertificate
+    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditExporterSkipsHistoricalEventsAndAdvancesDurableCursor
   - name: services/server:NewAuditWebhookService
     signature: func(_ db.AuditWebhookRepository, _ *pkg/metrics.Metrics) pro_interfaces.AuditWebhookService
     selected_signature: func(repository db.AuditWebhookRepository, appMetrics *pkg/metrics.Metrics) pro_interfaces.AuditWebhookService

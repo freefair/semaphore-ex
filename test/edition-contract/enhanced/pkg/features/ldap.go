@@ -102,31 +102,31 @@ func (s *ldapService) AllowLocalRecovery(_ context.Context, login string) (bool,
 func (s *ldapService) Authenticate(
 	ctx context.Context,
 	request pro_interfaces.LDAPAuthenticationRequest,
-) (db.User, error) {
+) (db.User, bool, error) {
 	if request.Now.IsZero() {
-		return db.User{}, common_errors.NewValidationError("LDAP authentication time is required")
+		return db.User{}, false, common_errors.NewValidationError("LDAP authentication time is required")
 	}
 	provider, err := s.repository.GetLDAPProvider(request.ProviderID)
 	if errors.Is(err, db.ErrNotFound) {
-		return db.User{}, pro_interfaces.ErrLDAPProviderNotFound
+		return db.User{}, false, pro_interfaces.ErrLDAPProviderNotFound
 	}
 	if err != nil {
-		return db.User{}, err
+		return db.User{}, false, err
 	}
 	state := pro_interfaces.LDAPState(provider.State)
 	if state != pro_interfaces.LDAPStateActive && state != pro_interfaces.LDAPStateSelectedUsers {
-		return db.User{}, pro_interfaces.ErrLDAPDisabled
+		return db.User{}, false, pro_interfaces.ErrLDAPDisabled
 	}
 
 	subjectHash := ldapSubjectHash(request.Username)
 	if blocked, blockErr := s.isBlocked(provider.ID, subjectHash, request.Now); blockErr != nil {
-		return db.User{}, blockErr
+		return db.User{}, false, blockErr
 	} else if blocked {
-		return db.User{}, pro_interfaces.ErrLDAPThrottled
+		return db.User{}, false, pro_interfaces.ErrLDAPThrottled
 	}
 	clientConfiguration, cleanup, err := s.clientConfiguration(provider)
 	if err != nil {
-		return db.User{}, err
+		return db.User{}, false, err
 	}
 	defer cleanup()
 	clientResult, err := s.client.Authenticate(ctx, pro_interfaces.NewLDAPClientRequest(
@@ -139,20 +139,20 @@ func (s *ldapService) Authenticate(
 				ldapFailureWindow, ldapMaxFailures, ldapFailureBlock,
 			)
 			if recordErr != nil {
-				return db.User{}, recordErr
+				return db.User{}, false, recordErr
 			}
 			if attempt.BlockedUntil != nil && request.Now.Before(*attempt.BlockedUntil) {
-				return db.User{}, pro_interfaces.ErrLDAPThrottled
+				return db.User{}, false, pro_interfaces.ErrLDAPThrottled
 			}
 		}
-		return db.User{}, err
+		return db.User{}, false, err
 	}
-	user, err := s.resolveIdentity(provider.ID, clientResult.Identity, state)
+	user, provisioned, err := s.resolveIdentity(provider.ID, clientResult.Identity, state)
 	if err != nil {
-		return db.User{}, err
+		return db.User{}, false, err
 	}
 	if err = s.repository.ClearLDAPAuthFailures(provider.ID, subjectHash); err != nil {
-		return db.User{}, err
+		return user, provisioned, err
 	}
 	if mappings, mappingErr := s.repository.GetLDAPGroupMappings(provider.ID); mappingErr == nil && len(mappings) != 0 {
 		userID := user.ID
@@ -160,7 +160,7 @@ func (s *ldapService) Authenticate(
 			ProviderID: provider.ID, Source: "login", UserID: &userID, Now: request.Now,
 		})
 	}
-	return user, nil
+	return user, provisioned, nil
 }
 
 func (s *ldapService) isBlocked(providerID string, subjectHash string, now time.Time) (bool, error) {
@@ -174,64 +174,64 @@ func (s *ldapService) isBlocked(providerID string, subjectHash string, now time.
 	return attempt.BlockedUntil != nil && now.Before(*attempt.BlockedUntil), nil
 }
 
-func (s *ldapService) Link(ctx context.Context, request pro_interfaces.LDAPLinkRequest) error {
+func (s *ldapService) Link(ctx context.Context, request pro_interfaces.LDAPLinkRequest) (bool, error) {
 	if request.Now.IsZero() {
-		return common_errors.NewValidationError("LDAP link time is required")
+		return false, common_errors.NewValidationError("LDAP link time is required")
 	}
 	provider, err := s.repository.GetLDAPProvider(request.ProviderID)
 	if errors.Is(err, db.ErrNotFound) {
-		return pro_interfaces.ErrLDAPProviderNotFound
+		return false, pro_interfaces.ErrLDAPProviderNotFound
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	state := pro_interfaces.LDAPState(provider.State)
 	if state != pro_interfaces.LDAPStateActive && state != pro_interfaces.LDAPStateSelectedUsers {
-		return pro_interfaces.ErrLDAPDisabled
+		return false, pro_interfaces.ErrLDAPDisabled
 	}
 	actor, err := s.repository.GetUser(request.ActorID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	configuration, cleanup, err := s.clientConfiguration(provider)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer cleanup()
 	result, err := s.client.Authenticate(ctx, pro_interfaces.NewLDAPClientRequest(
 		configuration, request.Username, request.Password,
 	))
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !strings.EqualFold(result.Identity.Username, actor.Username) &&
 		!strings.EqualFold(result.Identity.Email, actor.Email) {
-		return pro_interfaces.ErrLDAPForbidden
+		return false, pro_interfaces.ErrLDAPForbidden
 	}
 	existing, err := s.repository.GetExternalIdentity(
 		db.IdentityTypeLdap, provider.ID, result.Identity.ExternalID)
 	switch {
 	case err == nil && existing.UserID == actor.ID:
-		return nil
+		return false, nil
 	case err == nil:
-		return pro_interfaces.ErrLDAPIdentityCollision
+		return false, pro_interfaces.ErrLDAPIdentityCollision
 	case !errors.Is(err, db.ErrNotFound):
-		return err
+		return false, err
 	}
 	identities, err := s.repository.GetUserExternalIdentities(actor.ID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	for _, identity := range identities {
 		if identity.Type == db.IdentityTypeLdap && identity.Provider == provider.ID {
-			return pro_interfaces.ErrLDAPIdentityCollision
+			return false, pro_interfaces.ErrLDAPIdentityCollision
 		}
 	}
 	_, err = s.repository.CreateExternalIdentity(db.UserExternalIdentity{
 		UserID: actor.ID, Type: db.IdentityTypeLdap, Provider: provider.ID,
 		ExternalUID: result.Identity.ExternalID, Created: request.Now,
 	})
-	return err
+	return err == nil, err
 }
 
 func (s *ldapService) Providers(context.Context) ([]pro_interfaces.LDAPProviderConfiguration, error) {
@@ -432,46 +432,47 @@ func (s *ldapService) resolveIdentity(
 	providerID string,
 	identity pro_interfaces.LDAPIdentity,
 	state pro_interfaces.LDAPState,
-) (db.User, error) {
+) (db.User, bool, error) {
 	existingIdentity, err := s.repository.GetExternalIdentity(
 		db.IdentityTypeLdap, providerID, identity.ExternalID)
 	if err == nil {
 		user, userErr := s.repository.GetUser(existingIdentity.UserID)
 		if userErr != nil {
-			return db.User{}, userErr
+			return db.User{}, false, userErr
 		}
 		if state == pro_interfaces.LDAPStateSelectedUsers {
 			selected, selectedErr := s.repository.IsLDAPUserSelected(providerID, user.ID)
 			if selectedErr != nil {
-				return db.User{}, selectedErr
+				return db.User{}, false, selectedErr
 			}
 			if !selected {
-				return db.User{}, pro_interfaces.ErrLDAPForbidden
+				return db.User{}, false, pro_interfaces.ErrLDAPForbidden
 			}
 		}
-		return s.syncLDAPUser(user, identity)
+		user, err = s.syncLDAPUser(user, identity)
+		return user, false, err
 	}
 	if !errors.Is(err, db.ErrNotFound) {
-		return db.User{}, err
+		return db.User{}, false, err
 	}
 	if state == pro_interfaces.LDAPStateSelectedUsers {
-		return db.User{}, pro_interfaces.ErrLDAPForbidden
+		return db.User{}, false, pro_interfaces.ErrLDAPForbidden
 	}
 	if _, err = s.repository.GetUserByLoginOrEmail(identity.Username, identity.Email); err == nil {
-		return db.User{}, pro_interfaces.ErrLDAPIdentityCollision
+		return db.User{}, false, pro_interfaces.ErrLDAPIdentityCollision
 	} else if !errors.Is(err, db.ErrNotFound) {
-		return db.User{}, err
+		return db.User{}, false, err
 	}
 	user := db.User{
 		Username: identity.Username, Name: identity.Name, Email: identity.Email,
 		External: true,
 	}
 	if err = db.ValidateUser(user); err != nil {
-		return db.User{}, pro_interfaces.ErrLDAPIdentityCollision
+		return db.User{}, false, pro_interfaces.ErrLDAPIdentityCollision
 	}
 	user, err = s.repository.CreateUserWithoutPassword(user)
 	if err != nil {
-		return db.User{}, pro_interfaces.ErrLDAPIdentityCollision
+		return db.User{}, false, pro_interfaces.ErrLDAPIdentityCollision
 	}
 	_, err = s.repository.CreateExternalIdentity(db.UserExternalIdentity{
 		UserID: user.ID, Type: db.IdentityTypeLdap, Provider: providerID,
@@ -479,9 +480,9 @@ func (s *ldapService) resolveIdentity(
 	})
 	if err != nil {
 		_ = s.repository.DeleteUser(user.ID)
-		return db.User{}, pro_interfaces.ErrLDAPIdentityCollision
+		return db.User{}, false, pro_interfaces.ErrLDAPIdentityCollision
 	}
-	return user, nil
+	return user, true, nil
 }
 
 func (s *ldapService) syncLDAPUser(user db.User, identity pro_interfaces.LDAPIdentity) (db.User, error) {

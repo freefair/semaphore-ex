@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"image/png"
 	"net/http"
@@ -13,12 +14,21 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	proApi "github.com/semaphoreui/semaphore/pro/api"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	log "github.com/sirupsen/logrus"
 )
 
 type TOTPController struct {
 	service pro_interfaces.TOTPService
 	audit   pro_interfaces.AuditServiceFacade
+}
+
+type totpRequestBody struct {
+	Passcode string `json:"passcode"`
+}
+
+type totpRecoveryRequestBody struct {
+	RecoveryCode string `json:"recovery_code"`
 }
 
 func NewTOTPController(
@@ -122,6 +132,8 @@ func (c *TOTPController) qr(w http.ResponseWriter, r *http.Request, actorID int,
 		return
 	}
 	w.Header().Set("Content-Type", "image/png")
+	ctx, target := totpAuditContext(r, actorID, userID)
+	helpers.Audit(r).Record(ctx, audit.Event{Kind: audit.IAMMFAViewQR, Target: audit.UserTarget(userID, target.Username)})
 	_, _ = w.Write(buffer.Bytes())
 }
 
@@ -179,7 +191,7 @@ func (c *TOTPController) AcknowledgeRecoveryCodes(w http.ResponseWriter, r *http
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	c.acknowledge(w, r, actor.ID, target.ID, session.ID)
+	c.acknowledge(w, r, actor.ID, target.ID, session.ID, false)
 }
 
 func (c *TOTPController) AcknowledgeSessionRecoveryCodes(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +199,7 @@ func (c *TOTPController) AcknowledgeSessionRecoveryCodes(w http.ResponseWriter, 
 	if !ok {
 		return
 	}
-	c.acknowledge(w, r, session.UserID, session.UserID, session.ID)
+	c.acknowledge(w, r, session.UserID, session.UserID, session.ID, !session.Verified)
 }
 
 func (c *TOTPController) acknowledge(
@@ -196,6 +208,7 @@ func (c *TOTPController) acknowledge(
 	actorID int,
 	userID int,
 	sessionID int,
+	recordLogin bool,
 ) {
 	var body struct {
 		Stored bool `json:"stored"`
@@ -222,7 +235,31 @@ func (c *TOTPController) acknowledge(
 	}
 	c.record(r, actorID, pro_interfaces.AuditActionTOTPRecoveryAck,
 		pro_interfaces.AuditOutcomeAllowed, pro_interfaces.AuditReasonEnrollmentActive)
+	ctx, user := totpAuditContext(r, actorID, userID)
+	helpers.Audit(r).Record(ctx, audit.Event{Kind: audit.IAMMFAEnable, Target: audit.UserTarget(userID, user.Username)})
+	if recordLogin {
+		recordLoginAfterMFA(ctx, r, user)
+	}
 	helpers.WriteJSON(w, http.StatusOK, status)
+}
+
+// totpAuditContext keeps the authenticated actor distinct from a TOTP target.
+// Direct handler tests and enrollment-session routes have no authentication
+// middleware actor, so only those cases receive a server-side session actor.
+func totpAuditContext(r *http.Request, actorID int, targetID int) (context.Context, db.User) {
+	target := db.User{ID: targetID}
+	if stored, err := helpers.Store(r).GetUser(targetID); err == nil {
+		target = stored
+	}
+	ctx := r.Context()
+	if actor := audit.ActorFrom(ctx); actor.Type == "" || actor.Type == audit.ActorAnonymous {
+		user := db.User{ID: actorID}
+		if stored, err := helpers.Store(r).GetUser(actorID); err == nil {
+			user = stored
+		}
+		ctx = audit.WithActor(ctx, audit.UserActor(user.ID, user.Username, audit.AuthSession, ""))
+	}
+	return ctx, target
 }
 
 func (c *TOTPController) Reset(w http.ResponseWriter, r *http.Request) {
@@ -251,6 +288,7 @@ func (c *TOTPController) Reset(w http.ResponseWriter, r *http.Request) {
 	}
 	c.record(r, actor.ID, pro_interfaces.AuditActionTOTPReset,
 		pro_interfaces.AuditOutcomeAllowed, pro_interfaces.AuditReasonReset)
+	helpers.Audit(r).Record(r.Context(), audit.Event{Kind: audit.IAMMFADisable, Target: audit.UserTarget(target.ID, target.Username)})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -271,11 +309,15 @@ func (c *TOTPController) VerifySession(w http.ResponseWriter, r *http.Request) {
 		err := c.service.VerifyChallenge(r.Context(), session.UserID, session.ID, body.Passcode, tz.Now())
 		if err != nil {
 			c.recordError(r, session.UserID, pro_interfaces.AuditActionTOTPChallenge, err)
+			if errors.Is(err, pro_interfaces.ErrTOTPInvalidCode) {
+				c.recordSessionVerificationFailure(r, session, audit.AuthMFAVerifyTOTP, audit.ReasonInvalidPasscode)
+			}
 			writeTOTPError(w, err)
 			return
 		}
 		c.record(r, session.UserID, pro_interfaces.AuditActionTOTPChallenge,
 			pro_interfaces.AuditOutcomeAllowed, string(pro_interfaces.CapabilityReasonActive))
+		c.recordSessionVerification(r, session, audit.AuthMFAVerifyTOTP)
 		w.WriteHeader(http.StatusNoContent)
 	case db.SessionVerificationNone:
 		w.WriteHeader(http.StatusNoContent)
@@ -301,12 +343,40 @@ func (c *TOTPController) RecoverSession(w http.ResponseWriter, r *http.Request) 
 	err := c.service.RecoverSession(r.Context(), session.UserID, session.ID, body.RecoveryCode, tz.Now())
 	if err != nil {
 		c.recordError(r, session.UserID, pro_interfaces.AuditActionTOTPRecover, err)
+		if errors.Is(err, pro_interfaces.ErrTOTPInvalidRecovery) {
+			c.recordSessionVerificationFailure(r, session, audit.AuthMFARecover, audit.ReasonInvalidRecoveryCode)
+		}
 		writeTOTPError(w, err)
 		return
 	}
 	c.record(r, session.UserID, pro_interfaces.AuditActionTOTPRecover,
 		pro_interfaces.AuditOutcomeAllowed, pro_interfaces.AuditReasonRecoveryUsed)
+	c.recordSessionVerification(r, session, audit.AuthMFARecover)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (c *TOTPController) recordSessionVerification(r *http.Request, session *db.Session, kind audit.Kind) {
+	user := db.User{ID: session.UserID}
+	if stored, err := helpers.Store(r).GetUser(session.UserID); err == nil {
+		user = stored
+	}
+	ctx := audit.WithActor(r.Context(), audit.UserActor(user.ID, user.Username, audit.AuthSession, ""))
+	helpers.Audit(r).Record(ctx, audit.Event{Kind: kind, Target: audit.UserTarget(user.ID, user.Username)})
+	if !session.Verified {
+		recordLoginAfterMFA(ctx, r, user)
+	}
+}
+
+func (c *TOTPController) recordSessionVerificationFailure(r *http.Request, session *db.Session, kind audit.Kind, reason audit.Reason) {
+	user := db.User{ID: session.UserID}
+	if stored, err := helpers.Store(r).GetUser(session.UserID); err == nil {
+		user = stored
+	}
+	ctx := audit.WithActor(r.Context(), audit.UserActor(user.ID, user.Username, audit.AuthSession, ""))
+	helpers.Audit(r).Record(ctx, audit.Event{
+		Kind: kind, Outcome: audit.OutcomeFailure, Reason: reason,
+		Target: audit.UserTarget(user.ID, user.Username),
+	})
 }
 
 func (c *TOTPController) Configure(w http.ResponseWriter, r *http.Request) {

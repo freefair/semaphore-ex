@@ -5,6 +5,7 @@ import (
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"net/http"
 	"strconv"
 )
@@ -247,6 +248,18 @@ func (c *TemplateController) AddTemplatePerm(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:      audit.IAMTemplatePermissionCreate,
+		Target:    &audit.Target{Type: audit.TargetTemplatePermission, ID: strconv.Itoa(newPerm.ID)},
+		ProjectID: template.ProjectID,
+		Metadata: audit.TemplatePermissionMetadata{
+			TemplateID: template.ID,
+			// The slug comes from the request body, and SQLite does not enforce column lengths.
+			RoleSlug:    audit.TruncateName(newPerm.RoleSlug, audit.MaxNameBytes),
+			Permissions: audit.PermissionNames(newPerm.Permissions),
+		},
+	})
+
 	helpers.WriteJSON(w, http.StatusCreated, newPerm)
 }
 
@@ -276,6 +289,16 @@ func (c *TemplateController) UpdateTemplatePerm(w http.ResponseWriter, r *http.R
 		writeTemplateRoleError(w, err)
 		return
 	}
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:      audit.IAMTemplatePermissionUpdate,
+		Target:    &audit.Target{Type: audit.TargetTemplatePermission, ID: strconv.Itoa(permID)},
+		ProjectID: template.ProjectID,
+		Metadata: audit.TemplatePermissionMetadata{
+			TemplateID:  template.ID,
+			RoleSlug:    audit.TruncateName(updated.RoleSlug, audit.MaxNameBytes),
+			Permissions: audit.PermissionNames(updated.Permissions),
+		},
+	})
 
 	helpers.WriteJSON(w, http.StatusOK, updated)
 }
@@ -297,6 +320,13 @@ func (c *TemplateController) DeleteTemplatePerm(w http.ResponseWriter, r *http.R
 		writeTemplateRoleError(w, err)
 		return
 	}
+
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:      audit.IAMTemplatePermissionDelete,
+		Target:    &audit.Target{Type: audit.TargetTemplatePermission, ID: strconv.Itoa(permID)},
+		ProjectID: template.ProjectID,
+		Metadata:  audit.TemplatePermissionMetadata{TemplateID: template.ID},
+	})
 
 	w.WriteHeader(http.StatusNoContent)
 }

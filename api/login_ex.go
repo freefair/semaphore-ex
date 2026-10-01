@@ -13,6 +13,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	identityServices "github.com/semaphoreui/semaphore/services/identity"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
@@ -34,7 +35,7 @@ func loginWithTOTPService(
 func loginWithIdentityServices(
 	totpService pro_interfaces.TOTPService,
 	ldapService pro_interfaces.LDAPService,
-	audit pro_interfaces.AuditServiceFacade,
+	auditFacade pro_interfaces.AuditServiceFacade,
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
@@ -118,9 +119,18 @@ func loginWithIdentityServices(
 	}
 
 	login.Auth = strings.ToLower(login.Auth)
+	meta := audit.AuthMethodMetadata{Method: audit.LoginMethodPassword}
+	if login.Method == "ldap" {
+		meta.Method = audit.LoginMethodLDAP
+		meta.Provider = login.Provider
+		if meta.Provider == "" {
+			meta.Provider = "ldap"
+		}
+	}
 
 	var err error
 	var user db.User
+	var resolution externalResolution
 
 	switch login.Method {
 	case "password":
@@ -130,6 +140,7 @@ func loginWithIdentityServices(
 			return
 		}
 		if !allowed {
+			recordLoginFailure(r, login.Auth, meta, audit.ReasonMethodDisabled)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -141,17 +152,22 @@ func loginWithIdentityServices(
 			providerID = "ldap"
 		}
 		if ldapService != nil {
-			user, err = ldapService.Authenticate(r.Context(), pro_interfaces.LDAPAuthenticationRequest{
+			var provisioned bool
+			user, provisioned, err = ldapService.Authenticate(r.Context(), pro_interfaces.LDAPAuthenticationRequest{
 				ProviderID: providerID, Username: login.Auth, Password: login.Password, Now: tz.Now(),
 			})
+			if provisioned {
+				recordExternalResolution(r, user, resolvedProvisioned, meta)
+			}
 			if !errors.Is(err, pro_interfaces.ErrLDAPUnavailable) {
 				outcome, reason := ldapAuditReason(err)
 				var actorID *int
 				if err == nil {
 					actorID = &user.ID
 				}
-				recordLDAPAudit(audit, r, actorID, pro_interfaces.AuditActionLDAPLogin, outcome, reason)
+				recordLDAPAudit(auditFacade, r, actorID, pro_interfaces.AuditActionLDAPLogin, outcome, reason)
 				if err != nil {
+					recordLoginFailure(r, login.Auth, meta, managedLDAPLoginFailureReason(err))
 					writeLDAPError(w, err)
 					return
 				}
@@ -159,10 +175,11 @@ func loginWithIdentityServices(
 			}
 		}
 		if _, ok := util.Config.GetLdapProvider(providerID); !ok {
+			recordLoginFailure(r, login.Auth, audit.AuthMethodMetadata{Method: audit.LoginMethodLDAP}, audit.ReasonMethodDisabled)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		user, err = loginByLegacyLDAP(r.Context(), helpers.Store(r), providerID, login.Auth, login.Password)
+		user, resolution, err = loginByLegacyLDAP(r.Context(), helpers.Store(r), providerID, login.Auth, login.Password)
 
 	default:
 		_, managed, managedErr := managedLDAPProviders(r.Context(), ldapService)
@@ -177,16 +194,23 @@ func loginWithIdentityServices(
 				return
 			}
 			if !allowed {
+				recordLoginFailure(r, login.Auth, meta, audit.ReasonMethodDisabled)
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
 			user, err = loginByPassword(helpers.Store(r), login.Auth, login.Password)
 		} else {
-			user, err = loginLegacyCompatible(r.Context(), helpers.Store(r), login.Auth, login.Password)
+			user, resolution, meta, err = loginLegacyCompatible(r.Context(), helpers.Store(r), login.Auth, login.Password)
 		}
 	}
 
+	recordExternalResolution(r, user, resolution, meta)
 	if err != nil {
+		reason := loginFailureReason(err)
+		if meta.Method == audit.LoginMethodLDAP {
+			reason = ldapFailureReason(err)
+		}
+		recordLoginFailure(r, login.Auth, meta, reason)
 		if errors.Is(err, db.ErrNotFound) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -203,11 +227,24 @@ func loginWithIdentityServices(
 		return
 	}
 
-	if !createSession(w, r, user, false, totpService) {
+	if !createSessionWithMetadata(w, r, user, meta, totpService) {
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func managedLDAPLoginFailureReason(err error) audit.Reason {
+	switch {
+	case errors.Is(err, pro_interfaces.ErrLDAPInvalidCredentials):
+		return audit.ReasonInvalidCredentials
+	case errors.Is(err, pro_interfaces.ErrLDAPDisabled), errors.Is(err, pro_interfaces.ErrLDAPForbidden):
+		return audit.ReasonMethodDisabled
+	case errors.Is(err, pro_interfaces.ErrLDAPProviderUnavailable), errors.Is(err, pro_interfaces.ErrLDAPReferral):
+		return audit.ReasonProviderError
+	default:
+		return audit.ReasonInternalError
+	}
 }
 
 func managedLDAPProviders(
@@ -248,7 +285,7 @@ func loginByLegacyLDAP(
 	providerID string,
 	auth string,
 	password string,
-) (db.User, error) {
+) (db.User, externalResolution, error) {
 	ldapUser, externalID, err := authenticateLegacyLDAPProfile(ctx, providerID, auth, password)
 	if err != nil || ldapUser == nil {
 		if err != nil {
@@ -256,7 +293,10 @@ func loginByLegacyLDAP(
 				"context": "ldap", "provider": providerID,
 			}).Warn("Failed to authenticate against legacy LDAP provider")
 		}
-		return db.User{}, db.ErrNotFound
+		if err == nil {
+			return db.User{}, resolvedExisting, loginError{reason: audit.ReasonUserNotFound}
+		}
+		return db.User{}, resolvedExisting, loginError{reason: ldapFailureReason(err)}
 	}
 	return loginByLDAP(store, *ldapUser, externalID, providerID)
 }
@@ -305,23 +345,26 @@ func loginLegacyCompatible(
 	store db.Store,
 	auth string,
 	password string,
-) (db.User, error) {
+) (db.User, externalResolution, audit.AuthMethodMetadata, error) {
+	passwordMeta := audit.AuthMethodMetadata{Method: audit.LoginMethodPassword}
 	if _, ok := util.Config.GetLdapProvider("ldap"); ok {
 		ldapUser, externalID, err := authenticateLegacyLDAPProfile(ctx, "ldap", auth, password)
 		if err != nil {
 			log.WithError(err).WithFields(log.Fields{
 				"context": "ldap", "provider": "ldap",
 			}).Warn("Failed to authenticate against legacy LDAP provider")
-			return db.User{}, db.ErrNotFound
+			return db.User{}, resolvedExisting, audit.AuthMethodMetadata{Method: audit.LoginMethodLDAP, Provider: "ldap"}, loginError{reason: ldapFailureReason(err)}
 		}
 		if ldapUser != nil {
-			return loginByLDAP(store, *ldapUser, externalID, "ldap")
+			user, resolution, loginErr := loginByLDAP(store, *ldapUser, externalID, "ldap")
+			return user, resolution, audit.AuthMethodMetadata{Method: audit.LoginMethodLDAP, Provider: "ldap"}, loginErr
 		}
 	}
 	if util.Config.PasswordLoginDisable {
-		return db.User{}, db.ErrNotFound
+		return db.User{}, resolvedExisting, passwordMeta, db.ErrNotFound
 	}
-	return loginByPassword(store, auth, password)
+	user, err := loginByPassword(store, auth, password)
+	return user, resolvedExisting, passwordMeta, err
 }
 
 func oidcGroupClaimConfiguration(provider util.OidcProvider) (pro_interfaces.OIDCGroupClaimConfiguration, bool, error) {
@@ -368,6 +411,13 @@ func oidcRedirectWithIdentityServices(
 	r *http.Request,
 ) {
 	pid := mux.Vars(r)["provider"]
+	meta := audit.AuthMethodMetadata{Method: audit.LoginMethodOIDC}
+	if _, configured := util.Config.OidcProviders[pid]; configured {
+		meta.Provider = pid
+	}
+	recordFailure := func(reason audit.Reason) {
+		recordLoginFailure(r, "", meta, reason)
+	}
 	oauthState, err := r.Cookie("oauthstate")
 
 	// Errors are shown as plain text at the current URL instead of a silent
@@ -376,6 +426,7 @@ func oidcRedirectWithIdentityServices(
 
 	if err != nil {
 		log.Error(err.Error())
+		recordFailure(audit.ReasonInvalidState)
 		http.Error(w, "OIDC sign-in failed: state cookie is missing. Try signing in again.", http.StatusBadRequest)
 		return
 	}
@@ -385,6 +436,7 @@ func oidcRedirectWithIdentityServices(
 
 	if err != nil {
 		log.Error(err.Error())
+		recordFailure(audit.ReasonInvalidState)
 		http.Error(w, "OIDC sign-in failed: invalid state. Try signing in again.", http.StatusBadRequest)
 		return
 	}
@@ -394,12 +446,22 @@ func oidcRedirectWithIdentityServices(
 
 	if err != nil {
 		log.Error(err.Error())
+		recordFailure(audit.ReasonInvalidState)
 		http.Error(w, "OIDC sign-in failed: invalid state. Try signing in again.", http.StatusBadRequest)
 		return
 	}
 
 	if stateData.Csrf != oauthState.Value {
+		recordFailure(audit.ReasonInvalidState)
 		http.Error(w, "OIDC sign-in failed: state mismatch. Try signing in again.", http.StatusBadRequest)
+		return
+	}
+
+	provider, ok := util.Config.OidcProviders[pid]
+	if !ok {
+		log.Error(fmt.Errorf("no such provider: %s", pid))
+		recordFailure(audit.ReasonMethodDisabled)
+		http.Error(w, "Unknown OIDC provider.", http.StatusNotFound)
 		return
 	}
 
@@ -408,14 +470,8 @@ func oidcRedirectWithIdentityServices(
 	_oidc, oauth, err := getOidcProvider(pid, ctx, r.URL.Path)
 	if err != nil {
 		log.Error(err.Error())
+		recordFailure(audit.ReasonProviderError)
 		http.Error(w, "Failed to initialize OIDC provider. Contact your administrator.", http.StatusInternalServerError)
-		return
-	}
-
-	provider, ok := util.Config.OidcProviders[pid]
-	if !ok {
-		log.Error(fmt.Errorf("no such provider: %s", pid))
-		http.Error(w, "Unknown OIDC provider.", http.StatusNotFound)
 		return
 	}
 
@@ -426,6 +482,7 @@ func oidcRedirectWithIdentityServices(
 	oauth2Token, err := oauth.Exchange(ctx, code)
 	if err != nil {
 		log.Error(err.Error())
+		recordFailure(audit.ReasonProviderError)
 		http.Error(w, "OIDC sign-in failed: could not exchange authorization code. Contact your administrator.", http.StatusUnauthorized)
 		return
 	}
@@ -472,12 +529,14 @@ func oidcRedirectWithIdentityServices(
 
 	if err != nil {
 		log.Error(err.Error())
+		recordFailure(audit.ReasonProviderError)
 		http.Error(w, "OIDC sign-in failed: could not read user info from the provider. Contact your administrator.", http.StatusBadGateway)
 		return
 	}
 
 	if claims.sub == "" {
 		log.Error(fmt.Errorf("oidc provider %s returned no sub claim", pid))
+		recordFailure(audit.ReasonProviderError)
 		http.Error(w, "OIDC sign-in failed: the provider returned no user ID (sub claim). Contact your administrator.", http.StatusBadGateway)
 		return
 	}
@@ -496,7 +555,8 @@ func oidcRedirectWithIdentityServices(
 			return
 		}
 
-		if lErr := linkExternalIdentity(helpers.Store(r), sessionUser, db.IdentityTypeOidc, pid, claims.sub); lErr != nil {
+		linked, lErr := linkExternalIdentity(helpers.Store(r), sessionUser, db.IdentityTypeOidc, pid, claims.sub)
+		if lErr != nil {
 			log.WithError(lErr).WithFields(log.Fields{
 				"user_id":  sessionUser.ID,
 				"provider": pid,
@@ -513,13 +573,16 @@ func oidcRedirectWithIdentityServices(
 			}
 			return
 		}
+		if linked {
+			recordExternalResolution(r, sessionUser, resolvedLinked, meta)
+		}
 
 		redirectURL, _ := url.JoinPath(util.Config.WebHost, "/")
 		http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
 		return
 	}
 
-	user, err := resolveExternalUser(helpers.Store(r), externalUserProfile{
+	user, resolution, err := resolveExternalUser(helpers.Store(r), externalUserProfile{
 		Type:          db.IdentityTypeOidc,
 		Provider:      pid,
 		ExternalUID:   claims.sub,
@@ -530,8 +593,10 @@ func oidcRedirectWithIdentityServices(
 		// MatchByUsername stays false: OIDC matches by email only
 		// (username matching "creates a lot of problems" - see old comment).
 	})
+	recordExternalResolution(r, user, resolution, meta)
 	if err != nil {
 		log.Error(err.Error())
+		recordFailure(audit.ReasonInternalError)
 		http.Error(w, "OIDC sign-in failed: could not find or create the user account. Contact your administrator.", http.StatusInternalServerError)
 		return
 	}
@@ -562,7 +627,7 @@ func oidcRedirectWithIdentityServices(
 		}
 	}
 
-	if !createSession(w, r, user, true, totpService) {
+	if !createSessionWithMetadata(w, r, user, meta, totpService) {
 		return
 	}
 

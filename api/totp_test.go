@@ -13,22 +13,28 @@ import (
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	sqldb "github.com/semaphoreui/semaphore/db/sql"
+	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type totpServiceStub struct {
-	beginRequest   pro_interfaces.TOTPEnrollmentRequest
-	confirmRequest pro_interfaces.TOTPConfirmationRequest
-	resetRequest   pro_interfaces.TOTPResetRequest
-	configureError error
-	verifyError    error
-	recoverError   error
-	verifiedCode   string
-	recoveryCode   string
-	requirementErr error
+	beginRequest    pro_interfaces.TOTPEnrollmentRequest
+	confirmRequest  pro_interfaces.TOTPConfirmationRequest
+	resetRequest    pro_interfaces.TOTPResetRequest
+	configureError  error
+	verifyError     error
+	recoverError    error
+	verifiedCode    string
+	recoveryCode    string
+	requirementErr  error
+	requirement     pro_interfaces.TOTPSessionRequirement
+	sessionStore    db.Store
+	provisioningURI string
+	resetError      error
 }
 
 func (*totpServiceStub) Initialize(context.Context) error { return nil }
@@ -36,7 +42,7 @@ func (*totpServiceStub) Status(context.Context, int) (pro_interfaces.TOTPStatus,
 	return pro_interfaces.TOTPStatus{CapabilityState: pro_interfaces.CapabilityStateOptional}, nil
 }
 func (s *totpServiceStub) SessionRequirement(context.Context, int) (pro_interfaces.TOTPSessionRequirement, error) {
-	return pro_interfaces.TOTPSessionNone, s.requirementErr
+	return s.requirement, s.requirementErr
 }
 func (s *totpServiceStub) BeginEnrollment(
 	_ context.Context,
@@ -45,8 +51,11 @@ func (s *totpServiceStub) BeginEnrollment(
 	s.beginRequest = request
 	return pro_interfaces.TOTPEnrollmentCeremony{ID: 17, ProvisioningURI: "otpauth://ceremony"}, nil
 }
-func (*totpServiceStub) ProvisioningURI(context.Context, int, int, int) (string, error) {
-	return "", pro_interfaces.ErrTOTPNotFound
+func (s *totpServiceStub) ProvisioningURI(context.Context, int, int, int) (string, error) {
+	if s.provisioningURI == "" {
+		return "", pro_interfaces.ErrTOTPNotFound
+	}
+	return s.provisioningURI, nil
 }
 func (s *totpServiceStub) ConfirmEnrollment(
 	_ context.Context,
@@ -55,20 +64,31 @@ func (s *totpServiceStub) ConfirmEnrollment(
 	s.confirmRequest = request
 	return pro_interfaces.TOTPStatus{EnrollmentState: pro_interfaces.TOTPEnrollmentPendingRecoveryAck}, nil
 }
-func (*totpServiceStub) AcknowledgeRecoveryCodes(context.Context, pro_interfaces.TOTPRecoveryAcknowledgement) (pro_interfaces.TOTPStatus, error) {
+func (s *totpServiceStub) AcknowledgeRecoveryCodes(_ context.Context, request pro_interfaces.TOTPRecoveryAcknowledgement) (pro_interfaces.TOTPStatus, error) {
+	if s.sessionStore != nil {
+		if err := s.sessionStore.VerifySession(request.TargetUserID, request.SessionID); err != nil {
+			return pro_interfaces.TOTPStatus{}, err
+		}
+	}
 	return pro_interfaces.TOTPStatus{EnrollmentState: pro_interfaces.TOTPEnrollmentActive}, nil
 }
-func (s *totpServiceStub) VerifyChallenge(_ context.Context, _ int, _ int, code string, _ time.Time) error {
+func (s *totpServiceStub) VerifyChallenge(_ context.Context, userID int, sessionID int, code string, _ time.Time) error {
 	s.verifiedCode = code
-	return s.verifyError
+	if s.verifyError != nil || s.sessionStore == nil {
+		return s.verifyError
+	}
+	return s.sessionStore.VerifySession(userID, sessionID)
 }
-func (s *totpServiceStub) RecoverSession(_ context.Context, _ int, _ int, code string, _ time.Time) error {
+func (s *totpServiceStub) RecoverSession(_ context.Context, userID int, sessionID int, code string, _ time.Time) error {
 	s.recoveryCode = code
-	return s.recoverError
+	if s.recoverError != nil || s.sessionStore == nil {
+		return s.recoverError
+	}
+	return s.sessionStore.VerifySession(userID, sessionID)
 }
 func (s *totpServiceStub) ResetEnrollment(_ context.Context, request pro_interfaces.TOTPResetRequest) error {
 	s.resetRequest = request
-	return nil
+	return s.resetError
 }
 func (s *totpServiceStub) Configure(
 	_ context.Context,
@@ -146,6 +166,89 @@ func TestTOTPControllerResetAndReadinessErrors(t *testing.T) {
 	assert.Contains(t, configureRecorder.Body.String(), "TOTP_ADMIN_RECOVERY_NOT_READY")
 }
 
+func TestTOTPControllerRecordsQRAndSuccessfulResetOnly(t *testing.T) {
+	store := setupSessionTest(t)
+	actor := &db.User{ID: 3, Username: "admin", Admin: true}
+	target := db.User{ID: 9, Username: "target"}
+	service := &totpServiceStub{provisioningURI: "otpauth://totp/Semaphore:target?secret=JBSWY3DPEHPK3PXP&issuer=Semaphore"}
+	controller := NewTOTPController(service, nil)
+
+	qr := httptest.NewRequest(http.MethodGet, "/api/users/9/2fas/totp/22/qr", nil)
+	qr = mux.SetURLVars(qr, map[string]string{"totp_id": "22"})
+	qr = helpers.SetContextValue(qr, "user", actor)
+	qr = helpers.SetContextValue(qr, "_user", target)
+	qr = helpers.SetContextValue(qr, "store", store)
+	qr, recorded := withAuditRecorder(qr)
+	qrResponse := httptest.NewRecorder()
+	controller.QR(qrResponse, qr)
+	assert.Equal(t, http.StatusOK, qrResponse.Code)
+	onlyEvent(t, recorded, audit.IAMMFAViewQR)
+
+	reset := httptest.NewRequest(http.MethodDelete, "/api/users/9/2fas/totp/22", nil)
+	reset = mux.SetURLVars(reset, map[string]string{"totp_id": "22"})
+	reset = helpers.SetContextValue(reset, "user", actor)
+	reset = helpers.SetContextValue(reset, "_user", target)
+	reset = helpers.SetContextValue(reset, "store", store)
+	reset, recorded = withAuditRecorder(reset)
+	controller.Reset(httptest.NewRecorder(), reset)
+	onlyEvent(t, recorded, audit.IAMMFADisable)
+
+	service.resetError = pro_interfaces.ErrTOTPNotFound
+	missing := httptest.NewRequest(http.MethodDelete, "/api/users/9/2fas/totp/999", nil)
+	missing = mux.SetURLVars(missing, map[string]string{"totp_id": "999"})
+	missing = helpers.SetContextValue(missing, "user", actor)
+	missing = helpers.SetContextValue(missing, "_user", target)
+	missing = helpers.SetContextValue(missing, "store", store)
+	missing, recorded = withAuditRecorder(missing)
+	controller.Reset(httptest.NewRecorder(), missing)
+	assert.Empty(t, recorded.All())
+}
+
+func TestTOTPControllerAuditSeparatesAdminActorFromTarget(t *testing.T) {
+	store := setupSessionTest(t)
+	admin, err := store.CreateUserWithoutPassword(db.User{
+		Username: "totp-admin", Name: "TOTP Admin", Email: "totp-admin@example.test", Admin: true,
+	})
+	require.NoError(t, err)
+	target := createUserOptionsTestUser(t, store, "totp-target")
+	session, err := store.CreateSession(db.Session{UserID: admin.ID, Created: tz.Now(), LastActive: tz.Now()})
+	require.NoError(t, err)
+	service := &totpServiceStub{provisioningURI: "otpauth://totp/Semaphore:target?secret=JBSWY3DPEHPK3PXP&issuer=Semaphore"}
+	controller := NewTOTPController(service, nil)
+
+	qr := helpers.SetContextValue(httptest.NewRequest(http.MethodGet, "/api/users/target/2fas/totp/22/qr", nil), "store", store)
+	qr = mux.SetURLVars(qr, map[string]string{"totp_id": "22"})
+	qr = helpers.SetContextValue(qr, "user", &admin)
+	qr = helpers.SetContextValue(qr, "_user", target)
+	qr, qrAudit := withAuditRecorder(qr)
+	controller.QR(httptest.NewRecorder(), qr)
+	qrEvent := onlyEvent(t, qrAudit, audit.IAMMFAViewQR)
+	assert.Equal(t, audit.UserActor(admin.ID, admin.Username, audit.AuthSession, ""), qrEvent.Actor)
+	assert.Equal(t, audit.UserTarget(target.ID, target.Username), qrEvent.Event.Target)
+
+	apiTokenQR := qr.WithContext(audit.WithActor(qr.Context(), audit.UserActor(admin.ID, admin.Username, audit.AuthAPIToken, "token-fingerprint")))
+	apiTokenQR, apiTokenQRAudit := withAuditRecorder(apiTokenQR)
+	controller.QR(httptest.NewRecorder(), apiTokenQR)
+	apiTokenQREvent := onlyEvent(t, apiTokenQRAudit, audit.IAMMFAViewQR)
+	assert.Equal(t, audit.UserActor(admin.ID, admin.Username, audit.AuthAPIToken, "token-fingerprint"), apiTokenQREvent.Actor)
+	assert.Equal(t, audit.UserTarget(target.ID, target.Username), apiTokenQREvent.Event.Target)
+
+	encoded, err := util.Cookie.Encode("semaphore", map[string]any{"user": admin.ID, "session": session.ID})
+	require.NoError(t, err)
+	acknowledge := helpers.SetContextValue(httptest.NewRequest(http.MethodPost,
+		"/api/users/target/2fas/totp/22/recovery-codes/acknowledge", strings.NewReader(`{"stored":true}`)), "store", store)
+	acknowledge.AddCookie(&http.Cookie{Name: "semaphore", Value: encoded})
+	acknowledge = mux.SetURLVars(acknowledge, map[string]string{"totp_id": "22"})
+	acknowledge = helpers.SetContextValue(acknowledge, "user", &admin)
+	acknowledge = helpers.SetContextValue(acknowledge, "_user", target)
+	acknowledge, acknowledgeAudit := withAuditRecorder(acknowledge)
+	controller.AcknowledgeRecoveryCodes(httptest.NewRecorder(), acknowledge)
+	acknowledgeEvent := onlyEvent(t, acknowledgeAudit, audit.IAMMFAEnable)
+	assert.Equal(t, audit.UserActor(admin.ID, admin.Username, audit.AuthSession, ""), acknowledgeEvent.Actor)
+	assert.Equal(t, audit.UserTarget(target.ID, target.Username), acknowledgeEvent.Event.Target)
+
+}
+
 func TestWriteTOTPErrorReturnsStableSecurityStatuses(t *testing.T) {
 	tests := []struct {
 		err    error
@@ -210,11 +313,14 @@ func TestTOTPControllerChallengeAndRecoveryContracts(t *testing.T) {
 	service := &totpServiceStub{}
 	controller := NewTOTPController(service, nil)
 
-	verify := newTOTPAuthenticationRequest(t, store, session, "/api/auth/verify", `{"passcode":"123456"}`)
+	verify, authAudit := withAuditRecorder(newTOTPAuthenticationRequest(t, store, session, "/api/auth/verify", `{"passcode":"123456"}`))
 	verifyRecorder := httptest.NewRecorder()
 	controller.VerifySession(verifyRecorder, verify)
 	assert.Equal(t, http.StatusNoContent, verifyRecorder.Code)
 	assert.Equal(t, "123456", service.verifiedCode)
+	kinds, err := authAudit.Kinds()
+	require.NoError(t, err)
+	assert.Equal(t, []audit.Kind{audit.AuthMFAVerifyTOTP, audit.AuthLogin}, kinds)
 
 	service.verifyError = pro_interfaces.ErrTOTPReplay
 	replay := newTOTPAuthenticationRequest(t, store, session, "/api/auth/verify", `{"passcode":"123456"}`)
@@ -223,13 +329,31 @@ func TestTOTPControllerChallengeAndRecoveryContracts(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, replayRecorder.Code)
 	assert.Contains(t, replayRecorder.Body.String(), "TOTP_REPLAYED")
 
+	service.verifyError = pro_interfaces.ErrTOTPInvalidCode
+	invalidChallenge, challengeAudit := withAuditRecorder(newTOTPAuthenticationRequest(t, store, session, "/api/auth/verify", `{"passcode":"invalid"}`))
+	invalidChallengeRecorder := httptest.NewRecorder()
+	controller.VerifySession(invalidChallengeRecorder, invalidChallenge)
+	assert.Equal(t, http.StatusUnauthorized, invalidChallengeRecorder.Code)
+	got := onlyEvent(t, challengeAudit, audit.AuthMFAVerifyTOTP)
+	assert.Equal(t, audit.OutcomeFailure, got.Event.Outcome)
+	assert.Equal(t, audit.ReasonInvalidPasscode, got.Event.Reason)
+	kinds, err = challengeAudit.Kinds()
+	require.NoError(t, err)
+	assert.NotContains(t, kinds, audit.AuthLogin)
+
 	service.recoverError = pro_interfaces.ErrTOTPInvalidRecovery
-	recovery := newTOTPAuthenticationRequest(t, store, session, "/api/auth/recovery", `{"recovery_code":"RECOVERY"}`)
+	recovery, recoveryAudit := withAuditRecorder(newTOTPAuthenticationRequest(t, store, session, "/api/auth/recovery", `{"recovery_code":"RECOVERY"}`))
 	recoveryRecorder := httptest.NewRecorder()
 	controller.RecoverSession(recoveryRecorder, recovery)
 	assert.Equal(t, http.StatusUnauthorized, recoveryRecorder.Code)
 	assert.Equal(t, "RECOVERY", service.recoveryCode)
 	assert.Contains(t, recoveryRecorder.Body.String(), "INVALID_RECOVERY_CODE")
+	got = onlyEvent(t, recoveryAudit, audit.AuthMFARecover)
+	assert.Equal(t, audit.OutcomeFailure, got.Event.Outcome)
+	assert.Equal(t, audit.ReasonInvalidRecoveryCode, got.Event.Reason)
+	kinds, err = recoveryAudit.Kinds()
+	require.NoError(t, err)
+	assert.NotContains(t, kinds, audit.AuthLogin)
 }
 
 func newTOTPAuthenticationRequest(

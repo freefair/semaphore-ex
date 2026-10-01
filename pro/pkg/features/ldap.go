@@ -29,12 +29,12 @@ func (*communityLDAPService) AllowLocalRecovery(context.Context, string) (bool, 
 	return false, pro_interfaces.ErrLDAPUnavailable
 }
 
-func (*communityLDAPService) Authenticate(context.Context, pro_interfaces.LDAPAuthenticationRequest) (db.User, error) {
-	return db.User{}, pro_interfaces.ErrLDAPUnavailable
+func (*communityLDAPService) Authenticate(context.Context, pro_interfaces.LDAPAuthenticationRequest) (db.User, bool, error) {
+	return db.User{}, false, pro_interfaces.ErrLDAPUnavailable
 }
 
-func (*communityLDAPService) Link(context.Context, pro_interfaces.LDAPLinkRequest) error {
-	return pro_interfaces.ErrLDAPUnavailable
+func (*communityLDAPService) Link(context.Context, pro_interfaces.LDAPLinkRequest) (bool, error) {
+	return false, pro_interfaces.ErrLDAPUnavailable
 }
 
 func (*communityLDAPService) Providers(context.Context) ([]pro_interfaces.LDAPProviderConfiguration, error) {

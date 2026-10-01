@@ -13,6 +13,7 @@ import (
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 )
 
 type RolesController struct {
@@ -101,6 +102,7 @@ func (c *RolesController) AddRole(w http.ResponseWriter, r *http.Request) {
 		writeGlobalRoleError(w, err)
 		return
 	}
+	c.recordGlobalRoleAudit(r, audit.IAMRoleCreate, role, true)
 	helpers.WriteJSON(w, http.StatusCreated, role)
 }
 
@@ -130,6 +132,7 @@ func (c *RolesController) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		writeGlobalRoleError(w, err)
 		return
 	}
+	c.recordGlobalRoleAudit(r, audit.IAMRoleUpdate, updated, true)
 	helpers.WriteJSON(w, http.StatusOK, updated)
 }
 
@@ -145,10 +148,16 @@ func (c *RolesController) DeleteRole(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	role, err := c.store.GetGlobalRoleByID(roleID)
+	if err != nil {
+		writeGlobalRoleError(w, err)
+		return
+	}
 	if err := c.store.DeleteGlobalRole(roleID, revision); err != nil {
 		writeGlobalRoleError(w, err)
 		return
 	}
+	c.recordGlobalRoleAudit(r, audit.IAMRoleDelete, role, false)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -312,6 +321,7 @@ func (c *RolesController) AddProjectRole(w http.ResponseWriter, r *http.Request)
 		writeProjectRoleError(w, err)
 		return
 	}
+	c.recordProjectRoleAudit(r, audit.IAMProjectRoleDefinitionCreate, role, true)
 	helpers.WriteJSON(w, http.StatusCreated, role)
 }
 
@@ -362,6 +372,7 @@ func (c *RolesController) UpdateProjectRole(w http.ResponseWriter, r *http.Reque
 		writeProjectRoleError(w, err)
 		return
 	}
+	c.recordProjectRoleAudit(r, audit.IAMProjectRoleDefinitionUpdate, updated, true)
 	helpers.WriteJSON(w, http.StatusOK, updated)
 }
 
@@ -382,11 +393,77 @@ func (c *RolesController) DeleteProjectRole(w http.ResponseWriter, r *http.Reque
 		helpers.WriteErrorStatus(w, "A positive role revision is required", http.StatusBadRequest)
 		return
 	}
+	role, err := c.store.GetProjectRoleByID(project.ID, roleID)
+	if err != nil {
+		writeProjectRoleError(w, err)
+		return
+	}
 	if err = c.store.DeleteProjectRole(project.ID, roleID, revision); err != nil {
 		writeProjectRoleError(w, err)
 		return
 	}
+	c.recordProjectRoleAudit(r, audit.IAMProjectRoleDefinitionDelete, role, false)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (c *RolesController) recordGlobalRoleAudit(
+	r *http.Request,
+	kind audit.Kind,
+	role db.Role,
+	withMetadata bool,
+) {
+	event := audit.Event{Kind: kind, Target: roleAuditTarget(audit.TargetRole, role)}
+	if withMetadata {
+		event.Metadata = audit.RoleMetadata{Permissions: roleAuditPermissionNames(role)}
+	}
+	helpers.Audit(r).Record(r.Context(), event)
+}
+
+func (c *RolesController) recordProjectRoleAudit(
+	r *http.Request,
+	kind audit.Kind,
+	role db.Role,
+	withMetadata bool,
+) {
+	event := audit.Event{
+		Kind:      kind,
+		Target:    roleAuditTarget(audit.TargetProjectRoleDefinition, role),
+		ProjectID: projectIDFromRole(role),
+	}
+	if withMetadata {
+		event.Metadata = audit.RoleMetadata{Permissions: roleAuditPermissionNames(role)}
+	}
+	helpers.Audit(r).Record(r.Context(), event)
+}
+
+func projectIDFromRole(role db.Role) int {
+	if role.ProjectID == nil {
+		return 0
+	}
+	return *role.ProjectID
+}
+
+func roleAuditTarget(targetType string, role db.Role) *audit.Target {
+	return &audit.Target{
+		Type: targetType,
+		ID:   audit.TruncateName(string(role.ID), audit.MaxNameBytes),
+		Name: audit.TruncateName(role.Name, audit.MaxNameBytes),
+	}
+}
+
+func roleAuditPermissionNames(role db.Role) []string {
+	permissions := make([]string, 0)
+	for _, definition := range pro_interfaces.ProjectPermissionCatalog() {
+		if role.Permissions.Can(definition.Permission) {
+			permissions = append(permissions, string(definition.ID))
+		}
+	}
+	for _, definition := range pro_interfaces.GlobalPermissionCatalog() {
+		if role.GlobalPermissions.Can(db.GlobalPermission(definition.Permission)) {
+			permissions = append(permissions, string(definition.ID))
+		}
+	}
+	return permissions
 }
 
 func (c *RolesController) requireCapability(

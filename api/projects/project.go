@@ -6,11 +6,13 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 	"net/http"
+	"strings"
 )
 
 // ProjectMiddleware ensures a project exists and loads it to the context
@@ -115,6 +117,12 @@ func GetMustCanMiddleware(permissions db.ProjectUserPermission) mux.MiddlewareFu
 			can := (userPerms & permissions) == permissions
 
 			if !me.Admin && r.Method != "GET" && r.Method != "HEAD" && !can {
+				projectID := 0
+				if project, ok := helpers.GetOkFromContext(r, "project"); ok {
+					projectID = project.(db.Project).ID
+				}
+				// Every call site passes a single permission bit.
+				helpers.RecordDenied(r, strings.Join(audit.PermissionNames(permissions), ","), projectID)
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}

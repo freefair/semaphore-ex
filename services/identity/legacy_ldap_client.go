@@ -12,10 +12,19 @@ import (
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
 
-type legacyLDAPClient struct{}
+type legacyLDAPClient struct {
+	dial legacyLDAPDialFunc
+}
+
+type legacyLDAPDialFunc func(string, *tls.Config) (ldapConnection, error)
 
 func NewLegacyLDAPClient() pro_interfaces.LegacyLDAPClient {
-	return &legacyLDAPClient{}
+	return &legacyLDAPClient{dial: func(serverURL string, tlsConfig *tls.Config) (ldapConnection, error) {
+		return ldap.DialURL(serverURL,
+			ldap.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}),
+			ldap.DialWithTLSConfig(tlsConfig),
+		)
+	}}
 }
 
 func (c *legacyLDAPClient) Authenticate(
@@ -36,10 +45,7 @@ func (c *legacyLDAPClient) Authenticate(
 		ServerName:         serverURL.Hostname(),
 		InsecureSkipVerify: configuration.TLSSkipVerify, //nolint:gosec // explicit legacy compatibility setting
 	}
-	connection, err := ldap.DialURL(serverURL.String(),
-		ldap.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}),
-		ldap.DialWithTLSConfig(tlsConfiguration),
-	)
+	connection, err := c.dial(serverURL.String(), tlsConfiguration)
 	if err != nil {
 		return nil, err
 	}
@@ -79,6 +85,9 @@ func (c *legacyLDAPClient) Authenticate(
 	}
 	entry := result.Entries[0]
 	if err = connection.Bind(entry.DN, request.Credential); err != nil {
+		if ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
+			return nil, pro_interfaces.ErrLDAPInvalidCredentials
+		}
 		return nil, err
 	}
 	attributes := make(map[string]any, len(entry.Attributes))

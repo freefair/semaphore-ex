@@ -191,6 +191,49 @@ func TestLDAPClientMapsUserBindFailureWithoutLeakingDiagnostics(t *testing.T) {
 	assert.NotContains(t, err.Error(), "directory detail")
 }
 
+func TestLegacyLDAPClientDistinguishesUserAndServiceBindFailures(t *testing.T) {
+	request := pro_interfaces.LegacyLDAPClientRequest{
+		Configuration: pro_interfaces.LegacyLDAPClientConfiguration{
+			Server: "ldap.example.test:389", SearchBaseDN: "ou=people,dc=example,dc=test",
+			SearchFilter: "(uid=%s)", BindDN: "cn=reader,dc=example,dc=test", BindPassword: "bind-password",
+		},
+		Username: "alice", Credential: "user-password",
+	}
+	entry := ldap.NewEntry("uid=alice,ou=people,dc=example,dc=test", map[string][]string{"uid": {"alice"}})
+
+	t.Run("user bind maps invalid credentials sentinel", func(t *testing.T) {
+		connection := &fakeLDAPConnection{
+			searchResult: &ldap.SearchResult{Entries: []*ldap.Entry{entry}}, bindErrorAt: 2,
+			bindError: ldap.NewError(ldap.LDAPResultInvalidCredentials, errors.New("user bind detail")),
+		}
+		client := &legacyLDAPClient{dial: fakeLegacyLDAPDial(connection)}
+
+		_, err := client.Authenticate(context.Background(), request)
+
+		assert.ErrorIs(t, err, pro_interfaces.ErrLDAPInvalidCredentials)
+		assert.NotContains(t, err.Error(), "user bind detail")
+		assert.Len(t, connection.binds, 2)
+	})
+
+	t.Run("service bind stays provider failure", func(t *testing.T) {
+		serviceBind := ldap.NewError(ldap.LDAPResultInvalidCredentials, errors.New("service bind detail"))
+		connection := &fakeLDAPConnection{bindErrorAt: 1, bindError: serviceBind}
+		client := &legacyLDAPClient{dial: fakeLegacyLDAPDial(connection)}
+
+		_, err := client.Authenticate(context.Background(), request)
+
+		assert.ErrorIs(t, err, serviceBind)
+		assert.NotErrorIs(t, err, pro_interfaces.ErrLDAPInvalidCredentials)
+		assert.Len(t, connection.binds, 1)
+	})
+}
+
+func fakeLegacyLDAPDial(connection ldapConnection) legacyLDAPDialFunc {
+	return func(string, *tls.Config) (ldapConnection, error) {
+		return connection, nil
+	}
+}
+
 func TestValidateLDAPConfigurationRejectsDowngradeAndMutableIdentity(t *testing.T) {
 	configuration := validLDAPClientConfiguration()
 	configuration.ServerURL = "ldap://ldap.example.test:389"

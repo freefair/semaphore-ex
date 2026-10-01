@@ -455,6 +455,14 @@ func HAEnabled() bool {
 	return Config.HA != nil && Config.HA.Enabled
 }
 
+// HANodeID is empty outside HA.
+func HANodeID() string {
+	if !HAEnabled() {
+		return ""
+	}
+	return Config.HA.NodeID
+}
+
 // InitHANodeID generates a unique node identifier for this instance if one
 // was not explicitly configured. Must be called after ConfigInit.
 func InitHANodeID() {
@@ -771,7 +779,8 @@ type ConfigType struct {
 
 	HA *HAConfig `json:"ha,omitempty"`
 
-	Dirs *ConfigDirs `json:"dirs,omitempty"`
+	Audit *AuditConfig `json:"audit,omitempty"`
+	Dirs  *ConfigDirs  `json:"dirs,omitempty"`
 
 	Runner *RunnerConfig `json:"runner,omitempty"`
 
@@ -1909,6 +1918,10 @@ func validateConfig() {
 		if err := validateAuthConfig(Config.Auth); err != nil {
 			panic(err)
 		}
+	}
+
+	if err := Config.Audit.Validate(); err != nil {
+		panic(err)
 	}
 
 	if err := validateAccessKeyEncryption(Config.AccessKeyEncryption); err != nil {
