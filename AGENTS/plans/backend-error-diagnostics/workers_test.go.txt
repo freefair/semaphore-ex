@@ -1,0 +1,35 @@
+package audit_test
+
+import (
+ "testing"
+ "errors"
+ "time"
+ "github.com/semaphoreui/semaphore/db"
+ dbsql "github.com/semaphoreui/semaphore/db/sql"
+ enhanced "github.com/semaphoreui/semaphore/pro/services/server"
+ "github.com/semaphoreui/semaphore/util"
+ "github.com/stretchr/testify/assert"
+ "github.com/stretchr/testify/require"
+)
+
+type failingNotificationRepo struct {db.NotificationRepository;called chan struct{}}
+func (r *failingNotificationRepo) ClaimNotificationDeliveries(time.Time,time.Time,int)([]db.NotificationDelivery,error){r.called<-struct{}{};return nil,errors.New("synthetic notification claim database unavailable")}
+func TestAuditNotificationWorkerSwallowsClaimFailure(t *testing.T){
+ logs:=captureLog(t);repo:=&failingNotificationRepo{called:make(chan struct{},1)}
+ dispatcher:=enhanced.NewNotificationDispatcher(repo)
+ dispatcher.Start();t.Cleanup(func(){_ = dispatcher.Close()})
+ select{case <-repo.called:case <-time.After(5*time.Second):t.Fatal("worker did not attempt claim")}
+ require.NoError(t,dispatcher.Close())
+ assert.Empty(t,logs.String());t.Log("notification outbox claim failed; worker emitted no log and Close returned nil")
+}
+func TestAuditMissingDatabaseTableBecomesRevisionConflict(t *testing.T){
+ original:=util.Config;t.Cleanup(func(){util.Config=original})
+ util.Config=&util.ConfigType{SQLite:&util.DbConfig{Hostname:":memory:"},Dialect:"sqlite"}
+ store:=dbsql.CreateDb(util.DbDriverSQLite);store.Connect();t.Cleanup(store.Close)
+ _,dbErr:=store.Sql().Db.Exec("select * from docker_execution_policy")
+ require.ErrorContains(t,dbErr,"no such table")
+ _,err:=store.SaveDockerExecutionPolicy(db.DefaultDockerExecutionPolicy(),0)
+ assert.ErrorIs(t,err,db.ErrDockerExecutionPolicyRevisionConflict)
+ assert.NotContains(t,err.Error(),"no such table")
+ t.Logf("actual DB error=%q; returned error=%q",dbErr.Error(),err.Error())
+}

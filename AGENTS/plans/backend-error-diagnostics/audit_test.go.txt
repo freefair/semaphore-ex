@@ -1,0 +1,81 @@
+package audit_test
+
+import (
+ "bytes"
+ "context"
+ "crypto/x509"
+ "errors"
+ "io"
+ stdlog "log"
+ "net/http"
+ "net/http/httptest"
+ "strings"
+ "testing"
+
+ "github.com/semaphoreui/semaphore/api"
+ "github.com/semaphoreui/semaphore/api/helpers"
+ "github.com/semaphoreui/semaphore/db"
+ "github.com/semaphoreui/semaphore/pro_interfaces"
+ "github.com/semaphoreui/semaphore/services/identity"
+ log "github.com/sirupsen/logrus"
+ "github.com/stretchr/testify/assert"
+ "github.com/stretchr/testify/require"
+)
+
+// These characterization checks prove the current defects, not fixed behavior.
+func captureLog(t *testing.T) *bytes.Buffer {
+ var out bytes.Buffer
+ old := log.StandardLogger().Out
+ log.SetOutput(&out)
+ t.Cleanup(func(){log.SetOutput(old)})
+ return &out
+}
+func TestAuditInternalErrorBecomesEmptyBadRequest(t *testing.T) {
+ logs := captureLog(t)
+ response := httptest.NewRecorder()
+ helpers.WriteError(response, errors.New("synthetic database disk full"))
+ assert.Equal(t, 400, response.Code)
+ assert.Empty(t, response.Body.String())
+ assert.Contains(t, logs.String(), "synthetic database disk full")
+ t.Logf("observed internal DB failure: status=%d body=%q; cause only in uncorrelated server log", response.Code,response.Body.String())
+}
+func TestAuditMalformedJSONHasNoFieldDiagnostic(t *testing.T) {
+ r := httptest.NewRequest(http.MethodPost,"/test",strings.NewReader(`{"port":"wrong-type"}`))
+ response := httptest.NewRecorder()
+ var body struct {Port int `json:"port"`}
+ assert.False(t,helpers.Bind(response,r,&body))
+ assert.Equal(t,400,response.Code)
+ assert.Empty(t,response.Body.String())
+ t.Logf("observed invalid port type: status=%d body=%q",response.Code,response.Body.String())
+}
+type globalStub struct {pro_interfaces.GlobalCredentialServiceFacade}
+func (globalStub) ListGlobalCredentials(context.Context,db.RetrieveQueryParams)([]pro_interfaces.GlobalCredentialSummaryDTO,error){return nil,errors.New("synthetic global credential database failure")}
+type webhookStub struct {pro_interfaces.AuditWebhookServiceFacade}
+func (webhookStub) Configuration(context.Context)(pro_interfaces.AuditWebhookConfigDTO,error){return pro_interfaces.AuditWebhookConfigDTO{},errors.New("synthetic webhook database failure")}
+type notificationStub struct {pro_interfaces.NotificationGovernanceServiceFacade}
+func (notificationStub) ListDestinations(context.Context,*int,db.RetrieveQueryParams)([]pro_interfaces.NotificationDestinationDTO,error){return nil,errors.New("synthetic notification database failure")}
+func TestAuditAdminEndpointsDiscardCauseWithoutLog(t *testing.T){
+ for _,tc := range []struct{name string; handler http.HandlerFunc; status int; message string}{
+  {"global_credentials",api.NewGlobalCredentialController(globalStub{}).List,500,"Global credential service failure"},
+  {"audit_webhook",api.NewAuditWebhookController(webhookStub{},nil).GetConfiguration,500,"Audit webhook operation failed"},
+  {"notifications",api.NewNotificationGovernanceController(notificationStub{}).ListGlobalDestinations,503,"Notification governance is unavailable"},
+ }{t.Run(tc.name,func(t *testing.T){logs:=captureLog(t);response:=httptest.NewRecorder();tc.handler(response,httptest.NewRequest(http.MethodGet,"/test",nil));assert.Equal(t,tc.status,response.Code);assert.Contains(t,response.Body.String(),tc.message);assert.NotContains(t,response.Body.String(),"synthetic");assert.Empty(t,logs.String());t.Logf("status=%d body=%s log_bytes=%d",response.Code,strings.TrimSpace(response.Body.String()),logs.Len())})}
+}
+type ldapStub struct {pro_interfaces.LDAPService}
+func (ldapStub) Test(context.Context,pro_interfaces.LDAPTestRequest)(pro_interfaces.LDAPReadiness,error){return pro_interfaces.LDAPReadiness{Status:pro_interfaces.LDAPReadinessFailed,Connection:true,Code:"service_bind_failed"},pro_interfaces.ErrLDAPProviderUnavailable}
+func TestAuditLDAPTestDiscardsReadinessStage(t *testing.T){
+ logs:=captureLog(t);response:=httptest.NewRecorder()
+ request:=httptest.NewRequest(http.MethodPost,"/api/capabilities/ldap/test",strings.NewReader(`{"provider_id":"test","username":"fixture","password":"fixture","recovery_admin_user_id":1,"recovery_admin_password":"fixture"}`))
+ request=helpers.SetContextValue(request,"user",&db.User{ID:1,Admin:true})
+ api.NewLDAPController(ldapStub{},nil).Test(response,request)
+ assert.Equal(t,503,response.Code);assert.NotContains(t,response.Body.String(),"service_bind_failed");assert.Empty(t,logs.String())
+ t.Logf("service bind readiness discarded: status=%d body=%s log_bytes=%d",response.Code,strings.TrimSpace(response.Body.String()),logs.Len())
+}
+func TestAuditLDAPClientDiscardsCertificateCause(t *testing.T){
+ server:=httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter,*http.Request){}))
+ server.Config.ErrorLog=stdlog.New(io.Discard,"",0);server.StartTLS();defer server.Close()
+ result,err:=identity.NewLDAPClient().Authenticate(context.Background(),pro_interfaces.LDAPClientRequest{
+  Configuration:pro_interfaces.LDAPClientConfiguration{ServerURL:strings.Replace(server.URL,"https://","ldaps://",1),TLSMode:pro_interfaces.LDAPTLSModeLDAPS,TrustMode:pro_interfaces.LDAPTrustModeSystem,BindDN:"cn=reader,dc=example,dc=test",BindPassword:"fixture",SearchBaseDN:"dc=example,dc=test",UserFilter:"(uid={{username}})",IdentityAttribute:"entryUUID",UsernameAttribute:"uid",NameAttribute:"cn",EmailAttribute:"mail"},Username:"fixture",Credential:"fixture",
+ })
+ require.Error(t,err);assert.ErrorIs(t,err,pro_interfaces.ErrLDAPProviderUnavailable);var certificateError x509.UnknownAuthorityError;assert.False(t,errors.As(err,&certificateError));assert.Equal(t,"connection_failed",result.Readiness.Code);assert.Equal(t,"LDAP provider unavailable: connect",err.Error());t.Logf("self-signed TLS failure: error=%q readiness=%s certificate cause unavailable through errors.As",err.Error(),result.Readiness.Code)
+}

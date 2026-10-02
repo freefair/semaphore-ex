@@ -1,0 +1,21 @@
+package audit_test
+import (
+ "testing"
+ "errors"
+ "github.com/semaphoreui/semaphore/db"
+ "github.com/semaphoreui/semaphore/services/project"
+ "github.com/stretchr/testify/assert"
+ "github.com/stretchr/testify/require"
+)
+type restoreStore struct{db.Store;failedAlias bool}
+func (*restoreStore) GetAllProjects()([]db.Project,error){return nil,nil}
+func (*restoreStore) CreateProject(p db.Project)(db.Project,error){p.ID=17;return p,nil}
+func (*restoreStore) UpdateProject(db.Project)error{return nil}
+func (*restoreStore) CreateProjectUser(p db.ProjectUser)(db.ProjectUser,error){return p,nil}
+func (s *restoreStore) CreateIntegrationAlias(db.IntegrationAlias)(db.IntegrationAlias,error){s.failedAlias=true;return db.IntegrationAlias{},errors.New("synthetic alias insert failure")}
+func TestAuditRestoreReportsSuccessAfterAliasInsertFailure(t *testing.T){
+ logs:=captureLog(t);store:=&restoreStore{}
+ backup:=project.BackupFormat{Meta:project.BackupMeta{Project:db.Project{Name:"fixture"}},IntegrationAliases:[]string{"fixture-alias"}}
+ result,err:=backup.Restore(db.User{ID:1},store,nil)
+ require.NoError(t,err);require.NotNil(t,result);assert.True(t,store.failedAlias);assert.Empty(t,logs.String());t.Logf("CreateIntegrationAlias failed, but Restore returned project %d, nil error and no log",result.ID)
+}
