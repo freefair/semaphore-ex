@@ -1251,7 +1251,7 @@ func (p *JobPool) checkNewJobs() {
 		)
 		var executor tasks.Executor
 		if execErr == nil {
-			executor, execErr = newExecutor(newJob, response.AccessKeys, p.provider)
+			executor, execErr = newExecutor(&newJob, response.AccessKeys, p.provider)
 		}
 		if execErr != nil {
 			if policyRejection, isPolicyRejection := newDockerPolicyRejectionExecutor(execErr); isPolicyRejection {
@@ -1285,7 +1285,7 @@ func (p *JobPool) checkNewJobs() {
 			taskID:          newJob.Task.ID,
 			generation:      newJob.Task.AssignmentGeneration,
 			status:          newJob.Task.Status,
-			redactor:        taskredaction.NewFromTaskSecretAndValues(newJob.TaskSecret, newJob.CredentialTargets, hostConfigSecretValues(newJob.HostConfigs)),
+			redactor:        taskredaction.NewFromTaskSecretAndValues(newJob.TaskSecret, newJob.CredentialTargets, jobCredentialSecretValues(newJob.Repository, newJob.HostConfigs)),
 		}
 		if resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeDocker {
 			ack, ready := p.currentDockerPolicyAck()
@@ -1312,10 +1312,15 @@ func (p *JobPool) checkNewJobs() {
 	}
 }
 
-func hostConfigSecretValues(hostConfigs []db.HostConfig) []string {
-	values := make([]string, 0, len(hostConfigs)*4)
+func jobCredentialSecretValues(repository db.Repository, hostConfigs []db.HostConfig) []string {
+	values := make([]string, 0, (len(hostConfigs)+1)*3)
+	values = appendAccessKeySecretValues(values, repository.SSHKey)
 	for _, mapping := range hostConfigs {
-		values = append(values, mapping.SSHKey.SshKey.PrivateKey, mapping.SSHKey.SshKey.Passphrase, mapping.SSHKey.LoginPassword.Password)
+		values = appendAccessKeySecretValues(values, mapping.SSHKey)
 	}
 	return values
+}
+
+func appendAccessKeySecretValues(values []string, key db.AccessKey) []string {
+	return append(values, key.SshKey.PrivateKey, key.SshKey.Passphrase, key.LoginPassword.Password)
 }

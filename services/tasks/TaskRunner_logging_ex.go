@@ -9,11 +9,16 @@ import (
 )
 
 func (t *TaskRunner) SetTaskCredentialRedaction(taskSecret string) {
-	extra := make([]string, 0, len(t.HostConfigs)*2)
+	extra := make([]string, 0, (len(t.HostConfigs)+1)*3)
+	extra = appendAccessKeyRedactionValues(extra, t.Repository.SSHKey)
 	for _, mapping := range t.HostConfigs {
-		extra = append(extra, mapping.SSHKey.SshKey.PrivateKey, mapping.SSHKey.SshKey.Passphrase, mapping.SSHKey.LoginPassword.Password)
+		extra = appendAccessKeyRedactionValues(extra, mapping.SSHKey)
 	}
 	t.redactor = taskredaction.NewFromTaskSecretAndValues(taskSecret, t.GlobalCredentialBindingTargets(), extra)
+}
+
+func appendAccessKeyRedactionValues(values []string, key db.AccessKey) []string {
+	return append(values, key.SshKey.PrivateKey, key.SshKey.Passphrase, key.LoginPassword.Password)
 }
 
 func taskStatusTransitionAllowed(current task_logger.TaskStatus, next task_logger.TaskStatus) bool {

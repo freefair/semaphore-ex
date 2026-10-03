@@ -116,6 +116,10 @@ func (t *LocalExecutor) ContainerTaskPlan() (*ContainerTaskPlan, error) {
 	if err != nil {
 		return nil, err
 	}
+	galaxyBootstrapEnvironmentScript := ""
+	if t.Template.App == db.AppAnsible {
+		galaxyBootstrapEnvironmentScript = renderContainerEnvironment(t.containerGalaxyBootstrapEnvironment(environment))
+	}
 	runScript, terraformPlan, err := t.containerRunScript(args)
 	if err != nil {
 		return nil, err
@@ -124,7 +128,7 @@ func (t *LocalExecutor) ContainerTaskPlan() (*ContainerTaskPlan, error) {
 
 	reader, writer := io.Pipe()
 	go func() {
-		err := t.writeContainerBundle(writer, repositoryRoot, environmentScript, runScript, extraFiles)
+		err := t.writeContainerBundle(writer, repositoryRoot, environmentScript, galaxyBootstrapEnvironmentScript, runScript, extraFiles)
 		_ = writer.CloseWithError(err)
 	}()
 
@@ -145,6 +149,7 @@ func (t *LocalExecutor) writeContainerBundle(
 	destination io.Writer,
 	repositoryRoot string,
 	environmentScript string,
+	galaxyBootstrapEnvironmentScript string,
 	runScript string,
 	extraFiles []containerBundleFile,
 ) error {
@@ -185,6 +190,9 @@ func (t *LocalExecutor) writeContainerBundle(
 		{name: "run.sh", mode: 0o500, data: []byte(runScript)},
 		{name: "inventory-resolver.py", mode: 0o500, data: []byte(db_lib.InventoryResolverScript())},
 	}, extraFiles...)
+	if galaxyBootstrapEnvironmentScript != "" {
+		files = append(files, containerBundleFile{name: "credentials/galaxy-bootstrap.sh", mode: 0o600, data: []byte(galaxyBootstrapEnvironmentScript)})
+	}
 	for _, file := range files {
 		if err := addContainerFile(archive, file.name, file.mode, file.data); err != nil {
 			return err
@@ -359,6 +367,22 @@ func (t *LocalExecutor) containerEnvironment() ([]string, error) {
 		result = append(result, name+"="+value)
 	}
 	return result, nil
+}
+
+// containerGalaxyBootstrapEnvironment keeps repository Git credentials scoped
+// to dependency installation. The normal task environment has only its existing
+// task variables and project mappings; the repository rewrite is sourced by
+// bootstrap immediately before ansible-galaxy runs.
+func (t *LocalExecutor) containerGalaxyBootstrapEnvironment(environment []string) []string {
+	merged := db_lib.MergeGitConfigParameters(append(db_lib.GalaxyGitEnv(t.Repository), environment...))
+	result := make([]string, 0, 2)
+	for _, pair := range merged {
+		name, _, found := strings.Cut(pair, "=")
+		if found && (name == "GIT_TERMINAL_PROMPT" || name == "GIT_CONFIG_PARAMETERS") {
+			result = append(result, pair)
+		}
+	}
+	return result
 }
 
 func (t *LocalExecutor) isGeneratedTaskGitSSHCommand(value string) bool {
@@ -706,6 +730,7 @@ func (t *LocalExecutor) containerAnsibleBootstrap() string {
 		{"role", path.Join(containerWorkspacePath, "requirements.yml")},
 	}
 	var script strings.Builder
+	script.WriteString("  . \"${bundle_dir}/credentials/galaxy-bootstrap.sh\"\n")
 	for _, requirement := range requirements {
 		fmt.Fprintf(&script, "  if [ -f %s ]; then ansible-galaxy %s install -r %s --force; fi\n",
 			posixQuote(requirement.filename), posixQuote(requirement.typeName), posixQuote(requirement.filename))

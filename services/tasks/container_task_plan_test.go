@@ -404,6 +404,71 @@ func TestPrepareContainerTaskCarriesMappingsWithoutRunnerPaths(t *testing.T) {
 	})
 }
 
+func TestContainerGalaxyBootstrapEnvironmentScopesRepositoryCredential(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: t.TempDir()}
+	t.Cleanup(func() { util.Config = previousConfig })
+
+	repository := db.Repository{
+		ID:        7,
+		ProjectID: 8,
+		GitURL:    "https://git.example.test/team/repository.git",
+		SSHKey: db.AccessKey{
+			Type:          db.AccessKeyLoginPassword,
+			LoginPassword: db.LoginPassword{Login: "repo-user", Password: "repo=credential"},
+		},
+	}
+	repositoryRoot := repository.GetFullPath(9)
+	require.NoError(t, os.MkdirAll(repositoryRoot, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repositoryRoot, "site.yml"), []byte("---\n"), 0o644))
+
+	mapping := "GIT_CONFIG_PARAMETERS='url.https://mapping-password@git.example.test/mapped/.insteadOf=https://other.example.test/'"
+	executor := &LocalExecutor{
+		Task:       db.Task{ID: 1},
+		Template:   db.Template{ID: 9, ProjectID: 8, App: db.AppAnsible, Playbook: "site.yml"},
+		Repository: repository,
+		Inventory:  db.Inventory{Type: db.InventoryFile},
+		prepared:   true,
+		preparedEnv: []string{
+			mapping,
+			"TASK_VALUE=kept-out",
+		},
+		preparedArgsMap: map[string][]string{"default": {"site.yml"}},
+	}
+
+	plan, err := executor.ContainerTaskPlan()
+	require.NoError(t, err)
+	bundle, err := io.ReadAll(plan.Bundle)
+	require.NoError(t, err)
+	require.NoError(t, plan.Bundle.Close())
+	entries := readTaskBundle(t, bytes.NewReader(bundle))
+	headers := readTaskBundleHeaders(t, bytes.NewReader(bundle))
+	normalEnvironment := string(entries["credentials/environment.sh"])
+	bootstrapEnvironment := string(entries["credentials/galaxy-bootstrap.sh"])
+
+	assert.NotContains(t, normalEnvironment, "repo%3Dcredential")
+	assert.Contains(t, normalEnvironment, "mapping-password")
+	assert.Contains(t, bootstrapEnvironment, "repo-user:repo%3Dcredential@git.example.test")
+	assert.Contains(t, bootstrapEnvironment, "mapping-password@git.example.test/mapped")
+	assert.NotContains(t, bootstrapEnvironment, "TASK_VALUE")
+	require.Contains(t, headers, "credentials/galaxy-bootstrap.sh")
+	assert.Equal(t, int64(0o600), headers["credentials/galaxy-bootstrap.sh"].Mode)
+	assert.Contains(t, string(entries["run.sh"]), `. "${bundle_dir}/credentials/galaxy-bootstrap.sh"`)
+
+	bootstrapPath := filepath.Join(t.TempDir(), "galaxy-bootstrap.sh")
+	require.NoError(t, os.WriteFile(bootstrapPath, entries["credentials/galaxy-bootstrap.sh"], 0o600))
+	command := exec.Command("sh", "-c", `. "$1"; git config --get-regexp '^url\.'`, "sh", bootstrapPath)
+	command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null"}
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+	assert.Contains(t, string(output), "repo-user:repo%3Dcredential@git.example.test")
+	assert.Contains(t, string(output), "mapping-password@git.example.test/mapped")
+}
+
 func TestContainerTaskPlanPackagesOnlyPreparedTaskMaterial(t *testing.T) {
 	root := t.TempDir()
 	previousConfig := util.Config

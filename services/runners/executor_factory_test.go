@@ -67,7 +67,7 @@ func TestNewExecutor_DispatchesToProvider(t *testing.T) {
 		ExecutorImage: &resolvedImage,
 	}
 
-	exec, err := newExecutor(jobData, nil, provider)
+	exec, err := newExecutor(&jobData, nil, provider)
 	require.NoError(t, err)
 	require.NotNil(t, exec)
 
@@ -90,7 +90,7 @@ func TestNewExecutor_RejectsNilProvider(t *testing.T) {
 	// JobPool may end up with a nil provider when the runner config is malformed at
 	// startup. Dispatch must refuse cleanly with a useful message instead of
 	// panicking on a nil-interface call.
-	exec, err := newExecutor(JobData{}, nil, nil)
+	exec, err := newExecutor(&JobData{}, nil, nil)
 	assert.Nil(t, exec)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "provider")
@@ -136,6 +136,19 @@ func TestHydrateJobAccessKeys_WiresKeysIntoJobData(t *testing.T) {
 	require.NotNil(t, jobData.Template.Vaults[0].Vault)
 	assert.Equal(t, vaultKeyID, jobData.Template.Vaults[0].Vault.ID, "vault key wired")
 	assert.Equal(t, inventoryRepoSSHKeyID, jobData.Inventory.Repository.SSHKey.ID, "inventory repo SSH key wired")
+}
+
+func TestNewExecutorHydratesJobDataUsedForRunnerRedaction(t *testing.T) {
+	password := "runner-repository-password"
+	jobData := JobData{Repository: db.Repository{SSHKeyID: 71}}
+	provider := tasks.NewLocalExecutorProvider(nil)
+
+	_, err := newExecutor(&jobData, map[int]db.AccessKey{
+		71: {ID: 71, Type: db.AccessKeyLoginPassword, LoginPassword: db.LoginPassword{Password: password}},
+	}, provider)
+
+	require.NoError(t, err)
+	assert.Equal(t, password, jobData.Repository.SSHKey.LoginPassword.Password)
 }
 
 func TestHydrateJobAccessKeysWiresTaskSSHBindingsAndRejectsMissingKey(t *testing.T) {

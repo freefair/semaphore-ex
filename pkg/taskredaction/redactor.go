@@ -6,6 +6,7 @@ package taskredaction
 
 import (
 	"encoding/json"
+	"net/url"
 	"sort"
 	"strings"
 )
@@ -44,6 +45,17 @@ func NewFromTaskSecretAndValues(taskSecret string, targets []string, extra []str
 		if encoded, err := json.Marshal(value); err == nil && len(encoded) >= 2 {
 			values[string(encoded[1:len(encoded)-1])] = struct{}{}
 		}
+		// Git URL rewrites encode credentials in userinfo before a child process
+		// receives them. Keep that representation in the corpus too, so task
+		// output cannot disclose an escaped password from a failed clone.
+		userinfo := url.User(value).String()
+		values[userinfo] = struct{}{}
+		values[strings.ReplaceAll(userinfo, "=", "%3D")] = struct{}{}
+		password := strings.TrimPrefix(url.UserPassword("redaction", value).String(), "redaction:")
+		values[password] = struct{}{}
+		// Git's GIT_CONFIG_PARAMETERS parser splits at the first equals sign, so
+		// GalaxyGitEnv additionally escapes literal equals signs in userinfo.
+		values[strings.ReplaceAll(password, "=", "%3D")] = struct{}{}
 	}
 	ordered := make([]string, 0, len(values))
 	for value := range values {

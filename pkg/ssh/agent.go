@@ -303,6 +303,8 @@ func gitHostKeyCheckingOpts() string {
 	case util.SshStrictHostKeyCheckingYes:
 		return "-o StrictHostKeyChecking=yes -o UserKnownHostsFile=" + shellQuote(knownHostsFile)
 	case util.SshStrictHostKeyCheckingNo:
+		// No leading "ssh": the caller prepends it, and a second one is taken by
+		// ssh as the host to connect to ("Could not resolve hostname ssh").
 		return "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 	case util.SshStrictHostKeyCheckingAcceptNew:
 		return "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + shellQuote(knownHostsFile)

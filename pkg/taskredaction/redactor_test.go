@@ -2,8 +2,12 @@ package taskredaction
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRedactorRemovesExactCredentialCorpusWithoutTouchingUnrelatedText(t *testing.T) {
@@ -46,16 +50,30 @@ func TestRedactorRemovesGoJSONEscapedCredentialRepresentation(t *testing.T) {
 func TestRedactorExtraValuesProduceOneEscapedVariant(t *testing.T) {
 	credential := `quote" slash\\`
 	redactor := NewFromTaskSecretAndValues("", nil, []string{credential})
-	if len(redactor.values) != 2 {
-		t.Fatalf("expected raw and one JSON-escaped value, got %d: %#v", len(redactor.values), redactor.values)
-	}
 	escaped, err := json.Marshal(credential)
-	if err != nil {
-		t.Fatal(err)
+	require.NoError(t, err)
+	expectedCorpus := []string{
+		credential,
+		string(escaped[1 : len(escaped)-1]),
+		url.User(credential).String(),
 	}
+	assert.ElementsMatch(t, expectedCorpus, redactor.values)
 	for _, value := range []string{credential, string(escaped[1 : len(escaped)-1])} {
-		if strings.Contains(redactor.Redact(value), credential) || !strings.Contains(redactor.Redact(value), replacement) {
-			t.Fatalf("credential variant was not redacted: %q", value)
-		}
+		redacted := redactor.Redact(value)
+		assert.NotContains(t, redacted, credential)
+		assert.Contains(t, redacted, replacement)
 	}
+}
+
+func TestRedactorRemovesURLUserinfoCredentialRepresentation(t *testing.T) {
+	credential := "token=with@reserved/value%'ü"
+	redactor := NewFromTaskSecretAndValues("", nil, []string{credential})
+	encoded := strings.ReplaceAll(strings.TrimPrefix(url.UserPassword("user", credential).String(), "user:"), "=", "%3D")
+
+	output := "fatal: could not authenticate to https://user:" + encoded + "@git.example/role.git"
+	redacted := redactor.Redact(output)
+
+	assert.NotContains(t, redacted, encoded)
+	assert.NotContains(t, redacted, credential)
+	assert.Contains(t, redacted, replacement)
 }

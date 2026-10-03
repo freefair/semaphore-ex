@@ -6,6 +6,7 @@ import (
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"os/exec"
 	"testing"
 )
 
@@ -17,6 +18,30 @@ func TestRunningJobRedactsGlobalCredentialBeforeProgressUpload(t *testing.T) {
 	_, records, _, _ := runner.getProgress()
 	require.Len(t, records, 1)
 	assert.NotContains(t, records[0].Message, "runner-secret-value")
+	assert.Contains(t, records[0].Message, "[REDACTED]")
+}
+
+func TestRunningJobLogCmdRedactsRepositoryCredentialBeforeProgressUpload(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh is not available")
+	}
+
+	password := "runner=secret@reserved/value"
+	runner := newTestRunningJob(1)
+	runner.redactor = taskredaction.NewFromTaskSecretAndValues("", nil, jobCredentialSecretValues(
+		db.Repository{SSHKey: db.AccessKey{LoginPassword: db.LoginPassword{Password: password}}},
+		nil,
+	))
+	output := "fatal: https://user:runner%3Dsecret%40reserved%2Fvalue@git.example/role.git"
+	command := exec.Command("sh", "-c", "printf '%s' \"$1\"", "sh", output)
+	finishLog := runner.LogCmd(command)
+	require.NoError(t, command.Run())
+	finishLog()
+
+	_, records, _, _ := runner.getProgress()
+	require.Len(t, records, 1)
+	assert.NotContains(t, records[0].Message, "runner%3Dsecret%40reserved%2Fvalue")
+	assert.NotContains(t, records[0].Message, password)
 	assert.Contains(t, records[0].Message, "[REDACTED]")
 }
 

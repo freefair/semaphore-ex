@@ -97,6 +97,27 @@ func TestTaskRunnerRedactsDispatchTimeHostMappingCredential(t *testing.T) {
 	assert.Equal(t, `{"host":"gitlab.example.com"}`, runner.redactor.Redact(`{"host":"gitlab.example.com"}`))
 }
 
+func TestTaskRunnerRedactsRepositoryCredentialInURLUserinfo(t *testing.T) {
+	password := "repo=secret@reserved/value"
+	pool := &TaskPool{logger: make(chan logRecord, 1)}
+	runner := &TaskRunner{
+		Repository: db.Repository{SSHKey: db.AccessKey{LoginPassword: db.LoginPassword{Password: password}}},
+		pool:       pool,
+	}
+	runner.SetTaskCredentialRedaction("")
+
+	output := "fatal: https://user:repo%3Dsecret%40reserved%2Fvalue@git.example/role.git"
+	command := exec.Command("sh", "-c", "printf '%s' \"$1\"", "sh", output)
+	finishLog := runner.LogCmd(command)
+	require.NoError(t, command.Run())
+	finishLog()
+
+	record := <-pool.logger
+	assert.NotContains(t, record.output, "repo%3Dsecret%40reserved%2Fvalue")
+	assert.NotContains(t, record.output, password)
+	assert.Contains(t, record.output, "[REDACTED]")
+}
+
 func TestTaskRunnerLogCmdFinalizerPreservesCredentialRedaction(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh is not available")

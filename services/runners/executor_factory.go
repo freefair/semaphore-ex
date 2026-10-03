@@ -47,12 +47,12 @@ func resolveExecutorType(executorCfg *util.ExecutorConfig) util.ExecutorType {
 	return executorCfg.Type
 }
 
-// newExecutor wires per-task data through the Provider. Access keys are hydrated
-// here (not inside each Provider) so the behaviour is identical regardless of
-// strategy: ansible vault passwords, SSH keys, inventory keys, and the inventory
-// repo SSH key all land on the JobData before the Executor is built.
+// newExecutor wires per-task data through the Provider. It hydrates the caller's
+// JobData in place so the Executor and the runner's subsequently constructed
+// redactor see the same access-key material. Keeping this here (rather than in
+// each Provider) makes the behavior identical across strategies.
 func newExecutor(
-	jobData JobData,
+	jobData *JobData,
 	accessKeys map[int]db.AccessKey,
 	provider tasks.ExecutorProvider,
 ) (tasks.Executor, error) {
@@ -60,7 +60,7 @@ func newExecutor(
 		return nil, fmt.Errorf("executor provider is not initialised (check runner executor config)")
 	}
 
-	if err := hydrateJobAccessKeys(&jobData, accessKeys); err != nil {
+	if err := hydrateJobAccessKeys(jobData, accessKeys); err != nil {
 		return nil, err
 	}
 	jobData.Template.ExecutorImage = jobData.ExecutorImage

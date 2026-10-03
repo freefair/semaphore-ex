@@ -671,7 +671,7 @@ users:
 			Environment: db.Environment{},
 		}
 
-		executor, err := newExecutor(jobData, nil, dockerProvider)
+		executor, err := newExecutor(&jobData, nil, dockerProvider)
 		require.NoError(t, err)
 		require.NotNil(t, executor)
 
