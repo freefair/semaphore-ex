@@ -15,6 +15,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/conv"
 	"github.com/semaphoreui/semaphore/pkg/random"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/services/server"
 	task2 "github.com/semaphoreui/semaphore/services/tasks"
 
@@ -396,7 +397,9 @@ func (c *IntegrationController) RunIntegration(integration db.Integration, proje
 	pool := helpers.GetFromContext(r, "task_pool").(*task2.TaskPool)
 
 	templateID := integration.TemplateID
-	task, err := pool.AddTaskWithDeploymentWindowAdmission(taskDefinition, nil, "", integration.ProjectID, tpl.App.NeedTaskAlias(), pro_interfaces.DeploymentWindowAdmissionRequest{
+	// The webhook caller authenticates as the integration; the request address remains in its context.
+	ctx := audit.WithActor(r.Context(), audit.IntegrationActor(integration.ID, integration.Name))
+	task, err := pool.AddTaskWithDeploymentWindowAdmissionFrom(ctx, audit.TriggerIntegration, taskDefinition, nil, "", integration.ProjectID, tpl.App.NeedTaskAlias(), pro_interfaces.DeploymentWindowAdmissionRequest{
 		ProjectID: integration.ProjectID, DecisionKey: "integration-" + random.String(32), Source: pro_interfaces.DeploymentWindowSourceIntegration,
 		Origin: pro_interfaces.DeploymentWindowOriginIntegration, TemplateID: &templateID,
 	})

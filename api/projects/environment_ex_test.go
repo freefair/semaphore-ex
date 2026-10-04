@@ -15,7 +15,7 @@ func TestUpdateEnvironmentRejectsInvalidRuntimeReference(t *testing.T) {
 		StorageID: &storageID, Mount: "team", Path: "../escape", Field: "value",
 	})
 
-	err := controller.updateEnvironmentSecrets(environment)
+	_, err := controller.updateEnvironmentSecrets(environment)
 
 	if err == nil {
 		t.Fatal("expected invalid runtime reference to be rejected")

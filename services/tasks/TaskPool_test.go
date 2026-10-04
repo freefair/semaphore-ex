@@ -263,7 +263,8 @@ func TestTaskPoolStopTaskFallbackKeepsGroupedTaskStopping(t *testing.T) {
 	task.TaskGroupKeys = db.StringArrayField{"global/production"}
 	require.NoError(t, store.UpdateTask(task))
 
-	require.NoError(t, pool.StopTask(task, true))
+	_, stopErr := pool.StopTask(task, true)
+	require.NoError(t, stopErr)
 
 	stored, err := store.GetTaskByID(task.ID)
 	require.NoError(t, err)

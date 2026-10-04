@@ -77,7 +77,7 @@ func TestUpdateEnvironmentSecrets_DeleteRejectsKeyFromOtherEnvironment(t *testin
 		},
 	}
 
-	err := ctrl.updateEnvironmentSecrets(env)
+	_, err := ctrl.updateEnvironmentSecrets(env)
 	if err == nil {
 		t.Fatal("expected error when deleting secret from another environment, got nil")
 	}
@@ -103,7 +103,7 @@ func TestUpdateEnvironmentSecrets_DeleteRejectsKeyWithNilEnvironmentID(t *testin
 		},
 	}
 
-	err := ctrl.updateEnvironmentSecrets(env)
+	_, err := ctrl.updateEnvironmentSecrets(env)
 	if err == nil {
 		t.Fatal("expected error when deleting key with nil EnvironmentID, got nil")
 	}
@@ -130,7 +130,7 @@ func TestUpdateEnvironmentSecrets_DeleteAllowsMatchingEnvironment(t *testing.T) 
 		},
 	}
 
-	err := ctrl.updateEnvironmentSecrets(env)
+	_, err := ctrl.updateEnvironmentSecrets(env)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestUpdateEnvironmentSecrets_UpdateRejectsKeyFromOtherEnvironment(t *testin
 		},
 	}
 
-	err := ctrl.updateEnvironmentSecrets(env)
+	_, err := ctrl.updateEnvironmentSecrets(env)
 	if err == nil {
 		t.Fatal("expected error when updating secret from another environment, got nil")
 	}
@@ -183,7 +183,7 @@ func TestUpdateEnvironmentSecrets_UpdateRejectsKeyWithNilEnvironmentID(t *testin
 		},
 	}
 
-	err := ctrl.updateEnvironmentSecrets(env)
+	_, err := ctrl.updateEnvironmentSecrets(env)
 	if err == nil {
 		t.Fatal("expected error when updating key with nil EnvironmentID, got nil")
 	}
@@ -210,7 +210,7 @@ func TestUpdateEnvironmentSecrets_DeleteErrorIsReported(t *testing.T) {
 		},
 	}
 
-	err := ctrl.updateEnvironmentSecrets(env)
+	_, err := ctrl.updateEnvironmentSecrets(env)
 	if err == nil {
 		t.Fatal("expected error when Delete fails, got nil")
 	}
@@ -230,7 +230,7 @@ func TestUpdateEnvironmentSecretsPlaintextUpdateClearsRuntimeReference(t *testin
 	service := &mockAccessKeyService{}
 	controller := &EnvironmentController{accessKeyRepo: repo, accessKeyService: service}
 
-	err := controller.updateEnvironmentSecrets(db.Environment{
+	_, err := controller.updateEnvironmentSecrets(db.Environment{
 		ID: 1, ProjectID: 1,
 		Secrets: []db.EnvironmentSecret{{
 			ID: 42, Name: "TOKEN", Type: db.EnvironmentSecretEnv,

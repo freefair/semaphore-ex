@@ -49,6 +49,14 @@ func (p TemplatePermission) Can(permission TemplatePermission) bool {
 	return p&permission == permission
 }
 
+// KnownProjectRolePermissions is the validated Enhanced custom-role bit mask.
+// Restore code uses it to reject unknown future bits without silently stripping
+// permissions supported by the current custom-role contract.
+const KnownProjectRolePermissions = CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
+	CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
+	CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
+	CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails
+
 // ValidateProjectRole validates the Enhanced project-scoped role contract.
 // Slug remains an internal compatibility key; callers address roles by ID.
 func ValidateProjectRole(role Role) error {
@@ -64,11 +72,7 @@ func ValidateProjectRole(role Role) error {
 	if role.Revision <= 0 {
 		return &common_errors.ValidationError{Message: "Project role revision must be positive"}
 	}
-	const knownPermissions = CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
-		CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
-		CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
-		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails
-	if role.Permissions&^knownPermissions != 0 {
+	if role.Permissions&^KnownProjectRolePermissions != 0 {
 		return &common_errors.ValidationError{Message: "Project role contains unknown permissions"}
 	}
 	if role.GlobalPermissions != 0 {

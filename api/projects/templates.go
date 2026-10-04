@@ -147,73 +147,6 @@ func RemoveTemplate(w http.ResponseWriter, r *http.Request) {
 	removeTemplate(w, r, nil, nil)
 }
 
-func SetTemplateInventory(w http.ResponseWriter, r *http.Request) {
-	tpl := helpers.GetFromContext(r, "template").(db.Template)
-	inv := helpers.GetFromContext(r, "inventory").(db.Inventory)
-
-	if !tpl.App.HasInventoryType(inv.Type) {
-		helpers.WriteErrorStatus(w, "Inventory type is not supported for this template", http.StatusBadRequest)
-		return
-	}
-
-	if tpl.App.IsTerraform() && (inv.TemplateID == nil || *inv.TemplateID != tpl.ID) {
-		helpers.WriteErrorStatus(w, "Inventory is not attached to this template", http.StatusBadRequest)
-		return
-	}
-
-	tpl.InventoryID = &inv.ID
-	err := helpers.Store(r).UpdateTemplate(tpl)
-	if err != nil {
-		helpers.WriteError(w, err)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func AttachInventory(w http.ResponseWriter, r *http.Request) {
-	tpl := helpers.GetFromContext(r, "template").(db.Template)
-	inv := helpers.GetFromContext(r, "inventory").(db.Inventory)
-
-	if inv.TemplateID != nil {
-		helpers.WriteErrorStatus(w, "Inventory is already attached to another template", http.StatusBadRequest)
-		return
-	}
-
-	if !tpl.App.HasInventoryType(inv.Type) {
-		helpers.WriteErrorStatus(w, "Inventory type is not supported for this template", http.StatusBadRequest)
-		return
-	}
-
-	inv.TemplateID = &tpl.ID
-	err := helpers.Store(r).UpdateInventory(inv)
-	if err != nil {
-		helpers.WriteError(w, err)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func DetachInventory(w http.ResponseWriter, r *http.Request) {
-	tpl := helpers.GetFromContext(r, "template").(db.Template)
-	inv := helpers.GetFromContext(r, "inventory").(db.Inventory)
-
-	if inv.TemplateID == nil || *inv.TemplateID != tpl.ID {
-		helpers.WriteErrorStatus(w, "Inventory is not attached to this template", http.StatusBadRequest)
-		return
-	}
-
-	inv.TemplateID = nil
-	err := helpers.Store(r).UpdateInventory(inv)
-	if err != nil {
-		helpers.WriteError(w, err)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
 func (c *TemplateController) GetTemplatePerms(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	tpl := helpers.GetFromContext(r, "template").(db.Template)
@@ -241,6 +174,10 @@ func (c *TemplateController) AddTemplatePerm(w http.ResponseWriter, r *http.Requ
 
 	perm.ProjectID = template.ProjectID
 	perm.TemplateID = template.ID
+	if perm.Permissions&^db.KnownRolePermissions != 0 {
+		helpers.WriteErrorStatus(w, "Template permissions contain unknown bits", http.StatusBadRequest)
+		return
+	}
 
 	newPerm, err := c.templateRepo.CreateTemplateRole(perm)
 	if err != nil {
@@ -278,6 +215,10 @@ func (c *TemplateController) UpdateTemplatePerm(w http.ResponseWriter, r *http.R
 	perm.ID = permID
 	perm.ProjectID = template.ProjectID
 	perm.TemplateID = template.ID
+	if perm.Permissions&^db.KnownRolePermissions != 0 {
+		helpers.WriteErrorStatus(w, "Template permissions contain unknown bits", http.StatusBadRequest)
+		return
+	}
 
 	if perm.Revision <= 0 {
 		helpers.WriteErrorStatus(w, "A positive template permission revision is required", http.StatusBadRequest)
@@ -328,6 +269,71 @@ func (c *TemplateController) DeleteTemplatePerm(w http.ResponseWriter, r *http.R
 		Metadata:  audit.TemplatePermissionMetadata{TemplateID: template.ID},
 	})
 
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func SetTemplateInventory(w http.ResponseWriter, r *http.Request) {
+	tpl := helpers.GetFromContext(r, "template").(db.Template)
+	inv := helpers.GetFromContext(r, "inventory").(db.Inventory)
+	if !tpl.App.HasInventoryType(inv.Type) {
+		helpers.WriteErrorStatus(w, "Inventory type is not supported for this template", http.StatusBadRequest)
+		return
+	}
+	if tpl.App.IsTerraform() && (inv.TemplateID == nil || *inv.TemplateID != tpl.ID) {
+		helpers.WriteErrorStatus(w, "Inventory is not attached to this template", http.StatusBadRequest)
+		return
+	}
+	tpl.InventoryID = &inv.ID
+	if err := helpers.Store(r).UpdateTemplate(tpl); err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind: audit.ResourceTemplateSetDefaultInventory, Target: audit.ResourceTarget(audit.TargetTemplate, tpl.ID, tpl.Name),
+		ProjectID: tpl.ProjectID, Metadata: audit.TemplateInventoryMetadata{InventoryID: inv.ID},
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func AttachInventory(w http.ResponseWriter, r *http.Request) {
+	tpl := helpers.GetFromContext(r, "template").(db.Template)
+	inv := helpers.GetFromContext(r, "inventory").(db.Inventory)
+	if inv.TemplateID != nil {
+		helpers.WriteErrorStatus(w, "Inventory is already attached to another template", http.StatusBadRequest)
+		return
+	}
+	if !tpl.App.HasInventoryType(inv.Type) {
+		helpers.WriteErrorStatus(w, "Inventory type is not supported for this template", http.StatusBadRequest)
+		return
+	}
+	inv.TemplateID = &tpl.ID
+	if err := helpers.Store(r).UpdateInventory(inv); err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind: audit.ResourceTemplateAttachInventory, Target: audit.ResourceTarget(audit.TargetTemplate, tpl.ID, tpl.Name),
+		ProjectID: tpl.ProjectID, Metadata: audit.TemplateInventoryMetadata{InventoryID: inv.ID},
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func DetachInventory(w http.ResponseWriter, r *http.Request) {
+	tpl := helpers.GetFromContext(r, "template").(db.Template)
+	inv := helpers.GetFromContext(r, "inventory").(db.Inventory)
+	if inv.TemplateID == nil || *inv.TemplateID != tpl.ID {
+		helpers.WriteErrorStatus(w, "Inventory is not attached to this template", http.StatusBadRequest)
+		return
+	}
+	inv.TemplateID = nil
+	if err := helpers.Store(r).UpdateInventory(inv); err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind: audit.ResourceTemplateDetachInventory, Target: audit.ResourceTarget(audit.TargetTemplate, tpl.ID, tpl.Name),
+		ProjectID: tpl.ProjectID, Metadata: audit.TemplateInventoryMetadata{InventoryID: inv.ID},
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

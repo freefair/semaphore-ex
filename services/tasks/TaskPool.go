@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/pro/pkg/stage_parsers"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
@@ -89,6 +91,8 @@ type TaskPool struct {
 	deploymentWindowAudit     pro_interfaces.AuditServiceFacade
 	policyGuardrailAdmission  pro_interfaces.PolicyGuardrailAdmissionService
 	executionPreflightIssuer  *ExecutionPreflightReviewTokenIssuer
+	workflowRepo              db.WorkflowManager
+	auditRecorder             audit.Recorder
 	// stop signals the background loops started by Run to exit. Closing it (via
 	// Stop) terminates the runner-task reconcile loop and Run's own select.
 	// Channels are used rather than sync.WaitGroup/sync.Once because TaskPool is
@@ -154,6 +158,17 @@ func (p *TaskPool) StateStore() TaskStateStore {
 // and the pool needs the service to progress runs as tasks finish).
 func (p *TaskPool) SetWorkflowService(svc pro_interfaces.WorkflowService) {
 	p.workflowService = svc
+}
+
+func (p *TaskPool) SetWorkflowRepo(repo db.WorkflowManager) { p.workflowRepo = repo }
+
+func (p *TaskPool) SetAuditRecorder(recorder audit.Recorder) { p.auditRecorder = recorder }
+
+func (p *TaskPool) recorder() audit.Recorder {
+	if p.auditRecorder == nil {
+		return audit.Nop{}
+	}
+	return p.auditRecorder
 }
 
 // HandleWorkflowTaskCompletion notifies the workflow service that a task that
@@ -582,7 +597,13 @@ func (p *TaskPool) finalizeRemoteTaskLocked(tsk *TaskRunner, runner *db.Runner) 
 	// above (tsk.Task.End != nil) becomes a real second guard: a late
 	// duplicate finalize on another node observes End set and skips autorun,
 	// even if the cluster-wide finalize lock has already been released.
-	tsk.finishRun()
+	actor := audit.SystemActor(audit.ComponentTaskRunner)
+	if endReason, _ := tsk.endReason.Load().(string); endReason == audit.EndReasonRunnerLost {
+		actor = audit.SystemActor(audit.ComponentReconciler)
+	} else if endReason, _ := tsk.endReason.Load().(string); endReason == "" && !tsk.dispatchFailed.Load() && runner != nil {
+		actor = audit.RunnerActor(runner.ID, runner.Name)
+	}
+	tsk.finishRunWithActor(actor)
 	tsk.startAutorunTasks()
 }
 
@@ -664,9 +685,9 @@ func (p *TaskPool) hydrateTaskRunner(taskID int, projectID int) (*TaskRunner, er
 			Secret:       "",
 			Logger:       app.SetLogger(tr),
 			App:          app,
-		KeyInstaller: p.keyInstallationService,
-		RepoLock:     p.repoLock,
-		HostConfigs:  tr.HostConfigs,
+			KeyInstaller: p.keyInstallationService,
+			RepoLock:     p.repoLock,
+			HostConfigs:  tr.HostConfigs,
 		}
 	}
 	tr.setJob(job)
@@ -725,45 +746,47 @@ func (p *TaskPool) blocks(t *TaskRunner) bool {
 	return res
 }
 
-func (p *TaskPool) ConfirmTask(targetTask db.Task) error {
+func (p *TaskPool) ConfirmTask(targetTask db.Task) (bool, error) {
 	tsk, err := p.GetTask(targetTask.ID)
 
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if tsk == nil { // task not active, but exists in database
-		return fmt.Errorf("task is not active")
+		return false, fmt.Errorf("task is not active")
 	}
 
-	tsk.SetStatus(task_logger.TaskConfirmed)
+	before := tsk.Task.Status
+	updated := tsk.setStatus(task_logger.TaskConfirmed, nil, nil, 0, 0)
 
-	return nil
+	return before == task_logger.TaskWaitingConfirmation && updated, nil
 }
 
-func (p *TaskPool) RejectTask(targetTask db.Task) error {
+func (p *TaskPool) RejectTask(targetTask db.Task) (bool, error) {
 	tsk, err := p.GetTask(targetTask.ID)
 
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if tsk == nil { // task not active, but exists in database
-		return fmt.Errorf("task is not active")
+		return false, fmt.Errorf("task is not active")
 	}
 
-	tsk.SetStatus(task_logger.TaskRejected)
+	before := tsk.Task.Status
+	updated := tsk.setStatus(task_logger.TaskRejected, nil, nil, 0, 0)
 
-	return nil
+	return before == task_logger.TaskWaitingConfirmation && updated, nil
 }
 
-func (p *TaskPool) stopTaskRunner(t *TaskRunner, forceStop bool) {
+func (p *TaskPool) stopTaskRunner(t *TaskRunner, forceStop bool) bool {
 	prevStatus := t.Task.Status
+	targetStatus := task_logger.TaskStoppingStatus
 	if forceStop && !taskRequiresStopEvidence(t) {
-		t.SetStatus(task_logger.TaskStoppedStatus)
-	} else {
-		t.SetStatus(task_logger.TaskStoppingStatus)
+		targetStatus = task_logger.TaskStoppedStatus
 	}
+	updated := t.setStatus(targetStatus, nil, nil, 0, 0)
 	// A protected task may swap from a local executor to a RemoteJob while a
 	// stop request is in flight. Kill whichever job is current after the status
 	// transition so the request cannot be consumed by the discarded executor.
@@ -780,6 +803,7 @@ func (p *TaskPool) stopTaskRunner(t *TaskRunner, forceStop bool) {
 	if forceStop && !taskRequiresStopEvidence(t) && t.jobIsAsync() && t.Task.Status.IsFinished() {
 		go p.FinalizeRemoteTask(t, nil)
 	}
+	return updated && prevStatus != targetStatus
 }
 
 // taskRequiresStopEvidence retains a task's active lifecycle state until the
@@ -810,10 +834,10 @@ func (p *TaskPool) stopLocalTask(taskID int) {
 	}
 }
 
-func (p *TaskPool) StopTask(targetTask db.Task, forceStop bool) error {
+func (p *TaskPool) StopTask(targetTask db.Task, forceStop bool) (bool, error) {
 	tsk, err := p.GetTask(targetTask.ID)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// task not active, but exists in database. For non-HA mode
@@ -822,21 +846,27 @@ func (p *TaskPool) StopTask(targetTask db.Task, forceStop bool) error {
 
 		err := tsk.populateDetails()
 		if err != nil {
-			return err
+			return false, err
 		}
 		if taskRequiresStopEvidence(tsk) {
-			tsk.SetStatus(task_logger.TaskStoppingStatus)
+			before := tsk.Task.Status
+			updated := tsk.setStatus(task_logger.TaskStoppingStatus, nil, nil, 0, 0)
 			tsk.createTaskEvent()
-			return nil
+			return !before.IsFinished() && before != task_logger.TaskStoppingStatus && updated, nil
 		}
-		tsk.SetStatus(task_logger.TaskStoppedStatus)
+		updated := tsk.setStatus(task_logger.TaskStoppedStatus, nil, nil, 0, 0)
 		tsk.createTaskEvent()
-		return nil
+		changed := !targetTask.Status.IsFinished() && updated
+		if changed {
+			tsk.recordComplete(audit.SystemActor(audit.ComponentTaskRunner))
+		}
+		return changed, nil
 	}
 
-	p.stopTaskRunner(tsk, forceStop)
+	before := tsk.Task.Status
+	changed := p.stopTaskRunner(tsk, forceStop)
 
-	return nil
+	return !before.IsFinished() && changed, nil
 }
 
 // StopTasksByTemplate stops all active (queued or running) tasks that belong to
@@ -954,6 +984,9 @@ func (p *TaskPool) StopTasksByTemplate(projectID int, templateID int, forceStop 
 			go p.FinalizeRemoteTask(tsk, nil)
 		} else {
 			tsk.createTaskEvent()
+			if tsk.Task.Start == nil {
+				tsk.recordComplete(audit.SystemActor(audit.ComponentTaskRunner))
+			}
 		}
 	}
 }
@@ -1057,6 +1090,9 @@ func (p *TaskPool) StopTasksByWorkflowRun(projectID int, runID int, forceStop bo
 			go p.FinalizeRemoteTask(tsk, nil)
 		} else {
 			tsk.createTaskEvent()
+			if tsk.Task.Start == nil {
+				tsk.recordComplete(audit.SystemActor(audit.ComponentTaskRunner))
+			}
 		}
 	}
 }
@@ -1144,5 +1180,38 @@ func (p *TaskPool) AddTask(
 	if p != nil && p.policyGuardrailAdmission != nil {
 		return db.Task{}, errors.New("policy guardrail admission is required; use a policy-aware task creation path")
 	}
-	return p.addTask(taskObj, nil, userID, username, projectID, needAlias, nil, nil)
+	actor := audit.SystemActor(audit.ComponentTaskRunner)
+	if userID != nil {
+		actor = audit.UserActor(*userID, username, "", "")
+	}
+	return p.AddTaskFrom(audit.WithActor(context.Background(), actor), audit.TriggerWorkflow, taskObj, userID, username, projectID, needAlias)
+}
+
+func (p *TaskPool) AddTaskFrom(ctx context.Context, trigger string, taskObj db.Task, userID *int, username string, projectID int, needAlias bool) (db.Task, error) {
+	if p != nil && p.policyGuardrailAdmission != nil {
+		return db.Task{}, errors.New("policy guardrail admission is required; use a policy-aware task creation path")
+	}
+	return p.addTaskWithAudit(ctx, trigger, taskObj, nil, userID, username, projectID, needAlias, nil, nil)
+}
+
+func taskCreateMetadata(trigger string, task db.Task) audit.TaskCreateMetadata {
+	meta := audit.TaskCreateMetadata{Trigger: trigger, TemplateID: task.TemplateID}
+	if task.BuildTaskID != nil {
+		meta.ParentTaskID = *task.BuildTaskID
+	}
+	switch trigger {
+	case audit.TriggerSchedule:
+		if task.ScheduleID != nil {
+			meta.ScheduleID = *task.ScheduleID
+		}
+	case audit.TriggerIntegration:
+		if task.IntegrationID != nil {
+			meta.IntegrationID = *task.IntegrationID
+		}
+	case audit.TriggerWorkflow:
+		if task.WorkflowRunID != nil {
+			meta.WorkflowRunID = *task.WorkflowRunID
+		}
+	}
+	return meta
 }

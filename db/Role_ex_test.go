@@ -33,3 +33,9 @@ func TestPolicyGuardrailRoleBitsAreIndependentAndBounded(t *testing.T) {
 	assert.Error(t, ValidateProjectRole(Role{ID: "role_unknown", Name: "Unknown", ProjectID: &projectID, Revision: 1, Permissions: 1 << 30}))
 	assert.Error(t, ValidateGlobalRole(Role{ID: "global_unknown", Name: "Unknown", Revision: 1, GlobalPermissions: 1 << 30}))
 }
+
+func TestKnownProjectRolePermissionsIncludesEnhancedBits(t *testing.T) {
+	assert.NotZero(t, KnownProjectRolePermissions&CanViewWorkflows)
+	assert.NotZero(t, KnownProjectRolePermissions&CanManagePolicyGuardrails)
+	assert.Zero(t, KnownProjectRolePermissions&CanShareTaskGroups)
+}

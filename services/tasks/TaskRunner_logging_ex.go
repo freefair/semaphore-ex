@@ -1,10 +1,12 @@
 package tasks
 
 import (
+	"context"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/taskredaction"
 	"github.com/semaphoreui/semaphore/pkg/tz"
+	"github.com/semaphoreui/semaphore/services/audit"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -140,6 +142,18 @@ func (t *TaskRunner) setStatus(
 }
 
 func (t *TaskRunner) afterStatusChange(oldStatus task_logger.TaskStatus, status task_logger.TaskStatus) {
+	if oldStatus != status && status == task_logger.TaskWaitingConfirmation && t.pool != nil {
+		actor := audit.SystemActor(audit.ComponentTaskRunner)
+		if t.Task.RunnerID != nil {
+			actor = audit.RunnerActor(*t.Task.RunnerID, "")
+		}
+		t.pool.recorder().Record(audit.WithActor(context.Background(), actor), audit.Event{
+			Kind:      audit.TaskApprovalRequest,
+			Target:    audit.ResourceTarget(audit.TargetTask, t.Task.ID, t.Template.Name),
+			ProjectID: t.Task.ProjectID,
+			Metadata:  audit.TaskMetadata{TemplateID: t.Task.TemplateID},
+		})
+	}
 	if t.pool != nil && status.IsFinished() && t.Template.App == db.AppAnsible && t.pool.ansibleTaskRepo != nil {
 		if err := t.pool.ansibleTaskRepo.FinalizeTaskSummary(
 			t.Task.ProjectID, t.Task.ID, status, t.Task.Start, t.Task.End,

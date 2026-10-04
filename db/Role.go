@@ -33,6 +33,8 @@ type Role struct {
 	Revision          int                   `db:"revision" json:"revision"`
 }
 
+const KnownRolePermissions = CanRunProjectTasks | CanUpdateProject | CanManageProjectResources | CanManageProjectUsers
+
 func ValidateRole(role Role) error {
 	if role.Name == "" {
 		return &common_errors.ValidationError{Message: "Role name cannot be empty"}
@@ -45,8 +47,7 @@ func ValidateRole(role Role) error {
 	if ProjectUserRole(role.Slug).IsValid() {
 		return &common_errors.ValidationError{Message: "Role slug is reserved and cannot be used: " + role.Slug}
 	}
-	const knownPermissions = CanRunProjectTasks | CanUpdateProject | CanManageProjectResources | CanManageProjectUsers
-	if role.Permissions&^knownPermissions != 0 {
+	if role.Permissions&^KnownRolePermissions != 0 {
 		return &common_errors.ValidationError{Message: "Role permissions contain unknown bits"}
 	}
 	return nil

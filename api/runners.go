@@ -4,6 +4,7 @@ import (
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
@@ -64,6 +65,11 @@ func (c *GlobalRunnerController) AddRunner(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:   audit.RunnerLifecycleCreate,
+		Target: audit.ResourceTarget(audit.TargetRunner, newRunner.ID, newRunner.Name),
+	})
+
 	helpers.WriteJSON(w, http.StatusCreated, runnerWithToken{
 		Runner: newRunner,
 		Token:  newRunner.Token,
@@ -123,6 +129,11 @@ func (c *GlobalRunnerController) UpdateRunner(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:   audit.RunnerLifecycleUpdate,
+		Target: audit.ResourceTarget(audit.TargetRunner, oldRunner.ID, runner.Name),
+	})
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -137,6 +148,11 @@ func (c *GlobalRunnerController) ClearRunnerCache(w http.ResponseWriter, r *http
 		helpers.WriteError(w, err)
 		return
 	}
+
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:   audit.RunnerCacheClear,
+		Target: audit.ResourceTarget(audit.TargetRunner, runner.ID, runner.Name),
+	})
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -153,6 +169,11 @@ func (c *GlobalRunnerController) DeleteRunner(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:   audit.RunnerLifecycleDelete,
+		Target: audit.ResourceTarget(audit.TargetRunner, runner.ID, runner.Name),
+	})
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -165,6 +186,11 @@ func (c *GlobalRunnerController) RegenerateRegistrationToken(w http.ResponseWrit
 		helpers.WriteErrorStatus(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:   audit.RunnerCredentialRotate,
+		Target: audit.ResourceTarget(audit.TargetRunner, runner.ID, runner.Name),
+	})
 
 	helpers.WriteJSON(w, http.StatusOK, map[string]any{
 		"registration_token": token,
@@ -197,6 +223,7 @@ func (c *GlobalRunnerController) SetRunnerActive(w http.ResponseWriter, r *http.
 		return
 	}
 
+	changed := runner.Active != body.Active
 	runner.Active = body.Active
 
 	err := store.UpdateRunner(*runner)
@@ -204,6 +231,17 @@ func (c *GlobalRunnerController) SetRunnerActive(w http.ResponseWriter, r *http.
 	if err != nil {
 		helpers.WriteErrorStatus(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	if changed {
+		kind := audit.RunnerLifecycleDisable
+		if body.Active {
+			kind = audit.RunnerLifecycleEnable
+		}
+		helpers.Audit(r).Record(r.Context(), audit.Event{
+			Kind:   kind,
+			Target: audit.ResourceTarget(audit.TargetRunner, runner.ID, runner.Name),
+		})
 	}
 
 	w.WriteHeader(http.StatusNoContent)

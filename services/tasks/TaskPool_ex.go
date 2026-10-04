@@ -11,6 +11,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 	"strconv"
@@ -173,8 +174,28 @@ func (p *TaskPool) AddTaskWithDeploymentWindowAdmission(
 	needAlias bool,
 	request pro_interfaces.DeploymentWindowAdmissionRequest,
 ) (db.Task, error) {
+	actor := audit.SystemActor(audit.ComponentTaskRunner)
+	if userID != nil {
+		actor = audit.UserActor(*userID, username, "", "")
+	}
+	return p.AddTaskWithDeploymentWindowAdmissionFrom(
+		audit.WithActor(context.Background(), actor), audit.TriggerWorkflow,
+		taskObj, userID, username, projectID, needAlias, request,
+	)
+}
+
+func (p *TaskPool) AddTaskWithDeploymentWindowAdmissionFrom(
+	ctx context.Context,
+	trigger string,
+	taskObj db.Task,
+	userID *int,
+	username string,
+	projectID int,
+	needAlias bool,
+	request pro_interfaces.DeploymentWindowAdmissionRequest,
+) (db.Task, error) {
 	if p.policyGuardrailAdmission == nil && p.deploymentWindowAdmission == nil {
-		return p.addTask(taskObj, nil, userID, username, projectID, needAlias, nil, nil)
+		return p.addTaskWithAudit(ctx, trigger, taskObj, nil, userID, username, projectID, needAlias, nil, nil)
 	}
 	if request.ProjectID != projectID || request.TemplateID == nil || *request.TemplateID != taskObj.TemplateID {
 		return db.Task{}, errors.New("deployment window admission is unavailable")
@@ -213,7 +234,7 @@ func (p *TaskPool) AddTaskWithDeploymentWindowAdmission(
 		policyTemplateSnapshot = &templateCopy
 	}
 	if p.deploymentWindowAdmission == nil {
-		return p.addTask(taskObj, policyTemplateSnapshot, userID, username, projectID, needAlias, nil, nil)
+		return p.addTaskWithAudit(ctx, trigger, taskObj, policyTemplateSnapshot, userID, username, projectID, needAlias, nil, nil)
 	}
 	claim, err := p.deploymentWindowAdmission.Claim(request)
 	if err != nil {
@@ -239,7 +260,7 @@ func (p *TaskPool) AddTaskWithDeploymentWindowAdmission(
 	}
 	decisionID := claim.Decision.ID
 	taskObj.DeploymentWindowDecisionID = &decisionID
-	created, err := p.addTask(taskObj, policyTemplateSnapshot, userID, username, projectID, needAlias, nil, nil)
+	created, err := p.addTaskWithAudit(ctx, trigger, taskObj, policyTemplateSnapshot, userID, username, projectID, needAlias, nil, nil)
 	if err == nil {
 		p.recordDeploymentWindowTaskBinding(claim.Decision, created)
 	}
@@ -348,6 +369,14 @@ func sameTaskBindingID(left, right *int) bool {
 	return *left == *right
 }
 
+func workflowAuditContext(userID *int, username string) context.Context {
+	actor := audit.SystemActor(audit.ComponentTaskRunner)
+	if userID != nil {
+		actor = audit.UserActor(*userID, username, "", "")
+	}
+	return audit.WithActor(context.Background(), actor)
+}
+
 // AddWorkflowTask creates a normal task while freezing the template selected
 // by the workflow run snapshot. The rest of task validation, persistence,
 // placement, queueing, logging, and completion remains the standard TaskPool
@@ -372,7 +401,7 @@ func (p *TaskPool) AddWorkflowTask(
 	}
 	encoded := string(snapshot)
 	taskObj.WorkflowTemplateSnapshot = &encoded
-	return p.addTask(taskObj, &template, userID, username, projectID, needAlias, nil, nil)
+	return p.addTask(taskObj, &template, userID, username, projectID, needAlias, nil, nil, workflowAuditContext(userID, username), audit.TriggerWorkflow)
 }
 
 // AddWorkflowTaskWithDeploymentWindowDecision is the workflow service's
@@ -417,7 +446,7 @@ func (p *TaskPool) AddWorkflowTaskFenced(
 	}
 	encoded := string(snapshot)
 	taskObj.WorkflowTemplateSnapshot = &encoded
-	return p.addTask(taskObj, &template, userID, username, projectID, needAlias, &lease, nil)
+	return p.addTask(taskObj, &template, userID, username, projectID, needAlias, &lease, nil, workflowAuditContext(userID, username), audit.TriggerWorkflow)
 }
 
 // AddWorkflowTaskFencedWithDeploymentWindowDecision is the HA variant of the
@@ -486,7 +515,7 @@ func (p *TaskPool) AddCrossProjectWorkflowTaskFenced(
 	taskObj.WorkflowTemplateProvenanceJSON = stringPointer(encodedProvenance)
 	return p.addTask(
 		taskObj, &template, userID, username, consumerProjectID,
-		template.App.NeedTaskAlias(), lease, &provenanceCopy,
+		template.App.NeedTaskAlias(), lease, &provenanceCopy, workflowAuditContext(userID, username), audit.TriggerWorkflow,
 	)
 }
 
@@ -523,6 +552,8 @@ func (p *TaskPool) addTask(
 	needAlias bool,
 	workflowLease *pro_interfaces.WorkflowReconciliationLease,
 	crossProjectProvenance *db.CrossProjectTemplateProvenance,
+	auditContext context.Context,
+	auditTrigger string,
 ) (newTask db.Task, err error) {
 	if err = p.requirePolicyGuardrailTaskAdmission(taskObj); err != nil {
 		return db.Task{}, err
@@ -671,6 +702,10 @@ func (p *TaskPool) addTask(
 	if err != nil {
 		return
 	}
+	p.recorder().Record(auditContext, audit.Event{
+		Kind: audit.TaskExecutionCreate, Target: audit.ResourceTarget(audit.TargetTask, newTask.ID, tpl.Name),
+		ProjectID: projectID, Metadata: taskCreateMetadata(auditTrigger, newTask),
+	})
 
 	taskRunner := NewTaskRunner(newTask, p, username, p.keyInstallationService)
 
@@ -683,6 +718,7 @@ func (p *TaskPool) addTask(
 	if err != nil {
 		taskRunner.Log("Error: " + err.Error())
 		taskRunner.SetStatus(task_logger.TaskFailStatus)
+		taskRunner.recordComplete(audit.SystemActor(audit.ComponentTaskRunner))
 		return
 	}
 
@@ -695,6 +731,7 @@ func (p *TaskPool) addTask(
 		if err != nil {
 			taskRunner.Log("Error: failed to store survey secrets: " + err.Error())
 			taskRunner.SetStatus(task_logger.TaskFailStatus)
+			taskRunner.recordComplete(audit.SystemActor(audit.ComponentTaskRunner))
 			return
 		}
 	}
@@ -744,6 +781,21 @@ func (p *TaskPool) addTask(
 	taskRunner.createTaskEvent()
 
 	return
+}
+
+func (p *TaskPool) addTaskWithAudit(
+	ctx context.Context,
+	trigger string,
+	taskObj db.Task,
+	templateSnapshot *db.Template,
+	userID *int,
+	username string,
+	projectID int,
+	needAlias bool,
+	workflowLease *pro_interfaces.WorkflowReconciliationLease,
+	crossProjectProvenance *db.CrossProjectTemplateProvenance,
+) (db.Task, error) {
+	return p.addTask(taskObj, templateSnapshot, userID, username, projectID, needAlias, workflowLease, crossProjectProvenance, ctx, trigger)
 }
 
 // requirePolicyGuardrailTaskAdmission closes internal persistence paths after

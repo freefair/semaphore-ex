@@ -72,7 +72,7 @@ func (d *SqlDb) GetSecretStorage(projectID int, storageID int) (storage db.Secre
 }
 
 func (d *SqlDb) DeleteSecretStorage(projectID int, storageID int) error {
-	return d.deleteObject(projectID, db.SecretStorageProps, storageID)
+	return d.deleteSecretStorageAtomic(projectID, storageID)
 }
 
 func (d *SqlDb) GetSecretStorageRefs(projectID int, storageID int) (db.ObjectReferrers, error) {

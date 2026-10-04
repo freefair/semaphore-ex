@@ -7,6 +7,7 @@ import (
 
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/services/audit"
 
 	"os"
 	"path/filepath"
@@ -127,6 +128,12 @@ func AddInventory(w http.ResponseWriter, r *http.Request) {
 		Description: fmt.Sprintf("Inventory %s created", inventory.Name),
 	})
 
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:      audit.ResourceInventoryCreate,
+		Target:    audit.ResourceTarget(audit.TargetInventory, newInventory.ID, newInventory.Name),
+		ProjectID: project.ID,
+	})
+
 	helpers.WriteJSON(w, http.StatusCreated, newInventory)
 }
 
@@ -208,6 +215,12 @@ func UpdateInventory(w http.ResponseWriter, r *http.Request) {
 		Description: fmt.Sprintf("Inventory %s updated", inventory.Name),
 	})
 
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:      audit.ResourceInventoryUpdate,
+		Target:    audit.ResourceTarget(audit.TargetInventory, oldInventory.ID, inventory.Name),
+		ProjectID: oldInventory.ProjectID,
+	})
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -234,6 +247,12 @@ func RemoveInventory(w http.ResponseWriter, r *http.Request) {
 		ObjectType:  db.EventInventory,
 		ObjectID:    inventory.ID,
 		Description: fmt.Sprintf("Inventory %s deleted", inventory.Name),
+	})
+
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:      audit.ResourceInventoryDelete,
+		Target:    audit.ResourceTarget(audit.TargetInventory, inventory.ID, inventory.Name),
+		ProjectID: inventory.ProjectID,
 	})
 
 	w.WriteHeader(http.StatusNoContent)

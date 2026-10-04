@@ -2017,6 +2017,16 @@ symbols:
   - name: db:ErrProjectWorkflowRoleIdentityUnavailable
     signature: error
     implementation: core
+  - name: db:ErrRegistrationTokenExpired
+    signature: error
+    implementation: core
+    behavior_tests:
+    - db/sql/global_runner_test.go::TestRegisterRunner_RefusalErrors
+  - name: db:ErrRunnerAlreadyRegistered
+    signature: error
+    implementation: core
+    behavior_tests:
+    - db/sql/global_runner_test.go::TestRegisterRunner_RefusalErrors
   - name: db:ErrRunnerSecurityPolicyChangeRequiresReset
     signature: error
     implementation: core
@@ -2584,8 +2594,16 @@ symbols:
   - name: db:IsValidProjectRoleReferenceSyntax
     signature: func(reference db.ProjectRoleReference) bool
     implementation: core
+  - name: db:KnownProjectRolePermissions
+    signature: db.ProjectUserPermission = 32767
+    implementation: core
+    behavior_tests:
+    - db/Role_ex_test.go::TestKnownProjectRolePermissionsIncludesEnhancedBits
   - name: db:KnownProjectRoleReferences
     signature: func(customRoleIDs []db.ProjectRoleID) map[db.ProjectRoleReference]bool
+    implementation: core
+  - name: db:KnownRolePermissions
+    signature: db.ProjectUserPermission = 15
     implementation: core
   - name: db:KubernetesExecutionPolicy
     signature: >-
@@ -4255,6 +4273,9 @@ symbols:
       (db.ObjectReferrers, error); GetSecretStorages(projectID int) ([]db.SecretStorage, error); UpdateSecretStorage(storage
       db.SecretStorage) error}
     implementation: core
+    behavior_tests:
+    - db/sql/secret_storage_atomic_test.go::TestDeleteSecretStorageRollsBackCredentialsWhenStorageIsReferenced
+    - db/sql/secret_storage_atomic_test.go::TestDeleteSecretStorageScopesOwnedAndSyncedCredentials
   - name: db:SecretStorageSyncPath
     signature: >-
       struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; SyncID int "db:\"sync_id\" json:\"sync_id\" backup:\"-\""; Path string
@@ -4503,9 +4524,11 @@ symbols:
       string, migratedAt time.Time) error}
     implementation: core
   - name: db:Task
-    signature: struct{ID int "db:\"id\" json:\"id\""; TemplateID int "db:\"template_id\" json:\"template_id\""; ProjectID int "db:\"project_id\" json:\"project_id\""; TemplateName string "db:\"-\" json:\"template_name,omitempty\""; TaskGroupKeys db.StringArrayField "db:\"task_group_keys\" json:\"task_groups,omitempty\""; TaskGroupRunnerIDs db.TaskGroupBindings "db:\"task_group_runner_ids\" json:\"-\""; Status pkg/task_logger.TaskStatus "db:\"status\" json:\"status\""; NotificationRevision int "db:\"notification_revision\" json:\"-\""; Playbook string "db:\"playbook\" json:\"playbook\""; Environment string "db:\"environment\" json:\"environment,omitempty\""; Secret string "db:\"-\" json:\"secret,omitempty\""; GlobalCredentialBindingsJSON string "db:\"global_credential_bindings\" json:\"-\""; GlobalCredentialBindings map[string]int "db:\"-\" json:\"-\""; Arguments *string "db:\"arguments\" json:\"arguments,omitempty\""; GitBranch *string "db:\"git_branch\" json:\"git_branch,omitempty\""; SSHKeys db.SSHKeyBindings "db:\"ssh_keys\" json:\"ssh_keys\""; ResolvedSSHKeys []db.ResolvedTaskSSHKey "db:\"-\" json:\"-\" backup:\"-\""; UserID *int "db:\"user_id\" json:\"user_id,omitempty\""; IntegrationID *int "db:\"integration_id\" json:\"integration_id,omitempty\""; ScheduleID *int "db:\"schedule_id\" json:\"schedule_id,omitempty\""; ScheduleOccurrenceKey *string "db:\"schedule_occurrence_key\" json:\"-\""; RunnerID *int "db:\"runner_id\" json:\"-\""; RunnerSnapshotID *int "db:\"runner_id_snapshot\" json:\"-\""; RunnerName *string "db:\"runner_name\" json:\"-\""; AssignmentGeneration int "db:\"assignment_generation\" json:\"assignment_generation,omitempty\""; TaskControlFencingToken int64 "db:\"task_control_fencing_token\" json:\"-\""; RunnerAssignedAt *time.Time "db:\"runner_assigned_at\" json:\"runner_assigned_at,omitempty\""; RecoveryReason string "db:\"recovery_reason\" json:\"recovery_reason,omitempty\""; PlacementDecision *db.RunnerPlacementDecision "db:\"placement_decision\" json:\"placement_decision,omitempty\""; RequestedExecutorImage *string "db:\"requested_executor_image\" json:\"requested_executor_image,omitempty\""; ResolvedExecutorImage *string "db:\"resolved_executor_image\" json:\"resolved_executor_image,omitempty\""; Created time.Time "db:\"created\" json:\"created\""; Start *time.Time "db:\"start\" json:\"start,omitempty\""; End *time.Time "db:\"end\" json:\"end,omitempty\""; Message string "db:\"message\" json:\"message,omitempty\""; CommitHash *string "db:\"commit_hash\" json:\"commit_hash,omitempty\""; CommitMessage string "db:\"commit_message\" json:\"commit_message,omitempty\""; BuildTaskID *int "db:\"build_task_id\" json:\"build_task_id,omitempty\""; WorkflowRunID *int "db:\"workflow_run_id\" json:\"workflow_run_id,omitempty\""; WorkflowNodeID *int "db:\"workflow_node_id\" json:\"workflow_node_id,omitempty\""; WorkflowTemplateSnapshot *string "db:\"workflow_template_snapshot\" json:\"-\""; ExecutionSnapshotJSON *string "db:\"execution_snapshot\" json:\"-\""; WorkflowTemplateProvenanceJSON *string "db:\"workflow_template_provenance\" json:\"-\""; WorkflowTemplateProvenance *db.WorkflowTemplateProvenance "db:\"-\" json:\"-\""; DeploymentWindowDecisionID *int "db:\"-\" json:\"-\""; PolicyGuardrailEvaluationID *int "db:\"-\" json:\"-\""; Version *string "db:\"version\" json:\"version,omitempty\""; InventoryID *int "db:\"inventory_id\" json:\"inventory_id,omitempty\""; Params db.MapStringAnyField "db:\"params\" json:\"params,omitempty\""; Artifacts *string "db:\"artifacts\" json:\"artifacts,omitempty\""; Limit string "db:\"-\" json:\"limit\""}
+    signature: struct{ID int "db:\"id\" json:\"id\""; TemplateID int "db:\"template_id\" json:\"template_id\""; ProjectID int "db:\"project_id\" json:\"project_id\""; TemplateName string "db:\"-\" json:\"template_name,omitempty\""; TaskGroupKeys db.StringArrayField "db:\"task_group_keys\" json:\"task_groups,omitempty\""; TaskGroupRunnerIDs db.TaskGroupBindings "db:\"task_group_runner_ids\" json:\"-\""; Status pkg/task_logger.TaskStatus "db:\"status\" json:\"status\""; NotificationRevision int "db:\"notification_revision\" json:\"-\""; Playbook string "db:\"playbook\" json:\"playbook\""; Environment string "db:\"environment\" json:\"environment,omitempty\""; Secret string "db:\"-\" json:\"secret,omitempty\""; GlobalCredentialBindingsJSON string "db:\"global_credential_bindings\" json:\"-\""; GlobalCredentialBindings map[string]int "db:\"-\" json:\"-\""; Arguments *string "db:\"arguments\" json:\"arguments,omitempty\""; GitBranch *string "db:\"git_branch\" json:\"git_branch,omitempty\""; SSHKeys db.SSHKeyBindings "db:\"ssh_keys\" json:\"ssh_keys\""; ResolvedSSHKeys []db.ResolvedTaskSSHKey "db:\"-\" json:\"-\" backup:\"-\""; UserID *int "db:\"user_id\" json:\"user_id,omitempty\""; IntegrationID *int "db:\"integration_id\" json:\"integration_id,omitempty\""; ScheduleID *int "db:\"schedule_id\" json:\"schedule_id,omitempty\""; ScheduleOccurrenceKey *string "db:\"schedule_occurrence_key\" json:\"-\""; RunnerID *int "db:\"runner_id\" json:\"-\""; RunnerSnapshotID *int "db:\"runner_id_snapshot\" json:\"-\""; RunnerName *string "db:\"runner_name\" json:\"-\""; AssignmentGeneration int "db:\"assignment_generation\" json:\"assignment_generation,omitempty\""; TaskControlFencingToken int64 "db:\"task_control_fencing_token\" json:\"-\""; RunnerAssignedAt *time.Time "db:\"runner_assigned_at\" json:\"runner_assigned_at,omitempty\""; RecoveryReason string "db:\"recovery_reason\" json:\"recovery_reason,omitempty\""; PlacementDecision *db.RunnerPlacementDecision "db:\"placement_decision\" json:\"placement_decision,omitempty\""; RequestedExecutorImage *string "db:\"requested_executor_image\" json:\"requested_executor_image,omitempty\""; ResolvedExecutorImage *string "db:\"resolved_executor_image\" json:\"resolved_executor_image,omitempty\""; Created time.Time "db:\"created\" json:\"created\""; Start *time.Time "db:\"start\" json:\"start,omitempty\""; End *time.Time "db:\"end\" json:\"end,omitempty\""; Message string "db:\"message\" json:\"message,omitempty\""; CommitHash *string "db:\"commit_hash\" json:\"commit_hash,omitempty\""; CommitMessage string "db:\"commit_message\" json:\"commit_message,omitempty\""; BuildTaskID *int "db:\"build_task_id\" json:\"build_task_id,omitempty\""; WorkflowRunID *int "db:\"workflow_run_id\" json:\"workflow_run_id,omitempty\""; WorkflowNodeID *int "db:\"workflow_node_id\" json:\"workflow_node_id,omitempty\""; WorkflowTemplateSnapshot *string "db:\"workflow_template_snapshot\" json:\"-\""; ExecutionSnapshotJSON *string "db:\"execution_snapshot\" json:\"-\""; WorkflowTemplateProvenanceJSON *string "db:\"workflow_template_provenance\" json:\"-\""; WorkflowTemplateProvenance *db.WorkflowTemplateProvenance "db:\"-\" json:\"-\""; DeploymentWindowDecisionID *int "db:\"-\" json:\"-\""; PolicyGuardrailEvaluationID *int "db:\"-\" json:\"-\""; WorkflowTemplateID *int "db:\"-\" json:\"workflow_template_id,omitempty\""; Version *string "db:\"version\" json:\"version,omitempty\""; InventoryID *int "db:\"inventory_id\" json:\"inventory_id,omitempty\""; Params db.MapStringAnyField "db:\"params\" json:\"params,omitempty\""; Artifacts *string "db:\"artifacts\" json:\"artifacts,omitempty\""; Limit string "db:\"-\" json:\"limit\""}
     implementation: core
     behavior_tests:
+    - db/Task_test.go::TestTask_GetWorkflowUrl
+    - services/tasks/workflow_identity_ex_test.go::TestWorkflowIdentitySurvivesExecutionPreparation
     - api/projects/tasks_test.go::TestResolveTaskTemplate
     - db/sql/task_ssh_key_persistence_test.go::TestTaskSSHKeyBindingsRoundTrip
     - services/tasks/executor_image_test.go::TestAddTaskOverwritesRequestTaskGroupsWithTemplateSnapshot

@@ -6,6 +6,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/debuglog"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/tz"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 	"time"
@@ -327,6 +328,7 @@ func (p *TaskPool) failTaskRunnerLost(tsk *TaskRunner, runner *db.Runner, reason
 	tsk.Task = candidate
 	p.applyPersistedRunnerStatus(tsk, oldStatus)
 	tsk.Log("Runner lost: " + reason)
+	tsk.endReason.Store(audit.EndReasonRunnerLost)
 
 	p.finalizeRemoteTaskLocked(tsk, runner)
 }

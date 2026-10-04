@@ -1,12 +1,14 @@
 package tasks
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/semaphoreui/semaphore/api/sockets"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
 	"strconv"
 )
@@ -87,7 +89,9 @@ func (t *TaskRunner) addAutorunTask(tpl db.Template) (db.Task, error) {
 	}
 	templateID := tpl.ID
 	buildTaskID := t.Task.ID
-	return t.pool.AddTaskWithDeploymentWindowAdmission(
+	return t.pool.AddTaskWithDeploymentWindowAdmissionFrom(
+		audit.WithActor(context.Background(), audit.SystemActor(audit.ComponentTaskRunner)),
+		audit.TriggerAutorun,
 		task,
 		nil,
 		"",

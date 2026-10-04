@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/random"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
 )
 
@@ -71,7 +73,8 @@ func (p *TaskPool) AddTaskWithExecutionPreflightPlan(
 	needAlias bool,
 	review pro_interfaces.ExecutionPreflightReview,
 ) (db.Task, pro_interfaces.ExecutionPreflightPlan, error) {
-	return p.addTaskWithExecutionPreflightPlan(task, actor, projectID, needAlias, review, nil)
+	ctx := audit.WithActor(context.Background(), audit.UserActor(actor.ID, actor.Username, "", ""))
+	return p.addTaskWithExecutionPreflightPlan(ctx, task, actor, projectID, needAlias, review, nil)
 }
 
 // AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverride is the manual
@@ -85,10 +88,24 @@ func (p *TaskPool) AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverride(
 	review pro_interfaces.ExecutionPreflightReview,
 	override *pro_interfaces.DeploymentWindowOverrideInput,
 ) (db.Task, pro_interfaces.ExecutionPreflightPlan, error) {
-	return p.addTaskWithExecutionPreflightPlan(task, actor, projectID, needAlias, review, override)
+	ctx := audit.WithActor(context.Background(), audit.UserActor(actor.ID, actor.Username, "", ""))
+	return p.AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverrideFrom(ctx, task, actor, projectID, needAlias, review, override)
+}
+
+func (p *TaskPool) AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverrideFrom(
+	ctx context.Context,
+	task db.Task,
+	actor *db.User,
+	projectID int,
+	needAlias bool,
+	review pro_interfaces.ExecutionPreflightReview,
+	override *pro_interfaces.DeploymentWindowOverrideInput,
+) (db.Task, pro_interfaces.ExecutionPreflightPlan, error) {
+	return p.addTaskWithExecutionPreflightPlan(ctx, task, actor, projectID, needAlias, review, override)
 }
 
 func (p *TaskPool) addTaskWithExecutionPreflightPlan(
+	ctx context.Context,
 	task db.Task,
 	actor *db.User,
 	projectID int,
@@ -238,9 +255,9 @@ func (p *TaskPool) addTaskWithExecutionPreflightPlan(
 			return db.Task{}, snapshot.Plan, errors.New("execution preflight snapshot is invalid")
 		}
 		task.ExecutionSnapshotJSON = &encoded
-		created, err = p.addTask(task, &executionSnapshot.Template, &actor.ID, actor.Username, projectID, needAlias, nil, nil)
+		created, err = p.addTask(task, &executionSnapshot.Template, &actor.ID, actor.Username, projectID, needAlias, nil, nil, ctx, audit.TriggerAPI)
 	} else {
-		created, err = p.addTask(task, nil, &actor.ID, actor.Username, projectID, needAlias, nil, nil)
+		created, err = p.addTask(task, nil, &actor.ID, actor.Username, projectID, needAlias, nil, nil, ctx, audit.TriggerAPI)
 	}
 	if err == nil && admissionClaim != nil {
 		p.recordDeploymentWindowTaskBinding(admissionClaim.Decision, created)

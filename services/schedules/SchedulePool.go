@@ -1,6 +1,7 @@
 package schedules
 
 import (
+	"context"
 	"errors"
 	"github.com/robfig/cron/v3"
 	"github.com/semaphoreui/semaphore/db"
@@ -8,6 +9,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
@@ -202,7 +204,9 @@ func (r ScheduleRunner) Run() {
 	decisionKey := deploymentWindowScheduleDecisionKey(occurrence)
 	templateID := schedule.TemplateID
 	scheduleID := schedule.ID
-	createdTask, err := r.pool.taskPool.AddTaskWithDeploymentWindowAdmission(
+	createdTask, err := r.pool.taskPool.AddTaskWithDeploymentWindowAdmissionFrom(
+		audit.WithActor(context.Background(), audit.SystemActor(audit.ComponentScheduler)),
+		audit.TriggerSchedule,
 		task,
 		nil,
 		"",

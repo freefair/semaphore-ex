@@ -62,47 +62,27 @@ func (s *SecretStorageServiceImpl) SyncSecrets(sync db.SecretSync) error {
 }
 
 func (s *SecretStorageServiceImpl) Delete(projectID int, storageID int) (err error) {
-	storage, err := s.secretStorageRepo.GetSecretStorage(projectID, storageID)
-	if err != nil {
-		return
-	}
-
-	if storage.SyncEnabled {
-		var syncedKeys []db.AccessKey
-		syncedKeys, err = s.accessKeyRepo.GetAccessKeys(projectID, db.GetAccessKeyOptions{
-			IgnoreOwner:     true,
-			SourceStorageID: &storageID,
+	if s.accessKeyRepo != nil {
+		keys, err := s.accessKeyRepo.GetAccessKeys(projectID, db.GetAccessKeyOptions{
+			Owner:     db.AccessKeySecretStorage,
+			StorageID: &storageID,
 		}, db.RetrieveQueryParams{})
 		if err != nil {
-			return
+			return err
 		}
-
-		for _, key := range syncedKeys {
-			if err = s.accessKeyRepo.DeleteAccessKey(projectID, key.ID); err != nil {
-				return
+		for _, key := range keys {
+			refs, err := s.accessKeyRepo.GetAccessKeyRefs(projectID, key.ID)
+			if err != nil {
+				return err
+			}
+			// SSH binding references are JSON, so the database cannot protect
+			// them when atomic storage cleanup removes a vault-owned key.
+			if len(refs.Projects) > 0 || len(refs.Templates) > 0 {
+				return db.ErrInvalidOperation
 			}
 		}
 	}
-
-	err = s.secretStorageRepo.DeleteSecretStorage(projectID, storageID)
-	if err != nil {
-		return
-	}
-
-	keys, err := s.accessKeyService.GetAll(projectID, db.GetAccessKeyOptions{
-		Owner:     db.AccessKeySecretStorage,
-		StorageID: &storageID,
-	}, db.RetrieveQueryParams{})
-
-	if err != nil {
-		return
-	}
-
-	for _, key := range keys {
-		err = s.accessKeyService.Delete(projectID, key.ID)
-	}
-
-	return
+	return s.secretStorageRepo.DeleteSecretStorage(projectID, storageID)
 }
 
 func (s *SecretStorageServiceImpl) GetSecretStorage(projectID int, storageID int) (res db.SecretStorage, err error) {
@@ -112,9 +92,6 @@ func (s *SecretStorageServiceImpl) GetSecretStorage(projectID int, storageID int
 }
 
 func (s *SecretStorageServiceImpl) Create(storage db.SecretStorage) (res db.SecretStorage, err error) {
-	if err = ValidateRuntimeSecretStorage(&storage); err != nil {
-		return
-	}
 	sourceStorageType := storage.SourceStorageType
 	sourceStorageKey := ""
 
@@ -139,6 +116,9 @@ func (s *SecretStorageServiceImpl) Create(storage db.SecretStorage) (res db.Secr
 			err = common_errors.NewUserErrorS("unsupported source storage type")
 			return
 		}
+	}
+	if err = ValidateRuntimeSecretStorage(&storage); err != nil {
+		return
 	}
 
 	res, err = s.secretStorageRepo.CreateSecretStorage(storage)
@@ -171,6 +151,19 @@ func (s *SecretStorageServiceImpl) Update(storage db.SecretStorage) (err error) 
 	if err = ValidateRuntimeSecretStorage(&storage); err != nil {
 		return
 	}
+	sourceStorageType := storage.SourceStorageType
+	sourceStorageKey := ""
+
+	// Checked before the write, so a refused source leaves the storage unchanged.
+	if pro.StorageRequiresSecret(storage) && sourceStorageType != nil {
+		switch *sourceStorageType {
+		case db.AccessKeySourceStorageEnv, db.AccessKeySourceStorageFile:
+			sourceStorageKey = storage.Secret
+		default:
+			err = common_errors.NewUserErrorS("unsupported source storage type")
+			return
+		}
+	}
 	err = s.secretStorageRepo.UpdateSecretStorage(storage)
 	if err != nil {
 		return
@@ -201,19 +194,6 @@ func (s *SecretStorageServiceImpl) Update(storage db.SecretStorage) (err error) 
 			// empty vault token means the user didn't set a new token,
 			// so we don't create a new access key.
 			return
-		}
-
-		sourceStorageType := storage.SourceStorageType
-		sourceStorageKey := ""
-
-		if sourceStorageType != nil {
-			switch *sourceStorageType {
-			case db.AccessKeySourceStorageEnv, db.AccessKeySourceStorageFile:
-				sourceStorageKey = storage.Secret
-			default:
-				err = errors.New("unsupported source storage type")
-				return
-			}
 		}
 
 		newKey := db.AccessKey{

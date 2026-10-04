@@ -8,6 +8,7 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
 	"net/http"
 	"strconv"
@@ -153,6 +154,17 @@ func addTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailable 
 		return
 	}
 
+	createdInventoryID := 0
+	// The template row exists, so a failed inventory step is still recorded.
+	recordPartial := func() {
+		helpers.Audit(r).Record(r.Context(), audit.Event{
+			Kind:      audit.ResourceTemplateCreate,
+			Target:    audit.ResourceTarget(audit.TargetTemplate, newTemplate.ID, newTemplate.Name),
+			ProjectID: project.ID,
+			Reason:    audit.ReasonInventoryFailed,
+			Metadata:  audit.TemplateMetadata{App: string(newTemplate.App), CreatedInventoryID: createdInventoryID, Partial: true},
+		})
+	}
 	// Check workspace and create it if required.
 	if newTemplate.App.IsTerraform() {
 		var inv db.Inventory
@@ -163,6 +175,7 @@ func addTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailable 
 			if invTypes := newTemplate.App.InventoryTypes(); len(invTypes) > 0 {
 				inventoryType = invTypes[0]
 			} else {
+				recordPartial()
 				helpers.WriteErrorStatus(w, "Inventory type is not supported for this template", http.StatusBadRequest)
 				return
 			}
@@ -176,9 +189,11 @@ func addTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailable 
 			})
 
 			if err != nil {
+				recordPartial()
 				helpers.WriteError(w, err)
 				return
 			}
+			createdInventoryID = inv.ID
 
 			newTemplate.InventoryID = &inv.ID
 			err = helpers.Store(r).UpdateTemplate(newTemplate)
@@ -186,6 +201,7 @@ func addTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailable 
 		} else {
 			inv, err = helpers.Store(r).GetInventory(project.ID, *newTemplate.InventoryID)
 			if err != nil {
+				recordPartial()
 				helpers.WriteError(w, err)
 				return
 			}
@@ -195,6 +211,7 @@ func addTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailable 
 		}
 
 		if err != nil {
+			recordPartial()
 			helpers.WriteError(w, err)
 			return
 		}
@@ -206,6 +223,13 @@ func addTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailable 
 		ObjectType:  db.EventSchedule,
 		ObjectID:    newTemplate.ID,
 		Description: fmt.Sprintf("Template ID %d created", newTemplate.ID),
+	})
+
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:      audit.ResourceTemplateCreate,
+		Target:    audit.ResourceTarget(audit.TargetTemplate, newTemplate.ID, newTemplate.Name),
+		ProjectID: project.ID,
+		Metadata:  audit.TemplateMetadata{App: string(newTemplate.App), CreatedInventoryID: createdInventoryID},
 	})
 
 	helpers.WriteJSON(w, http.StatusCreated, newTemplate)
@@ -302,6 +326,13 @@ func updateTemplate(w http.ResponseWriter, r *http.Request, executorImageAvailab
 		ObjectType:  db.EventTemplate,
 		ObjectID:    oldTemplate.ID,
 		Description: fmt.Sprintf("Template ID %d updated", template.ID),
+	})
+
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:      audit.ResourceTemplateUpdate,
+		Target:    audit.ResourceTarget(audit.TargetTemplate, oldTemplate.ID, template.Name),
+		ProjectID: oldTemplate.ProjectID,
+		Metadata:  audit.TemplateMetadata{App: string(template.App)},
 	})
 
 	w.WriteHeader(http.StatusNoContent)
@@ -404,6 +435,12 @@ func writeTemplateDeleteEvent(w http.ResponseWriter, r *http.Request, tpl db.Tem
 		ObjectType:  db.EventTemplate,
 		ObjectID:    tpl.ID,
 		Description: fmt.Sprintf("Template ID %d deleted", tpl.ID),
+	})
+
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:      audit.ResourceTemplateDelete,
+		Target:    audit.ResourceTarget(audit.TargetTemplate, tpl.ID, tpl.Name),
+		ProjectID: tpl.ProjectID,
 	})
 
 	w.WriteHeader(http.StatusNoContent)

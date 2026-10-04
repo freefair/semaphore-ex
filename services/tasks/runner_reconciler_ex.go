@@ -5,6 +5,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 	"time"
@@ -182,6 +183,7 @@ func (p *TaskPool) applyFencedRecoveryTransition(
 		p.state.Enqueue(tsk)
 		p.queueEvents <- PoolEvent{EventTypeRequeued, tsk}
 	} else if finalize {
+		tsk.endReason.Store(audit.EndReasonRunnerLost)
 		tsk.Log("Recovery reconciled the execution as " + string(status) + ".")
 		p.finalizeRemoteTaskLocked(tsk, nil)
 	}
@@ -325,6 +327,7 @@ func (p *TaskPool) stopTaskRunnerLost(tsk *TaskRunner, runner *db.Runner, reason
 	}
 	tsk.Task = candidate
 	p.applyPersistedRunnerStatus(tsk, oldStatus)
+	tsk.endReason.Store(audit.EndReasonRunnerLost)
 	tsk.Log("Runner cancellation completed: " + reason)
 	p.finalizeRemoteTaskLocked(tsk, runner)
 }

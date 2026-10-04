@@ -163,6 +163,8 @@ var ErrNotFound = errors.New("no rows in result set")
 var ErrTOTPReadiness = errors.New("TOTP administrator recovery is not ready")
 var ErrLDAPReadiness = errors.New("LDAP local administrator recovery is not ready")
 var ErrInvalidOperation = errors.New("invalid operation")
+var ErrRunnerAlreadyRegistered = errors.New("runner is already registered")
+var ErrRegistrationTokenExpired = errors.New("registration token expired")
 
 type TaskStatUnit string
 

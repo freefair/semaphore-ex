@@ -130,6 +130,11 @@ type Task struct {
 	// intentionally not persisted on the task row: the immutable evaluation row
 	// owns the task link and is bound in the same transaction as task creation.
 	PolicyGuardrailEvaluationID *int `db:"-" json:"-"`
+	// WorkflowTemplateID is the workflow the run of WorkflowRunID belongs to.
+	// It is not stored with the task: the server resolves it from the run before
+	// the task starts so that executors (local or on a remote runner) can expose
+	// the workflow in the task environment without a database.
+	WorkflowTemplateID *int `db:"-" json:"workflow_template_id,omitempty"`
 	// Version is a build version.
 	// This field available only for Build tasks.
 	Version *string `db:"version" json:"version,omitempty"`
@@ -232,6 +237,19 @@ func (task *Task) GetUrl() *string {
 	}
 
 	return nil
+}
+
+// GetWorkflowUrl returns the URL of the workflow run page the task belongs to,
+// or nil when the task is not part of a workflow run or the web host is unknown.
+func (task *Task) GetWorkflowUrl() *string {
+	if util.Config.WebHost == "" || task.WorkflowRunID == nil || task.WorkflowTemplateID == nil {
+		return nil
+	}
+
+	workflowUrl := fmt.Sprintf("%s/project/%d/workflows/%d/runs/%d",
+		util.Config.WebHost, task.ProjectID, *task.WorkflowTemplateID, *task.WorkflowRunID)
+
+	return &workflowUrl
 }
 
 func (task *Task) ValidateNewTask(template Template) error {

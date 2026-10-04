@@ -12,6 +12,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/taskredaction"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/services/tasks/hooks"
 	log "github.com/sirupsen/logrus"
@@ -52,11 +53,13 @@ type TaskRunner struct {
 	currentOutput *db.TaskOutput
 	currentState  any
 
-	users        []int
-	alert        bool
-	alertChat    *string
-	pool         *TaskPool
-	keyInstaller db_lib.AccessKeyInstaller
+	users          []int
+	alert          bool
+	alertChat      *string
+	pool           *TaskPool
+	keyInstaller   db_lib.AccessKeyInstaller
+	endReason      atomic.Value
+	dispatchFailed atomic.Bool
 
 	// job executes Ansible and returns stdout to Semaphore logs
 	job   Job
@@ -478,6 +481,10 @@ func (t *TaskRunner) configureTerraformBackend(localJob *LocalExecutor) error {
 // to release the task's resources (EventTypeFinished -> onTaskStop). It is used
 // by the synchronous local path and by FinalizeRemoteTask for remote tasks.
 func (t *TaskRunner) finishRun() {
+	t.finishRunWithActor(audit.SystemActor(audit.ComponentTaskRunner))
+}
+
+func (t *TaskRunner) finishRunWithActor(actor audit.Actor) {
 	if !t.Task.Status.IsFinished() {
 		log.WithFields(log.Fields{
 			"task_id":     t.Task.ID,
@@ -508,6 +515,7 @@ func (t *TaskRunner) finishRun() {
 	}
 
 	t.createTaskEvent()
+	t.recordComplete(actor)
 	t.pool.queueEvents <- PoolEvent{EventTypeFinished, t}
 
 	// Notify the workflow service that this task finished so it can progress the
@@ -521,6 +529,26 @@ func (t *TaskRunner) finishRun() {
 	if err := t.pool.HandleWorkflowTaskCompletion(t.Task); err != nil {
 		t.Log("Workflow progression failed: " + err.Error())
 	}
+}
+
+func (t *TaskRunner) FailDispatch() {
+	t.dispatchFailed.Store(true)
+	t.SetStatus(task_logger.TaskFailStatus)
+}
+
+func (t *TaskRunner) recordComplete(actor audit.Actor) {
+	endReason, _ := t.endReason.Load().(string)
+	meta := audit.TaskCompleteMetadata{Result: string(t.Task.Status), EndReason: endReason, TemplateID: t.Task.TemplateID}
+	if t.Task.UserID != nil {
+		meta.InitiatorID = *t.Task.UserID
+	}
+	if t.Task.Start != nil && t.Task.End != nil {
+		meta.DurationMS = t.Task.End.Sub(*t.Task.Start).Milliseconds()
+	}
+	t.pool.recorder().Record(audit.WithActor(context.Background(), actor), audit.Event{
+		Kind: audit.TaskExecutionComplete, Target: audit.ResourceTarget(audit.TargetTask, t.Task.ID, t.Template.Name),
+		ProjectID: t.Task.ProjectID, Metadata: meta,
+	})
 }
 
 // startAutorunTasks queues the autorun child templates of a successfully
@@ -560,6 +588,24 @@ func (t *TaskRunner) prepareError(err error, errMsg string) error {
 		panic(err)
 	}
 
+	return nil
+}
+
+func (t *TaskRunner) populateWorkflowDetails() error {
+	t.Task.WorkflowTemplateID = nil
+	if t.Task.WorkflowRunID == nil || t.pool.workflowRepo == nil {
+		return nil
+	}
+	run, err := t.pool.workflowRepo.GetWorkflowRunByID(t.Task.ProjectID, *t.Task.WorkflowRunID)
+	if err != nil {
+		log.WithError(err).WithFields(log.Fields{
+			"context": "workflow_task", "project_id": t.Task.ProjectID, "task_id": t.Task.ID,
+		}).Warn("workflow run metadata is unavailable; task continues without workflow template identity")
+		return nil
+	}
+	if run.WorkflowTemplateID != 0 {
+		t.Task.WorkflowTemplateID = &run.WorkflowTemplateID
+	}
 	return nil
 }
 
@@ -616,6 +662,9 @@ func (t *TaskRunner) populateDetails() error {
 	)
 	if err != nil {
 		return t.prepareError(err, "Execution preflight snapshot is invalid!")
+	}
+	if err = t.populateWorkflowDetails(); err != nil {
+		return err
 	}
 
 	if executionSnapshot != nil {

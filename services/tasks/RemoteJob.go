@@ -15,6 +15,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/debuglog"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/tz"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 )
@@ -392,6 +393,7 @@ func (t *RemoteJob) handleTimeout(taskID int, runner *db.Runner) {
 		return
 	}
 	tsk.Log("Task timed out")
+	tsk.endReason.Store(audit.EndReasonTimeout)
 	if taskRequiresStopEvidence(tsk) {
 		tsk.SetStatus(task_logger.TaskStoppingStatus)
 		return

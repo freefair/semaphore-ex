@@ -592,7 +592,11 @@ func (d *SqlDb) DeleteTemplate(projectID int, templateID int) error {
 	if err = db.RequireFinishedTaskGroups(tx, d.PrepareQuery, projectID, templateID); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(d.PrepareQuery("delete from project__template where project_id=? and id=?"), projectID, templateID); err != nil {
+	result, err := tx.Exec(d.PrepareQuery("delete from project__template where project_id=? and id=?"), projectID, templateID)
+	if err != nil {
+		return err
+	}
+	if err = requireDeletedRow(result, nil); err != nil {
 		return err
 	}
 	return tx.Commit()

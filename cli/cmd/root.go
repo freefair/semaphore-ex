@@ -200,6 +200,9 @@ func runService() {
 			External: proServer.NewGlobalCredentialExternalAdapter(util.Config),
 		},
 	))
+	taskPool.SetAuditRecorder(auditService.Recorder())
+	taskPool.SetWorkflowRepo(workflowStore)
+
 	// The workflow service orchestrates workflow runs and launches each node's
 	// task through the pool; the pool calls back into it when a workflow task
 	// finishes. Wire the cycle: pool first, then service (with the pool as its

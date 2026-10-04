@@ -242,12 +242,12 @@ func (d *SqlDb) RegisterRunner(registrationTokenHash string, report db.RunnerSec
 
 	runner = runners[0]
 	if runner.IsRegistered() {
-		err = fmt.Errorf("runner is already registered")
+		err = db.ErrRunnerAlreadyRegistered
 		return
 	}
 
 	if runner.RegistrationTokenExpiresAt == nil || !runner.RegistrationTokenExpiresAt.After(tz.Now()) {
-		err = fmt.Errorf("registration token expired")
+		err = db.ErrRegistrationTokenExpired
 		return
 	}
 

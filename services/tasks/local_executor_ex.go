@@ -151,6 +151,7 @@ func (t *LocalExecutor) prepare(username string, incomingVersion *string, alias 
 	if installRequirements {
 		environmentVariables = append(environmentVariables, t.hostConfigEnv()...)
 	}
+	environmentVariables = append(environmentVariables, taskIdentityEnv(t.Task)...)
 
 	if t.Template.Type != db.TemplateTask {
 

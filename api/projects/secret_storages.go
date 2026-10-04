@@ -7,6 +7,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/random"
 	pro "github.com/semaphoreui/semaphore/pro/services/server"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/services/server"
 	"net/http"
 )
@@ -150,6 +151,13 @@ func (c *SecretStorageController) Update(w http.ResponseWriter, r *http.Request)
 		Description: fmt.Sprintf("Secret storage with ID %d has been updated", storage.ID),
 	})
 
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:      audit.SecretStorageUpdate,
+		Target:    audit.ResourceTarget(audit.TargetSecretStorage, oldStorage.ID, storage.Name),
+		ProjectID: oldStorage.ProjectID,
+		Metadata:  audit.SecretStorageMetadata{Type: string(storage.Type)},
+	})
+
 	helpers.WriteJSON(w, http.StatusOK, storage)
 }
 
@@ -186,6 +194,13 @@ func (c *SecretStorageController) Add(w http.ResponseWriter, r *http.Request) {
 		Description: fmt.Sprintf("Secret storage %s has been created", storage.Name),
 	})
 
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:      audit.SecretStorageCreate,
+		Target:    audit.ResourceTarget(audit.TargetSecretStorage, newStorage.ID, newStorage.Name),
+		ProjectID: newStorage.ProjectID,
+		Metadata:  audit.SecretStorageMetadata{Type: string(newStorage.Type)},
+	})
+
 	helpers.WriteJSON(w, http.StatusCreated, newStorage)
 }
 
@@ -194,12 +209,15 @@ func (c *SecretStorageController) Remove(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	project := helpers.GetFromContext(r, "project").(db.Project)
-	storageID, ok := helpers.GetIntParamOrAbort("storage_id", w, r)
-	if !ok {
-		return
+	storage, loaded := helpers.GetFromContext(r, "secretStorage").(db.SecretStorage)
+	if !loaded {
+		storageID, ok := helpers.GetIntParamOrAbort("storage_id", w, r)
+		if !ok {
+			return
+		}
+		storage = db.SecretStorage{ID: storageID, ProjectID: project.ID}
 	}
-
-	err := c.secretStorageService.Delete(project.ID, storageID)
+	err := c.secretStorageService.Delete(project.ID, storage.ID)
 	if err != nil {
 		helpers.WriteError(w, err)
 		return
@@ -207,8 +225,15 @@ func (c *SecretStorageController) Remove(w http.ResponseWriter, r *http.Request)
 
 	helpers.EventLog(r, helpers.EventLogDelete, helpers.EventLogItem{
 		UserID: helpers.UserFromContext(r).ID, ProjectID: project.ID,
-		ObjectType: db.EventSecretStorage, ObjectID: storageID,
-		Description: fmt.Sprintf("Secret storage with ID %d has been deleted", storageID),
+		ObjectType: db.EventSecretStorage, ObjectID: storage.ID,
+		Description: fmt.Sprintf("Secret storage with ID %d has been deleted", storage.ID),
+	})
+
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:      audit.SecretStorageDelete,
+		Target:    audit.ResourceTarget(audit.TargetSecretStorage, storage.ID, storage.Name),
+		ProjectID: project.ID,
+		Metadata:  audit.DeleteMetadata{},
 	})
 
 	w.WriteHeader(http.StatusNoContent)
@@ -255,6 +280,12 @@ func (c *SecretStorageController) SyncSecrets(w http.ResponseWriter, r *http.Req
 		Description: fmt.Sprintf(
 			"Secret storage sync operation %d finished with status %s", operation.ID, operation.Status,
 		),
+	})
+
+	helpers.Audit(r).Record(r.Context(), audit.Event{
+		Kind:      audit.SecretStorageSync,
+		Target:    audit.ResourceTarget(audit.TargetSecretStorage, storage.ID, storage.Name),
+		ProjectID: storage.ProjectID,
 	})
 
 	status := http.StatusOK

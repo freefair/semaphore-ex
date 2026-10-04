@@ -12,6 +12,7 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -929,7 +930,7 @@ func (deploymentWindowAdmissionStub) Claim(pro_interfaces.DeploymentWindowAdmiss
 
 func TestTaskPoolConfiguredAdmissionRejectsDirectPersistenceWithoutDecision(t *testing.T) {
 	pool := TaskPool{deploymentWindowAdmission: deploymentWindowAdmissionStub{}}
-	_, err := pool.addTask(db.Task{TemplateID: 1}, nil, nil, "", 1, false, nil, nil)
+	_, err := pool.addTask(db.Task{TemplateID: 1}, nil, nil, "", 1, false, nil, nil, context.Background(), audit.TriggerAPI)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "deployment window decision is required")
 }
