@@ -6683,6 +6683,18 @@ symbols:
     implementation: core
     behavior_tests:
     - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditExporterSkipsHistoricalEventsAndAdvancesDurableCursor
+    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditHECDestinationDeliversTLSBatchWithCanonicalEnvelope
+    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditHECDestinationRejectsRedirectAndNonzeroAcknowledgement
+    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditHECDestinationRejectsUntrustedCertificateAndTimesOut
+    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditHECExporterDoesNotAdvanceCursorAfterLeaseLoss
+    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditCompositeExporterRejectsDuplicateDestinationIDs
+    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditHECDestinationRequiresBoundedCodeZeroAcknowledgement
+    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditHECDestinationRejectsResponseReadFailure
+    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditHECExporterRetriesAcknowledgementFailureWithoutAdvancingCursor
+    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditHECExporterPersistsCursorAcrossRestartAndDestinations
+    - test/edition-contract/enhanced/services/server/audit_composite_exporter_ex_test.go::TestAuditCompositeExporterHECContinuesWhenSyslogUnavailable
+    - test/edition-contract/enhanced/services/server/audit_hec_transport_test.go::TestAuditHECTransportUsesSeparateNamesForHTTPSProxyAndOrigin
+    - test/edition-contract/enhanced/services/server/audit_hec_transport_test.go::TestAuditHECTransportRejectsUntrustedOriginBehindHTTPSProxy
   - name: pro_interfaces:AuditOutcome
     signature: string
     implementation: core

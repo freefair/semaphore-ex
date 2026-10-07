@@ -55,7 +55,7 @@ type auditSyslogConnection struct {
 
 var _ pro_interfaces.AuditExporter = (*auditExporter)(nil)
 
-// NewAuditExporter provides the selected durable Syslog exporter. The audit
+// NewAuditExporter provides the selected durable SIEM exporters. The audit
 // webhook service remains a separate delivery channel with its own queue.
 func NewAuditExporter(store db.Store, config *util.AuditConfig, leaser pro_interfaces.AuditExportLeaser) pro_interfaces.AuditExporter {
 	exporter := &auditExporter{leaser: leaser}
@@ -71,7 +71,14 @@ func NewAuditExporter(store db.Store, config *util.AuditConfig, leaser pro_inter
 	if exporter.destination != nil && exporter.leaser == nil && exporter.startErr == nil {
 		exporter.startErr = errors.New("audit syslog export requires an audit export leaser")
 	}
-	return exporter
+	if config == nil || config.SplunkHEC == nil || !config.SplunkHEC.IsConfigured() {
+		return exporter
+	}
+	hecExporter := newAuditHECExporter(store, config.SplunkHEC, leaser)
+	if config.Syslog == nil || !config.Syslog.IsConfigured() {
+		return hecExporter
+	}
+	return &auditCompositeExporter{exporters: []pro_interfaces.AuditExporter{exporter, hecExporter}}
 }
 
 func (e *auditExporter) Start() error {

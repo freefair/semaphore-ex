@@ -6,13 +6,17 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net"
+	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,9 +36,14 @@ type auditExportRepositoryTest struct {
 	releaseInitialization chan struct{}
 	initializeOnce        sync.Once
 	advanceCalls          int
+	initializedIDs        []string
+	mu                    sync.Mutex
 }
 
-func (r *auditExportRepositoryTest) InitializeAuditExportState(context.Context, string) (int64, error) {
+func (r *auditExportRepositoryTest) InitializeAuditExportState(_ context.Context, destinationID string) (int64, error) {
+	r.mu.Lock()
+	r.initializedIDs = append(r.initializedIDs, destinationID)
+	r.mu.Unlock()
 	if r.initialized != nil {
 		r.initializeOnce.Do(func() {
 			close(r.initialized)
@@ -335,6 +344,311 @@ func TestAuditSyslogDestinationCancelsInFlightWrite(t *testing.T) {
 		require.FailNow(t, "canceled TLS write did not stop promptly")
 	}
 }
+
+func TestAuditHECDestinationDeliversTLSBatchWithCanonicalEnvelope(t *testing.T) {
+	var authorization string
+	var received []hecEvent
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorization = r.Header.Get("Authorization")
+		decoder := json.NewDecoder(r.Body)
+		for decoder.More() {
+			var event hecEvent
+			require.NoError(t, decoder.Decode(&event))
+			received = append(received, event)
+		}
+		_, _ = w.Write([]byte(`{"code":0}`))
+	}))
+	defer server.Close()
+	certificatePath := writeAuditCertificate(t, server.Certificate())
+	destination, err := newAuditHECDestination(&util.AuditSplunkHECConfig{ID: "hec-primary", URL: server.URL, Token: "hec-secret", CAFile: certificatePath, Timeout: time.Second.String()})
+	require.NoError(t, err)
+	created := time.Date(2026, 10, 7, 12, 0, 0, 123000000, time.UTC)
+	require.NoError(t, destination.deliver(context.Background(), []db.AuditEvent{{Seq: 1, EventID: "event-1", Created: created, EventCode: "audit.lifecycle", InstanceID: "prod-eu", NodeID: "node-a", Metadata: "{}"}}))
+	require.Len(t, received, 1)
+	assert.Equal(t, "Splunk hec-secret", authorization)
+	assert.Equal(t, float64(created.UnixNano())/float64(time.Second), received[0].Time)
+	assert.Equal(t, "node-a", received[0].Host)
+	assert.Equal(t, "semaphore", received[0].Source)
+	assert.Equal(t, "semaphore:audit", received[0].Sourcetype)
+	assert.Equal(t, "event-1", received[0].Event.EventID)
+}
+
+func TestAuditHECDestinationRejectsRedirectAndNonzeroAcknowledgement(t *testing.T) {
+	redirectTargetCalled := false
+	target := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { redirectTargetCalled = true }))
+	defer target.Close()
+	redirect := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirect.Close()
+	destination, err := newAuditHECDestination(&util.AuditSplunkHECConfig{ID: "hec-primary", URL: redirect.URL, Token: "hec-secret", CAFile: writeAuditCertificate(t, redirect.Certificate()), Timeout: time.Second.String()})
+	require.NoError(t, err)
+	err = destination.deliver(context.Background(), []db.AuditEvent{{EventID: "event", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"}})
+	assert.Error(t, err)
+	assert.False(t, redirectTargetCalled)
+
+	acknowledgement := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"code":10}`)) }))
+	defer acknowledgement.Close()
+	destination, err = newAuditHECDestination(&util.AuditSplunkHECConfig{ID: "hec-primary", URL: acknowledgement.URL, Token: "hec-secret", CAFile: writeAuditCertificate(t, acknowledgement.Certificate()), Timeout: time.Second.String()})
+	require.NoError(t, err)
+	err = destination.deliver(context.Background(), []db.AuditEvent{{EventID: "event", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"}})
+	assert.ErrorContains(t, err, "response code 10")
+
+	malformed := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`not-json`)) }))
+	defer malformed.Close()
+	destination, err = newAuditHECDestination(&util.AuditSplunkHECConfig{ID: "hec-primary", URL: malformed.URL, Token: "hec-secret", CAFile: writeAuditCertificate(t, malformed.Certificate()), Timeout: time.Second.String()})
+	require.NoError(t, err)
+	err = destination.deliver(context.Background(), []db.AuditEvent{{EventID: "event", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"}})
+	assert.ErrorContains(t, err, "invalid audit Splunk HEC response")
+}
+
+func TestAuditHECDestinationRequiresBoundedCodeZeroAcknowledgement(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"empty", "", "invalid audit Splunk HEC response"},
+		{"missing code", `{}`, "invalid audit Splunk HEC response"},
+		{"nonzero code", `{"code":7}`, "response code 7"},
+		{"malformed", `not-json`, "invalid audit Splunk HEC response"},
+		{"oversized valid prefix", `{"code":0}` + strings.Repeat(" ", 4097), "response is too large"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(test.body)) }))
+			defer server.Close()
+			destination, err := newAuditHECDestination(&util.AuditSplunkHECConfig{ID: "hec", URL: server.URL, Token: "token", CAFile: writeAuditCertificate(t, server.Certificate())})
+			require.NoError(t, err)
+			err = destination.deliver(context.Background(), []db.AuditEvent{{EventID: "event", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"}})
+			assert.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func TestAuditHECDestinationRejectsResponseReadFailure(t *testing.T) {
+	destination, err := newAuditHECDestination(&util.AuditSplunkHECConfig{ID: "hec", URL: "https://hec.example/event", Token: "token"})
+	require.NoError(t, err)
+	destination.client.Transport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: failingReadCloser{}}, nil
+	})
+	err = destination.deliver(context.Background(), []db.AuditEvent{{EventID: "event", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"}})
+	assert.ErrorContains(t, err, "read audit Splunk HEC response")
+}
+
+func TestAuditHECExporterRetriesAcknowledgementFailureWithoutAdvancingCursor(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	defer store.Close()
+	historical, err := store.CreateAuditEvent(context.Background(), db.AuditEvent{EventID: "historical", SchemaVersion: "1", Created: time.Now().UTC(), Metadata: "{}"})
+	require.NoError(t, err)
+	var success atomic.Bool
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if success.Load() {
+			_, _ = w.Write([]byte(`{"code":0}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":10}`))
+	}))
+	defer server.Close()
+	exporter := newAuditHECExporter(store, &util.AuditSplunkHECConfig{ID: "hec", URL: server.URL, Token: "token", CAFile: writeAuditCertificate(t, server.Certificate())}, auditExportLeaserTest{})
+	_, err = store.InitializeAuditExportState(context.Background(), "hec")
+	require.NoError(t, err)
+	pending, err := store.CreateAuditEvent(context.Background(), db.AuditEvent{EventID: "pending", SchemaVersion: "1", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"})
+	require.NoError(t, err)
+	exporter.process(context.Background())
+	cursor, err := store.InitializeAuditExportState(context.Background(), "hec")
+	require.NoError(t, err)
+	assert.Equal(t, historical.Seq, cursor)
+	success.Store(true)
+	exporter.process(context.Background())
+	cursor, err = store.InitializeAuditExportState(context.Background(), "hec")
+	require.NoError(t, err)
+	assert.Equal(t, pending.Seq, cursor)
+}
+
+func TestAuditHECDestinationValidation(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *util.AuditSplunkHECConfig
+	}{
+		{"missing token", &util.AuditSplunkHECConfig{ID: "hec", URL: "https://hec.example/event"}},
+		{"token tab", &util.AuditSplunkHECConfig{ID: "hec", URL: "https://hec.example/event", Token: "token\tvalue"}},
+		{"token NUL", &util.AuditSplunkHECConfig{ID: "hec", URL: "https://hec.example/event", Token: "token\x00value"}},
+		{"token DEL", &util.AuditSplunkHECConfig{ID: "hec", URL: "https://hec.example/event", Token: "token\x7fvalue"}},
+		{"token leading whitespace", &util.AuditSplunkHECConfig{ID: "hec", URL: "https://hec.example/event", Token: " token"}},
+		{"token trailing whitespace", &util.AuditSplunkHECConfig{ID: "hec", URL: "https://hec.example/event", Token: "token "}},
+		{"non HTTPS URL", &util.AuditSplunkHECConfig{ID: "hec", URL: "http://hec.example/event", Token: "token"}},
+		{"URL credentials", &util.AuditSplunkHECConfig{ID: "hec", URL: "https://user:password@hec.example/event", Token: "token"}},
+		{"URL fragment", &util.AuditSplunkHECConfig{ID: "hec", URL: "https://hec.example/event#fragment", Token: "token"}},
+		{"invalid timeout", &util.AuditSplunkHECConfig{ID: "hec", URL: "https://hec.example/event", Token: "token", Timeout: "0s"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) { _, err := newAuditHECDestination(test.config); assert.Error(t, err) })
+	}
+}
+
+func TestAuditHECDestinationRejectsUntrustedCertificateAndTimesOut(t *testing.T) {
+	untrusted := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer untrusted.Close()
+	destination, err := newAuditHECDestination(&util.AuditSplunkHECConfig{ID: "hec", URL: untrusted.URL, Token: "token", Timeout: time.Second.String()})
+	require.NoError(t, err)
+	err = destination.deliver(context.Background(), []db.AuditEvent{{EventID: "event", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"}})
+	assert.ErrorContains(t, err, "certificate verification failed")
+
+	blocked := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		<-r.Context().Done()
+	}))
+	defer blocked.Close()
+	destination, err = newAuditHECDestination(&util.AuditSplunkHECConfig{ID: "hec", URL: blocked.URL, Token: "token", CAFile: writeAuditCertificate(t, blocked.Certificate()), Timeout: "25ms"})
+	require.NoError(t, err)
+	started := time.Now()
+	err = destination.deliver(context.Background(), []db.AuditEvent{{EventID: "event", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"}})
+	assert.ErrorContains(t, err, "timed out")
+	assert.Less(t, time.Since(started), time.Second)
+}
+
+func TestAuditHECTransportErrorIsActionableWithoutSecretOrURL(t *testing.T) {
+	err := sanitizeHECTransportError(&url.Error{Op: "Post", URL: "https://hec.example/event?token=must-not-leak", Err: context.DeadlineExceeded})
+	assert.ErrorContains(t, err, "timed out")
+	assert.NotContains(t, err.Error(), "must-not-leak")
+	assert.NotContains(t, err.Error(), "hec.example")
+}
+
+func TestAuditCompositeExporterRejectsDuplicateDestinationIDs(t *testing.T) {
+	exporter := NewAuditExporter(nil, &util.AuditConfig{
+		Syslog:    &util.AuditSyslogConfig{ID: "duplicate", Address: "127.0.0.1:6514"},
+		SplunkHEC: &util.AuditSplunkHECConfig{ID: "duplicate", URL: "https://hec.example/event", Token: "token"},
+	}, auditExportLeaserTest{})
+	assert.ErrorContains(t, exporter.Start(), "configured more than once")
+}
+
+func TestAuditHECExporterPersistsCursorAcrossRestartAndDestinations(t *testing.T) {
+	store := sqldb.InitConfigCreateTestStore()
+	defer store.Close()
+	_, err := store.CreateAuditEvent(context.Background(), db.AuditEvent{EventID: "historical", SchemaVersion: "1", Created: time.Now().UTC(), Metadata: "{}"})
+	require.NoError(t, err)
+	delivered := make(chan hecEvent, 2)
+	receiver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		decoder := json.NewDecoder(r.Body)
+		for decoder.More() {
+			var event hecEvent
+			require.NoError(t, decoder.Decode(&event))
+			delivered <- event
+		}
+		_, _ = w.Write([]byte(`{"code":0}`))
+	}))
+	defer receiver.Close()
+	config := func(id string) *util.AuditConfig {
+		return &util.AuditConfig{SplunkHEC: &util.AuditSplunkHECConfig{ID: id, URL: receiver.URL, Token: "token", CAFile: writeAuditCertificate(t, receiver.Certificate()), Timeout: time.Second.String()}}
+	}
+	first := NewAuditExporter(store, config("hec-a"), auditExportLeaserTest{})
+	require.NoError(t, first.Start())
+	defer first.Stop()
+	later, err := store.CreateAuditEvent(context.Background(), db.AuditEvent{EventID: "later", SchemaVersion: "1", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"})
+	require.NoError(t, err)
+	select {
+	case event := <-delivered:
+		assert.Equal(t, "later", event.Event.EventID)
+	case <-time.After(3 * time.Second):
+		require.FailNow(t, "timed out waiting for HEC delivery")
+	}
+	require.Eventually(t, func() bool {
+		cursor, cursorErr := store.InitializeAuditExportState(context.Background(), "hec-a")
+		return cursorErr == nil && cursor == later.Seq
+	}, 3*time.Second, 10*time.Millisecond)
+	first.Stop()
+	cursor, err := store.InitializeAuditExportState(context.Background(), "hec-a")
+	require.NoError(t, err)
+	assert.Equal(t, later.Seq, cursor)
+	restarted := NewAuditExporter(store, config("hec-a"), auditExportLeaserTest{})
+	require.NoError(t, restarted.Start())
+	defer restarted.Stop()
+	third, err := store.CreateAuditEvent(context.Background(), db.AuditEvent{EventID: "third", SchemaVersion: "1", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"})
+	require.NoError(t, err)
+	select {
+	case event := <-delivered:
+		assert.Equal(t, "third", event.Event.EventID, "restart must resume after its durable cursor")
+	case <-time.After(3 * time.Second):
+		require.FailNow(t, "timed out waiting for restarted HEC delivery")
+	}
+	require.Eventually(t, func() bool {
+		cursor, cursorErr := store.InitializeAuditExportState(context.Background(), "hec-a")
+		return cursorErr == nil && cursor == third.Seq
+	}, 3*time.Second, 10*time.Millisecond)
+	restarted.Stop()
+	other := NewAuditExporter(store, config("hec-b"), auditExportLeaserTest{})
+	require.NoError(t, other.Start())
+	defer other.Stop()
+	fourth, err := store.CreateAuditEvent(context.Background(), db.AuditEvent{EventID: "fourth", SchemaVersion: "1", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"})
+	require.NoError(t, err)
+	select {
+	case event := <-delivered:
+		assert.Equal(t, "fourth", event.Event.EventID)
+	case <-time.After(3 * time.Second):
+		require.FailNow(t, "timed out waiting for independent HEC delivery")
+	}
+	require.Eventually(t, func() bool {
+		cursor, cursorErr := store.InitializeAuditExportState(context.Background(), "hec-b")
+		return cursorErr == nil && cursor == fourth.Seq
+	}, 3*time.Second, 10*time.Millisecond)
+	other.Stop()
+	otherCursor, err := store.InitializeAuditExportState(context.Background(), "hec-b")
+	require.NoError(t, err)
+	assert.Equal(t, fourth.Seq, otherCursor)
+}
+
+func TestAuditHECExporterDoesNotAdvanceCursorAfterLeaseLoss(t *testing.T) {
+	requestReceived := make(chan struct{})
+	releaseResponse := make(chan struct{})
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(requestReceived)
+		<-releaseResponse
+		_, _ = w.Write([]byte(`{"code":0}`))
+	}))
+	defer server.Close()
+	destination, err := newAuditHECDestination(&util.AuditSplunkHECConfig{ID: "hec-primary", URL: server.URL, Token: "hec-secret", CAFile: writeAuditCertificate(t, server.Certificate()), Timeout: time.Second.String()})
+	require.NoError(t, err)
+	lease := &controllableAuditExportLease{lost: make(chan struct{}), valid: true}
+	repository := &auditExportRepositoryTest{events: []db.AuditEvent{{Seq: 1, EventID: "event-1", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"}}}
+	exporter := &auditHECExporter{repository: repository, destination: destination, leaser: controllableAuditExportLeaser{lease: lease}}
+	done := make(chan struct{})
+	go func() { exporter.process(context.Background()); close(done) }()
+	<-requestReceived
+	close(lease.lost)
+	close(releaseResponse)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		require.FailNow(t, "HEC export did not stop after lease loss")
+	}
+	assert.Zero(t, repository.advanceCalls)
+}
+
+func TestAuditExporterCombinesDistinctSyslogAndHECDestinations(t *testing.T) {
+	exporter := NewAuditExporter(nil, &util.AuditConfig{
+		Syslog:    &util.AuditSyslogConfig{ID: "syslog", Address: "127.0.0.1:6514"},
+		SplunkHEC: &util.AuditSplunkHECConfig{ID: "hec", URL: "https://hec.example/services/collector/event", Token: "token"},
+	}, nil)
+	assert.Equal(t, []string{"syslog", "hec"}, exporter.DestinationIDs())
+}
+
+func writeAuditCertificate(t *testing.T, certificate *x509.Certificate) string {
+	t.Helper()
+	path := t.TempDir() + "/receiver-ca.pem"
+	require.NoError(t, os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw}), 0o600))
+	return path
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
+type failingReadCloser struct{}
+
+func (failingReadCloser) Read([]byte) (int, error) { return 0, errors.New("read failed") }
+func (failingReadCloser) Close() error             { return nil }
 
 var _ pro_interfaces.AuditExporter = NewAuditExporter(nil, nil, nil)
 

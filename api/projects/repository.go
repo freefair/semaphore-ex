@@ -1,10 +1,12 @@
 package projects
 
 import (
+	"context"
 	"crypto/sha1"
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
@@ -51,6 +53,35 @@ func GetRepositoryRefs(w http.ResponseWriter, r *http.Request) {
 type RepositoryController struct {
 	keyInstaller      db_lib.AccessKeyInstaller
 	encryptionService db_lib.SecretDeserializer
+
+	// browseLocks serializes requests which share a scratch checkout
+	// (scratch dir name -> capacity-one channel). Without it two concurrent browse
+	// requests race on the same directory: one sees the half-made clone of the
+	// other, treats it as broken and deletes it from under the running git.
+	// The checkout lives on the local disk, so a per-process lock is enough
+	// in HA mode: every node browses its own copy.
+	browseLocks sync.Map
+}
+
+// lockBrowseDir takes the lock of a scratch checkout and returns the function
+// which releases it. A cancelled request does not wait for another browse to
+// finish and must not begin a delayed clone after its client has gone away.
+func (c *RepositoryController) lockBrowseDir(ctx context.Context, dirName string) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entry, _ := c.browseLocks.LoadOrStore(dirName, make(chan struct{}, 1))
+	lock := entry.(chan struct{})
+	select {
+	case lock <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-lock
+			return nil, err
+		}
+		return func() { <-lock }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func NewRepositoryController(
@@ -131,9 +162,9 @@ func (c *RepositoryController) GetRepositoryPlaybooks(w http.ResponseWriter, r *
 		// contain slashes) so each branch gets its own cached checkout instead
 		// of failing to check out a branch that was never fetched.
 		branchHash := sha1.Sum([]byte(branch))
-		hostConfigs, hcErr := c.hostConfigs(r, repo)
-		if hcErr != nil {
-			helpers.WriteError(w, hcErr)
+		repoCopy, hostConfigs, logger, err := c.browseGitConfiguration(r, repoCopy)
+		if err != nil {
+			helpers.WriteError(w, err)
 			return
 		}
 		defer hostConfigs.Destroy()
@@ -142,18 +173,18 @@ func (c *RepositoryController) GetRepositoryPlaybooks(w http.ResponseWriter, r *
 			Repository:  repoCopy,
 			TmpDirName:  fmt.Sprintf("repository_%d_browse_%x", repo.ID, branchHash[:4]),
 			Client:      db_lib.CreateDefaultGitClient(c.keyInstaller),
-			Logger:      task_logger.NopLogger{},
+			Logger:      logger,
 			HostConfigs: hostConfigs,
 		}
 
-		var err error
-		if err = git.ValidateRepo(); err != nil {
-			err = git.Clone()
-		} else {
-			err = git.Pull()
-		}
-
+		unlock, err := c.lockBrowseDir(r.Context(), git.TmpDirName)
 		if err != nil {
+			helpers.WriteError(w, err)
+			return
+		}
+		defer unlock()
+
+		if err := git.CloneOrPull(); err != nil {
 			helpers.WriteError(w, err)
 			return
 		}
