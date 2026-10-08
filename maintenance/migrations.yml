@@ -890,6 +890,13 @@ migrations:
     migrations/v2.20.9.sql: 5aa2f5c75e08b73532bf3fe19bf800990a3e4a0d4bca21225721b20803522ef0
   upstream_id: 2.20.9
 - registered: true
+  id: 2.20.10
+  owner: upstream
+  files:
+    migrations/v2.20.10.err.sql: 3e79b031c6c0a982b22f4aec57fd8a466e81cb3c235bae6bdc3daa209cd9588e
+    migrations/v2.20.10.sql: 7ed657a19985ff2e91ca8932dc2c82d91efe317e5062731c42f5a675b2be80dd
+  upstream_id: 2.20.10
+- registered: true
   id: 2.3.0
   owner: upstream
   files:

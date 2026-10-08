@@ -22,6 +22,7 @@ import (
 
 	"github.com/semaphoreui/semaphore/db"
 	sqldb "github.com/semaphoreui/semaphore/db/sql"
+	"github.com/semaphoreui/semaphore/pkg/metrics"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
@@ -37,6 +38,9 @@ type auditExportRepositoryTest struct {
 	initializeOnce        sync.Once
 	advanceCalls          int
 	initializedIDs        []string
+	backlog               db.AuditExportBacklog
+	backlogErr            error
+	backlogCalls          map[string]int
 	mu                    sync.Mutex
 }
 
@@ -62,6 +66,16 @@ func (r *auditExportRepositoryTest) GetAuditEventsAfter(ctx context.Context, _ i
 	return r.events, nil
 }
 
+func (r *auditExportRepositoryTest) GetAuditExportBacklog(_ context.Context, destinationID string) (db.AuditExportBacklog, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.backlogCalls == nil {
+		r.backlogCalls = make(map[string]int)
+	}
+	r.backlogCalls[destinationID]++
+	return r.backlog, r.backlogErr
+}
+
 func (r *auditExportRepositoryTest) AdvanceAuditExportState(context.Context, string, int64, int64) (bool, error) {
 	r.advanceCalls++
 	return true, nil
@@ -80,6 +94,18 @@ type controllableAuditExportLeaser struct{ lease *controllableAuditExportLease }
 
 func (l controllableAuditExportLeaser) TryAcquire(context.Context, string) (pro_interfaces.AuditExportLease, bool, error) {
 	return l.lease, true, nil
+}
+
+type unavailableAuditExportLeaser struct{}
+
+func (unavailableAuditExportLeaser) TryAcquire(context.Context, string) (pro_interfaces.AuditExportLease, bool, error) {
+	return nil, false, nil
+}
+
+func scrapeAuditExportMetrics(m *metrics.Metrics) string {
+	w := httptest.NewRecorder()
+	m.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/metrics", nil))
+	return w.Body.String()
 }
 
 func TestAuditSyslogDestinationDeliversVerifiedTLSRFC5424JSON(t *testing.T) {
@@ -177,6 +203,121 @@ func TestAuditExporterUsesOneTLSConnectionForAnOrderedBatch(t *testing.T) {
 	}
 }
 
+func TestAuditExportMetricsTracksSyslogFailureWithoutCredentialLabels(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	destination, err := newAuditSyslogDestination(&util.AuditSyslogConfig{ID: "syslog-primary", Address: address})
+	require.NoError(t, err)
+	appMetrics := metrics.NewMetrics()
+	exporterMetrics, err := newAuditExportMetrics(appMetrics)
+	require.NoError(t, err)
+	repository := &auditExportRepositoryTest{
+		events:  []db.AuditEvent{{Seq: 1, EventID: "event-1", Created: time.Now().UTC(), EventCode: "audit.lifecycle", Metadata: "{}"}},
+		backlog: db.AuditExportBacklog{PendingEvents: 3, OldestPendingAge: 42 * time.Second},
+	}
+	exporter := &auditExporter{repository: repository, destination: destination, leaser: auditExportLeaserTest{}, metrics: exporterMetrics}
+
+	exporter.process(context.Background())
+
+	output := scrapeAuditExportMetrics(appMetrics)
+	assert.Contains(t, output, `semaphore_audit_export_pending_events{destination="syslog-primary"} 3`)
+	assert.Contains(t, output, `semaphore_audit_export_oldest_pending_seconds{destination="syslog-primary"} 42`)
+	assert.Contains(t, output, `semaphore_audit_export_errors_total{destination="syslog-primary"} 1`)
+	assert.NotContains(t, output, address)
+	assert.NotContains(t, output, "token")
+}
+
+func TestAuditExportMetricsCountsHECFailureButNotLeaseContention(t *testing.T) {
+	receiver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer receiver.Close()
+	destination, err := newAuditHECDestination(&util.AuditSplunkHECConfig{
+		ID: "hec-primary", URL: receiver.URL, Token: "hec-secret-must-not-appear", CAFile: writeAuditCertificate(t, receiver.Certificate()),
+	})
+	require.NoError(t, err)
+	appMetrics := metrics.NewMetrics()
+	exporterMetrics, err := newAuditExportMetrics(appMetrics)
+	require.NoError(t, err)
+	repository := &auditExportRepositoryTest{
+		events:  []db.AuditEvent{{Seq: 1, EventID: "event-1", Created: time.Now().UTC(), EventCode: "audit.lifecycle", Metadata: "{}"}},
+		backlog: db.AuditExportBacklog{PendingEvents: 1, OldestPendingAge: time.Second},
+	}
+	exporter := &auditHECExporter{repository: repository, destination: destination, leaser: auditExportLeaserTest{}, metrics: exporterMetrics}
+
+	exporter.process(context.Background())
+
+	output := scrapeAuditExportMetrics(appMetrics)
+	assert.Contains(t, output, `semaphore_audit_export_errors_total{destination="hec-primary"} 1`)
+	assert.NotContains(t, output, "hec-secret-must-not-appear")
+	assert.NotContains(t, output, receiver.URL)
+
+	contentionMetrics := metrics.NewMetrics()
+	contentionExporterMetrics, err := newAuditExportMetrics(contentionMetrics)
+	require.NoError(t, err)
+	contention := &auditHECExporter{repository: repository, destination: destination, leaser: unavailableAuditExportLeaser{}, metrics: contentionExporterMetrics}
+	contention.process(context.Background())
+	assert.NotContains(t, scrapeAuditExportMetrics(contentionMetrics), "semaphore_audit_export_errors_total")
+
+	shutdownMetrics := metrics.NewMetrics()
+	shutdownExporterMetrics, err := newAuditExportMetrics(shutdownMetrics)
+	require.NoError(t, err)
+	shutdown := &auditHECExporter{repository: repository, destination: destination, leaser: auditExportLeaserTest{}, metrics: shutdownExporterMetrics}
+	shutdownContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	shutdown.process(shutdownContext)
+	assert.NotContains(t, scrapeAuditExportMetrics(shutdownMetrics), "semaphore_audit_export_errors_total")
+}
+
+func TestAuditExportMetricsThrottlesBacklogQueriesPerDestination(t *testing.T) {
+	appMetrics := metrics.NewMetrics()
+	exporterMetrics, err := newAuditExportMetrics(appMetrics)
+	require.NoError(t, err)
+	now := time.Date(2026, 10, 8, 7, 0, 0, 0, time.UTC)
+	exporterMetrics.now = func() time.Time { return now }
+	repository := &auditExportRepositoryTest{backlog: db.AuditExportBacklog{PendingEvents: 200, OldestPendingAge: time.Minute}}
+
+	for range 3 { // Three full delivery batches must still issue one backlog query.
+		exporterMetrics.updateBacklog(context.Background(), repository, "syslog-primary", time.Second)
+	}
+	exporterMetrics.updateBacklog(context.Background(), repository, "hec-primary", time.Second)
+	repository.mu.Lock()
+	assert.Equal(t, 1, repository.backlogCalls["syslog-primary"])
+	assert.Equal(t, 1, repository.backlogCalls["hec-primary"])
+	repository.mu.Unlock()
+
+	now = now.Add(auditExportMetricsRefreshInterval)
+	repository.backlog = db.AuditExportBacklog{}
+	exporterMetrics.updateBacklog(context.Background(), repository, "syslog-primary", time.Second)
+	repository.mu.Lock()
+	assert.Equal(t, 2, repository.backlogCalls["syslog-primary"])
+	repository.mu.Unlock()
+	assert.Contains(t, scrapeAuditExportMetrics(appMetrics), `semaphore_audit_export_pending_events{destination="syslog-primary"} 0`)
+}
+
+func TestAuditExportMetricsThrottlesFailedBacklogQueries(t *testing.T) {
+	appMetrics := metrics.NewMetrics()
+	exporterMetrics, err := newAuditExportMetrics(appMetrics)
+	require.NoError(t, err)
+	now := time.Date(2026, 10, 8, 7, 0, 0, 0, time.UTC)
+	exporterMetrics.now = func() time.Time { return now }
+	repository := &auditExportRepositoryTest{backlogErr: errors.New("database unavailable")}
+
+	exporterMetrics.updateBacklog(context.Background(), repository, "syslog-primary", time.Second)
+	exporterMetrics.updateBacklog(context.Background(), repository, "syslog-primary", time.Second)
+	repository.mu.Lock()
+	assert.Equal(t, 1, repository.backlogCalls["syslog-primary"])
+	repository.mu.Unlock()
+
+	now = now.Add(auditExportMetricsRefreshInterval)
+	exporterMetrics.updateBacklog(context.Background(), repository, "syslog-primary", time.Second)
+	repository.mu.Lock()
+	assert.Equal(t, 2, repository.backlogCalls["syslog-primary"])
+	repository.mu.Unlock()
+}
+
 func TestAuditSyslogDestinationRejectsUntrustedCertificate(t *testing.T) {
 	listener, certificate := auditSyslogTLSListener(t)
 	_ = acceptAuditSyslogMessage(t, listener)
@@ -200,10 +341,11 @@ func TestAuditExporterSkipsHistoricalEventsAndAdvancesDurableCursor(t *testing.T
 	certificatePath := t.TempDir() + "/receiver-ca.pem"
 	require.NoError(t, os.WriteFile(certificatePath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw}), 0o600))
 
+	appMetrics := metrics.NewMetrics()
 	exporter := NewAuditExporter(store, &util.AuditConfig{Syslog: &util.AuditSyslogConfig{
 		ID: "siem-primary", Address: listener.Addr().String(), CAFile: certificatePath,
 		ServerName: certificate.DNSNames[0], Timeout: time.Second.String(),
-	}}, auditExportLeaserTest{})
+	}}, auditExportLeaserTest{}, appMetrics)
 	require.NoError(t, exporter.Start())
 	defer exporter.Stop()
 	assert.Equal(t, []string{"siem-primary"}, exporter.DestinationIDs())
@@ -218,13 +360,14 @@ func TestAuditExporterSkipsHistoricalEventsAndAdvancesDurableCursor(t *testing.T
 	require.NotEmpty(t, message, "timed out waiting for audit export")
 	assert.Contains(t, message, "\"event_id\":\"later\"")
 	assert.NotContains(t, message, historical.EventID)
+	assert.Contains(t, scrapeAuditExportMetrics(appMetrics), `semaphore_audit_export_pending_events{destination="siem-primary"}`)
 	cursor, err := store.InitializeAuditExportState(context.Background(), "siem-primary")
 	require.NoError(t, err)
 	assert.Equal(t, later.Seq, cursor)
 }
 
 func TestAuditExporterRejectsPartialSyslogConfiguration(t *testing.T) {
-	exporter := NewAuditExporter(nil, &util.AuditConfig{Syslog: &util.AuditSyslogConfig{ID: "siem-primary"}}, nil)
+	exporter := NewAuditExporter(nil, &util.AuditConfig{Syslog: &util.AuditSyslogConfig{ID: "siem-primary"}}, nil, nil)
 	assert.Error(t, exporter.Start())
 	assert.Empty(t, exporter.DestinationIDs())
 }
@@ -232,7 +375,7 @@ func TestAuditExporterRejectsPartialSyslogConfiguration(t *testing.T) {
 func TestAuditExporterRejectsNilLeaserForConfiguredDestination(t *testing.T) {
 	store := sqldb.InitConfigCreateTestStore()
 	defer store.Close()
-	exporter := NewAuditExporter(store, &util.AuditConfig{Syslog: &util.AuditSyslogConfig{ID: "siem-primary", Address: "127.0.0.1:6514"}}, nil)
+	exporter := NewAuditExporter(store, &util.AuditConfig{Syslog: &util.AuditSyslogConfig{ID: "siem-primary", Address: "127.0.0.1:6514"}}, nil, nil)
 	assert.ErrorContains(t, exporter.Start(), "leaser")
 }
 
@@ -450,7 +593,7 @@ func TestAuditHECExporterRetriesAcknowledgementFailureWithoutAdvancingCursor(t *
 		_, _ = w.Write([]byte(`{"code":10}`))
 	}))
 	defer server.Close()
-	exporter := newAuditHECExporter(store, &util.AuditSplunkHECConfig{ID: "hec", URL: server.URL, Token: "token", CAFile: writeAuditCertificate(t, server.Certificate())}, auditExportLeaserTest{})
+	exporter := newAuditHECExporter(store, &util.AuditSplunkHECConfig{ID: "hec", URL: server.URL, Token: "token", CAFile: writeAuditCertificate(t, server.Certificate())}, auditExportLeaserTest{}, nil)
 	_, err = store.InitializeAuditExportState(context.Background(), "hec")
 	require.NoError(t, err)
 	pending, err := store.CreateAuditEvent(context.Background(), db.AuditEvent{EventID: "pending", SchemaVersion: "1", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"})
@@ -519,7 +662,7 @@ func TestAuditCompositeExporterRejectsDuplicateDestinationIDs(t *testing.T) {
 	exporter := NewAuditExporter(nil, &util.AuditConfig{
 		Syslog:    &util.AuditSyslogConfig{ID: "duplicate", Address: "127.0.0.1:6514"},
 		SplunkHEC: &util.AuditSplunkHECConfig{ID: "duplicate", URL: "https://hec.example/event", Token: "token"},
-	}, auditExportLeaserTest{})
+	}, auditExportLeaserTest{}, nil)
 	assert.ErrorContains(t, exporter.Start(), "configured more than once")
 }
 
@@ -543,7 +686,7 @@ func TestAuditHECExporterPersistsCursorAcrossRestartAndDestinations(t *testing.T
 	config := func(id string) *util.AuditConfig {
 		return &util.AuditConfig{SplunkHEC: &util.AuditSplunkHECConfig{ID: id, URL: receiver.URL, Token: "token", CAFile: writeAuditCertificate(t, receiver.Certificate()), Timeout: time.Second.String()}}
 	}
-	first := NewAuditExporter(store, config("hec-a"), auditExportLeaserTest{})
+	first := NewAuditExporter(store, config("hec-a"), auditExportLeaserTest{}, nil)
 	require.NoError(t, first.Start())
 	defer first.Stop()
 	later, err := store.CreateAuditEvent(context.Background(), db.AuditEvent{EventID: "later", SchemaVersion: "1", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"})
@@ -562,7 +705,7 @@ func TestAuditHECExporterPersistsCursorAcrossRestartAndDestinations(t *testing.T
 	cursor, err := store.InitializeAuditExportState(context.Background(), "hec-a")
 	require.NoError(t, err)
 	assert.Equal(t, later.Seq, cursor)
-	restarted := NewAuditExporter(store, config("hec-a"), auditExportLeaserTest{})
+	restarted := NewAuditExporter(store, config("hec-a"), auditExportLeaserTest{}, nil)
 	require.NoError(t, restarted.Start())
 	defer restarted.Stop()
 	third, err := store.CreateAuditEvent(context.Background(), db.AuditEvent{EventID: "third", SchemaVersion: "1", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"})
@@ -578,7 +721,7 @@ func TestAuditHECExporterPersistsCursorAcrossRestartAndDestinations(t *testing.T
 		return cursorErr == nil && cursor == third.Seq
 	}, 3*time.Second, 10*time.Millisecond)
 	restarted.Stop()
-	other := NewAuditExporter(store, config("hec-b"), auditExportLeaserTest{})
+	other := NewAuditExporter(store, config("hec-b"), auditExportLeaserTest{}, nil)
 	require.NoError(t, other.Start())
 	defer other.Stop()
 	fourth, err := store.CreateAuditEvent(context.Background(), db.AuditEvent{EventID: "fourth", SchemaVersion: "1", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"})
@@ -612,7 +755,10 @@ func TestAuditHECExporterDoesNotAdvanceCursorAfterLeaseLoss(t *testing.T) {
 	require.NoError(t, err)
 	lease := &controllableAuditExportLease{lost: make(chan struct{}), valid: true}
 	repository := &auditExportRepositoryTest{events: []db.AuditEvent{{Seq: 1, EventID: "event-1", Created: time.Now().UTC(), EventCode: "audit.lifecycle", InstanceID: "prod", Metadata: "{}"}}}
-	exporter := &auditHECExporter{repository: repository, destination: destination, leaser: controllableAuditExportLeaser{lease: lease}}
+	appMetrics := metrics.NewMetrics()
+	exporterMetrics, metricsErr := newAuditExportMetrics(appMetrics)
+	require.NoError(t, metricsErr)
+	exporter := &auditHECExporter{repository: repository, destination: destination, leaser: controllableAuditExportLeaser{lease: lease}, metrics: exporterMetrics}
 	done := make(chan struct{})
 	go func() { exporter.process(context.Background()); close(done) }()
 	<-requestReceived
@@ -624,13 +770,14 @@ func TestAuditHECExporterDoesNotAdvanceCursorAfterLeaseLoss(t *testing.T) {
 		require.FailNow(t, "HEC export did not stop after lease loss")
 	}
 	assert.Zero(t, repository.advanceCalls)
+	assert.NotContains(t, scrapeAuditExportMetrics(appMetrics), "semaphore_audit_export_errors_total")
 }
 
 func TestAuditExporterCombinesDistinctSyslogAndHECDestinations(t *testing.T) {
 	exporter := NewAuditExporter(nil, &util.AuditConfig{
 		Syslog:    &util.AuditSyslogConfig{ID: "syslog", Address: "127.0.0.1:6514"},
 		SplunkHEC: &util.AuditSplunkHECConfig{ID: "hec", URL: "https://hec.example/services/collector/event", Token: "token"},
-	}, nil)
+	}, nil, nil)
 	assert.Equal(t, []string{"syslog", "hec"}, exporter.DestinationIDs())
 }
 
@@ -650,7 +797,7 @@ type failingReadCloser struct{}
 func (failingReadCloser) Read([]byte) (int, error) { return 0, errors.New("read failed") }
 func (failingReadCloser) Close() error             { return nil }
 
-var _ pro_interfaces.AuditExporter = NewAuditExporter(nil, nil, nil)
+var _ pro_interfaces.AuditExporter = NewAuditExporter(nil, nil, nil, nil)
 
 type auditExportLeaserTest struct{}
 

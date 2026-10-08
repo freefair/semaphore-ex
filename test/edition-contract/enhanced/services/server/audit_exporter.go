@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/metrics"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
@@ -27,9 +28,10 @@ const (
 )
 
 type auditExporter struct {
-	repository  db.AuditExportRepository
+	repository  db.AuditExportBacklogRepository
 	destination *auditSyslogDestination
 	leaser      pro_interfaces.AuditExportLeaser
+	metrics     *auditExportMetrics
 
 	lifecycle   sync.Mutex
 	started     bool
@@ -57,13 +59,20 @@ var _ pro_interfaces.AuditExporter = (*auditExporter)(nil)
 
 // NewAuditExporter provides the selected durable SIEM exporters. The audit
 // webhook service remains a separate delivery channel with its own queue.
-func NewAuditExporter(store db.Store, config *util.AuditConfig, leaser pro_interfaces.AuditExportLeaser) pro_interfaces.AuditExporter {
+func NewAuditExporter(store db.Store, config *util.AuditConfig, leaser pro_interfaces.AuditExportLeaser, appMetrics *metrics.Metrics) pro_interfaces.AuditExporter {
 	exporter := &auditExporter{leaser: leaser}
-	if repository, ok := store.(db.AuditExportRepository); ok {
+	if config != nil && ((config.Syslog != nil && config.Syslog.IsConfigured()) || (config.SplunkHEC != nil && config.SplunkHEC.IsConfigured())) {
+		exporter.metrics, exporter.startErr = newAuditExportMetrics(appMetrics)
+	}
+	if repository, ok := store.(db.AuditExportBacklogRepository); ok {
 		exporter.repository = repository
 	}
 	if config != nil && config.Syslog != nil && config.Syslog.IsConfigured() {
-		exporter.destination, exporter.startErr = newAuditSyslogDestination(config.Syslog)
+		destination, err := newAuditSyslogDestination(config.Syslog)
+		exporter.destination = destination
+		if exporter.startErr == nil {
+			exporter.startErr = err
+		}
 	}
 	if config != nil && config.Syslog != nil && config.Syslog.IsConfigured() && exporter.repository == nil && exporter.startErr == nil {
 		exporter.startErr = errors.New("audit syslog export requires an audit export repository")
@@ -74,7 +83,10 @@ func NewAuditExporter(store db.Store, config *util.AuditConfig, leaser pro_inter
 	if config == nil || config.SplunkHEC == nil || !config.SplunkHEC.IsConfigured() {
 		return exporter
 	}
-	hecExporter := newAuditHECExporter(store, config.SplunkHEC, leaser)
+	hecExporter := newAuditHECExporter(store, config.SplunkHEC, leaser, exporter.metrics)
+	if exporter.startErr != nil && hecExporter.startErr == nil {
+		hecExporter.startErr = exporter.startErr
+	}
 	if config.Syslog == nil || !config.Syslog.IsConfigured() {
 		return hecExporter
 	}
@@ -186,6 +198,7 @@ func (e *auditExporter) run(ctx context.Context) {
 }
 
 func (e *auditExporter) process(ctx context.Context) bool {
+	e.metrics.updateBacklog(ctx, e.repository, e.destination.id, e.destination.timeout)
 	if e.leaser == nil {
 		log.WithField("destination_id", e.destination.id).Error("audit export leaser is unavailable; exporter cannot deliver")
 		return false
@@ -231,6 +244,7 @@ func (e *auditExporter) process(ctx context.Context) bool {
 	deliveryContext, deliveryCancel := context.WithTimeout(activeContext, e.destination.timeout)
 	connection, err := e.destination.connect(deliveryContext)
 	if err != nil {
+		e.metrics.recordDeliveryError(activeContext, lease, e.destination.id)
 		deliveryCancel()
 		log.WithError(err).WithField("destination_id", e.destination.id).Warn("failed to connect audit syslog exporter")
 		return false
@@ -248,6 +262,7 @@ func (e *auditExporter) process(ctx context.Context) bool {
 		}
 		err = e.destination.deliver(deliveryContext, connection, event)
 		if err != nil {
+			e.metrics.recordDeliveryError(activeContext, lease, e.destination.id)
 			log.WithError(err).WithFields(log.Fields{"destination_id": e.destination.id, "event_id": event.EventID, "seq": event.Seq}).Warn("failed to export audit event")
 			return false
 		}

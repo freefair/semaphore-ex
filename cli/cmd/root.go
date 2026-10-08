@@ -108,11 +108,13 @@ func runService() {
 
 	initSyslog(util.Config.Syslog, debugFilter)
 
+	appMetrics := metrics.NewMetrics()
+
 	auditService, auditErr := audit.StartService(
 		store,
 		util.Config.Audit,
 		util.HANodeID(),
-		proServer.NewAuditExporter(store, util.Config.Audit, proHA.NewAuditExportLeaser()),
+		proServer.NewAuditExporter(store, util.Config.Audit, proHA.NewAuditExportLeaser(), appMetrics),
 	)
 	if auditErr != nil {
 		log.WithError(auditErr).Fatal("failed to start the audit log")
@@ -157,7 +159,6 @@ func runService() {
 			log.WithError(err).Error("failed to flush structured logs during shutdown")
 		}
 	}()
-	appMetrics := metrics.NewMetrics()
 	auditWebhookService := proServer.NewAuditWebhookService(store, appMetrics)
 	auditWebhookService.Start()
 	defer func() {

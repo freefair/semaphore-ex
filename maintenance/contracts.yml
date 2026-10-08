@@ -875,11 +875,28 @@ symbols:
       Metadata string "db:\"metadata\""}
     implementation: core
   - name: db:AuditEventManager
-    signature: interface{CreateAuditEvent(ctx context.Context, event db.AuditEvent) (db.AuditEvent, error)}
+    signature: >-
+      interface{CreateAuditEvent(ctx context.Context, event db.AuditEvent) (db.AuditEvent, error);
+      DeleteAuditEventsOlderThan(ctx context.Context, days int, batch int) (deleted int64, lastSeq
+      int64, err error)}
     implementation: core
     behavior_tests:
-    - db/sql/audit_event_test.go::TestCreateAuditEvent_RoundTripsEveryColumn
-    - db/sql/audit_event_test.go::TestCreateAuditEvent_GapFreeUnderConcurrency
+      - db/sql/audit_event_test.go::TestCreateAuditEvent_RoundTripsEveryColumn
+      - db/sql/audit_event_test.go::TestCreateAuditEvent_GapFreeUnderConcurrency
+      - db/sql/audit_event_test.go::TestDeleteAuditEventsOlderThan
+      - db/sql/audit_event_test.go::TestDeleteAuditEventsOlderThan_KeepsNewerEventBehindAClockStep
+  - name: db:AuditExportBacklog
+    signature: struct{PendingEvents int64; OldestPendingAge time.Duration}
+    implementation: core
+    behavior_tests:
+      - db/sql/audit_event_test.go::TestGetAuditExportBacklogCountsEveryPendingEvent
+  - name: db:AuditExportBacklogRepository
+    signature: >-
+      interface{GetAuditExportBacklog(ctx context.Context, destinationID string)
+      (db.AuditExportBacklog, error); db.AuditExportRepository}
+    implementation: core
+    behavior_tests:
+      - db/sql/audit_event_test.go::TestGetAuditExportBacklogCountsEveryPendingEvent
   - name: db:AuditExportRepository
     signature: interface{AdvanceAuditExportState(ctx context.Context, destinationID string, expectedCursor int64, nextCursor
       int64) (advanced bool, err error); GetAuditEventsAfter(ctx context.Context, cursor int64, limit int) ([]db.AuditEvent,
@@ -3772,6 +3789,12 @@ symbols:
   - name: db:RepositoryFile
     signature: db.RepositoryType = "file"
     implementation: core
+  - name: db:RepositoryFileFilter
+    signature: struct{OnlyDirectories bool; Extensions []string}
+    implementation: core
+    behavior_tests:
+      - db_lib/PlaybookFiles_test.go::TestFindRepositoryFiles
+      - db_lib/PlaybookFiles_test.go::TestFindRepositoryFiles_SymlinkDoesNotEscape
   - name: db:RepositoryGit
     signature: db.RepositoryType = "git"
     implementation: core
@@ -10895,13 +10918,22 @@ symbols:
       Legacy concrete stub type is replaced by private structuredLogService through NewLogWriteService and
       pro_interfaces.LogWriteServiceLifecycle.
   - name: services/server:NewAuditExporter
-    signature: func(_ db.Store, _ *util.AuditConfig, _ pro_interfaces.AuditExportLeaser) pro_interfaces.AuditExporter
-    selected_signature: func(store db.Store, config *util.AuditConfig, leaser pro_interfaces.AuditExportLeaser) pro_interfaces.AuditExporter
+    signature: >-
+      func(_ db.Store, _ *util.AuditConfig, _ pro_interfaces.AuditExportLeaser, _
+      *pkg/metrics.Metrics) pro_interfaces.AuditExporter
+    selected_signature: >-
+      func(store db.Store, config *util.AuditConfig, leaser pro_interfaces.AuditExportLeaser,
+      appMetrics *pkg/metrics.Metrics) pro_interfaces.AuditExporter
     implementation: local
     behavior_tests:
-    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditSyslogDestinationDeliversVerifiedTLSRFC5424JSON
-    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditSyslogDestinationRejectsUntrustedCertificate
-    - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditExporterSkipsHistoricalEventsAndAdvancesDurableCursor
+      - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditSyslogDestinationDeliversVerifiedTLSRFC5424JSON
+      - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditSyslogDestinationRejectsUntrustedCertificate
+      - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditExporterSkipsHistoricalEventsAndAdvancesDurableCursor
+      - test/edition-contract/enhanced/services/server/audit_composite_exporter_ex_test.go::TestAuditCompositeExporterHECContinuesWhenSyslogUnavailable
+      - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditExportMetricsThrottlesBacklogQueriesPerDestination
+      - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditExportMetricsThrottlesFailedBacklogQueries
+      - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditExportMetricsTracksSyslogFailureWithoutCredentialLabels
+      - test/edition-contract/enhanced/services/server/audit_exporter_test.go::TestAuditExportMetricsCountsHECFailureButNotLeaseContention
   - name: services/server:NewAuditWebhookService
     signature: func(_ db.AuditWebhookRepository, _ *pkg/metrics.Metrics) pro_interfaces.AuditWebhookService
     selected_signature: func(repository db.AuditWebhookRepository, appMetrics *pkg/metrics.Metrics) pro_interfaces.AuditWebhookService

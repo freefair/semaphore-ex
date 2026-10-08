@@ -62,9 +62,10 @@ func (e *auditCompositeExporter) DestinationIDs() []string {
 }
 
 type auditHECExporter struct {
-	repository          db.AuditExportRepository
+	repository          db.AuditExportBacklogRepository
 	destination         *auditHECDestination
 	leaser              pro_interfaces.AuditExportLeaser
+	metrics             *auditExportMetrics
 	lifecycle           sync.Mutex
 	started, stopped    bool
 	startDone           chan struct{}
@@ -82,9 +83,9 @@ type auditHECDestination struct {
 	client                    *http.Client
 }
 
-func newAuditHECExporter(store any, config *util.AuditSplunkHECConfig, leaser pro_interfaces.AuditExportLeaser) *auditHECExporter {
-	e := &auditHECExporter{leaser: leaser}
-	if repository, ok := store.(db.AuditExportRepository); ok {
+func newAuditHECExporter(store any, config *util.AuditSplunkHECConfig, leaser pro_interfaces.AuditExportLeaser, exporterMetrics *auditExportMetrics) *auditHECExporter {
+	e := &auditHECExporter{leaser: leaser, metrics: exporterMetrics}
+	if repository, ok := store.(db.AuditExportBacklogRepository); ok {
 		e.repository = repository
 	}
 	e.destination, e.startErr = newAuditHECDestination(config)
@@ -245,6 +246,7 @@ func (e *auditHECExporter) run(ctx context.Context) {
 	}
 }
 func (e *auditHECExporter) process(ctx context.Context) bool {
+	e.metrics.updateBacklog(ctx, e.repository, e.destination.id, e.destination.timeout)
 	leaseCtx, cancel := context.WithTimeout(ctx, e.destination.timeout)
 	lease, acquired, err := e.leaser.TryAcquire(leaseCtx, e.destination.id)
 	cancel()
@@ -282,6 +284,7 @@ func (e *auditHECExporter) process(ctx context.Context) bool {
 		return false
 	}
 	if err = e.destination.deliver(active, events); err != nil {
+		e.metrics.recordDeliveryError(active, lease, e.destination.id)
 		log.WithError(err).WithField("destination_id", e.destination.id).Warn("failed to export audit HEC batch")
 		return false
 	}

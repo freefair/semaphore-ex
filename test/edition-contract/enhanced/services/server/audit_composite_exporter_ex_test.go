@@ -6,11 +6,13 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"testing"
 	"time"
 
 	"github.com/semaphoreui/semaphore/db"
 	sqldb "github.com/semaphoreui/semaphore/db/sql"
+	"github.com/semaphoreui/semaphore/pkg/metrics"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,10 +38,11 @@ func TestAuditCompositeExporterHECContinuesWhenSyslogUnavailable(t *testing.T) {
 	}))
 	defer receiver.Close()
 
+	appMetrics := metrics.NewMetrics()
 	exporter := NewAuditExporter(store, &util.AuditConfig{
 		Syslog:    &util.AuditSyslogConfig{ID: "syslog-unavailable", Address: refusedAddress},
 		SplunkHEC: &util.AuditSplunkHECConfig{ID: "hec-available", URL: receiver.URL, Token: "token", CAFile: writeAuditCertificate(t, receiver.Certificate()), Timeout: time.Second.String()},
-	}, auditExportLeaserTest{})
+	}, auditExportLeaserTest{}, appMetrics)
 	require.NoError(t, exporter.Start())
 	defer exporter.Stop()
 
@@ -56,6 +59,10 @@ func TestAuditCompositeExporterHECContinuesWhenSyslogUnavailable(t *testing.T) {
 	require.Eventually(t, func() bool {
 		cursor, cursorErr := store.InitializeAuditExportState(context.Background(), "hec-available")
 		return cursorErr == nil && cursor == event.Seq
+	}, 3*time.Second, 20*time.Millisecond)
+	errorCount := regexp.MustCompile(`semaphore_audit_export_errors_total\{destination="syslog-unavailable"\} [1-9][0-9]*`)
+	require.Eventually(t, func() bool {
+		return errorCount.MatchString(scrapeAuditExportMetrics(appMetrics))
 	}, 3*time.Second, 20*time.Millisecond)
 
 	syslogCursor, err := store.InitializeAuditExportState(context.Background(), "syslog-unavailable")
