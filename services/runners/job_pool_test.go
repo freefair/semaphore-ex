@@ -466,12 +466,18 @@ func TestJobPool_SendProgressIncludesOutputs(t *testing.T) {
 	t.Cleanup(func() { util.Config = prevCfg })
 
 	var mu sync.Mutex
-	var received RunnerProgress
+	var received []RunnerProgress
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
 			mu.Lock()
 			defer mu.Unlock()
-			require.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+			var progress RunnerProgress
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&progress))
+			received = append(received, progress)
+			if len(received) == 1 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 		}
 		_, _ = w.Write([]byte("{}"))
 	}))
@@ -489,18 +495,31 @@ func TestJobPool_SendProgressIncludesOutputs(t *testing.T) {
 	p := NewJobPool(nil)
 	document := `{"values":{"image_tag":"1.4.2"}}`
 	rj := newTestRunningJob(7)
+	rj.generation = 4
 	rj.finish(task_logger.TaskSuccessStatus, &document)
 	p.addRunningJob(7, rj)
+
+	assert.False(t, p.sendProgress())
+	retained := p.getRunningJob(7)
+	require.NotNil(t, retained)
+	status, _, _, _, retainedOutputs := retained.getProgress()
+	assert.Equal(t, task_logger.TaskSuccessStatus, status)
+	assert.Equal(t, &document, retainedOutputs)
 
 	require.True(t, p.sendProgress())
 
 	mu.Lock()
-	defer mu.Unlock()
-	require.Len(t, received.Jobs, 1)
-	assert.Equal(t, 7, received.Jobs[0].ID)
-	assert.Equal(t, task_logger.TaskSuccessStatus, received.Jobs[0].Status)
-	require.NotNil(t, received.Jobs[0].Outputs)
-	assert.Equal(t, document, *received.Jobs[0].Outputs)
+	reports := append([]RunnerProgress(nil), received...)
+	mu.Unlock()
+	require.Len(t, reports, 2)
+	for _, report := range reports {
+		require.Len(t, report.Jobs, 1)
+		assert.Equal(t, 7, report.Jobs[0].ID)
+		assert.Equal(t, 4, report.Jobs[0].Generation)
+		assert.Equal(t, task_logger.TaskSuccessStatus, report.Jobs[0].Status)
+		require.NotNil(t, report.Jobs[0].Outputs)
+		assert.Equal(t, document, *report.Jobs[0].Outputs)
+	}
 	// The terminal report was accepted, so the job leaves the running list.
 	assert.Nil(t, p.getRunningJob(7))
 }

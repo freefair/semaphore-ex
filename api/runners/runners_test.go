@@ -20,7 +20,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestRegisterRunner_InvalidTokenReturnsBadRequest(t *testing.T) {
@@ -329,13 +331,16 @@ type remoteWorkflowTaskFixture struct {
 	task      *tasks.TaskRunner
 }
 
-func newRemoteWorkflowTaskFixture(t *testing.T) remoteWorkflowTaskFixture {
+func newRemoteWorkflowTaskFixture(t *testing.T, decorateStore ...func(db.Store) db.Store) remoteWorkflowTaskFixture {
 	t.Helper()
 
 	prevCfg := util.Config
 	t.Cleanup(func() { util.Config = prevCfg })
 
-	store := sql.InitConfigCreateTestStore()
+	var store db.Store = sql.InitConfigCreateTestStore()
+	for _, decorate := range decorateStore {
+		store = decorate(store)
+	}
 
 	// Finalizing a terminal status writes the task event through the log
 	// write service, so the fixture needs one.
@@ -352,6 +357,8 @@ func newRemoteWorkflowTaskFixture(t *testing.T) remoteWorkflowTaskFixture {
 	)
 	collector := &outputsCollectorFake{}
 	pool.SetTaskOutputsCollector(collector)
+	go pool.Run()
+	t.Cleanup(pool.Stop)
 
 	proj, err := store.CreateProject(db.Project{})
 	require.NoError(t, err)
@@ -392,6 +399,29 @@ func newRemoteWorkflowTaskFixture(t *testing.T) remoteWorkflowTaskFixture {
 	tr.Template = tpl
 	require.True(t, tr.ApplyRunnerProgress(task_logger.TaskRunningStatus, runner.ID, task.AssignmentGeneration, nil, ""))
 	pool.StateStore().SetRunning(tr)
+	var terminalTransitionPublished atomic.Bool
+	tr.AddStatusListener(func(status task_logger.TaskStatus) {
+		if status.IsFinished() {
+			terminalTransitionPublished.Store(true)
+		}
+	})
+	t.Cleanup(func() {
+		if !terminalTransitionPublished.Load() {
+			return
+		}
+		require.Eventually(t, func() bool {
+			persisted, err := store.GetTaskByID(tr.Task.ID)
+			return err == nil && persisted.End != nil
+		}, time.Second, 10*time.Millisecond)
+		require.Eventually(t, func() bool {
+			state := pool.StateStore()
+			if !state.TryFinalize(tr.Task.ID) {
+				return false
+			}
+			state.DeleteFinalize(tr.Task.ID)
+			return true
+		}, time.Second, 10*time.Millisecond)
+	})
 
 	return remoteWorkflowTaskFixture{
 		store:     store,
@@ -400,6 +430,98 @@ func newRemoteWorkflowTaskFixture(t *testing.T) remoteWorkflowTaskFixture {
 		runner:    runner,
 		task:      tr,
 	}
+}
+
+// terminalReportRaceStore advances the database row immediately before a
+// terminal report's fenced CAS, modelling a concurrent HA progress report
+// from another API node.
+type terminalReportRaceStore struct {
+	db.Store
+	injected        bool
+	transitioned    bool
+	advanceStatuses []task_logger.TaskStatus
+	advances        int
+}
+
+func (s *terminalReportRaceStore) UpdateTaskRunner(
+	task db.Task,
+	expectedStatus task_logger.TaskStatus,
+	expectedRunnerID int,
+	expectedGeneration int,
+	outcome db.RunnerAttemptOutcome,
+	attemptReason string,
+	transitionedAt time.Time,
+) (bool, error) {
+	statuses := s.advanceStatuses
+	if len(statuses) == 0 {
+		statuses = []task_logger.TaskStatus{task_logger.TaskRunningStatus}
+	}
+	if task.Status.IsFinished() && s.advances < len(statuses) {
+		s.injected = true
+		concurrent, err := s.Store.GetTaskByID(task.ID)
+		if err != nil {
+			return false, err
+		}
+		concurrent.Status = statuses[s.advances]
+		s.advances++
+		transitioned, err := s.Store.UpdateTaskRunner(
+			concurrent,
+			expectedStatus,
+			expectedRunnerID,
+			expectedGeneration,
+			db.RunnerAttemptActive,
+			"",
+			transitionedAt,
+		)
+		s.transitioned = transitioned
+		if err != nil || !transitioned {
+			return false, err
+		}
+	}
+	return s.Store.UpdateTaskRunner(
+		task, expectedStatus, expectedRunnerID, expectedGeneration, outcome, attemptReason, transitionedAt,
+	)
+}
+
+type countingTaskRunnerStore struct {
+	db.Store
+	updates atomic.Int32
+}
+
+func (s *countingTaskRunnerStore) UpdateTaskRunner(
+	task db.Task,
+	expectedStatus task_logger.TaskStatus,
+	expectedRunnerID int,
+	expectedGeneration int,
+	outcome db.RunnerAttemptOutcome,
+	attemptReason string,
+	transitionedAt time.Time,
+) (bool, error) {
+	// Count only report-phase CAS writes. Finalization persists End through
+	// UpdateTask after the HTTP handler has returned.
+	if task.End == nil {
+		s.updates.Add(1)
+	}
+	return s.Store.UpdateTaskRunner(task, expectedStatus, expectedRunnerID, expectedGeneration, outcome, attemptReason, transitionedAt)
+}
+
+func setRemoteWorkflowFixtureStatus(t *testing.T, fixture remoteWorkflowTaskFixture, status task_logger.TaskStatus) {
+	t.Helper()
+	updatedTask := fixture.task.Task
+	expectedStatus := updatedTask.Status
+	updatedTask.Status = status
+	updated, err := fixture.store.UpdateTaskRunner(
+		updatedTask,
+		expectedStatus,
+		fixture.runner.ID,
+		updatedTask.AssignmentGeneration,
+		db.RunnerAttemptActive,
+		"",
+		tz.Now(),
+	)
+	require.NoError(t, err)
+	require.True(t, updated)
+	fixture.task.Task = updatedTask
 }
 
 func TestUpdateRunner_OutputsIgnoredWhileRunning(t *testing.T) {
@@ -462,6 +584,277 @@ func TestUpdateRunner_SuccessStoresOutputsBeforeStatus(t *testing.T) {
 	assert.Equal(t, document, *storedAtSuccess)
 	require.NotNil(t, fixture.task.Task.Artifacts)
 	assert.Equal(t, document, *fixture.task.Task.Artifacts)
+}
+
+func TestUpdateRunner_TerminalReportSurvivesConcurrentProgressBeforeTerminalCAS(t *testing.T) {
+	raceStore := &terminalReportRaceStore{}
+	fixture := newRemoteWorkflowTaskFixture(t, func(store db.Store) db.Store {
+		raceStore.Store = store
+		return raceStore
+	})
+	setRemoteWorkflowFixtureStatus(t, fixture, task_logger.TaskStartingStatus)
+
+	ctrl := NewRunnerController(nil, fixture.pool, nil, nil)
+	document := `{"values":{"image_tag":"1.4.2"}}`
+	req := newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{
+		Jobs: []runners.JobProgress{{
+			ID:         fixture.task.Task.ID,
+			Generation: fixture.task.Task.AssignmentGeneration,
+			Status:     task_logger.TaskSuccessStatus,
+			Outputs:    &document,
+		}},
+	})
+	w := httptest.NewRecorder()
+
+	ctrl.UpdateRunner(w, req)
+
+	require.True(t, raceStore.injected)
+	require.True(t, raceStore.transitioned)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, decodeProgressResponse(t, w).TerminatedJobs)
+	assert.Equal(t, task_logger.TaskSuccessStatus, fixture.task.Task.Status)
+	assert.Equal(t, &document, fixture.task.Task.Artifacts)
+	persisted, err := fixture.store.GetTaskByID(fixture.task.Task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task_logger.TaskSuccessStatus, persisted.Status)
+	assert.Equal(t, &document, persisted.Artifacts)
+}
+
+func TestUpdateRunner_UncontendedTerminalReportUsesOneCAS(t *testing.T) {
+	countingStore := &countingTaskRunnerStore{}
+	fixture := newRemoteWorkflowTaskFixture(t, func(store db.Store) db.Store {
+		countingStore.Store = store
+		return countingStore
+	})
+	countingStore.updates.Store(0)
+	ctrl := NewRunnerController(nil, fixture.pool, nil, nil)
+	document := `{"values":{"image_tag":"one-terminal-cas"}}`
+	req := newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{Jobs: []runners.JobProgress{{
+		ID: fixture.task.Task.ID, Generation: fixture.task.Task.AssignmentGeneration,
+		Status: task_logger.TaskSuccessStatus, Outputs: &document,
+	}}})
+	w := httptest.NewRecorder()
+
+	ctrl.UpdateRunner(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, decodeProgressResponse(t, w).TerminatedJobs)
+	assert.Equal(t, int32(1), countingStore.updates.Load())
+	assert.Equal(t, task_logger.TaskSuccessStatus, fixture.task.Task.Status)
+	assert.Equal(t, &document, fixture.task.Task.Artifacts)
+	require.Eventually(t, func() bool {
+		persisted, err := fixture.store.GetTaskByID(fixture.task.Task.ID)
+		return err == nil && persisted.End != nil
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestUpdateRunner_TerminalReportRetriesWhenSQLAlreadyAdvancedBeforeGuard(t *testing.T) {
+	fixture := newRemoteWorkflowTaskFixture(t)
+	setRemoteWorkflowFixtureStatus(t, fixture, task_logger.TaskStartingStatus)
+	advanced := fixture.task.Task
+	advanced.Status = task_logger.TaskRunningStatus
+	updated, err := fixture.store.UpdateTaskRunner(
+		advanced,
+		task_logger.TaskStartingStatus,
+		fixture.runner.ID,
+		advanced.AssignmentGeneration,
+		db.RunnerAttemptActive,
+		"",
+		tz.Now(),
+	)
+	require.NoError(t, err)
+	require.True(t, updated)
+
+	ctrl := NewRunnerController(nil, fixture.pool, nil, nil)
+	document := `{"values":{"image_tag":"advanced-before-guard"}}`
+	req := newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{Jobs: []runners.JobProgress{{
+		ID: fixture.task.Task.ID, Generation: fixture.task.Task.AssignmentGeneration,
+		Status: task_logger.TaskSuccessStatus, Outputs: &document,
+	}}})
+	w := httptest.NewRecorder()
+
+	ctrl.UpdateRunner(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, decodeProgressResponse(t, w).TerminatedJobs)
+	assert.Equal(t, task_logger.TaskSuccessStatus, fixture.task.Task.Status)
+	assert.Equal(t, &document, fixture.task.Task.Artifacts)
+	persisted, err := fixture.store.GetTaskByID(fixture.task.Task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task_logger.TaskSuccessStatus, persisted.Status)
+	assert.Equal(t, &document, persisted.Artifacts)
+}
+
+func TestUpdateRunner_TerminalReportReturnsRetryableErrorAfterTwoBenignCASConflicts(t *testing.T) {
+	raceStore := &terminalReportRaceStore{advanceStatuses: []task_logger.TaskStatus{
+		task_logger.TaskRunningStatus,
+		task_logger.TaskStoppingStatus,
+	}}
+	fixture := newRemoteWorkflowTaskFixture(t, func(store db.Store) db.Store {
+		raceStore.Store = store
+		return raceStore
+	})
+	setRemoteWorkflowFixtureStatus(t, fixture, task_logger.TaskStartingStatus)
+	ctrl := NewRunnerController(nil, fixture.pool, nil, nil)
+	document := `{"values":{"image_tag":"retry-after-conflict"}}`
+	progress := runners.RunnerProgress{Jobs: []runners.JobProgress{{
+		ID: fixture.task.Task.ID, Generation: fixture.task.Task.AssignmentGeneration,
+		Status: task_logger.TaskSuccessStatus, Outputs: &document,
+	}}}
+	w := httptest.NewRecorder()
+
+	ctrl.UpdateRunner(w, newProgressRequest(t, fixture.store, fixture.runner, progress))
+
+	require.Equal(t, 2, raceStore.advances)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, task_logger.TaskStoppingStatus, fixture.task.Task.Status)
+	assert.Nil(t, fixture.task.Task.Artifacts)
+	persisted, err := fixture.store.GetTaskByID(fixture.task.Task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task_logger.TaskStoppingStatus, persisted.Status)
+	assert.Nil(t, persisted.Artifacts)
+
+	accepted := httptest.NewRecorder()
+	ctrl.UpdateRunner(accepted, newProgressRequest(t, fixture.store, fixture.runner, progress))
+
+	require.Equal(t, http.StatusOK, accepted.Code)
+	assert.Empty(t, decodeProgressResponse(t, accepted).TerminatedJobs)
+	assert.Equal(t, task_logger.TaskStoppedStatus, fixture.task.Task.Status)
+	persisted, err = fixture.store.GetTaskByID(fixture.task.Task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task_logger.TaskStoppedStatus, persisted.Status)
+	assert.Nil(t, persisted.Artifacts)
+}
+
+func TestUpdateRunner_TerminalReportUsesStopOutcomeAfterConcurrentProgressBeforeTerminalCAS(t *testing.T) {
+	raceStore := &terminalReportRaceStore{advanceStatuses: []task_logger.TaskStatus{task_logger.TaskStoppingStatus}}
+	fixture := newRemoteWorkflowTaskFixture(t, func(store db.Store) db.Store {
+		raceStore.Store = store
+		return raceStore
+	})
+	setRemoteWorkflowFixtureStatus(t, fixture, task_logger.TaskStartingStatus)
+
+	ctrl := NewRunnerController(nil, fixture.pool, nil, nil)
+	document := `{"values":{"image_tag":"must-not-persist"}}`
+	req := newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{Jobs: []runners.JobProgress{{
+		ID: fixture.task.Task.ID, Generation: fixture.task.Task.AssignmentGeneration,
+		Status: task_logger.TaskSuccessStatus, Outputs: &document,
+	}}})
+	w := httptest.NewRecorder()
+
+	ctrl.UpdateRunner(w, req)
+
+	require.True(t, raceStore.injected)
+	require.True(t, raceStore.transitioned)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, decodeProgressResponse(t, w).TerminatedJobs)
+	assert.Equal(t, task_logger.TaskStoppedStatus, fixture.task.Task.Status)
+	assert.Nil(t, fixture.task.Task.Artifacts)
+	assert.Equal(t, []string{document}, fixture.collector.validated)
+	persisted, err := fixture.store.GetTaskByID(fixture.task.Task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task_logger.TaskStoppedStatus, persisted.Status)
+	assert.Nil(t, persisted.Artifacts)
+}
+
+func TestUpdateRunner_InvalidOutputsDoNotOverrideConcurrentStop(t *testing.T) {
+	raceStore := &terminalReportRaceStore{advanceStatuses: []task_logger.TaskStatus{task_logger.TaskStoppingStatus}}
+	fixture := newRemoteWorkflowTaskFixture(t, func(store db.Store) db.Store {
+		raceStore.Store = store
+		return raceStore
+	})
+	fixture.collector.err = errors.New("output validation failed")
+	setRemoteWorkflowFixtureStatus(t, fixture, task_logger.TaskStartingStatus)
+	ctrl := NewRunnerController(nil, fixture.pool, nil, nil)
+	document := `{"values":{"image_tag":"invalid"}}`
+	req := newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{Jobs: []runners.JobProgress{{
+		ID: fixture.task.Task.ID, Generation: fixture.task.Task.AssignmentGeneration,
+		Status: task_logger.TaskSuccessStatus, Outputs: &document,
+	}}})
+	w := httptest.NewRecorder()
+
+	ctrl.UpdateRunner(w, req)
+
+	require.True(t, raceStore.injected)
+	require.True(t, raceStore.transitioned)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, decodeProgressResponse(t, w).TerminatedJobs)
+	assert.Equal(t, task_logger.TaskStoppedStatus, fixture.task.Task.Status)
+	assert.Nil(t, fixture.task.Task.Artifacts)
+	assert.Equal(t, []string{document}, fixture.collector.validated)
+	persisted, err := fixture.store.GetTaskByID(fixture.task.Task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task_logger.TaskStoppedStatus, persisted.Status)
+	assert.Nil(t, persisted.Artifacts)
+}
+
+func TestUpdateRunner_StaleAssignmentAfterCASRefreshIsTerminated(t *testing.T) {
+	fixture := newRemoteWorkflowTaskFixture(t)
+	setRemoteWorkflowFixtureStatus(t, fixture, task_logger.TaskStartingStatus)
+	otherRunner, err := fixture.store.CreateRunner(db.Runner{Name: "replacement", Token: "replacement-token", Active: true})
+	require.NoError(t, err)
+	cleared := fixture.task.Task
+	cleared.RunnerID = nil
+	require.NoError(t, fixture.store.UpdateTask(cleared))
+	reassigned, assigned, err := fixture.store.AssignTaskRunner(
+		fixture.task.Task.ProjectID, fixture.task.Task.ID, otherRunner.ID, otherRunner.Name, tz.Now(),
+	)
+	require.NoError(t, err)
+	require.True(t, assigned)
+	require.NotEqual(t, fixture.task.Task.AssignmentGeneration, reassigned.AssignmentGeneration)
+
+	ctrl := NewRunnerController(nil, fixture.pool, nil, nil)
+	req := newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{Jobs: []runners.JobProgress{{
+		ID: fixture.task.Task.ID, Generation: fixture.task.Task.AssignmentGeneration, Status: task_logger.TaskSuccessStatus,
+	}}})
+	w := httptest.NewRecorder()
+
+	ctrl.UpdateRunner(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, decodeProgressResponse(t, w).TerminatedJobs, fixture.task.Task.ID)
+	persisted, err := fixture.store.GetTaskByID(fixture.task.Task.ID)
+	require.NoError(t, err)
+	require.NotNil(t, persisted.RunnerID)
+	assert.Equal(t, otherRunner.ID, *persisted.RunnerID)
+	assert.Equal(t, reassigned.AssignmentGeneration, persisted.AssignmentGeneration)
+	assert.Equal(t, task_logger.TaskStartingStatus, persisted.Status)
+}
+
+func TestUpdateRunner_StaleSQLCompletionAfterCASRefreshIsTerminated(t *testing.T) {
+	fixture := newRemoteWorkflowTaskFixture(t)
+	setRemoteWorkflowFixtureStatus(t, fixture, task_logger.TaskStartingStatus)
+	document := `{"values":{"image_tag":"already-persisted"}}`
+	completed := fixture.task.Task
+	completed.Status = task_logger.TaskSuccessStatus
+	completed.Artifacts = &document
+	updated, err := fixture.store.UpdateTaskRunner(
+		completed,
+		task_logger.TaskStartingStatus,
+		fixture.runner.ID,
+		completed.AssignmentGeneration,
+		db.RunnerAttemptSucceeded,
+		"",
+		tz.Now(),
+	)
+	require.NoError(t, err)
+	require.True(t, updated)
+
+	ctrl := NewRunnerController(nil, fixture.pool, nil, nil)
+	req := newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{Jobs: []runners.JobProgress{{
+		ID: fixture.task.Task.ID, Generation: fixture.task.Task.AssignmentGeneration, Status: task_logger.TaskSuccessStatus,
+	}}})
+	w := httptest.NewRecorder()
+
+	ctrl.UpdateRunner(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, decodeProgressResponse(t, w).TerminatedJobs, fixture.task.Task.ID)
+	assert.Empty(t, fixture.collector.validated)
+	persisted, err := fixture.store.GetTaskByID(fixture.task.Task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task_logger.TaskSuccessStatus, persisted.Status)
+	assert.Equal(t, &document, persisted.Artifacts)
 }
 
 func TestUpdateRunner_InvalidOutputsFailTheTask(t *testing.T) {

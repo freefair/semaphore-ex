@@ -3,6 +3,7 @@ package runners
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -69,5 +70,67 @@ func TestUpdateRunner_ConfirmationDecisionAcceptsProgress(t *testing.T) {
 				assert.Equal(t, "reviewed-commit", *stored.CommitHash)
 			})
 		}
+	}
+}
+
+func TestUpdateRunner_ConfirmationDecisionAcceptsTerminalReportFromStaleRunningTask(t *testing.T) {
+	for _, test := range []struct{ decision, reported, expected task_logger.TaskStatus }{
+		{task_logger.TaskConfirmed, task_logger.TaskSuccessStatus, task_logger.TaskSuccessStatus},
+		{task_logger.TaskRejected, task_logger.TaskFailStatus, task_logger.TaskFailStatus},
+		{task_logger.TaskRejected, task_logger.TaskStoppedStatus, task_logger.TaskStoppedStatus},
+	} {
+		t.Run(string(test.decision)+"/"+string(test.reported), func(t *testing.T) {
+			previous := util.Config
+			t.Cleanup(func() { util.Config = previous })
+			fixture := newRunnerMetadataAPIFixture(t)
+			fixture.task.Status = task_logger.TaskRunningStatus
+			require.NoError(t, fixture.store.UpdateTask(fixture.task))
+			stale := fixture.task
+			fixture.task.Status = test.decision
+			require.NoError(t, fixture.store.UpdateTask(fixture.task))
+
+			pool := tasks.CreateTaskPool(fixture.store, tasks.NewMemoryTaskStateStore(), nil, nil, nil, nil, &runnerAPILogWriter{}, nil, nil)
+			go pool.Run()
+			t.Cleanup(pool.Stop)
+			tr := tasks.NewTaskRunner(stale, &pool, "", nil)
+			pool.StateStore().SetRunning(tr)
+			var terminalTransitionPublished atomic.Bool
+			tr.AddStatusListener(func(status task_logger.TaskStatus) {
+				if status.IsFinished() {
+					terminalTransitionPublished.Store(true)
+				}
+			})
+			t.Cleanup(func() {
+				if !terminalTransitionPublished.Load() {
+					return
+				}
+				require.Eventually(t, func() bool {
+					stored, getErr := fixture.store.GetTaskByID(fixture.task.ID)
+					return getErr == nil && stored.End != nil
+				}, time.Second, 10*time.Millisecond)
+				require.Eventually(t, func() bool {
+					state := pool.StateStore()
+					if !state.TryFinalize(fixture.task.ID) {
+						return false
+					}
+					state.DeleteFinalize(fixture.task.ID)
+					return true
+				}, time.Second, 10*time.Millisecond)
+			})
+			controller := NewRunnerController(fixture.store, &pool, nil, nil)
+			request := newProgressRequest(t, fixture.store, fixture.runner, runners.RunnerProgress{Jobs: []runners.JobProgress{{
+				ID: fixture.task.ID, Generation: fixture.task.AssignmentGeneration, Status: test.reported,
+			}}})
+			response := httptest.NewRecorder()
+
+			controller.UpdateRunner(response, request)
+
+			require.Equal(t, http.StatusOK, response.Code)
+			assert.Empty(t, decodeProgressResponse(t, response).TerminatedJobs)
+			assert.Equal(t, test.expected, tr.Task.Status)
+			stored, err := fixture.store.GetTaskByID(fixture.task.ID)
+			require.NoError(t, err)
+			assert.Equal(t, test.expected, stored.Status)
+		})
 	}
 }

@@ -849,36 +849,70 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			commitHash = &job.Commit.Hash
 			commitMessage = job.Commit.Message
 		}
-		// A graceful stop can race with an in-flight progress snapshot that was
-		// captured before the runner received the server's stopping state. Keep
-		// the server-owned stopping state and accept the snapshot so the runner
-		// remains tracked long enough to report its terminal stopped status while
-		// still persisting commit metadata carried by the snapshot.
-		acceptedStatus, terminalStatus := deferredRunnerProgressStatus(tsk.Task.Status, job.Status)
+		const maxCASAttempts = 2
+		applied := false
+		retryableConflict := false
+		outputsValidated := false
+		outputsInvalid := false
+		var invalidOutputsError error
+		var normalizedOutputs *string
+		for attempt := 0; attempt < maxCASAttempts; attempt++ {
+			previousStatus := tsk.Task.Status
+			status := normalizedRunnerProgressStatus(previousStatus, job.Status)
+			if !status.IsFinished() {
+				if !tsk.ApplyRunnerProgress(status, runner.ID, reportedGeneration, commitHash, commitMessage) {
+					retryableConflict = runnerProgressWasBenignlyAdvanced(tsk, runner.ID, reportedGeneration, previousStatus)
+					if retryableConflict {
+						continue
+					}
+					break
+				}
+				applied = true
+				break
+			}
 
-		applied := tsk.ApplyRunnerProgress(
-			acceptedStatus, runner.ID, reportedGeneration, commitHash, commitMessage,
-		)
-		if !applied && runnerProgressWasSupersededByStopping(tsk, runner.ID, reportedGeneration, job.Status) {
-			// A different server can persist stopping after this node read its
-			// local TaskRunner but before the conditional progress update. The
-			// failed CAS refreshes tsk from SQL; retry against stopping so this
-			// runner receives the next-poll cancellation state rather than an
-			// erroneous terminated_jobs emergency kill.
-			acceptedStatus, terminalStatus = deferredRunnerProgressStatus(tsk.Task.Status, job.Status)
-			applied = tsk.ApplyRunnerProgress(
-				acceptedStatus,
-				runner.ID, reportedGeneration, commitHash, commitMessage,
-			)
-		}
-		if !applied && runnerProgressWasSupersededByConfirmation(tsk, runner.ID, reportedGeneration) {
-			acceptedStatus, terminalStatus = deferredRunnerProgressStatus(tsk.Task.Status, job.Status)
-			applied = tsk.ApplyRunnerProgress(
-				acceptedStatus,
-				runner.ID, reportedGeneration, commitHash, commitMessage,
-			)
+			// The outputs of a workflow task arrive with the success status and
+			// must be in the database before it (HA nodes progress the run from
+			// the persisted status). A document that fails validation fails the
+			// task: the runner is not trusted, and a success without the outputs
+			// it reported would be a lie to the downstream nodes.
+			outputsForTerminal := (*string)(nil)
+			if status == task_logger.TaskSuccessStatus {
+				if job.Outputs != nil && !outputsValidated {
+					outputsValidated = true
+					normalizedOutputs, err = taskPool.ValidateRemoteTaskOutputs(tsk, *job.Outputs)
+					if err != nil {
+						outputsInvalid = true
+						invalidOutputsError = err
+					}
+				}
+				outputsForTerminal = normalizedOutputs
+			}
+			if outputsInvalid && status == task_logger.TaskSuccessStatus {
+				status = task_logger.TaskFailStatus
+				outputsForTerminal = nil
+			}
+
+			if !tsk.ApplyRunnerProgressWithOutputs(status, runner.ID, reportedGeneration, commitHash, commitMessage, outputsForTerminal) {
+				retryableConflict = runnerProgressWasBenignlyAdvanced(tsk, runner.ID, reportedGeneration, previousStatus)
+				if retryableConflict {
+					continue
+				}
+				break
+			}
+
+			if status == task_logger.TaskFailStatus && invalidOutputsError != nil {
+				jobLog.WithError(invalidOutputsError).Warn("runner reported invalid task outputs")
+				tsk.Log("Invalid task outputs reported by the runner: " + invalidOutputsError.Error())
+			}
+			applied = true
+			break
 		}
 		if !applied {
+			if retryableConflict {
+				helpers.WriteErrorStatus(w, "Concurrent task progress update", http.StatusServiceUnavailable)
+				return
+			}
 			response.TerminatedJobs = append(response.TerminatedJobs, job.ID)
 			continue
 		}
@@ -887,27 +921,6 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			tsk.LogWithTime(logRecord.Time, logRecord.Message)
 		}
 		logRecordCount += len(job.LogRecords)
-
-		// The outputs of a workflow task arrive with the success status and
-		// must be in the database before it (HA nodes progress the run from
-		// the persisted status). A document that fails validation fails the
-		// task: the runner is not trusted, and a success without the outputs
-		// it reported would be a lie to the downstream nodes.
-		var normalizedOutputs *string
-		if job.Outputs != nil && terminalStatus == task_logger.TaskSuccessStatus {
-			if normalizedOutputs, err = taskPool.ValidateRemoteTaskOutputs(tsk, *job.Outputs); err != nil {
-				jobLog.WithError(err).Warn("runner reported invalid task outputs")
-				tsk.Log("Invalid task outputs reported by the runner: " + err.Error())
-				terminalStatus = task_logger.TaskFailStatus
-			}
-		}
-
-		if terminalStatus.IsFinished() {
-			if !tsk.ApplyRunnerProgressWithOutputs(terminalStatus, runner.ID, reportedGeneration, commitHash, commitMessage, normalizedOutputs) {
-				response.TerminatedJobs = append(response.TerminatedJobs, job.ID)
-				continue
-			}
-		}
 		// When the runner reports a terminal status, finalize the task here:
 		// finish webhook, autorun children, and pool/Redis state cleanup.
 		// This is what completes a task independently of the node that
@@ -945,17 +958,6 @@ func runnerProgressStatusForStoppingTask(current, reported task_logger.TaskStatu
 		return task_logger.TaskStoppingStatus
 	}
 	return reported
-}
-
-func runnerProgressWasSupersededByStopping(
-	tsk *tasks.TaskRunner,
-	runnerID, generation int,
-	reportedStatus task_logger.TaskStatus,
-) bool {
-	return tsk != nil &&
-		tsk.Task.Status == task_logger.TaskStoppingStatus &&
-		tsk.Task.RunnerID != nil && *tsk.Task.RunnerID == runnerID &&
-		tsk.Task.AssignmentGeneration == generation
 }
 
 func RegisterRunner(w http.ResponseWriter, r *http.Request) {

@@ -32,3 +32,32 @@ still has the shipped 32-character limit. Fresh migrations themselves succeed.
 Shortening or truncating the identity would weaken exact schema comparison.
 Editing the historical table-creation migration would violate migration
 immutability. An additive widening preserves both contracts.
+
+## Concurrent runner completion
+
+A deterministic regression demonstrates that the terminal-output guard and
+completion writes can race with a valid progress update for the same assignment.
+The second conditional write then loses, and the runner is incorrectly told to
+discard its terminal report while SQL remains nonterminal. The separate CI HA
+recovery timeout has not yet been conclusively attributed to this race.
+
+1. Add an injected SQL interleaving regression around the existing runner API
+   fixture, asserting the persisted status, outputs and response.
+2. Retry a bounded number of benign status advances only while runner identity
+   and assignment generation still match. Recompute cancellation/confirmation
+   semantics after refresh and retain atomic terminal-status/output persistence.
+3. Preserve rejection after revocation or reassignment. Exhausted valid conflicts
+   must remain retryable so the runner retains its terminal report.
+4. Cover cancellation, reassignment and already-completed SQL state; review the
+   narrow API delta with Terra and Claude. Repeat focused and retained gates,
+   local HA verification and required exact-head CI before completion.
+
+Truncating the report, accepting a stale generation or merely increasing the HA
+test timeout would not fix the demonstrated conditional-write conflict.
+
+The final terminal path uses pure validation followed by one conditional SQL
+write for status and outputs. A real MySQL probe shows that the redundant guard
+can report zero affected rows when it writes unchanged data, falsely rejecting
+the assignment under default connection settings. Removing that write preserves
+the existing connection contract and avoids changing generic SQL update
+semantics. Persist report logs only after the fenced transition is accepted.

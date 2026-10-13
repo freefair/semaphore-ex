@@ -2,7 +2,6 @@ package runners
 
 import (
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
-	"github.com/semaphoreui/semaphore/services/tasks"
 )
 
 // The runner can report its last waiting snapshot before polling the user's
@@ -13,13 +12,4 @@ func runnerProgressStatusForConfirmation(current, reported task_logger.TaskStatu
 		return current
 	}
 	return reported
-}
-
-// A failed conditional update refreshes the local task from durable storage.
-// Retry only if another HA node recorded a decision for this same assignment.
-func runnerProgressWasSupersededByConfirmation(tsk *tasks.TaskRunner, runnerID, generation int) bool {
-	return tsk != nil &&
-		tsk.Task.RunnerID != nil && *tsk.Task.RunnerID == runnerID &&
-		tsk.Task.AssignmentGeneration == generation &&
-		(tsk.Task.Status == task_logger.TaskConfirmed || tsk.Task.Status == task_logger.TaskRejected)
 }
