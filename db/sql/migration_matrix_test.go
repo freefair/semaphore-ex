@@ -109,6 +109,12 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 
 	require.Empty(t, matrixUserTables(t, store), "migration matrix database must be empty")
 	require.NoError(t, db.Migrate(store, nil))
+	assertClusterNodeSchemaIdentity(t, store, true)
+	partialRollbackTarget := "2.20.11-ex1.1"
+	require.NoError(t, db.Rollback(store, partialRollbackTarget))
+	assertClusterNodeSchemaIdentity(t, store, false)
+	require.NoError(t, db.Migrate(store, nil))
+	assertClusterNodeSchemaIdentity(t, store, false)
 	freshSchema := captureCapabilitySchema(t, store)
 	assertCapabilitySchema(t, freshSchema)
 	assertWorkflowParameterColumns(t, store, true)
@@ -134,6 +140,7 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	communityAtLegacySchema := legacyUser.Username == fixture.User.Username
 
 	require.NoError(t, db.Migrate(store, nil))
+	assertClusterNodeSchemaIdentity(t, store, true)
 	upgradedSchema := captureCapabilitySchema(t, store)
 	assertCapabilitySchema(t, upgradedSchema)
 	assertWorkflowParameterColumns(t, store, true)
@@ -206,6 +213,22 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 		CommunityDataSurvivedRollbackAndUpgrade: communityDataSurvived,
 		RestartPreservedEnhancedData:            restartPreserved,
 	}
+}
+
+func assertClusterNodeSchemaIdentity(t testing.TB, store *SqlDb, insert bool) {
+	t.Helper()
+	schemaVersion := db.CurrentSchemaVersion(store.GetDialect())
+	require.Greater(t, len(schemaVersion), 32)
+	if insert {
+		_, err := store.Sql().Exec(
+			store.PrepareQuery("insert into cluster__node(boot_id, node_id, edition, version, build, protocol_version, schema_version, capabilities, started_at, last_seen_at, draining, created) values (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)"),
+			"migration-matrix-"+store.GetDialect(), "migration-matrix", "enhanced", "matrix", "matrix", 1, schemaVersion, "[]", false,
+		)
+		require.NoError(t, err)
+	}
+	persisted, err := store.Sql().SelectStr(store.PrepareQuery("select schema_version from cluster__node where boot_id=?"), "migration-matrix-"+store.GetDialect())
+	require.NoError(t, err)
+	assert.Equal(t, schemaVersion, persisted)
 }
 
 func assertProjectRoleMutationLock(t testing.TB, store *SqlDb, dialect string) {

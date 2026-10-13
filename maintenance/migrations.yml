@@ -1145,3 +1145,10 @@ migrations:
   files:
     migrations_ex/v2.20.11-ex1.1.sql: ec28c0f27513d2658531cd4008040974055b85831f1a275400c4e36b23f9d155
     migrations_ex/v2.20.11-ex1.1.err.sql: b7dc69a5c50a1981e59e73d469a68febe6d064a83448f395910ab1a14c5836f4
+- registered: true
+  id: 2.20.11-ex1.2
+  owner: fork
+  rationale: Preserve the complete independent schema identity used by HA node registration.
+  files:
+    migrations_ex/v2.20.11-ex1.2.sql: 24a765e343d62202a42162c8369830a87f41e92ea70570274bdb04e62818e004
+    migrations_ex/v2.20.11-ex1.2.err.sql: 1502fb96f126a5d6eec449b7fa03c2ca77d43b417a449b768b8c99d54ae34408

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	coreDB "github.com/semaphoreui/semaphore/db"
 	coresql "github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/stretchr/testify/assert"
@@ -35,6 +36,25 @@ func TestClusterNodeStoreRetainsProcessBootHistory(t *testing.T) {
 	require.Len(t, nodes, 2)
 	assert.Equal(t, []string{"boot-2", "boot-1"}, []string{nodes[0].BootID, nodes[1].BootID})
 	assert.Equal(t, []string{"workflows"}, nodes[0].Capabilities)
+}
+
+func TestClusterNodeStorePersistsCurrentSchemaVersion(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	repository := NewClusterNodeStore(store.GetConnection())
+	schemaVersion := coreDB.CurrentSchemaVersion(store.GetDialect())
+	require.Greater(t, len(schemaVersion), 32)
+
+	registration := pro_interfaces.ClusterNodeRegistration{
+		ClusterNodeIdentity: pro_interfaces.ClusterNodeIdentity{NodeID: "node-a", BootID: "current-schema"},
+		Edition: "enhanced", Version: "test", Build: "test", ProtocolVersion: 1,
+		SchemaVersion: schemaVersion, Capabilities: []string{"cluster-dashboard"}, StartedAt: time.Now().UTC(), LastSeenAt: time.Now().UTC(),
+	}
+	require.NoError(t, repository.UpsertClusterNode(context.Background(), registration))
+	nodes, err := repository.ListClusterNodes(context.Background())
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	assert.Equal(t, schemaVersion, nodes[0].SchemaVersion)
 }
 
 func TestClusterNodeStorePersistsDrainAndRemovesOnlyExpiredHistory(t *testing.T) {
