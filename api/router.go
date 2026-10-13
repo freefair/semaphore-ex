@@ -176,6 +176,7 @@ func Route(
 	configureDeploymentWindowAudit(workflowTriggerService, auditFacade)
 	policyGuardrailController := proApi.NewPolicyGuardrailController(policyGuardrailGovernanceService)
 	configurePolicyGuardrailAudit(policyGuardrailController, auditFacade)
+	auditController := proApi.NewAuditController(store)
 
 	r := mux.NewRouter()
 	r.NotFoundHandler = http.HandlerFunc(servePublic)
@@ -389,6 +390,11 @@ func Route(
 	globalSystemAPI.Path("/options").HandlerFunc(getOptions).Methods("GET", "HEAD")
 	globalSystemAPI.Path("/options").HandlerFunc(setOption).Methods("POST")
 	globalSystemAPI.Path("/cache").HandlerFunc(clearCache).Methods("DELETE", "HEAD")
+
+	auditAPI := authenticatedAPI.PathPrefix("/audit-log").Subrouter()
+	auditAPI.Use(auditLogMiddleware)
+	auditAPI.Path("/events").HandlerFunc(getAuditEvents(auditController.GetEvents)).Methods("GET")
+	auditAPI.Path("/events/export").HandlerFunc(auditController.ExportEvents).Methods("GET")
 
 	adminAPI := authenticatedAPI.NewRoute().Subrouter()
 	adminAPI.Use(EnhancedAdminAuditMiddleware(auditFacade), adminMiddleware)

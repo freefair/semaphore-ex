@@ -93,6 +93,46 @@ symbols:
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
     implementation: local
+  - name: api:AuditController
+    signature: struct{}
+    selected_signature: struct{}
+    implementation: local
+    behavior_tests:
+      - api/audit_log_test.go::TestAuditController_FiltersAndExportAreIncluded
+      - api/audit_export_ex_test.go::TestAuditExportPreservesCanonicalEnvelopeInBothFormats
+      - api/audit_export_ex_test.go::TestAuditFiltersApplyAllFieldsAndExclusiveEnd
+      - api/audit_export_ex_test.go::TestAuditExportRejectsOversizedResultBeforeAttachment
+      - api/audit_log_test.go::TestAuditRoutes_PreserveLegacyAndCanonicalStreams
+  - name: api:AuditController.ExportEvents
+    signature: func(w net/http.ResponseWriter, _ *net/http.Request)
+    selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
+    implementation: local
+    behavior_tests:
+      - api/audit_log_test.go::TestAuditController_FiltersAndExportAreIncluded
+      - api/audit_export_ex_test.go::TestAuditExportPreservesCanonicalEnvelopeInBothFormats
+      - api/audit_export_ex_test.go::TestAuditFiltersApplyAllFieldsAndExclusiveEnd
+      - api/audit_export_ex_test.go::TestAuditExportRejectsOversizedResultBeforeAttachment
+      - api/audit_log_test.go::TestAuditRoutes_PreserveLegacyAndCanonicalStreams
+  - name: api:AuditController.GetEvents
+    signature: func(w net/http.ResponseWriter, _ *net/http.Request)
+    selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
+    implementation: local
+    behavior_tests:
+      - api/audit_log_test.go::TestAuditController_FiltersAndExportAreIncluded
+      - api/audit_export_ex_test.go::TestAuditExportPreservesCanonicalEnvelopeInBothFormats
+      - api/audit_export_ex_test.go::TestAuditFiltersApplyAllFieldsAndExclusiveEnd
+      - api/audit_export_ex_test.go::TestAuditExportRejectsOversizedResultBeforeAttachment
+      - api/audit_log_test.go::TestAuditRoutes_PreserveLegacyAndCanonicalStreams
+  - name: api:NewAuditController
+    signature: func(db.Store) *pro/api.AuditController
+    selected_signature: func(store db.Store) *pro/api.AuditController
+    implementation: local
+    behavior_tests:
+      - api/audit_log_test.go::TestAuditController_FiltersAndExportAreIncluded
+      - api/audit_export_ex_test.go::TestAuditExportPreservesCanonicalEnvelopeInBothFormats
+      - api/audit_export_ex_test.go::TestAuditFiltersApplyAllFieldsAndExclusiveEnd
+      - api/audit_export_ex_test.go::TestAuditExportRejectsOversizedResultBeforeAttachment
+      - api/audit_log_test.go::TestAuditRoutes_PreserveLegacyAndCanonicalStreams
   - name: api:NewPolicyGuardrailController
     signature: func(_ pro_interfaces.PolicyGuardrailGovernanceServiceFacade) pro_interfaces.PolicyGuardrailController
     selected_signature: func(service pro_interfaces.PolicyGuardrailGovernanceServiceFacade) pro_interfaces.PolicyGuardrailController
@@ -877,14 +917,18 @@ symbols:
   - name: db:AuditEventManager
     signature: >-
       interface{CreateAuditEvent(ctx context.Context, event db.AuditEvent) (db.AuditEvent, error);
-      DeleteAuditEventsOlderThan(ctx context.Context, days int, batch int) (deleted int64, lastSeq
-      int64, err error)}
+      DeleteAuditEventsOlderThan(ctx context.Context, days int, batch int) (deleted int64, lastSeq int64, err error);
+      ListAuditEvents(ctx context.Context, before int64, after int64, limit int) (db.AuditEventPage, error)}
     implementation: core
     behavior_tests:
       - db/sql/audit_event_test.go::TestCreateAuditEvent_RoundTripsEveryColumn
       - db/sql/audit_event_test.go::TestCreateAuditEvent_GapFreeUnderConcurrency
       - db/sql/audit_event_test.go::TestDeleteAuditEventsOlderThan
       - db/sql/audit_event_test.go::TestDeleteAuditEventsOlderThan_KeepsNewerEventBehindAClockStep
+      - db/sql/audit_event_list_test.go::TestListAuditEvents_PagesNewestFirst
+  - name: db:AuditEventPage
+    signature: struct{Events []db.AuditEvent; Older int64; Newer int64}
+    implementation: core
   - name: db:AuditExportBacklog
     signature: struct{PendingEvents int64; OldestPendingAge time.Duration}
     implementation: core
@@ -8319,11 +8363,12 @@ symbols:
     implementation: core
   - name: pro_interfaces:Features
     signature: >-
-      struct{ProjectRunners bool "json:\"project_runners\""; TerraformBackend bool "json:\"terraform_backend\""; TaskSummary bool
-      "json:\"task_summary\""; SecretStorages bool "json:\"secret_storages\""; SecretStorageManagement bool
-      "json:\"secret_storage_management\""; SecretStorageManagementEx bool "json:\"secret_storage_management_ex\""; CustomRolesManagement
-      bool "json:\"custom_roles_management\""; HighAvailability bool "json:\"high_availability\""; Workflows bool "json:\"workflows\"";
-      DockerExecutor bool "json:\"docker_executor\""; K8sExecutor bool "json:\"k8s_executor\""}
+      struct{ProjectRunners bool "json:\"project_runners\""; TerraformBackend bool "json:\"terraform_backend\"";
+      TaskSummary bool "json:\"task_summary\""; SecretStorages bool "json:\"secret_storages\""; SecretStorageManagement
+      bool "json:\"secret_storage_management\""; SecretStorageManagementEx bool "json:\"secret_storage_management_ex\"";
+      CustomRolesManagement bool "json:\"custom_roles_management\""; HighAvailability bool "json:\"high_availability\"";
+      Workflows bool "json:\"workflows\""; DockerExecutor bool "json:\"docker_executor\""; K8sExecutor bool
+      "json:\"k8s_executor\""; AuditLogFilters bool "json:\"audit_log_filters\""}
     implementation: core
   - name: pro_interfaces:FilterWorkflowTemplatesByAccess
     signature: >-

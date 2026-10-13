@@ -29,5 +29,6 @@ func GetFeatures() pro_interfaces.Features {
 		CustomRolesManagement:   true,
 		DockerExecutor:          true,
 		K8sExecutor:             true,
+		AuditLogFilters:         true,
 	}
 }
