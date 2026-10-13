@@ -93,6 +93,9 @@ type TaskPool struct {
 	executionPreflightIssuer  *ExecutionPreflightReviewTokenIssuer
 	workflowRepo              db.WorkflowManager
 	auditRecorder             audit.Recorder
+	// outputsCollector captures the outputs of workflow tasks run on this node.
+	// Injected via SetTaskOutputsCollector; nil in the open-source build.
+	outputsCollector pro_interfaces.TaskOutputsCollector
 	// stop signals the background loops started by Run to exit. Closing it (via
 	// Stop) terminates the runner-task reconcile loop and Run's own select.
 	// Channels are used rather than sync.WaitGroup/sync.Once because TaskPool is
@@ -151,6 +154,12 @@ func CreateTaskPool(
 // Dashboard to reach an optional TaskStateInspector implementation.
 func (p *TaskPool) StateStore() TaskStateStore {
 	return p.state
+}
+
+// SetTaskOutputsCollector injects the collector that captures the outputs of
+// workflow tasks run on this node. Nil (the open-source build) disables it.
+func (p *TaskPool) SetTaskOutputsCollector(collector pro_interfaces.TaskOutputsCollector) {
+	p.outputsCollector = collector
 }
 
 // SetWorkflowService injects the workflow orchestration service. It is wired
@@ -625,6 +634,39 @@ func applyDBPersistedTaskSnapshot(dst *db.Task, src db.Task) {
 	dst.Message = src.Message
 	dst.CommitHash = src.CommitHash
 	dst.CommitMessage = src.CommitMessage
+	dst.Artifacts = src.Artifacts
+}
+
+// StoreRemoteTaskOutputs validates and persists the outputs document a runner
+// reported for a workflow task. The runner is not trusted, so the document goes
+// through the same rules as a file written by a task process; an invalid one is
+// an error the caller turns into a failed task. It must run before the success
+// status is persisted: in HA any node may progress the workflow run as soon as
+// it sees the terminal status in the database. Tasks outside a workflow run
+// have no outputs, and their document is dropped.
+func (p *TaskPool) StoreRemoteTaskOutputs(tsk *TaskRunner, document string) error {
+	if tsk.Task.WorkflowRunID == nil {
+		return nil
+	}
+
+	if p.outputsCollector == nil {
+		return errors.New("workflow task outputs are not supported by this server")
+	}
+
+	normalized, err := p.outputsCollector.Validate(document)
+	if err != nil {
+		return err
+	}
+	if normalized == nil {
+		return nil
+	}
+
+	if err = p.store.UpdateTaskArtifacts(tsk.Task.ProjectID, tsk.Task.ID, normalized); err != nil {
+		return err
+	}
+	tsk.Task.Artifacts = normalized
+
+	return nil
 }
 
 // refreshTaskStatusFromDB updates tsk with the persisted task row. In HA mode
@@ -1192,6 +1234,7 @@ func (p *TaskPool) AddTaskFrom(ctx context.Context, trigger string, taskObj db.T
 		return db.Task{}, errors.New("policy guardrail admission is required; use a policy-aware task creation path")
 	}
 	return p.addTaskWithAudit(ctx, trigger, taskObj, nil, userID, username, projectID, needAlias, nil, nil)
+
 }
 
 func taskCreateMetadata(trigger string, task db.Task) audit.TaskCreateMetadata {

@@ -1,4 +1,7 @@
 export default {
+  workflowEdgeInputsUnavailableTarget: 'Für dieses Ziel sind keine öffentlichen Inputs verfügbar. Deaktiviere das explizite Mapping, um die Inputs dieser Verbindung zu entfernen.',
+  workflowEdgeInputsUnavailableVariable: 'Diese Variable steht für öffentliche Input-Mappings nicht mehr zur Verfügung.',
+  workflowEdgeInputsRemoveMapping: 'Mapping für {name} entfernen',
   hostsView: 'Hosts anzeigen',
   hostsTask: 'Task',
   hostsTitle: 'Hosts',

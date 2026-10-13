@@ -72,6 +72,53 @@ func (t *TaskRunner) ApplyRunnerProgress(
 	return t.setStatus(status, commitHash, &commitMessage, runnerID, generation)
 }
 
+// ApplyRunnerProgressWithOutputs makes a terminal runner report visible only
+// together with its already-validated public workflow outputs. The existing
+// runner/generation CAS in setStatus persists both fields in one transaction.
+func (t *TaskRunner) ApplyRunnerProgressWithOutputs(
+	status task_logger.TaskStatus,
+	runnerID int,
+	generation int,
+	commitHash *string,
+	commitMessage string,
+	artifacts *string,
+) bool {
+	if generation == 0 && artifacts == nil {
+		return t.ApplyRunnerProgress(status, runnerID, generation, commitHash, commitMessage)
+	}
+	if generation == 0 || t.Task.AssignmentGeneration != generation || t.Task.RunnerID == nil || *t.Task.RunnerID != runnerID {
+		return false
+	}
+	oldStatus := t.Task.Status
+	if !taskStatusTransitionAllowed(oldStatus, status) {
+		return false
+	}
+	candidate := t.Task
+	candidate.Artifacts = artifacts
+	candidate.Status = status
+	if commitHash != nil {
+		candidate.CommitHash = commitHash
+		candidate.CommitMessage = commitMessage
+	}
+	updated, err := t.pool.store.UpdateTaskRunner(candidate, oldStatus, runnerID, generation,
+		runnerAttemptOutcomeForStatus(status), "", tz.Now())
+	if err != nil || !updated {
+		if err != nil {
+			t.panicOnError(err, "Failed to conditionally update runner task outputs")
+		} else {
+			t.pool.refreshTaskStatusFromDB(t)
+		}
+		return false
+	}
+	t.Task = candidate
+	t.pool.state.UpdateRuntimeFields(t)
+	if status != oldStatus {
+		t.publishStatus()
+		t.afterStatusChange(oldStatus, status)
+	}
+	return true
+}
+
 func (t *TaskRunner) setStatus(
 	status task_logger.TaskStatus,
 	commitHash *string,

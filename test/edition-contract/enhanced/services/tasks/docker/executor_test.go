@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -15,10 +16,18 @@ import (
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	workflowtasks "github.com/semaphoreui/semaphore/pro/services/tasks"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+)
+
+type workflowOutputFile uint8
+
+const (
+	workflowProcessOutput workflowOutputFile = iota
+	workflowTerraformOutput
 )
 
 func TestEffectiveConfigAppliesDocumentedDefaultsAndValidatesInputs(t *testing.T) {
@@ -158,7 +167,7 @@ func TestDockerExecutorCleansResourcesAfterStageFailure(t *testing.T) {
 func TestDockerExecutorStopsThenKillsAndCleansOnCancellation(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	client := &fakeDockerClient{execStarted: started, execRelease: release, stopErr: errors.New("stop failed")}
+	client := &fakeDockerClient{execStarted: started, execRelease: release, stopErrors: map[string]error{"task-2": errors.New("stop failed")}}
 	config, err := effectiveConfig(util.RunnerDockerConfig{CleanupGraceSeconds: 4})
 	require.NoError(t, err)
 	executor := newDockerExecutorForPlan(client, config, "boot-abc", db.Task{ID: 11, ProjectID: 3}, db.Template{}, &recordingLogger{})
@@ -171,7 +180,11 @@ func TestDockerExecutorStopsThenKillsAndCleansOnCancellation(t *testing.T) {
 	close(release)
 	require.NoError(t, <-done)
 
-	assert.Equal(t, []stopCall{{containerID: "task-2", grace: 4 * time.Second}}, client.stops)
+	assert.Equal(t, []stopCall{
+		{containerID: "helper-1", grace: 4 * time.Second},
+		{containerID: "task-2", grace: 4 * time.Second},
+		{containerID: "task-2", grace: 4 * time.Second},
+	}, client.stops)
 	assert.Equal(t, []string{"task-2"}, client.killedContainers)
 	assert.Equal(t, []string{"helper-1", "task-2"}, client.removedContainers)
 	assert.Equal(t, []string{"volume-1"}, client.removedVolumes)
@@ -269,6 +282,135 @@ func TestDockerExecutorHandlesTerraformConfirmationStages(t *testing.T) {
 	}, client.execCommands)
 }
 
+func TestDockerExecutorCollectsWorkflowOutputsBeforeCleanup(t *testing.T) {
+	workflowID := 9
+	logger := &recordingLogger{}
+	executor, local := workflowDockerExecutor(t, db.AppBash, workflowID, logger)
+	defer local.Cleanup()
+	client := executor.client.(*fakeDockerClient)
+	client.workflowOutputs = map[workflowOutputFile][]byte{workflowProcessOutput: []byte(`{"image_tag":"1.4.2"}`)}
+
+	require.NoError(t, executor.runContainerPlan(context.Background(), workflowDockerPlan(db.AppBash)))
+	require.NotNil(t, executor.Outputs())
+	assert.JSONEq(t, `{"values":{"image_tag":"1.4.2"}}`, *executor.Outputs())
+	assert.Equal(t, [][]string{
+		{"/bin/sh", "/semaphore/bundle/run.sh", "bootstrap"},
+		{"/bin/sh", "/semaphore/bundle/run.sh", "run"},
+		{"/bin/sh", "/semaphore/bundle/run.sh", "docker-collect-outputs"},
+	}, client.execCommands)
+	assert.Equal(t, []string{"helper-1", "task-2"}, client.removedContainers)
+	assert.Equal(t, []string{"volume-1"}, client.removedVolumes)
+}
+
+func TestDockerExecutorCollectsTerraformOutputsWithoutLeakingSensitiveValues(t *testing.T) {
+	workflowID := 10
+	logger := &recordingLogger{}
+	executor, local := workflowDockerExecutor(t, db.AppTerraform, workflowID, logger)
+	defer local.Cleanup()
+	client := executor.client.(*fakeDockerClient)
+	client.execExitCodes = []int{0, 2, 0, 0, 0}
+	client.workflowOutputs = map[workflowOutputFile][]byte{
+		workflowProcessOutput:   []byte(`{"answer":9007199254740993}`),
+		workflowTerraformOutput: []byte(`{"answer":{"value":1},"token":{"value":"distinctive-secret-value","sensitive":true},"safe":{"value":true}}`),
+	}
+
+	require.NoError(t, executor.runContainerPlan(context.Background(), workflowDockerPlan(db.AppTerraform)))
+	require.NotNil(t, executor.Outputs())
+	assert.JSONEq(t, `{"values":{"answer":9007199254740993,"safe":true},"skipped":{"token":"sensitive"}}`, *executor.Outputs())
+	assert.NotContains(t, *executor.Outputs(), "distinctive-secret-value")
+	assert.NotContains(t, strings.Join(logger.logs, "\n"), "distinctive-secret-value")
+	assert.Equal(t, [][]string{
+		{"/bin/sh", "/semaphore/bundle/run.sh", "bootstrap"},
+		{"/bin/sh", "/semaphore/bundle/run.sh", "plan"},
+		{"/bin/sh", "/semaphore/bundle/run.sh", "apply"},
+		{"/bin/sh", "/semaphore/bundle/run.sh", "docker-collect-outputs"},
+		{"/bin/sh", "/semaphore/bundle/run.sh", "docker-terraform-outputs"},
+	}, client.execCommands)
+}
+
+func TestDockerExecutorFailsInvalidOrOversizeWorkflowOutputWithoutLoggingValues(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		content []byte
+	}{
+		{name: "invalid JSON", content: []byte(`{"token":"distinctive-secret-value"`)},
+		{name: "oversize", content: []byte(`{"value":"` + strings.Repeat("x", maxContainerOutputsBytes) + `"}`)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			workflowID := 11
+			logger := &recordingLogger{}
+			executor, local := workflowDockerExecutor(t, db.AppBash, workflowID, logger)
+			defer local.Cleanup()
+			client := executor.client.(*fakeDockerClient)
+			client.workflowOutputs = map[workflowOutputFile][]byte{workflowProcessOutput: tt.content}
+
+			err := executor.runContainerPlan(context.Background(), workflowDockerPlan(db.AppBash))
+			require.Error(t, err)
+			assert.Nil(t, executor.Outputs())
+			assert.NotContains(t, err.Error(), "distinctive-secret-value")
+			assert.NotContains(t, strings.Join(logger.logs, "\n"), "distinctive-secret-value")
+		})
+	}
+}
+
+func TestDockerExecutorCancellationDoesNotPublishWorkflowOutputs(t *testing.T) {
+	workflowID := 12
+	logger := &recordingLogger{}
+	executor, local := workflowDockerExecutor(t, db.AppBash, workflowID, logger)
+	defer local.Cleanup()
+	client := executor.client.(*fakeDockerClient)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	client.execStarted = started
+	client.execRelease = release
+	client.execStartedAt = 2
+	client.workflowOutputs = map[workflowOutputFile][]byte{workflowProcessOutput: []byte(`{"image_tag":"1.4.2"}`)}
+
+	done := make(chan error, 1)
+	go func() { done <- executor.runContainerPlan(context.Background(), workflowDockerPlan(db.AppBash)) }()
+	<-started
+	executor.Kill()
+	close(release)
+	require.NoError(t, <-done)
+	assert.Nil(t, executor.Outputs())
+}
+
+func TestDockerWorkflowOutputHelpersAreFixedAndDescriptorSafe(t *testing.T) {
+	assert.True(t, validStageCommand([]string{"/bin/sh", "/semaphore/bundle/run.sh", "collect-outputs"}))
+	assert.True(t, validStageCommand([]string{"/bin/sh", "/semaphore/bundle/run.sh", "terraform-outputs"}))
+	assert.False(t, validStageCommand([]string{"/bin/sh", "/semaphore/bundle/run.sh", "arbitrary-command"}))
+}
+
+func workflowDockerExecutor(t *testing.T, app db.TemplateApp, workflowID int, logger *recordingLogger) (*DockerExecutor, *tasks.LocalExecutor) {
+	t.Helper()
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: t.TempDir()}
+	t.Cleanup(func() { util.Config = previousConfig })
+	local := &tasks.LocalExecutor{
+		Task:             db.Task{ID: 98, WorkflowRunID: &workflowID},
+		Template:         db.Template{ID: 4, ProjectID: 1, App: app},
+		Logger:           logger,
+		OutputsCollector: workflowtasks.NewTaskOutputsCollector(),
+	}
+	local.SetStatus(task_logger.TaskRunningStatus)
+	_, err := local.BeginWorkflowOutputs(nil)
+	require.NoError(t, err)
+	config, err := effectiveConfig(util.RunnerDockerConfig{})
+	require.NoError(t, err)
+	executor := newDockerExecutorForPlan(&fakeDockerClient{}, config, "outputs", local.Task, local.Template, logger)
+	executor.local = local
+	return executor, local
+}
+
+func workflowDockerPlan(app db.TemplateApp) *tasks.ContainerTaskPlan {
+	return &tasks.ContainerTaskPlan{
+		App:             app,
+		Bundle:          io.NopCloser(bytes.NewReader([]byte("bundle"))),
+		WorkflowOutputs: true,
+		Terraform:       tasks.ContainerTerraformPlan{AutoApprove: true},
+	}
+}
+
 type fakeDockerClient struct {
 	mu                        sync.Mutex
 	images                    []imagePreparation
@@ -279,13 +421,17 @@ type fakeDockerClient struct {
 	copyRelease               chan struct{}
 	execCommands              [][]string
 	execExitCodes             []int
+	execStdout                [][]byte
+	workflowOutputs           map[workflowOutputFile][]byte
 	execStarted               chan struct{}
 	execRelease               chan struct{}
+	execStartedAt             int
 	startTaskStarted          chan struct{}
 	startTaskRelease          chan struct{}
 	taskCreateStarted         chan struct{}
 	taskCreateReturnsCanceled bool
 	stopErr                   error
+	stopErrors                map[string]error
 	inspectState              *ContainerState
 	inspectErr                error
 	inspectStates             map[string]ContainerState
@@ -531,8 +677,20 @@ func (c *fakeDockerClient) Exec(_ context.Context, _ string, command []string, s
 	started := c.execStarted
 	release := c.execRelease
 	c.mu.Unlock()
-	_, _ = stdout.Write([]byte("stage output\n"))
-	if index == 0 && started != nil {
+	output := []byte("stage output\n")
+	if len(command) == 3 && command[2] == "docker-collect-outputs" {
+		output = dockerOutputArchive("outputs.json", c.workflowOutputs[workflowProcessOutput])
+	}
+	if len(command) == 3 && command[2] == "docker-terraform-outputs" {
+		output = dockerOutputArchive("terraform-outputs.json", c.workflowOutputs[workflowTerraformOutput])
+	}
+	if index < len(c.execStdout) {
+		output = c.execStdout[index]
+	}
+	if _, err := stdout.Write(output); err != nil {
+		return 0, err
+	}
+	if index == c.execStartedAt && started != nil {
 		close(started)
 		<-release
 	}
@@ -542,8 +700,23 @@ func (c *fakeDockerClient) Exec(_ context.Context, _ string, command []string, s
 	return 0, nil
 }
 
+func dockerOutputArchive(name string, value []byte) []byte {
+	if value == nil {
+		return nil
+	}
+	var buffer bytes.Buffer
+	writer := tar.NewWriter(&buffer)
+	_ = writer.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(value)), Typeflag: tar.TypeReg})
+	_, _ = writer.Write(value)
+	_ = writer.Close()
+	return buffer.Bytes()
+}
+
 func (c *fakeDockerClient) StopContainer(_ context.Context, containerID string, grace time.Duration) error {
 	c.stops = append(c.stops, stopCall{containerID: containerID, grace: grace})
+	if err, exists := c.stopErrors[containerID]; exists {
+		return err
+	}
 	return c.stopErr
 }
 

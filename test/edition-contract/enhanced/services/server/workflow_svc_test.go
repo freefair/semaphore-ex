@@ -2057,6 +2057,14 @@ func (e *legacyWorkflowTestEnqueuer) AddWorkflowTask(task db.Task, template db.T
 	return e.delegate.AddWorkflowTask(task, template, userID, username, projectID, needAlias)
 }
 
+func (e *legacyWorkflowTestEnqueuer) AddFailedTask(task db.Task, userID *int, username string, lines []string) (db.Task, error) {
+	return e.delegate.AddFailedTask(task, userID, username, lines)
+}
+
+func (e *legacyWorkflowTestEnqueuer) LogTask(task db.Task, lines []string) {
+	e.delegate.LogTask(task, lines)
+}
+
 func (e *legacyWorkflowTestEnqueuer) StopTasksByWorkflowRun(projectID int, runID int, forceStop bool) {
 	e.delegate.StopTasksByWorkflowRun(projectID, runID, forceStop)
 }
@@ -2238,6 +2246,12 @@ func (e *workflowTestEnqueuer) AddWorkflowTask(
 	}
 	return created, nil
 }
+
+func (e *workflowTestEnqueuer) AddFailedTask(task db.Task, userID *int, username string, lines []string) (db.Task, error) {
+	return db.Task{}, errors.New("workflow edge input failures must finalize the node without a synthetic task")
+}
+
+func (e *workflowTestEnqueuer) LogTask(task db.Task, lines []string) {}
 
 func (e *workflowTestEnqueuer) AddWorkflowTaskFenced(
 	task db.Task,

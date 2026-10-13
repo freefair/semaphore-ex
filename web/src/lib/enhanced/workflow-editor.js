@@ -221,6 +221,8 @@ export const enhancedMethods = {
     this.editingEdge = null;
   },
   resetEditorState() {
+    this.outputHints = null;
+    this.outputHintRequest = (this.outputHintRequest || 0) + 1;
     this.clearSelection();
     this.validationIssues = [];
     this.validationState = 'idle';
@@ -371,13 +373,6 @@ export const enhancedMethods = {
     input.source_node_id = source.sourceNodeId;
     input.output = source.output;
     this.applyNodeEdit();
-  },
-  onEdgeConditionChanged() {
-    if (!this.editingEdge) return;
-    if (this.editingEdge.condition !== 'expression') {
-      this.editingEdge.condition_expression = '';
-    }
-    this.applyEdgeEdit();
   },
   markDirty() {
     this.dirty = true;

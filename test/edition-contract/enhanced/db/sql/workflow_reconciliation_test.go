@@ -69,6 +69,23 @@ func TestWorkflowReconciliationOwnershipTransfersFenceAndPublishesDiagnostics(t 
 	assert.GreaterOrEqual(t, health.MaxLagSeconds, int64(0))
 }
 
+func TestWorkflowReconciliationStaleLeaseCannotFinalizeFailedNode(t *testing.T) {
+	database, repository, projectID, run := workflowReconciliationFixture(t, "stale-failed-finalizer")
+	t.Cleanup(database.Close)
+	ownership := NewWorkflowReconciliationStore(database.GetConnection())
+	first, claimed, err := ownership.ClaimWorkflowReconciliation(projectID, run.ID, "boot-a", time.Minute)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	_, err = ownership.ReleaseWorkflowReconciliation(first)
+	require.NoError(t, err)
+	_, claimed, err = ownership.ClaimWorkflowReconciliation(projectID, run.ID, "boot-b", time.Minute)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	updated, err := repository.FinalizeWorkflowRunNodeFenced(first, run.Nodes[0].WorkflowNodeID, db.WorkflowRunNodeFailed, "input invalid", `{"status":"failed"}`, time.Now().UTC())
+	require.NoError(t, err)
+	assert.False(t, updated)
+}
+
 func TestWorkflowReconciliationSameOwnerReclaimAdvancesFenceWithoutTransfer(t *testing.T) {
 	database, _, projectID, run := workflowReconciliationFixture(t, "ha-same-owner-reclaim")
 	t.Cleanup(database.Close)

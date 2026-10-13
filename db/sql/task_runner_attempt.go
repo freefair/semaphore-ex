@@ -122,7 +122,7 @@ func (d *SqlDb) AssignTaskRunner(
 	}
 
 	result, err := tx.Exec(d.PrepareQuery(
-		"update task set runner_id=?, runner_id_snapshot=?, runner_name=?, runner_assigned_at=?, "+
+		"update task set runner_id=?, runner_id_snapshot=?, runner_name=?, runner_assigned_at=?, artifacts=null, "+
 			"assignment_generation=assignment_generation+1, placement_decision=? "+
 			"where id=? and project_id=? and runner_id is null and status in (?, ?)"),
 		runnerID, runnerID, runnerName, assignedAt, placement,
@@ -261,7 +261,7 @@ func (d *SqlDb) updateTaskRunner(
 		return false, err
 	}
 	notify := current.Status != task.Status && task.Status.IsFinished()
-	query := "update task set status=?, start=?, `end`=?, commit_hash=?, commit_message=?, runner_id=?, " +
+	query := "update task set status=?, start=?, `end`=?, commit_hash=?, commit_message=?, artifacts=?, runner_id=?, " +
 		"runner_id_snapshot=?, runner_name=?, runner_assigned_at=?, message=?, recovery_reason=?, placement_decision=?"
 	if notify {
 		query += ", notification_revision=notification_revision+1"
@@ -269,7 +269,7 @@ func (d *SqlDb) updateTaskRunner(
 	query += " where id=? and project_id=? and status=? and assignment_generation=? " +
 		"and (runner_id=? or (runner_id is null and (runner_id_snapshot=? or assignment_generation=0)))"
 	args := []any{
-		task.Status, task.Start, task.End, task.CommitHash, task.CommitMessage, task.RunnerID,
+		task.Status, task.Start, task.End, task.CommitHash, task.CommitMessage, task.Artifacts, task.RunnerID,
 		task.RunnerSnapshotID, task.RunnerName, task.RunnerAssignedAt, task.Message, task.RecoveryReason,
 		task.PlacementDecision,
 		task.ID, task.ProjectID, expectedStatus, expectedGeneration, expectedRunnerID, expectedRunnerID,

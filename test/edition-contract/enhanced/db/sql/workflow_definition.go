@@ -624,6 +624,12 @@ func (d *WorkflowStoreImpl) loadWorkflowGraph(tx *gorp.Transaction, workflow *db
 		return err
 	}
 	for index := range workflow.Edges {
+		edge := &workflow.Edges[index]
+		if edge.InputMappingsJSON != nil {
+			if err = json.Unmarshal([]byte(*edge.InputMappingsJSON), &edge.InputMappings); err != nil {
+				return fmt.Errorf("decode workflow edge input mappings: %w", err)
+			}
+		}
 		if workflow.Edges[index].ConditionProgramJSON == "" {
 			continue
 		}
@@ -759,6 +765,22 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 	keptEdges := make(map[int]struct{}, len(workflow.Edges))
 	for index := range workflow.Edges {
 		edge := &workflow.Edges[index]
+		edge.InputMode = edge.EffectiveInputMode()
+		edge.InputMappingsJSON = nil
+		if edge.InputMode == db.WorkflowEdgeInputExplicit {
+			mappings := edge.InputMappings
+			if mappings == nil {
+				mappings = []db.WorkflowInputMapping{}
+			}
+			encoded, err := json.Marshal(mappings)
+			if err != nil {
+				return fmt.Errorf("encode workflow edge inputs: %w", err)
+			}
+			value := string(encoded)
+			edge.InputMappingsJSON = &value
+		} else {
+			edge.InputMappings = nil
+		}
 		clientID := edge.ID
 		edge.WorkflowTemplateID = workflow.ID
 		if mapped, exists := nodeIDMap[edge.SourceNodeID]; exists {
@@ -769,8 +791,8 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 		}
 		if _, exists := existingEdges[clientID]; exists && clientID > 0 {
 			if _, err := tx.Exec(d.connection.PrepareQuery(
-				"update project__workflow_edge set source_node_id=?, destination_node_id=?, `condition`=?, label=?, condition_expression=?, condition_program=? where workflow_template_id=? and id=?"),
-				edge.SourceNodeID, edge.DestinationNodeID, edge.Condition, edge.Label, edge.Expression, edge.ConditionProgramJSON, workflow.ID, clientID,
+				"update project__workflow_edge set source_node_id=?, destination_node_id=?, `condition`=?, label=?, condition_expression=?, condition_program=?, input_mode=?, input_mappings=? where workflow_template_id=? and id=?"),
+				edge.SourceNodeID, edge.DestinationNodeID, edge.Condition, edge.Label, edge.Expression, edge.ConditionProgramJSON, edge.InputMode, edge.InputMappingsJSON, workflow.ID, clientID,
 			); err != nil {
 				return err
 			}
@@ -781,8 +803,8 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 			return fmt.Errorf("workflow edge %d does not belong to workflow %d", clientID, workflow.ID)
 		}
 		newID, err := d.insertTx(tx,
-			"insert into project__workflow_edge(workflow_template_id, source_node_id, destination_node_id, `condition`, label, condition_expression, condition_program) values (?, ?, ?, ?, ?, ?, ?)",
-			workflow.ID, edge.SourceNodeID, edge.DestinationNodeID, edge.Condition, edge.Label, edge.Expression, edge.ConditionProgramJSON,
+			"insert into project__workflow_edge(workflow_template_id, source_node_id, destination_node_id, `condition`, label, condition_expression, condition_program, input_mode, input_mappings) values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			workflow.ID, edge.SourceNodeID, edge.DestinationNodeID, edge.Condition, edge.Label, edge.Expression, edge.ConditionProgramJSON, edge.InputMode, edge.InputMappingsJSON,
 		)
 		if err != nil {
 			return err

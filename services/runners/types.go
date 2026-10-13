@@ -99,6 +99,14 @@ type JobProgress struct {
 	LogRecords       []LogRecord
 	Commit           *CommitInfo
 	ExecutorMetadata *db.RunnerExecutorMetadata `json:",omitempty"`
+
+	// Outputs is the outputs document of a workflow task (the same JSON that
+	// ends up in task.artifacts), attached together with the success status so
+	// no report carries the terminal status without it. Nil for tasks outside
+	// a workflow run, for executors that do not capture outputs and for every
+	// status but success. Optional on the wire: an old server ignores it and
+	// an old runner never sends it.
+	Outputs *string `json:"outputs,omitempty"`
 }
 
 type RunnerRegistration struct {
@@ -146,4 +154,9 @@ type job struct {
 	// ahead of dispatch.
 	dockerPolicyAck     *db.DockerExecutionPolicyAck
 	kubernetesPolicyAck *db.KubernetesExecutionPolicyAck
+
+	// workflowTask marks a task that belongs to a workflow run: its outputs are
+	// shipped to the server with the success status, and an executor that
+	// cannot capture them says so in the task log.
+	workflowTask bool
 }

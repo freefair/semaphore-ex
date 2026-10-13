@@ -54,6 +54,17 @@ func (s *workflowDefinitionService) Get(projectID int, workflowID int, actors ..
 	if err != nil || s.require(workflow, workflowDefinitionActor(actors), pro_interfaces.PermissionViewWorkflow) != nil {
 		return db.WorkflowTemplate{}, db.ErrNotFound
 	}
+	if s.versionStore == nil {
+		return workflow, nil
+	}
+	version, err := s.versionStore.EnsureCurrentWorkflowVersion(projectID, workflowID)
+	if err != nil {
+		return db.WorkflowTemplate{}, err
+	}
+	workflow.CurrentVersionID = version.ID
+	// revision_id remains a compatibility alias for consumers that adopted the
+	// historical response field before current_version_id was available.
+	workflow.RevisionID = version.ID
 	return workflow, nil
 }
 
@@ -118,6 +129,7 @@ func (s *workflowDefinitionService) Create(
 		created, version, err = s.versionStore.CreateWorkflowTemplateVersioned(workflow, mutation)
 	}
 	created.CurrentVersionID = version.ID
+	created.RevisionID = version.ID
 	created.VersionMessage = ""
 	return created, result, err
 }
@@ -197,6 +209,7 @@ func (s *workflowDefinitionService) update(
 		updated, version, err = s.versionStore.UpdateWorkflowTemplateVersioned(workflow, mutation)
 	}
 	updated.CurrentVersionID = version.ID
+	updated.RevisionID = version.ID
 	updated.VersionMessage = ""
 	return updated, result, err
 }

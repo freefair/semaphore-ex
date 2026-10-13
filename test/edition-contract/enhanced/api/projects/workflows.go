@@ -170,12 +170,14 @@ type workflowRunNodeView struct {
 }
 
 type workflowRunEdgeView struct {
-	ID                int                      `json:"id"`
-	SourceNodeID      int                      `json:"source_node_id"`
-	DestinationNodeID int                      `json:"destination_node_id"`
-	Condition         db.WorkflowEdgeCondition `json:"condition"`
-	Expression        string                   `json:"condition_expression,omitempty"`
-	Label             string                   `json:"label,omitempty"`
+	InputMode         db.WorkflowEdgeInputMode  `json:"input_mode,omitempty"`
+	InputMappings     []db.WorkflowInputMapping `json:"input_mappings,omitempty"`
+	ID                int                       `json:"id"`
+	SourceNodeID      int                       `json:"source_node_id"`
+	DestinationNodeID int                       `json:"destination_node_id"`
+	Condition         db.WorkflowEdgeCondition  `json:"condition"`
+	Expression        string                    `json:"condition_expression,omitempty"`
+	Label             string                    `json:"label,omitempty"`
 }
 
 type workflowRunTemplateView struct {
@@ -184,6 +186,7 @@ type workflowRunTemplateView struct {
 }
 
 type workflowRunTaskView struct {
+	Artifacts      *string                `json:"artifacts,omitempty"`
 	Created        time.Time              `json:"created"`
 	Start          *time.Time             `json:"start,omitempty"`
 	End            *time.Time             `json:"end,omitempty"`
@@ -290,7 +293,13 @@ func (c *workflowController) ValidateWorkflow(w http.ResponseWriter, r *http.Req
 }
 
 func (c *workflowController) GetWorkflow(w http.ResponseWriter, r *http.Request) {
-	workflow := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
+	selected := helpers.GetFromContext(r, "workflow").(db.WorkflowTemplate)
+	project := helpers.GetFromContext(r, "project").(db.Project)
+	workflow, err := c.definitionService.Get(project.ID, selected.ID, helpers.UserFromContext(r))
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
 	helpers.WriteJSON(w, http.StatusOK, workflowResponse{WorkflowTemplate: workflow, EffectiveAccess: workflowEffectiveAccess(r, workflow)})
 }
 
@@ -836,6 +845,7 @@ func (c *workflowController) workflowRunDetails(r *http.Request, run db.Workflow
 			detail.Task = &workflowRunTaskView{
 				ID: task.ID, Status: task.Status, Created: task.Created, Start: task.Start, End: task.End,
 				UsedRunnerID: task.UsedRunnerID, UsedRunnerName: task.UsedRunnerName,
+				Artifacts: workflowPublicOutputs(task.Artifacts),
 			}
 		}
 		if delay, delayExists := delaysByNode[state.WorkflowNodeID]; delayExists {
@@ -943,6 +953,7 @@ func newWorkflowRunDefinitionView(workflow db.WorkflowTemplate) workflowRunDefin
 			ID: edge.ID, SourceNodeID: edge.SourceNodeID,
 			DestinationNodeID: edge.DestinationNodeID,
 			Condition:         edge.Condition, Expression: edge.Expression, Label: edge.Label,
+			InputMode: edge.EffectiveInputMode(), InputMappings: append([]db.WorkflowInputMapping(nil), edge.InputMappings...),
 		}
 	}
 	return workflowRunDefinitionView{

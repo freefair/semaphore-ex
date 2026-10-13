@@ -3,6 +3,7 @@ package tasks
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/ssh"
@@ -186,6 +188,80 @@ func TestContainerTaskPlanUsesPublicSelectorsAndPreservesExplicitSSHSettings(t *
 	for name := range entries {
 		assert.NotContains(t, name, "workspace")
 	}
+}
+
+func TestContainerTaskPlanExportsWorkflowOutputsOnlyForWorkflowRuns(t *testing.T) {
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: t.TempDir()}
+	t.Cleanup(func() { util.Config = previousConfig })
+	workflowRunID := 7
+	hostOutput := "SEMAPHORE_OUTPUTS_FILE=" + filepath.Join(util.Config.TmpPath, "task_outputs", "outputs.json")
+	workflow := &LocalExecutor{Task: db.Task{WorkflowRunID: &workflowRunID}, preparedEnv: []string{"EXISTING=value", hostOutput}}
+	environment, err := workflow.containerEnvironment()
+	require.NoError(t, err)
+	assert.Contains(t, environment, "SEMAPHORE_OUTPUTS_FILE=/workspace/.semaphore/outputs.json")
+	assert.NotContains(t, environment, hostOutput)
+	assert.Len(t, environment, 2)
+	nonWorkflow := &LocalExecutor{Task: db.Task{}, preparedEnv: []string{"EXISTING=value", hostOutput}}
+	environment, err = nonWorkflow.containerEnvironment()
+	require.NoError(t, err)
+	assert.NotContains(t, environment, "SEMAPHORE_OUTPUTS_FILE=/workspace/.semaphore/outputs.json")
+	assert.NotContains(t, environment, hostOutput)
+}
+
+func TestContainerTaskPlanBundlesWorkflowOutputsCallbackWithoutRunnerPaths(t *testing.T) {
+	root := t.TempDir()
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: root}
+	t.Cleanup(func() { util.Config = previousConfig })
+
+	repository := filepath.Join(root, "repository")
+	repositoryConfig := db.Repository{ID: 1, ProjectID: 1, GitURL: repository}
+	callbackRoot := filepath.Join(repositoryConfig.GetInternalPath(2), "callbacks")
+	outputsCallbackRoot := filepath.Join(root, "workflow-output-callback")
+	require.NoError(t, os.MkdirAll(repository, 0o755))
+	require.NoError(t, os.MkdirAll(callbackRoot, 0o700))
+	require.NoError(t, os.MkdirAll(outputsCallbackRoot, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(repository, "site.yml"), []byte("---\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(callbackRoot, "semaphore_task_summary.py"), []byte("summary"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(outputsCallbackRoot, "semaphore_outputs.py"), []byte("outputs"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(outputsCallbackRoot, "ignored.py"), []byte("must not be bundled"), 0o600))
+
+	workflowRunID := 7
+	executor := &LocalExecutor{
+		Task:       db.Task{ID: 3, WorkflowRunID: &workflowRunID},
+		Template:   db.Template{ID: 2, ProjectID: 1, App: db.AppAnsible, Playbook: "site.yml"},
+		Repository: repositoryConfig,
+		Inventory:  db.Inventory{Type: db.InventoryStatic, Inventory: "localhost ansible_connection=local"},
+		prepared:   true,
+		preparedEnv: []string{
+			"ANSIBLE_CALLBACK_PLUGINS=" + callbackRoot + string(os.PathListSeparator) + outputsCallbackRoot,
+			"ANSIBLE_CALLBACKS_ENABLED=semaphore_task_summary,semaphore_outputs",
+			"SEMAPHORE_OUTPUTS_FILE=" + filepath.Join(root, "task_outputs", "outputs.json"),
+		},
+		preparedArgsMap:           map[string][]string{"default": {"site.yml"}},
+		ansibleOutputsCallbackDir: outputsCallbackRoot,
+	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(executor.tmpInventoryFullPath()), 0o700))
+	require.NoError(t, os.WriteFile(executor.tmpInventoryFullPath(), []byte("localhost ansible_connection=local\n"), 0o600))
+
+	plan, err := executor.ContainerTaskPlan()
+	require.NoError(t, err)
+	entries := readTaskBundle(t, plan.Bundle)
+	require.NoError(t, plan.Bundle.Close())
+
+	environment := string(entries["credentials/environment.sh"])
+	runScript := string(entries["run.sh"])
+	assert.True(t, plan.WorkflowOutputs)
+	assert.Equal(t, []byte("summary"), entries["internal/callbacks/semaphore_task_summary.py"])
+	assert.Equal(t, []byte("outputs"), entries["internal/callbacks/semaphore_outputs.py"])
+	assert.NotContains(t, entries, "internal/callbacks/ignored.py")
+	assert.Contains(t, environment, "export SEMAPHORE_OUTPUTS_FILE='/workspace/.semaphore/outputs.json'")
+	assert.Contains(t, environment, "export ANSIBLE_CALLBACK_PLUGINS='/semaphore/bundle/internal/callbacks'")
+	assert.Contains(t, environment, "export ANSIBLE_CALLBACKS_ENABLED='semaphore_task_summary,semaphore_outputs'")
+	assert.NotContains(t, environment, root)
+	assert.Contains(t, runScript, "mkdir -p \"${workspace}/.semaphore\"")
+	assert.Contains(t, runScript, "chmod 700 \"${workspace}/.semaphore\"")
 }
 
 func TestContainerTaskPlanKeepsAgentlessGitHostKeyPolicy(t *testing.T) {
@@ -717,9 +793,11 @@ func TestContainerTaskPlanDescribesTerraformStages(t *testing.T) {
 	t.Cleanup(func() { util.Config = previousConfig })
 	repositoryPath := filepath.Join(root, "repository")
 	require.NoError(t, os.MkdirAll(filepath.Join(repositoryPath, "infra"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repositoryPath, "infra", "main.tf"), []byte("# fixture\n"), 0o600))
 
+	workflowID := 1
 	executor := &LocalExecutor{
-		Task: db.Task{ID: 8},
+		Task: db.Task{ID: 8, WorkflowRunID: &workflowID},
 		Template: db.Template{
 			ID:        4,
 			ProjectID: 2,
@@ -742,6 +820,219 @@ func TestContainerTaskPlanDescribesTerraformStages(t *testing.T) {
 	assert.Equal(t, []string{"/bin/sh", "/semaphore/bundle/run.sh", "bootstrap"}, plan.Command(ContainerTaskStageBootstrap))
 	assert.Equal(t, []string{"/bin/sh", "/semaphore/bundle/run.sh", "plan"}, plan.Command(ContainerTaskStagePlan))
 	assert.Equal(t, []string{"/bin/sh", "/semaphore/bundle/run.sh", "apply"}, plan.Command(ContainerTaskStageApply))
+	assert.Equal(t, []string{"/bin/sh", "/semaphore/bundle/run.sh", "terraform-outputs"}, plan.Command(ContainerTaskStageTerraformOutput))
+	entries := readTaskBundle(t, plan.Bundle)
+	assert.Contains(t, string(entries["run.sh"]), "terraform_outputs()")
+	assert.Contains(t, string(entries["run.sh"]), "terraform-outputs) terraform_outputs")
+	assert.Contains(t, string(entries["run.sh"]), "capture_terraform_outputs()")
+	assert.Contains(t, string(entries["run.sh"]), "case \"${semaphore_terraform_exit}\" in 0|2) capture_terraform_outputs")
+	assert.Contains(t, string(entries["run.sh"]), "if [ \"${semaphore_terraform_exit}\" -eq 0 ]; then capture_terraform_outputs")
+	assert.Contains(t, string(entries["collect-workflow-outputs.py"]), "os.O_NOFOLLOW | os.O_NONBLOCK")
+	assert.Contains(t, string(entries["collect-workflow-outputs.py"]), "stat.S_ISREG")
+	assert.NotContains(t, entries, "capture-terraform-outputs.py")
+	assert.NotContains(t, string(entries["run.sh"]), "capture-terraform-outputs.py")
+	assert.Contains(t, string(entries["run.sh"]), "ulimit -f 8193")
+	assert.Contains(t, string(entries["run.sh"]), "2>/dev/null || exit 1")
+	assert.Contains(t, string(entries["collect-terraform-outputs.py"]), "limit = 4194304")
+	assert.Contains(t, string(entries["collect-terraform-outputs.py"]), "os.O_NOFOLLOW | os.O_NONBLOCK")
+	assert.Contains(t, string(entries["run.sh"]), "run_terraform_with_signal_forwarding()")
+	assert.Contains(t, string(entries["run.sh"]), "forward_terraform_signal TERM")
+
+	executor.Task.WorkflowRunID = nil
+	ordinaryPlan, err := executor.ContainerTaskPlan()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, ordinaryPlan.Bundle.Close()) })
+	ordinaryEntries := readTaskBundle(t, ordinaryPlan.Bundle)
+	ordinaryScript := string(ordinaryEntries["run.sh"])
+	assert.Contains(t, ordinaryScript, "exec 'terraform' 'plan'")
+	assert.Contains(t, ordinaryScript, "exec 'terraform' 'apply'")
+	assert.NotContains(t, ordinaryScript, "capture_terraform_outputs")
+	assert.NotContains(t, ordinaryScript, "run_terraform_with_signal_forwarding")
+	assert.NotContains(t, ordinaryScript, "terraform output")
+	assert.NotContains(t, ordinaryEntries, "collect-terraform-outputs.py")
+}
+
+func TestContainerTerraformOutputStageReadsRawOutputCapturedByGeneratedScript(t *testing.T) {
+	root := t.TempDir()
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: root}
+	t.Cleanup(func() { util.Config = previousConfig })
+	repositoryPath := filepath.Join(root, "repository")
+	require.NoError(t, os.MkdirAll(filepath.Join(repositoryPath, "infra"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repositoryPath, "infra", "main.tf"), []byte("# fixture\n"), 0o600))
+	workflowID := 1
+	executor := &LocalExecutor{
+		Task:              db.Task{ID: 8, WorkflowRunID: &workflowID},
+		Template:          db.Template{ID: 4, ProjectID: 2, App: db.AppTerraform, Playbook: "infra"},
+		Repository:        db.Repository{ID: 1, ProjectID: 2, GitURL: repositoryPath},
+		prepared:          true,
+		preparedArgsMap:   map[string][]string{"plan": {}, "apply": {}},
+		preparedParams:    &db.TerraformTaskParams{Plan: true},
+		preparedTplParams: &db.TerraformTemplateParams{AutoApprove: true},
+	}
+	plan, err := executor.ContainerTaskPlan()
+	require.NoError(t, err)
+	defer plan.Bundle.Close() //nolint:errcheck
+	entries := readTaskBundle(t, plan.Bundle)
+	bundle := filepath.Join(root, "bundle")
+	for name, contents := range entries {
+		path := filepath.Join(bundle, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, contents, 0o700))
+	}
+	workspace := filepath.Join(root, "workspace")
+	fakeTerraform := filepath.Join(root, "terraform")
+	require.NoError(t, os.WriteFile(fakeTerraform, []byte(`#!/bin/sh
+for argument in "$@"; do
+  if [ "$argument" = output ]; then
+    if [ "${TERRAFORM_OUTPUT_OVERSIZE-}" = 1 ]; then
+      printf '%s' 'sensitive-marker'
+      dd if=/dev/zero bs=4096 count=1025 2>/dev/null | tr '\000' x
+      exit 0
+    fi
+    printf '%s' '{"captured":{"value":"raw-terraform-value","sensitive":false}}'
+    exit 0
+  fi
+done
+exit 0
+`), 0o700))
+	rewrite := func(value string) string {
+		value = strings.ReplaceAll(value, "/semaphore/bundle", bundle)
+		value = strings.ReplaceAll(value, "/workspace", workspace)
+		value = strings.ReplaceAll(value, "/home/semaphore", filepath.Join(root, "home"))
+		return strings.ReplaceAll(value, "'terraform'", "'"+fakeTerraform+"'")
+	}
+	runScriptPath := filepath.Join(bundle, "run.sh")
+	runScript, err := os.ReadFile(runScriptPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(runScriptPath, []byte(rewrite(string(runScript))), 0o700))
+	fakePython := filepath.Join(root, "python3")
+	require.NoError(t, os.WriteFile(fakePython, []byte("#!/bin/sh\nexit 127\n"), 0o700))
+	withoutPython := append([]string(nil), os.Environ()...)
+	for index, value := range withoutPython {
+		if strings.HasPrefix(value, "PATH=") {
+			withoutPython[index] = "PATH=" + root + ":" + strings.TrimPrefix(value, "PATH=")
+			break
+		}
+	}
+	planStage := exec.Command("/bin/sh", runScriptPath, "bootstrap")
+	planStage.Env = withoutPython
+	bootstrapOutput, err := planStage.CombinedOutput()
+	require.NoError(t, err, string(bootstrapOutput))
+	planStage = exec.Command("/bin/sh", runScriptPath, "plan")
+	planStage.Env = withoutPython
+	planOutput, err := planStage.CombinedOutput()
+	require.NoError(t, err, string(planOutput))
+	rawPath := filepath.Join(workspace, ".semaphore", "terraform-outputs.json")
+	raw, err := os.ReadFile(rawPath)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"captured":{"value":"raw-terraform-value","sensitive":false}}`, string(raw))
+	collector := exec.Command("/bin/sh", runScriptPath, "terraform-outputs")
+	collector.Env = os.Environ()
+	collected, err := collector.Output()
+	require.NoError(t, err)
+	assert.JSONEq(t, string(raw), string(collected))
+
+	planStage = exec.Command("/bin/sh", runScriptPath, "plan")
+	planStage.Env = append(withoutPython, "TERRAFORM_OUTPUT_OVERSIZE=1")
+	overflowOutput, err := planStage.CombinedOutput()
+	require.NoError(t, err)
+	assert.Contains(t, string(overflowOutput), "Terraform outputs were not captured")
+	assert.NotContains(t, string(overflowOutput), "sensitive-marker")
+	_, err = os.Lstat(rawPath)
+	assert.True(t, os.IsNotExist(err))
+
+	require.NoError(t, syscall.Mkfifo(rawPath, 0o600))
+	dockerCollector := exec.Command("/bin/sh", runScriptPath, "docker-terraform-outputs")
+	dockerCollector.Env = os.Environ()
+	archive, err := dockerCollector.Output()
+	require.NoError(t, err)
+	archiveReader := tar.NewReader(bytes.NewReader(archive))
+	header, err := archiveReader.Next()
+	require.NoError(t, err)
+	assert.Equal(t, byte(tar.TypeFifo), header.Typeflag)
+}
+
+func TestContainerTerraformWorkflowForwardsTermBeforeOutputCaptureInDocker(t *testing.T) {
+	if os.Getenv("SEMAPHORE_RUN_CONTAINER_TERRAFORM_SIGNAL_INTEGRATION") != "1" {
+		t.Skip("set SEMAPHORE_RUN_CONTAINER_TERRAFORM_SIGNAL_INTEGRATION=1 to run the Linux Docker signal regression")
+	}
+	root := t.TempDir()
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: root}
+	t.Cleanup(func() { util.Config = previousConfig })
+	repositoryPath := filepath.Join(root, "repository")
+	require.NoError(t, os.MkdirAll(filepath.Join(repositoryPath, "infra"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repositoryPath, "infra", "main.tf"), []byte("# fixture\n"), 0o600))
+	workflowID := 1
+	executor := &LocalExecutor{
+		Task:              db.Task{ID: 8, WorkflowRunID: &workflowID},
+		Template:          db.Template{ID: 4, ProjectID: 2, App: db.AppTerraform, Playbook: "infra"},
+		Repository:        db.Repository{ID: 1, ProjectID: 2, GitURL: repositoryPath},
+		prepared:          true,
+		preparedArgsMap:   map[string][]string{"plan": {}, "apply": {}},
+		preparedParams:    &db.TerraformTaskParams{Plan: false},
+		preparedTplParams: &db.TerraformTemplateParams{AutoApprove: true},
+	}
+	plan, err := executor.ContainerTaskPlan()
+	require.NoError(t, err)
+	defer plan.Bundle.Close() //nolint:errcheck
+	entries := readTaskBundle(t, plan.Bundle)
+	bundle := filepath.Join(root, "bundle")
+	for name, contents := range entries {
+		path := filepath.Join(bundle, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, contents, 0o700))
+	}
+	workspace := filepath.Join(root, "workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	fakeTerraform := filepath.Join(workspace, "fake-terraform")
+	require.NoError(t, os.WriteFile(fakeTerraform, []byte(`#!/bin/sh
+printf '%s\n' "$*" >> /workspace/terraform-invocations
+case "$1" in
+  init|workspace) exit 0 ;;
+  plan) exit 2 ;;
+  apply)
+    trap ': > /workspace/terraform-terminated; exit 0' TERM
+    : > /workspace/apply-started
+    while :; do sleep 1; done
+    ;;
+  output) : > /workspace/terraform-output-invoked ;;
+esac
+`), 0o700))
+	runScriptPath := filepath.Join(bundle, "run.sh")
+	runScript, err := os.ReadFile(runScriptPath)
+	require.NoError(t, err)
+	rewritten := strings.ReplaceAll(string(runScript), "'terraform'", "'/workspace/fake-terraform'")
+	require.NoError(t, os.WriteFile(runScriptPath, []byte(rewritten), 0o500))
+	containerName := "semaphore-k8s-term-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", containerName).Run() })
+	run := exec.Command("docker", "run", "-d", "--name", containerName, "--user", "0:0",
+		"-v", bundle+":/semaphore/bundle:ro", "-v", workspace+":/workspace",
+		"--entrypoint", "/bin/sh", "ghcr.io/freefair/semaphore-ex-runner:latest", "-c", "/semaphore/bundle/run.sh bootstrap && exec /semaphore/bundle/run.sh apply")
+	output, err := run.CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(filepath.Join(workspace, "apply-started"))
+		return statErr == nil
+	}, 10*time.Second, 25*time.Millisecond, "generated command did not start Terraform apply")
+	invocationsBeforeTermination, err := os.ReadFile(filepath.Join(workspace, "terraform-invocations"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(invocationsBeforeTermination), "output")
+	terminated := exec.Command("docker", "kill", "--signal=TERM", containerName)
+	terminatedOutput, err := terminated.CombinedOutput()
+	require.NoError(t, err, string(terminatedOutput))
+	waitContext, cancelWait := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelWait()
+	wait := exec.CommandContext(waitContext, "docker", "wait", containerName)
+	waitOutput, err := wait.CombinedOutput()
+	require.NoError(t, err, string(waitOutput))
+	assert.Equal(t, "143", strings.TrimSpace(string(waitOutput)))
+	_, err = os.Stat(filepath.Join(workspace, "terraform-terminated"))
+	require.NoError(t, err)
+	invocations, err := os.ReadFile(filepath.Join(workspace, "terraform-invocations"))
+	require.NoError(t, err)
+	assert.Equal(t, string(invocationsBeforeTermination), string(invocations))
 }
 
 func readTaskBundle(t *testing.T, bundle io.Reader) map[string][]byte {

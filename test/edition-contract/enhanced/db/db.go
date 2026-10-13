@@ -42,6 +42,13 @@ func NormalizeWorkflowTemplate(workflow coreDB.WorkflowTemplate) coreDB.Workflow
 	usedEdgeIDs := make(map[int]struct{}, len(workflow.Edges))
 	for index := range workflow.Edges {
 		edge := &workflow.Edges[index]
+		if edge.InputMode == "" {
+			edge.InputMode = coreDB.WorkflowEdgeInputByName
+		}
+		for mappingIndex := range edge.InputMappings {
+			edge.InputMappings[mappingIndex].Var = strings.TrimSpace(edge.InputMappings[mappingIndex].Var)
+			edge.InputMappings[mappingIndex].Key = strings.TrimSpace(edge.InputMappings[mappingIndex].Key)
+		}
 		if edge.Condition == "" {
 			edge.Condition = coreDB.WorkflowEdgeOnSuccess
 		}
@@ -247,6 +254,7 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 	}
 
 	nodes := make(map[int]coreDB.WorkflowNode, len(workflow.Nodes))
+	templates := make(map[int]coreDB.Template, len(workflow.Nodes))
 	executable := make(map[int]struct{}, len(workflow.Nodes))
 	resourceStore, hasResourceStore := store.(coreDB.WorkflowParameterValidationStore)
 	globalCredentialStore, hasGlobalCredentialStore := store.(coreDB.WorkflowGlobalCredentialValidationStore)
@@ -345,6 +353,7 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 					return coreDB.WorkflowValidationResult{}, fmt.Errorf("validate workflow template reference: %w", err)
 				} else {
 					templateAvailable = true
+					templates[node.ID] = template
 				}
 			}
 			if templateAvailable {
@@ -419,6 +428,7 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 	adjacency := make(map[int][]int, len(executable))
 	undirected := make(map[int][]int, len(executable))
 	incoming := make(map[int]int, len(executable))
+	explicitInputs := make(map[string]int)
 	for index, edge := range workflow.Edges {
 		id := edge.ID
 		path := fmt.Sprintf("edges[%d]", index)
@@ -436,6 +446,65 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 		}
 		_, sourceExists := nodes[edge.SourceNodeID]
 		_, destinationExists := nodes[edge.DestinationNodeID]
+		if err := edge.EffectiveInputMode().Validate(); err != nil {
+			add("WORKFLOW_EDGE_INPUT_MODE_INVALID", "Workflow edge input mode is invalid.", path+".input_mode", nil, &id)
+		}
+		if destinationExists {
+			destination := nodes[edge.DestinationNodeID]
+			mode := edge.EffectiveInputMode()
+			if destination.EffectiveKind() != coreDB.WorkflowNodeTaskKind {
+				if mode != coreDB.WorkflowEdgeInputByName || len(edge.InputMappings) != 0 {
+					add("WORKFLOW_EDGE_INPUT_DESTINATION_INVALID", "Only task-node edges may define workflow inputs.", path+".input_mode", nil, &id)
+				}
+			} else if destination.CrossProjectTemplateReference != nil {
+				if mode != coreDB.WorkflowEdgeInputByName || len(edge.InputMappings) != 0 {
+					add("WORKFLOW_EDGE_INPUT_CROSS_PROJECT_FORBIDDEN", "Cross-project task templates cannot receive workflow edge inputs.", path+".input_mode", nil, &id)
+				}
+			} else if mode == coreDB.WorkflowEdgeInputByName {
+				if len(edge.InputMappings) != 0 {
+					add("WORKFLOW_EDGE_INPUT_MAPPINGS_FORBIDDEN", "By-name workflow edges cannot define input mappings.", path+".input_mappings", nil, &id)
+				}
+			} else if mode == coreDB.WorkflowEdgeInputExplicit {
+				template, available := templates[destination.ID]
+				if !available {
+					add("WORKFLOW_EDGE_INPUT_TEMPLATE_UNAVAILABLE", "Workflow edge input template cannot be validated.", path+".input_mappings", nil, &id)
+				} else {
+					survey := make(map[string]coreDB.SurveyVar, len(template.SurveyVars))
+					for _, variable := range template.SurveyVars {
+						survey[variable.Name] = variable
+					}
+					declared := make(map[string]struct{}, len(destination.ArtifactInputs))
+					for _, input := range destination.ArtifactInputs {
+						declared[input.Name] = struct{}{}
+					}
+					seen := make(map[string]struct{}, len(edge.InputMappings))
+					for mappingIndex, mapping := range edge.InputMappings {
+						mappingPath := fmt.Sprintf("%s.input_mappings[%d]", path, mappingIndex)
+						variable, exists := survey[mapping.Var]
+						if !exists || variable.Type == coreDB.SurveyVarSecret {
+							add("WORKFLOW_EDGE_INPUT_VARIABLE_INVALID", "Workflow edge input must target a non-secret survey variable.", mappingPath+".var", nil, &id)
+						}
+						if _, protected := declared[mapping.Var]; protected {
+							add("WORKFLOW_EDGE_INPUT_ARTIFACT_ALIAS_CONFLICT", "Workflow edge input cannot overwrite a declared artifact input.", mappingPath+".var", nil, &id)
+						}
+						if !coreDB.IsValidWorkflowOutputName(mapping.Key) || mapping.Key == "semaphore_workflow_outputs" {
+							add("WORKFLOW_EDGE_INPUT_KEY_INVALID", "Workflow edge input key is invalid.", mappingPath+".key", nil, &id)
+						}
+						if _, duplicate := seen[mapping.Var]; duplicate {
+							add("WORKFLOW_EDGE_INPUT_VARIABLE_DUPLICATE", "A workflow edge can map a survey variable only once.", mappingPath+".var", nil, &id)
+						}
+						seen[mapping.Var] = struct{}{}
+						if destination.EffectiveConvergenceMode() == coreDB.WorkflowConvergenceAll {
+							claim := fmt.Sprintf("%d:%s", destination.ID, mapping.Var)
+							if previous, exists := explicitInputs[claim]; exists && previous != id {
+								add("WORKFLOW_EDGE_INPUT_FANIN_CONFLICT", "All-convergence task nodes cannot receive the same explicit input from multiple edges.", mappingPath+".var", nil, &id)
+							}
+							explicitInputs[claim] = id
+						}
+					}
+				}
+			}
+		}
 		if !sourceExists {
 			add("WORKFLOW_EDGE_SOURCE_MISSING", "Workflow edge source does not exist.", path+".source_node_id", nil, &id)
 		}

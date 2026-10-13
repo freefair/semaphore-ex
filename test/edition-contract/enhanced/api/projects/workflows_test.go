@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -249,6 +250,59 @@ func TestWorkflowControllerCRUDAndValidation(t *testing.T) {
 	controller.ValidateWorkflow(validateRecorder, workflowRequest(http.MethodPost, "/api/project/7/workflows/validate", created, nil))
 	assert.Equal(t, http.StatusOK, validateRecorder.Code)
 	assert.JSONEq(t, `{"valid":true,"issues":[]}`, validateRecorder.Body.String())
+}
+
+func TestWorkflowControllerReturnsImmutableCurrentVersionIdentityFromRealService(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "workflow version identity API"})
+	require.NoError(t, err)
+	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &project.ID, Type: db.AccessKeyNone})
+	require.NoError(t, err)
+	repository, err := store.CreateRepository(db.Repository{ProjectID: project.ID, SSHKeyID: key.ID, Name: "workflow-version-identity", GitURL: "https://example.test/version.git", GitBranch: "main"})
+	require.NoError(t, err)
+	template, err := store.CreateTemplate(db.Template{ProjectID: project.ID, RepositoryID: repository.ID, Name: "Deploy", Playbook: "deploy.yml"})
+	require.NoError(t, err)
+	manager := workflowSQL.NewWorkflowStore(store.GetConnection())
+	definitionService := workflowServer.NewWorkflowDefinitionService(manager, store)
+	controller := NewWorkflowController(nil, manager, definitionService)
+	actor := &db.User{ID: 1, Admin: true}
+	create := func(name string) db.WorkflowTemplate {
+		payload := db.WorkflowTemplate{Name: name, Nodes: []db.WorkflowNode{{ID: -1, TemplateID: template.ID}}}
+		body, marshalErr := json.Marshal(payload)
+		require.NoError(t, marshalErr)
+		request := httptest.NewRequest(http.MethodPost, "/api/project/1/workflows", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request = helpers.SetContextValue(request, "project", project)
+		request = helpers.SetContextValue(request, "user", actor)
+		recorder := httptest.NewRecorder()
+		controller.AddWorkflow(recorder, request)
+		require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+		var created db.WorkflowTemplate
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &created))
+		return created
+	}
+	first := create("First")
+	second := create("Second")
+	assert.Equal(t, first.CurrentVersionID, first.RevisionID)
+	assert.Equal(t, second.CurrentVersionID, second.RevisionID)
+	assert.NotEqual(t, second.Revision, second.CurrentVersionID, "the ordinal revision must never stand in for the immutable version row ID")
+
+	stored, err := manager.GetWorkflowTemplate(project.ID, second.ID)
+	require.NoError(t, err)
+	assert.Zero(t, stored.CurrentVersionID)
+	assert.Zero(t, stored.RevisionID)
+	request := httptest.NewRequest(http.MethodGet, "/api/project/1/workflows/"+strconv.Itoa(second.ID), nil)
+	request = helpers.SetContextValue(request, "project", project)
+	request = helpers.SetContextValue(request, "user", actor)
+	request = helpers.SetContextValue(request, "workflow", stored)
+	recorder := httptest.NewRecorder()
+	controller.GetWorkflow(recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var response workflowResponse
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, second.CurrentVersionID, response.CurrentVersionID)
+	assert.Equal(t, second.CurrentVersionID, response.RevisionID)
 }
 
 func TestWorkflowControllerReturnsLocatedValidationErrors(t *testing.T) {

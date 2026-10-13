@@ -25,9 +25,11 @@ import (
 )
 
 type client struct {
-	config          config
-	api             kubernetes.Interface
-	recordTelemetry func(db.KubernetesTelemetryEvent)
+	config           config
+	api              kubernetes.Interface
+	restConfig       *rest.Config
+	recordTelemetry  func(db.KubernetesTelemetryEvent)
+	streamOutputExec func(context.Context, *rest.Config, string, string, string, []string, io.Writer, io.Writer) error
 }
 
 func (c *client) recordAPICall(operation db.KubernetesTelemetryOperation, started time.Time, err error) {
@@ -64,7 +66,7 @@ func newKubernetesClient(cfg config) (KubernetesClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating Kubernetes API client: %w", err)
 	}
-	return &client{config: cfg, api: api}, nil
+	return &client{config: cfg, api: api, restConfig: restConfig}, nil
 }
 
 func (c *client) CreateBundleSecret(ctx context.Context, spec BundleSecret) (ObjectIdentity, error) {

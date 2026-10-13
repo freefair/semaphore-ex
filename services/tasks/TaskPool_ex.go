@@ -761,16 +761,17 @@ func (p *TaskPool) addTask(
 			taskRunner)
 
 		job = &LocalExecutor{
-			Task:         taskRunner.Task,
-			Template:     taskRunner.Template,
-			Inventory:    taskRunner.Inventory,
-			Repository:   taskRunner.Repository,
-			Environment:  taskRunner.Environment,
-			Secret:       extraSecretVars,
-			Logger:       app.SetLogger(taskRunner),
-			App:          app,
-			KeyInstaller: p.keyInstallationService,
-			RepoLock:     p.repoLock,
+			Task:             taskRunner.Task,
+			Template:         taskRunner.Template,
+			Inventory:        taskRunner.Inventory,
+			Repository:       taskRunner.Repository,
+			Environment:      taskRunner.Environment,
+			Secret:           extraSecretVars,
+			Logger:           app.SetLogger(taskRunner),
+			App:              app,
+			KeyInstaller:     p.keyInstallationService,
+			RepoLock:         p.repoLock,
+			OutputsCollector: p.outputsCollector,
 		}
 	}
 

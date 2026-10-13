@@ -13,7 +13,10 @@ import (
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	workflowtasks "github.com/semaphoreui/semaphore/pro/services/tasks"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/tasks"
+	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
@@ -33,6 +36,33 @@ type fakeKubernetesClient struct {
 	createdBundle        BundleSecret
 	createdNetworkPolicy *networkingv1.NetworkPolicy
 	jobResult            JobResult
+	workflowExit         int32
+	workflowWaitErr      error
+	workflowPreflightErr error
+	outputStages         []outputStage
+	stageOutput          map[outputStage][]byte
+	stageError           map[outputStage]error
+}
+
+func (f *fakeKubernetesClient) validateOutputExecAccess(context.Context) error {
+	f.record("validate-output-exec")
+	return f.workflowPreflightErr
+}
+
+func (f *fakeKubernetesClient) WaitForTaskCompletion(context.Context, ObjectIdentity, PodIdentity, map[string]string) (int32, error) {
+	return f.workflowExit, f.workflowWaitErr
+}
+
+func (f *fakeKubernetesClient) execOutputStage(_ context.Context, _ ObjectIdentity, _ PodIdentity, _ map[string]string, stage outputStage, stdout io.Writer) error {
+	f.outputStages = append(f.outputStages, stage)
+	if err := f.stageError[stage]; err != nil {
+		return err
+	}
+	if output := f.stageOutput[stage]; len(output) != 0 {
+		_, err := stdout.Write(output)
+		return err
+	}
+	return nil
 }
 
 func (f *fakeKubernetesClient) CreateNetworkPolicy(_ context.Context, policy *networkingv1.NetworkPolicy) (ObjectIdentity, error) {
@@ -197,6 +227,250 @@ func TestKubernetesExecutorRunsJobStreamsAtLeastOnceAndCleansUIDBoundObjects(t *
 	assert.Equal(t, "semaphore-task-41-3-pod", metadata.K8sPodName)
 	assert.Equal(t, "pod-uid", metadata.K8sPodUID)
 	assert.Equal(t, "succeeded", metadata.K8sLifecycle)
+}
+
+func TestKubernetesWorkflowWithoutCollectorFailsClosedAfterAcknowledgingSidecar(t *testing.T) {
+	client := &fakeKubernetesClient{workflowExit: 0}
+	executor := newExecutorForPlan(client, config{}, db.KubernetesExecutionPolicy{}, 1, db.Task{}, db.Template{}, task_logger.NopLogger{})
+	executor.job = ObjectIdentity{Name: "job", UID: types.UID("job-uid")}
+
+	_, err := executor.collectWorkflowOutputs(context.Background(), PodIdentity{ObjectIdentity: ObjectIdentity{Name: "pod", UID: types.UID("pod-uid")}}, map[string]string{"io.semaphore.managed": "v1"})
+
+	require.ErrorContains(t, err, "collector is unavailable")
+	assert.Equal(t, []outputStage{acknowledgeOutputStage}, client.outputStages)
+}
+
+func TestKubernetesExecutorRejectsWorkflowOutputPermissionBeforeCreatingTaskObjects(t *testing.T) {
+	configureKubernetesOutputsTest(t)
+	local := newKubernetesOutputsLocalExecutor(t, db.AppBash, &kubernetesOutputsCapture{})
+	client := &fakeKubernetesClient{workflowPreflightErr: db.KubernetesPolicyViolationError{Rule: db.KubernetesPolicyRuleRBACDenied}}
+	executor := newKubernetesOutputsExecutor(t, client, local, db.AppBash)
+	plan := &tasks.ContainerTaskPlan{App: db.AppBash, WorkflowOutputs: true, Bundle: io.NopCloser(strings.NewReader("bundle"))}
+
+	err := executor.runPlan(context.Background(), plan)
+
+	require.ErrorIs(t, err, db.KubernetesPolicyViolationError{Rule: db.KubernetesPolicyRuleRBACDenied})
+	assert.Equal(t, []string{"validate-output-exec"}, client.events)
+	assert.Nil(t, client.createdJob)
+	assert.Empty(t, client.createdBundle.Name)
+}
+
+func TestKubernetesExecutorCollectsProcessAndTerraformOutputsBeforeAcknowledgement(t *testing.T) {
+	configureKubernetesOutputsTest(t)
+	document := `{"values":{"file":"file-wins","terraform_public":"public-value"},"skipped":{"terraform_secret":"sensitive"}}`
+	capture := &kubernetesOutputsCapture{document: &document}
+	local := newKubernetesOutputsLocalExecutor(t, db.AppTerraform, capture)
+	client := &fakeKubernetesClient{
+		jobResult: JobResult{Succeeded: true, Lifecycle: "succeeded"},
+		stageOutput: map[outputStage][]byte{
+			collectOutputStage:   []byte(`{"values":{"file":"process-value","process":"kept"}}`),
+			terraformOutputStage: []byte(`{"file":{"value":"terraform-value","sensitive":false},"terraform_public":{"value":"public-value","sensitive":false},"terraform_secret":{"value":"tf-secret-value","sensitive":true}}`),
+		},
+	}
+	executor := newKubernetesOutputsExecutor(t, client, local, db.AppTerraform)
+	plan := &tasks.ContainerTaskPlan{App: db.AppTerraform, WorkflowOutputs: true, Terraform: tasks.ContainerTerraformPlan{AutoApprove: true}, Bundle: io.NopCloser(strings.NewReader("bundle"))}
+
+	err := executor.runPlan(context.Background(), plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, []byte(`{"values":{"file":"process-value","process":"kept"}}`), capture.process)
+	assert.Contains(t, string(capture.terraform), `"tf-secret-value"`)
+	require.NotNil(t, executor.Outputs())
+	assert.Equal(t, document, *executor.Outputs())
+	assert.NotContains(t, *executor.Outputs(), "tf-secret-value")
+	assert.Equal(t, []outputStage{collectOutputStage, terraformOutputStage, acknowledgeOutputStage}, client.outputStages)
+}
+
+func TestKubernetesExecutorPassesLargeSensitiveTerraformOutputToActualCollector(t *testing.T) {
+	configureKubernetesOutputsTest(t)
+	workflowID := 1
+	local := &tasks.LocalExecutor{
+		Task:             db.Task{ID: 41, WorkflowRunID: &workflowID},
+		Template:         db.Template{ProjectID: 7, App: db.AppTerraform},
+		Logger:           task_logger.NopLogger{},
+		OutputsCollector: workflowtasks.NewTaskOutputsCollector(),
+	}
+	local.SetStatus(task_logger.TaskRunningStatus)
+	_, err := local.BeginWorkflowOutputs(nil)
+	require.NoError(t, err)
+	largeSensitiveValue := strings.Repeat("sensitive-marker-", (maxContainerOutputsBytes/len("sensitive-marker-"))+1)
+	terraform := fmt.Sprintf(`{"large_secret":{"value":%q,"sensitive":true},"safe":{"value":"kept","sensitive":false}}`, largeSensitiveValue)
+	client := &fakeKubernetesClient{
+		jobResult: JobResult{Succeeded: true, Lifecycle: "succeeded"},
+		stageOutput: map[outputStage][]byte{
+			collectOutputStage:   []byte(`{}`),
+			terraformOutputStage: []byte(terraform),
+		},
+	}
+	executor := newKubernetesOutputsExecutor(t, client, local, db.AppTerraform)
+	plan := &tasks.ContainerTaskPlan{App: db.AppTerraform, WorkflowOutputs: true, Terraform: tasks.ContainerTerraformPlan{AutoApprove: true}, Bundle: io.NopCloser(strings.NewReader("bundle"))}
+
+	err = executor.runPlan(context.Background(), plan)
+
+	require.NoError(t, err)
+	require.NotNil(t, executor.Outputs())
+	assert.JSONEq(t, `{"values":{"safe":"kept"},"skipped":{"large_secret":"sensitive"}}`, *executor.Outputs())
+	assert.NotContains(t, *executor.Outputs(), "sensitive-marker")
+	assert.Greater(t, len(client.stageOutput[terraformOutputStage]), maxContainerOutputsBytes)
+	assert.Equal(t, []outputStage{collectOutputStage, terraformOutputStage, acknowledgeOutputStage}, client.outputStages)
+}
+
+func TestKubernetesExecutorSkipsFailedTerraformOutputRetrievalWithoutFailingTask(t *testing.T) {
+	configureKubernetesOutputsTest(t)
+	logger := &captureLogger{}
+	local := newKubernetesOutputsLocalExecutor(t, db.AppTerraform, &kubernetesOutputsCapture{document: stringPointer(`{"values":{"process":"kept"}}`)})
+	client := &fakeKubernetesClient{
+		jobResult:   JobResult{Succeeded: true, Lifecycle: "succeeded"},
+		stageOutput: map[outputStage][]byte{collectOutputStage: []byte(`{"process":"kept"}`)},
+		stageError:  map[outputStage]error{terraformOutputStage: errors.New("raw secret marker")},
+	}
+	executor := newKubernetesOutputsExecutor(t, client, local, db.AppTerraform)
+	executor.SetLogger(logger)
+	plan := &tasks.ContainerTaskPlan{App: db.AppTerraform, WorkflowOutputs: true, Terraform: tasks.ContainerTerraformPlan{AutoApprove: true}, Bundle: io.NopCloser(strings.NewReader("bundle"))}
+
+	err := executor.runPlan(context.Background(), plan)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Terraform outputs were not captured"}, logger.records)
+	assert.Equal(t, []outputStage{collectOutputStage, terraformOutputStage, acknowledgeOutputStage}, client.outputStages)
+	assert.NotContains(t, strings.Join(logger.records, "\n"), "secret")
+}
+
+func TestKubernetesExecutorDoesNotCollectOutputsWhenTaskFails(t *testing.T) {
+	configureKubernetesOutputsTest(t)
+	capture := &kubernetesOutputsCapture{document: stringPointer(`{"values":{"unexpected":"value"}}`)}
+	local := newKubernetesOutputsLocalExecutor(t, db.AppBash, capture)
+	client := &fakeKubernetesClient{workflowExit: 1, jobResult: JobResult{Succeeded: false, Lifecycle: "failed", Reason: "NonZeroExit"}}
+	executor := newKubernetesOutputsExecutor(t, client, local, db.AppBash)
+	plan := &tasks.ContainerTaskPlan{App: db.AppBash, WorkflowOutputs: true, Bundle: io.NopCloser(strings.NewReader("bundle"))}
+
+	err := executor.runPlan(context.Background(), plan)
+
+	require.ErrorContains(t, err, "Kubernetes Job failed: NonZeroExit")
+	assert.Nil(t, executor.Outputs())
+	assert.Empty(t, capture.process)
+	assert.Empty(t, capture.terraform)
+	assert.Equal(t, []outputStage{acknowledgeOutputStage}, client.outputStages)
+	assert.Contains(t, client.events, "wait-job")
+}
+
+func TestKubernetesExecutorRejectsMalformedOutputsBeforeAcknowledgementAndCleansUp(t *testing.T) {
+	configureKubernetesOutputsTest(t)
+	capture := &kubernetesOutputsCapture{err: errors.New("outputs document is malformed")}
+	local := newKubernetesOutputsLocalExecutor(t, db.AppBash, capture)
+	client := &fakeKubernetesClient{
+		jobResult:   JobResult{Succeeded: true, Lifecycle: "succeeded"},
+		stageOutput: map[outputStage][]byte{collectOutputStage: []byte(`not-json`)},
+	}
+	executor := newKubernetesOutputsExecutor(t, client, local, db.AppBash)
+	plan := &tasks.ContainerTaskPlan{App: db.AppBash, WorkflowOutputs: true, Bundle: io.NopCloser(strings.NewReader("bundle"))}
+
+	err := executor.runPlan(context.Background(), plan)
+
+	require.ErrorContains(t, err, "validating Kubernetes workflow outputs")
+	assert.Nil(t, executor.Outputs())
+	assert.Equal(t, []byte("not-json"), capture.process)
+	assert.Equal(t, []outputStage{collectOutputStage}, client.outputStages)
+	assert.Contains(t, client.events, "delete-job")
+	assert.Contains(t, client.events, "delete-secret")
+	assert.NotContains(t, client.events, "wait-job")
+}
+
+func TestKubernetesExecutorCancellationDoesNotPublishOutputs(t *testing.T) {
+	configureKubernetesOutputsTest(t)
+	capture := &kubernetesOutputsCapture{document: stringPointer(`{"values":{"unexpected":"value"}}`)}
+	local := newKubernetesOutputsLocalExecutor(t, db.AppBash, capture)
+	client := &fakeKubernetesClient{workflowWaitErr: context.Canceled}
+	executor := newKubernetesOutputsExecutor(t, client, local, db.AppBash)
+	plan := &tasks.ContainerTaskPlan{App: db.AppBash, WorkflowOutputs: true, Bundle: io.NopCloser(strings.NewReader("bundle"))}
+
+	err := executor.runPlan(context.Background(), plan)
+
+	require.NoError(t, err)
+	assert.Nil(t, executor.Outputs())
+	assert.Empty(t, client.outputStages)
+	assert.Empty(t, capture.process)
+	assert.Empty(t, capture.terraform)
+	assert.NotEqual(t, "succeeded", executor.ExecutorMetadata().K8sLifecycle)
+}
+
+func TestKubernetesTerraformTaskCommandDoesNotOverwriteCapturedOutput(t *testing.T) {
+	plan := &tasks.ContainerTaskPlan{App: db.AppTerraform, WorkflowOutputs: true, Terraform: tasks.ContainerTerraformPlan{AutoApprove: true}}
+
+	command, err := kubernetesTaskCommand(plan)
+
+	require.NoError(t, err)
+	assert.NotContains(t, command[2], "terraform-outputs >")
+	assert.NotContains(t, command[2], "terraform-outputs.json")
+	assert.Contains(t, command[2], "run_stage plan")
+	assert.Contains(t, command[2], "/semaphore/bundle/run.sh apply")
+	assert.Contains(t, command[2], "forward_stage_signal")
+	assert.Contains(t, command[2], "exec /bin/sh /semaphore/bundle/run.sh apply")
+}
+
+type kubernetesOutputsCollector struct {
+	capture *kubernetesOutputsCapture
+}
+
+func (c *kubernetesOutputsCollector) Begin(string, int) (pro_interfaces.TaskOutputsCapture, error) {
+	return c.capture, nil
+}
+
+func (c *kubernetesOutputsCollector) Validate(document string) (*string, error) {
+	return &document, nil
+}
+
+type kubernetesOutputsCapture struct {
+	document  *string
+	err       error
+	process   []byte
+	terraform []byte
+}
+
+func (*kubernetesOutputsCapture) Env() []string { return nil }
+
+func (*kubernetesOutputsCapture) AnsibleCallbackDir() (string, error) { return "", nil }
+
+func (c *kubernetesOutputsCapture) Collect([]byte) (*string, []string, error) {
+	return c.document, nil, c.err
+}
+
+func (c *kubernetesOutputsCapture) CollectContent(process []byte, terraform []byte) (*string, []string, error) {
+	c.process = append([]byte(nil), process...)
+	c.terraform = append([]byte(nil), terraform...)
+	return c.document, nil, c.err
+}
+
+func (*kubernetesOutputsCapture) Close() {}
+
+func configureKubernetesOutputsTest(t *testing.T) {
+	t.Helper()
+	previous := util.Config
+	util.Config = &util.ConfigType{TmpPath: t.TempDir()}
+	t.Cleanup(func() { util.Config = previous })
+}
+
+func newKubernetesOutputsLocalExecutor(t *testing.T, app db.TemplateApp, capture *kubernetesOutputsCapture) *tasks.LocalExecutor {
+	t.Helper()
+	workflowID := 1
+	local := &tasks.LocalExecutor{
+		Task:             db.Task{ID: 41, WorkflowRunID: &workflowID},
+		Template:         db.Template{ProjectID: 7, App: app},
+		Logger:           task_logger.NopLogger{},
+		OutputsCollector: &kubernetesOutputsCollector{capture: capture},
+	}
+	local.SetStatus(task_logger.TaskRunningStatus)
+	_, err := local.BeginWorkflowOutputs(nil)
+	require.NoError(t, err)
+	return local
+}
+
+func newKubernetesOutputsExecutor(t *testing.T, client *fakeKubernetesClient, local *tasks.LocalExecutor, app db.TemplateApp) *KubernetesExecutor {
+	t.Helper()
+	cfg := config{clusterAlias: "qa", namespace: "semaphore-jobs", serviceAccount: "semaphore-task", image: testImage, helperImage: testImage, pollInterval: time.Millisecond, cleanupGrace: time.Second, activeDeadlineSeconds: 60}
+	executor := newExecutorForPlan(client, cfg, testKubernetesPolicy(t, cfg), 19, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 3}, db.Template{App: app}, task_logger.NopLogger{})
+	executor.local = local
+	return executor
 }
 
 func TestKubernetesLogStreamPreservesIdenticalTimestampedLines(t *testing.T) {

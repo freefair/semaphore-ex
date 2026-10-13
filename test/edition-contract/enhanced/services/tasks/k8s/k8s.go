@@ -11,6 +11,7 @@ import (
 	"github.com/semaphoreui/semaphore/db_lib"
 	"github.com/semaphoreui/semaphore/pkg/ssh"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 )
@@ -20,6 +21,7 @@ type Provider struct {
 	client                KubernetesClient
 	keyInstaller          db_lib.AccessKeyInstaller
 	repoLock              *tasks.KeyLock
+	outputsCollector      pro_interfaces.TaskOutputsCollector
 	mu                    sync.RWMutex
 	runnerID              int
 	policy                db.KubernetesExecutionPolicy
@@ -31,6 +33,8 @@ type Provider struct {
 	telemetry             []db.KubernetesTelemetryEvent
 	telemetryDropped      int64
 }
+
+func (p *Provider) SetTaskOutputsCollector(collector pro_interfaces.TaskOutputsCollector) { p.outputsCollector = collector }
 
 func NewProvider(input util.RunnerK8sConfig) (tasks.ExecutorProvider, error) {
 	cfg, err := effectiveConfig(input)
@@ -233,6 +237,7 @@ func (p *Provider) NewExecutor(task db.Task, template db.Template, inventory db.
 		JWT:          jwt,
 		RepoLock:     p.repoLock,
 		HostConfigs:  hostConfigs,
+		OutputsCollector: p.outputsCollector,
 	}
 	executor := newExecutorForPlan(p.client, p.config, policy, runnerID, task, template, task_logger.NopLogger{})
 	executor.local = local

@@ -5611,18 +5611,11 @@ symbols:
     signature: db.WorkflowDelayStatus = "waiting"
     implementation: core
   - name: db:WorkflowEdge
-    signature: >-
-      struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; WorkflowTemplateID int "db:\"workflow_template_id\"
-      json:\"workflow_template_id\" backup:\"-\""; RevisionID *int "db:\"revision_id\" json:\"-\" backup:\"-\"";
-      SourceNodeID int "db:\"source_node_id\" json:\"source_node_id\" backup:\"source_node_id\"";
-      DestinationNodeID int "db:\"destination_node_id\" json:\"destination_node_id\"
-      backup:\"destination_node_id\""; Condition db.WorkflowEdgeCondition "db:\"condition\" json:\"condition\"
-      backup:\"condition\""; Label string "db:\"label\" json:\"label,omitempty\" backup:\"label\""; Expression
-      string "db:\"condition_expression\" json:\"condition_expression,omitempty\"
-      backup:\"condition_expression\""; ConditionProgramJSON string "db:\"condition_program\" json:\"-\"
-      backup:\"condition_program\""; ConditionProgram db.WorkflowConditionProgram "db:\"-\"
-      json:\"condition_program,omitempty\" backup:\"-\""}
+    signature: struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; WorkflowTemplateID int "db:\"workflow_template_id\" json:\"workflow_template_id\" backup:\"-\""; RevisionID *int "db:\"revision_id\" json:\"-\" backup:\"-\""; SourceNodeID int "db:\"source_node_id\" json:\"source_node_id\" backup:\"source_node_id\""; DestinationNodeID int "db:\"destination_node_id\" json:\"destination_node_id\" backup:\"destination_node_id\""; Condition db.WorkflowEdgeCondition "db:\"condition\" json:\"condition\" backup:\"condition\""; Label string "db:\"label\" json:\"label,omitempty\" backup:\"label\""; Expression string "db:\"condition_expression\" json:\"condition_expression,omitempty\" backup:\"condition_expression\""; ConditionProgramJSON string "db:\"condition_program\" json:\"-\" backup:\"condition_program\""; ConditionProgram db.WorkflowConditionProgram "db:\"-\" json:\"condition_program,omitempty\" backup:\"-\""; InputMode db.WorkflowEdgeInputMode "db:\"input_mode\" json:\"input_mode,omitempty\" backup:\"input_mode\""; InputMappingsJSON *string "db:\"input_mappings\" json:\"-\" backup:\"-\""; InputMappings []db.WorkflowInputMapping "db:\"-\" json:\"input_mappings,omitempty\" backup:\"input_mappings\""}
     implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/db/sql/workflow_edge_inputs_test.go::TestWorkflowDefinitionPersistsEdgeInputsWithoutLosingConditions
+    - pro_interfaces/workflow_input_fingerprint_test.go::TestWorkflowInputMappingsFingerprintPreservesLegacyAndDetectsChanges
   - name: db:WorkflowEdgeAlways
     signature: db.WorkflowEdgeCondition = "always"
     implementation: core
@@ -10700,11 +10693,13 @@ symbols:
       ...db.WorkflowRunInput) (db.WorkflowRun, error); StopWorkflowRun(projectID int, runID int, user *db.User) (db.WorkflowRun, error)}
     implementation: core
   - name: pro_interfaces:WorkflowTaskEnqueuer
-    signature: >-
-      interface{AddTask(task db.Task, userID *int, username string, projectID int, needAlias bool) (db.Task, error); AddWorkflowTask(task
-      db.Task, template db.Template, userID *int, username string, projectID int, needAlias bool) (db.Task, error);
-      StopTasksByWorkflowRun(projectID int, runID int, forceStop bool)}
+    signature: interface{AddFailedTask(task db.Task, userID *int, username string, lines []string) (db.Task, error); AddTask(task db.Task, userID *int, username string, projectID int, needAlias bool) (db.Task, error); AddWorkflowTask(task db.Task, template db.Template, userID *int, username string, projectID int, needAlias bool) (db.Task, error); LogTask(task db.Task, lines []string); StopTasksByWorkflowRun(projectID int, runID int, forceStop bool)}
     implementation: core
+    behavior_tests:
+    - services/tasks/TaskPool_workflow_inputs_test.go::TestTaskPool_AddFailedTaskRejectsUnfencedWorkflowCreation
+    - services/tasks/TaskPool_workflow_inputs_test.go::TestTaskPool_LogTask
+    rationale: EX rejects unfenced failed-task inserts; workflow input failures use the existing lease-fenced node transition.
+      LogTask retains normal logging before asynchronous pool registration.
   - name: pro_interfaces:WorkflowTaskExecutionSnapshotPlanner
     signature: >-
       interface{BuildWorkflowTaskExecutionPreflightSnapshot(db.Task, db.Template, *db.User, int, time.Time)
@@ -11183,3 +11178,46 @@ symbols:
     selected_signature: func() services/tasks.TaskStateStore
     implementation: community
     rationale: Functional shared synchronized in-memory task-state factory used by the CLI TaskPool; SQL and HA reconciliation own durable state.
+  - name: db:IsValidWorkflowOutputName
+    signature: func(name string) bool
+    implementation: core
+    behavior_tests:
+    - db/Workflow_inputs_test.go::TestIsValidWorkflowOutputName
+  - name: db:SurveyVarSecret
+    signature: db.SurveyVarType = "secret"
+    implementation: core
+  - name: db:WorkflowEdgeInputByName
+    signature: db.WorkflowEdgeInputMode = "by_name"
+    implementation: core
+  - name: db:WorkflowEdgeInputExplicit
+    signature: db.WorkflowEdgeInputMode = "explicit"
+    implementation: core
+  - name: db:WorkflowEdgeInputMode
+    signature: string
+    implementation: core
+  - name: db:WorkflowInputMapping
+    signature: struct{Var string "json:\"var\" backup:\"var\""; Key string "json:\"key\" backup:\"key\""}
+    implementation: core
+  - name: pro_interfaces:TaskOutputsCapture
+    signature: interface{AnsibleCallbackDir() (string, error); Close(); Collect(terraformOutputs []byte) (document *string, notes []string, err error); CollectContent(content []byte, terraformOutputs []byte) (document *string, notes []string, err error); Env() []string}
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCollectorRejectsReservedStructuredOutput
+    - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCaptureFileOverridesTerraformAndPreservesJSONNumbers
+    - services/tasks/taskpool_collector_wiring_test.go::TestAddTaskFromWiresCollectorIntoActiveLocalExecutor
+    - test/edition-contract/enhanced/services/tasks/docker/executor_test.go::TestDockerExecutorCollectsTerraformOutputsWithoutLeakingSensitiveValues
+  - name: pro_interfaces:TaskOutputsCollector
+    signature: interface{Begin(dir string, taskID int) (pro_interfaces.TaskOutputsCapture, error); Validate(document string) (normalized *string, err error)}
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCollectorRejectsReservedStructuredOutput
+    - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCaptureFileOverridesTerraformAndPreservesJSONNumbers
+    - services/tasks/taskpool_collector_wiring_test.go::TestAddTaskFromWiresCollectorIntoActiveLocalExecutor
+  - name: services/tasks:NewTaskOutputsCollector
+    signature: func() pro_interfaces.TaskOutputsCollector
+    selected_signature: func() pro_interfaces.TaskOutputsCollector
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCollectorRejectsReservedStructuredOutput
+    - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCaptureFileOverridesTerraformAndPreservesJSONNumbers
+    - services/tasks/taskpool_collector_wiring_test.go::TestAddTaskFromWiresCollectorIntoActiveLocalExecutor

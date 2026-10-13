@@ -11,14 +11,16 @@ import (
 )
 
 const (
-	bundleArchiveKey  = "bundle.tar"
-	bundleInputPath   = "/semaphore/input"
-	bundlePath        = "/semaphore/bundle"
-	workspacePath     = "/workspace"
-	taskContainerName = "task"
+	bundleArchiveKey     = "bundle.tar"
+	bundleInputPath      = "/semaphore/input"
+	bundlePath           = "/semaphore/bundle"
+	workspacePath        = "/workspace"
+	taskContainerName    = "task"
+	outputsContainerName = "outputs"
+	outputsControlPath   = "/semaphore/control"
 )
 
-func buildJob(cfg config, policy db.KubernetesExecutionPolicy, task db.Task, runnerID int, bundleSecret string, image string, command []string) *batchv1.Job {
+func buildJob(cfg config, policy db.KubernetesExecutionPolicy, task db.Task, runnerID int, bundleSecret string, image string, command []string, workflowOutputs bool) *batchv1.Job {
 	labels := taskLabels(task, runnerID)
 	backoffLimit := int32(0)
 	automountToken := false
@@ -29,6 +31,31 @@ func buildJob(cfg config, policy db.KubernetesExecutionPolicy, task db.Task, run
 	pullSecrets := make([]corev1.LocalObjectReference, 0, len(cfg.pullSecrets))
 	for _, name := range cfg.pullSecrets {
 		pullSecrets = append(pullSecrets, corev1.LocalObjectReference{Name: name})
+	}
+
+	containers := []corev1.Container{{
+		Name:       taskContainerName,
+		Image:      image,
+		Command:    append([]string(nil), command...),
+		WorkingDir: workspacePath,
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "bundle", MountPath: bundlePath, ReadOnly: true},
+			{Name: "workspace", MountPath: workspacePath},
+		},
+		SecurityContext: restrictedContainerSecurityContext(),
+		Resources:       policyResources(policy.Resources),
+	}}
+	volumes := []corev1.Volume{
+		{Name: "bundle-input", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: bundleSecret, Items: []corev1.KeyToPath{{Key: bundleArchiveKey, Path: bundleArchiveKey}}, DefaultMode: &secretMode}}},
+		{Name: "bundle", VolumeSource: corev1.VolumeSource{EmptyDir: policyEmptyDir(policy.Resources)}},
+		{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: policyEmptyDir(policy.Resources)}},
+	}
+	if workflowOutputs {
+		containers = append(containers, corev1.Container{Name: outputsContainerName, Image: cfg.helperImage,
+			Command:         []string{"/bin/sh", "-c", "while [ ! -f /semaphore/control/outputs-ack ]; do sleep 1; done"},
+			VolumeMounts:    []corev1.VolumeMount{{Name: "bundle", MountPath: bundlePath, ReadOnly: true}, {Name: "workspace", MountPath: workspacePath, ReadOnly: true}, {Name: "outputs-control", MountPath: outputsControlPath}},
+			SecurityContext: restrictedContainerSecurityContext(), Resources: outputsSidecarResources(policy.Resources)})
+		volumes = append(volumes, corev1.Volume{Name: "outputs-control", VolumeSource: corev1.VolumeSource{EmptyDir: policyEmptyDir(policy.Resources)}})
 	}
 
 	job := &batchv1.Job{
@@ -61,23 +88,8 @@ func buildJob(cfg config, policy db.KubernetesExecutionPolicy, task db.Task, run
 						SecurityContext: restrictedContainerSecurityContext(),
 						Resources:       policyResources(policy.Resources),
 					}},
-					Containers: []corev1.Container{{
-						Name:       taskContainerName,
-						Image:      image,
-						Command:    append([]string(nil), command...),
-						WorkingDir: workspacePath,
-						VolumeMounts: []corev1.VolumeMount{
-							{Name: "bundle", MountPath: bundlePath, ReadOnly: true},
-							{Name: "workspace", MountPath: workspacePath},
-						},
-						SecurityContext: restrictedContainerSecurityContext(),
-						Resources:       policyResources(policy.Resources),
-					}},
-					Volumes: []corev1.Volume{
-						{Name: "bundle-input", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: bundleSecret, Items: []corev1.KeyToPath{{Key: bundleArchiveKey, Path: bundleArchiveKey}}, DefaultMode: &secretMode}}},
-						{Name: "bundle", VolumeSource: corev1.VolumeSource{EmptyDir: policyEmptyDir(policy.Resources)}},
-						{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: policyEmptyDir(policy.Resources)}},
-					},
+					Containers: containers,
+					Volumes:    volumes,
 				},
 			},
 		},

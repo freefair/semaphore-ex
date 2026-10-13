@@ -16,6 +16,8 @@ import (
 	"github.com/moby/moby/api/types/container"
 	moby "github.com/moby/moby/client"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	workflowtasks "github.com/semaphoreui/semaphore/pro/services/tasks"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
@@ -71,6 +73,36 @@ func TestDockerExecutorDisposableDaemonLifecycle(t *testing.T) {
 		require.NoError(t, <-done)
 		assertDockerResourcesAbsent(t, realClient, runnerBoot)
 	})
+}
+
+func TestDockerExecutorReadsWorkflowOutputFromPythonFreeTaskImage(t *testing.T) {
+	if os.Getenv("SEMAPHORE_TEST_DOCKER") != "1" {
+		t.Skip("set SEMAPHORE_TEST_DOCKER=1 to use the disposable Docker daemon")
+	}
+	cfg, err := effectiveConfig(util.RunnerDockerConfig{Image: "alpine:latest", HelperImage: "alpine:latest", Network: "none", PullPolicy: "never", CleanupGraceSeconds: 1})
+	require.NoError(t, err)
+	client, err := newMobyClient(cfg)
+	require.NoError(t, err)
+	policy := integrationDockerPolicy(t, client.(*mobyClient), "alpine:latest")
+	workflowID := 1
+	previous := util.Config
+	util.Config = &util.ConfigType{TmpPath: t.TempDir()}
+	t.Cleanup(func() { util.Config = previous })
+	local := &tasks.LocalExecutor{Task: db.Task{ID: 509, WorkflowRunID: &workflowID}, Template: db.Template{ID: 1, ProjectID: 1, App: db.AppBash}, Logger: task_logger.NopLogger{}, OutputsCollector: workflowtasks.NewTaskOutputsCollector()}
+	local.SetStatus(task_logger.TaskRunningStatus)
+	_, err = local.BeginWorkflowOutputs(nil)
+	require.NoError(t, err)
+	defer local.Cleanup()
+	logger := &recordingLogger{}
+	runnerBoot := fmt.Sprintf("python-free-%d", time.Now().UnixNano())
+	executor := newDockerExecutorForPlan(client, cfg, runnerBoot, local.Task, db.Template{ExecutorImage: stringPointer("alpine:latest")}, logger)
+	executor.policy, executor.local = policy, local
+	plan := integrationTaskPlan(t, "if command -v python3 >/dev/null; then exit 99; fi; mkdir -p /workspace/.semaphore; printf '%s' '{\"image_tag\":\"v1.2.3\"}' > /workspace/.semaphore/outputs.json")
+	plan.WorkflowOutputs = true
+	require.NoError(t, executor.runContainerPlan(context.Background(), plan))
+	require.NotNil(t, executor.Outputs())
+	assert.JSONEq(t, `{"values":{"image_tag":"v1.2.3"}}`, *executor.Outputs())
+	assertDockerResourcesAbsent(t, client.(*mobyClient), runnerBoot)
 }
 
 func TestDockerClientSamplesDisposableContainerResources(t *testing.T) {
@@ -247,7 +279,7 @@ func integrationTaskPlan(t *testing.T, runCommand string) *tasks.ContainerTaskPl
 		}
 	}
 	write("credentials", 0o700, tar.TypeDir, "")
-	write("credentials/environment.sh", 0o600, tar.TypeReg, "export QA_VALUE='ready'\n")
+	write("credentials/environment.sh", 0o600, tar.TypeReg, "export QA_VALUE='ready'\nexport SEMAPHORE_OUTPUTS_FILE='/workspace/.semaphore/outputs.json'\n")
 	write("repository", 0o555, tar.TypeDir, "")
 	write("repository/task.sh", 0o444, tar.TypeReg, "#!/bin/sh\n"+runCommand+"\n")
 	write("run.sh", 0o500, tar.TypeReg, `#!/bin/sh
@@ -259,6 +291,9 @@ case "${1-}" in
   run)
     . /semaphore/bundle/credentials/environment.sh
     /bin/sh /workspace/task.sh
+    ;;
+  docker-collect-outputs)
+    tar -cf - -C /workspace/.semaphore outputs.json
     ;;
   *) exit 64 ;;
 esac

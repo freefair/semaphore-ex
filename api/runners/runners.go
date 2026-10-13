@@ -854,8 +854,8 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 		// the server-owned stopping state and accept the snapshot so the runner
 		// remains tracked long enough to report its terminal stopped status while
 		// still persisting commit metadata carried by the snapshot.
-		acceptedStatus := runnerProgressStatusForStoppingTask(tsk.Task.Status, job.Status)
-		acceptedStatus = runnerProgressStatusForConfirmation(tsk.Task.Status, acceptedStatus)
+		acceptedStatus, terminalStatus := deferredRunnerProgressStatus(tsk.Task.Status, job.Status)
+
 		applied := tsk.ApplyRunnerProgress(
 			acceptedStatus, runner.ID, reportedGeneration, commitHash, commitMessage,
 		)
@@ -865,14 +865,16 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 			// failed CAS refreshes tsk from SQL; retry against stopping so this
 			// runner receives the next-poll cancellation state rather than an
 			// erroneous terminated_jobs emergency kill.
+			acceptedStatus, terminalStatus = deferredRunnerProgressStatus(tsk.Task.Status, job.Status)
 			applied = tsk.ApplyRunnerProgress(
-				runnerProgressStatusForStoppingTask(tsk.Task.Status, job.Status),
+				acceptedStatus,
 				runner.ID, reportedGeneration, commitHash, commitMessage,
 			)
 		}
 		if !applied && runnerProgressWasSupersededByConfirmation(tsk, runner.ID, reportedGeneration) {
+			acceptedStatus, terminalStatus = deferredRunnerProgressStatus(tsk.Task.Status, job.Status)
 			applied = tsk.ApplyRunnerProgress(
-				runnerProgressStatusForConfirmation(tsk.Task.Status, job.Status),
+				acceptedStatus,
 				runner.ID, reportedGeneration, commitHash, commitMessage,
 			)
 		}
@@ -886,6 +888,26 @@ func (c *RunnerController) UpdateRunner(w http.ResponseWriter, r *http.Request) 
 		}
 		logRecordCount += len(job.LogRecords)
 
+		// The outputs of a workflow task arrive with the success status and
+		// must be in the database before it (HA nodes progress the run from
+		// the persisted status). A document that fails validation fails the
+		// task: the runner is not trusted, and a success without the outputs
+		// it reported would be a lie to the downstream nodes.
+		var normalizedOutputs *string
+		if job.Outputs != nil && terminalStatus == task_logger.TaskSuccessStatus {
+			if normalizedOutputs, err = taskPool.ValidateRemoteTaskOutputs(tsk, *job.Outputs); err != nil {
+				jobLog.WithError(err).Warn("runner reported invalid task outputs")
+				tsk.Log("Invalid task outputs reported by the runner: " + err.Error())
+				terminalStatus = task_logger.TaskFailStatus
+			}
+		}
+
+		if terminalStatus.IsFinished() {
+			if !tsk.ApplyRunnerProgressWithOutputs(terminalStatus, runner.ID, reportedGeneration, commitHash, commitMessage, normalizedOutputs) {
+				response.TerminatedJobs = append(response.TerminatedJobs, job.ID)
+				continue
+			}
+		}
 		// When the runner reports a terminal status, finalize the task here:
 		// finish webhook, autorun children, and pool/Redis state cleanup.
 		// This is what completes a task independently of the node that

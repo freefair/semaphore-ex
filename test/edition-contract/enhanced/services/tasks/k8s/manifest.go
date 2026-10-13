@@ -9,6 +9,15 @@ import (
 
 const restrictedWorkloadUID int64 = 65532
 
+const (
+	outputsSidecarCPURequestMilli              int64 = 10
+	outputsSidecarCPULimitMilli                int64 = 50
+	outputsSidecarMemoryRequestBytes           int64 = 16 << 20
+	outputsSidecarMemoryLimitBytes             int64 = 64 << 20
+	outputsSidecarEphemeralStorageRequestBytes int64 = 8 << 20
+	outputsSidecarEphemeralStorageLimitBytes   int64 = 32 << 20
+)
+
 func restrictedContainerSecurityContext() *corev1.SecurityContext {
 	allowPrivilegeEscalation := false
 	readOnlyRootFilesystem := true
@@ -52,6 +61,28 @@ func policyResources(resources db.KubernetesExecutionResources) corev1.ResourceR
 	}
 }
 
+// outputsSidecarResources gives the idle fixed-function sidecar a small,
+// bounded envelope. Each value is clamped to the administrator-approved task
+// budget, so it cannot exceed the per-container resource policy. The sidecar
+// still adds its own bounded request to the Pod's quota footprint.
+func outputsSidecarResources(resources db.KubernetesExecutionResources) corev1.ResourceRequirements {
+	return policyResources(db.KubernetesExecutionResources{
+		CPURequestMilli:              minInt64(resources.CPURequestMilli, outputsSidecarCPURequestMilli),
+		CPULimitMilli:                minInt64(resources.CPULimitMilli, outputsSidecarCPULimitMilli),
+		MemoryRequestBytes:           minInt64(resources.MemoryRequestBytes, outputsSidecarMemoryRequestBytes),
+		MemoryLimitBytes:             minInt64(resources.MemoryLimitBytes, outputsSidecarMemoryLimitBytes),
+		EphemeralStorageRequestBytes: minInt64(resources.EphemeralStorageRequestBytes, outputsSidecarEphemeralStorageRequestBytes),
+		EphemeralStorageLimitBytes:   minInt64(resources.EphemeralStorageLimitBytes, outputsSidecarEphemeralStorageLimitBytes),
+	})
+}
+
+func minInt64(left, right int64) int64 {
+	if left < right {
+		return left
+	}
+	return right
+}
+
 func policyEmptyDir(resources db.KubernetesExecutionResources) *corev1.EmptyDirVolumeSource {
 	return &corev1.EmptyDirVolumeSource{SizeLimit: resource.NewQuantity(resources.EphemeralStorageLimitBytes, resource.BinarySI)}
 }
@@ -91,14 +122,24 @@ func validateGeneratedJob(job *batchv1.Job, cfg config, policy db.KubernetesExec
 	if !hasRestrictedPodSecurity(pod.SecurityContext) {
 		return db.KubernetesPolicyViolationError{Rule: db.KubernetesPolicyRuleSecurityProfileDenied}
 	}
-	if len(pod.InitContainers) != 1 || len(pod.Containers) != 1 || pod.InitContainers[0].Image != cfg.helperImage || pod.Containers[0].Image != taskImage {
+	if len(pod.InitContainers) != 1 || (len(pod.Containers) != 1 && len(pod.Containers) != 2) || pod.InitContainers[0].Image != cfg.helperImage || pod.Containers[0].Image != taskImage {
 		return db.KubernetesPolicyViolationError{Rule: db.KubernetesPolicyRuleProjectOverrideDenied}
+	}
+	if len(pod.Containers) == 2 {
+		outputs := pod.Containers[1]
+		if outputs.Name != outputsContainerName || outputs.Image != cfg.helperImage || !hasVolumeMount(outputs.VolumeMounts, "workspace", workspacePath, true) || !hasVolumeMount(outputs.VolumeMounts, "bundle", bundlePath, true) || !hasVolumeMount(outputs.VolumeMounts, "outputs-control", outputsControlPath, false) || hasVolumeMount(pod.Containers[0].VolumeMounts, "outputs-control", outputsControlPath, false) {
+			return db.KubernetesPolicyViolationError{Rule: db.KubernetesPolicyRuleProjectOverrideDenied}
+		}
 	}
 	for _, container := range append(append([]corev1.Container{}, pod.InitContainers...), pod.Containers...) {
 		if !hasRestrictedContainerSecurity(container.SecurityContext) {
 			return db.KubernetesPolicyViolationError{Rule: db.KubernetesPolicyRuleSecurityProfileDenied}
 		}
-		if !equalResourceRequirements(container.Resources, policy.Resources) {
+		expectedResources := policy.Resources
+		if container.Name == outputsContainerName {
+			expectedResources = outputsSidecarPolicyResources(policy.Resources)
+		}
+		if !equalResourceRequirements(container.Resources, expectedResources) {
 			return db.KubernetesPolicyViolationError{Rule: db.KubernetesPolicyRuleResourceDenied}
 		}
 		if len(container.Env) != 0 || len(container.EnvFrom) != 0 {
@@ -106,6 +147,26 @@ func validateGeneratedJob(job *batchv1.Job, cfg config, policy db.KubernetesExec
 		}
 	}
 	return nil
+}
+
+func outputsSidecarPolicyResources(resources db.KubernetesExecutionResources) db.KubernetesExecutionResources {
+	return db.KubernetesExecutionResources{
+		CPURequestMilli:              minInt64(resources.CPURequestMilli, outputsSidecarCPURequestMilli),
+		CPULimitMilli:                minInt64(resources.CPULimitMilli, outputsSidecarCPULimitMilli),
+		MemoryRequestBytes:           minInt64(resources.MemoryRequestBytes, outputsSidecarMemoryRequestBytes),
+		MemoryLimitBytes:             minInt64(resources.MemoryLimitBytes, outputsSidecarMemoryLimitBytes),
+		EphemeralStorageRequestBytes: minInt64(resources.EphemeralStorageRequestBytes, outputsSidecarEphemeralStorageRequestBytes),
+		EphemeralStorageLimitBytes:   minInt64(resources.EphemeralStorageLimitBytes, outputsSidecarEphemeralStorageLimitBytes),
+	}
+}
+
+func hasVolumeMount(mounts []corev1.VolumeMount, name string, path string, readOnly bool) bool {
+	for _, mount := range mounts {
+		if mount.Name == name && mount.MountPath == path && mount.ReadOnly == readOnly {
+			return true
+		}
+	}
+	return false
 }
 
 func generatedVolumeTypes(volumes []corev1.Volume) ([]db.KubernetesVolumeType, bool, bool, bool) {

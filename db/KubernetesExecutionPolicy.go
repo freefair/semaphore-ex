@@ -71,7 +71,8 @@ const (
 )
 
 // KubernetesExecutionResources are policy-owned requests and limits applied
-// identically to generated task and helper containers.
+// to generated task and init containers. Fixed-function sidecars derive a
+// smaller envelope that is capped by these administrator-approved values.
 type KubernetesExecutionResources struct {
 	CPURequestMilli              int64 `json:"cpu_request_milli"`
 	CPULimitMilli                int64 `json:"cpu_limit_milli"`

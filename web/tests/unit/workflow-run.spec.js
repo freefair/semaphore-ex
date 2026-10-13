@@ -58,6 +58,27 @@ describe('linear workflow run dashboard', () => {
     });
   });
 
+  it('counts values-only public task outputs without exposing their values', () => {
+    const context = {
+      details: {
+        nodes: [{
+          node: { id: 11 },
+          status: 'succeeded',
+          task: {
+            id: 101,
+            artifacts: JSON.stringify({ values: { image_tag: 'v1.2.3', replicas: 3 } }),
+          },
+        }],
+      },
+      normalizeNodeStatus: WorkflowRun.methods.normalizeNodeStatus,
+    };
+
+    const node = WorkflowRun.computed.nodeRuns.call(context)[11];
+    expect(node.outputs).to.equal(2);
+    expect(node).to.not.have.property('artifacts');
+    expect(JSON.stringify(node)).to.not.contain('v1.2.3');
+  });
+
   it('loads the immutable dashboard contract without fetching the edited live workflow', async () => {
     const requests = [];
     axios.get = async (url) => {

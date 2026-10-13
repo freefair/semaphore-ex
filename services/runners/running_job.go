@@ -37,6 +37,11 @@ type runningJob struct {
 	commit     *CommitInfo
 	redactor   taskredaction.Redactor
 
+	// outputs is the outputs document of a finished workflow task. It is set
+	// in the same critical section as the success status (see finish), so a
+	// progress snapshot never sees success without the outputs that go with it.
+	outputs *string
+
 	statusListeners []task_logger.StatusListener
 	logListeners    []task_logger.LogListener
 }
@@ -122,12 +127,29 @@ func (p *runningJob) SetCommit(hash, message string) {
 }
 
 func (p *runningJob) SetStatus(status task_logger.TaskStatus) {
+	p.transition(status, nil)
+}
+
+// finish moves the job to a terminal status and, for success, attaches the
+// outputs the task produced. Both change under one lock so getProgress reports
+// them together.
+func (p *runningJob) finish(status task_logger.TaskStatus, outputs *string) {
+	if status != task_logger.TaskSuccessStatus {
+		outputs = nil
+	}
+	p.transition(status, outputs)
+}
+
+func (p *runningJob) transition(status task_logger.TaskStatus, outputs *string) {
 	p.mu.Lock()
 	if p.status == status {
 		p.mu.Unlock()
 		return
 	}
 	p.status = status
+	if outputs != nil {
+		p.outputs = outputs
+	}
 	listeners := make([]task_logger.StatusListener, len(p.statusListeners))
 	copy(listeners, p.statusListeners)
 	p.mu.Unlock()
@@ -151,7 +173,7 @@ func (p *runningJob) getStatus() task_logger.TaskStatus {
 // getProgress atomically snapshots the data needed to report progress to the
 // server. The returned slice is a copy, so the caller can read it freely while
 // the job keeps appending records.
-func (p *runningJob) getProgress() (status task_logger.TaskStatus, logRecords []LogRecord, commit *CommitInfo, metadata *db.RunnerExecutorMetadata) {
+func (p *runningJob) getProgress() (status task_logger.TaskStatus, logRecords []LogRecord, commit *CommitInfo, metadata *db.RunnerExecutorMetadata, outputs *string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	status = p.status
@@ -162,6 +184,7 @@ func (p *runningJob) getProgress() (status task_logger.TaskStatus, logRecords []
 		value := provider.ExecutorMetadata()
 		metadata = &value
 	}
+	outputs = p.outputs
 	return
 }
 

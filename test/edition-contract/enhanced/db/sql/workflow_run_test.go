@@ -62,6 +62,12 @@ func TestWorkflowRunRepositoryPersistsImmutableSnapshotAndConditionalNodeState(t
 	attached, err = repository.AttachWorkflowRunNodeTask(projectID, created.ID, rootNodeID, task.ID)
 	require.NoError(t, err)
 	assert.False(t, attached)
+	finalized, err := repository.FinalizeWorkflowRunNode(
+		projectID, created.ID, rootNodeID, db.WorkflowRunNodeFailed,
+		"input resolution failed", `{"status":"failed","successful":false}`, now.Add(2*time.Second),
+	)
+	require.NoError(t, err)
+	assert.False(t, finalized, "a task-attached node must never be finalized by the planner")
 
 	_, err = store.CreateTask(db.Task{
 		ProjectID: projectID, TemplateID: templateOne.ID, Status: task_logger.TaskWaitingStatus,
@@ -93,7 +99,7 @@ func TestWorkflowRunRepositoryPersistsImmutableSnapshotAndConditionalNodeState(t
 	assert.ErrorIs(t, err, db.ErrNotFound)
 
 	dependentNodeID := workflow.Nodes[1].ID
-	finalized, err := repository.FinalizeWorkflowRunNode(
+	finalized, err = repository.FinalizeWorkflowRunNode(
 		projectID, created.ID, dependentNodeID, db.WorkflowRunNodeSkipped,
 		"condition did not match", `{"status":"skipped","successful":false}`, now.Add(6*time.Second),
 	)

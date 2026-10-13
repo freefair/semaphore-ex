@@ -2,9 +2,11 @@ package server
 
 import (
 	"testing"
+	"time"
 
 	"github.com/semaphoreui/semaphore/db"
 	coresql "github.com/semaphoreui/semaphore/db/sql"
+	workflowDB "github.com/semaphoreui/semaphore/pro/db"
 	workflowSQL "github.com/semaphoreui/semaphore/pro/db/sql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,6 +60,37 @@ func TestWorkflowDefinitionServiceNormalizesBeforeCreate(t *testing.T) {
 	assert.Equal(t, db.WorkflowNodeTaskKind, created.Nodes[0].Kind)
 	assert.Equal(t, db.WorkflowConvergenceAll, created.Nodes[0].ConvergenceMode)
 	assert.Equal(t, 4, created.MaxParallelTasks)
+}
+
+func TestWorkflowDefinitionServiceUsesImmutableVersionIDForDefinitionAndRunSnapshot(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	defer store.Close()
+	project, err := store.CreateProject(db.Project{Name: "Version identity service test"})
+	require.NoError(t, err)
+	templateID := insertWorkflowTestTemplate(t, store, project.ID)
+	template, err := store.GetTemplate(project.ID, templateID)
+	require.NoError(t, err)
+	repository := workflowSQL.NewWorkflowStore(store.GetConnection())
+	service := NewWorkflowDefinitionService(repository, store)
+	actor := &db.User{ID: 1, Admin: true}
+
+	first, validation, err := service.Create(project.ID, db.WorkflowTemplate{Name: "First", Nodes: []db.WorkflowNode{{ID: -1, TemplateID: templateID}}}, actor)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	second, validation, err := service.Create(project.ID, db.WorkflowTemplate{Name: "Second", Nodes: []db.WorkflowNode{{ID: -1, TemplateID: templateID}}}, actor)
+	require.NoError(t, err)
+	require.True(t, validation.Valid, validation.Issues)
+	require.NotEqual(t, second.Revision, second.CurrentVersionID, "revision is per-workflow ordinal, not immutable version identity")
+	assert.Equal(t, first.CurrentVersionID, first.RevisionID)
+	assert.Equal(t, second.CurrentVersionID, second.RevisionID)
+
+	reloaded, err := service.Get(project.ID, second.ID, actor)
+	require.NoError(t, err)
+	assert.Equal(t, second.CurrentVersionID, reloaded.CurrentVersionID)
+	assert.Equal(t, second.CurrentVersionID, reloaded.RevisionID)
+	run, err := workflowDB.BuildWorkflowRunSnapshot(reloaded, map[int]db.Template{templateID: template}, actor.ID, "immutable-version-id", time.Now().UTC())
+	require.NoError(t, err)
+	assert.Equal(t, reloaded.CurrentVersionID, run.WorkflowVersionID)
 }
 
 func TestWorkflowDefinitionServiceCompilesConditionsBeforePersistence(t *testing.T) {

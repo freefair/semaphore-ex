@@ -13,6 +13,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
 	"github.com/semaphoreui/semaphore/pkg/taskredaction"
 	"github.com/semaphoreui/semaphore/pkg/tz"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
@@ -127,6 +128,33 @@ func NewJobPool(keyInstaller db_lib.AccessKeyInstaller) *JobPool {
 	}
 
 	return pool
+}
+
+// SetTaskOutputsCollector injects the collector that captures the outputs of
+// workflow tasks into the executor provider when the provider supports it.
+// Nil, the open-source value, disables capture.
+func (p *JobPool) SetTaskOutputsCollector(collector pro_interfaces.TaskOutputsCollector) {
+	aware, ok := p.provider.(interface {
+		SetTaskOutputsCollector(pro_interfaces.TaskOutputsCollector)
+	})
+	if ok {
+		aware.SetTaskOutputsCollector(collector)
+	}
+}
+
+// taskOutputs returns the outputs document a finished workflow task produced,
+// or nil. An executor that cannot capture outputs leaves a line in the task
+// log, so a workflow author sees at the task why a downstream node got nothing.
+func (p *JobPool) taskOutputs(t *job, running *runningJob) *string {
+	if !t.workflowTask {
+		return nil
+	}
+	provider, ok := running.job.(tasks.OutputsProvider)
+	if !ok {
+		running.Log("Workflow outputs are not captured by this runner's executor.")
+		return nil
+	}
+	return provider.Outputs()
 }
 
 // setCommonHeaders sets the headers every runner→server request carries:
@@ -457,7 +485,7 @@ func (p *JobPool) Run() {
 					if running.getStatus() == task_logger.TaskStoppingStatus {
 						p.finishStoppedJob(running)
 					} else {
-						running.SetStatus(task_logger.TaskSuccessStatus)
+						running.finish(task_logger.TaskSuccessStatus, p.taskOutputs(t, running))
 					}
 				}
 
@@ -599,8 +627,7 @@ func (p *JobPool) sendProgress() (ok bool) {
 	}
 
 	for id, j := range p.snapshotRunningJobs() {
-
-		status, logRecords, commit, executorMetadata := j.getProgress()
+		status, logRecords, commit, executorMetadata, outputs := j.getProgress()
 
 		body.Jobs = append(body.Jobs, JobProgress{
 			ID:               id,
@@ -609,6 +636,7 @@ func (p *JobPool) sendProgress() (ok bool) {
 			Status:           status,
 			Commit:           commit,
 			ExecutorMetadata: executorMetadata,
+			Outputs:          outputs,
 		})
 		body.KnownJobs = append(body.KnownJobs, JobState{
 			ID: id, Generation: j.generation, Status: status,
@@ -1286,6 +1314,7 @@ func (p *JobPool) checkNewJobs() {
 			generation:      newJob.Task.AssignmentGeneration,
 			status:          newJob.Task.Status,
 			redactor:        taskredaction.NewFromTaskSecretAndValues(newJob.TaskSecret, newJob.CredentialTargets, jobCredentialSecretValues(newJob.Repository, newJob.HostConfigs)),
+			workflowTask:    newJob.Task.WorkflowRunID != nil,
 		}
 		if resolveExecutorType(util.Config.Runner.Executor) == util.ExecutorTypeDocker {
 			ack, ready := p.currentDockerPolicyAck()

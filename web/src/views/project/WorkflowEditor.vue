@@ -475,47 +475,18 @@
           </template>
         </div>
 
-        <div v-else-if="editingEdge" class="pa-3">
-          <div class="text-subtitle-2 mb-2">{{ $t('workflowEdgeCondition') }}</div>
-          <div class="text-caption text--secondary mb-2">
-            #{{ editingEdge.source_node_id }} → #{{ editingEdge.destination_node_id }}
-          </div>
-          <v-select
-            v-model="editingEdge.condition"
-            :items="conditionOptions"
-            item-value="value"
-            item-text="text"
-            :disabled="!canManage"
-            outlined
-            dense
-            hide-details="auto"
-            @change="onEdgeConditionChanged"
-          />
-          <v-textarea
-            v-if="editingEdge.condition === 'expression'"
-            v-model="editingEdge.condition_expression"
-            :label="$t('workflowConditionExpression')"
-            :hint="$t('workflowConditionExpressionHint')"
-            persistent-hint
-            :disabled="!canManage"
-            outlined
-            dense
-            auto-grow
-            rows="2"
-            class="mt-4"
-            @input="applyEdgeEdit"
-          />
-          <v-text-field
-            v-model="editingEdge.label"
-            :label="$t('workflowEdgeLabel')"
-            :disabled="!canManage"
-            outlined
-            dense
-            hide-details="auto"
-            class="mt-4"
-            @input="applyEdgeEdit"
-          />
-        </div>
+        <WorkflowEdgeProperties
+          v-else-if="editingEdge"
+          :key="edgeKey(editingEdge)"
+          :value="editingEdge"
+          :nodes="item.nodes"
+          :templates="templates"
+          :output-hints="outputHints"
+          :can-manage="canManage"
+          @input="applyEdgeEdit"
+          @delete="deleteSelectedEdge()"
+          @close="closePanel()"
+        />
       </div>
     </div>
 
@@ -537,6 +508,7 @@ import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
 import WorkflowGraph from '@/components/WorkflowGraph.vue';
+import WorkflowEdgeProperties from '@/components/workflow/WorkflowEdgeProperties.vue';
 import WorkflowNodeOverridePolicyEditor from '@/components/WorkflowNodeOverridePolicyEditor.vue';
 import WorkflowVersionsDialog from '@/components/WorkflowVersionsDialog.vue';
 import CrossProjectTemplateGrantsDialog from '@/components/CrossProjectTemplateGrantsDialog.vue';
@@ -564,6 +536,7 @@ export default {
     WorkflowNodeApprovalPolicy,
     TaskParamsForm,
     WorkflowGraph,
+    WorkflowEdgeProperties,
     WorkflowNodeOverridePolicyEditor,
     WorkflowVersionsDialog,
     CrossProjectTemplateGrantsDialog,
@@ -597,6 +570,11 @@ export default {
       // Runs still in progress: they keep executing the revision they started
       // from, so saving is safe — the chip in the toolbar just says so.
       activeRuns: 0,
+      // Outputs of the latest finished run of the loaded revision, keyed by
+      // node id, for the key suggestions of the edge panel. Null when no such
+      // run exists. Suggestions stay bound to the exact immutable EX version.
+      outputHints: null,
+      outputHintRequest: 0,
       // JSON of the last loaded / saved model, for the unsaved-changes guard.
       savedSnapshot: null,
       leaveDialog: false,
@@ -658,14 +636,6 @@ export default {
         nodes: this.item.nodes,
         edges: this.item.edges,
       });
-    },
-    conditionOptions() {
-      return [
-        { value: 'on_success', text: this.$t('workflowConditionOnSuccess') },
-        { value: 'on_failure', text: this.$t('workflowConditionOnFailure') },
-        { value: 'always', text: this.$t('workflowConditionAlways') },
-        { value: 'expression', text: this.$t('workflowConditionExpression') },
-      ];
     },
     problems() {
       if (this.validationIssues.length === 0) return this.clientIssues;
@@ -753,17 +723,73 @@ export default {
     setNavMini(mini) {
       EventBus.$emit('i-nav-mini', { mini });
     },
-    // Informational only (see activeRuns); a failure must not block editing.
+    // Informational only (see activeRuns, outputHints); a failure must not
+    // block editing.
     async loadActiveRuns() {
+      const projectId = this.projectId;
+      const workflowId = this.workflowId;
+      const revisionId = this.item?.current_version_id || this.item?.revision_id;
+      const request = (this.outputHintRequest || 0) + 1;
+      this.outputHintRequest = request;
+      const current = () => request === this.outputHintRequest
+        && projectId === this.projectId && workflowId === this.workflowId
+        && revisionId === (this.item?.current_version_id || this.item?.revision_id);
+      this.outputHints = null;
+      let runs;
       try {
-        const runs = await this.loadEndpoint(
-          `/api/project/${this.projectId}/workflows/${this.workflowId}/runs`,
-        );
-        this.activeRuns = (runs || [])
-          .filter((r) => ['pending', 'queued', 'running', 'approval', 'stopping'].includes(r.status)).length;
+        runs = await this.loadEndpoint(`/api/project/${projectId}/workflows/${workflowId}/runs`);
       } catch (err) {
-        this.activeRuns = 0;
+        if (current()) this.activeRuns = 0;
+        return;
       }
+      if (!current()) return;
+      this.activeRuns = (runs || [])
+        .filter((r) => ['pending', 'queued', 'running', 'approval', 'stopping'].includes(r.status)).length;
+      try {
+        await this.loadOutputHints(runs || [], request);
+      } catch (err) {
+        if (current()) this.outputHints = null;
+      }
+    },
+    // The latest finished run of the current revision tells which outputs each
+    // task node produced; the edge panel offers them as keys.
+    async loadOutputHints(runs, request = this.outputHintRequest) {
+      const projectId = this.projectId;
+      const workflowId = this.workflowId;
+      this.outputHints = null;
+      const revisionId = this.item?.current_version_id || this.item?.revision_id;
+      if (!revisionId) return;
+      const candidates = runs
+        .filter((r) => (r.workflow_version_id || r.revision_id) === revisionId
+          && !['pending', 'queued', 'running', 'approval', 'stopping'].includes(r.status))
+        .sort((a, b) => b.id - a.id);
+      if (candidates.length === 0) return;
+      const run = candidates[0];
+      const details = await this.loadEndpoint(
+        `/api/project/${projectId}/workflows/${workflowId}/runs/${run.id}`,
+      );
+      if (projectId !== this.projectId || workflowId !== this.workflowId
+        || revisionId !== (this.item?.current_version_id || this.item?.revision_id)
+        || request !== this.outputHintRequest) return;
+      const byNode = {};
+      (details?.nodes || []).forEach((n) => {
+        const raw = n.task?.artifacts;
+        if (!raw) return;
+        let doc;
+        try {
+          doc = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        } catch (err) {
+          return;
+        }
+        const values = doc && typeof doc === 'object' && doc.values && typeof doc.values === 'object'
+          ? doc.values : {};
+        const skipped = doc && typeof doc === 'object' && doc.skipped && typeof doc.skipped === 'object'
+          ? doc.skipped : {};
+        const keys = Object.keys(values).sort();
+        if (keys.length === 0 && Object.keys(skipped).length === 0) return;
+        byNode[n.node.id] = { keys, skipped };
+      });
+      this.outputHints = { runId: run.id, byNode };
     },
     getNewItem() {
       return {
@@ -953,8 +979,9 @@ export default {
       this.pendingHistoryKey = `node-${this.editingNode.id}`;
       this.$refs.graph.syncNode(this.editingNode.id, { ...this.editingNode });
     },
-    applyEdgeEdit() {
+    applyEdgeEdit(edge) {
       if (!this.editingEdge || !this.$refs.graph) return;
+      if (edge && typeof edge === 'object') this.editingEdge = { ...edge };
       this.pendingHistoryKey = this.edgeKey(this.editingEdge);
       this.$refs.graph.syncEdge({ ...this.editingEdge });
     },
@@ -1045,6 +1072,8 @@ export default {
           saved = (await axios.post(`/api/project/${this.projectId}/workflows`, payload)).data;
           EventBus.$emit('i-snackbar', { color: 'success', text: this.$t('workflowSaved') });
           this.item = this.prepareItem(saved);
+          this.outputHints = null;
+          this.outputHintRequest = (this.outputHintRequest || 0) + 1;
           this.clearSelection();
           this.baseline = this.clone(this.item);
           this.dirty = false;
@@ -1058,6 +1087,8 @@ export default {
             payload,
           )).data;
           this.item = this.prepareItem(saved);
+          this.outputHints = null;
+          this.outputHintRequest = (this.outputHintRequest || 0) + 1;
           this.clearSelection();
           this.baseline = this.clone(this.item);
           this.dirty = false;

@@ -46,6 +46,23 @@ type KubernetesClient interface {
 	DeleteBundleSecret(context.Context, ObjectIdentity) error
 }
 
+// workflowOutputsClient is deliberately separate from KubernetesClient. It
+// exposes only the output collection capability needed by workflow tasks.
+// Callers cannot choose a container or an arbitrary command.
+type workflowOutputsClient interface {
+	validateOutputExecAccess(context.Context) error
+	WaitForTaskCompletion(context.Context, ObjectIdentity, PodIdentity, map[string]string) (int32, error)
+	execOutputStage(context.Context, ObjectIdentity, PodIdentity, map[string]string, outputStage, io.Writer) error
+}
+
+type outputStage string
+
+const (
+	collectOutputStage     outputStage = "collect"
+	terraformOutputStage   outputStage = "terraform"
+	acknowledgeOutputStage outputStage = "acknowledge"
+)
+
 // kubernetesReconciliationScanner is intentionally narrower than the executor
 // client: it has no cluster-scoped capability and returns only bounded state.
 type kubernetesReconciliationScanner interface {

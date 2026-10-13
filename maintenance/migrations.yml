@@ -1138,3 +1138,10 @@ migrations:
     migrations_ex/v2.20.5-ex1.5.err.sql: 8f40e7b4acf260a9f60bcd4f0104b5b000e24d1c66dc2bf2825f99f8840ddc5c
     migrations_ex/v2.20.5-ex1.5.sql: d6e3fd3fe9fc84f1877183f3d73a676b3b587cee03094e561836290a1b191dfe
   rationale: Inventory membership snapshots and explicit runner refresh capability; independent EX schema.
+- registered: true
+  id: 2.20.11-ex1.1
+  owner: fork
+  rationale: Preserve shipped upstream 2.20.10 while adding its later workflow edge input columns through an anchored compatibility delta.
+  files:
+    migrations_ex/v2.20.11-ex1.1.sql: ec28c0f27513d2658531cd4008040974055b85831f1a275400c4e36b23f9d155
+    migrations_ex/v2.20.11-ex1.1.err.sql: b7dc69a5c50a1981e59e73d469a68febe6d064a83448f395910ab1a14c5836f4

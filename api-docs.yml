@@ -999,12 +999,6 @@ definitions:
       resolved_executor_image:
         type: string
         description: Immutable credential-free image delivered to the selected runner
-      workflow_run_id:
-        type: integer
-        description: Workflow run that created this task
-      workflow_node_id:
-        type: integer
-        description: Immutable workflow definition node represented by this task
       inventory_id:
         type: integer
       params:
@@ -1013,6 +1007,19 @@ definitions:
           - $ref: '#/definitions/TerraformTaskParams'
       limit:
         type: string
+      workflow_run_id:
+        type: integer
+        description: Set by the server when the task is a node of a workflow run. Ignored on create.
+      workflow_node_id:
+        type: integer
+        description: Node of the workflow revision that started the task. Ignored on create.
+      artifacts:
+        type: string
+        description: >
+          Outputs of a workflow task, as a JSON document in a string:
+          {"values": {"<name>": <any JSON value>}, "skipped": {"<name>": "<reason>"}}.
+          Set by the server after the task succeeded with outputs; reasons are sensitive, too_large,
+          invalid_name and limit. Ignored on create.
 
   RunnerAttempt:
     $ref: "./api-docs-ex.yml#/definitions/RunnerAttempt"
@@ -1687,7 +1694,40 @@ definitions:
         type: integer
       condition:
         type: string
-        enum: [on_success, on_failure, always]
+        enum: [on_success, on_failure, always, expression]
+      condition_expression:
+        type: string
+      label:
+        type: string
+      input_mode:
+        type: string
+        enum: [by_name, explicit]
+        description: >
+          How the outputs of the source node feed the survey variables of the destination task node.
+          by_name (default) delivers every output whose name equals a non-secret survey variable;
+          explicit delivers only the pairs listed in input_mappings. Allowed only on an edge whose
+          destination is a local task node. Cross-project template inputs remain owner-controlled;
+          declared EX artifact aliases cannot be mapped through this public channel.
+      input_mappings:
+        type: array
+        description: Pairs delivered in explicit mode. An empty list means the edge passes nothing.
+        items:
+          $ref: "#/definitions/WorkflowInputMapping"
+
+  WorkflowArtifactMetadata:
+    $ref: "./api-docs-ex.yml#/definitions/WorkflowArtifactMetadata"
+
+  WorkflowInputMapping:
+    type: object
+    required: [var, key]
+    properties:
+      var:
+        type: string
+        description: Name of a non-secret survey variable of the destination template.
+      key:
+        type: string
+        description: Name of a top-level output of the source node.
+        pattern: '^[A-Za-z_][A-Za-z0-9_-]*$'
 
   WorkflowTemplate:
     type: object
@@ -1709,6 +1749,9 @@ definitions:
       revision_id:
         type: integer
         description: Immutable EX workflow version ID used by the revision API.
+      current_version_id:
+        type: integer
+        description: Canonical immutable EX workflow version ID, also exposed as revision_id.
       nodes:
         type: array
         items:
@@ -1727,6 +1770,9 @@ definitions:
         type: integer
       workflow_template_id:
         type: integer
+      workflow_version_id:
+        type: integer
+        description: Canonical immutable EX workflow version ID captured by this run.
       revision_id:
         type: integer
         description: Immutable EX workflow version ID used by the revision API.
@@ -4041,20 +4087,7 @@ paths:
               $ref: "#/definitions/WorkflowApproval"
 
   /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/artifacts:
-    parameters:
-      - $ref: "#/parameters/project_id"
-      - $ref: "#/parameters/workflow_id"
-      - $ref: "#/parameters/run_id"
-    get:
-      tags:
-        - workflow
-      summary: Get merged workflow run artifacts
-      responses:
-        200:
-          description: merged artifacts
-          schema:
-            type: object
-            additionalProperties: true
+    $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1runs~1{run_id}~1artifacts"
 
   /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/file-artifacts:
     $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1runs~1{run_id}~1file-artifacts"

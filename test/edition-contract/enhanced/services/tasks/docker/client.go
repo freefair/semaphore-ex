@@ -392,7 +392,7 @@ func validStageCommand(command []string) bool {
 		return false
 	}
 	switch command[2] {
-	case "bootstrap", "run", "plan", "apply":
+	case "bootstrap", "run", "plan", "apply", "collect-outputs", "terraform-outputs", "docker-collect-outputs", "docker-terraform-outputs":
 		return true
 	default:
 		return false

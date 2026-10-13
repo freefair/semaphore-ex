@@ -22,7 +22,7 @@ func TestBuildJobCreatesOneBoundedAttributableTaskPod(t *testing.T) {
 	}
 	task := db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 3}
 
-	job := buildJob(cfg, testKubernetesPolicy(t, cfg), task, 19, "semaphore-bundle-41-3", testImage, []string{"/bin/sh", "/semaphore/bundle/run.sh", "run"})
+	job := buildJob(cfg, testKubernetesPolicy(t, cfg), task, 19, "semaphore-bundle-41-3", testImage, []string{"/bin/sh", "/semaphore/bundle/run.sh", "run"}, false)
 
 	require.NotNil(t, job)
 	assert.Equal(t, "semaphore-jobs", job.Namespace)
@@ -70,8 +70,47 @@ func TestBuildJobNameIsStableAndWithinKubernetesLimit(t *testing.T) {
 		ID:                   2147483647,
 		ProjectID:            2147483647,
 		AssignmentGeneration: 2147483647,
-	}, 2147483647, "semaphore-bundle-2147483647-2147483647", testImage, []string{"/bin/true"})
+	}, 2147483647, "semaphore-bundle-2147483647-2147483647", testImage, []string{"/bin/true"}, false)
 
 	assert.LessOrEqual(t, len(job.Name), 63)
 	assert.Equal(t, job.Labels, job.Spec.Template.Labels)
+}
+
+func TestBuildJobAddsIsolatedOutputsSidecarOnlyForWorkflowPlans(t *testing.T) {
+	cfg := config{namespace: "semaphore", serviceAccount: "semaphore-task", helperImage: testImage, cleanupGrace: time.Second, activeDeadlineSeconds: 60}
+	policy := testKubernetesPolicy(t, cfg)
+	task := db.Task{ID: 4, ProjectID: 5, AssignmentGeneration: 6}
+	command := []string{"/bin/sh", "/semaphore/bundle/run.sh", "run"}
+
+	job := buildJob(cfg, policy, task, 7, "bundle", testImage, command, true)
+	require.Len(t, job.Spec.Template.Spec.Containers, 2)
+	taskContainer := job.Spec.Template.Spec.Containers[0]
+	outputs := job.Spec.Template.Spec.Containers[1]
+	assert.Equal(t, command, taskContainer.Command)
+	assert.Equal(t, outputsContainerName, outputs.Name)
+	assert.Equal(t, cfg.helperImage, outputs.Image)
+	assert.Contains(t, outputs.Command[2], "outputs-ack")
+	assert.True(t, hasMount(outputs.VolumeMounts, "workspace", workspacePath, true))
+	assert.True(t, hasMount(outputs.VolumeMounts, "bundle", bundlePath, true))
+	assert.True(t, hasMount(outputs.VolumeMounts, "outputs-control", outputsControlPath, false))
+	assert.False(t, hasMount(taskContainer.VolumeMounts, "outputs-control", outputsControlPath, false))
+	assert.True(t, hasRestrictedContainerSecurity(outputs.SecurityContext))
+	assert.Equal(t, outputsSidecarResources(policy.Resources), outputs.Resources)
+	assert.Less(t, outputs.Resources.Requests.Cpu().MilliValue(), taskContainer.Resources.Requests.Cpu().MilliValue())
+	assert.Less(t, outputs.Resources.Requests.Memory().Value(), taskContainer.Resources.Requests.Memory().Value())
+	require.NotNil(t, job.Spec.Template.Spec.AutomountServiceAccountToken)
+	assert.False(t, *job.Spec.Template.Spec.AutomountServiceAccountToken)
+
+	nonWorkflow := buildJob(cfg, policy, task, 7, "bundle", testImage, command, false)
+	assert.Len(t, nonWorkflow.Spec.Template.Spec.Containers, 1)
+	assert.NotContains(t, nonWorkflow.Spec.Template.Spec.Volumes, corev1.Volume{Name: "outputs-control"})
+}
+
+func hasMount(mounts []corev1.VolumeMount, name string, path string, readOnly bool) bool {
+	for _, mount := range mounts {
+		if mount.Name == name && mount.MountPath == path && mount.ReadOnly == readOnly {
+			return true
+		}
+	}
+	return false
 }

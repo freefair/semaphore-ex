@@ -331,6 +331,19 @@ import WorkflowGraph from '@/components/WorkflowGraph.vue';
 import WorkflowParameterAudit from '@/components/WorkflowParameterAudit.vue';
 import socket from '@/socket';
 
+// Number of output values a task stored (task.artifacts is the
+// {values, skipped} document, as a JSON string or already parsed).
+function countOutputs(raw) {
+  if (!raw) return 0;
+  try {
+    const doc = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const values = doc && typeof doc === 'object' ? doc.values : null;
+    return values && typeof values === 'object' ? Object.keys(values).length : 0;
+  } catch (err) {
+    return 0;
+  }
+}
+
 export default {
   components: { WorkflowGraph, WorkflowParameterAudit, WorkflowRunArtifacts },
   props: {
@@ -365,12 +378,6 @@ export default {
       return this.isActiveRunStatus(this.details.run.status)
         && Boolean(this.details.effective_access?.stop);
     },
-    hasRemoteRunnerNodes() {
-      if (!this.details) return false;
-      return (this.details.nodes || []).some(
-        (n) => n.task && n.task.used_runner_id != null,
-      );
-    },
     // node.id -> run info for the card: status, timing, live delay countdown,
     // the task to open on click and the approval message.
     nodeRuns() {
@@ -387,6 +394,7 @@ export default {
           start: n.task?.start || n.task?.created || approval?.created || n.delay?.created,
           end: n.task?.end || approval?.resolved || n.delay?.resolved,
           taskId: n.task?.id,
+          outputs: countOutputs(n.task?.artifacts),
           message: n.node.approval_message,
           resumeAt: n.delay?.status === 'waiting' ? n.delay.resume_at : null,
         };

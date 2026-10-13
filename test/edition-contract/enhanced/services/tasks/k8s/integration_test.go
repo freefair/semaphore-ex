@@ -58,6 +58,27 @@ esac
 		assertIntegrationObjectsGone(t, admin, cfg.namespace, executor.task)
 	})
 
+	t.Run("workflow outputs preflight pods exec and collect through sidecar", func(t *testing.T) {
+		configureKubernetesOutputsTest(t)
+		document := `{"values":{"release":"1.2.3"}}`
+		local := newKubernetesOutputsLocalExecutor(t, db.AppBash, &kubernetesOutputsCapture{document: &document})
+		executor := newExecutorForPlan(baseClient, cfg, policy, 19, db.Task{ID: 4104, ProjectID: 7, AssignmentGeneration: 1}, db.Template{App: db.AppBash}, &captureLogger{})
+		executor.local = local
+		plan := &tasks.ContainerTaskPlan{App: db.AppBash, WorkflowOutputs: true, Bundle: io.NopCloser(bytes.NewReader(taskBundle(t, `
+case "$1" in
+  bootstrap) exit 0 ;;
+  run) exit 0 ;;
+  collect-outputs) printf '%s' '{"values":{"release":"1.2.3"}}' ;;
+  *) exit 64 ;;
+esac
+`)))}
+
+		require.NoError(t, executor.runPlan(context.Background(), plan))
+		require.NotNil(t, executor.Outputs())
+		assert.Equal(t, document, *executor.Outputs())
+		assertIntegrationObjectsGone(t, admin, cfg.namespace, executor.task)
+	})
+
 	t.Run("RBAC denial has stable category", func(t *testing.T) {
 		denied := tokenClientForServiceAccount(t, kubeconfig, contextName, admin, cfg.namespace, "semaphore-denied")
 		_, err := (&client{config: cfg, api: denied}).CreateNetworkPolicy(context.Background(), mustDenyAllNetworkPolicy(t, cfg, policy, 4190))
@@ -75,7 +96,7 @@ esac
 			_, ready := quota.Status.Hard[corev1.ResourceName("count/jobs.batch")]
 			return quotaErr == nil && ready
 		}, 15*time.Second, 100*time.Millisecond)
-		_, err = baseClient.CreateJob(context.Background(), buildJob(cfg, policy, db.Task{ID: 4191, ProjectID: 7, AssignmentGeneration: 1}, 19, "bundle", cfg.image, []string{"/bin/true"}))
+		_, err = baseClient.CreateJob(context.Background(), buildJob(cfg, policy, db.Task{ID: 4191, ProjectID: 7, AssignmentGeneration: 1}, 19, "bundle", cfg.image, []string{"/bin/true"}, false))
 		require.ErrorIs(t, err, db.KubernetesPolicyViolationError{Rule: db.KubernetesPolicyRuleQuotaDenied})
 		require.NoError(t, admin.CoreV1().ResourceQuotas(cfg.namespace).Delete(context.Background(), "slice053-cpu-quota", metav1.DeleteOptions{}))
 	})
@@ -211,6 +232,7 @@ func createRestrictedIntegrationClient(t *testing.T, kubeconfig string, contextN
 			{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"create", "get", "list", "watch", "delete"}},
 			{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}},
+			{APIGroups: []string{""}, Resources: []string{"pods/exec"}, Verbs: []string{"create"}},
 			{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"create", "get", "delete"}},
 			{APIGroups: []string{"networking.k8s.io"}, Resources: []string{"networkpolicies"}, Verbs: []string{"create", "get", "delete"}},
 		},
@@ -244,12 +266,17 @@ func createRestrictedIntegrationClient(t *testing.T, kubeconfig string, contextN
 	}, metav1.CreateOptions{})
 	require.NoError(t, err)
 	assert.True(t, access.Status.Allowed)
+	execAccess, err := restricted.AuthorizationV1().SelfSubjectAccessReviews().Create(context.Background(), &authorizationv1.SelfSubjectAccessReview{
+		Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: namespace, Verb: "create", Resource: "pods", Subresource: "exec"}},
+	}, metav1.CreateOptions{})
+	require.NoError(t, err)
+	assert.True(t, execAccess.Status.Allowed)
 	cfg := config{
 		clusterAlias: "kind-slice053", namespace: namespace, serviceAccount: "semaphore-task",
 		image: image, helperImage: image, pollInterval: 100 * time.Millisecond,
 		cleanupGrace: 5 * time.Second, activeDeadlineSeconds: 60,
 	}
-	return cfg, &client{config: cfg, api: restricted}, admin
+	return cfg, &client{config: cfg, api: restricted, restConfig: restrictedConfig}, admin
 }
 
 func taskBundle(t *testing.T, script string) []byte {

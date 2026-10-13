@@ -1,7 +1,9 @@
 package docker
 
 import (
+	"archive/tar"
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -16,6 +18,7 @@ import (
 	"github.com/semaphoreui/semaphore/db_lib"
 	"github.com/semaphoreui/semaphore/pkg/ssh"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/tasks"
 	"github.com/semaphoreui/semaphore/util"
 )
@@ -38,6 +41,7 @@ type Provider struct {
 	runnerID              int
 	session               db.DockerReconciliationSession
 	repoLock              *tasks.KeyLock
+	outputsCollector      pro_interfaces.TaskOutputsCollector
 	policyMu              sync.RWMutex
 	policy                db.DockerExecutionPolicy
 	telemetryMu           sync.Mutex
@@ -45,6 +49,10 @@ type Provider struct {
 	telemetryNextSequence int64
 	telemetry             []db.DockerTelemetryEvent
 	telemetryDropped      int64
+}
+
+func (p *Provider) SetTaskOutputsCollector(collector pro_interfaces.TaskOutputsCollector) {
+	p.outputsCollector = collector
 }
 
 // NewProvider builds one long-lived Docker API client for the runner. The
@@ -219,17 +227,18 @@ func (p *Provider) NewExecutor(task db.Task, template db.Template, inventory db.
 		return nil, err
 	}
 	local := &tasks.LocalExecutor{
-		Task:         task,
-		Template:     template,
-		Inventory:    inventory,
-		Repository:   repository,
-		Environment:  environment,
-		Secret:       taskSecret,
-		KeyInstaller: p.keyInstaller,
-		App:          db_lib.CreateApp(template, repository, inventory, nil),
-		JWT:          jwt,
-		RepoLock:     p.repoLock,
-		HostConfigs:  hostConfigs,
+		Task:             task,
+		Template:         template,
+		Inventory:        inventory,
+		Repository:       repository,
+		Environment:      environment,
+		Secret:           taskSecret,
+		KeyInstaller:     p.keyInstaller,
+		App:              db_lib.CreateApp(template, repository, inventory, nil),
+		JWT:              jwt,
+		RepoLock:         p.repoLock,
+		HostConfigs:      hostConfigs,
+		OutputsCollector: p.outputsCollector,
 	}
 	runnerBoot, runnerID := p.effectiveRunnerIdentity()
 	return &DockerExecutor{
@@ -281,6 +290,7 @@ type DockerExecutor struct {
 	helperImage     ResolvedImage
 	taskImage       ResolvedImage
 	recordTelemetry func(db.DockerTelemetryEvent)
+	outputs         *string
 }
 
 func newDockerExecutorForPlan(client DockerClient, cfg config, runnerBoot string, task db.Task, template db.Template, logger task_logger.Logger) *DockerExecutor {
@@ -434,6 +444,12 @@ func (e *DockerExecutor) runContainerPlan(ctx context.Context, plan *tasks.Conta
 	if e.IsKilled() {
 		return nil
 	}
+	if err := e.client.StopContainer(runCtx, helperID, e.config.cleanupGrace); err != nil {
+		if e.IsKilled() {
+			return nil
+		}
+		return fmt.Errorf("stopping Docker task helper: %w", err)
+	}
 	if err := e.client.RemoveContainer(runCtx, helperID); err != nil {
 		if e.IsKilled() {
 			return nil
@@ -475,7 +491,10 @@ func (e *DockerExecutor) runContainerPlan(ctx context.Context, plan *tasks.Conta
 		return nil
 	}
 	if !plan.App.IsTerraform() {
-		return e.runStage(runCtx, plan, tasks.ContainerTaskStageRun, false)
+		if err := e.runStage(runCtx, plan, tasks.ContainerTaskStageRun, false); err != nil {
+			return err
+		}
+		return e.collectOutputs(runCtx, plan)
 	}
 
 	exitCode, err := e.execStage(runCtx, plan, tasks.ContainerTaskStagePlan)
@@ -484,14 +503,14 @@ func (e *DockerExecutor) runContainerPlan(ctx context.Context, plan *tasks.Conta
 	}
 	switch exitCode {
 	case 0:
-		return nil
+		return e.collectOutputs(runCtx, plan)
 	case 2:
 		// Terraform's detailed exit code means the plan contains changes.
 	default:
 		return fmt.Errorf("Docker task stage plan exited with code %d", exitCode)
 	}
 	if plan.Terraform.PlanOnly {
-		return nil
+		return e.collectOutputs(runCtx, plan)
 	}
 	if !plan.Terraform.AutoApprove {
 		e.SetStatus(task_logger.TaskWaitingConfirmation)
@@ -501,7 +520,103 @@ func (e *DockerExecutor) runContainerPlan(ctx context.Context, plan *tasks.Conta
 		}
 		e.SetStatus(task_logger.TaskRunningStatus)
 	}
-	return e.runStage(runCtx, plan, tasks.ContainerTaskStageApply, false)
+	if err := e.runStage(runCtx, plan, tasks.ContainerTaskStageApply, false); err != nil {
+		return err
+	}
+	return e.collectOutputs(runCtx, plan)
+}
+
+const maxContainerOutputsBytes = 256 * 1024
+const maxDockerOutputArchiveOverhead = 20 * 1024
+
+func (e *DockerExecutor) Outputs() *string { return e.outputs }
+
+// collectOutputs uses the fixed bundle stage and a private bounded buffer; it
+// never routes untrusted output values through the task logger.
+func (e *DockerExecutor) collectOutputs(ctx context.Context, plan *tasks.ContainerTaskPlan) error {
+	if !plan.WorkflowOutputs || e.local == nil || e.local.OutputsCollector == nil || e.IsKilled() {
+		return nil
+	}
+	processArchive := &boundedOutputBuffer{limit: maxContainerOutputsBytes + maxDockerOutputArchiveOverhead}
+	exitCode, err := e.client.Exec(ctx, e.currentContainerID(), plan.Command(tasks.ContainerTaskStageDockerCollectOutputs), processArchive, io.Discard)
+	if err != nil {
+		return fmt.Errorf("collecting Docker workflow outputs: %w", err)
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("collecting Docker workflow outputs failed")
+	}
+	processOutput, err := readDockerOutputArchive(processArchive.Bytes(), "outputs.json", maxContainerOutputsBytes)
+	if err != nil {
+		return fmt.Errorf("collecting Docker workflow outputs: %w", err)
+	}
+	if e.IsKilled() {
+		return nil
+	}
+
+	var terraformOutput []byte
+	if plan.App.IsTerraform() {
+		archive := &boundedOutputBuffer{limit: 4*1024*1024 + maxDockerOutputArchiveOverhead}
+		exitCode, err = e.client.Exec(ctx, e.currentContainerID(), plan.Command(tasks.ContainerTaskStageDockerTerraformOutput), archive, io.Discard)
+		if err != nil || exitCode != 0 {
+			// Terraform output is best effort. Its stdout can contain sensitive
+			// values, so collection errors stay generic and stdout never reaches
+			// the task logger.
+			e.logger.Log("Terraform outputs were not captured")
+			terraformOutput = nil
+		} else {
+			terraformOutput, err = readDockerOutputArchive(archive.Bytes(), "terraform-outputs.json", 4*1024*1024)
+			if err != nil {
+				e.logger.Log("Terraform outputs were not captured")
+				terraformOutput = nil
+			}
+		}
+		if e.IsKilled() {
+			return nil
+		}
+	}
+
+	if err := e.local.CollectContainerOutputs(processOutput, terraformOutput); err != nil {
+		return fmt.Errorf("collecting Docker workflow outputs: %w", err)
+	}
+	if e.IsKilled() {
+		return nil
+	}
+	e.outputs = e.local.Outputs()
+	return nil
+}
+
+func readDockerOutputArchive(content []byte, name string, limit int) ([]byte, error) {
+	if len(content) == 0 {
+		return nil, nil
+	}
+	reader := tar.NewReader(bytes.NewReader(content))
+	header, err := reader.Next()
+	if err != nil {
+		return nil, fmt.Errorf("output archive is invalid")
+	}
+	if (header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA) || header.Name != name || header.Linkname != "" || header.Size < 0 || header.Size > int64(limit) {
+		return nil, fmt.Errorf("output archive is unsafe")
+	}
+	value, err := io.ReadAll(io.LimitReader(reader, int64(limit)+1))
+	if err != nil || len(value) != int(header.Size) || len(value) > limit {
+		return nil, fmt.Errorf("output archive exceeds limit")
+	}
+	if next, err := reader.Next(); err != io.EOF || next != nil {
+		return nil, fmt.Errorf("output archive has extra members")
+	}
+	return value, nil
+}
+
+type boundedOutputBuffer struct {
+	bytes.Buffer
+	limit int
+}
+
+func (b *boundedOutputBuffer) Write(value []byte) (int, error) {
+	if b.Len()+len(value) > b.limit {
+		return 0, fmt.Errorf("workflow outputs exceed %d bytes", b.limit)
+	}
+	return b.Buffer.Write(value)
 }
 
 func (e *DockerExecutor) runStage(ctx context.Context, plan *tasks.ContainerTaskPlan, stage tasks.ContainerTaskStage, allowTerraformChanges bool) error {
@@ -698,6 +813,10 @@ func (e *DockerExecutor) cleanupDockerResources() {
 		}
 	}
 	if containerID != "" {
+		if err := e.client.StopContainer(ctx, containerID, e.config.cleanupGrace); err != nil {
+			e.emitTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryCleanupFailure, CleanupResource: db.DockerTelemetryCleanupTask})
+			e.logger.Log("Unable to stop the Docker task container")
+		}
 		if err := e.client.RemoveContainer(ctx, containerID); err != nil {
 			e.emitTelemetry(db.DockerTelemetryEvent{Kind: db.DockerTelemetryCleanupFailure, CleanupResource: db.DockerTelemetryCleanupTask})
 			e.logger.Log("Unable to remove the Docker task container")

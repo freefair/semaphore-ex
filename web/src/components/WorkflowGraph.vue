@@ -148,6 +148,9 @@ export default {
       // condition keyed by `${sourceNodeId}->${destNodeId}`
       conditions: {},
       edgeMetadata: {},
+      // { input_mode, input_mappings } keyed like conditions, only for edges
+      // that map inputs explicitly (by_name is the default and stores nothing)
+      inputs: {},
       // guards re-entrancy while we mutate Drawflow programmatically
       syncing: false,
       built: false,
@@ -323,6 +326,7 @@ export default {
         this.attachOverlay();
         this.conditions = {};
         this.edgeMetadata = {};
+        this.inputs = {};
         this.edgeLabels = [];
         this.store.nodes = {};
         const dfIdByNodeId = {};
@@ -349,6 +353,12 @@ export default {
           const key = this.condKey(edge.source_node_id, edge.destination_node_id);
           this.conditions[key] = edge.condition || CONDITION_DEFAULT;
           this.edgeMetadata[key] = { ...edge };
+          if (edge.input_mode === 'explicit') {
+            this.inputs[key] = {
+              input_mode: 'explicit',
+              input_mappings: edge.input_mappings || [],
+            };
+          }
         });
         this.built = true;
       } finally {
@@ -450,7 +460,8 @@ export default {
             ...this.edgeMetadata[key],
             source_node_id: nodeId,
             destination_node_id: destNodeId,
-            condition: this.conditions[this.condKey(nodeId, destNodeId)] || CONDITION_DEFAULT,
+            condition: this.conditions[key] || CONDITION_DEFAULT,
+            ...(this.inputs?.[key] || {}),
           });
         });
       });
@@ -514,6 +525,18 @@ export default {
         this.edgeMetadata[key].condition_expression = '';
       }
       this.emitChange();
+    },
+
+    storeInputs(sourceNodeId, destNodeId, inputs) {
+      const key = this.condKey(sourceNodeId, destNodeId);
+      if (inputs && inputs.input_mode === 'explicit') {
+        this.inputs[key] = {
+          input_mode: 'explicit',
+          input_mappings: (inputs.input_mappings || []).map((m) => ({ var: m.var, key: m.key })),
+        };
+      } else {
+        delete this.inputs[key];
+      }
     },
 
     removeSelectedNode(nodeId) {
@@ -838,6 +861,7 @@ export default {
           if (s === nodeId || d === nodeId) {
             delete this.conditions[key];
             delete this.edgeMetadata[key];
+            delete this.inputs[key];
           }
         });
       }
@@ -874,17 +898,20 @@ export default {
       const dest = this.nodeIdOf(e.input_id);
       delete this.conditions[this.condKey(source, dest)];
       delete this.edgeMetadata[this.condKey(source, dest)];
+      delete this.inputs[this.condKey(source, dest)];
       this.emitChange();
     },
 
     onConnectionSelected(e) {
       const source = this.nodeIdOf(e.output_id);
       const dest = this.nodeIdOf(e.input_id);
+      const key = this.condKey(source, dest);
       this.$emit('connection-selected', {
         ...this.edgeMetadata[this.condKey(source, dest)],
         source_node_id: source,
         destination_node_id: dest,
-        condition: this.conditions[this.condKey(source, dest)] || CONDITION_DEFAULT,
+        condition: this.conditions[key] || CONDITION_DEFAULT,
+        ...(this.inputs?.[key] || {}),
       });
     },
 
@@ -942,9 +969,11 @@ export default {
           const state = this.editable
             ? null : edgeRunState(edge, this.store.runs, this.store.nodes);
 
+          const explicit = !!this.inputs[key];
           CONDITIONS.forEach((c) => svg.classList.remove(`WorkflowGraph__conn--${c}`));
           EDGE_STATES.forEach((s) => svg.classList.remove(`WorkflowGraph__conn--${s}`));
           svg.classList.add(`WorkflowGraph__conn--${condition}`);
+          svg.classList.toggle('WorkflowGraph__conn--explicit', explicit);
           if (state) svg.classList.add(`WorkflowGraph__conn--${state}`);
 
           const path = svg.querySelector('path.main-path');
@@ -958,7 +987,7 @@ export default {
             return;
           }
           labels.push({
-            key, source, dest, condition, x: point.x, y: point.y, state,
+            key, source, dest, condition, x: point.x, y: point.y, state, explicit,
           });
         });
       });

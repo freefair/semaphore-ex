@@ -1484,7 +1484,7 @@ func (d *WorkflowStoreImpl) FinalizeWorkflowRunNodeFenced(
 	resultJSON string,
 	at time.Time,
 ) (bool, error) {
-	if status != db.WorkflowRunNodeSkipped && status != db.WorkflowRunNodeBlocked && status != db.WorkflowRunNodeCanceled {
+	if status != db.WorkflowRunNodeSkipped && status != db.WorkflowRunNodeBlocked && status != db.WorkflowRunNodeCanceled && status != db.WorkflowRunNodeFailed {
 		return false, fmt.Errorf("workflow planner cannot finalize node as %s", status)
 	}
 	result, err := d.connection.Exec(
@@ -1690,7 +1690,7 @@ func (d *WorkflowStoreImpl) FinalizeWorkflowRunNode(
 	resultJSON string,
 	at time.Time,
 ) (bool, error) {
-	if status != db.WorkflowRunNodeSkipped && status != db.WorkflowRunNodeBlocked && status != db.WorkflowRunNodeCanceled {
+	if status != db.WorkflowRunNodeSkipped && status != db.WorkflowRunNodeBlocked && status != db.WorkflowRunNodeCanceled && status != db.WorkflowRunNodeFailed {
 		return false, fmt.Errorf("workflow planner cannot finalize node as %s", status)
 	}
 	result, err := d.connection.Exec(

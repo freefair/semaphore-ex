@@ -79,11 +79,13 @@ type canonicalWorkflowArtifactInput struct {
 }
 
 type canonicalWorkflowEdge struct {
-	SourceOrdinal      int                      `json:"source_ordinal"`
-	DestinationOrdinal int                      `json:"destination_ordinal"`
-	Condition          db.WorkflowEdgeCondition `json:"condition"`
-	Expression         string                   `json:"condition_expression,omitempty"`
-	Label              string                   `json:"label,omitempty"`
+	InputMode          db.WorkflowEdgeInputMode  `json:"input_mode,omitempty"`
+	InputMappings      []db.WorkflowInputMapping `json:"input_mappings,omitempty"`
+	SourceOrdinal      int                       `json:"source_ordinal"`
+	DestinationOrdinal int                       `json:"destination_ordinal"`
+	Condition          db.WorkflowEdgeCondition  `json:"condition"`
+	Expression         string                    `json:"condition_expression,omitempty"`
+	Label              string                    `json:"label,omitempty"`
 }
 
 type canonicalWorkflowPermissions struct {
@@ -232,6 +234,19 @@ func canonicalizeWorkflowDefinition(workflow db.WorkflowTemplate) (canonicalWork
 			SourceOrdinal: sourceOrdinal, DestinationOrdinal: destinationOrdinal,
 			Condition: edge.Condition, Expression: edge.Expression, Label: edge.Label,
 		}
+		// Omit default mapping fields to retain fingerprints of shipped versions.
+		// Explicit empty mappings intentionally disable all edge inputs.
+		if edge.EffectiveInputMode() == db.WorkflowEdgeInputExplicit {
+			edges[index].InputMode = db.WorkflowEdgeInputExplicit
+			edges[index].InputMappings = append([]db.WorkflowInputMapping(nil), edge.InputMappings...)
+			sort.Slice(edges[index].InputMappings, func(i, j int) bool {
+				left, right := edges[index].InputMappings[i], edges[index].InputMappings[j]
+				if left.Var != right.Var {
+					return left.Var < right.Var
+				}
+				return left.Key < right.Key
+			})
+		}
 	}
 	sort.Slice(edges, func(i, j int) bool {
 		if edges[i].SourceOrdinal != edges[j].SourceOrdinal {
@@ -246,7 +261,15 @@ func canonicalizeWorkflowDefinition(workflow db.WorkflowTemplate) (canonicalWork
 		if edges[i].Expression != edges[j].Expression {
 			return edges[i].Expression < edges[j].Expression
 		}
-		return edges[i].Label < edges[j].Label
+		if edges[i].Label != edges[j].Label {
+			return edges[i].Label < edges[j].Label
+		}
+		if edges[i].InputMode != edges[j].InputMode {
+			return edges[i].InputMode < edges[j].InputMode
+		}
+		left, _ := json.Marshal(edges[i].InputMappings)
+		right, _ := json.Marshal(edges[j].InputMappings)
+		return string(left) < string(right)
 	})
 	viewRoles := append([]db.ProjectRoleReference(nil), workflow.AccessPolicy.ViewRoleIDs...)
 	startRoles := append([]db.ProjectRoleReference(nil), workflow.AccessPolicy.StartRoleIDs...)

@@ -24,9 +24,39 @@ import (
 )
 
 const (
-	containerBundlePath    = "/semaphore/bundle"
-	containerWorkspacePath = "/workspace"
+	containerBundlePath           = "/semaphore/bundle"
+	containerWorkspacePath        = "/workspace"
+	containerWorkflowOutputsPath  = "/workspace/.semaphore/outputs.json"
+	containerTerraformOutputsPath = "/workspace/.semaphore/terraform-outputs.json"
+	containerCallbacksPath        = "/semaphore/bundle/internal/callbacks"
+	containerWorkflowOutputBytes  = 256 * 1024
+	// MaxContainerTerraformRawOutputBytes leaves enough room to inspect large
+	// sensitive Terraform values before the public-output filter applies its
+	// smaller document cap. It is deliberately a transport bound, not a public
+	// output limit.
+	MaxContainerTerraformRawOutputBytes = 4 * 1024 * 1024
+	containerTerraformOutputLimitBlocks = (MaxContainerTerraformRawOutputBytes / 512) + 1
 )
+
+func containerOutputReader(limit int) string {
+	return fmt.Sprintf(`import os, stat, sys
+
+limit = %d
+path = sys.argv[1]
+try:
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+except FileNotFoundError:
+    sys.exit(0)
+with os.fdopen(fd, 'rb', closefd=True) as source:
+    info = os.fstat(source.fileno())
+    if not stat.S_ISREG(info.st_mode):
+        raise RuntimeError('workflow outputs are not a regular file')
+    value = source.read(limit + 1)
+    if len(value) > limit:
+        raise RuntimeError('workflow outputs exceed public document limit')
+sys.stdout.buffer.write(value)
+`, limit)
+}
 
 // ContainerTaskStage identifies one fixed entry point in the read-only task
 // bundle. The Docker API sees only this bounded stage selector; task arguments
@@ -38,6 +68,13 @@ const (
 	ContainerTaskStageRun       ContainerTaskStage = "run"
 	ContainerTaskStagePlan      ContainerTaskStage = "plan"
 	ContainerTaskStageApply     ContainerTaskStage = "apply"
+	// ContainerTaskStageCollectOutputs is the fixed helper-image retrieval stage
+	// for the private workflow output file. Docker uses its separately named tar
+	// stage so that its runner can validate archive members before collection.
+	ContainerTaskStageCollectOutputs        ContainerTaskStage = "collect-outputs"
+	ContainerTaskStageTerraformOutput       ContainerTaskStage = "terraform-outputs"
+	ContainerTaskStageDockerCollectOutputs  ContainerTaskStage = "docker-collect-outputs"
+	ContainerTaskStageDockerTerraformOutput ContainerTaskStage = "docker-terraform-outputs"
 )
 
 // ContainerTerraformPlan tells a container executor how to continue after a
@@ -52,9 +89,10 @@ type ContainerTerraformPlan struct {
 // whose root is mounted read-only by the executor; Command returns a fixed,
 // non-secret argv for each supported lifecycle stage.
 type ContainerTaskPlan struct {
-	App       db.TemplateApp
-	Bundle    io.ReadCloser
-	Terraform ContainerTerraformPlan
+	App             db.TemplateApp
+	Bundle          io.ReadCloser
+	WorkflowOutputs bool
+	Terraform       ContainerTerraformPlan
 }
 
 // Command returns the only command an executor needs to expose through the
@@ -111,6 +149,18 @@ func (t *LocalExecutor) ContainerTaskPlan() (*ContainerTaskPlan, error) {
 	if err != nil {
 		return nil, err
 	}
+	extraVarsFiles, err := t.prepareContainerExtraVars(args)
+	if err != nil {
+		return nil, err
+	}
+	extraFiles = append(extraFiles, extraVarsFiles...)
+	outputsCallback, err := t.containerOutputsCallbackFile()
+	if err != nil {
+		return nil, err
+	}
+	if outputsCallback != nil {
+		extraFiles = append(extraFiles, *outputsCallback)
+	}
 
 	environment, err := t.containerEnvironment()
 	if err != nil {
@@ -133,9 +183,10 @@ func (t *LocalExecutor) ContainerTaskPlan() (*ContainerTaskPlan, error) {
 	}()
 
 	return &ContainerTaskPlan{
-		App:       t.Template.App,
-		Bundle:    reader,
-		Terraform: terraformPlan,
+		App:             t.Template.App,
+		Bundle:          reader,
+		WorkflowOutputs: t.Task.WorkflowRunID != nil,
+		Terraform:       terraformPlan,
 	}, nil
 }
 
@@ -190,6 +241,12 @@ func (t *LocalExecutor) writeContainerBundle(
 		{name: "run.sh", mode: 0o500, data: []byte(runScript)},
 		{name: "inventory-resolver.py", mode: 0o500, data: []byte(db_lib.InventoryResolverScript())},
 	}, extraFiles...)
+	if t.Task.WorkflowRunID != nil {
+		files = append(files, containerBundleFile{name: "collect-workflow-outputs.py", mode: 0o500, data: []byte(containerOutputReader(containerWorkflowOutputBytes))})
+		if t.Template.App.IsTerraform() {
+			files = append(files, containerBundleFile{name: "collect-terraform-outputs.py", mode: 0o500, data: []byte(containerOutputReader(MaxContainerTerraformRawOutputBytes))})
+		}
+	}
 	if galaxyBootstrapEnvironmentScript != "" {
 		files = append(files, containerBundleFile{name: "credentials/galaxy-bootstrap.sh", mode: 0o600, data: []byte(galaxyBootstrapEnvironmentScript)})
 	}
@@ -358,15 +415,67 @@ func (t *LocalExecutor) containerEnvironment() ([]string, error) {
 		if !ok || !containerEnvironmentName.MatchString(name) {
 			return nil, fmt.Errorf("invalid container environment variable %q", name)
 		}
-		if name == "SSH_AUTH_SOCK" ||
+		if name == "SEMAPHORE_OUTPUTS_FILE" || name == "SSH_AUTH_SOCK" ||
 			(name == "GIT_SSH_COMMAND" && t.isGeneratedTaskGitSSHCommand(value)) ||
 			(name == "ANSIBLE_SSH_EXECUTABLE" && t.taskSSHRoutingCommand != "" && value == t.taskSSHRoutingCommand) {
 			continue
 		}
 		value = t.rewriteContainerPath(value)
+		if name == ansibleCallbackPluginsEnv {
+			value = deduplicateContainerPaths(value)
+		}
 		result = append(result, name+"="+value)
 	}
+	if t.Task.WorkflowRunID != nil {
+		result = append(result, "SEMAPHORE_OUTPUTS_FILE="+containerWorkflowOutputsPath)
+	}
 	return result, nil
+}
+
+func deduplicateContainerPaths(value string) string {
+	if value == "" {
+		return ""
+	}
+	seen := make(map[string]struct{})
+	paths := strings.Split(value, string(os.PathListSeparator))
+	result := make([]string, 0, len(paths))
+	for _, callbackPath := range paths {
+		if callbackPath == "" {
+			continue
+		}
+		if _, exists := seen[callbackPath]; exists {
+			continue
+		}
+		seen[callbackPath] = struct{}{}
+		result = append(result, callbackPath)
+	}
+	return strings.Join(result, string(os.PathListSeparator))
+}
+
+// containerOutputsCallbackFile returns only the generated workflow-outputs
+// plugin. Its directory is runner-private, so copying the full tree would make
+// unrelated runner files part of the task bundle.
+func (t *LocalExecutor) containerOutputsCallbackFile() (*containerBundleFile, error) {
+	if t.ansibleOutputsCallbackDir == "" {
+		return nil, nil
+	}
+	pluginPath := filepath.Join(t.ansibleOutputsCallbackDir, "semaphore_outputs.py")
+	info, err := os.Lstat(pluginPath)
+	if err != nil {
+		return nil, fmt.Errorf("checking workflow outputs callback: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || containerFileHasMultipleLinks(info) {
+		return nil, fmt.Errorf("workflow outputs callback is not a regular private file")
+	}
+	plugin, err := os.ReadFile(pluginPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading workflow outputs callback: %w", err)
+	}
+	return &containerBundleFile{
+		name: path.Join("internal", "callbacks", "semaphore_outputs.py"),
+		mode: 0o444,
+		data: plugin,
+	}, nil
 }
 
 // containerGalaxyBootstrapEnvironment keeps repository Git credentials scoped
@@ -409,7 +518,8 @@ func renderContainerEnvironment(environment []string) string {
 
 func (t *LocalExecutor) rewriteContainerPath(value string) string {
 	replacements := [][2]string{
-		{path.Join(t.Repository.GetInternalPath(t.Template.ID), "callbacks"), path.Join(containerBundlePath, "internal/callbacks")},
+		{path.Join(t.Repository.GetInternalPath(t.Template.ID), "callbacks"), containerCallbacksPath},
+		{t.ansibleOutputsCallbackDir, containerCallbacksPath},
 		{t.Repository.GetFullPath(t.Template.ID), containerWorkspacePath},
 	}
 	if t.Inventory.RepositoryID != nil && t.Inventory.Repository != nil {
@@ -657,6 +767,9 @@ func (t *LocalExecutor) containerRunScript(args map[string][]string) (string, Co
 	script.WriteString("load_environment() {\n  . \"${bundle_dir}/credentials/environment.sh\"\n  export HOME=\"${home_dir}\"\n  export PATH=\"${runner_path}\"\n  export PWD=\"${workspace}\"\n  unset SSH_ASKPASS SSH_ASKPASS_REQUIRE\n  if [ -e \"${workspace}/.semaphore/ssh-agent.sock\" ]; then export SSH_AUTH_SOCK=\"${workspace}/.semaphore/ssh-agent.sock\"; else unset SSH_AUTH_SOCK; fi\n  export ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_FORCE_COLOR=True ANSIBLE_REMOTE_TMP=/tmp/.ansible/tmp PYTHONUNBUFFERED=1\n  if [ -x \"${bundle_dir}/ssh-route.sh\" ]; then\n    semaphore_system_ssh=\"$(command -v ssh)\"\n    case \"${semaphore_system_ssh}\" in /*) ;; *) semaphore_system_ssh=\"$(cd \"$(dirname \"${semaphore_system_ssh}\")\" && pwd)/$(basename \"${semaphore_system_ssh}\")\" ;; esac\n    export SEMAPHORE_SYSTEM_SSH=\"${semaphore_system_ssh}\"\n    export PATH=\"${bundle_dir}/ssh-bin:${runner_path}\"\n    if [ -z \"${GIT_SSH_COMMAND+x}\" ]; then export GIT_SSH_COMMAND=\"${bundle_dir}/ssh-route.sh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/workspace/.semaphore/known_hosts\"; fi\n    if [ -z \"${ANSIBLE_SSH_EXECUTABLE+x}\" ]; then export ANSIBLE_SSH_EXECUTABLE=\"${bundle_dir}/ssh-route.sh\"; fi\n  elif [ -z \"${GIT_SSH_COMMAND+x}\" ]; then\n    export GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/workspace/.semaphore/known_hosts'\n  fi\n}\n")
 	script.WriteString("start_ssh_agent() {\n  order_file=\"${bundle_dir}/credentials/ssh-key-order\"\n  [ -s \"${order_file}\" ] || return 0\n  mkdir -p \"${workspace}/.semaphore\"\n  eval \"$(ssh-agent -a \"${workspace}/.semaphore/ssh-agent.sock\" -s)\" >/dev/null\n  while IFS= read -r key; do\n    [ -s \"${key}\" ] || continue\n    key_name=\"${key#${bundle_dir}/credentials/ssh-key-}\"\n    passphrase=\"${bundle_dir}/credentials/ssh-passphrase-${key_name}\"\n    if [ -s \"${passphrase}\" ]; then\n      SEMAPHORE_SSH_PASSPHRASE_FILE=\"${passphrase}\" SSH_ASKPASS=\"${bundle_dir}/ssh-askpass.sh\" SSH_ASKPASS_REQUIRE=force DISPLAY=semaphore ssh-add \"${key}\" </dev/null >/dev/null\n    else\n      ssh-add \"${key}\" </dev/null >/dev/null\n    fi\n  done < \"${order_file}\"\n}\n")
 	script.WriteString("bootstrap() {\n  mkdir -p \"${workspace}\" \"${home_dir}\"\n  cp -R \"${bundle_dir}/repository/.\" \"${workspace}/\"\n  load_environment\n  start_ssh_agent\n")
+	if t.Task.WorkflowRunID != nil {
+		script.WriteString("  mkdir -p \"${workspace}/.semaphore\"\n  chmod 700 \"${workspace}/.semaphore\"\n")
+	}
 
 	terraformPlan := ContainerTerraformPlan{}
 	switch {
@@ -681,24 +794,61 @@ func (t *LocalExecutor) containerRunScript(args map[string][]string) (string, Co
 	script.WriteString("\n  exec ")
 	script.WriteString(joinContainerCommand(runCommand))
 	script.WriteString("\n}\n")
-
 	if t.Template.App.IsTerraform() {
 		planCommand, applyCommand := t.containerTerraformCommands(args)
-		script.WriteString("plan_task() {\n  load_environment\n  cd ")
-		script.WriteString(posixQuote(t.containerWorkingDirectory()))
-		script.WriteString("\n  exec ")
-		script.WriteString(joinContainerCommand(planCommand))
-		script.WriteString("\n}\n")
-		script.WriteString("apply_task() {\n  load_environment\n  cd ")
-		script.WriteString(posixQuote(t.containerWorkingDirectory()))
-		script.WriteString("\n  exec ")
-		script.WriteString(joinContainerCommand(applyCommand))
-		script.WriteString("\n}\n")
+		if t.Task.WorkflowRunID == nil {
+			script.WriteString("plan_task() {\n  load_environment\n  cd ")
+			script.WriteString(posixQuote(t.containerWorkingDirectory()))
+			script.WriteString("\n  exec ")
+			script.WriteString(joinContainerCommand(planCommand))
+			script.WriteString("\n}\napply_task() {\n  load_environment\n  cd ")
+			script.WriteString(posixQuote(t.containerWorkingDirectory()))
+			script.WriteString("\n  exec ")
+			script.WriteString(joinContainerCommand(applyCommand))
+			script.WriteString("\n}\n")
+		} else {
+			terraformOutputCommand := t.containerTerraformOutputCommand()
+			script.WriteString("run_terraform_with_signal_forwarding() {\n  semaphore_terraform_pid=\n  forward_terraform_signal() {\n    kill -\"${1}\" \"${semaphore_terraform_pid}\" 2>/dev/null || :\n    wait \"${semaphore_terraform_pid}\" 2>/dev/null || :\n    case \"${1}\" in TERM) exit 143 ;; *) exit 130 ;; esac\n  }\n  trap 'forward_terraform_signal TERM' TERM\n  trap 'forward_terraform_signal INT' INT\n  \"$@\" &\n  semaphore_terraform_pid=$!\n  if wait \"${semaphore_terraform_pid}\"; then semaphore_terraform_exit=0; else semaphore_terraform_exit=$?; fi\n  trap - TERM INT\n  return \"${semaphore_terraform_exit}\"\n}\n")
+			script.WriteString("capture_terraform_outputs() {\n  semaphore_terraform_output_directory=")
+			script.WriteString(posixQuote(path.Dir(containerTerraformOutputsPath)))
+			script.WriteString("\n  semaphore_terraform_output_path=")
+			script.WriteString(posixQuote(containerTerraformOutputsPath))
+			script.WriteString("\n  mkdir -p \"${semaphore_terraform_output_directory}\" 2>/dev/null || { echo \"Terraform outputs were not captured\" >&2; return 0; }\n  rm -f \"${semaphore_terraform_output_path}\" || { echo \"Terraform outputs were not captured\" >&2; return 0; }\n  semaphore_terraform_output_temporary=\"${semaphore_terraform_output_directory}/.terraform-outputs.$$\"\n  ( umask 077; set -C; : > \"${semaphore_terraform_output_temporary}\" ) 2>/dev/null || { echo \"Terraform outputs were not captured\" >&2; return 0; }\n  ( ulimit -f ")
+			script.WriteString(fmt.Sprintf("%d", containerTerraformOutputLimitBlocks))
+			script.WriteString(" 2>/dev/null || exit 1; ")
+			script.WriteString(joinContainerCommand(terraformOutputCommand))
+			script.WriteString(" > \"${semaphore_terraform_output_temporary}\" 2>/dev/null ) || { rm -f \"${semaphore_terraform_output_temporary}\" 2>/dev/null || :; echo \"Terraform outputs were not captured\" >&2; return 0; }\n  semaphore_terraform_output_size=$(wc -c < \"${semaphore_terraform_output_temporary}\") || { rm -f \"${semaphore_terraform_output_temporary}\" 2>/dev/null || :; echo \"Terraform outputs were not captured\" >&2; return 0; }\n  semaphore_terraform_output_size=$(printf '%s' \"${semaphore_terraform_output_size}\" | tr -d ' ') || { rm -f \"${semaphore_terraform_output_temporary}\" 2>/dev/null || :; echo \"Terraform outputs were not captured\" >&2; return 0; }\n  case \"${semaphore_terraform_output_size}\" in ''|*[!0-9]*) rm -f \"${semaphore_terraform_output_temporary}\" 2>/dev/null || :; echo \"Terraform outputs were not captured\" >&2; return 0 ;; esac\n  if [ \"${semaphore_terraform_output_size}\" -gt ")
+			script.WriteString(fmt.Sprintf("%d", MaxContainerTerraformRawOutputBytes))
+			script.WriteString(" ]; then\n    rm -f \"${semaphore_terraform_output_temporary}\" 2>/dev/null || :\n    echo \"Terraform outputs were not captured\" >&2\n    return 0\n  fi\n  mv -f \"${semaphore_terraform_output_temporary}\" \"${semaphore_terraform_output_path}\" 2>/dev/null || { rm -f \"${semaphore_terraform_output_temporary}\" 2>/dev/null || :; echo \"Terraform outputs were not captured\" >&2; }\n}\n")
+			script.WriteString("plan_task() {\n  load_environment\n  cd ")
+			script.WriteString(posixQuote(t.containerWorkingDirectory()))
+			script.WriteString("\n  if run_terraform_with_signal_forwarding ")
+			script.WriteString(joinContainerCommand(planCommand))
+			script.WriteString("; then semaphore_terraform_exit=0; else semaphore_terraform_exit=$?; fi\n  case \"${semaphore_terraform_exit}\" in 0|2) capture_terraform_outputs ;; esac\n  return \"${semaphore_terraform_exit}\"\n}\n")
+			script.WriteString("apply_task() {\n  load_environment\n  cd ")
+			script.WriteString(posixQuote(t.containerWorkingDirectory()))
+			script.WriteString("\n  if run_terraform_with_signal_forwarding ")
+			script.WriteString(joinContainerCommand(applyCommand))
+			script.WriteString("; then semaphore_terraform_exit=0; else semaphore_terraform_exit=$?; fi\n  if [ \"${semaphore_terraform_exit}\" -eq 0 ]; then capture_terraform_outputs; fi\n  return \"${semaphore_terraform_exit}\"\n}\n")
+			script.WriteString("terraform_outputs() {\n  python3 \"${bundle_dir}/collect-terraform-outputs.py\" ")
+			script.WriteString(posixQuote(containerTerraformOutputsPath))
+			script.WriteString("\n}\n")
+			script.WriteString("docker_terraform_outputs() {\n  [ ! -e ")
+			script.WriteString(posixQuote(containerTerraformOutputsPath))
+			script.WriteString(" ] && [ ! -L ")
+			script.WriteString(posixQuote(containerTerraformOutputsPath))
+			script.WriteString(" ] && return 0\n  tar -cf - -C ")
+			script.WriteString(posixQuote(path.Dir(containerTerraformOutputsPath)))
+			script.WriteString(" ")
+			script.WriteString(posixQuote(path.Base(containerTerraformOutputsPath)))
+			script.WriteString("\n}\n")
+		}
 	}
 
-	script.WriteString("case \"${stage}\" in\n  bootstrap) bootstrap ;;\n  run) run_task ;;\n")
+	script.WriteString("collect_outputs() {\n  [ -n \"${SEMAPHORE_OUTPUTS_FILE-}\" ] || return 0\n  python3 \"${bundle_dir}/collect-workflow-outputs.py\" \"${SEMAPHORE_OUTPUTS_FILE}\"\n}\ndocker_collect_outputs() {\n  [ -n \"${SEMAPHORE_OUTPUTS_FILE-}\" ] || return 0\n  [ ! -e \"${SEMAPHORE_OUTPUTS_FILE}\" ] && [ ! -L \"${SEMAPHORE_OUTPUTS_FILE}\" ] && return 0\n  tar -cf - -C \"$(dirname \"${SEMAPHORE_OUTPUTS_FILE}\")\" \"$(basename \"${SEMAPHORE_OUTPUTS_FILE}\")\"\n}\n")
+	script.WriteString("case \"${stage}\" in\n  bootstrap) bootstrap ;;\n  run) run_task ;;\n  collect-outputs) load_environment; collect_outputs ;;\n  docker-collect-outputs) load_environment; docker_collect_outputs ;;\n")
 	if t.Template.App.IsTerraform() {
-		script.WriteString("  plan) plan_task ;;\n  apply) apply_task ;;\n")
+		script.WriteString("  plan) plan_task ;;\n  apply) apply_task ;;\n  terraform-outputs) terraform_outputs ;;\n  docker-terraform-outputs) docker_terraform_outputs ;;\n")
 	}
 	script.WriteString("  *) echo \"unsupported task stage: ${stage}\" >&2; exit 64 ;;\nesac\n")
 	return script.String(), terraformPlan, nil
@@ -827,6 +977,15 @@ func (t *LocalExecutor) containerTerraformCommands(args map[string][]string) ([]
 	planCommand := append(append([]string{binary}, prefix...), t.containerTerraformArgs(planStage)...)
 	applyCommand := append(append([]string{binary}, prefix...), t.containerTerraformArgs(applyStage)...)
 	return planCommand, applyCommand
+}
+
+// containerTerraformOutputCommand is a fixed retrieval command used only by
+// isolated executors after Terraform completed successfully. Its JSON reaches
+// a private buffer, never the task logger.
+func (t *LocalExecutor) containerTerraformOutputCommand() []string {
+	binary, prefix := t.containerApplicationCommand()
+	args := t.containerTerraformWorkspaceArgs([]string{"output", "-json"})
+	return append(append([]string{binary}, prefix...), t.containerTerraformArgs(args)...)
 }
 
 func (t *LocalExecutor) containerApplicationCommand() (string, []string) {

@@ -153,6 +153,12 @@ func (t *LocalExecutor) prepare(username string, incomingVersion *string, alias 
 	}
 	environmentVariables = append(environmentVariables, taskIdentityEnv(t.Task)...)
 
+	outputEnvironment, err := t.BeginWorkflowOutputs(environmentVariables)
+	if err != nil {
+		return err
+	}
+	environmentVariables = append(environmentVariables, outputEnvironment...)
+
 	if t.Template.Type != db.TemplateTask {
 
 		environmentVariables = append(environmentVariables, fmt.Sprintf("SEMAPHORE_TASK_TYPE=%s", t.Template.Type))

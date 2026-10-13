@@ -73,8 +73,12 @@ func TestRunnerAssignmentGenerationRejectsLateSameRunnerCompletion(t *testing.T)
 
 	lateFirst := first
 	lateFirst.Status = task_logger.TaskSuccessStatus
+	staleOutputs := `{"values":{"stale":"must-not-store"}}`
+	lateFirst.Artifacts = &staleOutputs
 	currentSecond := second
 	currentSecond.Status = task_logger.TaskSuccessStatus
+	currentOutputs := `{"values":{"current":"stored"}}`
+	currentSecond.Artifacts = &currentOutputs
 
 	type result struct {
 		generation int
@@ -121,6 +125,8 @@ func TestRunnerAssignmentGenerationRejectsLateSameRunnerCompletion(t *testing.T)
 	assert.Equal(t, task_logger.TaskSuccessStatus, stored.Status)
 	assert.Equal(t, 2, stored.AssignmentGeneration)
 	assert.Equal(t, requeued.RecoveryReason, stored.RecoveryReason)
+	require.NotNil(t, stored.Artifacts)
+	assert.Equal(t, currentOutputs, *stored.Artifacts)
 
 	attempts, err := store.GetTaskRunnerAttempts(projectID, task.ID)
 	require.NoError(t, err)
@@ -130,6 +136,39 @@ func TestRunnerAssignmentGenerationRejectsLateSameRunnerCompletion(t *testing.T)
 	assert.Empty(t, attempts[1].Reason)
 	assert.NotNil(t, attempts[0].EndedAt)
 	assert.NotNil(t, attempts[1].EndedAt)
+}
+
+func TestRunnerAttemptCASBindsAndClearsWorkflowOutputs(t *testing.T) {
+	store, projectID, runner, task := createRunnerAttemptFixture(t)
+	now := time.Now().UTC()
+	old := `{"values":{"old":"value"}}`
+	task.Artifacts = &old
+	require.NoError(t, store.UpdateTask(task))
+	first, assigned, err := store.AssignTaskRunner(projectID, task.ID, runner.ID, runner.Name, now)
+	require.NoError(t, err)
+	require.True(t, assigned)
+	assert.Nil(t, first.Artifacts)
+	current := first
+	document := `{"values":{"new":"value"}}`
+	current.Artifacts = &document
+	current.Status = task_logger.TaskSuccessStatus
+	updated, err := store.UpdateTaskRunner(current, first.Status, runner.ID, first.AssignmentGeneration, db.RunnerAttemptSucceeded, "", now.Add(time.Second))
+	require.NoError(t, err)
+	require.True(t, updated)
+	persisted, err := store.GetTask(projectID, task.ID)
+	require.NoError(t, err)
+	require.NotNil(t, persisted.Artifacts)
+	assert.Equal(t, document, *persisted.Artifacts)
+	stale := first
+	stale.Artifacts = &old
+	stale.Status = task_logger.TaskFailStatus
+	updated, err = store.UpdateTaskRunner(stale, first.Status, runner.ID, first.AssignmentGeneration-1, db.RunnerAttemptFailed, "stale", now.Add(2*time.Second))
+	require.NoError(t, err)
+	assert.False(t, updated)
+	persisted, err = store.GetTask(projectID, task.ID)
+	require.NoError(t, err)
+	require.NotNil(t, persisted.Artifacts)
+	assert.Equal(t, document, *persisted.Artifacts)
 }
 
 func TestClaimTaskStartRejectsStaleRecoveredDispatcher(t *testing.T) {

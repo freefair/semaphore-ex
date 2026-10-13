@@ -1111,20 +1111,36 @@ definitions:
   WorkflowRunDefinitionEdge:
     type: object
     properties:
-      id:
-        type: integer
-      source_node_id:
-        type: integer
-      destination_node_id:
-        type: integer
+      id: {type: integer}
+      source_node_id: {type: integer}
+      destination_node_id: {type: integer}
       condition:
         type: string
-        enum:
-        - on_success
-        - on_failure
-        - always
-      label:
+        enum: [on_success, on_failure, always, expression]
+      condition_expression: {type: string}
+      label: {type: string}
+      input_mode:
         type: string
+        enum: [by_name, explicit]
+      input_mappings:
+        type: array
+        items:
+          $ref: ./api-docs.yml#/definitions/WorkflowInputMapping
+  WorkflowArtifactMetadata:
+    type: object
+    description: Value-free metadata for declared, typed EX workflow artifacts.
+    required: [workflow_node_id, name, schema, sensitive, availability, size_bytes, reference_fingerprint]
+    properties:
+      workflow_node_id: {type: integer}
+      name: {type: string}
+      schema: {type: object, additionalProperties: true}
+      sensitive: {type: boolean}
+      availability: {type: string, enum: [available, unavailable, invalid]}
+      size_bytes: {type: integer}
+      reference_fingerprint: {type: string}
+      diagnostic: {type: string}
+      producer_task_id: {type: integer}
+      producer_attempt: {type: integer}
   WorkflowRunTemplate:
     type: object
     description: Template identity needed to label the immutable run graph.
@@ -1137,6 +1153,14 @@ definitions:
     type: object
     description: Task identity and status needed by the workflow run view.
     properties:
+      artifacts:
+        type: string
+        description: >
+          Canonical JSON string containing public output values and optional skipped reasons.
+          Excludes the reserved typed EX artifact channel. Absent when no public outputs exist.
+      created: {type: string, format: date-time}
+      start: {type: string, format: date-time}
+      end: {type: string, format: date-time}
       id:
         type: integer
       status:
@@ -3107,6 +3131,25 @@ paths:
           description: workflow run stopped
           schema:
             $ref: ./api-docs.yml#/definitions/WorkflowRun
+  /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/artifacts:
+    parameters:
+      - $ref: ./api-docs.yml#/parameters/project_id
+      - $ref: ./api-docs.yml#/parameters/workflow_id
+      - $ref: ./api-docs.yml#/parameters/run_id
+    get:
+      tags: [workflow]
+      summary: Get declared workflow artifact metadata
+      description: >
+        Returns value-free metadata for typed EX artifacts in the frozen run definition.
+        Public task outputs are exposed in each task's artifacts field in run details.
+      responses:
+        200:
+          description: Declared artifact metadata without plaintext or ciphertext values.
+          schema:
+            type: array
+            items:
+              $ref: ./api-docs.yml#/definitions/WorkflowArtifactMetadata
+
   /project/{project_id}/workflows/{workflow_id}/runs/{run_id}/file-artifacts:
     parameters:
     - $ref: ./api-docs.yml#/parameters/project_id

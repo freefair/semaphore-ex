@@ -1329,6 +1329,9 @@ func (s *workflowService) progressReadyWorkflowNodes(run db.WorkflowRun, user *d
 			if err := s.enqueueWorkflowNode(run, decision.node, user, decision.node.WorkflowNodeID == root.ID, lease); err != nil {
 				return err
 			}
+			// Enqueue may finalize an input-invalid node without creating a task.
+			// Reloading on the next pass is required so its on_failure edges run.
+			changed = true
 			slots--
 		}
 
@@ -2389,6 +2392,18 @@ func (s *workflowService) enqueueWorkflowNode(
 	if node.CrossProjectTemplateProvenance != nil && task.InventoryID != nil {
 		return s.blockCrossProjectWorkflowNode(run, node, "Cross-project template resource overrides are unavailable.", lease)
 	}
+	inputFailed, inputReason, inputLines, err := s.resolveWorkflowEdgeInputs(run, node, definitionNode, &task)
+	if err != nil {
+		return err
+	}
+	if inputFailed {
+		resultJSON, marshalErr := marshalWorkflowNodeResult(db.WorkflowNodeResult{Status: db.WorkflowRunNodeFailed})
+		if marshalErr != nil {
+			return marshalErr
+		}
+		_, finalizeErr := s.finalizeWorkflowRunNode(run, node.WorkflowNodeID, db.WorkflowRunNodeFailed, inputReason, resultJSON, tz.Now(), lease)
+		return finalizeErr
+	}
 	blocked, err := s.resolveWorkflowTaskInputs(run, node, definitionNode, &task)
 	if err != nil {
 		return err
@@ -2476,6 +2491,9 @@ func (s *workflowService) enqueueWorkflowNode(
 	if created.ID > 0 {
 		if attachErr := s.attachWorkflowTask(run, node, created, root, lease); attachErr != nil {
 			return attachErr
+		}
+		if len(inputLines) > 0 {
+			s.enqueuer.LogTask(created, inputLines)
 		}
 		if nodeAdmission != nil {
 			bound := *nodeAdmission

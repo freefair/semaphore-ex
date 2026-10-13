@@ -234,6 +234,7 @@ func runService() {
 		workflowTriggerScheduler.Start()
 		defer workflowTriggerScheduler.Stop()
 	}
+	taskPool.SetTaskOutputsCollector(proTasks.NewTaskOutputsCollector())
 
 	schedulePool := schedules.CreateSchedulePool(
 		store,

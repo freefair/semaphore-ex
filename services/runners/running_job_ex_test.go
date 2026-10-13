@@ -15,7 +15,7 @@ func TestRunningJobRedactsGlobalCredentialBeforeProgressUpload(t *testing.T) {
 	runner.redactor = taskredaction.NewFromTaskSecret(`{"deploy_token":"runner-secret-value"}`, []string{"deploy_token"})
 	runner.Log("credential=runner-secret-value")
 
-	_, records, _, _ := runner.getProgress()
+	_, records, _, _, _ := runner.getProgress()
 	require.Len(t, records, 1)
 	assert.NotContains(t, records[0].Message, "runner-secret-value")
 	assert.Contains(t, records[0].Message, "[REDACTED]")
@@ -38,7 +38,7 @@ func TestRunningJobLogCmdRedactsRepositoryCredentialBeforeProgressUpload(t *test
 	require.NoError(t, command.Run())
 	finishLog()
 
-	_, records, _, _ := runner.getProgress()
+	_, records, _, _, _ := runner.getProgress()
 	require.Len(t, records, 1)
 	assert.NotContains(t, records[0].Message, "runner%3Dsecret%40reserved%2Fvalue")
 	assert.NotContains(t, records[0].Message, password)
@@ -49,7 +49,7 @@ func TestRunningJob_GetProgressIncludesBoundedExecutorMetadata(t *testing.T) {
 	rj := newTestRunningJob(1)
 	rj.job = &metadataExecutor{LocalExecutor: tasks.LocalExecutor{}}
 
-	_, _, _, metadata := rj.getProgress()
+	_, _, _, metadata, _ := rj.getProgress()
 
 	require.NotNil(t, metadata)
 	assert.Equal(t, db.RunnerExecutorDocker, metadata.ExecutorType)

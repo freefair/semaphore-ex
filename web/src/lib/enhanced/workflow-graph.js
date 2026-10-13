@@ -2,6 +2,11 @@ const enhancedMethods = {
   syncEdge(edge) {
     const key = this.condKey(edge.source_node_id, edge.destination_node_id);
     this.edgeMetadata[key] = { ...this.edgeMetadata[key], ...edge };
+    if (this.storeInputs) this.storeInputs(edge.source_node_id, edge.destination_node_id, edge);
+    if (edge.input_mode !== 'explicit') {
+      delete this.edgeMetadata[key].input_mode;
+      delete this.edgeMetadata[key].input_mappings;
+    }
     this.conditions[key] = edge.condition || 'on_success';
     this.emitChange();
   },

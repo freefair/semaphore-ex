@@ -1,4 +1,7 @@
 export default {
+  workflowEdgeInputsUnavailableTarget: 'Public inputs are unavailable for this destination. Turn off explicit mapping to clear the connection inputs.',
+  workflowEdgeInputsUnavailableVariable: 'This variable is no longer available for public input mapping.',
+  workflowEdgeInputsRemoveMapping: 'Remove mapping for {name}',
   hostsView: 'View hosts',
   hostsTask: 'Task',
   hostsTitle: 'Hosts',

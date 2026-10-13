@@ -61,7 +61,7 @@ func TestKubernetesProviderRequiresPolicyAcknowledgementAndValidatesFinalManifes
 	_, err = provider.NewExecutor(db.Task{}, db.Template{ExecutorImage: stringPointer("registry.example.test/other@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")}, db.Inventory{}, db.Repository{}, db.Environment{}, "", "", nil)
 	require.ErrorContains(t, err, db.KubernetesPolicyRuleImageDenied)
 
-	job := buildJob(cfg, policy, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 1}, 19, "bundle", testImage, []string{"/bin/true"})
+	job := buildJob(cfg, policy, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 1}, 19, "bundle", testImage, []string{"/bin/true"}, false)
 	require.NoError(t, validateGeneratedJob(job, cfg, policy, testImage))
 	assert.True(t, *job.Spec.Template.Spec.InitContainers[0].SecurityContext.RunAsNonRoot)
 	assert.True(t, *job.Spec.Template.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem)
@@ -73,15 +73,15 @@ func TestKubernetesProviderRequiresPolicyAcknowledgementAndValidatesFinalManifes
 func TestGeneratedManifestRejectsPolicyBroadening(t *testing.T) {
 	cfg := config{clusterAlias: "qa", namespace: "semaphore-jobs", serviceAccount: "semaphore-task", image: testImage, helperImage: testImage, cleanupGrace: time.Second, activeDeadlineSeconds: 60}
 	policy := testKubernetesPolicy(t, cfg)
-	job := buildJob(cfg, policy, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 1}, 19, "bundle", testImage, []string{"/bin/true"})
+	job := buildJob(cfg, policy, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 1}, 19, "bundle", testImage, []string{"/bin/true"}, false)
 	job.Spec.Template.Spec.HostNetwork = true
 	require.ErrorContains(t, validateGeneratedJob(job, cfg, policy, testImage), db.KubernetesPolicyRuleHostNamespaceDenied)
 
-	job = buildJob(cfg, policy, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 1}, 19, "bundle", testImage, []string{"/bin/true"})
+	job = buildJob(cfg, policy, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 1}, 19, "bundle", testImage, []string{"/bin/true"}, false)
 	job.Spec.Template.Spec.Containers[0].SecurityContext.Privileged = boolPointer(true)
 	require.ErrorContains(t, validateGeneratedJob(job, cfg, policy, testImage), db.KubernetesPolicyRuleSecurityProfileDenied)
 
-	job = buildJob(cfg, policy, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 1}, 19, "bundle", testImage, []string{"/bin/true"})
+	job = buildJob(cfg, policy, db.Task{ID: 41, ProjectID: 7, AssignmentGeneration: 1}, 19, "bundle", testImage, []string{"/bin/true"}, false)
 	job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{Name: "host", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/"}}})
 	require.ErrorContains(t, validateGeneratedJob(job, cfg, policy, testImage), db.KubernetesPolicyRuleHostNamespaceDenied)
 }

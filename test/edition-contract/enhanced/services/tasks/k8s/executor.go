@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -17,9 +18,10 @@ import (
 )
 
 const (
-	maxBundleBytes   = 768 * 1024
-	maxLogLineBytes  = 64 * 1024
-	maxLogReconnects = 5
+	maxBundleBytes           = 768 * 1024
+	maxLogLineBytes          = 64 * 1024
+	maxLogReconnects         = 5
+	maxContainerOutputsBytes = 256 * 1024
 )
 
 type KubernetesExecutor struct {
@@ -45,6 +47,7 @@ type KubernetesExecutor struct {
 	pod               PodIdentity
 	lifecycle         string
 	terminalReason    string
+	outputs           *string
 	retentionDeadline *time.Time
 	cleanupCompleted  bool
 	recordTelemetry   func(db.KubernetesTelemetryEvent)
@@ -110,6 +113,18 @@ func (e *KubernetesExecutor) Run(username string, incomingVersion *string, alias
 func (e *KubernetesExecutor) runPlan(parent context.Context, plan *tasks.ContainerTaskPlan) (runErr error) {
 	if plan == nil || plan.Bundle == nil {
 		return fmt.Errorf("Kubernetes executor has no task bundle")
+	}
+	if plan.WorkflowOutputs {
+		outputClient, ok := e.client.(workflowOutputsClient)
+		if !ok {
+			return fmt.Errorf("Kubernetes client does not support workflow output collection")
+		}
+		if e.local == nil || e.local.OutputsCollector == nil {
+			return fmt.Errorf("Kubernetes workflow output collector is unavailable")
+		}
+		if err := outputClient.validateOutputExecAccess(parent); err != nil {
+			return fmt.Errorf("validating Kubernetes workflow output permissions: %w", err)
+		}
 	}
 	defer plan.Bundle.Close() //nolint:errcheck
 
@@ -187,6 +202,19 @@ func (e *KubernetesExecutor) runPlan(parent context.Context, plan *tasks.Contain
 		defer close(logDone)
 		e.streamLogs(logCtx, pod, tracker)
 	}()
+	var taskExitCode *int32
+	if plan.WorkflowOutputs {
+		exitCode, outputErr := e.collectWorkflowOutputs(runCtx, pod, labels)
+		if outputErr != nil {
+			stopLogs()
+			<-logDone
+			if e.IsKilled() || errors.Is(outputErr, context.Canceled) {
+				return nil
+			}
+			return outputErr
+		}
+		taskExitCode = &exitCode
+	}
 
 	result, err := e.client.WaitForJob(runCtx, job, pod)
 	stopLogs()
@@ -207,7 +235,71 @@ func (e *KubernetesExecutor) runPlan(parent context.Context, plan *tasks.Contain
 	if !result.Succeeded {
 		return fmt.Errorf("Kubernetes Job failed: %s", fallbackReason(e.terminalReason))
 	}
+	if taskExitCode != nil && *taskExitCode != 0 {
+		return fmt.Errorf("Kubernetes task exited with code %d", *taskExitCode)
+	}
 	return nil
+}
+
+func (e *KubernetesExecutor) Outputs() *string { return e.outputs }
+
+func (e *KubernetesExecutor) collectWorkflowOutputs(ctx context.Context, pod PodIdentity, labels map[string]string) (int32, error) {
+	if e.IsKilled() {
+		return 0, nil
+	}
+	client, ok := e.client.(workflowOutputsClient)
+	if !ok {
+		return 0, fmt.Errorf("Kubernetes client does not support workflow output collection")
+	}
+	exitCode, err := client.WaitForTaskCompletion(ctx, e.job, pod, labels)
+	if err != nil {
+		return 0, fmt.Errorf("waiting for Kubernetes task completion: %w", err)
+	}
+	if exitCode != 0 {
+		if err := client.execOutputStage(ctx, e.job, pod, labels, acknowledgeOutputStage, io.Discard); err != nil {
+			return 0, fmt.Errorf("acknowledging failed Kubernetes task: %w", err)
+		}
+		return exitCode, nil
+	}
+	if e.local == nil || e.local.OutputsCollector == nil {
+		if err := client.execOutputStage(ctx, e.job, pod, labels, acknowledgeOutputStage, io.Discard); err != nil {
+			return 0, fmt.Errorf("acknowledging Kubernetes workflow without output collector: %w", err)
+		}
+		return 0, fmt.Errorf("Kubernetes workflow output collector is unavailable")
+	}
+	output := &boundedOutputBuffer{limit: maxContainerOutputsBytes}
+	if err := client.execOutputStage(ctx, e.job, pod, labels, collectOutputStage, output); err != nil {
+		return 0, fmt.Errorf("collecting Kubernetes workflow outputs: %w", err)
+	}
+	var terraformOutput []byte
+	if e.template.App.IsTerraform() {
+		terraform := &boundedOutputBuffer{limit: tasks.MaxContainerTerraformRawOutputBytes}
+		if err := client.execOutputStage(ctx, e.job, pod, labels, terraformOutputStage, terraform); err != nil {
+			e.logger.Log("Terraform outputs were not captured")
+		} else {
+			terraformOutput = terraform.Bytes()
+		}
+	}
+	if err := e.local.CollectContainerOutputs(output.Bytes(), terraformOutput); err != nil {
+		return 0, fmt.Errorf("validating Kubernetes workflow outputs: %w", err)
+	}
+	if err := client.execOutputStage(ctx, e.job, pod, labels, acknowledgeOutputStage, io.Discard); err != nil {
+		return 0, fmt.Errorf("acknowledging Kubernetes workflow outputs: %w", err)
+	}
+	e.outputs = e.local.Outputs()
+	return exitCode, nil
+}
+
+type boundedOutputBuffer struct {
+	bytes.Buffer
+	limit int
+}
+
+func (b *boundedOutputBuffer) Write(value []byte) (int, error) {
+	if b.Len()+len(value) > b.limit {
+		return 0, fmt.Errorf("workflow outputs exceed %d bytes", b.limit)
+	}
+	return b.Buffer.Write(value)
 }
 
 func (e *KubernetesExecutor) createTaskObjects(ctx context.Context, labels map[string]string, bundle []byte, image string, command []string) (ObjectIdentity, error) {
@@ -241,7 +333,7 @@ func (e *KubernetesExecutor) createTaskObjects(ctx context.Context, labels map[s
 	e.mu.Lock()
 	e.networkPolicy = networkPolicy
 	e.mu.Unlock()
-	jobManifest := buildJob(e.config, e.policy, e.task, e.runnerID, secret.Name, image, command)
+	jobManifest := buildJob(e.config, e.policy, e.task, e.runnerID, secret.Name, image, command, e.plan != nil && e.plan.WorkflowOutputs)
 	if err := validateGeneratedJob(jobManifest, e.config, e.policy, image); err != nil {
 		return ObjectIdentity{}, err
 	}
@@ -275,7 +367,8 @@ func kubernetesTaskCommand(plan *tasks.ContainerTaskPlan) ([]string, error) {
 	if !plan.Terraform.PlanOnly && !plan.Terraform.AutoApprove {
 		return nil, fmt.Errorf("Kubernetes executor requires Terraform plan-only or auto-approve mode")
 	}
-	command := bootstrap + " && if /bin/sh /semaphore/bundle/run.sh plan; then exit 0; else code=$?; " +
+	command := "semaphore_stage_pid=; forward_stage_signal() { if [ -n \"${semaphore_stage_pid}\" ]; then kill -\"${1}\" \"${semaphore_stage_pid}\" 2>/dev/null || :; wait \"${semaphore_stage_pid}\" 2>/dev/null || :; fi; case \"${1}\" in TERM) exit 143 ;; *) exit 130 ;; esac; }; trap 'forward_stage_signal TERM' TERM; trap 'forward_stage_signal INT' INT; run_stage() { /bin/sh /semaphore/bundle/run.sh \"${1}\" & semaphore_stage_pid=$!; if wait \"${semaphore_stage_pid}\"; then semaphore_stage_status=0; else semaphore_stage_status=$?; fi; semaphore_stage_pid=; return \"${semaphore_stage_status}\"; }; " +
+		"run_stage bootstrap && if run_stage plan; then code=0; else code=$?; " +
 		"if [ \"$code\" -ne 2 ]; then exit \"$code\"; fi; "
 	if plan.Terraform.PlanOnly {
 		command += "exit 0; fi"
