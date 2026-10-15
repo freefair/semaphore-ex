@@ -5,229 +5,254 @@
     v-model="formValid"
     v-if="isLoaded()"
     @submit.prevent="save()"
+    class="task-form-layout"
   >
-    <v-alert v-if="inventoryRefresh" type="info" text dense>
-      {{ $t('hostsRefreshContext') }}
-    </v-alert>
-    <v-alert
-      :value="formError"
-      color="error"
-      class="pb-2"
-    >{{ formError }}
-    </v-alert>
+    <div class="task-form-inputs">
+      <v-alert v-if="inventoryRefresh" type="info" text dense>
+        {{ $t('hostsRefreshContext') }}
+      </v-alert>
+      <v-alert
+        :value="formError"
+        color="error"
+        class="pb-2"
+      >{{ formError }}
+      </v-alert>
 
-    <v-alert
-      color="blue"
-      dark
-      dismissible
-      dense
-      @input="item.commit_hash=null"
-      v-model="hasCommit"
-      class="overflow-hidden mt-2"
-    >
-      <div
-        style="font-weight: bold;"
-      >
-        <v-icon small>mdi-source-fork</v-icon>
-        {{ (item.commit_hash || '').substr(0, 10) }}
-      </div>
-      <div v-if="sourceTask && sourceTask.commit_message">
-        {{ sourceTask.commit_message.substring(0, 50) }}
-      </div>
-    </v-alert>
-
-    <v-autocomplete
-      v-if="buildTasks != null && template.type === 'deploy'"
-      v-model="item.build_task_id"
-      :label="$t('buildVersion')"
-      :items="buildTasks"
-      item-value="id"
-      :item-text="(itm) => getTaskMessage(itm)"
-      :rules="[v => !!v || $t('build_version_required')]"
-      required
-      :disabled="formSaving"
-      outlined
-      dense
-    />
-
-    <v-skeleton-loader
-      v-else-if="template.type === 'deploy'"
-      type="card"
-      height="54"
-      style="margin-bottom: 16px; margin-top: 4px;"
-    ></v-skeleton-loader>
-
-    <v-text-field
-      v-model="item.message"
-      :label="$t('messageOptional')"
-      :disabled="formSaving"
-      outlined
-      dense
-    />
-
-    <TaskSSHKeys
-      v-if="canOverrideSSHKeys"
-      :project-id="template.project_id || projectId"
-      :template="template"
-      :value="item.ssh_keys"
-      :disabled="formSaving"
-      @input="$set(item, 'ssh_keys', $event)"
-    />
-    <p v-else class="text-body-2">
-      {{ $t(sameSSHKeyProject ? 'taskSSHKeysManaged' : 'taskSSHKeysCrossProject') }}
-    </p>
-
-    <div v-for="(v) in template.survey_vars || []" :key="v.name">
-
-      <v-text-field
-        v-if="v.type === 'secret'"
-        :label="v.title"
-        :hint="v.description"
-        v-model="editedSecretEnvironment[v.name]"
-        :required="v.required"
-        class="masked-secret-input"
-        :rules="[
-            val => !v.required || !!val || v.title + $t('isRequired'),
-          ]"
-        outlined
+      <v-alert
+        color="blue"
+        dark
+        dismissible
         dense
-      />
-
-      <v-select
-        clearable
-        v-else-if="v.type === 'enum' || v.type === 'select'"
-        :label="v.title + (v.required ? ' *' : '')"
-        :hint="v.description"
-        v-model="editedEnvironment[v.name]"
-        :required="v.required"
-        :rules="[
-          val => !v.required || (Array.isArray(val) ? val.length > 0 : val != null)
-          || v.title + ' ' + $t('isRequired')
-        ]"
-        :items="v.values"
-        item-text="name"
-        item-value="value"
-        outlined
-        dense
-        :multiple="v.type === 'select'"
-        :chips="v.type === 'select'"
+        @input="item.commit_hash=null"
+        v-model="hasCommit"
+        class="overflow-hidden mt-2"
       >
-      <template v-if="v.type === 'select'" v-slot:selection="{ item, index }">
-        <v-chip
-          small
-          close
-          @click:close="deleteItem(v.name, index)"
+        <div
+          style="font-weight: bold;"
         >
-          {{ item && item.name ? item.name : String(item) }}
-        </v-chip>
-      </template>
-    </v-select>
+          <v-icon small>mdi-source-fork</v-icon>
+          {{ (item.commit_hash || '').substr(0, 10) }}
+        </div>
+        <div v-if="sourceTask && sourceTask.commit_message">
+          {{ sourceTask.commit_message.substring(0, 50) }}
+        </div>
+      </v-alert>
 
-      <v-textarea
-        v-else-if="v.type === 'text'"
-        :label="v.title + (v.required ? ' *' : '')"
-        :hint="v.description"
-        v-model="editedEnvironment[v.name]"
-        :required="v.required"
-        :rules="[
-          val => !v.required || !!val || v.title + ' ' + $t('isRequired'),
-        ]"
-        rows="3"
-        auto-grow
+      <v-autocomplete
+        v-if="buildTasks != null && template.type === 'deploy'"
+        v-model="item.build_task_id"
+        :label="$t('buildVersion')"
+        :items="buildTasks"
+        item-value="id"
+        :item-text="(itm) => getTaskMessage(itm)"
+        :rules="[v => !!v || $t('build_version_required')]"
+        required
+        :disabled="formSaving"
         outlined
         dense
       />
+
+      <v-skeleton-loader
+        v-else-if="template.type === 'deploy'"
+        type="card"
+        height="54"
+        style="margin-bottom: 16px; margin-top: 4px;"
+      ></v-skeleton-loader>
 
       <v-text-field
-        v-else
-        :label="v.title + (v.required ? ' *' : '')"
-        :hint="v.description"
-        v-model="editedEnvironment[v.name]"
-        :required="v.required"
-        :rules="[
-          val => !v.required || !!val || v.title + ' ' + $t('isRequired'),
-          val => !val || v.type !== 'int' || /^\d+$/.test(val) ||
-          v.title + ' ' + $t('mustBeInteger'),
-        ]"
+        v-model="item.message"
+        :label="$t('messageOptional')"
+        :disabled="formSaving"
         outlined
         dense
       />
+
+      <TaskSSHKeys
+        v-if="canOverrideSSHKeys"
+        :project-id="template.project_id || projectId"
+        :template="template"
+        :value="item.ssh_keys"
+        :disabled="formSaving"
+        @input="$set(item, 'ssh_keys', $event)"
+      />
+      <p v-else class="text-body-2">
+        {{ $t(sameSSHKeyProject ? 'taskSSHKeysManaged' : 'taskSSHKeysCrossProject') }}
+      </p>
+
+      <div v-for="(v) in template.survey_vars || []" :key="v.name">
+
+        <v-text-field
+          v-if="v.type === 'secret'"
+          :label="v.title"
+          :hint="v.description"
+          v-model="editedSecretEnvironment[v.name]"
+          :required="v.required"
+          class="masked-secret-input"
+          :rules="[
+              val => !v.required || !!val || v.title + $t('isRequired'),
+            ]"
+          outlined
+          dense
+        />
+
+        <v-select
+          clearable
+          v-else-if="v.type === 'enum' || v.type === 'select'"
+          :label="v.title + (v.required ? ' *' : '')"
+          :hint="v.description"
+          v-model="editedEnvironment[v.name]"
+          :required="v.required"
+          :rules="[
+            val => !v.required || (Array.isArray(val) ? val.length > 0 : val != null)
+            || v.title + ' ' + $t('isRequired')
+          ]"
+          :items="v.values"
+          item-text="name"
+          item-value="value"
+          outlined
+          dense
+          :multiple="v.type === 'select'"
+          :chips="v.type === 'select'"
+        >
+        <template v-if="v.type === 'select'" v-slot:selection="{ item, index }">
+          <v-chip
+            small
+            close
+            @click:close="deleteItem(v.name, index)"
+          >
+            {{ item && item.name ? item.name : String(item) }}
+          </v-chip>
+        </template>
+      </v-select>
+
+        <v-textarea
+          v-else-if="v.type === 'text'"
+          :label="v.title + (v.required ? ' *' : '')"
+          :hint="v.description"
+          v-model="editedEnvironment[v.name]"
+          :required="v.required"
+          :rules="[
+            val => !v.required || !!val || v.title + ' ' + $t('isRequired'),
+          ]"
+          rows="3"
+          auto-grow
+          outlined
+          dense
+        />
+
+        <v-text-field
+          v-else
+          :label="v.title + (v.required ? ' *' : '')"
+          :hint="v.description"
+          v-model="editedEnvironment[v.name]"
+          :required="v.required"
+          :rules="[
+            val => !v.required || !!val || v.title + ' ' + $t('isRequired'),
+            val => !val || v.type !== 'int' || /^\d+$/.test(val) ||
+            v.title + ' ' + $t('mustBeInteger'),
+          ]"
+          outlined
+          dense
+        />
+      </div>
+
+      <v-text-field
+        v-model="git_branch"
+        :label="fieldLabel('branch')"
+        outlined
+        dense
+        required
+        :disabled="formSaving"
+        v-if="canOverrideBranch"
+      />
+
+      <v-autocomplete
+        v-model="inventory_id"
+        :label="fieldLabel('inventory')"
+        :items="inventory"
+        item-value="id"
+        item-text="name"
+        outlined
+        dense
+        required
+        :disabled="formSaving"
+        v-if="inventory != null && needInventory && !inventoryRefresh"
+      ></v-autocomplete>
+
+      <v-skeleton-loader
+        v-else-if="needInventory && !inventoryRefresh"
+        type="card"
+        height="46"
+        style="margin-bottom: 16px; margin-top: 4px;"
+      ></v-skeleton-loader>
+
+      <TaskParamsAnsibleForm
+        v-if="template.app === 'ansible' && !inventoryRefresh"
+        v-model="item.params"
+        :app="template.app"
+        :template-params="template.task_params || {}"
+      />
+
+      <TaskParamsTerraformForm
+        v-else-if="['terraform', 'tofu', 'terragrunt'].includes(template.app)"
+        v-model="item.params"
+        :app="template.app"
+        :template-params="template.task_params || {}"
+      />
+
+      <ArgsPicker
+        v-if="template.allow_override_args_in_task"
+        :vars="args"
+        title="CLI args"
+        @change="setArgs"
+      />
+
+      <DeploymentWindowOverride
+        :block="deploymentWindowBlock"
+        :message="deploymentWindowBlockMessage"
+        :categories="deploymentWindowOverrideCategories"
+        :category.sync="deploymentWindowOverrideCategory"
+        :reference.sync="deploymentWindowOverrideReference"
+        :confirmed.sync="deploymentWindowOverrideConfirmed"
+        :disabled="formSaving"
+        :format-date="formatDeploymentWindowDate"
+      />
     </div>
 
-    <v-text-field
-      v-model="git_branch"
-      :label="fieldLabel('branch')"
-      outlined
-      dense
-      required
-      :disabled="formSaving"
-      v-if="canOverrideBranch"
-    />
-
-    <v-autocomplete
-      v-model="inventory_id"
-      :label="fieldLabel('inventory')"
-      :items="inventory"
-      item-value="id"
-      item-text="name"
-      outlined
-      dense
-      required
-      :disabled="formSaving"
-      v-if="inventory != null && needInventory && !inventoryRefresh"
-    ></v-autocomplete>
-
-    <v-skeleton-loader
-      v-else-if="needInventory && !inventoryRefresh"
-      type="card"
-      height="46"
-      style="margin-bottom: 16px; margin-top: 4px;"
-    ></v-skeleton-loader>
-
-    <TaskParamsAnsibleForm
-      v-if="template.app === 'ansible' && !inventoryRefresh"
-      v-model="item.params"
-      :app="template.app"
-      :template-params="template.task_params || {}"
-    />
-
-    <TaskParamsTerraformForm
-      v-else-if="['terraform', 'tofu', 'terragrunt'].includes(template.app)"
-      v-model="item.params"
-      :app="template.app"
-      :template-params="template.task_params || {}"
-    />
-
-    <ArgsPicker
-      v-if="template.allow_override_args_in_task"
-      :vars="args"
-      title="CLI args"
-      @change="setArgs"
-    />
-
-    <DeploymentWindowOverride
-      :block="deploymentWindowBlock"
-      :message="deploymentWindowBlockMessage"
-      :categories="deploymentWindowOverrideCategories"
-      :category.sync="deploymentWindowOverrideCategory"
-      :reference.sync="deploymentWindowOverrideReference"
-      :confirmed.sync="deploymentWindowOverrideConfirmed"
-      :disabled="formSaving"
-      :format-date="formatDeploymentWindowDate"
-    />
-
-    <div v-if="executionPreflightLoading" class="mt-4" role="status">
-      <div class="text-subtitle-1 mb-2">{{ $t('executionPreflightLoading') }}</div>
-      <v-progress-linear indeterminate />
+    <div class="task-form-review">
+      <div v-if="executionPreflightLoading" class="mt-4" role="status">
+        <div class="text-subtitle-1 mb-2">{{ $t('executionPreflightLoading') }}</div>
+        <v-progress-linear indeterminate />
+      </div>
+      <v-alert v-if="executionPreflightError" type="error" text class="mt-4">
+        {{ executionPreflightError }}
+        <v-btn text @click="refreshExecutionPreflight">{{ $t('retry') }}</v-btn>
+      </v-alert>
+      <ExecutionPreflightReview :plan="executionPreflight" />
     </div>
-    <v-alert v-if="executionPreflightError" type="error" text class="mt-4">
-      {{ executionPreflightError }}
-      <v-btn text @click="refreshExecutionPreflight">{{ $t('retry') }}</v-btn>
-    </v-alert>
-    <ExecutionPreflightReview :plan="executionPreflight" />
 
   </v-form>
 </template>
+<style scoped>
+.task-form-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 24px;
+}
+
+.task-form-inputs,
+.task-form-review {
+  min-width: 0;
+}
+
+@media (max-width: 959px) {
+  .task-form-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+}
+</style>
 <script>
 import DeploymentWindowOverride from '@/components/enhanced/DeploymentWindowOverride.vue';
 import createEnhancedState from '@/lib/enhanced/task-form-state';

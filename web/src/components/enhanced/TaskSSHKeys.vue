@@ -8,7 +8,6 @@
       :inherited="inheritedKeys"
       :always="project.always_ssh_keys || []"
       :inherit-label="template ? $t('taskSSHKeysInheritTemplate') : $t('taskSSHKeysInheritProject')"
-      :description="$t('taskSSHKeysDescription')"
       :disabled="disabled || loading || !!error"
       @input="$emit('input', $event)"
     />

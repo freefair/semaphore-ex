@@ -597,7 +597,7 @@
 
           <v-checkbox
             class="mt-0"
-            :label="$t('auto_approve')"
+            :label="$t('templateAutoApproveDefault')"
             v-model="item.task_params.auto_approve"
             v-if="needField('auto_approve')"
           />
@@ -671,7 +671,7 @@
 
           <v-checkbox
             class="mt-0"
-            :label="$t('auto_approve')"
+            :label="$t('templateAutoApproveOverride')"
             v-model="item.task_params.allow_auto_approve"
             v-if="needField('allow_auto_approve')"
           />

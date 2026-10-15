@@ -8,12 +8,15 @@
     @close="closeDialog"
     test-id="newTaskDialog"
     content-class="execution-preflight-task-dialog"
+    :max-width="1200"
   >
     <template v-slot:title={}>
-      <v-icon small class="mr-4">{{ TEMPLATE_TYPE_ICONS[template?.type || ''] }}</v-icon>
-      <span class="breadcrumbs__item">{{ templateTitle }}</span>
-      <v-icon>mdi-chevron-right</v-icon>
-      <span class="breadcrumbs__item">
+      <v-icon small class="execution-task-icon">
+        {{ TEMPLATE_TYPE_ICONS[template?.type || ''] }}
+      </v-icon>
+      <span class="execution-task-title">{{ templateTitle }}</span>
+      <v-icon class="execution-task-separator">mdi-chevron-right</v-icon>
+      <span class="execution-task-action">
         {{ $t(isInventoryRefresh ? 'hostsRefresh' : 'newTask') }}
       </span>
     </template>
@@ -83,12 +86,7 @@ export default {
     ...enhancedComputed,
     isInventoryRefresh() { return this.sourceTask?.params?.inventory_refresh === true; },
     templateTitle() {
-      let res = this.template?.name || '';
-      if (res.length > 16) {
-        res = `${res.substring(0, 14)}...`;
-      }
-
-      return res;
+      return this.template?.name || '';
     },
   },
 
@@ -118,5 +116,64 @@ export default {
 
 .execution-preflight-task-dialog > .v-card > .v-card__text {
   overflow-y: auto;
+  min-height: 0;
+}
+
+.execution-preflight-task-dialog > .v-card > .v-card__title {
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  white-space: normal;
+  gap: 8px;
+}
+
+.execution-preflight-task-dialog .execution-task-title {
+  min-width: 0;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.execution-preflight-task-dialog .execution-task-action {
+  flex-shrink: 0;
+}
+
+.execution-preflight-task-dialog .item-dialog__title-actions {
+  position: static;
+  flex-shrink: 0;
+}
+
+.execution-preflight-task-dialog > .v-card > .v-card__actions {
+  flex-shrink: 0;
+}
+
+@media (max-width: 599px) {
+  .execution-preflight-task-dialog > .v-card > .v-card__title {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    margin-right: 0;
+  }
+
+  .execution-preflight-task-dialog .execution-task-title {
+    grid-column: 2;
+  }
+
+  .execution-preflight-task-dialog .execution-task-icon {
+    margin-top: 6px;
+  }
+
+  .execution-preflight-task-dialog .execution-task-action {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .execution-preflight-task-dialog .item-dialog__title-actions {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .execution-preflight-task-dialog .execution-task-separator,
+  .execution-preflight-task-dialog .v-card__title > .spacer {
+    display: none;
+  }
 }
 </style>

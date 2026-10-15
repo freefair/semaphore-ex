@@ -1,12 +1,12 @@
 <template>
-  <v-card v-if="plan" outlined class="mt-4" data-testid="execution-preflight-review">
+  <v-card v-if="plan" outlined class="execution-review" data-testid="execution-preflight-review">
     <v-card-title class="text-subtitle-1 py-3">
       <v-icon small class="mr-2">mdi-clipboard-check-outline</v-icon>
       {{ $t('executionPreflightReview') }}
     </v-card-title>
     <v-card-text class="pt-0">
       <v-alert
-        v-for="(finding, index) in plan.findings || []"
+        v-for="(finding, index) in visibleFindings"
         :key="`${finding.code}-${finding.node_id || 0}-${index}`"
         :type="findingType(finding.severity)"
         dense
@@ -14,7 +14,7 @@
         class="mb-2"
         :data-testid="`execution-preflight-${finding.severity}`"
       >
-        <div>{{ finding.message }} <code>{{ finding.code }}</code></div>
+        <div>{{ finding.message }}</div>
         <div v-if="policyFindingLabel(finding)" class="text-caption mt-1">
           <code>{{ policyFindingLabel(finding) }}</code>
         </div>
@@ -49,17 +49,24 @@
 
       <div v-if="plan.references && plan.references.length" class="mb-3">
         <div class="text-caption text--secondary mb-1">{{ $t('resolvedReferences') }}</div>
-        <div
-          v-for="reference in plan.references"
-          :key="referenceKey(reference)"
-          class="text-body-2"
-        >
-          <v-icon x-small class="mr-1">
-            {{ reference.visible ? 'mdi-link-variant' : 'mdi-eye-off-outline' }}
-          </v-icon>
-          {{ reference.kind }} · {{ reference.name || `#${reference.id}` }}
-          <span v-if="reference.binding_target">→ {{ reference.binding_target }}</span>
-        </div>
+        <table class="execution-references text-body-2">
+          <thead>
+            <tr>
+              <th scope="col">{{ $t('executionReferenceName') }}</th>
+              <th scope="col">{{ $t('executionReferenceBinding') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="reference in plan.references" :key="referenceKey(reference)">
+              <td>
+                <v-icon v-if="!reference.visible" x-small>mdi-eye-off-outline</v-icon>
+                {{ reference.name || `#${reference.id}` }}
+                <div class="text-caption text--secondary">{{ reference.kind }}</div>
+              </td>
+              <td>{{ reference.binding_target || '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
       <div v-if="plan.placements && plan.placements.length" class="mb-3">
@@ -75,7 +82,13 @@
           <span v-if="placement.requested_executor_image">
             · {{ placement.requested_executor_image }}
           </span>
-          <v-chip x-small outlined class="ml-1">{{ $t('provisional') }}</v-chip>
+          <v-chip
+            v-if="placement.provisional"
+            x-small
+            outlined
+            class="ml-1"
+            data-testid="placement-provisional"
+          >{{ $t('provisional') }}</v-chip>
         </div>
       </div>
 
@@ -95,9 +108,6 @@
         </div>
       </div>
 
-      <div class="text-caption text--secondary mt-3">
-        {{ $t('executionPreflightNoSecretValues') }}
-      </div>
     </v-card-text>
   </v-card>
 </template>
@@ -106,6 +116,16 @@
 export default {
   props: {
     plan: { type: Object, default: null },
+  },
+  computed: {
+    visibleFindings() {
+      // Provisional placement is normal preview state, shown beside the runner.
+      // A denial must remain visible even if a server reuses this reason code.
+      return (this.plan?.findings || []).filter((finding) => (
+        finding.code !== 'provisional_placement'
+        || !['info', 'warning'].includes(finding.severity)
+      ));
+    },
   },
   methods: {
     findingType(severity) {
@@ -137,3 +157,45 @@ export default {
   },
 };
 </script>
+
+<style scoped>
+.execution-review {
+  overflow-wrap: anywhere;
+}
+
+.execution-references {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.execution-references th,
+.execution-references td {
+  padding: 6px 8px;
+  vertical-align: top;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+.execution-references th:first-child,
+.execution-references td:first-child {
+  padding-left: 0;
+  width: 45%;
+}
+
+.execution-references th:last-child,
+.execution-references td:last-child {
+  padding-right: 0;
+}
+
+.execution-review .v-chip {
+  max-width: 100%;
+  height: auto;
+  min-height: 24px;
+}
+
+.execution-review ::v-deep .v-chip__content {
+  white-space: normal;
+  height: auto;
+}
+</style>
