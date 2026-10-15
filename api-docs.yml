@@ -420,7 +420,7 @@ definitions:
               type: string
             type:
               type: string
-              enum: [static, static-yaml, file]
+              enum: [static, static-yaml, file, terraform-workspace, tofu-workspace, terragrunt-workspace]
       environments:
         type: array
         items:
@@ -740,7 +740,7 @@ definitions:
         description: Repository holding the inventory file. Used only by a "file" inventory; for any other type it is dropped and stored as null.
       type:
         type: string
-        enum: [static, static-yaml, file, terraform-workspace]
+        enum: [static, static-yaml, file, terraform-workspace, tofu-workspace, terragrunt-workspace]
 
   Inventory:
     type: object
@@ -767,7 +767,7 @@ definitions:
         x-nullable: true
       type:
         type: string
-        enum: [static, static-yaml, file, terraform-workspace]
+        enum: [static, static-yaml, file, terraform-workspace, tofu-workspace, terragrunt-workspace]
 
   Integration:
     type: object
@@ -945,7 +945,7 @@ definitions:
         type: integer
       monorepo:
         type: boolean
-        description: Share one checkout of this repository between all templates instead of cloning it per template. Templates of a monorepo can not have a branch of their own or let tasks override the branch or commit.
+        description: Share one Git checkout between all templates. Templates cannot override its branch or commit. Local filesystem paths normalize this option to false; file:// Git clones support it.
         example: false
 
   Repository:
@@ -968,7 +968,7 @@ definitions:
         type: integer
       monorepo:
         type: boolean
-        description: Share one checkout of this repository between all templates instead of cloning it per template. Templates of a monorepo can not have a branch of their own or let tasks override the branch or commit.
+        description: Share one Git checkout between all templates. Templates cannot override its branch or commit. Local filesystem paths normalize this option to false; file:// Git clones support it.
         example: false
 
   Task:

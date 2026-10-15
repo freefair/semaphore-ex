@@ -23,6 +23,36 @@ import (
 	"time"
 )
 
+type countingRunnerEncryptionService struct {
+	server.AccessKeyEncryptionService
+	decrypted []int
+}
+
+func (s *countingRunnerEncryptionService) DeserializeSecret(key *db.AccessKey) error {
+	s.decrypted = append(s.decrypted, key.ID)
+	return nil
+}
+
+func TestCollectTaskAccessKeysSkipsStaleStaticInventoryRepository(t *testing.T) {
+	staleRepositoryID := 42
+	encryption := &countingRunnerEncryptionService{}
+	controller := NewRunnerController(nil, nil, encryption, nil)
+	runner := &tasks.TaskRunner{
+		Task: db.Task{ID: 1},
+		Inventory: db.Inventory{
+			Type: db.InventoryStatic, RepositoryID: &staleRepositoryID,
+			Repository: &db.Repository{ID: staleRepositoryID, SSHKeyID: staleRepositoryID, SSHKey: db.AccessKey{ID: staleRepositoryID}},
+		},
+		Repository: db.Repository{ID: 7, SSHKeyID: 7, SSHKey: db.AccessKey{ID: 7}},
+	}
+	keys := make(map[int]db.AccessKey)
+
+	require.NoError(t, controller.collectTaskAccessKeys(runner, 1, keys))
+	assert.Equal(t, []int{7}, encryption.decrypted)
+	assert.NotContains(t, keys, staleRepositoryID)
+	assert.Contains(t, keys, 7)
+}
+
 func TestRegisterRunnerConsumesProjectTokenOnceAndPreservesBinding(t *testing.T) {
 	store := sql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)

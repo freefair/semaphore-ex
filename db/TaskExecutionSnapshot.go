@@ -25,6 +25,26 @@ type TaskExecutionSnapshot struct {
 	SSHKeys             SSHKeyBindings `json:"ssh_keys,omitempty"`
 }
 
+func (snapshot *TaskExecutionSnapshot) normalizeInventoryRepository() {
+	snapshot.Repository.NormalizeSharedCheckout()
+	if snapshot.InventoryRepository != nil {
+		repository := *snapshot.InventoryRepository
+		repository.NormalizeSharedCheckout()
+		snapshot.InventoryRepository = &repository
+	}
+	if snapshot.Inventory == nil {
+		snapshot.InventoryRepository = nil
+		return
+	}
+
+	inventory := *snapshot.Inventory
+	inventory.NormalizeRepositoryReference()
+	snapshot.Inventory = &inventory
+	if !snapshot.Inventory.UsesRepository() {
+		snapshot.InventoryRepository = nil
+	}
+}
+
 // Validate checks only the structural invariants needed before a persisted
 // snapshot becomes execution input. Values remain private to the protected
 // task record and never enter a review token, audit record, or API response.
@@ -44,7 +64,7 @@ func (snapshot TaskExecutionSnapshot) Validate(projectID, templateID int) error 
 	} else if snapshot.SSHKeys != nil {
 		return errors.New("task execution snapshot SSH keys are invalid")
 	}
-	if snapshot.Inventory != nil && snapshot.Inventory.RepositoryID != nil &&
+	if snapshot.Inventory != nil && snapshot.Inventory.UsesRepository() &&
 		(snapshot.InventoryRepository == nil || snapshot.InventoryRepository.ID != *snapshot.Inventory.RepositoryID ||
 			snapshot.InventoryRepository.ProjectID != snapshot.Template.ProjectID) {
 		return errors.New("task execution snapshot inventory repository is invalid")
@@ -63,6 +83,7 @@ func (snapshot TaskExecutionSnapshot) Validate(projectID, templateID int) error 
 }
 
 func EncodeTaskExecutionSnapshot(snapshot TaskExecutionSnapshot) (string, error) {
+	snapshot.normalizeInventoryRepository()
 	if err := snapshot.Validate(snapshot.ProjectID, snapshot.Template.ID); err != nil {
 		return "", err
 	}
@@ -81,6 +102,7 @@ func DecodeTaskExecutionSnapshot(encoded string, projectID, templateID int) (*Ta
 	if err := json.Unmarshal([]byte(encoded), &snapshot); err != nil {
 		return nil, errors.New("task execution snapshot is invalid")
 	}
+	snapshot.normalizeInventoryRepository()
 	if err := snapshot.Validate(projectID, templateID); err != nil {
 		return nil, err
 	}

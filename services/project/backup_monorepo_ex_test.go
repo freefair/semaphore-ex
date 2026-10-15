@@ -10,6 +10,14 @@ import (
 )
 
 func TestBackupMonorepoKeepsLegacyTemplateBranchSettings(t *testing.T) {
+	testBackupRepositoryPolicy(t, "https://example.test/source.git", true)
+}
+
+func TestBackupLegacyLocalRepositoryClearsSharedCheckout(t *testing.T) {
+	testBackupRepositoryPolicy(t, "/srv/local-repository", false)
+}
+
+func testBackupRepositoryPolicy(t *testing.T, restoredURL string, shared bool) {
 	store := sql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
 	project, err := store.CreateProject(db.Project{Name: "monorepo-backup"})
@@ -25,6 +33,7 @@ func TestBackupMonorepoKeepsLegacyTemplateBranchSettings(t *testing.T) {
 	require.NoError(t, store.UpdateRepository(repo))
 	backup, err := GetBackup(project.ID, store, proFactory.NewWorkflowStore(store))
 	require.NoError(t, err)
+	backup.Repositories[0].GitURL = restoredURL
 	encoded, err := backup.Marshal()
 	require.NoError(t, err)
 	imported := &BackupFormat{}
@@ -37,7 +46,7 @@ func TestBackupMonorepoKeepsLegacyTemplateBranchSettings(t *testing.T) {
 	repos, err := store.GetRepositories(restored.ID, db.RetrieveQueryParams{})
 	require.NoError(t, err)
 	require.Len(t, repos, 1)
-	assert.True(t, repos[0].Monorepo)
+	assert.Equal(t, shared, repos[0].Monorepo)
 	templates, err := store.GetTemplates(restored.ID, db.TemplateFilter{}, db.RetrieveQueryParams{})
 	require.NoError(t, err)
 	require.Len(t, templates, 1)

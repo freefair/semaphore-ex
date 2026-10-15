@@ -15,12 +15,12 @@ export function getRepositoryUrlType(url) {
   }
 
   // Windows UNC
-  if (/^\\\\/.test(url)) {
+  if (/^\\\\./.test(url)) {
     return 'local';
   }
 
-  // Windows drive: D:\ D:/ D: D:\path
-  if (/^[a-zA-Z]:/.test(url)) {
+  // Match the backend's drive-path boundary; c:org/repo is an SSH host alias.
+  if (/^[a-zA-Z]:(?:$|\\|\/(?!\/))/.test(url)) {
     return 'local';
   }
 

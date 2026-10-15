@@ -116,6 +116,7 @@
 import axios from 'axios';
 import ItemFormBase from '@/components/ItemFormBase';
 import { getRepositoryUrlType } from '@/lib/repositoryUrl';
+import { repositoryFormMethods, repositoryFormWatch } from '@/lib/enhanced/repositoryForm';
 
 export default {
   mixins: [ItemFormBase],
@@ -150,7 +151,10 @@ export default {
     },
   },
 
+  watch: { ...repositoryFormWatch },
+
   methods: {
+    ...repositoryFormMethods,
     getTypeOfUrl(url) {
       return getRepositoryUrlType(url);
     },

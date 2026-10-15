@@ -613,9 +613,10 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 		}
 		return ExecutionPreflightSnapshot{}, nil, err
 	}
+	inventory.NormalizeRepositoryReference()
 	if inventoryID != nil {
 		inventorySnapshot := sanitizedExecutionSnapshotInventory(inventory)
-		if inventory.RepositoryID != nil {
+		if inventory.UsesRepository() {
 			inventoryRepository, repositoryErr := p.store.GetRepository(template.ProjectID, *inventory.RepositoryID)
 			if repositoryErr != nil {
 				return ExecutionPreflightSnapshot{}, nil, repositoryErr
@@ -839,6 +840,7 @@ func sanitizedExecutionSnapshotTemplate(template db.Template) db.Template {
 
 func sanitizedExecutionSnapshotInventory(inventory db.Inventory) db.Inventory {
 	copy := inventory
+	copy.NormalizeRepositoryReference()
 	copy.SSHKey = db.AccessKey{}
 	copy.BecomeKey = db.AccessKey{}
 	copy.Repository = nil

@@ -13,6 +13,7 @@ func (d *SqlDb) GetRepository(projectID int, repositoryID int) (db.Repository, e
 		return repository, err
 	}
 
+	repository.NormalizeSharedCheckout()
 	repository.SSHKey, err = d.GetAccessKey(projectID, repository.SSHKeyID)
 
 	return repository, err
@@ -51,11 +52,15 @@ func (d *SqlDb) GetRepositories(projectID int, params db.RetrieveQueryParams) (r
 	}
 
 	_, err = d.selectAll(&repositories, query, args...)
+	for i := range repositories {
+		repositories[i].NormalizeSharedCheckout()
+	}
 
 	return
 }
 
 func (d *SqlDb) UpdateRepository(repository db.Repository) error {
+	repository.NormalizeSharedCheckout()
 	err := repository.Validate()
 
 	if err != nil {
@@ -75,6 +80,7 @@ func (d *SqlDb) UpdateRepository(repository db.Repository) error {
 }
 
 func (d *SqlDb) CreateRepository(repository db.Repository) (newRepo db.Repository, err error) {
+	repository.NormalizeSharedCheckout()
 	err = repository.Validate()
 
 	if err != nil {

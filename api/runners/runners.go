@@ -334,6 +334,8 @@ func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Ru
 		SSHKeyBindings:      resolvedTaskSSHKeyBindings(tsk.ResolvedSSHKeys),
 		HostConfigs:         tsk.HostConfigs,
 	}
+	sanitizeInventoryJobData(&jobData)
+	sanitizeMonorepoJobData(&jobData)
 	jobData.Template.ExecutorImage = jobData.ExecutorImage
 	if tsk.Template.App.IsTerraform() {
 		backendEnvironment, backendErr := tasks.TerraformBackendOverrideEnvironment(c.taskPool.Store(), c.encryptionService, tsk.Task.ProjectID, tsk.Template, tsk.Inventory)
@@ -511,7 +513,7 @@ func (c *RunnerController) collectTaskAccessKeys(tsk *tasks.TaskRunner, runnerID
 		keys[*vault.VaultKeyID] = *vault.Vault
 	}
 
-	if tsk.Inventory.RepositoryID != nil {
+	if tsk.Inventory.UsesRepository() {
 		if err := c.encryptionService.DeserializeSecret(&tsk.Inventory.Repository.SSHKey); err != nil {
 			log.WithFields(log.Fields{
 				"runner_id":     runnerID,

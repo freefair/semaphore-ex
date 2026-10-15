@@ -81,6 +81,10 @@ func newExecutor(
 // per-task data. Lives in the factory (not the Provider) so the behaviour is
 // identical across strategies — every executor sees the same shape of JobData.
 func hydrateJobAccessKeys(jobData *JobData, accessKeys map[int]db.AccessKey) error {
+	jobData.Repository.NormalizeSharedCheckout()
+	if jobData.Inventory.Repository != nil {
+		jobData.Inventory.Repository.NormalizeSharedCheckout()
+	}
 	jobData.Repository.SSHKey = accessKeys[jobData.Repository.SSHKeyID]
 
 	for i := range jobData.HostConfigs {
@@ -107,7 +111,7 @@ func hydrateJobAccessKeys(jobData *JobData, accessKeys map[int]db.AccessKey) err
 		jobData.Template.Vaults = vaults
 	}
 
-	if jobData.Inventory.RepositoryID != nil && jobData.Inventory.Repository != nil {
+	if jobData.Inventory.UsesRepository() && jobData.Inventory.Repository != nil {
 		jobData.Inventory.Repository.SSHKey = accessKeys[jobData.Inventory.Repository.SSHKeyID]
 	}
 

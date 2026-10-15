@@ -259,6 +259,10 @@ func (r Repository) Validate() error {
 		return err
 	}
 
+	if r.GetType() == RepositoryLocal && r.Monorepo {
+		return common_errors.NewValidationError("local repositories do not support shared checkout")
+	}
+
 	if r.GetType() != RepositoryLocal && r.GitBranch == "" {
 		return common_errors.NewValidationError("repository branch can't be empty")
 	}

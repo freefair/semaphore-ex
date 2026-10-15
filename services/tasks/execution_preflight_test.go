@@ -439,6 +439,8 @@ func TestReviewedTaskRehydratesVaultAndInventorySnapshotReferences(t *testing.T)
 	require.NoError(t, err)
 	inventory, err := store.GetInventory(template.ProjectID, *template.InventoryID)
 	require.NoError(t, err)
+	inventory.Type = db.InventoryFile
+	inventory.Inventory = "hosts.ini"
 	inventory.RepositoryID = &inventoryRepository.ID
 	require.NoError(t, store.UpdateInventory(inventory))
 	issuer, err := NewExecutionPreflightReviewTokenIssuer([]byte("01234567890123456789012345678901"), time.Minute)
@@ -463,6 +465,38 @@ func TestReviewedTaskRehydratesVaultAndInventorySnapshotReferences(t *testing.T)
 	assert.Equal(t, inventoryRepository.ID, runner.Inventory.Repository.ID)
 	require.NotNil(t, runner.Inventory.SSHKeyID)
 	assert.Equal(t, *runner.Inventory.SSHKeyID, runner.Inventory.SSHKey.ID)
+}
+
+func TestReviewedTaskDropsStaleStaticInventoryRepositorySnapshot(t *testing.T) {
+	store, pool, actor, template, _ := createTaskPreflightFixture(t)
+	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &template.ProjectID, Name: "stale inventory repository key", Type: db.AccessKeyNone})
+	require.NoError(t, err)
+	inventoryRepository, err := store.CreateRepository(db.Repository{
+		ProjectID: template.ProjectID, SSHKeyID: key.ID, Name: "stale inventory repository",
+		GitURL: "https://example.invalid/inventory.git", GitBranch: "main",
+	})
+	require.NoError(t, err)
+	inventory, err := store.GetInventory(template.ProjectID, *template.InventoryID)
+	require.NoError(t, err)
+	assert.Equal(t, db.InventoryStatic, inventory.Type)
+	inventory.RepositoryID = &inventoryRepository.ID
+	require.NoError(t, store.UpdateInventory(inventory))
+	issuer, err := NewExecutionPreflightReviewTokenIssuer([]byte("01234567890123456789012345678901"), time.Minute)
+	require.NoError(t, err)
+	pool.SetExecutionPreflightReviewTokenIssuer(issuer)
+
+	preview, err := pool.PreviewTaskExecution(db.Task{TemplateID: template.ID}, &actor, template.ProjectID)
+	require.NoError(t, err)
+	created, err := pool.AddTaskWithExecutionPreflight(db.Task{TemplateID: template.ID}, &actor, template.ProjectID, false, pro_interfaces.ExecutionPreflightReview{
+		Fingerprint: preview.Fingerprint, ReviewToken: preview.ReviewToken,
+	})
+	require.NoError(t, err)
+
+	restartedPool := CreateTaskPool(store, NewMemoryTaskStateStore(), nil, &InventoryServiceMock{}, &EncryptionServiceMock{}, &KeyInstallerMock{}, &mockLogWriteService{}, nil, nil)
+	runner, err := restartedPool.HydrateTaskRunnerFromDB(created.ID)
+	require.NoError(t, err)
+	assert.Nil(t, runner.Inventory.RepositoryID)
+	assert.Nil(t, runner.Inventory.Repository)
 }
 
 func TestAddTaskWithExecutionPreflightPreservesHeaderlessLegacyQueueing(t *testing.T) {

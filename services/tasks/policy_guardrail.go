@@ -173,12 +173,13 @@ func (p *TaskPool) buildAutomaticTaskPolicyGuardrailDescriptor(
 	if err != nil {
 		return automaticTaskPolicyGuardrailDescriptor{}, err
 	}
+	inventory.NormalizeRepositoryReference()
 	if inventoryID != nil {
 		inventorySnapshot := sanitizedExecutionSnapshotInventory(inventory)
 		descriptor.snapshot.Inventory = &inventorySnapshot
 		appendCredentialReference(&descriptor.plan, inventory.SSHKeyID, "inventory.ssh")
 		appendCredentialReference(&descriptor.plan, inventory.BecomeKeyID, "inventory.become")
-		if inventory.RepositoryID != nil {
+		if inventory.UsesRepository() {
 			inventoryRepository, repositoryErr := p.store.GetRepository(projectID, *inventory.RepositoryID)
 			if repositoryErr != nil {
 				return automaticTaskPolicyGuardrailDescriptor{}, repositoryErr

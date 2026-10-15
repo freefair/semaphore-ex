@@ -126,7 +126,7 @@ func (t *TaskRunner) resolveExecutionSnapshotInventory() error {
 		}
 		t.Inventory.BecomeKey = key
 	}
-	if t.Inventory.RepositoryID != nil {
+	if t.Inventory.UsesRepository() {
 		if t.Inventory.Repository == nil || t.Inventory.Repository.ID != *t.Inventory.RepositoryID ||
 			t.Inventory.Repository.ProjectID != t.Inventory.ProjectID {
 			return errors.New("execution preflight inventory repository snapshot is invalid")

@@ -114,6 +114,7 @@ func TestHydrateJobAccessKeys_WiresKeysIntoJobData(t *testing.T) {
 	jobData := JobData{
 		Repository: db.Repository{SSHKeyID: 7},
 		Inventory: db.Inventory{
+			Type:         db.InventoryFile,
 			SSHKeyID:     &sshKeyID,
 			BecomeKeyID:  &becomeKeyID,
 			RepositoryID: &inventoryRepoID,
@@ -136,6 +137,17 @@ func TestHydrateJobAccessKeys_WiresKeysIntoJobData(t *testing.T) {
 	require.NotNil(t, jobData.Template.Vaults[0].Vault)
 	assert.Equal(t, vaultKeyID, jobData.Template.Vaults[0].Vault.ID, "vault key wired")
 	assert.Equal(t, inventoryRepoSSHKeyID, jobData.Inventory.Repository.SSHKey.ID, "inventory repo SSH key wired")
+}
+
+func TestHydrateJobAccessKeysDoesNotWireStaleStaticInventoryRepository(t *testing.T) {
+	repositoryID := 44
+	jobData := JobData{Inventory: db.Inventory{
+		Type: db.InventoryStatic, RepositoryID: &repositoryID,
+		Repository: &db.Repository{ID: repositoryID, SSHKeyID: 55},
+	}}
+
+	require.NoError(t, hydrateJobAccessKeys(&jobData, map[int]db.AccessKey{55: {ID: 55, Type: db.AccessKeySSH}}))
+	assert.Zero(t, jobData.Inventory.Repository.SSHKey.ID)
 }
 
 func TestNewExecutorHydratesJobDataUsedForRunnerRedaction(t *testing.T) {

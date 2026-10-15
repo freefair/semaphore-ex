@@ -38,6 +38,8 @@ func (s *InventoryServiceImpl) GetInventory(projectID int, inventoryID int) (inv
 }
 
 func (s *InventoryServiceImpl) fillInventory(inventory *db.Inventory) (err error) {
+	inventory.NormalizeRepositoryReference()
+
 	if inventory.SSHKeyID != nil {
 		inventory.SSHKey, err = s.accessKeyRepo.GetAccessKey(inventory.ProjectID, *inventory.SSHKeyID)
 	}
@@ -54,7 +56,7 @@ func (s *InventoryServiceImpl) fillInventory(inventory *db.Inventory) (err error
 		return
 	}
 
-	if inventory.RepositoryID != nil {
+	if inventory.UsesRepository() {
 		var repo db.Repository
 		repo, err = s.repositoryRepo.GetRepository(inventory.ProjectID, *inventory.RepositoryID)
 		if err != nil {
