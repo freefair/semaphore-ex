@@ -3,7 +3,6 @@ package tasks
 import (
 	"fmt"
 	"os"
-	"path"
 	"strconv"
 
 	"github.com/semaphoreui/semaphore/db"
@@ -128,25 +127,32 @@ func (t *LocalExecutor) removeTaskSSHIdentityFiles() {
 	t.extraSSHIdentityFiles = nil
 }
 
-func (t *LocalExecutor) tmpInventoryFilename() string {
-	if t.Inventory.Repository == nil {
-		return "inventory_" + strconv.Itoa(t.Inventory.ID)
-	}
+func (t *LocalExecutor) getGitClonedInventoryFilename() string {
 	return t.Inventory.Repository.GetDirName(t.Template.ID) + "_inventory_" + strconv.Itoa(t.Inventory.ID)
 }
 
 func (t *LocalExecutor) tmpInventoryFullPath() string {
-	if t.Inventory.Repository != nil && t.Inventory.Repository.GetType() == db.RepositoryLocal {
+	if t.Inventory.Type.IsStatic() {
+		filename := "inventory_" + strconv.Itoa(t.Inventory.ID) + "_task_" + strconv.Itoa(t.Task.ID)
+		pathname := util.Config.GetProjectTmpFile(t.Template.ProjectID, filename)
+		if t.Inventory.Type == db.InventoryStaticYaml {
+			pathname += ".yml"
+		}
+		return pathname
+	}
+	if t.Inventory.Repository == nil {
+		return util.Config.GetProjectTmpFile(t.Template.ProjectID, "inventory_"+strconv.Itoa(t.Inventory.ID))
+	}
+	if t.Inventory.Repository.GetType() == db.RepositoryLocal {
 		return t.Inventory.Repository.GetGitURL(false)
 	}
-	pathname := path.Join(util.Config.GetProjectTmpDir(t.Template.ProjectID), t.tmpInventoryFilename())
-	if t.Inventory.Type == db.InventoryStaticYaml {
-		pathname += ".yml"
-	}
-	return pathname
+	return util.Config.GetProjectTmpFile(t.Template.ProjectID, t.getGitClonedInventoryFilename())
 }
 
 func (t *LocalExecutor) cloneInventoryRepo(keyInstaller db_lib.AccessKeyInstaller) error {
+	if t.Inventory.Type.IsStatic() {
+		return nil
+	}
 	if t.Inventory.Repository == nil {
 		return nil
 	}
@@ -159,7 +165,7 @@ func (t *LocalExecutor) cloneInventoryRepo(keyInstaller db_lib.AccessKeyInstalle
 
 	repo := db_lib.GitRepository{
 		Logger:      t.Logger,
-		TmpDirName:  t.tmpInventoryFilename(),
+		TmpDirName:  t.getGitClonedInventoryFilename(),
 		Repository:  *t.Inventory.Repository,
 		Client:      db_lib.CreateDefaultGitClient(keyInstaller),
 		HostConfigs: t.hostConfigInstallation,

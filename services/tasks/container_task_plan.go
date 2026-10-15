@@ -572,10 +572,10 @@ func (t *LocalExecutor) rewriteContainerPath(value string) string {
 		{t.ansibleOutputsCallbackDir, containerCallbacksPath},
 		{t.Repository.GetFullPath(t.Template.ID), containerWorkspacePath},
 	}
-	if t.Inventory.RepositoryID != nil && t.Inventory.Repository != nil {
-		replacements = append(replacements, [2]string{t.tmpInventoryFullPath(), path.Join(containerBundlePath, "inventory")})
-	} else if t.Inventory.Type.IsStatic() {
+	if t.Inventory.Type.IsStatic() {
 		replacements = append(replacements, [2]string{t.tmpInventoryFullPath(), path.Join(containerBundlePath, "inventory/hosts")})
+	} else if t.Inventory.Type == db.InventoryFile && t.Inventory.RepositoryID != nil && t.Inventory.Repository != nil {
+		replacements = append(replacements, [2]string{t.tmpInventoryFullPath(), path.Join(containerBundlePath, "inventory")})
 	}
 	for _, replacement := range replacements {
 		if replacement[0] != "" {
