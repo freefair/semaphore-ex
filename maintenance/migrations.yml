@@ -1152,3 +1152,10 @@ migrations:
   files:
     migrations_ex/v2.20.11-ex1.2.sql: 24a765e343d62202a42162c8369830a87f41e92ea70570274bdb04e62818e004
     migrations_ex/v2.20.11-ex1.2.err.sql: 1502fb96f126a5d6eec449b7fa03c2ca77d43b417a449b768b8c99d54ae34408
+- registered: true
+  id: 2.20.11-ex1.3
+  owner: fork
+  rationale: Preserve shipped upstream 2.20.11 while adding its later monorepo column through an anchored compatibility delta.
+  files:
+    migrations_ex/v2.20.11-ex1.3.sql: 18f8b316ea4b8bf6762311930f1323c17697469d063b7f839c12e1389095b097
+    migrations_ex/v2.20.11-ex1.3.err.sql: fd3e463b2f682e16bfe166a8e2b3b7f5be339b3f73771a80fb41f65cb2bfe20c

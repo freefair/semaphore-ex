@@ -8,6 +8,7 @@ import (
 
 type RepositoryExporter struct {
 	ValueMap[db.Repository]
+	pendingMonorepos []db.Repository
 }
 
 func (e *RepositoryExporter) load(store db.Store, exporter DataExporter, progress Progress) error {
@@ -50,9 +51,16 @@ func (e *RepositoryExporter) restoreValue(val EntityObject[db.Repository], store
 		return err
 	}
 
+	// Templates may retain branch settings from before sharing was enabled.
+	// Finalize the saved policy after the dependent templates have been restored.
+	monorepo := old.Monorepo
+	old.Monorepo = false
 	newObj, err := store.CreateRepository(old)
 	if err != nil {
 		return err
+	}
+	if monorepo {
+		e.pendingMonorepos = append(e.pendingMonorepos, newObj)
 	}
 
 	return exporter.mapKeys(e.getName(), val.scope, old.GetDbKey(), newObj.GetDbKey())

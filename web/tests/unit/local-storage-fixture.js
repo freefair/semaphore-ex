@@ -2,6 +2,7 @@ const values = new Map();
 
 Object.defineProperty(global, 'localStorage', {
   configurable: true,
+  writable: true,
   value: {
     clear() {
       values.clear();

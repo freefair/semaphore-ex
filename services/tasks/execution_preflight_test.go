@@ -86,6 +86,33 @@ func TestTaskExecutionPreflightSnapshotsInheritedSSHBindingsAndDetectsRotation(t
 	assert.NotEqual(t, preflight.Components[pro_interfaces.ExecutionChangeReference], rotated.Components[pro_interfaces.ExecutionChangeReference])
 }
 
+func TestExecutionPreflightRepositoryMonorepoChangeMakesReviewStale(t *testing.T) {
+	store, pool, actor, template, _ := createTaskPreflightFixture(t)
+	issuer, err := NewExecutionPreflightReviewTokenIssuer([]byte("01234567890123456789012345678901"), time.Minute)
+	require.NoError(t, err)
+	pool.SetExecutionPreflightReviewTokenIssuer(issuer)
+	template.AllowOverrideBranchInTask = true
+	require.NoError(t, store.UpdateTemplate(template))
+
+	branch := "release"
+	preview, err := pool.PreviewTaskExecution(db.Task{TemplateID: template.ID, GitBranch: &branch}, &actor, template.ProjectID)
+	require.NoError(t, err)
+	require.Len(t, preview.Commands, 1)
+	assert.True(t, preview.Commands[0].BranchOverride)
+	repository, err := store.GetRepository(template.ProjectID, template.RepositoryID)
+	require.NoError(t, err)
+	repository.Monorepo = true
+	require.NoError(t, store.UpdateRepository(repository))
+
+	_, err = pool.AddTaskWithExecutionPreflight(db.Task{TemplateID: template.ID, GitBranch: &branch}, &actor, template.ProjectID, false,
+		pro_interfaces.ExecutionPreflightReview{Fingerprint: preview.Fingerprint, ReviewToken: preview.ReviewToken})
+	var stale *ExecutionPreflightStaleError
+	require.ErrorAs(t, err, &stale)
+	assert.Contains(t, stale.Changes, pro_interfaces.ExecutionChangeReference)
+	require.Len(t, stale.Preflight.Commands, 1)
+	assert.False(t, stale.Preflight.Commands[0].BranchOverride)
+}
+
 func TestTaskExecutionPreflightSnapshotsBindingWithoutHostMapping(t *testing.T) {
 	store, pool, actor, template, _ := createTaskPreflightFixture(t)
 	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &template.ProjectID, Name: "optional mapping", Type: db.AccessKeySSH})

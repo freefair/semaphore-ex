@@ -796,6 +796,9 @@ func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore 
 	}
 
 	for i, o := range backup.Repositories {
+		// A repository can become shared after templates with branch settings
+		// already exist. Restore that same order without dropping saved settings.
+		o.Monorepo = false
 		if err := o.Restore(&b); err != nil {
 			return &newProject, fmt.Errorf("error at repositories[%d]: %s", i, err.Error())
 		}
@@ -829,6 +832,9 @@ func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore 
 		if err := o.Restore(&b); err != nil {
 			return &newProject, fmt.Errorf("error at templates[%d]: %s", i, err.Error())
 		}
+	}
+	if err := backup.restoreMonorepoPolicies(&b); err != nil {
+		return &newProject, err
 	}
 
 	for i, o := range backup.Integration {

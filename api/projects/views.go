@@ -47,7 +47,13 @@ func GetViewTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	helpers.WriteJSON(w, http.StatusOK, templates)
+	response, err := projectTemplateResponsesFor(helpers.Store(r), project.ID, templates)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+
+	helpers.WriteJSON(w, http.StatusOK, response)
 }
 
 // GetViews retrieves sorted keys from the database

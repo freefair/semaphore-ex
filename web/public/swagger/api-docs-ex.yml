@@ -1,5 +1,9 @@
 # Fork-owned API definitions and paths, referenced by api-docs.yml.
 definitions:
+  RepositoryMonorepoPolicy:
+    type: boolean
+    readOnly: true
+    description: Repository checkout policy for this template. Does not grant access to repository details.
   InventoryRefresh:
     type: boolean
     default: false

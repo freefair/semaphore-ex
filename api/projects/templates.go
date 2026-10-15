@@ -62,11 +62,15 @@ func NewTemplateController(
 func GetTemplate(w http.ResponseWriter, r *http.Request) {
 	template := helpers.GetFromContext(r, "template").(db.Template)
 	permissions := helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
-	res := db.TemplateWithPerms{
+	response, err := projectTemplateResponseFor(helpers.Store(r), template.ProjectID, db.TemplateWithPerms{
 		Template:    template,
 		Permissions: &permissions,
+	})
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
 	}
-	helpers.WriteJSON(w, http.StatusOK, res)
+	helpers.WriteJSON(w, http.StatusOK, response)
 }
 
 func GetTemplateRefs(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +105,13 @@ func GetTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	helpers.WriteJSON(w, http.StatusOK, templates)
+	response, err := projectTemplateResponsesFor(helpers.Store(r), project.ID, templates)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+
+	helpers.WriteJSON(w, http.StatusOK, response)
 }
 
 // AddTemplate adds a template to the database

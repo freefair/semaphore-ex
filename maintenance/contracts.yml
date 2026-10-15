@@ -3828,8 +3828,18 @@ symbols:
       struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; Name string "db:\"name\" json:\"name\" binding:\"required\""; ProjectID int
       "db:\"project_id\" json:\"project_id\" backup:\"-\""; GitURL string "db:\"git_url\" json:\"git_url\" binding:\"required\""; GitBranch
       string "db:\"git_branch\" json:\"git_branch\" binding:\"required\""; SSHKeyID int "db:\"ssh_key_id\" json:\"ssh_key_id\"
-      binding:\"required\" backup:\"-\""; SSHKey db.AccessKey "db:\"-\" json:\"-\" backup:\"-\""}
+      binding:\"required\" backup:\"-\""; Monorepo bool "db:\"monorepo\" json:\"monorepo\""; SSHKey db.AccessKey "db:\"-\" json:\"-\" backup:\"-\""}
     implementation: core
+    behavior_tests:
+      - db/sql/monorepo_template_test.go::TestRepository_MonorepoPersists
+      - db/sql/monorepo_template_test.go::TestCreateTemplate_MonorepoRefusesBranchOverride
+      - db/sql/monorepo_template_test.go::TestTemplate_MonorepoRefusesOwnBranch
+      - db/sql/monorepo_migration_ex_test.go::TestMonorepoMigrationPreservesRepositoryAndRollsBack
+      - services/tasks/monorepo_checkout_ex_test.go::TestCheckoutMonorepoIgnoresRequestedCommitAndReportsBranchHead
+      - services/tasks/execution_preflight_test.go::TestExecutionPreflightRepositoryMonorepoChangeMakesReviewStale
+      - services/project/backup_monorepo_ex_test.go::TestBackupMonorepoKeepsLegacyTemplateBranchSettings
+      - services/export/monorepo_restore_ex_test.go::TestExportRestorePreservesMonorepoWithLegacyTemplateBranches
+      - api/projects/template_projection_ex_test.go::TestTemplateResponsesExposeRepositoryMonorepoForTemplateReaders
   - name: db:RepositoryFile
     signature: db.RepositoryType = "file"
     implementation: core

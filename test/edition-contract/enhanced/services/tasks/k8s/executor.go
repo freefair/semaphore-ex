@@ -460,6 +460,9 @@ func (e *KubernetesExecutor) Kill() {
 }
 
 func (e *KubernetesExecutor) ConfirmStop(ctx context.Context) tasks.StopConfirmation {
+	if e.local != nil {
+		e.local.Kill()
+	}
 	e.mu.Lock()
 	e.killed = true
 	if e.job.Name != "" && e.pod.Name != "" {

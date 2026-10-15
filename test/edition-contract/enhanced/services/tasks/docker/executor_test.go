@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -126,6 +128,36 @@ func TestDockerExecutorRunsFixedStagesInsideTaskScopedResources(t *testing.T) {
 		MemoryBytes:    512 * 1024 * 1024,
 		PidsLimit:      256,
 	}, executor.ExecutorMetadata(), "cleanup must retain immutable task runtime identity")
+}
+
+func TestDockerExecutorKillCancelsMonorepoMaterializerLockWait(t *testing.T) {
+	root := t.TempDir()
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: root, Process: &util.ConfigProcess{}}
+	t.Cleanup(func() { util.Config = previousConfig })
+	repository := filepath.Join(root, "repository")
+	require.NoError(t, os.MkdirAll(repository, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repository, "run.sh"), []byte("#!/bin/sh\n"), 0o700))
+	lock := &tasks.KeyLock{}
+	hold := lock.Lock(repository)
+	defer hold()
+
+	executor := newDockerExecutorForPlan(&fakeDockerClient{}, config{cleanupGrace: time.Second}, "boot", db.Task{ID: 1, ProjectID: 1}, db.Template{}, task_logger.NopLogger{})
+	executor.local = &tasks.LocalExecutor{Template: db.Template{ID: 1, ProjectID: 1, Type: db.TemplateTask, App: db.AppBash, Playbook: "run.sh"}, Inventory: db.Inventory{Type: db.InventoryStatic}, Repository: db.Repository{ID: 1, ProjectID: 1, GitURL: repository, Monorepo: true}, Logger: task_logger.NopLogger{}, RepoLock: lock}
+	result := make(chan error, 1)
+	go func() { result <- executor.Prepare("", nil, "") }()
+	select {
+	case err := <-result:
+		assert.Fail(t, "prepare returned before lock cancellation", "%v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	executor.Kill()
+	select {
+	case err := <-result:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		require.FailNow(t, "Docker Kill did not cancel materializer lock wait")
+	}
 }
 
 func TestDockerExecutorEmitsBoundedImageAndResourceTelemetry(t *testing.T) {

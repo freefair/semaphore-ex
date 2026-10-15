@@ -25,11 +25,11 @@ func newLegacyTemplateTestProject(t *testing.T, store *SqlDb) (projectID int, re
 	project := createLegacyProject(t, store, "legacy template project")
 	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &project.ID, Type: db.AccessKeyNone})
 	require.NoError(t, err)
-	repository, err := store.CreateRepository(db.Repository{
-		ProjectID: project.ID, Name: "legacy repository", GitURL: "https://example.com/repo.git",
-		GitBranch: "main", SSHKeyID: key.ID,
-	})
+	// This fixture predates the monorepo column; use its original schema.
+	repositoryID, err = store.insert("id",
+		"insert into project__repository (project_id, name, git_url, git_branch, ssh_key_id) values (?, ?, ?, ?, ?)",
+		project.ID, "legacy repository", "https://example.com/repo.git", "main", key.ID)
 	require.NoError(t, err)
 
-	return project.ID, repository.ID
+	return project.ID, repositoryID
 }

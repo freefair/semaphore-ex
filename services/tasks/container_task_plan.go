@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"archive/tar"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/semaphoreui/semaphore/db"
@@ -105,6 +107,19 @@ func (p ContainerTaskPlan) Command(stage ContainerTaskStage) []string {
 // credentials as local execution, but leaves dependency installation and task
 // commands to the isolated container.
 func (t *LocalExecutor) PrepareContainerTask(username string, incomingVersion *string, alias string) (*ContainerTaskPlan, error) {
+	if !t.ensureStopCh() {
+		return nil, context.Canceled
+	}
+	if err := t.lockMonorepoCheckout(); err != nil {
+		return nil, err
+	}
+	releaseOnFailure := true
+	defer func() {
+		if releaseOnFailure {
+			t.unlockMonorepoCheckout()
+		}
+	}()
+
 	if err := t.installHostConfigs(); err != nil {
 		return nil, err
 	}
@@ -121,7 +136,42 @@ func (t *LocalExecutor) PrepareContainerTask(username string, incomingVersion *s
 		t.Cleanup()
 		return nil, err
 	}
+	if t.hasMonorepoCheckoutLease() {
+		plan.Bundle = &checkoutLeaseReadCloser{
+			ReadCloser: plan.Bundle,
+			release:    t.unlockMonorepoCheckout,
+		}
+		releaseOnFailure = false
+	}
 	return plan, nil
+}
+
+// checkoutLeaseReadCloser keeps a monorepo checkout stable until its bundle is
+// fully copied into the isolated executor. Releasing at EOF lets a completed
+// archive unblock the next task even when the caller defers Close until after
+// container execution; Close also handles aborted copies.
+type checkoutLeaseReadCloser struct {
+	io.ReadCloser
+	release func()
+	once    sync.Once
+}
+
+func (r *checkoutLeaseReadCloser) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	if err == io.EOF {
+		r.releaseCheckout()
+	}
+	return n, err
+}
+
+func (r *checkoutLeaseReadCloser) Close() error {
+	err := r.ReadCloser.Close()
+	r.releaseCheckout()
+	return err
+}
+
+func (r *checkoutLeaseReadCloser) releaseCheckout() {
+	r.once.Do(r.release)
 }
 
 // ContainerTaskPlan builds a single-use tar stream from already prepared task

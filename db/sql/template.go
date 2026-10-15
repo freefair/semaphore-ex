@@ -42,6 +42,10 @@ func (d *SqlDb) CreateTemplate(tmpl db.Template) (db.Template, error) {
 		return db.Template{}, err
 	}
 
+	if err := d.verifyTemplateRepository(tmpl); err != nil {
+		return db.Template{}, err
+	}
+
 	tmpl.ApplyLegacyEnvironmentField()
 
 	fields := map[string]any{
@@ -128,6 +132,10 @@ func (d *SqlDb) UpdateTemplate(tmpl db.Template) error {
 	}
 
 	if err = d.validateTemplateNameIsFree(tmpl.ProjectID, tmpl.ID, tmpl.Name); err != nil {
+		return err
+	}
+
+	if err := d.verifyTemplateRepository(tmpl); err != nil {
 		return err
 	}
 
@@ -744,4 +752,33 @@ func (d *SqlDb) UpdateTemplateRole(
 		return db.TemplateRolePerm{}, db.ErrTemplateRoleRevisionConflict
 	}
 	return d.GetTemplateRole(role.ProjectID, role.TemplateID, role.ID)
+}
+
+// verifyTemplateRepository rejects a template which would move a repository
+// every template shares away from the repository's own branch: a branch of the
+// template's own, or tasks checking out a branch or commit of their own.
+// Sharing keeps the repository branch authoritative for every template.
+func (d *SqlDb) verifyTemplateRepository(tmpl db.Template) error {
+	hasOwnBranch := tmpl.GitBranch != nil && *tmpl.GitBranch != ""
+
+	if !tmpl.AllowOverrideBranchInTask && !hasOwnBranch {
+		return nil
+	}
+
+	repo, err := d.GetRepository(tmpl.ProjectID, tmpl.RepositoryID)
+	if err != nil {
+		return err
+	}
+
+	if !repo.Monorepo {
+		return nil
+	}
+
+	if tmpl.AllowOverrideBranchInTask {
+		return common_errors.NewValidationError(
+			"a template of a monorepo repository can not let its tasks override the branch or commit")
+	}
+
+	return common_errors.NewValidationError(
+		"a template of a monorepo repository can not have a branch of its own")
 }

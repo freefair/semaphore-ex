@@ -710,6 +710,9 @@ func (e *DockerExecutor) Kill() {
 // requestStop makes one best-effort stop request while retaining the daemon
 // error for ConfirmStop. Kill intentionally keeps its historical no-error API.
 func (e *DockerExecutor) requestStop(ctx context.Context) error {
+	if e.local != nil {
+		e.local.Kill()
+	}
 	e.mu.Lock()
 	e.killed = true
 	containerID := e.containerID

@@ -209,6 +209,171 @@ func TestContainerTaskPlanExportsWorkflowOutputsOnlyForWorkflowRuns(t *testing.T
 	assert.NotContains(t, environment, hostOutput)
 }
 
+func TestPrepareContainerTaskKeepsMonorepoStableUntilBundleRead(t *testing.T) {
+	root := t.TempDir()
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: root, Process: &util.ConfigProcess{}}
+	t.Cleanup(func() { util.Config = previousConfig })
+	repository := filepath.Join(root, "repository")
+	require.NoError(t, os.MkdirAll(repository, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repository, "run.sh"), []byte("#!/bin/sh\n"), 0o700))
+
+	lock := &KeyLock{}
+	newExecutor := func(templateID int) *LocalExecutor {
+		return &LocalExecutor{
+			Template:   db.Template{ID: templateID, ProjectID: 1, Type: db.TemplateTask, App: db.AppBash, Playbook: "run.sh"},
+			Inventory:  db.Inventory{ID: 1, ProjectID: 1, Type: db.InventoryStatic},
+			Repository: db.Repository{ID: 1, ProjectID: 1, GitURL: repository, Monorepo: true},
+			App:        &delayedApp{runCh: make(chan struct{}), releaseCh: make(chan struct{})},
+			Logger:     task_logger.NopLogger{},
+			RepoLock:   lock,
+		}
+	}
+
+	first := newExecutor(1)
+	firstPlan, err := first.PrepareContainerTask("", nil, "")
+	require.NoError(t, err)
+	t.Cleanup(first.Cleanup)
+
+	second := newExecutor(2)
+	secondPlan := make(chan *ContainerTaskPlan, 1)
+	secondErr := make(chan error, 1)
+	go func() {
+		plan, prepareErr := second.PrepareContainerTask("", nil, "")
+		if prepareErr != nil {
+			secondErr <- prepareErr
+			return
+		}
+		secondPlan <- plan
+	}()
+	select {
+	case err := <-secondErr:
+		assert.Fail(t, "second container task prepared while the shared checkout was leased", "%v", err)
+	case <-secondPlan:
+		assert.Fail(t, "second container task prepared before the first bundle was copied")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	_, err = io.Copy(io.Discard, firstPlan.Bundle)
+	require.NoError(t, err)
+	require.NoError(t, firstPlan.Bundle.Close())
+
+	select {
+	case err := <-secondErr:
+		require.NoError(t, err)
+	case plan := <-secondPlan:
+		require.NoError(t, plan.Bundle.Close())
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "second container task did not continue after the bundle was copied")
+	}
+	second.Cleanup()
+}
+
+func TestPrepareContainerTaskLockWaitStopsWithTask(t *testing.T) {
+	root := t.TempDir()
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: root, Process: &util.ConfigProcess{}}
+	t.Cleanup(func() { util.Config = previousConfig })
+	repository := filepath.Join(root, "repository")
+	require.NoError(t, os.MkdirAll(repository, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repository, "run.sh"), []byte("#!/bin/sh\n"), 0o700))
+
+	lock := &KeyLock{}
+	newExecutor := func(templateID int) *LocalExecutor {
+		return &LocalExecutor{
+			Template:   db.Template{ID: templateID, ProjectID: 1, Type: db.TemplateTask, App: db.AppBash, Playbook: "run.sh"},
+			Inventory:  db.Inventory{ID: 1, ProjectID: 1, Type: db.InventoryStatic},
+			Repository: db.Repository{ID: 1, ProjectID: 1, GitURL: repository, Monorepo: true},
+			App:        &delayedApp{runCh: make(chan struct{}), releaseCh: make(chan struct{})},
+			Logger:     task_logger.NopLogger{},
+			RepoLock:   lock,
+		}
+	}
+
+	first := newExecutor(1)
+	firstPlan, err := first.PrepareContainerTask("", nil, "")
+	require.NoError(t, err)
+	t.Cleanup(first.Cleanup)
+	t.Cleanup(func() { _ = firstPlan.Bundle.Close() })
+
+	second := newExecutor(2)
+	result := make(chan error, 1)
+	go func() {
+		_, prepareErr := second.PrepareContainerTask("", nil, "")
+		result <- prepareErr
+	}()
+	select {
+	case err := <-result:
+		assert.Fail(t, "second container task returned before waiting", "%v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	second.Kill()
+	select {
+	case err := <-result:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		require.FailNow(t, "stopped container preparation remained blocked on the lease")
+	}
+}
+
+func TestPrepareContainerTaskFailureReleasesMonorepoLease(t *testing.T) {
+	root := t.TempDir()
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: root, Process: &util.ConfigProcess{}}
+	t.Cleanup(func() { util.Config = previousConfig })
+	repository := filepath.Join(root, "repository")
+	require.NoError(t, os.MkdirAll(repository, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repository, "run.sh"), []byte("#!/bin/sh\n"), 0o700))
+
+	lock := &KeyLock{}
+	invalid := &LocalExecutor{Template: db.Template{ID: 1, ProjectID: 1, Type: db.TemplateTask, App: db.AppBash, Playbook: "../outside"}, Inventory: db.Inventory{Type: db.InventoryStatic}, Repository: db.Repository{ID: 1, ProjectID: 1, GitURL: repository, Monorepo: true}, App: &delayedApp{}, Logger: task_logger.NopLogger{}, RepoLock: lock}
+	_, err := invalid.PrepareContainerTask("", nil, "")
+	require.Error(t, err)
+
+	valid := &LocalExecutor{Template: db.Template{ID: 2, ProjectID: 1, Type: db.TemplateTask, App: db.AppBash, Playbook: "run.sh"}, Inventory: db.Inventory{Type: db.InventoryStatic}, Repository: db.Repository{ID: 1, ProjectID: 1, GitURL: repository, Monorepo: true}, App: &delayedApp{}, Logger: task_logger.NopLogger{}, RepoLock: lock}
+	plan, err := valid.PrepareContainerTask("", nil, "")
+	require.NoError(t, err)
+	require.NoError(t, plan.Bundle.Close())
+	valid.Cleanup()
+}
+
+func TestPrepareContainerTaskBundleCloseReleasesMonorepoLease(t *testing.T) {
+	root := t.TempDir()
+	previousConfig := util.Config
+	util.Config = &util.ConfigType{TmpPath: root, Process: &util.ConfigProcess{}}
+	t.Cleanup(func() { util.Config = previousConfig })
+	repository := filepath.Join(root, "repository")
+	require.NoError(t, os.MkdirAll(repository, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repository, "run.sh"), []byte("#!/bin/sh\n"), 0o700))
+
+	lock := &KeyLock{}
+	newExecutor := func(templateID int) *LocalExecutor {
+		return &LocalExecutor{Template: db.Template{ID: templateID, ProjectID: 1, Type: db.TemplateTask, App: db.AppBash, Playbook: "run.sh"}, Inventory: db.Inventory{Type: db.InventoryStatic}, Repository: db.Repository{ID: 1, ProjectID: 1, GitURL: repository, Monorepo: true}, App: &delayedApp{}, Logger: task_logger.NopLogger{}, RepoLock: lock}
+	}
+	first := newExecutor(1)
+	plan, err := first.PrepareContainerTask("", nil, "")
+	require.NoError(t, err)
+	t.Cleanup(first.Cleanup)
+	second := newExecutor(2)
+	ready := make(chan error, 1)
+	go func() { _, prepareErr := second.PrepareContainerTask("", nil, ""); ready <- prepareErr }()
+	select {
+	case err := <-ready:
+		assert.Fail(t, "second container task returned before bundle close", "%v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	require.NoError(t, plan.Bundle.Close())
+	select {
+	case err := <-ready:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		require.FailNow(t, "bundle close did not release the monorepo lease")
+	}
+	second.Cleanup()
+}
+
 func TestContainerTaskPlanBundlesWorkflowOutputsCallbackWithoutRunnerPaths(t *testing.T) {
 	root := t.TempDir()
 	previousConfig := util.Config

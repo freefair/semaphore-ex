@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -65,6 +66,14 @@ type LocalExecutor struct {
 	// (runner). Must be non-nil when Prepare is called for a git repository.
 	RepoLock *KeyLock
 
+	// monorepoCheckoutUnlock is held from preparation through local execution.
+	// Unlike ordinary template checkouts, a monorepo checkout is shared by
+	// different templates, which may have different credentials and permissions.
+	// Releasing the lock after git preparation would let a second task replace
+	// files while the first task still executes them.
+	monorepoCheckoutUnlock func()
+	monorepoCheckoutMu     sync.Mutex
+
 	WorkflowArtifacts           map[string]any
 	TerraformBackendEnvironment []string
 	// OutputsCollector captures the outputs of a workflow task. Nil in the
@@ -107,6 +116,18 @@ func (t *LocalExecutor) IsKilled() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.terminationRequested
+}
+
+func (t *LocalExecutor) ensureStopCh() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.terminationRequested {
+		return false
+	}
+	if t.stopCh == nil {
+		t.stopCh = make(chan struct{})
+	}
+	return true
 }
 
 // Async is false: LocalJob.Run executes the task synchronously and returns only
@@ -824,11 +845,13 @@ func (t *LocalExecutor) getParams() (params any, err error) {
 // available for callers that want to drive the phases explicitly.
 func (t *LocalExecutor) Run(username string, incomingVersion *string, alias string) error {
 	t.mu.Lock()
-	if t.stopCh != nil {
+	if t.runDone != nil {
 		t.mu.Unlock()
 		return fmt.Errorf("local executor has already been run")
 	}
-	t.stopCh = make(chan struct{})
+	if t.stopCh == nil {
+		t.stopCh = make(chan struct{})
+	}
 	t.runDone = make(chan struct{})
 	terminationRequested := t.terminationRequested
 	t.mu.Unlock()
@@ -1039,6 +1062,22 @@ func (t *LocalExecutor) collectOutputContent(content []byte, terraformOutputs []
 // also performs the SetStatus(running) transition the legacy Run() did inline, since
 // callers driving the lifecycle manually still expect that signal to fire here.
 func (t *LocalExecutor) Prepare(username string, incomingVersion *string, alias string) (err error) {
+	if t.prepared {
+		return nil
+	}
+	if !t.ensureStopCh() {
+		return context.Canceled
+	}
+
+	if err = t.lockMonorepoCheckout(); err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			t.unlockMonorepoCheckout()
+		}
+	}()
+
 	if err = t.installHostConfigs(); err != nil {
 		return err
 	}
@@ -1062,6 +1101,43 @@ func (t *LocalExecutor) Cleanup() {
 	if t.App != nil {
 		t.App.Clear()
 	}
+	t.unlockMonorepoCheckout()
+}
+
+func (t *LocalExecutor) lockMonorepoCheckout() error {
+	if !t.Repository.Monorepo || t.hasMonorepoCheckoutLease() {
+		return nil
+	}
+	if t.RepoLock == nil {
+		return fmt.Errorf("monorepo repository lock is not configured")
+	}
+
+	unlock, err := t.RepoLock.LockWithStop(t.Repository.GetFullPath(t.Template.ID), t.stopCh)
+	if err != nil {
+		return err
+	}
+	t.monorepoCheckoutMu.Lock()
+	t.monorepoCheckoutUnlock = unlock
+	t.monorepoCheckoutMu.Unlock()
+	return nil
+}
+
+func (t *LocalExecutor) hasMonorepoCheckoutLease() bool {
+	t.monorepoCheckoutMu.Lock()
+	defer t.monorepoCheckoutMu.Unlock()
+	return t.monorepoCheckoutUnlock != nil
+}
+
+func (t *LocalExecutor) unlockMonorepoCheckout() {
+	t.monorepoCheckoutMu.Lock()
+	defer t.monorepoCheckoutMu.Unlock()
+	if t.monorepoCheckoutUnlock == nil {
+		return
+	}
+
+	unlock := t.monorepoCheckoutUnlock
+	t.monorepoCheckoutUnlock = nil
+	unlock()
 }
 
 // resolveGitBranch computes the effective git branch for a run, applying the
@@ -1088,7 +1164,15 @@ func resolveGitBranch(repoBranch string, template db.Template, task db.Task) str
 
 // withEffectiveBranch settles the branch before the App is built, so the App
 // and Git operations use the same branch-specific checkout directory.
+//
+// A monorepo is one checkout shared by every template on the repository's own
+// branch, so the template's branch and the task's branch are ignored there even
+// if a template still carries them from before the repository became a monorepo.
 func withEffectiveBranch(repository db.Repository, template db.Template, task db.Task) db.Repository {
+	if repository.Monorepo {
+		return repository
+	}
+
 	repository.GitBranch = resolveGitBranch(repository.GitBranch, template, task)
 	return repository
 }
@@ -1220,8 +1304,10 @@ func (t *LocalExecutor) prepareRunTerraform(tfApp *db_lib.TerraformApp, installi
 // different commits still share the working tree afterwards — per-task
 // worktrees if that ever matters.
 func (t *LocalExecutor) updateAndCheckoutRepository() error {
-	unlock := t.RepoLock.Lock(t.Repository.GetFullPath(t.Template.ID))
-	defer unlock()
+	if !t.hasMonorepoCheckoutLease() {
+		unlock := t.RepoLock.Lock(t.Repository.GetFullPath(t.Template.ID))
+		defer unlock()
+	}
 
 	if err := t.updateRepository(); err != nil {
 		t.Log("Failed updating repository: " + err.Error())
@@ -1264,8 +1350,10 @@ func (t *LocalExecutor) checkoutRepository() error {
 		return err
 	}
 
-	if t.Task.CommitHash != nil {
-		// checkout to commit if it is provided for TaskRunner
+	// Checkout the commit the task asks for. A monorepo stays on the head of
+	// its branch: the checkout is shared, and a task-supplied commit is ignored
+	// the same way as a task-supplied branch.
+	if t.Task.CommitHash != nil && !t.Repository.Monorepo {
 		return repo.Checkout(*t.Task.CommitHash)
 	}
 

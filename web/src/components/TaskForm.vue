@@ -161,9 +161,7 @@
       dense
       required
       :disabled="formSaving"
-      v-if="
-        needField('allow_override_branch')
-        && template.allow_override_branch_in_task"
+      v-if="canOverrideBranch"
     />
 
     <v-autocomplete
@@ -297,6 +295,14 @@ export default {
     },
     needInventory() {
       return this.needField('inventory') && this.template.task_params?.allow_override_inventory;
+    },
+
+    // A monorepo is shared by every template on the repository's own branch, so
+    // the task may not pick one even if the template still says it may.
+    canOverrideBranch() {
+      return this.needField('allow_override_branch')
+        && this.template.allow_override_branch_in_task
+        && !this.template.repository_monorepo;
     },
 
     args() {

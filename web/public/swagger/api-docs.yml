@@ -816,6 +816,10 @@ definitions:
         example: master
       ssh_key_id:
         type: integer
+      monorepo:
+        type: boolean
+        description: Share one checkout of this repository between all templates instead of cloning it per template. Templates of a monorepo can not have a branch of their own or let tasks override the branch or commit.
+        example: false
 
   Repository:
     type: object
@@ -835,6 +839,10 @@ definitions:
         example: master
       ssh_key_id:
         type: integer
+      monorepo:
+        type: boolean
+        description: Share one checkout of this repository between all templates instead of cloning it per template. Templates of a monorepo can not have a branch of their own or let tasks override the branch or commit.
+        example: false
 
   Task:
     type: object
@@ -1015,6 +1023,8 @@ definitions:
   Template:
     type: object
     properties:
+      repository_monorepo:
+        $ref: './api-docs-ex.yml#/definitions/RepositoryMonorepoPolicy'
       task_groups:
         $ref: "./api-docs-ex.yml#/definitions/TaskGroupBindings"
       ssh_keys:

@@ -578,7 +578,7 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 			Playbook:       effectiveTaskPlaybook(template, task),
 			ArgumentKeys:   sortedMapKeys(task.Params),
 			InputKeys:      taskPreflightInputNames(template),
-			BranchOverride: task.GitBranch != nil && template.AllowOverrideBranchInTask,
+			BranchOverride: false,
 		}},
 		Placements: make([]pro_interfaces.ExecutionPreflightPlacement, 0, 1),
 		Findings:   make([]pro_interfaces.ExecutionPreflightFinding, 0, 2),
@@ -663,11 +663,12 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 		}
 		repositorySnapshot := sanitizedExecutionSnapshotRepository(repository)
 		snapshotRepository = &repositorySnapshot
+		plan.Commands[0].BranchOverride = task.GitBranch != nil && template.AllowOverrideBranchInTask && !repository.Monorepo
 		plan.References = append(plan.References, pro_interfaces.ExecutionPreflightReference{
 			Kind: pro_interfaces.ExecutionReferenceRepository, ID: repository.ID,
 			Name: repository.Name, Revision: repository.GitBranch, Visible: true,
 		})
-		resourceState = append(resourceState, repository.ID, repository.Name, repository.GitURL, repository.GitBranch, repository.SSHKeyID)
+		resourceState = append(resourceState, repository.ID, repository.Name, repository.GitURL, repository.GitBranch, repository.SSHKeyID, repository.Monorepo)
 		appendCredentialReference(&plan, &repository.SSHKeyID, "repository.ssh")
 		if err = p.appendExecutionPreflightCredentialState(&resourceState, template.ProjectID, &repository.SSHKeyID); err != nil {
 			return ExecutionPreflightSnapshot{}, nil, err
