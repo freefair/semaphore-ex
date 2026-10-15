@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { parseNoPatch as parse } from 'babel-eslint';
+import { parse } from '@babel/parser';
 
 // Check the selected application graph; unreferenced upstream compatibility
 // components are not product UI, but become subject to the gate if imported.
