@@ -242,7 +242,7 @@
       </template>
 
       <template v-slot:item.repository_id="{ item }">
-        {{ repositories.find((x) => x.id === item.repository_id).name }}
+        {{ (repositories.find((x) => x.id === item.repository_id) || {name: '—'}).name }}
       </template>
 
       <template v-slot:item.actions="{ item }">
@@ -632,7 +632,9 @@ export default {
       ] = await Promise.all([
         this.loadProjectResources('inventory'),
         this.loadProjectResources('environment'),
-        this.loadProjectResources('repositories'),
+        // eslint-disable-next-line no-bitwise
+        this.isAdmin || (this.userPermissions & this.USER_PERMISSIONS.viewProjectResources)
+          ? this.loadProjectResources('repositories') : [],
       ]);
     },
 

@@ -70,7 +70,9 @@
             <v-list-item-content>
               <v-list-item-title>{{ $t('repository2') }}</v-list-item-title>
               <v-list-item-subtitle>
-                {{ repositories.find((x) => x.id === template.repository_id).name }}
+                {{ (
+                  repositories.find((x) => x.id === template.repository_id) || {name: '—'}
+                ).name }}
               </v-list-item-subtitle>
             </v-list-item-content>
           </v-list-item>

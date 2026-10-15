@@ -421,6 +421,8 @@ export default {
 
     async loadData() {
       try {
+        this.item = await this.loadProjectResource('templates', this.itemId);
+
         [
           this.item,
           this.inventory,
@@ -430,7 +432,9 @@ export default {
           this.loadProjectResource('templates', this.itemId),
           this.loadProjectResources('inventory'),
           this.loadProjectResources('environment'),
-          this.loadProjectResources('repositories'),
+          // eslint-disable-next-line no-bitwise
+          this.isAdmin || (this.userPermissions & USER_PERMISSIONS.viewProjectResources)
+            ? this.loadProjectResources('repositories') : [],
         ]);
       } catch (err) {
         if (err.response?.status !== 403) {
