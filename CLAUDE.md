@@ -19,7 +19,11 @@ independently; they are security and runtime controls rather than product-editio
 
 During execution of the approved enhanced-edition slice plan, resolve local, reversible implementation and design details with best engineering judgment. Continue without asking for routine preferences. Ask Dennis only when work is blocked by missing authority or information, an irreversible or destructive action, or a choice that materially changes the approved product scope.
 
-The local QA server, database, and test data were created by Codex for this plan. They are Codex-owned disposable infrastructure and may be migrated, rebuilt, reset, seeded, restarted, or stopped without asking Dennis. This authorization does not extend to remote or shared environments.
+The `semaphore-ex-full-sync` automation runs in explicitly authorized autonomous mode. A request for a full sync and push authorizes the complete workflow: assessment, recovery refs, upstream merges, scope-preserving compatibility fixes, required reviews and verification, related Wiki updates, commits, ordinary pushes to product `develop` and Wiki `master`, and repair of in-scope CI failures. Carry this authority across compaction, resume, and subsequent scheduled runs until Dennis revokes it. State and execute scope-preserving plans without another approval round. Claude CLI consultation with task-relevant source is included.
+
+Task-owned local QA servers, databases, repositories, test accounts, sessions, and synthetic test data are disposable infrastructure. Create, seed, migrate, rebuild, reset, restart, stop, and clean up these fixtures as needed for verification without asking Dennis. Verify that their paths and loopback endpoints belong to the task first. Generate ephemeral authentication material at runtime and keep it out of source, logs, commits, and reports. This fixture authority excludes existing shared or remote runtime infrastructure and unrelated user data.
+
+Distinguish missing authority from technical failures. Investigate failed commands and continue through safe, authorized alternatives. For a guard false positive, retain the denial and diagnose the exact trigger without reading protected secrets. Prefer correcting the fixture or command structure; a standing sync approval does not disable safeguards or override a tool's explicit approval requirement. Ask only for authority or information that is actually missing, identifying the exact action and reason. Prior requests already answered by this standing authorization are resolved, not pending blockers.
 
 Keep enhanced-edition work upstream-compatible. Prefer implementing existing interfaces and extension seams; leave Community behavior and shared UI untouched wherever possible. UI changes must be the smallest integration needed for the selected slice and should reuse existing routes, views, and components instead of redesigning shared surfaces.
 
@@ -51,16 +55,22 @@ and helpers in this repository so policy changes and the skill stay aligned.
 
 Use regular upstream merges into the long-lived `develop` branch.
 Maintain English docs in the product Wiki repository on `master`; there is no
-separate docs fork to merge. Preserve published fork history. A sync request authorizes
-preparing the merge and scope-preserving compatibility fixes; obtain publication
-approval before pushing. History rewrites and force-pushes require a separate,
+separate docs fork to merge. Preserve published fork history. An assessment-only request
+remains read-only. A full sync with push, including the scheduled automation, carries
+the standing publication authorization in Autonomy; proceed after verification without
+requesting it again. For a sync without publication authorization, prepare the verified
+result before asking to publish. History rewrites and force-pushes require a separate,
 explicit request and are not the routine update procedure.
 
 Follow [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Upstream-Maintenance) and
 `maintenance/README.md`. Run the repository-owned `tools/upstream-sync/preflight.sh`
 with retained evidence before merging. Capture exact refs, review local changes,
 and merge the reviewed upstream SHA. Maintain related documentation independently in the Wiki.
-Use ordinary pushes and stop to reassess if the recorded remote tip has changed.
+Use ordinary pushes. If the recorded remote tip changes, fetch and inspect the
+concurrent work, incorporate compatible changes, and repeat affected verification
+before pushing normally. Existing publication authority remains valid; ask only
+when reconciliation would cross a genuine scope or authority boundary.
+Routine sync publication covers branch pushes, not release tags or deployments.
 This repository policy supersedes older rebase instructions in personal sync skills.
 
 Keep upstream migration IDs canonical and register new upstream SQL only in the

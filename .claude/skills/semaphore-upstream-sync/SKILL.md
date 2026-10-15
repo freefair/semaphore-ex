@@ -21,9 +21,15 @@ Repository policy and the maintained runbook are authoritative. For each conflic
 
 ## Scope and Authorization
 
-Distinguish assessment-only requests from an actual sync. A sync request authorizes preparing merges and scope-preserving compatibility fixes. Obtain publication approval for the concrete verified result unless already authorized in the conversation.
+Distinguish assessment-only requests from an actual sync. Assessment-only work remains read-only. A full sync with push authorizes the complete workflow through verified publication, including related Wiki updates and in-scope CI repairs. The `semaphore-ex-full-sync` automation has standing explicit autonomous authorization under root `CLAUDE.md`. State the plan and proceed; preserve this authorization across compaction, resume, and subsequent runs until revoked. Resolve earlier pending routine approval questions against this authorization instead of repeating them. For a sync without publication authorization, prepare the concrete verified result before asking to publish.
+
+Local task-owned QA infrastructure is part of the workflow. Verify ownership and loopback endpoints, then create and seed disposable databases, Git repositories, accounts, sessions, and test data; restart, reset, and clean them up as needed. Generate ephemeral authentication material at runtime and keep its values out of source and evidence. Claude CLI consultation and review with task-relevant project source are preauthorized.
+
+Technical failure is not missing consent. Diagnose and repair in-scope failures autonomously. Retain guard denials and identify their exact cause without exposing secrets. Prefer a safe command or fixture correction for a proven false positive; standing authorization does not disable safeguards or replace explicit tool-level approval requirements. Ask only when missing authority or information prevents safe continuation, naming the concrete action and the source of the requirement. Shared or remote environment mutations, unrelated user data, scope expansion, and history rewrites are outside routine QA authorization.
 
 Routine syncs use merges and ordinary fast-forward pushes. Rebases, other history rewrites, force-pushes, and deletion of recovery branches or restored stashes require separate explicit authorization. A failed normal push is a reason to reassess concurrent work, not to force it.
+
+Routine publication covers product and Wiki branch pushes. Release tags, deployments, and changes to other repositories require their own scope; a secondary automation working directory is a read-only reference unless explicitly included.
 
 Keep helper/tooling changes in their own explicitly requested scope. Preserve unrelated tracked/untracked work and review unpublished commits before including them.
 

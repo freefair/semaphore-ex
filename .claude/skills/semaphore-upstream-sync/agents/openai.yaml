@@ -1,4 +1,4 @@
 interface:
   display_name: "Semaphore Upstream Sync"
   short_description: "Merge upstream into the full-product Semaphore fork"
-  default_prompt: "Use $semaphore-upstream-sync to merge upstream into freefair/semaphore-ex, preserve published history and Enhanced contracts, and verify the result with the repository-owned gates."
+  default_prompt: "Use $semaphore-upstream-sync for a full sync and ordinary push in the project's explicitly authorized autonomous mode. Preserve published history and Enhanced contracts, complete local QA, reviews and repository-owned gates, publish related Wiki updates, and verify exact-commit CI without repeating granted approvals."
