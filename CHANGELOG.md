@@ -11,11 +11,59 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+## [v2.20.0-ex.2.1.5] - 2026-10-16
+
+### Added
+
+- Workflow revisions, input mappings and output views preserve immutable run
+  definitions and carry workflow context through task execution. Validated task
+  outputs reach downstream nodes across local and remote executors.
+- An administrator audit browser supports filtering, pagination and JSON export.
+  Canonical events cover authentication, permissions, resources, credentials,
+  task execution and runner lifecycle. Configurable retention and Syslog/Splunk
+  HEC delivery include durable export cursors and backlog metrics.
+- Repository monorepo mode shares a checkout across templates. Repository path
+  suggestions and shallow browsing simplify template setup while preserving
+  manually entered paths and project access controls.
+
 ### Fixed
 
 - Access-key API responses always include the Boolean fields `empty` and
   `synchronized`, including `false`, so clients can distinguish explicit values
   from absent fields.
+- Task dialogs use the available desktop width and show execution review beside
+  the inputs. Routine provisional runner placement no longer appears as a
+  permanent warning, and Terraform defaults are distinguished from run-time
+  override prompts.
+- Remote task completion preserves status and validated outputs across concurrent
+  progress, cancellation and confirmation updates. HA recovery retains complete
+  schema identities and fences stale runner assignments.
+- Runner preparation failures remain failures; cancellation retains its separate
+  outcome and stops work through the existing cancellation path.
+- Templates remain usable with scoped template permissions when the user cannot
+  read repositories. Inventory and repository execution policies stay consistent
+  across previews, snapshots and remote execution.
+- Private Galaxy dependencies retain repository and host-mapping credentials
+  across local, remote and container execution. Repository URL credentials are
+  redacted from task logs.
+- Concurrent static inventories use isolated files. Ansible secret extra-vars
+  use per-task Vault delivery, while unsafe-value handling applies only to Jinja
+  data that requires it.
+- Workflow inputs reject forged task fields and unsafe expression injection.
+  Secret-storage deletion preserves atomic credential cleanup and scoped
+  reference checks on all supported database dialects.
+
+### Changed
+
+- Release builds use Go 1.26.9 and `golang.org/x/net` v0.60.0 to address the
+  reachable Go advisories identified by the release dependency checks.
+- Updated the upstream integration while preserving independent upstream and EX
+  migration histories, full-product permissions and workflow execution contracts.
+- Removed vulnerable frontend dependency paths through compatible dependency
+  overrides and refreshed third-party license attribution.
+- HA fault verification keeps a killed owner offline during runner recovery and
+  records actual task/attempt results. Existing recovery limits and uniqueness
+  assertions remain enforced.
 
 ## [v2.20.0-ex.2.1.4] - 2026-09-25
 
