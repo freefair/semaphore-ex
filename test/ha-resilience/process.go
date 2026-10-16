@@ -26,6 +26,13 @@ func (r *commandRunner) docker(ctx context.Context, arguments ...string) (string
 	return r.run(ctx, "docker", arguments...)
 }
 
+// startService preserves faults injected into dependencies of this service.
+// Compose start traverses depends_on and would revive a deliberately killed node.
+func (r *commandRunner) startService(ctx context.Context, service string) error {
+	_, err := r.compose(ctx, "up", "--detach", "--no-deps", "--no-recreate", service)
+	return err
+}
+
 func (r *commandRunner) run(ctx context.Context, name string, arguments ...string) (string, error) {
 	command := exec.CommandContext(ctx, name, arguments...)
 	command.Dir = r.repositoryDir
@@ -33,11 +40,11 @@ func (r *commandRunner) run(ctx context.Context, name string, arguments ...strin
 	for key, value := range r.environment {
 		command.Env = append(command.Env, key+"="+value)
 	}
-	var output bytes.Buffer
+	var output, diagnostics bytes.Buffer
 	command.Stdout = &output
-	command.Stderr = &output
+	command.Stderr = &diagnostics
 	if err := command.Run(); err != nil {
-		return output.String(), fmt.Errorf("%s %s: %w\n%s", name, strings.Join(arguments, " "), err, output.String())
+		return output.String(), fmt.Errorf("%s %s: %w\n%s%s", name, strings.Join(arguments, " "), err, output.String(), diagnostics.String())
 	}
 	return strings.TrimSpace(output.String()), nil
 }

@@ -68,7 +68,7 @@ func (h *Harness) killNode(ctx context.Context) error {
 			runnerStarted := false
 			defer func() {
 				if !runnerStarted {
-					_, _ = h.commands.compose(context.Background(), "start", "runner")
+					_ = h.commands.startService(context.Background(), "runner")
 				}
 				if !ownerRestarted {
 					_, _ = h.commands.compose(context.Background(), "up", "--detach", "--no-deps", owner)
@@ -88,16 +88,35 @@ func (h *Harness) killNode(ctx context.Context) error {
 				h.recoveryTaskID,
 			)
 			assignmentRevoked := h.waitSQL(ctx, revocationQuery, 1, 45*time.Second) == nil
-			if _, err := h.commands.compose(ctx, "start", "runner"); err != nil {
+			if err := h.commands.startService(ctx, "runner"); err != nil {
 				return nil, fmt.Errorf("restart runner for post-revocation evidence: %w", err)
 			}
 			runnerStarted = true
+			ownerAfterRunnerStart, err := h.commands.compose(ctx, "ps", "--status", "running", "--services", owner)
+			if err != nil {
+				return nil, err
+			}
 
 			terminalQuery := fmt.Sprintf(
 				"select count(*) from task where id=%d and assignment_generation=2 and status in ('success','error','stopped');",
 				h.recoveryTaskID,
 			)
-			terminal := h.waitSQL(ctx, terminalQuery, 1, 150*time.Second) == nil
+			terminalErr := h.waitSQL(ctx, terminalQuery, 1, 150*time.Second)
+			terminalEvidence := fmt.Sprintf("task %d reached a terminal state on assignment generation 2", h.recoveryTaskID)
+			if terminalErr != nil {
+				terminalEvidence = terminalErr.Error()
+			}
+			ownerAfterRecovery, err := h.commands.compose(ctx, "ps", "--status", "running", "--services", owner)
+			if err != nil {
+				return nil, err
+			}
+			recoveryState, err := h.commands.sql(ctx, fmt.Sprintf(
+				"select t.status || ':generation=' || t.assignment_generation || ':attempts=' || coalesce((select string_agg(a.generation || ':' || a.outcome, ',' order by a.generation) from task__runner_attempt a where a.task_id=t.id), '') from task t where t.id=%d;",
+				h.recoveryTaskID,
+			))
+			if err != nil {
+				return nil, err
+			}
 			attemptCount, err := h.sqlInt(ctx, fmt.Sprintf("select count(*) from task__runner_attempt where task_id=%d;", h.recoveryTaskID))
 			if err != nil {
 				return nil, err
@@ -131,9 +150,10 @@ func (h *Harness) killNode(ctx context.Context) error {
 			ready := h.waitReadiness(ctx, ownerURL, true, 60*time.Second) == nil
 			return []Assertion{
 				{Name: "proxy_api_available", Passed: available, Evidence: "authenticated read succeeded after SIGKILL"},
+				{Name: "killed_node_stays_down", Passed: ownerAfterRunnerStart == "" && ownerAfterRecovery == "", Evidence: fmt.Sprintf("running owner after runner start=%q, after recovery=%q", ownerAfterRunnerStart, ownerAfterRecovery)},
 				{Name: "task_owner_recovered", Passed: ownerTransferred && assignmentRevoked && requeued == 1, Evidence: fmt.Sprintf("task %d owner %s/%s transferred, revoked, and safely requeued once", h.recoveryTaskID, owner, h.recoveryOwnerBootID)},
 				{Name: "runner_attempt_generations_unique", Passed: attemptCount == 2 && uniqueGenerations == 2, Evidence: fmt.Sprintf("task %d has %d attempts across %d expected generations", h.recoveryTaskID, attemptCount, uniqueGenerations)},
-				{Name: "recovered_task_terminal", Passed: terminal, Evidence: fmt.Sprintf("task %d reached a terminal state on assignment generation 2", h.recoveryTaskID)},
+				{Name: "recovered_task_terminal", Passed: terminalErr == nil, Evidence: terminalEvidence + "; " + recoveryState},
 				{Name: "original_dispatch_race_absent", Passed: originalRaceAbsent, Evidence: "server logs contain neither duplicate runner-attempt generation nor stale assignment conflict"},
 				{Name: "killed_node_rejoins", Passed: ready, Evidence: fmt.Sprintf("%s registered a new ready process lifetime", owner)},
 			}, nil
