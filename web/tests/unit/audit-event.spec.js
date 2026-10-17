@@ -48,6 +48,7 @@ describe('lib/auditEvent', () => {
 
   it('labels reasons and object types, and passes unknown values through', () => {
     expect(reasonLabel('invalid_credentials', i18n)).to.equal('Invalid credentials');
+    expect(reasonLabel('owner_self_change', i18n)).to.equal('An owner cannot change their own role');
     expect(reasonLabel('', i18n)).to.equal('');
     expect(reasonLabel('new_reason', i18n)).to.equal('new_reason');
     expect(targetTypeLabel('credential', i18n)).to.equal('Key');
@@ -75,6 +76,17 @@ describe('lib/auditEvent', () => {
       { key: 'deleted', value: '3' },
     ]);
     expect(metadataRows(null)).to.deep.equal([]);
+  });
+
+  it('shows a role reference by its slug', () => {
+    const owner = { id: 1, slug: 'owner' };
+    const runner = { id: 3, slug: 'task_runner' };
+    const metadata = { old_roles: [owner], new_roles: [owner, runner], role: runner };
+    expect(metadataRows(metadata)).to.deep.equal([
+      { key: 'old_roles', value: 'owner' },
+      { key: 'new_roles', value: 'owner, task_runner' },
+      { key: 'role', value: 'task_runner' },
+    ]);
   });
 
   it('drops empty filters', () => {

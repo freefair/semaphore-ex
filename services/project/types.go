@@ -24,6 +24,7 @@ type BackupDB struct {
 	secretStorages []db.SecretStorage
 	globalRoles    []db.Role
 	roles          []db.Role
+	roleIDMap      map[db.ProjectRoleID]db.ProjectRoleID
 	templateRoles  map[int][]db.TemplateRolePerm
 	runners        []db.Runner
 	workflows      []db.WorkflowTemplate
@@ -104,6 +105,7 @@ type BackupHostConfig struct {
 
 type BackupTemplateRole struct {
 	Role        string                   `backup:"role"`
+	RoleID      db.ProjectRoleID         `backup:"role_id"`
 	IsGlobal    bool                     `backup:"is_global"`
 	Permissions db.ProjectUserPermission `backup:"permissions"`
 }
@@ -146,6 +148,7 @@ type BackupSecretStorage struct {
 
 type BackupRole struct {
 	db.Role
+	ID db.ProjectRoleID `backup:"id"`
 }
 
 type BackupRunner struct {

@@ -353,7 +353,6 @@ func (d *SqlDb) getTemplates(
 	if userID != nil {
 		fields = append(fields, "0 permissions")
 	}
-
 	q := sq.Select(fields...).From("project__template pt")
 
 	if filter.App != nil {
@@ -616,11 +615,12 @@ func (d *SqlDb) GetTemplateRefs(projectID int, templateID int) (db.ObjectReferre
 
 func (d *SqlDb) GetTemplateRole(projectID int, templateID int, id int) (templateRole db.TemplateRolePerm, err error) {
 
-	query, args, err := sq.Select("*").
-		From("project__template_role").
-		Where("project_id = ?", projectID).
-		Where("template_id = ?", templateID).
-		Where("id = ?", id).
+	query, args, err := sq.Select("ptr.*", "coalesce(r.slug, ptr.role_slug) role_slug").
+		From("project__template_role ptr").
+		LeftJoin("`role` r ON r.role_id = ptr.role_id").
+		Where("ptr.project_id = ?", projectID).
+		Where("ptr.template_id = ?", templateID).
+		Where("ptr.id = ?", id).
 		ToSql()
 
 	if err != nil {
@@ -641,10 +641,11 @@ func (d *SqlDb) GetTemplatePermission(projectID int, templateID int, userID int)
 }
 
 func (d *SqlDb) GetTemplateRoles(projectID int, templateID int) (roles []db.TemplateRolePerm, err error) {
-	query, args, err := sq.Select("*").
-		From("project__template_role").
-		Where("project_id = ?", projectID).
-		Where("template_id = ?", templateID).
+	query, args, err := sq.Select("ptr.*", "coalesce(r.slug, ptr.role_slug) role_slug").
+		From("project__template_role ptr").
+		LeftJoin("`role` r ON r.role_id = ptr.role_id").
+		Where("ptr.project_id = ?", projectID).
+		Where("ptr.template_id = ?", templateID).
 		ToSql()
 
 	if err != nil {

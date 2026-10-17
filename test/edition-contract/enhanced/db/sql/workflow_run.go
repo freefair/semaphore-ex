@@ -13,6 +13,7 @@ import (
 	"github.com/go-gorp/gorp/v3"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/util"
 )
 
 func (d *WorkflowStoreImpl) GetWorkflowRunTasks(projectID int, runID int, params db.RetrieveQueryParams) ([]db.TaskWithTpl, error) {
@@ -1096,7 +1097,10 @@ func (d *WorkflowStoreImpl) SubmitWorkflowApprovalContribution(
 		approval.RolePolicySnapshotJSON = string(payload)
 		approval.RolePolicySnapshotRevision = submission.LegacySnapshot.PolicyRevision
 	}
-	identity, knownRoles, identityErr := d.resolveWorkflowApprovalIdentityTx(tx, submission.ProjectID, submission.ActorUserID)
+	if err = d.lockWorkflowApprovalAuthorization(tx, submission.ProjectID); err != nil {
+		return db.WorkflowApprovalContributionResult{}, err
+	}
+	identities, knownRoles, identityErr := d.resolveWorkflowApprovalIdentitiesTx(tx, submission.ProjectID, submission.ActorUserID)
 	if identityErr != nil {
 		if err = tx.Commit(); err != nil {
 			return db.WorkflowApprovalContributionResult{}, err
@@ -1106,13 +1110,17 @@ func (d *WorkflowStoreImpl) SubmitWorkflowApprovalContribution(
 	eligibility := pro_interfaces.EvaluateWorkflowApprovalEligibility(pro_interfaces.WorkflowApprovalEligibilityRequest{
 		Policy: approval.RolePolicySnapshot.Policy, ActorUserID: submission.ActorUserID,
 		InitiatorUserID:         approval.RequestActorUserID,
-		EffectiveRoleReferences: []db.ProjectRoleReference{identity.Reference}, KnownRoleReferences: knownRoles,
+		EffectiveRoleReferences: workflowApprovalRoleReferences(identities), KnownRoleReferences: knownRoles,
 	})
 	if !eligibility.Allowed || len(eligibility.MatchingRoleIDs) == 0 {
 		if err = tx.Commit(); err != nil {
 			return db.WorkflowApprovalContributionResult{}, err
 		}
 		return db.WorkflowApprovalContributionResult{Approval: approval, Denied: true}, nil
+	}
+	identity, found := workflowApprovalIdentityForReference(identities, eligibility.MatchingRoleIDs[0])
+	if !found {
+		return db.WorkflowApprovalContributionResult{}, db.ErrProjectWorkflowRoleIdentityUnavailable
 	}
 	contribution := db.WorkflowApprovalContribution{
 		ApprovalID: approval.ID, ActorUserID: submission.ActorUserID, RoleID: eligibility.MatchingRoleIDs[0],
@@ -1214,48 +1222,130 @@ func isWorkflowApprovalContributionDuplicate(err error) bool {
 	return strings.Contains(value, "unique") || strings.Contains(value, "duplicate")
 }
 
-func (d *WorkflowStoreImpl) resolveWorkflowApprovalIdentityTx(
+// lockWorkflowApprovalAuthorization establishes the same global-then-project
+// mutation boundary used by membership changes before role relations are read.
+func (d *WorkflowStoreImpl) lockWorkflowApprovalAuthorization(tx *gorp.Transaction, projectID int) error {
+	result, err := tx.Exec(d.connection.PrepareQuery("update global_role_state set revision=revision+1 where id=1"))
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return db.ErrNotFound
+	}
+	query := "select id from project where id=?"
+	if d.connection.GetDialect() != util.DbDriverSQLite {
+		query += " for update"
+	}
+	var lockedProjectID int
+	if err = tx.SelectOne(&lockedProjectID, d.connection.PrepareQuery(query), projectID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return db.ErrNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+func (d *WorkflowStoreImpl) resolveWorkflowApprovalIdentitiesTx(
 	tx *gorp.Transaction,
 	projectID int,
 	userID int,
-) (db.ProjectWorkflowRoleIdentity, map[db.ProjectRoleReference]bool, error) {
+) ([]db.ProjectWorkflowRoleIdentity, map[db.ProjectRoleReference]bool, error) {
 	var member db.ProjectUser
 	if err := tx.SelectOne(&member, d.connection.PrepareQuery(
 		"select * from project__user where project_id=? and user_id=?"), projectID, userID,
 	); err != nil {
-		return db.ProjectWorkflowRoleIdentity{}, nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+		return nil, nil, db.ErrProjectWorkflowRoleIdentityUnavailable
 	}
 	roleIDs := make([]db.ProjectRoleID, 0)
 	var roles []db.Role
 	if _, err := tx.Select(&roles, d.connection.PrepareQuery(
 		"select * from `role` where project_id=? and revision>=1 order by role_id"), projectID,
 	); err != nil {
-		return db.ProjectWorkflowRoleIdentity{}, nil, err
+		return nil, nil, err
 	}
 	for _, role := range roles {
 		roleIDs = append(roleIDs, role.ID)
 	}
 	known := db.KnownProjectRoleReferences(roleIDs)
-	identity, roleID, builtIn, err := workflowApprovalIdentityBase(member, roles)
-	if err != nil {
-		return db.ProjectWorkflowRoleIdentity{}, nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+	var assignments []struct {
+		RoleID db.ProjectRoleID `db:"role_id"`
+		LDAP   *int             `db:"ldap_group_managed_assignment_id"`
+		OIDC   *int             `db:"oidc_group_managed_assignment_id"`
 	}
-	if member.LDAPGroupManagedAssignmentID != nil && member.OIDCGroupManagedAssignmentID != nil {
-		return db.ProjectWorkflowRoleIdentity{}, nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+	if _, err := tx.Select(&assignments, d.connection.PrepareQuery("select role_id, ldap_group_managed_assignment_id, oidc_group_managed_assignment_id from project__user_role where project_id=? and user_id=?"), projectID, userID); err != nil {
+		return nil, nil, err
 	}
-	if member.LDAPGroupManagedAssignmentID != nil {
-		identity, err = d.resolveWorkflowApprovalDirectoryIdentityTx(tx, identity, member, roleID, *member.LDAPGroupManagedAssignmentID, "ldap")
-	} else if member.OIDCGroupManagedAssignmentID != nil {
-		identity, err = d.resolveWorkflowApprovalDirectoryIdentityTx(tx, identity, member, roleID, *member.OIDCGroupManagedAssignmentID, "oidc")
-	} else if builtIn {
-		identity.Origin = db.ProjectWorkflowRoleOriginBuiltIn
-	} else {
-		identity.Origin = db.ProjectWorkflowRoleOriginManual
+	identities := make([]db.ProjectWorkflowRoleIdentity, 0, len(assignments))
+	for _, assignment := range assignments {
+		if assignment.LDAP != nil && assignment.OIDC != nil {
+			return nil, nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+		}
+		candidate := member
+		candidate.RoleID = &assignment.RoleID
+		candidate.Role = db.ProjectNone
+		var identity db.ProjectWorkflowRoleIdentity
+		var roleID string
+		var builtIn bool
+		var err error
+		if strings.HasPrefix(string(assignment.RoleID), "builtin:") {
+			role := db.ProjectUserRole(strings.TrimPrefix(string(assignment.RoleID), "builtin:"))
+			reference, ok := db.ProjectRoleReferenceForBuiltInRole(role)
+			if !ok {
+				return nil, nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+			}
+			identity = db.ProjectWorkflowRoleIdentity{Reference: reference, Permissions: role.GetPermissions(), Revision: member.Revision}
+			roleID = string(role)
+			builtIn = true
+		} else {
+			identity, roleID, builtIn, err = workflowApprovalIdentityBase(candidate, roles)
+			if err != nil {
+				var global db.Role
+				globalErr := tx.SelectOne(&global, d.connection.PrepareQuery("select * from role where role_id=? and project_id is null and revision>=1"), assignment.RoleID)
+				if globalErr == nil {
+					continue
+				}
+				return nil, nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+			}
+		}
+		if assignment.LDAP != nil {
+			identity, err = d.resolveWorkflowApprovalDirectoryIdentityTx(tx, identity, member, roleID, *assignment.LDAP, "ldap")
+		} else if assignment.OIDC != nil {
+			identity, err = d.resolveWorkflowApprovalDirectoryIdentityTx(tx, identity, member, roleID, *assignment.OIDC, "oidc")
+		} else if builtIn {
+			identity.Origin = db.ProjectWorkflowRoleOriginBuiltIn
+		} else {
+			identity.Origin = db.ProjectWorkflowRoleOriginManual
+		}
+		if err != nil || identity.Validate() != nil {
+			return nil, nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+		}
+		identities = append(identities, identity)
 	}
-	if err != nil || identity.Validate() != nil {
-		return db.ProjectWorkflowRoleIdentity{}, nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+	if len(identities) == 0 {
+		return nil, nil, db.ErrProjectWorkflowRoleIdentityUnavailable
 	}
-	return identity, known, nil
+	return identities, known, nil
+}
+
+func workflowApprovalRoleReferences(identities []db.ProjectWorkflowRoleIdentity) []db.ProjectRoleReference {
+	refs := make([]db.ProjectRoleReference, 0, len(identities))
+	for _, identity := range identities {
+		refs = append(refs, identity.Reference)
+	}
+	return refs
+}
+func workflowApprovalIdentityForReference(identities []db.ProjectWorkflowRoleIdentity, reference db.ProjectRoleReference) (db.ProjectWorkflowRoleIdentity, bool) {
+	for _, identity := range identities {
+		if identity.Reference == reference {
+			return identity, true
+		}
+	}
+	return db.ProjectWorkflowRoleIdentity{}, false
 }
 
 func workflowApprovalIdentityBase(member db.ProjectUser, roles []db.Role) (db.ProjectWorkflowRoleIdentity, string, bool, error) {

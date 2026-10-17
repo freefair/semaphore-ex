@@ -89,6 +89,24 @@ func TestBuiltInAdministratorHasAllGlobalPermissions(t *testing.T) {
 		db.CanManageGlobalSystem|db.CanReadGlobalAudit))
 }
 
+func TestGetRoleAssignmentsIncludesDirectGlobalAssignmentsInImpact(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	user, err := store.CreateUserWithoutPassword(db.User{Username: "global-impact", Name: "Global impact", Email: "global-impact@example.test"})
+	require.NoError(t, err)
+	role, err := store.CreateGlobalRole(db.Role{ID: "global_impact", Name: "Global impact", Revision: 1})
+	require.NoError(t, err)
+	_, err = store.CreateGlobalRoleAssignment(db.GlobalRoleAssignment{UserID: user.ID, RoleID: role.ID, Revision: 1})
+	require.NoError(t, err)
+
+	assignments, err := store.GetRoleAssignments(role.ID)
+
+	require.NoError(t, err)
+	assert.Empty(t, assignments.Members)
+	assert.Equal(t, 1, assignments.GlobalMembers)
+	assert.Equal(t, db.RoleImpact{Members: 1}, assignments.Impact())
+}
+
 func TestUserMutationsProtectLastEffectiveGlobalAdministrator(t *testing.T) {
 	store := InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
@@ -221,6 +239,30 @@ func TestDeleteGlobalRoleRejectsProjectMemberships(t *testing.T) {
 	membership, err := store.GetProjectUser(project.ID, user.ID)
 	require.NoError(t, err)
 	assert.Equal(t, db.ProjectUserRole(role.Slug), membership.Role)
+}
+
+func TestGlobalRoleMutationsProtectRelationOnlyMemberships(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "Relation global role project"})
+	require.NoError(t, err)
+	user := createProjectRoleTestUser(t, store, "relation-global-member")
+	role, err := store.CreateGlobalRole(db.Role{
+		ID: "global_relation_administrator", Slug: "global-relation-administrator", Name: "Global relation administrator",
+		Permissions: db.CanManageProjectUsers, Revision: 1,
+	})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUserWithRoleRefs(
+		db.ProjectUser{ProjectID: project.ID, UserID: user.ID, Revision: 1},
+		[]db.ProjectRoleID{role.ID},
+	)
+	require.NoError(t, err)
+
+	err = store.DeleteGlobalRole(role.ID, role.Revision)
+	assert.ErrorIs(t, err, db.ErrGlobalRoleAssigned)
+	role.Permissions = db.CanViewProjectResources
+	_, err = store.UpdateGlobalRole(role, role.Revision)
+	assert.ErrorIs(t, err, db.ErrLastProjectAdministrator)
 }
 
 func TestUpdateGlobalRoleRetainsAnAdministratorInEveryAffectedProject(t *testing.T) {

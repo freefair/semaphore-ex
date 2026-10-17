@@ -217,63 +217,82 @@ func (d *SqlDb) GetLDAPGroupRoleAssignments(providerID string) ([]db.LDAPGroupRo
 	type projectRow struct {
 		UserID                       int                      `db:"user_id"`
 		ProjectID                    int                      `db:"project_id"`
-		Role                         db.ProjectUserRole       `db:"role"`
-		RoleID                       *db.ProjectRoleID        `db:"role_id"`
+		RoleID                       db.ProjectRoleID         `db:"role_id"`
 		LDAPGroupManagedAssignmentID *int                     `db:"ldap_group_managed_assignment_id"`
+		OIDCGroupManagedAssignmentID *int                     `db:"oidc_group_managed_assignment_id"`
 		Permissions                  db.ProjectUserPermission `db:"permissions"`
 	}
 	projectRows := make([]projectRow, 0)
 	_, err = d.selectAll(&projectRows,
-		`select pu.user_id, pu.project_id, pu.role, pu.role_id, pu.ldap_group_managed_assignment_id,
-		 case when pu.role='owner' then ?
-		      when pu.role='manager' then ?
-		      when pu.role='task_runner' then ?
-		      when pu.role='guest' then ?
+		`select pur.user_id, pur.project_id, pur.role_id,
+		 pur.ldap_group_managed_assignment_id, pur.oidc_group_managed_assignment_id,
+		 case when pur.role_id=? then ?
+		      when pur.role_id=? then ?
+		      when pur.role_id=? then ?
+		      when pur.role_id=? then ?
 		      else coalesce(r.permissions, 0) end permissions
-		 from project__user pu
-		 join user__external_identity i on i.user_id=pu.user_id and i.type='ldap' and i.provider=?
-		 left join role r on ((pu.role_id is not null and r.role_id=pu.role_id and r.project_id=pu.project_id)
-		                    or (pu.role_id is null and r.slug=pu.role and (r.project_id=pu.project_id or r.project_id is null)))
-		 order by pu.user_id, pu.project_id`,
-		db.ProjectOwner.GetPermissions(), db.ProjectManager.GetPermissions(),
-		db.ProjectTaskRunner.GetPermissions(), db.ProjectGuest.GetPermissions(), providerID)
+		 from project__user_role pur
+		 join user__external_identity i on i.user_id=pur.user_id and i.type='ldap' and i.provider=?
+		 left join role r on r.role_id=pur.role_id and (r.project_id=pur.project_id or r.project_id is null)
+		 order by pur.user_id, pur.project_id, pur.role_id`,
+		db.BuiltinProjectRoleReferenceOwner, db.ProjectOwner.GetPermissions(),
+		db.BuiltinProjectRoleReferenceManager, db.ProjectManager.GetPermissions(),
+		db.BuiltinProjectRoleReferenceTaskRunner, db.ProjectTaskRunner.GetPermissions(),
+		db.BuiltinProjectRoleReferenceGuest, db.ProjectGuest.GetPermissions(), providerID)
 	if err != nil {
 		return nil, err
 	}
 	for _, row := range projectRows {
-		roleID := string(row.Role)
-		if row.RoleID != nil {
-			roleID = string(*row.RoleID)
-		}
 		managedBy := ""
 		if row.LDAPGroupManagedAssignmentID != nil {
 			if owner, ok := ledgerByID[*row.LDAPGroupManagedAssignmentID]; ok &&
 				owner.TargetScope == "project" && owner.UserID == row.UserID &&
-				owner.ProjectID != nil && *owner.ProjectID == row.ProjectID && owner.RoleID == roleID {
+				owner.ProjectID != nil && *owner.ProjectID == row.ProjectID && owner.RoleID == string(row.RoleID) {
 				managedBy = owner.MappingID
 			}
-		}
-		protected := false
-		if row.Permissions.Can(db.CanManageProjectUsers) {
-			count, countErr := d.Sql().SelectInt(d.PrepareQuery(
-				"select count(1) from project__user pu where pu.project_id=? and pu.user_id<>? and ("+
-					"pu.role='owner' or exists (select 1 from `role` r "+
-					"where (r.project_id=pu.project_id or r.project_id is null) "+
-					"and ((pu.role_id is not null and r.role_id=pu.role_id) or (pu.role_id is null and r.slug=pu.role)) "+
-					"and (r.permissions & ?) = ?))"),
-				row.ProjectID, row.UserID, db.CanManageProjectUsers, db.CanManageProjectUsers)
-			if countErr != nil {
-				return nil, countErr
+			if managedBy == "" {
+				continue
 			}
-			protected = count == 0
+		} else if row.OIDCGroupManagedAssignmentID != nil {
+			continue
+		}
+		protected, protectedErr := d.projectRoleAssignmentProtectedAdministrator(row.ProjectID, row.UserID, row.RoleID, row.Permissions)
+		if protectedErr != nil {
+			return nil, protectedErr
 		}
 		projectID := row.ProjectID
 		assignments = append(assignments, db.LDAPGroupRoleAssignment{
-			UserID: row.UserID, TargetScope: "project", ProjectID: &projectID, RoleID: roleID,
+			UserID: row.UserID, TargetScope: "project", ProjectID: &projectID, RoleID: string(row.RoleID),
 			ManagedByMappingID: managedBy, ProtectedAdministrator: protected,
 		})
 	}
 	return assignments, nil
+}
+
+func (d *SqlDb) projectRoleAssignmentProtectedAdministrator(projectID, userID int, roleID db.ProjectRoleID, permissions db.ProjectUserPermission) (bool, error) {
+	if !permissions.Can(db.CanManageProjectUsers) {
+		return false, nil
+	}
+	count, err := d.Sql().SelectInt(d.PrepareQuery(
+		`select count(*)
+		 from project__user_role pur
+		 left join role r on r.role_id=pur.role_id and (r.project_id=pur.project_id or r.project_id is null)
+		 where pur.project_id=? and (pur.user_id<>? or pur.role_id<>?)
+		   and ((case when pur.role_id=? then ?
+		             when pur.role_id=? then ?
+		             when pur.role_id=? then ?
+		             when pur.role_id=? then ?
+		             else coalesce(r.permissions, 0) end) & ?) = ?`),
+		projectID, userID, roleID,
+		db.BuiltinProjectRoleReferenceOwner, db.ProjectOwner.GetPermissions(),
+		db.BuiltinProjectRoleReferenceManager, db.ProjectManager.GetPermissions(),
+		db.BuiltinProjectRoleReferenceTaskRunner, db.ProjectTaskRunner.GetPermissions(),
+		db.BuiltinProjectRoleReferenceGuest, db.ProjectGuest.GetPermissions(),
+		db.CanManageProjectUsers, db.CanManageProjectUsers)
+	if err != nil {
+		return false, err
+	}
+	return count == 0, nil
 }
 
 func (d *SqlDb) SaveLDAPGroupReconciliation(
@@ -328,7 +347,7 @@ func (d *SqlDb) ApplyLDAPGroupPreview(
 	if err != nil {
 		return db.LDAPGroupReconciliation{}, err
 	}
-	if err = lockLDAPGroupRemovalTargetsTx(tx, d, removals); err != nil {
+	if err = lockLDAPGroupTargetsTx(tx, d, additions, removals); err != nil {
 		return db.LDAPGroupReconciliation{}, err
 	}
 	for _, change := range removals {
@@ -350,14 +369,15 @@ func (d *SqlDb) ApplyLDAPGroupPreview(
 	return reconciliation, nil
 }
 
-func lockLDAPGroupRemovalTargetsTx(
+func lockLDAPGroupTargetsTx(
 	tx *gorp.Transaction,
 	d *SqlDb,
+	additions []db.LDAPGroupAssignmentChange,
 	removals []db.LDAPGroupAssignmentChange,
 ) error {
 	needsGlobalLock := false
 	projectIDs := make(map[int]bool)
-	for _, change := range removals {
+	for _, change := range append(append([]db.LDAPGroupAssignmentChange{}, additions...), removals...) {
 		switch change.TargetScope {
 		case "global":
 			needsGlobalLock = true
@@ -569,36 +589,73 @@ func removeLDAPManagedAssignmentTx(
 		if change.ProjectID == nil {
 			return db.ErrLDAPGroupMappingCollision
 		}
-		var assignment db.ProjectUser
-		err = tx.SelectOne(&assignment, d.PrepareQuery(
-			`select * from project__user where project_id=? and user_id=? and role_id=?
+		assigned, err := tx.SelectInt(d.PrepareQuery(
+			`select count(1) from project__user_role where project_id=? and user_id=? and role_id=?
 			 and ldap_group_managed_assignment_id=?`),
 			*change.ProjectID, change.UserID, change.RoleID, ledger.ID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return db.ErrLDAPGroupMappingCollision
-		}
 		if err != nil {
 			return err
 		}
-		permissions, permissionErr := projectRoleAssignmentPermissionsTx(tx, d, assignment)
-		if permissionErr != nil {
-			return permissionErr
-		}
-		if permissions.Can(db.CanManageProjectUsers) {
-			if err = requireAnotherProjectAdministratorTx(tx, d, *change.ProjectID, change.UserID); err != nil {
-				return err
-			}
+		if assigned != 1 {
+			return db.ErrLDAPGroupMappingCollision
 		}
 		if _, err = tx.Exec(d.PrepareQuery(
-			`delete from project__user where project_id=? and user_id=? and role_id=?
+			`delete from project__user_role where project_id=? and user_id=? and role_id=?
 			 and ldap_group_managed_assignment_id=?`),
 			*change.ProjectID, change.UserID, change.RoleID, ledger.ID); err == nil {
+			removedCanManage, permissionErr := d.roleRefsCanManageProjectUsers(tx, *change.ProjectID, []db.ProjectRoleID{db.ProjectRoleID(change.RoleID)})
+			if permissionErr != nil {
+				return permissionErr
+			}
+			if removedCanManage {
+				administrators, countErr := d.countEffectiveProjectAdministrators(tx, *change.ProjectID)
+				if countErr != nil {
+					return countErr
+				}
+				if administrators == 0 {
+					return db.ErrLastProjectAdministrator
+				}
+			}
+			if err = reprojectProjectMembershipAfterLDAPRemoval(tx, d, *change.ProjectID, change.UserID, ledger.ID); err != nil {
+				return err
+			}
+			_, err = tx.Exec(d.PrepareQuery(
+				`delete from project__user where project_id=? and user_id=? and ldap_group_managed_assignment_id=?
+				 and not exists (select 1 from project__user_role where project_id=? and user_id=?)`),
+				*change.ProjectID, change.UserID, ledger.ID, *change.ProjectID, change.UserID)
+			if err != nil {
+				return err
+			}
 			_, err = tx.Exec(d.PrepareQuery(
 				"delete from ldap_group_managed_assignment where id=?"), ledger.ID)
 		}
 	default:
 		return db.ErrLDAPGroupMappingCollision
 	}
+	return err
+}
+
+func reprojectProjectMembershipAfterLDAPRemoval(tx *gorp.Transaction, d *SqlDb, projectID, userID, ledgerID int) error {
+	var remaining struct {
+		RoleID db.ProjectRoleID `db:"role_id"`
+		LDAP   *int             `db:"ldap_group_managed_assignment_id"`
+		OIDC   *int             `db:"oidc_group_managed_assignment_id"`
+	}
+	err := tx.SelectOne(&remaining, d.PrepareQuery("select role_id, ldap_group_managed_assignment_id, oidc_group_managed_assignment_id from project__user_role where project_id=? and user_id=? order by role_id limit 1"), projectID, userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	role, roleID, err := d.projectRoleProjection(tx, projectID, remaining.RoleID)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(d.PrepareQuery("update project__user set revision=revision+1 where project_id=? and user_id=?"), projectID, userID); err != nil {
+		return err
+	}
+	_, err = tx.Exec(d.PrepareQuery("update project__user set role=?, role_id=nullif(?, ''), ldap_group_managed_assignment_id=?, oidc_group_managed_assignment_id=? where project_id=? and user_id=? and ldap_group_managed_assignment_id=?"), role, roleID, remaining.LDAP, remaining.OIDC, projectID, userID, ledgerID)
 	return err
 }
 
@@ -660,20 +717,40 @@ func addLDAPManagedAssignmentTx(
 			return err
 		}
 		if count != 0 {
-			return db.ErrLDAPGroupMappingCollision
+			if err = ensureLDAPProjectMembershipCompatibleForAdditionTx(tx, d, change); err != nil {
+				return err
+			}
 		}
 		ledgerID, insertErr := insertLDAPManagedAssignmentTx(tx, d, providerID, change, nil, created)
 		if insertErr != nil {
 			return insertErr
 		}
 		projectMembershipAssignmentID = &ledgerID
+		if count == 0 {
+			_, err = tx.Exec(d.PrepareQuery(
+				`insert into project__user
+				 (project_id, user_id, role, role_id, revision, ldap_group_managed_assignment_id)
+				 values (?, ?, '', ?, 1, ?)`),
+				*change.ProjectID, change.UserID, change.RoleID, ledgerID)
+			if err != nil {
+				return err
+			}
+		}
 		_, err = tx.Exec(d.PrepareQuery(
-			`insert into project__user
-			 (project_id, user_id, role, role_id, revision, ldap_group_managed_assignment_id)
-			 values (?, ?, '', ?, 1, ?)`),
+			`insert into project__user_role
+			 (project_id, user_id, role_id, ldap_group_managed_assignment_id)
+			 values (?, ?, ?, ?)`),
 			*change.ProjectID, change.UserID, change.RoleID, ledgerID)
 		if err != nil {
 			return err
+		}
+		if count != 0 {
+			_, err = tx.Exec(d.PrepareQuery(
+				"update project__user set revision=revision+1 where project_id=? and user_id=?"),
+				*change.ProjectID, change.UserID)
+			if err != nil {
+				return err
+			}
 		}
 	default:
 		return db.ErrNotFound
@@ -683,6 +760,34 @@ func addLDAPManagedAssignmentTx(
 	}
 	_, err := insertLDAPManagedAssignmentTx(tx, d, providerID, change, globalAssignmentID, created)
 	return err
+}
+
+func ensureLDAPProjectMembershipCompatibleForAdditionTx(
+	tx *gorp.Transaction,
+	d *SqlDb,
+	change db.LDAPGroupAssignmentChange,
+) error {
+	type relation struct {
+		RoleID db.ProjectRoleID `db:"role_id"`
+		LDAP   *int             `db:"ldap_group_managed_assignment_id"`
+		OIDC   *int             `db:"oidc_group_managed_assignment_id"`
+	}
+	var relations []relation
+	_, err := tx.Select(&relations, d.PrepareQuery(
+		"select role_id, ldap_group_managed_assignment_id, oidc_group_managed_assignment_id from project__user_role where project_id=? and user_id=?"),
+		*change.ProjectID, change.UserID)
+	if err != nil {
+		return err
+	}
+	if len(relations) == 0 {
+		return db.ErrLDAPGroupMappingCollision
+	}
+	for _, relation := range relations {
+		if string(relation.RoleID) == change.RoleID || (relation.LDAP == nil && relation.OIDC == nil) || (relation.LDAP != nil && relation.OIDC != nil) {
+			return db.ErrLDAPGroupMappingCollision
+		}
+	}
+	return nil
 }
 
 func insertLDAPManagedAssignmentTx(

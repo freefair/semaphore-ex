@@ -51,10 +51,18 @@ describe('Enhanced permission constants', () => {
       rollbackPolicyGuardrails: 256,
     });
     expect(USER_ROLES).to.deep.equal([
-      { slug: 'owner', name: 'Owner', permissions: 1048575 },
-      { slug: 'manager', name: 'Manager', permissions: 1048565 },
-      { slug: 'task_runner', name: 'Task Runner', permissions: 36273 },
-      { slug: 'guest', name: 'Guest', permissions: 32816 },
+      {
+        slug: 'owner', builtin: true, name: 'Owner', permissions: 1048575,
+      },
+      {
+        slug: 'manager', builtin: true, name: 'Manager', permissions: 1048565,
+      },
+      {
+        slug: 'task_runner', builtin: true, name: 'Task Runner', permissions: 36273,
+      },
+      {
+        slug: 'guest', builtin: true, name: 'Guest', permissions: 32816,
+      },
     ]);
     expect(ROLE_PERMISSIONS.default).to.deep.equal([
       descriptor(1, 'canRunProjectTasks', 'blue'),

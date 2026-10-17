@@ -37,18 +37,22 @@ export const USER_PERMISSIONS = {
 
 export const USER_ROLES = [{
   slug: 'owner',
+  builtin: true,
   name: 'Owner',
   permissions: 1048575,
 }, {
   slug: 'manager',
+  builtin: true,
   name: 'Manager',
   permissions: 1048565,
 }, {
   slug: 'task_runner',
+  builtin: true,
   name: 'Task Runner',
   permissions: 36273,
 }, {
   slug: 'guest',
+  builtin: true,
   name: 'Guest',
   permissions: 32816,
 }];

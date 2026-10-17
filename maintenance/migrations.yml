@@ -1159,3 +1159,18 @@ migrations:
   files:
     migrations_ex/v2.20.11-ex1.3.sql: 18f8b316ea4b8bf6762311930f1323c17697469d063b7f839c12e1389095b097
     migrations_ex/v2.20.11-ex1.3.err.sql: fd3e463b2f682e16bfe166a8e2b3b7f5be339b3f73771a80fb41f65cb2bfe20c
+- registered: true
+  id: 2.20.12
+  owner: upstream-adapted
+  upstream_id: 2.20.12
+  rationale: Preserve EX immutable role identities, membership revisions, and directory ownership while introducing the upstream multi-role relation.
+  files:
+    migrations/v2.20.12.sql: 04f5c2d0be05aedd395529d26bd9070eaca3c99aca31a66d4eb0d80e1679bed6
+    migrations/v2.20.12.err.sql: 21700e0e092335ca8c46fbe2d57a8b45b71f8179d0ae62e208b973aa78dffceb
+- registered: true
+  id: 2.20.13
+  owner: upstream
+  upstream_id: 2.20.13
+  files:
+    migrations/v2.20.13.sql: 0d203319f7871dac005cb3c6a0c7d2730845b30f896c690d078f10daaab7599b
+    migrations/v2.20.13.err.sql: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855

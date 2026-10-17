@@ -60,6 +60,7 @@ func truncateAll() {
 		"project__template",
 		"project__template_vault",
 		"project__schedule",
+		"project__user_role",
 		"project__user",
 		"user",
 		"project__view",
@@ -120,12 +121,20 @@ func setupObjectsAndPaths(t *transaction.Transaction) {
 
 // Object Lifecycle
 func addUserProjectRelation(pid int, user int) {
-	_, err := store.CreateProjectUser(db.ProjectUser{
+	owner, err := store.GetGlobalRoleBySlug("owner")
+	if err != nil {
+		panic(err)
+	}
+	membership, err := store.CreateProjectUser(db.ProjectUser{
 		ProjectID: pid,
 		UserID:    user,
 		Role:      db.ProjectOwner,
+		Revision:  1,
 	})
 	if err != nil {
+		panic(err)
+	}
+	if err = store.SetProjectUserRoleRefs(pid, user, []db.ProjectRoleID{owner.ID}, membership.Revision); err != nil {
 		panic(err)
 	}
 }

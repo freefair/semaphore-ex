@@ -33,23 +33,26 @@ const (
 type Reason string
 
 const (
-	ReasonNone                     Reason = ""
-	ReasonInvalidCredentials       Reason = "invalid_credentials"
-	ReasonUserNotFound             Reason = "user_not_found"
-	ReasonMethodDisabled           Reason = "method_disabled"
-	ReasonProviderError            Reason = "provider_error"
-	ReasonInvalidState             Reason = "invalid_state"
-	ReasonInternalError            Reason = "internal_error"
-	ReasonInvalidPasscode          Reason = "invalid_passcode"
-	ReasonInvalidRecoveryCode      Reason = "invalid_recovery_code"
-	ReasonCodeExpired              Reason = "code_expired"
-	ReasonTooManyAttempts          Reason = "too_many_attempts"
-	ReasonTokenUnknown             Reason = "token_unknown"
-	ReasonTokenExpired             Reason = "token_expired"
-	ReasonForbidden                Reason = "forbidden"
-	ReasonCrossOrigin              Reason = "cross_origin"
-	ReasonInvalidCurrentPassword   Reason = "invalid_current_password"
+	ReasonNone                   Reason = ""
+	ReasonInvalidCredentials     Reason = "invalid_credentials"
+	ReasonUserNotFound           Reason = "user_not_found"
+	ReasonMethodDisabled         Reason = "method_disabled"
+	ReasonProviderError          Reason = "provider_error"
+	ReasonInvalidState           Reason = "invalid_state"
+	ReasonInternalError          Reason = "internal_error"
+	ReasonInvalidPasscode        Reason = "invalid_passcode"
+	ReasonInvalidRecoveryCode    Reason = "invalid_recovery_code"
+	ReasonCodeExpired            Reason = "code_expired"
+	ReasonTooManyAttempts        Reason = "too_many_attempts"
+	ReasonTokenUnknown           Reason = "token_unknown"
+	ReasonTokenExpired           Reason = "token_expired"
+	ReasonForbidden              Reason = "forbidden"
+	ReasonCrossOrigin            Reason = "cross_origin"
+	ReasonInvalidCurrentPassword Reason = "invalid_current_password"
+	// ReasonOwnerSelfChange remains valid for audit events persisted before the
+	// last-owner rule replaced that rejection path.
 	ReasonOwnerSelfChange          Reason = "owner_self_change"
+	ReasonLastOwner                Reason = "last_owner"
 	ReasonActivationFailed         Reason = "activation_failed"
 	ReasonSecretFailed             Reason = "secret_failed"
 	ReasonInventoryFailed          Reason = "inventory_failed"
@@ -64,7 +67,7 @@ func knownReasons() []Reason {
 		ReasonInvalidCredentials, ReasonUserNotFound, ReasonMethodDisabled, ReasonProviderError,
 		ReasonInvalidState, ReasonInternalError, ReasonInvalidPasscode, ReasonInvalidRecoveryCode,
 		ReasonCodeExpired, ReasonTooManyAttempts, ReasonTokenUnknown, ReasonTokenExpired,
-		ReasonForbidden, ReasonCrossOrigin, ReasonInvalidCurrentPassword, ReasonOwnerSelfChange,
+		ReasonForbidden, ReasonCrossOrigin, ReasonInvalidCurrentPassword, ReasonOwnerSelfChange, ReasonLastOwner,
 		ReasonActivationFailed, ReasonSecretFailed, ReasonInventoryFailed, ReasonSetupFailed, ReasonRestoreFailed,
 		ReasonInvalidRegistrationToken, ReasonInvalidStatus,
 	}

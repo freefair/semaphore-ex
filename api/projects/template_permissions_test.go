@@ -99,6 +99,71 @@ func TestTemplatePermissionAPIEnforcesDenyAllowInheritanceAndBoundedProvenance(t
 	}
 }
 
+func TestEffectiveTemplatePermissionsAPIAggregatesMultipleRoleOverrides(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, template := createTemplatePermissionFixture(t, store)
+	guest, err := store.GetGlobalRoleBySlug(string(db.ProjectGuest))
+	require.NoError(t, err)
+	customRole, err := store.CreateProjectRole(db.Role{
+		ID: "role_template_explanation", Name: "Template explanation",
+		ProjectID: &project.ID, Revision: 1,
+	})
+	require.NoError(t, err)
+	user, err := store.CreateUserWithoutPassword(db.User{
+		Username: "template-explanation-user", Name: "Template explanation user",
+		Email: "template-explanation-user@example.test",
+	})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUser(db.ProjectUser{
+		ProjectID: project.ID, UserID: user.ID, Role: db.ProjectGuest,
+	})
+	require.NoError(t, err)
+	membership, err := store.GetProjectUser(project.ID, user.ID)
+	require.NoError(t, err)
+	require.NoError(t, store.SetProjectUserRoleRefs(
+		project.ID, user.ID, []db.ProjectRoleID{guest.ID, customRole.ID}, membership.Revision,
+	))
+	_, err = store.CreateTemplateRole(db.TemplateRolePerm{
+		ProjectID: project.ID, TemplateID: template.ID, RoleID: &customRole.ID,
+		AllowedPermissions: db.CanEditTemplate, DeniedPermissions: db.CanReadTemplate, Revision: 1,
+	})
+	require.NoError(t, err)
+
+	controller := NewTemplateController(store, store)
+	request := httptest.NewRequest(http.MethodGet, "/api/project/1/templates/1/permissions/effective", nil)
+	request = helpers.SetContextValue(request, "store", store)
+	request = helpers.SetContextValue(request, "project", project)
+	request = helpers.SetContextValue(request, "template", template)
+	request = helpers.SetContextValue(request, "user", &user)
+	response := httptest.NewRecorder()
+	controller.GetEffectiveTemplatePermissions(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+
+	var effective pro_interfaces.EffectiveTemplatePermissions
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &effective))
+	assert.Equal(t, db.CanEditTemplate, effective.Permissions)
+	decisions := make(map[pro_interfaces.PermissionID]pro_interfaces.EffectivePermissionDecision, len(effective.Decisions))
+	for _, decision := range effective.Decisions {
+		decisions[decision.Permission] = decision
+		definition, known := pro_interfaces.PermissionDefinitionByID(decision.Permission)
+		require.True(t, known)
+		assert.Equal(t, effective.Permissions.Can(db.TemplatePermission(definition.Permission)), decision.Allowed)
+		assert.Empty(t, decision.Provenance.RoleID)
+		assert.Empty(t, decision.Provenance.RoleName)
+	}
+	read, found := decisions[pro_interfaces.PermissionReadTemplate]
+	require.True(t, found)
+	assert.False(t, read.Allowed)
+	assert.Equal(t, pro_interfaces.PermissionScopeTemplate, read.Provenance.Scope)
+	assert.Equal(t, pro_interfaces.PermissionEffectDeny, read.Provenance.Effect)
+	edit, found := decisions[pro_interfaces.PermissionEditTemplate]
+	require.True(t, found)
+	assert.True(t, edit.Allowed)
+	assert.Equal(t, pro_interfaces.PermissionScopeTemplate, edit.Provenance.Scope)
+	assert.Equal(t, pro_interfaces.PermissionEffectAllow, edit.Provenance.Effect)
+}
+
 func TestGetTemplateRefsDoesNotMutateTemplate(t *testing.T) {
 	store := coresql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
@@ -317,13 +382,6 @@ func createTemplatePermissionFixture(
 	store *coresql.SqlDb,
 ) (db.Project, db.Template) {
 	t.Helper()
-	for _, role := range []db.ProjectUserRole{db.ProjectGuest, db.ProjectManager} {
-		_, err := store.CreateRole(db.Role{
-			ID: db.ProjectRoleID(role), Slug: string(role), Name: string(role),
-			Permissions: role.GetPermissions(), Revision: 1,
-		})
-		require.NoError(t, err)
-	}
 	project, err := store.CreateProject(db.Project{Name: "Template permission project"})
 	require.NoError(t, err)
 	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &project.ID, Type: db.AccessKeyNone})

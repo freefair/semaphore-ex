@@ -249,11 +249,15 @@ type ProjectStore interface {
 	CreateProject(project Project) (Project, error)
 	DeleteProject(projectID int) error
 	UpdateProject(project Project) error
-	GetProjectUsers(projectID int, params RetrieveQueryParams) ([]UserWithProjectRole, error)
+	GetProjectUsers(projectID int, params RetrieveQueryParams) ([]UserWithProjectRoles, error)
 	CreateProjectUser(projectUser ProjectUser) (ProjectUser, error)
+	CreateProjectUserWithRoleRefs(projectUser ProjectUser, roleIDs []ProjectRoleID) (ProjectUser, error)
 	DeleteProjectUser(projectID int, userID int) error
 	GetProjectUser(projectID int, userID int) (ProjectUser, error)
 	UpdateProjectUser(projectUser ProjectUser) error
+	SetProjectUserRoleRefs(projectID int, userID int, roleIDs []ProjectRoleID, expectedRevision int) error
+	GetProjectUserRoles(projectID int, userID int) ([]Role, error)
+	CountProjectOwners(projectID int) (int, error)
 }
 
 type ProjectInviteRepository interface {
@@ -613,13 +617,16 @@ type RoleRepository interface {
 	GetGlobalRoles() ([]Role, error)
 	UpdateRole(role Role) error
 	CreateRole(role Role) (Role, error)
-	DeleteRole(slug string, projectID *int) error
+	DeleteRole(roleID ProjectRoleID) error
+	GetRoleAssignments(roleID ProjectRoleID) (RoleAssignments, error)
 	CreateProjectRole(role Role) (Role, error)
 	UpdateProjectRole(projectID int, role Role, expectedRevision int) (Role, error)
 	DeleteProjectRole(projectID int, roleID ProjectRoleID, expectedRevision int) error
+	ForceDeleteProjectRole(projectID int, roleID ProjectRoleID, expectedRevision int) (RoleImpact, error)
 	CreateGlobalRole(role Role) (Role, error)
 	UpdateGlobalRole(role Role, expectedRevision int) (Role, error)
 	DeleteGlobalRole(roleID ProjectRoleID, expectedRevision int) error
+	ForceDeleteGlobalRole(roleID ProjectRoleID, expectedRevision int) (RoleImpact, error)
 	GetGlobalRoleAssignments(userID int) ([]GlobalRoleAssignment, error)
 	CreateGlobalRoleAssignment(assignment GlobalRoleAssignment) (GlobalRoleAssignment, error)
 	DeleteGlobalRoleAssignment(userID int, assignmentID int, expectedRevision int) error
@@ -760,12 +767,6 @@ var WorkflowTemplateProps = ObjectProps{
 	DefaultSortingColumn:  "name",
 }
 
-var ProjectUserProps = ObjectProps{
-	TableName:         "project__user",
-	Type:              reflect.TypeFor[ProjectUser](),
-	PrimaryColumnName: "user_id",
-}
-
 var ProjectInviteProps = ObjectProps{
 	TableName:             "project__invite",
 	Type:                  reflect.TypeFor[ProjectInvite](),
@@ -799,6 +800,14 @@ var SecretStorageProps = ObjectProps{
 	Ownerships:            []*ObjectProps{&ProjectProps},
 }
 
+// ProjectUserProps preserves the established metadata seam for compatibility callers.
+var ProjectUserProps = ObjectProps{
+	TableName:         "project__user",
+	Type:              reflect.TypeFor[ProjectUser](),
+	PrimaryColumnName: "user_id",
+}
+
+// RoleProps preserves the established metadata seam for compatibility callers.
 var RoleProps = ObjectProps{
 	TableName:         "role",
 	Type:              reflect.TypeFor[Role](),

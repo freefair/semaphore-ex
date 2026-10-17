@@ -80,3 +80,151 @@ func TestDeleteUser_WithTask(t *testing.T) {
 	_, err = store.GetTask(projectID, task.ID)
 	assert.NoError(t, err)
 }
+
+func createMembershipTestProjectAndUser(t *testing.T, store db.Store) (db.Project, db.User) {
+	p, err := store.CreateProject(db.Project{Name: "membership"})
+	require.NoError(t, err)
+	u, err := store.CreateUserWithoutPassword(db.User{Username: "a", Name: "A", Email: "a@e.st"})
+	require.NoError(t, err)
+	return p, u
+}
+
+func slugsOf(roles []db.Role) []string {
+	slugs := []string{}
+	for _, r := range roles {
+		slugs = append(slugs, r.Slug)
+	}
+	return slugs
+}
+
+func createMembershipWithRoles(t *testing.T, store *SqlDb, projectID, userID int, roles []db.Role) db.ProjectUser {
+	t.Helper()
+	require.NotEmpty(t, roles)
+	primary := roles[0]
+	membership := db.ProjectUser{ProjectID: projectID, UserID: userID, Role: db.ProjectUserRole(primary.Slug), Revision: 1}
+	if primary.ProjectID != nil {
+		membership.Role = db.ProjectNone
+		membership.RoleID = &primary.ID
+	}
+	created, err := store.CreateProjectUser(membership)
+	require.NoError(t, err)
+	roleIDs := make([]db.ProjectRoleID, 0, len(roles))
+	for _, role := range roles {
+		roleIDs = append(roleIDs, role.ID)
+	}
+	require.NoError(t, store.SetProjectUserRoleRefs(projectID, userID, roleIDs, created.Revision))
+	return created
+}
+
+func TestMembershipRolesRoundTripUsesStableRoleIDsAndCAS(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	p, u := createMembershipTestProjectAndUser(t, store)
+	owner, err := store.GetGlobalRoleBySlug("owner")
+	require.NoError(t, err)
+	runner, err := store.GetGlobalRoleBySlug("task_runner")
+	require.NoError(t, err)
+	local, err := store.CreateProjectRole(db.Role{
+		ID: "role_membership_local", Name: "Local", Permissions: db.CanRunProjectTasks,
+		ProjectID: &p.ID, Revision: 1,
+	})
+	require.NoError(t, err)
+
+	createMembershipWithRoles(t, store, p.ID, u.ID, []db.Role{runner, local})
+	roles, err := store.GetProjectUserRoles(p.ID, u.ID)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"task_runner", "role_membership_local"}, slugsOf(roles))
+
+	membership, err := store.GetProjectUser(p.ID, u.ID)
+	require.NoError(t, err)
+	require.NoError(t, store.SetProjectUserRoleRefs(p.ID, u.ID, []db.ProjectRoleID{owner.ID, runner.ID, local.ID}, membership.Revision))
+	roles, err = store.GetProjectUserRoles(p.ID, u.ID)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"owner", "task_runner", "role_membership_local"}, slugsOf(roles))
+
+	assert.ErrorIs(t, store.SetProjectUserRoleRefs(p.ID, u.ID, []db.ProjectRoleID{owner.ID}, membership.Revision), db.ErrProjectMembershipRevisionConflict)
+
+	other, err := store.CreateUserWithoutPassword(db.User{Username: "b", Name: "B", Email: "b@e.st"})
+	require.NoError(t, err)
+	createMembershipWithRoles(t, store, p.ID, other.ID, []db.Role{owner})
+	require.NoError(t, store.DeleteProjectUser(p.ID, u.ID))
+	_, err = store.GetProjectUser(p.ID, u.ID)
+	assert.ErrorIs(t, err, db.ErrNotFound)
+
+	assert.ErrorIs(t, store.SetProjectUserRoleRefs(p.ID, u.ID, []db.ProjectRoleID{owner.ID}, membership.Revision+1), db.ErrProjectMembershipRevisionConflict, "a removed member does not come back")
+	_, err = store.GetProjectUser(p.ID, u.ID)
+	assert.ErrorIs(t, err, db.ErrNotFound)
+}
+
+func TestMembershipRejectsEmptyRoleSetWithoutChangingRoles(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	p, u := createMembershipTestProjectAndUser(t, store)
+	runner, err := store.GetGlobalRoleBySlug("task_runner")
+	require.NoError(t, err)
+
+	createMembershipWithRoles(t, store, p.ID, u.ID, []db.Role{runner})
+	membership, err := store.GetProjectUser(p.ID, u.ID)
+	require.NoError(t, err)
+	assert.Error(t, store.SetProjectUserRoleRefs(p.ID, u.ID, nil, membership.Revision))
+	roles, err := store.GetProjectUserRoles(p.ID, u.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"task_runner"}, slugsOf(roles), "an empty list does not remove the member")
+}
+
+func TestMembershipRejectsForeignRoleWithoutChangingRoles(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	project, user := createMembershipTestProjectAndUser(t, store)
+	otherProject, err := store.CreateProject(db.Project{Name: "other"})
+	require.NoError(t, err)
+	runner, err := store.GetGlobalRoleBySlug("task_runner")
+	require.NoError(t, err)
+	foreign, err := store.CreateProjectRole(db.Role{
+		ID: "role_foreign_membership", Name: "Foreign", ProjectID: &otherProject.ID, Revision: 1,
+	})
+	require.NoError(t, err)
+
+	createMembershipWithRoles(t, store, project.ID, user.ID, []db.Role{runner})
+	membership, err := store.GetProjectUser(project.ID, user.ID)
+	require.NoError(t, err)
+	assert.Error(t, store.SetProjectUserRoleRefs(project.ID, user.ID, []db.ProjectRoleID{foreign.ID}, membership.Revision))
+	roles, err := store.GetProjectUserRoles(project.ID, user.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"task_runner"}, slugsOf(roles))
+}
+
+func TestProjectUsersSortByRole(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	p, u1 := createMembershipTestProjectAndUser(t, store)
+	u2, err := store.CreateUserWithoutPassword(db.User{Username: "b", Name: "B", Email: "b@e.st"})
+	require.NoError(t, err)
+	owner, err := store.GetGlobalRoleBySlug("owner")
+	require.NoError(t, err)
+	guest, err := store.GetGlobalRoleBySlug("guest")
+	require.NoError(t, err)
+	createMembershipWithRoles(t, store, p.ID, u1.ID, []db.Role{owner})
+	createMembershipWithRoles(t, store, p.ID, u2.ID, []db.Role{guest})
+	users, err := store.GetProjectUsers(p.ID, db.RetrieveQueryParams{SortBy: "role"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"guest", "owner"}, []string{users[0].Roles[0].Slug, users[1].Roles[0].Slug})
+}
+
+func TestCountProjectOwners(t *testing.T) {
+	store, projectID, _ := newTemplatePermissionTest(t)
+	owner, err := store.GetGlobalRoleBySlug("owner")
+	require.NoError(t, err)
+	guest, err := store.GetGlobalRoleBySlug("guest")
+	require.NoError(t, err)
+	createTemplatePermissionTestUser(t, store, projectID, "a", owner)
+	b := createTemplatePermissionTestUser(t, store, projectID, "b", guest)
+	createTemplatePermissionTestUser(t, store, projectID, "c", guest)
+
+	count, err := store.CountProjectOwners(projectID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+
+	membership, err := store.GetProjectUser(projectID, b.ID)
+	require.NoError(t, err)
+	require.NoError(t, store.SetProjectUserRoleRefs(projectID, b.ID, []db.ProjectRoleID{owner.ID, guest.ID}, membership.Revision))
+	count, err = store.CountProjectOwners(projectID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+}

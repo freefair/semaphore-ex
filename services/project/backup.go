@@ -4,20 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/random"
 )
-
-func findNameBySlug[T db.BackupSluggedEntity](slug string, items []T) (*string, error) {
-	for _, o := range items {
-		if o.GetSlug() == slug {
-			name := o.GetName()
-			return &name, nil
-		}
-	}
-	return nil, fmt.Errorf("item %s does not exist", slug)
-}
 
 func findNameByID[T db.BackupEntity](ID int, items []T) (*string, error) {
 	for _, o := range items {
@@ -296,9 +287,7 @@ func (b *BackupDB) format() (*BackupFormat, error) {
 
 	roles := make([]BackupRole, len(b.roles))
 	for i, r := range b.roles {
-		roles[i] = BackupRole{
-			r,
-		}
+		roles[i] = BackupRole{Role: r, ID: r.ID}
 	}
 
 	schedules := make([]BackupSchedule, len(b.schedules))
@@ -449,25 +438,16 @@ func (b *BackupDB) format() (*BackupFormat, error) {
 
 		var roles []BackupTemplateRole
 		for _, r := range b.templateRoles[o.ID] {
-			name, err := findNameBySlug[db.Role](r.RoleSlug, b.roles)
-			if err == nil {
-				roles = append(roles, BackupTemplateRole{
-					Role:        *name,
-					IsGlobal:    false,
-					Permissions: r.Permissions,
-				})
-			} else {
-				// Try to find in Global
-				name, err = findNameBySlug[db.Role](r.RoleSlug, b.globalRoles)
-				if err != nil {
-					continue
+			sameRole := func(role db.Role) bool { return r.RoleID != nil && role.ID == *r.RoleID }
+			if i := slices.IndexFunc(b.roles, sameRole); i >= 0 {
+				roles = append(roles, BackupTemplateRole{Role: b.roles[i].Name, RoleID: b.roles[i].ID, Permissions: r.Permissions})
+			} else if i := slices.IndexFunc(b.globalRoles, sameRole); i >= 0 {
+				// Global and built-in roles are written by slug.
+				roles = append(roles, BackupTemplateRole{Role: b.globalRoles[i].Slug, RoleID: b.globalRoles[i].ID, IsGlobal: true, Permissions: r.Permissions})
+			} else if r.RoleID == nil {
+				if i := slices.IndexFunc(b.globalRoles, func(role db.Role) bool { return role.Slug == r.RoleSlug }); i >= 0 {
+					roles = append(roles, BackupTemplateRole{Role: b.globalRoles[i].Slug, RoleID: b.globalRoles[i].ID, IsGlobal: true, Permissions: r.Permissions})
 				}
-
-				roles = append(roles, BackupTemplateRole{
-					Role:        *name,
-					IsGlobal:    true,
-					Permissions: r.Permissions,
-				})
 			}
 		}
 

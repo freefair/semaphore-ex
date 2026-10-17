@@ -1994,6 +1994,11 @@ symbols:
   - name: db:ErrGlobalRoleAssignmentConflict
     signature: error
     implementation: core
+  - name: db:ErrGlobalRoleForceProtected
+    signature: error
+    implementation: core
+    behavior_tests:
+    - db/sql/role_delete_assignments_ex_test.go::TestForceDeleteProjectRoleRejectsDirectoryProvenance
   - name: db:ErrGlobalRoleRevisionConflict
     signature: error
     implementation: core
@@ -2066,12 +2071,20 @@ symbols:
   - name: db:ErrPolicyGuardrailTenantMismatch
     signature: error
     implementation: core
+  - name: db:ErrProjectMembershipConflict
+    signature: error
+    implementation: core
   - name: db:ErrProjectMembershipRevisionConflict
     signature: error
     implementation: core
   - name: db:ErrProjectRoleAssigned
     signature: error
     implementation: core
+  - name: db:ErrProjectRoleForceProtected
+    signature: error
+    implementation: core
+    behavior_tests:
+    - db/sql/role_delete_assignments_ex_test.go::TestForceDeleteProjectRoleRejectsDirectoryProvenance
   - name: db:ErrProjectRoleRevisionConflict
     signature: error
     implementation: core
@@ -2655,6 +2668,11 @@ symbols:
   - name: db:IsValidProjectRoleReferenceSyntax
     signature: func(reference db.ProjectRoleReference) bool
     implementation: core
+  - name: db:IsValidWorkflowOutputName
+    signature: func(name string) bool
+    implementation: core
+    behavior_tests:
+    - db/Workflow_inputs_test.go::TestIsValidWorkflowOutputName
   - name: db:KnownProjectRolePermissions
     signature: db.ProjectUserPermission = 32767
     implementation: core
@@ -3770,13 +3788,13 @@ symbols:
     signature: struct{}
     implementation: core
   - name: db:ProjectStore
-    signature: >-
-      interface{CreateProject(project db.Project) (db.Project, error); CreateProjectUser(projectUser db.ProjectUser) (db.ProjectUser,
-      error); DeleteProject(projectID int) error; DeleteProjectUser(projectID int, userID int) error; GetAllProjects() ([]db.Project,
-      error); GetProject(projectID int) (db.Project, error); GetProjectUser(projectID int, userID int) (db.ProjectUser, error);
-      GetProjectUsers(projectID int, params db.RetrieveQueryParams) ([]db.UserWithProjectRole, error); GetProjects(userID int)
-      ([]db.Project, error); UpdateProject(project db.Project) error; UpdateProjectUser(projectUser db.ProjectUser) error}
+    signature: interface{CountProjectOwners(projectID int) (int, error); CreateProject(project db.Project) (db.Project, error); CreateProjectUser(projectUser db.ProjectUser) (db.ProjectUser, error); CreateProjectUserWithRoleRefs(projectUser db.ProjectUser, roleIDs []db.ProjectRoleID) (db.ProjectUser, error); DeleteProject(projectID int) error; DeleteProjectUser(projectID int, userID int) error; GetAllProjects() ([]db.Project, error); GetProject(projectID int) (db.Project, error); GetProjectUser(projectID int, userID int) (db.ProjectUser, error); GetProjectUserRoles(projectID int, userID int) ([]db.Role, error); GetProjectUsers(projectID int, params db.RetrieveQueryParams) ([]db.UserWithProjectRoles, error); GetProjects(userID int) ([]db.Project, error); SetProjectUserRoleRefs(projectID int, userID int, roleIDs []db.ProjectRoleID, expectedRevision int) error; UpdateProject(project db.Project) error; UpdateProjectUser(projectUser db.ProjectUser) error}
     implementation: core
+    behavior_tests:
+    - db/sql/user_test.go::TestMembershipRolesRoundTripUsesStableRoleIDsAndCAS
+    - db/sql/user_test.go::TestMembershipRejectsForeignRoleWithoutChangingRoles
+    - test/edition-contract/enhanced/services/server/workflow_file_artifact_svc_test.go::TestWorkflowFileArtifactServiceFencesRevokedExecutionRoleAndSupersededAttempt
+    - db/sql/project_user_role_refs_create_test.go::TestCreateProjectUserWithRoleRefsIsAtomicAndProjectsLegacyShape
   - name: db:ProjectTaskRunner
     signature: db.ProjectUserRole = "task_runner"
     implementation: core
@@ -3806,8 +3824,12 @@ symbols:
       "json:\"directory_revision_fingerprint,omitempty\""}
     implementation: core
   - name: db:ProjectWorkflowRoleIdentityResolver
-    signature: interface{ResolveProjectWorkflowRoleIdentity(projectID int, userID int) (db.ProjectWorkflowRoleIdentity, error)}
+    signature: interface{ResolveProjectWorkflowRoleIdentities(projectID int, userID int) ([]db.ProjectWorkflowRoleIdentity,
+      error); ResolveProjectWorkflowRoleIdentity(projectID int, userID int) (db.ProjectWorkflowRoleIdentity, error)}
     implementation: core
+    behavior_tests:
+    - db/sql/workflow_role_multi_role_ex_test.go::TestResolveProjectWorkflowRoleIdentitiesReturnsEveryCurrentRole
+    - db/sql/workflow_role_multi_role_ex_test.go::TestResolveProjectWorkflowRoleIdentitiesSkipsGlobalRolesButKeepsLocalRoles
   - name: db:ProjectWorkflowRoleOrigin
     signature: string
     implementation: core
@@ -3916,11 +3938,18 @@ symbols:
       *db.TaskFilter; BeforeID int}
     implementation: core
   - name: db:Role
-    signature: >-
-      struct{ID db.ProjectRoleID "db:\"role_id\" json:\"id\" backup:\"-\""; Slug string "db:\"slug\" json:\"slug\" backup:\"-\""; Name
-      string "db:\"name\" json:\"name\""; Permissions db.ProjectUserPermission "db:\"permissions\" json:\"permissions\""; GlobalPermissions
-      db.GlobalPermission "db:\"global_permissions\" json:\"global_permissions\" backup:\"-\""; ProjectID *int "db:\"project_id\"
-      json:\"project_id\""; Revision int "db:\"revision\" json:\"revision\""}
+    signature: struct{ID db.ProjectRoleID "db:\"role_id\" json:\"id\" backup:\"-\""; Slug string "db:\"slug\" json:\"slug\" backup:\"-\""; Name string "db:\"name\" json:\"name\""; Permissions db.ProjectUserPermission "db:\"permissions\" json:\"permissions\""; GlobalPermissions db.GlobalPermission "db:\"global_permissions\" json:\"global_permissions\" backup:\"-\""; ProjectID *int "db:\"project_id\" json:\"project_id\""; Revision int "db:\"revision\" json:\"revision\""; Builtin bool "db:\"builtin\" json:\"builtin\" backup:\"-\""}
+    implementation: core
+  - name: db:RoleAssignments
+    signature: struct{Members []db.RoleMember; Grants []db.TemplateRolePerm; GlobalMembers int}
+    implementation: core
+    behavior_tests:
+    - db/Role_test.go::TestRoleAssignments_Impact
+  - name: db:RoleImpact
+    signature: struct{Members int "json:\"members\""; Projects int "json:\"projects\""; TemplateGrants int "json:\"template_grants\""}
+    implementation: core
+  - name: db:RoleMember
+    signature: struct{ProjectID int; UserID int; Username string; Roles []db.Role}
     implementation: core
   - name: db:RoleProps
     signature: db.ObjectProps
@@ -3930,17 +3959,21 @@ symbols:
       (db.GlobalRoleAssignment, error); CreateProjectRole(role db.Role) (db.Role, error); CreateRole(role db.Role) (db.Role,
       error); DeleteGlobalRole(roleID db.ProjectRoleID, expectedRevision int) error; DeleteGlobalRoleAssignment(userID int,
       assignmentID int, expectedRevision int) error; DeleteProjectRole(projectID int, roleID db.ProjectRoleID, expectedRevision
-      int) error; DeleteRole(slug string, projectID *int) error; GetEffectiveGlobalPermissions(userID int) (db.GlobalPermission,
-      error); GetGlobalRoleAssignments(userID int) ([]db.GlobalRoleAssignment, error); GetGlobalRoleByID(roleID db.ProjectRoleID)
-      (db.Role, error); GetGlobalRoleBySlug(slug string) (db.Role, error); GetGlobalRoles() ([]db.Role, error); GetProjectOrGlobalRoleBySlug(projectID
-      int, slug string) (db.Role, error); GetProjectRole(projectID int, slug string) (db.Role, error); GetProjectRoleByID(projectID
-      int, roleID db.ProjectRoleID) (db.Role, error); GetProjectRoles(projectID int) ([]db.Role, error); UpdateGlobalRole(role
+      int) error; DeleteRole(roleID db.ProjectRoleID) error; ForceDeleteGlobalRole(roleID db.ProjectRoleID, expectedRevision
+      int) (db.RoleImpact, error); ForceDeleteProjectRole(projectID int, roleID db.ProjectRoleID, expectedRevision int) (db.RoleImpact,
+      error); GetEffectiveGlobalPermissions(userID int) (db.GlobalPermission, error); GetGlobalRoleAssignments(userID int) ([]db.GlobalRoleAssignment,
+      error); GetGlobalRoleByID(roleID db.ProjectRoleID) (db.Role, error); GetGlobalRoleBySlug(slug string) (db.Role, error);
+      GetGlobalRoles() ([]db.Role, error); GetProjectOrGlobalRoleBySlug(projectID int, slug string) (db.Role, error); GetProjectRole(projectID
+      int, slug string) (db.Role, error); GetProjectRoleByID(projectID int, roleID db.ProjectRoleID) (db.Role, error); GetProjectRoles(projectID
+      int) ([]db.Role, error); GetRoleAssignments(roleID db.ProjectRoleID) (db.RoleAssignments, error); UpdateGlobalRole(role
       db.Role, expectedRevision int) (db.Role, error); UpdateProjectRole(projectID int, role db.Role, expectedRevision int)
       (db.Role, error); UpdateRole(role db.Role) error}
     implementation: core
     behavior_tests:
     - db/sql/role_test.go::TestDeleteRole_GlobalScopeDoesNotTouchProjectRole
     - db/sql/role_test.go::TestUpdateRole_OtherProjectIsNotFound
+    - db/sql/role_delete_assignments_ex_test.go::TestForceDeleteProjectRoleReprojectsRemainingMembershipAndFencesCAS
+    - db/sql/role_delete_assignments_ex_test.go::TestForceDeleteProjectRoleRetainsLastEffectiveAdministrator
   - name: db:Rollback
     signature: func(d db.Store, targetVersion string) error
     implementation: core
@@ -4548,6 +4581,9 @@ symbols:
     implementation: core
   - name: db:SurveyVarInt
     signature: db.SurveyVarType = "int"
+    implementation: core
+  - name: db:SurveyVarSecret
+    signature: db.SurveyVarType = "secret"
     implementation: core
   - name: db:SurveyVarSelect
     signature: db.SurveyVarType = "select"
@@ -5171,6 +5207,9 @@ symbols:
       struct{Role db.ProjectUserRole "db:\"role\" json:\"role\""; RoleID *db.ProjectRoleID "db:\"role_id\" json:\"role_id,omitempty\"";
       Revision int "db:\"revision\" json:\"revision\""; db.User}
     implementation: core
+  - name: db:UserWithProjectRoles
+    signature: struct{db.User; Roles []db.Role "db:\"-\" json:\"roles\""}
+    implementation: core
   - name: db:UserWithPwd
     signature: struct{Pwd string "db:\"-\" json:\"password\""; db.User}
     implementation: core
@@ -5242,8 +5281,10 @@ symbols:
     signature: func(store db.Store, repo *db.Repository) (err error)
     implementation: core
   - name: db:ValidateRole
-    signature: func(role db.Role) error
+    signature: func(role db.Role, isNew bool) error
     implementation: core
+    behavior_tests:
+    - db/Role_test.go::TestValidateRole
   - name: db:ValidateRunnerRegistrationPolicyChange
     signature: func(current db.Runner, requested db.RunnerRegistrationPolicy) error
     implementation: core
@@ -5635,6 +5676,15 @@ symbols:
   - name: db:WorkflowEdgeExpression
     signature: db.WorkflowEdgeCondition = "expression"
     implementation: core
+  - name: db:WorkflowEdgeInputByName
+    signature: db.WorkflowEdgeInputMode = "by_name"
+    implementation: core
+  - name: db:WorkflowEdgeInputExplicit
+    signature: db.WorkflowEdgeInputMode = "explicit"
+    implementation: core
+  - name: db:WorkflowEdgeInputMode
+    signature: string
+    implementation: core
   - name: db:WorkflowEdgeOnFailure
     signature: db.WorkflowEdgeCondition = "on_failure"
     implementation: core
@@ -5723,6 +5773,9 @@ symbols:
     signature: >-
       interface{GetGlobalCredential(credentialID int) (db.GlobalCredential, error); GetGlobalCredentialGrantForProject(credentialID int,
       projectID int) (db.GlobalCredentialGrant, error)}
+    implementation: core
+  - name: db:WorkflowInputMapping
+    signature: struct{Var string "json:\"var\" backup:\"var\""; Key string "json:\"key\" backup:\"key\""}
     implementation: core
   - name: db:WorkflowJoinAllComplete
     signature: db.WorkflowJoinMode = "all-complete"
@@ -7146,11 +7199,21 @@ symbols:
       func(policy db.WorkflowFileArtifactAccessPolicy, identity db.ProjectWorkflowRoleIdentity, knownRoles map[db.ProjectRoleReference]bool)
       bool
     implementation: core
+  - name: pro_interfaces:AuthorizeWorkflowFileArtifactAccessForState
+    signature: func(policy db.WorkflowFileArtifactAccessPolicy, state pro_interfaces.WorkflowAuthorizationState) bool
+    implementation: core
+    behavior_tests:
+    - pro_interfaces/workflow_access_state_test.go::TestWorkflowStateHelpersUseRoleUnionAndRejectRevokedOrGlobalRoles
   - name: pro_interfaces:AuthorizeWorkflowRead
     signature: >-
       func(workflow db.WorkflowTemplate, identity db.ProjectWorkflowRoleIdentity, knownRoles map[db.ProjectRoleReference]bool)
       pro_interfaces.WorkflowAccessDecision
     implementation: core
+  - name: pro_interfaces:AuthorizeWorkflowReadForState
+    signature: func(workflow db.WorkflowTemplate, state pro_interfaces.WorkflowAuthorizationState) pro_interfaces.WorkflowAccessDecision
+    implementation: core
+    behavior_tests:
+    - pro_interfaces/workflow_access_state_test.go::TestWorkflowStateHelpersUseRoleUnionAndRejectRevokedOrGlobalRoles
   - name: pro_interfaces:AuthorizeWorkflowTaskRead
     signature: >-
       func(workflow db.WorkflowTemplate, identity db.ProjectWorkflowRoleIdentity, knownRoles map[db.ProjectRoleReference]bool)
@@ -8378,6 +8441,11 @@ symbols:
       func(workflows []db.WorkflowTemplate, identity db.ProjectWorkflowRoleIdentity, knownRoles map[db.ProjectRoleReference]bool)
       []db.WorkflowTemplate
     implementation: core
+  - name: pro_interfaces:FilterWorkflowTemplatesByAuthorizationState
+    signature: func(workflows []db.WorkflowTemplate, state pro_interfaces.WorkflowAuthorizationState) []db.WorkflowTemplate
+    implementation: core
+    behavior_tests:
+    - pro_interfaces/workflow_access_state_test.go::TestWorkflowStateHelpersUseRoleUnionAndRejectRevokedOrGlobalRoles
   - name: pro_interfaces:FingerprintExecutionPreflight
     signature: func(plan pro_interfaces.ExecutionPreflightPlan) (string, error)
     implementation: core
@@ -10288,6 +10356,21 @@ symbols:
       "json:\"template\""; TemplateName string "json:\"template_name\""; UserID *int "json:\"user,omitempty\""; Description *string
       "json:\"-\""; RunnerID *int "json:\"runner,omitempty\""; Status pkg/task_logger.TaskStatus "json:\"status\""}
     implementation: core
+  - name: pro_interfaces:TaskOutputsCapture
+    signature: interface{AnsibleCallbackDir() (string, error); Close(); Collect(terraformOutputs []byte) (document *string, notes []string, err error); CollectContent(content []byte, terraformOutputs []byte) (document *string, notes []string, err error); Env() []string}
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCollectorRejectsReservedStructuredOutput
+    - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCaptureFileOverridesTerraformAndPreservesJSONNumbers
+    - services/tasks/taskpool_collector_wiring_test.go::TestAddTaskFromWiresCollectorIntoActiveLocalExecutor
+    - test/edition-contract/enhanced/services/tasks/docker/executor_test.go::TestDockerExecutorCollectsTerraformOutputsWithoutLeakingSensitiveValues
+  - name: pro_interfaces:TaskOutputsCollector
+    signature: interface{Begin(dir string, taskID int) (pro_interfaces.TaskOutputsCapture, error); Validate(document string) (normalized *string, err error)}
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCollectorRejectsReservedStructuredOutput
+    - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCaptureFileOverridesTerraformAndPreservesJSONNumbers
+    - services/tasks/taskpool_collector_wiring_test.go::TestAddTaskFromWiresCollectorIntoActiveLocalExecutor
   - name: pro_interfaces:TaskRecoveryAssessment
     signature: >-
       struct{Decision pro_interfaces.TaskRecoveryDecision "json:\"decision\""; SafeReplacement bool "json:\"safe_replacement\"";
@@ -10475,8 +10558,11 @@ symbols:
     signature: interface{GetProjectRoles(projectID int) ([]db.Role, error); db.ProjectWorkflowRoleIdentityResolver}
     implementation: core
   - name: pro_interfaces:WorkflowAuthorizationState
-    signature: struct{Identity db.ProjectWorkflowRoleIdentity; KnownRoles map[db.ProjectRoleReference]bool}
+    signature: struct{Identity db.ProjectWorkflowRoleIdentity; Identities []db.ProjectWorkflowRoleIdentity; ProjectPermissions
+      db.ProjectUserPermission; KnownRoles map[db.ProjectRoleReference]bool}
     implementation: core
+    behavior_tests:
+    - pro_interfaces/workflow_access_state_test.go::TestWorkflowStateHelpersUseRoleUnionAndRejectRevokedOrGlobalRoles
   - name: pro_interfaces:WorkflowController
     signature: >-
       interface{AddWorkflow(w net/http.ResponseWriter, r *net/http.Request); DiffWorkflowVersions(w
@@ -11183,46 +11269,6 @@ symbols:
     signature: func(_ util.RunnerK8sConfig) (services/tasks.ExecutorProvider, error)
     selected_signature: func(input util.RunnerK8sConfig) (services/tasks.ExecutorProvider, error)
     implementation: local
-  - name: services/tasks:NewTaskStateStore
-    signature: func() services/tasks.TaskStateStore
-    selected_signature: func() services/tasks.TaskStateStore
-    implementation: community
-    rationale: Functional shared synchronized in-memory task-state factory used by the CLI TaskPool; SQL and HA reconciliation own durable state.
-  - name: db:IsValidWorkflowOutputName
-    signature: func(name string) bool
-    implementation: core
-    behavior_tests:
-    - db/Workflow_inputs_test.go::TestIsValidWorkflowOutputName
-  - name: db:SurveyVarSecret
-    signature: db.SurveyVarType = "secret"
-    implementation: core
-  - name: db:WorkflowEdgeInputByName
-    signature: db.WorkflowEdgeInputMode = "by_name"
-    implementation: core
-  - name: db:WorkflowEdgeInputExplicit
-    signature: db.WorkflowEdgeInputMode = "explicit"
-    implementation: core
-  - name: db:WorkflowEdgeInputMode
-    signature: string
-    implementation: core
-  - name: db:WorkflowInputMapping
-    signature: struct{Var string "json:\"var\" backup:\"var\""; Key string "json:\"key\" backup:\"key\""}
-    implementation: core
-  - name: pro_interfaces:TaskOutputsCapture
-    signature: interface{AnsibleCallbackDir() (string, error); Close(); Collect(terraformOutputs []byte) (document *string, notes []string, err error); CollectContent(content []byte, terraformOutputs []byte) (document *string, notes []string, err error); Env() []string}
-    implementation: core
-    behavior_tests:
-    - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCollectorRejectsReservedStructuredOutput
-    - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCaptureFileOverridesTerraformAndPreservesJSONNumbers
-    - services/tasks/taskpool_collector_wiring_test.go::TestAddTaskFromWiresCollectorIntoActiveLocalExecutor
-    - test/edition-contract/enhanced/services/tasks/docker/executor_test.go::TestDockerExecutorCollectsTerraformOutputsWithoutLeakingSensitiveValues
-  - name: pro_interfaces:TaskOutputsCollector
-    signature: interface{Begin(dir string, taskID int) (pro_interfaces.TaskOutputsCapture, error); Validate(document string) (normalized *string, err error)}
-    implementation: core
-    behavior_tests:
-    - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCollectorRejectsReservedStructuredOutput
-    - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCaptureFileOverridesTerraformAndPreservesJSONNumbers
-    - services/tasks/taskpool_collector_wiring_test.go::TestAddTaskFromWiresCollectorIntoActiveLocalExecutor
   - name: services/tasks:NewTaskOutputsCollector
     signature: func() pro_interfaces.TaskOutputsCollector
     selected_signature: func() pro_interfaces.TaskOutputsCollector
@@ -11231,3 +11277,8 @@ symbols:
     - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCollectorRejectsReservedStructuredOutput
     - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCaptureFileOverridesTerraformAndPreservesJSONNumbers
     - services/tasks/taskpool_collector_wiring_test.go::TestAddTaskFromWiresCollectorIntoActiveLocalExecutor
+  - name: services/tasks:NewTaskStateStore
+    signature: func() services/tasks.TaskStateStore
+    selected_signature: func() services/tasks.TaskStateStore
+    implementation: community
+    rationale: Functional shared synchronized in-memory task-state factory used by the CLI TaskPool; SQL and HA reconciliation own durable state.

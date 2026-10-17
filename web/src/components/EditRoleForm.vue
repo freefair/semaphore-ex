@@ -26,11 +26,12 @@
       v-if="!projectId"
       v-model="item.slug"
       :label="$t('slug')"
-      :rules="[v => !!v || $t('slug_required'), v => this.validateSlug(v)]"
+      @input="slugTouched = true"
+      :rules="slugRules"
       outlined
       dense
       required
-      :disabled="formSaving"
+      :disabled="formSaving || !isNew"
       :hint="$t('slugHint')"
     ></v-text-field>
 
@@ -52,7 +53,7 @@
 
     <template v-else>
       <v-alert text dense type="info">
-        No assignable permissions are available for this edition.
+        No assignable permissions are available.
       </v-alert>
     </template>
 
@@ -102,6 +103,7 @@ export default {
   data() {
     return {
       permissionCatalog: [],
+      slugTouched: false,
       permissions: {
         canRunProjectTasks: false,
         canUpdateProject: false,
@@ -111,7 +113,26 @@ export default {
     };
   },
 
+  computed: {
+    slugRules() {
+      if (!this.isNew) return [];
+      return [(v) => !!v || this.$t('slug_required'), (v) => this.validateSlug(v)];
+    },
+  },
+
   watch: {
+    'item.name': function onNameChange(name) {
+      if (!this.projectId && this.isNew && !this.slugTouched && this.item) {
+        this.item.slug = (name || '')
+          .toLowerCase()
+          .replace(/[^a-z0-9_-]+/g, '-')
+          .replace(/-+/g, '-')
+          .replace(/^-|-$/g, '')
+          .slice(0, 100);
+      }
+    },
+
+    // Watch permissions and update the item.permissions value
     permissions: {
       handler(newPermissions) {
         if (this.projectId || !this.item) return;
@@ -143,8 +164,13 @@ export default {
   methods: {
     ...enhancedMethods,
     validateSlug(value) {
-      if (!value) return true;
-      return /^[a-z0-9_-]+$/.test(value) || this.$t('invalidSlugFormat');
+      if (!value) return true; // Required validation is handled separately
+
+      if (!/^[A-Za-z0-9_-]{1,100}$/.test(value)) {
+        return this.$t('invalidSlugFormat');
+      }
+
+      return true;
     },
 
     getItemsUrl() {
@@ -193,6 +219,7 @@ export default {
     },
 
     afterReset() {
+      this.slugTouched = false;
       if (this.projectId) return;
       this.permissions = {
         canRunProjectTasks: false,

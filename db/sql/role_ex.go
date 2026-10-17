@@ -100,7 +100,7 @@ func (d *SqlDb) DeleteProjectRole(projectID int, roleID db.ProjectRoleID, expect
 		return db.ErrProjectRoleRevisionConflict
 	}
 	assigned, err := tx.SelectInt(d.PrepareQuery(
-		"select count(1) from project__user where project_id=? and role_id=?"), projectID, roleID)
+		"select count(1) from project__user_role where project_id=? and role_id=?"), projectID, roleID)
 	if err != nil {
 		return err
 	}
@@ -190,6 +190,125 @@ func (d *SqlDb) ResolveProjectWorkflowRoleIdentity(
 	}
 }
 
+// ResolveProjectWorkflowRoleIdentities resolves every live role relation for
+// a project member. The relation is authoritative: project__user is retained
+// only as a compatibility projection and must not narrow a multi-role grant.
+// Each directory-managed relation is checked against its own immutable ledger
+// entry so a stale assignment fails closed without affecting another role.
+func (d *SqlDb) ResolveProjectWorkflowRoleIdentities(
+	projectID int,
+	userID int,
+) ([]db.ProjectWorkflowRoleIdentity, error) {
+	member, err := d.GetProjectUser(projectID, userID)
+	if errors.Is(err, db.ErrNotFound) {
+		return nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+	}
+	if err != nil {
+		return nil, err
+	}
+	var assignments []struct {
+		RoleID                       db.ProjectRoleID `db:"role_id"`
+		LDAPGroupManagedAssignmentID *int             `db:"ldap_group_managed_assignment_id"`
+		OIDCGroupManagedAssignmentID *int             `db:"oidc_group_managed_assignment_id"`
+	}
+	_, err = d.selectAll(&assignments, `
+		select role_id, ldap_group_managed_assignment_id, oidc_group_managed_assignment_id
+		from project__user_role where project_id=? and user_id=? order by role_id`, projectID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(assignments) == 0 {
+		return nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+	}
+	identities := make([]db.ProjectWorkflowRoleIdentity, 0, len(assignments))
+	for _, assignment := range assignments {
+		if assignment.LDAPGroupManagedAssignmentID != nil && assignment.OIDCGroupManagedAssignmentID != nil {
+			return nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+		}
+		identity, roleIdentifier, builtIn, skipped, err := d.projectWorkflowRoleIdentityForReference(
+			projectID, member.Revision, assignment.RoleID,
+		)
+		if err != nil {
+			return nil, err
+		}
+		// Slice 054 excludes global roles from workflow identity. A global role
+		// can therefore coexist with a project role, but it cannot satisfy a
+		// workflow policy or carry project-directory provenance.
+		if skipped {
+			if assignment.LDAPGroupManagedAssignmentID != nil || assignment.OIDCGroupManagedAssignmentID != nil {
+				return nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+			}
+			continue
+		}
+		switch {
+		case assignment.LDAPGroupManagedAssignmentID != nil:
+			identity, err = d.resolveLDAPProjectWorkflowRoleIdentityForAssignment(
+				identity, projectID, userID, roleIdentifier, *assignment.LDAPGroupManagedAssignmentID,
+			)
+		case assignment.OIDCGroupManagedAssignmentID != nil:
+			identity, err = d.resolveOIDCProjectWorkflowRoleIdentityForAssignment(
+				identity, projectID, userID, roleIdentifier, *assignment.OIDCGroupManagedAssignmentID,
+			)
+		case builtIn:
+			identity.Origin = db.ProjectWorkflowRoleOriginBuiltIn
+			if err = identity.Validate(); err != nil {
+				err = db.ErrProjectWorkflowRoleIdentityUnavailable
+			}
+		default:
+			identity.Origin = db.ProjectWorkflowRoleOriginManual
+			if err = identity.Validate(); err != nil {
+				err = db.ErrProjectWorkflowRoleIdentityUnavailable
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		identities = append(identities, identity)
+	}
+	if len(identities) == 0 {
+		return nil, db.ErrProjectWorkflowRoleIdentityUnavailable
+	}
+	return identities, nil
+}
+
+func (d *SqlDb) projectWorkflowRoleIdentityForReference(
+	projectID int,
+	membershipRevision int,
+	roleID db.ProjectRoleID,
+) (db.ProjectWorkflowRoleIdentity, string, bool, bool, error) {
+	if strings.HasPrefix(string(roleID), "builtin:") {
+		role := db.ProjectUserRole(strings.TrimPrefix(string(roleID), "builtin:"))
+		reference, ok := db.ProjectRoleReferenceForBuiltInRole(role)
+		if !ok || membershipRevision < 1 {
+			return db.ProjectWorkflowRoleIdentity{}, "", false, false, db.ErrProjectWorkflowRoleIdentityUnavailable
+		}
+		return db.ProjectWorkflowRoleIdentity{
+			Reference: reference, Permissions: role.GetPermissions(), Revision: membershipRevision,
+		}, string(role), true, false, nil
+	}
+	role, err := d.GetProjectRoleByID(projectID, roleID)
+	if errors.Is(err, db.ErrNotFound) {
+		globalRole, globalErr := d.GetGlobalRoleByID(roleID)
+		if globalErr == nil && globalRole.ProjectID == nil && globalRole.Revision >= 1 {
+			return db.ProjectWorkflowRoleIdentity{}, "", false, true, nil
+		}
+		if globalErr != nil && !errors.Is(globalErr, db.ErrNotFound) {
+			return db.ProjectWorkflowRoleIdentity{}, "", false, false, globalErr
+		}
+		return db.ProjectWorkflowRoleIdentity{}, "", false, false, db.ErrProjectWorkflowRoleIdentityUnavailable
+	}
+	if err == nil &&
+		(role.ProjectID == nil || *role.ProjectID != projectID || role.Revision < 1) {
+		return db.ProjectWorkflowRoleIdentity{}, "", false, false, db.ErrProjectWorkflowRoleIdentityUnavailable
+	}
+	if err != nil {
+		return db.ProjectWorkflowRoleIdentity{}, "", false, false, err
+	}
+	return db.ProjectWorkflowRoleIdentity{
+		Reference: db.ProjectRoleReferenceForCustomRole(role.ID), Permissions: role.Permissions, Revision: role.Revision,
+	}, string(role.ID), false, false, nil
+}
+
 func (d *SqlDb) projectWorkflowRoleIdentityBase(
 	member db.ProjectUser,
 ) (db.ProjectWorkflowRoleIdentity, string, bool, error) {
@@ -254,6 +373,39 @@ func (d *SqlDb) resolveLDAPProjectWorkflowRoleIdentity(
 	return directoryWorkflowRoleIdentity(identity, db.ProjectWorkflowRoleOriginLDAP, provenance)
 }
 
+func (d *SqlDb) resolveLDAPProjectWorkflowRoleIdentityForAssignment(
+	identity db.ProjectWorkflowRoleIdentity,
+	projectID int,
+	userID int,
+	roleIdentifier string,
+	ledgerID int,
+) (db.ProjectWorkflowRoleIdentity, error) {
+	var provenance workflowRoleDirectoryProvenance
+	err := d.selectOne(&provenance, `
+		select assignment.provider_id, assignment.mapping_id, mapping.revision as mapping_revision,
+		       reconciliation.directory_revision
+		from ldap_group_managed_assignment assignment
+		join ldap_group_mapping mapping on mapping.provider_id=assignment.provider_id and mapping.id=assignment.mapping_id
+		join ldap_group_mapping_state state on state.provider_id=assignment.provider_id
+		join ldap_group_reconciliation reconciliation on reconciliation.id=(
+			select latest.id from ldap_group_reconciliation latest
+			where latest.provider_id=assignment.provider_id and latest.mapping_revision=state.revision
+			  and latest.status='applied' and latest.applied_at is not null
+			order by latest.id desc limit 1
+		)
+		where assignment.id=? and assignment.user_id=? and assignment.project_id=?
+		  and assignment.target_scope='project' and assignment.role_id=?
+		  and mapping.target_scope='project' and mapping.project_id=? and mapping.role_id=? and mapping.enabled=true`,
+		ledgerID, userID, projectID, roleIdentifier, projectID, roleIdentifier)
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, db.ErrNotFound) {
+		return db.ProjectWorkflowRoleIdentity{}, db.ErrProjectWorkflowRoleIdentityUnavailable
+	}
+	if err != nil {
+		return db.ProjectWorkflowRoleIdentity{}, err
+	}
+	return directoryWorkflowRoleIdentity(identity, db.ProjectWorkflowRoleOriginLDAP, provenance)
+}
+
 func (d *SqlDb) resolveOIDCProjectWorkflowRoleIdentity(
 	identity db.ProjectWorkflowRoleIdentity,
 	member db.ProjectUser,
@@ -278,6 +430,39 @@ func (d *SqlDb) resolveOIDCProjectWorkflowRoleIdentity(
 		  and mapping.target_scope='project' and mapping.project_id=? and mapping.role_id=? and mapping.enabled=true`,
 		ledgerID, member.UserID, member.ProjectID, roleIdentifier, member.ProjectID, roleIdentifier)
 	if errors.Is(err, sql.ErrNoRows) {
+		return db.ProjectWorkflowRoleIdentity{}, db.ErrProjectWorkflowRoleIdentityUnavailable
+	}
+	if err != nil {
+		return db.ProjectWorkflowRoleIdentity{}, err
+	}
+	return directoryWorkflowRoleIdentity(identity, db.ProjectWorkflowRoleOriginOIDC, provenance)
+}
+
+func (d *SqlDb) resolveOIDCProjectWorkflowRoleIdentityForAssignment(
+	identity db.ProjectWorkflowRoleIdentity,
+	projectID int,
+	userID int,
+	roleIdentifier string,
+	ledgerID int,
+) (db.ProjectWorkflowRoleIdentity, error) {
+	var provenance workflowRoleDirectoryProvenance
+	err := d.selectOne(&provenance, `
+		select assignment.provider_id, assignment.mapping_id, mapping.revision as mapping_revision,
+		       reconciliation.claim_revision as directory_revision
+		from oidc_group_managed_assignment assignment
+		join oidc_group_mapping mapping on mapping.provider_id=assignment.provider_id and mapping.id=assignment.mapping_id
+		join oidc_group_mapping_state state on state.provider_id=assignment.provider_id
+		join oidc_group_reconciliation reconciliation on reconciliation.id=(
+			select latest.id from oidc_group_reconciliation latest
+			where latest.provider_id=assignment.provider_id and latest.user_id=assignment.user_id
+			  and latest.mapping_revision=state.revision and latest.status='applied' and latest.applied_at is not null
+			order by latest.id desc limit 1
+		)
+		where assignment.id=? and assignment.user_id=? and assignment.project_id=?
+		  and assignment.target_scope='project' and assignment.role_id=?
+		  and mapping.target_scope='project' and mapping.project_id=? and mapping.role_id=? and mapping.enabled=true`,
+		ledgerID, userID, projectID, roleIdentifier, projectID, roleIdentifier)
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, db.ErrNotFound) {
 		return db.ProjectWorkflowRoleIdentity{}, db.ErrProjectWorkflowRoleIdentityUnavailable
 	}
 	if err != nil {

@@ -5,6 +5,7 @@ type BackupEntity interface {
 	GetName() string
 }
 
+// BackupSluggedEntity remains available to legacy backup consumers.
 type BackupSluggedEntity interface {
 	GetSlug() string
 	GetName() string

@@ -70,7 +70,10 @@ func (d *SqlDb) UpdateGlobalRole(
 	}
 	if current.Permissions.Can(db.CanManageProjectUsers) &&
 		!role.Permissions.Can(db.CanManageProjectUsers) {
-		if err = requireProjectAdministratorsAfterGlobalRoleUpdateTx(tx, d, current.Slug); err != nil {
+		if err = lockProjectRoleMutationsForReferenceTx(tx, d, role.ID); err != nil {
+			return db.Role{}, err
+		}
+		if err = requireProjectAdministratorsAfterGlobalRoleUpdateTx(tx, d, role.ID); err != nil {
 			return db.Role{}, err
 		}
 	}
@@ -119,10 +122,13 @@ func (d *SqlDb) DeleteGlobalRole(roleID db.ProjectRoleID, expectedRevision int) 
 	if role.Revision != expectedRevision {
 		return db.ErrGlobalRoleRevisionConflict
 	}
+	if err = lockProjectRoleMutationsForReferenceTx(tx, d, roleID); err != nil {
+		return err
+	}
 	assigned, err := tx.SelectInt(d.PrepareQuery(
 		"select (select count(1) from user__global_role where role_id=?) + "+
-			"(select count(1) from project__user where role=? and role_id is null)"),
-		roleID, role.Slug)
+			"(select count(1) from project__user_role where role_id=?)"),
+		roleID, roleID)
 	if err != nil {
 		return err
 	}
@@ -374,30 +380,61 @@ func requireGlobalAdministratorWithoutRoleTx(
 func requireProjectAdministratorsAfterGlobalRoleUpdateTx(
 	tx *gorp.Transaction,
 	d *SqlDb,
-	roleSlug string,
+	roleID db.ProjectRoleID,
 ) error {
-	count, err := tx.SelectInt(d.PrepareQuery(
-		"select count(distinct pu.project_id) from project__user pu "+
-			"where pu.role=? and pu.role_id is null and not exists ("+
-			"select 1 from project__user candidate "+
-			"where candidate.project_id=pu.project_id "+
-			"and not (candidate.role=? and candidate.role_id is null) and ("+
-			"candidate.role='owner' or exists ("+
-			"select 1 from `role` r "+
-			"where (r.project_id=candidate.project_id or r.project_id is null) "+
-			"and ((candidate.role_id is not null and r.role_id=candidate.role_id) "+
-			"or (candidate.role_id is null and r.slug=candidate.role)) "+
-			"and (r.permissions & ?) = ?)))"),
-		roleSlug,
-		roleSlug,
-		db.CanManageProjectUsers,
-		db.CanManageProjectUsers,
-	)
+	var projects []int
+	_, err := tx.Select(&projects, d.PrepareQuery(
+		"select distinct project_id from project__user_role where role_id=? order by project_id"), roleID)
 	if err != nil {
 		return err
 	}
-	if count > 0 {
-		return db.ErrLastProjectAdministrator
+	for _, projectID := range projects {
+		var users []int
+		_, err = tx.Select(&users, d.PrepareQuery(
+			"select distinct user_id from project__user_role where project_id=? order by user_id"), projectID)
+		if err != nil {
+			return err
+		}
+		administrators := 0
+		for _, userID := range users {
+			refs, refsErr := d.memberRoleRefs(tx, projectID, userID)
+			if refsErr != nil {
+				return refsErr
+			}
+			remaining := refs[:0]
+			for _, ref := range refs {
+				if ref != roleID {
+					remaining = append(remaining, ref)
+				}
+			}
+			canManage, permissionsErr := d.roleRefsCanManageProjectUsers(tx, projectID, remaining)
+			if permissionsErr != nil {
+				return permissionsErr
+			}
+			if canManage {
+				administrators++
+			}
+		}
+		if administrators == 0 {
+			return db.ErrLastProjectAdministrator
+		}
+	}
+	return nil
+}
+
+// lockProjectRoleMutationsForReferenceTx follows the global-then-project lock
+// order used by membership mutations before inspecting a global role's impact.
+func lockProjectRoleMutationsForReferenceTx(tx *gorp.Transaction, d *SqlDb, roleID db.ProjectRoleID) error {
+	var projectIDs []int
+	_, err := tx.Select(&projectIDs, d.PrepareQuery(
+		"select distinct project_id from project__user_role where role_id=? order by project_id"), roleID)
+	if err != nil {
+		return err
+	}
+	for _, projectID := range projectIDs {
+		if err = lockProjectRoleMutations(tx, d, projectID); err != nil {
+			return err
+		}
 	}
 	return nil
 }

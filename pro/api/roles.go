@@ -43,7 +43,23 @@ func (c *RolesController) GetProjectRoles(w http.ResponseWriter, r *http.Request
 }
 
 func (c *RolesController) GetProjectAndGlobalRoles(w http.ResponseWriter, r *http.Request) {
-	helpers.WriteJSON(w, http.StatusOK, []string{})
+	roles, err := c.store.GetGlobalRoles()
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+
+	projectID, ok := helpers.GetIntParamOrAbort("project_id", w, r)
+	if !ok {
+		return
+	}
+	projectRoles, err := c.store.GetProjectRoles(projectID)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	roles = append(roles, projectRoles...)
+	helpers.WriteJSON(w, http.StatusOK, roles)
 }
 
 func (c *RolesController) AddProjectRole(w http.ResponseWriter, r *http.Request) {

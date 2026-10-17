@@ -104,4 +104,5 @@ type GlobalCredentialRepository interface {
 // deliberately excludes global roles and legacy role-slug fallbacks.
 type ProjectWorkflowRoleIdentityResolver interface {
 	ResolveProjectWorkflowRoleIdentity(projectID int, userID int) (ProjectWorkflowRoleIdentity, error)
+	ResolveProjectWorkflowRoleIdentities(projectID int, userID int) ([]ProjectWorkflowRoleIdentity, error)
 }

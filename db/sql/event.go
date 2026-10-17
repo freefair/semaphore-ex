@@ -55,9 +55,7 @@ func (d *SqlDb) GetUserEvents(userID int, params db.RetrieveQueryParams) ([]db.E
 		From("event").
 		LeftJoin("project as p on event.project_id=p.id").
 		OrderBy("id desc").
-		LeftJoin("project__user as pu on pu.project_id=p.id").
-		Where("(event.project_id IS NULL AND (event.object_type IS NULL OR event.object_type != ?)) OR pu.user_id=?",
-			db.EventProjectRunnerAudit, userID)
+		Where("(event.project_id IS NULL AND (event.object_type IS NULL OR event.object_type != ?)) OR exists (select 1 from project__user_role pur where pur.project_id = p.id and pur.user_id = ?)", db.EventProjectRunnerAudit, userID)
 
 	return d.getEvents(q, params)
 }

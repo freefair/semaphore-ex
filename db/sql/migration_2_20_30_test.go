@@ -87,10 +87,12 @@ func TestMigration22030RollbackRefusesToRegrantDeniedTemplatePermissions(t *test
 	t.Cleanup(store.Close)
 
 	projectID, repositoryID := newTemplateTestProject(t, store)
-	_, err := store.CreateRole(db.Role{
-		ID: "rollback_guest_role", Slug: string(db.ProjectGuest), Name: "Rollback guest",
-		ProjectID: &projectID, Permissions: db.ProjectGuest.GetPermissions(), Revision: 1,
-	})
+	// This represents a historical invalid row that the public role API rejects
+	// because it shadows a virtual builtin. Seed it directly to retain rollback
+	// coverage without weakening public validation.
+	_, err := store.exec(`insert into role (role_id, slug, name, permissions, global_permissions, project_id, revision)
+		values (?, ?, ?, ?, ?, ?, ?)`, "rollback_guest_role", string(db.ProjectGuest), "Rollback guest",
+		db.ProjectGuest.GetPermissions(), 0, projectID, 1)
 	require.NoError(t, err)
 	template, err := store.CreateTemplate(db.Template{
 		ProjectID: projectID, RepositoryID: repositoryID, Name: "Rollback denied template", Playbook: "site.yml",

@@ -219,7 +219,24 @@ definitions:
         type: string
       role:
         type: string
-        enum: [owner, manager, task_runner, guest]
+        description: "Built-in slug or immutable custom role ID for a single role; empty for multiple roles"
+        example: manager
+      roles:
+        type: array
+        items:
+          type: string
+        description: "Slugs of all roles of the member. `role` is set only when this list has one role"
+        example: [manager]
+      role_id:
+        type: string
+        description: Immutable custom-role ID for a single custom assignment.
+      revision:
+        type: integer
+        minimum: 1
+        description: Current membership revision required for updates.
+      effective_permissions:
+        type: integer
+        description: Union of current project-role permission bits.
 
   ProjectInvite:
     type: object
@@ -2832,7 +2849,19 @@ paths:
             properties:
               role:
                 type: string
+                description: "Built-in slug or immutable custom role ID for a single role; empty for multiple roles"
                 example: owner
+              roles:
+                type: array
+                items:
+                  type: string
+                example: [owner]
+              role_id:
+                type: string
+                description: Immutable custom-role ID for a single custom assignment.
+              role_name:
+                type: string
+                description: Display name for a single role.
               permissions:
                 type: number
                 example: 0
@@ -2899,8 +2928,13 @@ paths:
                 minimum: 2
               role:
                 type: string
-                enum: [owner, manager, task_runner, guest]
-                example: owner
+                description: "Role slug: a built-in role (owner, manager, task_runner, guest) or a custom role"
+                example: manager
+              roles:
+                type: array
+                items:
+                  type: string
+                description: "Several role slugs. Send either role or roles"
       responses:
         204:
           description: User added
@@ -2922,16 +2956,24 @@ paths:
           required: true
           schema:
             type: object
-            required: [role, revision]
+            required: [revision]
             properties:
               role:
                 type: string
-                enum: [owner, manager, task_runner, guest]
-                example: owner
+                description: 'Single built-in slug or immutable custom role ID; send either role or roles.'
+                example: manager
+              roles:
+                type: array
+                minItems: 1
+                uniqueItems: true
+                items:
+                  type: string
+                description: 'Several role slugs. Send either role or roles.'
               revision:
                 type: integer
                 minimum: 1
-      summary: Update user role
+                description: 'Observed membership revision for compare-and-set updates.'
+      summary: Update user roles
       tags:
         - project
       responses:

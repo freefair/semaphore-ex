@@ -100,6 +100,8 @@ func TestValidate(t *testing.T) {
 		{"failure with reason", Event{Kind: AuthLogin, Outcome: OutcomeFailure, Reason: ReasonInvalidCredentials, Metadata: AuthMethodMetadata{}}, false},
 		{"unknown reason", Event{Kind: AuthLogin, Outcome: OutcomeFailure, Reason: Reason("boom"), Metadata: AuthMethodMetadata{}}, true},
 		{"reason of another kind", Event{Kind: AuthLogin, Outcome: OutcomeFailure, Reason: ReasonCrossOrigin, Metadata: AuthMethodMetadata{}}, true},
+		{"historical owner self change", Event{Kind: IAMProjectRoleChange, Outcome: OutcomeFailure, Reason: ReasonOwnerSelfChange, Metadata: ProjectRoleMetadata{}}, false},
+		{"current last owner", Event{Kind: IAMProjectRoleChange, Outcome: OutcomeFailure, Reason: ReasonLastOwner, Metadata: ProjectRoleMetadata{}}, false},
 		{"reason on success", Event{Kind: AuthLogin, Reason: ReasonInvalidCredentials, Metadata: AuthMethodMetadata{}}, true},
 		{"success of a denial", Event{Kind: AuthCSRFBlock, Metadata: DenyMetadata{}}, true},
 		{"invalid outcome", Event{Kind: IAMUserDelete, Outcome: Outcome("maybe")}, true},
@@ -132,7 +134,7 @@ func TestKnownReasonsExcludeEmpty(t *testing.T) {
 func TestPermissionNames(t *testing.T) {
 	assert.Equal(t, []string{}, PermissionNames(0))
 	assert.Equal(t, []string{"run_tasks", "manage_users"}, PermissionNames(db.CanRunProjectTasks|db.CanManageProjectUsers))
-	assert.Equal(t, []string{"run_tasks", "update_project", "manage_resources", "manage_users"}, PermissionNames(db.ProjectOwner.GetPermissions()))
+	assert.Equal(t, []string{"run_tasks", "update_project", "manage_resources", "manage_users"}, PermissionNames(db.KnownRolePermissions))
 }
 
 func TestTruncateName(t *testing.T) {

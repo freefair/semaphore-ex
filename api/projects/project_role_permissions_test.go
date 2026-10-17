@@ -40,6 +40,13 @@ func (s projectRolePermissionStore) GetProjectRoleByID(projectID int, roleID db.
 	return s.role, nil
 }
 
+func (s projectRolePermissionStore) GetProjectUserRoles(projectID, userID int) ([]db.Role, error) {
+	if projectID != s.projectUser.ProjectID || userID != s.projectUser.UserID {
+		return nil, db.ErrNotFound
+	}
+	return []db.Role{s.role}, nil
+}
+
 func TestProjectMiddlewareResolvesCustomRoleByScopedImmutableID(t *testing.T) {
 	projectID := 12
 	roleID := db.ProjectRoleID("role_resource_viewer")
@@ -61,8 +68,7 @@ func TestProjectMiddlewareResolvesCustomRoleByScopedImmutableID(t *testing.T) {
 	ProjectMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		called = true
 		assert.Equal(t, db.CanViewProjectResources, helpers.GetFromContext(r, "permissions"))
-		assert.Equal(t, db.ProjectUserRole(roleID), helpers.GetFromContext(r, "projectUserRole"))
-		assert.Equal(t, "Resource viewer", helpers.GetFromContext(r, "projectUserRoleName"))
+		assert.Equal(t, []db.Role{store.role}, helpers.GetFromContext(r, "projectRoles"))
 	})).ServeHTTP(recorder, request)
 
 	require.True(t, called)
@@ -71,8 +77,8 @@ func TestProjectMiddlewareResolvesCustomRoleByScopedImmutableID(t *testing.T) {
 
 func TestGetUserRoleIncludesCustomRoleDisplayName(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/project/12/role", nil)
-	request = helpers.SetContextValue(request, "projectUserRole", db.ProjectUserRole("role_resource_viewer"))
-	request = helpers.SetContextValue(request, "projectUserRoleName", "Resource viewer")
+	roleID := db.ProjectRoleID("role_resource_viewer")
+	request = helpers.SetContextValue(request, "projectRoles", []db.Role{{ID: roleID, Slug: "resource-viewer", Name: "Resource viewer", Permissions: db.CanViewProjectResources}})
 	request = helpers.SetContextValue(request, "permissions", db.CanViewProjectResources)
 	response := httptest.NewRecorder()
 
@@ -80,7 +86,9 @@ func TestGetUserRoleIncludesCustomRoleDisplayName(t *testing.T) {
 
 	assert.JSONEq(t, `{
 		"role":"role_resource_viewer",
+		"roles":["resource-viewer"],
 		"role_name":"Resource viewer",
+		"role_id":"role_resource_viewer",
 		"permissions":16
 	}`, response.Body.String())
 }

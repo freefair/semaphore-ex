@@ -842,17 +842,20 @@ func (s *workflowTriggerService) authorizeWorkflow(
 	if err != nil {
 		return pro_interfaces.ErrWorkflowTriggerPermissionDenied
 	}
-	view := pro_interfaces.AuthorizeWorkflowTriggerRead(workflow, state.Identity, state.KnownRoles)
+	view := pro_interfaces.AuthorizeWorkflowReadForState(workflow, state)
 	if !view.Allowed {
 		return pro_interfaces.ErrWorkflowTriggerPermissionDenied
 	}
 	var decision pro_interfaces.WorkflowAccessDecision
 	if permission == pro_interfaces.PermissionAdministerWorkflow {
-		decision = pro_interfaces.AuthorizeWorkflowTriggerAdmin(workflow, state.Identity, state.KnownRoles)
+		decision = pro_interfaces.EvaluateWorkflowAccess(pro_interfaces.WorkflowAccessRequest{
+			Permission: permission, ProjectPermissions: state.ProjectPermissions,
+			EffectiveRoleReferences: state.RoleReferences(), KnownRoleReferences: state.KnownRoles, Policy: workflow.AccessPolicy,
+		})
 	} else {
 		decision = pro_interfaces.EvaluateWorkflowAccess(pro_interfaces.WorkflowAccessRequest{
-			Permission: permission, ProjectPermissions: state.Identity.Permissions,
-			EffectiveRoleReferences: []db.ProjectRoleReference{state.Identity.Reference}, KnownRoleReferences: state.KnownRoles,
+			Permission: permission, ProjectPermissions: state.ProjectPermissions,
+			EffectiveRoleReferences: state.RoleReferences(), KnownRoleReferences: state.KnownRoles,
 			Policy: workflow.AccessPolicy,
 		})
 	}

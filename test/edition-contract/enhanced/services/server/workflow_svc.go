@@ -714,7 +714,7 @@ func (s *workflowService) workflowExecutionPermissionDigest(workflow db.Workflow
 	if err != nil {
 		return executionPreflightHash("denied", user.ID, workflow.AccessPolicy.Revision)
 	}
-	return executionPreflightHash(state.Identity, state.KnownRoles, workflow.AccessPolicy)
+	return executionPreflightHash(state.Identities, state.ProjectPermissions, state.KnownRoles, workflow.AccessPolicy)
 }
 
 func workflowHiddenReferencePreflight(workflow db.WorkflowTemplate, actorID int, fingerprint string, now time.Time) pro_interfaces.ExecutionPreflightSnapshot {
@@ -1395,12 +1395,12 @@ func (s *workflowService) requireWorkflowAccess(
 		return common_errors.NewValidationError("workflow access is denied")
 	}
 	if requireView && permission != pro_interfaces.PermissionViewWorkflow &&
-		!pro_interfaces.AuthorizeWorkflowRead(workflow, state.Identity, state.KnownRoles).Allowed {
+		!pro_interfaces.AuthorizeWorkflowReadForState(workflow, state).Allowed {
 		return common_errors.NewValidationError("workflow access is denied")
 	}
 	decision := pro_interfaces.EvaluateWorkflowAccess(pro_interfaces.WorkflowAccessRequest{
-		Permission: permission, ProjectPermissions: state.Identity.Permissions,
-		EffectiveRoleReferences: []db.ProjectRoleReference{state.Identity.Reference},
+		Permission: permission, ProjectPermissions: state.ProjectPermissions,
+		EffectiveRoleReferences: state.RoleReferences(),
 		KnownRoleReferences:     state.KnownRoles, Policy: workflow.AccessPolicy,
 	})
 	if !decision.Allowed {
@@ -1634,7 +1634,7 @@ func (s *workflowService) GetWorkflowApprovalInbox(projectID int, user *db.User)
 			eligibility := pro_interfaces.EvaluateWorkflowApprovalEligibility(pro_interfaces.WorkflowApprovalEligibilityRequest{
 				Policy: approval.RolePolicySnapshot.Policy, ActorUserID: user.ID,
 				InitiatorUserID:         approval.RequestActorUserID,
-				EffectiveRoleReferences: []db.ProjectRoleReference{state.Identity.Reference}, KnownRoleReferences: state.KnownRoles,
+				EffectiveRoleReferences: state.RoleReferences(), KnownRoleReferences: state.KnownRoles,
 			})
 			if eligibility.Allowed {
 				inbox = append(inbox, approval)

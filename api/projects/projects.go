@@ -363,7 +363,7 @@ func (c *ProjectsController) AddProject(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 
-	_, err = store.CreateProjectUser(db.ProjectUser{ProjectID: body.ID, UserID: user.ID, Role: db.ProjectOwner})
+	_, err = store.CreateProjectUser(db.ProjectUser{ProjectID: body.ID, UserID: user.ID, Role: db.ProjectOwner, Revision: 1})
 	if err != nil {
 		recordSetupFailed()
 		helpers.WriteError(w, err)
@@ -392,10 +392,6 @@ func (c *ProjectsController) AddProject(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		recordSetupFailed()
 		helpers.WriteError(w, err)
-		return
-	}
-
-	if err != nil {
 		return
 	}
 

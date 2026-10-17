@@ -87,7 +87,7 @@ func TestOIDCGroupMappingApplyTracksOwnershipAndRejectsStaleRevision(t *testing.
 	assert.ErrorIs(t, err, db.ErrOIDCGroupPreviewStale)
 }
 
-func TestOIDCGroupMappingApplyIsAtomicOnManualProjectMembershipCollision(t *testing.T) {
+func TestOIDCGroupMappingProjectRoleRejectsManualMembershipCollision(t *testing.T) {
 	store := InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
 	now := time.Unix(1_800_000_100, 0).UTC()
@@ -130,6 +130,77 @@ func TestOIDCGroupMappingApplyIsAtomicOnManualProjectMembershipCollision(t *test
 	require.NoError(t, err)
 	assert.Equal(t, db.ProjectGuest, persisted.Role)
 	assert.Nil(t, persisted.OIDCGroupManagedAssignmentID)
+	managed, err := store.Sql().SelectInt(store.PrepareQuery(
+		"select count(*) from project__user_role where project_id=? and user_id=? and role_id=? and oidc_group_managed_assignment_id is not null"),
+		project.ID, user.ID, role.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), managed)
+}
+
+func TestOIDCGroupMappingApplyRefusesLastAdministratorAfterPreview(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	now := time.Unix(1_800_000_150, 0).UTC()
+	user, err := store.CreateUserWithoutPassword(db.User{Username: "oidc-admin", Name: "OIDC Admin", Email: "oidc-admin@example.test", External: true})
+	require.NoError(t, err)
+	_, err = store.CreateExternalIdentity(db.UserExternalIdentity{UserID: user.ID, Type: db.IdentityTypeOidc, Provider: "corp", ExternalUID: "oidc-admin"})
+	require.NoError(t, err)
+	project, err := store.CreateProject(db.Project{Name: "OIDC admin project", Created: now})
+	require.NoError(t, err)
+	role, err := store.CreateProjectRole(db.Role{ID: "oidc-admin-role", Name: "OIDC admin", ProjectID: &project.ID, Permissions: db.CanManageProjectUsers, Revision: 1})
+	require.NoError(t, err)
+	projectID := project.ID
+	mapping, err := store.SaveOIDCGroupMapping(db.OIDCGroupMapping{ID: "oidc-admins", ProviderID: "corp", ClaimValue: "admins", TargetScope: "project", ProjectID: &projectID, RoleID: string(role.ID), Enabled: true, Revision: 1, Created: now, Updated: now}, 0)
+	require.NoError(t, err)
+	revision, err := store.GetOIDCGroupMappingRevision("corp")
+	require.NoError(t, err)
+	change := db.OIDCGroupAssignmentChange{MappingID: mapping.ID, UserID: user.ID, TargetScope: "project", ProjectID: &projectID, RoleID: string(role.ID)}
+	_, err = store.ApplyOIDCGroupReconciliation(db.OIDCGroupReconciliation{ProviderID: "corp", UserID: user.ID, Source: "login", Status: "applied", Token: "oidc-admin-add", MappingRevision: revision, ClaimRevision: "claim", PreviewJSON: "{}", Created: now}, []db.OIDCGroupAssignmentChange{change}, nil)
+	require.NoError(t, err)
+
+	manual, err := store.CreateUserWithoutPassword(db.User{Username: "oidc-manual-admin", Name: "Manual Admin", Email: "oidc-manual-admin@example.test"})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUser(db.ProjectUser{ProjectID: project.ID, UserID: manual.ID, Role: db.ProjectManager, Revision: 1})
+	require.NoError(t, err)
+	require.NoError(t, store.DeleteProjectUser(project.ID, manual.ID))
+	_, err = store.ApplyOIDCGroupReconciliation(db.OIDCGroupReconciliation{ProviderID: "corp", UserID: user.ID, Source: "login", Status: "applied", Token: "oidc-admin-remove", MappingRevision: revision, ClaimRevision: "claim-two", PreviewJSON: "{}", Created: now}, nil, []db.OIDCGroupAssignmentChange{change})
+	assert.ErrorIs(t, err, db.ErrLastProjectAdministrator)
+	remaining, err := store.Sql().SelectInt(store.PrepareQuery("select count(*) from project__user_role where project_id=? and user_id=? and role_id=?"), project.ID, user.ID, role.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), remaining)
+}
+
+func TestOIDCGroupRoleAssignmentsListEveryManagedProjectRole(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	now := time.Unix(1_800_000_175, 0).UTC()
+	project, user := workflowRoleIdentityProjectUser(t, store, "oidc-assignment-reader")
+	first, err := store.CreateProjectRole(db.Role{ID: "oidc-first", Name: "OIDC first", ProjectID: &project.ID, Permissions: db.CanRunProjectTasks, Revision: 1})
+	require.NoError(t, err)
+	second, err := store.CreateProjectRole(db.Role{ID: "oidc-second", Name: "OIDC second", ProjectID: &project.ID, Permissions: db.CanStartWorkflows, Revision: 1})
+	require.NoError(t, err)
+	setupOIDCWorkflowRoleIdentity(t, store, project, user, first, now)
+	_, err = store.CreateExternalIdentity(db.UserExternalIdentity{UserID: user.ID, Type: db.IdentityTypeOidc, Provider: "corp", ExternalUID: "oidc-assignment-reader"})
+	require.NoError(t, err)
+	projectID := project.ID
+	mapping, err := store.SaveOIDCGroupMapping(db.OIDCGroupMapping{ID: "workflow-second", ProviderID: "corp", ClaimValue: "second", TargetScope: "project", ProjectID: &projectID, RoleID: string(second.ID), Enabled: true, Revision: 1, Created: now, Updated: now}, 0)
+	require.NoError(t, err)
+	revision, err := store.GetOIDCGroupMappingRevision("corp")
+	require.NoError(t, err)
+	_, err = store.ApplyOIDCGroupReconciliation(db.OIDCGroupReconciliation{ProviderID: "corp", UserID: user.ID, Source: "login", Status: "applied", Token: "oidc-assignment-reader", MappingRevision: revision, ClaimRevision: "claim", PreviewJSON: "{}", Created: now}, []db.OIDCGroupAssignmentChange{{MappingID: mapping.ID, UserID: user.ID, TargetScope: "project", ProjectID: &projectID, RoleID: string(second.ID)}}, nil)
+	require.NoError(t, err)
+
+	assignments, err := store.GetOIDCGroupRoleAssignments("corp", user.ID)
+	require.NoError(t, err)
+	managed := make(map[string]string)
+	for _, assignment := range assignments {
+		if assignment.TargetScope == "project" && assignment.UserID == user.ID && assignment.ProjectID != nil && *assignment.ProjectID == project.ID {
+			require.Equal(t, "oidc", assignment.OwnerKind)
+			require.Equal(t, "corp", assignment.ManagedByProviderID)
+			managed[assignment.RoleID] = assignment.ManagedByMappingID
+		}
+	}
+	assert.Equal(t, map[string]string{string(first.ID): "workflow-approvers", string(second.ID): mapping.ID}, managed)
 }
 
 func TestOIDCGroupAssignmentProjectionIdentifiesLDAPAndForeignOIDCOwners(t *testing.T) {

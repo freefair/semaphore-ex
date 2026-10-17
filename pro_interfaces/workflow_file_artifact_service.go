@@ -90,3 +90,30 @@ func AuthorizeWorkflowFileArtifactAccess(policy db.WorkflowFileArtifactAccessPol
 	}
 	return false
 }
+
+func AuthorizeWorkflowFileArtifactAccessForState(policy db.WorkflowFileArtifactAccessPolicy, state WorkflowAuthorizationState) bool {
+	if policy.Validate() != nil {
+		return false
+	}
+	for _, reference := range state.RoleReferences() {
+		if !state.KnownRoles[reference] {
+			return false
+		}
+	}
+	for _, roleID := range policy.RoleIDs {
+		if !state.KnownRoles[roleID] {
+			return false
+		}
+	}
+	if len(policy.RoleIDs) == 0 {
+		return true
+	}
+	for _, reference := range state.RoleReferences() {
+		for _, roleID := range policy.RoleIDs {
+			if roleID == reference {
+				return true
+			}
+		}
+	}
+	return false
+}

@@ -10,7 +10,8 @@ export const enhancedComputed = {
 
 export const enhancedMethods = {
   allowActions() {
-    return this.canManageRoles;
+    // Mixin data initializes table headers before Vue installs computed getters.
+    return enhancedComputed.canManageRoles.call(this);
   },
   getDeleteItemUrl(item) {
     return `${this.getSingleItemUrl()}?revision=${encodeURIComponent(item.revision)}`;

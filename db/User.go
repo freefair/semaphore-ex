@@ -1,9 +1,10 @@
 package db
 
 import (
+	"time"
+
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pkg/tz"
-	"time"
 )
 
 // User is the model for an entity which has access to the API
@@ -52,6 +53,11 @@ type UserWithProjectRole struct {
 	RoleID   *ProjectRoleID  `db:"role_id" json:"role_id,omitempty"`
 	Revision int             `db:"revision" json:"revision"`
 	User
+}
+
+type UserWithProjectRoles struct {
+	User
+	Roles []Role `db:"-" json:"roles"` // ordered by name
 }
 
 // UserWithPwd extends User structure with field for unhashed password received from JSON.

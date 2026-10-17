@@ -150,6 +150,79 @@ func TestProjectRoleControllerFailsClosedWhenCapabilityIsUnavailable(t *testing.
 	assert.Equal(t, http.StatusForbidden, response.Code)
 }
 
+func TestProjectRoleControllerForceDeleteReportsImpactThenDeletes(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "force controller"})
+	require.NoError(t, err)
+	controller := NewRolesController(store, features.NewCapabilityProvider(store))
+	role, err := store.CreateProjectRole(db.Role{ID: "controller_force", Name: "Controller force", Permissions: db.CanRunProjectTasks, ProjectID: &project.ID, Revision: 1})
+	require.NoError(t, err)
+	user, err := store.CreateUserWithoutPassword(db.User{Username: "controller-force", Name: "Controller Force", Email: "controller-force@example.test"})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUser(db.ProjectUser{ProjectID: project.ID, UserID: user.ID, Role: db.ProjectGuest, RoleID: &role.ID, Revision: 1})
+	require.NoError(t, err)
+
+	path := "/api/project/" + strconv.Itoa(project.ID) + "/roles/" + string(role.ID) + "?revision=1"
+	conflict := serveProjectRoleRequest(t, project, http.MethodDelete, path, nil, map[string]string{"role_id": string(role.ID)}, controller.DeleteProjectRole)
+	assert.Equal(t, http.StatusConflict, conflict.Code)
+	force, forceAudit := serveProjectRoleAuditRequest(t, project, http.MethodDelete, path+"&force=true", nil, map[string]string{"role_id": string(role.ID)}, controller.DeleteProjectRole)
+	assert.Equal(t, http.StatusOK, force.Code)
+	var impact db.RoleImpact
+	require.NoError(t, json.Unmarshal(force.Body.Bytes(), &impact))
+	assert.Equal(t, db.RoleImpact{Members: 1, Projects: 1, TemplateGrants: 0}, impact)
+	forceDeleted := onlyRoleAuditEvent(t, forceAudit, audit.IAMProjectRoleDefinitionDelete)
+	assert.Equal(t, audit.RoleDeleteMetadata{Slug: role.Slug, Impact: &impact}, forceDeleted.Event.Metadata)
+}
+
+func TestProjectAndGlobalRolesReturnsProjectRolesAndVirtualBuiltins(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "Project roles for options"})
+	require.NoError(t, err)
+	otherProject, err := store.CreateProject(db.Project{Name: "Other project roles"})
+	require.NoError(t, err)
+	controller := NewRolesController(store, features.NewCapabilityProvider(store))
+	projectRole, err := store.CreateProjectRole(db.Role{
+		ID: "project_option", Name: "Project option", Permissions: db.CanViewWorkflows,
+		ProjectID: &project.ID, Revision: 1,
+	})
+	require.NoError(t, err)
+	_, err = store.CreateProjectRole(db.Role{
+		ID: "other_project_option", Name: "Other project option", Permissions: db.CanViewWorkflows,
+		ProjectID: &otherProject.ID, Revision: 1,
+	})
+	require.NoError(t, err)
+	globalRole, err := store.CreateGlobalRole(db.Role{
+		ID: "global_option", Name: "Global option", Permissions: db.CanViewWorkflows, Revision: 1,
+	})
+	require.NoError(t, err)
+
+	projectOnly := serveProjectRoleRequest(
+		t, project, http.MethodGet, "/api/project/roles", nil, nil, controller.GetProjectRoles,
+	)
+	assert.Equal(t, http.StatusOK, projectOnly.Code)
+	var customRoles []db.Role
+	require.NoError(t, json.Unmarshal(projectOnly.Body.Bytes(), &customRoles))
+	require.Equal(t, []db.Role{projectRole}, customRoles)
+
+	response := serveProjectRoleRequest(
+		t, project, http.MethodGet, "/api/project/roles/all", nil, nil, controller.GetProjectAndGlobalRoles,
+	)
+	assert.Equal(t, http.StatusOK, response.Code)
+	var roles []db.Role
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &roles))
+	require.Len(t, roles, 5)
+	assert.Equal(t, projectRole, roles[0])
+	assert.Equal(t, []db.Role{
+		{ID: "builtin:owner", Slug: "owner", Name: "Owner", Permissions: db.ProjectOwner.GetPermissions(), Revision: 1, Builtin: true},
+		{ID: "builtin:manager", Slug: "manager", Name: "Manager", Permissions: db.ProjectManager.GetPermissions(), Revision: 1, Builtin: true},
+		{ID: "builtin:task_runner", Slug: "task_runner", Name: "Task Runner", Permissions: db.ProjectTaskRunner.GetPermissions(), Revision: 1, Builtin: true},
+		{ID: "builtin:guest", Slug: "guest", Name: "Guest", Permissions: db.ProjectGuest.GetPermissions(), Revision: 1, Builtin: true},
+	}, roles[1:])
+	assert.NotContains(t, roles, globalRole)
+}
+
 func TestGlobalRoleControllerCRUDCatalogAssignmentsAndProvenance(t *testing.T) {
 	store := coresql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
@@ -332,7 +405,7 @@ func TestRoleControllerRecordsAuditOnlyForSuccessfulStoredMutations(t *testing.T
 	require.NoError(t, json.Unmarshal(globalCreate.Body.Bytes(), &globalRole))
 	globalCreated := onlyRoleAuditEvent(t, globalCreateAudit, audit.IAMRoleCreate)
 	assert.Equal(t, &audit.Target{Type: audit.TargetRole, ID: string(globalRole.ID), Name: globalRole.Name}, globalCreated.Event.Target)
-	assert.Equal(t, audit.RoleMetadata{Permissions: []string{
+	assert.Equal(t, audit.RoleMetadata{Slug: globalRole.Slug, Permissions: []string{
 		"workflow.view", "global.users.manage", "global.audit.read",
 	}}, globalCreated.Event.Metadata)
 
@@ -350,7 +423,7 @@ func TestRoleControllerRecordsAuditOnlyForSuccessfulStoredMutations(t *testing.T
 	require.NoError(t, json.Unmarshal(globalUpdate.Body.Bytes(), &updatedGlobalRole))
 	globalUpdated := onlyRoleAuditEvent(t, globalUpdateAudit, audit.IAMRoleUpdate)
 	assert.Equal(t, &audit.Target{Type: audit.TargetRole, ID: string(updatedGlobalRole.ID), Name: updatedGlobalRole.Name}, globalUpdated.Event.Target)
-	assert.Equal(t, audit.RoleMetadata{Permissions: []string{
+	assert.Equal(t, audit.RoleMetadata{Slug: updatedGlobalRole.Slug, Permissions: []string{
 		"workflow.view", "workflow.start", "global.roles.manage",
 	}}, globalUpdated.Event.Metadata)
 
@@ -370,6 +443,49 @@ func TestRoleControllerRecordsAuditOnlyForSuccessfulStoredMutations(t *testing.T
 	assert.Equal(t, http.StatusNoContent, globalDelete.Code)
 	globalDeleted := onlyRoleAuditEvent(t, globalDeleteAudit, audit.IAMRoleDelete)
 	assert.Equal(t, &audit.Target{Type: audit.TargetRole, ID: string(updatedGlobalRole.ID), Name: updatedGlobalRole.Name}, globalDeleted.Event.Target)
+	assert.Equal(t, audit.RoleDeleteMetadata{Slug: updatedGlobalRole.Slug}, globalDeleted.Event.Metadata)
+
+	previewGlobalRole, err := store.CreateGlobalRole(db.Role{
+		ID: "preview_global_audited", Name: "Preview global audited", Permissions: db.CanViewWorkflows, Revision: 1,
+	})
+	require.NoError(t, err)
+	_, err = store.CreateGlobalRoleAssignment(db.GlobalRoleAssignment{
+		UserID: admin.ID, RoleID: previewGlobalRole.ID, Revision: 1,
+	})
+	require.NoError(t, err)
+	previewGlobalDelete, _ := serveGlobalRoleAuditRequest(
+		t, store, admin, http.MethodDelete,
+		"/api/roles/"+string(previewGlobalRole.ID)+"?revision=1",
+		nil, map[string]string{"role_id": string(previewGlobalRole.ID)}, controller.DeleteRole,
+	)
+	assert.Equal(t, http.StatusConflict, previewGlobalDelete.Code)
+	var previewGlobalConflict struct {
+		Code   string        `json:"code"`
+		Impact db.RoleImpact `json:"impact"`
+	}
+	require.NoError(t, json.Unmarshal(previewGlobalDelete.Body.Bytes(), &previewGlobalConflict))
+	assert.Equal(t, "GLOBAL_ROLE_ASSIGNED", previewGlobalConflict.Code)
+	assert.Equal(t, db.RoleImpact{Members: 1}, previewGlobalConflict.Impact)
+
+	forceGlobalRole, err := store.CreateGlobalRole(db.Role{
+		ID: "force_global_audited", Name: "Force global audited", Permissions: db.CanViewWorkflows, Revision: 1,
+	})
+	require.NoError(t, err)
+	_, err = store.CreateGlobalRoleAssignment(db.GlobalRoleAssignment{
+		UserID: admin.ID, RoleID: forceGlobalRole.ID, Revision: 1,
+	})
+	require.NoError(t, err)
+	forceGlobalDelete, forceGlobalAudit := serveGlobalRoleAuditRequest(
+		t, store, admin, http.MethodDelete,
+		"/api/roles/"+string(forceGlobalRole.ID)+"?revision=1&force=true",
+		nil, map[string]string{"role_id": string(forceGlobalRole.ID)}, controller.DeleteRole,
+	)
+	assert.Equal(t, http.StatusOK, forceGlobalDelete.Code)
+	var forceGlobalImpact db.RoleImpact
+	require.NoError(t, json.Unmarshal(forceGlobalDelete.Body.Bytes(), &forceGlobalImpact))
+	assert.Equal(t, db.RoleImpact{Members: 1, Projects: 0, TemplateGrants: 0}, forceGlobalImpact)
+	forceGlobalDeleted := onlyRoleAuditEvent(t, forceGlobalAudit, audit.IAMRoleDelete)
+	assert.Equal(t, audit.RoleDeleteMetadata{Slug: forceGlobalRole.Slug, Impact: &forceGlobalImpact}, forceGlobalDeleted.Event.Metadata)
 
 	projectCreate, projectCreateAudit := serveProjectRoleAuditRequest(
 		t, project, http.MethodPost, "/api/project/"+strconv.Itoa(project.ID)+"/roles",
@@ -382,7 +498,7 @@ func TestRoleControllerRecordsAuditOnlyForSuccessfulStoredMutations(t *testing.T
 	projectCreated := onlyRoleAuditEvent(t, projectCreateAudit, audit.IAMProjectRoleDefinitionCreate)
 	assert.Equal(t, &audit.Target{Type: audit.TargetProjectRoleDefinition, ID: string(projectRole.ID), Name: projectRole.Name}, projectCreated.Event.Target)
 	assert.Equal(t, project.ID, projectCreated.Event.ProjectID)
-	assert.Equal(t, audit.RoleMetadata{Permissions: []string{"workflow.view"}}, projectCreated.Event.Metadata)
+	assert.Equal(t, audit.RoleMetadata{Slug: projectRole.Slug, Permissions: []string{"workflow.view"}}, projectCreated.Event.Metadata)
 
 	projectUpdate, projectUpdateAudit := serveProjectRoleAuditRequest(
 		t, project, http.MethodPut, "/api/project/"+strconv.Itoa(project.ID)+"/roles/"+string(projectRole.ID),
@@ -397,7 +513,7 @@ func TestRoleControllerRecordsAuditOnlyForSuccessfulStoredMutations(t *testing.T
 	projectUpdated := onlyRoleAuditEvent(t, projectUpdateAudit, audit.IAMProjectRoleDefinitionUpdate)
 	assert.Equal(t, &audit.Target{Type: audit.TargetProjectRoleDefinition, ID: string(updatedProjectRole.ID), Name: updatedProjectRole.Name}, projectUpdated.Event.Target)
 	assert.Equal(t, project.ID, projectUpdated.Event.ProjectID)
-	assert.Equal(t, audit.RoleMetadata{Permissions: []string{"workflow.view", "workflow.start"}}, projectUpdated.Event.Metadata)
+	assert.Equal(t, audit.RoleMetadata{Slug: updatedProjectRole.Slug, Permissions: []string{"workflow.view", "workflow.start"}}, projectUpdated.Event.Metadata)
 
 	missingProject, missingProjectAudit := serveProjectRoleAuditRequest(
 		t, project, http.MethodDelete, "/api/project/"+strconv.Itoa(project.ID)+"/roles/missing?revision=1",

@@ -76,7 +76,7 @@ func TestProjectRoleAssignmentAPIPreservesScopeRevisionAndEffectivePermissions(t
 		}
 	}
 	require.NotZero(t, listed.ID)
-	assert.Equal(t, db.ProjectUserRole(viewer.ID), listed.Role)
+	assert.Equal(t, string(viewer.ID), listed.Role)
 	assert.Equal(t, db.CanViewProjectResources, listed.EffectivePermissions)
 
 	stale := serveProjectMembershipUpdate(

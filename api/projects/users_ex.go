@@ -5,6 +5,7 @@ import (
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"net/http"
+	"strings"
 )
 
 func resolveProjectMembershipRole(
@@ -13,8 +14,8 @@ func resolveProjectMembershipRole(
 	projectID int,
 	roleRef db.ProjectUserRole,
 ) (db.ProjectUserRole, *db.ProjectRoleID, bool) {
-	if roleRef.IsValid() {
-		return roleRef, nil, true
+	if builtin := db.ProjectUserRole(strings.ToLower(string(roleRef))); builtin.IsValid() {
+		return builtin, nil, true
 	}
 	roleID := db.ProjectRoleID(roleRef)
 	role, err := helpers.Store(r).GetProjectRoleByID(projectID, roleID)
@@ -45,6 +46,10 @@ func writeProjectMembershipError(w http.ResponseWriter, err error) {
 	case errors.Is(err, db.ErrProjectMembershipRevisionConflict):
 		helpers.WriteJSON(w, http.StatusConflict, map[string]string{
 			"code": "PROJECT_MEMBERSHIP_REVISION_CONFLICT", "message": err.Error(),
+		})
+	case errors.Is(err, db.ErrProjectMembershipConflict):
+		helpers.WriteJSON(w, http.StatusConflict, map[string]string{
+			"code": "PROJECT_MEMBERSHIP_CONFLICT", "message": err.Error(),
 		})
 	default:
 		helpers.WriteError(w, err)

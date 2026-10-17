@@ -126,6 +126,7 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	assertGlobalTemplateRoleSchema(t, store, true)
 	assertDeploymentWindowSchema(t, store, true)
 	assertProjectRoleMutationLock(t, store, config.Dialect)
+	assertProjectRoleReferenceRollbackSafety(t, store, config.Dialect)
 
 	user, err := store.CreateUserWithoutPassword(fixture.User)
 	require.NoError(t, err)
@@ -217,6 +218,111 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 		CommunityDataSurvivedRollbackAndUpgrade: communityDataSurvived,
 		RestartPreservedEnhancedData:            restartPreserved,
 	}
+}
+
+func assertProjectRoleReferenceRollbackSafety(t testing.TB, store *SqlDb, dialect string) {
+	t.Helper()
+	project, err := store.CreateProject(db.Project{Name: "Role matrix " + dialect})
+	require.NoError(t, err)
+	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &project.ID, Type: db.AccessKeyNone})
+	require.NoError(t, err)
+	repository, err := store.CreateRepository(db.Repository{
+		ProjectID: project.ID, SSHKeyID: key.ID, Name: "Role matrix repository",
+		GitURL: "git@example.test:matrix/roles", GitBranch: "main",
+	})
+	require.NoError(t, err)
+	template, err := store.CreateTemplate(db.Template{
+		ProjectID: project.ID, RepositoryID: repository.ID, Name: "Role matrix template", Playbook: "site.yml",
+	})
+	require.NoError(t, err)
+	roleID := db.ProjectRoleID("role_matrix_" + dialect)
+	role, err := store.CreateProjectRole(db.Role{
+		ID: roleID, Name: "Matrix role", ProjectID: &project.ID,
+		Permissions: db.CanViewProjectResources, Revision: 1,
+	})
+	require.NoError(t, err)
+	user, err := store.CreateUserWithoutPassword(db.User{
+		Username: "role-matrix-" + dialect, Name: "Role matrix " + dialect,
+		Email: "role-matrix-" + dialect + "@example.test",
+	})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUser(db.ProjectUser{
+		ProjectID: project.ID, UserID: user.ID, Role: db.ProjectNone, RoleID: &role.ID, Revision: 1,
+	})
+	require.NoError(t, err)
+	guest, err := store.GetGlobalRoleBySlug(string(db.ProjectGuest))
+	require.NoError(t, err)
+	builtinUser, err := store.CreateUserWithoutPassword(db.User{
+		Username: "builtin-role-matrix-" + dialect, Name: "Builtin role matrix", Email: "builtin-role-matrix-" + dialect + "@example.test",
+	})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUser(db.ProjectUser{
+		ProjectID: project.ID, UserID: builtinUser.ID, Role: db.ProjectGuest, Revision: 1,
+	})
+	require.NoError(t, err)
+	grant, err := store.CreateTemplateRole(db.TemplateRolePerm{
+		ProjectID: project.ID, TemplateID: template.ID, RoleID: &guest.ID,
+		AllowedPermissions: db.CanRunTemplate, DeniedPermissions: db.CanReadTemplate, Revision: 1,
+	})
+	require.NoError(t, err)
+	// Old databases may contain a case variant. The rollback must produce the
+	// canonical slug because their template lookup is case-sensitive.
+	_, err = store.Sql().Exec(store.PrepareQuery(
+		"update project__template_role set role_slug=? where project_id=? and template_id=?"), "GUEST", project.ID, template.ID)
+	require.NoError(t, err)
+	var persisted db.ProjectRoleID
+	require.NoError(t, store.Sql().SelectOne(&persisted, store.PrepareQuery(
+		"select role_id from project__user_role where project_id=? and user_id=?"), project.ID, user.ID))
+	assert.Equal(t, roleID, persisted)
+	require.NoError(t, db.Rollback(store, "2.20.11"))
+	var legacyGrant db.TemplateRolePerm
+	require.NoError(t, store.Sql().SelectOne(&legacyGrant, store.PrepareQuery(
+		"select * from project__template_role where project_id=? and template_id=?"), project.ID, template.ID))
+	assert.Nil(t, legacyGrant.RoleID)
+	assert.Equal(t, string(db.ProjectGuest), legacyGrant.RoleSlug)
+	assert.Equal(t, db.CanRunTemplate, legacyGrant.AllowedPermissions)
+	assert.Equal(t, db.CanReadTemplate, legacyGrant.DeniedPermissions)
+	membership, err := store.GetProjectUser(project.ID, user.ID)
+	require.NoError(t, err)
+	require.NotNil(t, membership.RoleID)
+	assert.Equal(t, roleID, *membership.RoleID)
+	globalRole, err := store.CreateGlobalRole(db.Role{
+		ID: db.ProjectRoleID("global_matrix_" + dialect), Slug: "global-matrix-" + dialect,
+		Name: "Global matrix role", Revision: 1,
+	})
+	require.NoError(t, err)
+	globalUser, err := store.CreateUserWithoutPassword(db.User{
+		Username: "global-role-matrix-" + dialect, Name: "Global role matrix", Email: "global-role-matrix-" + dialect + "@example.test",
+	})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUser(db.ProjectUser{
+		ProjectID: project.ID, UserID: globalUser.ID, Role: db.ProjectUserRole(globalRole.Slug), Revision: 1,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, db.Migrate(store, nil))
+	require.NoError(t, store.Sql().SelectOne(&persisted, store.PrepareQuery(
+		"select role_id from project__user_role where project_id=? and user_id=?"), project.ID, user.ID))
+	assert.Equal(t, roleID, persisted)
+	require.NoError(t, store.Sql().SelectOne(&persisted, store.PrepareQuery(
+		"select role_id from project__user_role where project_id=? and user_id=?"), project.ID, globalUser.ID))
+	assert.Equal(t, globalRole.ID, persisted)
+	context, err := store.GetTemplatePermissionContext(project.ID, template.ID, builtinUser.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.CanRunTemplate, context.EffectivePermissions)
+	// Later matrix stages cross the older template-grant schema, which cannot
+	// represent a deny. Remove this isolated rollback fixture first.
+	legacyGrant, err = store.GetTemplateRole(project.ID, template.ID, grant.ID)
+	require.NoError(t, err)
+	require.NoError(t, store.DeleteTemplateRole(project.ID, template.ID, legacyGrant.ID, legacyGrant.Revision))
+	// The outer matrix later rolls back below the global-role schema. Remove
+	// this targeted .12 fixture so that broader compatibility coverage does not
+	// intentionally carry an unrepresentable global membership into that state.
+	require.NoError(t, store.DeleteProjectUser(project.ID, globalUser.ID))
+	require.NoError(t, store.DeleteGlobalRole(globalRole.ID, globalRole.Revision))
+	require.NoError(t, store.DeleteProjectUser(project.ID, builtinUser.ID))
+	require.NoError(t, store.DeleteProjectUser(project.ID, user.ID))
+	require.NoError(t, store.DeleteProjectRole(project.ID, role.ID, role.Revision))
 }
 
 func assertClusterNodeSchemaIdentity(t testing.TB, store *SqlDb, insert bool) {

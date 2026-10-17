@@ -63,13 +63,11 @@ describe('custom project roles', () => {
     const custom = {
       id: 'role_0123456789abcdef0123456789abcdef',
       name: 'Resource viewer',
+      slug: 'resource-viewer',
       permissions: USER_PERMISSIONS.viewProjectResources,
     };
-    const roles = Team.computed.userRoles.call({ roles: [custom] });
-    expect(roles.find((role) => role.value === custom.id).permissions).to.equal(
-      USER_PERMISSIONS.viewProjectResources,
-    );
-    expect(Team.methods.rolePermissions.call({ userRoles: roles }, custom.id)).to.equal(
+    const roles = [...USER_ROLES, custom];
+    expect(Team.methods.memberPermissions.call({ roles }, { roles: [custom.slug] })).to.equal(
       USER_PERMISSIONS.viewProjectResources,
     );
   });
@@ -98,8 +96,10 @@ describe('custom project roles', () => {
     try {
       await Team.methods.updateProjectUser.call({
         projectId: 1,
+        saving: Promise.resolve(),
+        pendingSaves: 0,
         loadItems: async () => { reloads += 1; },
-      }, { id: 1, role: 'guest' });
+      }, { id: 1, roles: ['guest'], revision: 1 });
     } finally {
       axios.defaults.adapter = previousAdapter;
       EventBus.$off('i-snackbar', captureSnackbar);

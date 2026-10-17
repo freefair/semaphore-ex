@@ -1,6 +1,7 @@
 package projects
 
 import (
+	"errors"
 	"fmt"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
@@ -8,6 +9,7 @@ import (
 	"github.com/semaphoreui/semaphore/services/audit"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // TemplatesMiddleware ensures a template exists and loads it to the context
@@ -182,6 +184,21 @@ func (c *TemplateController) AddTemplatePerm(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	role, err := helpers.Store(r).GetProjectOrGlobalRoleBySlug(template.ProjectID, perm.RoleSlug)
+	if errors.Is(err, db.ErrNotFound) {
+		status := http.StatusBadRequest
+		if strings.TrimSpace(perm.RoleSlug) == "" {
+			status = http.StatusNotFound
+		}
+		helpers.WriteErrorStatus(w, "Role does not exist in this project", status)
+		return
+	}
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+
+	perm.RoleID = &role.ID
 	perm.ProjectID = template.ProjectID
 	perm.TemplateID = template.ID
 	if perm.Permissions&^db.KnownRolePermissions != 0 {
@@ -194,19 +211,22 @@ func (c *TemplateController) AddTemplatePerm(w http.ResponseWriter, r *http.Requ
 		helpers.WriteError(w, err)
 		return
 	}
+	newPerm.RoleSlug = role.Slug
 
 	helpers.Audit(r).Record(r.Context(), audit.Event{
 		Kind:      audit.IAMTemplatePermissionCreate,
 		Target:    &audit.Target{Type: audit.TargetTemplatePermission, ID: strconv.Itoa(newPerm.ID)},
 		ProjectID: template.ProjectID,
 		Metadata: audit.TemplatePermissionMetadata{
-			TemplateID: template.ID,
-			// The slug comes from the request body, and SQLite does not enforce column lengths.
-			RoleSlug:    audit.TruncateName(newPerm.RoleSlug, audit.MaxNameBytes),
+			TemplateID:  template.ID,
+			Role:        audit.NewRoleRef(role),
 			Permissions: audit.PermissionNames(newPerm.Permissions),
 		},
 	})
 
+	if role.Builtin {
+		newPerm.RoleID = nil
+	}
 	helpers.WriteJSON(w, http.StatusCreated, newPerm)
 }
 
@@ -246,12 +266,19 @@ func (c *TemplateController) UpdateTemplatePerm(w http.ResponseWriter, r *http.R
 		ProjectID: template.ProjectID,
 		Metadata: audit.TemplatePermissionMetadata{
 			TemplateID:  template.ID,
-			RoleSlug:    audit.TruncateName(updated.RoleSlug, audit.MaxNameBytes),
+			Role:        templateRoleAuditRef(updated),
 			Permissions: audit.PermissionNames(updated.Permissions),
 		},
 	})
 
 	helpers.WriteJSON(w, http.StatusOK, updated)
+}
+
+func templateRoleAuditRef(permission db.TemplateRolePerm) audit.RoleRef {
+	if permission.RoleID == nil {
+		return audit.NewRoleRef(db.Role{Slug: permission.RoleSlug})
+	}
+	return audit.NewRoleRef(db.Role{ID: *permission.RoleID, Slug: permission.RoleSlug})
 }
 
 func (c *TemplateController) DeleteTemplatePerm(w http.ResponseWriter, r *http.Request) {

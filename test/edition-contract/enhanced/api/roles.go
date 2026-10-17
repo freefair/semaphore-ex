@@ -102,7 +102,7 @@ func (c *RolesController) AddRole(w http.ResponseWriter, r *http.Request) {
 		writeGlobalRoleError(w, err)
 		return
 	}
-	c.recordGlobalRoleAudit(r, audit.IAMRoleCreate, role, true)
+	c.recordGlobalRoleAudit(r, audit.IAMRoleCreate, role, nil)
 	helpers.WriteJSON(w, http.StatusCreated, role)
 }
 
@@ -132,7 +132,7 @@ func (c *RolesController) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		writeGlobalRoleError(w, err)
 		return
 	}
-	c.recordGlobalRoleAudit(r, audit.IAMRoleUpdate, updated, true)
+	c.recordGlobalRoleAudit(r, audit.IAMRoleUpdate, updated, nil)
 	helpers.WriteJSON(w, http.StatusOK, updated)
 }
 
@@ -153,11 +153,28 @@ func (c *RolesController) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		writeGlobalRoleError(w, err)
 		return
 	}
+	if r.URL.Query().Get("force") == "true" {
+		impact, forceErr := c.store.ForceDeleteGlobalRole(roleID, revision)
+		if forceErr != nil {
+			writeGlobalRoleError(w, forceErr)
+			return
+		}
+		c.recordGlobalRoleAudit(r, audit.IAMRoleDelete, role, &impact)
+		helpers.WriteJSON(w, http.StatusOK, impact)
+		return
+	}
 	if err := c.store.DeleteGlobalRole(roleID, revision); err != nil {
+		if errors.Is(err, db.ErrGlobalRoleAssigned) {
+			impact, impactErr := c.store.GetRoleAssignments(roleID)
+			if impactErr == nil {
+				helpers.WriteJSON(w, http.StatusConflict, map[string]any{"code": "GLOBAL_ROLE_ASSIGNED", "impact": impact.Impact()})
+				return
+			}
+		}
 		writeGlobalRoleError(w, err)
 		return
 	}
-	c.recordGlobalRoleAudit(r, audit.IAMRoleDelete, role, false)
+	c.recordGlobalRoleAudit(r, audit.IAMRoleDelete, role, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -288,9 +305,56 @@ func (c *RolesController) GetProjectRoles(w http.ResponseWriter, r *http.Request
 }
 
 func (c *RolesController) GetProjectAndGlobalRoles(w http.ResponseWriter, r *http.Request) {
-	// Global roles belong to Slice 046. Keeping this project-only prevents a
-	// project administrator from assigning a role outside the current scope.
-	c.GetProjectRoles(w, r)
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead) {
+		return
+	}
+	project, ok := projectRoleRequestProject(w, r)
+	if !ok {
+		return
+	}
+	roles, err := c.store.GetProjectRoles(project.ID)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	roles = append(roles, virtualBuiltinProjectRoles()...)
+	helpers.WriteJSON(w, http.StatusOK, roles)
+}
+
+func virtualBuiltinProjectRoles() []db.Role {
+	builtins := []db.ProjectUserRole{
+		db.ProjectOwner,
+		db.ProjectManager,
+		db.ProjectTaskRunner,
+		db.ProjectGuest,
+	}
+	roles := make([]db.Role, 0, len(builtins))
+	for _, builtin := range builtins {
+		roles = append(roles, db.Role{
+			ID:          db.ProjectRoleID("builtin:" + string(builtin)),
+			Slug:        string(builtin),
+			Name:        builtinProjectRoleName(builtin),
+			Permissions: builtin.GetPermissions(),
+			Revision:    1,
+			Builtin:     true,
+		})
+	}
+	return roles
+}
+
+func builtinProjectRoleName(role db.ProjectUserRole) string {
+	switch role {
+	case db.ProjectOwner:
+		return "Owner"
+	case db.ProjectManager:
+		return "Manager"
+	case db.ProjectTaskRunner:
+		return "Task Runner"
+	case db.ProjectGuest:
+		return "Guest"
+	default:
+		return string(role)
+	}
 }
 
 func (c *RolesController) AddProjectRole(w http.ResponseWriter, r *http.Request) {
@@ -321,7 +385,7 @@ func (c *RolesController) AddProjectRole(w http.ResponseWriter, r *http.Request)
 		writeProjectRoleError(w, err)
 		return
 	}
-	c.recordProjectRoleAudit(r, audit.IAMProjectRoleDefinitionCreate, role, true)
+	c.recordProjectRoleAudit(r, audit.IAMProjectRoleDefinitionCreate, role, nil)
 	helpers.WriteJSON(w, http.StatusCreated, role)
 }
 
@@ -372,7 +436,7 @@ func (c *RolesController) UpdateProjectRole(w http.ResponseWriter, r *http.Reque
 		writeProjectRoleError(w, err)
 		return
 	}
-	c.recordProjectRoleAudit(r, audit.IAMProjectRoleDefinitionUpdate, updated, true)
+	c.recordProjectRoleAudit(r, audit.IAMProjectRoleDefinitionUpdate, updated, nil)
 	helpers.WriteJSON(w, http.StatusOK, updated)
 }
 
@@ -398,11 +462,28 @@ func (c *RolesController) DeleteProjectRole(w http.ResponseWriter, r *http.Reque
 		writeProjectRoleError(w, err)
 		return
 	}
+	if r.URL.Query().Get("force") == "true" {
+		impact, forceErr := c.store.ForceDeleteProjectRole(project.ID, roleID, revision)
+		if forceErr != nil {
+			writeProjectRoleError(w, forceErr)
+			return
+		}
+		c.recordProjectRoleAudit(r, audit.IAMProjectRoleDefinitionDelete, role, &impact)
+		helpers.WriteJSON(w, http.StatusOK, impact)
+		return
+	}
 	if err = c.store.DeleteProjectRole(project.ID, roleID, revision); err != nil {
+		if errors.Is(err, db.ErrProjectRoleAssigned) {
+			impact, impactErr := c.store.GetRoleAssignments(roleID)
+			if impactErr == nil {
+				helpers.WriteJSON(w, http.StatusConflict, map[string]any{"code": "PROJECT_ROLE_ASSIGNED", "impact": impact.Impact()})
+				return
+			}
+		}
 		writeProjectRoleError(w, err)
 		return
 	}
-	c.recordProjectRoleAudit(r, audit.IAMProjectRoleDefinitionDelete, role, false)
+	c.recordProjectRoleAudit(r, audit.IAMProjectRoleDefinitionDelete, role, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -410,11 +491,13 @@ func (c *RolesController) recordGlobalRoleAudit(
 	r *http.Request,
 	kind audit.Kind,
 	role db.Role,
-	withMetadata bool,
+	impact *db.RoleImpact,
 ) {
 	event := audit.Event{Kind: kind, Target: roleAuditTarget(audit.TargetRole, role)}
-	if withMetadata {
-		event.Metadata = audit.RoleMetadata{Permissions: roleAuditPermissionNames(role)}
+	if kind == audit.IAMRoleDelete {
+		event.Metadata = audit.RoleDeleteMetadata{Slug: role.Slug, Impact: impact}
+	} else {
+		event.Metadata = audit.RoleMetadata{Slug: role.Slug, Permissions: roleAuditPermissionNames(role)}
 	}
 	helpers.Audit(r).Record(r.Context(), event)
 }
@@ -423,15 +506,17 @@ func (c *RolesController) recordProjectRoleAudit(
 	r *http.Request,
 	kind audit.Kind,
 	role db.Role,
-	withMetadata bool,
+	impact *db.RoleImpact,
 ) {
 	event := audit.Event{
 		Kind:      kind,
 		Target:    roleAuditTarget(audit.TargetProjectRoleDefinition, role),
 		ProjectID: projectIDFromRole(role),
 	}
-	if withMetadata {
-		event.Metadata = audit.RoleMetadata{Permissions: roleAuditPermissionNames(role)}
+	if kind == audit.IAMProjectRoleDefinitionDelete {
+		event.Metadata = audit.RoleDeleteMetadata{Slug: role.Slug, Impact: impact}
+	} else {
+		event.Metadata = audit.RoleMetadata{Slug: role.Slug, Permissions: roleAuditPermissionNames(role)}
 	}
 	helpers.Audit(r).Record(r.Context(), event)
 }
@@ -565,6 +650,8 @@ func writeGlobalRoleError(w http.ResponseWriter, err error) {
 		helpers.WriteJSON(w, http.StatusConflict, map[string]string{
 			"code": "GLOBAL_ROLE_ASSIGNED", "message": err.Error(),
 		})
+	case errors.Is(err, db.ErrGlobalRoleForceProtected):
+		helpers.WriteJSON(w, http.StatusConflict, map[string]string{"code": "GLOBAL_ROLE_FORCE_PROTECTED", "message": err.Error()})
 	case errors.Is(err, db.ErrLastGlobalAdministrator):
 		helpers.WriteJSON(w, http.StatusConflict, map[string]string{
 			"code": "LAST_GLOBAL_ADMINISTRATOR", "message": err.Error(),
@@ -597,6 +684,10 @@ func writeProjectRoleError(w http.ResponseWriter, err error) {
 		helpers.WriteJSON(w, http.StatusConflict, map[string]string{
 			"code": "PROJECT_ROLE_ASSIGNED", "message": err.Error(),
 		})
+	case errors.Is(err, db.ErrProjectRoleForceProtected):
+		helpers.WriteJSON(w, http.StatusConflict, map[string]string{"code": "PROJECT_ROLE_FORCE_PROTECTED", "message": err.Error()})
+	case errors.Is(err, db.ErrLastProjectAdministrator):
+		helpers.WriteJSON(w, http.StatusConflict, map[string]string{"code": "LAST_PROJECT_ADMINISTRATOR", "message": err.Error()})
 	default:
 		helpers.WriteError(w, err)
 	}

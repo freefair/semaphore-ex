@@ -100,7 +100,7 @@ func TestLDAPGroupMappingApplyTracksOwnershipAndRejectsStalePreview(t *testing.T
 	assert.ErrorIs(t, err, db.ErrLDAPGroupPreviewStale)
 }
 
-func TestLDAPGroupMappingApplyIsAtomicOnProjectMembershipCollision(t *testing.T) {
+func TestLDAPGroupMappingProjectRoleRejectsManualMembershipCollision(t *testing.T) {
 	store := InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
 	now := time.Unix(1_780_000_100, 0).UTC()
@@ -147,10 +147,92 @@ func TestLDAPGroupMappingApplyIsAtomicOnProjectMembershipCollision(t *testing.T)
 	persisted, err := store.GetProjectUser(project.ID, user.ID)
 	require.NoError(t, err)
 	assert.Equal(t, db.ProjectGuest, persisted.Role)
+	managed, err := store.Sql().SelectInt(store.PrepareQuery(
+		"select count(*) from project__user_role where project_id=? and user_id=? and role_id=? and ldap_group_managed_assignment_id is not null"),
+		project.ID, user.ID, role.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), managed)
 	assignments, err := store.GetLDAPGroupRoleAssignments("corp")
 	require.NoError(t, err)
 	require.Len(t, assignments, 1)
 	assert.Empty(t, assignments[0].ManagedByMappingID)
+}
+
+func TestLDAPGroupMappingApplyRefusesLastAdministratorAfterPreview(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	now := time.Unix(1_780_000_125, 0).UTC()
+	require.NoError(t, store.SaveLDAPProvider(readyLDAPProvider("corp", now, nil)))
+	user, err := store.CreateUserWithoutPassword(db.User{Username: "ldap-admin", Name: "LDAP Admin", Email: "ldap-admin@example.test", External: true})
+	require.NoError(t, err)
+	_, err = store.CreateExternalIdentity(db.UserExternalIdentity{UserID: user.ID, Type: db.IdentityTypeLdap, Provider: "corp", ExternalUID: "entryuuid:ldap-admin"})
+	require.NoError(t, err)
+	project, err := store.CreateProject(db.Project{Name: "LDAP admin project", Created: now})
+	require.NoError(t, err)
+	role, err := store.CreateProjectRole(db.Role{ID: "ldap-admin-role", Name: "LDAP admin", ProjectID: &project.ID, Permissions: db.CanManageProjectUsers, Revision: 1})
+	require.NoError(t, err)
+	projectID := project.ID
+	mapping, err := store.SaveLDAPGroupMapping(db.LDAPGroupMapping{ID: "ldap-admins", ProviderID: "corp", GroupExternalID: "entryuuid:ldap-admins", TargetScope: "project", ProjectID: &projectID, RoleID: string(role.ID), Enabled: true, Revision: 1, Created: now, Updated: now}, 0)
+	require.NoError(t, err)
+	revision, err := store.GetLDAPGroupMappingRevision("corp")
+	require.NoError(t, err)
+	change := db.LDAPGroupAssignmentChange{MappingID: mapping.ID, UserID: user.ID, TargetScope: "project", ProjectID: &projectID, RoleID: string(role.ID)}
+	preview := db.LDAPGroupReconciliation{ProviderID: "corp", Source: "manual", Status: "preview", Token: "ldap-admin-add", MappingRevision: revision, DirectoryRevision: "directory", PreviewJSON: "{}", Created: now}
+	_, err = store.SaveLDAPGroupReconciliation(preview)
+	require.NoError(t, err)
+	preview.Status = "applied"
+	_, err = store.ApplyLDAPGroupPreview(preview, []db.LDAPGroupAssignmentChange{change}, nil)
+	require.NoError(t, err)
+
+	manual, err := store.CreateUserWithoutPassword(db.User{Username: "manual-admin", Name: "Manual Admin", Email: "manual-admin@example.test"})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUser(db.ProjectUser{ProjectID: project.ID, UserID: manual.ID, Role: db.ProjectManager, Revision: 1})
+	require.NoError(t, err)
+	removal := db.LDAPGroupReconciliation{ProviderID: "corp", Source: "manual", Status: "preview", Token: "ldap-admin-remove", MappingRevision: revision, DirectoryRevision: "directory", PreviewJSON: "{}", Created: now}
+	_, err = store.SaveLDAPGroupReconciliation(removal)
+	require.NoError(t, err)
+	require.NoError(t, store.DeleteProjectUser(project.ID, manual.ID))
+	removal.Status = "applied"
+	_, err = store.ApplyLDAPGroupPreview(removal, nil, []db.LDAPGroupAssignmentChange{change})
+	assert.ErrorIs(t, err, db.ErrLastProjectAdministrator)
+	remaining, err := store.Sql().SelectInt(store.PrepareQuery("select count(*) from project__user_role where project_id=? and user_id=? and role_id=?"), project.ID, user.ID, role.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), remaining)
+}
+
+func TestLDAPGroupRoleAssignmentsListEveryManagedProjectRole(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	now := time.Unix(1_780_000_140, 0).UTC()
+	project, user := workflowRoleIdentityProjectUser(t, store, "ldap-assignment-reader")
+	first, err := store.CreateProjectRole(db.Role{ID: "ldap-first", Name: "LDAP first", ProjectID: &project.ID, Permissions: db.CanRunProjectTasks, Revision: 1})
+	require.NoError(t, err)
+	second, err := store.CreateProjectRole(db.Role{ID: "ldap-second", Name: "LDAP second", ProjectID: &project.ID, Permissions: db.CanStartWorkflows, Revision: 1})
+	require.NoError(t, err)
+	setupLDAPWorkflowRoleIdentity(t, store, project, user, first, now)
+	_, err = store.CreateExternalIdentity(db.UserExternalIdentity{UserID: user.ID, Type: db.IdentityTypeLdap, Provider: "corp", ExternalUID: "entryuuid:ldap-assignment-reader"})
+	require.NoError(t, err)
+	projectID := project.ID
+	mapping, err := store.SaveLDAPGroupMapping(db.LDAPGroupMapping{ID: "workflow-second", ProviderID: "corp", GroupExternalID: "entryuuid:20112233-4455-6677-8899-aabbccddeeff", TargetScope: "project", ProjectID: &projectID, RoleID: string(second.ID), Enabled: true, Revision: 1, Created: now, Updated: now}, 0)
+	require.NoError(t, err)
+	revision, err := store.GetLDAPGroupMappingRevision("corp")
+	require.NoError(t, err)
+	preview := db.LDAPGroupReconciliation{ProviderID: "corp", Source: "manual", Status: "preview", Token: "ldap-assignment-reader", MappingRevision: revision, DirectoryRevision: "directory", PreviewJSON: "{}", Created: now}
+	_, err = store.SaveLDAPGroupReconciliation(preview)
+	require.NoError(t, err)
+	preview.Status = "applied"
+	_, err = store.ApplyLDAPGroupPreview(preview, []db.LDAPGroupAssignmentChange{{MappingID: mapping.ID, UserID: user.ID, TargetScope: "project", ProjectID: &projectID, RoleID: string(second.ID)}}, nil)
+	require.NoError(t, err)
+
+	assignments, err := store.GetLDAPGroupRoleAssignments("corp")
+	require.NoError(t, err)
+	managed := make(map[string]string)
+	for _, assignment := range assignments {
+		if assignment.TargetScope == "project" && assignment.UserID == user.ID && assignment.ProjectID != nil && *assignment.ProjectID == project.ID {
+			managed[assignment.RoleID] = assignment.ManagedByMappingID
+		}
+	}
+	assert.Equal(t, map[string]string{string(first.ID): "workflow-approvers", string(second.ID): mapping.ID}, managed)
 }
 
 func TestLDAPGroupMappingRemovalDoesNotDeleteManuallyRecreatedMembership(t *testing.T) {
@@ -195,7 +277,10 @@ func TestLDAPGroupMappingRemovalDoesNotDeleteManuallyRecreatedMembership(t *test
 	_, err = store.ApplyLDAPGroupPreview(preview, []db.LDAPGroupAssignmentChange{change}, nil)
 	require.NoError(t, err)
 
-	require.NoError(t, store.DeleteProjectUser(project.ID, user.ID))
+	_, err = store.Sql().Exec("delete from project__user_role where project_id=? and user_id=?", project.ID, user.ID)
+	require.NoError(t, err)
+	_, err = store.Sql().Exec("delete from project__user where project_id=? and user_id=?", project.ID, user.ID)
+	require.NoError(t, err)
 	_, err = store.CreateProjectUser(db.ProjectUser{
 		ProjectID: project.ID, UserID: user.ID, Role: db.ProjectNone, RoleID: &role.ID, Revision: 1,
 	})

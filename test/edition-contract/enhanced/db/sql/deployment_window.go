@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-gorp/gorp/v3"
@@ -596,27 +597,34 @@ func (d *DeploymentWindowStore) currentOverride(tx *gorp.Transaction, request pr
 	if err != nil {
 		return nil, err
 	}
-	permissions := membership.Role.GetPermissions()
-	if membership.RoleID != nil {
+	var refs []struct {
+		RoleID db.ProjectRoleID `db:"role_id"`
+	}
+	if _, err = tx.Select(&refs, d.connection.PrepareQuery(d.lockAuthorizationQuery("select role_id from project__user_role where project_id=? and user_id=? order by role_id")), request.ProjectID, *request.ActorUserID); err != nil {
+		return nil, err
+	}
+	if len(refs) == 0 {
+		return nil, pro_interfaces.ErrDeploymentWindowOverrideForbidden
+	}
+	var permissions db.ProjectUserPermission
+	for _, ref := range refs {
+		if strings.HasPrefix(string(ref.RoleID), "builtin:") {
+			role := db.ProjectUserRole(strings.TrimPrefix(string(ref.RoleID), "builtin:"))
+			if !role.IsValid() {
+				return nil, pro_interfaces.ErrDeploymentWindowOverrideForbidden
+			}
+			permissions |= role.GetPermissions()
+			continue
+		}
 		var role db.Role
-		err = tx.SelectOne(&role, d.connection.PrepareQuery(d.lockAuthorizationQuery("select role_id, slug, name, permissions, global_permissions, project_id, revision from role where project_id=? and role_id=?")), request.ProjectID, *membership.RoleID)
+		err = tx.SelectOne(&role, d.connection.PrepareQuery(d.lockAuthorizationQuery("select role_id, slug, name, permissions, global_permissions, project_id, revision from role where role_id=? and (project_id=? or project_id is null)")), ref.RoleID, request.ProjectID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, pro_interfaces.ErrDeploymentWindowOverrideForbidden
 		}
 		if err != nil {
 			return nil, err
 		}
-		permissions = role.Permissions
-	} else if !membership.Role.IsValid() {
-		var role db.Role
-		err = tx.SelectOne(&role, d.connection.PrepareQuery(d.lockAuthorizationQuery("select role_id, slug, name, permissions, global_permissions, project_id, revision from role where slug=? and (project_id=? or project_id is null) order by case when project_id=? then 0 else 1 end limit 1")), membership.Role, request.ProjectID, request.ProjectID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, pro_interfaces.ErrDeploymentWindowOverrideForbidden
-		}
-		if err != nil {
-			return nil, err
-		}
-		permissions = role.Permissions
+		permissions |= role.Permissions
 	}
 	if !permissions.Can(db.CanOverrideDeploymentWindow) {
 		return nil, pro_interfaces.ErrDeploymentWindowOverrideForbidden

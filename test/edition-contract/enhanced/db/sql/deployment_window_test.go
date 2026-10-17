@@ -355,6 +355,36 @@ func TestDeploymentWindowOverrideRejectsRevokedMembershipAndAllowsGlobalAdminWit
 	assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden)
 }
 
+func TestDeploymentWindowOverrideUsesCustomPermissionFromMultiRoleMembershipRegardlessOfInputOrder(t *testing.T) {
+	for _, roleRefs := range [][]coreDB.ProjectRoleID{
+		{"builtin:guest", "multi-role-window-override"},
+		{"multi-role-window-override", "builtin:guest"},
+	} {
+		t.Run("role order", func(t *testing.T) {
+			store, repository, project, template := deploymentWindowOverrideTestStore(t)
+			customRole, err := store.CreateProjectRole(coreDB.Role{
+				ID: "multi-role-window-override", Name: "Multi Role Window Override", ProjectID: intPointer(project.ID),
+				Permissions: coreDB.CanOverrideDeploymentWindow, Revision: 3,
+			})
+			require.NoError(t, err)
+			actor := deploymentWindowTestUser(t, store, "multi-role-window-override-actor", false)
+			_, err = store.CreateProjectUserWithRoleRefs(coreDB.ProjectUser{ProjectID: project.ID, UserID: actor.ID, Role: coreDB.ProjectGuest}, roleRefs)
+			require.NoError(t, err)
+
+			claim, err := repository.ClaimDeploymentWindowAdmission(deploymentWindowOverrideAdmission(project.ID, template.ID, actor.ID, "multi-role-before-revocation"), deploymentWindowEvaluator().Evaluate)
+			require.NoError(t, err)
+			assert.Equal(t, string(pro_interfaces.DeploymentWindowDecisionOverridden), claim.Decision.State)
+
+			membership, err := store.GetProjectUser(project.ID, actor.ID)
+			require.NoError(t, err)
+			require.NoError(t, store.SetProjectUserRoleRefs(project.ID, actor.ID, []coreDB.ProjectRoleID{"builtin:guest"}, membership.Revision))
+			_, err = repository.ClaimDeploymentWindowAdmission(deploymentWindowOverrideAdmission(project.ID, template.ID, actor.ID, "multi-role-after-revocation"), deploymentWindowEvaluator().Evaluate)
+			assert.ErrorIs(t, err, pro_interfaces.ErrDeploymentWindowOverrideForbidden)
+			assert.Equal(t, coreDB.CanOverrideDeploymentWindow, customRole.Permissions)
+		})
+	}
+}
+
 func TestDeploymentWindowClaimOrdersConcurrentAuthorizationRevocations(t *testing.T) {
 	t.Run("membership", func(t *testing.T) {
 		store, repository, project, template := deploymentWindowOverrideTestStore(t)

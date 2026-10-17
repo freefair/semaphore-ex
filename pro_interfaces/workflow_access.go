@@ -15,8 +15,12 @@ type WorkflowAuthorizationIdentityStore interface {
 // workflow access evaluators. It is intentionally scoped to one project and
 // one actor so it cannot be reused as a cross-project authorization grant.
 type WorkflowAuthorizationState struct {
-	Identity   db.ProjectWorkflowRoleIdentity
-	KnownRoles map[db.ProjectRoleReference]bool
+	// Identity is retained for callers that only need display/provenance of the
+	// deterministic first relation. Authorization must use Identities.
+	Identity           db.ProjectWorkflowRoleIdentity
+	Identities         []db.ProjectWorkflowRoleIdentity
+	ProjectPermissions db.ProjectUserPermission
+	KnownRoles         map[db.ProjectRoleReference]bool
 }
 
 // ResolveWorkflowAuthorizationState resolves the actor's single current
@@ -27,12 +31,19 @@ func ResolveWorkflowAuthorizationState(
 	projectID int,
 	actorID int,
 ) (WorkflowAuthorizationState, error) {
-	identity, err := store.ResolveProjectWorkflowRoleIdentity(projectID, actorID)
+	identities, err := store.ResolveProjectWorkflowRoleIdentities(projectID, actorID)
 	if err != nil {
 		return WorkflowAuthorizationState{}, err
 	}
-	if err = identity.Validate(); err != nil {
+	if len(identities) == 0 {
 		return WorkflowAuthorizationState{}, db.ErrProjectWorkflowRoleIdentityUnavailable
+	}
+	var permissions db.ProjectUserPermission
+	for _, identity := range identities {
+		if err = identity.Validate(); err != nil {
+			return WorkflowAuthorizationState{}, db.ErrProjectWorkflowRoleIdentityUnavailable
+		}
+		permissions |= identity.Permissions
 	}
 	roles, err := store.GetProjectRoles(projectID)
 	if err != nil {
@@ -46,8 +57,24 @@ func ResolveWorkflowAuthorizationState(
 		roleIDs = append(roleIDs, role.ID)
 	}
 	return WorkflowAuthorizationState{
-		Identity: identity, KnownRoles: db.KnownProjectRoleReferences(roleIDs),
+		Identity: identities[0], Identities: identities, ProjectPermissions: permissions,
+		KnownRoles: db.KnownProjectRoleReferences(roleIDs),
 	}, nil
+}
+
+func (state WorkflowAuthorizationState) RoleReferences() []db.ProjectRoleReference {
+	references := make([]db.ProjectRoleReference, 0, len(state.Identities))
+	for _, identity := range state.Identities {
+		references = append(references, identity.Reference)
+	}
+	return references
+}
+
+func AuthorizeWorkflowReadForState(workflow db.WorkflowTemplate, state WorkflowAuthorizationState) WorkflowAccessDecision {
+	return EvaluateWorkflowAccess(WorkflowAccessRequest{
+		Permission: PermissionViewWorkflow, ProjectPermissions: state.ProjectPermissions,
+		EffectiveRoleReferences: state.RoleReferences(), KnownRoleReferences: state.KnownRoles, Policy: workflow.AccessPolicy,
+	})
 }
 
 // AuthorizeWorkflowRead decides whether a workflow definition, run, artifact,
@@ -106,6 +133,19 @@ func FilterWorkflowTemplatesByAccess(
 	visible := make([]db.WorkflowTemplate, 0, len(workflows))
 	for _, workflow := range workflows {
 		if AuthorizeWorkflowRead(workflow, identity, knownRoles).Allowed {
+			visible = append(visible, workflow)
+		}
+	}
+	return visible
+}
+
+func FilterWorkflowTemplatesByAuthorizationState(
+	workflows []db.WorkflowTemplate,
+	state WorkflowAuthorizationState,
+) []db.WorkflowTemplate {
+	visible := make([]db.WorkflowTemplate, 0, len(workflows))
+	for _, workflow := range workflows {
+		if AuthorizeWorkflowReadForState(workflow, state).Allowed {
 			visible = append(visible, workflow)
 		}
 	}

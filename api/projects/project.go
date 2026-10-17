@@ -2,7 +2,6 @@ package projects
 
 import (
 	"encoding/json"
-	"errors"
 	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
@@ -27,10 +26,13 @@ func ProjectMiddleware(next http.Handler) http.Handler {
 		}
 
 		// check if user in project's team
-		projectUser, err := helpers.Store(r).GetProjectUser(projectID, user.ID)
-
-		if !user.Admin && err != nil {
+		roles, err := helpers.Store(r).GetProjectUserRoles(projectID, user.ID)
+		if err != nil {
 			helpers.WriteError(w, err)
+			return
+		}
+		if len(roles) == 0 && !user.Admin {
+			helpers.WriteError(w, db.ErrNotFound)
 			return
 		}
 
@@ -41,37 +43,9 @@ func ProjectMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		roleSlug := projectUser.Role
-		roleName := string(roleSlug)
-
-		permissions := roleSlug.GetPermissions()
-
-		if projectUser.RoleID != nil {
-			role, roleErr := helpers.Store(r).GetProjectRoleByID(projectID, *projectUser.RoleID)
-			if roleErr != nil {
-				helpers.WriteError(w, roleErr)
-				return
-			}
-			roleSlug = db.ProjectUserRole(role.ID)
-			roleName = role.Name
-			permissions = role.Permissions
-		}
-
-		// Built-in roles are defined in code and are the source of truth for their
-		// permissions. Only custom roles are resolved from the database, otherwise a
-		// project role sharing a built-in slug (e.g. "manager") could override the
-		// built-in permissions and escalate privileges.
-		if projectUser.RoleID == nil && !roleSlug.IsValid() {
-			role, err := helpers.Store(r).GetProjectOrGlobalRoleBySlug(projectID, string(projectUser.Role))
-
-			if err == nil {
-				roleSlug = db.ProjectUserRole(role.Slug)
-				roleName = role.Name
-				permissions = role.Permissions
-			} else if !errors.Is(err, db.ErrNotFound) {
-				helpers.WriteError(w, err)
-				return
-			}
+		var permissions db.ProjectUserPermission
+		for _, role := range roles {
+			permissions |= role.Permissions
 		}
 
 		basePermissions := permissions
@@ -80,18 +54,15 @@ func ProjectMiddleware(next http.Handler) http.Handler {
 			if !templateOk {
 				return
 			}
-			var perm db.ProjectUserPermission
-			perm, err = helpers.Store(r).GetTemplatePermission(project.ID, templateID, user.ID)
+			grants, err := helpers.Store(r).GetTemplatePermission(project.ID, templateID, user.ID)
 			if err != nil {
 				helpers.WriteError(w, err)
 				return
 			}
-
-			permissions = applyEffectiveTemplatePermissions(permissions, perm)
+			permissions = applyEffectiveTemplatePermissions(permissions, grants)
 		}
 
-		r = helpers.SetContextValue(r, "projectUserRole", roleSlug)
-		r = helpers.SetContextValue(r, "projectUserRoleName", roleName)
+		r = helpers.SetContextValue(r, "projectRoles", roles)
 		r = helpers.SetContextValue(r, "basePermissions", basePermissions)
 		r = helpers.SetContextValue(r, "permissions", permissions)
 		r = helpers.SetContextValue(r, "project", project)
@@ -256,13 +227,26 @@ func GetProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func GetUserRole(w http.ResponseWriter, r *http.Request) {
-	var result struct {
-		Role        db.ProjectUserRole       `json:"role"`
+	result := struct {
+		Role        string                   `json:"role"`
+		Roles       []string                 `json:"roles"`
 		RoleName    string                   `json:"role_name"`
+		RoleID      *db.ProjectRoleID        `json:"role_id,omitempty"`
 		Permissions db.ProjectUserPermission `json:"permissions"`
+	}{Roles: []string{}}
+	roles := helpers.GetFromContext(r, "projectRoles").([]db.Role)
+	for _, role := range roles {
+		result.Roles = append(result.Roles, role.Slug)
 	}
-	result.Role = helpers.GetFromContext(r, "projectUserRole").(db.ProjectUserRole)
-	result.RoleName, _ = helpers.GetFromContext(r, "projectUserRoleName").(string)
+	if len(result.Roles) == 1 {
+		role := roles[0]
+		result.Role = role.Slug
+		result.RoleName = role.Name
+		if !role.Builtin {
+			result.Role = string(role.ID)
+			result.RoleID = &role.ID
+		}
+	}
 	result.Permissions = helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
 	helpers.WriteJSON(w, http.StatusOK, result)
 }

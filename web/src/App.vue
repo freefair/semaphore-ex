@@ -141,7 +141,7 @@
                   {{ project.name }}
                 </v-list-item-title>
                 <v-list-item-subtitle>
-                  {{ userRole.role_name || userRole.role }}
+                  {{ userRole.role_name || (userRole.roles || []).join(', ') }}
                 </v-list-item-subtitle>
               </v-list-item-content>
 
@@ -551,7 +551,6 @@
         :projectId="projectId"
         :projectType="(project || {}).type || ''"
         :userPermissions="(userRole || {}).permissions"
-        :userRole="(userRole || {}).role"
         :userId="(user || {}).id"
         :isAdmin="(user || {}).admin"
         :user="user"

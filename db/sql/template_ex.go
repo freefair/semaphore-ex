@@ -2,9 +2,11 @@ package sql
 
 import (
 	"errors"
+	"strings"
+
 	sq "github.com/Masterminds/squirrel"
 	"github.com/semaphoreui/semaphore/db"
-	"strings"
+	"github.com/semaphoreui/semaphore/pkg/common_errors"
 )
 
 type templateWithLastTask struct {
@@ -129,7 +131,7 @@ func (d *SqlDb) GetTemplatePermissionContext(
 		}, nil
 	}
 
-	projectUser, err := d.GetProjectUser(projectID, userID)
+	_, err = d.GetProjectUser(projectID, userID)
 	if errors.Is(err, db.ErrNotFound) {
 		return db.TemplatePermissionContext{}, nil
 	}
@@ -137,54 +139,77 @@ func (d *SqlDb) GetTemplatePermissionContext(
 		return db.TemplatePermissionContext{}, err
 	}
 
-	roleID := string(projectUser.Role)
-	roleName := string(projectUser.Role)
-	roleSlug := string(projectUser.Role)
-	projectPermissions := projectUser.Role.GetPermissions()
-	var customRoleID *db.ProjectRoleID
-	if projectUser.RoleID != nil {
-		role, roleErr := d.GetProjectRoleByID(projectID, *projectUser.RoleID)
-		if roleErr != nil {
-			return db.TemplatePermissionContext{}, roleErr
-		}
-		roleID = string(role.ID)
-		roleName = role.Name
-		roleSlug = role.Slug
-		projectPermissions = role.Permissions
-		customRoleID = &role.ID
-	} else if !projectUser.Role.IsValid() {
-		role, roleErr := d.GetProjectOrGlobalRoleBySlug(projectID, string(projectUser.Role))
-		if errors.Is(roleErr, db.ErrNotFound) {
-			return db.TemplatePermissionContext{}, nil
-		}
-		if roleErr != nil {
-			return db.TemplatePermissionContext{}, roleErr
-		}
-		roleID = string(role.ID)
-		roleName = role.Name
-		roleSlug = role.Slug
-		projectPermissions = role.Permissions
-		if role.ProjectID != nil {
-			customRoleID = &role.ID
-		}
-	}
-
-	override, err := d.getTemplateRoleOverride(
-		projectID, templateID, roleSlug, customRoleID,
-	)
-	if err != nil && !errors.Is(err, db.ErrNotFound) {
+	roles, err := d.GetProjectUserRoles(projectID, userID)
+	if err != nil {
 		return db.TemplatePermissionContext{}, err
 	}
-	var overridePtr *db.TemplateRolePerm
-	if err == nil {
-		overridePtr = &override
+	if len(roles) == 0 {
+		return db.TemplatePermissionContext{}, nil
 	}
-	inherited := db.ProjectPermissionsToTemplate(projectPermissions)
+
+	// The multi-role relation is the authorization source. The legacy
+	// project__user role remains only a compatibility projection and is not
+	// consulted for inherited grants or scoped overrides.
+	primary := roles[0]
+	projectPermissions := db.ProjectUserPermission(0)
+	var allowed, denied db.TemplatePermission
+	var overridePtr *db.TemplateRolePerm
+	overrideFound := false
+	for _, role := range roles {
+		projectPermissions |= role.Permissions
+		roleIDs := []*db.ProjectRoleID{nil}
+		if role.Builtin {
+			roleIDs = []*db.ProjectRoleID{&role.ID, nil}
+		} else if role.ProjectID != nil {
+			// Project custom roles have immutable IDs. Their historic slug may
+			// collide with a virtual built-in, so a slug-only grant is never
+			// inherited by a custom project role.
+			roleIDs = []*db.ProjectRoleID{&role.ID}
+		} else if role.ID != "" && !db.ProjectUserRole(strings.ToLower(role.Slug)).IsValid() {
+			roleIDs = []*db.ProjectRoleID{&role.ID, nil}
+		} else if role.ID != "" {
+			roleIDs = []*db.ProjectRoleID{&role.ID}
+		}
+		for _, roleID := range roleIDs {
+			override, overrideErr := d.getTemplateRoleOverride(projectID, templateID, role.Slug, roleID)
+			if errors.Is(overrideErr, db.ErrNotFound) {
+				continue
+			}
+			if overrideErr != nil {
+				return db.TemplatePermissionContext{}, overrideErr
+			}
+			overrideFound = true
+			if len(roles) == 1 && overridePtr == nil && role.ID == primary.ID {
+				overridePtr = &override
+			}
+			allowed |= override.AllowedPermissions
+			denied |= override.DeniedPermissions
+		}
+	}
+	roleID, roleName := "", ""
+	if len(roles) == 1 {
+		roleID, roleName = templatePermissionContextRoleID(primary), primary.Name
+	} else if overrideFound {
+		// A combined override is evaluation-only: a single role cannot explain
+		// the union of several active roles' explicit grants and denies.
+		overridePtr = &db.TemplateRolePerm{
+			AllowedPermissions: allowed,
+			DeniedPermissions:  denied,
+		}
+	}
+	effective := (db.ProjectPermissionsToTemplate(projectPermissions) | allowed) &^ denied
 	return db.TemplatePermissionContext{
 		RoleID: roleID, RoleName: roleName, ProjectPermissions: projectPermissions,
-		EffectivePermissions: db.ApplyTemplatePermissionOverride(inherited, overridePtr),
+		EffectivePermissions: effective,
 		Override:             overridePtr,
 	}, nil
+}
+
+func templatePermissionContextRoleID(role db.Role) string {
+	if role.Builtin {
+		return role.Slug
+	}
+	return string(role.ID)
 }
 
 func (d *SqlDb) getTemplateRoleOverride(
@@ -225,11 +250,25 @@ func (d *SqlDb) normalizeTemplateRole(
 	}
 	role.Permissions = db.TemplatePermissionsToProject(role.AllowedPermissions)
 	if role.RoleID != nil {
-		projectRole, err := d.GetProjectRoleByID(role.ProjectID, *role.RoleID)
-		if err != nil {
-			return db.TemplateRolePerm{}, err
+		if strings.HasPrefix(string(*role.RoleID), "builtin:") {
+			builtIn := db.ProjectUserRole(strings.TrimPrefix(string(*role.RoleID), "builtin:"))
+			if !builtIn.IsValid() {
+				return db.TemplateRolePerm{}, db.ErrNotFound
+			}
+			role.RoleSlug = string(builtIn)
+		} else {
+			projectRole, err := d.GetProjectRoleByID(role.ProjectID, *role.RoleID)
+			if errors.Is(err, db.ErrNotFound) {
+				projectRole, err = d.GetGlobalRoleByID(*role.RoleID)
+			}
+			if errors.Is(err, db.ErrNotFound) {
+				return db.TemplateRolePerm{}, &common_errors.ValidationError{Message: "Role is not available in this project"}
+			}
+			if err != nil {
+				return db.TemplateRolePerm{}, err
+			}
+			role.RoleSlug = projectRole.Slug
 		}
-		role.RoleSlug = projectRole.Slug
 	} else {
 		roleRef := db.ProjectUserRole(role.RoleSlug)
 		if !roleRef.IsValid() {

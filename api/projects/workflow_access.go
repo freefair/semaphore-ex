@@ -57,8 +57,8 @@ func WorkflowProjectPermissionMiddleware(permission pro_interfaces.PermissionID)
 			}
 			state, err := pro_interfaces.ResolveWorkflowAuthorizationState(store, project.ID, user.ID)
 			if err != nil || !pro_interfaces.EvaluateWorkflowAccess(pro_interfaces.WorkflowAccessRequest{
-				Permission: permission, ProjectPermissions: state.Identity.Permissions,
-				EffectiveRoleReferences: []db.ProjectRoleReference{state.Identity.Reference},
+				Permission: permission, ProjectPermissions: state.ProjectPermissions,
+				EffectiveRoleReferences: state.RoleReferences(),
 				KnownRoleReferences:     state.KnownRoles,
 			}).Allowed {
 				w.WriteHeader(http.StatusForbidden)
@@ -96,13 +96,13 @@ func AuthorizeWorkflowRequest(
 	if err != nil {
 		return false, false, err
 	}
-	view := pro_interfaces.AuthorizeWorkflowRead(workflow, state.Identity, state.KnownRoles)
+	view := pro_interfaces.AuthorizeWorkflowReadForState(workflow, state)
 	if !view.Allowed {
 		return false, false, nil
 	}
 	decision := pro_interfaces.EvaluateWorkflowAccess(pro_interfaces.WorkflowAccessRequest{
-		Permission: permission, ProjectPermissions: state.Identity.Permissions,
-		EffectiveRoleReferences: []db.ProjectRoleReference{state.Identity.Reference},
+		Permission: permission, ProjectPermissions: state.ProjectPermissions,
+		EffectiveRoleReferences: state.RoleReferences(),
 		KnownRoleReferences:     state.KnownRoles, Policy: workflow.AccessPolicy,
 	})
 	return true, decision.Allowed, nil

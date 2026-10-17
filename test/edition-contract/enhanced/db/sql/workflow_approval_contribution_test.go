@@ -74,6 +74,56 @@ func TestWorkflowApprovalContributionRejectsDeletedCustomRoleWithoutMutatingSnap
 	assert.Equal(t, db.ProjectRoleReferenceForCustomRole(role.ID), reloaded.RolePolicySnapshot.Policy.RoleIDs[0])
 }
 
+func TestWorkflowApprovalContributionUsesCustomRoleFromMultiRoleMembershipAndRejectsRevocation(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	actor, first, second := workflowRunResources(t, store, projectID)
+	owner, err := store.CreateUserWithoutPassword(db.User{Username: "workflow-multi-role-owner", Name: "Workflow Multi Role Owner", Email: "workflow-multi-role-owner@example.invalid"})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUser(db.ProjectUser{ProjectID: projectID, UserID: owner.ID, Role: db.ProjectOwner})
+	require.NoError(t, err)
+	customRole, err := store.CreateProjectRole(db.Role{
+		ID: "workflow-custom-approver", Slug: "workflow-custom-approver", Name: "Workflow Custom Approver",
+		ProjectID: &projectID, Permissions: db.CanRunProjectTasks, Revision: 4,
+	})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUserWithRoleRefs(
+		db.ProjectUser{ProjectID: projectID, UserID: actor.ID, Role: db.ProjectGuest},
+		[]db.ProjectRoleID{"builtin:guest", customRole.ID},
+	)
+	require.NoError(t, err)
+
+	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	workflow, err := repository.CreateWorkflowTemplate(linearRepositoryWorkflow(projectID, first.ID, second.ID))
+	require.NoError(t, err)
+	policy := db.WorkflowApprovalRolePolicy{
+		Revision: 1, Mode: db.WorkflowApprovalRoleModeAnyOf, MinimumDistinctApprovers: 1,
+		RoleIDs: []db.ProjectRoleReference{db.ProjectRoleReferenceForCustomRole(customRole.ID)},
+	}
+	approval := workflowApprovalWithPolicy(t, repository, workflow, projectID, actor.ID, first, second, policy, "multi-role-approval", now)
+
+	result, err := repository.SubmitWorkflowApprovalContribution(workflowApprovalSubmission(projectID, approval, actor.ID, now))
+	require.NoError(t, err)
+	require.True(t, result.Committed)
+	require.NotNil(t, result.Contribution)
+	assert.Equal(t, db.ProjectRoleReferenceForCustomRole(customRole.ID), result.Contribution.RoleID)
+	assert.Equal(t, customRole.Revision, result.Contribution.RoleRevision)
+	assert.Equal(t, db.WorkflowApprovalRoleOriginManual, result.Contribution.RoleOrigin)
+	assert.Empty(t, result.Contribution.DirectoryProviderID)
+	assert.Empty(t, result.Contribution.DirectoryMappingID)
+
+	membership, err := store.GetProjectUser(projectID, actor.ID)
+	require.NoError(t, err)
+	require.NoError(t, store.SetProjectUserRoleRefs(projectID, actor.ID, []db.ProjectRoleID{"builtin:guest"}, membership.Revision))
+	revokedApproval := workflowApprovalWithPolicy(t, repository, workflow, projectID, actor.ID, first, second, policy, "multi-role-revoked", now.Add(time.Minute))
+	revoked, err := repository.SubmitWorkflowApprovalContribution(workflowApprovalSubmission(projectID, revokedApproval, actor.ID, now.Add(time.Minute)))
+	require.NoError(t, err)
+	assert.True(t, revoked.Denied)
+	contributions, err := repository.GetWorkflowApprovalContributions(revokedApproval.ID)
+	require.NoError(t, err)
+	assert.Empty(t, contributions)
+}
+
 func TestWorkflowApprovalContributionTimeoutWinsAndFinalizesOnce(t *testing.T) {
 	store, repository, projectID, user, approval, now := workflowApprovalContributionFixture(t)
 	defer store.Close()
@@ -188,6 +238,36 @@ func TestWorkflowApprovalContributionAllowsOneActorRowUnderConcurrency(t *testin
 	require.Len(t, contributions, 1)
 }
 
+func TestWorkflowApprovalContributionWaitsForMultiRoleMutationBoundary(t *testing.T) {
+	store, repository, projectID, user, approval, now := workflowApprovalContributionFixture(t)
+	defer store.Close()
+
+	mutation, err := store.Sql().Begin()
+	require.NoError(t, err)
+	defer func() { _ = mutation.Rollback() }()
+	_, err = mutation.Exec("update global_role_state set revision=revision+1 where id=1")
+	require.NoError(t, err)
+	_, err = mutation.Exec("update project set id=id where id=?", projectID)
+	require.NoError(t, err)
+
+	completed := make(chan error, 1)
+	waitCount := store.Sql().Db.Stats().WaitCount
+	go func() {
+		_, submissionErr := repository.SubmitWorkflowApprovalContribution(workflowApprovalSubmission(projectID, approval, user.ID, now))
+		completed <- submissionErr
+	}()
+	require.Eventually(t, func() bool {
+		return store.Sql().Db.Stats().WaitCount > waitCount
+	}, time.Second, 5*time.Millisecond, "approval contribution must wait for the shared role-mutation boundary")
+	select {
+	case err = <-completed:
+		t.Fatalf("approval contribution completed before the role-mutation boundary released: %v", err)
+	default:
+	}
+	require.NoError(t, mutation.Commit())
+	require.NoError(t, <-completed)
+}
+
 func workflowApprovalContributionFixture(t *testing.T) (*coresql.SqlDb, *WorkflowStoreImpl, int, db.User, db.WorkflowApproval, time.Time) {
 	t.Helper()
 	store, repository, projectID := workflowRepositoryFixture(t)
@@ -215,6 +295,38 @@ func workflowApprovalContributionFixture(t *testing.T) (*coresql.SqlDb, *Workflo
 	require.NoError(t, err)
 	require.True(t, opened)
 	return store, repository, projectID, user, approval, now
+}
+
+func workflowApprovalWithPolicy(
+	t *testing.T,
+	repository *WorkflowStoreImpl,
+	workflow db.WorkflowTemplate,
+	projectID int,
+	actorID int,
+	first db.Template,
+	second db.Template,
+	policy db.WorkflowApprovalRolePolicy,
+	correlationID string,
+	now time.Time,
+) db.WorkflowApproval {
+	t.Helper()
+	run, err := workflowDB.BuildWorkflowRunSnapshot(workflow, map[int]db.Template{first.ID: first, second.ID: second}, actorID, correlationID, now)
+	require.NoError(t, err)
+	run, err = repository.CreateWorkflowRun(run)
+	require.NoError(t, err)
+	payload, err := json.Marshal(db.WorkflowApprovalRolePolicySnapshot{PolicyRevision: policy.Revision, Policy: policy})
+	require.NoError(t, err)
+	deadline := now.Add(time.Minute)
+	approval, opened, err := repository.OpenWorkflowApproval(db.WorkflowApproval{
+		ProjectID: projectID, WorkflowRunID: run.ID, WorkflowNodeID: workflow.Nodes[0].ID,
+		Status: db.WorkflowApprovalPending, Created: now, Deadline: &deadline, Prompt: "approve",
+		EligiblePermission: db.CanRunProjectTasks, RolePolicySnapshotJSON: string(payload), RolePolicySnapshotRevision: policy.Revision,
+		RolePolicySnapshot: db.WorkflowApprovalRolePolicySnapshot{PolicyRevision: policy.Revision, Policy: policy},
+		RequestActorUserID: actorID + 1, TimeoutOutcome: db.WorkflowApprovalTimeoutReject, CorrelationID: correlationID,
+	})
+	require.NoError(t, err)
+	require.True(t, opened)
+	return approval
 }
 
 func workflowApprovalSubmission(projectID int, approval db.WorkflowApproval, actorID int, at time.Time) db.WorkflowApprovalContributionSubmission {

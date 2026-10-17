@@ -2,18 +2,24 @@ package db
 
 import (
 	"errors"
+	"regexp"
+	"strings"
+
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
 )
 
 var (
 	ErrProjectRoleRevisionConflict       = errors.New("project role revision conflict")
 	ErrProjectMembershipRevisionConflict = errors.New("project membership revision conflict")
+	ErrProjectMembershipConflict         = errors.New("project membership already exists")
 	ErrLastProjectAdministrator          = errors.New("project must retain an administrator")
 	ErrProjectRoleAssigned               = errors.New("project role is assigned")
+	ErrProjectRoleForceProtected         = errors.New("project role has protected directory references")
 	ErrGlobalRoleRevisionConflict        = errors.New("global role revision conflict")
 	ErrGlobalRoleAssignmentConflict      = errors.New("global role assignment revision conflict")
 	ErrLastGlobalAdministrator           = errors.New("system must retain a global administrator")
 	ErrGlobalRoleAssigned                = errors.New("global role is assigned")
+	ErrGlobalRoleForceProtected          = errors.New("global role has protected project or directory references")
 	ErrTemplateRoleRevisionConflict      = errors.New("template role revision conflict")
 	ErrLDAPGroupMappingRevisionConflict  = errors.New("LDAP group mapping revision conflict")
 	ErrLDAPGroupPreviewStale             = errors.New("LDAP group preview is stale")
@@ -23,6 +29,8 @@ var (
 	ErrOIDCGroupMappingCollision         = errors.New("OIDC group mapping assignment collision")
 )
 
+// Role keeps its external immutable identity separate from its mutable slug.
+// All EX API and policy references use ID.
 type Role struct {
 	ID                ProjectRoleID         `db:"role_id" json:"id" backup:"-"`
 	Slug              string                `db:"slug" json:"slug" backup:"-"`
@@ -31,24 +39,35 @@ type Role struct {
 	GlobalPermissions GlobalPermission      `db:"global_permissions" json:"global_permissions" backup:"-"`
 	ProjectID         *int                  `db:"project_id" json:"project_id"`
 	Revision          int                   `db:"revision" json:"revision"`
+	Builtin           bool                  `db:"builtin" json:"builtin" backup:"-"`
 }
 
 const KnownRolePermissions = CanRunProjectTasks | CanUpdateProject | CanManageProjectResources | CanManageProjectUsers
 
-func ValidateRole(role Role) error {
-	if role.Name == "" {
+func ValidateRole(role Role, isNew bool) error {
+	if strings.TrimSpace(role.Name) == "" {
 		return &common_errors.ValidationError{Message: "Role name cannot be empty"}
 	}
-	if role.Slug == "" {
-		return &common_errors.ValidationError{Message: "Role slug cannot be empty"}
+	// Built-in roles define the complete current project-permission catalog.
+	// Keeping this derived from Owner avoids rejecting newer EX bits in role
+	// imports while still rejecting values outside the typed permission space.
+	if role.Permissions&^ProjectOwner.GetPermissions() != 0 {
+		return &common_errors.ValidationError{Message: "Role permissions contain unknown bits"}
 	}
-	// Built-in role slugs are reserved. Allowing a custom role to reuse one lets
-	// it shadow the built-in role and escalate the permissions of its members.
-	if ProjectUserRole(role.Slug).IsValid() {
+	if !isNew {
+		return nil
+	}
+	validSlug, _ := regexp.MatchString(`^[A-Za-z0-9_-]{1,100}$`, role.Slug)
+	if !validSlug {
+		return &common_errors.ValidationError{Message: "Role slug must be 1 to 100 characters: letters A-Z, digits, '_' and '-'"}
+	}
+	// Built-ins are virtual immutable references. A custom row with the same
+	// slug would shadow that identity and could change effective permissions.
+	if ProjectUserRole(strings.ToLower(role.Slug)).IsValid() {
 		return &common_errors.ValidationError{Message: "Role slug is reserved and cannot be used: " + role.Slug}
 	}
-	if role.Permissions&^KnownRolePermissions != 0 {
-		return &common_errors.ValidationError{Message: "Role permissions contain unknown bits"}
+	if strings.EqualFold(role.Slug, "all") {
+		return &common_errors.ValidationError{Message: "Role slug is reserved: " + role.Slug}
 	}
 	return nil
 }
@@ -63,4 +82,34 @@ type TemplateRolePerm struct {
 	AllowedPermissions TemplatePermission    `db:"allowed_permissions" json:"allowed_permissions"`
 	DeniedPermissions  TemplatePermission    `db:"denied_permissions" json:"denied_permissions"`
 	Revision           int                   `db:"revision" json:"revision"`
+}
+
+type RoleImpact struct {
+	Members        int `json:"members"`
+	Projects       int `json:"projects"`
+	TemplateGrants int `json:"template_grants"`
+}
+
+type RoleMember struct {
+	ProjectID int
+	UserID    int
+	Username  string
+	Roles     []Role
+}
+
+type RoleAssignments struct {
+	Members       []RoleMember
+	Grants        []TemplateRolePerm
+	GlobalMembers int
+}
+
+func (a RoleAssignments) Impact() RoleImpact {
+	projects := map[int]bool{}
+	for _, m := range a.Members {
+		projects[m.ProjectID] = true
+	}
+	for _, g := range a.Grants {
+		projects[g.ProjectID] = true
+	}
+	return RoleImpact{Members: len(a.Members) + a.GlobalMembers, Projects: len(projects), TemplateGrants: len(a.Grants)}
 }

@@ -14,7 +14,7 @@
 
     <v-select
       v-model="item.role_slug"
-      :items="availableRoles"
+      :items="groupedRoles"
       item-value="slug"
       item-text="name"
       :label="$t('role')"
@@ -56,7 +56,8 @@ import enhancedMethods from '@/lib/enhanced/edit-template-permission-form';
 import ItemFormBase from '@/components/ItemFormBase';
 import axios from 'axios';
 import { getErrorMessage } from '@/lib/error';
-import { ROLE_PERMISSIONS, USER_ROLES } from '@/lib/constants';
+import { ROLE_PERMISSIONS } from '@/lib/constants';
+import groupRolesForSelect from '@/lib/roles';
 
 export default {
   mixins: [ItemFormBase],
@@ -81,13 +82,19 @@ export default {
     };
   },
 
+  computed: {
+    groupedRoles() {
+      return groupRolesForSelect(this.availableRoles, (key) => this.$i18n.t(key));
+    },
+  },
+
   methods: {
     ...enhancedMethods,
 
     async loadRoles() {
       try {
         const response = await axios.get(`/api/project/${this.projectId}/roles/all`);
-        this.availableRoles = [...USER_ROLES, ...(response.data || [])];
+        this.availableRoles = response.data || [];
       } catch (error) {
         this.formError = getErrorMessage(error);
       }
@@ -104,8 +111,6 @@ export default {
     getNewItem() {
       return {
         role_slug: null,
-        template_id: parseInt(this.templateId, 10),
-        project_id: this.projectId,
         permissions: 0,
         allowed_permissions: 0,
         denied_permissions: 0,

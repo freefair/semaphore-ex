@@ -1,6 +1,7 @@
 package project
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -82,6 +83,11 @@ func (e BackupRole) Verify(backup *BackupFormat) error {
 
 func (e BackupRole) Restore(b *BackupDB) error {
 	role := e.Role
+	oldID := e.ID
+	role.ID = db.ProjectRoleID(random.String(32))
+	if strings.HasPrefix(string(oldID), "builtin:") {
+		return fmt.Errorf("backup custom role uses reserved ID: %s", oldID)
+	}
 	role.ProjectID = &b.meta.ID
 	role.Slug = random.String(16)
 	// Unknown bits are never checked today but would turn on with a future permission.
@@ -91,6 +97,10 @@ func (e BackupRole) Restore(b *BackupDB) error {
 		return err
 	}
 	b.roles = append(b.roles, newRole)
+	if b.roleIDMap == nil {
+		b.roleIDMap = make(map[db.ProjectRoleID]db.ProjectRoleID)
+	}
+	b.roleIDMap[oldID] = newRole.ID
 	return nil
 }
 
@@ -478,14 +488,31 @@ func (e BackupTemplate) Restore(b *BackupDB) error {
 	if e.Roles != nil {
 		for _, role := range e.Roles {
 			if role.IsGlobal {
-				r, err := b.store.GetGlobalRoleBySlug(role.Role)
+				var r db.Role
+				var err error
+				if strings.HasPrefix(string(role.RoleID), "builtin:") {
+					r, err = b.store.GetGlobalRoleBySlug(strings.TrimPrefix(string(role.RoleID), "builtin:"))
+				} else if role.RoleID != "" {
+					r, err = b.store.GetGlobalRoleByID(role.RoleID)
+					if errors.Is(err, db.ErrNotFound) {
+						// Global role IDs are instance-local. A backup records the
+						// stable slug as well, so use it only after the exact ID is
+						// absent and retain the global-scope lookup.
+						r, err = b.store.GetGlobalRoleBySlug(role.Role)
+					}
+				} else {
+					r, err = b.store.GetGlobalRoleBySlug(role.Role)
+				}
+				if errors.Is(err, db.ErrNotFound) {
+					return fmt.Errorf("global role does not exist: %s", role.RoleID)
+				}
 				if err != nil {
-					return fmt.Errorf("global role does not exist: %s", role.Role)
+					return err
 				}
 
 				_, err = b.store.CreateTemplateRole(db.TemplateRolePerm{
 					TemplateID:  newTemplate.ID,
-					RoleSlug:    r.Slug,
+					RoleID:      &r.ID,
 					ProjectID:   b.meta.ID,
 					Permissions: role.Permissions & db.KnownProjectRolePermissions,
 				})
@@ -496,12 +523,24 @@ func (e BackupTemplate) Restore(b *BackupDB) error {
 
 				continue
 			}
-			if k := findEntityByName[db.Role](&role.Role, b.roles); k == nil {
+			var k *db.Role
+			if role.RoleID != "" {
+				role.RoleID = b.roleIDMap[role.RoleID]
+				for i := range b.roles {
+					if b.roles[i].ID == role.RoleID {
+						k = &b.roles[i]
+						break
+					}
+				}
+			} else {
+				k = findEntityByName[db.Role](&role.Role, b.roles)
+			}
+			if k == nil {
 				return fmt.Errorf("roles[].role does not exist in roles[].name")
 			} else {
 				_, err = b.store.CreateTemplateRole(db.TemplateRolePerm{
 					TemplateID:  newTemplate.ID,
-					RoleSlug:    k.Slug,
+					RoleID:      &k.ID,
 					ProjectID:   b.meta.ID,
 					Permissions: role.Permissions & db.KnownProjectRolePermissions,
 				})
@@ -741,17 +780,22 @@ func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore 
 	if err != nil {
 		return nil, err
 	}
+	ownerRole, err := b.store.GetGlobalRoleBySlug(string(db.ProjectOwner))
+	if err != nil {
+		return nil, err
+	}
 
-	if _, err = b.store.CreateProjectUser(db.ProjectUser{
+	_, err = b.store.CreateProjectUserWithRoleRefs(db.ProjectUser{
 		ProjectID: newProject.ID,
 		UserID:    user.ID,
 		Role:      db.ProjectOwner,
-	}); err != nil {
+		Revision:  1,
+	}, []db.ProjectRoleID{ownerRole.ID})
+	if err != nil {
 		return &newProject, err
 	}
 
 	b.meta = newProject
-
 	for i, o := range backup.SecretStorages {
 		if err := o.Restore(&b); err != nil {
 			return &newProject, fmt.Errorf("error at secret storage[%d]: %s", i, err.Error())

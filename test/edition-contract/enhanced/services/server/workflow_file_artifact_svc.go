@@ -48,7 +48,7 @@ func (service *workflowFileArtifactService) BeginWorkflowFileArtifact(ctx contex
 	if err != nil {
 		return db.WorkflowFileArtifactMetadata{}, err
 	}
-	if !user.Admin && !state.Identity.Permissions.Can(db.CanRunProjectTasks) {
+	if !user.Admin && !state.ProjectPermissions.Can(db.CanRunProjectTasks) {
 		return db.WorkflowFileArtifactMetadata{}, pro_interfaces.ErrWorkflowPermissionDenied
 	}
 	task, err := service.identityStore.GetTask(projectID, upload.TaskID)
@@ -129,7 +129,7 @@ func (service *workflowFileArtifactService) GetWorkflowFileArtifact(ctx context.
 	if artifact.State != db.WorkflowFileArtifactAvailable {
 		return db.WorkflowFileArtifactMetadata{}, pro_interfaces.ErrWorkflowFileArtifactNotAvailable
 	}
-	if user == nil || !user.Admin && !pro_interfaces.AuthorizeWorkflowFileArtifactAccess(artifact.AccessPolicy, state.Identity, state.KnownRoles) {
+	if user == nil || !user.Admin && !pro_interfaces.AuthorizeWorkflowFileArtifactAccessForState(artifact.AccessPolicy, state) {
 		return db.WorkflowFileArtifactMetadata{}, pro_interfaces.ErrWorkflowPermissionDenied
 	}
 	return artifact, nil
@@ -152,7 +152,7 @@ func (service *workflowFileArtifactService) GetWorkflowFileArtifacts(ctx context
 	}
 	visible := make([]db.WorkflowFileArtifactMetadata, 0, len(artifacts))
 	for _, artifact := range artifacts {
-		if pro_interfaces.AuthorizeWorkflowFileArtifactAccess(artifact.AccessPolicy, state.Identity, state.KnownRoles) {
+		if pro_interfaces.AuthorizeWorkflowFileArtifactAccessForState(artifact.AccessPolicy, state) {
 			visible = append(visible, artifact)
 		}
 	}
@@ -236,7 +236,7 @@ func (service *workflowFileArtifactService) authorizeArtifactMutation(projectID 
 	if err != nil {
 		return db.WorkflowFileArtifactMetadata{}, err
 	}
-	if !user.Admin && !state.Identity.Permissions.Can(db.CanRunProjectTasks) {
+	if !user.Admin && !state.ProjectPermissions.Can(db.CanRunProjectTasks) {
 		return db.WorkflowFileArtifactMetadata{}, pro_interfaces.ErrWorkflowPermissionDenied
 	}
 	artifact, err := service.repository.GetWorkflowFileArtifact(projectID, workflowRunID, artifactID)
@@ -270,7 +270,7 @@ func (service *workflowFileArtifactService) authorizeWorkflowRun(projectID int, 
 		return run, pro_interfaces.WorkflowAuthorizationState{}, nil
 	}
 	state, err := pro_interfaces.ResolveWorkflowAuthorizationState(service.identityStore, projectID, user.ID)
-	if err != nil || !pro_interfaces.AuthorizeWorkflowRead(run.DefinitionSnapshot, state.Identity, state.KnownRoles).Allowed {
+	if err != nil || !pro_interfaces.AuthorizeWorkflowReadForState(run.DefinitionSnapshot, state).Allowed {
 		return db.WorkflowRun{}, pro_interfaces.WorkflowAuthorizationState{}, pro_interfaces.ErrWorkflowPermissionDenied
 	}
 	return run, state, nil

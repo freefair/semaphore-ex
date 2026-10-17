@@ -249,7 +249,7 @@ func (c *workflowController) GetWorkflows(w http.ResponseWriter, r *http.Request
 					w.WriteHeader(http.StatusNotFound)
 					return
 				}
-				workflows = pro_interfaces.FilterWorkflowTemplatesByAccess(workflows, state.Identity, state.KnownRoles)
+				workflows = pro_interfaces.FilterWorkflowTemplatesByAuthorizationState(workflows, state)
 			}
 		}
 	}

@@ -46,7 +46,7 @@ func (s *workflowDefinitionService) List(projectID int, params db.RetrieveQueryP
 	if err != nil {
 		return nil, db.ErrNotFound
 	}
-	return pro_interfaces.FilterWorkflowTemplatesByAccess(workflows, state.Identity, state.KnownRoles), nil
+	return pro_interfaces.FilterWorkflowTemplatesByAuthorizationState(workflows, state), nil
 }
 
 func (s *workflowDefinitionService) Get(projectID int, workflowID int, actors ...*db.User) (db.WorkflowTemplate, error) {
@@ -389,10 +389,10 @@ func (s *workflowDefinitionService) require(workflow db.WorkflowTemplate, actor 
 		return nil
 	}
 	state, err := pro_interfaces.ResolveWorkflowAuthorizationState(s.authorizationStore, workflow.ProjectID, actor.ID)
-	if err != nil || !pro_interfaces.AuthorizeWorkflowRead(workflow, state.Identity, state.KnownRoles).Allowed {
+	if err != nil || !pro_interfaces.AuthorizeWorkflowReadForState(workflow, state).Allowed {
 		return errors.New("workflow hidden")
 	}
-	if !pro_interfaces.EvaluateWorkflowAccess(pro_interfaces.WorkflowAccessRequest{Permission: permission, ProjectPermissions: state.Identity.Permissions, EffectiveRoleReferences: []db.ProjectRoleReference{state.Identity.Reference}, KnownRoleReferences: state.KnownRoles, Policy: workflow.AccessPolicy}).Allowed {
+	if !pro_interfaces.EvaluateWorkflowAccess(pro_interfaces.WorkflowAccessRequest{Permission: permission, ProjectPermissions: state.ProjectPermissions, EffectiveRoleReferences: state.RoleReferences(), KnownRoleReferences: state.KnownRoles, Policy: workflow.AccessPolicy}).Allowed {
 		return errors.New("workflow denied")
 	}
 	return nil
