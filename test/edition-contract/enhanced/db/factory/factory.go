@@ -31,6 +31,8 @@ func NewWorkflowStore(store db.Store) db.WorkflowManager {
 	return sql.NewWorkflowStore(connectionStore.GetConnection(), taskStore)
 }
 
+func NewRoleMappingStore(store db.Store) db.RoleMappingStore { return sql.NewRoleMappingStore(store) }
+
 func NewDeploymentWindowStore(store db.Store) pro_interfaces.DeploymentWindowGovernanceRepository {
 	connectionStore, ok := store.(interface {
 		GetConnection() *coresql.SqlDbConnection

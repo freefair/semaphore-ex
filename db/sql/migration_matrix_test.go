@@ -111,13 +111,16 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	require.NoError(t, db.Migrate(store, nil))
 	assertClusterNodeSchemaIdentity(t, store, true)
 	assertMonorepoSchema(t, store, true)
+	assertWorkflowSurveySchema(t, store, true)
 	partialRollbackTarget := "2.20.11-ex1.1"
 	require.NoError(t, db.Rollback(store, partialRollbackTarget))
 	assertMonorepoSchema(t, store, false)
+	assertWorkflowSurveySchema(t, store, false)
 	assertClusterNodeSchemaIdentity(t, store, false)
 	require.NoError(t, db.Migrate(store, nil))
 	assertClusterNodeSchemaIdentity(t, store, false)
 	assertMonorepoSchema(t, store, true)
+	assertWorkflowSurveySchema(t, store, true)
 	freshSchema := captureCapabilitySchema(t, store)
 	assertCapabilitySchema(t, freshSchema)
 	assertWorkflowParameterColumns(t, store, true)
@@ -146,6 +149,7 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	require.NoError(t, db.Migrate(store, nil))
 	assertClusterNodeSchemaIdentity(t, store, true)
 	assertMonorepoSchema(t, store, true)
+	assertWorkflowSurveySchema(t, store, true)
 	upgradedSchema := captureCapabilitySchema(t, store)
 	assertCapabilitySchema(t, upgradedSchema)
 	assertWorkflowParameterColumns(t, store, true)
@@ -878,4 +882,17 @@ func assertMonorepoSchema(t testing.TB, store *SqlDb, expected bool) {
 	}
 	require.NoError(t, err)
 	require.NoError(t, rows.Close())
+}
+
+// The later upstream survey fields follow the immutable 2.20.13 identity as an
+// EX delta; partial rollback must remove them before an earlier schema runs.
+func assertWorkflowSurveySchema(t testing.TB, store *SqlDb, expected bool) {
+	t.Helper()
+	for _, column := range []struct{ table, name string }{
+		{"project__workflow_revision", "survey_vars"},
+		{"project__workflow_node", "survey_inputs"},
+		{"project__workflow_run", "environment"},
+	} {
+		assert.Equal(t, expected, matrixColumnExists(t, store, column.table, column.name), "%s.%s", column.table, column.name)
+	}
 }

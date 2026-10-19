@@ -11,6 +11,18 @@ import (
 	"strings"
 )
 
+const projectMemberMappedRolesQuery = `
+	select pur.project_id, pur.user_id, u.username, assignment.id as mapping_id,
+	       assignment.provider_id as provider, mapping.claim_value as group_name,
+	       pur.role_id, coalesce(role.slug, '') as role_slug, coalesce(role.name, '') as role_name,
+	       coalesce(role.permissions, 0) as role_permissions
+	from project__user_role pur
+	join oidc_group_managed_assignment assignment on assignment.id=pur.oidc_group_managed_assignment_id
+	join oidc_group_mapping mapping on mapping.provider_id=assignment.provider_id and mapping.id=assignment.mapping_id
+	join ` + "`user`" + ` u on u.id=pur.user_id
+	left join role on role.role_id=pur.role_id
+	where pur.project_id=? and pur.user_id=? order by pur.role_id`
+
 func (d *SqlDb) CreateUserWithoutPassword(user db.User) (newUser db.User, err error) {
 
 	err = db.ValidateUser(user)
@@ -498,6 +510,48 @@ func (d *SqlDb) GetProjectUserRoles(projectID, userID int) (roles []db.Role, err
 		roles = append(roles, role)
 	}
 	return
+}
+
+// GetProjectMember separates manual roles from directory-managed roles. Both
+// live in project__user_role for authorization, while MappedRoles carries the
+// immutable provider and group provenance required by the membership UI.
+func (d *SqlDb) GetProjectMember(projectID, userID int) (db.ProjectMember, error) {
+	roles, err := d.GetProjectUserRoles(projectID, userID)
+	if err != nil {
+		return db.ProjectMember{}, err
+	}
+	if len(roles) == 0 {
+		return db.ProjectMember{}, db.ErrNotFound
+	}
+	member := db.ProjectMember{Roles: roles}
+	_, err = d.selectAll(&member.MappedRoles, d.PrepareQuery(projectMemberMappedRolesQuery), projectID, userID)
+	if err != nil {
+		return db.ProjectMember{}, err
+	}
+	for index := range member.MappedRoles {
+		mapped := &member.MappedRoles[index]
+		if mapped.RoleSlug == "" && strings.HasPrefix(string(mapped.RoleID), "builtin:") {
+			role := db.ProjectUserRole(strings.TrimPrefix(string(mapped.RoleID), "builtin:"))
+			mapped.RoleSlug = string(role)
+			mapped.RoleName = builtinProjectRoleName(role)
+			mapped.RolePermissions = role.GetPermissions()
+		}
+	}
+	// A managed relation is never a manual grant. Keep it out of Roles so
+	// callers cannot mistake the effective authorization projection for a role
+	// that may be changed through the team API.
+	managed := make(map[db.ProjectRoleID]struct{}, len(member.MappedRoles))
+	for _, mapped := range member.MappedRoles {
+		managed[mapped.RoleID] = struct{}{}
+	}
+	manualRoles := member.Roles[:0]
+	for _, role := range member.Roles {
+		if _, isManaged := managed[role.ID]; !isManaged {
+			manualRoles = append(manualRoles, role)
+		}
+	}
+	member.Roles = manualRoles
+	return member, nil
 }
 
 func (d *SqlDb) CountProjectOwners(projectID int) (int, error) {

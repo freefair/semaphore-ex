@@ -57,6 +57,9 @@ func (m *mockProjectStore) UpdateProjectUser(projectUser db.ProjectUser) error {
 func (m *mockProjectStore) SetProjectUserRoleRefs(projectID int, userID int, roleIDs []db.ProjectRoleID, expectedRevision int) error {
 	return nil
 }
+func (m *mockProjectStore) GetProjectMember(projectID int, userID int) (db.ProjectMember, error) {
+	return db.ProjectMember{}, nil
+}
 func (m *mockProjectStore) GetProjectUserRoles(projectID int, userID int) ([]db.Role, error) {
 	return nil, nil
 }

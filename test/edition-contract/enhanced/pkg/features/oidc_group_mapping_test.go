@@ -17,6 +17,15 @@ type staleOnceOIDCRepository struct {
 	stale bool
 }
 
+type deleteOIDCGroupMappingRepositoryStub struct {
+	db.OIDCGroupMappingRepository
+	err error
+}
+
+func (r *deleteOIDCGroupMappingRepositoryStub) DeleteOIDCGroupMapping(string, string, int) error {
+	return r.err
+}
+
 func (r *staleOnceOIDCRepository) ApplyOIDCGroupReconciliation(
 	reconciliation db.OIDCGroupReconciliation,
 	additions []db.OIDCGroupAssignmentChange,
@@ -195,6 +204,29 @@ func TestOIDCGroupMappingReconciliationRetriesOneStaleRevision(t *testing.T) {
 	assignments, err := store.GetGlobalRoleAssignments(user.ID)
 	require.NoError(t, err)
 	require.Len(t, assignments, 1)
+}
+
+func TestOIDCGroupMappingDeleteTranslatesStoreConflicts(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		storeErr error
+		expected error
+	}{
+		{name: "project administrator", storeErr: db.ErrLastProjectAdministrator, expected: pro_interfaces.ErrOIDCGroupProtectedAdministrator},
+		{name: "global administrator", storeErr: db.ErrLastGlobalAdministrator, expected: pro_interfaces.ErrOIDCGroupProtectedAdministrator},
+		{name: "assignment ownership", storeErr: db.ErrOIDCGroupMappingCollision, expected: pro_interfaces.ErrOIDCGroupMappingCollision},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := NewOIDCGroupMappingService(&deleteOIDCGroupMappingRepositoryStub{err: test.storeErr})
+
+			err := service.DeleteGroupMapping(context.Background(), pro_interfaces.OIDCGroupMappingDeleteRequest{
+				ActorID: 1, ActorIsAdmin: true, ProviderID: "corp", MappingID: "engineering", ExpectedRevision: 1,
+				Now: time.Unix(1_800_100_300, 0).UTC(),
+			})
+
+			assert.ErrorIs(t, err, test.expected)
+		})
+	}
 }
 
 func TestOIDCGroupMappingRejectsUnauthorizedAndUnknownRoleTargets(t *testing.T) {

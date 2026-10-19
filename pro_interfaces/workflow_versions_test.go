@@ -8,6 +8,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestWorkflowDefinitionFingerprintIncludesSurveyDeclarationsAndBindings(t *testing.T) {
+	base := db.WorkflowTemplate{Nodes: []db.WorkflowNode{{ID: 1, TemplateID: 2}}}
+	baseline, err := WorkflowDefinitionFingerprint(base)
+	require.NoError(t, err)
+	// Measured with the published pre-survey canonicalizer.
+	assert.Equal(t, "sha256:7483a2e33096c050183e7678fe3d0b7badf4eb040a5625b4e58d08fd45436ed3", baseline)
+	empty := base
+	empty.SurveyVars = []db.SurveyVar{}
+	empty.Nodes[0].SurveyInputs = []db.WorkflowNodeSurveyInput{}
+	emptyFingerprint, err := WorkflowDefinitionFingerprint(empty)
+	require.NoError(t, err)
+	assert.Equal(t, baseline, emptyFingerprint)
+
+	declaration := base
+	declaration.SurveyVars = []db.SurveyVar{{Name: "release"}}
+	declarationFingerprint, err := WorkflowDefinitionFingerprint(declaration)
+	require.NoError(t, err)
+	assert.NotEqual(t, baseline, declarationFingerprint)
+	diff, err := DiffWorkflowDefinitions(base, declaration)
+	require.NoError(t, err)
+	assert.Contains(t, diff.ChangedSections(), "survey_vars")
+
+	binding := declaration
+	binding.Nodes = append([]db.WorkflowNode(nil), declaration.Nodes...)
+	binding.Nodes[0].SurveyInputs = []db.WorkflowNodeSurveyInput{{Var: "target", WorkflowVar: "release"}}
+	bindingFingerprint, err := WorkflowDefinitionFingerprint(binding)
+	require.NoError(t, err)
+	assert.NotEqual(t, declarationFingerprint, bindingFingerprint)
+	diff, err = DiffWorkflowDefinitions(declaration, binding)
+	require.NoError(t, err)
+	assert.Contains(t, diff.ChangedSections(), "nodes")
+}
+
 func TestWorkflowDefinitionFingerprintIgnoresPersistenceIdentity(t *testing.T) {
 	left := db.WorkflowTemplate{
 		ID: 11, ProjectID: 7, Revision: 4, Name: "Deploy", MaxParallelTasks: 2,

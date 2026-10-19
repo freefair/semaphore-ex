@@ -2,6 +2,7 @@ package projects
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
@@ -25,14 +26,13 @@ func ProjectMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// check if user in project's team
-		roles, err := helpers.Store(r).GetProjectUserRoles(projectID, user.ID)
+		// An admin enters a project without being a member.
+		member, err := helpers.Store(r).GetProjectMember(projectID, user.ID)
+		if errors.Is(err, db.ErrNotFound) && user.Admin {
+			err = nil
+		}
 		if err != nil {
 			helpers.WriteError(w, err)
-			return
-		}
-		if len(roles) == 0 && !user.Admin {
-			helpers.WriteError(w, db.ErrNotFound)
 			return
 		}
 
@@ -44,8 +44,11 @@ func ProjectMiddleware(next http.Handler) http.Handler {
 		}
 
 		var permissions db.ProjectUserPermission
-		for _, role := range roles {
+		for _, role := range member.Roles {
 			permissions |= role.Permissions
+		}
+		for _, role := range member.MappedRoles {
+			permissions |= role.RolePermissions
 		}
 
 		basePermissions := permissions
@@ -62,7 +65,15 @@ func ProjectMiddleware(next http.Handler) http.Handler {
 			permissions = applyEffectiveTemplatePermissions(permissions, grants)
 		}
 
-		r = helpers.SetContextValue(r, "projectRoles", roles)
+		effectiveRoles := append([]db.Role(nil), member.Roles...)
+		for _, role := range member.MappedRoles {
+			effectiveRoles = append(effectiveRoles, db.Role{
+				ID: role.RoleID, Slug: role.RoleSlug, Name: role.RoleName,
+				Permissions: role.RolePermissions,
+				Builtin:     strings.HasPrefix(string(role.RoleID), "builtin:"),
+			})
+		}
+		r = helpers.SetContextValue(r, "projectRoles", effectiveRoles)
 		r = helpers.SetContextValue(r, "basePermissions", basePermissions)
 		r = helpers.SetContextValue(r, "permissions", permissions)
 		r = helpers.SetContextValue(r, "project", project)

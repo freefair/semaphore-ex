@@ -16,6 +16,7 @@ import (
 	"github.com/semaphoreui/semaphore/pkg/tz"
 	proApi "github.com/semaphoreui/semaphore/pro/api"
 	proProjects "github.com/semaphoreui/semaphore/pro/api/projects"
+	proFactory "github.com/semaphoreui/semaphore/pro/db/factory"
 	proFeatures "github.com/semaphoreui/semaphore/pro/pkg/features"
 	proHA "github.com/semaphoreui/semaphore/pro/services/ha"
 	proServer "github.com/semaphoreui/semaphore/pro/services/server"
@@ -140,6 +141,7 @@ func Route(
 	}
 	taskController := projects.NewTaskController(store, ansibleTaskRepo, workflowStore)
 	rolesController := proApi.NewRolesController(store, capabilityProvider)
+	roleMappingsController := proApi.NewRoleMappingsController(proFactory.NewRoleMappingStore(store), store)
 	templateController := projects.NewTemplateController(store, store, executorImageResolver)
 	templateController.ConfigureCrossProjectDeletionGuard(workflowStore)
 	taskGroupManager, _ := any(store).(db.TaskGroupManager)
@@ -399,6 +401,9 @@ func Route(
 	adminAPI := authenticatedAPI.NewRoute().Subrouter()
 	adminAPI.Use(EnhancedAdminAuditMiddleware(auditFacade), adminMiddleware)
 	adminAPI.Path("/admin/info").HandlerFunc(getAdminInfo).Methods("GET", "HEAD")
+	adminAPI.Path("/role_mappings").HandlerFunc(roleMappingsController.GetMappings).Methods("GET", "HEAD")
+	adminAPI.Path("/role_mappings").HandlerFunc(roleMappingsController.AddMapping).Methods("POST")
+	adminAPI.Path("/role_mappings/{mapping_id}").HandlerFunc(roleMappingsController.DeleteMapping).Methods("DELETE")
 	adminAPI.Path("/capabilities/lifecycle-test").HandlerFunc(capabilityController.Configure).Methods("PUT")
 	adminAPI.Path("/capabilities/runtime-secrets").HandlerFunc(capabilityController.GetRuntimeSecretsConfiguration).Methods("GET", "HEAD")
 	adminAPI.Path("/capabilities/runtime-secrets").HandlerFunc(capabilityController.ConfigureRuntimeSecrets).Methods("PUT")

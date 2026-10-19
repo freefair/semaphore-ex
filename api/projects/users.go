@@ -53,6 +53,15 @@ type projUser struct {
 	RoleID               *db.ProjectRoleID        `json:"role_id,omitempty"`
 	Revision             int                      `json:"revision"`
 	EffectivePermissions db.ProjectUserPermission `json:"effective_permissions"`
+	MappedRoles          []mappedRole             `json:"mapped_roles,omitempty"`
+}
+
+// mappedRole exposes directory provenance for roles excluded from the mutable
+// plural roles list.
+type mappedRole struct {
+	Provider string `json:"provider"`
+	Group    string `json:"group"`
+	Role     string `json:"role"`
 }
 
 // takesLastOwner reports whether the change takes the owner role from the only owner of the project.
@@ -161,13 +170,23 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 			helpers.WriteError(w, membershipErr)
 			return
 		}
-		item := projUser{ID: user.ID, Name: user.Name, Username: user.Username, Roles: make([]string, 0, len(user.Roles)), Revision: membership.Revision}
-		for _, role := range user.Roles {
+		member, memberErr := helpers.Store(r).GetProjectMember(project.ID, user.ID)
+		if memberErr != nil {
+			helpers.WriteError(w, memberErr)
+			return
+		}
+		item := projUser{ID: user.ID, Name: user.Name, Username: user.Username, Roles: make([]string, 0, len(member.Roles)), Revision: membership.Revision}
+		for _, role := range member.Roles {
 			item.Roles = append(item.Roles, role.Slug)
+		}
+		for _, role := range user.Roles {
 			item.EffectivePermissions |= role.Permissions
 		}
+		for _, role := range member.MappedRoles {
+			item.MappedRoles = append(item.MappedRoles, mappedRole{Provider: role.Provider, Group: role.Group, Role: role.RoleSlug})
+		}
 		// One value would hide the other roles, so old clients see it only for a single role.
-		if len(item.Roles) == 1 {
+		if len(user.Roles) == 1 {
 			role := user.Roles[0]
 			item.Role = role.Slug
 			if !role.Builtin {

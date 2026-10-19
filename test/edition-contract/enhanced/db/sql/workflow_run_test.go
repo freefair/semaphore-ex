@@ -117,6 +117,68 @@ func TestWorkflowRunRepositoryPersistsImmutableSnapshotAndConditionalNodeState(t
 	assert.Equal(t, db.WorkflowRunNodeSkipped, dependent.Result.Status)
 }
 
+func TestWorkflowSurveyRoundTripPreservesVersionAndRunInputs(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	user, first, second := workflowRunResources(t, store, projectID)
+	workflow := linearRepositoryWorkflow(projectID, first.ID, second.ID)
+	workflow.SurveyVars = []db.SurveyVar{{Name: "release", Required: true}}
+	workflow.Nodes[0].SurveyInputs = []db.WorkflowNodeSurveyInput{{Var: "release", WorkflowVar: "release"}}
+	var versions db.WorkflowVersionStore = repository
+	created, version, err := versions.CreateWorkflowTemplateVersioned(workflow, db.WorkflowVersionMutation{AuthorUserID: user.ID, Message: "survey"})
+	require.NoError(t, err)
+	reloaded, err := repository.GetWorkflowTemplate(projectID, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created.SurveyVars, reloaded.SurveyVars)
+	listed, err := repository.GetWorkflowTemplates(projectID, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, created.SurveyVars, listed[0].SurveyVars)
+	assert.Equal(t, created.Nodes[0].SurveyInputs, reloaded.Nodes[0].SurveyInputs)
+	updatedDefinition := reloaded
+	updatedDefinition.SurveyVars = []db.SurveyVar{{Name: "release_next", Required: true}}
+	updatedDefinition.Nodes[0].SurveyInputs = []db.WorkflowNodeSurveyInput{{Var: "release", WorkflowVar: "release_next"}}
+	updated, _, err := versions.UpdateWorkflowTemplateVersioned(updatedDefinition, db.WorkflowVersionMutation{AuthorUserID: user.ID, Message: "survey update"})
+	require.NoError(t, err)
+	oldVersion, err := versions.GetWorkflowVersion(projectID, created.ID, version.VersionNumber)
+	require.NoError(t, err)
+	assert.Equal(t, []db.SurveyVar{{Name: "release", Required: true}}, oldVersion.DefinitionSnapshot.SurveyVars)
+	assert.Equal(t, []db.SurveyVar{{Name: "release_next", Required: true}}, updated.SurveyVars)
+	// Version identity is assigned by the definition service, not raw SQL reads.
+	reloaded.CurrentVersionID = version.ID
+	run, err := workflowDB.BuildWorkflowRunSnapshot(reloaded, map[int]db.Template{first.ID: first, second.ID: second}, user.ID, "survey-run", time.Now().UTC(), db.WorkflowRunInput{Environment: db.MapStringAnyField{"release": "v1"}})
+	require.NoError(t, err)
+	persisted, err := repository.CreateWorkflowRun(run)
+	require.NoError(t, err)
+	loaded, err := repository.GetWorkflowRun(projectID, created.ID, persisted.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.MapStringAnyField{"release": "v1"}, loaded.Environment)
+	assert.Equal(t, []db.SurveyVar{{Name: "release", Required: true}}, loaded.DefinitionSnapshot.SurveyVars)
+	assert.Equal(t, version.ID, loaded.WorkflowVersionID)
+}
+
+func TestUnversionedWorkflowSurveyUpdatePersistsAndClears(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	_, first, second := workflowRunResources(t, store, projectID)
+	workflow := linearRepositoryWorkflow(projectID, first.ID, second.ID)
+	workflow.SurveyVars = []db.SurveyVar{{Name: "release"}}
+	created, err := repository.CreateWorkflowTemplate(workflow)
+	require.NoError(t, err)
+	created.SurveyVars = []db.SurveyVar{{Name: "next"}}
+	updated, err := repository.UpdateWorkflowTemplate(created)
+	require.NoError(t, err)
+	loaded, err := repository.GetWorkflowTemplate(projectID, updated.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "next", loaded.SurveyVars[0].Name)
+	updated.SurveyVars = nil
+	_, err = repository.UpdateWorkflowTemplate(updated)
+	require.NoError(t, err)
+	cleared, err := repository.GetWorkflowTemplate(projectID, updated.ID)
+	require.NoError(t, err)
+	assert.Empty(t, cleared.SurveyVars)
+}
+
 func TestConfiguredWorkflowRepositoryRejectsUnboundRun(t *testing.T) {
 	store, repository, projectID := workflowRepositoryFixture(t)
 	defer store.Close()

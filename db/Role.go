@@ -88,6 +88,7 @@ type RoleImpact struct {
 	Members        int `json:"members"`
 	Projects       int `json:"projects"`
 	TemplateGrants int `json:"template_grants"`
+	Mappings       int `json:"mappings"`
 }
 
 type RoleMember struct {
@@ -95,21 +96,37 @@ type RoleMember struct {
 	UserID    int
 	Username  string
 	Roles     []Role
+	// The member also holds roles through mappings of other roles, so losing every manual role keeps the membership.
+	Mapped bool
 }
 
 type RoleAssignments struct {
-	Members       []RoleMember
-	Grants        []TemplateRolePerm
-	GlobalMembers int
+	Members         []RoleMember
+	Grants          []TemplateRolePerm
+	GlobalMembers   int
+	Mappings        []RoleMapping
+	MappingCount    int
+	MappingProjects []int
 }
 
 func (a RoleAssignments) Impact() RoleImpact {
+	type member struct{ projectID, userID int }
+	members := map[member]bool{}
 	projects := map[int]bool{}
 	for _, m := range a.Members {
+		members[member{m.ProjectID, m.UserID}] = true
 		projects[m.ProjectID] = true
 	}
 	for _, g := range a.Grants {
 		projects[g.ProjectID] = true
 	}
-	return RoleImpact{Members: len(a.Members) + a.GlobalMembers, Projects: len(projects), TemplateGrants: len(a.Grants)}
+	for _, m := range a.Mappings {
+		projects[m.ProjectID] = true
+	}
+	for _, projectID := range a.MappingProjects {
+		if projectID > 0 {
+			projects[projectID] = true
+		}
+	}
+	return RoleImpact{Members: len(members) + a.GlobalMembers, Projects: len(projects), TemplateGrants: len(a.Grants), Mappings: len(a.Mappings) + a.MappingCount}
 }

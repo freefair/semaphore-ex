@@ -303,9 +303,11 @@ func writeOIDCGroupMappingError(w http.ResponseWriter, err error) {
 		helpers.WriteErrorStatus(w, "OIDC_GROUP_MAPPING_FORBIDDEN", http.StatusForbidden)
 	case errors.Is(err, pro_interfaces.ErrOIDCGroupMappingPreviewStale):
 		helpers.WriteErrorStatus(w, "OIDC_GROUP_MAPPING_STALE", http.StatusConflict)
-	case errors.Is(err, pro_interfaces.ErrOIDCGroupMappingCollision):
+	case errors.Is(err, pro_interfaces.ErrOIDCGroupMappingCollision), errors.Is(err, db.ErrOIDCGroupMappingCollision):
 		helpers.WriteErrorStatus(w, "OIDC_GROUP_MAPPING_COLLISION", http.StatusConflict)
-	case errors.Is(err, pro_interfaces.ErrOIDCGroupProtectedAdministrator):
+	case errors.Is(err, pro_interfaces.ErrOIDCGroupProtectedAdministrator),
+		errors.Is(err, db.ErrLastProjectAdministrator),
+		errors.Is(err, db.ErrLastGlobalAdministrator):
 		helpers.WriteErrorStatus(w, "OIDC_GROUP_PROTECTED_ADMINISTRATOR", http.StatusConflict)
 	default:
 		var validationErr *common_errors.ValidationError

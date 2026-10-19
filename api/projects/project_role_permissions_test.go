@@ -47,6 +47,11 @@ func (s projectRolePermissionStore) GetProjectUserRoles(projectID, userID int) (
 	return []db.Role{s.role}, nil
 }
 
+func (s projectRolePermissionStore) GetProjectMember(projectID, userID int) (db.ProjectMember, error) {
+	roles, err := s.GetProjectUserRoles(projectID, userID)
+	return db.ProjectMember{Roles: roles}, err
+}
+
 func TestProjectMiddlewareResolvesCustomRoleByScopedImmutableID(t *testing.T) {
 	projectID := 12
 	roleID := db.ProjectRoleID("role_resource_viewer")

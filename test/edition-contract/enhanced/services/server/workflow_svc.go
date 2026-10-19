@@ -461,7 +461,7 @@ func (s *workflowService) buildWorkflowExecutionPreflightWithRun(
 			Kind: pro_interfaces.ExecutionReferenceWorkflow, ID: workflow.ID,
 			Name: workflow.Name, Revision: fmt.Sprintf("%d", workflow.Revision), Fingerprint: fingerprint,
 		},
-		Inputs:     workflowPreflightInputs(run.ParameterSnapshot),
+		Inputs:     workflowPreflightInputs(run.ParameterSnapshot, run.Environment),
 		References: []pro_interfaces.ExecutionPreflightReference{},
 		Commands:   []pro_interfaces.ExecutionPreflightCommand{},
 		Placements: []pro_interfaces.ExecutionPreflightPlacement{},
@@ -615,7 +615,7 @@ func (s *workflowService) buildWorkflowExecutionPreflightWithRun(
 	return result, nil
 }
 
-func workflowPreflightInputs(parameters map[string]db.WorkflowParameterSnapshot) []pro_interfaces.ExecutionPreflightInput {
+func workflowPreflightInputs(parameters map[string]db.WorkflowParameterSnapshot, environment db.MapStringAnyField) []pro_interfaces.ExecutionPreflightInput {
 	names := sortedWorkflowParameterNames(parameters)
 	result := make([]pro_interfaces.ExecutionPreflightInput, 0, len(names))
 	for _, name := range names {
@@ -626,7 +626,19 @@ func workflowPreflightInputs(parameters map[string]db.WorkflowParameterSnapshot)
 			Sensitive: parameter.Type == db.WorkflowParameterSecretReference,
 		})
 	}
+	for _, name := range sortedEnvironmentNames(environment) {
+		result = append(result, pro_interfaces.ExecutionPreflightInput{Name: "survey:" + name, Type: "workflow_survey", Source: "workflow_survey", Present: environment[name] != nil})
+	}
 	return result
+}
+
+func sortedEnvironmentNames(environment db.MapStringAnyField) []string {
+	names := make([]string, 0, len(environment))
+	for name := range environment {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func workflowPolicyGuardrailTriggerSource(snapshot db.WorkflowTriggerSnapshot) (string, error) {
@@ -2392,6 +2404,9 @@ func (s *workflowService) enqueueWorkflowNode(
 	if node.CrossProjectTemplateProvenance != nil && task.InventoryID != nil {
 		return s.blockCrossProjectWorkflowNode(run, node, "Cross-project template resource overrides are unavailable.", lease)
 	}
+	if err := applyWorkflowSurveyBindings(run, definitionNode, node.TemplateSnapshot, &task); err != nil {
+		return err
+	}
 	inputFailed, inputReason, inputLines, err := s.resolveWorkflowEdgeInputs(run, node, definitionNode, &task)
 	if err != nil {
 		return err
@@ -2512,6 +2527,43 @@ func (s *workflowService) enqueueWorkflowNode(
 		return enqueueErr
 	}
 	return nil
+}
+
+// applyWorkflowSurveyBindings reads only the run snapshot. It intentionally
+// precedes edge inputs so a later edge value retains the established task-input
+// precedence while an unconnected node still receives its explicit binding.
+func applyWorkflowSurveyBindings(run db.WorkflowRun, node db.WorkflowNode, template db.Template, task *db.Task) error {
+	if len(node.SurveyInputs) == 0 {
+		return nil
+	}
+	if node.CrossProjectTemplateReference != nil {
+		return common_errors.NewValidationError("cross-project workflow nodes cannot bind survey variables")
+	}
+	plain, err := decodeWorkflowArtifactObject(task.Environment)
+	if err != nil {
+		return err
+	}
+	vars := make(map[string]db.SurveyVar, len(template.SurveyVars))
+	for _, variable := range template.SurveyVars {
+		vars[variable.Name] = variable
+	}
+	for _, binding := range node.SurveyInputs {
+		variable, ok := vars[binding.Var]
+		if !ok || variable.Type == db.SurveyVarSecret {
+			return common_errors.NewValidationError("workflow survey binding targets an unavailable template variable")
+		}
+		value, ok := run.Environment[binding.WorkflowVar]
+		if !ok {
+			return common_errors.NewValidationError("workflow survey binding references an unavailable workflow variable")
+		}
+		encoded, marshalErr := json.Marshal(value)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		plain[binding.Var] = encoded
+	}
+	task.Environment, err = encodeWorkflowArtifactObject(plain)
+	return err
 }
 
 func (s *workflowService) blockDeploymentWindowWorkflowNode(run db.WorkflowRun, node db.WorkflowRunNode, blocked *pro_interfaces.DeploymentWindowBlockedError, decision *db.DeploymentWindowDecisionRecord, lease *pro_interfaces.WorkflowReconciliationLease) error {

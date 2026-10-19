@@ -257,6 +257,7 @@ type ProjectStore interface {
 	UpdateProjectUser(projectUser ProjectUser) error
 	SetProjectUserRoleRefs(projectID int, userID int, roleIDs []ProjectRoleID, expectedRevision int) error
 	GetProjectUserRoles(projectID int, userID int) ([]Role, error)
+	GetProjectMember(projectID int, userID int) (ProjectMember, error)
 	CountProjectOwners(projectID int) (int, error)
 }
 

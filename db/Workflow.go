@@ -1,9 +1,10 @@
 package db
 
 import (
-	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"regexp"
 	"time"
+
+	"github.com/semaphoreui/semaphore/pkg/common_errors"
 )
 
 type WorkflowEdgeCondition string
@@ -42,6 +43,22 @@ const (
 type WorkflowInputMapping struct {
 	Var string `json:"var" backup:"var"`
 	Key string `json:"key" backup:"key"`
+}
+
+// WorkflowNodeSurveyInput binds a non-secret survey variable of a task node's
+// template to a workflow survey variable. Bindings are explicit: equal names
+// alone never transfer a workflow value into a task.
+type WorkflowNodeSurveyInput struct {
+	Var         string `json:"var" backup:"var"`
+	WorkflowVar string `json:"workflow_var" backup:"workflow_var"`
+}
+
+// WorkflowRunParams carries the answers supplied when a workflow starts.
+// Workflow survey values are deliberately separate from EX parameter values:
+// the former are persisted in the run environment while the latter remain in
+// the immutable parameter snapshot.
+type WorkflowRunParams struct {
+	Environment MapStringAnyField `json:"environment,omitempty"`
 }
 
 // workflowOutputNamePattern is the shape of an output name. The hyphen is
@@ -89,6 +106,10 @@ type WorkflowTemplate struct {
 	Nodes []WorkflowNode `db:"-" bolt:"include" json:"nodes" backup:"-"`
 	Edges []WorkflowEdge `db:"-" bolt:"include" json:"edges" backup:"edges"`
 
+	// SurveyVars belongs to the workflow graph version. It is copied into the
+	// immutable EX definition snapshot with the nodes and edges it names.
+	SurveyVars []SurveyVar `db:"-" json:"survey_vars" backup:"survey_vars"`
+
 	// RevisionID is the immutable EX version ID exposed by the revision API.
 	// Revision remains the definition CAS token; response metadata is ignored on write.
 	RevisionID int `db:"-" json:"revision_id,omitempty" backup:"-"`
@@ -115,6 +136,11 @@ type WorkflowRevision struct {
 
 	Created         time.Time `db:"created" json:"created"`
 	CreatedByUserID *int      `db:"created_by_user_id" json:"created_by_user_id,omitempty"`
+
+	// SurveyVarsJSON is the database representation of the immutable revision
+	// survey; callers use SurveyVars.
+	SurveyVarsJSON *string     `db:"survey_vars" json:"-"`
+	SurveyVars     []SurveyVar `db:"-" json:"survey_vars,omitempty"`
 
 	// HasRuns is filled by list queries: true when at least one run pins this
 	// revision (such a revision survives later saves).
@@ -156,6 +182,11 @@ type WorkflowNode struct {
 
 	Note         *string `db:"note" json:"note,omitempty" backup:"note"`
 	DelaySeconds *int    `db:"delay_seconds" json:"delay_seconds,omitempty" backup:"delay_seconds"`
+
+	// SurveyInputsJSON is the database representation of task-node bindings;
+	// callers use SurveyInputs.
+	SurveyInputsJSON *string                   `db:"survey_inputs" json:"-" backup:"-"`
+	SurveyInputs     []WorkflowNodeSurveyInput `db:"-" json:"survey_inputs,omitempty" backup:"survey_inputs"`
 
 	PositionX int `db:"position_x" json:"position_x" backup:"position_x"`
 	PositionY int `db:"position_y" json:"position_y" backup:"position_y"`
@@ -291,6 +322,11 @@ type WorkflowRun struct {
 	TriggerSnapshot        WorkflowTriggerSnapshot              `db:"-" json:"trigger,omitempty" backup:"-"`
 	Nodes                  []WorkflowRunNode                    `db:"-" json:"nodes" backup:"-"`
 
+	// Environment is written only at run creation after survey validation. A
+	// workflow survey cannot contain secret values, so this persisted object is
+	// safe to show in run details and snapshots.
+	Environment MapStringAnyField `db:"environment" json:"environment,omitempty" backup:"-"`
+
 	Created time.Time  `db:"created" json:"created" backup:"created"`
 	Start   *time.Time `db:"start" json:"start,omitempty" backup:"start"`
 	End     *time.Time `db:"end" json:"end,omitempty" backup:"end"`
@@ -397,6 +433,45 @@ func (status WorkflowApprovalStatus) Validate() error {
 	default:
 		return common_errors.NewValidationError("workflow approval status is invalid")
 	}
+}
+
+// ValidateWorkflowSurveyVars rejects ambiguous, malformed, and secret
+// workflow survey declarations. Runs persist their answers, therefore secrets
+// remain exclusively a task-template concern.
+func ValidateWorkflowSurveyVars(vars []SurveyVar) error {
+	seen := make(map[string]struct{}, len(vars))
+	for _, variable := range vars {
+		if variable.Name == "" {
+			return common_errors.NewValidationError("workflow survey variable name can not be empty")
+		}
+		if _, duplicate := seen[variable.Name]; duplicate {
+			return common_errors.NewValidationError("workflow survey variable \"" + variable.Name + "\" is declared more than once")
+		}
+		seen[variable.Name] = struct{}{}
+		if variable.Type == SurveyVarSecret {
+			return common_errors.NewValidationError("workflow survey variable \"" + variable.Name + "\" can not be a secret")
+		}
+		switch variable.Target {
+		case SurveyVarTargetDefault, SurveyVarTargetEnv:
+		default:
+			return common_errors.NewValidationError("workflow survey variable \"" + variable.Name + "\": invalid target \"" + string(variable.Target) + "\"")
+		}
+		if err := ValidateSurveyVar(variable); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SurveyVarByName resolves a workflow survey declaration for binding
+// validation without exposing mutable storage details.
+func (workflow WorkflowTemplate) SurveyVarByName(name string) (SurveyVar, bool) {
+	for _, variable := range workflow.SurveyVars {
+		if variable.Name == name {
+			return variable, true
+		}
+	}
+	return SurveyVar{}, false
 }
 
 // WorkflowTemplateValidationStore is the slice of Store workflow template

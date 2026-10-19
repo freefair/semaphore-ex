@@ -79,6 +79,23 @@
 
     <v-divider />
 
+    <div v-if="runVariables.length > 0" class="WorkflowRun__vars px-4 py-2">
+      <span class="text-caption text--secondary mr-2">{{ $t('workflowRunVariables') }}</span>
+      <v-chip
+        v-for="variable in runVariables"
+        :key="variable.name"
+        x-small
+        label
+        outlined
+        class="WorkflowRun__var mr-1 mb-1"
+        :title="`${variable.name} = ${variable.value}`"
+      >
+        <span class="WorkflowRun__varName">{{ variable.name }}</span>
+        <span class="mx-1">=</span>
+        <span class="WorkflowRun__varValue">{{ variable.value }}</span>
+      </v-chip>
+    </div>
+
     <div class="WorkflowRun__body">
       <template v-if="details != null">
         <v-alert
@@ -365,6 +382,18 @@ export default {
   },
   computed: {
     ...enhancedComputed,
+    runVariables() {
+      const environment = this.details?.run?.environment;
+      if (!environment || typeof environment !== 'object') return [];
+      return Object.keys(environment).sort().map((name) => {
+        const raw = environment[name];
+        let value = '';
+        if (Array.isArray(raw)) value = raw.join(', ');
+        else if (raw !== null && typeof raw === 'object') value = JSON.stringify(raw);
+        else if (raw != null) value = String(raw);
+        return { name, value };
+      });
+    },
     workflowId() {
       return parseInt(this.$route.params.workflowId, 10);
     },

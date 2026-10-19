@@ -75,6 +75,32 @@ func TestWorkflowServiceRunsTwoNodesInOrderFromImmutableSnapshot(t *testing.T) {
 	assert.Len(t, fixture.enqueuer.tasks, 2)
 }
 
+func TestWorkflowServiceDispatchesFrozenSurveyBinding(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	fixture.second.SurveyVars = []db.SurveyVar{{Name: "deployment_release"}}
+	require.NoError(t, fixture.store.UpdateTemplate(fixture.second))
+	definition := db.WorkflowTemplate{ProjectID: fixture.projectID, Name: "survey workflow", DefinitionVersion: db.WorkflowDefinitionVersion,
+		SurveyVars: []db.SurveyVar{{Name: "release", Required: true}},
+		Nodes:      []db.WorkflowNode{{ID: -1, TemplateID: fixture.first.ID}, {ID: -2, TemplateID: fixture.second.ID, SurveyInputs: []db.WorkflowNodeSurveyInput{{Var: "deployment_release", WorkflowVar: "release"}}}},
+		Edges:      []db.WorkflowEdge{{ID: -1, SourceNodeID: -1, DestinationNodeID: -2, Condition: db.WorkflowEdgeOnSuccess}}}
+	var versions db.WorkflowVersionStore = fixture.repository
+	workflow, _, err := versions.CreateWorkflowTemplateVersioned(definition, db.WorkflowVersionMutation{AuthorUserID: fixture.user.ID, Message: "survey"})
+	require.NoError(t, err)
+	run, err := fixture.service.StartWorkflow(workflow, &fixture.user, "survey-binding", db.WorkflowRunInput{Environment: db.MapStringAnyField{"release": "v1"}})
+	require.NoError(t, err)
+	root := finishWorkflowTask(t, fixture.store, run.Nodes[0], task_logger.TaskSuccessStatus, "")
+	workflow.SurveyVars[0].Name = "changed"
+	_, _, err = versions.UpdateWorkflowTemplateVersioned(workflow, db.WorkflowVersionMutation{AuthorUserID: fixture.user.ID, Message: "changed"})
+	require.NoError(t, err)
+	require.NoError(t, fixture.service.HandleWorkflowTaskCompletion(root))
+	require.Len(t, fixture.enqueuer.tasks, 2)
+	var environment map[string]any
+	require.NoError(t, json.Unmarshal([]byte(fixture.enqueuer.tasks[1].Environment), &environment))
+	assert.Equal(t, "v1", environment["deployment_release"])
+	assert.NotContains(t, environment, "release")
+}
+
 func TestWorkflowServiceDelayWaitsWithoutRunnerAndUsesRunSnapshot(t *testing.T) {
 	fixture := newWorkflowServiceFixture(t)
 	defer fixture.store.Close()

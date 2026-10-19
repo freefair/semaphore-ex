@@ -89,6 +89,14 @@ func (d *SqlDb) SaveOIDCGroupMapping(
 }
 
 func (d *SqlDb) DeleteOIDCGroupMapping(providerID string, mappingID string, expectedRevision int) error {
+	return d.DeleteOIDCGroupMappingAndRevoke(providerID, mappingID, expectedRevision)
+}
+
+// DeleteOIDCGroupMappingAndRevoke removes every grant owned by this mapping
+// and the mapping itself in one transaction. It uses the same removal path as
+// reconciliation, including protected-administrator checks and membership
+// reprojection, so deleting configuration cannot leave an orphaned grant.
+func (d *SqlDb) DeleteOIDCGroupMappingAndRevoke(providerID string, mappingID string, expectedRevision int) error {
 	if expectedRevision <= 0 {
 		return db.ErrOIDCGroupMappingRevisionConflict
 	}
@@ -99,6 +107,31 @@ func (d *SqlDb) DeleteOIDCGroupMapping(providerID string, mappingID string, expe
 	defer func() { _ = tx.Rollback() }()
 	if err = ensureOIDCGroupMappingStateTx(tx, d, providerID); err != nil {
 		return err
+	}
+	var mapping db.OIDCGroupMapping
+	if err = tx.SelectOne(&mapping, d.PrepareQuery("select * from oidc_group_mapping where provider_id=? and id=?"), providerID, mappingID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return db.ErrOIDCGroupMappingRevisionConflict
+		}
+		return err
+	}
+	if mapping.Revision != expectedRevision {
+		return db.ErrOIDCGroupMappingRevisionConflict
+	}
+	var removals []db.OIDCGroupAssignmentChange
+	if _, err = tx.Select(&removals, d.PrepareQuery(`
+		select mapping_id, user_id, target_scope, project_id, role_id
+		from oidc_group_managed_assignment
+		where provider_id=? and mapping_id=?`), providerID, mappingID); err != nil {
+		return err
+	}
+	if err = lockOIDCGroupTargetsTx(tx, d, nil, removals); err != nil {
+		return err
+	}
+	for _, removal := range removals {
+		if err = removeOIDCManagedAssignmentTx(tx, d, providerID, removal); err != nil {
+			return err
+		}
 	}
 	result, err := tx.Exec(d.PrepareQuery(
 		"delete from oidc_group_mapping where provider_id=? and id=? and revision=?"),
@@ -403,6 +436,10 @@ func requireOIDCGroupMappingRoleTx(tx *gorp.Transaction, d *SqlDb, mapping db.OI
 	case "project":
 		if mapping.ProjectID == nil {
 			return db.ErrNotFound
+		}
+		if mapping.RoleID == "builtin:owner" || mapping.RoleID == "builtin:manager" ||
+			mapping.RoleID == "builtin:task_runner" || mapping.RoleID == "builtin:guest" {
+			return nil
 		}
 		count, err = tx.SelectInt(d.PrepareQuery(
 			"select count(1) from `role` where role_id=? and project_id=?"), mapping.RoleID, *mapping.ProjectID)

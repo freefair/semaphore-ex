@@ -86,6 +86,12 @@ func (s *oidcGroupMappingService) DeleteGroupMapping(
 	if errors.Is(err, db.ErrOIDCGroupMappingRevisionConflict) {
 		return pro_interfaces.ErrOIDCGroupMappingPreviewStale
 	}
+	if errors.Is(err, db.ErrLastProjectAdministrator) || errors.Is(err, db.ErrLastGlobalAdministrator) {
+		return pro_interfaces.ErrOIDCGroupProtectedAdministrator
+	}
+	if errors.Is(err, db.ErrOIDCGroupMappingCollision) {
+		return pro_interfaces.ErrOIDCGroupMappingCollision
+	}
 	return err
 }
 

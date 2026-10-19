@@ -101,6 +101,17 @@
           </template>
         </template>
 
+        <template v-if="surveyVars.length">
+          <div class="text-subtitle-2 mt-3 mb-2">{{ $t('surveyVariables') }}</div>
+          <v-form ref="surveyForm" lazy-validation>
+            <SurveyFields
+              :vars="surveyVars"
+              :value="environment"
+              :secret-value="{}"
+            />
+          </v-form>
+        </template>
+
         <template v-if="configurableNodes.length">
           <div class="text-subtitle-2 mt-3 mb-2">{{ $t('workflowNodeOverrides') }}</div>
           <v-card
@@ -199,6 +210,7 @@
           color="primary"
           :loading="busy"
           :disabled="errors.length > 0 || hasDenial"
+          data-testid="workflow-run-dialog-run"
           @click="submit"
         >
           {{ executionPreflight ? $t('confirmExecution') : $t('run') }}
@@ -217,12 +229,13 @@ import {
   credentialReferenceFromKey,
 } from '@/lib/workflow-credential-references';
 import ExecutionPreflightReview from '@/components/ExecutionPreflightReview.vue';
+import SurveyFields from '@/components/SurveyFields.vue';
 
 const NODE_OVERRIDE_FIELDS = ['inventory_id', 'environment_ids', 'arguments', 'git_branch'];
 const stringByteLength = (value) => new TextEncoder().encode(String(value)).length;
 
 export default {
-  components: { ExecutionPreflightReview },
+  components: { ExecutionPreflightReview, SurveyFields },
   props: {
     value: Boolean,
     workflow: { type: Object, required: true },
@@ -232,6 +245,7 @@ export default {
   data() {
     return {
       values: {},
+      environment: {},
       nodeValues: {},
       inventories: [],
       environments: [],
@@ -249,6 +263,11 @@ export default {
   computed: {
     parameters() {
       return this.workflow.parameters || [];
+    },
+    surveyVars() {
+      // Workflow surveys reject secrets in the backend. Filter defensively so
+      // a stale response can never render a plaintext secret input here.
+      return (this.workflow.survey_vars || []).filter((variable) => variable.type !== 'secret');
     },
     configurableNodes() {
       return (this.workflow.nodes || []).filter((node) => {
@@ -327,7 +346,8 @@ export default {
       handler(open) {
         if (open) {
           this.reset();
-          if (!this.parameters.length && !this.configurableNodes.length) {
+          if (!this.parameters.length && !this.configurableNodes.length
+            && !this.surveyVars.length) {
             this.$nextTick(() => this.submit());
           }
         }
@@ -335,6 +355,7 @@ export default {
     },
   },
   async created() {
+    if (!this.configurableNodes.length) return;
     try {
       const [inventories, environments] = await Promise.all([
         axios.get(`/api/project/${this.projectId}/inventory`),
@@ -361,10 +382,25 @@ export default {
           git_branch: undefined,
         },
       }), {});
+      this.environment = this.surveyVars.reduce((values, variable) => ({
+        ...values,
+        [variable.name]: this.surveyDefault(variable),
+      }), {});
       this.executionPreflight = null;
       this.executionPreflightPayloadSignature = null;
       this.preflightMessage = null;
       this.clearDeploymentWindowBlock();
+    },
+    surveyDefault(variable) {
+      const defaultValue = variable.default_value;
+      if (variable.type === 'select') {
+        if (Array.isArray(defaultValue)) return [...defaultValue];
+        return defaultValue ? [defaultValue] : [];
+      }
+      if (defaultValue !== undefined && defaultValue !== null && defaultValue !== '') {
+        return Array.isArray(defaultValue) ? defaultValue[0] : defaultValue;
+      }
+      return variable.type === 'enum' ? null : '';
     },
     parameterLabel(parameter) {
       return `${parameter.name}${parameter.required ? ' *' : ''}`;
@@ -427,6 +463,7 @@ export default {
       const payload = {};
       if (Object.keys(parameters).length) payload.parameters = parameters;
       if (Object.keys(nodeOverrides).length) payload.node_overrides = nodeOverrides;
+      if (this.surveyVars.length) payload.environment = { ...this.environment };
       return payload;
     },
     buildStartPayload(payload) {
@@ -477,6 +514,7 @@ export default {
     },
     async submit() {
       if (this.errors.length) return;
+      if (this.$refs.surveyForm && !this.$refs.surveyForm.validate()) return;
       if (this.deploymentWindowBlock && !this.deploymentWindowOverrideReady) {
         this.deploymentWindowOverrideError = this.$t('deploymentWindowOverrideIncomplete');
         return;

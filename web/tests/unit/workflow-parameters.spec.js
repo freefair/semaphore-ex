@@ -54,6 +54,7 @@ describe('workflow parameters and node overrides', () => {
   it('builds a value-safe run request with allow-listed node fields only', () => {
     const context = {
       values: { region: 'eu', token: 41 },
+      surveyVars: [],
       nodeValues: { 7: { inventory_id: 5, arguments: '["--check"]', ignored: 'no' } },
       workflow: {
         parameters: [
@@ -76,6 +77,7 @@ describe('workflow parameters and node overrides', () => {
   it('drops fields that are outside the node policy even when present in local state', () => {
     const payload = WorkflowRunDialog.methods.buildPayload.call({
       values: {},
+      surveyVars: [],
       nodeValues: { 7: { inventory_id: 9, environment_ids: [4], git_branch: 'main' } },
       workflow: {
         parameters: [],
@@ -95,6 +97,7 @@ describe('workflow parameters and node overrides', () => {
 
     const payload = WorkflowRunDialog.methods.buildPayload.call({
       values: { deploy_credential: 'global_credential:51' },
+      surveyVars: [],
       nodeValues: {},
       workflow: {
         parameters: [{ name: 'deploy_credential', type: 'secret_reference' }],
@@ -109,6 +112,7 @@ describe('workflow parameters and node overrides', () => {
   it('can explicitly override a non-empty string default with an empty string', () => {
     const payload = WorkflowRunDialog.methods.buildPayload.call({
       values: { note: '' },
+      surveyVars: [],
       nodeValues: {},
       workflow: {
         parameters: [{ name: 'note', type: 'string', default: 'from-definition' }],

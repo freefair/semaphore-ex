@@ -195,10 +195,10 @@ func (d *WorkflowStoreImpl) createWorkflowRun(run db.WorkflowRun, crossProjectRe
 		}
 	}
 	run.ID, err = d.insertTx(tx,
-		"insert into project__workflow_run(project_id, workflow_template_id, status, desired_state, reconciliation_state, reconciliation_attempts, reconciliation_last_error, reconciliation_next_retry_at, reconciliation_quarantined_at, version, start, `end`, root_task_id, actor_user_id, definition_version, definition_revision, workflow_version_id, definition_snapshot, parameter_snapshot, trigger_snapshot, correlation_id, created, reason) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"insert into project__workflow_run(project_id, workflow_template_id, status, desired_state, reconciliation_state, reconciliation_attempts, reconciliation_last_error, reconciliation_next_retry_at, reconciliation_quarantined_at, version, start, `end`, root_task_id, actor_user_id, definition_version, definition_revision, workflow_version_id, definition_snapshot, parameter_snapshot, trigger_snapshot, correlation_id, created, reason, environment) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		run.ProjectID, run.WorkflowTemplateID, run.Status, run.DesiredState, run.ReconciliationState, run.ReconciliationAttempts, run.ReconciliationLastError, run.ReconciliationNextRetryAt, run.ReconciliationQuarantinedAt, run.Version, run.Start, run.End, run.RootTaskID,
 		run.ActorUserID, run.DefinitionVersion, run.DefinitionRevision, run.WorkflowVersionID, run.DefinitionSnapshotJSON,
-		run.ParameterSnapshotJSON, run.TriggerSnapshotJSON, run.CorrelationID, run.Created, run.Reason,
+		run.ParameterSnapshotJSON, run.TriggerSnapshotJSON, run.CorrelationID, run.Created, run.Reason, run.Environment,
 	)
 	if err != nil {
 		_ = tx.Rollback()

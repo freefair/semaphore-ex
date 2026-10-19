@@ -46,7 +46,7 @@ func TestValidateRole(t *testing.T) {
 
 func TestRoleAssignments_Impact(t *testing.T) {
 	assigned := RoleAssignments{
-		Members:       []RoleMember{{ProjectID: 1}, {ProjectID: 1}, {ProjectID: 2}},
+		Members:       []RoleMember{{ProjectID: 1, UserID: 1}, {ProjectID: 1, UserID: 2}, {ProjectID: 2, UserID: 1}},
 		Grants:        []TemplateRolePerm{{ProjectID: 3}},
 		GlobalMembers: 2,
 	}

@@ -167,6 +167,7 @@ export const enhancedMethods = {
           ? value.access_policy.start_role_ids : [],
       },
       parameters: Array.isArray(value.parameters) ? value.parameters : [],
+      survey_vars: Array.isArray(value.survey_vars) ? value.survey_vars : [],
       nodes: Array.isArray(value.nodes) ? value.nodes : [],
       edges: Array.isArray(value.edges) ? value.edges : [],
     };
@@ -183,6 +184,7 @@ export const enhancedMethods = {
             || (convergence === 'any' ? 'any-successful' : 'all-successful'),
         artifact_outputs: Array.isArray(node.artifact_outputs) ? node.artifact_outputs : [],
         artifact_inputs: Array.isArray(node.artifact_inputs) ? node.artifact_inputs : [],
+        survey_inputs: Array.isArray(node.survey_inputs) ? node.survey_inputs : [],
         override_policy: node.override_policy || {},
         approval_permission: node.kind === 'approval'
           ? (node.approval_permission || USER_PERMISSIONS.runProjectTasks)
@@ -250,6 +252,7 @@ export const enhancedMethods = {
       this.editingNode.task_params = {};
       this.editingNode.override_policy = {};
     }
+    this.$delete(this.editingNode, 'survey_inputs');
     this.applyNodeEdit();
   },
   includePersistedCrossProjectReferences() {

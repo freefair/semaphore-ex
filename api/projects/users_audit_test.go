@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
@@ -80,11 +81,35 @@ func (f membershipFixture) request(method string, body string, me db.User, myRol
 	r = helpers.SetContextValue(r, "log_writer", nopLogWriter{})
 	r = helpers.SetContextValue(r, "audit", rec)
 	if target != nil {
-		targetRoles, _ := f.store.GetProjectUserRoles(f.project.ID, target.ID)
+		roles, _ := f.store.GetProjectUserRoles(f.project.ID, target.ID)
 		r = helpers.SetContextValue(r, "projectUser", *target)
-		r = helpers.SetContextValue(r, "projectMemberRoles", targetRoles)
+		r = helpers.SetContextValue(r, "projectMemberRoles", roles)
 	}
 	return r.WithContext(audit.WithActor(r.Context(), audit.UserActor(me.ID, me.Username, audit.AuthSession, ""))), rec
+}
+
+// newMappedUser creates a user whose only access comes from an authoritative
+// OIDC reconciliation. It deliberately does not use the 2.20.14 compatibility
+// tables, which are not a permission source in Semaphore EX.
+func (f membershipFixture) newMappedUser(t *testing.T, group string, role *db.Role) db.User {
+	t.Helper()
+	user, err := f.store.CreateUser(db.UserWithPwd{Pwd: "verystrongpassword1", User: db.User{Username: group, Name: group, Email: group + "@example.com"}})
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	mapping, err := f.store.SaveOIDCGroupMapping(db.OIDCGroupMapping{
+		ID: "mapping-" + group, ProviderID: "okta", ClaimValue: group,
+		TargetScope: "project", ProjectID: &f.project.ID, RoleID: string(role.ID),
+		Enabled: true, Revision: 1, Created: now, Updated: now,
+	}, 0)
+	require.NoError(t, err)
+	revision, err := f.store.GetOIDCGroupMappingRevision("okta")
+	require.NoError(t, err)
+	_, err = f.store.ApplyOIDCGroupReconciliation(db.OIDCGroupReconciliation{
+		ProviderID: "okta", UserID: user.ID, Source: "test", Status: "applied",
+		Token: "fixture-" + group, MappingRevision: revision, ClaimRevision: "fixture", PreviewJSON: "{}", Created: now,
+	}, []db.OIDCGroupAssignmentChange{{MappingID: mapping.ID, UserID: user.ID, TargetScope: "project", ProjectID: &f.project.ID, RoleID: string(role.ID)}}, nil)
+	require.NoError(t, err)
+	return user
 }
 
 func only(t *testing.T, rec *audittest.Recorder, kind audit.Kind) audittest.Recorded {
@@ -117,6 +142,23 @@ func TestRemoveUser_IsRecorded(t *testing.T) {
 	assert.Equal(t, audit.MembershipMetadata{Roles: []audit.RoleRef{f.ref(db.ProjectManager)}}, only(t, rec, audit.IAMMembershipRemove).Event.Metadata)
 }
 
+func TestAddUser_MappedMemberRefusalRecordsNoSuccessfulRoleChange(t *testing.T) {
+	f := newMembershipFixture(t)
+	user := f.newMappedUser(t, "m", f.roles[db.ProjectGuest])
+	r, rec := f.request(http.MethodPost, fmt.Sprintf(`{"user_id":%d,"role":"manager"}`, user.ID), f.owner, f.roles[db.ProjectOwner], nil)
+	response := httptest.NewRecorder()
+
+	AddUser(response, r)
+
+	assert.Equal(t, http.StatusConflict, response.Code)
+	assert.Empty(t, rec.All())
+	member, err := f.store.GetProjectMember(f.project.ID, user.ID)
+	require.NoError(t, err)
+	assert.Empty(t, member.Roles)
+	require.Len(t, member.MappedRoles, 1)
+	assert.Equal(t, f.roles[db.ProjectGuest].ID, member.MappedRoles[0].RoleID)
+}
+
 type concurrentMemberRemoval struct{ *sql.SqlDb }
 
 func (concurrentMemberRemoval) DeleteProjectUser(int, int) error { return db.ErrNotFound }
@@ -140,6 +182,19 @@ func TestLeftProject_IsRecorded(t *testing.T) {
 	LeftProject(httptest.NewRecorder(), r)
 
 	assert.Equal(t, audit.MembershipMetadata{Roles: []audit.RoleRef{f.ref(db.ProjectManager)}, SelfRemoval: true}, only(t, rec, audit.IAMMembershipRemove).Event.Metadata)
+}
+
+func TestLeftProject_AdminWithoutMembershipRecordsNothing(t *testing.T) {
+	f := newMembershipFixture(t)
+	admin, err := f.store.CreateUser(db.UserWithPwd{Pwd: "verystrongpassword1", User: db.User{Username: "admin", Name: "admin", Email: "admin@example.com", Admin: true}})
+	require.NoError(t, err)
+	r, rec := f.request(http.MethodDelete, "", admin, nil, nil)
+	w := httptest.NewRecorder()
+
+	LeftProject(w, r)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Empty(t, rec.All())
 }
 
 func TestLeftProject_OwnerRefusalIsRecorded(t *testing.T) {
@@ -178,9 +233,9 @@ func TestUpdateUser_LastOwnerRefusalIsRecorded(t *testing.T) {
 	UpdateUser(w, r)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	roles, err := f.store.GetProjectUserRoles(f.project.ID, f.owner.ID)
+	member, err := f.store.GetProjectMember(f.project.ID, f.owner.ID)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"owner"}, slugsOf(roles), "the owner keeps the role")
+	assert.Equal(t, []string{"owner"}, slugsOf(member.Roles), "the owner keeps the role")
 	got := only(t, rec, audit.IAMProjectRoleChange)
 	assert.Equal(t, audit.ReasonLastOwner, got.Event.Reason)
 	assert.Equal(t, audit.ProjectRoleMetadata{OldRoles: []audit.RoleRef{f.ref(db.ProjectOwner)}}, got.Event.Metadata)

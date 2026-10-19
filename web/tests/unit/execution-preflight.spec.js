@@ -41,6 +41,7 @@ describe('execution preflight review', () => {
       deploymentWindowBlock: null,
       projectId: 7,
       workflow: { id: 41 },
+      $refs: {},
       buildPayload: () => payload,
       buildStartPayload: WorkflowRunDialog.methods.buildStartPayload,
       isExecutionPreflightUnavailable: WorkflowRunDialog.methods.isExecutionPreflightUnavailable,

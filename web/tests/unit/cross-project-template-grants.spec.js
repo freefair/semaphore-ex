@@ -1,5 +1,6 @@
 import { expect } from 'chai';
 import axios from 'axios';
+import Vue from 'vue';
 import CrossProjectTemplateGrantsDialog from '@/components/CrossProjectTemplateGrantsDialog.vue';
 import WorkflowEditor from '@/views/project/WorkflowEditor.vue';
 
@@ -102,7 +103,9 @@ describe('cross-project template UI', () => {
 
   it('maps an exact grant version into the existing workflow node model', () => {
     const context = {
+      $delete: Vue.delete,
       editingNode: {
+        survey_inputs: [{ var: 'target', workflow_var: 'source' }],
         template_id: 8,
         task_params: { inventory_id: 9 },
         override_policy: { inventory: true },
@@ -120,6 +123,7 @@ describe('cross-project template UI', () => {
     WorkflowEditor.methods.applyTemplateChoice.call(context, 'grant:5:version:3');
 
     expect(context.editingNode.template_id).to.equal(41);
+    expect(context.editingNode).not.to.have.property('survey_inputs');
     expect(context.editingNode.cross_project_template_reference).to.deep.equal({
       grant_id: 5,
       template_version_number: 3,
@@ -131,7 +135,9 @@ describe('cross-project template UI', () => {
 
   it('switches back to a local template without retaining grant provenance', () => {
     const context = {
+      $delete: Vue.delete,
       editingNode: {
+        survey_inputs: [{ var: 'target', workflow_var: 'source' }],
         template_id: 41,
         cross_project_template_reference: { grant_id: 5, template_version_number: 3 },
       },
@@ -142,6 +148,7 @@ describe('cross-project template UI', () => {
     WorkflowEditor.methods.applyTemplateChoice.call(context, 'local:8');
 
     expect(context.editingNode.template_id).to.equal(8);
+    expect(context.editingNode).not.to.have.property('survey_inputs');
     expect(context.editingNode).not.to.have.property('cross_project_template_reference');
   });
 

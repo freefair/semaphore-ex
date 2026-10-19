@@ -57,7 +57,8 @@ type UserWithProjectRole struct {
 
 type UserWithProjectRoles struct {
 	User
-	Roles []Role `db:"-" json:"roles"` // ordered by name
+	Roles       []Role       `db:"-" json:"roles"` // ordered by name
+	MappedRoles []MappedRole `db:"-" json:"-"`
 }
 
 // UserWithPwd extends User structure with field for unhashed password received from JSON.

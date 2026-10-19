@@ -17,6 +17,10 @@ type OidcProvider struct {
 	EmailClaim       string       `json:"email_claim" default:"email"`
 	// GroupClaimPath selects the bounded OIDC claim path used for role mapping.
 	GroupClaimPath string `json:"group_claim_path,omitempty"`
+	// GroupsClaim is the upstream-compatible spelling for GroupClaimPath. It
+	// supports the same bounded dotted path and cannot
+	// silently override an explicitly configured path.
+	GroupsClaim string `json:"groups_claim,omitempty"`
 	// GroupClaimCaseInsensitive lowercases mapped group values before matching.
 	// It defaults to false.
 	GroupClaimCaseInsensitive bool   `json:"group_claim_case_insensitive,omitempty"`

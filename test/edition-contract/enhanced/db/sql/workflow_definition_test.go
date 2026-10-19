@@ -206,3 +206,19 @@ func repositoryWorkflow(projectID int) db.WorkflowTemplate {
 		},
 	}
 }
+
+func TestWorkflowReadsDoNotCreateBaselineVersions(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	t.Cleanup(store.Close)
+	created, err := repository.CreateWorkflowTemplate(repositoryWorkflow(projectID))
+	require.NoError(t, err)
+	_, err = repository.GetWorkflowTemplate(projectID, created.ID)
+	require.NoError(t, err)
+	workflows, err := repository.GetWorkflowTemplates(projectID, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, workflows, 1)
+	assert.Zero(t, workflows[0].CurrentVersionID)
+	versions, err := repository.GetWorkflowVersions(projectID, created.ID, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	assert.Empty(t, versions)
+}

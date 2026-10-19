@@ -1,5 +1,8 @@
 import './setup';
 import { expect } from 'chai';
+import { mount, createLocalVue } from '@vue/test-utils';
+import Vuetify from 'vuetify';
+import i18n from '@/plugins/i18';
 import EventBus from '@/event-bus';
 import mockAxios, { httpError } from './helpers/axiosMock';
 
@@ -130,9 +133,99 @@ describe('Team.vue', () => {
     expect(Team.methods.memberPermissions.call(c, { roles: ['run', 'edit'] })).to.equal(5);
   });
 
+  it('includes mapped role permissions without making them manual roles', () => {
+    const c = ctx({ roles: [{ slug: 'run', permissions: 1 }, { slug: 'edit', permissions: 4 }] });
+    const member = {
+      roles: ['run'], mapped_roles: [{ role: 'edit', provider: 'qa', group: 'operators' }],
+    };
+    expect(Team.methods.memberPermissions.call(c, member)).to.equal(5);
+    expect(member.roles).to.deep.equal(['run']);
+    const mappedOnly = { roles: [], mapped_roles: member.mapped_roles };
+    expect(Team.methods.memberPermissions.call(c, mappedOnly)).to.equal(4);
+  });
+
   it('keeps a role missing from the list', () => {
     const items = Team.methods.roleItems.call(ctx(), { roles: ['owner', 'deployer'] });
     expect(items.filter((i) => i.slug).map((i) => i.slug)).to.deep.equal(['owner', 'deployer']);
     expect(items.find((i) => i.slug === 'deployer').name).to.equal('deployer');
+  });
+
+  it('keeps refusing an empty list without mapped roles', async () => {
+    const shown = [];
+    const listener = (e) => shown.push(e.text);
+    EventBus.$on('i-snackbar', listener);
+    const c = ctx();
+
+    await Team.methods.updateProjectUser.call(c, { id: 5, roles: [], mapped_roles: [] });
+
+    EventBus.$off('i-snackbar', listener);
+    expect(http.requests).to.have.length(0);
+    expect(shown).to.deep.equal(['memberNeedsRole']);
+  });
+
+  it('does not save a directory-managed member', async () => {
+    const shown = [];
+    const listener = (e) => shown.push(e.text);
+    EventBus.$on('i-snackbar', listener);
+    const c = { ...ctx(), isDirectoryManaged: Team.methods.isDirectoryManaged };
+    const mapped = [{ role: 'owner', provider: 'okta', group: 'Admins' }];
+
+    await Team.methods.updateProjectUser.call(c, { id: 5, roles: [], mapped_roles: mapped });
+
+    EventBus.$off('i-snackbar', listener);
+    expect(http.requests).to.have.length(0);
+    expect(shown).to.deep.equal(['memberKeepsMappedRoles']);
+  });
+
+  it('does not delete a directory-managed member', async () => {
+    const shown = [];
+    const listener = (e) => shown.push(e.text);
+    EventBus.$on('i-snackbar', listener);
+    const c = {
+      ...ctx(),
+      items: [],
+      isDirectoryManaged: Team.methods.isDirectoryManaged,
+      getSingleItemUrl() { return `/api/project/1/users/${this.itemId}`; },
+      async loadItems() { this.loaded += 1; },
+    };
+    c.items = [{ id: 5, roles: [], mapped_roles: [{ role: 'owner' }] }];
+
+    await Team.methods.deleteItem.call(c, 5);
+
+    EventBus.$off('i-snackbar', listener);
+    expect(http.requests).to.have.length(0);
+    expect(shown).to.deep.equal(['memberKeepsMappedRoles']);
+  });
+
+  it('shows mapped roles as locked chips', async () => {
+    http.respond((config) => {
+      if (config.url === '/api/project/1/roles/all') {
+        return [{
+          slug: 'owner', name: 'Owner', builtin: true, project_id: null,
+        }];
+      }
+      return [{
+        id: 5, name: 'Alice', username: 'alice', roles: [], mapped_roles: [{ role: 'owner', provider: 'okta', group: 'Admins' }],
+      }];
+    });
+    const wrapper = mount(Team, {
+      localVue: createLocalVue(),
+      vuetify: new Vuetify(),
+      i18n,
+      propsData: { projectId: 1, systemInfo: { teams: {} } },
+      stubs: {
+        EditTeamMemberDialog: true,
+        YesNoDialog: true,
+        TeamMenu: true,
+        'v-tooltip': { template: '<div><slot name="activator" :on="{}" :attrs="{}" /><slot /></div>' },
+      },
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+
+    const chip = wrapper.find('.v-chip');
+    expect(chip.find('.mdi-lock').exists()).to.equal(true);
+    expect(chip.text()).to.equal('Owner');
+    expect(wrapper.text()).to.contain('okta: Admins');
+    wrapper.destroy();
   });
 });

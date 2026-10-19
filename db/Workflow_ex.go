@@ -214,6 +214,10 @@ type WorkflowRunInput struct {
 	UserValues      map[string]json.RawMessage   `json:"parameters,omitempty"`
 	NodeOverrides   map[int]WorkflowNodeOverride `json:"node_overrides,omitempty"`
 	TriggerSnapshot *WorkflowTriggerSnapshot     `json:"-"`
+	// Environment holds non-secret workflow-survey answers. It remains
+	// separate from UserValues so the typed EX parameter snapshot and survey
+	// environment cannot overwrite one another.
+	Environment MapStringAnyField `json:"environment,omitempty"`
 }
 
 type WorkflowApprovalTimeoutOutcome string

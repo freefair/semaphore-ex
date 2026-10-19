@@ -135,6 +135,7 @@ type workflowRunView struct {
 	RootTaskID                  *int                                    `json:"root_task_id,omitempty"`
 	Parameters                  map[string]db.WorkflowParameterSnapshot `json:"parameters,omitempty"`
 	Trigger                     *db.WorkflowTriggerSnapshot             `json:"trigger,omitempty"`
+	Environment                 db.MapStringAnyField                    `json:"environment,omitempty"`
 }
 
 type workflowRunDefinitionView struct {
@@ -623,6 +624,7 @@ func readWorkflowRunInput(w http.ResponseWriter, r *http.Request) (db.WorkflowRu
 	request := struct {
 		Parameters               map[string]json.RawMessage                    `json:"parameters,omitempty"`
 		NodeOverrides            map[int]db.WorkflowNodeOverride               `json:"node_overrides,omitempty"`
+		Environment              db.MapStringAnyField                          `json:"environment,omitempty"`
 		DeploymentWindowOverride *pro_interfaces.DeploymentWindowOverrideInput `json:"deployment_window_override,omitempty"`
 	}{}
 	if r.Body == nil {
@@ -638,7 +640,7 @@ func readWorkflowRunInput(w http.ResponseWriter, r *http.Request) (db.WorkflowRu
 		helpers.WriteError(w, common_errors.NewValidationError("workflow run input is invalid"))
 		return db.WorkflowRunInput{}, nil, false
 	}
-	return db.WorkflowRunInput{UserValues: request.Parameters, NodeOverrides: request.NodeOverrides}, request.DeploymentWindowOverride, true
+	return db.WorkflowRunInput{UserValues: request.Parameters, NodeOverrides: request.NodeOverrides, Environment: request.Environment}, request.DeploymentWindowOverride, true
 }
 
 func (c *workflowController) writeWorkflowExecutionPreflightError(w http.ResponseWriter, r *http.Request, workflow db.WorkflowTemplate, planned pro_interfaces.ExecutionPreflightPlan, err error) bool {
@@ -934,6 +936,7 @@ func newWorkflowRunView(run db.WorkflowRun) workflowRunView {
 		End:                         run.End,
 		RootTaskID:                  run.RootTaskID,
 		Parameters:                  run.ParameterSnapshot,
+		Environment:                 run.Environment,
 	}
 	if run.TriggerSnapshot.ID > 0 {
 		trigger := run.TriggerSnapshot

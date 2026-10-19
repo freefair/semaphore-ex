@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -225,6 +226,28 @@ func ValidateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 	return result, err
 }
 
+func validateWorkflowSurveyBindings(node coreDB.WorkflowNode, template coreDB.Template, workflowVars map[string]struct{}, path string, nodeID *int, add func(string, string, string, *int, *int)) {
+	templateVars := make(map[string]coreDB.SurveyVar, len(template.SurveyVars))
+	for _, variable := range template.SurveyVars {
+		templateVars[variable.Name] = variable
+	}
+	seen := make(map[string]struct{}, len(node.SurveyInputs))
+	for index, binding := range node.SurveyInputs {
+		bindingPath := fmt.Sprintf("%s.survey_inputs[%d]", path, index)
+		if _, duplicate := seen[binding.Var]; duplicate {
+			add("WORKFLOW_SURVEY_BINDING_DUPLICATE", "A task survey variable can be bound only once.", bindingPath+".var", nodeID, nil)
+		}
+		seen[binding.Var] = struct{}{}
+		variable, exists := templateVars[binding.Var]
+		if !exists || variable.Type == coreDB.SurveyVarSecret {
+			add("WORKFLOW_SURVEY_BINDING_DESTINATION_INVALID", "Workflow survey bindings require a declared non-secret task survey variable.", bindingPath+".var", nodeID, nil)
+		}
+		if _, exists := workflowVars[binding.WorkflowVar]; !exists {
+			add("WORKFLOW_SURVEY_BINDING_SOURCE_INVALID", "Workflow survey binding references an unknown workflow variable.", bindingPath+".workflow_var", nodeID, nil)
+		}
+	}
+}
+
 func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, workflow coreDB.WorkflowTemplate) (coreDB.WorkflowValidationResult, error) {
 	issues := make([]coreDB.WorkflowValidationIssue, 0)
 	add := func(code, message, path string, nodeID, edgeID *int) {
@@ -260,6 +283,10 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 	globalCredentialStore, hasGlobalCredentialStore := store.(coreDB.WorkflowGlobalCredentialValidationStore)
 	requiresParameterResources := false
 	parameterTypes := make(map[string]coreDB.WorkflowParameterType, len(workflow.ParameterDefinitions))
+	workflowSurveyNames := make(map[string]struct{}, len(workflow.SurveyVars))
+	for _, variable := range workflow.SurveyVars {
+		workflowSurveyNames[variable.Name] = struct{}{}
+	}
 	for _, parameter := range workflow.ParameterDefinitions {
 		requiresParameterResources = requiresParameterResources || len(parameter.SecretOptions) > 0
 		parameterTypes[parameter.Name] = parameter.Type
@@ -324,6 +351,9 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 		switch node.EffectiveKind() {
 		case coreDB.WorkflowNodeTaskKind:
 			if node.CrossProjectTemplateReference != nil {
+				if len(node.SurveyInputs) > 0 {
+					add("WORKFLOW_SURVEY_BINDING_CROSS_PROJECT_FORBIDDEN", "Cross-project task nodes cannot bind workflow survey variables.", path+".survey_inputs", &id, nil)
+				}
 				if err := node.CrossProjectTemplateReference.ValidateNormalized(); err != nil {
 					add("WORKFLOW_CROSS_PROJECT_REFERENCE_INVALID", "Cross-project template provenance is invalid.", path+".cross_project_template_reference", &id, nil)
 				}
@@ -357,6 +387,7 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 				}
 			}
 			if templateAvailable {
+				validateWorkflowSurveyBindings(node, template, workflowSurveyNames, path, &id, add)
 				if len(node.OverridePolicy.InventoryIDs) > 0 {
 					allowed, err := template.CanOverrideInventory()
 					if err != nil {
@@ -394,6 +425,9 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 				}
 			}
 		case coreDB.WorkflowNodeApprovalKind:
+			if len(node.SurveyInputs) > 0 {
+				add("WORKFLOW_SURVEY_BINDING_NODE_KIND_INVALID", "Only task nodes can bind workflow survey variables.", path+".survey_inputs", &id, nil)
+			}
 			if node.TemplateID != 0 {
 				add("WORKFLOW_APPROVAL_TEMPLATE_FORBIDDEN", "Approval nodes cannot reference a template.", path+".template_id", &id, nil)
 			}
@@ -411,10 +445,16 @@ func validateWorkflowTemplate(store coreDB.WorkflowTemplateValidationStore, work
 				add("WORKFLOW_APPROVAL_TIMEOUT_OUTCOME_INVALID", "Approval timeout outcome is invalid.", path+".approval_timeout_outcome", &id, nil)
 			}
 		case coreDB.WorkflowNodeNoteKind:
+			if len(node.SurveyInputs) > 0 {
+				add("WORKFLOW_SURVEY_BINDING_NODE_KIND_INVALID", "Only task nodes can bind workflow survey variables.", path+".survey_inputs", &id, nil)
+			}
 			if node.TemplateID != 0 {
 				add("WORKFLOW_NOTE_TEMPLATE_FORBIDDEN", "Note nodes cannot reference a template.", path+".template_id", &id, nil)
 			}
 		case coreDB.WorkflowNodeDelayKind:
+			if len(node.SurveyInputs) > 0 {
+				add("WORKFLOW_SURVEY_BINDING_NODE_KIND_INVALID", "Only task nodes can bind workflow survey variables.", path+".survey_inputs", &id, nil)
+			}
 			if node.TemplateID != 0 {
 				add("WORKFLOW_DELAY_TEMPLATE_FORBIDDEN", "Delay nodes cannot reference a template.", path+".template_id", &id, nil)
 			}
@@ -745,6 +785,13 @@ func BuildWorkflowRunSnapshotWithCrossProjectProvenance(
 	if len(inputs) == 1 {
 		input = inputs[0]
 	}
+	if err := coreDB.ValidateWorkflowSurveyVars(workflow.SurveyVars); err != nil {
+		return coreDB.WorkflowRun{}, err
+	}
+	environment, err := resolveWorkflowSurveyEnvironment(workflow.SurveyVars, input.Environment)
+	if err != nil {
+		return coreDB.WorkflowRun{}, err
+	}
 	parameterSnapshot, err := coreDB.ResolveWorkflowParameters(
 		workflow.ParameterDefinitions, input.TriggerValues, input.UserValues,
 	)
@@ -786,7 +833,8 @@ func BuildWorkflowRunSnapshotWithCrossProjectProvenance(
 		CorrelationID:     correlationID, DefinitionSnapshotJSON: string(definitionJSON),
 		DefinitionSnapshot: workflow, ParameterSnapshotJSON: string(parameterJSON), ParameterSnapshot: parameterSnapshot,
 		TriggerSnapshotJSON: triggerSnapshotJSON, TriggerSnapshot: triggerSnapshot,
-		Created: now, Start: &now,
+		Environment: environment,
+		Created:     now, Start: &now,
 		Nodes: make([]coreDB.WorkflowRunNode, 0, len(workflow.Nodes)),
 	}
 	for _, node := range workflow.Nodes {
@@ -837,6 +885,113 @@ func BuildWorkflowRunSnapshotWithCrossProjectProvenance(
 		})
 	}
 	return run, nil
+}
+
+// ResolveWorkflowSurveyEnvironment validates and deep-copies the public survey
+// values that become an immutable run environment.
+func resolveWorkflowSurveyEnvironment(vars []coreDB.SurveyVar, input coreDB.MapStringAnyField) (coreDB.MapStringAnyField, error) {
+	if err := coreDB.ValidateWorkflowSurveyVars(vars); err != nil {
+		return nil, err
+	}
+	declared := make(map[string]coreDB.SurveyVar, len(vars))
+	result := make(coreDB.MapStringAnyField, len(vars))
+	for _, variable := range vars {
+		declared[variable.Name] = variable
+		if variable.DefaultValue != nil && len(variable.DefaultValue.Values) > 0 {
+			if variable.Type == coreDB.SurveyVarSelect {
+				values := make([]any, len(variable.DefaultValue.Values))
+				for index := range variable.DefaultValue.Values {
+					values[index] = variable.DefaultValue.Values[index]
+				}
+				result[variable.Name] = values
+			} else {
+				result[variable.Name] = variable.DefaultValue.Values[0]
+			}
+			if err := validateWorkflowSurveyValue(variable, result[variable.Name]); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for name, value := range input {
+		variable, ok := declared[name]
+		if !ok {
+			return nil, common_errors.NewValidationError("workflow survey value is unknown: " + name)
+		}
+		if variable.Type == coreDB.SurveyVarSecret {
+			return nil, common_errors.NewValidationError("workflow survey secret values are forbidden")
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, common_errors.NewValidationError("workflow survey value is invalid")
+		}
+		var copy any
+		if err = json.Unmarshal(encoded, &copy); err != nil {
+			return nil, common_errors.NewValidationError("workflow survey value is invalid")
+		}
+		if err = validateWorkflowSurveyValue(variable, copy); err != nil {
+			return nil, err
+		}
+		result[name] = copy
+	}
+	for name, variable := range declared {
+		if variable.Required {
+			value, ok := result[name]
+			emptySelect := false
+			if variable.Type == coreDB.SurveyVarSelect {
+				values, valuesOK := value.([]any)
+				emptySelect = valuesOK && len(values) == 0
+			}
+			if !ok || value == nil || value == "" || emptySelect {
+				return nil, common_errors.NewValidationError("workflow survey value is required: " + name)
+			}
+		}
+	}
+	return result, nil
+}
+
+func validateWorkflowSurveyValue(variable coreDB.SurveyVar, value any) error {
+	validOption := func(value string) bool {
+		for _, option := range variable.Values {
+			if option.Value == value {
+				return true
+			}
+		}
+		return false
+	}
+	switch variable.Type {
+	case coreDB.SurveyVarStr, coreDB.SurveyVarText:
+		if _, ok := value.(string); !ok {
+			return common_errors.NewValidationError("workflow survey value has invalid type: " + variable.Name)
+		}
+	case coreDB.SurveyVarInt:
+		number, ok := value.(float64)
+		if text, textOK := value.(string); textOK {
+			_, err := strconv.ParseInt(text, 10, 64)
+			ok = err == nil
+		}
+		if !ok || (number != 0 && number != float64(int64(number))) {
+			return common_errors.NewValidationError("workflow survey value has invalid type: " + variable.Name)
+		}
+	case coreDB.SurveyVarEnum:
+		text, ok := value.(string)
+		if !ok || !validOption(text) {
+			return common_errors.NewValidationError("workflow survey value is invalid: " + variable.Name)
+		}
+	case coreDB.SurveyVarSelect:
+		items, ok := value.([]any)
+		if !ok {
+			return common_errors.NewValidationError("workflow survey value has invalid type: " + variable.Name)
+		}
+		for _, item := range items {
+			text, ok := item.(string)
+			if !ok || !validOption(text) {
+				return common_errors.NewValidationError("workflow survey value is invalid: " + variable.Name)
+			}
+		}
+	default:
+		return common_errors.NewValidationError("workflow survey variable type is invalid")
+	}
+	return nil
 }
 
 func validateRunnableWorkflow(workflow coreDB.WorkflowTemplate) error {

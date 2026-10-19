@@ -27,11 +27,11 @@ type OIDCGroupRoleAssignment struct {
 }
 
 type OIDCGroupAssignmentChange struct {
-	MappingID   string
-	UserID      int
-	TargetScope string
-	ProjectID   *int
-	RoleID      string
+	MappingID   string `db:"mapping_id"`
+	UserID      int    `db:"user_id"`
+	TargetScope string `db:"target_scope"`
+	ProjectID   *int   `db:"project_id"`
+	RoleID      string `db:"role_id"`
 }
 
 type OIDCGroupReconciliation struct {

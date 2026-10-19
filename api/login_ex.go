@@ -368,11 +368,20 @@ func loginLegacyCompatible(
 }
 
 func oidcGroupClaimConfiguration(provider util.OidcProvider) (pro_interfaces.OIDCGroupClaimConfiguration, bool, error) {
-	if strings.TrimSpace(provider.GroupClaimPath) == "" {
+	path := strings.TrimSpace(provider.GroupClaimPath)
+	compatibilityPath := strings.TrimSpace(provider.GroupsClaim)
+	if path != "" && compatibilityPath != "" && path != compatibilityPath {
+		return pro_interfaces.OIDCGroupClaimConfiguration{}, false,
+			common_errors.NewValidationError("group_claim_path and groups_claim must match when both are configured")
+	}
+	if path == "" {
+		path = compatibilityPath
+	}
+	if path == "" {
 		return pro_interfaces.OIDCGroupClaimConfiguration{}, false, nil
 	}
 	configuration := pro_interfaces.OIDCGroupClaimConfiguration{
-		Path: provider.GroupClaimPath, CaseInsensitive: provider.GroupClaimCaseInsensitive,
+		Path: path, CaseInsensitive: provider.GroupClaimCaseInsensitive,
 		MissingClaimPolicy: pro_interfaces.OIDCMissingClaimPolicy(provider.GroupClaimMissingPolicy),
 	}
 	if err := pro_interfaces.NormalizeOIDCGroupClaimConfiguration(&configuration); err != nil {

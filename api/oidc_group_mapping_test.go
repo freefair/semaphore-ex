@@ -156,6 +156,33 @@ func TestOIDCGroupMappingControllerCRUDAndAuditContract(t *testing.T) {
 	assert.Equal(t, 3, service.deleteRequest.ExpectedRevision)
 }
 
+func TestOIDCGroupMappingControllerDeleteMapsStoreConflicts(t *testing.T) {
+	withOIDCGroupProvider(t)
+	for _, test := range []struct {
+		name string
+		err  error
+		code string
+	}{
+		{name: "project administrator", err: db.ErrLastProjectAdministrator, code: "OIDC_GROUP_PROTECTED_ADMINISTRATOR"},
+		{name: "global administrator", err: db.ErrLastGlobalAdministrator, code: "OIDC_GROUP_PROTECTED_ADMINISTRATOR"},
+		{name: "assignment ownership", err: db.ErrOIDCGroupMappingCollision, code: "OIDC_GROUP_MAPPING_COLLISION"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			controller := NewOIDCGroupMappingController(&oidcGroupMappingServiceStub{err: test.err}, nil)
+			request := httptest.NewRequest(http.MethodDelete,
+				"/api/capabilities/oidc/group-mappings/engineering?provider_id=corp&expected_revision=3", nil)
+			request = mux.SetURLVars(request, map[string]string{"mapping_id": "engineering"})
+			request = helpers.SetContextValue(request, "user", &db.User{ID: 7, Admin: true})
+			recorder := httptest.NewRecorder()
+
+			controller.DeleteGroupMapping(recorder, request)
+
+			assert.Equal(t, http.StatusConflict, recorder.Code)
+			assert.Contains(t, recorder.Body.String(), test.code)
+		})
+	}
+}
+
 func TestOIDCGroupMappingControllerPreviewAcceptsOnlySelectedClaimFixture(t *testing.T) {
 	withOIDCGroupProvider(t)
 	service := &oidcGroupMappingServiceStub{preview: pro_interfaces.OIDCGroupPreview{

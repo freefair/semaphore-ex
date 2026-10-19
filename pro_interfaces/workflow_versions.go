@@ -40,6 +40,7 @@ type canonicalWorkflowDefinition struct {
 	Parameters  []db.WorkflowParameterDeclaration `json:"parameters"`
 	Permissions canonicalWorkflowPermissions      `json:"permissions"`
 	References  []canonicalWorkflowReference      `json:"references"`
+	SurveyVars  []db.SurveyVar                    `json:"survey_vars,omitempty"`
 }
 
 type canonicalWorkflowMetadata struct {
@@ -69,6 +70,7 @@ type canonicalWorkflowNode struct {
 	Note                       *string                           `json:"note,omitempty"`
 	PositionX                  int                               `json:"position_x"`
 	PositionY                  int                               `json:"position_y"`
+	SurveyInputs               []db.WorkflowNodeSurveyInput      `json:"survey_inputs,omitempty"`
 }
 
 type canonicalWorkflowArtifactInput struct {
@@ -149,6 +151,7 @@ func DiffWorkflowDefinitions(before db.WorkflowTemplate, after db.WorkflowTempla
 		{"parameters", left.Parameters, right.Parameters},
 		{"permissions", left.Permissions, right.Permissions},
 		{"references", left.References, right.References},
+		{"survey_vars", left.SurveyVars, right.SurveyVars},
 	}
 	diff := WorkflowDefinitionDiff{Changes: make([]WorkflowDefinitionDiffChange, 0, len(sections))}
 	for _, section := range sections {
@@ -200,6 +203,7 @@ func canonicalizeWorkflowDefinition(workflow db.WorkflowTemplate) (canonicalWork
 			ApprovalSeparationOfDuties: node.ApprovalSeparationOfDuties, TaskParams: node.TaskParams,
 			ArtifactOutputs: append([]db.WorkflowArtifactDeclaration(nil), node.ArtifactOutputs...), ArtifactInputs: inputs,
 			OverridePolicy: node.OverridePolicy, Note: node.Note, PositionX: node.PositionX, PositionY: node.PositionY,
+			SurveyInputs: append([]db.WorkflowNodeSurveyInput(nil), node.SurveyInputs...),
 		}
 		if node.CrossProjectTemplateReference != nil {
 			reference := node.CrossProjectTemplateReference
@@ -277,6 +281,7 @@ func canonicalizeWorkflowDefinition(workflow db.WorkflowTemplate) (canonicalWork
 	sort.Slice(startRoles, func(i, j int) bool { return startRoles[i] < startRoles[j] })
 	sort.Slice(references, func(i, j int) bool { return references[i].NodeOrdinal < references[j].NodeOrdinal })
 	return canonicalWorkflowDefinition{
+		SurveyVars: append([]db.SurveyVar(nil), workflow.SurveyVars...),
 		Metadata: canonicalWorkflowMetadata{
 			Name: workflow.Name, Description: workflow.Description, StartVersion: workflow.StartVersion,
 			DefinitionVersion: workflow.DefinitionVersion, MaxParallelTasks: workflow.MaxParallelTasks,

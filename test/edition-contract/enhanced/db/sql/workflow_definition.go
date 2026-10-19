@@ -141,6 +141,11 @@ func (d *WorkflowStoreImpl) GetWorkflowTemplates(projectID int, params db.Retrie
 		if err := decodeWorkflowPolicies(&workflows[index]); err != nil {
 			return nil, err
 		}
+		version, versionErr := d.GetWorkflowVersion(projectID, workflows[index].ID, workflows[index].Revision)
+		if versionErr != nil && !errors.Is(versionErr, db.ErrNotFound) {
+			return nil, versionErr
+		}
+		workflows[index].SurveyVars = version.DefinitionSnapshot.SurveyVars
 	}
 	return workflows, nil
 }
@@ -163,11 +168,23 @@ func (d *WorkflowStoreImpl) GetWorkflowTemplate(projectID int, workflowID int) (
 	if err := decodeWorkflowPolicies(&workflow); err != nil {
 		return db.WorkflowTemplate{}, err
 	}
+	// Workflow survey declarations are version-owned. The mutable workflow row
+	// intentionally has no duplicate survey column; project the current
+	// immutable definition so reads and starts use the same declaration.
+	version, err := d.GetWorkflowVersion(projectID, workflowID, workflow.Revision)
+	if err != nil && !errors.Is(err, db.ErrNotFound) {
+		return db.WorkflowTemplate{}, err
+	}
+	workflow.SurveyVars = version.DefinitionSnapshot.SurveyVars
 	return workflow, nil
 }
 
 func (d *WorkflowStoreImpl) CreateWorkflowTemplate(workflow db.WorkflowTemplate) (db.WorkflowTemplate, error) {
-	created, _, err := d.createWorkflowTemplate(workflow, nil, false)
+	var mutation *db.WorkflowVersionMutation
+	if len(workflow.SurveyVars) > 0 {
+		mutation = &db.WorkflowVersionMutation{AuthorUserID: 0, Message: "Baseline imported workflow survey", Created: time.Now().UTC()}
+	}
+	created, _, err := d.createWorkflowTemplate(workflow, mutation, false)
 	return created, err
 }
 
@@ -321,6 +338,21 @@ func (d *WorkflowStoreImpl) updateWorkflowTemplate(
 	}
 	workflow.Revision++
 	var version db.WorkflowVersion
+	if mutation == nil {
+		latest, latestErr := d.latestWorkflowVersionTx(tx, workflow.ProjectID, workflow.ID)
+		if latestErr == nil {
+			if err = decodeWorkflowVersion(&latest); err != nil {
+				return db.WorkflowTemplate{}, db.WorkflowVersion{}, err
+			}
+			if len(workflow.SurveyVars) > 0 || len(latest.DefinitionSnapshot.SurveyVars) > 0 {
+				mutation = &db.WorkflowVersionMutation{AuthorUserID: 0, Message: "Baseline imported workflow survey update", Created: time.Now().UTC()}
+			}
+		} else if !errors.Is(latestErr, db.ErrNotFound) {
+			return db.WorkflowTemplate{}, db.WorkflowVersion{}, latestErr
+		} else if len(workflow.SurveyVars) > 0 {
+			mutation = &db.WorkflowVersionMutation{AuthorUserID: 0, Message: "Baseline imported workflow survey update", Created: time.Now().UTC()}
+		}
+	}
 	if mutation != nil {
 		parent, parentErr := d.latestWorkflowVersionTx(tx, workflow.ProjectID, workflow.ID)
 		if errors.Is(parentErr, db.ErrNotFound) {
@@ -603,7 +635,7 @@ func (d *WorkflowStoreImpl) selectWorkflowTemplateTx(tx *gorp.Transaction, proje
 
 func (d *WorkflowStoreImpl) loadWorkflowGraph(tx *gorp.Transaction, workflow *db.WorkflowTemplate) error {
 	nodeQuery := d.connection.PrepareQuery(
-		"select id, workflow_template_id, template_id, cross_project_template_reference, kind, convergence_mode, join_mode, approval_timeout, approval_message, approval_permission, approval_timeout_outcome, approval_separation_of_duties, delay_seconds, approval_role_policy, approval_role_policy_revision, task_params_id, note, position_x, position_y, display_name, artifact_outputs, artifact_inputs, override_policy from project__workflow_node where workflow_template_id=? order by id")
+		"select id, workflow_template_id, template_id, cross_project_template_reference, kind, convergence_mode, join_mode, approval_timeout, approval_message, approval_permission, approval_timeout_outcome, approval_separation_of_duties, delay_seconds, approval_role_policy, approval_role_policy_revision, task_params_id, note, position_x, position_y, display_name, artifact_outputs, artifact_inputs, override_policy, survey_inputs from project__workflow_node where workflow_template_id=? order by id")
 	edgeQuery := d.connection.PrepareQuery(
 		"select * from project__workflow_edge where workflow_template_id=? order by id")
 	var err error
@@ -643,6 +675,11 @@ func (d *WorkflowStoreImpl) loadWorkflowGraph(tx *gorp.Transaction, workflow *db
 			return fmt.Errorf("decode workflow cross-project template reference: %w", decodeErr)
 		}
 		workflow.Nodes[index].CrossProjectTemplateReference = reference
+		if raw := workflow.Nodes[index].SurveyInputsJSON; raw != nil {
+			if err = json.Unmarshal([]byte(*raw), &workflow.Nodes[index].SurveyInputs); err != nil {
+				return fmt.Errorf("decode workflow survey inputs: %w", err)
+			}
+		}
 		if err = decodeWorkflowArtifactDefinition(&workflow.Nodes[index]); err != nil {
 			return err
 		}
@@ -707,10 +744,10 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 		}
 		if _, exists := existingNodes[clientID]; exists && clientID > 0 {
 			if _, err := tx.Exec(d.connection.PrepareQuery(
-				"update project__workflow_node set template_id=?, cross_project_template_reference=?, kind=?, convergence_mode=?, join_mode=?, approval_timeout=?, approval_message=?, approval_permission=?, approval_timeout_outcome=?, approval_separation_of_duties=?, delay_seconds=?, approval_role_policy=?, approval_role_policy_revision=?, task_params_id=?, note=?, position_x=?, position_y=?, display_name=?, override_policy=? where workflow_template_id=? and id=?"),
+				"update project__workflow_node set template_id=?, cross_project_template_reference=?, kind=?, convergence_mode=?, join_mode=?, approval_timeout=?, approval_message=?, approval_permission=?, approval_timeout_outcome=?, approval_separation_of_duties=?, delay_seconds=?, approval_role_policy=?, approval_role_policy_revision=?, task_params_id=?, note=?, position_x=?, position_y=?, display_name=?, override_policy=?, survey_inputs=? where workflow_template_id=? and id=?"),
 				node.TemplateID, node.CrossProjectTemplateReferenceJSON, node.Kind, node.ConvergenceMode, node.JoinMode, node.ApprovalTimeout, node.ApprovalMessage,
 				node.ApprovalPermission, node.ApprovalTimeoutOutcome, sqlBool(node.ApprovalSeparationOfDuties), node.DelaySeconds,
-				node.ApprovalRolePolicyJSON, node.ApprovalRolePolicyRevision, node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, node.OverridePolicyJSON,
+				node.ApprovalRolePolicyJSON, node.ApprovalRolePolicyRevision, node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, node.OverridePolicyJSON, db.ObjectToJSON(node.SurveyInputs),
 				workflow.ID, clientID,
 			); err != nil {
 				return err
@@ -729,10 +766,10 @@ func (d *WorkflowStoreImpl) replaceWorkflowGraph(tx *gorp.Transaction, workflow 
 			return fmt.Errorf("workflow node %d does not belong to workflow %d", clientID, workflow.ID)
 		}
 		newID, err := d.insertTx(tx,
-			"insert into project__workflow_node(workflow_template_id, template_id, cross_project_template_reference, kind, convergence_mode, join_mode, approval_timeout, approval_message, approval_permission, approval_timeout_outcome, approval_separation_of_duties, delay_seconds, approval_role_policy, approval_role_policy_revision, task_params_id, note, position_x, position_y, display_name, artifact_outputs, artifact_inputs, override_policy) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"insert into project__workflow_node(workflow_template_id, template_id, cross_project_template_reference, kind, convergence_mode, join_mode, approval_timeout, approval_message, approval_permission, approval_timeout_outcome, approval_separation_of_duties, delay_seconds, approval_role_policy, approval_role_policy_revision, task_params_id, note, position_x, position_y, display_name, artifact_outputs, artifact_inputs, override_policy, survey_inputs) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			workflow.ID, node.TemplateID, node.CrossProjectTemplateReferenceJSON, node.Kind, node.ConvergenceMode, node.JoinMode, node.ApprovalTimeout,
 			node.ApprovalMessage, node.ApprovalPermission, node.ApprovalTimeoutOutcome, sqlBool(node.ApprovalSeparationOfDuties), node.DelaySeconds,
-			node.ApprovalRolePolicyJSON, node.ApprovalRolePolicyRevision, node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, "[]", "[]", node.OverridePolicyJSON,
+			node.ApprovalRolePolicyJSON, node.ApprovalRolePolicyRevision, node.TaskParamsID, node.Note, node.PositionX, node.PositionY, node.DisplayName, "[]", "[]", node.OverridePolicyJSON, db.ObjectToJSON(node.SurveyInputs),
 		)
 		if err != nil {
 			return err

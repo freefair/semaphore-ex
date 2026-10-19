@@ -76,6 +76,18 @@ func TestClaimOIDCTokenSkipsGroupParsingForLinkMode(t *testing.T) {
 	assert.Nil(t, claims.groups)
 }
 
+func TestOIDCGroupClaimConfigurationAcceptsUpstreamGroupsClaimAlias(t *testing.T) {
+	configuration, configured, err := oidcGroupClaimConfiguration(util.OidcProvider{GroupsClaim: "realm.groups"})
+	require.NoError(t, err)
+	assert.True(t, configured)
+	assert.Equal(t, "realm.groups", configuration.Path)
+
+	_, _, err = oidcGroupClaimConfiguration(util.OidcProvider{
+		GroupClaimPath: "realm.groups", GroupsClaim: "resource.groups",
+	})
+	assert.Error(t, err)
+}
+
 func TestOIDCRedirectLinkModeSkipsMalformedGroupClaimAndReconciliation(t *testing.T) {
 	fixture := newOIDCGroupCallbackFixture(t, map[string]any{"unexpected": true}, "preserve")
 	user, err := fixture.store.CreateUserWithoutPassword(db.User{

@@ -137,6 +137,16 @@ symbols:
     signature: func(_ pro_interfaces.PolicyGuardrailGovernanceServiceFacade) pro_interfaces.PolicyGuardrailController
     selected_signature: func(service pro_interfaces.PolicyGuardrailGovernanceServiceFacade) pro_interfaces.PolicyGuardrailController
     implementation: local
+  - name: api:NewRoleMappingsController
+    signature: func(db.RoleMappingStore, db.Store) *pro/api.RoleMappingsController
+    selected_signature: func(m db.RoleMappingStore, store db.Store) *pro/api.RoleMappingsController
+    implementation: local
+    behavior_tests:
+      - api/role_mappings_route_test.go::TestRoleMappingRoutesRequireAdminAndUseEnhancedStore
+      - test/edition-contract/enhanced/api/role_mappings_test.go::TestRoleMappingsControllerPostResolvesBuiltinAndScopedSlug
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
   - name: api:NewRolesController
     signature: func(store db.Store, _ pro_interfaces.CapabilityProvider) *pro/api.RolesController
     selected_signature: func(store db.Store, capabilityProvider pro_interfaces.CapabilityProvider) *pro/api.RolesController
@@ -156,6 +166,46 @@ symbols:
     signature: func(pro_interfaces.WorkflowArtifactRetentionGovernanceServiceFacade) pro_interfaces.WorkflowArtifactRetentionController
     selected_signature: func(service pro_interfaces.WorkflowArtifactRetentionGovernanceServiceFacade) pro_interfaces.WorkflowArtifactRetentionController
     implementation: local
+  - name: api:RoleMappingsController
+    signature: struct{}
+    selected_signature: struct{}
+    implementation: local
+    behavior_tests:
+      - api/role_mappings_route_test.go::TestRoleMappingRoutesRequireAdminAndUseEnhancedStore
+      - test/edition-contract/enhanced/api/role_mappings_test.go::TestRoleMappingsControllerPostResolvesBuiltinAndScopedSlug
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
+  - name: api:RoleMappingsController.AddMapping
+    signature: func(w net/http.ResponseWriter, _ *net/http.Request)
+    selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
+    implementation: local
+    behavior_tests:
+      - api/role_mappings_route_test.go::TestRoleMappingRoutesRequireAdminAndUseEnhancedStore
+      - test/edition-contract/enhanced/api/role_mappings_test.go::TestRoleMappingsControllerPostResolvesBuiltinAndScopedSlug
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
+  - name: api:RoleMappingsController.DeleteMapping
+    signature: func(w net/http.ResponseWriter, _ *net/http.Request)
+    selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
+    implementation: local
+    behavior_tests:
+      - api/role_mappings_route_test.go::TestRoleMappingRoutesRequireAdminAndUseEnhancedStore
+      - test/edition-contract/enhanced/api/role_mappings_test.go::TestRoleMappingsControllerPostResolvesBuiltinAndScopedSlug
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
+  - name: api:RoleMappingsController.GetMappings
+    signature: func(w net/http.ResponseWriter, _ *net/http.Request)
+    selected_signature: func(w net/http.ResponseWriter, _ *net/http.Request)
+    implementation: local
+    behavior_tests:
+      - api/role_mappings_route_test.go::TestRoleMappingRoutesRequireAdminAndUseEnhancedStore
+      - test/edition-contract/enhanced/api/role_mappings_test.go::TestRoleMappingsControllerPostResolvesBuiltinAndScopedSlug
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
   - name: api:RolesController
     signature: struct{}
     selected_signature: struct{}
@@ -302,6 +352,16 @@ symbols:
     signature: func(db.Store) pro_interfaces.PolicyGuardrailRepository
     selected_signature: func(store db.Store) pro_interfaces.PolicyGuardrailRepository
     implementation: local
+  - name: db/factory:NewRoleMappingStore
+    signature: func(store db.Store) db.RoleMappingStore
+    selected_signature: func(store db.Store) db.RoleMappingStore
+    implementation: local
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/role_mapping_test.go::TestRoleMappingStoreCRUDRevokesOnlyOwnedGrant
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
   - name: db/factory:NewTerraformStore
     signature: func(store db.Store) db.TerraformStore
     selected_signature: func(store db.Store) db.TerraformStore
@@ -416,6 +476,56 @@ symbols:
     behavior_tests:
     - test/edition-contract/enhanced/db/sql/ansible_task_test.go::TestTaskSummaryRepository_PersistsIdempotentOutOfOrderResults
     - test/edition-contract/enhanced/db/sql/ansible_task_test.go::TestTaskSummaryRepository_BoundsPagesAndScopesEveryRead
+  - name: db/sql:RoleMappingStoreImpl
+    signature: struct{}
+    selected_signature: struct{}
+    implementation: local
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/role_mapping_test.go::TestRoleMappingStoreCRUDRevokesOnlyOwnedGrant
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
+  - name: db/sql:RoleMappingStoreImpl.CreateRoleMapping
+    signature: func(mapping db.RoleMapping) (db.RoleMapping, error)
+    selected_signature: func(m db.RoleMapping) (db.RoleMapping, error)
+    implementation: local
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/role_mapping_test.go::TestRoleMappingStoreCRUDRevokesOnlyOwnedGrant
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
+  - name: db/sql:RoleMappingStoreImpl.DeleteRoleMapping
+    signature: func(int) (db.RoleMapping, []db.MappedRole, error)
+    selected_signature: func(id int) (db.RoleMapping, []db.MappedRole, error)
+    implementation: local
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/role_mapping_test.go::TestRoleMappingStoreCRUDRevokesOnlyOwnedGrant
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
+  - name: db/sql:RoleMappingStoreImpl.GetRoleMappings
+    signature: func() ([]db.RoleMapping, error)
+    selected_signature: func() ([]db.RoleMapping, error)
+    implementation: local
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/role_mapping_test.go::TestRoleMappingStoreCRUDRevokesOnlyOwnedGrant
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
+  - name: db/sql:RoleMappingStoreImpl.SyncMappedRoles
+    signature: func(int, string, []string) ([]db.MappedRole, []db.MappedRole, error)
+    selected_signature: func(userID int, providerID string, groups []string) ([]db.MappedRole, []db.MappedRole, error)
+    implementation: local
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/role_mapping_test.go::TestRoleMappingStoreCRUDRevokesOnlyOwnedGrant
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
   - name: db/sql:TerraformStoreImpl
     signature: struct{}
     selected_signature: struct{}
@@ -3144,6 +3254,15 @@ symbols:
   - name: db:MapStringAnyField
     signature: map[string]any
     implementation: core
+  - name: db:MappedRole
+    signature: >-
+      struct{ProjectID int "db:\"project_id\""; UserID int "db:\"user_id\""; Username string "db:\"username\"";
+      MappingID int "db:\"mapping_id\""; Provider string "db:\"provider\""; Group string "db:\"group_name\"";
+      RoleID db.ProjectRoleID "db:\"role_id\""; RoleSlug string "db:\"role_slug\""; RoleName string
+      "db:\"role_name\""; RolePermissions db.ProjectUserPermission "db:\"role_permissions\""}
+    implementation: core
+    behavior_tests:
+      - api/projects/users_test.go::TestMappedMembers
   - name: db:MaxAuditWebhookAttemptEventIDBytes
     signature: untyped int = 128
     implementation: core
@@ -3578,8 +3697,13 @@ symbols:
       time.Time "db:\"created\" json:\"created\""; Updated time.Time "db:\"updated\" json:\"updated\""}
     implementation: core
   - name: db:OIDCGroupAssignmentChange
-    signature: struct{MappingID string; UserID int; TargetScope string; ProjectID *int; RoleID string}
+    signature: >-
+      struct{MappingID string "db:\"mapping_id\""; UserID int "db:\"user_id\""; TargetScope string
+      "db:\"target_scope\""; ProjectID *int "db:\"project_id\""; RoleID string "db:\"role_id\""}
     implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/role_mapping_test.go::TestRoleMappingStoreCRUDRevokesOnlyOwnedGrant
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
   - name: db:OIDCGroupMapping
     signature: >-
       struct{ID string "db:\"id\" json:\"id\""; ProviderID string "db:\"provider_id\" json:\"provider_id\""; ClaimValue string
@@ -3590,14 +3714,20 @@ symbols:
     implementation: core
   - name: db:OIDCGroupMappingRepository
     signature: >-
-      interface{ApplyOIDCGroupReconciliation(reconciliation db.OIDCGroupReconciliation, additions []db.OIDCGroupAssignmentChange, removals
-      []db.OIDCGroupAssignmentChange) (db.OIDCGroupReconciliation, error); DeleteOIDCGroupMapping(providerID string, mappingID string,
-      expectedRevision int) error; GetOIDCGroupMappingRevision(providerID string) (int, error); GetOIDCGroupMappings(providerID string)
-      ([]db.OIDCGroupMapping, error); GetOIDCGroupReconciliationHistory(providerID string, limit int) ([]db.OIDCGroupReconciliation, error);
-      GetOIDCGroupRoleAssignments(providerID string, userID int) ([]db.OIDCGroupRoleAssignment, error); SaveOIDCGroupMapping(mapping
-      db.OIDCGroupMapping, expectedRevision int) (db.OIDCGroupMapping, error); SaveOIDCGroupReconciliation(reconciliation
-      db.OIDCGroupReconciliation) (db.OIDCGroupReconciliation, error)}
+      interface{ApplyOIDCGroupReconciliation(reconciliation db.OIDCGroupReconciliation, additions
+      []db.OIDCGroupAssignmentChange, removals []db.OIDCGroupAssignmentChange) (db.OIDCGroupReconciliation,
+      error); DeleteOIDCGroupMapping(providerID string, mappingID string, expectedRevision int) error;
+      DeleteOIDCGroupMappingAndRevoke(providerID string, mappingID string, expectedRevision int) error;
+      GetOIDCGroupMappingRevision(providerID string) (int, error); GetOIDCGroupMappings(providerID string)
+      ([]db.OIDCGroupMapping, error); GetOIDCGroupReconciliationHistory(providerID string, limit int)
+      ([]db.OIDCGroupReconciliation, error); GetOIDCGroupRoleAssignments(providerID string, userID int)
+      ([]db.OIDCGroupRoleAssignment, error); SaveOIDCGroupMapping(mapping db.OIDCGroupMapping, expectedRevision
+      int) (db.OIDCGroupMapping, error); SaveOIDCGroupReconciliation(reconciliation db.OIDCGroupReconciliation)
+      (db.OIDCGroupReconciliation, error)}
     implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/role_mapping_test.go::TestRoleMappingStoreCRUDRevokesOnlyOwnedGrant
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
   - name: db:OIDCGroupReconciliation
     signature: >-
       struct{ID int "db:\"id\" json:\"id\""; ProviderID string "db:\"provider_id\" json:\"provider_id\""; UserID int "db:\"user_id\"
@@ -3760,6 +3890,11 @@ symbols:
   - name: db:ProjectManager
     signature: db.ProjectUserRole = "manager"
     implementation: core
+  - name: db:ProjectMember
+    signature: struct{Roles []db.Role; MappedRoles []db.MappedRole}
+    implementation: core
+    behavior_tests:
+      - api/projects/users_test.go::TestMappedMembers
   - name: db:ProjectNone
     signature: db.ProjectUserRole = ""
     implementation: core
@@ -3788,13 +3923,25 @@ symbols:
     signature: struct{}
     implementation: core
   - name: db:ProjectStore
-    signature: interface{CountProjectOwners(projectID int) (int, error); CreateProject(project db.Project) (db.Project, error); CreateProjectUser(projectUser db.ProjectUser) (db.ProjectUser, error); CreateProjectUserWithRoleRefs(projectUser db.ProjectUser, roleIDs []db.ProjectRoleID) (db.ProjectUser, error); DeleteProject(projectID int) error; DeleteProjectUser(projectID int, userID int) error; GetAllProjects() ([]db.Project, error); GetProject(projectID int) (db.Project, error); GetProjectUser(projectID int, userID int) (db.ProjectUser, error); GetProjectUserRoles(projectID int, userID int) ([]db.Role, error); GetProjectUsers(projectID int, params db.RetrieveQueryParams) ([]db.UserWithProjectRoles, error); GetProjects(userID int) ([]db.Project, error); SetProjectUserRoleRefs(projectID int, userID int, roleIDs []db.ProjectRoleID, expectedRevision int) error; UpdateProject(project db.Project) error; UpdateProjectUser(projectUser db.ProjectUser) error}
+    signature: >-
+      interface{CountProjectOwners(projectID int) (int, error); CreateProject(project db.Project) (db.Project,
+      error); CreateProjectUser(projectUser db.ProjectUser) (db.ProjectUser, error);
+      CreateProjectUserWithRoleRefs(projectUser db.ProjectUser, roleIDs []db.ProjectRoleID) (db.ProjectUser,
+      error); DeleteProject(projectID int) error; DeleteProjectUser(projectID int, userID int) error;
+      GetAllProjects() ([]db.Project, error); GetProject(projectID int) (db.Project, error);
+      GetProjectMember(projectID int, userID int) (db.ProjectMember, error); GetProjectUser(projectID int,
+      userID int) (db.ProjectUser, error); GetProjectUserRoles(projectID int, userID int) ([]db.Role, error);
+      GetProjectUsers(projectID int, params db.RetrieveQueryParams) ([]db.UserWithProjectRoles, error);
+      GetProjects(userID int) ([]db.Project, error); SetProjectUserRoleRefs(projectID int, userID int, roleIDs
+      []db.ProjectRoleID, expectedRevision int) error; UpdateProject(project db.Project) error;
+      UpdateProjectUser(projectUser db.ProjectUser) error}
     implementation: core
     behavior_tests:
-    - db/sql/user_test.go::TestMembershipRolesRoundTripUsesStableRoleIDsAndCAS
-    - db/sql/user_test.go::TestMembershipRejectsForeignRoleWithoutChangingRoles
-    - test/edition-contract/enhanced/services/server/workflow_file_artifact_svc_test.go::TestWorkflowFileArtifactServiceFencesRevokedExecutionRoleAndSupersededAttempt
-    - db/sql/project_user_role_refs_create_test.go::TestCreateProjectUserWithRoleRefsIsAtomicAndProjectsLegacyShape
+      - db/sql/user_test.go::TestMembershipRolesRoundTripUsesStableRoleIDsAndCAS
+      - db/sql/user_test.go::TestMembershipRejectsForeignRoleWithoutChangingRoles
+      - test/edition-contract/enhanced/services/server/workflow_file_artifact_svc_test.go::TestWorkflowFileArtifactServiceFencesRevokedExecutionRoleAndSupersededAttempt
+      - db/sql/project_user_role_refs_create_test.go::TestCreateProjectUserWithRoleRefsIsAtomicAndProjectsLegacyShape
+      - api/projects/users_test.go::TestMappedMembers
   - name: db:ProjectTaskRunner
     signature: db.ProjectUserRole = "task_runner"
     implementation: core
@@ -3941,16 +4088,54 @@ symbols:
     signature: struct{ID db.ProjectRoleID "db:\"role_id\" json:\"id\" backup:\"-\""; Slug string "db:\"slug\" json:\"slug\" backup:\"-\""; Name string "db:\"name\" json:\"name\""; Permissions db.ProjectUserPermission "db:\"permissions\" json:\"permissions\""; GlobalPermissions db.GlobalPermission "db:\"global_permissions\" json:\"global_permissions\" backup:\"-\""; ProjectID *int "db:\"project_id\" json:\"project_id\""; Revision int "db:\"revision\" json:\"revision\""; Builtin bool "db:\"builtin\" json:\"builtin\" backup:\"-\""}
     implementation: core
   - name: db:RoleAssignments
-    signature: struct{Members []db.RoleMember; Grants []db.TemplateRolePerm; GlobalMembers int}
+    signature: >-
+      struct{Members []db.RoleMember; Grants []db.TemplateRolePerm; GlobalMembers int; Mappings
+      []db.RoleMapping; MappingCount int; MappingProjects []int}
     implementation: core
     behavior_tests:
-    - db/Role_test.go::TestRoleAssignments_Impact
+      - db/Role_test.go::TestRoleAssignments_Impact
+      - db/sql/migration_2_20_14_test.go::TestMigration_2_20_14_AllowsVirtualBuiltInRoleID
   - name: db:RoleImpact
-    signature: struct{Members int "json:\"members\""; Projects int "json:\"projects\""; TemplateGrants int "json:\"template_grants\""}
+    signature: >-
+      struct{Members int "json:\"members\""; Projects int "json:\"projects\""; TemplateGrants int
+      "json:\"template_grants\""; Mappings int "json:\"mappings\""}
     implementation: core
+    behavior_tests:
+      - db/Role_test.go::TestRoleAssignments_Impact
+      - db/sql/migration_2_20_14_test.go::TestMigration_2_20_14_AllowsVirtualBuiltInRoleID
+  - name: db:RoleMapping
+    signature: >-
+      struct{ID int "db:\"id\" json:\"id\""; Provider string "db:\"provider\" json:\"provider\""; Group string
+      "db:\"group_name\" json:\"group\""; ProjectID int "db:\"project_id\" json:\"project_id\""; RoleID
+      db.ProjectRoleID "db:\"role_id\" json:\"-\""; Created time.Time "db:\"created\" json:\"created\"";
+      ProjectName string "db:\"project_name\" json:\"project_name\""; RoleSlug string "db:\"role_slug\"
+      json:\"role\""; RoleName string "db:\"role_name\" json:\"role_name\""}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/role_mapping_test.go::TestRoleMappingStoreCRUDRevokesOnlyOwnedGrant
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
+  - name: db:RoleMappingStore
+    signature: >-
+      interface{CreateRoleMapping(mapping db.RoleMapping) (db.RoleMapping, error); DeleteRoleMapping(mappingID
+      int) (db.RoleMapping, []db.MappedRole, error); GetRoleMappings() ([]db.RoleMapping, error);
+      SyncMappedRoles(userID int, provider string, groups []string) (added []db.MappedRole, removed
+      []db.MappedRole, err error)}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/role_mapping_test.go::TestRoleMappingStoreCRUDRevokesOnlyOwnedGrant
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
   - name: db:RoleMember
-    signature: struct{ProjectID int; UserID int; Username string; Roles []db.Role}
+    signature: struct{ProjectID int; UserID int; Username string; Roles []db.Role; Mapped bool}
     implementation: core
+    behavior_tests:
+      - db/Role_test.go::TestRoleAssignments_Impact
+      - db/sql/migration_2_20_14_test.go::TestMigration_2_20_14_AllowsVirtualBuiltInRoleID
   - name: db:RoleProps
     signature: db.ObjectProps
     implementation: core
@@ -5208,8 +5393,12 @@ symbols:
       Revision int "db:\"revision\" json:\"revision\""; db.User}
     implementation: core
   - name: db:UserWithProjectRoles
-    signature: struct{db.User; Roles []db.Role "db:\"-\" json:\"roles\""}
+    signature: >-
+      struct{db.User; Roles []db.Role "db:\"-\" json:\"roles\""; MappedRoles []db.MappedRole "db:\"-\"
+      json:\"-\""}
     implementation: core
+    behavior_tests:
+      - api/projects/users_test.go::TestMappedMembers
   - name: db:UserWithPwd
     signature: struct{Pwd string "db:\"-\" json:\"password\""; db.User}
     implementation: core
@@ -5330,6 +5519,11 @@ symbols:
   - name: db:ValidateWorkflowParameterDeclarations
     signature: func(declarations []db.WorkflowParameterDeclaration) error
     implementation: core
+  - name: db:ValidateWorkflowSurveyVars
+    signature: func(vars []db.SurveyVar) error
+    implementation: core
+    behavior_tests:
+      - db/Workflow_survey_test.go::TestValidateWorkflowSurveyVars
   - name: db:ValidateWorkflowTemplate
     signature: func(d db.WorkflowTemplateValidationStore, workflow db.WorkflowTemplate) error
     selected_signature: func(store db.WorkflowTemplateValidationStore, workflow db.WorkflowTemplate) (db.WorkflowValidationResult, error)
@@ -5867,10 +6061,15 @@ symbols:
       OverridePolicyJSON string "db:\"override_policy\" json:\"-\" backup:\"override_policy\""; OverridePolicy
       db.WorkflowNodeOverridePolicy "db:\"-\" json:\"override_policy,omitempty\" backup:\"-\""; Note *string
       "db:\"note\" json:\"note,omitempty\" backup:\"note\""; DelaySeconds *int "db:\"delay_seconds\"
-      json:\"delay_seconds,omitempty\" backup:\"delay_seconds\""; PositionX int "db:\"position_x\"
+      json:\"delay_seconds,omitempty\" backup:\"delay_seconds\""; SurveyInputsJSON *string "db:\"survey_inputs\"
+      json:\"-\" backup:\"-\""; SurveyInputs []db.WorkflowNodeSurveyInput "db:\"-\"
+      json:\"survey_inputs,omitempty\" backup:\"survey_inputs\""; PositionX int "db:\"position_x\"
       json:\"position_x\" backup:\"position_x\""; PositionY int "db:\"position_y\" json:\"position_y\"
       backup:\"position_y\""}
     implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/workflow_run_test.go::TestWorkflowSurveyRoundTripPreservesVersionAndRunInputs
+      - services/tasks/workflow_survey_preflight_ex_test.go::TestWorkflowExecutionPreflightRejectsChangedSurveyAnswer
   - name: db:WorkflowNodeApprovalKind
     signature: db.WorkflowNodeKind = "approval"
     implementation: core
@@ -5907,6 +6106,14 @@ symbols:
       struct{State db.TaskSummaryState "json:\"state\""; ExpectedHosts int "json:\"expected_hosts\""; TotalHosts int "json:\"total_hosts\"";
       OkHosts int "json:\"ok_hosts\""; FailedHosts int "json:\"failed_hosts\""}
     implementation: core
+  - name: db:WorkflowNodeSurveyInput
+    signature: >-
+      struct{Var string "json:\"var\" backup:\"var\""; WorkflowVar string "json:\"workflow_var\"
+      backup:\"workflow_var\""}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/workflow_run_test.go::TestWorkflowSurveyRoundTripPreservesVersionAndRunInputs
+      - services/tasks/workflow_survey_preflight_ex_test.go::TestWorkflowExecutionPreflightRejectsChangedSurveyAnswer
   - name: db:WorkflowNodeTaskKind
     signature: db.WorkflowNodeKind = "task"
     implementation: core
@@ -5973,9 +6180,13 @@ symbols:
       struct{ID int "db:\"id\" json:\"id\""; ProjectID int "db:\"project_id\" json:\"project_id\"";
       WorkflowTemplateID int "db:\"workflow_template_id\" json:\"workflow_template_id\""; Number int
       "db:\"number\" json:\"number\""; Created time.Time "db:\"created\" json:\"created\""; CreatedByUserID *int
-      "db:\"created_by_user_id\" json:\"created_by_user_id,omitempty\""; HasRuns bool "db:\"-\"
-      json:\"has_runs\""}
+      "db:\"created_by_user_id\" json:\"created_by_user_id,omitempty\""; SurveyVarsJSON *string
+      "db:\"survey_vars\" json:\"-\""; SurveyVars []db.SurveyVar "db:\"-\" json:\"survey_vars,omitempty\"";
+      HasRuns bool "db:\"-\" json:\"has_runs\""}
     implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/workflow_run_test.go::TestWorkflowSurveyRoundTripPreservesVersionAndRunInputs
+      - services/tasks/workflow_survey_preflight_ex_test.go::TestWorkflowExecutionPreflightRejectsChangedSurveyAnswer
   - name: db:WorkflowRootNode
     signature: func(workflow db.WorkflowTemplate) (db.WorkflowNode, error)
     selected_signature: func(workflow db.WorkflowTemplate) (db.WorkflowNode, error)
@@ -6010,7 +6221,8 @@ symbols:
       map[string]db.WorkflowParameterSnapshot "db:\"-\" json:\"parameters,omitempty\" backup:\"-\"";
       TriggerSnapshotJSON string "db:\"trigger_snapshot\" json:\"-\" backup:\"trigger_snapshot\"";
       TriggerSnapshot db.WorkflowTriggerSnapshot "db:\"-\" json:\"trigger,omitempty\" backup:\"-\""; Nodes
-      []db.WorkflowRunNode "db:\"-\" json:\"nodes\" backup:\"-\""; Created time.Time "db:\"created\"
+      []db.WorkflowRunNode "db:\"-\" json:\"nodes\" backup:\"-\""; Environment db.MapStringAnyField
+      "db:\"environment\" json:\"environment,omitempty\" backup:\"-\""; Created time.Time "db:\"created\"
       json:\"created\" backup:\"created\""; Start *time.Time "db:\"start\" json:\"start,omitempty\"
       backup:\"start\""; End *time.Time "db:\"end\" json:\"end,omitempty\" backup:\"end\""; RootTaskID *int
       "db:\"root_task_id\" json:\"root_task_id,omitempty\" backup:\"root_task_id\""; DeploymentWindowDecisionID
@@ -6018,6 +6230,9 @@ symbols:
       backup:\"-\""; ReconciliationOwnership *db.WorkflowReconciliationDiagnostics "db:\"-\"
       json:\"reconciliation_ownership,omitempty\" backup:\"-\""}
     implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/workflow_run_test.go::TestWorkflowSurveyRoundTripPreservesVersionAndRunInputs
+      - services/tasks/workflow_survey_preflight_ex_test.go::TestWorkflowExecutionPreflightRejectsChangedSurveyAnswer
   - name: db:WorkflowRunApproval
     signature: db.WorkflowRunStatus = "approval"
     implementation: core
@@ -6044,10 +6259,15 @@ symbols:
     implementation: core
   - name: db:WorkflowRunInput
     signature: >-
-      struct{TriggerValues map[string]encoding/json.RawMessage "json:\"-\""; UserValues map[string]encoding/json.RawMessage
-      "json:\"parameters,omitempty\""; NodeOverrides map[int]db.WorkflowNodeOverride "json:\"node_overrides,omitempty\""; TriggerSnapshot
-      *db.WorkflowTriggerSnapshot "json:\"-\""}
+      struct{TriggerValues map[string]encoding/json.RawMessage "json:\"-\""; UserValues
+      map[string]encoding/json.RawMessage "json:\"parameters,omitempty\""; NodeOverrides
+      map[int]db.WorkflowNodeOverride "json:\"node_overrides,omitempty\""; TriggerSnapshot
+      *db.WorkflowTriggerSnapshot "json:\"-\""; Environment db.MapStringAnyField
+      "json:\"environment,omitempty\""}
     implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/workflow_run_test.go::TestWorkflowSurveyRoundTripPreservesVersionAndRunInputs
+      - services/tasks/workflow_survey_preflight_ex_test.go::TestWorkflowExecutionPreflightRejectsChangedSurveyAnswer
   - name: db:WorkflowRunNode
     signature: >-
       struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; ProjectID int "db:\"project_id\" json:\"project_id\" backup:\"-\""; WorkflowRunID
@@ -6107,6 +6327,12 @@ symbols:
   - name: db:WorkflowRunNodeWaiting
     signature: db.WorkflowRunNodeStatus = "waiting"
     implementation: core
+  - name: db:WorkflowRunParams
+    signature: struct{Environment db.MapStringAnyField "json:\"environment,omitempty\""}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/workflow_run_test.go::TestWorkflowSurveyRoundTripPreservesVersionAndRunInputs
+      - services/tasks/workflow_survey_preflight_ex_test.go::TestWorkflowExecutionPreflightRejectsChangedSurveyAnswer
   - name: db:WorkflowRunPending
     signature: db.WorkflowRunStatus = "pending"
     implementation: core
@@ -6168,10 +6394,13 @@ symbols:
       "db:\"-\" json:\"current_version_id,omitempty\" backup:\"-\""; VersionMessage string "db:\"-\"
       json:\"version_message,omitempty\" backup:\"-\""; Nodes []db.WorkflowNode "db:\"-\" bolt:\"include\"
       json:\"nodes\" backup:\"-\""; Edges []db.WorkflowEdge "db:\"-\" bolt:\"include\" json:\"edges\"
-      backup:\"edges\""; RevisionID int "db:\"-\" json:\"revision_id,omitempty\" backup:\"-\""; RevisionAuthorID
-      *int "db:\"-\" json:\"-\" backup:\"-\""; LastRun *db.WorkflowRun "db:\"-\" json:\"last_run,omitempty\"
-      backup:\"-\""}
+      backup:\"edges\""; SurveyVars []db.SurveyVar "db:\"-\" json:\"survey_vars\" backup:\"survey_vars\"";
+      RevisionID int "db:\"-\" json:\"revision_id,omitempty\" backup:\"-\""; RevisionAuthorID *int "db:\"-\"
+      json:\"-\" backup:\"-\""; LastRun *db.WorkflowRun "db:\"-\" json:\"last_run,omitempty\" backup:\"-\""}
     implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/workflow_run_test.go::TestWorkflowSurveyRoundTripPreservesVersionAndRunInputs
+      - services/tasks/workflow_survey_preflight_ex_test.go::TestWorkflowExecutionPreflightRejectsChangedSurveyAnswer
   - name: db:WorkflowTemplateProps
     signature: db.ObjectProps
     implementation: core
@@ -7961,6 +8190,12 @@ symbols:
   - name: pro_interfaces:ErrGlobalCredentialRevisionConflict
     signature: error
     implementation: core
+  - name: pro_interfaces:ErrGroupsClaim
+    signature: error
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceRejectsMalformedGroupsWithoutReconciling
   - name: pro_interfaces:ErrLDAPDisabled
     signature: error
     implementation: core
@@ -10065,6 +10300,17 @@ symbols:
       struct{TaskID int "json:\"task\""; ProjectID int "json:\"project\""; CorrelationID string "json:\"correlation_id,omitempty\"";
       EventType string "json:\"event_type\""; Result any "json:\"result\""}
     implementation: core
+  - name: pro_interfaces:RoleSyncService
+    signature: >-
+      interface{SyncLoginRoles(userID int, provider string, claims map[string]any) (added []db.MappedRole,
+      removed []db.MappedRole, err error)}
+    implementation: core
+    behavior_tests:
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceRejectsMalformedGroupsWithoutReconciling
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
   - name: pro_interfaces:RuntimeSecretResolver
     signature: >-
       interface{ResolveRuntimeSecret(context.Context, int, pro_interfaces.SecretReference) ([]byte, error);
@@ -11153,6 +11399,26 @@ symbols:
     signature: func(pro_interfaces.PolicyGuardrailGovernanceRepository) pro_interfaces.PolicyGuardrailGovernanceServiceFacade
     selected_signature: func(repository pro_interfaces.PolicyGuardrailGovernanceRepository) pro_interfaces.PolicyGuardrailGovernanceServiceFacade
     implementation: local
+  - name: services/server:NewRoleSyncService
+    signature: func(db.RoleMappingStore) pro_interfaces.RoleSyncService
+    selected_signature: func(store db.RoleMappingStore) pro_interfaces.RoleSyncService
+    implementation: local
+    behavior_tests:
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceRejectsMalformedGroupsWithoutReconciling
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
+  - name: services/server:NewRoleSyncServiceWithOIDC
+    signature: func(pro_interfaces.OIDCGroupMappingService) pro_interfaces.RoleSyncService
+    selected_signature: func(oidc pro_interfaces.OIDCGroupMappingService) pro_interfaces.RoleSyncService
+    implementation: local
+    behavior_tests:
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceRejectsMalformedGroupsWithoutReconciling
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
   - name: services/server:NewVaultAccessKeyDeserializer
     signature: >-
       func(_ db.AccessKeyManager, _ db.SecretStorageRepository, _ pro/services/server.VaultStorageTokenDeserializer, providers
@@ -11212,6 +11478,26 @@ symbols:
       pro_interfaces.WorkflowService, identityStore pro_interfaces.WorkflowTriggerIdentityStore, capability
       pro_interfaces.CapabilityProvider) pro_interfaces.WorkflowTriggerService
     implementation: local
+  - name: services/server:RoleSyncServiceImpl
+    signature: struct{}
+    selected_signature: struct{}
+    implementation: local
+    behavior_tests:
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceRejectsMalformedGroupsWithoutReconciling
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
+  - name: services/server:RoleSyncServiceImpl.SyncLoginRoles
+    signature: func(int, string, map[string]any) ([]db.MappedRole, []db.MappedRole, error)
+    selected_signature: func(userID int, providerID string, claims map[string]any) ([]db.MappedRole, []db.MappedRole, error)
+    implementation: local
+    behavior_tests:
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceStoreAdapterAddsAndRemovesMappedRole
+      - test/edition-contract/enhanced/services/server/role_sync_svc_test.go::TestRoleSyncServiceRejectsMalformedGroupsWithoutReconciling
+    rationale: >-
+      Adapt the upstream entry point to the existing EX OIDC reconciliation and provider-owned assignment
+      authority; preserve scoped immutable role identities and protected administrator invariants.
   - name: services/server:StorageRequiresSecret
     signature: func(_ db.SecretStorage) bool
     selected_signature: func(storage db.SecretStorage) bool

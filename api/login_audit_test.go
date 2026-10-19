@@ -228,3 +228,17 @@ func TestResolveExternalUser_LinkSurvivesFailedSync(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, ids, 1, "the link is stored")
 }
+
+func TestLogin_PasswordSignInDoesNotReconcileOIDCManagedRoles(t *testing.T) {
+	store := setupSessionTest(t)
+	createUserOptionsTestUser(t, store, "alice")
+	r, rec := withAuditRecorder(loginRequest(store, `{"auth":"alice","password":"verystrongpassword1","method":"password"}`))
+	w := httptest.NewRecorder()
+
+	login(w, r)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	kinds, err := rec.Kinds()
+	require.NoError(t, err)
+	assert.Equal(t, []audit.Kind{audit.AuthLogin}, kinds)
+}

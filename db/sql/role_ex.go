@@ -107,6 +107,14 @@ func (d *SqlDb) DeleteProjectRole(projectID int, roleID db.ProjectRoleID, expect
 	if assigned > 0 {
 		return db.ErrProjectRoleAssigned
 	}
+	mapped, err := tx.SelectInt(d.PrepareQuery(
+		"select count(1) from oidc_group_mapping where target_scope='project' and project_id=? and role_id=?"), projectID, roleID)
+	if err != nil {
+		return err
+	}
+	if mapped > 0 {
+		return db.ErrProjectRoleAssigned
+	}
 	result, err := tx.Exec(d.PrepareQuery(
 		"delete from `role` where project_id=? and role_id=? and revision=?"),
 		projectID, roleID, expectedRevision)

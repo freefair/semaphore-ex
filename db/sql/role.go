@@ -125,6 +125,13 @@ func (d *SqlDb) UpdateRole(role db.Role) error {
 // callers use DeleteProjectRole or DeleteGlobalRole, which enforce current
 // assignment and revision rules.
 func (d *SqlDb) DeleteRole(roleID db.ProjectRoleID) error {
+	mappings, err := d.Sql().SelectInt(d.PrepareQuery("select count(1) from oidc_group_mapping where role_id=?"), roleID)
+	if err != nil {
+		return err
+	}
+	if mappings > 0 {
+		return db.ErrInvalidOperation
+	}
 	res, err := d.exec("delete from role where role_id=?", roleID)
 	return requireDeletedRow(res, err)
 }
@@ -181,6 +188,22 @@ func (d *SqlDb) roleAssignments(q gorp.SqlExecutor, roleID db.ProjectRoleID) (as
 		return assigned, err
 	}
 	assigned.GlobalMembers = int(globalMembers)
+	count, countErr := q.SelectInt(d.PrepareQuery("select count(1) from oidc_group_mapping where role_id=?"), roleID)
+	if countErr != nil {
+		return assigned, countErr
+	}
+	assigned.MappingCount = int(count)
+	var mappingProjects []struct {
+		ProjectID *int `db:"project_id"`
+	}
+	if _, err = q.Select(&mappingProjects, d.PrepareQuery("select project_id from oidc_group_mapping where role_id=?"), roleID); err != nil {
+		return assigned, err
+	}
+	for _, mapping := range mappingProjects {
+		if mapping.ProjectID != nil {
+			assigned.MappingProjects = append(assigned.MappingProjects, *mapping.ProjectID)
+		}
+	}
 	return
 }
 

@@ -53,30 +53,43 @@
       style="max-width: calc(var(--breakpoint-xl) - var(--nav-drawer-width) - 200px); margin: auto"
     >
       <template v-slot:item.roles="{ item }">
-        <v-autocomplete
-          v-if="can(USER_PERMISSIONS.manageProjectUsers)"
-          v-model="item.roles"
-          :items="roleItems(item)"
-          item-value="slug"
-          item-text="name"
-          multiple
-          small-chips
-          deletable-chips
-          hide-details
-          dense
-          class="pt-0 mt-0"
-          @change="updateProjectUser(item)"
-        >
-          <template v-slot:item="{ item: role }">
-            <v-list-item-content>
-              <v-list-item-title>{{ role.name }}</v-list-item-title>
-              <v-list-item-subtitle>{{ role.slug }}</v-list-item-subtitle>
-            </v-list-item-content>
-          </template>
-        </v-autocomplete>
-        <div v-else>
-          <v-chip v-for="role in roleItems(item).filter((r) => item.roles.includes(r.slug))"
-                  :key="role.slug" small class="mr-1">{{ role.name }}</v-chip>
+        <div class="d-flex align-center">
+          <v-tooltip v-for="mapped in item.mapped_roles || []"
+                     :key="`${mapped.provider}/${mapped.group}/${mapped.role}`" bottom>
+            <template v-slot:activator="{ on, attrs }">
+              <v-chip small outlined class="mr-1" v-bind="attrs" v-on="on">
+                <v-icon x-small left>mdi-lock</v-icon>
+                {{ (roles.find((r) => r.slug === mapped.role) || { name: mapped.role }).name }}
+              </v-chip>
+            </template>
+            {{ mapped.provider }}: {{ mapped.group }}
+          </v-tooltip>
+          <v-autocomplete
+            v-if="can(USER_PERMISSIONS.manageProjectUsers)
+              && !isDirectoryManaged(item)"
+            v-model="item.roles"
+            :items="roleItems(item)"
+            item-value="slug"
+            item-text="name"
+            multiple
+            small-chips
+            deletable-chips
+            hide-details
+            dense
+            class="pt-0 mt-0"
+            @change="updateProjectUser(item)"
+          >
+            <template v-slot:item="{ item: role }">
+              <v-list-item-content>
+                <v-list-item-title>{{ role.name }}</v-list-item-title>
+                <v-list-item-subtitle>{{ role.slug }}</v-list-item-subtitle>
+              </v-list-item-content>
+            </template>
+          </v-autocomplete>
+          <div v-else>
+            <v-chip v-for="role in roleItems(item).filter((r) => item.roles.includes(r.slug))"
+                    :key="role.slug" small class="mr-1">{{ role.name }}</v-chip>
+          </div>
         </div>
         <TemplatePermissionsChips
           class="mt-1"
@@ -86,7 +99,10 @@
 
       <template v-slot:item.actions="{ item }">
         <v-btn-toggle dense :value-comparator="() => false">
-          <v-btn @click="askDeleteItem(item.id)" v-if="can(USER_PERMISSIONS.manageProjectUsers)">
+          <v-btn
+            v-if="can(USER_PERMISSIONS.manageProjectUsers) && !isDirectoryManaged(item)"
+            @click="askDeleteItem(item.id)"
+          >
             <v-icon>mdi-delete</v-icon>
           </v-btn>
         </v-btn-toggle>
@@ -106,6 +122,10 @@ import TeamMenu from '@/components/TeamMenu.vue';
 import TemplatePermissionsChips from '@/components/TemplatePermissionsChips.vue';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
+
+function isDirectoryManaged(member) {
+  return Array.isArray(member?.mapped_roles) && member.mapped_roles.length > 0;
+}
 
 export default {
   components: { TeamMenu, EditTeamMemberDialog, TemplatePermissionsChips },
@@ -165,7 +185,15 @@ export default {
       return [...groupRolesForSelect(this.roles, (key) => this.$i18n.t(key)), ...missing];
     },
 
+    isDirectoryManaged(member) {
+      return isDirectoryManaged(member);
+    },
+
     async updateProjectUser(user) {
+      if (isDirectoryManaged(user)) {
+        EventBus.$emit('i-snackbar', { color: 'info', text: this.$i18n.t('memberKeepsMappedRoles') });
+        return;
+      }
       const roles = [...user.roles];
       const save = async () => {
         // Removing a member is the delete button, the server refuses an empty role list.
@@ -194,6 +222,29 @@ export default {
       this.pendingSaves += 1;
       this.saving = this.saving.then(save, save);
       await this.saving;
+    },
+
+    async deleteItem(itemId) {
+      const member = this.items?.find((candidate) => candidate.id === itemId);
+      if (isDirectoryManaged(member)) {
+        EventBus.$emit('i-snackbar', { color: 'info', text: this.$i18n.t('memberKeepsMappedRoles') });
+        return;
+      }
+      this.itemId = itemId;
+      try {
+        await axios({
+          method: 'delete',
+          url: this.getSingleItemUrl(),
+          responseType: 'json',
+        });
+      } catch (err) {
+        EventBus.$emit('i-snackbar', { color: 'error', text: getErrorMessage(err) });
+        return;
+      }
+      await this.loadItems();
+      if (this.items.some((candidate) => candidate.id === itemId)) {
+        EventBus.$emit('i-snackbar', { color: 'info', text: this.$i18n.t('memberKeepsMappedRoles') });
+      }
     },
 
     allowActions() {

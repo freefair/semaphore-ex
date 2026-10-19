@@ -18,7 +18,7 @@ func TestMigrationRegistriesAreIndependent(t *testing.T) {
 	}
 	ex := GetEXMigrations()
 	require.NotEmpty(t, ex)
-	assert.Equal(t, "2.20.11-ex1.3", ex[len(ex)-1].Version)
+	assert.Equal(t, "2.20.13-ex1.1", ex[len(ex)-1].Version)
 	for i, m := range ex {
 		assert.True(t, strings.Contains(m.Version, "-ex"))
 		_, err := m.ParseVersion()
@@ -27,7 +27,7 @@ func TestMigrationRegistriesAreIndependent(t *testing.T) {
 			assert.Less(t, ex[i-1].Compare(m), 0)
 		}
 	}
-	assert.Equal(t, "upstream/2.20.13;ex/2.20.11-ex1.3", CurrentSchemaVersion(util.DbDriverSQLite))
+	assert.Equal(t, "upstream/2.20.14;ex/2.20.13-ex1.1", CurrentSchemaVersion(util.DbDriverSQLite))
 }
 
 type migrationRecordingStore struct {
@@ -63,6 +63,10 @@ func TestMigrationSequencesFollowUpstreamAnchorsAndRollbackInReverse(t *testing.
 	assert.Equal(t, "apply 2.20.2", s.events[before+65])
 	assert.Equal(t, "apply 2.20.2-ex1.1", s.events[before+66])
 	assert.Equal(t, "apply 2.20.3", s.events[before+67])
+	surveyAnchor := slices.Index(s.events, "apply 2.20.13")
+	require.NotEqual(t, -1, surveyAnchor)
+	assert.Equal(t, "apply 2.20.13-ex1.1", s.events[surveyAnchor+1])
+	assert.Equal(t, "apply 2.20.14", s.events[surveyAnchor+2])
 	applied := slices.Clone(s.events)
 	s.events = nil
 	require.NoError(t, Migrate(s, nil))

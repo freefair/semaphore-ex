@@ -2,6 +2,7 @@ package sql
 
 import (
 	"testing"
+	"time"
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/stretchr/testify/assert"
@@ -296,4 +297,28 @@ func TestProjectRoleAssignmentsUseStableIDsAndBlockDeletion(t *testing.T) {
 	assert.ErrorIs(t, store.DeleteProjectRole(projectID, role.ID, role.Revision), db.ErrProjectRoleAssigned)
 	_, err = store.GetProjectRoleByID(projectID, role.ID)
 	require.NoError(t, err, "a failed delete preserves the stable role")
+}
+
+func TestRoleAssignmentsExposeMappingConfigurationWithoutCreatingMembership(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	project, err := store.CreateProject(db.Project{Name: "mapping impact"})
+	require.NoError(t, err)
+	role, err := store.CreateProjectRole(db.Role{
+		ID: "mapping-impact-role", Name: "Mapping impact", ProjectID: &project.ID,
+		Permissions: db.CanRunProjectTasks, Revision: 1,
+	})
+	require.NoError(t, err)
+
+	_, err = store.SaveOIDCGroupMapping(db.OIDCGroupMapping{
+		ID: "mapping-impact", ProviderID: "corp", ClaimValue: "engineering",
+		TargetScope: "project", ProjectID: &project.ID, RoleID: string(role.ID),
+		Enabled: true, Revision: 1, Created: time.Now().UTC(), Updated: time.Now().UTC(),
+	}, 0)
+	require.NoError(t, err)
+
+	assigned, err := store.GetRoleAssignments(role.ID)
+	require.NoError(t, err)
+	assert.Empty(t, assigned.Members)
+	assert.Empty(t, assigned.Mappings, "legacy compatibility mappings are not an authorization source")
+	assert.Equal(t, db.RoleImpact{Projects: 1, Mappings: 1}, assigned.Impact())
 }

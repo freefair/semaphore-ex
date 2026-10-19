@@ -64,6 +64,7 @@ type OIDCGroupMappingRepository interface {
 	GetOIDCGroupMappings(providerID string) ([]OIDCGroupMapping, error)
 	SaveOIDCGroupMapping(mapping OIDCGroupMapping, expectedRevision int) (OIDCGroupMapping, error)
 	DeleteOIDCGroupMapping(providerID string, mappingID string, expectedRevision int) error
+	DeleteOIDCGroupMappingAndRevoke(providerID string, mappingID string, expectedRevision int) error
 	GetOIDCGroupMappingRevision(providerID string) (int, error)
 	GetOIDCGroupRoleAssignments(providerID string, userID int) ([]OIDCGroupRoleAssignment, error)
 	SaveOIDCGroupReconciliation(reconciliation OIDCGroupReconciliation) (OIDCGroupReconciliation, error)

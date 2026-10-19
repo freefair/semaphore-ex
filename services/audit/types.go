@@ -97,6 +97,7 @@ const (
 	TargetRole                  = "role"
 	TargetProjectRoleDefinition = "project_role_definition"
 	TargetTemplatePermission    = "template_permission"
+	TargetRoleMapping           = "role_mapping"
 	TargetLicense               = "license"
 	TargetProject               = "project"
 	TargetInventory             = "inventory"

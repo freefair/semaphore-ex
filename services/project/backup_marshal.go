@@ -1,6 +1,7 @@
 package project
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 
@@ -14,6 +15,18 @@ func marshalValue(v reflect.Value) (any, error) {
 			return nil, nil
 		}
 		return marshalValue(v.Elem())
+	}
+
+	if v.Type() == reflect.TypeOf(db.SurveyVarDefaultValue{}) {
+		raw, err := json.Marshal(v.Interface())
+		if err != nil {
+			return nil, err
+		}
+		var out any
+		if err = json.Unmarshal(raw, &out); err != nil {
+			return nil, err
+		}
+		return out, nil
 	}
 
 	// Handle structs
@@ -188,6 +201,17 @@ func unmarshalValueWithBackupTags(data any, v reflect.Value) error {
 			v.Set(reflect.New(v.Type().Elem()))
 		}
 		return unmarshalValueWithBackupTags(data, v.Elem())
+	}
+
+	if v.Type() == reflect.TypeOf(db.SurveyVarDefaultValue{}) {
+		raw, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
+		if !v.CanAddr() {
+			return fmt.Errorf("cannot set survey default value")
+		}
+		return v.Addr().Interface().(json.Unmarshaler).UnmarshalJSON(raw)
 	}
 
 	// Handle structs

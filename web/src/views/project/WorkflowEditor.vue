@@ -186,6 +186,13 @@
               </template>
             </WorkflowDefinitionSettings>
 
+            <SurveyVars
+              :key="`workflow-survey-${graphKey}`"
+              :vars="item.survey_vars"
+              :allow-secret="false"
+              @change="setSurveyVars"
+            />
+
             <v-divider />
           </template>
 
@@ -387,8 +394,12 @@
                 <TaskParamsForm
                   :template="editingNodeTemplate"
                   v-model="editingNode.task_params"
+                  :workflow-vars="workflowSurveyVars"
+                  :survey-inputs="editingNode.survey_inputs || []"
                   class="mt-2"
                   @input="applyNodeEdit"
+                  @bind="setEditingNodeSurveyBinding"
+                  @unbind="removeEditingNodeSurveyBinding"
                 />
               </v-card-text>
             </v-card>
@@ -514,6 +525,7 @@ import WorkflowVersionsDialog from '@/components/WorkflowVersionsDialog.vue';
 import CrossProjectTemplateGrantsDialog from '@/components/CrossProjectTemplateGrantsDialog.vue';
 import YesNoDialog from '@/components/YesNoDialog.vue';
 import TaskParamsForm from '@/components/TaskParamsForm.vue';
+import SurveyVars from '@/components/SurveyVars.vue';
 import ProjectMixin from '@/components/ProjectMixin';
 import PermissionsCheck from '@/components/PermissionsCheck';
 import { USER_PERMISSIONS } from '@/lib/constants';
@@ -535,6 +547,7 @@ export default {
     WorkflowNodeArtifactsEditor,
     WorkflowNodeApprovalPolicy,
     TaskParamsForm,
+    SurveyVars,
     WorkflowGraph,
     WorkflowEdgeProperties,
     WorkflowNodeOverridePolicyEditor,
@@ -633,6 +646,7 @@ export default {
       return JSON.stringify({
         name: this.item.name,
         start_version: this.item.start_version || '',
+        survey_vars: this.item.survey_vars || [],
         nodes: this.item.nodes,
         edges: this.item.edges,
       });
@@ -657,6 +671,9 @@ export default {
         map[nodeId] = this.problemText(p);
       });
       return map;
+    },
+    workflowSurveyVars() {
+      return (this.item?.survey_vars || []).filter((variable) => variable.type !== 'secret');
     },
   },
   watch: {
@@ -722,6 +739,27 @@ export default {
     },
     setNavMini(mini) {
       EventBus.$emit('i-nav-mini', { mini });
+    },
+    setSurveyVars(vars) {
+      this.item.survey_vars = [...vars];
+      this.markDirty();
+    },
+    setEditingNodeSurveyBinding(name, workflowVar) {
+      if (!this.editingNode) return;
+      const bindings = (this.editingNode.survey_inputs || [])
+        .filter((binding) => binding.var !== name);
+      this.$set(this.editingNode, 'survey_inputs', [
+        ...bindings, { var: name, workflow_var: workflowVar },
+      ]);
+      this.applyNodeEdit();
+    },
+    removeEditingNodeSurveyBinding(name) {
+      if (!this.editingNode) return;
+      const bindings = (this.editingNode.survey_inputs || [])
+        .filter((binding) => binding.var !== name);
+      if (bindings.length) this.$set(this.editingNode, 'survey_inputs', bindings);
+      else this.$delete(this.editingNode, 'survey_inputs');
+      this.applyNodeEdit();
     },
     // Informational only (see activeRuns, outputHints); a failure must not
     // block editing.
@@ -934,6 +972,7 @@ export default {
           delete this.editingNode.cross_project_template_reference;
         }
         this.editingNode.task_params = null;
+        this.$delete(this.editingNode, 'survey_inputs');
         this.editingNode.artifact_outputs = [];
         this.editingNode.artifact_inputs = [];
       }

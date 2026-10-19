@@ -66,3 +66,4 @@ __debug_bin*
 /.claude/task-notes/
 
 /.claude/rules/
+/integration-tests/
