@@ -37,3 +37,11 @@ incoming docs gitlink from the merge result, not any existing user directory.
 Use official SHA256-verified Node 24.19.0/npm 11.17.0 and GOTOOLCHAIN=go1.26.9.
 Evidence root: /tmp/semaphore-sync-20261019. Dedicated Terra handles security-related
 integration/reviews as required by repository policy; primary integrates and verifies.
+
+## Exact-commit CI repair
+
+Dev Dredd identifies null survey arrays in definition responses and an undeclared
+survey answer in its workflow seed. Normalize the private response projection,
+repair the fixture declaration, preserve strict validation and canonical hashes,
+reproduce on local SQLite, then repeat retained gates and focused reviews before
+a new ordinary commit and push. Verify both required workflows on the new head.

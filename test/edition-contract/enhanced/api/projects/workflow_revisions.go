@@ -99,5 +99,5 @@ func (c *workflowController) GetWorkflowRevision(w http.ResponseWriter, r *http.
 	definition.RevisionID = version.ID
 	definition.Revision = version.VersionNumber
 	definition.CurrentVersionID = version.ID
-	helpers.WriteJSON(w, http.StatusOK, definition)
+	helpers.WriteJSON(w, http.StatusOK, newWorkflowWireDefinition(definition))
 }

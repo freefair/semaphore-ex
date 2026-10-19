@@ -232,6 +232,7 @@ func TestWorkflowControllerCRUDAndValidation(t *testing.T) {
 	createRecorder := httptest.NewRecorder()
 	controller.AddWorkflow(createRecorder, workflowRequest(http.MethodPost, "/api/project/7/workflows", created, nil))
 	assert.Equal(t, http.StatusCreated, createRecorder.Code, createRecorder.Body.String())
+	assert.Contains(t, createRecorder.Body.String(), `"survey_vars":[]`)
 
 	getRecorder := httptest.NewRecorder()
 	controller.GetWorkflow(getRecorder, workflowRequest(http.MethodGet, "/api/project/7/workflows/41", nil, &created))
@@ -240,6 +241,7 @@ func TestWorkflowControllerCRUDAndValidation(t *testing.T) {
 	updateRecorder := httptest.NewRecorder()
 	controller.UpdateWorkflow(updateRecorder, workflowRequest(http.MethodPut, "/api/project/7/workflows/41", created, &created))
 	assert.Equal(t, http.StatusOK, updateRecorder.Code, updateRecorder.Body.String())
+	assert.Contains(t, updateRecorder.Body.String(), `"survey_vars":[]`)
 
 	deleteRecorder := httptest.NewRecorder()
 	controller.RemoveWorkflow(deleteRecorder, workflowRequest(http.MethodDelete, "/api/project/7/workflows/41", nil, &created))
@@ -250,6 +252,30 @@ func TestWorkflowControllerCRUDAndValidation(t *testing.T) {
 	controller.ValidateWorkflow(validateRecorder, workflowRequest(http.MethodPost, "/api/project/7/workflows/validate", created, nil))
 	assert.Equal(t, http.StatusOK, validateRecorder.Code)
 	assert.JSONEq(t, `{"valid":true,"issues":[]}`, validateRecorder.Body.String())
+}
+
+func TestWorkflowControllerSerializesNilSurveyVarsAsArray(t *testing.T) {
+	workflow := db.WorkflowTemplate{ID: 41, ProjectID: 7, Name: "survey wire"}
+	service := &workflowDefinitionServiceStub{workflows: []db.WorkflowTemplate{workflow}}
+	controller := NewWorkflowController(nil, nil, service)
+
+	list := httptest.NewRecorder()
+	controller.GetWorkflows(list, workflowRequest(http.MethodGet, "/api/project/7/workflows", nil, nil))
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	assert.Contains(t, list.Body.String(), `"survey_vars":[]`)
+	assert.NotContains(t, list.Body.String(), `"survey_vars":null`)
+
+	detail := httptest.NewRecorder()
+	controller.GetWorkflow(detail, workflowRequest(http.MethodGet, "/api/project/7/workflows/41", nil, &workflow))
+	require.Equal(t, http.StatusOK, detail.Code, detail.Body.String())
+	assert.Contains(t, detail.Body.String(), `"survey_vars":[]`)
+	assert.NotContains(t, detail.Body.String(), `"survey_vars":null`)
+	assert.Nil(t, workflow.SurveyVars)
+
+	populated := db.WorkflowTemplate{SurveyVars: []db.SurveyVar{{Name: "release", Title: "Release"}}}
+	wire := newWorkflowWireDefinition(populated)
+	assert.Equal(t, populated.SurveyVars, wire.SurveyVars)
+	assert.Equal(t, populated.SurveyVars, wire.WorkflowTemplate.SurveyVars)
 }
 
 func TestWorkflowControllerReturnsImmutableCurrentVersionIdentityFromRealService(t *testing.T) {
@@ -345,6 +371,7 @@ func TestWorkflowControllerReturnsCurrentDefinitionOnRevisionConflict(t *testing
 	assert.Contains(t, recorder.Body.String(), `"code":"WORKFLOW_REVISION_CONFLICT"`)
 	assert.Contains(t, recorder.Body.String(), `"name":"Newer"`)
 	assert.Contains(t, recorder.Body.String(), `"revision":3`)
+	assert.Contains(t, recorder.Body.String(), `"survey_vars":[]`)
 	require.Len(t, service.getActors, 1)
 	assert.Equal(t, 12, service.getActors[0].ID)
 }

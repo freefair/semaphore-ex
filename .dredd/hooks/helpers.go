@@ -375,8 +375,9 @@ func addWorkflow() *db.WorkflowTemplate {
 		panic("workflow version store is unavailable")
 	}
 	wf, version, err := versionStore.CreateWorkflowTemplateVersioned(db.WorkflowTemplate{
-		ProjectID: userProject.ID,
-		Name:      "ITW-" + getUUID(),
+		ProjectID:  userProject.ID,
+		Name:       "ITW-" + getUUID(),
+		SurveyVars: []db.SurveyVar{{Name: "wf_var", Title: "Workflow var"}},
 		Nodes: []db.WorkflowNode{
 			{ID: 1, TemplateID: templateID},
 			{ID: 2, Kind: db.WorkflowNodeApprovalKind, ApprovalMessage: new("approve"), ApprovalRolePolicy: approvalPolicy},

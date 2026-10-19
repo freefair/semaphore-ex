@@ -82,6 +82,8 @@ func TestWorkflowRevisionDetailUsesAuthorizedDefinitionService(t *testing.T) {
 	assert.Contains(t, recorder.Body.String(), `"revision_id":71`)
 	assert.Contains(t, recorder.Body.String(), `"revision":3`)
 	assert.Contains(t, recorder.Body.String(), `"name":"private definition"`)
+	assert.Contains(t, recorder.Body.String(), `"survey_vars":[]`)
+	assert.NotContains(t, recorder.Body.String(), `"survey_vars":null`)
 	assert.NotContains(t, recorder.Body.String(), "must-not-serialize")
 }
 

@@ -89,6 +89,7 @@ func TestWorkflowVersionControllerListDetailDiffAndRestore(t *testing.T) {
 		map[string]string{"version_number": "1"}, `{"message":"Restore initial"}`,
 	))
 	require.Equal(t, http.StatusOK, restore.Code)
+	assert.Contains(t, restore.Body.String(), `"survey_vars":[]`)
 	assert.Equal(t, "Restore initial", service.restoreMessage)
 	assert.Contains(t, restore.Body.String(), `"revision":3`)
 }

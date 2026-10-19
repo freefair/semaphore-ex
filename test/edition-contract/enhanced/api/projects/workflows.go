@@ -49,8 +49,13 @@ type workflowRunDetails struct {
 }
 
 type workflowResponse struct {
-	db.WorkflowTemplate
+	workflowWireDefinition
 	EffectiveAccess workflowEffectiveAccessView `json:"effective_access"`
+}
+
+type workflowWireDefinition struct {
+	db.WorkflowTemplate
+	SurveyVars []db.SurveyVar `json:"survey_vars"`
 }
 
 type workflowVersionSummary struct {
@@ -256,7 +261,10 @@ func (c *workflowController) GetWorkflows(w http.ResponseWriter, r *http.Request
 	}
 	result := make([]workflowResponse, len(workflows))
 	for index := range workflows {
-		result[index] = workflowResponse{WorkflowTemplate: workflows[index], EffectiveAccess: workflowEffectiveAccess(r, workflows[index])}
+		result[index] = workflowResponse{
+			workflowWireDefinition: newWorkflowWireDefinition(workflows[index]),
+			EffectiveAccess:        workflowEffectiveAccess(r, workflows[index]),
+		}
 	}
 	helpers.WriteJSON(w, http.StatusOK, result)
 }
@@ -276,7 +284,7 @@ func (c *workflowController) AddWorkflow(w http.ResponseWriter, r *http.Request)
 		writeWorkflowValidation(w, validation)
 		return
 	}
-	helpers.WriteJSON(w, http.StatusCreated, created)
+	helpers.WriteJSON(w, http.StatusCreated, newWorkflowWireDefinition(created))
 }
 
 func (c *workflowController) ValidateWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -301,7 +309,20 @@ func (c *workflowController) GetWorkflow(w http.ResponseWriter, r *http.Request)
 		helpers.WriteError(w, err)
 		return
 	}
-	helpers.WriteJSON(w, http.StatusOK, workflowResponse{WorkflowTemplate: workflow, EffectiveAccess: workflowEffectiveAccess(r, workflow)})
+	helpers.WriteJSON(w, http.StatusOK, workflowResponse{
+		workflowWireDefinition: newWorkflowWireDefinition(workflow),
+		EffectiveAccess:        workflowEffectiveAccess(r, workflow),
+	})
+}
+
+// newWorkflowWireDefinition normalizes API-only collection fields without
+// mutating the persisted definition or its immutable snapshot.
+func newWorkflowWireDefinition(workflow db.WorkflowTemplate) workflowWireDefinition {
+	surveyVars := workflow.SurveyVars
+	if surveyVars == nil {
+		surveyVars = []db.SurveyVar{}
+	}
+	return workflowWireDefinition{WorkflowTemplate: workflow, SurveyVars: surveyVars}
 }
 
 func (c *workflowController) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -320,7 +341,7 @@ func (c *workflowController) UpdateWorkflow(w http.ResponseWriter, r *http.Reque
 		writeWorkflowValidation(w, validation)
 		return
 	}
-	helpers.WriteJSON(w, http.StatusOK, updated)
+	helpers.WriteJSON(w, http.StatusOK, newWorkflowWireDefinition(updated))
 }
 
 func bindWorkflowDefinition(w http.ResponseWriter, r *http.Request, workflow *db.WorkflowTemplate) bool {
@@ -433,7 +454,7 @@ func (c *workflowController) RestoreWorkflowVersion(w http.ResponseWriter, r *ht
 		writeWorkflowValidation(w, validation)
 		return
 	}
-	helpers.WriteJSON(w, http.StatusOK, restored)
+	helpers.WriteJSON(w, http.StatusOK, newWorkflowWireDefinition(restored))
 }
 
 func newWorkflowVersionSummary(version db.WorkflowVersion) workflowVersionSummary {
@@ -506,7 +527,7 @@ func writeWorkflowError(
 			"message": "The workflow was changed by another editor. Reload the current definition before saving again.",
 		}
 		if current, getErr := service.Get(projectID, workflowID, actor); getErr == nil {
-			response["current"] = current
+			response["current"] = newWorkflowWireDefinition(current)
 		}
 		helpers.WriteJSON(w, http.StatusConflict, response)
 		return
