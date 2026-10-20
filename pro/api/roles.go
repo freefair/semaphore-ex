@@ -43,7 +43,7 @@ func (c *RolesController) GetProjectRoles(w http.ResponseWriter, r *http.Request
 }
 
 func (c *RolesController) GetProjectAndGlobalRoles(w http.ResponseWriter, r *http.Request) {
-	roles, err := c.store.GetGlobalRoles()
+	roles, err := c.store.GetSharedRoles()
 	if err != nil {
 		helpers.WriteError(w, err)
 		return

@@ -1189,3 +1189,18 @@ migrations:
   files:
     migrations/v2.20.14.sql: 4598a65d4fc3feadc8a9e87910c40673c8db1ef75c4d9ac41662d8076794a2d7
     migrations/v2.20.14.err.sql: 7e6a1c2d6c63ca197242eaa419e4274c9f581a7c18430ce72d027cb597b2b9f2
+- registered: true
+  id: 2.20.14-ex1.1
+  owner: fork
+  rationale: Restore immutable shipped upstream 2.20.14 bytes and add workflow integration targets immediately after their upstream anchor in the independent EX history.
+  files:
+    migrations_ex/v2.20.14-ex1.1.sql: 71ecc585aaba76f4ddb49a9af0df866399730c2711f4c42fe55b20c006b35e2e
+    migrations_ex/v2.20.14-ex1.1.err.sql: b0b56b7a01bb9d659f22662d2b7335fae5d7d9307f41e5dc8a0d111192a6aa24
+- registered: true
+  id: 2.20.16
+  owner: upstream-adapted
+  upstream_id: 2.20.16
+  rationale: Retain the canonical upstream identity as a no-op bridge because EX already owns string-ID global roles and user__global_role assignments; creating the upstream integer-role tables would collide with the existing authority.
+  files:
+    migrations/v2.20.16.sql: caf01910f576f5583d520cb11bdce5e27c24ecd865c7750802d8084f1e6dede0
+    migrations/v2.20.16.err.sql: 83a62287828ac1a11a1d08ee3b3ab6f05a72278322a80d3af74cf8dc13e74adc

@@ -75,7 +75,7 @@ func TestGetProjectRole_IgnoresGlobalAndOtherProjects(t *testing.T) {
 	assert.ErrorIs(t, err, db.ErrNotFound)
 }
 
-func TestGetGlobalRoles_IncludesBuiltins(t *testing.T) {
+func TestGetGlobalRoles_ExcludesProjectBuiltins(t *testing.T) {
 	store := InitConfigCreateTestStore()
 	project, err := store.CreateProject(db.Project{Name: "proj"})
 	require.NoError(t, err)
@@ -89,7 +89,7 @@ func TestGetGlobalRoles_IncludesBuiltins(t *testing.T) {
 	projectRoles, err := store.GetProjectRoles(project.ID)
 	require.NoError(t, err)
 
-	assert.ElementsMatch(t, []string{"auditor", "guest", "manager", "owner", "task_runner"}, slugsOf(globals))
+	assert.Equal(t, []string{"auditor"}, slugsOf(globals))
 	assert.Equal(t, []string{"local"}, slugsOf(projectRoles))
 }
 

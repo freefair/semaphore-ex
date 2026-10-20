@@ -51,7 +51,7 @@ func TestAuditedDeletes_ReportMissingRow(t *testing.T) {
 	template, err := store.CreateTemplate(db.Template{ProjectID: projectID, RepositoryID: repositoryID, Name: "t", Playbook: "p.yml"})
 	require.NoError(t, err)
 
-	manager, err := store.GetGlobalRoleBySlug("manager")
+	manager, err := store.GetSharedRoleBySlug("manager")
 	require.NoError(t, err)
 	createMembershipWithRoles(t, store, projectID, user.ID, []db.Role{manager})
 	ops, err := store.CreateProjectRole(db.Role{ID: "role_audit_ops", Name: "ops", ProjectID: &projectID, Revision: 1})
@@ -102,7 +102,7 @@ func TestAuditedDeletes_MissingTaskParamsIsNotAFailure(t *testing.T) {
 
 	schedule, err := store.CreateSchedule(db.Schedule{ProjectID: projectID, TemplateID: template.ID, Name: "s", CronFormat: "* * * * *", Active: true, Type: db.ScheduleTypeCron, TaskParams: &db.TaskParams{}})
 	require.NoError(t, err)
-	integration, err := store.CreateIntegration(db.Integration{ProjectID: projectID, TemplateID: template.ID, Name: "i", AuthMethod: db.IntegrationAuthNone, TaskParams: &db.TaskParams{}})
+	integration, err := store.CreateIntegration(db.Integration{ProjectID: projectID, TemplateID: &template.ID, Name: "i", AuthMethod: db.IntegrationAuthNone, TaskParams: &db.TaskParams{}})
 	require.NoError(t, err)
 
 	tests := []struct {

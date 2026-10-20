@@ -50,11 +50,11 @@ func TestIntegrationControllerClaimsServerDerivedDeploymentWindowAdmission(t *te
 	request := httptest.NewRequest(http.MethodPost, "/api/integrations/release", strings.NewReader(`{"event":"release"}`))
 	request = helpers.SetContextValue(request, "task_pool", &pool)
 
-	task := NewIntegrationController(store, nil).RunIntegration(
-		db.Integration{ID: 13, ProjectID: project.ID, TemplateID: template.ID}, project, request, []byte(`{"event":"release"}`),
+	result := NewIntegrationController(store, nil).RunIntegration(
+		db.Integration{ID: 13, ProjectID: project.ID, TemplateID: integrationTemplateID(template.ID)}, project, request, []byte(`{"event":"release"}`),
 	)
 
-	assert.Nil(t, task, "the capture stops the normal enqueue path after recording the controller request")
+	assert.Nil(t, result.Task, "the capture stops the normal enqueue path after recording the controller request")
 	assert.Equal(t, project.ID, capture.request.ProjectID)
 	assert.Equal(t, pro_interfaces.DeploymentWindowSourceIntegration, capture.request.Source)
 	assert.Equal(t, pro_interfaces.DeploymentWindowOriginIntegration, capture.request.Origin)

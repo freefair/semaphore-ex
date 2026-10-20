@@ -812,7 +812,17 @@ definitions:
         minimum: 1
       template_id:
         type: integer
-        minimum: 1
+        x-nullable: true
+        description: The task template the integration starts. Exactly one of template_id and workflow_id is set.
+      workflow_id:
+        type: integer
+        x-nullable: true
+        description: The workflow the integration starts instead of a template (Pro). Extracted values become the answers to the workflow's survey.
+      workflow_user_id:
+        type: integer
+        readOnly: true
+        x-nullable: true
+        description: Server-bound execution principal for a workflow integration. The authenticated editor sets it on save; clients cannot supply it.
       auth_method:
         type: string
         example: none
@@ -838,6 +848,12 @@ definitions:
         type: integer
       template_id:
         type: integer
+        x-nullable: true
+        description: The task template to start. Exactly one of template_id and workflow_id must be set.
+      workflow_id:
+        type: integer
+        x-nullable: true
+        description: The workflow to start instead of a template (Pro). task_params do not apply to a workflow and are dropped.
       auth_method:
         type: string
         example: none
@@ -2066,6 +2082,26 @@ definitions:
     $ref: "./api-docs-ex.yml#/definitions/WorkflowTriggerHistoryEntry"
   WorkflowTriggerFireResult:
     $ref: "./api-docs-ex.yml#/definitions/WorkflowTriggerFireResult"
+  EXGlobalRole:
+    $ref: "./api-docs-ex.yml#/definitions/EXGlobalRole"
+  EXGlobalRoleCreateRequest:
+    $ref: "./api-docs-ex.yml#/definitions/EXGlobalRoleCreateRequest"
+  EXGlobalRoleUpdateRequest:
+    $ref: "./api-docs-ex.yml#/definitions/EXGlobalRoleUpdateRequest"
+  EXGlobalRoleAssignment:
+    $ref: "./api-docs-ex.yml#/definitions/EXGlobalRoleAssignment"
+  EXGlobalRoleAssignmentRequest:
+    $ref: "./api-docs-ex.yml#/definitions/EXGlobalRoleAssignmentRequest"
+  EXPermissionProvenance:
+    $ref: "./api-docs-ex.yml#/definitions/EXPermissionProvenance"
+  EXEffectivePermissionDecision:
+    $ref: "./api-docs-ex.yml#/definitions/EXEffectivePermissionDecision"
+  EXEffectiveGlobalPermissions:
+    $ref: "./api-docs-ex.yml#/definitions/EXEffectiveGlobalPermissions"
+  EXGlobalPermissionDefinition:
+    $ref: "./api-docs-ex.yml#/definitions/EXGlobalPermissionDefinition"
+  EXRoleImpact:
+    $ref: "./api-docs-ex.yml#/definitions/EXRoleImpact"
   GlobalCredentialExternalReference:
     $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialExternalReference"
   GlobalCredentialMaterialInput:
@@ -2159,6 +2195,20 @@ parameters:
     type: integer
     required: true
     x-example: 2
+  assignment_id:
+    name: assignment_id
+    description: Global role assignment ID
+    in: path
+    type: integer
+    required: true
+    x-example: 23
+  role_id:
+    name: role_id
+    description: Global role ID
+    in: path
+    type: integer
+    required: true
+    x-example: 24
   key_id:
     name: key_id
     description: key ID
@@ -2339,6 +2389,12 @@ paths:
     $ref: './api-docs-ex.yml#/paths/~1capabilities~1runtime-secrets'
   /roles/project-permissions:
     $ref: './api-docs-ex.yml#/paths/~1roles~1project-permissions'
+  /roles:
+    $ref: './api-docs-ex.yml#/paths/~1roles'
+  /roles/permissions:
+    $ref: './api-docs-ex.yml#/paths/~1roles~1permissions'
+  /roles/{role_id}:
+    $ref: './api-docs-ex.yml#/paths/~1roles~1{role_id}'
   /project/{project_id}/templates/{template_id}/perms/catalog:
     $ref: './api-docs-ex.yml#/paths/~1project~1{project_id}~1templates~1{template_id}~1perms~1catalog'
   /ping:
@@ -2790,6 +2846,21 @@ paths:
       responses:
         204:
           description: Password updated
+
+  /users/{user_id}/global-roles:
+    $ref: './api-docs-ex.yml#/paths/~1users~1{user_id}~1global-roles'
+  /users/{user_id}/global-roles/{assignment_id}:
+    $ref: './api-docs-ex.yml#/paths/~1users~1{user_id}~1global-roles~1{assignment_id}'
+  /users/{user_id}/global-permissions:
+    $ref: './api-docs-ex.yml#/paths/~1users~1{user_id}~1global-permissions'
+  /global-roles/permissions:
+    $ref: './api-docs-ex.yml#/paths/~1global-roles~1permissions'
+  /global-roles/project-permissions:
+    $ref: './api-docs-ex.yml#/paths/~1global-roles~1project-permissions'
+  /global-roles:
+    $ref: './api-docs-ex.yml#/paths/~1global-roles'
+  /global-roles/{role_id}:
+    $ref: './api-docs-ex.yml#/paths/~1global-roles~1{role_id}'
 
   # Projects
   /projects:
@@ -3360,6 +3431,8 @@ paths:
         - integration
       summary: Get all integration aliases for the project
       responses:
+        403:
+          description: Permission denied. Workflow aliases require current view and start authority for the requesting user and every bound workflow principal reached by the alias.
         200:
           description: Integration Aliases
           schema:
@@ -3371,6 +3444,8 @@ paths:
         - integration
       summary: Create a new integration alias for the project
       responses:
+        403:
+          description: Permission denied. Workflow aliases require current view and start authority for the requesting user and every bound workflow principal reached by the alias.
         200:
           description: Integration Alias Created
           schema:
@@ -3385,6 +3460,8 @@ paths:
         - integration
       summary: Remove integration alias
       responses:
+        403:
+          description: Permission denied. Workflow aliases require current view and start authority for the requesting user and every bound workflow principal reached by the alias.
         204:
           description: integration alias removed
 
@@ -3397,6 +3474,8 @@ paths:
         - integration
       summary: Get all aliases for an integration
       responses:
+        403:
+          description: Permission denied. Workflow aliases require current view and start authority for the requesting user and every bound workflow principal reached by the alias.
         200:
           description: Integration Aliases
           schema:
@@ -3408,6 +3487,8 @@ paths:
         - integration
       summary: Create a new alias for an integration
       responses:
+        403:
+          description: Permission denied. Workflow aliases require current view and start authority for the requesting user and every bound workflow principal reached by the alias.
         200:
           description: Integration Alias Created
           schema:
@@ -3423,6 +3504,8 @@ paths:
         - integration
       summary: Remove integration alias
       responses:
+        403:
+          description: Permission denied. Workflow aliases require current view and start authority for the requesting user and every bound workflow principal reached by the alias.
         204:
           description: integration alias removed
 

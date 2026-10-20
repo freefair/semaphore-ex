@@ -96,6 +96,7 @@
 import enhancedMethods from '@/lib/enhanced/edit-role-form';
 
 import ItemFormBase from '@/components/ItemFormBase';
+import { isValidSlug, slugFromName } from '@/lib/roles';
 
 export default {
   mixins: [ItemFormBase],
@@ -123,12 +124,7 @@ export default {
   watch: {
     'item.name': function onNameChange(name) {
       if (!this.projectId && this.isNew && !this.slugTouched && this.item) {
-        this.item.slug = (name || '')
-          .toLowerCase()
-          .replace(/[^a-z0-9_-]+/g, '-')
-          .replace(/-+/g, '-')
-          .replace(/^-|-$/g, '')
-          .slice(0, 100);
+        this.item.slug = slugFromName(name);
       }
     },
 
@@ -166,7 +162,7 @@ export default {
     validateSlug(value) {
       if (!value) return true; // Required validation is handled separately
 
-      if (!/^[A-Za-z0-9_-]{1,100}$/.test(value)) {
+      if (!isValidSlug(value)) {
         return this.$t('invalidSlugFormat');
       }
 

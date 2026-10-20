@@ -227,6 +227,10 @@ const routes = [
     component: Users,
   },
   {
+    path: '/users/roles',
+    redirect: '/roles',
+  },
+  {
     path: '/roles',
     component: Roles,
   },

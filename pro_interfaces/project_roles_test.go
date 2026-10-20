@@ -82,6 +82,16 @@ func TestPermissionCatalogUsesExplicitGlobalAndTemplateScopes(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestDBGlobalPermissionCatalogUsesAuthoritativeGlobalIDs(t *testing.T) {
+	authoritative := GlobalPermissionCatalog()
+	databaseCatalog := db.GlobalPermissionCatalog()
+	require.Len(t, databaseCatalog, len(authoritative))
+	for index, definition := range authoritative {
+		assert.Equal(t, string(definition.ID), databaseCatalog[index].ID)
+		assert.Equal(t, db.GlobalPermission(definition.Permission), databaseCatalog[index].Permission)
+	}
+}
+
 func TestEvaluatePermissionTemplateInheritanceOverrideAndConstraints(t *testing.T) {
 	project := &PermissionGrant{
 		Scope: PermissionScopeProject, RoleID: "runner", RoleName: "Runner",

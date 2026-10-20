@@ -184,7 +184,7 @@ func (c *TemplateController) AddTemplatePerm(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	role, err := helpers.Store(r).GetProjectOrGlobalRoleBySlug(template.ProjectID, perm.RoleSlug)
+	role, err := helpers.Store(r).GetProjectOrSharedRoleBySlug(template.ProjectID, perm.RoleSlug)
 	if errors.Is(err, db.ErrNotFound) {
 		status := http.StatusBadRequest
 		if strings.TrimSpace(perm.RoleSlug) == "" {

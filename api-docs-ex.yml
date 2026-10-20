@@ -2312,7 +2312,310 @@ definitions:
       last_used_at:
         type: string
         format: date-time
+  EXGlobalRole:
+    type: object
+    required: [id, slug, name, permissions, global_permissions, revision, builtin]
+    description: A role returned by the EX role picker. Stored EX global roles carry separate project and instance-wide permission masks; the list also includes immutable built-in project-role options, which cannot be assigned as global roles.
+    properties:
+      id: {type: string, example: role_0123456789abcdef0123456789abcdef}
+      slug: {type: string, example: role_0123456789abcdef0123456789abcdef}
+      name: {type: string, example: Audit reader}
+      permissions: {type: integer, example: 0}
+      global_permissions: {type: integer, example: 8}
+      project_id: {type: integer, x-nullable: true, readOnly: true}
+      revision: {type: integer, minimum: 1, example: 1}
+      builtin: {type: boolean, readOnly: true, example: false}
+  EXGlobalRoleCreateRequest:
+    type: object
+    required: [name]
+    properties:
+      name: {type: string, example: Audit reader}
+      permissions: {type: integer, default: 0}
+      global_permissions: {type: integer, default: 0}
+  EXGlobalRoleUpdateRequest:
+    type: object
+    required: [name, permissions, global_permissions, revision]
+    properties:
+      id: {type: string, description: Optional consistency value; when present it must equal the path ID.}
+      name: {type: string, example: Audit reader}
+      permissions: {type: integer, example: 0}
+      global_permissions: {type: integer, example: 8}
+      revision: {type: integer, minimum: 1, example: 1}
+  EXGlobalRoleAssignment:
+    type: object
+    required: [id, user_id, role_id, revision]
+    properties:
+      id: {type: integer, minimum: 1}
+      user_id: {type: integer, minimum: 1}
+      role_id: {type: string, example: role_0123456789abcdef0123456789abcdef}
+      revision: {type: integer, minimum: 1}
+      role_name: {type: string, example: Audit reader}
+      global_permissions: {type: integer, example: 8}
+  EXGlobalRoleAssignmentRequest:
+    type: object
+    required: [role_id]
+    properties:
+      role_id: {type: string, example: role_0123456789abcdef0123456789abcdef}
+  EXPermissionProvenance:
+    type: object
+    required: [scope, effect]
+    properties:
+      scope: {type: string, example: global}
+      role_id: {type: string, x-nullable: true}
+      role_name: {type: string, x-nullable: true}
+      effect: {type: string, example: allow}
+      constraint_id: {type: string, x-nullable: true}
+  EXEffectivePermissionDecision:
+    type: object
+    required: [permission, allowed, provenance]
+    properties:
+      permission: {type: string, example: global.audit.read}
+      allowed: {type: boolean}
+      provenance: {$ref: '#/definitions/EXPermissionProvenance'}
+  EXEffectiveGlobalPermissions:
+    type: object
+    required: [permissions, decisions]
+    properties:
+      permissions: {type: integer, example: 8}
+      decisions:
+        type: array
+        items: {$ref: '#/definitions/EXEffectivePermissionDecision'}
+  EXGlobalPermissionDefinition:
+    type: object
+    required: [id, description, scope, permission, capability_prerequisites]
+    properties:
+      id: {type: string, example: global.audit.read}
+      description: {type: string, example: Read the audit log}
+      scope: {type: string, enum: [global]}
+      permission: {type: integer, example: 8}
+      capability_prerequisites:
+        type: array
+        x-nullable: true
+        items: {type: string}
+  EXRoleImpact:
+    type: object
+    required: [members, projects, template_grants, mappings]
+    properties:
+      members: {type: integer, minimum: 0}
+      projects: {type: integer, minimum: 0}
+      template_grants: {type: integer, minimum: 0}
+      mappings: {type: integer, minimum: 0}
+
 paths:
+  /roles:
+    get:
+      tags: [user]
+      summary: List canonical EX global roles
+      description: Lists canonical string-ID EX global roles and the immutable built-in project-role options used by existing role pickers. Only stored EX global roles can be assigned or mutated. Requires global role management and the project_roles capability.
+      responses:
+        '200': {description: Global roles, schema: {type: array, items: {$ref: '#/definitions/EXGlobalRole'}}}
+        '403': {description: Permission denied or capability unavailable}
+    post:
+      tags: [user]
+      summary: Create canonical EX global role
+      consumes: [application/json]
+      parameters:
+      - name: Global role
+        in: body
+        required: true
+        schema: {$ref: '#/definitions/EXGlobalRoleCreateRequest'}
+      responses:
+        '201': {description: Global role created, schema: {$ref: '#/definitions/EXGlobalRole'}}
+        '400': {description: Invalid role}
+        '403': {description: Permission denied or capability unavailable}
+  /roles/permissions:
+    get:
+      tags: [user]
+      summary: List EX global permission catalog
+      responses:
+        '200': {description: Global permission catalog, schema: {type: array, items: {$ref: '#/definitions/EXGlobalPermissionDefinition'}}}
+        '403': {description: Permission denied or capability unavailable}
+  /roles/{role_id}:
+    parameters:
+    - name: role_id
+      in: path
+      required: true
+      type: string
+      x-example: '24'
+    get:
+      tags: [user]
+      summary: Get canonical EX global role
+      responses:
+        '200': {description: Global role, schema: {$ref: '#/definitions/EXGlobalRole'}}
+        '403': {description: Permission denied or capability unavailable}
+        '404': {description: Global role not found}
+    put:
+      tags: [user]
+      summary: Update canonical EX global role
+      consumes: [application/json]
+      parameters:
+      - name: Global role update
+        in: body
+        required: true
+        schema: {$ref: '#/definitions/EXGlobalRoleUpdateRequest'}
+      responses:
+        '200': {description: Updated global role, schema: {$ref: '#/definitions/EXGlobalRole'}}
+        '400': {description: Invalid role or missing revision}
+        '403': {description: Permission denied or capability unavailable}
+        '404': {description: Global role not found}
+        '409': {description: Revision conflict or last global administrator protection}
+    delete:
+      tags: [user]
+      summary: Delete canonical EX global role
+      parameters:
+      - name: revision
+        in: query
+        required: true
+        type: integer
+        minimum: 1
+        x-example: 1
+      - name: force
+        in: query
+        required: false
+        type: boolean
+      responses:
+        '204': {description: Global role deleted}
+        '200': {description: Forced deletion impact, schema: {$ref: '#/definitions/EXRoleImpact'}}
+        '400': {description: Missing or invalid revision}
+        '403': {description: Permission denied or capability unavailable}
+        '404': {description: Global role not found}
+        '409': {description: "Assigned role, revision conflict or last global administrator protection"}
+  /global-roles:
+    get:
+      tags: [user]
+      summary: List EX global-role alias
+      description: Alias of `/roles`; it has the same EX string IDs, split permission masks, immutable built-in picker options and CAS contract.
+      responses:
+        '200': {description: Global roles, schema: {type: array, items: {$ref: '#/definitions/EXGlobalRole'}}}
+        '403': {description: Permission denied or capability unavailable}
+    post:
+      tags: [user]
+      summary: Creates a global role
+      consumes: [application/json]
+      parameters:
+      - name: Global role
+        in: body
+        required: true
+        schema: {$ref: '#/definitions/EXGlobalRoleCreateRequest'}
+      responses:
+        '201': {description: Global role created, schema: {$ref: '#/definitions/EXGlobalRole'}}
+        '400': {description: Invalid role}
+        '403': {description: Permission denied or capability unavailable}
+  /global-roles/permissions:
+    get:
+      tags: [user]
+      summary: List EX global permission catalog alias
+      description: Alias of `/roles/permissions`.
+      responses:
+        '200': {description: Global permission catalog, schema: {type: array, items: {$ref: '#/definitions/EXGlobalPermissionDefinition'}}}
+        '403': {description: Permission denied or capability unavailable}
+  /global-roles/project-permissions:
+    $ref: '#/paths/~1roles~1project-permissions'
+  /global-roles/{role_id}:
+    parameters:
+    - name: role_id
+      in: path
+      required: true
+      type: string
+      x-example: '24'
+    get:
+      tags: [user]
+      summary: Get EX global-role alias
+      responses:
+        '200': {description: Global role, schema: {$ref: '#/definitions/EXGlobalRole'}}
+        '403': {description: Permission denied or capability unavailable}
+        '404': {description: Global role not found}
+    put:
+      tags: [user]
+      summary: Updates a global role
+      consumes: [application/json]
+      parameters:
+      - name: Global role update
+        in: body
+        required: true
+        schema: {$ref: '#/definitions/EXGlobalRoleUpdateRequest'}
+      responses:
+        '200': {description: Updated global role, schema: {$ref: '#/definitions/EXGlobalRole'}}
+        '400': {description: Invalid role or missing revision}
+        '403': {description: Permission denied or capability unavailable}
+        '404': {description: Global role not found}
+        '409': {description: Revision conflict or last global administrator protection}
+    delete:
+      tags: [user]
+      summary: Deletes a global role
+      parameters:
+      - name: revision
+        in: query
+        required: true
+        type: integer
+        minimum: 1
+        x-example: 1
+      - name: force
+        in: query
+        required: false
+        type: boolean
+      responses:
+        '204': {description: Global role deleted}
+        '200': {description: Forced deletion impact, schema: {$ref: '#/definitions/EXRoleImpact'}}
+        '400': {description: Missing or invalid revision}
+        '403': {description: Permission denied or capability unavailable}
+        '404': {description: Global role not found}
+        '409': {description: "Assigned role, revision conflict or last global administrator protection"}
+  /users/{user_id}/global-roles:
+    parameters:
+    - $ref: './api-docs.yml#/parameters/user_id'
+    get:
+      tags: [user]
+      summary: List EX global role assignments
+      responses:
+        '200': {description: Global role assignments, schema: {type: array, items: {$ref: '#/definitions/EXGlobalRoleAssignment'}}}
+        '403': {description: Permission denied or capability unavailable}
+        '404': {description: User not found}
+    post:
+      tags: [user]
+      summary: Assigns a global role to the user
+      consumes: [application/json]
+      parameters:
+      - name: Assignment
+        in: body
+        required: true
+        schema: {$ref: '#/definitions/EXGlobalRoleAssignmentRequest'}
+      responses:
+        '201': {description: Global role assigned, schema: {$ref: '#/definitions/EXGlobalRoleAssignment'}}
+        '400': {description: Invalid or duplicate assignment}
+        '403': {description: Permission denied or capability unavailable}
+        '404': {description: User or role not found}
+        '409': {description: Assignment conflict}
+  /users/{user_id}/global-roles/{assignment_id}:
+    parameters:
+    - $ref: './api-docs.yml#/parameters/user_id'
+    - $ref: './api-docs.yml#/parameters/assignment_id'
+    delete:
+      tags: [user]
+      summary: Removes a global role from the user
+      parameters:
+      - name: revision
+        in: query
+        required: true
+        type: integer
+        minimum: 1
+        x-example: 1
+      responses:
+        '204': {description: Global role assignment removed}
+        '400': {description: Missing or invalid revision}
+        '403': {description: Permission denied or capability unavailable}
+        '404': {description: User or assignment not found}
+        '409': {description: Revision conflict or last global administrator protection}
+  /users/{user_id}/global-permissions:
+    parameters:
+    - $ref: './api-docs.yml#/parameters/user_id'
+    get:
+      tags: [user]
+      summary: Get effective EX global permissions
+      responses:
+        '200': {description: Effective global permissions and bounded provenance, schema: {$ref: '#/definitions/EXEffectiveGlobalPermissions'}}
+        '403': {description: Permission denied or capability unavailable}
+        '404': {description: User not found}
   /project/{project_id}/hosts:
     parameters:
     - $ref: ./api-docs.yml#/parameters/project_id

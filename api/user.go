@@ -58,7 +58,7 @@ func (c *UserController) GetUser(w http.ResponseWriter, r *http.Request) {
 
 	user.User = *helpers.GetFromContext(r, "user").(*db.User)
 	user.CanCreateProject = user.Admin || util.Config.NonAdminCanCreateProject
-	user.CanReadAuditLog = canReadAuditLog(&user.User)
+	user.CanReadAuditLog = canReadAuditLog(r, &user.User)
 	user.HasActiveSubscription = false
 	user.Pro = false
 	helpers.WriteJSON(w, http.StatusOK, user)

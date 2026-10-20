@@ -31,6 +31,57 @@ var (
 
 // Role keeps its external immutable identity separate from its mutable slug.
 // All EX API and policy references use ID.
+
+// GlobalPermission is an instance-wide permission bit held by a global role. It is a separate type from
+// ProjectUserPermission on purpose: the same numeric bit means different things in the two scopes.
+type GlobalPermission int64
+
+const (
+	// CanManageGlobalUsers creates, edits and deletes users. Only an admin may grant the admin flag.
+	CanManageGlobalUsers GlobalPermission = 1 << iota
+	// CanManageGlobalRoles manages global roles and their assignments to users.
+	CanManageGlobalRoles
+	// CanManageGlobalSystem changes instance settings: options, apps, runners, cluster, active tasks.
+	CanManageGlobalSystem
+	// CanReadGlobalAudit reads the audit log.
+	CanReadGlobalAudit
+	CanManageGlobalCredentialsMetadata
+	CanManageGlobalCredentialsRotate
+	CanManageGlobalCredentialsGrant
+	CanManageGlobalPolicyGuardrails
+	CanRollbackGlobalPolicyGuardrails
+)
+
+const AllGlobalPermissions = CanManageGlobalUsers | CanManageGlobalRoles | CanManageGlobalSystem | CanReadGlobalAudit |
+	CanManageGlobalCredentialsMetadata | CanManageGlobalCredentialsRotate | CanManageGlobalCredentialsGrant |
+	CanManageGlobalPolicyGuardrails | CanRollbackGlobalPolicyGuardrails
+
+func (p GlobalPermission) Can(permission GlobalPermission) bool {
+	return p&permission == permission
+}
+
+// GlobalPermissionDefinition describes one global permission bit for the API and the UI.
+type GlobalPermissionDefinition struct {
+	ID          string           `json:"id"`
+	Permission  GlobalPermission `json:"permission"`
+	Description string           `json:"description"`
+}
+
+// GlobalPermissionCatalog lists the global permissions in a stable order.
+func GlobalPermissionCatalog() []GlobalPermissionDefinition {
+	return []GlobalPermissionDefinition{
+		{ID: "global.users.manage", Permission: CanManageGlobalUsers, Description: "Manage users"},
+		{ID: "global.roles.manage", Permission: CanManageGlobalRoles, Description: "Manage global roles"},
+		{ID: "global.system.manage", Permission: CanManageGlobalSystem, Description: "Manage system settings"},
+		{ID: "global.audit.read", Permission: CanReadGlobalAudit, Description: "Read the audit log"},
+		{ID: "global.credentials.metadata.manage", Permission: CanManageGlobalCredentialsMetadata, Description: "Manage global credential metadata"},
+		{ID: "global.credentials.rotate", Permission: CanManageGlobalCredentialsRotate, Description: "Rotate global credentials"},
+		{ID: "global.credentials.grant", Permission: CanManageGlobalCredentialsGrant, Description: "Grant global credentials"},
+		{ID: "global.policy_guardrails.manage", Permission: CanManageGlobalPolicyGuardrails, Description: "Manage policy guardrails"},
+		{ID: "global.policy_guardrails.rollback", Permission: CanRollbackGlobalPolicyGuardrails, Description: "Rollback policy guardrails"},
+	}
+}
+
 type Role struct {
 	ID                ProjectRoleID         `db:"role_id" json:"id" backup:"-"`
 	Slug              string                `db:"slug" json:"slug" backup:"-"`
@@ -120,6 +171,7 @@ func (a RoleAssignments) Impact() RoleImpact {
 	for _, g := range a.Grants {
 		projects[g.ProjectID] = true
 	}
+
 	for _, m := range a.Mappings {
 		projects[m.ProjectID] = true
 	}

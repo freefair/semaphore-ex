@@ -218,6 +218,10 @@ type WorkflowRunInput struct {
 	// separate from UserValues so the typed EX parameter snapshot and survey
 	// environment cannot overwrite one another.
 	Environment MapStringAnyField `json:"environment,omitempty"`
+	// IntegrationID is server-owned webhook provenance. It is copied into the
+	// immutable run snapshot and the root task; callers cannot provide it over
+	// the manual workflow-run API.
+	IntegrationID *int `json:"-"`
 }
 
 type WorkflowApprovalTimeoutOutcome string

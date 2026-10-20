@@ -1773,13 +1773,17 @@ func TestWorkflowPolicyGuardrailTriggerSourcesAreClosedAndConsistent(t *testing.
 		{name: "webhook", snapshot: db.WorkflowTriggerSnapshot{ID: 1, Type: db.WorkflowTriggerWebhook}, want: "webhook"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			actual, err := workflowPolicyGuardrailTriggerSource(testCase.snapshot)
+			actual, err := workflowPolicyGuardrailTriggerSource(testCase.snapshot, nil)
 			require.NoError(t, err)
 			assert.Equal(t, testCase.want, actual)
 		})
 	}
-	_, err := workflowPolicyGuardrailTriggerSource(db.WorkflowTriggerSnapshot{ID: 1, Type: "unknown"})
+	_, err := workflowPolicyGuardrailTriggerSource(db.WorkflowTriggerSnapshot{ID: 1, Type: "unknown"}, nil)
 	assert.Error(t, err)
+	integrationID := 42
+	actual, err := workflowPolicyGuardrailTriggerSource(db.WorkflowTriggerSnapshot{}, &integrationID)
+	require.NoError(t, err)
+	assert.Equal(t, "webhook", actual)
 }
 
 func TestWorkflowPolicyGuardrailDecisionKeysAreWorkflowScoped(t *testing.T) {
@@ -1871,6 +1875,39 @@ func TestWorkflowPolicyGuardrailDenyIsPersistedBeforeItBlocksStart(t *testing.T)
 	for _, evaluation := range evaluations {
 		assert.Equal(t, db.PolicyGuardrailDecisionDeny, evaluation.Decision)
 	}
+}
+
+func TestWorkflowPolicyGuardrailIntegrationCannotBypassWebhookRule(t *testing.T) {
+	fixture := newWorkflowServiceFixture(t)
+	defer fixture.store.Close()
+	policyStore := workflowSQL.NewPolicyGuardrailStore(fixture.store.GetConnection())
+	governance := NewPolicyGuardrailGovernanceService(policyStore)
+	state, err := governance.Get(context.Background(), pro_interfaces.PolicyGuardrailScopeProject, &fixture.projectID)
+	require.NoError(t, err)
+	source := "version: 1\nrules:\n  - id: deny-webhook-workflow\n    effect: deny\n    severity: high\n    message: Webhook workflow starts are denied.\n    match: all\n    conditions:\n      - field: workflow.trigger_source\n        operator: equals\n        string_value: webhook\n"
+	draft, err := governance.SaveDraft(context.Background(), pro_interfaces.PolicyGuardrailScopeProject, &fixture.projectID, source, state.Draft.Revision, fixture.user.ID)
+	require.NoError(t, err)
+	_, err = governance.Publish(context.Background(), pro_interfaces.PolicyGuardrailScopeProject, &fixture.projectID, pro_interfaces.PolicyGuardrailPublishRequest{ExpectedDraftRevision: draft.Revision}, fixture.user.ID)
+	require.NoError(t, err)
+	fixture.service.(pro_interfaces.WorkflowPolicyGuardrailAdmissionConfigurer).ConfigurePolicyGuardrailAdmission(NewPolicyGuardrailAdmissionService(policyStore))
+
+	manual, err := fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "manual-remains-manual")
+	require.NoError(t, err)
+	assert.Positive(t, manual.ID)
+
+	integrationID := 42
+	_, err = fixture.service.StartWorkflow(fixture.workflow, &fixture.user, "integration-must-be-webhook", db.WorkflowRunInput{IntegrationID: &integrationID})
+	var denied *pro_interfaces.ExecutionPreflightDeniedError
+	require.ErrorAs(t, err, &denied)
+	evaluations, err := governance.Evaluations(context.Background(), &fixture.projectID, db.RetrieveQueryParams{Count: 10})
+	require.NoError(t, err)
+	var webhookDenials int
+	for _, evaluation := range evaluations {
+		if evaluation.Source == "webhook" && evaluation.Decision == db.PolicyGuardrailDecisionDeny {
+			webhookDenials++
+		}
+	}
+	assert.Equal(t, 3, webhookDenials, "the root and both workflow nodes must be denied as webhook-originated")
 }
 
 func TestWorkflowPolicyGuardrailUnreviewedAuditReturnsFinalClaimPlan(t *testing.T) {

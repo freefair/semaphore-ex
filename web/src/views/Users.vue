@@ -2,8 +2,9 @@
   <div v-if="items != null">
     <EditDialog
       v-model="editDialog"
-      save-button-text="Save"
-      :title="$t('editUser')"
+      :save-button-text="itemId === 'new' ? $t('create') : $t('save')"
+      :title="itemId === 'new' ? $t('newUser') : $t('editUser')"
+      :dont-close-on-save="itemId === 'new'"
       @save="loadItems()"
       :hide-buttons="hideEditDialogButtons"
     >
@@ -11,7 +12,7 @@
         <UserForm
           :project-id="projectId"
           :item-id="itemId"
-          @save="onSave"
+          @save="onSave($event); onUserSaved($event)"
           @error="onError"
           :need-save="needSave"
           :need-reset="needReset"

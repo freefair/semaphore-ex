@@ -9,6 +9,7 @@ import (
 
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	coresql "github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
@@ -144,6 +145,9 @@ func TestAdminInfoStructuredLogDiagnosticsAreForbiddenToNonAdmins(t *testing.T) 
 	restoreConfig := installAdminInfoTestConfig(t)
 	defer restoreConfig()
 	request := httptest.NewRequest(http.MethodGet, "/api/admin/info", nil)
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	request = helpers.SetContextValue(request, "store", store)
 	request = helpers.SetContextValue(request, "user", &db.User{ID: 12, Admin: false})
 	request = helpers.SetContextValue(request, "log_writer", structuredLogDiagnosticsStub{
 		diagnostics: pro_interfaces.StructuredLogDiagnostics{

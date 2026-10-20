@@ -5,6 +5,7 @@ export default {
   data() {
     return {
       aliases: null,
+      aliasesAccessible: true,
     };
   },
 
@@ -31,11 +32,20 @@ export default {
   methods: {
 
     async loadAliases() {
-      this.aliases = (await axios({
-        method: 'get',
-        url: this.aliasPath,
-        responseType: 'json',
-      })).data;
+      this.aliases = null;
+      this.aliasesAccessible = true;
+      try {
+        this.aliases = (await axios({
+          method: 'get',
+          url: this.aliasPath,
+          responseType: 'json',
+        })).data;
+        this.aliasesAccessible = true;
+      } catch (error) {
+        if (error.response?.status !== 403) throw error;
+        this.aliases = [];
+        this.aliasesAccessible = false;
+      }
     },
 
     async deleteAlias(id) {

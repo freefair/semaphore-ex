@@ -38,6 +38,13 @@ describe('Roles.vue', () => {
   it('keeps authorized actions during table data initialization', () => {
     expect(Roles.methods.allowActions.call({ projectId: 1, can: () => true })).to.equal(true);
     expect(Roles.methods.allowActions.call({ projectId: 1, can: () => false })).to.equal(false);
+    expect(Roles.methods.allowActions.call({ isAdmin: true })).to.equal(true);
+    expect(Roles.methods.allowActions.call({
+      systemInfo: { global_permissions: { permissions: 2 } },
+    })).to.equal(true);
+    expect(Roles.methods.allowActions.call({
+      systemInfo: { global_permissions: { permissions: 1 } },
+    })).to.equal(false);
   });
 
   it('asks again with the impact when the role is assigned', async () => {

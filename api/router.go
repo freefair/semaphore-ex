@@ -110,10 +110,10 @@ func Route(
 	)
 	runnerController.SetMetrics(appMetrics)
 	jwksController := NewJwksController(jwtSigner)
-	integrationController := NewIntegrationController(store, integrationService)
 	environmentController := projects.NewEnvironmentController(store, encryptionService, accessKeyService, environmentService, secretStorageService)
 	identityServices := newIdentityServiceBundle(store)
 	capabilityProvider := identityServices.capabilityProvider
+	integrationController := NewIntegrationController(store, integrationService, workflowStore, workflowService, capabilityProvider)
 	totpService := identityServices.totpService
 	ldapService := identityServices.ldapService
 	oidcGroupMappingService := identityServices.oidcGroupMappingService
@@ -141,6 +141,7 @@ func Route(
 	}
 	taskController := projects.NewTaskController(store, ansibleTaskRepo, workflowStore)
 	rolesController := proApi.NewRolesController(store, capabilityProvider)
+	projectIntegrationController := projects.NewIntegrationController(store, workflowStore, capabilityProvider)
 	roleMappingsController := proApi.NewRoleMappingsController(proFactory.NewRoleMappingStore(store), store)
 	templateController := projects.NewTemplateController(store, store, executorImageResolver)
 	templateController.ConfigureCrossProjectDeletionGuard(workflowStore)
@@ -355,6 +356,23 @@ func Route(
 	globalRolesAPI.Path("/{role_id}").HandlerFunc(rolesController.UpdateRole).Methods("PUT", "POST")
 	globalRolesAPI.Path("/{role_id}").HandlerFunc(rolesController.DeleteRole).Methods("DELETE")
 
+	// Upstream uses /global-roles while EX has always exposed the same
+	// authority at /roles. Keep the incoming path as a compatibility alias;
+	// both surfaces are backed by the same role store and authorization chain.
+	globalRolesCompatibilityAPI := authenticatedAPI.PathPrefix("/global-roles").Subrouter()
+	globalRolesCompatibilityAPI.Use(
+		delegatedProjectRolesSnapshot,
+		EnhancedGlobalPermissionAuditMiddleware(auditFacade),
+		globalPermissionMiddleware(db.CanManageGlobalRoles),
+	)
+	globalRolesCompatibilityAPI.Path("/permissions").HandlerFunc(rolesController.GetGlobalPermissionCatalog).Methods("GET", "HEAD")
+	globalRolesCompatibilityAPI.Path("/project-permissions").HandlerFunc(rolesController.GetGlobalProjectPermissionCatalog).Methods("GET", "HEAD")
+	globalRolesCompatibilityAPI.Path("").HandlerFunc(rolesController.GetRoles).Methods("GET", "HEAD")
+	globalRolesCompatibilityAPI.Path("").HandlerFunc(rolesController.AddRole).Methods("POST")
+	globalRolesCompatibilityAPI.Path("/{role_id}").HandlerFunc(rolesController.GetGlobalRole).Methods("GET", "HEAD")
+	globalRolesCompatibilityAPI.Path("/{role_id}").HandlerFunc(rolesController.UpdateRole).Methods("PUT", "POST")
+	globalRolesCompatibilityAPI.Path("/{role_id}").HandlerFunc(rolesController.DeleteRole).Methods("DELETE")
+
 	globalRoleAssignmentsAPI := authenticatedAPI.PathPrefix("/users/{user_id}/global-roles").Subrouter()
 	globalRoleAssignmentsAPI.Use(
 		delegatedProjectRolesSnapshot,
@@ -394,7 +412,7 @@ func Route(
 	globalSystemAPI.Path("/cache").HandlerFunc(clearCache).Methods("DELETE", "HEAD")
 
 	auditAPI := authenticatedAPI.PathPrefix("/audit-log").Subrouter()
-	auditAPI.Use(auditLogMiddleware)
+	auditAPI.Use(delegatedProjectRolesSnapshot, auditLogMiddleware)
 	auditAPI.Path("/events").HandlerFunc(getAuditEvents(auditController.GetEvents)).Methods("GET")
 	auditAPI.Path("/events/export").HandlerFunc(auditController.ExportEvents).Methods("GET")
 
@@ -602,7 +620,7 @@ func Route(
 	projectUserAPI.Path("/views/positions").HandlerFunc(projects.SetViewPositions).Methods("POST")
 
 	projectUserAPI.Path("/integrations").HandlerFunc(projects.GetIntegrations).Methods("GET", "HEAD")
-	projectUserAPI.Path("/integrations").HandlerFunc(projects.AddIntegration).Methods("POST")
+	projectUserAPI.Path("/integrations").HandlerFunc(projectIntegrationController.AddIntegration).Methods("POST")
 	projectUserAPI.Path("/backup").HandlerFunc(backupController.GetBackup).Methods("GET", "HEAD")
 	projectUserAPI.Path("/notifications/test").HandlerFunc(projectController.SendTestNotification).Methods("POST")
 
@@ -951,32 +969,32 @@ func Route(
 
 	projectIntegrationsAliasAPI := projectUserAPI.PathPrefix("/integrations").Subrouter()
 	projectIntegrationsAliasAPI.Use(projects.ProjectMiddleware)
-	projectIntegrationsAliasAPI.HandleFunc("/aliases", projects.GetIntegrationAlias).Methods("GET", "HEAD")
-	projectIntegrationsAliasAPI.HandleFunc("/aliases", projects.AddIntegrationAlias).Methods("POST")
-	projectIntegrationsAliasAPI.HandleFunc("/aliases/{alias_id}", projects.RemoveIntegrationAlias).Methods("DELETE")
+	projectIntegrationsAliasAPI.Handle("/aliases", projectIntegrationController.ProjectWorkflowIntegrationAliasMiddleware(http.HandlerFunc(projects.GetIntegrationAlias))).Methods("GET", "HEAD")
+	projectIntegrationsAliasAPI.Handle("/aliases", projectIntegrationController.ProjectWorkflowIntegrationAliasMiddleware(http.HandlerFunc(projects.AddIntegrationAlias))).Methods("POST")
+	projectIntegrationsAliasAPI.Handle("/aliases/{alias_id}", projectIntegrationController.ProjectWorkflowIntegrationAliasMiddleware(http.HandlerFunc(projects.RemoveIntegrationAlias))).Methods("DELETE")
 
 	projectIntegrationsAPI := projectUserAPI.PathPrefix("/integrations").Subrouter()
 	projectIntegrationsAPI.Use(projects.ProjectMiddleware, projects.IntegrationMiddleware)
-	projectIntegrationsAPI.HandleFunc("/{integration_id}", projects.UpdateIntegration).Methods("PUT")
+	projectIntegrationsAPI.HandleFunc("/{integration_id}", projectIntegrationController.UpdateIntegration).Methods("PUT")
 	projectIntegrationsAPI.HandleFunc("/{integration_id}", projects.DeleteIntegration).Methods("DELETE")
 	projectIntegrationsAPI.HandleFunc("/{integration_id}", projects.GetIntegration).Methods("GET")
 	projectIntegrationsAPI.HandleFunc("/{integration_id}/refs", projects.GetIntegrationRefs).Methods("GET", "HEAD")
 	projectIntegrationsAPI.HandleFunc("/{integration_id}/matchers", projects.GetIntegrationMatchers).Methods("GET", "HEAD")
-	projectIntegrationsAPI.HandleFunc("/{integration_id}/matchers", projects.AddIntegrationMatcher).Methods("POST")
+	projectIntegrationsAPI.Handle("/{integration_id}/matchers", projectIntegrationController.WorkflowIntegrationInputMutationMiddleware(http.HandlerFunc(projects.AddIntegrationMatcher))).Methods("POST")
 	projectIntegrationsAPI.HandleFunc("/{integration_id}/values", projects.GetIntegrationExtractValues).Methods("GET", "HEAD")
-	projectIntegrationsAPI.HandleFunc("/{integration_id}/values", projects.AddIntegrationExtractValue).Methods("POST")
-	projectIntegrationsAPI.HandleFunc("/{integration_id}/aliases", projects.GetIntegrationAlias).Methods("GET", "HEAD")
-	projectIntegrationsAPI.HandleFunc("/{integration_id}/aliases", projects.AddIntegrationAlias).Methods("POST")
-	projectIntegrationsAPI.HandleFunc("/{integration_id}/aliases/{alias_id}", projects.RemoveIntegrationAlias).Methods("DELETE")
+	projectIntegrationsAPI.Handle("/{integration_id}/values", projectIntegrationController.WorkflowIntegrationInputMutationMiddleware(http.HandlerFunc(projects.AddIntegrationExtractValue))).Methods("POST")
+	projectIntegrationsAPI.Handle("/{integration_id}/aliases", projectIntegrationController.WorkflowIntegrationAliasMiddleware(http.HandlerFunc(projects.GetIntegrationAlias))).Methods("GET", "HEAD")
+	projectIntegrationsAPI.Handle("/{integration_id}/aliases", projectIntegrationController.WorkflowIntegrationAliasMiddleware(http.HandlerFunc(projects.AddIntegrationAlias))).Methods("POST")
+	projectIntegrationsAPI.Handle("/{integration_id}/aliases/{alias_id}", projectIntegrationController.WorkflowIntegrationAliasMiddleware(http.HandlerFunc(projects.RemoveIntegrationAlias))).Methods("DELETE")
 
 	projectIntegrationsAPI.HandleFunc("/{integration_id}/matchers/{matcher_id}", projects.GetIntegrationMatcher).Methods("GET", "HEAD")
-	projectIntegrationsAPI.HandleFunc("/{integration_id}/matchers/{matcher_id}", projects.UpdateIntegrationMatcher).Methods("PUT")
-	projectIntegrationsAPI.HandleFunc("/{integration_id}/matchers/{matcher_id}", projects.DeleteIntegrationMatcher).Methods("DELETE")
+	projectIntegrationsAPI.Handle("/{integration_id}/matchers/{matcher_id}", projectIntegrationController.WorkflowIntegrationInputMutationMiddleware(http.HandlerFunc(projects.UpdateIntegrationMatcher))).Methods("PUT")
+	projectIntegrationsAPI.Handle("/{integration_id}/matchers/{matcher_id}", projectIntegrationController.WorkflowIntegrationInputMutationMiddleware(http.HandlerFunc(projects.DeleteIntegrationMatcher))).Methods("DELETE")
 	projectIntegrationsAPI.HandleFunc("/{integration_id}/matchers/{matcher_id}/refs", projects.GetIntegrationMatcherRefs).Methods("GET", "HEAD")
 
 	projectIntegrationsAPI.HandleFunc("/{integration_id}/values/{value_id}", projects.GetIntegrationExtractValue).Methods("GET", "HEAD")
-	projectIntegrationsAPI.HandleFunc("/{integration_id}/values/{value_id}", projects.UpdateIntegrationExtractValue).Methods("PUT")
-	projectIntegrationsAPI.HandleFunc("/{integration_id}/values/{value_id}", projects.DeleteIntegrationExtractValue).Methods("DELETE")
+	projectIntegrationsAPI.Handle("/{integration_id}/values/{value_id}", projectIntegrationController.WorkflowIntegrationInputMutationMiddleware(http.HandlerFunc(projects.UpdateIntegrationExtractValue))).Methods("PUT")
+	projectIntegrationsAPI.Handle("/{integration_id}/values/{value_id}", projectIntegrationController.WorkflowIntegrationInputMutationMiddleware(http.HandlerFunc(projects.DeleteIntegrationExtractValue))).Methods("DELETE")
 	projectIntegrationsAPI.HandleFunc("/{integration_id}/values/{value_id}/refs", projects.GetIntegrationExtractValueRefs).Methods("GET")
 
 	if os.Getenv("DEBUG") == "1" {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -35,6 +36,8 @@ var globalRunner *db.Runner
 var workflow *db.WorkflowTemplate
 var workflowRun *db.WorkflowRun
 var workflowApproval *db.WorkflowApproval
+var globalRole *db.Role
+var globalRoleAssignment *db.GlobalRoleAssignment
 
 // Runtime created simple ID values for some items we need to reference in other objects
 var repoID int
@@ -72,6 +75,7 @@ var capabilities = map[string][]string{
 	"workflow":                {"template"},
 	"workflow_run":            {"workflow"},
 	"workflow_approval":       {"workflow_run"},
+	"global_role":             {"user"},
 }
 
 func capabilityWrapper(cap string) func(t *trans.Transaction) {
@@ -213,6 +217,9 @@ func resolveCapability(caps []string, resolved []string, uid string) {
 		case "workflow_approval":
 			workflowApproval = addWorkflowApproval()
 			workflowNodeID = workflowApproval.WorkflowNodeID
+		case "global_role":
+			globalRole = addGlobalRole()
+			globalRoleAssignment = addGlobalRoleAssignment(userPathTestUser.ID, globalRole.ID)
 		default:
 			panic("unknown capability " + v)
 		}
@@ -273,11 +280,27 @@ var pathSubPatterns = []func() string{
 		}
 		return strconv.Itoa(workflow.RevisionID)
 	}, // revision_id, x-example: 22
+	func() string {
+		if globalRoleAssignment == nil {
+			return "0"
+		}
+		return strconv.Itoa(globalRoleAssignment.ID)
+	}, // assignment_id, x-example: 23
+	func() string {
+		if globalRole == nil {
+			return "0"
+		}
+		return string(globalRole.ID)
+	}, // global role_id, x-example: 24
 }
 
 // alterRequestPath with the above slice of functions
 func alterRequestPath(t *trans.Transaction) {
-	pathArgs := strings.Split(t.FullPath, "/")
+	requestURL, err := url.Parse(t.FullPath)
+	if err != nil {
+		panic(err)
+	}
+	pathArgs := strings.Split(requestURL.Path, "/")
 	exploded := make([]string, len(pathArgs))
 	copy(exploded, pathArgs)
 	for k, v := range pathSubPatterns {
@@ -287,7 +310,9 @@ func alterRequestPath(t *trans.Transaction) {
 			pathArgs[pos] = v()
 		}
 	}
-	t.FullPath = strings.Join(pathArgs, "/")
+	requestURL.Path = strings.Join(pathArgs, "/")
+	requestURL.RawPath = ""
+	t.FullPath = requestURL.String()
 
 	t.Request.URI = t.FullPath
 }
@@ -325,6 +350,9 @@ func alterRequestBody(t *trans.Transaction) {
 	bodyFieldProcessor("repository_id", repoID, &request)
 	bodyFieldProcessor("template_id", templateID, &request)
 	bodyFieldProcessor("build_template_id", nil, &request)
+	// An integration runs either a template or a workflow; the generated body
+	// carries both ids, so the workflow one is cleared.
+	bodyFieldProcessor("workflow_id", nil, &request)
 	if task != nil {
 		bodyFieldProcessor("task_id", task.ID, &request)
 	}
@@ -662,4 +690,17 @@ func matchesTerraformAliasResponse(body string, expected db.TerraformInventoryAl
 
 func failTerraformDredd(t *trans.Transaction, message string) {
 	t.Fail = message
+}
+
+// setRequestQuery preserves stateful fixture parameters through final path normalization.
+func setRequestQuery(t *trans.Transaction, key, value string) {
+	requestURL, err := url.Parse(t.FullPath)
+	if err != nil {
+		panic(err)
+	}
+	query := requestURL.Query()
+	query.Set(key, value)
+	requestURL.RawQuery = query.Encode()
+	t.FullPath = requestURL.String()
+	t.Request.URI = t.FullPath
 }

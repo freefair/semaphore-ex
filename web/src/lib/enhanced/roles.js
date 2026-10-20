@@ -4,7 +4,11 @@ import { hasGlobalPermission } from '@/lib/role-permissions';
 export const enhancedComputed = {
   canManageRoles() {
     if (this.projectId) return this.can(USER_PERMISSIONS.manageProjectUsers);
-    return hasGlobalPermission(this.systemInfo, GLOBAL_PERMISSIONS.manageRoles, this.isAdmin);
+    return hasGlobalPermission(
+      this.systemInfo || this.user,
+      GLOBAL_PERMISSIONS.manageRoles,
+      this.isAdmin,
+    );
   },
 };
 

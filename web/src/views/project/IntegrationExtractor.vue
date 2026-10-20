@@ -12,9 +12,18 @@
         class="mt-0"
         v-model="integration.searchable"
         :label="$t('globalAlias')"
+        :disabled="inputsReadOnly"
         @change="updateIntegration()"
       />
     </div>
+
+    <v-alert v-if="!aliasesAccessible" type="info" text class="mx-4">
+      {{ $t('integrationAliasesForbidden') }}
+    </v-alert>
+
+    <v-alert v-if="integration.workflow_id" type="info" text dense class="mx-4">
+      {{ $t('integrationWorkflowAliasAuthority') }}
+    </v-alert>
 
     <div v-if="integration.searchable" class="px-4">
       <v-alert type="info" text class="d-inline-block">
@@ -22,8 +31,10 @@
       </v-alert>
     </div>
 
-    <div v-else class="px-4 pb-6">
-      <div class="mb-3 pl-1" v-if="(aliases || []).length === 0">There is no aliases.</div>
+    <div v-else-if="aliasesAccessible" class="px-4 pb-6">
+      <div class="mb-3 pl-1" v-if="aliases != null && aliases.length === 0">
+        There are no aliases.
+      </div>
 
       <div v-else v-for="alias of aliases || []" :key="alias.id">
         <code class="mr-2">{{ alias.url }}</code>
@@ -60,12 +71,14 @@
       :is-admin="isAdmin"
       :userPermissions="userPermissions"
       :project-id="projectId"
+      :read-only="inputsReadOnly"
     />
 
     <IntegrationExtractValue
       :is-admin="isAdmin"
       :userPermissions="userPermissions"
       :project-id="projectId"
+      :read-only="inputsReadOnly"
     />
   </div>
 </template>
@@ -98,6 +111,13 @@ export default {
       integration: null,
       USER_PERMISSIONS,
     };
+  },
+
+  computed: {
+    inputsReadOnly() {
+      return !!this.integration?.workflow_id
+        && (!this.aliasesAccessible || this.aliases == null);
+    },
   },
 
   async created() {

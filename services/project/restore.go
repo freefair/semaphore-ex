@@ -565,15 +565,27 @@ func (e BackupIntegration) Restore(b *BackupDB) error {
 		authSecretID = &((*k).ID)
 	}
 
-	tpl := findEntityByName[db.Template](&e.Template, b.templates)
-	if tpl == nil {
-		return fmt.Errorf("template does not exist in templates[].name")
-	}
-
 	integration := e.Integration
 	integration.ProjectID = b.meta.ID
 	integration.AuthSecretID = authSecretID
-	integration.TemplateID = tpl.ID
+	integration.TemplateID = nil
+	integration.WorkflowID = nil
+	integration.WorkflowUserID = nil
+	if e.Template != nil {
+		tpl := findEntityByName[db.Template](e.Template, b.templates)
+		if tpl == nil {
+			return fmt.Errorf("template does not exist in templates[].name")
+		}
+		integration.TemplateID = &tpl.ID
+	} else if e.Workflow != nil {
+		workflow := findEntityByName[db.WorkflowTemplate](e.Workflow, b.workflows)
+		if workflow == nil {
+			return fmt.Errorf("workflow does not exist in workflows[].name")
+		}
+		integration.WorkflowID = &workflow.ID
+	} else {
+		return fmt.Errorf("integration target is missing")
+	}
 
 	if integration.TaskParams != nil {
 		inv := findEntityByName[db.Inventory](e.TaskParams.InventoryName, b.inventories)
@@ -607,6 +619,19 @@ func (e BackupIntegration) Restore(b *BackupDB) error {
 		_, _ = b.store.CreateIntegrationAlias(alias)
 	}
 
+	return nil
+}
+
+func (e BackupIntegration) Verify(backup *BackupFormat) error {
+	if (e.Template == nil && e.Workflow == nil) || (e.Template != nil && e.Workflow != nil) {
+		return errors.New("integration must reference either a template or a workflow")
+	}
+	if e.Template != nil && findEntityByName[BackupTemplate](e.Template, backup.Templates) == nil {
+		return errors.New("integration template does not exist")
+	}
+	if e.Workflow != nil && findEntityByName[BackupWorkflow](e.Workflow, backup.Workflows) == nil {
+		return errors.New("integration workflow does not exist")
+	}
 	return nil
 }
 
@@ -753,6 +778,11 @@ func (backup *BackupFormat) Verify() error {
 			return fmt.Errorf("error at workflows[%d]: %s", i, err.Error())
 		}
 	}
+	for i, o := range backup.Integration {
+		if err := o.Verify(backup); err != nil {
+			return fmt.Errorf("error at integrations[%d]: %s", i, err.Error())
+		}
+	}
 
 	return nil
 }
@@ -881,20 +911,6 @@ func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore 
 		return &newProject, err
 	}
 
-	for i, o := range backup.Integration {
-		if err := o.Restore(&b); err != nil {
-			return &newProject, fmt.Errorf("error at integrations[%d]: %s", i, err.Error())
-		}
-	}
-
-	for _, o := range backup.IntegrationAliases {
-		alias := db.IntegrationAlias{
-			Alias:     o,
-			ProjectID: b.meta.ID,
-		}
-		_, _ = b.store.CreateIntegrationAlias(alias)
-	}
-
 	for i, o := range backup.Schedules {
 		if err := o.Restore(&b); err != nil {
 			return &newProject, fmt.Errorf("error at schedules[%d]: %s", i, err.Error())
@@ -907,12 +923,27 @@ func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore 
 		}
 	}
 
-	// Workflows are restored last: their nodes reference templates, inventories
-	// and environments by name, all of which must already exist in the project.
+	// Workflows depend on templates, inventories and environments, while
+	// workflow integrations depend on the restored workflow IDs. Restore the
+	// workflow graph between those two dependency layers.
 	for i, o := range backup.Workflows {
 		if err := o.Restore(&b); err != nil {
 			return &newProject, fmt.Errorf("error at workflows[%d]: %s", i, err.Error())
 		}
+	}
+
+	for i, o := range backup.Integration {
+		if err := o.Restore(&b); err != nil {
+			return &newProject, fmt.Errorf("error at integrations[%d]: %s", i, err.Error())
+		}
+	}
+
+	for _, o := range backup.IntegrationAliases {
+		alias := db.IntegrationAlias{
+			Alias:     o,
+			ProjectID: b.meta.ID,
+		}
+		_, _ = b.store.CreateIntegrationAlias(alias)
 	}
 
 	return &newProject, nil

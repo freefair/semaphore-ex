@@ -14,6 +14,7 @@ import (
 
 	"github.com/semaphoreui/semaphore/pkg/conv"
 	"github.com/semaphoreui/semaphore/pkg/random"
+	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/services/server"
@@ -55,13 +56,40 @@ func hmacHashPayload(secret string, payloadBody []byte, hashFunc func() hash.Has
 type IntegrationController struct {
 	store              db.Store
 	integrationService server.IntegrationService
+	workflowRepo       db.WorkflowManager
+	workflowService    pro_interfaces.WorkflowService
+	capabilityProvider pro_interfaces.CapabilityProvider
 }
 
-func NewIntegrationController(store db.Store, integrationService server.IntegrationService) *IntegrationController {
+func NewIntegrationController(store db.Store, integrationService server.IntegrationService, dependencies ...any) *IntegrationController {
+	var workflowRepo db.WorkflowManager
+	var workflowService pro_interfaces.WorkflowService
+	var capabilityProvider pro_interfaces.CapabilityProvider
+	for _, dependency := range dependencies {
+		switch value := dependency.(type) {
+		case db.WorkflowManager:
+			workflowRepo = value
+		case pro_interfaces.WorkflowService:
+			workflowService = value
+		case pro_interfaces.CapabilityProvider:
+			capabilityProvider = value
+		}
+	}
 	return &IntegrationController{
 		store:              store,
 		integrationService: integrationService,
+		workflowRepo:       workflowRepo,
+		workflowService:    workflowService,
+		capabilityProvider: capabilityProvider,
 	}
+}
+
+// IntegrationRunResult is what one matching integration started: a task for
+// a template integration, a workflow run for a workflow integration, neither
+// when the start failed (the reason is in the log).
+type IntegrationRunResult struct {
+	Task *db.Task
+	Run  *db.WorkflowRun
 }
 
 func (c *IntegrationController) ReceiveIntegration(w http.ResponseWriter, r *http.Request) {
@@ -239,8 +267,9 @@ func (c *IntegrationController) ReceiveIntegration(w http.ResponseWriter, r *htt
 			}
 		}
 
-		task := c.RunIntegration(integration, project, r, payload)
-		if task != nil {
+		result := c.RunIntegration(integration, project, r, payload)
+
+		if task := result.Task; task != nil {
 			w.Header().Add("X-Semaphore-Task-ID", strconv.Itoa(task.ID))
 			w.Header().Add("X-Semaphore-Template-ID", strconv.Itoa(task.TemplateID))
 			w.Header().Add("X-Semaphore-Project-ID", strconv.Itoa(task.ProjectID))
@@ -251,6 +280,17 @@ func (c *IntegrationController) ReceiveIntegration(w http.ResponseWriter, r *htt
 
 			if task.InventoryID != nil {
 				w.Header().Add("X-Semaphore-Inventory-ID", strconv.Itoa(*task.InventoryID))
+			}
+		}
+
+		if run := result.Run; run != nil {
+			w.Header().Add("X-Semaphore-Workflow-ID", strconv.Itoa(run.WorkflowTemplateID))
+			w.Header().Add("X-Semaphore-Workflow-Run-ID", strconv.Itoa(run.ID))
+			w.Header().Add("X-Semaphore-Project-ID", strconv.Itoa(run.ProjectID))
+			w.Header().Add("X-Semaphore-Integration-ID", strconv.Itoa(integration.ID))
+
+			if run.RootTaskID != nil {
+				w.Header().Add("X-Semaphore-Task-ID", strconv.Itoa(*run.RootTaskID))
 			}
 		}
 	}
@@ -324,12 +364,19 @@ func GetTaskDefinition(
 
 	var extractedEnvResults = Extract(envValues, h, payload)
 
+	// Only a template integration gets here (a workflow one goes through
+	// GetWorkflowRunParams); a missing template id is left as zero.
+	templateID := 0
+	if integration.TemplateID != nil {
+		templateID = *integration.TemplateID
+	}
+
 	if integration.TaskParams != nil {
-		taskDefinition = integration.TaskParams.CreateTask(integration.TemplateID)
+		taskDefinition = integration.TaskParams.CreateTask(templateID)
 	} else {
 		taskDefinition = db.Task{
 			ProjectID:  integration.ProjectID,
-			TemplateID: integration.TemplateID,
+			TemplateID: templateID,
 			Params:     make(db.MapStringAnyField),
 		}
 	}
@@ -371,32 +418,73 @@ func GetTaskDefinition(
 	return
 }
 
-func (c *IntegrationController) RunIntegration(integration db.Integration, project db.Project, r *http.Request, payload []byte) (taskRef *db.Task) {
-	taskRef = nil
+// GetWorkflowRunParams builds the start parameters of a workflow run from a
+// webhook: every extracted value, whatever its variable type, becomes an
+// answer to the workflow's survey under the extractor's variable name. The
+// engine validates the answers against the survey (defaults, required,
+// types) and delivers them to nodes through their explicit bindings.
+func GetWorkflowRunParams(
+	integration db.Integration,
+	payload []byte,
+	h http.Header,
+	extractorCreator func(projectID, integrationID int) ([]db.IntegrationExtractValue, error),
+) (params db.WorkflowRunParams, err error) {
+	extractValues, err := extractorCreator(integration.ProjectID, integration.ID)
+	if err != nil {
+		return
+	}
 
+	params.IntegrationID = &integration.ID
+
+	extracted := Extract(extractValues, h, payload)
+	if len(extracted) > 0 {
+		params.Environment = db.MapStringAnyField(extracted)
+	}
+
+	return
+}
+
+func (c *IntegrationController) RunIntegration(integration db.Integration, project db.Project, r *http.Request, payload []byte) (result IntegrationRunResult) {
 	log.Info(fmt.Sprintf("Running integration %d", integration.ID))
+
+	if integration.RunsWorkflow() {
+		result.Run = c.runWorkflowIntegration(integration, r, payload)
+		return
+	}
+
+	result.Task = c.runTemplateIntegration(integration, r, payload)
+	return
+}
+
+func (c *IntegrationController) runTemplateIntegration(integration db.Integration, r *http.Request, payload []byte) *db.Task {
+	logger := log.WithFields(log.Fields{
+		"context":        "integrations",
+		"integration_id": integration.ID,
+	})
+
+	if integration.TemplateID == nil {
+		logger.Error("integration has no template")
+		return nil
+	}
 
 	taskDefinition, err := GetTaskDefinition(
 		integration, payload, r.Header, func(projectID, integrationID int) ([]db.IntegrationExtractValue, error) {
 			return c.store.GetIntegrationExtractValues(projectID, db.RetrieveQueryParams{}, integrationID)
 		})
 	if err != nil {
-		log.WithError(err).WithFields(log.Fields{
-			"context":        "integrations",
-			"integration_id": integration.ID,
-		}).Error("Failed to get task definition")
-		return
+		logger.WithError(err).Error("Failed to get task definition")
+		return nil
 	}
 
-	tpl, err := c.store.GetTemplate(integration.ProjectID, integration.TemplateID)
+	tpl, err := c.store.GetTemplate(integration.ProjectID, *integration.TemplateID)
 	if err != nil {
 		log.Error(err)
-		return
+		return nil
 	}
 
 	pool := helpers.GetFromContext(r, "task_pool").(*task2.TaskPool)
 
-	templateID := integration.TemplateID
+	templateID := *integration.TemplateID
 	// The webhook caller authenticates as the integration; the request address remains in its context.
 	ctx := audit.WithActor(r.Context(), audit.IntegrationActor(integration.ID, integration.Name))
 	task, err := pool.AddTaskWithDeploymentWindowAdmissionFrom(ctx, audit.TriggerIntegration, taskDefinition, nil, "", integration.ProjectID, tpl.App.NeedTaskAlias(), pro_interfaces.DeploymentWindowAdmissionRequest{
@@ -405,12 +493,98 @@ func (c *IntegrationController) RunIntegration(integration db.Integration, proje
 	})
 	if err != nil {
 		log.Error(err)
-		return
+		return nil
 	}
 
-	taskRef = &task
+	return &task
+}
 
-	return
+// runWorkflowIntegration starts a run of the integration's workflow. The
+// start is attributed to the integration (audit actor, task.integration_id
+// of the root task); a start the engine refuses — a required survey variable
+// the webhook did not provide, a workflow without a root — is logged, and
+// the webhook still answers 204 like every other silently skipped
+// integration.
+func (c *IntegrationController) runWorkflowIntegration(integration db.Integration, r *http.Request, payload []byte) *db.WorkflowRun {
+	if integration.WorkflowID == nil {
+		return nil
+	}
+	logger := log.WithFields(log.Fields{
+		"context":        "integrations",
+		"integration_id": integration.ID,
+		"workflow_id":    *integration.WorkflowID,
+	})
+
+	if c.workflowRepo == nil || c.workflowService == nil {
+		logger.Error("workflow integration dependencies are unavailable")
+		return nil
+	}
+	actor, err := c.integrationWorkflowActor(r, integration)
+	if err != nil {
+		logger.WithError(err).Error("Failed to resolve workflow integration initiator")
+		return nil
+	}
+	workflow, err := c.workflowRepo.GetWorkflowTemplate(integration.ProjectID, *integration.WorkflowID)
+	if err != nil {
+		logger.WithError(err).Error("Failed to load the integration's workflow")
+		return nil
+	}
+	if workflow.ID == 0 {
+		// A valid workflow integration must fail closed when its configured
+		// workflow dependency is unavailable.
+		logger.Error("Workflow integration target is unavailable")
+		return nil
+	}
+
+	params, err := GetWorkflowRunParams(
+		integration, payload, r.Header, func(projectID, integrationID int) ([]db.IntegrationExtractValue, error) {
+			return c.store.GetIntegrationExtractValues(projectID, db.RetrieveQueryParams{}, integrationID)
+		})
+	if err != nil {
+		logger.WithError(err).Error("Failed to get workflow run params")
+		return nil
+	}
+
+	run, err := c.workflowService.StartWorkflow(
+		workflow,
+		actor,
+		"integration-"+strconv.Itoa(integration.ID)+"-"+random.String(32),
+		db.WorkflowRunInput{Environment: params.Environment, IntegrationID: params.IntegrationID},
+	)
+	if err != nil {
+		logger.WithError(err).Error("Failed to start workflow")
+		return nil
+	}
+
+	return &run
+}
+
+// integrationWorkflowActor reloads the exact user persisted with the
+// integration and resolves workflow-trigger capability at dispatch time. It
+// deliberately never substitutes a current project owner: membership and
+// start authorization are subsequently re-evaluated by WorkflowService while
+// creating the immutable execution snapshot.
+func (c *IntegrationController) integrationWorkflowActor(r *http.Request, integration db.Integration) (*db.User, error) {
+	if integration.WorkflowUserID == nil || *integration.WorkflowUserID <= 0 {
+		return nil, db.ErrNotFound
+	}
+	actor, err := c.store.GetUser(*integration.WorkflowUserID)
+	if err != nil {
+		return nil, err
+	}
+	if c.capabilityProvider == nil {
+		return nil, pro_interfaces.CapabilityDeniedError{Decision: pro_interfaces.NewCapabilityDecision(
+			pro_interfaces.CapabilityWorkflowTriggers, pro_interfaces.CapabilityStateUnavailable,
+			pro_interfaces.CapabilityReasonProviderUnavailable, nil, nil), Required: pro_interfaces.CapabilityAccessExecute}
+	}
+	snapshot, err := c.capabilityProvider.Resolve(r.Context(), pro_interfaces.CapabilityRequest{UserID: actor.ID, IsAdmin: actor.Admin, At: tz.Now()})
+	if err != nil {
+		return nil, err
+	}
+	if err = snapshot.Require(pro_interfaces.CapabilityWorkflowTriggers, pro_interfaces.CapabilityAccessExecute); err != nil {
+		return nil, err
+	}
+	return &actor, nil
 }
 
 func Extract(extractValues []db.IntegrationExtractValue, h http.Header, payload []byte) (result map[string]any) {

@@ -198,11 +198,15 @@ func TestIntegrationMatch(t *testing.T) {
 	assert.True(t, matched)
 }
 
+func integrationTemplateID(value int) *int {
+	return &value
+}
+
 func TestGetTaskDefinitionSuccess(t *testing.T) {
 	integration := db.Integration{
 		ID:         11,
 		ProjectID:  22,
-		TemplateID: 33,
+		TemplateID: integrationTemplateID(33),
 		TaskParams: &db.TaskParams{
 			ProjectID:   22,
 			Environment: `{"existing":"value"}`,
@@ -250,7 +254,8 @@ func TestGetTaskDefinitionSuccess(t *testing.T) {
 	}
 
 	assert.Equal(t, integration.ProjectID, task.ProjectID)
-	assert.Equal(t, integration.TemplateID, task.TemplateID)
+	require.NotNil(t, integration.TemplateID)
+	assert.Equal(t, *integration.TemplateID, task.TemplateID)
 	assert.NotEmpty(t, task.Environment)
 
 	var env map[string]any
@@ -279,7 +284,7 @@ func TestGetTaskDefinition_JSONObjectInEnv(t *testing.T) {
 	integration := db.Integration{
 		ID:         11,
 		ProjectID:  22,
-		TemplateID: 33,
+		TemplateID: integrationTemplateID(33),
 	}
 
 	header := make(http.Header)
@@ -313,7 +318,7 @@ func TestGetTaskDefinitionTaskParamExtractionWithNilParamsMap(t *testing.T) {
 	integration := db.Integration{
 		ID:         111,
 		ProjectID:  222,
-		TemplateID: 333,
+		TemplateID: integrationTemplateID(333),
 		TaskParams: &db.TaskParams{
 			ProjectID: 222,
 			GitBranch: nil,
@@ -346,7 +351,7 @@ func TestGetTaskDefinitionExtractorError(t *testing.T) {
 	integration := db.Integration{
 		ID:         44,
 		ProjectID:  55,
-		TemplateID: 66,
+		TemplateID: integrationTemplateID(66),
 	}
 
 	header := make(http.Header)
@@ -370,7 +375,7 @@ func TestGetTaskDefinitionInvalidEnvironmentJSON(t *testing.T) {
 	integration := db.Integration{
 		ID:         77,
 		ProjectID:  88,
-		TemplateID: 99,
+		TemplateID: integrationTemplateID(99),
 		TaskParams: &db.TaskParams{
 			ProjectID:   88,
 			Environment: "{not-json}",
@@ -392,7 +397,7 @@ func TestGetTaskDefinitionIntegrationWithoutTaskParams(t *testing.T) {
 	integration := db.Integration{
 		ID:         44,
 		ProjectID:  55,
-		TemplateID: 66,
+		TemplateID: integrationTemplateID(66),
 	}
 
 	header := make(http.Header)
@@ -435,7 +440,7 @@ func TestGetTaskDefinitionWithExtractedEnvValues(t *testing.T) {
 	integration := db.Integration{
 		ID:         1,
 		ProjectID:  1,
-		TemplateID: 1,
+		TemplateID: integrationTemplateID(1),
 	}
 
 	// Create test payload
@@ -791,7 +796,7 @@ func setupHmacSha512ReceiveIntegration(t *testing.T, authSecret db.AccessKey) (*
 	integration, err := store.CreateIntegration(db.Integration{
 		Name:         "hmac-sha512 integration",
 		ProjectID:    project.ID,
-		TemplateID:   template.ID,
+		TemplateID:   integrationTemplateID(template.ID),
 		AuthMethod:   db.IntegrationAuthHmacSha512,
 		AuthSecretID: &authSecretID,
 		AuthHeader:   authHeader,
@@ -907,14 +912,15 @@ func TestReceiveIntegration_HmacSha512_RejectsInvalidAuthenticationConfiguration
 
 func TestIntegrationValidate_HmacSha512RequiresSecretAndHeader(t *testing.T) {
 	authSecretID := 1
+	templateID := 1
 
 	assert.NoError(t, (&db.Integration{
-		Name: "valid hmac-sha512", AuthMethod: db.IntegrationAuthHmacSha512, AuthSecretID: &authSecretID, AuthHeader: "X-Signature",
+		Name: "valid hmac-sha512", TemplateID: &templateID, AuthMethod: db.IntegrationAuthHmacSha512, AuthSecretID: &authSecretID, AuthHeader: "X-Signature",
 	}).Validate())
 	assert.Error(t, (&db.Integration{
-		Name: "missing secret", AuthMethod: db.IntegrationAuthHmacSha512, AuthHeader: "X-Signature",
+		Name: "missing secret", TemplateID: &templateID, AuthMethod: db.IntegrationAuthHmacSha512, AuthHeader: "X-Signature",
 	}).Validate())
 	assert.Error(t, (&db.Integration{
-		Name: "missing header", AuthMethod: db.IntegrationAuthHmacSha512, AuthSecretID: &authSecretID,
+		Name: "missing header", TemplateID: &templateID, AuthMethod: db.IntegrationAuthHmacSha512, AuthSecretID: &authSecretID,
 	}).Validate())
 }

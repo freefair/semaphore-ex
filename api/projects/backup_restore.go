@@ -15,8 +15,8 @@ import (
 )
 
 // BackupController serves project backup/restore. Workflows live outside
-// db.Store (Pro feature, see db.WorkflowManager), so the workflow store is
-// injected and threaded into the backup/restore routines.
+// db.Store, so the workflow store is injected and threaded into the
+// backup/restore routines.
 type BackupController struct {
 	workflowStore db.WorkflowManager
 }

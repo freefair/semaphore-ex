@@ -7,3 +7,13 @@ func TestWorkflowEditorFeatureIsAvailableInEnhancedEdition(t *testing.T) {
 		t.Fatal("enhanced edition must advertise the workflow editor")
 	}
 }
+
+func TestFeaturesAdvertiseImplementedGlobalRolesAndWorkflowIntegrations(t *testing.T) {
+	features := GetFeatures()
+	if !features.GlobalRolesManagement {
+		t.Fatal("enhanced edition must advertise implemented global role management")
+	}
+	if !features.WorkflowIntegrationsManagement {
+		t.Fatal("enhanced edition must advertise implemented workflow integrations")
+	}
+}

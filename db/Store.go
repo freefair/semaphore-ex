@@ -608,14 +608,19 @@ type SecretSyncRepository interface {
 	CompleteSecretSyncOperation(operation SecretSyncOperation, paths []SecretSyncPath) error
 }
 
+// RoleRepository holds the project roles. A shared role has no project and can be given in every project;
+// the built-in roles are shared.
 type RoleRepository interface {
 	GetGlobalRoleBySlug(slug string) (Role, error)
 	GetGlobalRoleByID(roleID ProjectRoleID) (Role, error)
+	GetGlobalRoles() ([]Role, error)
 	GetProjectOrGlobalRoleBySlug(projectID int, slug string) (Role, error)
+	GetSharedRoleBySlug(slug string) (Role, error)
+	GetProjectOrSharedRoleBySlug(projectID int, slug string) (Role, error)
 	GetProjectRole(projectID int, slug string) (Role, error)
 	GetProjectRoleByID(projectID int, roleID ProjectRoleID) (Role, error)
 	GetProjectRoles(projectID int) ([]Role, error)
-	GetGlobalRoles() ([]Role, error)
+	GetSharedRoles() ([]Role, error)
 	UpdateRole(role Role) error
 	CreateRole(role Role) (Role, error)
 	DeleteRole(roleID ProjectRoleID) error

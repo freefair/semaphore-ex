@@ -44,6 +44,12 @@ func TestValidateRole(t *testing.T) {
 	}
 }
 
+func TestValidateGlobalRole(t *testing.T) {
+	assert.NoError(t, ValidateGlobalRole(Role{ID: "global_auditor", Name: "Auditor", Revision: 1, GlobalPermissions: AllGlobalPermissions}))
+	assert.Error(t, ValidateGlobalRole(Role{ID: "global_missing_name", Revision: 1}))
+	assert.Error(t, ValidateGlobalRole(Role{ID: "global_unknown", Name: "Unknown", Revision: 1, GlobalPermissions: 1 << 30}))
+}
+
 func TestRoleAssignments_Impact(t *testing.T) {
 	assigned := RoleAssignments{
 		Members:       []RoleMember{{ProjectID: 1, UserID: 1}, {ProjectID: 1, UserID: 2}, {ProjectID: 2, UserID: 1}},
@@ -53,4 +59,33 @@ func TestRoleAssignments_Impact(t *testing.T) {
 
 	assert.Equal(t, RoleImpact{Members: 5, Projects: 3, TemplateGrants: 1}, assigned.Impact())
 	assert.Equal(t, RoleImpact{}, RoleAssignments{}.Impact())
+}
+
+func TestGlobalPermission_Can(t *testing.T) {
+	mask := CanManageGlobalUsers | CanReadGlobalAudit
+	assert.True(t, mask.Can(CanManageGlobalUsers))
+	assert.True(t, mask.Can(CanManageGlobalUsers|CanReadGlobalAudit))
+	assert.False(t, mask.Can(CanManageGlobalRoles))
+	assert.False(t, mask.Can(CanManageGlobalUsers|CanManageGlobalRoles))
+	assert.True(t, AllGlobalPermissions.Can(CanManageGlobalSystem))
+	assert.Equal(t, GlobalPermission(511), AllGlobalPermissions, "the bit values are part of the API")
+}
+
+func TestGlobalPermissionCatalog_CoversEveryBit(t *testing.T) {
+	var covered GlobalPermission
+	ids := map[string]bool{}
+	for _, definition := range GlobalPermissionCatalog() {
+		covered |= definition.Permission
+		assert.False(t, ids[definition.ID], "duplicate id %s", definition.ID)
+		ids[definition.ID] = true
+		assert.NotEmpty(t, definition.Description)
+	}
+	assert.Equal(t, AllGlobalPermissions, covered)
+}
+
+func TestGlobalRoleErrorsRemainDistinct(t *testing.T) {
+	assert.NotErrorIs(t, ErrLastGlobalAdministrator, ErrInvalidOperation)
+	assert.NotErrorIs(t, ErrGlobalRoleAssigned, ErrInvalidOperation)
+	assert.NotErrorIs(t, ErrLastGlobalAdministrator, ErrGlobalRoleAssigned)
+	assert.NotErrorIs(t, ErrInvalidOperation, ErrLastGlobalAdministrator)
 }

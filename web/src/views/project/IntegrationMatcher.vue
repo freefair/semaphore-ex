@@ -40,7 +40,7 @@
       <v-toolbar-title>Matcher</v-toolbar-title>
       <v-spacer></v-spacer>
       <v-btn
-        v-if="can(USER_PERMISSIONS.manageProjectResources)"
+        v-if="!readOnly && can(USER_PERMISSIONS.manageProjectResources)"
         color="primary"
         @click="editItem('new')"
         >New Matcher</v-btn
@@ -68,7 +68,7 @@
       </template>
 
       <template v-slot:item.actions="{ item }">
-        <div style="white-space: nowrap">
+        <div v-if="!readOnly" style="white-space: nowrap">
           <v-btn icon class="mr-1" @click="askDeleteItem(item.id)">
             <v-icon>mdi-delete</v-icon>
           </v-btn>
@@ -89,6 +89,9 @@ import IntegrationMatcherForm from '@/components/IntegrationMatcherForm.vue';
 export default {
   mixins: [ItemListPageBase],
   components: { IntegrationMatcherForm },
+  props: {
+    readOnly: { type: Boolean, default: false },
+  },
   computed: {
     // projectId() {
     //   if (/^-?\d+$/.test(this.$route.params.projectId)) {

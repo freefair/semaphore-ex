@@ -1,18 +1,34 @@
 import { GLOBAL_PERMISSIONS } from '@/lib/constants';
 import { hasGlobalPermission } from '@/lib/role-permissions';
+import EventBus from '@/event-bus';
 
 export const enhancedComputed = {
   canManageUsers() {
-    return hasGlobalPermission(this.systemInfo, GLOBAL_PERMISSIONS.manageUsers, this.isAdmin);
+    return hasGlobalPermission(
+      this.systemInfo || this.user,
+      GLOBAL_PERMISSIONS.manageUsers,
+      this.isAdmin,
+    );
   },
   canManageGlobalRoles() {
-    return hasGlobalPermission(this.systemInfo, GLOBAL_PERMISSIONS.manageRoles, this.isAdmin);
+    return hasGlobalPermission(
+      this.systemInfo || this.user,
+      GLOBAL_PERMISSIONS.manageRoles,
+      this.isAdmin,
+    );
   },
+
 };
 
 export const enhancedMethods = {
   allowActions() {
-    return this.canManageUsers;
+    return enhancedComputed.canManageUsers.call(this);
+  },
+  async onUserSaved(event) {
+    if (event.action !== 'new' || !event.item || !event.item.id) return;
+    this.itemId = event.item.id;
+    EventBus.$emit('i-snackbar', { color: 'success', text: this.$i18n.t('userCreated') });
+    await this.loadItems();
   },
   refreshHeaders() {
     this.headers = this.getHeaders().filter(

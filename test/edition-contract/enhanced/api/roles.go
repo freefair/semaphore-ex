@@ -65,7 +65,11 @@ func (c *RolesController) GetRoles(w http.ResponseWriter, r *http.Request) {
 	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead) {
 		return
 	}
-	roles, err := c.store.GetGlobalRoles()
+	// The role picker has always exposed the shared built-in project roles as
+	// read-only choices alongside assignable global roles. Keep that UI
+	// contract while CreateGlobalRoleAssignment continues to require a stored
+	// global role (project_id IS NULL and role_id IS NOT NULL).
+	roles, err := c.store.GetSharedRoles()
 	if err != nil {
 		writeGlobalRoleError(w, err)
 		return

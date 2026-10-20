@@ -19,16 +19,18 @@ func Compatibility() pro_interfaces.Compatibility {
 
 func GetFeatures() pro_interfaces.Features {
 	return pro_interfaces.Features{
-		TerraformBackend:        true,
-		ProjectRunners:          true,
-		TaskSummary:             true,
-		SecretStorages:          true,
-		SecretStorageManagement: true,
-		HighAvailability:        true,
-		Workflows:               true,
-		CustomRolesManagement:   true,
-		DockerExecutor:          true,
-		K8sExecutor:             true,
-		AuditLogFilters:         true,
+		TerraformBackend:               true,
+		ProjectRunners:                 true,
+		TaskSummary:                    true,
+		SecretStorages:                 true,
+		SecretStorageManagement:        true,
+		HighAvailability:               true,
+		Workflows:                      true,
+		WorkflowIntegrationsManagement: true,
+		CustomRolesManagement:          true,
+		GlobalRolesManagement:          true,
+		DockerExecutor:                 true,
+		K8sExecutor:                    true,
+		AuditLogFilters:                true,
 	}
 }

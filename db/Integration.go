@@ -92,10 +92,23 @@ const (
 )
 
 type Integration struct {
-	ID           int                   `db:"id" json:"id" backup:"-"`
-	Name         string                `db:"name" json:"name"`
-	ProjectID    int                   `db:"project_id" json:"project_id" backup:"-"`
-	TemplateID   int                   `db:"template_id" json:"template_id" backup:"-"`
+	ID        int    `db:"id" json:"id" backup:"-"`
+	Name      string `db:"name" json:"name"`
+	ProjectID int    `db:"project_id" json:"project_id" backup:"-"`
+
+	// TemplateID is the task template the integration starts. Exactly one of
+	// TemplateID and WorkflowID is set; the store refuses anything else.
+	TemplateID *int `db:"template_id" json:"template_id" backup:"-"`
+	// WorkflowID is the workflow (a project__workflow_template row) the
+	// integration starts instead of a template. The webhook's extracted values
+	// go to the task of the workflow's root node; TaskParams do not apply and
+	// are dropped by the store.
+	WorkflowID *int `db:"workflow_id" json:"workflow_id" backup:"-"`
+	// WorkflowUserID is the durable user authority bound when a workflow
+	// integration is created or updated. It is never inferred from another
+	// project member when the unauthenticated webhook fires.
+	WorkflowUserID *int `db:"workflow_user_id" json:"workflow_user_id,omitempty" backup:"-"`
+
 	AuthMethod   IntegrationAuthMethod `db:"auth_method" json:"auth_method"`
 	AuthSecretID *int                  `db:"auth_secret_id" json:"auth_secret_id" backup:"-"`
 	AuthHeader   string                `db:"auth_header" json:"auth_header"`
@@ -130,7 +143,21 @@ func (env *Integration) Validate() error {
 		}
 	}
 
+	if env.TemplateID == nil && env.WorkflowID == nil {
+		return common_errors.NewValidationError("Integration must run a template or a workflow")
+	}
+
+	if env.TemplateID != nil && env.WorkflowID != nil {
+		return common_errors.NewValidationError("Integration can run either a template or a workflow, not both")
+	}
+
 	return nil
+}
+
+// RunsWorkflow reports whether the integration starts a workflow rather than
+// a task template.
+func (env *Integration) RunsWorkflow() bool {
+	return env.WorkflowID != nil
 }
 
 func (env *IntegrationMatcher) Validate() error {

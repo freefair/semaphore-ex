@@ -238,6 +238,23 @@ func TestGlobalRoleControllerCRUDCatalogAssignmentsAndProvenance(t *testing.T) {
 	require.NoError(t, err)
 	controller := NewRolesController(store, features.NewCapabilityProvider(store))
 
+	listResponse := serveGlobalRoleRequest(
+		t, store, admin, http.MethodGet, "/api/roles", nil, nil, controller.GetRoles,
+	)
+	assert.Equal(t, http.StatusOK, listResponse.Code)
+	var initialRoles []db.Role
+	require.NoError(t, json.Unmarshal(listResponse.Body.Bytes(), &initialRoles))
+	require.Len(t, initialRoles, 4)
+	assert.True(t, initialRoles[0].Builtin)
+
+	builtinAssignment := serveGlobalRoleRequest(
+		t, store, admin, http.MethodPost,
+		"/api/users/"+strconv.Itoa(target.ID)+"/global-roles",
+		map[string]any{"role_id": "builtin:owner"},
+		map[string]string{"user_id": strconv.Itoa(target.ID)}, controller.AddGlobalRoleAssignment,
+	)
+	assert.Equal(t, http.StatusNotFound, builtinAssignment.Code)
+
 	catalogResponse := serveGlobalRoleRequest(
 		t, store, admin, http.MethodGet, "/api/roles/permissions", nil, nil,
 		controller.GetGlobalPermissionCatalog,
@@ -314,15 +331,15 @@ func TestGlobalRoleControllerCRUDCatalogAssignmentsAndProvenance(t *testing.T) {
 	assert.Equal(t, target.ID, assignment.UserID)
 	assert.Equal(t, created.ID, assignment.RoleID)
 
-	listResponse := serveGlobalRoleRequest(
+	assignmentListResponse := serveGlobalRoleRequest(
 		t, store, admin, http.MethodGet,
 		"/api/users/"+strconv.Itoa(target.ID)+"/global-roles", nil,
 		map[string]string{"user_id": strconv.Itoa(target.ID)},
 		controller.GetGlobalRoleAssignments,
 	)
-	assert.Equal(t, http.StatusOK, listResponse.Code)
+	assert.Equal(t, http.StatusOK, assignmentListResponse.Code)
 	var assignments []db.GlobalRoleAssignment
-	require.NoError(t, json.Unmarshal(listResponse.Body.Bytes(), &assignments))
+	require.NoError(t, json.Unmarshal(assignmentListResponse.Body.Bytes(), &assignments))
 	assert.Len(t, assignments, 1)
 
 	effectiveResponse := serveGlobalRoleRequest(

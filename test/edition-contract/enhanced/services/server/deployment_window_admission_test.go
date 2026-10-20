@@ -176,6 +176,22 @@ func TestWorkflowStartAdmissionMapsTriggerSourcesServerSide(t *testing.T) {
 			assert.Equal(t, 19, *run.DeploymentWindowDecisionID)
 		})
 	}
+
+	t.Run("integration", func(t *testing.T) {
+		capture := &deploymentWindowAdmissionCapture{}
+		service := &workflowService{deploymentWindowAdmission: capture, deploymentWindowRunFence: true}
+		workflow := db.WorkflowTemplate{ID: 8, ProjectID: 7}
+		actor := &db.User{ID: 4}
+		run := db.WorkflowRun{}
+		integrationID := 31
+		require.NoError(t, service.claimWorkflowStartAdmission(&run, workflow, actor, "caller-controlled", nil, db.WorkflowRunInput{IntegrationID: &integrationID}))
+		assert.Equal(t, pro_interfaces.DeploymentWindowSourceIntegration, capture.request.Source)
+		assert.Equal(t, pro_interfaces.DeploymentWindowOriginIntegration, capture.request.Origin)
+		assert.Equal(t, workflow.ID, *capture.request.WorkflowID)
+		assert.Equal(t, actor.ID, *capture.request.ActorUserID)
+		assert.NotContains(t, capture.request.DecisionKey, "caller-controlled")
+		assert.Equal(t, 19, *run.DeploymentWindowDecisionID)
+	})
 }
 
 func TestWorkflowNodeAdmissionUsesConsumerScopeForCrossProjectNodes(t *testing.T) {

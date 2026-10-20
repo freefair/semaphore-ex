@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func intPtr(value int) *int { return &value }
+
 func TestTaskPoolPolicyGuardrailAdmissionRejectsUnadmittedDirectTaskSinks(t *testing.T) {
 	policy := &executionPreflightPolicyGuardrailStub{}
 	evaluationID, decisionID := 1, 1

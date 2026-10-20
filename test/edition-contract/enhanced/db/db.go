@@ -827,7 +827,7 @@ func BuildWorkflowRunSnapshotWithCrossProjectProvenance(
 	}
 	run := coreDB.WorkflowRun{
 		ProjectID: workflow.ProjectID, WorkflowTemplateID: workflow.ID,
-		Status: coreDB.WorkflowRunPending, ActorUserID: actorUserID,
+		Status: coreDB.WorkflowRunPending, ActorUserID: actorUserID, IntegrationID: input.IntegrationID,
 		DefinitionVersion: workflow.DefinitionVersion, DefinitionRevision: workflow.Revision,
 		WorkflowVersionID: workflow.CurrentVersionID,
 		CorrelationID:     correlationID, DefinitionSnapshotJSON: string(definitionJSON),

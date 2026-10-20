@@ -59,6 +59,12 @@ type WorkflowNodeSurveyInput struct {
 // the immutable parameter snapshot.
 type WorkflowRunParams struct {
 	Environment MapStringAnyField `json:"environment,omitempty"`
+
+	// IntegrationID is set by the server when a webhook integration starts
+	// the run: it is stamped on the root task (task.integration_id), so the
+	// task page and the audit trail show which integration started the run.
+	// Never read from a request body.
+	IntegrationID *int `json:"-"`
 }
 
 // workflowOutputNamePattern is the shape of an output name. The hyphen is
@@ -308,7 +314,11 @@ type WorkflowRun struct {
 
 	Version *string `db:"version" json:"version,omitempty" backup:"version"`
 
-	ActorUserID        int    `db:"actor_user_id" json:"actor_user_id" backup:"actor_user_id"`
+	ActorUserID int `db:"actor_user_id" json:"actor_user_id" backup:"actor_user_id"`
+	// IntegrationID records the authenticated integration that caused this
+	// run. The responsible user remains ActorUserID; the two identities are
+	// deliberately separate for authorization and audit provenance.
+	IntegrationID      *int   `db:"integration_id" json:"integration_id,omitempty" backup:"integration_id"`
 	DefinitionVersion  int    `db:"definition_version" json:"definition_version" backup:"definition_version"`
 	DefinitionRevision int    `db:"definition_revision" json:"definition_revision" backup:"definition_revision"`
 	WorkflowVersionID  int    `db:"workflow_version_id" json:"workflow_version_id" backup:"workflow_version_id"`

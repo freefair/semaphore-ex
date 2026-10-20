@@ -649,6 +649,42 @@ func TestRestore_DropsUnknownPermissionBits(t *testing.T) {
 	assert.Equal(t, db.CanManageProjectResources, perms[0].Permissions)
 }
 
+// Verify refuses an integration whose target is missing, doubled or unknown
+// before anything is written.
+func TestRestore_IntegrationVerify(t *testing.T) {
+	templateName := "Deploy"
+	workflowName := "WF"
+	base := func() *BackupFormat {
+		return &BackupFormat{
+			Templates: []BackupTemplate{{Template: db.Template{Name: templateName}}},
+			Workflows: []BackupWorkflow{{WorkflowTemplate: db.WorkflowTemplate{Name: workflowName}}},
+		}
+	}
+
+	tests := []struct {
+		name        string
+		integration BackupIntegration
+		wantErr     string
+	}{
+		{"template target", BackupIntegration{Template: &templateName}, ""},
+		{"workflow target", BackupIntegration{Workflow: &workflowName}, ""},
+		{"both", BackupIntegration{Template: &templateName, Workflow: &workflowName}, "either a template or a workflow"},
+		{"none", BackupIntegration{}, "either a template or a workflow"},
+		{"unknown template", BackupIntegration{Template: new("missing")}, "template does not exist"},
+		{"unknown workflow", BackupIntegration{Workflow: new("missing")}, "workflow does not exist"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.integration.Verify(base())
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
 func createBackupFixture(t *testing.T, store db.Store) (db.Project, db.Template) {
 	t.Helper()
 	proj, err := store.CreateProject(db.Project{Name: "Grants"})
@@ -669,7 +705,7 @@ func TestBackupKeepsBuiltinAndGlobalGrants(t *testing.T) {
 	store := sql.InitConfigCreateTestStore()
 	workflows := proFactory.NewWorkflowStore(store)
 	p, tpl := createBackupFixture(t, store)
-	runner, err := store.GetGlobalRoleBySlug("task_runner")
+	runner, err := store.GetSharedRoleBySlug("task_runner")
 	require.NoError(t, err)
 	global, err := store.CreateRole(db.Role{Slug: "deployer", Name: "Deployer Name"})
 	require.NoError(t, err)

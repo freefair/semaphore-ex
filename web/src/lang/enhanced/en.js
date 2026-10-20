@@ -1,4 +1,9 @@
 export default {
+  integrationWorkflowAliasAuthority: 'Existing matching alias URLs follow the workflow target. Remove old aliases before changing it if their holders must lose access.',
+  integrationAliasesForbidden: 'You do not have access to these webhook aliases.',
+  integrationWorkflowTargetUnavailable: 'This integration runs workflow #{id}. Workflows are disabled on this server, so the target cannot be changed here.',
+  sharedRoles: 'Global roles',
+  shared: 'Global',
   workflowEdgeInputsUnavailableTarget: 'Public inputs are unavailable for this destination. Turn off explicit mapping to clear the connection inputs.',
   workflowEdgeInputsUnavailableVariable: 'This variable is no longer available for public input mapping.',
   workflowEdgeInputsRemoveMapping: 'Remove mapping for {name}',

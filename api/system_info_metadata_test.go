@@ -39,7 +39,7 @@ func TestSystemInfoEditionMetadataJSON(t *testing.T) {
 		"use_remote_runner":false,
 		"auth_methods":{},
 		"login_with_password":false,
-		"features":{"project_runners":false,"terraform_backend":false,"task_summary":false,"secret_storages":false,"secret_storage_management":false,"secret_storage_management_ex":false,"custom_roles_management":false,"high_availability":false,"workflows":false,"docker_executor":false,"k8s_executor":false,"audit_log_filters":false},
+		"features":{"project_runners":false,"terraform_backend":false,"task_summary":false,"secret_storages":false,"secret_storage_management":false,"secret_storage_management_ex":false,"custom_roles_management":false,"global_roles_management":false,"high_availability":false,"workflows":false,"workflow_integrations_management":false,"docker_executor":false,"k8s_executor":false,"audit_log_filters":false},
 		"subscription_state":"",
 		"git_client":"",
 		"global_permissions":{"permissions":0,"decisions":null},

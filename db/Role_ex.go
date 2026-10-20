@@ -7,33 +7,6 @@ import (
 
 type ProjectRoleID string
 
-// GlobalPermission is deliberately separate from ProjectUserPermission. The
-// same numeric bit may therefore mean different things only when accompanied
-// by its explicit scope.
-type GlobalPermission int64
-
-const (
-	CanManageGlobalUsers GlobalPermission = 1 << iota
-	CanManageGlobalRoles
-	CanManageGlobalSystem
-	CanReadGlobalAudit
-	CanManageGlobalCredentialsMetadata
-	CanManageGlobalCredentialsRotate
-	CanManageGlobalCredentialsGrant
-	// CanManageGlobalPolicyGuardrails permits global policy governance.
-	CanManageGlobalPolicyGuardrails
-	// CanRollbackGlobalPolicyGuardrails permits global break-glass rollback.
-	CanRollbackGlobalPolicyGuardrails
-)
-
-const AllGlobalPermissions = CanManageGlobalUsers | CanManageGlobalRoles |
-	CanManageGlobalSystem | CanReadGlobalAudit | CanManageGlobalCredentialsMetadata |
-	CanManageGlobalCredentialsRotate | CanManageGlobalCredentialsGrant | CanManageGlobalPolicyGuardrails | CanRollbackGlobalPolicyGuardrails
-
-func (p GlobalPermission) Can(permission GlobalPermission) bool {
-	return p&permission == permission
-}
-
 // TemplatePermission represents actions on one template. Project permissions
 // are mapped to these actions explicitly by the permission evaluator.
 type TemplatePermission int64

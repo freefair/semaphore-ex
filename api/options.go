@@ -8,6 +8,9 @@ import (
 	"github.com/semaphoreui/semaphore/services/audit"
 )
 
+// setOption and getOptions sit under systemAPI: globalPermissionMiddleware(db.CanManageGlobalSystem) has already
+// admitted the caller (an admin or a holder of a global role with that permission), so neither re-checks the
+// admin flag.
 func setOption(w http.ResponseWriter, r *http.Request) {
 	currentUser := helpers.GetFromContext(r, "user").(*db.User)
 
@@ -22,7 +25,6 @@ func setOption(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-
 	var option db.Option
 	if !helpers.Bind(w, r, &option) {
 		return
@@ -58,7 +60,6 @@ func getOptions(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-
 	options, err := helpers.Store(r).GetOptions(db.RetrieveQueryParams{})
 	if err != nil {
 		helpers.WriteJSON(w, http.StatusInternalServerError, map[string]string{

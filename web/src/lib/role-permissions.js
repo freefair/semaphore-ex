@@ -1,6 +1,8 @@
 export function hasGlobalPermission(systemInfo, permission, isAdmin = false) {
-  if (isAdmin) return true;
-  const mask = systemInfo?.global_permissions?.permissions || 0;
+  if (isAdmin || systemInfo?.admin === true) return true;
+  // Both API projections carry the server's effective mask; legacy EX includes provenance.
+  const permissions = systemInfo?.global_permissions;
+  const mask = typeof permissions === 'number' ? permissions : permissions?.permissions || 0;
   return (mask & permission) === permission;
 }
 
@@ -19,4 +21,8 @@ export function setTemplatePermissionEffect(item, permission, effect) {
     allowed_permissions: effect === 'allow' ? allowed | permission : allowed,
     denied_permissions: effect === 'deny' ? denied | permission : denied,
   };
+}
+
+export function permissionEntries(catalog, mask) {
+  return (catalog || []).filter((entry) => ((mask || 0) & entry.permission) === entry.permission);
 }

@@ -1,4 +1,9 @@
 export default {
+  integrationWorkflowAliasAuthority: 'Bestehende passende Alias-URLs folgen dem Workflow-Ziel. Entferne alte Aliase vor der Änderung, wenn deren Empfänger keinen Zugriff mehr haben sollen.',
+  integrationAliasesForbidden: 'Du hast keinen Zugriff auf diese Webhook-Aliase.',
+  integrationWorkflowTargetUnavailable: 'Diese Integration startet Workflow #{id}. Workflows sind auf diesem Server deaktiviert; das Ziel kann hier nicht geändert werden.',
+  sharedRoles: 'Globale Rollen',
+  shared: 'Global',
   templateAutoApproveDefault: 'Auto approve standardmäßig aktivieren',
   templateAutoApproveOverride: 'Auto approve beim Task-Start ändern dürfen',
   executionReferenceName: 'Ressource',

@@ -17,6 +17,8 @@ func (d *SqlDb) GetGlobalRoleBySlug(slug string) (role db.Role, err error) {
 	return
 }
 
+func (d *SqlDb) GetSharedRoleBySlug(slug string) (db.Role, error) { return d.GetGlobalRoleBySlug(slug) }
+
 func builtinProjectRole(role db.ProjectUserRole) db.Role {
 	return db.Role{ID: db.ProjectRoleID("builtin:" + string(role)), Slug: string(role), Name: builtinProjectRoleName(role), Permissions: role.GetPermissions(), Builtin: true, Revision: 1}
 }
@@ -50,12 +52,16 @@ func (d *SqlDb) GetProjectOrGlobalRoleBySlug(projectID int, slug string) (role d
 	return
 }
 
+func (d *SqlDb) GetProjectOrSharedRoleBySlug(projectID int, slug string) (db.Role, error) {
+	return d.GetProjectOrGlobalRoleBySlug(projectID, slug)
+}
+
 func (d *SqlDb) GetProjectRoles(projectID int) (roles []db.Role, err error) {
 	_, err = d.selectAll(&roles, "select * from `role` where project_id=? order by name", projectID)
 	return
 }
 
-func (d *SqlDb) GetGlobalRoles() (roles []db.Role, err error) {
+func (d *SqlDb) GetSharedRoles() (roles []db.Role, err error) {
 	_, err = d.selectAll(&roles, "select * from `role` where project_id is null order by name")
 	if err != nil {
 		return

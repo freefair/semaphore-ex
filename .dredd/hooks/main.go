@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -157,6 +158,65 @@ func main() {
 	h.Before("template > /api/project/{project_id}/templates/{template_id}/perms/catalog > List assignable template permissions > 200 > application/json", func(t *trans.Transaction) {
 		addCapabilities([]string{"project", "template"})
 	})
+
+	// Global-role routes are aliases over the selected EX role authority. They
+	// remain executable in the full product without any subscription gate.
+	h.Before("user > /api/users/{user_id}/global-roles > Assigns a global role to the user > 201 > application/json", func(transaction *trans.Transaction) {
+		addCapabilities([]string{"global_role"})
+		dbConnect()
+		defer store.Close()
+		if err := store.DeleteGlobalRoleAssignment(userPathTestUser.ID, globalRoleAssignment.ID, globalRoleAssignment.Revision); err != nil {
+			panic(err)
+		}
+		transaction.Request.Body = fmt.Sprintf("{\"role_id\":%q}", globalRole.ID)
+	})
+	h.Before("user > /api/users/{user_id}/global-roles/{assignment_id} > Removes a global role from the user > 204 > application/json", capabilityWrapper("global_role"))
+	h.Before("user > /api/users/{user_id}/global-roles/{assignment_id} > Removes a global role from the user > 204 > application/json", func(transaction *trans.Transaction) {
+		setRequestQuery(transaction, "revision", strconv.Itoa(globalRoleAssignment.Revision))
+	})
+	h.Before("user > /api/roles > Create canonical EX global role > 201 > application/json", func(transaction *trans.Transaction) {
+		transaction.Request.Body = "{\"name\":\"Dredd canonical global role\",\"global_permissions\":8}"
+	})
+	h.Before("user > /api/roles/{role_id} > Get canonical EX global role > 200 > application/json", capabilityWrapper("global_role"))
+	h.Before("user > /api/roles/{role_id} > Update canonical EX global role > 200 > application/json", func(transaction *trans.Transaction) {
+		addCapabilities([]string{"global_role"})
+		transaction.Request.Body = fmt.Sprintf("{\"id\":%q,\"name\":\"Dredd canonical global role\",\"permissions\":0,\"global_permissions\":8,\"revision\":%d}", globalRole.ID, globalRole.Revision)
+	})
+	h.Before("user > /api/roles/{role_id} > Delete canonical EX global role > 204 > application/json", func(transaction *trans.Transaction) {
+		dbConnect()
+		defer store.Close()
+		globalRole = addGlobalRole()
+		setRequestQuery(transaction, "revision", strconv.Itoa(globalRole.Revision))
+	})
+	h.Before("user > /api/global-roles > Creates a global role > 201 > application/json", func(transaction *trans.Transaction) {
+		transaction.Request.Body = "{\"name\":\"Dredd global role\",\"global_permissions\":8}"
+	})
+	h.Before("user > /api/global-roles/{role_id} > Get EX global-role alias > 200 > application/json", capabilityWrapper("global_role"))
+	h.Before("user > /api/global-roles/{role_id} > Updates a global role > 200 > application/json", func(transaction *trans.Transaction) {
+		addCapabilities([]string{"global_role"})
+		transaction.Request.Body = fmt.Sprintf("{\"id\":%q,\"name\":\"Dredd global role\",\"permissions\":0,\"global_permissions\":8,\"revision\":%d}", globalRole.ID, globalRole.Revision)
+	})
+	// A plain delete needs a role nobody holds, so the fixture with the assignment is not used.
+	h.Before("user > /api/global-roles/{role_id} > Deletes a global role > 204 > application/json", func(transaction *trans.Transaction) {
+		dbConnect()
+		defer store.Close()
+		globalRole = addGlobalRole()
+		setRequestQuery(transaction, "revision", strconv.Itoa(globalRole.Revision))
+	})
+
+	// Forced deletion returns its impact, while ordinary deletion returns 204.
+	for _, name := range []string{
+		"user > /api/roles/{role_id} > Delete canonical EX global role > 200 > application/json",
+		"user > /api/global-roles/{role_id} > Deletes a global role > 200 > application/json",
+	} {
+		h.Before(name, func(transaction *trans.Transaction) {
+			dbConnect()
+			defer store.Close()
+			globalRole = addGlobalRole()
+			setRequestQuery(transaction, "revision", strconv.Itoa(globalRole.Revision))
+			setRequestQuery(transaction, "force", "true")
+		})
+	}
 
 	if isProBuild() {
 		h.Before("workflow > /api/project/{project_id}/workflows > Get workflows > 200 > application/json", capabilityWrapper("workflow"))

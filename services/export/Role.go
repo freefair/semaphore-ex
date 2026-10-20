@@ -64,7 +64,7 @@ func (e *RoleExporter) load(store db.Store, exporter DataExporter, progress Prog
 		}
 	}
 
-	roles, err := store.GetGlobalRoles()
+	roles, err := store.GetSharedRoles()
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ func (e *RoleExporter) restoreValue(val EntityObject[db.Role], store db.Store, e
 	sourceRoleSlug := old.Slug
 
 	if old.Builtin {
-		destRole, err := store.GetGlobalRoleBySlug(old.Slug)
+		destRole, err := store.GetSharedRoleBySlug(old.Slug)
 		if err != nil {
 			return err
 		}

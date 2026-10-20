@@ -31,6 +31,13 @@ describe('EditRoleForm', () => {
     });
   });
 
+  it('starts a new role without permissions', () => {
+    expect(EditRoleForm.methods.getNewItem.call({ projectId: null })).to.deep.equal({
+      name: '', slug: '', permissions: 0, global_permissions: 0,
+    });
+    expect(EditRoleForm.methods.getNewItem.call({ projectId: 7 })).to.deep.equal({ name: '', permissions: 0 });
+  });
+
   it('derives the slug again after the form is reset', () => {
     const form = { slugTouched: true };
     EditRoleForm.methods.afterReset.call(form);

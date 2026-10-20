@@ -18,12 +18,22 @@ func globalPermissionMiddleware(permission db.GlobalPermission) mux.MiddlewareFu
 				return
 			}
 			if !allowed {
+				helpers.RecordDenied(r, globalPermissionName(permission), 0)
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func globalPermissionName(permission db.GlobalPermission) string {
+	for _, definition := range db.GlobalPermissionCatalog() {
+		if definition.Permission == permission {
+			return definition.ID
+		}
+	}
+	return "global_permission"
 }
 
 func hasGlobalPermission(
@@ -39,7 +49,15 @@ func hasGlobalPermission(
 	if user.Admin {
 		return true, nil
 	}
-	permissions, err := helpers.Store(r).GetEffectiveGlobalPermissions(user.ID)
+	storeValue, ok := helpers.GetOkFromContext(r, "store")
+	store, validStore := storeValue.(db.Store)
+	if !ok || !validStore || store == nil {
+		// Direct/internal handler use has no request-scoped store. It must deny
+		// the delegated path rather than panic or treating missing context as a
+		// break-glass grant.
+		return false, nil
+	}
+	permissions, err := store.GetEffectiveGlobalPermissions(user.ID)
 	if err != nil {
 		return false, err
 	}

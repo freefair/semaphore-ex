@@ -121,7 +121,7 @@ func setupObjectsAndPaths(t *transaction.Transaction) {
 
 // Object Lifecycle
 func addUserProjectRelation(pid int, user int) {
-	owner, err := store.GetGlobalRoleBySlug("owner")
+	owner, err := store.GetSharedRoleBySlug("owner")
 	if err != nil {
 		panic(err)
 	}
@@ -196,6 +196,32 @@ func addUser() *db.User {
 		panic(err)
 	}
 	return &user
+}
+
+// addGlobalRole creates an EX global role in the selected role authority.
+func addGlobalRole() *db.Role {
+	uid := getUUID()
+	role, err := store.CreateGlobalRole(db.Role{
+		ID:                db.ProjectRoleID("dredd_global_" + uid),
+		Slug:              "dredd_global_" + uid,
+		Name:              "ITGR-" + uid,
+		GlobalPermissions: db.CanReadGlobalAudit,
+		Revision:          1,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return &role
+}
+
+func addGlobalRoleAssignment(userID int, roleID db.ProjectRoleID) *db.GlobalRoleAssignment {
+	assignment, err := store.CreateGlobalRoleAssignment(db.GlobalRoleAssignment{
+		UserID: userID, RoleID: roleID, Revision: 1,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return &assignment
 }
 
 func addView() *db.View {
@@ -274,7 +300,7 @@ func addIntegration() *db.Integration {
 	integration, err := store.CreateIntegration(db.Integration{
 		ProjectID:  userProject.ID,
 		Name:       "Test Integration",
-		TemplateID: templateID,
+		TemplateID: &templateID,
 	})
 	if err != nil {
 		panic(err)

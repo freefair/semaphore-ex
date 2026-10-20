@@ -16,6 +16,11 @@ func (d *SqlDb) GetGlobalRoleByID(roleID db.ProjectRoleID) (db.Role, error) {
 	return role, err
 }
 
+func (d *SqlDb) GetGlobalRoles() (roles []db.Role, err error) {
+	_, err = d.selectAll(&roles, "select * from `role` where project_id is null and role_id is not null order by name")
+	return
+}
+
 func (d *SqlDb) CreateGlobalRole(role db.Role) (db.Role, error) {
 	role.ProjectID = nil
 	role.Name = strings.TrimSpace(role.Name)

@@ -41,7 +41,7 @@
       <v-toolbar-title>ExtractValue</v-toolbar-title>
       <v-spacer></v-spacer>
       <v-btn
-        v-if="can(USER_PERMISSIONS.manageProjectResources)"
+        v-if="!readOnly && can(USER_PERMISSIONS.manageProjectResources)"
         color="primary"
         @click="editItem('new')"
         >New Extracted Value</v-btn
@@ -65,7 +65,7 @@
         <code>{{ item.variable_type }}</code>
       </template>
       <template v-slot:item.actions="{ item }">
-        <div style="white-space: nowrap">
+        <div v-if="!readOnly" style="white-space: nowrap">
           <v-btn icon class="mr-1" @click="askDeleteItem(item.id)">
             <v-icon>mdi-delete</v-icon>
           </v-btn>
@@ -86,6 +86,9 @@ import IntegrationExtractValueForm from '@/components/IntegrationExtractValueFor
 export default {
   mixins: [ItemListPageBase],
   components: { IntegrationExtractValueForm },
+  props: {
+    readOnly: { type: Boolean, default: false },
+  },
 
   computed: {
     integrationId() {

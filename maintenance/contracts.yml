@@ -2454,6 +2454,17 @@ symbols:
   - name: db:GlobalPermission
     signature: int64
     implementation: core
+  - name: db:GlobalPermissionCatalog
+    signature: func() []db.GlobalPermissionDefinition
+    implementation: core
+    behavior_tests:
+    - db/Role_test.go::TestGlobalPermissionCatalog_CoversEveryBit
+    - api/global_routes_test.go::TestGlobalRoutes_PermissionTable
+  - name: db:GlobalPermissionDefinition
+    signature: struct{ID string "json:\"id\""; Permission db.GlobalPermission "json:\"permission\""; Description string "json:\"description\""}
+    implementation: core
+    behavior_tests:
+    - db/Role_test.go::TestGlobalPermissionCatalog_CoversEveryBit
   - name: db:GlobalRoleAssignment
     signature: >-
       struct{ID int "db:\"id\" json:\"id\""; UserID int "db:\"user_id\" json:\"user_id\""; RoleID db.ProjectRoleID "db:\"role_id\"
@@ -2504,14 +2515,12 @@ symbols:
     signature: untyped string = "oidc"
     implementation: core
   - name: db:Integration
-    signature: >-
-      struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; Name string "db:\"name\" json:\"name\""; ProjectID int "db:\"project_id\"
-      json:\"project_id\" backup:\"-\""; TemplateID int "db:\"template_id\" json:\"template_id\" backup:\"-\""; AuthMethod
-      db.IntegrationAuthMethod "db:\"auth_method\" json:\"auth_method\""; AuthSecretID *int "db:\"auth_secret_id\" json:\"auth_secret_id\"
-      backup:\"-\""; AuthHeader string "db:\"auth_header\" json:\"auth_header\""; AuthSecret db.AccessKey "db:\"-\" json:\"-\"
-      backup:\"-\""; Searchable bool "db:\"searchable\" json:\"searchable\""; TaskParamsID *int "db:\"task_params_id\" json:\"-\"
-      backup:\"-\""; TaskParams *db.TaskParams "db:\"-\" json:\"task_params,omitempty\" backup:\"task_params\""}
+    signature: struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; Name string "db:\"name\" json:\"name\""; ProjectID int "db:\"project_id\" json:\"project_id\" backup:\"-\""; TemplateID *int "db:\"template_id\" json:\"template_id\" backup:\"-\""; WorkflowID *int "db:\"workflow_id\" json:\"workflow_id\" backup:\"-\""; WorkflowUserID *int "db:\"workflow_user_id\" json:\"workflow_user_id,omitempty\" backup:\"-\""; AuthMethod db.IntegrationAuthMethod "db:\"auth_method\" json:\"auth_method\""; AuthSecretID *int "db:\"auth_secret_id\" json:\"auth_secret_id\" backup:\"-\""; AuthHeader string "db:\"auth_header\" json:\"auth_header\""; AuthSecret db.AccessKey "db:\"-\" json:\"-\" backup:\"-\""; Searchable bool "db:\"searchable\" json:\"searchable\""; TaskParamsID *int "db:\"task_params_id\" json:\"-\" backup:\"-\""; TaskParams *db.TaskParams "db:\"-\" json:\"task_params,omitempty\" backup:\"task_params\""}
     implementation: core
+    behavior_tests:
+    - db/Integration_test.go::TestIntegration_Validate
+    - db/sql/integration_target_test.go::TestCreateIntegration_WorkflowTarget
+    - api/integration_workflow_test.go::TestReceiveIntegration_WorkflowStartFailsClosedWithoutPersistedPrincipal
   - name: db:IntegrationAlias
     signature: >-
       struct{ID int "db:\"id\" json:\"-\" backup:\"-\""; Alias string "db:\"alias\" json:\"alias\""; ProjectID int "db:\"project_id\"
@@ -4140,19 +4149,7 @@ symbols:
     signature: db.ObjectProps
     implementation: core
   - name: db:RoleRepository
-    signature: interface{CreateGlobalRole(role db.Role) (db.Role, error); CreateGlobalRoleAssignment(assignment db.GlobalRoleAssignment)
-      (db.GlobalRoleAssignment, error); CreateProjectRole(role db.Role) (db.Role, error); CreateRole(role db.Role) (db.Role,
-      error); DeleteGlobalRole(roleID db.ProjectRoleID, expectedRevision int) error; DeleteGlobalRoleAssignment(userID int,
-      assignmentID int, expectedRevision int) error; DeleteProjectRole(projectID int, roleID db.ProjectRoleID, expectedRevision
-      int) error; DeleteRole(roleID db.ProjectRoleID) error; ForceDeleteGlobalRole(roleID db.ProjectRoleID, expectedRevision
-      int) (db.RoleImpact, error); ForceDeleteProjectRole(projectID int, roleID db.ProjectRoleID, expectedRevision int) (db.RoleImpact,
-      error); GetEffectiveGlobalPermissions(userID int) (db.GlobalPermission, error); GetGlobalRoleAssignments(userID int) ([]db.GlobalRoleAssignment,
-      error); GetGlobalRoleByID(roleID db.ProjectRoleID) (db.Role, error); GetGlobalRoleBySlug(slug string) (db.Role, error);
-      GetGlobalRoles() ([]db.Role, error); GetProjectOrGlobalRoleBySlug(projectID int, slug string) (db.Role, error); GetProjectRole(projectID
-      int, slug string) (db.Role, error); GetProjectRoleByID(projectID int, roleID db.ProjectRoleID) (db.Role, error); GetProjectRoles(projectID
-      int) ([]db.Role, error); GetRoleAssignments(roleID db.ProjectRoleID) (db.RoleAssignments, error); UpdateGlobalRole(role
-      db.Role, expectedRevision int) (db.Role, error); UpdateProjectRole(projectID int, role db.Role, expectedRevision int)
-      (db.Role, error); UpdateRole(role db.Role) error}
+    signature: interface{CreateGlobalRole(role db.Role) (db.Role, error); CreateGlobalRoleAssignment(assignment db.GlobalRoleAssignment) (db.GlobalRoleAssignment, error); CreateProjectRole(role db.Role) (db.Role, error); CreateRole(role db.Role) (db.Role, error); DeleteGlobalRole(roleID db.ProjectRoleID, expectedRevision int) error; DeleteGlobalRoleAssignment(userID int, assignmentID int, expectedRevision int) error; DeleteProjectRole(projectID int, roleID db.ProjectRoleID, expectedRevision int) error; DeleteRole(roleID db.ProjectRoleID) error; ForceDeleteGlobalRole(roleID db.ProjectRoleID, expectedRevision int) (db.RoleImpact, error); ForceDeleteProjectRole(projectID int, roleID db.ProjectRoleID, expectedRevision int) (db.RoleImpact, error); GetEffectiveGlobalPermissions(userID int) (db.GlobalPermission, error); GetGlobalRoleAssignments(userID int) ([]db.GlobalRoleAssignment, error); GetGlobalRoleByID(roleID db.ProjectRoleID) (db.Role, error); GetGlobalRoleBySlug(slug string) (db.Role, error); GetGlobalRoles() ([]db.Role, error); GetProjectOrGlobalRoleBySlug(projectID int, slug string) (db.Role, error); GetProjectOrSharedRoleBySlug(projectID int, slug string) (db.Role, error); GetProjectRole(projectID int, slug string) (db.Role, error); GetProjectRoleByID(projectID int, roleID db.ProjectRoleID) (db.Role, error); GetProjectRoles(projectID int) ([]db.Role, error); GetRoleAssignments(roleID db.ProjectRoleID) (db.RoleAssignments, error); GetSharedRoleBySlug(slug string) (db.Role, error); GetSharedRoles() ([]db.Role, error); UpdateGlobalRole(role db.Role, expectedRevision int) (db.Role, error); UpdateProjectRole(projectID int, role db.Role, expectedRevision int) (db.Role, error); UpdateRole(role db.Role) error}
     implementation: core
     behavior_tests:
     - db/sql/role_test.go::TestDeleteRole_GlobalScopeDoesNotTouchProjectRole
@@ -6209,7 +6206,7 @@ symbols:
       "db:\"reconciliation_quarantined_at\" json:\"reconciliation_quarantined_at,omitempty\"
       backup:\"reconciliation_quarantined_at\""; Reason string "db:\"reason\" json:\"reason,omitempty\"
       backup:\"reason\""; Version *string "db:\"version\" json:\"version,omitempty\" backup:\"version\"";
-      ActorUserID int "db:\"actor_user_id\" json:\"actor_user_id\" backup:\"actor_user_id\""; DefinitionVersion
+      ActorUserID int "db:\"actor_user_id\" json:\"actor_user_id\" backup:\"actor_user_id\""; IntegrationID *int "db:\"integration_id\" json:\"integration_id,omitempty\" backup:\"integration_id\""; DefinitionVersion
       int "db:\"definition_version\" json:\"definition_version\" backup:\"definition_version\"";
       DefinitionRevision int "db:\"definition_revision\" json:\"definition_revision\"
       backup:\"definition_revision\""; WorkflowVersionID int "db:\"workflow_version_id\"
@@ -6233,6 +6230,7 @@ symbols:
     behavior_tests:
       - test/edition-contract/enhanced/db/sql/workflow_run_test.go::TestWorkflowSurveyRoundTripPreservesVersionAndRunInputs
       - services/tasks/workflow_survey_preflight_ex_test.go::TestWorkflowExecutionPreflightRejectsChangedSurveyAnswer
+      - api/integration_workflow_test.go::TestReceiveIntegration_StartsWorkflowRun
   - name: db:WorkflowRunApproval
     signature: db.WorkflowRunStatus = "approval"
     implementation: core
@@ -6263,11 +6261,12 @@ symbols:
       map[string]encoding/json.RawMessage "json:\"parameters,omitempty\""; NodeOverrides
       map[int]db.WorkflowNodeOverride "json:\"node_overrides,omitempty\""; TriggerSnapshot
       *db.WorkflowTriggerSnapshot "json:\"-\""; Environment db.MapStringAnyField
-      "json:\"environment,omitempty\""}
+      "json:\"environment,omitempty\""; IntegrationID *int "json:\"-\""}
     implementation: core
     behavior_tests:
       - test/edition-contract/enhanced/db/sql/workflow_run_test.go::TestWorkflowSurveyRoundTripPreservesVersionAndRunInputs
       - services/tasks/workflow_survey_preflight_ex_test.go::TestWorkflowExecutionPreflightRejectsChangedSurveyAnswer
+      - api/integration_workflow_test.go::TestReceiveIntegration_StartsWorkflowRun
   - name: db:WorkflowRunNode
     signature: >-
       struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; ProjectID int "db:\"project_id\" json:\"project_id\" backup:\"-\""; WorkflowRunID
@@ -6328,11 +6327,12 @@ symbols:
     signature: db.WorkflowRunNodeStatus = "waiting"
     implementation: core
   - name: db:WorkflowRunParams
-    signature: struct{Environment db.MapStringAnyField "json:\"environment,omitempty\""}
+    signature: struct{Environment db.MapStringAnyField "json:\"environment,omitempty\""; IntegrationID *int "json:\"-\""}
     implementation: core
     behavior_tests:
       - test/edition-contract/enhanced/db/sql/workflow_run_test.go::TestWorkflowSurveyRoundTripPreservesVersionAndRunInputs
       - services/tasks/workflow_survey_preflight_ex_test.go::TestWorkflowExecutionPreflightRejectsChangedSurveyAnswer
+      - api/integration_workflow_test.go::TestReceiveIntegration_StartsWorkflowRun
   - name: db:WorkflowRunPending
     signature: db.WorkflowRunStatus = "pending"
     implementation: core
@@ -8667,10 +8667,12 @@ symbols:
       struct{ProjectRunners bool "json:\"project_runners\""; TerraformBackend bool "json:\"terraform_backend\"";
       TaskSummary bool "json:\"task_summary\""; SecretStorages bool "json:\"secret_storages\""; SecretStorageManagement
       bool "json:\"secret_storage_management\""; SecretStorageManagementEx bool "json:\"secret_storage_management_ex\"";
-      CustomRolesManagement bool "json:\"custom_roles_management\""; HighAvailability bool "json:\"high_availability\"";
-      Workflows bool "json:\"workflows\""; DockerExecutor bool "json:\"docker_executor\""; K8sExecutor bool
+      CustomRolesManagement bool "json:\"custom_roles_management\""; GlobalRolesManagement bool "json:\"global_roles_management\""; HighAvailability bool "json:\"high_availability\"";
+      Workflows bool "json:\"workflows\""; WorkflowIntegrationsManagement bool "json:\"workflow_integrations_management\""; DockerExecutor bool "json:\"docker_executor\""; K8sExecutor bool
       "json:\"k8s_executor\""; AuditLogFilters bool "json:\"audit_log_filters\""}
     implementation: core
+    behavior_tests:
+      - api/system_info_metadata_test.go::TestSystemInfoEditionMetadataJSON
   - name: pro_interfaces:FilterWorkflowTemplatesByAccess
     signature: >-
       func(workflows []db.WorkflowTemplate, identity db.ProjectWorkflowRoleIdentity, knownRoles map[db.ProjectRoleReference]bool)

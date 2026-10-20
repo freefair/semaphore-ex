@@ -437,7 +437,7 @@ func (s *workflowService) buildWorkflowExecutionPreflightWithRun(
 	triggerSource := ""
 	policyInputs := make([]pro_interfaces.PolicyGuardrailEvaluationInput, 0, len(run.Nodes)+1)
 	if hasPolicySnapshotPlanner {
-		triggerSource, err = workflowPolicyGuardrailTriggerSource(run.TriggerSnapshot)
+		triggerSource, err = workflowPolicyGuardrailTriggerSource(run.TriggerSnapshot, run.IntegrationID)
 		if err != nil {
 			return pro_interfaces.ExecutionPreflightSnapshot{}, err
 		}
@@ -641,7 +641,16 @@ func sortedEnvironmentNames(environment db.MapStringAnyField) []string {
 	return names
 }
 
-func workflowPolicyGuardrailTriggerSource(snapshot db.WorkflowTriggerSnapshot) (string, error) {
+func workflowPolicyGuardrailTriggerSource(snapshot db.WorkflowTriggerSnapshot, integrationID *int) (string, error) {
+	if integrationID != nil {
+		if *integrationID <= 0 {
+			return "", errors.New("workflow integration source is invalid")
+		}
+		// Integrations are HTTP webhook entry points. Reusing the existing
+		// webhook vocabulary keeps policy documents stable while preventing a
+		// server-owned integration run from being evaluated as a manual start.
+		return string(pro_interfaces.DeploymentWindowSourceWebhook), nil
+	}
 	if snapshot.ID == 0 && snapshot.Type == "" {
 		return string(pro_interfaces.DeploymentWindowSourceManual), nil
 	}
@@ -1182,6 +1191,17 @@ func (s *workflowService) claimWorkflowStartAdmissionDecision(run *db.WorkflowRu
 	source, origin := pro_interfaces.DeploymentWindowSourceManual, pro_interfaces.DeploymentWindowOriginUser
 	keyMaterial := "manual|" + correlationID
 	for _, input := range inputs {
+		if input.IntegrationID != nil {
+			if *input.IntegrationID <= 0 {
+				return nil, errors.New("workflow integration source is invalid")
+			}
+			if input.TriggerSnapshot != nil {
+				return nil, errors.New("workflow integration trigger source is invalid")
+			}
+			source, origin = pro_interfaces.DeploymentWindowSourceIntegration, pro_interfaces.DeploymentWindowOriginIntegration
+			keyMaterial = fmt.Sprintf("integration|%d|%s", *input.IntegrationID, correlationID)
+			break
+		}
 		if input.TriggerSnapshot == nil {
 			continue
 		}
@@ -2386,6 +2406,10 @@ func (s *workflowService) enqueueWorkflowNode(
 	}
 	task.WorkflowRunID = &run.ID
 	task.WorkflowNodeID = &node.WorkflowNodeID
+	if root && run.IntegrationID != nil {
+		integrationID := *run.IntegrationID
+		task.IntegrationID = &integrationID
+	}
 	if s.policyGuardrailAdmission != nil {
 		if node.PolicyGuardrailEvaluationID == nil || *node.PolicyGuardrailEvaluationID <= 0 {
 			return errors.New("workflow task node policy guardrail admission is unavailable")
