@@ -4924,6 +4924,16 @@ symbols:
   - name: db:TaskOutputProps
     signature: db.ObjectProps
     implementation: core
+  - name: db:TaskParamGitBranch
+    signature: untyped string = "git_branch"
+    implementation: core
+    behavior_tests:
+    - api/integration_test.go::TestApplyGitBranchParam
+    - api/integration_test.go::TestGetTaskDefinitionGitBranchParam
+    - api/integration_branch_ex_test.go::TestIntegrationGitBranch_ReachesPersistenceBoundaryNormalizedAndStripped
+    - api/integration_branch_ex_test.go::TestIntegrationGitBranch_DisabledOverrideKeepsStaticBranchAtPersistenceBoundary
+    - api/integration_branch_ex_test.go::TestIntegrationGitBranch_ConfiguredAdmissionsSeeNormalizedInputBeforeInvalidBranchRejection
+    rationale: Reserved webhook task parameter uses the normal branch override and task admission path.
   - name: db:TaskParams
     signature: >-
       struct{ID int "db:\"id\" json:\"-\" backup:\"-\""; ProjectID int "db:\"project_id\" json:\"-\" backup:\"-\""; Environment string

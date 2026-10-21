@@ -355,6 +355,8 @@ export default {
   matchMethod: 'Comparison Method',
   matchBodyDataType: 'Body Data Type',
   extractValue: 'Extract Value',
+  integrationTaskParamGitBranchHint:
+    'The variable git_branch sets the branch of the started task when the template allows overriding it.',
   newExtractedValue: 'New Extracted Value',
   extractedValueSource: 'Value Source',
   matchKey: 'Key',
@@ -1006,4 +1008,8 @@ export default {
   audit_target_secret_storage: 'Secret storage',
   audit_target_task: 'Task',
   audit_target_runner: 'Runner',
+  noProjectsTitle: 'No projects yet',
+  noProjectsText: 'You are not a member of any project. Ask your Semaphore administrator to add you to one.',
+  signedInAs: 'Signed in as {username} ({email})',
+  signedInAsNoEmail: 'Signed in as {username}',
 };

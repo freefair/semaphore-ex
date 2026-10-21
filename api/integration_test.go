@@ -924,3 +924,82 @@ func TestIntegrationValidate_HmacSha512RequiresSecretAndHeader(t *testing.T) {
 		Name: "missing header", TemplateID: &templateID, AuthMethod: db.IntegrationAuthHmacSha512, AuthSecretID: &authSecretID,
 	}).Validate())
 }
+
+func TestApplyGitBranchParam(t *testing.T) {
+	tests := []struct {
+		name           string
+		params         db.MapStringAnyField
+		initialBranch  *string
+		wantBranch     *string
+		wantParamsLeft db.MapStringAnyField
+	}{
+		{
+			name:           "moved from params onto the task",
+			params:         db.MapStringAnyField{"git_branch": "feature/x", "limit": "web"},
+			wantBranch:     new("feature/x"),
+			wantParamsLeft: db.MapStringAnyField{"limit": "web"},
+		},
+		{
+			name:           "overrides the static integration branch",
+			params:         db.MapStringAnyField{"git_branch": "hotfix"},
+			initialBranch:  new("main"),
+			wantBranch:     new("hotfix"),
+			wantParamsLeft: db.MapStringAnyField{},
+		},
+		{
+			name:           "blank value is stripped and keeps the static branch",
+			params:         db.MapStringAnyField{"git_branch": "  "},
+			initialBranch:  new("main"),
+			wantBranch:     new("main"),
+			wantParamsLeft: db.MapStringAnyField{},
+		},
+		{
+			name:           "non-string value is stripped and not applied",
+			params:         db.MapStringAnyField{"git_branch": 42},
+			wantParamsLeft: db.MapStringAnyField{},
+		},
+		{
+			name:           "nothing to do without the parameter",
+			params:         db.MapStringAnyField{"limit": "web"},
+			wantParamsLeft: db.MapStringAnyField{"limit": "web"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			task := db.Task{Params: tt.params, GitBranch: tt.initialBranch}
+
+			applyGitBranchParam(&task, true)
+
+			assert.Equal(t, tt.wantBranch, task.GitBranch)
+			assert.Equal(t, tt.wantParamsLeft, task.Params)
+		})
+	}
+}
+
+func TestApplyGitBranchParam_NilParams(t *testing.T) {
+	task := db.Task{}
+
+	applyGitBranchParam(&task, true)
+
+	assert.Nil(t, task.GitBranch)
+}
+
+func TestGetTaskDefinitionGitBranchParam(t *testing.T) {
+	integration := db.Integration{ID: 1, ProjectID: 2, TemplateID: new(3)}
+	payload := []byte(`{"ref":"release/1.0"}`)
+
+	task, err := GetTaskDefinition(integration, payload, http.Header{}, func(int, int) ([]db.IntegrationExtractValue, error) {
+		return []db.IntegrationExtractValue{{
+			VariableType: db.IntegrationVariableTaskParam,
+			ValueSource:  db.IntegrationExtractBodyValue,
+			BodyDataType: db.IntegrationBodyDataJSON,
+			Key:          "ref",
+			Variable:     db.TaskParamGitBranch,
+		}}, nil
+	})
+
+	require.NoError(t, err)
+	assert.Nil(t, task.GitBranch)
+	assert.Equal(t, "release/1.0", task.Params[db.TaskParamGitBranch])
+}
