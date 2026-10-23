@@ -9,7 +9,7 @@ builds:
   - binary: semaphore
     env:
       - CGO_ENABLED=0
-    main: ./cli/main.go
+    main: ./cli
     flags:
       - -trimpath
       - -buildvcs=false
@@ -52,6 +52,27 @@ archives:
     format_overrides:
       - goos: windows
         format: zip
+
+# Read the linked module graph from each full-product executable. Application
+# analysis misidentifies local workspace replacements. The existing human-readable
+# third-party report remains the license review source.
+sboms:
+  - id: binary
+    artifacts: binary
+    documents:
+      - "{{ .Env.PROJECT_NAME }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}.cdx.json"
+    cmd: cyclonedx-gomod
+    args:
+      - bin
+      - -json
+      - -version
+      - "{{ .Version }}"
+      - -output
+      - $document
+      - $artifact
+    env:
+      - GOOS={{ .Os }}
+      - GOARCH={{ .Arch }}
 
 signs:
   -

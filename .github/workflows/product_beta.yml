@@ -18,6 +18,7 @@ env:
   NODE_VERSION: '24.19.0'
   TASK_VERSION: '3.53.1'
   GORELEASER_VERSION: '2.11.2'
+  CYCLONEDX_GOMOD_VERSION: '1.12.0'
 
 jobs:
   gate:
@@ -56,6 +57,7 @@ jobs:
         run: |
           go install github.com/go-task/task/v3/cmd/task@v"${TASK_VERSION}"
           go install github.com/goreleaser/goreleaser/v2@v"${GORELEASER_VERSION}"
+          go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v"${CYCLONEDX_GOMOD_VERSION}"
 
       - name: Install rpm
         run: |
