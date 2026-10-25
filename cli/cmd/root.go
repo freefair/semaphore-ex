@@ -108,20 +108,38 @@ func runService() {
 
 	initSyslog(util.Config.Syslog, debugFilter)
 
+	for _, warning := range util.HAWarnings() {
+		log.Warn(warning)
+	}
+	// Fail before starting workers when HA cannot coordinate. Consumers borrow
+	// this connection; its pool closes after their deferred shutdown completes.
+	haRedis := proHA.NewHARedis()
+	if haRedis != nil {
+		pingCtx, cancelPing := context.WithTimeout(context.Background(), 10*time.Second)
+		err := haRedis.Ping(pingCtx)
+		cancelPing()
+		if err != nil {
+			_ = haRedis.Close()
+			log.WithError(err).Fatal("failed to connect to the HA Redis backend")
+		}
+		defer haRedis.Close()
+		log.WithField("redis", haRedis.Describe()).Info("HA Redis backend connected")
+	}
+
 	appMetrics := metrics.NewMetrics()
 
 	auditService, auditErr := audit.StartService(
 		store,
 		util.Config.Audit,
 		util.HANodeID(),
-		proServer.NewAuditExporter(store, util.Config.Audit, proHA.NewAuditExportLeaser(), appMetrics),
+		proServer.NewAuditExporter(store, util.Config.Audit, proHA.NewAuditExportLeaser(haRedis), appMetrics),
 	)
 	if auditErr != nil {
 		log.WithError(auditErr).Fatal("failed to start the audit log")
 	}
 	defer auditService.Stop()
 
-	state := proTasks.NewTaskStateStore()
+	state := proTasks.NewTaskStateStore(haRedis)
 	terraformStore := proFactory.NewTerraformStore(store)
 	ansibleTaskRepo := proFactory.NewAnsibleTaskRepository(store)
 	workflowStore := proFactory.NewWorkflowStore(store)
@@ -210,7 +228,7 @@ func runService() {
 	// enqueuer), then inject the service back into the pool. The run locker is
 	// SQL-backed in HA mode (cluster-wide progression ownership) and nil
 	// otherwise, which makes the service fall back to its in-process locker.
-	workflowRunLocker := proHA.NewWorkflowRunLocker(store)
+	workflowRunLocker := proHA.NewWorkflowRunLocker(haRedis, store)
 	workflowService := proServer.NewWorkflowService(workflowStore, store, &taskPool, workflowRunLocker, encryptionService)
 	workflowDefinitionService := proServer.NewWorkflowDefinitionService(workflowStore, store)
 	workflowTriggerService := proServer.NewWorkflowTriggerService(
@@ -247,13 +265,13 @@ func runService() {
 	defer taskPool.Stop()
 
 	// --- Active-Active HA Setup ---
-	// When HA is enabled, multiple Semaphore nodes share the same Redis-backed
-	// task state and coordinate via Pub/Sub. The following components ensure:
+	// HA nodes share durable SQL state; Redis provides liveness and Pub/Sub.
+	// The following components preserve ownership and live notifications:
 	// 1. Node registry: heartbeat-based cluster membership
 	// 2. Schedule deduplication: only one node fires each schedule occurrence
 	// 3. WebSocket broadcaster: real-time events reach clients on all nodes
 	// 4. Orphan cleaner: expired task controls are recovered from stable runner evidence
-	if nodeRegistry := proHA.NewNodeRegistry(store); nodeRegistry != nil {
+	if nodeRegistry := proHA.NewNodeRegistry(haRedis, store); nodeRegistry != nil {
 		if err := nodeRegistry.Start(); err != nil {
 			log.WithError(err).Fatal("failed to start HA node registry")
 		}
@@ -264,7 +282,7 @@ func runService() {
 	// Task ownership is registered before runners can observe an assignment.
 	// The same component relinquishes every lease before this node is marked
 	// draining in the cluster registry.
-	orphanCleaner := proHA.NewOrphanCleaner(store, &taskPool)
+	orphanCleaner := proHA.NewOrphanCleaner(haRedis, store, &taskPool)
 	if orphanCleaner != nil {
 		orphanCleaner.Start()
 		defer orphanCleaner.Stop()
@@ -273,7 +291,7 @@ func runService() {
 	// Stop new scheduled starts before relinquishing task and workflow owners.
 	// SetNodeDraining waits for every in-flight transition before persisting the
 	// draining state that removes this node from coordinated work readiness.
-	dedup := proHA.NewScheduleDeduplicator(store)
+	dedup := proHA.NewScheduleDeduplicator(haRedis, store)
 	if dedup != nil {
 		schedulePool.SetDeduplicator(dedup)
 	}
@@ -287,7 +305,7 @@ func runService() {
 
 	// Cluster inspector powers the admin Cluster Dashboard and the public
 	// load-balancer readiness endpoint. It is nil when HA is disabled.
-	clusterInspector := proHA.NewClusterInspector(store, drainers...)
+	clusterInspector := proHA.NewClusterInspector(haRedis, store, drainers...)
 
 	// Each process holds its own in-memory cron table. Schedule CRUD handlers only
 	// call Refresh on the node that served the HTTP request, so other HA nodes
@@ -329,7 +347,7 @@ func runService() {
 	// channel is being consumed when LocalBroadcast is called.
 	go sockets.StartWS()
 
-	if wsBroadcaster := proHA.NewWSBroadcaster(store); wsBroadcaster != nil {
+	if wsBroadcaster := proHA.NewWSBroadcaster(haRedis, store); wsBroadcaster != nil {
 		sockets.SetBroadcaster(wsBroadcaster)
 		wsBroadcaster.Start()
 		defer wsBroadcaster.Stop()

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/semaphoreui/semaphore/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -53,8 +53,13 @@ func TestRedisAuditExportLeaseSignalsLossAtLocalExpiryWithoutValidCall(t *testin
 
 func TestRedisAuditExportLeaseReleaseAndRenewAreBoundedWhenRedisStalls(t *testing.T) {
 	address := blackholeRedisAddress(t)
-	client := newAuditExportRedisClient(&redis.Options{Addr: address})
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	old := util.Config
+	t.Cleanup(func() { util.Config = old })
+	util.Config = &util.ConfigType{HA: &util.HAConfig{Enabled: true, NodeID: "audit-stall", Redis: &util.HARedisConfig{Addr: address}}}
+	shared := NewHARedis()
+	client, err := sharedRedisClient(shared)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, shared.Close()) })
 	lease := &redisAuditExportLease{
 		client: client,
 		key:    "audit-export", token: "owner", lost: make(chan struct{}), stop: make(chan struct{}),

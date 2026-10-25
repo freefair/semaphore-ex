@@ -7039,6 +7039,7 @@ symbols:
     implementation: core
     behavior_tests:
     - test/edition-contract/enhanced/services/ha/audit_export_lease_test.go::TestRedisAuditExportLeaseReleaseAndRenewAreBoundedWhenRedisStalls
+    - test/edition-contract/enhanced/services/ha/audit_export_lease_test.go::TestRedisAuditExportLeaseSignalsLossAtLocalExpiryWithoutValidCall
     - test/edition-contract/enhanced/services/ha/audit_export_lease_test.go::TestLocalAuditExportLeaseAllowsOnlyOneOwnerPerDestination
   - name: pro_interfaces:AuditExporter
     signature: interface{DestinationIDs() []string; Start() error; Stop()}
@@ -9268,6 +9269,18 @@ symbols:
       pro_interfaces.ClusterNodeCompatibilityState "json:\"compatibility_state\""; CompatibilityReason string
       "json:\"compatibility_reason,omitempty\""}
     implementation: core
+  - name: pro_interfaces:HARedis
+    signature: interface{Close() error; Describe() string; Ping(ctx context.Context) error}
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesBorrowOneConnectionAndKeepSQLAuthority
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_InvalidHAConfigurationFailsClosedWithoutSecretOrAddress
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_DirectHostWithoutPortKeepsLegacyDefault
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestDirectRedisAddressPreservesLegacySafeDefaultPortForms
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_SentinelSharesAuthenticatedTLSFailoverClient
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_DirectConnectionPreservesSpecialCharacterCredentials
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_DirectTLSVerifiesTrustedServer
+    - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesRejectMissingSharedRedis
   - name: pro_interfaces:NodeRegistry
     signature: interface{NodeCount() int; NodeID() string; Start() error; Stop()}
     implementation: core
@@ -11139,39 +11152,67 @@ symbols:
       (pro_interfaces.RedisInfo, error); SetNodeDraining(bootID string, draining bool) error}
     implementation: local
   - name: services/ha:NewAuditExportLeaser
-    signature: func() pro_interfaces.AuditExportLeaser
-    selected_signature: func() pro_interfaces.AuditExportLeaser
+    signature: func(_ pro_interfaces.HARedis) pro_interfaces.AuditExportLeaser
+    selected_signature: func(shared pro_interfaces.HARedis) pro_interfaces.AuditExportLeaser
     implementation: local
     behavior_tests:
+    - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesBorrowOneConnectionAndKeepSQLAuthority
+    - test/edition-contract/enhanced/services/ha/audit_export_lease_test.go::TestRedisAuditExportLeaseReleaseAndRenewAreBoundedWhenRedisStalls
     - test/edition-contract/enhanced/services/ha/audit_export_lease_test.go::TestRedisAuditExportLeaseSignalsLossAtLocalExpiryWithoutValidCall
   - name: services/ha:NewClusterInspector
-    signature: func(_ db.Store, _ ...pro_interfaces.ClusterDrainer) pro/services/ha.ClusterInspector
-    selected_signature: func(store db.Store, drainers ...pro_interfaces.ClusterDrainer) pro/services/ha.ClusterInspector
+    signature: func(_ pro_interfaces.HARedis, _ db.Store, _ ...pro_interfaces.ClusterDrainer) pro/services/ha.ClusterInspector
+    selected_signature: func(shared pro_interfaces.HARedis, store db.Store, drainers ...pro_interfaces.ClusterDrainer) pro/services/ha.ClusterInspector
     implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesBorrowOneConnectionAndKeepSQLAuthority
+  - name: services/ha:NewHARedis
+    signature: func() pro_interfaces.HARedis
+    selected_signature: func() pro_interfaces.HARedis
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_DisabledReturnsNil
+    - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesBorrowOneConnectionAndKeepSQLAuthority
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_InvalidHAConfigurationFailsClosedWithoutSecretOrAddress
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_DirectHostWithoutPortKeepsLegacyDefault
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestDirectRedisAddressPreservesLegacySafeDefaultPortForms
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_SentinelSharesAuthenticatedTLSFailoverClient
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_DirectConnectionPreservesSpecialCharacterCredentials
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_DirectTLSVerifiesTrustedServer
+    - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesRejectMissingSharedRedis
   - name: services/ha:NewNodeRegistry
-    signature: func(_ db.Store) pro/services/ha.NodeRegistry
-    selected_signature: func(store db.Store) pro/services/ha.NodeRegistry
+    signature: func(_ pro_interfaces.HARedis, _ db.Store) pro/services/ha.NodeRegistry
+    selected_signature: func(shared pro_interfaces.HARedis, store db.Store) pro/services/ha.NodeRegistry
     implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesBorrowOneConnectionAndKeepSQLAuthority
   - name: services/ha:NewOrphanCleaner
-    signature: func(_ db.Store, _ *services/tasks.TaskPool) pro/services/ha.OrphanCleaner
-    selected_signature: func(store db.Store, pool *services/tasks.TaskPool) pro/services/ha.OrphanCleaner
+    signature: func(_ pro_interfaces.HARedis, _ db.Store, _ *services/tasks.TaskPool) pro/services/ha.OrphanCleaner
+    selected_signature: func(shared pro_interfaces.HARedis, store db.Store, pool *services/tasks.TaskPool) pro/services/ha.OrphanCleaner
     implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesBorrowOneConnectionAndKeepSQLAuthority
   - name: services/ha:NewScheduleDeduplicator
-    signature: func(_ db.Store) services/schedules.ScheduleDeduplicator
-    selected_signature: func(store db.Store) services/schedules.ScheduleDeduplicator
+    signature: func(_ pro_interfaces.HARedis, _ db.Store) services/schedules.ScheduleDeduplicator
+    selected_signature: func(_ pro_interfaces.HARedis, store db.Store) services/schedules.ScheduleDeduplicator
     implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesBorrowOneConnectionAndKeepSQLAuthority
   - name: services/ha:NewTaskExecutionEvidenceRecorder
     signature: func(_ db.Store) db.TaskExecutionEvidenceRecorder
     selected_signature: func(store db.Store) db.TaskExecutionEvidenceRecorder
     implementation: local
   - name: services/ha:NewWSBroadcaster
-    signature: func(_ db.Store) api/sockets.Broadcaster
-    selected_signature: func(store db.Store) api/sockets.Broadcaster
+    signature: func(_ pro_interfaces.HARedis, _ db.Store) api/sockets.Broadcaster
+    selected_signature: func(shared pro_interfaces.HARedis, store db.Store) api/sockets.Broadcaster
     implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesBorrowOneConnectionAndKeepSQLAuthority
   - name: services/ha:NewWorkflowRunLocker
-    signature: func(_ db.Store) pro_interfaces.WorkflowRunLocker
-    selected_signature: func(store db.Store) pro_interfaces.WorkflowRunLocker
+    signature: func(_ pro_interfaces.HARedis, _ db.Store) pro_interfaces.WorkflowRunLocker
+    selected_signature: func(_ pro_interfaces.HARedis, store db.Store) pro_interfaces.WorkflowRunLocker
     implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesBorrowOneConnectionAndKeepSQLAuthority
   - name: services/ha:NodeRegistry
     signature: interface{NodeCount() int; NodeID() string; Start() error; Stop()}
     selected_signature: interface{NodeCount() int; NodeID() string; Start() error; Stop()}
@@ -11576,7 +11617,9 @@ symbols:
     - test/edition-contract/enhanced/services/tasks/task_outputs_test.go::TestTaskOutputsCaptureFileOverridesTerraformAndPreservesJSONNumbers
     - services/tasks/taskpool_collector_wiring_test.go::TestAddTaskFromWiresCollectorIntoActiveLocalExecutor
   - name: services/tasks:NewTaskStateStore
-    signature: func() services/tasks.TaskStateStore
-    selected_signature: func() services/tasks.TaskStateStore
-    implementation: community
-    rationale: Functional shared synchronized in-memory task-state factory used by the CLI TaskPool; SQL and HA reconciliation own durable state.
+    signature: func(_ pro_interfaces.HARedis) services/tasks.TaskStateStore
+    selected_signature: func(_ pro_interfaces.HARedis) services/tasks.TaskStateStore
+    implementation: local
+    rationale: Execution-local synchronized handles remain in memory; SQL and fenced reconciliation own durable task state, independent of the Redis transport.
+    behavior_tests:
+    - test/edition-contract/enhanced/services/tasks/tasks_ex_test.go::TestTaskStateFactoryKeepsExecutionHandlesLocal

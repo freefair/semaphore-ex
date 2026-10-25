@@ -104,14 +104,14 @@ var _ pro_interfaces.AuditExportLease = (*redisAuditExportLease)(nil)
 // NewAuditExportLeaser uses a process-local lease for a single node. HA uses
 // Redis compare-and-renew ownership; missing or invalid HA coordination fails
 // closed so no node exports until Redis is usable again.
-func NewAuditExportLeaser() pro_interfaces.AuditExportLeaser {
+func NewAuditExportLeaser(shared pro_interfaces.HARedis) pro_interfaces.AuditExportLeaser {
 	if util.Config == nil || !util.HAEnabled() {
 		return newLocalAuditExportLeaser()
 	}
-	if util.Config.HA == nil || util.Config.HA.NodeID == "" || util.Config.HA.Redis == nil || util.Config.HA.Redis.Addr == "" {
-		return unavailableAuditExportLeaser{err: errors.New("audit export HA requires node ID and Redis address")}
+	if util.Config.HA == nil || util.Config.HA.NodeID == "" {
+		return unavailableAuditExportLeaser{err: errors.New("audit export HA requires node ID")}
 	}
-	options, err := redisOptionsForHA(util.Config.HA.Redis)
+	client, err := sharedRedisClient(shared)
 	if err != nil {
 		return unavailableAuditExportLeaser{err: errors.New("audit export Redis configuration is invalid")}
 	}
@@ -119,18 +119,7 @@ func NewAuditExportLeaser() pro_interfaces.AuditExportLeaser {
 	if err != nil {
 		return unavailableAuditExportLeaser{err: errors.New("audit export cluster identity is unavailable")}
 	}
-	return &redisAuditExportLeaser{client: newAuditExportRedisClient(options), owner: identity.BootID}
-}
-
-func newAuditExportRedisClient(options *redis.Options) *redis.Client {
-	auditOptions := *options
-	// Lease loss must bound an in-flight Redis request even when the peer accepts
-	// TCP and never replies. Do not change the shared HA client defaults.
-	auditOptions.ContextTimeoutEnabled = true
-	auditOptions.DialTimeout = time.Second
-	auditOptions.ReadTimeout = time.Second
-	auditOptions.WriteTimeout = time.Second
-	return redis.NewClient(&auditOptions)
+	return &redisAuditExportLeaser{client: client, owner: identity.BootID}
 }
 
 func (l *redisAuditExportLeaser) TryAcquire(ctx context.Context, destinationID string) (pro_interfaces.AuditExportLease, bool, error) {

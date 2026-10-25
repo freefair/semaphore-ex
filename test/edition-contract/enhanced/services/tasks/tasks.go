@@ -1,6 +1,12 @@
-// Package tasks adapts the public Community surface for the workspace fixture.
 package tasks
 
-import community "github.com/semaphoreui/semaphore/community-pro/services/tasks"
+import (
+	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/tasks"
+)
 
-var NewTaskStateStore = community.NewTaskStateStore
+// NewTaskStateStore keeps execution-local handles in memory. Durable task state
+// and HA assignment fencing remain in SQL; Redis only coordinates live signals.
+func NewTaskStateStore(_ pro_interfaces.HARedis) tasks.TaskStateStore {
+	return tasks.NewMemoryTaskStateStore()
+}

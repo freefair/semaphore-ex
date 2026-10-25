@@ -14,13 +14,23 @@ type NodeRegistry = pro_interfaces.NodeRegistry
 type OrphanCleaner = pro_interfaces.OrphanCleaner
 type ClusterInspector = pro_interfaces.ClusterInspector
 
-// Stubs – these are replaced by pro_impl via Go workspace.
+// Unselected compatibility stubs; the workspace selects the Enhanced module.
 
-func NewNodeRegistry(_ db.Store) NodeRegistry                           { return nil }
-func NewScheduleDeduplicator(_ db.Store) schedules.ScheduleDeduplicator { return nil }
-func NewWSBroadcaster(_ db.Store) sockets.Broadcaster                   { return nil }
-func NewOrphanCleaner(_ db.Store, _ *tasks.TaskPool) OrphanCleaner      { return nil }
+func NewHARedis() pro_interfaces.HARedis { return nil }
 
-func NewClusterInspector(_ db.Store, _ ...pro_interfaces.ClusterDrainer) ClusterInspector { return nil }
-func NewWorkflowRunLocker(_ db.Store) pro_interfaces.WorkflowRunLocker                    { return nil }
-func NewAuditExportLeaser() pro_interfaces.AuditExportLeaser                              { return nil }
+func NewNodeRegistry(_ pro_interfaces.HARedis, _ db.Store) NodeRegistry { return nil }
+func NewScheduleDeduplicator(_ pro_interfaces.HARedis, _ db.Store) schedules.ScheduleDeduplicator {
+	return nil
+}
+func NewWSBroadcaster(_ pro_interfaces.HARedis, _ db.Store) sockets.Broadcaster { return nil }
+func NewOrphanCleaner(_ pro_interfaces.HARedis, _ db.Store, _ *tasks.TaskPool) OrphanCleaner {
+	return nil
+}
+
+func NewClusterInspector(_ pro_interfaces.HARedis, _ db.Store, _ ...pro_interfaces.ClusterDrainer) ClusterInspector {
+	return nil
+}
+func NewWorkflowRunLocker(_ pro_interfaces.HARedis, _ db.Store) pro_interfaces.WorkflowRunLocker {
+	return nil
+}
+func NewAuditExportLeaser(_ pro_interfaces.HARedis) pro_interfaces.AuditExportLeaser { return nil }

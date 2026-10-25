@@ -3,14 +3,10 @@ package ha
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
-	"fmt"
-	"net/url"
 	"sync"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/semaphoreui/semaphore/api/sockets"
 	community "github.com/semaphoreui/semaphore/community-pro/services/ha"
 	"github.com/semaphoreui/semaphore/db"
@@ -32,7 +28,7 @@ var clusterIdentityState struct {
 	identity pro_interfaces.ClusterNodeIdentity
 }
 
-func NewWorkflowRunLocker(store db.Store) pro_interfaces.WorkflowRunLocker {
+func NewWorkflowRunLocker(_ pro_interfaces.HARedis, store db.Store) pro_interfaces.WorkflowRunLocker {
 	if !util.HAEnabled() || util.Config.HA == nil || util.Config.HA.NodeID == "" {
 		return nil
 	}
@@ -58,7 +54,7 @@ func NewWorkflowRunLocker(store db.Store) pro_interfaces.WorkflowRunLocker {
 // mode derives a process-lifetime identity so a restart cannot revive a
 // terminal blocked occurrence. Community still receives nil from its own
 // replaceable implementation.
-func NewScheduleDeduplicator(store db.Store) schedules.ScheduleDeduplicator {
+func NewScheduleDeduplicator(_ pro_interfaces.HARedis, store db.Store) schedules.ScheduleDeduplicator {
 	connectionStore, ok := store.(interface {
 		GetConnection() *coresql.SqlDbConnection
 	})
@@ -79,8 +75,8 @@ func NewScheduleDeduplicator(store db.Store) schedules.ScheduleDeduplicator {
 	return NewManagedScheduleDeduplicator(clusterSQL.NewScheduleCoordinatorStore(connectionStore.GetConnection()), identity.BootID)
 }
 
-func NewWSBroadcaster(store db.Store) sockets.Broadcaster {
-	if !util.HAEnabled() || util.Config.HA == nil || util.Config.HA.NodeID == "" || util.Config.HA.Redis == nil || util.Config.HA.Redis.Addr == "" {
+func NewWSBroadcaster(shared pro_interfaces.HARedis, store db.Store) sockets.Broadcaster {
+	if !util.HAEnabled() || util.Config.HA == nil || util.Config.HA.NodeID == "" {
 		return nil
 	}
 	if _, ok := store.(interface {
@@ -92,11 +88,11 @@ func NewWSBroadcaster(store db.Store) sockets.Broadcaster {
 	if err != nil {
 		return nil
 	}
-	options, err := redisOptionsForHA(util.Config.HA.Redis)
+	client, err := sharedRedisClient(shared)
 	if err != nil {
 		return nil
 	}
-	return NewManagedWSBroadcaster(NewGoRedisEventTransport(redis.NewClient(options)), identity.BootID, sockets.LocalBroadcast, coordinatorHealthFor(util.Config.HA.NodeID))
+	return NewManagedWSBroadcaster(NewGoRedisEventTransport(client), identity.BootID, sockets.LocalBroadcast, coordinatorHealthFor(util.Config.HA.NodeID))
 }
 
 func NewTaskExecutionEvidenceRecorder(store db.Store) db.TaskExecutionEvidenceRecorder {
@@ -112,8 +108,8 @@ func NewTaskExecutionEvidenceRecorder(store db.Store) db.TaskExecutionEvidenceRe
 	return clusterSQL.NewTaskControlStore(connectionStore.GetConnection())
 }
 
-func NewOrphanCleaner(store db.Store, pool *tasks.TaskPool) OrphanCleaner {
-	if !util.HAEnabled() || pool == nil || util.Config.HA == nil || util.Config.HA.NodeID == "" || util.Config.HA.Redis == nil || util.Config.HA.Redis.Addr == "" {
+func NewOrphanCleaner(shared pro_interfaces.HARedis, store db.Store, pool *tasks.TaskPool) OrphanCleaner {
+	if !util.HAEnabled() || pool == nil || util.Config.HA == nil || util.Config.HA.NodeID == "" {
 		return nil
 	}
 	connectionStore, ok := store.(interface {
@@ -126,12 +122,12 @@ func NewOrphanCleaner(store db.Store, pool *tasks.TaskPool) OrphanCleaner {
 	if err != nil {
 		return nil
 	}
-	redisOptions, err := redisOptionsForHA(util.Config.HA.Redis)
+	client, err := sharedRedisClient(shared)
 	if err != nil {
 		return nil
 	}
 	connection := connectionStore.GetConnection()
-	heartbeats := NewRedisHeartbeatStore(NewGoRedisHeartbeatClient(redis.NewClient(redisOptions)), defaultClusterHeartbeatPrefix)
+	heartbeats := NewRedisHeartbeatStore(NewGoRedisHeartbeatClient(client), defaultClusterHeartbeatPrefix)
 	repository := clusterSQL.NewClusterNodeStore(connection)
 	requirements := pro_interfaces.ClusterCompatibilityRequirements{
 		Edition:         util.BuildEdition,
@@ -174,14 +170,14 @@ func NewOrphanCleaner(store db.Store, pool *tasks.TaskPool) OrphanCleaner {
 const clusterProtocolVersion = 1
 
 // NewNodeRegistry enables durable cluster membership only when HA has an
-// explicit stable node ID and a Redis endpoint. An auto-generated process ID
+// explicit stable node ID and a shared Redis connection. An auto-generated process ID
 // would make restart history and operator diagnostics ambiguous.
-func NewNodeRegistry(store db.Store) NodeRegistry {
+func NewNodeRegistry(shared pro_interfaces.HARedis, store db.Store) NodeRegistry {
 	if !util.HAEnabled() {
 		return nil
 	}
-	if util.Config.HA == nil || util.Config.HA.NodeID == "" || util.Config.HA.Redis == nil || util.Config.HA.Redis.Addr == "" {
-		return failedNodeRegistry{err: errors.New("ha requires an explicit node_id and redis address")}
+	if util.Config.HA == nil || util.Config.HA.NodeID == "" {
+		return failedNodeRegistry{err: errors.New("ha requires an explicit node_id")}
 	}
 	connectionStore, ok := store.(interface {
 		GetConnection() *coresql.SqlDbConnection
@@ -193,7 +189,7 @@ func NewNodeRegistry(store db.Store) NodeRegistry {
 	if err != nil {
 		return failedNodeRegistry{err: err}
 	}
-	redisOptions, err := redisOptionsForHA(util.Config.HA.Redis)
+	client, err := sharedRedisClient(shared)
 	if err != nil {
 		return failedNodeRegistry{err: err}
 	}
@@ -207,7 +203,7 @@ func NewNodeRegistry(store db.Store) NodeRegistry {
 		SchemaVersion:       currentSchemaVersion(connection.GetDialect()),
 		Capabilities:        []string{"cluster-dashboard"},
 	}
-	redisClient := NewGoRedisHeartbeatClient(redis.NewClient(redisOptions))
+	redisClient := NewGoRedisHeartbeatClient(client)
 	return NewManagedNodeRegistry(
 		clusterSQL.NewClusterNodeStore(connection),
 		NewRedisHeartbeatStore(redisClient, defaultClusterHeartbeatPrefix),
@@ -217,8 +213,8 @@ func NewNodeRegistry(store db.Store) NodeRegistry {
 	)
 }
 
-func NewClusterInspector(store db.Store, drainers ...pro_interfaces.ClusterDrainer) ClusterInspector {
-	if !util.HAEnabled() || util.Config.HA == nil || util.Config.HA.NodeID == "" || util.Config.HA.Redis == nil || util.Config.HA.Redis.Addr == "" {
+func NewClusterInspector(shared pro_interfaces.HARedis, store db.Store, drainers ...pro_interfaces.ClusterDrainer) ClusterInspector {
+	if !util.HAEnabled() || util.Config.HA == nil || util.Config.HA.NodeID == "" {
 		return nil
 	}
 	connectionStore, ok := store.(interface {
@@ -231,12 +227,12 @@ func NewClusterInspector(store db.Store, drainers ...pro_interfaces.ClusterDrain
 	if err != nil {
 		return nil
 	}
-	redisOptions, err := redisOptionsForHA(util.Config.HA.Redis)
+	client, err := sharedRedisClient(shared)
 	if err != nil {
 		return nil
 	}
 	connection := connectionStore.GetConnection()
-	redisClient := NewGoRedisHeartbeatClient(redis.NewClient(redisOptions))
+	redisClient := NewGoRedisHeartbeatClient(client)
 	inspector := NewManagedClusterInspector(
 		clusterSQL.NewClusterNodeStore(connection),
 		NewRedisHeartbeatStore(redisClient, defaultClusterHeartbeatPrefix),
@@ -247,7 +243,7 @@ func NewClusterInspector(store db.Store, drainers ...pro_interfaces.ClusterDrain
 			RequiredCapabilities: []string{"cluster-dashboard"},
 		},
 		identity,
-		redisClient,
+		sharedRedisDiagnostics{client: redisClient, shared: shared},
 	)
 	inspector.coordinatorHealth = coordinatorHealthFor(util.Config.HA.NodeID)
 	inspector.drainers = append(inspector.drainers, drainers...)
@@ -273,22 +269,6 @@ func clusterIdentity(nodeID string) (pro_interfaces.ClusterNodeIdentity, error) 
 	clusterIdentityState.nodeID = nodeID
 	clusterIdentityState.identity = identity
 	return identity, nil
-}
-
-func redisOptionsForHA(config *util.HARedisConfig) (*redis.Options, error) {
-	scheme := "redis"
-	if config.TLS {
-		scheme = "rediss"
-	}
-	dsn := fmt.Sprintf("%s://%s:%s@%s/%d", scheme, url.PathEscape(config.User), url.PathEscape(config.Pass), config.Addr, config.DB)
-	options, err := redis.ParseURL(dsn)
-	if err != nil {
-		return nil, fmt.Errorf("parse HA redis configuration: %w", err)
-	}
-	if config.TLS {
-		options.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: config.TLSSkipVerify}
-	}
-	return options, nil
 }
 
 func currentSchemaVersion(dialect string) string {
