@@ -4,6 +4,7 @@ import { expect, test } from '@playwright/test';
 
 test('full-product production bundle loads', async ({ page }) => {
   const runtimeErrors: string[] = [];
+  const initialRequests = new Set<string>();
   let submittedCredentials: Record<string, unknown> | undefined;
   page.on('pageerror', (error) => runtimeErrors.push(error.message));
   page.on('console', (message) => {
@@ -14,7 +15,9 @@ test('full-product production bundle loads', async ({ page }) => {
     }
   });
 
-  await page.route('**/api/user', async (route) => {
+  // The real backend rejects all three parallel bootstrap requests without a session.
+  await page.route(/\/api\/(user(?:\/options)?|info)$/, async (route) => {
+    initialRequests.add(new URL(route.request().url()).pathname);
     await route.fulfill({
       status: 401,
       contentType: 'application/json',
@@ -48,6 +51,9 @@ test('full-product production bundle loads', async ({ page }) => {
   await expect(page.getByTestId('auth-username')).toBeVisible();
   await expect(page.getByTestId('auth-password')).toBeVisible();
   await expect(page.getByTestId('auth-signin')).toBeEnabled();
+  await expect.poll(() => [...initialRequests].sort()).toEqual([
+    '/api/info', '/api/user', '/api/user/options',
+  ]);
 
   const evidenceDirectory = path.resolve(__dirname, '..', 'test-results');
   fs.mkdirSync(evidenceDirectory, { recursive: true });
