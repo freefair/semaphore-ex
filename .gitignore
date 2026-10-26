@@ -67,3 +67,4 @@ __debug_bin*
 
 /.claude/rules/
 /integration-tests/
+/pro_impl/

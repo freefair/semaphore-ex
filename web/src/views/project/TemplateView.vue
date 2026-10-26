@@ -18,6 +18,7 @@
       :item-id="itemId"
       @save="loadData()"
       :features="features"
+      :jwt="jwt"
       :task-type="item.type"
     ></EditTemplateDialog>
 
@@ -29,6 +30,7 @@
       :source-item-id="itemId"
       @save="onTemplateCopied"
       :features="features"
+      :jwt="jwt"
       :task-type="item.type"
     ></EditTemplateDialog>
 
@@ -251,6 +253,7 @@ export default {
     projectId: Number,
     userPermissions: Number,
     features: Object,
+    jwt: Object,
   },
 
   mixins: [PermissionsCheck, ProjectMixin],

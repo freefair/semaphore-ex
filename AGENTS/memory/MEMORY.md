@@ -94,6 +94,11 @@ only when the task touches that topic. Keep this file under 150 lines.
   quotes ignored: `!unsafe "2026.08"` is a float, `"00123"` the int 83. Tag only strings holding a
   Jinja2 delimiter or a `#jinja2:` header (`isPossiblyTemplate`, `services/tasks/extra_vars_file.go`);
   check a generated extra-vars file with the real loader, not yaml.v3 (`extra_vars_ansible_test.go`).
+- A new per-task execution step (hooks, extra commands) must cover both
+  `services/tasks/local_executor.go` (shared by server and runner) and the selected
+  Enhanced Docker/Kubernetes executors under `test/edition-contract/enhanced/services/tasks`.
+  Preserve the task-bundle execution path. The server stores no runner version
+  (`db/Runner.go`), so an old runner silently ignores new `JobData.Template` fields.
 
 ## Topic files
 

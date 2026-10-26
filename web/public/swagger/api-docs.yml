@@ -1275,8 +1275,6 @@ definitions:
     properties:
       version:
         type: string
-      ansible:
-        type: string
       web_host:
         type: string
       use_remote_runner:

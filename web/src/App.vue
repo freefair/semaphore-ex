@@ -565,6 +565,7 @@
         :isAdmin="(user || {}).admin"
         :user="user"
         :features="(systemInfo || { features: {} }).features"
+        :jwt="(systemInfo || {}).jwt"
         :authMethods="(systemInfo || { auth_methods: {} }).auth_methods"
         :systemInfo="systemInfo"
       ></router-view>
@@ -1511,33 +1512,6 @@ export default {
       this.$i18n.locale = locale;
     },
 
-    async loadUserOptions() {
-      const options = (
-        await axios({
-          method: 'get',
-          url: '/api/user/options',
-          responseType: 'json',
-        })
-      ).data;
-
-      if (options['nav.unpinnedItems'] != null) {
-        try {
-          this.unpinnedNavKeys = JSON.parse(options['nav.unpinnedItems']);
-        } catch {
-          // do nothing
-        }
-      }
-
-      if (options.lang != null) {
-        const currentLang = localStorage.getItem('lang');
-        try {
-          this.applyLanguage(JSON.parse(options.lang));
-        } catch {
-          this.applyLanguage(currentLang);
-        }
-      }
-    },
-
     async selectLanguage(lang) {
       const previousLang = localStorage.getItem('lang');
       this.applyLanguage(lang);
@@ -1572,7 +1546,6 @@ export default {
 
     async loadData() {
       await this.loadUserInfo();
-      await this.loadUserOptions();
 
       // Activate session and start socket only after confirming user is authenticated
       socket.setSessionActive(true);
@@ -1680,21 +1653,44 @@ export default {
     },
 
     async loadUserInfo() {
-      this.user = (
-        await axios({
+      const [user, systemInfo, optionsResponse] = await Promise.all([
+        axios({
           method: 'get',
           url: '/api/user',
           responseType: 'json',
-        })
-      ).data;
-
-      this.systemInfo = (
-        await axios({
+        }),
+        axios({
           method: 'get',
           url: '/api/info',
           responseType: 'json',
-        })
-      ).data;
+        }),
+        axios({
+          method: 'get',
+          url: '/api/user/options',
+          responseType: 'json',
+        }),
+      ]);
+
+      this.user = user.data;
+      this.systemInfo = systemInfo.data;
+      const options = optionsResponse.data;
+
+      if (options['nav.unpinnedItems'] != null) {
+        try {
+          this.unpinnedNavKeys = JSON.parse(options['nav.unpinnedItems']);
+        } catch {
+          // do nothing
+        }
+      }
+
+      if (options.lang != null) {
+        const currentLang = localStorage.getItem('lang');
+        try {
+          this.applyLanguage(JSON.parse(options.lang));
+        } catch {
+          this.applyLanguage(currentLang);
+        }
+      }
     },
 
     getProjectColor(projectData) {

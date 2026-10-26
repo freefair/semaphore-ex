@@ -34,7 +34,6 @@ func TestSystemInfoEditionMetadataJSON(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
 		"version":"",
-		"ansible":"",
 		"web_host":"",
 		"use_remote_runner":false,
 		"auth_methods":{},
