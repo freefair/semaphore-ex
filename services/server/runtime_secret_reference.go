@@ -84,6 +84,9 @@ func ValidateRuntimeSecretStorage(storage *db.SecretStorage) error {
 	if storage == nil {
 		return common_errors.NewValidationError("secret storage is required")
 	}
+	if storage.Type == db.SecretStorageTypeInfisical {
+		return ValidateInfisicalStorage(storage)
+	}
 	if storage.Type != db.SecretStorageTypeVault && storage.Type != db.SecretStorageTypeOpenBao {
 		return common_errors.NewValidationError("only Vault and OpenBao runtime secret providers are supported")
 	}

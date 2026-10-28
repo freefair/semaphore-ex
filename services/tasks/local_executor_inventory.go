@@ -52,7 +52,7 @@ func (t *LocalExecutor) startTaskSSHAgent() error {
 	}
 	keys := ssh.AgentKeys(allKeys...)
 	if len(keys) == 0 {
-		return nil
+		return t.prepareInfisicalPAMOnlyRouting()
 	}
 	agent, err := ssh.StartSSHAgentWithKeys(keys, &t.Template.ProjectID, t.Logger)
 	if err != nil {

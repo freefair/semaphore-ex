@@ -10,6 +10,10 @@ export const enhancedComputed = {
     }
     return this.items?.find((item) => item.id === this.itemId)?.type || this.itemType;
   },
+  dialogMaxWidth() {
+    // Host routes need two inputs per row.
+    return this.dialogStorageType === 'infisical' ? 760 : 450;
+  },
   runtimeCanRead() {
     return this.runtimeDecision?.access?.includes('read') || false;
   },

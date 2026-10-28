@@ -230,6 +230,7 @@ func (p *JobPool) setCommonHeaders(req *http.Request) {
 	// version. The server uses it to keep inventory-only refresh work away from
 	// runners that would otherwise ignore the refresh flag and run a playbook.
 	req.Header.Set(RunnerInventoryRefreshHeader, "1")
+	req.Header.Set(RunnerInfisicalPAMHeader, "1")
 	if ack, ready := p.currentDockerPolicyAck(); ready {
 		req.Header.Set(RunnerDockerPolicyRevisionHeader, strconv.Itoa(ack.Revision))
 		req.Header.Set(RunnerDockerPolicyHashHeader, ack.Hash)

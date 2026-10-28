@@ -5,6 +5,9 @@ export const enhancedComputed = {
   isRuntimeProvider() {
     return this.item?.type === 'vault' || this.item?.type === 'openbao';
   },
+  isInfisicalPAM() {
+    return this.item?.type === 'infisical';
+  },
   isManagedOutbound() {
     return this.isRuntimeProvider && this.item?.sync_direction === 'outbound';
   },

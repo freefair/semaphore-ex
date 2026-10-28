@@ -310,6 +310,11 @@ func (t *TaskRunner) run() {
 	if localJob := t.localJob(); localJob != nil {
 		localJob.HostConfigs = t.HostConfigs
 	}
+	if err = t.refreshInfisicalPAM(); err != nil {
+		t.Log("Failed to load Infisical PAM routes for task dispatch: " + err.Error())
+		t.SetStatus(task_logger.TaskFailStatus)
+		return
+	}
 	if len(t.Task.TaskGroupRunnerIDs) > 0 {
 		tags, mode, legacy := runnerPlacementPolicy(t.Template, t.Inventory)
 		t.replaceWithRemoteJob(&RemoteJob{RunnerTag: legacy, RunnerTags: tags, RunnerTagMatchMode: mode,

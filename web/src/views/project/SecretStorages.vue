@@ -27,7 +27,7 @@
       v-model="editDialog"
       :save-button-text="itemId === 'new' ? $t('create') : $t('save')"
       :title="`${itemId === 'new' ? $t('nnew') : $t('edit')} ${dialogStorageType} Storage`"
-      :max-width="450"
+      :max-width="dialogMaxWidth"
       @save="loadItems()"
     >
       <template v-slot:form="{ onSave, onError, needSave, needReset }">
@@ -91,6 +91,21 @@
               <v-icon>$vuetify.icons.openbao</v-icon>
             </v-list-item-icon>
             <v-list-item-title>OpenBao</v-list-item-title>
+          </v-list-item>
+
+          <v-list-item
+            link
+            @click="
+              editItem('new');
+              itemType = 'infisical';
+            "
+            :disabled="!features.secret_storage_management || !runtimeCanWrite"
+            data-testid="secretStorage-newInfisical"
+          >
+            <v-list-item-icon>
+              <v-icon>mdi-shield-key-outline</v-icon>
+            </v-list-item-icon>
+            <v-list-item-title>{{ $t('infisicalPam') }}</v-list-item-title>
           </v-list-item>
 
           <template v-if="features.secret_storage_management_ex">
@@ -347,6 +362,8 @@ export default {
           return '$vuetify.icons.aws_sm';
         case 'azure_kv':
           return '$vuetify.icons.azure_kv';
+        case 'infisical':
+          return 'mdi-shield-key-outline';
         default:
           return '';
       }

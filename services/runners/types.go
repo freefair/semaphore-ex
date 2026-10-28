@@ -30,6 +30,9 @@ type JobData struct {
 	// RunnerState.AccessKeys.
 	SSHKeyBindings db.SSHKeyBindings `json:"ssh_key_bindings,omitempty"`
 	HostConfigs    []db.HostConfig   `json:"host_configs,omitempty"`
+	// InfisicalPAM is value-free routing configuration; each machine identity
+	// secret travels in RunnerState.AccessKeys.
+	InfisicalPAM []db.TaskInfisicalPAM `json:"infisical_pam,omitempty"`
 }
 
 type RunnerState struct {

@@ -133,6 +133,19 @@
       </div>
     </div>
 
+    <InfisicalPAMStorageFields
+      v-else-if="isInfisicalPAM"
+      :client-id.sync="item.params.client_id"
+      :organization-slug.sync="item.params.organization_slug"
+      :session-duration.sync="item.params.session_duration"
+      :ca-certificate.sync="item.params.ca_certificate"
+      :routes.sync="item.params.pam_routes"
+      :secret.sync="item.secret"
+      :secret-storage.sync="secretStorage"
+      :is-new="itemId === 'new'"
+      :form-saving="formSaving"
+    />
+
     <div v-else-if="item.type === 'dvls'">
       <v-checkbox
         class="pt-0 mb-2"
@@ -339,7 +352,7 @@
     </div>
 
     <v-checkbox
-      v-if="!isRuntimeProvider"
+      v-if="!isRuntimeProvider && !isInfisicalPAM"
       v-model="item.readonly"
       :label="$t('Read only')"
       :disabled="formSaving"
@@ -347,7 +360,7 @@
       style="position: absolute; bottom: 15px; margin: 0; left: 25px"
     />
 
-    <v-alert v-else text dense type="info" class="mb-3">
+    <v-alert v-else-if="isRuntimeProvider" text dense type="info" class="mb-3">
       {{
         isManagedOutbound
           ? 'Managed outbound writes are enabled for selected keys.'
@@ -361,7 +374,7 @@
         v-model="item.sync_enabled"
         :label="isRuntimeProvider ? 'Automatic synchronization enabled' : $t('Sync keys enabled')"
         :disabled="formSaving"
-        v-if="!isRuntimeProvider || isManagedOutbound"
+        v-if="(!isRuntimeProvider || isManagedOutbound) && !isInfisicalPAM"
       />
 
       <v-btn
@@ -418,6 +431,7 @@
 import { createEnhancedState, enhancedWatch } from '@/lib/enhanced/secret-storage-form-state';
 
 import RuntimeProviderAuthFields from '@/components/enhanced/RuntimeProviderAuthFields.vue';
+import InfisicalPAMStorageFields from '@/components/enhanced/InfisicalPAMStorageFields.vue';
 import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/secret-storage-form';
 
 import ItemFormBase from '@/components/ItemFormBase';
@@ -425,7 +439,12 @@ import SecretStorageSyncOptionsForm from '@/components/SecretStorageSyncOptionsF
 import SecretSourceToggle from '@/components/SecretSourceToggle.vue';
 
 export default {
-  components: { RuntimeProviderAuthFields, SecretStorageSyncOptionsForm, SecretSourceToggle },
+  components: {
+    RuntimeProviderAuthFields,
+    InfisicalPAMStorageFields,
+    SecretStorageSyncOptionsForm,
+    SecretSourceToggle,
+  },
 
   props: {
     itemType: String,

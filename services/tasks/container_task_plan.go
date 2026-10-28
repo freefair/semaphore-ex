@@ -123,6 +123,7 @@ func (t *LocalExecutor) PrepareContainerTask(username string, incomingVersion *s
 	if err := t.installHostConfigs(); err != nil {
 		return nil, err
 	}
+	t.disableInfisicalPAM("container tasks cannot reach the runner's Infisical PAM broker")
 	if err := t.prepare(username, incomingVersion, alias, false); err != nil {
 		t.Cleanup()
 		return nil, err

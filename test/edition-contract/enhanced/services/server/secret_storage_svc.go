@@ -16,7 +16,8 @@ func GetSecretStorages(repo db.SecretStorageRepository, projectID int) ([]db.Sec
 	}
 	result := make([]db.SecretStorage, 0, len(storages))
 	for _, storage := range storages {
-		if storage.Type != db.SecretStorageTypeVault && storage.Type != db.SecretStorageTypeOpenBao {
+		if storage.Type != db.SecretStorageTypeVault && storage.Type != db.SecretStorageTypeOpenBao &&
+			storage.Type != db.SecretStorageTypeInfisical {
 			continue
 		}
 		storage.Secret = ""

@@ -25,12 +25,15 @@ func (t *LocalExecutor) prepareTaskSSHRouting() error {
 	if err != nil {
 		return fmt.Errorf("building task SSH host routing: %w", err)
 	}
-	if !routing.RequiresRouting() && len(routing.RoutedHosts()) == 0 {
+	if !routing.RequiresRouting() && len(routing.RoutedHosts()) == 0 && !t.infisicalPAMActive() {
 		if t.hostConfigInstallation == nil || t.hostConfigInstallation.SSHConfigPath() == "" {
 			return nil
 		}
 	}
 	if err := t.rejectHostConfigRoutingConflicts(routing.RoutedHosts()); err != nil {
+		return err
+	}
+	if err := t.rejectInfisicalPAMConflicts(routing.RoutedHosts()); err != nil {
 		return err
 	}
 	return t.writeTaskSSHRoutingFiles(routing)
@@ -103,22 +106,17 @@ func (t *LocalExecutor) writeTaskSSHRoutingFiles(routing ssh.HostRouting) error 
 	if err := os.Mkdir(routingDirectory, 0o700); err != nil {
 		return fmt.Errorf("creating task SSH routing directory: %w", err)
 	}
-	config := filepath.Join(routingDirectory, "routing.conf")
-	wrapper := filepath.Join(routingDirectory, "ssh")
-	sshBinary, err := exec.LookPath("ssh")
+	// Infisical PAM blocks come first: OpenSSH uses the first value it reads,
+	// so no mapping or Host * default can override a PAM route.
+	configContents, err := t.startInfisicalPAMBrokers(routingDirectory)
 	if err != nil {
 		_ = os.RemoveAll(routingDirectory)
-		return fmt.Errorf("locating system SSH client: %w", err)
+		return err
 	}
-	sshBinary, err = filepath.Abs(sshBinary)
-	if err != nil {
-		_ = os.RemoveAll(routingDirectory)
-		return fmt.Errorf("resolving system SSH client path: %w", err)
-	}
-	configContents := ""
 	if t.hostConfigInstallation != nil && t.hostConfigInstallation.SSHConfigPath() != "" {
 		mapped, readErr := os.ReadFile(t.hostConfigInstallation.SSHConfigPath())
 		if readErr != nil {
+			t.stopInfisicalPAMBrokers()
 			_ = os.RemoveAll(routingDirectory)
 			return fmt.Errorf("reading host mapping SSH config: %w", readErr)
 		}
@@ -127,12 +125,31 @@ func (t *LocalExecutor) writeTaskSSHRoutingFiles(routing ssh.HostRouting) error 
 		configContents += string(mapped) + "\n"
 	}
 	configContents += routing.Config(t.taskSSHAgent.SocketFile)
-	if err := os.WriteFile(config, []byte(taskSSHRoutingConfig(configContents)), 0o600); err != nil {
+	if err := t.writeTaskSSHRoutingConfigFiles(routingDirectory, configContents); err != nil {
+		t.stopInfisicalPAMBrokers()
 		_ = os.RemoveAll(routingDirectory)
+		return err
+	}
+	return nil
+}
+
+// writeTaskSSHRoutingConfigFiles writes the routing config and the ssh
+// wrapper that selects it into an existing private directory.
+func (t *LocalExecutor) writeTaskSSHRoutingConfigFiles(routingDirectory, configContents string) error {
+	config := filepath.Join(routingDirectory, "routing.conf")
+	wrapper := filepath.Join(routingDirectory, "ssh")
+	sshBinary, err := exec.LookPath("ssh")
+	if err != nil {
+		return fmt.Errorf("locating system SSH client: %w", err)
+	}
+	sshBinary, err = filepath.Abs(sshBinary)
+	if err != nil {
+		return fmt.Errorf("resolving system SSH client path: %w", err)
+	}
+	if err := os.WriteFile(config, []byte(taskSSHRoutingConfig(configContents)), 0o600); err != nil {
 		return fmt.Errorf("writing task SSH routing config: %w", err)
 	}
-	if err := os.WriteFile(wrapper, []byte(taskSSHRoutingWrapper(sshBinary, config)), 0o700); err != nil {
-		_ = os.RemoveAll(routingDirectory)
+	if err := os.WriteFile(wrapper, []byte(taskSSHRoutingWrapper(sshBinary, config, t.infisicalPAMWrapperOptions()...)), 0o700); err != nil {
 		return fmt.Errorf("writing task SSH routing wrapper: %w", err)
 	}
 	t.taskSSHRoutingFiles = []string{routingDirectory}
@@ -187,13 +204,20 @@ func sshConfigPathValue(value string) string {
 	return `"` + strings.ReplaceAll(strings.ReplaceAll(value, "\\", "\\\\"), `"`, `\"`) + `"`
 }
 
-func taskSSHRoutingWrapper(sshBinary, config string) string {
+// taskSSHRoutingWrapper selects the generated config. Options precede the
+// caller's arguments, so OpenSSH's first-value rule makes them authoritative.
+func taskSSHRoutingWrapper(sshBinary, config string, options ...string) string {
+	quoted := ""
+	for _, option := range options {
+		quoted += " " + posixQuote(option)
+	}
 	return "#!/bin/sh\n" +
 		"set -eu\n" +
-		"exec " + posixQuote(sshBinary) + " -F " + posixQuote(config) + " \"$@\"\n"
+		"exec " + posixQuote(sshBinary) + " -F " + posixQuote(config) + quoted + " \"$@\"\n"
 }
 
 func (t *LocalExecutor) removeTaskSSHRoutingFiles() {
+	t.stopInfisicalPAMBrokers()
 	for _, filename := range t.taskSSHRoutingFiles {
 		_ = os.RemoveAll(filename)
 	}

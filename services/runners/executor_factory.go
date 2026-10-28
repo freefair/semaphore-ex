@@ -90,6 +90,9 @@ func hydrateJobAccessKeys(jobData *JobData, accessKeys map[int]db.AccessKey) err
 	for i := range jobData.HostConfigs {
 		jobData.HostConfigs[i].SSHKey = accessKeys[jobData.HostConfigs[i].SSHKeyID]
 	}
+	if err := hydrateJobInfisicalPAM(jobData, accessKeys); err != nil {
+		return err
+	}
 
 	if jobData.Inventory.SSHKeyID != nil {
 		jobData.Inventory.SSHKey = accessKeys[*jobData.Inventory.SSHKeyID]

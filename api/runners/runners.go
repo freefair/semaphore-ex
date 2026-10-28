@@ -235,6 +235,9 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if tsk.Task.Status == task_logger.TaskWaitingStatus || tsk.Task.Status == task_logger.TaskStartingStatus {
+			if !c.prepareInfisicalPAMDispatch(tsk, &runner, r.Header) {
+				continue
+			}
 
 			c.prepareRemoteJob(tsk, &runner, &data)
 
@@ -333,6 +336,7 @@ func (c *RunnerController) prepareRemoteJob(tsk *tasks.TaskRunner, runner *db.Ru
 		ExecutorImage:       tsk.Task.ResolvedExecutorImage,
 		SSHKeyBindings:      resolvedTaskSSHKeyBindings(tsk.ResolvedSSHKeys),
 		HostConfigs:         tsk.HostConfigs,
+		InfisicalPAM:        tsk.Task.InfisicalPAM,
 	}
 	sanitizeInventoryJobData(&jobData)
 	sanitizeMonorepoJobData(&jobData)
@@ -468,6 +472,7 @@ func (c *RunnerController) collectTaskAccessKeys(tsk *tasks.TaskRunner, runnerID
 	for _, hostConfig := range tsk.HostConfigs {
 		keys[hostConfig.SSHKeyID] = hostConfig.SSHKey
 	}
+	collectInfisicalPAMAccessKeys(tsk.Task.InfisicalPAM, keys)
 
 	if tsk.Inventory.SSHKeyID != nil {
 		if err := c.encryptionService.DeserializeSecret(&tsk.Inventory.SSHKey); err != nil {

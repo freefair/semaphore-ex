@@ -47,6 +47,7 @@ type LocalExecutor struct {
 	sshKeyInstallation         ssh.AccessKeyInstallation
 	hostConfigInstallation     *ssh.HostConfigInstallation
 	taskSSHAgent               *ssh.Agent
+	infisicalPAM               taskInfisicalPAM
 	taskSSHIdentityFiles       []string
 	repositorySSHIdentityFiles []string
 	inventorySSHIdentityFiles  []string
@@ -1430,6 +1431,9 @@ func (t *LocalExecutor) hostConfigEnv() []string {
 }
 
 func (t *LocalExecutor) inventorySSHCommonArgs() string {
+	if args := t.infisicalPAMSSHCommonArgs(); args != "" {
+		return args
+	}
 	if t.taskSSHRoutingCommand != "" {
 		// The wrapper is selected through ANSIBLE_SSH_EXECUTABLE. It is an
 		// executable path, not an ssh option; passing it here makes Ansible hand
@@ -1458,9 +1462,10 @@ func (t *LocalExecutor) getTaskSSHAgentEnvironment(existingValues ...[]string) [
 	}
 	sshAuthSock := t.getSSHAgentEnv()
 	if sshAuthSock == "" {
-		return nil
+		return t.infisicalPAMOnlyEnvironment(existing)
 	}
 	environment := []string{sshAuthSock}
+	environment = append(environment, t.infisicalPAMEnvironment(existing)...)
 	gitIdentities := append(append([]string(nil), t.repositorySSHIdentityFiles...), t.inventorySSHIdentityFiles...)
 	for _, selector := range t.extraSSHIdentityFiles {
 		if selector != "" {

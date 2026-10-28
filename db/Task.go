@@ -77,6 +77,9 @@ type Task struct {
 	// ResolvedSSHKeys is runner-only hydrated key material. It never persists
 	// or crosses public task APIs; the immutable snapshot stores only bindings.
 	ResolvedSSHKeys []ResolvedTaskSSHKey `db:"-" json:"-" backup:"-"`
+	// InfisicalPAM is runner-only routing configuration with hydrated
+	// credentials; it never crosses public task APIs.
+	InfisicalPAM []TaskInfisicalPAM `db:"-" json:"-" backup:"-"`
 
 	UserID        *int `db:"user_id" json:"user_id,omitempty"`
 	IntegrationID *int `db:"integration_id" json:"integration_id,omitempty"`
