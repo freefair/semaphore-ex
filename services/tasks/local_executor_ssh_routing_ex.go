@@ -149,7 +149,7 @@ func (t *LocalExecutor) writeTaskSSHRoutingConfigFiles(routingDirectory, configC
 	if err := os.WriteFile(config, []byte(taskSSHRoutingConfig(configContents)), 0o600); err != nil {
 		return fmt.Errorf("writing task SSH routing config: %w", err)
 	}
-	if err := os.WriteFile(wrapper, []byte(taskSSHRoutingWrapper(sshBinary, config, t.infisicalPAMWrapperOptions()...)), 0o700); err != nil {
+	if err := os.WriteFile(wrapper, []byte(taskSSHRoutingWrapper(sshBinary, config, t.taskSSHControlPathWrapperOptions()...)), 0o700); err != nil {
 		return fmt.Errorf("writing task SSH routing wrapper: %w", err)
 	}
 	t.taskSSHRoutingFiles = []string{routingDirectory}

@@ -48,6 +48,7 @@ type LocalExecutor struct {
 	hostConfigInstallation     *ssh.HostConfigInstallation
 	taskSSHAgent               *ssh.Agent
 	infisicalPAM               taskInfisicalPAM
+	taskSSHControlPathDir      string
 	taskSSHIdentityFiles       []string
 	repositorySSHIdentityFiles []string
 	inventorySSHIdentityFiles  []string
@@ -1462,10 +1463,10 @@ func (t *LocalExecutor) getTaskSSHAgentEnvironment(existingValues ...[]string) [
 	}
 	sshAuthSock := t.getSSHAgentEnv()
 	if sshAuthSock == "" {
-		return t.infisicalPAMOnlyEnvironment(existing)
+		return append(t.taskSSHControlPathEnvironment(), t.infisicalPAMOnlyEnvironment(existing)...)
 	}
 	environment := []string{sshAuthSock}
-	environment = append(environment, t.infisicalPAMEnvironment(existing)...)
+	environment = append(environment, t.taskSSHControlPathEnvironment()...)
 	gitIdentities := append(append([]string(nil), t.repositorySSHIdentityFiles...), t.inventorySSHIdentityFiles...)
 	for _, selector := range t.extraSSHIdentityFiles {
 		if selector != "" {

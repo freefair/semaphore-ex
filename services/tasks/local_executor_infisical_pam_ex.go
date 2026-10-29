@@ -25,7 +25,6 @@ type taskInfisicalPAM struct {
 	// execution, where the broker socket is unreachable.
 	disabledReason string
 	brokers        []*infisicalpam.Broker
-	controlPathDir string
 }
 
 func (t *LocalExecutor) infisicalPAMActive() bool {
@@ -98,11 +97,11 @@ func (t *LocalExecutor) startInfisicalPAMBrokers(directory string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	controlPathDir, err := os.MkdirTemp(infisicalPAMControlPathParent(), "sxcp")
-	if err != nil {
-		return "", fmt.Errorf("creating Infisical PAM control path directory: %w", err)
+	// A PAM session must never be carried by, or lend its master connection
+	// to, another task.
+	if err = t.prepareTaskSSHControlPath(); err != nil {
+		return "", err
 	}
-	t.infisicalPAM.controlPathDir = controlPathDir
 	var config strings.Builder
 	for index, storage := range t.Task.InfisicalPAM {
 		if len(storage.Routes) == 0 {
@@ -198,21 +197,6 @@ func (t *LocalExecutor) stopInfisicalPAMBrokers() {
 		broker.Close()
 	}
 	t.infisicalPAM.brokers = nil
-	if t.infisicalPAM.controlPathDir != "" {
-		_ = os.RemoveAll(t.infisicalPAM.controlPathDir)
-	}
-	t.infisicalPAM.controlPathDir = ""
-}
-
-// infisicalPAMControlPathParent keeps master socket paths short: OpenSSH
-// rejects a ControlPath of 104 bytes or more, and %C alone adds 40. The task
-// temporary directory can be arbitrarily deep, so the private directory is
-// created under /tmp where it exists. os.MkdirTemp creates it with 0700.
-func infisicalPAMControlPathParent() string {
-	if info, err := os.Stat("/tmp"); err == nil && info.IsDir() {
-		return "/tmp"
-	}
-	return os.TempDir()
 }
 
 // prepareInfisicalPAMOnlyRouting writes a routing configuration for a task
@@ -260,33 +244,10 @@ func (t *LocalExecutor) prepareInfisicalPAMOnlyRouting() error {
 	return nil
 }
 
-// infisicalPAMEnvironment scopes Ansible's SSH multiplexing to the task, so no
-// other task's master connection can carry this task's SSH traffic and no
-// other task reuses a connection opened through these sessions. The values
-// replace inherited ones on purpose: they are appended after them.
-func (t *LocalExecutor) infisicalPAMEnvironment([]string) []string {
-	if t.infisicalPAM.controlPathDir == "" {
-		return nil
-	}
-	return []string{
-		"ANSIBLE_SSH_CONTROL_PATH_DIR=" + t.infisicalPAM.controlPathDir,
-		"ANSIBLE_SSH_CONTROL_PATH=%(directory)s/%%C",
-	}
-}
-
-// infisicalPAMWrapperOptions forces a task-private ControlPath for every ssh
-// started through the wrapper, ahead of any inherited or caller value.
-func (t *LocalExecutor) infisicalPAMWrapperOptions() []string {
-	if t.infisicalPAM.controlPathDir == "" {
-		return nil
-	}
-	return []string{"-o", "ControlPath=" + filepath.Join(t.infisicalPAM.controlPathDir, "%C")}
-}
-
 // infisicalPAMSSHCommonArgs hands the routing config to sftp and scp, which
 // start their own ssh binary instead of the wrapper.
 func (t *LocalExecutor) infisicalPAMSSHCommonArgs() string {
-	if t.infisicalPAM.controlPathDir == "" || t.taskSSHRoutingCommand == "" {
+	if !t.infisicalPAMActive() || t.taskSSHRoutingCommand == "" {
 		return ""
 	}
 	config := filepath.Join(filepath.Dir(t.taskSSHRoutingCommand), "routing.conf")
@@ -296,10 +257,10 @@ func (t *LocalExecutor) infisicalPAMSSHCommonArgs() string {
 // infisicalPAMOnlyEnvironment selects the routing wrapper for a task whose
 // only SSH routing is Infisical PAM.
 func (t *LocalExecutor) infisicalPAMOnlyEnvironment(existing []string) []string {
-	if t.taskSSHRoutingCommand == "" || t.infisicalPAM.controlPathDir == "" {
+	if t.taskSSHRoutingCommand == "" || !t.infisicalPAMActive() {
 		return nil
 	}
-	environment := t.infisicalPAMEnvironment(existing)
+	var environment []string
 	if !environmentHasName(existing, "ANSIBLE_SSH_EXECUTABLE") {
 		environment = append(environment, "ANSIBLE_SSH_EXECUTABLE="+t.taskSSHRoutingCommand)
 	}

@@ -107,7 +107,7 @@ func TestInfisicalPAMRoutesOpenSSHWithoutTaskKeys(t *testing.T) {
 
 	environment := executor.getTaskSSHAgentEnvironment(nil)
 	assert.Contains(t, environment, "ANSIBLE_SSH_EXECUTABLE="+executor.taskSSHRoutingCommand)
-	assert.Contains(t, environment, "ANSIBLE_SSH_CONTROL_PATH_DIR="+executor.infisicalPAM.controlPathDir)
+	assert.Contains(t, environment, "ANSIBLE_SSH_CONTROL_PATH_DIR="+executor.taskSSHControlPathDir)
 	assert.NotContains(t, strings.Join(environment, "\n"), pamtest.ClientSecret)
 }
 
@@ -164,7 +164,7 @@ func TestInfisicalPAMRoutesAlongsideTaskSSHRouting(t *testing.T) {
 
 	require.NoError(t, err, output)
 	assert.Contains(t, output, "ok id")
-	assert.Contains(t, executor.getTaskSSHAgentEnvironment(nil), "ANSIBLE_SSH_CONTROL_PATH_DIR="+executor.infisicalPAM.controlPathDir)
+	assert.Contains(t, executor.getTaskSSHAgentEnvironment(nil), "ANSIBLE_SSH_CONTROL_PATH_DIR="+executor.taskSSHControlPathDir)
 }
 
 func TestInfisicalPAMRejectsHostWithOtherCredential(t *testing.T) {
@@ -227,7 +227,7 @@ func TestInfisicalPAMForcesTaskPrivateControlPath(t *testing.T) {
 	output, err := exec.Command(executor.taskSSHRoutingCommand, "-G", "-o", "ControlPath=/shared/%C", "web-1.example.test").Output()
 
 	require.NoError(t, err)
-	assert.Contains(t, string(output), "\ncontrolpath "+executor.infisicalPAM.controlPathDir+"/")
+	assert.Contains(t, string(output), "\ncontrolpath "+executor.taskSSHControlPathDir+"/")
 	assert.NotContains(t, string(output), "/shared/")
 }
 
@@ -241,7 +241,7 @@ func TestInfisicalPAMOverridesInheritedAnsibleControlPath(t *testing.T) {
 
 	environment := append(append([]string(nil), inherited...), executor.getTaskSSHAgentEnvironment(inherited)...)
 
-	assert.Equal(t, executor.infisicalPAM.controlPathDir, lastEnvironmentValue(environment, "ANSIBLE_SSH_CONTROL_PATH_DIR"))
+	assert.Equal(t, executor.taskSSHControlPathDir, lastEnvironmentValue(environment, "ANSIBLE_SSH_CONTROL_PATH_DIR"))
 	assert.Equal(t, "%(directory)s/%%C", lastEnvironmentValue(environment, "ANSIBLE_SSH_CONTROL_PATH"))
 }
 
@@ -281,7 +281,7 @@ func TestInfisicalPAMControlPathStaysShortAndIsRemoved(t *testing.T) {
 	env := pamtest.Start(t, pamtest.Options{})
 	executor := infisicalPAMTestExecutor(&pamRecordingLogger{}, infisicalPAMTestConfig(env, "web-1.example.test"))
 	require.NoError(t, executor.startTaskSSHAgent())
-	directory := executor.infisicalPAM.controlPathDir
+	directory := executor.taskSSHControlPathDir
 	info, err := os.Stat(directory)
 	require.NoError(t, err)
 

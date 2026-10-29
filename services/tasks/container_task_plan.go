@@ -468,7 +468,8 @@ func (t *LocalExecutor) containerEnvironment() ([]string, error) {
 		}
 		if name == "SEMAPHORE_OUTPUTS_FILE" || name == "SSH_AUTH_SOCK" ||
 			(name == "GIT_SSH_COMMAND" && t.isGeneratedTaskGitSSHCommand(value)) ||
-			(name == "ANSIBLE_SSH_EXECUTABLE" && t.taskSSHRoutingCommand != "" && value == t.taskSSHRoutingCommand) {
+			(name == "ANSIBLE_SSH_EXECUTABLE" && t.taskSSHRoutingCommand != "" && value == t.taskSSHRoutingCommand) ||
+			t.isTaskSSHControlPathEnvironment(name, value) {
 			continue
 		}
 		value = t.rewriteContainerPath(value)

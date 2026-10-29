@@ -46,6 +46,9 @@ func (t *LocalExecutor) installInventory() (err error) {
 }
 
 func (t *LocalExecutor) startTaskSSHAgent() error {
+	if err := t.prepareTaskSSHControlPath(); err != nil {
+		return err
+	}
 	allKeys := []db.AccessKey{t.Inventory.SSHKey, t.Repository.SSHKey}
 	for _, resolved := range t.Task.ResolvedSSHKeys {
 		allKeys = append(allKeys, resolved.Key)
@@ -221,6 +224,7 @@ func (t *LocalExecutor) destroyInventoryFile() {
 
 func (t *LocalExecutor) destroyKeys() {
 	t.removeTaskSSHRoutingFiles()
+	t.removeTaskSSHControlPath()
 	t.removeTaskSSHIdentityFiles()
 	if t.taskSSHAgent != nil {
 		if err := t.taskSSHAgent.Close(); err != nil {
