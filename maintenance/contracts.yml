@@ -8629,6 +8629,16 @@ symbols:
   - name: pro_interfaces:ExecutionReasonInactive
     signature: pro_interfaces.ExecutionPreflightReasonCode = "inactive"
     implementation: core
+  - name: pro_interfaces:ExecutionReasonInfisicalPAMInvalid
+    signature: pro_interfaces.ExecutionPreflightReasonCode = "infisical_pam_invalid"
+    implementation: core
+    behavior_tests:
+    - services/tasks/execution_preflight_infisical_pam_ex_test.go::TestTaskExecutionPreflightDeniesInfisicalPAMTheRunnerWouldReject
+  - name: pro_interfaces:ExecutionReasonInfisicalPAMSkipped
+    signature: pro_interfaces.ExecutionPreflightReasonCode = "infisical_pam_skipped"
+    implementation: core
+    behavior_tests:
+    - services/tasks/execution_preflight_infisical_pam_ex_test.go::TestTaskExecutionPreflightWarnsThatContainerTasksSkipInfisicalPAM
   - name: pro_interfaces:ExecutionReasonInvalidInput
     signature: pro_interfaces.ExecutionPreflightReasonCode = "invalid_input"
     implementation: core
@@ -8677,6 +8687,11 @@ symbols:
   - name: pro_interfaces:ExecutionReferenceRepository
     signature: pro_interfaces.ExecutionPreflightReferenceKind = "repository"
     implementation: core
+  - name: pro_interfaces:ExecutionReferenceSecretStorage
+    signature: pro_interfaces.ExecutionPreflightReferenceKind = "secret_storage"
+    implementation: core
+    behavior_tests:
+    - services/tasks/execution_preflight_infisical_pam_ex_test.go::TestTaskExecutionPreflightListsInfisicalPAMRoutes
   - name: pro_interfaces:ExecutionReferenceTemplate
     signature: pro_interfaces.ExecutionPreflightReferenceKind = "template"
     implementation: core

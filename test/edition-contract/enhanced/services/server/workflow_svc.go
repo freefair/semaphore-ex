@@ -573,6 +573,7 @@ func (s *workflowService) buildWorkflowExecutionPreflightWithRun(
 			for referenceIndex := range child.Plan.References {
 				child.Plan.References[referenceIndex].Name = ""
 			}
+			redactCrossProjectInfisicalPAM(&child.Plan)
 		}
 		plan.References = append(plan.References, child.Plan.References...)
 		plan.Commands = append(plan.Commands, child.Plan.Commands...)

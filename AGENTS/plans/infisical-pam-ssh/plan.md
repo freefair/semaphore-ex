@@ -110,3 +110,25 @@ real licensed Infisical instance remains open until one is available.
 - Independent cleanup budgets per session, broker reply deadline and
   cancellation in `Connect`, unusable sessions are ended, renewal margin is at
   most a quarter of the session duration.
+
+## Follow-up: Task-Private ControlPath and Execution Review
+
+- Every local task gets the private `/tmp/sxcp*` control path directory
+  (`local_executor_ssh_control_path_ex.go`), not only PAM tasks. It is chowned
+  to `process.user` when configured and filtered out of container task
+  environments. Wiki ADR-0051.
+- The execution review lists one `secret_storage` reference per routing
+  storage with all routes (`ssh: host → account, …`, or the host count above
+  the 2 KiB display bound). Invalid routing is a denial
+  (`infisical_pam_invalid`), a container executor image a warning
+  (`infisical_pam_skipped`); both codes are in the audit allowlists. Routes and
+  credential state join the reference digest. Cross-project workflow nodes
+  hide routes and validation details.
+- Codex review: process-user ownership, cross-project disclosure and the
+  reference budget were fixed with regressions.
+- Terra review, documented and not changed: same-UID tasks can still reach
+  each other's control sockets (ADR-0050/0051 boundary; an `ansible.cfg`
+  `ControlPath` only matters through that boundary); same-project members can
+  already read the routes through `GET /secret_storages`; routes are loaded
+  live at dispatch like host mappings and credentials, so revocation applies
+  immediately.

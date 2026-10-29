@@ -570,6 +570,7 @@ func ExecutionPreflightAuditDenialReason(plan ExecutionPreflightPlan) (string, b
 		ExecutionReasonPolicyDenied,
 		ExecutionReasonPlanLimitExceeded,
 		ExecutionReasonInvalidInput,
+		ExecutionReasonInfisicalPAMInvalid,
 		ExecutionReasonNoCandidate,
 	} {
 		for _, finding := range plan.Findings {
@@ -1065,7 +1066,7 @@ func validExecutionPreflightAuditDenialReason(reason string) bool {
 	switch ExecutionPreflightReasonCode(reason) {
 	case ExecutionReasonHiddenReference, ExecutionReasonPermissionDenied, ExecutionReasonCapabilityUnavailable,
 		ExecutionReasonPolicyDenied, ExecutionReasonPlanLimitExceeded, ExecutionReasonInvalidInput,
-		ExecutionReasonNoCandidate:
+		ExecutionReasonInfisicalPAMInvalid, ExecutionReasonNoCandidate:
 		return true
 	default:
 		return false
@@ -1098,7 +1099,8 @@ func validDistinctExecutionPreflightReasons(values []ExecutionPreflightReasonCod
 			ExecutionReasonTagMismatch, ExecutionReasonImageUnsupported, ExecutionReasonNoCandidate,
 			ExecutionReasonHiddenReference, ExecutionReasonPermissionDenied, ExecutionReasonCapabilityUnavailable,
 			ExecutionReasonPolicyAllowed, ExecutionReasonPolicyWarning, ExecutionReasonPolicyDenied,
-			ExecutionReasonPlanLimitExceeded, ExecutionReasonInvalidInput:
+			ExecutionReasonPlanLimitExceeded, ExecutionReasonInvalidInput,
+			ExecutionReasonInfisicalPAMInvalid, ExecutionReasonInfisicalPAMSkipped:
 		default:
 			return false
 		}

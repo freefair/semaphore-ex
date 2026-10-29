@@ -219,14 +219,14 @@ func LoadProjectInfisicalPAM(
 		}
 		config, err := InfisicalPAMFromStorage(storage)
 		if err != nil {
-			return nil, fmt.Errorf("Infisical storage %q is invalid: %w", storage.Name, err)
+			return nil, common_errors.NewValidationError(fmt.Sprintf("Infisical storage %q is invalid: %s", storage.Name, err.Error()))
 		}
 		if len(config.Routes) == 0 {
 			continue
 		}
 		for _, route := range config.Routes {
 			if other, exists := seenHosts[route.Host]; exists && other != storage.ID {
-				return nil, fmt.Errorf("host %q is routed by more than one Infisical storage", route.Host)
+				return nil, common_errors.NewValidationError(fmt.Sprintf("host %q is routed by more than one Infisical storage", route.Host))
 			}
 			seenHosts[route.Host] = storage.ID
 		}
@@ -237,7 +237,7 @@ func LoadProjectInfisicalPAM(
 			return nil, err
 		}
 		if len(credentials) != 1 {
-			return nil, fmt.Errorf("Infisical storage %q has no client secret", storage.Name)
+			return nil, common_errors.NewValidationError(fmt.Sprintf("Infisical storage %q has no client secret", storage.Name))
 		}
 		config.CredentialKeyID = credentials[0].ID
 		config.Credential = credentials[0]

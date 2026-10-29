@@ -719,6 +719,10 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 			return ExecutionPreflightSnapshot{}, nil, err
 		}
 	}
+	infisicalPAM, err := p.appendInfisicalPAMPreflight(&plan, &resourceState, template.ProjectID)
+	if err != nil {
+		return ExecutionPreflightSnapshot{}, nil, err
+	}
 	if len(plan.References) > pro_interfaces.MaxExecutionPreflightReferences {
 		return planLimitTaskPreflight(plan, components), nil, nil
 	}
@@ -730,6 +734,7 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 	}
 	imageAvailable := requestedImage == nil || (p.executorImageAvailable != nil && p.executorImageAvailable(actor))
 	components[pro_interfaces.ExecutionChangeCapability] = hashPreflightComponent(imageAvailable)
+	appendInfisicalPAMContainerFinding(&plan, infisicalPAM, requestedImage != nil)
 	if !imageAvailable {
 		plan.Findings = append(plan.Findings, pro_interfaces.ExecutionPreflightFinding{
 			Severity: pro_interfaces.ExecutionFindingDenial,
