@@ -45,10 +45,15 @@ func (t *LocalExecutor) installInventory() (err error) {
 	return
 }
 
-func (t *LocalExecutor) startTaskSSHAgent() error {
-	if err := t.prepareTaskSSHControlPath(); err != nil {
+func (t *LocalExecutor) startTaskSSHAgent() (err error) {
+	if err = t.prepareTaskSSHControlPath(); err != nil {
 		return err
 	}
+	defer func() {
+		if err != nil {
+			t.removeTaskSSHControlPath()
+		}
+	}()
 	allKeys := []db.AccessKey{t.Inventory.SSHKey, t.Repository.SSHKey}
 	for _, resolved := range t.Task.ResolvedSSHKeys {
 		allKeys = append(allKeys, resolved.Key)

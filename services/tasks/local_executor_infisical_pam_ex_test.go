@@ -159,6 +159,7 @@ func TestInfisicalPAMRoutesAlongsideTaskSSHRouting(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, executor.writeTaskSSHRoutingFiles(routing))
+	t.Cleanup(executor.removeTaskSSHControlPath)
 	t.Cleanup(executor.removeTaskSSHRoutingFiles)
 	output, err := runRoutedSSH(t, executor, "web-1.example.test", "id")
 
@@ -187,6 +188,7 @@ func TestInfisicalPAMDisabledForContainerTasks(t *testing.T) {
 
 	executor.disableInfisicalPAM("container tasks cannot reach the runner's Infisical PAM broker")
 	require.NoError(t, executor.startTaskSSHAgent())
+	t.Cleanup(executor.destroyKeys)
 
 	assert.False(t, executor.infisicalPAMActive())
 	assert.Empty(t, executor.taskSSHRoutingCommand)
@@ -205,6 +207,7 @@ func TestInfisicalPAMRejectsUnavailableCredential(t *testing.T) {
 
 	assert.ErrorContains(t, err, "client secret is unavailable")
 	assert.Empty(t, executor.taskSSHRoutingCommand)
+	assert.Empty(t, executor.taskSSHControlPathDir, "a failed start removes the control path directory")
 	entries, readErr := os.ReadDir(util.Config.GetProjectTmpDir(1))
 	require.NoError(t, readErr)
 	assert.Empty(t, entries, "a failed start leaves no routing directory")
