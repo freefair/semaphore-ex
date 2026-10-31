@@ -228,6 +228,7 @@ func TestRedactJSON(t *testing.T) {
 		{"password", `{"auth":"a","password":"x"}`, `{"auth":"a","password":"***"}`},
 		{"token nested", `{"runner":{"token":"abc"},"name":"r"}`, `{"runner":{"token":"***"},"name":"r"}`},
 		{"escaped quote", `{"secret":"a\"b"}`, `{"secret":"***"}`},
+		{"current password", `{"password":"n","current_password":"o"}`, `{"password":"***","current_password":"***"}`},
 		{"string key value", `{"name":"k","type":"string","string":"s3cr3t"}`, `{"name":"k","type":"string","string":"***"}`},
 		{"array untouched", `[{"id":1}]`, `[{"id":1}]`},
 		{"not json", "pong\n", "pong"},

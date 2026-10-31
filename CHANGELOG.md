@@ -54,6 +54,10 @@ release, so every release needs its section here before the tag is pushed.
   in `crypto/x509` (GO-2026-6809, reachable through LDAP TLS).
 - The web frontend ships `follow-redirects` 1.16.2 (GHSA-q3jh-wrc6-jgq8,
   GHSA-8r9p-f939-6h3c, GHSA-mrwp-f3q8-3g9p).
+- `semaphore client` drops terminal control sequences from task logs and
+  table output except colours, writes backup files with mode 0600 even when
+  they already exist, and masks every password, token and secret field in its
+  debug trace.
 
 ## [v2.20.0-ex.2.1.5] - 2026-10-16
 

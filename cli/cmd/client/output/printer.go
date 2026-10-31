@@ -284,7 +284,7 @@ func cellString(v any) string {
 	case nil:
 		return ""
 	case string:
-		return x
+		return Sanitize(x, false)
 	case bool:
 		return strconv.FormatBool(x)
 	case float64:

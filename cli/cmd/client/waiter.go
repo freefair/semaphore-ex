@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/semaphoreui/semaphore/cli/cmd/client/output"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/apiclient"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
-	"github.com/semaphoreui/semaphore/util"
 	"github.com/spf13/cobra"
 )
 
@@ -252,14 +252,12 @@ func (r *runtime) printNewOutput(ctx context.Context, api *apiclient.Client, pro
 	return len(lines), nil
 }
 
-// printLogLine writes one task log line to stdout, with ANSI colours kept only
-// for a colour-capable terminal.
+// printLogLine writes one task log line to stdout. Colours are kept only for a
+// colour-capable terminal; every other control sequence is dropped.
 func (r *runtime) printLogLine(text string) {
 	opts := r.printer.Options()
-	if !(opts.TTY && opts.Color) {
-		text = util.ClearFromAnsiCodes(text)
-	}
-	r.printer.Printf("%s\n", strings.TrimRight(text, "\r\n"))
+	text = output.Sanitize(strings.TrimRight(text, "\r\n"), opts.TTY && opts.Color)
+	r.printer.Printf("%s\n", text)
 }
 
 // waitEnded turns a cancelled or expired wait into the right error, sending a

@@ -988,6 +988,10 @@ with --file it is written with mode 0600, because it contains secrets.`,
 				return err
 			}
 			defer f.Close()
+			// An existing file keeps its mode on O_TRUNC; a backup is not for other users.
+			if err := f.Chmod(0o600); err != nil {
+				return err
+			}
 			if err := api.BackupProject(ctx, p.ID, f); err != nil {
 				return err
 			}

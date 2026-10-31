@@ -21,9 +21,11 @@ var maskedHeaders = map[string]bool{
 	"Set-Cookie":    true,
 }
 
-// secretJSONKeys are masked when a request or response body is traced.
-// "string" is the value of a String access key.
-var secretJSONKeys = regexp.MustCompile(`(?i)"(password|passcode|token|secret|registration_token|login_password|ssh|plain|string|private_key|passphrase)"\s*:\s*("(?:[^"\\]|\\.)*"|\{[^{}]*\})`)
+// secretJSONKeys are masked when a request or response body is traced: any
+// key ending in password, passcode, token, secret, passphrase or private_key
+// (current_password, registration_token, …), plus "string" (the value of a
+// String access key), "ssh" and "plain".
+var secretJSONKeys = regexp.MustCompile(`(?i)"([a-z_]*(?:password|passcode|token|secret|passphrase|private_key)|ssh|plain|string)"\s*:\s*("(?:[^"\\]|\\.)*"|\{[^{}]*\})`)
 
 func (c *Client) trace(format string, args ...any) {
 	if c.debug == nil {
