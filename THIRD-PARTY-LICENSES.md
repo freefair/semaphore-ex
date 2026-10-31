@@ -214,7 +214,7 @@ Packages bundled into the web UI assets, which are embedded in the server binary
 | `es-errors` | 1.3.0 | MIT | [link](https://github.com/ljharb/es-errors) |
 | `es-object-atoms` | 1.1.2 | MIT | [link](https://github.com/ljharb/es-object-atoms) |
 | `es-set-tostringtag` | 2.1.0 | MIT | [link](https://github.com/es-shims/es-set-tostringtag) |
-| `follow-redirects` | 1.16.0 | MIT | [link](https://github.com/follow-redirects/follow-redirects) |
+| `follow-redirects` | 1.16.2 | MIT | [link](https://github.com/follow-redirects/follow-redirects) |
 | `form-data` | 4.0.6 | MIT | [link](https://github.com/form-data/form-data) |
 | `function-bind` | 1.1.2 | MIT | [link](https://github.com/Raynos/function-bind) |
 | `get-intrinsic` | 1.3.0 | MIT | [link](https://github.com/ljharb/get-intrinsic) |
