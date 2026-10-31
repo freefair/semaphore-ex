@@ -51,11 +51,13 @@ const (
 	ReasonInvalidCurrentPassword Reason = "invalid_current_password"
 	// ReasonOwnerSelfChange remains valid for audit events persisted before the
 	// last-owner rule replaced that rejection path.
-	ReasonOwnerSelfChange          Reason = "owner_self_change"
-	ReasonLastOwner                Reason = "last_owner"
-	ReasonActivationFailed         Reason = "activation_failed"
-	ReasonSecretFailed             Reason = "secret_failed"
-	ReasonInventoryFailed          Reason = "inventory_failed"
+	ReasonOwnerSelfChange  Reason = "owner_self_change"
+	ReasonLastOwner        Reason = "last_owner"
+	ReasonActivationFailed Reason = "activation_failed"
+	ReasonSecretFailed     Reason = "secret_failed"
+	ReasonInventoryFailed  Reason = "inventory_failed"
+	// ReasonSetupFailed and ReasonRestoreFailed remain valid for audit events
+	// persisted while a failed project setup or restore kept the project.
 	ReasonSetupFailed              Reason = "setup_failed"
 	ReasonRestoreFailed            Reason = "restore_failed"
 	ReasonInvalidRegistrationToken Reason = "invalid_registration_token"

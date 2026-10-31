@@ -80,3 +80,28 @@ func TestCreateTemplateRole_RejectsRoleOfAnotherProject(t *testing.T) {
 
 	assert.ErrorContains(t, err, "Role is not available in this project")
 }
+
+func TestCreateTemplateRole_RefusesASecondGrantForTheRole(t *testing.T) {
+	store, projectID, templateID := newTemplatePermissionTest(t)
+	role, err := store.CreateProjectRole(db.Role{ID: "role_ops", Name: "Ops", ProjectID: &projectID, Revision: 1})
+	require.NoError(t, err)
+	_, err = store.CreateTemplateRole(db.TemplateRolePerm{ProjectID: projectID, TemplateID: templateID, RoleID: &role.ID, Permissions: db.CanRunProjectTasks})
+	require.NoError(t, err)
+
+	_, err = store.CreateTemplateRole(db.TemplateRolePerm{ProjectID: projectID, TemplateID: templateID, RoleID: &role.ID, Permissions: db.CanUpdateProject})
+
+	assert.ErrorContains(t, err, "Role already has permissions on this template")
+}
+
+// A built-in grant may arrive by its virtual ID or by its slug; both name the
+// same role, so the second form must be refused as well.
+func TestCreateTemplateRole_RefusesASecondBuiltinGrantInAnotherForm(t *testing.T) {
+	store, projectID, templateID := newTemplatePermissionTest(t)
+	builtin := db.ProjectRoleID("builtin:guest")
+	_, err := store.CreateTemplateRole(db.TemplateRolePerm{ProjectID: projectID, TemplateID: templateID, RoleID: &builtin, Permissions: db.CanRunProjectTasks})
+	require.NoError(t, err)
+
+	_, err = store.CreateTemplateRole(db.TemplateRolePerm{ProjectID: projectID, TemplateID: templateID, RoleSlug: "guest", Permissions: db.CanUpdateProject})
+
+	assert.ErrorContains(t, err, "Role already has permissions on this template")
+}

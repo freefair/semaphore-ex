@@ -123,6 +123,11 @@ func ValidateRole(role Role, isNew bool) error {
 	return nil
 }
 
+// IsReservedRoleSlug is true for the built-in slugs and "all", taken by the /project/{id}/roles/all route.
+func IsReservedRoleSlug(slug string) bool {
+	return ProjectUserRole(strings.ToLower(slug)).IsValid() || strings.EqualFold(slug, "all")
+}
+
 type TemplateRolePerm struct {
 	ID                 int                   `db:"id" json:"id"`
 	RoleSlug           string                `db:"role_slug" json:"role_slug"`

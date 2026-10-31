@@ -729,6 +729,7 @@ func TestIsValidHmacPayload_SHA512(t *testing.T) {
 	assert.False(t, isValidHmacPayload(secret, "deadbeef", payload, "", sha512.New))
 }
 
+// stubIntegrationService hands the integration a decrypted credential.
 type stubIntegrationService struct {
 	authSecret db.AccessKey
 }
@@ -756,13 +757,16 @@ func (s *templateProbeStore) GetTemplate(projectID int, templateID int) (db.Temp
 	return s.Store.GetTemplate(projectID, templateID)
 }
 
-func setupHmacSha512ReceiveIntegration(t *testing.T, authSecret db.AccessKey) (*IntegrationController, *templateProbeStore, db.Integration, string, string) {
+// setupReceiveIntegration stores a project with one integration of the given
+// auth method behind its own alias, and a controller whose integration
+// service answers with authSecret.
+func setupReceiveIntegration(t *testing.T, method db.IntegrationAuthMethod, authHeader string, authSecret db.AccessKey) (*IntegrationController, *templateProbeStore, db.Integration, string) {
 	t.Helper()
 
 	base := sql.InitConfigCreateTestStore()
 	store := &templateProbeStore{Store: base, sqlStore: base, failTemplate: true}
 
-	project, err := store.CreateProject(db.Project{Name: "hmac-sha512 project"})
+	project, err := store.CreateProject(db.Project{Name: string(method) + " project"})
 	require.NoError(t, err)
 
 	key, err := store.CreateAccessKey(db.AccessKey{
@@ -790,20 +794,19 @@ func setupHmacSha512ReceiveIntegration(t *testing.T, authSecret db.AccessKey) (*
 	})
 	require.NoError(t, err)
 
-	const authHeader = "X-Signature"
 	authSecretID := 1
 
 	integration, err := store.CreateIntegration(db.Integration{
-		Name:         "hmac-sha512 integration",
+		Name:         string(method) + " integration",
 		ProjectID:    project.ID,
 		TemplateID:   integrationTemplateID(template.ID),
-		AuthMethod:   db.IntegrationAuthHmacSha512,
+		AuthMethod:   method,
 		AuthSecretID: &authSecretID,
 		AuthHeader:   authHeader,
 	})
 	require.NoError(t, err)
 
-	alias := "hmac-sha512-alias"
+	alias := string(method) + "-alias"
 	_, err = store.CreateIntegrationAlias(db.IntegrationAlias{
 		Alias:         alias,
 		ProjectID:     project.ID,
@@ -812,6 +815,13 @@ func setupHmacSha512ReceiveIntegration(t *testing.T, authSecret db.AccessKey) (*
 	require.NoError(t, err)
 
 	ctrl := NewIntegrationController(store, &stubIntegrationService{authSecret: authSecret})
+	return ctrl, store, integration, alias
+}
+
+func setupHmacSha512ReceiveIntegration(t *testing.T, authSecret db.AccessKey) (*IntegrationController, *templateProbeStore, db.Integration, string, string) {
+	t.Helper()
+	const authHeader = "X-Signature"
+	ctrl, store, integration, alias := setupReceiveIntegration(t, db.IntegrationAuthHmacSha512, authHeader, authSecret)
 	return ctrl, store, integration, alias, authHeader
 }
 
@@ -1002,4 +1012,131 @@ func TestGetTaskDefinitionGitBranchParam(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, task.GitBranch)
 	assert.Equal(t, "release/1.0", task.Params[db.TaskParamGitBranch])
+}
+
+// receive posts payload to the integration alias with the given headers and
+// returns the status and whether the integration ran (reached GetTemplate).
+func receive(t *testing.T, ctrl *IntegrationController, store *templateProbeStore, alias string, payload []byte, headers map[string]string, basic *[2]string) (int, bool) {
+	t.Helper()
+	before := store.getTemplateCalls
+	req := httptest.NewRequest(http.MethodPost, "/api/integrations/"+alias, bytes.NewReader(payload))
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	if basic != nil {
+		req.SetBasicAuth(basic[0], basic[1])
+	}
+	req = mux.SetURLVars(req, map[string]string{"integration_alias": alias})
+	w := httptest.NewRecorder()
+	ctrl.ReceiveIntegration(w, req)
+	return w.Code, store.getTemplateCalls > before
+}
+
+// A string key is a single secret, which is all the token and HMAC methods
+// compare against; it must work exactly like the password of a
+// login/password key.
+func TestReceiveIntegration_StringKeyAsAuthSecret(t *testing.T) {
+	payload := []byte(`{"event":"deploy"}`)
+	stringKey := &db.AccessKey{Name: "hook secret", Type: db.AccessKeyString, String: "webhook-secret"}
+
+	tests := []struct {
+		name    string
+		method  db.IntegrationAuthMethod
+		header  string
+		valid   map[string]string
+		invalid map[string]string
+	}{
+		{
+			name:   "token",
+			method: db.IntegrationAuthToken, header: "X-Token",
+			valid:   map[string]string{"X-Token": "webhook-secret"},
+			invalid: map[string]string{"X-Token": "wrong"},
+		},
+		{
+			name:   "hmac sha256",
+			method: db.IntegrationAuthHmac, header: "X-Signature",
+			valid:   map[string]string{"X-Signature": hmacHashPayload("webhook-secret", payload, sha256.New)},
+			invalid: map[string]string{"X-Signature": "deadbeef"},
+		},
+		{
+			name:   "hmac sha512",
+			method: db.IntegrationAuthHmacSha512, header: "X-Signature",
+			valid:   map[string]string{"X-Signature": hmacHashPayload("webhook-secret", payload, sha512.New)},
+			invalid: map[string]string{"X-Signature": "deadbeef"},
+		},
+		{
+			name:    "github",
+			method:  db.IntegrationAuthGitHub,
+			valid:   map[string]string{"X-Hub-Signature-256": "sha256=" + hmacHashPayload("webhook-secret", payload, sha256.New)},
+			invalid: map[string]string{"X-Hub-Signature-256": "sha256=deadbeef"},
+		},
+		{
+			name:    "bitbucket",
+			method:  db.IntegrationAuthBitbucket,
+			valid:   map[string]string{"x-hub-signature": "sha256=" + hmacHashPayload("webhook-secret", payload, sha256.New)},
+			invalid: map[string]string{"x-hub-signature": "sha256=deadbeef"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl, store, _, alias := setupReceiveIntegration(t, tt.method, tt.header, *stringKey)
+
+			code, ran := receive(t, ctrl, store, alias, payload, tt.valid, nil)
+			assert.Equal(t, http.StatusNoContent, code)
+			assert.True(t, ran, "a request signed with the string key must run the integration")
+
+			code, ran = receive(t, ctrl, store, alias, payload, tt.invalid, nil)
+			assert.Equal(t, http.StatusNoContent, code)
+			assert.False(t, ran, "a wrong secret must not run the integration")
+		})
+	}
+}
+
+// BasicAuth compares a login and a password; a string key has no login, so
+// it can never authenticate such a request, whatever the client sends.
+func TestReceiveIntegration_Basic_RejectsStringKey(t *testing.T) {
+	payload := []byte(`{"event":"deploy"}`)
+	stringKey := &db.AccessKey{Name: "hook secret", Type: db.AccessKeyString, String: "pw"}
+	ctrl, store, _, alias := setupReceiveIntegration(t, db.IntegrationAuthBasic, "", *stringKey)
+
+	for _, creds := range []*[2]string{{"", "pw"}, {"pw", "pw"}, {"bob", "pw"}} {
+		code, ran := receive(t, ctrl, store, alias, payload, nil, creds)
+		assert.Equal(t, http.StatusNoContent, code)
+		assert.False(t, ran, "basic auth with a string key must never run the integration (login %q)", creds[0])
+	}
+
+	// The same request with a login/password key is accepted.
+	loginKey := &db.AccessKey{Name: "hook secret", Type: db.AccessKeyLoginPassword, LoginPassword: db.LoginPassword{Login: "bob", Password: "pw"}}
+	ctrl, store, _, alias = setupReceiveIntegration(t, db.IntegrationAuthBasic, "", *loginKey)
+	_, ran := receive(t, ctrl, store, alias, payload, nil, &[2]string{"bob", "pw"})
+	assert.True(t, ran)
+}
+
+// A key that holds no usable secret (wrong type, or never filled) must not
+// let a request through: with the token method an empty secret would
+// otherwise equal a missing header.
+func TestReceiveIntegration_EmptyOrUnfitSecretIsRefused(t *testing.T) {
+	payload := []byte(`{"event":"deploy"}`)
+	tests := []struct {
+		name string
+		key  *db.AccessKey
+	}{
+		{"ssh key", &db.AccessKey{Type: db.AccessKeySSH, SshKey: db.SshKey{PrivateKey: "k"}}},
+		{"none key", &db.AccessKey{Type: db.AccessKeyNone}},
+		{"empty string key", &db.AccessKey{Type: db.AccessKeyString}},
+		{"login/password key without a password", &db.AccessKey{Type: db.AccessKeyLoginPassword, LoginPassword: db.LoginPassword{Login: "bob"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl, store, _, alias := setupReceiveIntegration(t, db.IntegrationAuthToken, "X-Token", *tt.key)
+
+			code, ran := receive(t, ctrl, store, alias, payload, map[string]string{}, nil)
+			assert.Equal(t, http.StatusNoContent, code)
+			assert.False(t, ran, "no header and an empty secret must not match")
+
+			code, ran = receive(t, ctrl, store, alias, payload, map[string]string{"X-Token": ""}, nil)
+			assert.Equal(t, http.StatusNoContent, code)
+			assert.False(t, ran, "an empty header and an empty secret must not match")
+		})
+	}
 }

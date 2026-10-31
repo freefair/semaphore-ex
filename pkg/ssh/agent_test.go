@@ -394,3 +394,42 @@ func TestGetGitEnv_SshCommandHasOneSshPrefix(t *testing.T) {
 		})
 	}
 }
+
+// A string key holds a bare value with no login and no private key, so no
+// role that authenticates a user can use it. The installer must say so instead
+// of handing an empty installation to the executor.
+func TestKeyInstaller_Install_StringKeyIsRejectedForUserRoles(t *testing.T) {
+	key := db.AccessKey{Name: "token", Type: db.AccessKeyString, String: "s3cr3t"}
+
+	tests := []struct {
+		name string
+		role db.AccessKeyRole
+	}{
+		{"ansible user", db.AccessKeyRoleAnsibleUser},
+		{"ansible become user", db.AccessKeyRoleAnsibleBecomeUser},
+		{"ansible password vault", db.AccessKeyRoleAnsiblePasswordVault},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			installation, err := KeyInstaller{}.Install(key, tt.role, task_logger.NopLogger{})
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "not supported")
+			assert.Nil(t, installation.SSHAgent)
+			assert.Empty(t, installation.Password, "the value must not leak into the installation")
+		})
+	}
+}
+
+// For the git role the installer only starts an agent for an ssh key; any
+// other type is left to the git client, which rejects what it cannot use.
+func TestKeyInstaller_Install_StringKeyForGitStartsNoAgent(t *testing.T) {
+	key := db.AccessKey{Name: "token", Type: db.AccessKeyString, String: "s3cr3t"}
+
+	installation, err := KeyInstaller{}.Install(key, db.AccessKeyRoleGit, task_logger.NopLogger{})
+
+	require.NoError(t, err)
+	assert.Nil(t, installation.SSHAgent)
+	assert.Empty(t, installation.Login)
+	assert.Empty(t, installation.Password)
+}

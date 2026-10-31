@@ -660,6 +660,19 @@ func (d *SqlDb) CreateTemplateRole(role db.TemplateRolePerm) (newRole db.Templat
 	if err != nil {
 		return db.TemplateRolePerm{}, err
 	}
+	// One grant per role and template. The normalized slug is the key because
+	// built-in and global grants may be stored without a role ID. It is compared
+	// exactly: legacy role slugs that differ only in case are distinct roles.
+	granted, err := d.Sql().SelectInt(d.PrepareQuery(
+		"select count(*) from project__template_role where template_id=? and role_slug=?"), role.TemplateID, role.RoleSlug)
+	if err != nil {
+		return
+	}
+	if granted > 0 {
+		err = &common_errors.ValidationError{Message: "Role already has permissions on this template"}
+		return
+	}
+
 	insertID, err := d.insert(
 		"id",
 		"insert into project__template_role "+

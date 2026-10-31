@@ -2789,6 +2789,11 @@ symbols:
   - name: db:IsKubernetesPolicyRuleID
     signature: func(value string) bool
     implementation: core
+  - name: db:IsReservedRoleSlug
+    signature: func(slug string) bool
+    implementation: core
+    behavior_tests:
+    - services/project/backup_upstream_format_ex_test.go::TestVerifyUpstreamFormat2RoleSlugs
   - name: db:IsValidProjectRoleReferenceSyntax
     signature: func(reference db.ProjectRoleReference) bool
     implementation: core

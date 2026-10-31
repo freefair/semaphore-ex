@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/gorilla/handlers"
 	"github.com/semaphoreui/semaphore/api"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/api/sockets"
+	"github.com/semaphoreui/semaphore/cli/cmd/client"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/debuglog"
 	"github.com/semaphoreui/semaphore/pkg/metrics"
@@ -81,8 +83,13 @@ var registerPersistentFlags = sync.OnceFunc(func() {
 func Execute() {
 	registerPersistentFlags()
 	if err := rootCmd.Execute(); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		// Ctrl+C needs no explanation, and "context canceled" is not one.
+		if !errors.Is(err, context.Canceled) {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+		}
+		// `semaphore client` distinguishes usage, auth, not-found and task
+		// outcomes by exit code; every other command keeps exiting with 1.
+		os.Exit(client.ExitCode(err))
 	}
 }
 

@@ -5,18 +5,14 @@
       v-model="restoreProjectResultDialog"
       hide-no-button
       :yes-button-title="$t('close')"
-      :max-width="400"
+      :max-width="640"
     >
-      <div class="pt-3" v-if="restoreProjectResult">
-        <v-alert dense outlined type="success">
-          {{ $t('projectWithNameRestored', { projectName: restoreProjectResult.projectName }) }}
-        </v-alert>
-
-        <v-alert dense outlined type="error" class="mb-0">
-          <b>{{ $t('emptyKeysRestored', { emptyKeys: restoreProjectResult.emptyKeys }) }}</b>
-          {{ $t('pleaseUpdateAccessKeys') }}
-        </v-alert>
-      </div>
+      <RestoreProjectResult
+        v-if="restoreProjectResult"
+        :key="restoreProjectResult.project.id"
+        :project="restoreProjectResult.project"
+        :empty-keys="restoreProjectResult.emptyKeys"
+      />
     </YesNoDialog>
 
     <EditDialog
@@ -974,6 +970,7 @@ import { navMiniForPath } from '@/lib/workflowEditorPrefs';
 import socket from '@/socket';
 
 import RestoreProjectForm from '@/components/RestoreProjectForm.vue';
+import RestoreProjectResult from '@/components/RestoreProjectResult.vue';
 import YesNoDialog from '@/components/YesNoDialog.vue';
 import TaskLogDialog from '@/components/TaskLogDialog.vue';
 import SystemInfoDialog from '@/components/SystemInfoDialog.vue';
@@ -1055,6 +1052,7 @@ export default {
     TaskLogDialog,
     YesNoDialog,
     RestoreProjectForm,
+    RestoreProjectResult,
     UserForm,
     EditDialog,
     ProjectForm,
@@ -1438,7 +1436,7 @@ export default {
         ).data.filter((k) => k.empty);
 
         this.restoreProjectResult = {
-          projectName,
+          project: e.item,
           emptyKeys: emptyKeys.length,
         };
         this.restoreProjectResultDialog = true;
@@ -1673,7 +1671,7 @@ export default {
 
       this.user = user.data;
       this.systemInfo = systemInfo.data;
-      const options = optionsResponse.data;
+      const options = optionsResponse.data || {};
 
       if (options['nav.unpinnedItems'] != null) {
         try {

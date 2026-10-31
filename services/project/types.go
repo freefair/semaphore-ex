@@ -1,6 +1,8 @@
 package project
 
 import (
+	"fmt"
+
 	"github.com/semaphoreui/semaphore/db"
 )
 
@@ -25,6 +27,8 @@ type BackupDB struct {
 	globalRoles    []db.Role
 	roles          []db.Role
 	roleIDMap      map[db.ProjectRoleID]db.ProjectRoleID
+	roleSlugMap    map[string]db.ProjectRoleID
+	unassigned     []UnassignedRole
 	templateRoles  map[int][]db.TemplateRolePerm
 	runners        []db.Runner
 	workflows      []db.WorkflowTemplate
@@ -38,7 +42,50 @@ type BackupDB struct {
 	workflowStore db.WorkflowManager
 }
 
+// BackupFormatVersion is the newest Semaphore UI format this build reads. Format 2
+// refers to roles by slug. EX exports omit the version and refer to roles by ID.
+const BackupFormatVersion = 2
+
+// CleanupError says the project stayed behind after a failed restore.
+type CleanupError struct {
+	ProjectID int
+	Err       error
+	DeleteErr error
+}
+
+func (e *CleanupError) Error() string {
+	return fmt.Sprintf("%v (project %d could not be removed: %v)", e.Err, e.ProjectID, e.DeleteErr)
+}
+
+func (e *CleanupError) Unwrap() error { return e.Err }
+
+// UnassignedTemplate is a template whose grant to the role was not restored.
+type UnassignedTemplate struct {
+	ID          int                      `json:"id"`
+	Name        string                   `json:"name"`
+	Permissions db.ProjectUserPermission `json:"permissions"`
+}
+
+// ReasonNotInFile says a grant names a role the file does not define.
+const ReasonNotInFile = "not_in_file"
+
+// UnassignedRole is a role reference the restore left to the user because the file does not define it.
+type UnassignedRole struct {
+	Slug        string                   `json:"slug"`
+	Reason      string                   `json:"reason"`
+	Name        string                   `json:"name,omitempty"`
+	Permissions db.ProjectUserPermission `json:"permissions,omitempty"`
+	Templates   []UnassignedTemplate     `json:"templates"`
+}
+
+// RestoredProject is the restore result: the project and what it did not restore.
+type RestoredProject struct {
+	db.Project
+	UnassignedRoles []UnassignedRole `json:"unassigned_roles"`
+}
+
 type BackupFormat struct {
+	Version            *int                  `backup:"version"`
 	Meta               BackupMeta            `backup:"meta"`
 	Templates          []BackupTemplate      `backup:"templates"`
 	Repositories       []BackupRepository    `backup:"repositories"`
@@ -104,9 +151,11 @@ type BackupHostConfig struct {
 }
 
 type BackupTemplateRole struct {
-	Role        string                   `backup:"role"`
-	RoleID      db.ProjectRoleID         `backup:"role_id"`
-	IsGlobal    bool                     `backup:"is_global"`
+	Role     string           `backup:"role"`
+	RoleID   db.ProjectRoleID `backup:"role_id"`
+	IsGlobal bool             `backup:"is_global"`
+	// Slug is read from Semaphore UI format 2 files only; EX writes RoleID.
+	Slug        *string                  `backup:"slug"`
 	Permissions db.ProjectUserPermission `backup:"permissions"`
 }
 
@@ -153,6 +202,9 @@ type BackupSecretStorage struct {
 type BackupRole struct {
 	db.Role
 	ID db.ProjectRoleID `backup:"id"`
+	// UpstreamSlug is read from Semaphore UI format 2 files, whose template
+	// grants refer to roles by slug. EX exports address roles by ID instead.
+	UpstreamSlug *string `backup:"slug"`
 }
 
 type BackupRunner struct {

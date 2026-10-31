@@ -161,6 +161,21 @@
     />
 
     <v-text-field
+      v-model="item.string"
+      :append-icon="showString ? 'mdi-eye' : 'mdi-eye-off'"
+      :label="$t('keyFormStringValue')"
+      :rules="[(v) => !!v || !canEditSecrets || $t('value_required')]"
+      :class="{ 'masked-secret-input': !showString }"
+      v-if="!isReadOnly && item.type === 'string'"
+      :required="canEditSecrets"
+      :disabled="formSaving || !canEditSecrets"
+      autocomplete="new-password"
+      @click:append="showString = !showString"
+      outlined
+      dense
+    />
+
+    <v-text-field
       v-model="item.ssh.login"
       :label="$t('usernameOptional')"
       v-if="!isReadOnly && item.type === 'ssh'"
@@ -208,6 +223,10 @@
     <v-alert dense text type="info" v-if="item.type === 'none'">
       {{ $t('useThisTypeOfKeyForHttpsRepositoriesAndForPlaybook') }}
     </v-alert>
+
+    <v-alert dense text type="info" v-if="item.type === 'string'">
+      {{ $t('keyFormStringHint') }}
+    </v-alert>
   </v-form>
 </template>
 <script>
@@ -236,6 +255,7 @@ export default {
     return {
       showLoginPassword: false,
       showSSHPassphrase: false,
+      showString: false,
       inventoryTypes: [
         {
           id: 'ssh',
@@ -244,6 +264,10 @@ export default {
         {
           id: 'login_password',
           name: `${this.$t('keyFormLoginPassword')}`,
+        },
+        {
+          id: 'string',
+          name: `${this.$t('keyFormString')}`,
         },
         {
           id: 'none',
@@ -339,6 +363,7 @@ export default {
         ssh: {},
         login_password: {},
         source_storage_version: 0,
+        string: '',
       };
     },
 

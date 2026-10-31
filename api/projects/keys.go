@@ -123,6 +123,13 @@ func (c *KeyController) AddKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !key.Type.IsValid() {
+		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "Invalid key type",
+		})
+		return
+	}
+
 	//if err := key.Validate(true); err != nil {
 	//	helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
 	//		"error": err.Error(),
@@ -200,6 +207,16 @@ func (c *KeyController) UpdateKey(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+	}
+
+	// The type is stored only together with the secret, but it is checked
+	// unconditionally: the audit event below reports it and a client has no
+	// reason to send a type the server cannot store.
+	if !key.Type.IsValid() {
+		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "Invalid key type",
+		})
+		return
 	}
 
 	if oldKey.Synchronized {

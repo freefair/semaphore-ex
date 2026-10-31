@@ -3,6 +3,7 @@ package project
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/semaphoreui/semaphore/db"
@@ -77,8 +78,30 @@ func (e BackupSecretStorage) Restore(b *BackupDB) error {
 	return nil
 }
 
+// Verify keeps EX role names unique. Semaphore UI format 2 files also carry
+// role slugs; those slugs must be unique and must not shadow a built-in role,
+// because template grants in such files refer to roles by slug.
 func (e BackupRole) Verify(backup *BackupFormat) error {
-	return verifyDuplicate[BackupRole](e.Name, backup.Roles)
+	if e.UpstreamSlug == nil {
+		return verifyDuplicate[BackupRole](e.Name, backup.Roles)
+	}
+	slug := *e.UpstreamSlug
+	if n := len([]rune(slug)); n == 0 || n > 100 {
+		return &common_errors.ValidationError{Message: "Role slug must be 1 to 100 characters"}
+	}
+	if db.IsReservedRoleSlug(slug) {
+		return &common_errors.ValidationError{Message: "Role slug is reserved: " + slug}
+	}
+	n := 0
+	for _, other := range backup.Roles {
+		if other.UpstreamSlug != nil && strings.EqualFold(*other.UpstreamSlug, slug) {
+			n++
+		}
+	}
+	if n > 1 {
+		return &common_errors.ValidationError{Message: "Role slug is duplicate: " + slug}
+	}
+	return nil
 }
 
 func (e BackupRole) Restore(b *BackupDB) error {
@@ -90,6 +113,11 @@ func (e BackupRole) Restore(b *BackupDB) error {
 	}
 	role.ProjectID = &b.meta.ID
 	role.Slug = random.String(16)
+	if e.UpstreamSlug != nil {
+		// Format 2 identifies roles by slug and allows repeated names, while EX
+		// names are unique per project.
+		role.Name = b.uniqueRoleName(role.Name, *e.UpstreamSlug)
+	}
 	// Unknown bits are never checked today but would turn on with a future permission.
 	role.Permissions &= db.KnownProjectRolePermissions
 	newRole, err := b.store.CreateRole(role)
@@ -101,7 +129,40 @@ func (e BackupRole) Restore(b *BackupDB) error {
 		b.roleIDMap = make(map[db.ProjectRoleID]db.ProjectRoleID)
 	}
 	b.roleIDMap[oldID] = newRole.ID
+	if e.UpstreamSlug != nil {
+		if b.roleSlugMap == nil {
+			b.roleSlugMap = make(map[string]db.ProjectRoleID)
+		}
+		b.roleSlugMap[*e.UpstreamSlug] = newRole.ID
+	}
 	return nil
+}
+
+// uniqueRoleName keeps name when no restored role uses it, and otherwise
+// appends the file slug, then a counter.
+func (b *BackupDB) uniqueRoleName(name, slug string) string {
+	taken := func(candidate string) bool {
+		return slices.ContainsFunc(b.roles, func(role db.Role) bool { return role.Name == candidate })
+	}
+	if !taken(name) {
+		return name
+	}
+	candidate := fmt.Sprintf("%s (%s)", name, slug)
+	for n := 2; taken(candidate); n++ {
+		candidate = fmt.Sprintf("%s (%s %d)", name, slug, n)
+	}
+	return candidate
+}
+
+// unassignedRole finds or adds the report entry for a slug. Use the pointer at once, a later add may move it.
+func (b *BackupDB) unassignedRole(slug, reason string) *UnassignedRole {
+	for i := range b.unassigned {
+		if b.unassigned[i].Slug == slug {
+			return &b.unassigned[i]
+		}
+	}
+	b.unassigned = append(b.unassigned, UnassignedRole{Slug: slug, Reason: reason, Templates: []UnassignedTemplate{}})
+	return &b.unassigned[len(b.unassigned)-1]
 }
 
 func (e BackupEnvironment) Verify(backup *BackupFormat) error {
@@ -163,6 +224,8 @@ func (e BackupSchedule) Restore(b *BackupDB) error {
 		}
 	}
 
+	// Created inactive: Restore activates it only after every entry succeeded.
+	v.Active = false
 	newSchedule, err := b.store.CreateSchedule(v)
 	if err != nil {
 		return err
@@ -374,6 +437,12 @@ func (e BackupTemplate) Verify(backup *BackupFormat) error {
 		return fmt.Errorf("vault_key does not exist in keys[].name")
 	}
 
+	for _, grant := range e.Roles {
+		if grant.Role == "" && grant.RoleID == "" && (grant.Slug == nil || *grant.Slug == "") {
+			return fmt.Errorf("role grant names no role")
+		}
+	}
+
 	if e.Vaults != nil {
 		for _, vault := range e.Vaults {
 			if vault.VaultKey != nil {
@@ -487,6 +556,12 @@ func (e BackupTemplate) Restore(b *BackupDB) error {
 
 	if e.Roles != nil {
 		for _, role := range e.Roles {
+			if role.Slug != nil && role.Role == "" && role.RoleID == "" && !role.IsGlobal {
+				if err := b.restoreUpstreamGrant(newTemplate, *role.Slug, role.Permissions&db.KnownProjectRolePermissions); err != nil {
+					return err
+				}
+				continue
+			}
 			if role.IsGlobal {
 				var r db.Role
 				var err error
@@ -554,6 +629,33 @@ func (e BackupTemplate) Restore(b *BackupDB) error {
 	return nil
 }
 
+// restoreUpstreamGrant applies a Semaphore UI format 2 template grant. The
+// slug resolves to a role from the same file or to a built-in role. Any other
+// role of this instance is never matched by slug: that would hand the grant to
+// an unrelated role, so the grant is reported for the user to assign instead.
+func (b *BackupDB) restoreUpstreamGrant(template db.Template, slug string, permissions db.ProjectUserPermission) error {
+	roleID, ok := b.roleSlugMap[slug]
+	if !ok {
+		role, err := b.store.GetGlobalRoleBySlug(slug)
+		if err != nil && !errors.Is(err, db.ErrNotFound) {
+			return err
+		}
+		if err != nil || !role.Builtin {
+			unassigned := b.unassignedRole(slug, ReasonNotInFile)
+			unassigned.Templates = append(unassigned.Templates, UnassignedTemplate{ID: template.ID, Name: template.Name, Permissions: permissions})
+			return nil
+		}
+		roleID = role.ID
+	}
+	_, err := b.store.CreateTemplateRole(db.TemplateRolePerm{
+		TemplateID:  template.ID,
+		RoleID:      &roleID,
+		ProjectID:   b.meta.ID,
+		Permissions: permissions,
+	})
+	return err
+}
+
 func (e BackupIntegration) Restore(b *BackupDB) error {
 	var authSecretID *int
 
@@ -600,15 +702,22 @@ func (e BackupIntegration) Restore(b *BackupDB) error {
 	}
 	b.integrations = append(b.integrations, newIntegration)
 
-	for _, m := range e.Matchers {
+	for i, m := range e.Matchers {
 		m.IntegrationID = newIntegration.ID
-		_, _ = b.store.CreateIntegrationMatcher(b.meta.ID, m)
+		if _, err := b.store.CreateIntegrationMatcher(b.meta.ID, m); err != nil {
+			return fmt.Errorf("matchers[%d]: %w", i, err)
+		}
 	}
 
-	for _, v := range e.ExtractValues {
+	for i, v := range e.ExtractValues {
 		v.IntegrationID = newIntegration.ID
-		_, _ = b.store.CreateIntegrationExtractValue(b.meta.ID, v)
+		if _, err := b.store.CreateIntegrationExtractValue(b.meta.ID, v); err != nil {
+			return fmt.Errorf("extract_values[%d]: %w", i, err)
+		}
 	}
+
+	// Aliases are instance-wide bearer URLs. One already taken, for example by
+	// the source project on the same instance, is skipped rather than moved.
 
 	for _, a := range e.Aliases {
 		alias := db.IntegrationAlias{
@@ -712,6 +821,11 @@ func (e BackupWorkflow) Restore(b *BackupDB) error {
 }
 
 func (backup *BackupFormat) Verify() error {
+	// EX exports carry no version and address roles by ID; Semaphore UI
+	// format 2 files carry version 2 and address roles by slug. Both read.
+	if backup.Version != nil && *backup.Version > BackupFormatVersion {
+		return fmt.Errorf("backup was written by a newer version of Semaphore")
+	}
 	for i, o := range backup.Environments {
 		if err := o.Verify(backup); err != nil {
 			return fmt.Errorf("error at environments[%d]: %s", i, err.Error())
@@ -724,7 +838,7 @@ func (backup *BackupFormat) Verify() error {
 	}
 	for i, o := range backup.Schedules {
 		if err := o.Verify(backup); err != nil {
-			return fmt.Errorf("error at templates[%d]: %s", i, err.Error())
+			return fmt.Errorf("error at schedules[%d]: %s", i, err.Error())
 		}
 	}
 	for i, o := range backup.Keys {
@@ -787,12 +901,12 @@ func (backup *BackupFormat) Verify() error {
 	return nil
 }
 
-// Restore returns the created project with the error when a step after the project row fails.
-func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore db.WorkflowManager) (*db.Project, error) {
+// Restore creates the project whole or not at all: a failed entry removes it again.
+func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore db.WorkflowManager) (restored *RestoredProject, err error) {
 	if err := backup.rejectTaskGroupsForRestore(); err != nil {
 		return nil, err
 	}
-	var b = BackupDB{store: store, workflowStore: workflowStore}
+	var b = BackupDB{store: store, workflowStore: workflowStore, unassigned: []UnassignedRole{}}
 	project := backup.Meta.Project
 
 	// Prevent importing a project with a name that already exists
@@ -806,10 +920,18 @@ func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore 
 	}
 
 	newProject, err := b.store.CreateProject(project)
-
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		if deleteErr := b.store.DeleteProject(newProject.ID); deleteErr != nil {
+			err = &CleanupError{ProjectID: newProject.ID, Err: err, DeleteErr: deleteErr}
+		}
+	}()
+
 	ownerRole, err := b.store.GetGlobalRoleBySlug(string(db.ProjectOwner))
 	if err != nil {
 		return nil, err
@@ -822,37 +944,37 @@ func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore 
 		Revision:  1,
 	}, []db.ProjectRoleID{ownerRole.ID})
 	if err != nil {
-		return &newProject, err
+		return nil, err
 	}
 
 	b.meta = newProject
 	for i, o := range backup.SecretStorages {
 		if err := o.Restore(&b); err != nil {
-			return &newProject, fmt.Errorf("error at secret storage[%d]: %s", i, err.Error())
+			return nil, fmt.Errorf("error at secret storage[%d]: %w", i, err)
 		}
 	}
 
 	for i, o := range backup.Roles {
 		if err := o.Restore(&b); err != nil {
-			return &newProject, fmt.Errorf("error at roles[%d]: %s", i, err.Error())
+			return nil, fmt.Errorf("error at roles[%d]: %w", i, err)
 		}
 	}
 
 	for i, o := range backup.Environments {
 		if err := o.Restore(&b); err != nil {
-			return &newProject, fmt.Errorf("error at environments[%d]: %s", i, err.Error())
+			return nil, fmt.Errorf("error at environments[%d]: %w", i, err)
 		}
 	}
 
 	for i, o := range backup.Views {
 		if err := o.Restore(&b); err != nil {
-			return &newProject, fmt.Errorf("error at views[%d]: %s", i, err.Error())
+			return nil, fmt.Errorf("error at views[%d]: %w", i, err)
 		}
 	}
 
 	for i, o := range backup.Keys {
 		if err := o.Restore(&b); err != nil {
-			return &newProject, fmt.Errorf("error at keys[%d]: %s", i, err.Error())
+			return nil, fmt.Errorf("error at keys[%d]: %w", i, err)
 		}
 	}
 	defaultSSHKeys, err := restoreBackupSSHKeyBindings(backup.Meta.DefaultSSHKeyBindings, b.keys)
@@ -874,19 +996,19 @@ func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore 
 		// already exist. Restore that same order without dropping saved settings.
 		o.Monorepo = false
 		if err := o.Restore(&b); err != nil {
-			return &newProject, fmt.Errorf("error at repositories[%d]: %s", i, err.Error())
+			return nil, fmt.Errorf("error at repositories[%d]: %w", i, err)
 		}
 	}
 
 	for i, o := range backup.HostConfigs {
 		if err := o.Restore(&b); err != nil {
-			return &newProject, fmt.Errorf("error at host_configs[%d]: %s", i, err.Error())
+			return nil, fmt.Errorf("error at host_configs[%d]: %w", i, err)
 		}
 	}
 
 	for i, o := range backup.Inventories {
 		if err := o.Restore(&b); err != nil {
-			return &newProject, fmt.Errorf("error at inventories[%d]: %s", i, err.Error())
+			return nil, fmt.Errorf("error at inventories[%d]: %w", i, err)
 		}
 	}
 
@@ -897,29 +1019,23 @@ func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore 
 			continue
 		}
 		if err := o.Restore(&b); err != nil {
-			return &newProject, fmt.Errorf("error at templates[%d]: %s", i, err.Error())
+			return nil, fmt.Errorf("error at templates[%d]: %w", i, err)
 		}
 	}
 
 	for _, i := range deployTemplates {
 		o := backup.Templates[i]
 		if err := o.Restore(&b); err != nil {
-			return &newProject, fmt.Errorf("error at templates[%d]: %s", i, err.Error())
+			return nil, fmt.Errorf("error at templates[%d]: %w", i, err)
 		}
 	}
 	if err := backup.restoreMonorepoPolicies(&b); err != nil {
-		return &newProject, err
-	}
-
-	for i, o := range backup.Schedules {
-		if err := o.Restore(&b); err != nil {
-			return &newProject, fmt.Errorf("error at schedules[%d]: %s", i, err.Error())
-		}
+		return nil, err
 	}
 
 	for i, o := range backup.Runners {
 		if err := o.Restore(&b); err != nil {
-			return &newProject, fmt.Errorf("error at runners[%d]: %s", i, err.Error())
+			return nil, fmt.Errorf("error at runners[%d]: %w", i, err)
 		}
 	}
 
@@ -928,13 +1044,13 @@ func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore 
 	// workflow graph between those two dependency layers.
 	for i, o := range backup.Workflows {
 		if err := o.Restore(&b); err != nil {
-			return &newProject, fmt.Errorf("error at workflows[%d]: %s", i, err.Error())
+			return nil, fmt.Errorf("error at workflows[%d]: %w", i, err)
 		}
 	}
 
 	for i, o := range backup.Integration {
 		if err := o.Restore(&b); err != nil {
-			return &newProject, fmt.Errorf("error at integrations[%d]: %s", i, err.Error())
+			return nil, fmt.Errorf("error at integrations[%d]: %w", i, err)
 		}
 	}
 
@@ -946,7 +1062,24 @@ func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore 
 		_, _ = b.store.CreateIntegrationAlias(alias)
 	}
 
-	return &newProject, nil
+	// An active schedule can start a task on any HA node as soon as it exists.
+	// Schedules are therefore created inactive after every other entry and
+	// activated only once the whole restore succeeded.
+	for i, o := range backup.Schedules {
+		if err := o.Restore(&b); err != nil {
+			return nil, fmt.Errorf("error at schedules[%d]: %w", i, err)
+		}
+	}
+	for i, o := range backup.Schedules {
+		if !o.Active {
+			continue
+		}
+		if err := b.store.SetScheduleActive(b.meta.ID, b.schedules[i].ID, true); err != nil {
+			return nil, fmt.Errorf("error at schedules[%d]: %w", i, err)
+		}
+	}
+
+	return &RestoredProject{Project: newProject, UnassignedRoles: b.unassigned}, nil
 }
 
 // rejectTaskGroupsForRestore keeps a backup from silently weakening a
