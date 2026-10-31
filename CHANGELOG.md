@@ -11,6 +11,43 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+## [v2.20.0-ex.2.1.6] - 2026-10-31
+
+### Added
+
+- Optional Infisical PAM routing for SSH of local-executor tasks: a per-task
+  broker opens PAM sessions for configured host routes, and the execution
+  review lists the routed hosts before a task starts.
+- `semaphore client` manages a running server over its REST API with an API
+  token: projects, templates, tasks, inventories, repositories, keys,
+  variable groups, schedules, views, runners and users, with table, JSON and
+  YAML output and documented exit codes.
+- String access keys hold a single secret value and can authenticate token,
+  HMAC, GitHub and Bitbucket integrations.
+- Project restore imports Semaphore UI format 2 backups. Template permissions
+  of roles the file does not define are reported, and the restore dialog
+  assigns them to a chosen role.
+- Projects can have several roles per member; workflow surveys, OIDC role
+  mappings, workflow integrations, global roles, Redis Sentinel and integer
+  HTTP listen ports are available.
+- Release executables come with CycloneDX software bills of materials.
+
+### Changed
+
+- A failed project restore or project setup deletes the new project again
+  instead of keeping a partial project. Schedules are restored last.
+- A template accepts one permission entry per role.
+- The API rejects unknown access key types, and integrations reject an auth
+  secret that does not fit their authentication method.
+- Every local task uses its own SSH control path, so tasks no longer reuse
+  each other's multiplexed SSH connections.
+- User metadata, preferences and system information load in parallel.
+
+### Fixed
+
+- Workflow survey arrays keep their shape in API responses.
+- The API client's debug trace masks String key values and created API tokens.
+
 ## [v2.20.0-ex.2.1.5] - 2026-10-16
 
 ### Added
