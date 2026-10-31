@@ -784,6 +784,7 @@ func TestPrepare_Idempotency(t *testing.T) {
 			RepoLock:   &tasks.KeyLock{},
 		}
 		executor.SetLogger(NewMemoryTaskLogger())
+		t.Cleanup(executor.Cleanup)
 
 		require.NoError(t, executor.Prepare("admin", nil, ""))
 		// Second call must be a no-op and succeed without re-preparing or failing
