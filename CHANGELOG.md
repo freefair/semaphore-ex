@@ -48,6 +48,13 @@ release, so every release needs its section here before the tag is pushed.
 - Workflow survey arrays keep their shape in API responses.
 - The API client's debug trace masks String key values and created API tokens.
 
+### Security
+
+- Builds use Go 1.26.10, which distrusts compromised intermediate certificates
+  in `crypto/x509` (GO-2026-6809, reachable through LDAP TLS).
+- The web frontend ships `follow-redirects` 1.16.2 (GHSA-q3jh-wrc6-jgq8,
+  GHSA-8r9p-f939-6h3c, GHSA-mrwp-f3q8-3g9p).
+
 ## [v2.20.0-ex.2.1.5] - 2026-10-16
 
 ### Added
