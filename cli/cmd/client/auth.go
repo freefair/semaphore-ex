@@ -327,7 +327,7 @@ terminal, because a token on screen tends to end up in screenshots and logs.`,
 			if err := r.requireToken(cmd); err != nil {
 				return err
 			}
-			if output.IsTerminal(r.io.Out) {
+			if r.outTTY {
 				r.warnf("warning: printing the API token to the terminal")
 			}
 			fmt.Fprintln(r.io.Out, r.cfg.Token)

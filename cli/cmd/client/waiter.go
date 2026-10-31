@@ -11,6 +11,7 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/apiclient"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	"github.com/semaphoreui/semaphore/pkg/termsafe"
 	"github.com/spf13/cobra"
 )
 
@@ -256,7 +257,12 @@ func (r *runtime) printNewOutput(ctx context.Context, api *apiclient.Client, pro
 // colour-capable terminal; every other control sequence is dropped.
 func (r *runtime) printLogLine(text string) {
 	opts := r.printer.Options()
-	text = output.Sanitize(strings.TrimRight(text, "\r\n"), opts.TTY && opts.Color)
+	keepColor := opts.TTY && opts.Color
+	text = output.Sanitize(strings.TrimRight(text, "\r\n"), keepColor)
+	if keepColor && strings.Contains(text, "\x1b[") {
+		// A line's colours must not carry over to later output.
+		text += termsafe.Reset
+	}
 	r.printer.Printf("%s\n", text)
 }
 

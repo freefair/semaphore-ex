@@ -595,3 +595,21 @@ func TestBuildExtraVars(t *testing.T) {
 	_, err = buildExtraVars(cmd, nil, f)
 	assert.ErrorContains(t, err, "top-level mapping")
 }
+
+// Task output comes from playbooks and remote hosts. On a terminal it must not
+// reach the terminal's control functions, raw or not; colours stay.
+func TestTaskLogsOnATerminalDropControlSequences(t *testing.T) {
+	s := newTaskServer(task_logger.TaskSuccessStatus)
+	s.lines = []string{"ok\x1b]52;c;ZXZpbA==\x07: [web1]", "\x1b[0;32mchanged\x1b[8m"}
+	s.polls = len(s.lines)
+	srv := httptest.NewServer(s.handler(t))
+	defer srv.Close()
+	env := taskEnv(srv)
+	env["NO_COLOR"] = "1"
+
+	for _, args := range [][]string{{"task", "logs", "42"}, {"task", "logs", "42", "--raw"}} {
+		out, _, err := runWith(t, env, "", true, args...)
+		require.NoError(t, err)
+		assert.Equal(t, "ok: [web1]\nchanged\n", out, args)
+	}
+}

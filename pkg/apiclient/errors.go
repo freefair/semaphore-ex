@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/semaphoreui/semaphore/pkg/termsafe"
 )
 
 // Sentinel errors a caller can test with errors.Is against any error the
@@ -76,7 +78,7 @@ func newAPIError(resp *http.Response) *APIError {
 		Error string `json:"error"`
 	}
 	if json.Unmarshal(body, &errRes) == nil && errRes.Error != "" {
-		apiErr.Message = errRes.Error
+		apiErr.Message = termsafe.String(errRes.Error, false)
 		return apiErr
 	}
 
@@ -84,8 +86,9 @@ func newAPIError(resp *http.Response) *APIError {
 	if strings.HasPrefix(text, "<") {
 		return apiErr // HTML from a proxy or the SPA: not a message for the user
 	}
+	text = termsafe.String(text, false)
 	if len(text) > 200 {
-		text = text[:200] + "…"
+		text = strings.ToValidUTF8(text[:200], "") + "…"
 	}
 	apiErr.Message = text
 	return apiErr

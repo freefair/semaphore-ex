@@ -226,7 +226,12 @@ func TestRedactJSON(t *testing.T) {
 		want string
 	}{
 		{"password", `{"auth":"a","password":"x"}`, `{"auth":"a","password":"***"}`},
-		{"token nested", `{"runner":{"token":"abc"},"name":"r"}`, `{"runner":{"token":"***"},"name":"r"}`},
+		{"token nested", `{"runner":{"token":"abc"},"name":"r"}`, `{"name":"r","runner":{"token":"***"}}`},
+		{"escaped key", `{"pass\u0077ord":"leak"}`, `{"password":"***"}`},
+		{"hyphenated key", `{"api-token":"leak"}`, `{"api-token":"***"}`},
+		{"array value", `{"token":["leak"]}`, `{"token":"***"}`},
+		{"nested object value", `{"ssh":{"private_key":"leak","login":{"x":1}}}`, `{"ssh":"***"}`},
+		{"secret inside an array", `[{"secret":"leak","id":1}]`, `[{"id":1,"secret":"***"}]`},
 		{"escaped quote", `{"secret":"a\"b"}`, `{"secret":"***"}`},
 		{"current password", `{"password":"n","current_password":"o"}`, `{"password":"***","current_password":"***"}`},
 		{"string key value", `{"name":"k","type":"string","string":"s3cr3t"}`, `{"name":"k","type":"string","string":"***"}`},
@@ -235,7 +240,12 @@ func TestRedactJSON(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, redactJSON([]byte(tt.in)))
+			got := redactJSON([]byte(tt.in))
+			if json.Valid([]byte(tt.want)) {
+				assert.JSONEq(t, tt.want, got)
+				return
+			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -297,4 +307,18 @@ func TestDebugTraceNeverShowsACreatedAPIToken(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, trace.String(), "fresh-api-token-value")
 	assert.Contains(t, trace.String(), "< body ***")
+}
+
+func TestAPIErrorMessageDropsTerminalControls(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"bad\u001b]0;owned\u0007 name"}`))
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv, nil)
+
+	err := c.Do(context.Background(), http.MethodGet, "/projects", nil, nil)
+
+	require.Error(t, err)
+	assert.Equal(t, "GET /api/projects: server returned 400: bad name", err.Error())
 }

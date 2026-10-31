@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"regexp"
 	"strings"
 )
 
@@ -21,11 +20,27 @@ var maskedHeaders = map[string]bool{
 	"Set-Cookie":    true,
 }
 
-// secretJSONKeys are masked when a request or response body is traced: any
-// key ending in password, passcode, token, secret, passphrase or private_key
-// (current_password, registration_token, …), plus "string" (the value of a
-// String access key), "ssh" and "plain".
-var secretJSONKeys = regexp.MustCompile(`(?i)"([a-z_]*(?:password|passcode|token|secret|passphrase|private_key)|ssh|plain|string)"\s*:\s*("(?:[^"\\]|\\.)*"|\{[^{}]*\})`)
+// secretKeyParts mark a JSON key whose value is masked in the debug trace:
+// a key containing one of them, compared after JSON unescaping, in lower case
+// and without "-" and "_" (password, current_password, api-token, …).
+var secretKeyParts = []string{"password", "passcode", "token", "secret", "passphrase", "privatekey"}
+
+// secretKeys are masked as a whole: "string" holds the value of a String
+// access key, "ssh" and "plain" hold key material.
+var secretKeys = map[string]bool{"string": true, "ssh": true, "plain": true}
+
+func isSecretKey(key string) bool {
+	k := strings.ToLower(strings.NewReplacer("-", "", "_", "").Replace(key))
+	if secretKeys[k] {
+		return true
+	}
+	for _, part := range secretKeyParts {
+		if strings.Contains(k, part) {
+			return true
+		}
+	}
+	return false
+}
 
 func (c *Client) trace(format string, args ...any) {
 	if c.debug == nil {
@@ -58,12 +73,35 @@ func redactResponse(apiPath string, body []byte) string {
 	return redactJSON(body)
 }
 
-// redactJSON masks well-known secret fields of a JSON document for the debug
-// trace. It works on the text so that a body that is not an object (an array,
-// plain text) passes through unchanged.
+// redactJSON masks secret fields of a JSON document for the debug trace. It
+// decodes the document, so escaped key names and nested values are found, and
+// masks a secret key's whole value. Text that is not JSON passes through.
 func redactJSON(body []byte) string {
-	if !json.Valid(body) {
+	var doc any
+	if err := json.Unmarshal(body, &doc); err != nil {
 		return strings.TrimSpace(string(body))
 	}
-	return secretJSONKeys.ReplaceAllString(string(body), `"$1":"`+masked+`"`)
+	out, err := json.Marshal(redactValue(doc))
+	if err != nil {
+		return masked
+	}
+	return string(out)
+}
+
+func redactValue(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, child := range x {
+			if isSecretKey(k) {
+				x[k] = masked
+			} else {
+				x[k] = redactValue(child)
+			}
+		}
+	case []any:
+		for i, child := range x {
+			x[i] = redactValue(child)
+		}
+	}
+	return v
 }

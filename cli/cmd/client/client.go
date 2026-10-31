@@ -19,6 +19,7 @@ import (
 	"github.com/semaphoreui/semaphore/cli/cmd/client/config"
 	"github.com/semaphoreui/semaphore/cli/cmd/client/output"
 	"github.com/semaphoreui/semaphore/pkg/apiclient"
+	"github.com/semaphoreui/semaphore/pkg/termsafe"
 	"github.com/semaphoreui/semaphore/util"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -68,6 +69,9 @@ type runtime struct {
 	prompter *Prompter
 	// interactive is true when both stdin and stdout are terminals.
 	interactive bool
+	// outTTY is true when stdout is a terminal. io.Out is then wrapped in a
+	// termsafe.Writer, so ask this field rather than io.Out.
+	outTTY bool
 	// projectID caches the resolved project for the invocation.
 	projectID int
 	// pollInterval is how often waiting commands ask the server; tests shorten it.
@@ -244,6 +248,16 @@ func newRuntime(cmd *cobra.Command, stdio IO, f *flags) (*runtime, error) {
 
 	interactive := stdio.forceInteractive || (output.IsTerminal(stdio.In) && output.IsTerminal(stdio.Out))
 	outTTY := stdio.forceInteractive || output.IsTerminal(stdio.Out)
+	color := !f.noColor && output.ColorEnabled(stdio.Getenv)
+
+	// Server text (names, task logs, raw output, error messages) reaches the
+	// terminal through these streams; filter control sequences there.
+	if outTTY {
+		stdio.Out = termsafe.NewWriter(stdio.Out, color)
+	}
+	if stdio.forceInteractive || output.IsTerminal(stdio.Err) {
+		stdio.Err = termsafe.NewWriter(stdio.Err, false)
+	}
 
 	r := &runtime{
 		io:           stdio,
@@ -252,6 +266,7 @@ func newRuntime(cmd *cobra.Command, stdio IO, f *flags) (*runtime, error) {
 		cfgFile:      cfgFile,
 		cfgPath:      cfgPath,
 		interactive:  interactive,
+		outTTY:       outTTY,
 		pollInterval: stdio.pollInterval,
 		printer: output.New(stdio.Out, output.Options{
 			Format:    cfg.Output,
@@ -259,7 +274,7 @@ func newRuntime(cmd *cobra.Command, stdio IO, f *flags) (*runtime, error) {
 			Quiet:     f.quiet,
 			NoHeaders: f.noHeaders,
 			TTY:       outTTY,
-			Color:     !f.noColor && output.ColorEnabled(stdio.Getenv),
+			Color:     color,
 		}),
 		prompter: &Prompter{
 			in:          bufio.NewReader(stdio.In),
