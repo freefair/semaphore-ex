@@ -1,7 +1,7 @@
 # The Go toolchain must match the build platform: a bare COPY --from=<image> resolves the
 # image for the *target* platform, so cross-building linux/arm64 on an amd64 runner copied
 # an arm64 Go that ran under emulation and failed to assemble cgo with the host gcc.
-FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine3.24@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade AS goroot
+FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine3.24@sha256:a2012b4a1d1f9f7e9f44e0d39b805a901e856b1dd80b4e6ee4338db547050308 AS goroot
 
 FROM --platform=$BUILDPLATFORM node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS builder
 
