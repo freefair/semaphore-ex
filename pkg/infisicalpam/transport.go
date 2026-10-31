@@ -108,7 +108,10 @@ func (s *Session) Cancel(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return conn.Close()
+	// The completed handshake is the cancellation. The gateway may close the
+	// connection first, so a failed close_notify does not undo it.
+	_ = conn.Close()
+	return nil
 }
 
 func (s *Session) dialGateway(ctx context.Context, alpn string) (net.Conn, error) {

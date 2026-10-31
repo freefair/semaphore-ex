@@ -119,6 +119,19 @@ func TestSessionCancelAndEnd(t *testing.T) {
 	assert.Equal(t, []string{session.ID}, env.Ended())
 }
 
+// A gateway may drop the cancellation connection as soon as the handshake is
+// done; the cancellation has arrived and must not be reported as failed.
+func TestSessionCancelSucceedsWhenTheGatewayResetsTheConnection(t *testing.T) {
+	env := pamtest.Start(t, pamtest.Options{Direct: true, NoRelay: true, ResetAfterCancel: true})
+	_, _, session := openSession(t, env)
+
+	for i := 0; i < 20; i++ {
+		require.NoError(t, session.Cancel(context.Background()))
+	}
+
+	assert.Eventually(t, func() bool { return len(env.Cancelled()) == 20 }, 2*time.Second, 10*time.Millisecond)
+}
+
 func TestLoginRejectsWrongSecret(t *testing.T) {
 	env := pamtest.Start(t, pamtest.Options{})
 	client := newTestClient(t, env, "wrong")

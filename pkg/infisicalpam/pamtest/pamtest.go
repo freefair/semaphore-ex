@@ -53,6 +53,9 @@ type Options struct {
 	// AccessError, when set, is returned by the access endpoint as an
 	// Infisical error name with HTTP 403.
 	AccessError string
+	// ResetAfterCancel drops a cancellation connection with a TCP reset right
+	// after the handshake, as a gateway that is done with it may.
+	ResetAfterCancel bool
 }
 
 // Environment is a running fake PAM installation.
@@ -308,6 +311,9 @@ func (e *Environment) handleGateway(transport net.Conn) {
 		e.mu.Lock()
 		e.cancelled = append(e.cancelled, sessionID)
 		e.mu.Unlock()
+		if tcp, ok := transport.(*net.TCPConn); ok && e.Options.ResetAfterCancel {
+			_ = tcp.SetLinger(0)
+		}
 	case "infisical-pam-proxy":
 		e.serveSSH(gateway)
 	}
