@@ -11,6 +11,17 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+## [v2.20.16-ex.1] - 2026-11-01
+
+### Changed
+
+- The release version now names the upstream Semaphore UI line the product is
+  based on: 2.20.16 (upstream `v2.20.16-beta9` and later commits). The fork
+  releases up to v2.20.0-ex.2.1.6 kept the 2.20.0 label after the upstream base
+  had moved on. The product content matches v2.20.0-ex.2.1.6. Packages
+  (`2.20.16~ex.1`) sort above `2.20.0~ex.2.1.6`, so apt and dnf upgrade
+  normally.
+
 ## [v2.20.0-ex.2.1.6] - 2026-10-31
 
 ### Added
