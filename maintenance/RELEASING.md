@@ -7,11 +7,8 @@ The tag triggers everything; nothing is built or published by hand.
 ## Version scheme
 
 `vX.Y.Z-ex.N`: `X.Y.Z` is the upstream Semaphore UI line the head is based on
-(the next upstream release the merged `develop` precedes or matches; check it with
-`git describe --tags --exclude '*-ex*' develop` before each release). The EX number
-`N` counts fork releases continuously across upstream lines and does not restart when
-`X.Y.Z` changes: `v2.20.16-ex.2.1.7` follows `v2.20.0-ex.2.1.6`.
-Release candidates are `vX.Y.Z-ex.N-rcM`.
+(the next upstream release the merged `develop` precedes or matches), `N` counts fork
+releases on that line, starting at 1. Release candidates are `vX.Y.Z-ex.N-rcM`.
 
 Fork releases support one, two or three numeric EX components:
 `vX.Y.Z-ex.N`, `vX.Y.Z-ex.N.M`, and `vX.Y.Z-ex.N.M.P`.

@@ -69,6 +69,37 @@ Relative external references would resolve against that upstream schema identity
 
 ## Maintenance Rule
 
+### External credential persistence contract
+
+Inventory SSH credentials must be resolved through the encryption service before
+executor dispatch, for both live inventory loads and execution snapshots. The
+task-scoped SSH agent consumes resolved material directly instead of calling the
+credential installer. Keep credential-resolution failures explicit.
+
+Semaphore EX selects the Vault/OpenBao implementation in
+`test/edition-contract/enhanced/services/server/vault_runtime.go`. The shared
+access-key service normalizes reference metadata without discarding a submitted
+value until that implementation has written it externally. Empty credential
+input creates a runtime reference without contacting the provider, including
+read-only and version-pinned references. Submitted credentials require a writable
+storage and the runtime-secrets write capability; a pinned version cannot be
+written.
+
+KV v2 writes create absent documents using `POST` with `options.cas: 0`. Existing
+documents use merge `PATCH` with the observed version, preserving sibling fields;
+concurrent modifications fail instead of being retried or overwritten. String
+credentials are field strings. Login/password and SSH credentials are JSON
+strings using the existing `db.LoginPassword` and `db.SshKey` schemas. Credential
+deletion removes only the selected field with CAS, not the shared KV document.
+
+Semaphore retains the canonical reference, never the submitted credential or a
+local-origin copy. Overrides also clear legacy `plain` metadata. The SQL-backed
+regressions in `services/server/runtime_secret_storage_ex_test.go` check SQL NULL
+`secret` and `plain`, runtime round trips, local-to-external overrides and
+reference-only creation. Provider HTTP-shape tests remain next to the enhanced
+implementation. Outbound synchronization uses the same CAS write seam and keeps
+its separate local-origin workflow.
+
 Regular updates merge upstream into the long-lived fork.
 History reconstruction is a separately authorized exception and is not part of routine syncs.
 Review new exported seams for inherited placeholders and require observable behavior tests before updating their inventory.

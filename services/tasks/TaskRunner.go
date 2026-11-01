@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db_lib"
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
@@ -827,6 +828,14 @@ func (t *TaskRunner) populateDetails() error {
 		}
 		if err = t.pool.encryptionService.DeserializeSecret(&t.Repository.SSHKey); err != nil {
 			return err
+		}
+	}
+
+	// Inventory SSH keys bypass the installer when the task-scoped agent is
+	// used, so resolve their material before dispatching to the executor.
+	if t.Inventory.SSHKeyID != nil && t.Inventory.SSHKey.Type == db.AccessKeySSH {
+		if err = t.pool.encryptionService.DeserializeSecret(&t.Inventory.SSHKey); err != nil {
+			return fmt.Errorf("resolving inventory SSH key %d: %w", *t.Inventory.SSHKeyID, err)
 		}
 	}
 

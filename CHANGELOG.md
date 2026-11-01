@@ -3,25 +3,13 @@
 All notable changes to Semaphore EX are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions use the
 `vX.Y.Z-ex.N` scheme: `X.Y.Z` is the upstream Semaphore UI line the release is
-based on, `N` is the fork release number, which continues across upstream lines.
-Release candidates append `-rcM`
+based on, `N` counts fork releases on that line. Release candidates append `-rcM`
 and share the section of their final tag.
 
 `task release:notes` copies the section of the tag being released into the GitHub
 release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
-
-## [v2.20.16-ex.2.1.7] - 2026-11-01
-
-### Changed
-
-- The release version now names the upstream Semaphore UI line the product is
-  based on: 2.20.16 (upstream `v2.20.16-beta9` and later commits). The fork
-  releases up to v2.20.0-ex.2.1.6 kept the 2.20.0 label after the upstream base
-  had moved on. The EX release number continues across upstream lines. The
-  product content matches v2.20.0-ex.2.1.6. Packages (`2.20.16~ex.2.1.7`) sort
-  above `2.20.0~ex.2.1.6`, so apt and dnf upgrade normally.
 
 ## [v2.20.0-ex.2.1.6] - 2026-10-31
 
