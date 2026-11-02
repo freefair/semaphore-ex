@@ -12,6 +12,8 @@ import (
 	sqldb "github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type ldapClientStub struct {
@@ -151,6 +153,26 @@ func TestLDAPCollisionDoesNotMergeLocalUser(t *testing.T) {
 	if !errors.Is(err, pro_interfaces.ErrLDAPIdentityCollision) {
 		t.Fatalf("colliding LDAP login = %v, want identity collision", err)
 	}
+}
+
+func TestLDAPLinkRejectsMismatchedDirectoryProfile(t *testing.T) {
+	store, service, client, now := readyActiveLDAPServiceTest(t)
+	user, err := store.CreateUser(db.UserWithPwd{User: db.User{
+		Username: "local-user", Name: "Local User", Email: "local@example.test",
+	}, Pwd: "local-password"})
+	require.NoError(t, err)
+	client.result.Identity = pro_interfaces.LDAPIdentity{
+		ExternalID: "unrelated-directory-user", Username: "other", Email: "other@example.test",
+	}
+
+	linked, err := service.Link(context.Background(), pro_interfaces.LDAPLinkRequest{
+		ActorID: user.ID, ProviderID: "corp", Username: "other", Password: "directory-password", Now: now,
+	})
+	assert.ErrorIs(t, err, pro_interfaces.ErrLDAPForbidden)
+	assert.False(t, linked)
+	identities, err := store.GetUserExternalIdentities(user.ID)
+	require.NoError(t, err)
+	assert.Empty(t, identities)
 }
 
 func TestLDAPAuthenticateReportsProvisioningOnlyOnce(t *testing.T) {

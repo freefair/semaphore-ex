@@ -9,7 +9,14 @@ import (
 	"github.com/semaphoreui/semaphore/services/audit"
 	log "github.com/sirupsen/logrus"
 	"net/http"
+	"strings"
 )
+
+// A directory bind alone does not establish that the profile belongs to this account.
+func ldapProfileMatchesSemaphoreUser(ldapUser, semaphoreUser db.User) bool {
+	return (ldapUser.Email != "" && strings.EqualFold(ldapUser.Email, semaphoreUser.Email)) ||
+		(ldapUser.Username != "" && strings.EqualFold(ldapUser.Username, semaphoreUser.Username))
+}
 
 func linkLdapIdentityWithService(
 	service pro_interfaces.LDAPService,
