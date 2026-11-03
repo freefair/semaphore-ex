@@ -1383,8 +1383,7 @@ func cloneStruct(origValue reflect.Value) reflect.Value {
 func assignMapToStructRecursive(m map[string]any, structValue reflect.Value) error {
 	structType := structValue.Type()
 
-	for i := 0; i < structType.NumField(); i++ {
-		field := structType.Field(i)
+	for field := range structType.Fields() {
 
 		// Skip fields with db:"-" tag
 		dbTag := field.Tag.Get("db")
@@ -2089,10 +2088,8 @@ func validateConfig() {
 		panic(err)
 	}
 
-	if Config.Auth != nil {
-		if err := validateAuthConfig(Config.Auth); err != nil {
-			panic(err)
-		}
+	if err := validateAuthConfig(Config.Auth); err != nil {
+		panic(err)
 	}
 
 	if _, err := validateHAConfig(Config.HA); err != nil {
@@ -2196,8 +2193,21 @@ func loadEnvironmentToObject(obj any) (resultSensitiveEnvs []string, err error) 
 		envVar, sensitive := parseEnvTag(envTag)
 
 		envValue, exists := os.LookupEnv(envVar)
+		if t == reflect.TypeOf(AuthConfig{}) && fieldType.Name == "MaxSessionLifeHours" && !exists {
+			envVar = "SEMAPHORE_AUTH_MAX_SESSION_LIFE_HOURS"
+			envValue, exists = os.LookupEnv(envVar)
+		}
 
 		if !exists {
+			continue
+		}
+
+		if t == reflect.TypeOf(AuthConfig{}) && (fieldType.Name == "MaxSessionLifeHours" || fieldType.Name == "SessionInactivityHours") {
+			value, parseErr := strconv.Atoi(envValue)
+			if parseErr != nil {
+				return nil, fmt.Errorf("%s must be a valid integer", envVar)
+			}
+			fieldValue.SetInt(int64(value))
 			continue
 		}
 

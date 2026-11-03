@@ -1,10 +1,14 @@
 package db
 
-import "time"
+import (
+	"time"
 
-// SessionInactivityTimeout is how long a session may stay unused before it is
-// rejected. It applies regardless of the configured absolute session lifetime.
-const SessionInactivityTimeout = 7 * 24 * time.Hour
+	"github.com/semaphoreui/semaphore/util"
+)
+
+// SessionInactivityTimeout is the default inactivity timeout retained for compatibility.
+// Deprecated: use the configured util.ConfigType.SessionInactivityTimeout instead.
+const SessionInactivityTimeout = util.DefaultSessionInactivityTimeout
 
 type SessionVerificationMethod int
 

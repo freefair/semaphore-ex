@@ -11,14 +11,25 @@ import (
 // preventing a positive setting from overflowing into a disabled duration.
 const maxSessionLifeHours = int64(math.MaxInt64) / int64(time.Hour)
 
+// DefaultSessionInactivityTimeout is how long a session may stay unused before
+// it is rejected when auth.session_inactivity_hours is not configured. It
+// applies regardless of the configured absolute session lifetime.
+const DefaultSessionInactivityTimeout = 7 * 24 * time.Hour
+
 // AuthConfig holds settings that apply to every login method.
 type AuthConfig struct {
 	// MaxSessionLifeHours is the absolute lifetime of a login session in
 	// hours, counted from the moment the user logged in. Once exceeded the
 	// session is rejected and expired, even if it was active recently, and the
 	// user must log in again. 0 (default) means no absolute limit: sessions
-	// then only expire after SessionInactivityTimeout without activity.
-	MaxSessionLifeHours int `json:"max_session_life_hours,omitempty" rule:"^[0-9]*$" env:"SEMAPHORE_AUTH_MAX_SESSION_LIFE_HOURS"`
+	// then only expire after the inactivity timeout without activity.
+	MaxSessionLifeHours int `json:"max_session_life_hours,omitempty" rule:"^[0-9]*$" env:"SEMAPHORE_SESSION_MAX_LIFE_HOURS"`
+
+	// SessionInactivityHours is how long a login session may stay unused, in
+	// hours, before it is rejected and expired. Every authenticated request
+	// resets the counter. 0 (default) means the built-in 168 hours (7 days).
+	// The inactivity timeout cannot be disabled.
+	SessionInactivityHours int `json:"session_inactivity_hours,omitempty" rule:"^[0-9]*$" env:"SEMAPHORE_SESSION_INACTIVITY_HOURS"`
 }
 
 // MaxSessionLife returns the absolute session lifetime configured by
@@ -44,12 +55,23 @@ func validateAuthConfig(config *AuthConfig) error {
 		return err
 	}
 	if int64(config.MaxSessionLifeHours) > maxSessionLifeHours {
-		return fmt.Errorf(
-			"auth.max_session_life_hours must not exceed %d hours",
-			maxSessionLifeHours,
-		)
+		return fmt.Errorf("auth.max_session_life_hours must not exceed %d hours", maxSessionLifeHours)
+	}
+	if int64(config.SessionInactivityHours) > maxSessionLifeHours {
+		return fmt.Errorf("auth.session_inactivity_hours must not exceed %d hours", maxSessionLifeHours)
 	}
 	return nil
+}
+
+// SessionInactivityTimeout returns the configured idle limit, or the default.
+func (c *ConfigType) SessionInactivityTimeout() time.Duration {
+	if c == nil || c.Auth == nil || c.Auth.SessionInactivityHours <= 0 {
+		return DefaultSessionInactivityTimeout
+	}
+	if int64(c.Auth.SessionInactivityHours) > maxSessionLifeHours {
+		return DefaultSessionInactivityTimeout
+	}
+	return time.Duration(c.Auth.SessionInactivityHours) * time.Hour
 }
 
 type RecaptchaConfig struct {

@@ -20,7 +20,7 @@ func TestConfigType_MaxSessionLife(t *testing.T) {
 		expected time.Duration
 	}{
 		{"nil config", nil, 0},
-		{"auth section not configured", &ConfigType{}, 0},
+		{"nil auth", &ConfigType{}, 0},
 		{"zero hours means unlimited", &ConfigType{Auth: &AuthConfig{MaxSessionLifeHours: 0}}, 0},
 		{"negative hours means unlimited", &ConfigType{Auth: &AuthConfig{MaxSessionLifeHours: -5}}, 0},
 		{"configured hours", &ConfigType{Auth: &AuthConfig{MaxSessionLifeHours: 12}}, 12 * time.Hour},
@@ -35,8 +35,30 @@ func TestConfigType_MaxSessionLife(t *testing.T) {
 	}
 }
 
+func TestConfigType_SessionInactivityTimeout(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   *ConfigType
+		expected time.Duration
+	}{
+		{"nil config", nil, DefaultSessionInactivityTimeout},
+		{"nil auth", &ConfigType{}, DefaultSessionInactivityTimeout},
+		{"overflow defaults safely", &ConfigType{Auth: &AuthConfig{SessionInactivityHours: int(maxSessionLifeHours + 1)}}, DefaultSessionInactivityTimeout},
+		{"zero hours means built-in default", &ConfigType{Auth: &AuthConfig{SessionInactivityHours: 0}}, DefaultSessionInactivityTimeout},
+		{"negative hours means built-in default", &ConfigType{Auth: &AuthConfig{SessionInactivityHours: -5}}, DefaultSessionInactivityTimeout},
+		{"configured hours", &ConfigType{Auth: &AuthConfig{SessionInactivityHours: 8}}, 8 * time.Hour},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.config.SessionInactivityTimeout())
+		})
+	}
+}
+
 func TestAuthConfig_LoadFromEnvironment(t *testing.T) {
-	t.Setenv("SEMAPHORE_AUTH_MAX_SESSION_LIFE_HOURS", "36")
+	t.Setenv("SEMAPHORE_SESSION_MAX_LIFE_HOURS", "36")
+	t.Setenv("SEMAPHORE_SESSION_INACTIVITY_HOURS", "8")
 
 	cfg := &ConfigType{}
 	_, err := loadEnvironmentToObject(cfg)
@@ -45,9 +67,14 @@ func TestAuthConfig_LoadFromEnvironment(t *testing.T) {
 	require.NotNil(t, cfg.Auth)
 	assert.Equal(t, 36, cfg.Auth.MaxSessionLifeHours)
 	assert.Equal(t, 36*time.Hour, cfg.MaxSessionLife())
+	assert.Equal(t, 8, cfg.Auth.SessionInactivityHours)
+	assert.Equal(t, 8*time.Hour, cfg.SessionInactivityTimeout())
 }
 
 func TestAuthConfig_ValidateRejectsNegative(t *testing.T) {
+	assert.Error(t, validateAuthConfig(&AuthConfig{SessionInactivityHours: -1}))
+	assert.NoError(t, validateAuthConfig(&AuthConfig{SessionInactivityHours: int(maxSessionLifeHours)}))
+	assert.ErrorContains(t, validateAuthConfig(&AuthConfig{SessionInactivityHours: int(maxSessionLifeHours + 1)}), "must not exceed")
 	assert.Error(t, validateAuthConfig(&AuthConfig{MaxSessionLifeHours: -1}))
 	assert.NoError(t, validateAuthConfig(&AuthConfig{MaxSessionLifeHours: 0}))
 	assert.NoError(t, validateAuthConfig(&AuthConfig{MaxSessionLifeHours: 720}))
@@ -97,4 +124,30 @@ func TestConfigInitRejectsOverflowingSessionLifetime(t *testing.T) {
 		))
 		assert.PanicsWithError(t, expectedError, func() { ConfigInit(configPath, false) })
 	})
+
+}
+
+func TestAuthConfig_EnvironmentCompatibility(t *testing.T) {
+	t.Run("legacy fallback", func(t *testing.T) {
+		t.Setenv("SEMAPHORE_AUTH_MAX_SESSION_LIFE_HOURS", "36")
+		cfg := &ConfigType{}
+		_, err := loadEnvironmentToObject(cfg)
+		require.NoError(t, err)
+		assert.Equal(t, 36*time.Hour, cfg.MaxSessionLife())
+	})
+	t.Run("canonical takes precedence including zero", func(t *testing.T) {
+		t.Setenv("SEMAPHORE_AUTH_MAX_SESSION_LIFE_HOURS", "36")
+		t.Setenv("SEMAPHORE_SESSION_MAX_LIFE_HOURS", "0")
+		cfg := &ConfigType{}
+		_, err := loadEnvironmentToObject(cfg)
+		require.NoError(t, err)
+		assert.Zero(t, cfg.MaxSessionLife())
+	})
+	for _, key := range []string{"SEMAPHORE_AUTH_MAX_SESSION_LIFE_HOURS", "SEMAPHORE_SESSION_MAX_LIFE_HOURS", "SEMAPHORE_SESSION_INACTIVITY_HOURS"} {
+		t.Run("invalid "+key, func(t *testing.T) {
+			t.Setenv(key, "invalid")
+			_, err := loadEnvironmentToObject(&ConfigType{})
+			assert.ErrorContains(t, err, key)
+		})
+	}
 }
