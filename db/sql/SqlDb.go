@@ -1060,6 +1060,14 @@ func (d *SqlDb) GetTaskStats(projectID int, templateID *int, unit db.TaskStatUni
 		q = q.Where("template_id=?", *templateID)
 	}
 
+	if filtered(filter.Viewer) {
+		where, args, visibilityErr := d.exactVisibleTasksWhere(projectID, filter.Viewer.UserID)
+		if visibilityErr != nil {
+			return nil, visibilityErr
+		}
+		q = q.Where(where, args...)
+	}
+
 	if filter.UserID != nil {
 		q = q.Where("user_id=?", *filter.UserID)
 	}

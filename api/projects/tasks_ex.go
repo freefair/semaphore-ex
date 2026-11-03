@@ -203,6 +203,20 @@ func (c *TaskController) refillVisibleWorkflowTaskPage(
 func (c *TaskController) WorkflowTaskAccessMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		task := helpers.GetFromContext(r, "task").(db.Task)
+		if task.WorkflowRunID == nil && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			user := helpers.UserFromContext(r)
+			if user == nil {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if !user.Admin {
+				context, err := c.store.GetTemplatePermissionContext(task.ProjectID, task.TemplateID, user.ID)
+				if err != nil || !context.EffectivePermissions.Can(db.CanReadTemplate) {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+			}
+		}
 		permission := pro_interfaces.PermissionViewWorkflow
 		if r.Method == http.MethodDelete {
 			permission = pro_interfaces.PermissionAdministerWorkflow

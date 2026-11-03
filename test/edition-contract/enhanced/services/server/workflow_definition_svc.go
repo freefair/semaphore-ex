@@ -38,15 +38,36 @@ func (s *workflowDefinitionService) List(projectID int, params db.RetrieveQueryP
 	if actor == nil {
 		return nil, db.ErrNotFound
 	}
-	workflows, err := s.repository.GetWorkflowTemplates(projectID, params)
+
+	queryParams := params
+	if !actor.Admin {
+		queryParams.Count = 0
+		queryParams.Offset = 0
+	}
+	workflows, err := s.repository.GetWorkflowTemplates(projectID, &db.Viewer{UserID: actor.ID, Admin: actor.Admin}, queryParams)
 	if err != nil || actor.Admin {
 		return workflows, err
 	}
-	state, err := pro_interfaces.ResolveWorkflowAuthorizationState(s.authorizationStore, projectID, actor.ID)
-	if err != nil {
-		return nil, db.ErrNotFound
+	visible := make([]db.WorkflowTemplate, 0, len(workflows))
+	for _, workflow := range workflows {
+		state, stateErr := pro_interfaces.ResolveWorkflowObjectAuthorizationState(s.authorizationStore, projectID, workflow.ID, actor.ID)
+		if stateErr != nil {
+			return nil, db.ErrNotFound
+		}
+		if pro_interfaces.AuthorizeWorkflowReadForState(workflow, state).Allowed {
+			visible = append(visible, workflow)
+		}
 	}
-	return pro_interfaces.FilterWorkflowTemplatesByAuthorizationState(workflows, state), nil
+	if params.Offset > 0 {
+		if params.Offset >= len(visible) {
+			return []db.WorkflowTemplate{}, nil
+		}
+		visible = visible[params.Offset:]
+	}
+	if params.Count > 0 && params.Count < len(visible) {
+		visible = visible[:params.Count]
+	}
+	return visible, nil
 }
 
 func (s *workflowDefinitionService) Get(projectID int, workflowID int, actors ...*db.User) (db.WorkflowTemplate, error) {
@@ -388,7 +409,7 @@ func (s *workflowDefinitionService) require(workflow db.WorkflowTemplate, actor 
 	if actor.Admin {
 		return nil
 	}
-	state, err := pro_interfaces.ResolveWorkflowAuthorizationState(s.authorizationStore, workflow.ProjectID, actor.ID)
+	state, err := pro_interfaces.ResolveWorkflowObjectAuthorizationState(s.authorizationStore, workflow.ProjectID, workflow.ID, actor.ID)
 	if err != nil || !pro_interfaces.AuthorizeWorkflowReadForState(workflow, state).Allowed {
 		return errors.New("workflow hidden")
 	}

@@ -400,8 +400,11 @@ export default {
     runId() {
       return parseInt(this.$route.params.runId, 10);
     },
+    item() {
+      return this.workflow;
+    },
     // A run can be stopped while it is still in progress (executing tasks or
-    // blocked on an approval) and the user may run project tasks.
+    // blocked on an approval) and the user may run the workflow.
     canStopRun() {
       if (!this.details) return false;
       return this.isActiveRunStatus(this.details.run.status)

@@ -31,6 +31,29 @@ describe('EditRoleForm', () => {
     });
   });
 
+  it('edits legacy project actions without reinterpreting EX workflow bits', () => {
+    const form = { item: { permissions: 128 }, permissions: {} };
+    EditRoleForm.watch.permissions.handler.call(form, { canRunProjectTasks: true });
+    expect(form.item.permissions).to.equal(129);
+    EditRoleForm.watch['item.permissions'].handler.call(form, 129);
+    expect(form.permissions).to.deep.equal({
+      canRunProjectTasks: true,
+      canUpdateProject: false,
+      canManageProjectResources: false,
+      canManageProjectUsers: false,
+    });
+  });
+
+  it('keeps bits the form does not know', () => {
+    const form = { item: { permissions: 1024 | 1 }, permissions: {} };
+    EditRoleForm.watch.permissions.handler.call(form, { canRunProjectTasks: false });
+    expect(form.item.permissions).to.equal(1024);
+
+    form.permissions = { canManageProjectUsers: true };
+    EditRoleForm.methods.beforeSave.call(form);
+    expect(form.item.permissions).to.equal(1032);
+  });
+
   it('starts a new role without permissions', () => {
     expect(EditRoleForm.methods.getNewItem.call({ projectId: null })).to.deep.equal({
       name: '', slug: '', permissions: 0, global_permissions: 0,

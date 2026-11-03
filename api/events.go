@@ -11,24 +11,16 @@ func getEvents(w http.ResponseWriter, r *http.Request, limit int) {
 	user := helpers.GetFromContext(r, "user").(*db.User)
 	projectObj, exists := helpers.GetOkFromContext(r, "project")
 
+	params := db.RetrieveQueryParams{Count: limit, Viewer: &db.Viewer{UserID: user.ID, Admin: user.Admin}}
 	var err error
 	var events []db.Event
 
 	if exists {
+		// The route's read_project check already admitted the member.
 		project := projectObj.(db.Project)
-
-		if !user.Admin { // check permissions to view events
-			_, err = helpers.Store(r).GetProjectUser(project.ID, user.ID)
-		}
-
-		if err != nil {
-			helpers.WriteError(w, err)
-			return
-		}
-
-		events, err = helpers.Store(r).GetEvents(project.ID, db.RetrieveQueryParams{Count: limit})
+		events, err = helpers.Store(r).GetEvents(project.ID, params)
 	} else {
-		events, err = helpers.Store(r).GetUserEvents(user.ID, db.RetrieveQueryParams{Count: limit})
+		events, err = helpers.Store(r).GetUserEvents(user.ID, params)
 	}
 
 	if err != nil {

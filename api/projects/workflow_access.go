@@ -92,7 +92,7 @@ func AuthorizeWorkflowRequest(
 	if !ok {
 		return false, false, errors.New("workflow identity resolver is unavailable")
 	}
-	state, err := pro_interfaces.ResolveWorkflowAuthorizationState(store, project.ID, user.ID)
+	state, err := pro_interfaces.ResolveWorkflowObjectAuthorizationState(store, project.ID, workflow.ID, user.ID)
 	if err != nil {
 		return false, false, err
 	}

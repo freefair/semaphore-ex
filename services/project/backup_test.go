@@ -2,6 +2,7 @@ package project
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/semaphoreui/semaphore/db/sql"
@@ -18,6 +19,8 @@ type testItem struct {
 }
 
 func TestBackupProject(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
 	util.Config = &util.ConfigType{
 		TmpPath: "/tmp",
 	}
@@ -147,6 +150,8 @@ func TestBackupProject(t *testing.T) {
 }
 
 func TestBackup_BackupSecretStorage(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
 	util.Config = &util.ConfigType{
 		TmpPath: "/tmp",
 	}
@@ -208,6 +213,7 @@ func TestBackup_BackupSecretStorage(t *testing.T) {
     "name": "Test 1234",
     "type": ""
   },
+  "permission_schema": "semaphore-ex",
   "repositories": [],
   "roles": [],
   "runners": [],
@@ -224,6 +230,7 @@ func TestBackup_BackupSecretStorage(t *testing.T) {
     }
   ],
   "templates": [],
+  "version": 4,
   "views": [],
   "workflows": []
 }`, str)
@@ -264,6 +271,8 @@ func TestBackup_BackupSecretStorage(t *testing.T) {
 // restore, BackupSchedule.Restore used to dereference the nil pointer and
 // crash the HTTP handler with a runtime nil-pointer panic.
 func TestBackup_RestoreScheduleWithoutTaskParams(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
 	util.Config = &util.ConfigType{
 		TmpPath: "/tmp",
 	}
@@ -405,6 +414,8 @@ func TestMakeUniqueNames(t *testing.T) {
 // backup/restore cycle. Without it a restored project silently loses them and
 // its tasks lose the credentials they reach other hosts with.
 func TestBackupProject_HostConfig(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
 	util.Config = &util.ConfigType{TmpPath: "/tmp"}
 
 	store := sql.InitConfigCreateTestStore()
@@ -489,6 +500,8 @@ func TestBackupProject_HostConfig(t *testing.T) {
 
 // A hand-edited backup must not get a mapping past the checks the API applies.
 func TestRestore_RejectsInvalidHostConfig(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
 	util.Config = &util.ConfigType{TmpPath: "/tmp"}
 	store := sql.InitConfigCreateTestStore()
 
@@ -612,6 +625,8 @@ func TestRestore_RejectsInvalidHostConfig(t *testing.T) {
 
 // Old backups may carry bits the application never checks: restore keeps the roles and drops the bits.
 func TestRestore_DropsUnknownPermissionBits(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
 	util.Config = &util.ConfigType{TmpPath: "/tmp"}
 	store := sql.InitConfigCreateTestStore()
 
@@ -619,10 +634,10 @@ func TestRestore_DropsUnknownPermissionBits(t *testing.T) {
   "keys": [{"name": "noop", "owner": "", "type": "none"}],
   "meta": {"name": "Restored Roles", "type": ""},
   "repositories": [{"git_branch": "master", "git_url": "git@example.com:test/test.git", "name": "Repo", "ssh_key": "noop"}],
-  "roles": [{"name": "ops", "permissions": 1048577}],
+  "roles": [{"name": "ops", "permissions": 1099511627777}],
   "templates": [{
     "app": "", "name": "Tpl", "playbook": "test.yml", "repository": "Repo", "type": "",
-    "roles": [{"role": "ops", "is_global": false, "permissions": 1048580}],
+    "roles": [{"role": "ops", "is_global": false, "permissions": 1099511627780}],
     "vaults": [], "view": null, "environments": []
   }]
 }`
@@ -638,7 +653,7 @@ func TestRestore_DropsUnknownPermissionBits(t *testing.T) {
 	roles, err := store.GetProjectRoles(project.ID)
 	require.NoError(t, err)
 	require.Len(t, roles, 1)
-	assert.Equal(t, db.CanRunProjectTasks, roles[0].Permissions)
+	assert.Equal(t, db.CanRunProjectTasks|db.CanReadProject|db.CanApproveWorkflows, roles[0].Permissions)
 
 	templates, err := store.GetTemplates(project.ID, db.TemplateFilter{}, db.RetrieveQueryParams{})
 	require.NoError(t, err)
@@ -701,6 +716,8 @@ func createBackupFixture(t *testing.T, store db.Store) (db.Project, db.Template)
 }
 
 func TestBackupKeepsBuiltinAndGlobalGrants(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
 	util.Config = &util.ConfigType{TmpPath: "/tmp"}
 	store := sql.InitConfigCreateTestStore()
 	workflows := proFactory.NewWorkflowStore(store)
@@ -718,8 +735,8 @@ func TestBackupKeepsBuiltinAndGlobalGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, backup.Templates, 1)
 	assert.ElementsMatch(t, []BackupTemplateRole{
-		{Role: "task_runner", RoleID: db.ProjectRoleID("builtin:task_runner"), IsGlobal: true},
-		{Role: "deployer", RoleID: global.ID, IsGlobal: true, Permissions: db.CanRunProjectTasks},
+		{Role: "task_runner", RoleID: db.ProjectRoleID("builtin:task_runner"), IsGlobal: true, AllowedPermissions: new(db.TemplatePermission(0)), DeniedPermissions: new(db.TemplatePermission(0))},
+		{Role: "deployer", RoleID: global.ID, IsGlobal: true, Permissions: db.CanRunProjectTasks, AllowedPermissions: new(db.CanRunTemplate), DeniedPermissions: new(db.TemplatePermission(0))},
 	}, backup.Templates[0].Roles)
 
 	backup.Meta.Name = "Grants restored"
@@ -737,6 +754,8 @@ func TestBackupKeepsBuiltinAndGlobalGrants(t *testing.T) {
 }
 
 func TestBackupRestoresGlobalGrantBySlugWhenRoleIDDiffers(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
 	util.Config = &util.ConfigType{TmpPath: "/tmp"}
 	source := sql.InitConfigCreateTestStore()
 	t.Cleanup(source.Close)
@@ -769,6 +788,8 @@ func TestBackupRestoresGlobalGrantBySlugWhenRoleIDDiffers(t *testing.T) {
 }
 
 func TestRestoreRegeneratesProjectRoleIDsAndRemapsTemplateGrants(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
 	util.Config = &util.ConfigType{TmpPath: "/tmp"}
 	store := sql.InitConfigCreateTestStore()
 	workflows := proFactory.NewWorkflowStore(store)
@@ -811,6 +832,8 @@ func TestRestoreRegeneratesProjectRoleIDsAndRemapsTemplateGrants(t *testing.T) {
 }
 
 func TestRestoreLegacyTemplateGrantWithoutRoleIDUsesRoleName(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
 	util.Config = &util.ConfigType{TmpPath: "/tmp"}
 	store := sql.InitConfigCreateTestStore()
 	workflows := proFactory.NewWorkflowStore(store)
@@ -849,6 +872,8 @@ func TestRestoreLegacyTemplateGrantWithoutRoleIDUsesRoleName(t *testing.T) {
 }
 
 func TestRestore_FailsOnUnknownGlobalGrant(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
 	util.Config = &util.ConfigType{TmpPath: "/tmp"}
 	store := sql.InitConfigCreateTestStore()
 	p, _ := createBackupFixture(t, store)
@@ -863,6 +888,8 @@ func TestRestore_FailsOnUnknownGlobalGrant(t *testing.T) {
 }
 
 func TestBackupJSONHasNoRoleInternals(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
 	util.Config = &util.ConfigType{TmpPath: "/tmp"}
 	store := sql.InitConfigCreateTestStore()
 	p, _ := createBackupFixture(t, store)
@@ -881,5 +908,102 @@ func TestBackupJSONHasNoRoleInternals(t *testing.T) {
 	assert.Equal(t, "local", doc.Roles[0]["id"], "the durable role ID survives a backup")
 	for _, key := range []string{"scope", "builtin", "slug"} {
 		assert.NotContains(t, doc.Roles[0], key)
+	}
+}
+
+// A file written before the workflow verbs carries roles and grants without them; restoring it gives them the
+// same bits the upgrade gives stored roles.
+func TestRestore_LiftsMasksOfAVersion2File(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
+	util.Config = &util.ConfigType{TmpPath: "/tmp"}
+	store := sql.InitConfigCreateTestStore()
+
+	payload := `{
+  "version": 2,
+  "keys": [{"name": "noop", "owner": "", "type": "none"}],
+  "meta": {"name": "Old Roles", "type": ""},
+  "repositories": [{"git_branch": "master", "git_url": "git@example.com:test/test.git", "name": "Repo", "ssh_key": "noop"}],
+  "roles": [{"name": "ops", "slug": "ops", "permissions": 5}],
+  "templates": [{
+    "app": "", "name": "Tpl", "playbook": "test.yml", "repository": "Repo", "type": "",
+    "roles": [{"slug": "ops", "permissions": 1}],
+    "vaults": [], "view": null, "environments": []
+  }]
+}`
+	backup := &BackupFormat{}
+	require.NoError(t, backup.Unmarshal(payload))
+	require.NoError(t, backup.Verify())
+
+	user, err := store.CreateUser(db.UserWithPwd{Pwd: "3412341234123", User: db.User{Username: "old", Name: "old", Email: "old@example.com", Admin: true}})
+	require.NoError(t, err)
+	project, err := backup.Restore(user, store, proFactory.NewWorkflowStore(store))
+	require.NoError(t, err)
+
+	roles, err := store.GetProjectRoles(project.ID)
+	require.NoError(t, err)
+	require.Len(t, roles, 1)
+	assert.Equal(t, db.CanRunProjectTasks|db.CanManageProjectResources|db.CanStartWorkflows|db.CanEditWorkflows|db.CanApproveWorkflows|db.CanReadProject|db.CanViewProjectResources|db.CanViewWorkflows, roles[0].Permissions, "5 lifted: run and approve workflows, edit workflows, read")
+
+	templates, err := store.GetTemplates(project.ID, db.TemplateFilter{}, db.RetrieveQueryParams{})
+	require.NoError(t, err)
+	require.Len(t, templates, 1)
+	perms, err := store.GetTemplateRoles(project.ID, templates[0].ID)
+	require.NoError(t, err)
+	require.Len(t, perms, 1)
+	assert.Equal(t, db.CanRunTemplate|db.CanReadTemplate, perms[0].AllowedPermissions, "a template grant gains only read")
+}
+
+// Version 3 files carry the workflow verbs but not read, version 4 files carry everything as written.
+func TestRestore_ReadBitByFileVersion(t *testing.T) {
+	previousConfig := util.Config
+	t.Cleanup(func() { util.Config = previousConfig })
+	util.Config = &util.ConfigType{TmpPath: "/tmp"}
+	tests := []struct {
+		version   int
+		roleMask  db.ProjectUserPermission
+		wantRole  db.ProjectUserPermission
+		wantGrant db.TemplatePermission
+	}{
+		{3, 0, db.CanReadProject | db.CanViewProjectResources | db.CanViewWorkflows, db.CanReadTemplate | db.CanRunTemplate},
+		{3, 1, db.CanRunProjectTasks | db.CanReadProject | db.CanViewProjectResources | db.CanViewWorkflows, db.CanReadTemplate | db.CanRunTemplate},
+		{4, 0, 0, db.CanRunTemplate},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("version %d mask %d", tt.version, tt.roleMask), func(t *testing.T) {
+			store := sql.InitConfigCreateTestStore()
+			payload := fmt.Sprintf(`{
+  "version": %d,
+  "keys": [{"name": "noop", "owner": "", "type": "none"}],
+  "meta": {"name": "Versioned", "type": ""},
+  "repositories": [{"git_branch": "master", "git_url": "git@example.com:test/test.git", "name": "Repo", "ssh_key": "noop"}],
+  "roles": [{"name": "ops", "slug": "ops", "permissions": %d}],
+  "templates": [{
+    "app": "", "name": "Tpl", "playbook": "test.yml", "repository": "Repo", "type": "",
+    "roles": [{"slug": "ops", "permissions": 1}],
+    "vaults": [], "view": null, "environments": []
+  }]
+}`, tt.version, tt.roleMask)
+			backup := &BackupFormat{}
+			require.NoError(t, backup.Unmarshal(payload))
+			require.NoError(t, backup.Verify())
+			user, err := store.CreateUser(db.UserWithPwd{Pwd: "3412341234123", User: db.User{Username: "v", Name: "v", Email: "v@example.com", Admin: true}})
+			require.NoError(t, err)
+
+			project, err := backup.Restore(user, store, proFactory.NewWorkflowStore(store))
+			require.NoError(t, err)
+
+			roles, err := store.GetProjectRoles(project.ID)
+			require.NoError(t, err)
+			require.Len(t, roles, 1)
+			assert.Equal(t, tt.wantRole, roles[0].Permissions)
+			templates, err := store.GetTemplates(project.ID, db.TemplateFilter{}, db.RetrieveQueryParams{})
+			require.NoError(t, err)
+			require.Len(t, templates, 1)
+			perms, err := store.GetTemplateRoles(project.ID, templates[0].ID)
+			require.NoError(t, err)
+			require.Len(t, perms, 1)
+			assert.Equal(t, tt.wantGrant, perms[0].AllowedPermissions)
+		})
 	}
 }

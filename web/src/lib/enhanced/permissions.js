@@ -15,6 +15,8 @@ export const ENHANCED_USER_PERMISSIONS = {
   updateTaskGroups: 131072,
   deleteTaskGroups: 262144,
   shareTaskGroups: 524288,
+  readProject: 1048576,
+  approveWorkflows: 2097152,
 };
 
 export const GLOBAL_PERMISSIONS = {
@@ -30,6 +32,16 @@ export const GLOBAL_PERMISSIONS = {
 };
 
 export const ENHANCED_PROJECT_ROLE_PERMISSIONS = [{
+  permission: ENHANCED_USER_PERMISSIONS.readProject,
+  label: 'canReadProject',
+  color: 'grey',
+  textColor: 'white',
+}, {
+  permission: ENHANCED_USER_PERMISSIONS.approveWorkflows,
+  label: 'canApproveWorkflows',
+  color: 'deep-purple',
+  textColor: 'white',
+}, {
   permission: ENHANCED_USER_PERMISSIONS.viewProjectResources,
   label: 'canViewProjectResources',
   color: 'purple',

@@ -47,7 +47,7 @@ func TestTemplatePermissionAPIEnforcesDenyAllowInheritanceAndBoundedProvenance(t
 	readResponse := serveTemplatePermissionHandler(
 		store, project, template, user, http.MethodGet, readHandler,
 	)
-	assert.Equal(t, http.StatusForbidden, readResponse.Code)
+	assert.Equal(t, http.StatusNotFound, readResponse.Code)
 	assert.False(t, readReached)
 
 	runReached := false
@@ -69,7 +69,7 @@ func TestTemplatePermissionAPIEnforcesDenyAllowInheritanceAndBoundedProvenance(t
 	detailResponse := serveTemplatePermissionHandler(
 		store, project, template, user, http.MethodGet, detailHandler,
 	)
-	assert.Equal(t, http.StatusForbidden, detailResponse.Code)
+	assert.Equal(t, http.StatusNotFound, detailResponse.Code)
 	assert.NotContains(t, detailResponse.Body.String(), template.Name)
 
 	controller := NewTemplateController(store, store)
@@ -172,6 +172,7 @@ func TestGetTemplateRefsDoesNotMutateTemplate(t *testing.T) {
 	request = helpers.SetContextValue(request, "store", store)
 	request = helpers.SetContextValue(request, "project", project)
 	request = helpers.SetContextValue(request, "template", template)
+	request = helpers.SetContextValue(request, "user", &db.User{Admin: true})
 	response := httptest.NewRecorder()
 	GetTemplateRefs(response, request)
 	require.Equal(t, http.StatusOK, response.Code)
@@ -445,4 +446,56 @@ func serveTemplateRoleMutation(
 	response := httptest.NewRecorder()
 	handler(response, request)
 	return response
+}
+
+func TestTemplatePermissionUpdateAcceptsLegacyProjectionFromGet(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, template := createTemplatePermissionFixture(t, store)
+	role, err := store.CreateProjectRole(db.Role{ID: "template-roundtrip", Slug: "template-roundtrip", Name: "Roundtrip", ProjectID: &project.ID, Permissions: db.CanRunProjectTasks, Revision: 1})
+	require.NoError(t, err)
+	grant, err := store.CreateTemplateRole(db.TemplateRolePerm{ProjectID: project.ID, TemplateID: template.ID, RoleID: &role.ID, AllowedPermissions: db.CanReadTemplate | db.CanRunTemplate})
+	require.NoError(t, err)
+	controller := NewTemplateController(store, store)
+	get := serveTemplateRoleMutation(t, store, project, template, http.MethodGet, "/perms/1", nil, map[string]string{"perm_id": strconv.Itoa(grant.ID)}, controller.GetTemplatePerm)
+	require.Equal(t, http.StatusOK, get.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(get.Body.Bytes(), &body))
+	assert.Equal(t, float64(db.CanViewProjectResources|db.CanRunProjectTasks), body["permissions"])
+	body["allowed_permissions"] = db.CanReadTemplate
+	body["denied_permissions"] = db.CanRunTemplate
+	put := serveTemplateRoleMutation(t, store, project, template, http.MethodPut, "/perms/1", body, map[string]string{"perm_id": strconv.Itoa(grant.ID)}, controller.UpdateTemplatePerm)
+	require.Equal(t, http.StatusOK, put.Code, put.Body.String())
+	stored, err := store.GetTemplateRole(project.ID, template.ID, grant.ID)
+	require.NoError(t, err)
+	assert.Equal(t, db.CanReadTemplate, stored.AllowedPermissions)
+	assert.Equal(t, db.CanRunTemplate, stored.DeniedPermissions)
+	user, err := store.CreateUserWithoutPassword(db.User{Username: "roundtrip-inherit", Name: "Roundtrip", Email: "roundtrip-inherit@example.invalid"})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUser(db.ProjectUser{ProjectID: project.ID, UserID: user.ID, RoleID: &role.ID, Revision: 1})
+	require.NoError(t, err)
+	cleared := map[string]any{"role_id": role.ID, "role_slug": role.Slug, "revision": stored.Revision, "permissions": 0, "allowed_permissions": 0, "denied_permissions": 0}
+	put = serveTemplateRoleMutation(t, store, project, template, http.MethodPut, "/perms/1", cleared, map[string]string{"perm_id": strconv.Itoa(grant.ID)}, controller.UpdateTemplatePerm)
+	require.Equal(t, http.StatusOK, put.Code, put.Body.String())
+	effective, err := store.GetTemplatePermissionContext(project.ID, template.ID, user.ID)
+	require.NoError(t, err)
+	assert.True(t, effective.EffectivePermissions.Can(db.CanRunTemplate), "clearing overrides restores inherited run permission")
+}
+
+func TestTemplatePermissionRejectsUnknownAndConflictingExplicitMasks(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, template := createTemplatePermissionFixture(t, store)
+	controller := NewTemplateController(store, store)
+	for _, tt := range []struct {
+		name        string
+		allow, deny db.TemplatePermission
+	}{
+		{"unknown allow", 16, 0}, {"unknown deny", 0, 16}, {"allow and deny", db.CanRunTemplate, db.CanRunTemplate},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			response := serveTemplateRoleMutation(t, store, project, template, http.MethodPost, "/perms", map[string]any{"role_slug": "guest", "allowed_permissions": tt.allow, "denied_permissions": tt.deny}, nil, controller.AddTemplatePerm)
+			assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+		})
+	}
 }

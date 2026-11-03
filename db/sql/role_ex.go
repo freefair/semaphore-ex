@@ -115,6 +115,13 @@ func (d *SqlDb) DeleteProjectRole(projectID int, roleID db.ProjectRoleID, expect
 	if mapped > 0 {
 		return db.ErrProjectRoleAssigned
 	}
+	grants, err := tx.SelectInt(d.PrepareQuery("select count(*) from project__workflow_role where project_id=? and role_id=?"), projectID, roleID)
+	if err != nil {
+		return err
+	}
+	if grants > 0 {
+		return db.ErrProjectRoleAssigned
+	}
 	result, err := tx.Exec(d.PrepareQuery(
 		"delete from `role` where project_id=? and role_id=? and revision=?"),
 		projectID, roleID, expectedRevision)

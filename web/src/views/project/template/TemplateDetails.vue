@@ -70,9 +70,7 @@
             <v-list-item-content>
               <v-list-item-title>{{ $t('repository2') }}</v-list-item-title>
               <v-list-item-subtitle>
-                {{ (
-                  repositories.find((x) => x.id === template.repository_id) || {name: '—'}
-                ).name }}
+                {{ repositoryName }}
               </v-list-item-subtitle>
             </v-list-item-content>
           </v-list-item>
@@ -80,7 +78,7 @@
       </v-col>
     </v-row>
 
-    <TaskStats :project-id="template.project_id" :template-id="template.id" />
+    <TaskStats :project-id="template.project_id" :template-id="template.id" :can-read="canRead" />
 
   </v-container>
 
@@ -101,6 +99,7 @@ export default {
     repositories: Array,
     inventory: Array,
     environment: Array,
+    canRead: Boolean,
   },
 
   data() {
@@ -126,6 +125,10 @@ export default {
   },
 
   computed: {
+    repositoryName() {
+      return (this.repositories.find((x) => x.id === this.template.repository_id) || { name: '—' }).name;
+    },
+
     environmentNames() {
       if (!this.template || !Array.isArray(this.template.environment_ids)
           || this.template.environment_ids.length === 0) {

@@ -159,6 +159,18 @@ func main() {
 		addCapabilities([]string{"project", "template"})
 	})
 
+	h.Before("template > /api/project/{project_id}/templates/{template_id}/perms > Get template permissions > 200 > application/json", capabilityWrapper("template"))
+	h.Before("template > /api/project/{project_id}/templates/{template_id}/perms > Grant a role on the template > 201 > application/json", func(t *trans.Transaction) {
+		addCapabilities([]string{"template"})
+		t.Request.Body = "{\"role_slug\": \"task_runner\", \"allowed_permissions\": 3, \"denied_permissions\": 0}"
+	})
+	h.Before("template > /api/project/{project_id}/templates/{template_id}/perms/{perm_id} > Get one template permission > 200 > application/json", capabilityWrapper("template_perm"))
+	h.Before("template > /api/project/{project_id}/templates/{template_id}/perms/{perm_id} > Change the permissions of a grant > 200 > application/json", func(t *trans.Transaction) {
+		addCapabilities([]string{"template_perm"})
+		t.Request.Body = "{\"role_id\": \"builtin:task_runner\", \"allowed_permissions\": 15, \"denied_permissions\": 0, \"revision\": 1}"
+	})
+	h.Before("template > /api/project/{project_id}/templates/{template_id}/perms/{perm_id} > Remove a grant > 204 > application/json", capabilityWrapper("template_perm"))
+
 	// Global-role routes are aliases over the selected EX role authority. They
 	// remain executable in the full product without any subscription gate.
 	h.Before("user > /api/users/{user_id}/global-roles > Assigns a global role to the user > 201 > application/json", func(transaction *trans.Transaction) {
@@ -233,6 +245,18 @@ func main() {
 		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/revisions{?count,before} > Get workflow revisions > 200 > application/json", capabilityWrapper("workflow"))
 		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/revisions/{revision_id} > Get workflow revision > 200 > application/json", capabilityWrapper("workflow"))
 		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/run > Run workflow > 201 > application/json", capabilityWrapper("workflow"))
+		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/perms > Get workflow permissions > 200 > application/json", capabilityWrapper("workflow"))
+		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/perms/{perm_id} > Get one workflow permission > 200 > application/json", capabilityWrapper("workflow_perm"))
+
+		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/perms > Grant a role on the workflow > 201 > application/json", func(t *trans.Transaction) {
+			addCapabilities([]string{"workflow"})
+			t.Request.Body = "{\"role_id\": \"builtin:task_runner\", \"permissions\": 1048704}"
+		})
+		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/perms/{perm_id} > Change the permissions of a grant > 204 > application/json", func(t *trans.Transaction) {
+			addCapabilities([]string{"workflow_perm"})
+			t.Request.Body = "{\"role_id\": \"builtin:task_runner\", \"permissions\": 1048768}"
+		})
+		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/perms/{perm_id} > Remove a grant > 204 > application/json", capabilityWrapper("workflow_perm"))
 		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/runs > Run workflow > 201 > application/json", capabilityWrapper("workflow"))
 		h.Before("workflow > /api/project/{project_id}/workflows/{workflow_id}/runs > Run workflow > 201 > application/json", func(t *trans.Transaction) {
 			t.Request.Body = "{\"environment\":{\"wf_var\":\"from-dredd\"}}"
@@ -269,6 +293,11 @@ func main() {
 			"workflow > /api/project/{project_id}/workflows/{workflow_id}/revisions{?count,before} > Get workflow revisions > 200 > application/json",
 			"workflow > /api/project/{project_id}/workflows/{workflow_id}/revisions/{revision_id} > Get workflow revision > 200 > application/json",
 			"workflow > /api/project/{project_id}/workflows/{workflow_id}/run > Run workflow > 201 > application/json",
+			"workflow > /api/project/{project_id}/workflows/{workflow_id}/perms > Get workflow permissions > 200 > application/json",
+			"workflow > /api/project/{project_id}/workflows/{workflow_id}/perms > Grant a role on the workflow > 201 > application/json",
+			"workflow > /api/project/{project_id}/workflows/{workflow_id}/perms/{perm_id} > Get one workflow permission > 200 > application/json",
+			"workflow > /api/project/{project_id}/workflows/{workflow_id}/perms/{perm_id} > Change the permissions of a grant > 204 > application/json",
+			"workflow > /api/project/{project_id}/workflows/{workflow_id}/perms/{perm_id} > Remove a grant > 204 > application/json",
 			"workflow > /api/project/{project_id}/workflows/{workflow_id}/runs > Run workflow > 201 > application/json",
 			"workflow > /api/project/{project_id}/workflows/{workflow_id}/runs > Get workflow runs > 200 > application/json",
 			"workflow > /api/project/{project_id}/workflows/{workflow_id}/runs/{run_id} > Get workflow run details > 200 > application/json",

@@ -119,6 +119,8 @@ export default {
 
     beforeSave() {
       if (this.item) {
+        // Explicit allow/deny masks supersede the legacy compatibility projection.
+        this.item.permissions = 0;
         this.item.template_id = parseInt(this.templateId, 10);
         this.item.project_id = this.projectId;
       }

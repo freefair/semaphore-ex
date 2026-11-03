@@ -130,7 +130,7 @@ func TestWorkflowSurveyRoundTripPreservesVersionAndRunInputs(t *testing.T) {
 	reloaded, err := repository.GetWorkflowTemplate(projectID, created.ID)
 	require.NoError(t, err)
 	assert.Equal(t, created.SurveyVars, reloaded.SurveyVars)
-	listed, err := repository.GetWorkflowTemplates(projectID, db.RetrieveQueryParams{})
+	listed, err := repository.GetWorkflowTemplates(projectID, nil, db.RetrieveQueryParams{})
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
 	assert.Equal(t, created.SurveyVars, listed[0].SurveyVars)

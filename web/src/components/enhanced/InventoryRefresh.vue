@@ -40,6 +40,7 @@
       :user-permissions="userPermissions"
       :is-admin="isAdmin"
       :source-task="sourceTask"
+      :can-read="canReadProject"
       @save="$emit('started', $event.item)"
     />
   </div>
@@ -48,6 +49,7 @@
 import axios from 'axios';
 import NewTaskDialog from '@/components/NewTaskDialog.vue';
 import { getErrorMessage } from '@/lib/error';
+import { USER_PERMISSIONS } from '@/lib/constants';
 
 export default {
   components: { NewTaskDialog },
@@ -67,6 +69,10 @@ export default {
     error: null,
   }),
   computed: {
+    canReadProject() {
+      return this.isAdmin
+        || ((this.userPermissions || 0) & USER_PERMISSIONS.readProject) !== 0;
+    },
     sourceTask() {
       return {
         inventory_id: this.inventoryId,

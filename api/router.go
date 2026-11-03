@@ -131,6 +131,7 @@ func Route(
 	crossProjectTemplateController := proProjects.NewCrossProjectTemplateController(proServer.NewCrossProjectTemplateService(store, workflowStore))
 	workflowTriggerController := proProjects.NewWorkflowTriggerController(workflowTriggerService)
 	workflowMiddlewareController := projects.NewWorkflowController(workflowStore)
+	workflowPermController := projects.NewWorkflowPermController(store)
 	backupController := projects.NewBackupController(workflowStore)
 	userController := NewUserController()
 	usersController := NewUsersController()
@@ -555,14 +556,29 @@ func Route(
 
 	//
 	// Project resources CRUD
+	//
+	// Any member reads these: the lists answer only what the member may see
+	projectMemberAPI := authenticatedAPI.PathPrefix("/project/{project_id}").Subrouter()
+	projectMemberAPI.Use(projects.ProjectMiddleware)
+	projectMemberAPI.Path("/role").HandlerFunc(projects.GetUserRole).Methods("GET", "HEAD")
+	projectMemberAPI.Path("/tasks").HandlerFunc(taskController.GetAllTasks).Methods("GET", "HEAD")
+	projectMemberAPI.HandleFunc("/tasks/last", taskController.GetLastTasks).Methods("GET", "HEAD")
+	projectMemberAPI.Path("/stats").HandlerFunc(taskController.GetTaskStats).Methods("GET", "HEAD")
+	projectMemberAPI.Path("/templates").HandlerFunc(projects.GetTemplates).Methods("GET", "HEAD")
+	projectMemberAPI.Path("/workflows").Handler(workflowAudit(http.HandlerFunc(workflowController.GetWorkflows))).Methods("GET", "HEAD")
+	projectMemberAPI.Path("/views").HandlerFunc(projects.GetViews).Methods("GET", "HEAD")
+	projectMemberAPI.Path("/roles/all").HandlerFunc(rolesController.GetProjectAndGlobalRoles).Methods("GET", "HEAD")
+
+	projectMemberViews := projectMemberAPI.PathPrefix("/views").Subrouter()
+	projectMemberViews.Use(projects.ViewMiddleware)
+	projectMemberViews.HandleFunc("/{view_id}/templates", projects.GetViewTemplates).Methods("GET", "HEAD")
+
 	projectUserAPI := authenticatedAPI.PathPrefix("/project/{project_id}").Subrouter()
 	projectUserAPI.Use(
 		projects.ProjectMiddleware,
 		EnhancedProjectPermissionAuditMiddleware(auditFacade),
 		projects.GetMustCanMiddleware(db.CanManageProjectResources),
 	)
-
-	projectUserAPI.Path("/role").HandlerFunc(projects.GetUserRole).Methods("GET", "HEAD")
 
 	projectUserAPI.Path("/events").HandlerFunc(getAllEvents).Methods("GET", "HEAD")
 	projectUserAPI.HandleFunc("/events/last", getLastEvents).Methods("GET", "HEAD")
@@ -596,11 +612,6 @@ func Route(
 	projectWorkflowCollectionAPI := authenticatedAPI.PathPrefix("/project/{project_id}/workflows").Subrouter()
 	projectWorkflowCollectionAPI.Use(projects.ProjectMiddleware, workflowAudit)
 	projectWorkflowCollectionAPI.Path("").Handler(
-		projects.WorkflowProjectPermissionMiddleware(pro_interfaces.PermissionViewWorkflow)(
-			http.HandlerFunc(workflowController.GetWorkflows),
-		),
-	).Methods("GET", "HEAD")
-	projectWorkflowCollectionAPI.Path("").Handler(
 		projects.WorkflowProjectPermissionMiddleware(pro_interfaces.PermissionEditWorkflow)(
 			http.HandlerFunc(workflowController.AddWorkflow),
 		),
@@ -615,7 +626,6 @@ func Route(
 	projectUserAPI.Path("/schedules").HandlerFunc(projects.AddSchedule).Methods("POST")
 	projectUserAPI.Path("/schedules/validate").HandlerFunc(projects.ValidateScheduleCronFormat).Methods("POST")
 
-	projectUserAPI.Path("/views").HandlerFunc(projects.GetViews).Methods("GET", "HEAD")
 	projectUserAPI.Path("/views").HandlerFunc(projects.AddView).Methods("POST")
 	projectUserAPI.Path("/views/positions").HandlerFunc(projects.SetViewPositions).Methods("POST")
 
@@ -836,7 +846,7 @@ func Route(
 	projectTmplManagement.Path("/{template_id}/tasks/last").Handler(
 		templateRead(http.HandlerFunc(taskController.GetLastTasks))).Methods("GET")
 	projectTmplManagement.Path("/{template_id}/schedules").Handler(
-		templateRead(http.HandlerFunc(projects.GetTemplateSchedules))).Methods("GET")
+		templateRead(projects.GetMustHaveBaseProjectPermissionMiddleware(db.CanReadProject)(http.HandlerFunc(projects.GetTemplateSchedules)))).Methods("GET")
 	projectTmplManagement.Path("/{template_id}/stats").Handler(
 		templateRead(http.HandlerFunc(taskController.GetTaskStats))).Methods("GET")
 	projectTmplManagement.Path("/{template_id}/permissions/effective").Handler(
@@ -900,6 +910,12 @@ func Route(
 	projectWorkflowApprovalInboxAPI := authenticatedAPI.PathPrefix("/project/{project_id}/workflow-approvals").Subrouter()
 	projectWorkflowApprovalInboxAPI.Use(projects.ProjectMiddleware, workflowAudit)
 	projectWorkflowApprovalInboxAPI.HandleFunc("", workflowController.GetWorkflowApprovalInbox).Methods("GET", "HEAD")
+
+	projectWorkflowManagement.Handle("/{workflow_id}/perms", workflowAdmin(http.HandlerFunc(workflowPermController.GetWorkflowPerms))).Methods("GET")
+	projectWorkflowManagement.Handle("/{workflow_id}/perms", workflowAdmin(http.HandlerFunc(workflowPermController.AddWorkflowPerm))).Methods("POST")
+	projectWorkflowManagement.Handle("/{workflow_id}/perms/{perm_id}", workflowAdmin(http.HandlerFunc(workflowPermController.GetWorkflowPerm))).Methods("GET")
+	projectWorkflowManagement.Handle("/{workflow_id}/perms/{perm_id}", workflowAdmin(http.HandlerFunc(workflowPermController.UpdateWorkflowPerm))).Methods("PUT")
+	projectWorkflowManagement.Handle("/{workflow_id}/perms/{perm_id}", workflowAdmin(http.HandlerFunc(workflowPermController.DeleteWorkflowPerm))).Methods("DELETE")
 
 	projectWorkflowRunAPI := authenticatedAPI.PathPrefix("/project/{project_id}/workflows").Subrouter()
 	projectWorkflowRunAPI.Use(projects.ProjectMiddleware, workflowMiddlewareController.WorkflowsMiddleware, workflowAudit)
@@ -965,7 +981,6 @@ func Route(
 	projectViewManagement.HandleFunc("/{view_id}", projects.GetViews).Methods("GET", "HEAD")
 	projectViewManagement.HandleFunc("/{view_id}", projects.UpdateView).Methods("PUT")
 	projectViewManagement.HandleFunc("/{view_id}", projects.RemoveView).Methods("DELETE")
-	projectViewManagement.HandleFunc("/{view_id}/templates", projects.GetViewTemplates).Methods("GET", "HEAD")
 
 	projectIntegrationsAliasAPI := projectUserAPI.PathPrefix("/integrations").Subrouter()
 	projectIntegrationsAliasAPI.Use(projects.ProjectMiddleware)

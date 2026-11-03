@@ -8,6 +8,7 @@ const deferred = () => {
   return { promise, resolve, reject };
 };
 const host = () => ({
+  canRead: true,
   repositoryId: 1,
   item: { git_branch: 'main' },
   app: 'terraform',

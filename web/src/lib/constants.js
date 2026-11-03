@@ -28,6 +28,9 @@ export const TEMPLATE_TYPE_ACTION_TITLES = {
 };
 
 export const USER_PERMISSIONS = {
+  readProject: 1048576,
+  runWorkflows: 128,
+  approveWorkflows: 2097152,
   runProjectTasks: 1,
   updateProject: 2,
   manageProjectResources: 4,
@@ -39,22 +42,22 @@ export const USER_ROLES = [{
   slug: 'owner',
   builtin: true,
   name: 'Owner',
-  permissions: 1048575,
+  permissions: 4194303,
 }, {
   slug: 'manager',
   builtin: true,
   name: 'Manager',
-  permissions: 1048565,
+  permissions: 4194293,
 }, {
   slug: 'task_runner',
   builtin: true,
   name: 'Task Runner',
-  permissions: 36273,
+  permissions: 3182001,
 }, {
   slug: 'guest',
   builtin: true,
   name: 'Guest',
-  permissions: 32816,
+  permissions: 3178544,
 }];
 
 export const MATCHER_TYPE_TITLES = {
@@ -297,6 +300,20 @@ export const APP_FIELDS = {
 };
 
 export const ROLE_PERMISSIONS = {
+  workflow: [
+    {
+      permission: 1048576, label: 'canSeeWorkflow', color: 'grey', textColor: 'white',
+    },
+    {
+      permission: 128, label: 'canRunWorkflow', color: 'teal', textColor: 'white',
+    },
+    {
+      permission: 64, label: 'canEditWorkflow', color: 'indigo', textColor: 'white',
+    },
+    {
+      permission: 2097152, label: 'canApproveWorkflow', color: 'deep-purple', textColor: 'white',
+    },
+  ],
   default: [{
     permission: 1,
     label: 'canRunProjectTasks',

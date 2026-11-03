@@ -34,6 +34,7 @@
       @save="loadItems()"
       :features="features"
       :jwt="jwt"
+      :can-read="can(USER_PERMISSIONS.readProject)"
     ></EditTemplateDialog>
 
     <NewTaskDialog
@@ -45,6 +46,7 @@
       :project-id="projectId"
       :template="template"
       :template-id="itemId"
+      :can-read="can(USER_PERMISSIONS.readProject)"
     />
 
     <v-toolbar flat>
@@ -63,7 +65,7 @@
             v-on="on"
             color="primary"
             class="mr-1 pr-2"
-            v-if="can(USER_PERMISSIONS.manageProjectResources)"
+            v-if="canCreate"
             :disabled="!isAdmin && appsMixin.activeAppIds.length === 0"
           >
             {{ $t('newTemplate') }}
@@ -249,7 +251,7 @@
       <template v-slot:item.actions="{ item }">
         <v-btn-toggle dense :value-comparator="() => false">
           <v-btn
-            v-if="canRun(item)"
+            v-if="can(USER_PERMISSIONS.runProjectTasks, item)"
             @click="createTask(item.id)"
           >
             <v-icon>mdi-play</v-icon>
@@ -269,6 +271,7 @@
             :template="item"
             :limit="5"
             :hide-footer="true"
+            :can-read="can(USER_PERMISSIONS.readProject)"
           />
         </td>
       </template>
@@ -379,6 +382,12 @@ export default {
   },
 
   computed: {
+
+    // A new template needs an inventory and a repository, which only project read can list.
+    canCreate() {
+      return this.can(this.USER_PERMISSIONS.manageProjectResources)
+        && this.can(this.USER_PERMISSIONS.readProject);
+    },
 
     viewId() {
       if (/^-?\d+$/.test(this.$route.params.viewId)) {
@@ -550,22 +559,6 @@ export default {
       });
     },
 
-    canRun(item) {
-      if (this.isAdmin) {
-        return true;
-      }
-
-      const perm = this.USER_PERMISSIONS.runProjectTasks;
-
-      if (item.permissions != null) {
-        // eslint-disable-next-line no-bitwise
-        return (item.permissions & perm) === perm;
-      }
-
-      // eslint-disable-next-line no-bitwise
-      return (this.userPermissions & perm) === perm;
-    },
-
     createTask(itemId) {
       this.itemId = itemId;
       this.newTaskDialog = true;
@@ -627,15 +620,16 @@ export default {
     },
 
     async loadData() {
+      const canRead = this.can(this.USER_PERMISSIONS.readProject);
       [
         this.inventory,
         this.environment,
         this.repositories,
       ] = await Promise.all([
-        this.loadProjectResources('inventory'),
-        this.loadProjectResources('environment'),
-        // eslint-disable-next-line no-bitwise
-        this.isAdmin || (this.userPermissions & this.USER_PERMISSIONS.viewProjectResources)
+        canRead ? this.loadProjectResources('inventory') : [],
+        canRead ? this.loadProjectResources('environment') : [],
+        canRead && (this.isAdmin
+          || (this.userPermissions & this.USER_PERMISSIONS.viewProjectResources))
           ? this.loadProjectResources('repositories') : [],
       ]);
     },

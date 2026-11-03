@@ -81,6 +81,12 @@
       <v-tab :to="`/project/${projectId}/workflows/${itemId}/stats`">
         {{ $t('workflowStats') }}
       </v-tab>
+      <v-tab
+        v-if="canAdminister"
+        :to="`/project/${projectId}/workflows/${itemId}/perms`"
+      >
+        {{ $t('Permissions') }}
+      </v-tab>
     </v-tabs>
 
     <v-divider style="margin-top: -1px;" />
@@ -88,6 +94,8 @@
     <router-view
       :project-id="projectId"
       :workflow="item"
+      :features="features"
+      :is-admin="isAdmin"
     ></router-view>
   </div>
 </template>
@@ -118,6 +126,7 @@ export default {
   props: {
     projectId: Number,
     systemInfo: Object,
+    features: Object,
   },
 
   data() {

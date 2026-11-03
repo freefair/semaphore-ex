@@ -269,7 +269,7 @@ func (service *workflowFileArtifactService) authorizeWorkflowRun(projectID int, 
 	if user.Admin {
 		return run, pro_interfaces.WorkflowAuthorizationState{}, nil
 	}
-	state, err := pro_interfaces.ResolveWorkflowAuthorizationState(service.identityStore, projectID, user.ID)
+	state, err := pro_interfaces.ResolveWorkflowObjectAuthorizationState(service.identityStore, projectID, run.DefinitionSnapshot.ID, user.ID)
 	if err != nil || !pro_interfaces.AuthorizeWorkflowReadForState(run.DefinitionSnapshot, state).Allowed {
 		return db.WorkflowRun{}, pro_interfaces.WorkflowAuthorizationState{}, pro_interfaces.ErrWorkflowPermissionDenied
 	}

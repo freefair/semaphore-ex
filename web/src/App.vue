@@ -47,6 +47,7 @@
       :project-id="projectId"
       :item-id="taskId"
       :system-info="systemInfo"
+      :can-read="canReadProject"
     />
 
     <EditDialog
@@ -962,6 +963,7 @@ import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/app';
 
 import axios from 'axios';
 import { getErrorMessage } from '@/lib/error';
+import { USER_PERMISSIONS } from '@/lib/constants';
 import EditDialog from '@/components/EditDialog.vue';
 import ProjectForm from '@/components/ProjectForm.vue';
 import UserForm from '@/components/UserForm.vue';
@@ -1185,10 +1187,17 @@ export default {
       return `/project/${this.projectId}/templates`;
     },
 
+    canReadProject() {
+      return (this.user && this.user.admin)
+        || (((this.userRole || {}).permissions || 0) & USER_PERMISSIONS.readProject) !== 0;
+    },
+
     navItems() {
       if (!this.project) return [];
       const base = `/project/${this.projectId}`;
       const items = [];
+      // Without read_project only the templates and workflows granted to the member are there.
+      const canRead = this.canReadProject;
 
       if (this.project.type === '') {
         items.push(
@@ -1206,6 +1215,11 @@ export default {
             to: `${base}/workflows`,
             testId: 'sidebar-workflows',
           },
+        );
+      }
+
+      if (this.project.type === '' && canRead) {
+        items.push(
           {
             key: 'schedule',
             icon: 'mdi-clock-outline',
@@ -1263,15 +1277,17 @@ export default {
         );
       }
 
-      items.push({
-        key: 'team',
-        icon: 'mdi-account-multiple',
-        title: this.$t('team'),
-        to: `${base}/team`,
-        testId: 'sidebar-team',
-      });
+      if (canRead) {
+        items.push({
+          key: 'team',
+          icon: 'mdi-account-multiple',
+          title: this.$t('team'),
+          to: `${base}/team`,
+          testId: 'sidebar-team',
+        });
+      }
 
-      if (this.project.type === '') {
+      if (this.project.type === '' && canRead) {
         items.push({
           key: 'runners',
           icon: 'mdi-cogs',

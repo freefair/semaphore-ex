@@ -5,9 +5,11 @@ const enhancedMethods = {
     await Promise.all([this.loadRoles(), this.loadEffectivePermissions()]);
   },
   getDeleteItemUrl(item) {
-    return `${this.getSingleItemUrl()}?revision=${encodeURIComponent(item.revision)}`;
+    return this.scope === 'workflow' ? this.getSingleItemUrl()
+      : `${this.getSingleItemUrl()}?revision=${encodeURIComponent(item.revision)}`;
   },
   async loadEffectivePermissions() {
+    if (this.scope === 'workflow') { this.effectivePermissions = null; return; }
     const response = await axios.get(
       `/api/project/${this.projectId}/templates/${this.templateId}/permissions/effective`,
     );

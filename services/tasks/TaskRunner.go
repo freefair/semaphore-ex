@@ -53,6 +53,7 @@ type TaskRunner struct {
 	currentOutput *db.TaskOutput
 	currentState  any
 
+	// users is populated only for the explicit project test-alert operation.
 	users          []int
 	alert          bool
 	alertChat      *string
@@ -738,32 +739,6 @@ func (t *TaskRunner) populateDetails() error {
 
 	t.alert = project.Alert
 	t.alertChat = project.AlertChat
-
-	// get project users
-	projectUsers, err := t.pool.store.GetProjectUsers(t.Task.ProjectID, db.RetrieveQueryParams{})
-	if err != nil {
-		return t.prepareError(err, "Users not found!")
-	}
-
-	users := make(map[int]bool)
-
-	for _, user := range projectUsers {
-		users[user.ID] = true
-	}
-
-	admins, err := t.pool.store.GetAllAdmins()
-	if err != nil {
-		return err
-	}
-
-	for _, admin := range admins {
-		users[admin.ID] = true
-	}
-
-	t.users = []int{}
-	for userID := range users {
-		t.users = append(t.users, userID)
-	}
 
 	if executionSnapshot != nil {
 		if executionSnapshot.SSHKeyProjectID != 0 {

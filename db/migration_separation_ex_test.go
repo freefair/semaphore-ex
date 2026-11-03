@@ -27,7 +27,7 @@ func TestMigrationRegistriesAreIndependent(t *testing.T) {
 			assert.Less(t, ex[i-1].Compare(m), 0)
 		}
 	}
-	assert.Equal(t, "upstream/2.20.16;ex/2.20.14-ex1.1", CurrentSchemaVersion(util.DbDriverSQLite))
+	assert.Equal(t, "upstream/2.20.18;ex/2.20.14-ex1.1", CurrentSchemaVersion(util.DbDriverSQLite))
 }
 
 type migrationRecordingStore struct {

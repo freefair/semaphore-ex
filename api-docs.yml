@@ -334,11 +334,83 @@ definitions:
 
   ProjectBackup:
     type: object
-    example: {"version":2,"meta":{"name":"homelab","alert":true,"alert_chat":"Test","max_parallel_tasks":0,"type":null},"templates":[{"inventory":"Build","repository":"Demo","environment":"Empty","name":"Build","playbook":"build.yml","app":"ansible","working_directory":".","arguments":"[]","allow_override_args_in_task":false,"description":"Build Job","vault_key":null,"type":"build","start_version":"1.0.0","build_template":null,"view":"Build","autorun":false,"survey_vars":[],"suppress_success_alerts":false,"suppress_error_alerts":false,"cron":"* * * * *"}],"repositories":[{"name":"Demo","git_url":"https://github.com/semaphoreui/semaphore-demo.git","git_branch":"main","ssh_key":"None"}],"keys":[{"name":"None","type":"none"},{"name":"Vault Password","type":"login_password"}],"views":[{"title":"Build","position":0}],"inventories":[{"name":"Build","inventory":"","ssh_key":"None","become_key":"None","type":"static"},{"name":"Dev","inventory":"","ssh_key":"None","become_key":"None","type":"file"},{"name":"Prod","inventory":"","ssh_key":"None","become_key":"None","type":"file"}],"environments":[{"name":"Empty","password":null,"json":"{}","env":null}],"roles":[{"slug":"deployer","name":"Deployer","permissions":1}]}
+    example:
+      version: 4
+      meta:
+        name: homelab
+        alert: true
+        alert_chat: Test
+        max_parallel_tasks: 0
+        type: null
+      templates:
+        - inventory: Build
+          repository: Demo
+          environment: Empty
+          name: Build
+          playbook: build.yml
+          app: ansible
+          working_directory: .
+          arguments: '[]'
+          allow_override_args_in_task: false
+          description: Build Job
+          vault_key: null
+          type: build
+          start_version: 1.0.0
+          build_template: null
+          view: Build
+          autorun: false
+          survey_vars: []
+          suppress_success_alerts: false
+          suppress_error_alerts: false
+          cron: '* * * * *'
+      repositories:
+        - name: Demo
+          git_url: https://github.com/semaphoreui/semaphore-demo.git
+          git_branch: main
+          ssh_key: None
+      keys:
+        - name: None
+          type: none
+        - name: Vault Password
+          type: login_password
+      views:
+        - title: Build
+          position: 0
+      inventories:
+        - name: Build
+          inventory: ''
+          ssh_key: None
+          become_key: None
+          type: static
+        - name: Dev
+          inventory: ''
+          ssh_key: None
+          become_key: None
+          type: file
+        - name: Prod
+          inventory: ''
+          ssh_key: None
+          become_key: None
+          type: file
+      environments:
+        - name: Empty
+          password: null
+          json: '{}'
+          env: null
+      roles:
+        - slug: deployer
+          name: Deployer
+          permissions: 129
     properties:
       version:
         type: integer
-        description: Format version of the backup file. Files written by a newer version are refused. A file without a version is accepted only when it carries no roles and no template permissions.
+        description: >-
+          Format version 4. EX exports identify their permission schema explicitly; unversioned legacy EX files
+          retain their original masks. Upstream versions 2 through 4 are translated into EX permission values.
+          Newer versions and unknown schemas are rejected.
+      permission_schema:
+        type: string
+        description: EX exports use semaphore-ex; omitted on upstream and legacy EX backups.
       meta:
         type: object
         properties:
@@ -376,8 +448,8 @@ definitions:
             working_directory:
               type: string
               description: >-
-                Repository-relative working directory for Ansible commands. It is
-                valid only for Ansible templates and must stay inside the repository.
+                Repository-relative working directory for Ansible commands. It is valid only for Ansible
+                templates and must stay inside the repository.
               x-nullable: true
             arguments:
               type: string
@@ -407,7 +479,9 @@ definitions:
               type: boolean
             roles:
               type: array
-              description: Template permissions granted to roles, by role slug.
+              description: >-
+                EX template overrides preserve immutable role IDs and explicit allow/deny masks; upstream files
+                use slug and upstream permissions.
               items:
                 type: object
                 properties:
@@ -415,6 +489,19 @@ definitions:
                     type: string
                   permissions:
                     type: integer
+                  role_id:
+                    type: string
+                    description: Immutable EX role reference; regenerated project-role IDs are mapped during restore.
+                  role:
+                    type: string
+                  is_global:
+                    type: boolean
+                  allowed_permissions:
+                    type: integer
+                    description: EX template read1,run2,edit4,delete8.
+                  denied_permissions:
+                    type: integer
+                    description: EX template deny mask; denies override inherited and explicit allows.
       repositories:
         type: array
         items:
@@ -437,7 +524,11 @@ definitions:
               type: string
             type:
               type: string
-              enum: [ssh, login_password, none, string]
+              enum:
+                - ssh
+                - login_password
+                - none
+                - string
       views:
         type: array
         items:
@@ -463,7 +554,13 @@ definitions:
               type: string
             type:
               type: string
-              enum: [static, static-yaml, file, terraform-workspace, tofu-workspace, terragrunt-workspace]
+              enum:
+                - static
+                - static-yaml
+                - file
+                - terraform-workspace
+                - tofu-workspace
+                - terragrunt-workspace
       environments:
         type: array
         items:
@@ -479,7 +576,9 @@ definitions:
               type: string
       roles:
         type: array
-        description: Project roles. Template permissions refer to them by slug.
+        description: >-
+          EX roles use immutable id; upstream-format roles use slug. Permission masks follow permission_schema
+          and version.
         items:
           type: object
           properties:
@@ -489,6 +588,170 @@ definitions:
               type: string
             permissions:
               type: integer
+            id:
+              type: string
+              description: Immutable EX role reference; regenerated project-role IDs are mapped during restore.
+      workflows:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            description:
+              type: string
+            start_version:
+              type: string
+            survey_vars:
+              type: array
+              items:
+                $ref: '#/definitions/TemplateSurveyVar'
+            nodes:
+              type: array
+              items:
+                $ref: '#/definitions/BackupWorkflowNode'
+            edges:
+              type: array
+              items:
+                $ref: '#/definitions/BackupWorkflowEdge'
+            roles:
+              type: array
+              description: EX workflow grants address roles by immutable role_id; upstream files use slug.
+              items:
+                type: object
+                properties:
+                  slug:
+                    type: string
+                  permissions:
+                    type: integer
+                  role_id:
+                    type: string
+                    description: Immutable EX role reference; regenerated project-role IDs are mapped during restore.
+                  is_global:
+                    type: boolean
+
+  BackupWorkflowNode:
+    type: object
+    description: A workflow node in a backup. The template is referred to by name, ids of the database are left out.
+    properties:
+      id:
+        type: integer
+        description: Node number inside the workflow, referred to by the edges.
+      template:
+        type: string
+        description: Name of the template a task node runs.
+      kind:
+        type: string
+        enum: [task, approval, note, delay]
+      convergence_mode:
+        type: string
+        enum: [all, any]
+      approval_timeout:
+        type: integer
+      approval_message:
+        type: string
+      task_params:
+        $ref: '#/definitions/BackupTaskParams'
+      note:
+        type: string
+      delay_seconds:
+        type: integer
+      survey_inputs:
+        type: array
+        items:
+          $ref: "#/definitions/WorkflowNodeSurveyInput"
+      position_x:
+        type: integer
+      position_y:
+        type: integer
+
+  BackupTaskParams:
+    type: object
+    description: Task parameters of a workflow node in a backup. The inventory is referred to by name.
+    properties:
+      environment:
+        type: string
+      git_branch:
+        type: string
+      message:
+        type: string
+      version:
+        type: string
+      arguments:
+        type: string
+      inventory_name:
+        type: string
+      params:
+        allOf:
+          - $ref: '#/definitions/AnsibleTaskParams'
+          - $ref: '#/definitions/TerraformTaskParams'
+
+  BackupWorkflowEdge:
+    type: object
+    description: A workflow edge in a backup, between node numbers of the same workflow.
+    properties:
+      source_node_id:
+        type: integer
+      destination_node_id:
+        type: integer
+      condition:
+        type: string
+        enum: [on_success, on_failure, always]
+      input_mode:
+        type: string
+        enum: [by_name, explicit]
+      input_mappings:
+        type: array
+        items:
+          $ref: "#/definitions/WorkflowInputMapping"
+
+  TemplateRolePermission:
+    type: object
+    description: EX template override with independent allow and deny masks and revision checks.
+    properties:
+      id:
+        type: integer
+      template_id:
+        type: integer
+      project_id:
+        type: integer
+      role_id:
+        type: string
+        description: Immutable role ID, including builtin references.
+      role_slug:
+        type: string
+        description: Compatibility role reference, required when creating a template override.
+      permissions:
+        type: integer
+        description: Legacy project permission projection. Set to zero when submitting explicit template masks, including an all-inherit override.
+      allowed_permissions:
+        type: integer
+        description: Template read (1), run (2), edit (4), delete (8).
+      denied_permissions:
+        type: integer
+        description: Same template action bits; denies take precedence.
+      revision:
+        type: integer
+        description: Required observed revision when updating or deleting an existing grant.
+
+  WorkflowRolePermission:
+    type: object
+    description: Workflow grant addressed by immutable role ID. EX workflow policies further constrain access.
+    properties:
+      id:
+        type: integer
+      workflow_id:
+        type: integer
+      project_id:
+        type: integer
+      role_id:
+        type: string
+      role_slug:
+        type: string
+        readOnly: true
+      permissions:
+        type: integer
+        description: read_project (1048576), run_workflows (128), edit_workflows (64), approve_workflows (2097152). Object actions include visibility; workflow administration is required to change grants.
 
   APIToken:
     type: object
@@ -571,9 +834,10 @@ definitions:
           unassigned_roles:
             type: array
             description: >-
-              Roles the restore left for you to decide about. A template grant to a role that is not in the
-              file (reason not_in_file) or a project role whose slug a shared role already holds (reason
-              slug_taken) is not restored. Assign the templates to a role of this instance yourself.
+              Roles the restore left for you to decide about. A template or workflow grant to a role that is
+              neither in the file nor a built-in role (reason not_in_file) or a project role whose slug a
+              shared role already holds (reason slug_taken) is not restored. Assign the templates and
+              workflows to a role of this instance yourself.
             example: []
             items:
               type: object
@@ -590,6 +854,17 @@ definitions:
                   type: integer
                   description: Permissions of the role in the file, only for slug_taken.
                 templates:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                      name:
+                        type: string
+                      permissions:
+                        type: integer
+                workflows:
                   type: array
                   items:
                     type: object
@@ -1158,6 +1433,8 @@ definitions:
         $ref: './api-docs-ex.yml#/definitions/InventoryRefresh'
       debug:
         type: boolean
+      debug_level:
+        type: integer
       dry_run:
         type: boolean
       diff:
@@ -1187,6 +1464,8 @@ definitions:
       auto_approve:
         type: boolean
       upgrade:
+        type: boolean
+      reconfigure:
         type: boolean
 
   TaskPrams:
@@ -1425,7 +1704,7 @@ definitions:
         type: string
       type:
         type: string
-        enum: ["", int, enum, secret, text] # String => "", Integer => "int", Text (multiline) => "text"
+        enum: ["", int, enum, select, secret, text] # String => "", Integer => "int", Text (multiline) => "text"
         example: int
       target:
         type: string
@@ -1437,6 +1716,9 @@ definitions:
         type: array
         items:
           $ref: "#/definitions/TemplateSurveyVarValue"
+      default_value:
+        description: A string, or an array of strings for a select variable.
+        x-nullable: true
 
   TemplateSurveyVarValue:
     type: object
@@ -1890,6 +2172,9 @@ definitions:
         type: string
       description:
         type: string
+      permissions:
+        type: integer
+        description: What the caller may do with this workflow, the project verbs plus the grants on it (read-only).
       start_version:
         type: string
       definition_version:
@@ -2331,6 +2616,13 @@ parameters:
     type: integer
     required: true
     x-example: 24
+  perm_id:
+    name: perm_id
+    description: role grant ID
+    in: path
+    type: integer
+    required: true
+    x-example: 25
   run_id:
     name: run_id
     description: workflow run ID
@@ -4080,6 +4372,8 @@ paths:
           description: template object
           schema:
             $ref: "#/definitions/Template"
+        404:
+          description: no such template, or the member may not read it
     put:
       tags:
         - template
@@ -4100,6 +4394,82 @@ paths:
       responses:
         204:
           description: template removed
+
+  /project/{project_id}/templates/{template_id}/perms:
+    parameters:
+      - $ref: "#/parameters/project_id"
+      - $ref: "#/parameters/template_id"
+    get:
+      tags:
+        - template
+      summary: Get template permissions
+      responses:
+        200:
+          description: role grants on the template
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/TemplateRolePermission"
+    post:
+      tags:
+        - template
+      summary: Grant a role on the template
+      parameters:
+        - name: permission
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/TemplateRolePermission"
+      responses:
+        201:
+          description: grant created
+          schema:
+            $ref: "#/definitions/TemplateRolePermission"
+        400:
+          description: unknown role or permissions outside the template verbs
+
+  /project/{project_id}/templates/{template_id}/perms/{perm_id}:
+    parameters:
+      - $ref: "#/parameters/project_id"
+      - $ref: "#/parameters/template_id"
+      - $ref: "#/parameters/perm_id"
+    get:
+      tags:
+        - template
+      summary: Get one template permission
+      responses:
+        200:
+          description: role grant
+          schema:
+            $ref: "#/definitions/TemplateRolePermission"
+    put:
+      tags:
+        - template
+      summary: Change the permissions of a grant
+      parameters:
+        - name: permission
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/TemplateRolePermission"
+      responses:
+        200:
+          description: grant updated
+          schema:
+            $ref: "#/definitions/TemplateRolePermission"
+    delete:
+      tags:
+        - template
+      summary: Remove a grant
+      parameters:
+        - name: revision
+          in: query
+          required: true
+          type: integer
+          x-example: 1
+      responses:
+        204:
+          description: grant removed
 
   # project workflows
   /audit-webhook:
@@ -4165,6 +4535,8 @@ paths:
           description: workflow template
           schema:
             $ref: "#/definitions/WorkflowTemplate"
+        404:
+          description: no such workflow, or the member may not read it
     put:
       tags:
         - workflow
@@ -4288,6 +4660,74 @@ paths:
 
   /project/{project_id}/workflows/{workflow_id}/preflight:
     $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1workflows~1{workflow_id}~1preflight"
+  /project/{project_id}/workflows/{workflow_id}/perms:
+    parameters:
+      - $ref: "#/parameters/project_id"
+      - $ref: "#/parameters/workflow_id"
+    get:
+      tags:
+        - workflow
+      summary: Get workflow permissions
+      responses:
+        200:
+          description: role grants on the workflow
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/WorkflowRolePermission"
+    post:
+      tags:
+        - workflow
+      summary: Grant a role on the workflow
+      parameters:
+        - name: permission
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/WorkflowRolePermission"
+      responses:
+        201:
+          description: grant created
+          schema:
+            $ref: "#/definitions/WorkflowRolePermission"
+        400:
+          description: unknown role or permissions outside the workflow verbs
+
+  /project/{project_id}/workflows/{workflow_id}/perms/{perm_id}:
+    parameters:
+      - $ref: "#/parameters/project_id"
+      - $ref: "#/parameters/workflow_id"
+      - $ref: "#/parameters/perm_id"
+    get:
+      tags:
+        - workflow
+      summary: Get one workflow permission
+      responses:
+        200:
+          description: role grant
+          schema:
+            $ref: "#/definitions/WorkflowRolePermission"
+    put:
+      tags:
+        - workflow
+      summary: Change the permissions of a grant
+      parameters:
+        - name: permission
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/WorkflowRolePermission"
+      responses:
+        204:
+          description: grant updated
+    delete:
+      tags:
+        - workflow
+      summary: Remove a grant
+      responses:
+        204:
+          description: grant removed
+
   /project/{project_id}/workflows/{workflow_id}/runs:
     parameters:
       - $ref: "#/parameters/project_id"
@@ -4681,6 +5121,8 @@ paths:
           description: Task
           schema:
             $ref: "#/definitions/Task"
+        404:
+          description: no such task, or the member may not read it
     delete:
       tags:
         - task

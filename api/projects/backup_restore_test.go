@@ -69,7 +69,7 @@ func TestRestore_ResponseListsUnassignedRoles(t *testing.T) {
 	assert.Equal(t, "ops", restored.UnassignedRoles[0].Slug)
 	assert.Equal(t, "not_in_file", restored.UnassignedRoles[0].Reason)
 	require.Len(t, restored.UnassignedRoles[0].Templates, 1)
-	assert.Equal(t, db.CanRunProjectTasks, restored.UnassignedRoles[0].Templates[0].Permissions)
+	assert.Equal(t, db.ProjectUserPermission(db.CanReadTemplate|db.CanRunTemplate), restored.UnassignedRoles[0].Templates[0].Permissions)
 }
 
 type failingDelete struct{ db.Store }

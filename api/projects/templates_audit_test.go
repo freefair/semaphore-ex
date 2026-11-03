@@ -75,6 +75,7 @@ func TestTemplatePermissions_AreRecorded(t *testing.T) {
 	ref := audit.NewRoleRef(runner)
 	assert.Equal(t, audit.TemplatePermissionMetadata{TemplateID: 3, Role: ref, Permissions: []string{"run_tasks"}}, got.Event.Metadata)
 	assert.Contains(t, w.Body.String(), `"role_slug":"task_runner"`)
+	assert.Contains(t, w.Body.String(), `"permissions":1`, "legacy mask remains in its EX namespace")
 	assert.NotContains(t, w.Body.String(), "role_id")
 
 	r, rec = templatePermRequest(t, store, http.MethodPut, `{"role_slug":"task_runner","permissions":5,"revision":1}`, "5")
@@ -142,11 +143,13 @@ func TestTemplatePermissions_RejectUnknownBits(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r, rec := templatePermRequest(t, store, tt.method, `{"role_slug":"guest","permissions":17}`, tt.permID)
-			w := httptest.NewRecorder()
-			tt.handle(w, r)
-			assert.Equal(t, http.StatusBadRequest, w.Code)
-			assert.Empty(t, rec.All())
+			for _, body := range []string{`{"role_slug":"guest","permissions":1024}`, `{"role_slug":"guest","permissions":32}`, `{"role_slug":"guest","permissions":1048576}`} {
+				r, rec := templatePermRequest(t, store, tt.method, body, tt.permID)
+				w := httptest.NewRecorder()
+				tt.handle(w, r)
+				assert.Equal(t, http.StatusBadRequest, w.Code, body)
+				assert.Empty(t, rec.All())
+			}
 		})
 	}
 }

@@ -173,6 +173,11 @@ func (c *TaskController) AddTask(w http.ResponseWriter, r *http.Request) {
 func (c *TaskController) writeTasksList(w http.ResponseWriter, r *http.Request, params db.RetrieveQueryParams, pageSize int) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	tpl := helpers.GetFromContext(r, "template")
+	user := helpers.UserFromContext(r)
+	if params.TaskFilter == nil {
+		params.TaskFilter = &db.TaskFilter{}
+	}
+	params.TaskFilter.Viewer = &db.Viewer{UserID: user.ID, Admin: user.Admin}
 
 	var err error
 	var taskList []db.TaskWithTpl
@@ -260,6 +265,29 @@ func (c *TaskController) GetLastTasks(w http.ResponseWriter, r *http.Request) {
 // GetTask returns a task based on its id
 func (c *TaskController) GetTask(w http.ResponseWriter, r *http.Request) {
 	task := helpers.GetFromContext(r, "task").(db.Task)
+	user := helpers.UserFromContext(r)
+	if user != nil && !user.Admin && task.BuildTaskID != nil {
+		build, err := c.store.GetTask(task.ProjectID, *task.BuildTaskID)
+		if err != nil {
+			task.BuildTaskID = nil
+		} else {
+			viewers, viewerErr := c.store.GetTaskViewers(task.ProjectID, build.TemplateID, build.WorkflowRunID)
+			if viewerErr != nil {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			allowed := false
+			for _, id := range viewers {
+				if id == user.ID {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				task.BuildTaskID = nil
+			}
+		}
+	}
 	helpers.WriteJSON(w, http.StatusOK, task)
 }
 
@@ -269,6 +297,32 @@ func (c *TaskController) GetTaskPermissionsMiddleware(next http.Handler) http.Ha
 		user := helpers.GetFromContext(r, "user").(*db.User)
 		task := helpers.GetFromContext(r, "task").(db.Task)
 
+		isRead := r.Method == http.MethodGet || r.Method == http.MethodHead
+		if isRead && task.WorkflowRunID != nil {
+			if c.workflowStore == nil {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			run, err := c.workflowStore.GetWorkflowRunByID(project.ID, *task.WorkflowRunID)
+			if err != nil {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			visible, _, err := AuthorizeWorkflowRequest(r, run.DefinitionSnapshot, pro_interfaces.PermissionViewWorkflow)
+			if err != nil || !visible {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			grants, err := c.store.GetWorkflowRunPermission(project.ID, *task.WorkflowRunID, user.ID)
+			if err != nil {
+				helpers.WriteError(w, err)
+				return
+			}
+			permissions := helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission) | grants
+			r = helpers.SetContextValue(r, "permissions", permissions)
+			next.ServeHTTP(w, r)
+			return
+		}
 		// Resolve a name before querying template permissions. The router runs this
 		// middleware before AddTask, so waiting until the handler would otherwise
 		// authorize a synthetic template ID 0.
@@ -287,8 +341,18 @@ func (c *TaskController) GetTaskPermissionsMiddleware(next http.Handler) http.Ha
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if !permissionContext.EffectivePermissions.Can(db.CanRunTemplate) {
-			w.WriteHeader(http.StatusForbidden)
+		canRead := permissionContext.EffectivePermissions.Can(db.CanReadTemplate)
+		canRun := permissionContext.EffectivePermissions.Can(db.CanRunTemplate)
+		if isRead && !canRead {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if !isRead && !canRun {
+			if !canRead {
+				w.WriteHeader(http.StatusNotFound)
+			} else {
+				w.WriteHeader(http.StatusForbidden)
+			}
 			return
 		}
 
@@ -343,6 +407,9 @@ func (c *TaskController) NewTaskMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// Workflow provenance is server-owned and cannot be supplied by a task-start client.
+		payload.Task.WorkflowRunID = nil
+		payload.Task.WorkflowNodeID = nil
 		r = helpers.SetContextValue(r, "task", payload.Task)
 		r = helpers.SetContextValue(r, "deployment_window_override", payload.DeploymentWindowOverride)
 		next.ServeHTTP(w, r)
@@ -595,7 +662,8 @@ func (c *TaskController) GetTaskStats(w http.ResponseWriter, r *http.Request) {
 		tplID = &id
 	}
 
-	filter := db.TaskFilter{}
+	user := helpers.UserFromContext(r)
+	filter := db.TaskFilter{Viewer: &db.Viewer{UserID: user.ID, Admin: user.Admin}}
 
 	if start := r.URL.Query().Get("start"); start != "" {
 		d, err := time.Parse("2006-01-02", start)

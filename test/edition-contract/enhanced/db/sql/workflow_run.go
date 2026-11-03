@@ -1107,6 +1107,30 @@ func (d *WorkflowStoreImpl) SubmitWorkflowApprovalContribution(
 		}
 		return db.WorkflowApprovalContributionResult{Approval: approval, Denied: true}, nil
 	}
+	var actorPermissions db.ProjectUserPermission
+	for _, identity := range identities {
+		actorPermissions |= identity.Permissions
+	}
+	var workflowGrants []struct {
+		Permissions db.ProjectUserPermission `db:"permissions"`
+	}
+	_, err = tx.Select(&workflowGrants, d.connection.PrepareQuery(`select pwr.permissions from project__workflow_role pwr
+       join project__workflow_run wr on wr.workflow_template_id=pwr.workflow_id and wr.project_id=pwr.project_id
+       where wr.id=? and wr.project_id=? and pwr.role_id in
+       (select role_id from project__user_role where project_id=? and user_id=?)`),
+		submission.WorkflowRunID, submission.ProjectID, submission.ProjectID, submission.ActorUserID)
+	if err != nil {
+		return db.WorkflowApprovalContributionResult{}, err
+	}
+	for _, grant := range workflowGrants {
+		actorPermissions |= grant.Permissions
+	}
+	if !actorPermissions.Can(db.CanApproveWorkflows) {
+		if err = tx.Commit(); err != nil {
+			return db.WorkflowApprovalContributionResult{}, err
+		}
+		return db.WorkflowApprovalContributionResult{Approval: approval, Denied: true}, nil
+	}
 	eligibility := pro_interfaces.EvaluateWorkflowApprovalEligibility(pro_interfaces.WorkflowApprovalEligibilityRequest{
 		Policy: approval.RolePolicySnapshot.Policy, ActorUserID: submission.ActorUserID,
 		InitiatorUserID:         approval.RequestActorUserID,

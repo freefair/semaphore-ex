@@ -31,7 +31,7 @@ func TestWorkflowDefinitionServicePreventsInvalidPersistence(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, validation.Valid)
 	assert.Contains(t, workflowServiceIssueCodes(validation), "WORKFLOW_TEMPLATE_NOT_IN_PROJECT")
-	stored, err := repository.GetWorkflowTemplates(project.ID, db.RetrieveQueryParams{})
+	stored, err := repository.GetWorkflowTemplates(project.ID, nil, db.RetrieveQueryParams{})
 	require.NoError(t, err)
 	assert.Empty(t, stored)
 }
@@ -148,7 +148,7 @@ func TestWorkflowDefinitionServiceRejectsMalformedConditionAndParallelismLimit(t
 	assert.False(t, validation.Valid)
 	assert.Contains(t, workflowServiceIssueCodes(validation), "WORKFLOW_EDGE_EXPRESSION_INVALID")
 	assert.Contains(t, workflowServiceIssueCodes(validation), "WORKFLOW_PARALLELISM_INVALID")
-	stored, err := repository.GetWorkflowTemplates(project.ID, db.RetrieveQueryParams{})
+	stored, err := repository.GetWorkflowTemplates(project.ID, nil, db.RetrieveQueryParams{})
 	require.NoError(t, err)
 	assert.Empty(t, stored)
 }

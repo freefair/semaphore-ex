@@ -1,6 +1,6 @@
 const enhancedMethods = {
   permissionLabel(label) {
-    return this.scope === 'default' ? this.$t(label) : label;
+    return this.scope === 'default' || this.scope === 'workflow' ? this.$t(label) : label;
   },
 };
 

@@ -37,5 +37,7 @@ func TestPolicyGuardrailRoleBitsAreIndependentAndBounded(t *testing.T) {
 func TestKnownProjectRolePermissionsIncludesEnhancedBits(t *testing.T) {
 	assert.NotZero(t, KnownProjectRolePermissions&CanViewWorkflows)
 	assert.NotZero(t, KnownProjectRolePermissions&CanManagePolicyGuardrails)
-	assert.Zero(t, KnownProjectRolePermissions&CanShareTaskGroups)
+	assert.NotZero(t, KnownProjectRolePermissions&CanShareTaskGroups)
+	assert.NotZero(t, KnownProjectRolePermissions&CanReadProject)
+	assert.NotZero(t, KnownProjectRolePermissions&CanApproveWorkflows)
 }

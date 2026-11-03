@@ -355,6 +355,11 @@ func (d *SqlDb) getTemplates(
 	}
 	q := sq.Select(fields...).From("project__template pt")
 
+	if filtered(filter.Viewer) {
+		where, args := visibleTemplatesWhere(projectID, filter.Viewer.UserID, "pt")
+		q = q.Where(where, args...)
+	}
+
 	if filter.App != nil {
 		q = q.Where("pt.app=?", *filter.App)
 	}
@@ -480,7 +485,11 @@ func (d *SqlDb) getTemplates(
 	}
 	var tasks []db.TaskWithTpl
 	if len(taskIDs) > 0 {
-		err = d.getTasks(projectID, nil, nil, taskIDs, db.RetrieveQueryParams{}, &tasks)
+		taskParams := db.RetrieveQueryParams{}
+		if filter.Viewer != nil {
+			taskParams.TaskFilter = &db.TaskFilter{Viewer: filter.Viewer}
+		}
+		err = d.getTasks(projectID, nil, nil, taskIDs, taskParams, &tasks)
 		if err != nil {
 			return
 		}
@@ -530,7 +539,11 @@ func (d *SqlDb) GetTemplatesWithPermissions(projectID int, userID int, filter db
 }
 
 func (d *SqlDb) GetTemplates(projectID int, filter db.TemplateFilter, params db.RetrieveQueryParams) (templates []db.Template, err error) {
-	res, err := d.getTemplates(projectID, nil, filter, params, true)
+	var viewerID *int
+	if filtered(filter.Viewer) {
+		viewerID = &filter.Viewer.UserID
+	}
+	res, err := d.getTemplates(projectID, viewerID, filter, params, true)
 	if err != nil {
 		return
 	}

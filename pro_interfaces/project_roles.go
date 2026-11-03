@@ -6,6 +6,8 @@ import "github.com/semaphoreui/semaphore/db"
 type PermissionID string
 
 const (
+	PermissionReadProject                     PermissionID = "project.read"
+	PermissionApproveWorkflow                 PermissionID = "workflow.approve"
 	PermissionRunProjectTasks                 PermissionID = "project.tasks.run"
 	PermissionUpdateProject                   PermissionID = "project.settings.update"
 	PermissionViewProjectResources            PermissionID = "project.resources.view"
@@ -132,6 +134,8 @@ func permissionCatalog() []PermissionDefinition {
 			Scope: PermissionScopeProject, Permission: db.CanRunProjectTasks,
 			CapabilityPrerequisites: []CapabilityID{},
 		},
+		{ID: PermissionReadProject, Description: "Read project", Scope: PermissionScopeProject, Permission: db.CanReadProject, CapabilityPrerequisites: []CapabilityID{}},
+		{ID: PermissionApproveWorkflow, Description: "Approve workflows", Scope: PermissionScopeProject, Permission: db.CanApproveWorkflows, CapabilityPrerequisites: []CapabilityID{}},
 		{
 			ID: PermissionUpdateProject, Description: "Update project settings",
 			Scope: PermissionScopeProject, Permission: db.CanUpdateProject,

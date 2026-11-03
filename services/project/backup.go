@@ -273,9 +273,16 @@ func (b *BackupDB) load(projectID int, store db.Store, workflowStore db.Workflow
 		return
 	}
 
-	b.workflows, err = workflowStore.GetWorkflowTemplates(projectID, db.RetrieveQueryParams{})
+	b.workflows, err = workflowStore.GetWorkflowTemplates(projectID, nil, db.RetrieveQueryParams{})
 	if err != nil {
 		return
+	}
+	b.workflowRoles = make(map[int][]db.WorkflowRolePerm)
+	for _, w := range b.workflows {
+		b.workflowRoles[w.ID], err = store.GetWorkflowRoles(projectID, w.ID)
+		if err != nil {
+			return
+		}
 	}
 
 	b.makeUniqueNames()
@@ -440,13 +447,13 @@ func (b *BackupDB) format() (*BackupFormat, error) {
 		for _, r := range b.templateRoles[o.ID] {
 			sameRole := func(role db.Role) bool { return r.RoleID != nil && role.ID == *r.RoleID }
 			if i := slices.IndexFunc(b.roles, sameRole); i >= 0 {
-				roles = append(roles, BackupTemplateRole{Role: b.roles[i].Name, RoleID: b.roles[i].ID, Permissions: r.Permissions})
+				roles = append(roles, BackupTemplateRole{Role: b.roles[i].Name, RoleID: b.roles[i].ID, Permissions: r.Permissions, AllowedPermissions: &r.AllowedPermissions, DeniedPermissions: &r.DeniedPermissions})
 			} else if i := slices.IndexFunc(b.globalRoles, sameRole); i >= 0 {
 				// Global and built-in roles are written by slug.
-				roles = append(roles, BackupTemplateRole{Role: b.globalRoles[i].Slug, RoleID: b.globalRoles[i].ID, IsGlobal: true, Permissions: r.Permissions})
+				roles = append(roles, BackupTemplateRole{Role: b.globalRoles[i].Slug, RoleID: b.globalRoles[i].ID, IsGlobal: true, Permissions: r.Permissions, AllowedPermissions: &r.AllowedPermissions, DeniedPermissions: &r.DeniedPermissions})
 			} else if r.RoleID == nil {
 				if i := slices.IndexFunc(b.globalRoles, func(role db.Role) bool { return role.Slug == r.RoleSlug }); i >= 0 {
-					roles = append(roles, BackupTemplateRole{Role: b.globalRoles[i].Slug, RoleID: b.globalRoles[i].ID, IsGlobal: true, Permissions: r.Permissions})
+					roles = append(roles, BackupTemplateRole{Role: b.globalRoles[i].Slug, RoleID: b.globalRoles[i].ID, IsGlobal: true, Permissions: r.Permissions, AllowedPermissions: &r.AllowedPermissions, DeniedPermissions: &r.DeniedPermissions})
 				}
 			}
 		}
@@ -538,9 +545,15 @@ func (b *BackupDB) format() (*BackupFormat, error) {
 			}
 			nodes[j] = node
 		}
+		var roles []BackupWorkflowRole
+		for _, r := range b.workflowRoles[o.ID] {
+			roles = append(roles, BackupWorkflowRole{Slug: r.RoleSlug, RoleID: r.RoleID, IsGlobal: !slices.ContainsFunc(b.roles, func(role db.Role) bool { return role.ID == r.RoleID }), Permissions: r.Permissions})
+		}
+
 		workflows[i] = BackupWorkflow{
 			WorkflowTemplate: o,
 			Nodes:            nodes,
+			Roles:            roles,
 		}
 	}
 
@@ -555,7 +568,9 @@ func (b *BackupDB) format() (*BackupFormat, error) {
 	meta := b.meta
 	meta.DefaultSSHKeys = nil
 	meta.AlwaysSSHKeys = nil
+	version := BackupFormatVersion
 	return &BackupFormat{
+		Version: &version, PermissionSchema: "semaphore-ex",
 		Meta: BackupMeta{
 			Project: meta, DefaultSSHKeyBindings: defaultSSHKeyBindings, AlwaysSSHKeyBindings: alwaysSSHKeyBindings,
 		},

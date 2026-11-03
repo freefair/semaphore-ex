@@ -49,7 +49,11 @@ func GetMustHaveTemplatePermissionMiddleware(permission db.TemplatePermission) m
 				return
 			}
 			if !context.EffectivePermissions.Can(permission) {
-				w.WriteHeader(http.StatusForbidden)
+				if permission == db.CanReadTemplate {
+					w.WriteHeader(http.StatusNotFound)
+				} else {
+					w.WriteHeader(http.StatusForbidden)
+				}
 				return
 			}
 			r = helpers.SetContextValue(r, "templatePermissionContext", context)

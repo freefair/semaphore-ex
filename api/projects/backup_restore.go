@@ -11,6 +11,7 @@ import (
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/audit"
 	projectService "github.com/semaphoreui/semaphore/services/project"
 	log "github.com/sirupsen/logrus"
@@ -27,9 +28,110 @@ func NewBackupController(workflowStore db.WorkflowManager) *BackupController {
 	return &BackupController{workflowStore: workflowStore}
 }
 
+// canExportProject checks all current objects before generating a backup.
+func (c *BackupController) canExportProject(r *http.Request, projectID int) bool {
+	user := helpers.UserFromContext(r)
+	if user == nil {
+		return false
+	}
+	if user.Admin {
+		return true
+	}
+	if c.workflowStore == nil {
+		return false
+	}
+	store := helpers.Store(r)
+	templates, err := store.GetTemplates(projectID, db.TemplateFilter{}, db.RetrieveQueryParams{})
+	if err != nil {
+		return false
+	}
+	workflows, err := c.workflowStore.GetWorkflowTemplates(projectID, nil, db.RetrieveQueryParams{})
+	if err != nil {
+		return false
+	}
+	templateIDs := make([]int, 0, len(templates))
+	workflowIDs := make([]int, 0, len(workflows))
+	for _, template := range templates {
+		templateIDs = append(templateIDs, template.ID)
+	}
+	for _, workflow := range workflows {
+		workflowIDs = append(workflowIDs, workflow.ID)
+	}
+	return c.canExportObjects(r, projectID, templateIDs, workflowIDs)
+}
+
+// canExportObjects rechecks the exact objects in the generated backup, so a
+// deletion or permission change during generation fails closed.
+func (c *BackupController) canExportObjects(r *http.Request, projectID int, templateIDs, workflowIDs []int) bool {
+	user := helpers.UserFromContext(r)
+	if user == nil {
+		return false
+	}
+	if user.Admin {
+		return true
+	}
+	if c.workflowStore == nil {
+		return false
+	}
+	store := helpers.Store(r)
+	member, err := store.GetProjectMember(projectID, user.ID)
+	if err != nil {
+		return false
+	}
+	var base db.ProjectUserPermission
+	for _, role := range member.Roles {
+		base |= role.Permissions
+	}
+	for _, role := range member.MappedRoles {
+		base |= role.RolePermissions
+	}
+	if !base.Can(db.CanReadProject | db.CanViewProjectResources) {
+		return false
+	}
+	for _, id := range templateIDs {
+		if _, err = store.GetTemplate(projectID, id); err != nil {
+			return false
+		}
+		permission, permissionErr := store.GetTemplatePermissionContext(projectID, id, user.ID)
+		if permissionErr != nil || !permission.EffectivePermissions.Can(db.CanReadTemplate) {
+			return false
+		}
+	}
+	for _, id := range workflowIDs {
+		workflow, workflowErr := c.workflowStore.GetWorkflowTemplate(projectID, id)
+		if workflowErr != nil {
+			return false
+		}
+		visible, _, permissionErr := AuthorizeWorkflowRequest(r, workflow, pro_interfaces.PermissionViewWorkflow)
+		if permissionErr != nil || !visible {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *BackupController) canExportSnapshot(r *http.Request, projectID int, backup *projectService.BackupFormat) bool {
+	if backup == nil {
+		return false
+	}
+	templateIDs := make([]int, 0, len(backup.Templates))
+	workflowIDs := make([]int, 0, len(backup.Workflows))
+	for _, template := range backup.Templates {
+		templateIDs = append(templateIDs, template.ID)
+	}
+	for _, workflow := range backup.Workflows {
+		workflowIDs = append(workflowIDs, workflow.ID)
+	}
+	return c.canExportObjects(r, projectID, templateIDs, workflowIDs)
+}
+
 func (c *BackupController) GetBackup(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 
+	if !c.canExportProject(r, project.ID) {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
 	store := helpers.Store(r)
 
 	backup, err := projectService.GetBackup(project.ID, store, c.workflowStore)
@@ -39,6 +141,10 @@ func (c *BackupController) GetBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !c.canExportSnapshot(r, project.ID, backup) {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
 	str, err := backup.Marshal()
 	if err != nil {
 		helpers.WriteError(w, err)

@@ -732,7 +732,7 @@ func (s *workflowService) workflowExecutionPermissionDigest(workflow db.Workflow
 	if user.Admin {
 		return executionPreflightHash("admin", user.ID, workflow.AccessPolicy.Revision)
 	}
-	state, err := pro_interfaces.ResolveWorkflowAuthorizationState(s.authorizationStore, workflow.ProjectID, user.ID)
+	state, err := pro_interfaces.ResolveWorkflowObjectAuthorizationState(s.authorizationStore, workflow.ProjectID, workflow.ID, user.ID)
 	if err != nil {
 		return executionPreflightHash("denied", user.ID, workflow.AccessPolicy.Revision)
 	}
@@ -1423,7 +1423,7 @@ func (s *workflowService) requireWorkflowAccess(
 	if user == nil || user.ID <= 0 || s.authorizationStore == nil {
 		return common_errors.NewValidationError("workflow access is unavailable")
 	}
-	state, err := pro_interfaces.ResolveWorkflowAuthorizationState(s.authorizationStore, workflow.ProjectID, user.ID)
+	state, err := pro_interfaces.ResolveWorkflowObjectAuthorizationState(s.authorizationStore, workflow.ProjectID, workflow.ID, user.ID)
 	if err != nil {
 		return common_errors.NewValidationError("workflow access is denied")
 	}
@@ -1660,8 +1660,12 @@ func (s *workflowService) GetWorkflowApprovalInbox(projectID int, user *db.User)
 			if s.authorizationStore == nil {
 				return nil, errors.New("workflow authorization store is unavailable")
 			}
-			state, resolveErr := pro_interfaces.ResolveWorkflowAuthorizationState(s.authorizationStore, projectID, user.ID)
-			if resolveErr != nil {
+			run, runErr := s.repository.GetWorkflowRunByID(projectID, approval.WorkflowRunID)
+			if runErr != nil {
+				continue
+			}
+			state, resolveErr := pro_interfaces.ResolveWorkflowObjectAuthorizationState(s.authorizationStore, projectID, run.DefinitionSnapshot.ID, user.ID)
+			if resolveErr != nil || !state.ProjectPermissions.Can(db.CanApproveWorkflows) || !pro_interfaces.AuthorizeWorkflowReadForState(run.DefinitionSnapshot, state).Allowed {
 				continue
 			}
 			eligibility := pro_interfaces.EvaluateWorkflowApprovalEligibility(pro_interfaces.WorkflowApprovalEligibilityRequest{
@@ -2163,6 +2167,15 @@ func (s *workflowService) authorizeWorkflowApproval(projectID int, approval db.W
 	if s.approvalIdentity == nil {
 		return errors.New("workflow approval identity store is unavailable")
 	}
+	run, err := s.repository.GetWorkflowRunByID(projectID, approval.WorkflowRunID)
+	if err != nil || s.authorizationStore == nil {
+		return common_errors.NewValidationError("workflow approval actor is not eligible")
+	}
+	state, err := pro_interfaces.ResolveWorkflowObjectAuthorizationState(s.authorizationStore, projectID, run.DefinitionSnapshot.ID, user.ID)
+	if err != nil || !state.ProjectPermissions.Can(db.CanApproveWorkflows) || !pro_interfaces.AuthorizeWorkflowReadForState(run.DefinitionSnapshot, state).Allowed {
+		return common_errors.NewValidationError("workflow approval actor is not eligible")
+	}
+
 	member, err := s.approvalIdentity.GetProjectUser(projectID, user.ID)
 	if err != nil {
 		return common_errors.NewValidationError("workflow approval actor is not eligible")

@@ -66,17 +66,17 @@ func TestRestoreUpstreamFormat2ResolvesGrantsToFileAndBuiltinRolesOnly(t *testin
 	require.Len(t, templates, 1)
 	grants, err := store.GetTemplateRoles(restored.ID, templates[0].ID)
 	require.NoError(t, err)
-	granted := map[string]db.ProjectUserPermission{}
+	granted := map[string]db.TemplatePermission{}
 	for _, grant := range grants {
-		granted[grant.RoleSlug] = grant.Permissions
+		granted[grant.RoleSlug] = grant.AllowedPermissions
 	}
-	assert.Equal(t, map[string]db.ProjectUserPermission{
-		roles[0].Slug: db.CanRunProjectTasks,
-		"task_runner": db.CanRunProjectTasks,
+	assert.Equal(t, map[string]db.TemplatePermission{
+		roles[0].Slug: db.CanRunTemplate | db.CanReadTemplate,
+		"task_runner": db.CanRunTemplate | db.CanReadTemplate,
 	}, granted)
 	assert.Equal(t, []UnassignedRole{
-		{Slug: "deployer", Reason: ReasonNotInFile, Templates: []UnassignedTemplate{{ID: templates[0].ID, Name: "Tpl", Permissions: db.CanRunProjectTasks}}},
-		{Slug: "nobody", Reason: ReasonNotInFile, Templates: []UnassignedTemplate{{ID: templates[0].ID, Name: "Tpl", Permissions: db.CanManageProjectResources}}},
+		{Slug: "deployer", Reason: ReasonNotInFile, Templates: []UnassignedTemplate{{ID: templates[0].ID, Name: "Tpl", Permissions: db.ProjectUserPermission(db.CanReadTemplate | db.CanRunTemplate)}}, Workflows: []UnassignedWorkflow{}},
+		{Slug: "nobody", Reason: ReasonNotInFile, Templates: []UnassignedTemplate{{ID: templates[0].ID, Name: "Tpl", Permissions: db.ProjectUserPermission(db.CanReadTemplate | db.CanEditTemplate | db.CanDeleteTemplate)}}, Workflows: []UnassignedWorkflow{}},
 	}, restored.UnassignedRoles)
 }
 
@@ -108,7 +108,7 @@ func TestVerifyUpstreamFormat2RoleSlugs(t *testing.T) {
 	}
 }
 
-func TestEXBackupStaysVersionlessAndAddressesRolesByID(t *testing.T) {
+func TestEXBackupIdentifiesSchemaAndAddressesRolesByID(t *testing.T) {
 	util.Config = &util.ConfigType{TmpPath: "/tmp"}
 	store := sql.InitConfigCreateTestStore()
 	p, tpl := createBackupFixture(t, store)
@@ -124,7 +124,8 @@ func TestEXBackupStaysVersionlessAndAddressesRolesByID(t *testing.T) {
 	require.NoError(t, err)
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal([]byte(str), &doc))
-	assert.NotContains(t, doc, "version")
+	assert.Equal(t, float64(4), doc["version"])
+	assert.Equal(t, "semaphore-ex", doc["permission_schema"])
 	grant := doc["templates"].([]any)[0].(map[string]any)["roles"].([]any)[0].(map[string]any)
 	assert.Equal(t, "local-ops", grant["role_id"])
 	assert.NotContains(t, grant, "slug")
@@ -163,18 +164,20 @@ func TestRestoreRemovesTheProjectWhenAnEntryFails(t *testing.T) {
 type failingDelete struct{ db.Store }
 
 func (failingDelete) DeleteProject(int) error { return errors.New("locked") }
+func (failingDelete) CreateProjectUserWithRoleRefs(db.ProjectUser, []db.ProjectRoleID) (db.ProjectUser, error) {
+	return db.ProjectUser{}, errors.New("membership failed")
+}
 
 func TestRestore_ReportsAFailedCleanup(t *testing.T) {
 	util.Config = &util.ConfigType{TmpPath: "/tmp"}
 	store := sql.InitConfigCreateTestStore()
 	backup := &BackupFormat{
-		Meta:      BackupMeta{Project: db.Project{Name: "stuck"}},
-		Templates: []BackupTemplate{{Template: db.Template{Name: "deploy"}, Repository: "gone"}},
+		Meta: BackupMeta{Project: db.Project{Name: "stuck"}},
 	}
 
 	_, err := backup.Restore(restoreUser(t, store), failingDelete{store}, proFactory.NewWorkflowStore(store))
 
-	require.ErrorContains(t, err, "error at templates[0]")
+	require.ErrorContains(t, err, "membership failed")
 	assert.ErrorContains(t, err, "could not be removed: locked")
 	var cleanup *CleanupError
 	assert.ErrorAs(t, err, &cleanup)

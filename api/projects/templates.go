@@ -64,6 +64,29 @@ func NewTemplateController(
 func GetTemplate(w http.ResponseWriter, r *http.Request) {
 	template := helpers.GetFromContext(r, "template").(db.Template)
 	permissions := helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
+	user := helpers.UserFromContext(r)
+	if user != nil && !user.Admin && template.LastTask != nil {
+		last := *template.LastTask
+		if last.BuildTask != nil {
+			viewers, viewerErr := helpers.Store(r).GetTaskViewers(template.ProjectID, last.BuildTask.TemplateID, last.BuildTask.WorkflowRunID)
+			if viewerErr != nil {
+				helpers.WriteError(w, viewerErr)
+				return
+			}
+			allowed := false
+			for _, viewer := range viewers {
+				if viewer == user.ID {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				last.BuildTask = nil
+				last.BuildTaskID = nil
+			}
+		}
+		template.LastTask = &last
+	}
 	response, err := projectTemplateResponseFor(helpers.Store(r), template.ProjectID, db.TemplateWithPerms{
 		Template:    template,
 		Permissions: &permissions,
@@ -77,10 +100,50 @@ func GetTemplate(w http.ResponseWriter, r *http.Request) {
 
 func GetTemplateRefs(w http.ResponseWriter, r *http.Request) {
 	tpl := helpers.GetFromContext(r, "template").(db.Template)
+	user := helpers.GetFromContext(r, "user").(*db.User)
 	refs, err := helpers.Store(r).GetTemplateRefs(tpl.ProjectID, tpl.ID)
 	if err != nil {
 		helpers.WriteError(w, err)
 		return
+	}
+
+	// Templates built on this one are named only when the member may read them.
+	if !user.Admin {
+		member, memberErr := helpers.Store(r).GetProjectMember(tpl.ProjectID, user.ID)
+		if memberErr != nil {
+			helpers.WriteError(w, memberErr)
+			return
+		}
+		var base db.ProjectUserPermission
+		for _, role := range member.Roles {
+			base |= role.Permissions
+		}
+		for _, role := range member.MappedRoles {
+			base |= role.RolePermissions
+		}
+		if !base.Can(db.CanReadProject | db.CanViewProjectResources) {
+			refs.Inventories = []db.ObjectReferrer{}
+		}
+		if !base.Can(db.CanReadProject) {
+			refs.Schedules = []db.ObjectReferrer{}
+		}
+		filter := db.TemplateFilter{Viewer: &db.Viewer{UserID: user.ID}}
+		visible, err := helpers.Store(r).GetTemplates(tpl.ProjectID, filter, db.RetrieveQueryParams{})
+		if err != nil {
+			helpers.WriteError(w, err)
+			return
+		}
+		seen := map[int]bool{}
+		for _, t := range visible {
+			seen[t.ID] = true
+		}
+		kept := []db.ObjectReferrer{}
+		for _, ref := range refs.Templates {
+			if seen[ref.ID] {
+				kept = append(kept, ref)
+			}
+		}
+		refs.Templates = kept
 	}
 
 	helpers.WriteJSON(w, http.StatusOK, refs)
@@ -90,7 +153,7 @@ func GetTemplateRefs(w http.ResponseWriter, r *http.Request) {
 func GetTemplates(w http.ResponseWriter, r *http.Request) {
 	project := helpers.GetFromContext(r, "project").(db.Project)
 	user := helpers.UserFromContext(r)
-	filter := db.TemplateFilter{}
+	filter := db.TemplateFilter{Viewer: &db.Viewer{UserID: user.ID, Admin: user.Admin}}
 	if r.URL.Query().Get("app") != "" {
 		app := db.TemplateApp(r.URL.Query().Get("app"))
 		filter.App = &app
@@ -201,7 +264,7 @@ func (c *TemplateController) AddTemplatePerm(w http.ResponseWriter, r *http.Requ
 	perm.RoleID = &role.ID
 	perm.ProjectID = template.ProjectID
 	perm.TemplateID = template.ID
-	if perm.Permissions&^db.KnownRolePermissions != 0 {
+	if perm.Permissions & ^(db.KnownRolePermissions|db.CanViewProjectResources) != 0 {
 		helpers.WriteErrorStatus(w, "Template permissions contain unknown bits", http.StatusBadRequest)
 		return
 	}
@@ -245,7 +308,7 @@ func (c *TemplateController) UpdateTemplatePerm(w http.ResponseWriter, r *http.R
 	perm.ID = permID
 	perm.ProjectID = template.ProjectID
 	perm.TemplateID = template.ID
-	if perm.Permissions&^db.KnownRolePermissions != 0 {
+	if perm.Permissions & ^(db.KnownRolePermissions|db.CanViewProjectResources) != 0 {
 		helpers.WriteErrorStatus(w, "Template permissions contain unknown bits", http.StatusBadRequest)
 		return
 	}
@@ -260,6 +323,7 @@ func (c *TemplateController) UpdateTemplatePerm(w http.ResponseWriter, r *http.R
 		writeTemplateRoleError(w, err)
 		return
 	}
+
 	helpers.Audit(r).Record(r.Context(), audit.Event{
 		Kind:      audit.IAMTemplatePermissionUpdate,
 		Target:    &audit.Target{Type: audit.TargetTemplatePermission, ID: strconv.Itoa(permID)},

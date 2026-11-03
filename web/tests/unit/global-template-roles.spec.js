@@ -2,12 +2,11 @@ import './local-storage-fixture';
 import { expect } from 'chai';
 import EditRoleForm from '@/components/EditRoleForm.vue';
 import EditTemplatePermissionForm from '@/components/EditTemplatePermissionForm.vue';
-import EventBus from '@/event-bus';
 import TemplatePermissionsChips from '@/components/TemplatePermissionsChips.vue';
 import UserForm from '@/components/UserForm.vue';
 import Roles from '@/views/Roles.vue';
 import TemplateView from '@/views/project/TemplateView.vue';
-import TemplatePerms from '@/views/project/template/TemplatePerms.vue';
+import TemplatePerms from '@/views/project/ObjectPerms.vue';
 import Users from '@/views/Users.vue';
 import { GLOBAL_PERMISSIONS, USER_PERMISSIONS } from '@/lib/constants';
 import {
@@ -144,10 +143,19 @@ describe('global and template roles', () => {
     expect(translations).to.equal(0);
   });
 
+  it('translates workflow grant chips while retaining literal template labels', () => {
+    expect(TemplatePermissionsChips.methods.permissionLabel.call({
+      scope: 'workflow', $t: (key) => ({ canSeeWorkflow: 'Can see this workflow' }[key]),
+    }, 'canSeeWorkflow')).to.equal('Can see this workflow');
+  });
+
   it('uses CAS deletes and project resource permission for template override actions', () => {
     expect(TemplatePerms.methods.getDeleteItemUrl.call({
       projectId: 7,
       templateId: 9,
+      scope: 'template',
+      object: { id: 9 },
+      getItemsUrl: TemplatePerms.methods.getItemsUrl,
       itemId: 11,
       getSingleItemUrl: TemplatePerms.methods.getSingleItemUrl,
     }, { revision: 3 })).to.equal(
@@ -158,32 +166,32 @@ describe('global and template roles', () => {
     })).to.equal(true);
   });
 
-  it('returns to the template list when a read override denies detail access', async () => {
-    const denied = new Error('Request failed with status code 403');
-    denied.response = { status: 403 };
-    let replacement;
-    let snackbar;
-    const captureSnackbar = (message) => { snackbar = message; };
-    EventBus.$once('i-snackbar', captureSnackbar);
+  it('shows not found when a read override hides template detail', async () => {
+    const denied = new Error('Not found');
+    denied.response = { status: 404 };
+    const context = {
+      USER_PERMISSIONS,
+      can: () => false,
+      loadProjectResource: async () => { throw denied; },
+      loadProjectResources: async () => { throw new Error('No collection request permitted'); },
+    };
+    await TemplateView.methods.loadData.call(context);
+    expect(context.notFound).to.equal(true);
+  });
+});
 
-    try {
-      await TemplateView.methods.loadData.call({
-        projectId: 7,
-        viewId: 3,
-        loadProjectResource: async () => { throw denied; },
-        loadProjectResources: async () => [],
-        $router: {
-          replace: async (destination) => { replacement = destination; },
-        },
-      });
-    } finally {
-      EventBus.$off('i-snackbar', captureSnackbar);
-    }
-
-    expect(replacement).to.deep.equal({ path: '/project/7/views/3/templates' });
-    expect(snackbar).to.deep.equal({
-      color: 'error',
-      text: 'You do not have permission to view this template.',
-    });
+describe('template grant editor save projection', () => {
+  it('clears stale legacy permissions when all explicit effects return to inherit', () => {
+    const form = {
+      item: { permissions: 17, allowed_permissions: 3, denied_permissions: 0 },
+      templateId: '3',
+      projectId: 2,
+    };
+    EditTemplatePermissionForm.methods.setPermissionEffect.call(form, 1, 'inherit');
+    EditTemplatePermissionForm.methods.setPermissionEffect.call(form, 2, 'inherit');
+    EditTemplatePermissionForm.methods.beforeSave.call(form);
+    expect(form.item.permissions).to.equal(0);
+    expect(form.item.allowed_permissions).to.equal(0);
+    expect(form.item.denied_permissions).to.equal(0);
   });
 });

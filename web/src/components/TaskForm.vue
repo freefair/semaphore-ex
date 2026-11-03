@@ -279,6 +279,8 @@ export default {
     template: Object,
     sourceTask: Object,
     inventoryRefresh: Boolean,
+    // Without read_project nothing is listed to pick from, the template's own values are used.
+    canRead: Boolean,
   },
 
   components: {
@@ -319,7 +321,7 @@ export default {
       return this.sameSSHKeyProject && this.can(USER_PERMISSIONS.manageProjectResources);
     },
     needInventory() {
-      return this.needField('inventory') && this.template.task_params?.allow_override_inventory;
+      return this.canRead && this.needField('inventory') && this.template.task_params?.allow_override_inventory;
     },
 
     // A monorepo is shared by every template on the repository's own branch, so
@@ -485,25 +487,30 @@ export default {
     },
 
     async loadBuildTasks() {
-      const builds = [];
-      let before = 0;
-      // Refreshes are task history, but cannot supply a deployable build.
-      while (builds.length < 20) {
-        // Each page depends on the cursor returned by the previous request.
-        // eslint-disable-next-line no-await-in-loop
-        const { data, headers } = await axios({
-          method: 'get',
-          url: `/api/project/${this.projectId}/templates/${this.template.build_template_id}/tasks/last?count=20${before ? `&before=${before}` : ''}`,
-          responseType: 'json',
-        });
-        builds.push(...data.filter((task) => task.status === 'success'
-          && !task.params?.inventory_refresh));
-        if (data.length === 0 || headers['x-has-next'] === 'false') break;
-        const next = data[data.length - 1].id;
-        if (before && next >= before) break;
-        before = next;
+      try {
+        const builds = [];
+        let before = 0;
+        // Refreshes are task history, but cannot supply a deployable build.
+        while (builds.length < 20) {
+          // Each page depends on the cursor returned by the previous request.
+          // eslint-disable-next-line no-await-in-loop
+          const { data, headers } = await axios({
+            method: 'get',
+            url: `/api/project/${this.projectId}/templates/${this.template.build_template_id}/tasks/last?count=20${before ? `&before=${before}` : ''}`,
+            responseType: 'json',
+          });
+          builds.push(...data.filter((task) => task.status === 'success'
+            && !task.params?.inventory_refresh));
+          if (data.length === 0 || headers['x-has-next'] === 'false') break;
+          const next = data[data.length - 1].id;
+          if (before && next >= before) break;
+          before = next;
+        }
+        return builds.slice(0, 20);
+      } catch (error) {
+        if (error.response?.status === 404) return [];
+        throw error;
       }
-      return builds.slice(0, 20);
     },
 
     async afterLoadData() {

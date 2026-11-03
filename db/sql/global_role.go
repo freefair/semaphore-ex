@@ -147,6 +147,13 @@ func (d *SqlDb) DeleteGlobalRole(roleID db.ProjectRoleID, expectedRevision int) 
 	if mapped > 0 {
 		return db.ErrGlobalRoleAssigned
 	}
+	grants, err := tx.SelectInt(d.PrepareQuery("select count(*) from project__workflow_role where role_id=?"), roleID)
+	if err != nil {
+		return err
+	}
+	if grants > 0 {
+		return db.ErrGlobalRoleAssigned
+	}
 	result, err := tx.Exec(d.PrepareQuery(
 		"delete from `role` where role_id=? and project_id is null and revision=?"),
 		roleID, expectedRevision)

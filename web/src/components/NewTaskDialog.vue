@@ -37,6 +37,7 @@
         :need-reset="needReset"
         :source-task="sourceTask"
         :inventory-refresh="isInventoryRefresh"
+        :can-read="canRead"
       />
     </template>
   </EditDialog>
@@ -62,6 +63,7 @@ export default {
     projectId: Number,
     template: Object,
     sourceTask: Object,
+    canRead: Boolean,
   },
   data() {
     return {

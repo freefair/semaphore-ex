@@ -90,7 +90,7 @@ func (t *TaskRunner) LogWithTime(now time.Time, msg string) {
 }
 
 func (t *TaskRunner) sendToWs(now time.Time, msg string) {
-	for _, user := range t.users {
+	for _, user := range t.taskViewers() {
 		b, err := json.Marshal(&map[string]any{
 			"type":       "log",
 			"output":     msg,

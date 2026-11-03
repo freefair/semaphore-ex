@@ -28,7 +28,8 @@ func (p TemplatePermission) Can(permission TemplatePermission) bool {
 const KnownProjectRolePermissions = CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
 	CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
 	CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
-	CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails
+	CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails | CanReadTaskGroups | CanCreateTaskGroups |
+	CanUpdateTaskGroups | CanDeleteTaskGroups | CanShareTaskGroups | CanReadProject | CanApproveWorkflows
 
 // ValidateProjectRole validates the Enhanced project-scoped role contract.
 // Slug remains an internal compatibility key; callers address roles by ID.

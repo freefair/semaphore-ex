@@ -312,6 +312,7 @@ type SurveyVar struct {
 }
 
 type TemplateFilter struct {
+	Viewer          *Viewer
 	ViewID          *int
 	BuildTemplateID *int
 	AutorunOnly     bool

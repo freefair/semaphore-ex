@@ -250,12 +250,18 @@ func (c *workflowController) GetWorkflows(w http.ResponseWriter, r *http.Request
 					return
 				}
 			} else {
-				state, stateErr := pro_interfaces.ResolveWorkflowAuthorizationState(store, project.ID, user.ID)
-				if stateErr != nil {
-					w.WriteHeader(http.StatusNotFound)
-					return
+				visible := make([]db.WorkflowTemplate, 0, len(workflows))
+				for _, workflow := range workflows {
+					state, stateErr := pro_interfaces.ResolveWorkflowObjectAuthorizationState(store, project.ID, workflow.ID, user.ID)
+					if stateErr != nil {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+					if pro_interfaces.AuthorizeWorkflowReadForState(workflow, state).Allowed {
+						visible = append(visible, workflow)
+					}
 				}
-				workflows = pro_interfaces.FilterWorkflowTemplatesByAuthorizationState(workflows, state)
+				workflows = visible
 			}
 		}
 	}

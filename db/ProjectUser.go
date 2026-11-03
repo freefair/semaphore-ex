@@ -48,23 +48,37 @@ const (
 	CanUpdateTaskGroups
 	CanDeleteTaskGroups
 	CanShareTaskGroups
+	CanReadProject
+	CanApproveWorkflows
 )
+
+const (
+	CanRunWorkflows          = CanStartWorkflows
+	WorkflowGrantPermissions = CanRunWorkflows | CanEditWorkflows | CanApproveWorkflows | CanReadProject
+	TemplateGrantPermissions = CanRunProjectTasks | CanManageProjectResources | CanReadProject
+)
+
+// Viewer scopes a list to the requesting member.
+type Viewer struct {
+	UserID int
+	Admin  bool
+}
 
 var rolePermissions = map[ProjectUserRole]ProjectUserPermission{
 	ProjectOwner: CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
 		CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
 		CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
 		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails |
-		CanReadTaskGroups | CanCreateTaskGroups | CanUpdateTaskGroups | CanDeleteTaskGroups | CanShareTaskGroups,
+		CanReadTaskGroups | CanCreateTaskGroups | CanUpdateTaskGroups | CanDeleteTaskGroups | CanShareTaskGroups | CanReadProject | CanApproveWorkflows,
 	ProjectManager: CanRunProjectTasks | CanManageProjectResources | CanViewProjectResources |
 		CanViewWorkflows | CanEditWorkflows | CanStartWorkflows | CanStopWorkflows |
 		CanAdministerWorkflows | CanListGrantedCredentials | CanConsumeGrantedCredentials |
 		CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails |
-		CanReadTaskGroups | CanCreateTaskGroups | CanUpdateTaskGroups | CanDeleteTaskGroups | CanShareTaskGroups,
+		CanReadTaskGroups | CanCreateTaskGroups | CanUpdateTaskGroups | CanDeleteTaskGroups | CanShareTaskGroups | CanReadProject | CanApproveWorkflows,
 	ProjectTaskRunner: CanRunProjectTasks | CanViewProjectResources |
 		CanViewWorkflows | CanStartWorkflows | CanStopWorkflows |
-		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanReadTaskGroups,
-	ProjectGuest: CanViewProjectResources | CanViewWorkflows | CanReadTaskGroups,
+		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanReadTaskGroups | CanReadProject | CanApproveWorkflows,
+	ProjectGuest: CanViewProjectResources | CanViewWorkflows | CanReadTaskGroups | CanReadProject | CanApproveWorkflows,
 }
 
 func (r ProjectUserRole) IsValid() bool {

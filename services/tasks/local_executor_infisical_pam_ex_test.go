@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/semaphoreui/semaphore/api/sockets"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/infisicalpam"
 	"github.com/semaphoreui/semaphore/pkg/infisicalpam/pamtest"
@@ -35,6 +36,7 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	go sockets.StartWS()
 	os.Exit(m.Run())
 }
 

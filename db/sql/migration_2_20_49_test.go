@@ -59,7 +59,7 @@ func TestMigration22049AddsWorkflowRolePolicyStorageAndMigratesRoleBits(t *testi
 
 	unmappedGlobal, err := store.GetGlobalRoleByID(globalRole.ID)
 	require.NoError(t, err)
-	assert.Equal(t, globalRole.Permissions, unmappedGlobal.Permissions)
+	assert.Equal(t, globalRole.Permissions|db.CanReadProject|db.CanApproveWorkflows, unmappedGlobal.Permissions)
 
 	require.NoError(t, db.Rollback(store, legacyVersion))
 	assert.NotContains(t, sqliteColumnNames(t, store, "project__workflow_template"), "access_policy")

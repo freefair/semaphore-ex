@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-gorp/gorp/v3"
 	"github.com/semaphoreui/semaphore/db"
+	coresql "github.com/semaphoreui/semaphore/db/sql"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/util"
 )
@@ -96,12 +97,17 @@ func encodeWorkflowPolicies(workflow *db.WorkflowTemplate) error {
 	return nil
 }
 
-func (d *WorkflowStoreImpl) GetWorkflowTemplates(projectID int, params db.RetrieveQueryParams) ([]db.WorkflowTemplate, error) {
+func (d *WorkflowStoreImpl) GetWorkflowTemplates(projectID int, viewer *db.Viewer, params db.RetrieveQueryParams) ([]db.WorkflowTemplate, error) {
 	if d.connection == nil {
 		return nil, db.ErrNotFound
 	}
-	query := "select * from project__workflow_template where project_id=?"
+	query := "select w.* from project__workflow_template w where project_id=?"
 	args := []any{projectID}
+	if viewer != nil && !viewer.Admin {
+		where, whereArgs := coresql.VisibleWorkflowsWhere(projectID, viewer.UserID, "w")
+		query += " and " + where
+		args = append(args, whereArgs...)
+	}
 	if params.Filter != "" {
 		query += " and lower(name) like lower(?)"
 		args = append(args, "%"+params.Filter+"%")

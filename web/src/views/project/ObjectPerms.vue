@@ -3,7 +3,8 @@
     <EditTemplatePermissionDialog
       v-model="editDialog"
       :project-id="projectId"
-      :template-id="templateId"
+      :scope="scope"
+      :object-id="object.id"
       :item-id="itemId"
       @save="loadItems()"
     />
@@ -54,7 +55,7 @@
       </template>
 
       <template v-slot:item.permissions="{ item }">
-        <div class="py-1">
+        <div v-if="scope === 'template'" class="py-1">
           <div class="caption text--secondary">Allow</div>
           <TemplatePermissionsChips
             :permissions="item.allowed_permissions || 0"
@@ -67,6 +68,7 @@
             effect="deny"
           />
         </div>
+        <TemplatePermissionsChips v-else :permissions="item.permissions" :scope="scope" />
       </template>
 
       <template v-slot:item.actions="{ item }">
@@ -121,9 +123,11 @@ export default {
   },
   mixins: [ItemListPageBase],
 
+  // The tab of a template or of a workflow: the view passes the one it shows.
   props: {
     projectId: Number,
     template: Object,
+    workflow: Object,
     repositories: Array,
     inventory: Array,
     environment: Array,
@@ -140,8 +144,14 @@ export default {
   },
 
   computed: {
-    templateId() {
-      return this.template.id;
+    scope() {
+      return this.workflow ? 'workflow' : 'template';
+    },
+
+    templateId() { return this.template?.id; },
+
+    object() {
+      return this.workflow || this.template;
     },
   },
 
@@ -150,9 +160,7 @@ export default {
 
     async loadRoles() {
       try {
-        const response = await axios.get(
-          `/api/project/${this.template.project_id}/roles/all`,
-        );
+        const response = await axios.get(`/api/project/${this.projectId}/roles/all`);
         this.availableRoles = response.data || [];
       } catch (error) {
         // eslint-disable-next-line no-console
@@ -172,7 +180,9 @@ export default {
     roleScope,
 
     allowActions() {
-      return this.can(USER_PERMISSIONS.manageProjectResources);
+      return this.workflow
+        ? Boolean(this.workflow?.effective_access?.administer)
+        : this.can(USER_PERMISSIONS.manageProjectResources);
     },
 
     getHeaders() {
@@ -196,15 +206,15 @@ export default {
     },
 
     getSingleItemUrl() {
-      return `/api/project/${this.projectId}/templates/${this.templateId}/perms/${this.itemId}`;
+      return `${this.getItemsUrl()}/${this.itemId}`;
     },
 
     getItemsUrl() {
-      return `/api/project/${this.projectId}/templates/${this.templateId}/perms`;
+      return `/api/project/${this.projectId}/${this.scope}s/${this.object.id}/perms`;
     },
 
     getEventName() {
-      return 'i-template-perms';
+      return `i-${this.scope}-perms`;
     },
 
   },

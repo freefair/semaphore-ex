@@ -69,6 +69,9 @@ func (d *SqlDb) ForceDeleteProjectRole(projectID int, roleID db.ProjectRoleID, e
 			return db.RoleImpact{}, db.ErrLastProjectAdministrator
 		}
 	}
+	if _, err = tx.Exec(d.PrepareQuery("delete from project__workflow_role where project_id=? and role_id=?"), projectID, roleID); err != nil {
+		return db.RoleImpact{}, err
+	}
 	if _, err = tx.Exec(d.PrepareQuery("delete from project__template_role where project_id=? and role_id=?"), projectID, roleID); err != nil {
 		return db.RoleImpact{}, err
 	}
@@ -175,6 +178,9 @@ func (d *SqlDb) ForceDeleteGlobalRole(roleID db.ProjectRoleID, expectedRevision 
 		return db.RoleImpact{}, err
 	}
 	impact := assigned.Impact()
+	if _, err = tx.Exec(d.PrepareQuery("delete from project__workflow_role where role_id=?"), roleID); err != nil {
+		return db.RoleImpact{}, err
+	}
 	if _, err = tx.Exec(d.PrepareQuery("delete from project__template_role where role_id=?"), roleID); err != nil {
 		return db.RoleImpact{}, err
 	}

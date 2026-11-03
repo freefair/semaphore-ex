@@ -10,6 +10,7 @@ import (
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
+	log "github.com/sirupsen/logrus"
 	"strconv"
 )
 
@@ -52,8 +53,21 @@ func (t *TaskRunner) claimTaskStart() (taskStartClaimOutcome, error) {
 	return taskStartClaimed, nil
 }
 
+// taskViewers resolves live authorization immediately before a socket delivery.
+func (t *TaskRunner) taskViewers() []int {
+	if t.pool == nil || t.pool.store == nil {
+		return nil
+	}
+	viewers, err := t.pool.store.GetTaskViewers(t.Task.ProjectID, t.Task.TemplateID, t.Task.WorkflowRunID)
+	if err != nil {
+		log.WithError(err).WithField("task_id", t.Task.ID).Warn("Cannot authorize task socket recipients")
+		return nil
+	}
+	return viewers
+}
+
 func (t *TaskRunner) publishStatus() {
-	for _, user := range t.users {
+	for _, user := range t.taskViewers() {
 		b, err := json.Marshal(&map[string]any{
 			"type":                     "update",
 			"start":                    t.Task.Start,

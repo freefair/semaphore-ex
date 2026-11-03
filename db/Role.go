@@ -140,10 +140,21 @@ type TemplateRolePerm struct {
 	Revision           int                   `db:"revision" json:"revision"`
 }
 
+// WorkflowRolePerm grants actions to an immutable role on one workflow.
+type WorkflowRolePerm struct {
+	ID          int                   `db:"id" json:"id"`
+	RoleID      ProjectRoleID         `db:"role_id" json:"role_id"`
+	RoleSlug    string                `db:"role_slug" json:"role_slug"`
+	WorkflowID  int                   `db:"workflow_id" json:"workflow_id"`
+	ProjectID   int                   `db:"project_id" json:"project_id"`
+	Permissions ProjectUserPermission `db:"permissions" json:"permissions"`
+}
+
 type RoleImpact struct {
 	Members        int `json:"members"`
 	Projects       int `json:"projects"`
 	TemplateGrants int `json:"template_grants"`
+	WorkflowGrants int `json:"workflow_grants"`
 	Mappings       int `json:"mappings"`
 }
 
@@ -159,6 +170,7 @@ type RoleMember struct {
 type RoleAssignments struct {
 	Members         []RoleMember
 	Grants          []TemplateRolePerm
+	WorkflowGrants  []WorkflowRolePerm
 	GlobalMembers   int
 	Mappings        []RoleMapping
 	MappingCount    int
@@ -177,6 +189,9 @@ func (a RoleAssignments) Impact() RoleImpact {
 		projects[g.ProjectID] = true
 	}
 
+	for _, g := range a.WorkflowGrants {
+		projects[g.ProjectID] = true
+	}
 	for _, m := range a.Mappings {
 		projects[m.ProjectID] = true
 	}
@@ -185,5 +200,5 @@ func (a RoleAssignments) Impact() RoleImpact {
 			projects[projectID] = true
 		}
 	}
-	return RoleImpact{Members: len(members) + a.GlobalMembers, Projects: len(projects), TemplateGrants: len(a.Grants), Mappings: len(a.Mappings) + a.MappingCount}
+	return RoleImpact{Members: len(members) + a.GlobalMembers, Projects: len(projects), TemplateGrants: len(a.Grants), WorkflowGrants: len(a.WorkflowGrants), Mappings: len(a.Mappings) + a.MappingCount}
 }

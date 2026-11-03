@@ -838,7 +838,7 @@ func (s *workflowTriggerService) authorizeWorkflow(
 		}
 		return s.authorize(ctx, actor, projectID, pro_interfaces.CapabilityAccessRead, legacyPermission)
 	}
-	state, err := pro_interfaces.ResolveWorkflowAuthorizationState(store, projectID, actor.ID)
+	state, err := pro_interfaces.ResolveWorkflowObjectAuthorizationState(store, projectID, workflow.ID, actor.ID)
 	if err != nil {
 		return pro_interfaces.ErrWorkflowTriggerPermissionDenied
 	}

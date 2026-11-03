@@ -198,6 +198,41 @@ func addUser() *db.User {
 	return &user
 }
 
+// addTemplatePerm supplies a versioned template override for grant transactions.
+func addTemplatePerm() int {
+	role, err := store.GetSharedRoleBySlug("task_runner")
+	if err != nil {
+		panic(err)
+	}
+	perm, err := store.CreateTemplateRole(db.TemplateRolePerm{
+		ProjectID:          userProject.ID,
+		TemplateID:         templateID,
+		RoleID:             &role.ID,
+		AllowedPermissions: db.CanReadTemplate | db.CanRunTemplate,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return perm.ID
+}
+
+func addWorkflowPerm() int {
+	role, err := store.GetSharedRoleBySlug("task_runner")
+	if err != nil {
+		panic(err)
+	}
+	perm, err := store.CreateWorkflowRole(db.WorkflowRolePerm{
+		ProjectID:   userProject.ID,
+		WorkflowID:  workflowID,
+		RoleID:      role.ID,
+		Permissions: db.CanRunWorkflows,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return perm.ID
+}
+
 // addGlobalRole creates an EX global role in the selected role authority.
 func addGlobalRole() *db.Role {
 	uid := getUUID()

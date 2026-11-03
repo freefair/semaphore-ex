@@ -8,6 +8,7 @@
       :project-id="template.project_id"
       :template="template"
       :source-task="sourceTask"
+      :can-read="canRead"
     />
 
     <v-data-table
@@ -121,6 +122,7 @@ export default {
     limit: Number,
     hideFooter: Boolean,
     needUpdate: Boolean,
+    canRead: Boolean,
   },
   data() {
     return {

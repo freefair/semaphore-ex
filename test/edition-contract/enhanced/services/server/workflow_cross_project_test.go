@@ -76,7 +76,7 @@ func TestCrossProjectDefinitionLifecycleNormalizesAndRejectsLiveGrantFailures(t 
 	service := NewWorkflowDefinitionService(fixture.repository, fixture.store)
 	_, _, err := service.Create(fixture.consumerID, fixture.workflow(), &fixture.actor)
 	assert.ErrorIs(t, err, db.ErrNotFound)
-	workflows, err := fixture.repository.GetWorkflowTemplates(fixture.consumerID, db.RetrieveQueryParams{})
+	workflows, err := fixture.repository.GetWorkflowTemplates(fixture.consumerID, nil, db.RetrieveQueryParams{})
 	require.NoError(t, err)
 	assert.Empty(t, workflows)
 

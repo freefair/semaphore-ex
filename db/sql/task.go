@@ -318,6 +318,14 @@ func (d *SqlDb) getTasks(projectID int, templateID *int, workflowRunID *int, tas
 		q = q.Where(squirrel.Eq{"status": params.TaskFilter.Status})
 	}
 
+	if params.TaskFilter != nil && filtered(params.TaskFilter.Viewer) {
+		where, args, visibilityErr := d.exactVisibleTasksWhere(projectID, params.TaskFilter.Viewer.UserID)
+		if visibilityErr != nil {
+			return visibilityErr
+		}
+		q = q.Where(where, args...)
+	}
+
 	if templateID == nil {
 		q = q.Where("task.project_id=?", projectID)
 	} else {
@@ -353,6 +361,15 @@ func (d *SqlDb) getTasks(projectID int, templateID *int, workflowRunID *int, tas
 		err = (*tasks)[i].Task.DecodeWorkflowTemplateProvenance()
 		if err != nil {
 			return
+		}
+		if params.TaskFilter != nil && filtered(params.TaskFilter.Viewer) && (*tasks)[i].BuildTaskID != nil {
+			visible, visibilityErr := d.taskVisible(projectID, (*tasks)[i].BuildTaskID, params.TaskFilter.Viewer.UserID)
+			if visibilityErr != nil {
+				return visibilityErr
+			}
+			if !visible {
+				(*tasks)[i].BuildTaskID = nil
+			}
 		}
 		err = (*tasks)[i].Fill(d)
 		if err != nil {

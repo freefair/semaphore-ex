@@ -181,3 +181,27 @@ func authorizeWorkflowAccess(
 		KnownRoleReferences:     knownRoles, Policy: workflow.AccessPolicy,
 	})
 }
+
+// ResolveWorkflowObjectAuthorizationState applies only grants for the given
+// workflow. Its access policy still narrows every resulting action.
+func ResolveWorkflowObjectAuthorizationState(store WorkflowAuthorizationIdentityStore, projectID, workflowID, actorID int) (WorkflowAuthorizationState, error) {
+	state, err := ResolveWorkflowAuthorizationState(store, projectID, actorID)
+	if err != nil {
+		return WorkflowAuthorizationState{}, err
+	}
+	grants, ok := any(store).(interface {
+		GetWorkflowPermission(int, int, int) (db.ProjectUserPermission, error)
+	})
+	if !ok {
+		return state, nil
+	}
+	permissions, err := grants.GetWorkflowPermission(projectID, workflowID, actorID)
+	if err != nil {
+		return WorkflowAuthorizationState{}, err
+	}
+	if permissions&db.CanReadProject != 0 {
+		permissions |= db.CanViewWorkflows
+	}
+	state.ProjectPermissions |= permissions
+	return state, nil
+}

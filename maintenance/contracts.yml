@@ -747,9 +747,14 @@ symbols:
     selected_signature: func(projectID int, workflowID int) (db.WorkflowTemplate, error)
     implementation: local
   - name: db/sql:WorkflowStoreImpl.GetWorkflowTemplates
-    signature: func(projectID int, params db.RetrieveQueryParams) (res []db.WorkflowTemplate, err error)
-    selected_signature: func(projectID int, params db.RetrieveQueryParams) ([]db.WorkflowTemplate, error)
+    signature: >-
+      func(projectID int, viewer *db.Viewer, params db.RetrieveQueryParams) (res []db.WorkflowTemplate, err
+      error)
+    selected_signature: func(projectID int, viewer *db.Viewer, params db.RetrieveQueryParams) ([]db.WorkflowTemplate, error)
     implementation: local
+    behavior_tests:
+      - test/edition-contract/enhanced/db/sql/workflow_definition_test.go::TestWorkflowDefinitionRoundTripPreservesGraphIDsAndLayout
+      - test/edition-contract/enhanced/db/sql/workflow_definition_test.go::TestWorkflowTemplatesViewerRespectsScopedGrants
   - name: db/sql:WorkflowStoreImpl.OpenWorkflowApproval
     signature: func(approval db.WorkflowApproval) (res db.WorkflowApproval, opened bool, err error)
     selected_signature: func(approval db.WorkflowApproval) (db.WorkflowApproval, bool, error)
@@ -1197,6 +1202,9 @@ symbols:
   - name: db:CanAdministerWorkflows
     signature: db.ProjectUserPermission = 512
     implementation: core
+  - name: db:CanApproveWorkflows
+    signature: db.ProjectUserPermission = 2097152
+    implementation: core
   - name: db:CanConsumeGrantedCredentials
     signature: db.ProjectUserPermission = 2048
     implementation: core
@@ -1258,6 +1266,9 @@ symbols:
   - name: db:CanReadGlobalAudit
     signature: db.GlobalPermission = 8
     implementation: core
+  - name: db:CanReadProject
+    signature: db.ProjectUserPermission = 1048576
+    implementation: core
   - name: db:CanReadTaskGroups
     signature: db.ProjectUserPermission = 32768
     implementation: core
@@ -1277,6 +1288,9 @@ symbols:
     implementation: core
   - name: db:CanRunTemplate
     signature: db.TemplatePermission = 2
+    implementation: core
+  - name: db:CanRunWorkflows
+    signature: db.ProjectUserPermission = 128
     implementation: core
   - name: db:CanShareTaskGroups
     signature: db.ProjectUserPermission = 524288
@@ -2803,10 +2817,10 @@ symbols:
     behavior_tests:
     - db/Workflow_inputs_test.go::TestIsValidWorkflowOutputName
   - name: db:KnownProjectRolePermissions
-    signature: db.ProjectUserPermission = 32767
+    signature: db.ProjectUserPermission = 4194303
     implementation: core
     behavior_tests:
-    - db/Role_ex_test.go::TestKnownProjectRolePermissionsIncludesEnhancedBits
+      - db/Role_ex_test.go::TestKnownProjectRolePermissionsIncludesEnhancedBits
   - name: db:KnownProjectRoleReferences
     signature: func(customRoleIDs []db.ProjectRoleID) map[db.ProjectRoleReference]bool
     implementation: core
@@ -4100,16 +4114,16 @@ symbols:
     - services/runners/executor_factory_ex_test.go::TestRunnerPayloadNeverSerializesResolvedTaskSSHKeyMaterial
   - name: db:RetrieveQueryParams
     signature: >-
-      struct{Offset int; Count int; SortBy string; SortInverted bool; Filter string; Ownership db.OwnershipFilter; TaskFilter
-      *db.TaskFilter; BeforeID int}
+      struct{Viewer *db.Viewer; Offset int; Count int; SortBy string; SortInverted bool; Filter string;
+      Ownership db.OwnershipFilter; TaskFilter *db.TaskFilter; BeforeID int}
     implementation: core
   - name: db:Role
     signature: struct{ID db.ProjectRoleID "db:\"role_id\" json:\"id\" backup:\"-\""; Slug string "db:\"slug\" json:\"slug\" backup:\"-\""; Name string "db:\"name\" json:\"name\""; Permissions db.ProjectUserPermission "db:\"permissions\" json:\"permissions\""; GlobalPermissions db.GlobalPermission "db:\"global_permissions\" json:\"global_permissions\" backup:\"-\""; ProjectID *int "db:\"project_id\" json:\"project_id\""; Revision int "db:\"revision\" json:\"revision\""; Builtin bool "db:\"builtin\" json:\"builtin\" backup:\"-\""}
     implementation: core
   - name: db:RoleAssignments
     signature: >-
-      struct{Members []db.RoleMember; Grants []db.TemplateRolePerm; GlobalMembers int; Mappings
-      []db.RoleMapping; MappingCount int; MappingProjects []int}
+      struct{Members []db.RoleMember; Grants []db.TemplateRolePerm; WorkflowGrants []db.WorkflowRolePerm;
+      GlobalMembers int; Mappings []db.RoleMapping; MappingCount int; MappingProjects []int}
     implementation: core
     behavior_tests:
       - db/Role_test.go::TestRoleAssignments_Impact
@@ -4117,7 +4131,8 @@ symbols:
   - name: db:RoleImpact
     signature: >-
       struct{Members int "json:\"members\""; Projects int "json:\"projects\""; TemplateGrants int
-      "json:\"template_grants\""; Mappings int "json:\"mappings\""}
+      "json:\"template_grants\""; WorkflowGrants int "json:\"workflow_grants\""; Mappings int
+      "json:\"mappings\""}
     implementation: core
     behavior_tests:
       - db/Role_test.go::TestRoleAssignments_Impact
@@ -4746,16 +4761,20 @@ symbols:
     signature: struct{Login string "json:\"login\""; Passphrase string "json:\"passphrase\""; PrivateKey string "json:\"private_key\""}
     implementation: core
   - name: db:Store
-    signature: interface{db.ConnectionManager; db.MigrationManager; db.OptionsManager; db.UserManager; db.ProjectStore; db.ProjectInviteRepository;
-      db.TemplateManager; db.InventoryManager; db.RepositoryManager; db.HostConfigManager; db.EnvironmentManager; db.AccessKeyManager;
-      db.IntegrationManager; db.SessionManager; db.TokenManager; db.ExternalIdentityManager; db.TaskManager; db.ScheduleManager;
-      db.ViewManager; db.RunnerManager; db.DockerExecutionPolicyRepository; db.KubernetesExecutionPolicyRepository; db.DockerReconciliationRepository;
-      db.DockerTelemetryRepository; db.KubernetesTelemetryRepository; db.EventManager; db.SecretStorageRepository; db.GlobalCredentialRepository;
-      db.SecretSyncRepository; db.RoleRepository; db.CapabilityRepository; db.TOTPRepository; db.LDAPRepository; db.OIDCGroupMappingRepository;
-      db.AuditWebhookRepository; db.NotificationRepository; db.AuditEventManager; db.AuditExportRepository}
+    signature: >-
+      interface{db.ConnectionManager; db.MigrationManager; db.OptionsManager; db.UserManager; db.ProjectStore;
+      db.ProjectInviteRepository; db.TemplateManager; db.WorkflowRoleManager; db.InventoryManager;
+      db.RepositoryManager; db.HostConfigManager; db.EnvironmentManager; db.AccessKeyManager;
+      db.IntegrationManager; db.SessionManager; db.TokenManager; db.ExternalIdentityManager; db.TaskManager;
+      db.ScheduleManager; db.ViewManager; db.RunnerManager; db.DockerExecutionPolicyRepository;
+      db.KubernetesExecutionPolicyRepository; db.DockerReconciliationRepository; db.DockerTelemetryRepository;
+      db.KubernetesTelemetryRepository; db.EventManager; db.SecretStorageRepository;
+      db.GlobalCredentialRepository; db.SecretSyncRepository; db.RoleRepository; db.CapabilityRepository;
+      db.TOTPRepository; db.LDAPRepository; db.OIDCGroupMappingRepository; db.AuditWebhookRepository;
+      db.NotificationRepository; db.AuditEventManager; db.AuditExportRepository}
     implementation: core
     behavior_tests:
-    - db/sql/host_config_test.go::TestHostConfigCRUD
+      - db/sql/host_config_test.go::TestHostConfigCRUD
   - name: db:StringArrayField
     signature: '[]string'
     implementation: core
@@ -4882,8 +4901,8 @@ symbols:
     implementation: core
   - name: db:TaskFilter
     signature: >-
-      struct{Start *time.Time "json:\"start\""; End *time.Time "json:\"end\""; UserID *int "json:\"user_id\""; Status
-      []pkg/task_logger.TaskStatus}
+      struct{Start *time.Time "json:\"start\""; End *time.Time "json:\"end\""; UserID *int "json:\"user_id\"";
+      Status []pkg/task_logger.TaskStatus; Viewer *db.Viewer "json:\"-\""}
     implementation: core
   - name: db:TaskGroup
     signature: struct{ID int "db:\"id\" json:\"id\""; ProjectID int "db:\"project_id\" json:\"project_id\""; Name string "db:\"name\" json:\"name\""; Description string "db:\"description\" json:\"description\""; MaxParallelTasks int "db:\"max_parallel_tasks\" json:\"max_parallel_tasks\""; RunnerIDs db.TaskGroupBindings "db:\"runner_ids\" json:\"runner_ids\""; SharedProjectIDs db.TaskGroupBindings "db:\"-\" json:\"shared_project_ids\""; Revision int "db:\"revision\" json:\"revision\""}
@@ -5166,7 +5185,12 @@ symbols:
     signature: db.TemplateType = "deploy"
     implementation: core
   - name: db:TemplateFilter
-    signature: struct{ViewID *int; BuildTemplateID *int; AutorunOnly bool; App *db.TemplateApp; Search string}
+    signature: >-
+      struct{Viewer *db.Viewer; ViewID *int; BuildTemplateID *int; AutorunOnly bool; App *db.TemplateApp; Search
+      string}
+    implementation: core
+  - name: db:TemplateGrantPermissions
+    signature: db.ProjectUserPermission = 1048581
     implementation: core
   - name: db:TemplateJWTParams
     signature: >-
@@ -5368,6 +5392,30 @@ symbols:
   - name: db:TokenProps
     signature: db.ObjectProps
     implementation: core
+  - name: db:UpstreamProjectPermissions
+    signature: func(mask db.ProjectUserPermission, version int) db.ProjectUserPermission
+    implementation: core
+    behavior_tests:
+      - services/project/backup_test.go::TestRestore_LiftsMasksOfAVersion2File
+      - services/project/backup_test.go::TestRestore_ReadBitByFileVersion
+      - services/project/backup_permissions_ex_test.go::TestEXBackupPermissionSchemaRoundTripPreservesDeniesAndWorkflowGrants
+      - db/upstream_permissions_ex_test.go::TestUpstreamPermissionTranslationDoesNotCollideWithEXBits
+  - name: db:UpstreamTemplatePermissions
+    signature: func(mask db.ProjectUserPermission, version int) db.TemplatePermission
+    implementation: core
+    behavior_tests:
+      - services/project/backup_test.go::TestRestore_LiftsMasksOfAVersion2File
+      - services/project/backup_test.go::TestRestore_ReadBitByFileVersion
+      - services/project/backup_permissions_ex_test.go::TestEXBackupPermissionSchemaRoundTripPreservesDeniesAndWorkflowGrants
+      - db/upstream_permissions_ex_test.go::TestUpstreamPermissionTranslationDoesNotCollideWithEXBits
+  - name: db:UpstreamWorkflowPermissions
+    signature: func(mask db.ProjectUserPermission, version int) db.ProjectUserPermission
+    implementation: core
+    behavior_tests:
+      - services/project/backup_test.go::TestRestore_LiftsMasksOfAVersion2File
+      - services/project/backup_test.go::TestRestore_ReadBitByFileVersion
+      - services/project/backup_permissions_ex_test.go::TestEXBackupPermissionSchemaRoundTripPreservesDeniesAndWorkflowGrants
+      - db/upstream_permissions_ex_test.go::TestUpstreamPermissionTranslationDoesNotCollideWithEXBits
   - name: db:User
     signature: >-
       struct{ID int "db:\"id\" json:\"id\""; Created time.Time "db:\"created\" json:\"created\""; Username string "db:\"username\"
@@ -5593,6 +5641,9 @@ symbols:
     implementation: core
   - name: db:ViewTypeCustom
     signature: db.ViewType = ""
+    implementation: core
+  - name: db:Viewer
+    signature: struct{UserID int; Admin bool}
     implementation: core
   - name: db:WorkflowAccessPolicy
     signature: >-
@@ -5996,6 +6047,9 @@ symbols:
       interface{GetGlobalCredential(credentialID int) (db.GlobalCredential, error); GetGlobalCredentialGrantForProject(credentialID int,
       projectID int) (db.GlobalCredentialGrant, error)}
     implementation: core
+  - name: db:WorkflowGrantPermissions
+    signature: db.ProjectUserPermission = 3145920
+    implementation: core
   - name: db:WorkflowInputMapping
     signature: struct{Var string "json:\"var\" backup:\"var\""; Key string "json:\"key\" backup:\"key\""}
     implementation: core
@@ -6038,10 +6092,10 @@ symbols:
       GetWorkflowRunTasks(projectID int, runID int, params db.RetrieveQueryParams) ([]db.TaskWithTpl, error);
       GetWorkflowRuns(projectID int, workflowTemplateID int, params db.RetrieveQueryParams) ([]db.WorkflowRun,
       error); GetWorkflowTemplate(projectID int, workflowID int) (db.WorkflowTemplate, error);
-      GetWorkflowTemplates(projectID int, params db.RetrieveQueryParams) ([]db.WorkflowTemplate, error);
-      OpenWorkflowApproval(approval db.WorkflowApproval) (db.WorkflowApproval, bool, error);
-      ReplaceWorkflowTaskArtifacts(projectID int, runID int, nodeID int, taskID int, attempt int, artifacts
-      []db.WorkflowArtifact) error; RequestWorkflowRunStop(projectID int, runID int) (bool, error);
+      GetWorkflowTemplates(projectID int, viewer *db.Viewer, params db.RetrieveQueryParams)
+      ([]db.WorkflowTemplate, error); OpenWorkflowApproval(approval db.WorkflowApproval) (db.WorkflowApproval,
+      bool, error); ReplaceWorkflowTaskArtifacts(projectID int, runID int, nodeID int, taskID int, attempt int,
+      artifacts []db.WorkflowArtifact) error; RequestWorkflowRunStop(projectID int, runID int) (bool, error);
       ResolveWorkflowApprovalIfPending(approval db.WorkflowApproval) (bool, error);
       ResolveWorkflowDelayIfWaiting(delay db.WorkflowDelay) (bool, error); SetWorkflowRunRootTask(projectID int,
       runID int, taskID int) (bool, error); UpdateWorkflowApproval(approval db.WorkflowApproval) error;
@@ -6215,6 +6269,30 @@ symbols:
     behavior_tests:
       - test/edition-contract/enhanced/db/sql/workflow_run_test.go::TestWorkflowSurveyRoundTripPreservesVersionAndRunInputs
       - services/tasks/workflow_survey_preflight_ex_test.go::TestWorkflowExecutionPreflightRejectsChangedSurveyAnswer
+  - name: db:WorkflowRoleManager
+    signature: >-
+      interface{CreateWorkflowRole(perm db.WorkflowRolePerm) (db.WorkflowRolePerm, error);
+      DeleteWorkflowRole(projectID int, workflowID int, permID int) error; GetTaskViewers(projectID int,
+      templateID int, workflowRunID *int) ([]int, error); GetWorkflowGrantsForUser(projectID int, userID int)
+      (map[int]db.ProjectUserPermission, error); GetWorkflowPermission(projectID int, workflowID int, userID
+      int) (db.ProjectUserPermission, error); GetWorkflowRole(projectID int, workflowID int, permID int)
+      (db.WorkflowRolePerm, error); GetWorkflowRoles(projectID int, workflowID int) ([]db.WorkflowRolePerm,
+      error); GetWorkflowRunPermission(projectID int, runID int, userID int) (db.ProjectUserPermission, error);
+      UpdateWorkflowRole(perm db.WorkflowRolePerm) error}
+    implementation: core
+    behavior_tests:
+      - db/sql/workflow_role_test.go::TestWorkflowRoles_RoundTrip
+      - db/sql/workflow_role_test.go::TestWorkflowGrants_AddUpPerWorkflow
+  - name: db:WorkflowRolePerm
+    signature: >-
+      struct{ID int "db:\"id\" json:\"id\""; RoleID db.ProjectRoleID "db:\"role_id\" json:\"role_id\""; RoleSlug
+      string "db:\"role_slug\" json:\"role_slug\""; WorkflowID int "db:\"workflow_id\" json:\"workflow_id\"";
+      ProjectID int "db:\"project_id\" json:\"project_id\""; Permissions db.ProjectUserPermission
+      "db:\"permissions\" json:\"permissions\""}
+    implementation: core
+    behavior_tests:
+      - db/sql/workflow_role_test.go::TestWorkflowRoles_RoundTrip
+      - db/sql/workflow_role_test.go::TestWorkflowGrants_AddUpPerWorkflow
   - name: db:WorkflowRootNode
     signature: func(workflow db.WorkflowTemplate) (db.WorkflowNode, error)
     selected_signature: func(workflow db.WorkflowTemplate) (db.WorkflowNode, error)
@@ -6410,7 +6488,8 @@ symbols:
     implementation: core
   - name: db:WorkflowTemplate
     signature: >-
-      struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; ProjectID int "db:\"project_id\" json:\"project_id\"
+      struct{Permissions *db.ProjectUserPermission "db:\"-\" json:\"permissions,omitempty\" backup:\"-\""; ID
+      int "db:\"id\" json:\"id\" backup:\"-\""; ProjectID int "db:\"project_id\" json:\"project_id\"
       backup:\"-\""; Name string "db:\"name\" json:\"name\" backup:\"name\""; Description *string
       "db:\"description\" json:\"description,omitempty\" backup:\"description\""; StartVersion *string
       "db:\"start_version\" json:\"start_version,omitempty\" backup:\"start_version\""; DefinitionVersion int
@@ -8916,6 +8995,18 @@ symbols:
       "json:\"display_name\""; Version int "json:\"version\""; Operations db.GlobalCredentialGrantOperation "json:\"operations\""; GrantID
       int "json:\"grant_id\""; GrantRevision int "json:\"grant_revision\""; ExpiresAt *time.Time "json:\"expires_at,omitempty\""}
     implementation: core
+  - name: pro_interfaces:HARedis
+    signature: interface{Close() error; Describe() string; Ping(ctx context.Context) error}
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesBorrowOneConnectionAndKeepSQLAuthority
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_InvalidHAConfigurationFailsClosedWithoutSecretOrAddress
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_DirectHostWithoutPortKeepsLegacyDefault
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestDirectRedisAddressPreservesLegacySafeDefaultPortForms
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_SentinelSharesAuthenticatedTLSFailoverClient
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_DirectConnectionPreservesSpecialCharacterCredentials
+    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_DirectTLSVerifiesTrustedServer
+    - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesRejectMissingSharedRedis
   - name: pro_interfaces:LDAPAuthenticationRequest
     signature: struct{ProviderID string; Username string; Password string; Now time.Time}
     implementation: core
@@ -9305,18 +9396,6 @@ symbols:
       pro_interfaces.ClusterNodeCompatibilityState "json:\"compatibility_state\""; CompatibilityReason string
       "json:\"compatibility_reason,omitempty\""}
     implementation: core
-  - name: pro_interfaces:HARedis
-    signature: interface{Close() error; Describe() string; Ping(ctx context.Context) error}
-    implementation: core
-    behavior_tests:
-    - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesBorrowOneConnectionAndKeepSQLAuthority
-    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_InvalidHAConfigurationFailsClosedWithoutSecretOrAddress
-    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_DirectHostWithoutPortKeepsLegacyDefault
-    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestDirectRedisAddressPreservesLegacySafeDefaultPortForms
-    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_SentinelSharesAuthenticatedTLSFailoverClient
-    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_DirectConnectionPreservesSpecialCharacterCredentials
-    - test/edition-contract/enhanced/services/ha/redis_connection_ex_test.go::TestNewHARedis_DirectTLSVerifiesTrustedServer
-    - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesRejectMissingSharedRedis
   - name: pro_interfaces:NodeRegistry
     signature: interface{NodeCount() int; NodeID() string; Start() error; Stop()}
     implementation: core
@@ -9762,6 +9841,9 @@ symbols:
   - name: pro_interfaces:PermissionAdministerWorkflow
     signature: pro_interfaces.PermissionID = "workflow.administer"
     implementation: core
+  - name: pro_interfaces:PermissionApproveWorkflow
+    signature: pro_interfaces.PermissionID = "workflow.approve"
+    implementation: core
   - name: pro_interfaces:PermissionCatalog
     signature: func() []pro_interfaces.PermissionDefinition
     implementation: core
@@ -9875,6 +9957,9 @@ symbols:
     implementation: core
   - name: pro_interfaces:PermissionReadGlobalAudit
     signature: pro_interfaces.PermissionID = "global.audit.read"
+    implementation: core
+  - name: pro_interfaces:PermissionReadProject
+    signature: pro_interfaces.PermissionID = "project.read"
     implementation: core
   - name: pro_interfaces:PermissionReadTaskGroups
     signature: pro_interfaces.PermissionID = "project.task_groups.read"
@@ -10356,6 +10441,13 @@ symbols:
       func(store pro_interfaces.WorkflowAuthorizationIdentityStore, projectID int, actorID int) (pro_interfaces.WorkflowAuthorizationState,
       error)
     implementation: core
+  - name: pro_interfaces:ResolveWorkflowObjectAuthorizationState
+    signature: >-
+      func(store pro_interfaces.WorkflowAuthorizationIdentityStore, projectID int, workflowID int, actorID int)
+      (pro_interfaces.WorkflowAuthorizationState, error)
+    implementation: core
+    behavior_tests:
+      - pro_interfaces/workflow_object_grants_ex_test.go::TestWorkflowObjectGrantStillRequiresCurrentRolePolicy
   - name: pro_interfaces:ResultLogRecord
     signature: >-
       struct{TaskID int "json:\"task\""; ProjectID int "json:\"project\""; CorrelationID string "json:\"correlation_id,omitempty\"";

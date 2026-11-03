@@ -1,11 +1,11 @@
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
-import { USER_PERMISSIONS } from '@/lib/constants';
 
 const enhancedMethods = {
   allowActions() {
-    return this.can(USER_PERMISSIONS.startWorkflows);
+    // Each row uses its server-computed effective access after data loads.
+    return true;
   },
   hasRunInputs(workflow) {
     return (workflow.parameters || []).length > 0

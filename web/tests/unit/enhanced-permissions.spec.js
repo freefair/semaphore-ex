@@ -18,6 +18,9 @@ function descriptor(permission, label, color) {
 describe('Enhanced permission constants', () => {
   it('preserves the public permission values and descriptor order', () => {
     expect(USER_PERMISSIONS).to.deep.equal({
+      readProject: 1048576,
+      approveWorkflows: 2097152,
+      runWorkflows: 128,
       runProjectTasks: 1,
       updateProject: 2,
       manageProjectResources: 4,
@@ -52,16 +55,16 @@ describe('Enhanced permission constants', () => {
     });
     expect(USER_ROLES).to.deep.equal([
       {
-        slug: 'owner', builtin: true, name: 'Owner', permissions: 1048575,
+        slug: 'owner', builtin: true, name: 'Owner', permissions: 4194303,
       },
       {
-        slug: 'manager', builtin: true, name: 'Manager', permissions: 1048565,
+        slug: 'manager', builtin: true, name: 'Manager', permissions: 4194293,
       },
       {
-        slug: 'task_runner', builtin: true, name: 'Task Runner', permissions: 36273,
+        slug: 'task_runner', builtin: true, name: 'Task Runner', permissions: 3182001,
       },
       {
-        slug: 'guest', builtin: true, name: 'Guest', permissions: 32816,
+        slug: 'guest', builtin: true, name: 'Guest', permissions: 3178544,
       },
     ]);
     expect(ROLE_PERMISSIONS.default).to.deep.equal([
@@ -69,6 +72,8 @@ describe('Enhanced permission constants', () => {
       descriptor(2, 'canUpdateProject', 'green'),
       descriptor(4, 'canManageProjectResources', 'orange'),
       descriptor(8, 'canManageProjectUsers', 'red'),
+      descriptor(1048576, 'canReadProject', 'grey'),
+      descriptor(2097152, 'canApproveWorkflows', 'deep-purple'),
       descriptor(16, 'canViewProjectResources', 'purple'),
       descriptor(1024, 'List granted credential metadata', 'teal'),
       descriptor(2048, 'Consume granted credentials', 'indigo'),

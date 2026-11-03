@@ -1204,3 +1204,23 @@ migrations:
   files:
     migrations/v2.20.16.sql: caf01910f576f5583d520cb11bdce5e27c24ecd865c7750802d8084f1e6dede0
     migrations/v2.20.16.err.sql: 83a62287828ac1a11a1d08ee3b3ab6f05a72278322a80d3af74cf8dc13e74adc
+- registered: true
+  id: 2.20.17
+  owner: upstream-adapted
+  files:
+    migrations/v2.20.17.err.sql: e714eecea42133337f6f6bc416cb60a7b96ff344dd21cf66b49fb321081f2062
+    migrations/v2.20.17.sql: 8316df7c5722a7383203519e63b0b1d5c3d0ce93ceef64ea2be5d05890d0710f
+  upstream_id: 2.20.17
+  rationale: >-
+    Preserve shipped EX workflow bits and immutable string role IDs; retain prior approval-policy eligibility
+    through a new explicit approval bit. See Wiki ADR0056.
+- registered: true
+  id: 2.20.18
+  owner: upstream-adapted
+  files:
+    migrations/v2.20.18.err.sql: ed739f36a1e3311d0b96eec7ae0f29f583cb472c98c3065d931c68348d7982f9
+    migrations/v2.20.18.sql: 634eee31e9ab6a7ddcf7e9d8a21c9c12ae72c72f32a40a57ade4c3b028cae683
+  upstream_id: 2.20.18
+  rationale: >-
+    Preserve existing project read access using the new EX read bit, without rewriting independent template
+    allow/deny masks. See Wiki ADR0056.

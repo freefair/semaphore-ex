@@ -138,6 +138,13 @@ func (d *SqlDb) DeleteRole(roleID db.ProjectRoleID) error {
 	if mappings > 0 {
 		return db.ErrInvalidOperation
 	}
+	grants, err := d.Sql().SelectInt(d.PrepareQuery("select count(*) from project__workflow_role where role_id=?"), roleID)
+	if err != nil {
+		return err
+	}
+	if grants > 0 {
+		return db.ErrInvalidOperation
+	}
 	res, err := d.exec("delete from role where role_id=?", roleID)
 	return requireDeletedRow(res, err)
 }
@@ -188,6 +195,10 @@ func (d *SqlDb) roleAssignments(q gorp.SqlExecutor, roleID db.ProjectRoleID) (as
 	_, err = q.Select(&assigned.Grants, d.PrepareQuery("select * from project__template_role where role_id=?"), roleID)
 	if err != nil {
 		return
+	}
+	_, err = q.Select(&assigned.WorkflowGrants, d.PrepareQuery("select * from project__workflow_role where role_id=?"), roleID)
+	if err != nil {
+		return assigned, err
 	}
 	globalMembers, err := q.SelectInt(d.PrepareQuery("select count(*) from user__global_role where role_id=?"), roleID)
 	if err != nil {

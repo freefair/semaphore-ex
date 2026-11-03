@@ -133,7 +133,7 @@ func TestRepositoryPermissionStackAllowsViewerListsAndDeniesMutations(t *testing
 		project:     db.Project{ID: projectID, Name: "Scoped role project"},
 		role: db.Role{
 			ID: roleID, ProjectID: &projectID, Name: "Resource viewer",
-			Permissions: db.CanViewProjectResources, Revision: 1,
+			Permissions: db.CanViewProjectResources | db.CanReadProject, Revision: 1,
 		},
 	}
 	router := mux.NewRouter()

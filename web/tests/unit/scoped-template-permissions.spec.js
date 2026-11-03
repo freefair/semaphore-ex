@@ -2,12 +2,14 @@ import './setup';
 import { expect } from 'chai';
 import TemplateView from '@/views/project/TemplateView.vue';
 import Templates from '@/views/project/Templates.vue';
+import PermissionsCheck from '@/components/PermissionsCheck';
 import { USER_PERMISSIONS } from '@/lib/constants';
 
 describe('scoped template permissions', () => {
   it('loads template detail without the forbidden repositories collection', async () => {
     const calls = [];
     const context = {
+      can: PermissionsCheck.methods.can,
       projectId: 7,
       itemId: 11,
       userPermissions: USER_PERMISSIONS.runProjectTasks,
@@ -23,18 +25,20 @@ describe('scoped template permissions', () => {
     await TemplateView.methods.loadData.call(context);
 
     expect(context.item).to.deep.equal({ id: 11, name: 'Scoped template' });
-    expect(context.inventory).to.deep.equal([{ id: 1, name: 'inventory' }]);
-    expect(context.environment).to.deep.equal([{ id: 1, name: 'environment' }]);
+    expect(context.inventory).to.deep.equal([]);
+    expect(context.environment).to.deep.equal([]);
     expect(context.repositories).to.deep.equal([]);
-    expect(calls).to.deep.equal(['inventory', 'environment']);
+    expect(calls).to.deep.equal([]);
   });
 
   it('retains resource collections for a broad project role', async () => {
     const calls = [];
     const context = {
+      can: PermissionsCheck.methods.can,
       projectId: 7,
       itemId: 11,
-      userPermissions: USER_PERMISSIONS.viewProjectResources,
+      userPermissions: USER_PERMISSIONS.viewProjectResources | USER_PERMISSIONS.readProject,
+      USER_PERMISSIONS,
       isAdmin: false,
       loadProjectResource: async () => ({ id: 11 }),
       loadProjectResources: async (name) => {
@@ -52,6 +56,7 @@ describe('scoped template permissions', () => {
   it('keeps repository access for an administrator without a project role mask', async () => {
     const calls = [];
     const context = {
+      can: PermissionsCheck.methods.can,
       projectId: 7,
       itemId: 11,
       userPermissions: 0,
@@ -74,8 +79,9 @@ describe('scoped template permissions', () => {
   it('keeps permitted resource and view collections while skipping repositories', async () => {
     const calls = [];
     const context = {
+      can: PermissionsCheck.methods.can,
       projectId: 7,
-      userPermissions: USER_PERMISSIONS.runProjectTasks,
+      userPermissions: USER_PERMISSIONS.runProjectTasks | USER_PERMISSIONS.readProject,
       isAdmin: false,
       USER_PERMISSIONS,
       loadProjectResources: async (name) => {

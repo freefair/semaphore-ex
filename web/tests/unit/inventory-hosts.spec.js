@@ -9,6 +9,7 @@ import HostBrowser from '@/components/enhanced/HostBrowser.vue';
 import HostTaskHistory from '@/components/enhanced/HostTaskHistory.vue';
 import InventoryDetails from '@/views/project/InventoryDetails.vue';
 import router from '@/router';
+import { USER_PERMISSIONS } from '@/lib/constants';
 
 describe('inventory host browser', () => {
   let originalGet;
@@ -43,7 +44,7 @@ describe('inventory host browser', () => {
     wrapper = mount(InventoryRefresh, {
       vuetify: new Vuetify(),
       attachTo: target,
-      propsData: { projectId: 7, inventoryId: 9 },
+      propsData: { projectId: 7, inventoryId: 9, userPermissions: USER_PERMISSIONS.readProject },
       mocks: { $t: (key) => key },
       stubs: { TaskForm: true },
     });
@@ -55,6 +56,11 @@ describe('inventory host browser', () => {
     expect(dialog.props('sourceTask')).to.include({ inventory_id: 9 });
     expect(dialog.props('sourceTask').params).to.deep.equal({ inventory_refresh: true });
     expect(dialog.vm.saveButtonText).to.equal('hostsRefresh');
+    expect(dialog.props('canRead')).to.equal(true);
+    await wrapper.setProps({ userPermissions: 0, isAdmin: false });
+    expect(dialog.props('canRead')).to.equal(false);
+    await wrapper.setProps({ isAdmin: true });
+    expect(dialog.props('canRead')).to.equal(true);
   });
 
   it('keeps the selected host open when refreshed search results still contain it', async () => {

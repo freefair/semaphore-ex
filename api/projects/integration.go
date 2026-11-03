@@ -72,7 +72,7 @@ func (c *IntegrationController) workflowIntegrationActorAllowed(w http.ResponseW
 			w.WriteHeader(http.StatusForbidden)
 			return false
 		}
-		state, stateErr := pro_interfaces.ResolveWorkflowAuthorizationState(identityStore, workflow.ProjectID, actor.ID)
+		state, stateErr := pro_interfaces.ResolveWorkflowObjectAuthorizationState(identityStore, workflow.ProjectID, workflow.ID, actor.ID)
 		if stateErr != nil || !pro_interfaces.AuthorizeWorkflowReadForState(workflow, state).Allowed || !pro_interfaces.EvaluateWorkflowAccess(pro_interfaces.WorkflowAccessRequest{
 			Permission: pro_interfaces.PermissionStartWorkflow, ProjectPermissions: state.ProjectPermissions,
 			EffectiveRoleReferences: state.RoleReferences(), KnownRoleReferences: state.KnownRoles, Policy: workflow.AccessPolicy,

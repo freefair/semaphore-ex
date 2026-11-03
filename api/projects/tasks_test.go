@@ -1,12 +1,23 @@
 package projects
 
 import (
+	"encoding/json"
+	"fmt"
+	"github.com/gorilla/mux"
+	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db/sql"
+	"github.com/semaphoreui/semaphore/pkg/task_logger"
+	proFactory "github.com/semaphoreui/semaphore/pro/db/factory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseTasksPageParams(t *testing.T) {
@@ -176,4 +187,127 @@ func TestResolveTaskTemplate(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "more than one template")
 	})
+}
+
+func runTaskMiddlewares(f taskControlFixture, taskID int, user *db.User, permissions db.ProjectUserPermission) (*httptest.ResponseRecorder, db.ProjectUserPermission) {
+	r := httptest.NewRequest(http.MethodGet, "/api/project/1/tasks/"+strconv.Itoa(taskID), nil)
+	r = mux.SetURLVars(r, map[string]string{"task_id": strconv.Itoa(taskID)})
+	r = helpers.SetContextValue(r, "store", f.store)
+	r = helpers.SetContextValue(r, "user", user)
+	r = helpers.SetContextValue(r, "project", f.project)
+	r = helpers.SetContextValue(r, "permissions", permissions)
+	w := httptest.NewRecorder()
+	var effective db.ProjectUserPermission
+	controller := NewTaskController(f.store, nil, proFactory.NewWorkflowStore(f.store))
+	controller.GetTaskMiddleware(controller.GetTaskPermissionsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		effective = helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
+		w.WriteHeader(http.StatusNoContent)
+	}))).ServeHTTP(w, r)
+	return w, effective
+}
+
+// A task is readable through a grant on its template or on the workflow of its run; otherwise it is not there.
+func TestTaskMiddlewares_ReadThroughGrants(t *testing.T) {
+	f := newTaskControlFixture(t)
+	role, err := f.store.CreateRole(db.Role{Slug: "nobody", Name: "Nobody", ProjectID: &f.project.ID})
+	require.NoError(t, err)
+	bob, err := f.store.CreateUserWithoutPassword(db.User{Username: "bob", Name: "Bob", Email: "bob@example.com"})
+	require.NoError(t, err)
+	_, err = f.store.CreateProjectUserWithRoleRefs(db.ProjectUser{ProjectID: f.project.ID, UserID: bob.ID, Revision: 1}, []db.ProjectRoleID{role.ID})
+	require.NoError(t, err)
+	task := f.task(t, task_logger.TaskWaitingStatus, false)
+
+	missing, _ := runTaskMiddlewares(f, 9999, &bob, db.CanReadProject)
+	assert.Equal(t, http.StatusNotFound, missing.Code)
+	hidden, _ := runTaskMiddlewares(f, task.ID, &bob, 0)
+	assert.Equal(t, http.StatusNotFound, hidden.Code)
+	assert.Equal(t, missing.Body.String(), hidden.Body.String())
+
+	_, err = f.store.CreateTemplateRole(db.TemplateRolePerm{ProjectID: f.project.ID, TemplateID: f.template.ID, RoleID: &role.ID, AllowedPermissions: db.CanReadTemplate | db.CanRunTemplate})
+	require.NoError(t, err)
+	w, effective := runTaskMiddlewares(f, task.ID, &bob, 0)
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Equal(t, db.CanViewProjectResources|db.CanRunProjectTasks, effective)
+
+	workflowID, runID := permissionTaskWorkflow(t, f, bob.ID)
+	other, err := f.store.CreateTemplate(db.Template{Name: "node", Playbook: "node.yml", ProjectID: f.project.ID, RepositoryID: f.template.RepositoryID, InventoryID: f.template.InventoryID})
+	require.NoError(t, err)
+	id := int(runID)
+	nodeTask, err := f.store.CreateTask(db.Task{ProjectID: f.project.ID, TemplateID: other.ID, WorkflowRunID: &id}, 0)
+	require.NoError(t, err)
+	hidden, _ = runTaskMiddlewares(f, nodeTask.ID, &bob, 0)
+	assert.Equal(t, http.StatusNotFound, hidden.Code)
+	_, err = f.store.CreateWorkflowRole(db.WorkflowRolePerm{ProjectID: f.project.ID, WorkflowID: int(workflowID), RoleID: role.ID, Permissions: db.CanReadProject | db.CanApproveWorkflows})
+	require.NoError(t, err)
+	w, effective = runTaskMiddlewares(f, nodeTask.ID, &bob, 0)
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Equal(t, db.CanReadProject|db.CanApproveWorkflows, effective)
+}
+
+// A new task carries what the client sent: a workflow run in the body must not lend its grants.
+func TestNewTaskMiddleware_IgnoresClientWorkflowRun(t *testing.T) {
+	f := newTaskControlFixture(t)
+	role, err := f.store.CreateRole(db.Role{Slug: "runner", Name: "Runner", Permissions: 0, ProjectID: &f.project.ID})
+	require.NoError(t, err)
+	bob, err := f.store.CreateUserWithoutPassword(db.User{Username: "bob", Name: "Bob", Email: "bob@example.com"})
+	require.NoError(t, err)
+	_, err = f.store.CreateProjectUserWithRoleRefs(db.ProjectUser{ProjectID: f.project.ID, UserID: bob.ID, Revision: 1}, []db.ProjectRoleID{role.ID})
+	require.NoError(t, err)
+	workflowID, runID := permissionTaskWorkflow(t, f, bob.ID)
+	_, err = f.store.CreateWorkflowRole(db.WorkflowRolePerm{ProjectID: f.project.ID, WorkflowID: int(workflowID), RoleID: role.ID, Permissions: db.CanReadProject | db.CanRunWorkflows})
+	require.NoError(t, err)
+
+	body := fmt.Sprintf(`{"template_id": %d, "workflow_run_id": %d}`, f.template.ID, runID)
+	r := httptest.NewRequest(http.MethodPost, "/api/project/1/tasks", strings.NewReader(body))
+	r = helpers.SetContextValue(r, "store", f.store)
+	r = helpers.SetContextValue(r, "user", &bob)
+	r = helpers.SetContextValue(r, "project", f.project)
+	r = helpers.SetContextValue(r, "permissions", db.CanRunProjectTasks)
+	w := httptest.NewRecorder()
+	controller := NewTaskController(f.store, nil)
+	controller.NewTaskMiddleware(controller.GetTaskPermissionsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))).ServeHTTP(w, r)
+
+	assert.Equal(t, http.StatusNotFound, w.Code, "the template is hidden, whatever run the body names")
+}
+
+func TestNewTaskMiddleware_ResolvesTemplateName(t *testing.T) {
+	f := newTaskControlFixture(t)
+	role, err := f.store.CreateRole(db.Role{Slug: "runner", Name: "Runner", Permissions: 0, ProjectID: &f.project.ID})
+	require.NoError(t, err)
+	bob, err := f.store.CreateUserWithoutPassword(db.User{Username: "bob", Name: "Bob", Email: "bob@example.com"})
+	require.NoError(t, err)
+	_, err = f.store.CreateProjectUserWithRoleRefs(db.ProjectUser{ProjectID: f.project.ID, UserID: bob.ID, Revision: 1}, []db.ProjectRoleID{role.ID})
+	require.NoError(t, err)
+	_, err = f.store.CreateTemplateRole(db.TemplateRolePerm{ProjectID: f.project.ID, TemplateID: f.template.ID, RoleID: &role.ID, AllowedPermissions: db.CanReadTemplate | db.CanRunTemplate})
+	require.NoError(t, err)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/project/1/tasks", strings.NewReader(`{"template_name": "deploy"}`))
+	r = helpers.SetContextValue(r, "store", f.store)
+	r = helpers.SetContextValue(r, "user", &bob)
+	r = helpers.SetContextValue(r, "project", f.project)
+	r = helpers.SetContextValue(r, "permissions", db.ProjectUserPermission(0))
+	w := httptest.NewRecorder()
+	controller := NewTaskController(f.store, nil)
+	var seen db.Task
+	controller.NewTaskMiddleware(controller.GetTaskPermissionsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = helpers.GetFromContext(r, "task").(db.Task)
+		w.WriteHeader(http.StatusNoContent)
+	}))).ServeHTTP(w, r)
+
+	assert.Equal(t, http.StatusNoContent, w.Code, "the grant on the named template is found")
+	assert.Equal(t, f.template.ID, seen.TemplateID)
+}
+
+func permissionTaskWorkflow(t *testing.T, f taskControlFixture, actorID int) (int, int) {
+	t.Helper()
+	workflows := proFactory.NewWorkflowStore(f.store)
+	workflow, err := workflows.CreateWorkflowTemplate(db.WorkflowTemplate{ProjectID: f.project.ID, Name: "release", DefinitionVersion: db.WorkflowDefinitionVersion, Nodes: []db.WorkflowNode{{ID: -1, Kind: db.WorkflowNodeTaskKind, TemplateID: f.template.ID, ConvergenceMode: db.WorkflowConvergenceAll}}})
+	require.NoError(t, err)
+	snapshot, err := json.Marshal(workflow)
+	require.NoError(t, err)
+	run, err := workflows.CreateWorkflowRun(db.WorkflowRun{ProjectID: f.project.ID, WorkflowTemplateID: workflow.ID, Status: db.WorkflowRunRunning, ActorUserID: actorID, DefinitionVersion: workflow.DefinitionVersion, DefinitionRevision: workflow.Revision, DefinitionSnapshotJSON: string(snapshot), ParameterSnapshotJSON: "{}", TriggerSnapshotJSON: "{}", CorrelationID: "permission-fixture", Created: time.Now()})
+	require.NoError(t, err)
+	return workflow.ID, run.ID
 }

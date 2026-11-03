@@ -91,7 +91,11 @@ func (t *TaskRunner) sendMailAlert() {
 		return
 	}
 
-	for _, uid := range t.users {
+	recipients := t.taskViewers()
+	if t.Task.ID == 0 {
+		recipients = t.users
+	}
+	for _, uid := range recipients {
 		user, err := t.pool.store.GetUser(uid)
 
 		if err != nil {

@@ -11,16 +11,16 @@ func TestBuiltInProjectRolePermissionsRemainDeterministic(t *testing.T) {
 			CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
 			CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
 			CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails |
-			CanReadTaskGroups | CanCreateTaskGroups | CanUpdateTaskGroups | CanDeleteTaskGroups | CanShareTaskGroups,
+			CanReadTaskGroups | CanCreateTaskGroups | CanUpdateTaskGroups | CanDeleteTaskGroups | CanShareTaskGroups | CanReadProject | CanApproveWorkflows,
 		ProjectManager: CanRunProjectTasks | CanManageProjectResources | CanViewProjectResources |
 			CanViewWorkflows | CanEditWorkflows | CanStartWorkflows | CanStopWorkflows |
 			CanAdministerWorkflows | CanListGrantedCredentials | CanConsumeGrantedCredentials |
 			CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails |
-			CanReadTaskGroups | CanCreateTaskGroups | CanUpdateTaskGroups | CanDeleteTaskGroups | CanShareTaskGroups,
+			CanReadTaskGroups | CanCreateTaskGroups | CanUpdateTaskGroups | CanDeleteTaskGroups | CanShareTaskGroups | CanReadProject | CanApproveWorkflows,
 		ProjectTaskRunner: CanRunProjectTasks | CanViewProjectResources |
 			CanViewWorkflows | CanStartWorkflows | CanStopWorkflows |
-			CanListGrantedCredentials | CanConsumeGrantedCredentials | CanReadTaskGroups,
-		ProjectGuest: CanViewProjectResources | CanViewWorkflows | CanReadTaskGroups,
+			CanListGrantedCredentials | CanConsumeGrantedCredentials | CanReadTaskGroups | CanReadProject | CanApproveWorkflows,
+		ProjectGuest: CanViewProjectResources | CanViewWorkflows | CanReadTaskGroups | CanReadProject | CanApproveWorkflows,
 	}
 
 	permissions := BuiltInProjectRolePermissions()
@@ -31,7 +31,7 @@ func TestBuiltInProjectRolePermissionsRemainDeterministic(t *testing.T) {
 	}
 
 	permissions[ProjectGuest] = 0
-	assert.Equal(t, CanViewProjectResources|CanViewWorkflows|CanReadTaskGroups, ProjectGuest.GetPermissions())
+	assert.Equal(t, CanViewProjectResources|CanViewWorkflows|CanReadTaskGroups|CanReadProject|CanApproveWorkflows, ProjectGuest.GetPermissions())
 	assert.True(t, ProjectOwner.Can(CanManagePolicyGuardrails))
 	assert.True(t, ProjectOwner.Can(CanRollbackPolicyGuardrails))
 	assert.True(t, ProjectManager.Can(CanManagePolicyGuardrails))

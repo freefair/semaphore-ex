@@ -130,6 +130,7 @@ func runMigrationMatrix(t testing.TB, config migrationMatrixConfig) migrationMat
 	assertDeploymentWindowSchema(t, store, true)
 	assertProjectRoleMutationLock(t, store, config.Dialect)
 	assertProjectRoleReferenceRollbackSafety(t, store, config.Dialect)
+	assertWorkflowGrantUnchangedUpdate(t, store)
 
 	user, err := store.CreateUserWithoutPassword(fixture.User)
 	require.NoError(t, err)
@@ -895,4 +896,25 @@ func assertWorkflowSurveySchema(t testing.TB, store *SqlDb, expected bool) {
 	} {
 		assert.Equal(t, expected, matrixColumnExists(t, store, column.table, column.name), "%s.%s", column.table, column.name)
 	}
+}
+
+// The same-value update has zero affected rows on MySQL/MariaDB by default.
+func assertWorkflowGrantUnchangedUpdate(t testing.TB, store *SqlDb) {
+	t.Helper()
+	project, err := store.CreateProject(db.Project{Name: "matrix-workflow-grant"})
+	require.NoError(t, err)
+	role, err := store.CreateProjectRole(db.Role{ID: "matrix-workflow-grant-role", Slug: "matrix-workflow-grant-role", Name: "Matrix workflow role", ProjectID: &project.ID, Revision: 1})
+	require.NoError(t, err)
+	workflowID, err := store.insert("id", "insert into project__workflow_template (project_id,name,parameter_definitions,access_policy) values (?,?,?,?)", project.ID, "matrix-workflow", "[]", "{}")
+	require.NoError(t, err)
+	grant, err := store.CreateWorkflowRole(db.WorkflowRolePerm{ProjectID: project.ID, WorkflowID: workflowID, RoleID: role.ID, Permissions: db.CanReadProject})
+	require.NoError(t, err)
+	require.NoError(t, store.UpdateWorkflowRole(grant))
+	require.NoError(t, store.UpdateWorkflowRole(grant))
+	stored, err := store.GetWorkflowRole(project.ID, workflowID, grant.ID)
+	require.NoError(t, err)
+	assert.Equal(t, grant.Permissions, stored.Permissions)
+	require.NoError(t, store.DeleteWorkflowRole(project.ID, workflowID, grant.ID))
+	assert.ErrorIs(t, store.UpdateWorkflowRole(grant), db.ErrNotFound)
+	require.NoError(t, store.DeleteProject(project.ID))
 }

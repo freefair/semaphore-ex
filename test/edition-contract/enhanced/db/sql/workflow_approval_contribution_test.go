@@ -336,3 +336,32 @@ func workflowApprovalSubmission(projectID int, approval db.WorkflowApproval, act
 		CorrelationID: "approval-contribution", At: at,
 	}
 }
+
+func TestWorkflowApprovalContributionRequiresCurrentApproveGrant(t *testing.T) {
+	store, repository, projectID := workflowRepositoryFixture(t)
+	defer store.Close()
+	actor, first, second := workflowRunResources(t, store, projectID)
+	role, err := store.CreateProjectRole(db.Role{ID: "approval-grant-test", Slug: "approval-grant-test", Name: "Approval grant test", ProjectID: &projectID, Revision: 1})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUser(db.ProjectUser{ProjectID: projectID, UserID: actor.ID, RoleID: &role.ID, Revision: 1})
+	require.NoError(t, err)
+	workflow, err := repository.CreateWorkflowTemplate(linearRepositoryWorkflow(projectID, first.ID, second.ID))
+	require.NoError(t, err)
+	policy := db.WorkflowApprovalRolePolicy{Revision: 1, Mode: db.WorkflowApprovalRoleModeAnyOf, MinimumDistinctApprovers: 1, RoleIDs: []db.ProjectRoleReference{db.ProjectRoleReferenceForCustomRole(role.ID)}}
+	now := time.Date(2026, time.November, 3, 12, 0, 0, 0, time.UTC)
+	approval := workflowApprovalWithPolicy(t, repository, workflow, projectID, actor.ID, first, second, policy, "approve-grant-check", now)
+	denied, err := repository.SubmitWorkflowApprovalContribution(workflowApprovalSubmission(projectID, approval, actor.ID, now))
+	require.NoError(t, err)
+	assert.True(t, denied.Denied)
+	grant, err := store.CreateWorkflowRole(db.WorkflowRolePerm{ProjectID: projectID, WorkflowID: workflow.ID, RoleID: role.ID, Permissions: db.CanApproveWorkflows})
+	require.NoError(t, err)
+	require.NoError(t, store.DeleteWorkflowRole(projectID, workflow.ID, grant.ID))
+	revoked, err := repository.SubmitWorkflowApprovalContribution(workflowApprovalSubmission(projectID, approval, actor.ID, now))
+	require.NoError(t, err)
+	assert.True(t, revoked.Denied)
+	_, err = store.CreateWorkflowRole(db.WorkflowRolePerm{ProjectID: projectID, WorkflowID: workflow.ID, RoleID: role.ID, Permissions: db.CanApproveWorkflows})
+	require.NoError(t, err)
+	granted, err := repository.SubmitWorkflowApprovalContribution(workflowApprovalSubmission(projectID, approval, actor.ID, now))
+	require.NoError(t, err)
+	assert.True(t, granted.Committed)
+}

@@ -119,7 +119,14 @@ func (e BackupRole) Restore(b *BackupDB) error {
 		role.Name = b.uniqueRoleName(role.Name, *e.UpstreamSlug)
 	}
 	// Unknown bits are never checked today but would turn on with a future permission.
-	role.Permissions &= db.KnownProjectRolePermissions
+	if b.upstreamPermissions {
+		role.Permissions = db.UpstreamProjectPermissions(role.Permissions, b.version)
+	} else {
+		role.Permissions &= db.KnownProjectRolePermissions
+		if b.version < 4 {
+			role.Permissions |= db.CanReadProject | db.CanApproveWorkflows
+		}
+	}
 	newRole, err := b.store.CreateRole(role)
 	if err != nil {
 		return err
@@ -161,7 +168,7 @@ func (b *BackupDB) unassignedRole(slug, reason string) *UnassignedRole {
 			return &b.unassigned[i]
 		}
 	}
-	b.unassigned = append(b.unassigned, UnassignedRole{Slug: slug, Reason: reason, Templates: []UnassignedTemplate{}})
+	b.unassigned = append(b.unassigned, UnassignedRole{Slug: slug, Reason: reason, Templates: []UnassignedTemplate{}, Workflows: []UnassignedWorkflow{}})
 	return &b.unassigned[len(b.unassigned)-1]
 }
 
@@ -557,7 +564,7 @@ func (e BackupTemplate) Restore(b *BackupDB) error {
 	if e.Roles != nil {
 		for _, role := range e.Roles {
 			if role.Slug != nil && role.Role == "" && role.RoleID == "" && !role.IsGlobal {
-				if err := b.restoreUpstreamGrant(newTemplate, *role.Slug, role.Permissions&db.KnownProjectRolePermissions); err != nil {
+				if err := b.restoreUpstreamGrant(newTemplate, *role.Slug, role.Permissions); err != nil {
 					return err
 				}
 				continue
@@ -585,12 +592,7 @@ func (e BackupTemplate) Restore(b *BackupDB) error {
 					return err
 				}
 
-				_, err = b.store.CreateTemplateRole(db.TemplateRolePerm{
-					TemplateID:  newTemplate.ID,
-					RoleID:      &r.ID,
-					ProjectID:   b.meta.ID,
-					Permissions: role.Permissions & db.KnownProjectRolePermissions,
-				})
+				_, err = b.restoreEXTemplateGrant(newTemplate.ID, r.ID, role)
 
 				if err != nil {
 					return err
@@ -613,12 +615,7 @@ func (e BackupTemplate) Restore(b *BackupDB) error {
 			if k == nil {
 				return fmt.Errorf("roles[].role does not exist in roles[].name")
 			} else {
-				_, err = b.store.CreateTemplateRole(db.TemplateRolePerm{
-					TemplateID:  newTemplate.ID,
-					RoleID:      &k.ID,
-					ProjectID:   b.meta.ID,
-					Permissions: role.Permissions & db.KnownProjectRolePermissions,
-				})
+				_, err = b.restoreEXTemplateGrant(newTemplate.ID, k.ID, role)
 				if err != nil {
 					return err
 				}
@@ -642,16 +639,16 @@ func (b *BackupDB) restoreUpstreamGrant(template db.Template, slug string, permi
 		}
 		if err != nil || !role.Builtin {
 			unassigned := b.unassignedRole(slug, ReasonNotInFile)
-			unassigned.Templates = append(unassigned.Templates, UnassignedTemplate{ID: template.ID, Name: template.Name, Permissions: permissions})
+			unassigned.Templates = append(unassigned.Templates, UnassignedTemplate{ID: template.ID, Name: template.Name, Permissions: db.ProjectUserPermission(db.UpstreamTemplatePermissions(permissions, b.version))})
 			return nil
 		}
 		roleID = role.ID
 	}
 	_, err := b.store.CreateTemplateRole(db.TemplateRolePerm{
-		TemplateID:  template.ID,
-		RoleID:      &roleID,
-		ProjectID:   b.meta.ID,
-		Permissions: permissions,
+		TemplateID:         template.ID,
+		RoleID:             &roleID,
+		ProjectID:          b.meta.ID,
+		AllowedPermissions: db.UpstreamTemplatePermissions(permissions, b.version),
 	})
 	return err
 }
@@ -761,6 +758,11 @@ func (e BackupRunner) Restore(b *BackupDB) error {
 }
 
 func (e BackupWorkflow) Verify(backup *BackupFormat) error {
+	for _, grant := range e.Roles {
+		if grant.Slug == "" && grant.RoleID == "" {
+			return fmt.Errorf("role grant has no slug")
+		}
+	}
 	if err := verifyDuplicate[BackupWorkflow](e.Name, backup.Workflows); err != nil {
 		return err
 	}
@@ -816,13 +818,45 @@ func (e BackupWorkflow) Restore(b *BackupDB) error {
 		return err
 	}
 
+	for _, grant := range e.Roles {
+		permissions := grant.Permissions & db.WorkflowGrantPermissions
+		if b.upstreamPermissions {
+			permissions = db.UpstreamWorkflowPermissions(grant.Permissions, b.version)
+		}
+		role, err := b.workflowGrantRole(grant)
+		if errors.Is(err, db.ErrNotFound) {
+			unassigned := b.unassignedRole(grant.Slug, ReasonNotInFile)
+			unassigned.Workflows = append(unassigned.Workflows, UnassignedWorkflow{ID: newWorkflow.ID, Name: newWorkflow.Name, Permissions: permissions})
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		_, err = b.store.CreateWorkflowRole(db.WorkflowRolePerm{
+			WorkflowID:  newWorkflow.ID,
+			RoleID:      role.ID,
+			ProjectID:   b.meta.ID,
+			Permissions: permissions,
+		})
+		if err != nil {
+			return err
+		}
+	}
+
 	b.workflows = append(b.workflows, newWorkflow)
 	return nil
 }
 
 func (backup *BackupFormat) Verify() error {
-	// EX exports carry no version and address roles by ID; Semaphore UI
-	// format 2 files carry version 2 and address roles by slug. Both read.
+	if backup.PermissionSchema != "" && backup.PermissionSchema != "semaphore-ex" {
+		return fmt.Errorf("unsupported backup permission schema")
+	}
+	if backup.PermissionSchema == "semaphore-ex" && (backup.Version == nil || *backup.Version != BackupFormatVersion) {
+		return fmt.Errorf("semaphore-ex permission schema requires backup version %d", BackupFormatVersion)
+	}
+	if backup.Version != nil && *backup.Version < 2 {
+		return fmt.Errorf("unsupported backup version")
+	}
 	if backup.Version != nil && *backup.Version > BackupFormatVersion {
 		return fmt.Errorf("backup was written by a newer version of Semaphore")
 	}
@@ -906,7 +940,14 @@ func (backup *BackupFormat) Restore(user db.User, store db.Store, workflowStore 
 	if err := backup.rejectTaskGroupsForRestore(); err != nil {
 		return nil, err
 	}
-	var b = BackupDB{store: store, workflowStore: workflowStore, unassigned: []UnassignedRole{}}
+	if err := backup.Verify(); err != nil {
+		return nil, err
+	}
+	version := 0
+	if backup.Version != nil {
+		version = *backup.Version
+	}
+	var b = BackupDB{store: store, workflowStore: workflowStore, unassigned: []UnassignedRole{}, version: version, upstreamPermissions: backup.Version != nil && backup.PermissionSchema == ""}
 	project := backup.Meta.Project
 
 	// Prevent importing a project with a name that already exists
