@@ -1720,6 +1720,7 @@ definitions:
         # Swagger 2 cannot express this primitive union. On an untyped schema,
         # Dredd converts x-nullable into a null-only constraint.
         description: A string, an array of strings for a select variable, or null when no default is configured.
+        example: "3"
 
   TemplateSurveyVarValue:
     type: object
