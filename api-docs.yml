@@ -1717,8 +1717,9 @@ definitions:
         items:
           $ref: "#/definitions/TemplateSurveyVarValue"
       default_value:
-        description: A string, or an array of strings for a select variable.
-        x-nullable: true
+        # Swagger 2 cannot express this primitive union. On an untyped schema,
+        # Dredd converts x-nullable into a null-only constraint.
+        description: A string, an array of strings for a select variable, or null when no default is configured.
 
   TemplateSurveyVarValue:
     type: object
