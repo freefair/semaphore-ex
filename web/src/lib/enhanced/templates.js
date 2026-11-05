@@ -83,7 +83,7 @@ const enhancedMethods = {
       if (request === this.templateSearchRequest) {
         this.items = response.data;
         this.openedItems = this.openedItems.filter((opened) => (
-          this.items.some((item) => item.id === opened.id)
+          this.items.some((item) => item.id === opened)
         ));
       }
     } catch (err) {

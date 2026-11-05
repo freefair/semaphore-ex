@@ -1,9 +1,9 @@
 import './setup';
 import { expect } from 'chai';
 import { mount } from '@vue/test-utils';
-import Vuetify from 'vuetify';
+
 import UserForm from '@/components/UserForm.vue';
-import mockAxios from './helpers/axiosMock';
+import mockAxios, { httpError } from './helpers/axiosMock';
 
 const flush = () => new Promise((resolve) => { setTimeout(resolve, 0); });
 
@@ -43,18 +43,21 @@ describe('UserForm named Security tab', () => {
       return [];
     });
     const wrapper = mount(UserForm, {
-      vuetify: new Vuetify(),
+
       attachTo: document.body,
       data: () => ({ item: { id: 12, username: 'fixture', external: false } }),
-      propsData: {
+      props: {
         itemId: 12,
         isSelf: true,
         isAdmin: true,
         authMethods: { totp: true },
-        LoginWithPassword: true,
+        loginWithPassword: true,
       },
-      mocks: { $t: (key) => key },
-      stubs: { TotpEnrollmentPanel: { template: '<div data-testid="totp-panel">TOTP</div>' } },
+      global: {
+        renderStubDefaultSlot: true,
+        mocks: { $t: (key) => key },
+        stubs: { TotpEnrollmentPanel: { template: '<div data-testid="totp-panel">TOTP</div>' } },
+      },
     });
     try {
       await flush();
@@ -64,7 +67,35 @@ describe('UserForm named Security tab', () => {
       expect(wrapper.find('[data-testid="totp-panel"]').isVisible()).to.equal(true);
       expect(wrapper.text()).to.contain('Change password');
     } finally {
-      wrapper.destroy();
+      wrapper.unmount();
+      http.restore();
+    }
+  });
+
+  it('explains unsupported legacy LDAP group settings when linking', async () => {
+    const http = mockAxios();
+    http.respond(({ url, method }) => {
+      if (url === '/api/users/12') return { id: 12, username: 'fixture', external: false };
+      if (url === '/api/auth/login') return { oidc_providers: [], ldap_providers: [{ id: 'corp', name: 'Corp' }] };
+      if (method === 'post' && url === '/api/user/identities/ldap') {
+        throw httpError(503, { error: 'LDAP_GROUP_MAPPING_UNSUPPORTED' });
+      }
+      return [];
+    });
+    const wrapper = mount(UserForm, {
+      props: {
+        itemId: 12, isSelf: true, authMethods: {}, loginWithPassword: true,
+      },
+      global: { mocks: { $t: (key) => key } },
+    });
+    try {
+      await flush();
+      await wrapper.setData({ tab: 'security', ldapUsername: 'fixture', ldapPassword: 'secret' });
+      await wrapper.vm.linkLdapIdentity();
+      await flush();
+      expect(wrapper.find('[data-testid="user-linkError"]').text()).to.contain('configure group mapping through managed LDAP');
+    } finally {
+      wrapper.unmount();
       http.restore();
     }
   });

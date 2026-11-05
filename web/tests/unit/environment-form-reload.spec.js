@@ -1,16 +1,17 @@
 import { expect } from 'chai';
+import { h } from 'vue';
 import { mount } from '@vue/test-utils';
 import EnvironmentForm from '@/components/EnvironmentForm.vue';
 import mockAxios from './helpers/axiosMock';
 
 const FormStub = {
-  render: (h) => h('form'),
-  methods: { validate: () => true, resetValidation: () => {} },
+  render: () => h('form'),
+  methods: { validate: async () => ({ valid: true }), resetValidation: () => {} },
 };
 const Host = {
   extends: EnvironmentForm,
   components: { FormStub },
-  render(h) { return h('form-stub', { ref: 'form' }); },
+  render() { return h(FormStub, { ref: 'form' }); },
 };
 const flush = async () => new Promise((resolve) => { setTimeout(resolve, 0); });
 
@@ -34,7 +35,7 @@ describe('variable group editor reload', () => {
       return { ...groups[id] };
     });
   });
-  afterEach(() => { wrapper?.destroy(); http.restore(); });
+  afterEach(() => { wrapper?.unmount(); http.restore(); });
 
   [
     { name: 'another group after valid YAML editing', yaml: 'group: unsaved-A', id: 2 },
@@ -43,7 +44,7 @@ describe('variable group editor reload', () => {
     { name: 'a new group after YAML editing', yaml: 'group: unsaved-A', id: 'new' },
   ].forEach(({ name, yaml, id }) => {
     it(`loads only persisted values for ${name}`, async () => {
-      wrapper = mount(Host, { propsData: { projectId: 7, itemId: 1 } });
+      wrapper = mount(Host, { props: { projectId: 7, itemId: 1 } });
       await flush();
       await wrapper.setData({ extraVarsEditMode: 'yaml' });
       await wrapper.setData({ yaml });

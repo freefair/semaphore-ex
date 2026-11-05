@@ -1,6 +1,11 @@
 <template>
-  <div v-if="items != null">
+  <div
+    v-if="items != null"
+    data-testid="secretStorages-page"
+    :data-state="items.length === 0 ? 'empty' : 'ready'"
+  >
     <ObjectRefsDialog
+      test-id="secretStoragesRefsDialog"
       object-title="storage"
       :object-refs="itemRefs"
       :project-id="projectId"
@@ -17,6 +22,7 @@
     />
 
     <YesNoDialog
+      test-id="secretStoragesDeleteDialog"
       :title="$t('deleteStorage')"
       :text="$t('askDeleteStorage')"
       v-model="deleteItemDialog"
@@ -25,6 +31,7 @@
 
     <EditDialog
       v-model="editDialog"
+      test-id="secretStoragesDialog"
       :save-button-text="itemId === 'new' ? $t('create') : $t('save')"
       :title="`${itemId === 'new' ? $t('nnew') : $t('edit')} ${dialogStorageType} Storage`"
       :max-width="dialogMaxWidth"
@@ -45,17 +52,24 @@
     </EditDialog>
 
     <v-toolbar flat>
-      <v-app-bar-nav-icon @click="showDrawer()"></v-app-bar-nav-icon>
-      <v-toolbar-title>{{ $t('keyStore') }}</v-toolbar-title>
+      <v-app-bar-nav-icon
+        @click="showDrawer()"
+        data-testid="secretStorages-drawerToggle"
+      ></v-app-bar-nav-icon>
+      <v-toolbar-title class="flex-0-1" data-testid="secretStorages-title">
+        {{ $t('keyStore') }}
+      </v-toolbar-title>
       <v-spacer></v-spacer>
 
-      <v-menu offset-y>
-        <template v-slot:activator="{ on, attrs }">
+      <!-- The menu is wider than the button: Vuetify 2 pushed it against the 12 px margin of the
+           window, Vuetify 4 lines it up with the end of the button, 4 px further left. -->
+      <v-menu location="bottom" :offset="[0, 4]">
+        <template v-slot:activator="{ props }">
           <v-btn
             class="pr-2"
-            v-bind="attrs"
-            v-on="on"
+            v-bind="props"
             color="primary"
+            variant="elevated"
             v-if="can(USER_PERMISSIONS.manageProjectResources)"
             :disabled="!runtimeCanWrite"
             data-testid="secretStorage-newMenu"
@@ -64,7 +78,7 @@
             <v-icon>mdi-chevron-down</v-icon>
           </v-btn>
         </template>
-        <v-list>
+        <v-list class="SecretStoragesNewMenu" data-testid="secretStorages-newMenu">
           <v-list-item
             link
             @click="
@@ -72,10 +86,11 @@
               itemType = 'vault';
             "
             :disabled="!features.secret_storage_management || !runtimeCanWrite"
+            data-testid="secretStorages-new-vault"
           >
-            <v-list-item-icon>
-              <v-icon>$vuetify.icons.hashicorp_vault</v-icon>
-            </v-list-item-icon>
+            <template v-slot:prepend>
+              <v-icon>$hashicorp_vault</v-icon>
+            </template>
             <v-list-item-title>Hashicorp Vault</v-list-item-title>
           </v-list-item>
 
@@ -86,10 +101,11 @@
               itemType = 'openbao';
             "
             :disabled="!features.secret_storage_management || !runtimeCanWrite"
+            data-testid="secretStorages-new-openbao"
           >
-            <v-list-item-icon>
-              <v-icon>$vuetify.icons.openbao</v-icon>
-            </v-list-item-icon>
+            <template v-slot:prepend>
+              <v-icon>$openbao</v-icon>
+            </template>
             <v-list-item-title>OpenBao</v-list-item-title>
           </v-list-item>
 
@@ -102,9 +118,9 @@
             :disabled="!features.secret_storage_management || !runtimeCanWrite"
             data-testid="secretStorage-newInfisical"
           >
-            <v-list-item-icon>
+            <template #prepend>
               <v-icon>mdi-shield-key-outline</v-icon>
-            </v-list-item-icon>
+            </template>
             <v-list-item-title>{{ $t('infisicalPam') }}</v-list-item-title>
           </v-list-item>
 
@@ -116,10 +132,11 @@
                 itemType = 'aws_sm';
               "
               :disabled="!features.secret_storage_management_ex"
+              data-testid="secretStorages-new-aws_sm"
             >
-              <v-list-item-icon>
-                <v-icon>$vuetify.icons.aws_sm</v-icon>
-              </v-list-item-icon>
+              <template v-slot:prepend>
+                <v-icon>$aws_sm</v-icon>
+              </template>
               <v-list-item-title>AWS Secrets Manager</v-list-item-title>
             </v-list-item>
 
@@ -130,10 +147,11 @@
                 itemType = 'azure_kv';
               "
               :disabled="!features.secret_storage_management_ex"
+              data-testid="secretStorages-new-azure_kv"
             >
-              <v-list-item-icon>
-                <v-icon>$vuetify.icons.azure_kv</v-icon>
-              </v-list-item-icon>
+              <template v-slot:prepend>
+                <v-icon>$azure_kv</v-icon>
+              </template>
               <v-list-item-title>Azure Key Vault</v-list-item-title>
             </v-list-item>
 
@@ -144,10 +162,11 @@
                 itemType = 'dvls';
               "
               :disabled="!features.secret_storage_management_ex"
+              data-testid="secretStorages-new-dvls"
             >
-              <v-list-item-icon>
-                <v-icon>$vuetify.icons.dvls</v-icon>
-              </v-list-item-icon>
+              <template v-slot:prepend>
+                <v-icon>$dvls</v-icon>
+              </template>
               <v-list-item-title>Devolutions Server</v-list-item-title>
             </v-list-item>
           </template>
@@ -155,7 +174,7 @@
       </v-menu>
     </v-toolbar>
 
-    <v-tabs class="pl-4">
+    <v-tabs class="pl-4" data-testid="secretStorages-tabs">
       <v-tab key="keys" :to="`/project/${projectId}/keys`" data-testid="keystore-keys">
         Keys
       </v-tab>
@@ -181,16 +200,17 @@
 
     <v-alert
       v-if="!features.secret_storage_management"
-      text
+      variant="tonal"
       color="hsl(348deg, 86%, 61%)"
       class="PageAlert"
+      data-testid="secretStorages-proAlert"
     >
       Managed secret storage is not enabled.
     </v-alert>
 
     <v-alert
       v-if="runtimeDecision && runtimeDecision.state !== 'active'"
-      text
+      variant="tonal"
       :type="runtimeDecision.state === 'read_only' ? 'info' : 'warning'"
       class="PageAlert"
       data-testid="secretStorage-runtimeCapability"
@@ -202,32 +222,40 @@
     </v-alert>
 
     <v-data-table
-      :headers="headers"
+      :headers="visibleHeaders"
       :items="items"
       hide-default-footer
-      class="mt-4"
-      :items-per-page="Number.MAX_VALUE"
-      style="max-width: calc(var(--breakpoint-xl) - var(--nav-drawer-width) - 200px); margin: auto"
+      class="mt-4 SecretStoragesTable"
+      :items-per-page="-1"
+      data-testid="secretStorages-table"
+      :data-state="items.length === 0 ? 'empty' : 'ready'"
     >
       <template v-slot:item.name="{ item }">
-        <v-icon class="mr-3" small>
+        <v-icon class="mr-3" size="small" :data-testid="`secretStorages-rowIcon-${item.type}`">
           {{ getIcon(item.type) }}
         </v-icon>
 
-        <span class="mr-2">{{ item.name }}</span>
+        <span class="mr-2" data-testid="secretStorages-rowName">{{ item.name }}</span>
 
-        <v-chip v-if="item.readonly" style="transform: translateY(-1px)" color="info" small>
+        <v-chip
+          v-if="item.readonly"
+          class="SecretStoragesReadonly"
+          style="transform: translateY(-1px)"
+          color="info"
+          size="small"
+          data-testid="secretStorages-rowReadonly"
+        >
           Read only
         </v-chip>
 
-        <div class="d-md-none text-caption text--secondary mt-1">
+        <div class="d-md-none text-body-small text--secondary mt-1">
           Last attempt: {{ formatTimestamp(lastAttempt(item)) }}<br />
           Last success: {{ formatTimestamp(item.last_synced_at) }}
         </div>
       </template>
 
       <template v-slot:item.type="{ item }">
-        <code>{{ item.type }}</code>
+        <code data-testid="secretStorages-rowType">{{ item.type }}</code>
       </template>
 
       <template v-slot:item.last_attempt="{ item }">
@@ -239,7 +267,10 @@
       </template>
 
       <template v-slot:item.actions="{ item }">
-        <v-btn-toggle dense :value-comparator="() => false" style="">
+        <v-btn-group
+          density="compact"
+          data-testid="secretStorages-rowActions"
+        >
           <v-btn
             v-if="item.sync_direction === 'outbound'"
             @click="syncItem(item.id)"
@@ -247,27 +278,26 @@
               !runtimeCanWrite || syncInProgress || !(item.sync_paths && item.sync_paths.length > 0)
             "
             aria-label="Synchronize selected keys"
+            data-testid="secretStorages-rowSync"
           >
             <v-icon>mdi-sync</v-icon>
           </v-btn>
           <v-btn @click="openSyncHistory(item)" aria-label="Open synchronization history">
             <v-icon>mdi-history</v-icon>
           </v-btn>
-          <v-btn
-            @click="askDeleteItem(item.id)"
+          <v-btn @click="askDeleteItem(item.id)" data-testid="secretStorages-rowDelete"
             :disabled="!runtimeCanWrite"
             aria-label="Delete secret storage"
           >
             <v-icon>mdi-delete</v-icon>
           </v-btn>
-          <v-btn
-            @click="editItem(item.id)"
+          <v-btn @click="editItem(item.id)" data-testid="secretStorages-rowEdit"
             :disabled="!runtimeCanRead"
             aria-label="Edit secret storage"
           >
             <v-icon>mdi-pencil</v-icon>
           </v-btn>
-        </v-btn-toggle>
+        </v-btn-group>
       </template>
     </v-data-table>
   </div>
@@ -299,6 +329,11 @@ export default {
   },
 
   computed: {
+    visibleHeaders() {
+      return this.$vuetify.display.smAndDown
+        ? this.headers.filter((header) => ['name', 'actions'].includes(header.key))
+        : this.headers;
+    },
     ...enhancedComputed,
     features() {
       return this.systemInfo?.features || {};
@@ -353,15 +388,15 @@ export default {
     getIcon(type) {
       switch (type) {
         case 'vault':
-          return '$vuetify.icons.hashicorp_vault';
+          return '$hashicorp_vault';
         case 'openbao':
-          return '$vuetify.icons.openbao';
+          return '$openbao';
         case 'dvls':
-          return '$vuetify.icons.dvls';
+          return '$dvls';
         case 'aws_sm':
-          return '$vuetify.icons.aws_sm';
+          return '$aws_sm';
         case 'azure_kv':
-          return '$vuetify.icons.azure_kv';
+          return '$azure_kv';
         case 'infisical':
           return 'mdi-shield-key-outline';
         default:
@@ -370,38 +405,34 @@ export default {
     },
 
     getHeaders() {
-      const headers = [
+      return [
         {
-          text: this.$i18n.t('name'),
-          value: 'name',
+          title: this.$t('name'),
+          key: 'name',
           width: '40%',
         },
         {
-          text: this.$i18n.t('type'),
-          value: 'type',
+          title: this.$t('type'),
+          key: 'type',
           width: '20%',
         },
         {
-          text: 'Last attempt',
-          value: 'last_attempt',
+          title: 'Last attempt',
+          key: 'last_attempt',
           width: '20%',
         },
         {
-          text: 'Last success',
-          value: 'last_success',
+          title: 'Last success',
+          key: 'last_success',
           width: '20%',
         },
         {
-          value: 'actions',
+          key: 'actions',
           sortable: false,
           width: '0%',
           align: 'end',
         },
       ];
-
-      return this.$vuetify.breakpoint.smAndDown
-        ? headers.filter((header) => ['name', 'actions'].includes(header.value))
-        : headers;
     },
     getItemsUrl() {
       return `/api/project/${this.projectId}/secret_storages`;

@@ -27,12 +27,12 @@ export const enhancedMethods = {
   async onUserSaved(event) {
     if (event.action !== 'new' || !event.item || !event.item.id) return;
     this.itemId = event.item.id;
-    EventBus.$emit('i-snackbar', { color: 'success', text: this.$i18n.t('userCreated') });
+    EventBus.$emit('i-snackbar', { color: 'success', text: this.$t('userCreated') });
     await this.loadItems();
   },
   refreshHeaders() {
     this.headers = this.getHeaders().filter(
-      (header) => this.canManageUsers || header.value !== 'actions',
+      (header) => this.canManageUsers || header.key !== 'actions',
     );
   },
   async loadItems() {

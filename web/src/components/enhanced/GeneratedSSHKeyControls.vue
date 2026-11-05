@@ -13,18 +13,18 @@
     v-model="algorithmModel"
     :items="algorithms"
     item-value="id"
-    item-text="name"
+    item-title="name"
     label="Key algorithm"
     :disabled="disabled"
     data-testid="key-generateAlgorithm"
-    outlined
-    dense
+    variant="outlined"
+    density="compact"
   />
 
   <v-alert
     v-if="metadata"
-    dense
-    text
+    density="compact"
+    variant="tonal"
     type="info"
     data-testid="key-generatedMetadata"
     class="generated-ssh-key-metadata"
@@ -52,6 +52,7 @@
 import CopyClipboardButton from '@/components/CopyClipboardButton.vue';
 
 export default {
+  emits: ['update:algorithm', 'update:generate'],
   components: { CopyClipboardButton },
   props: {
     canGenerate: Boolean,

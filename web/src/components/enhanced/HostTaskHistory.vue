@@ -2,23 +2,23 @@
   <section class="host-history pa-4" :aria-label="$t('hostsHistory', { host })">
     <div class="d-flex align-center mb-2">
       <v-icon class="mr-2">mdi-history</v-icon>
-      <h3 class="text-h6">{{ $t('hostsHistory', { host }) }}</h3>
+      <h3 class="text-headline-small">{{ $t('hostsHistory', { host }) }}</h3>
     </div>
-    <p class="text-body-2 text--secondary">{{ $t('hostsHistoryCoverage') }}</p>
-    <v-alert v-if="error" type="error" text>{{ error }}</v-alert>
-    <div v-if="$vuetify.breakpoint.xsOnly">
+    <p class="text-body-medium text--secondary">{{ $t('hostsHistoryCoverage') }}</p>
+    <v-alert v-if="error" type="error" variant="tonal">{{ error }}</v-alert>
+    <div v-if="$vuetify.display.xs">
       <v-progress-linear v-if="loading" indeterminate class="mb-3" />
-      <p v-if="!loading && !items.length" class="text-body-2">{{ $t('hostsNoHistory') }}</p>
-      <v-card v-for="item in items" :key="item.id" outlined class="mb-3 pa-3">
+      <p v-if="!loading && !items.length" class="text-body-medium">{{ $t('hostsNoHistory') }}</p>
+      <v-card v-for="item in items" :key="item.id" variant="outlined" class="mb-3 pa-3">
         <div class="d-flex align-center justify-space-between mb-2">
           <TaskLink :task-id="item.id" :label="`#${item.id}`" />
           <TaskStatus :status="item.status" />
         </div>
-        <div class="text-body-2 font-weight-medium">{{ item.tpl_alias }}</div>
-        <div class="text-body-2 mt-2">
-          {{ $t('start') }}: {{ (item.start || item.created) | formatDate }}
+        <div class="text-body-medium font-weight-medium">{{ item.tpl_alias }}</div>
+        <div class="text-body-medium mt-2">
+          {{ $t('start') }}: {{ $filters.formatDate(item.start || item.created) }}
         </div>
-        <div class="text-body-2 mb-3">{{ $t('hostsTrigger') }}: {{ trigger(item) }}</div>
+        <div class="text-body-medium mb-3">{{ $t('hostsTrigger') }}: {{ trigger(item) }}</div>
         <TaskLink :task-id="item.id" :label="$t('hostsTaskOutput')" />
       </v-card>
     </div>
@@ -33,10 +33,10 @@
     >
       <template v-slot:item.id="{ item }">
         <TaskLink :task-id="item.id" :label="`#${item.id}`" />
-        <div class="text-body-2">{{ item.tpl_alias }}</div>
+        <div class="text-body-medium">{{ item.tpl_alias }}</div>
       </template>
       <template v-slot:item.start="{ item }">{{
-        (item.start || item.created) | formatDate
+        $filters.formatDate(item.start || item.created)
       }}</template>
       <template v-slot:item.status="{ item }"><TaskStatus :status="item.status" /></template>
       <template v-slot:item.trigger="{ item }">{{ trigger(item) }}</template>
@@ -44,7 +44,7 @@
         <TaskLink :task-id="item.id" :label="$t('hostsTaskOutput')" />
       </template>
     </v-data-table>
-    <v-btn v-if="nextCursor" class="mt-3" outlined :loading="loading" @click="load(true)">
+    <v-btn v-if="nextCursor" class="mt-3" variant="outlined" :loading="loading" @click="load(true)">
       {{ $t('hostsOlderTasks') }}
     </v-btn>
   </section>
@@ -68,11 +68,11 @@ export default {
   computed: {
     headers() {
       return [
-        { text: this.$t('hostsTask'), value: 'id' },
-        { text: this.$t('start'), value: 'start' },
-        { text: this.$t('status'), value: 'status' },
-        { text: this.$t('hostsTrigger'), value: 'trigger' },
-        { text: this.$t('hostsTaskOutput'), value: 'output' },
+        { title: this.$t('hostsTask'), key: 'id' },
+        { title: this.$t('start'), key: 'start' },
+        { title: this.$t('status'), key: 'status' },
+        { title: this.$t('hostsTrigger'), key: 'trigger' },
+        { title: this.$t('hostsTaskOutput'), key: 'output' },
       ].map((header) => ({ ...header, sortable: false }));
     },
   },
@@ -87,7 +87,7 @@ export default {
   mounted() {
     this.load();
   },
-  beforeDestroy() {
+  beforeUnmount() {
     this.requestId += 1;
   },
   methods: {

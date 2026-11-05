@@ -3,7 +3,7 @@
     <v-card v-if="generatedKeyResult" class="generated-ssh-key-result">
       <v-card-title>SSH public key</v-card-title>
       <v-card-text>
-        <v-alert dense text type="info">
+        <v-alert density="compact" variant="tonal" type="info">
           The private key is stored encrypted by Semaphore and is never displayed.
         </v-alert>
         <div>Algorithm: <code>{{ generatedKeyResult.algorithm }}</code></div>
@@ -23,7 +23,11 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn text color="primary" @click="$emit('input', false)">Close</v-btn>
+        <v-btn
+          variant="text"
+          color="primary"
+          @click="$emit('update:modelValue', false)"
+        >Close</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -33,15 +37,16 @@
 import CopyClipboardButton from '@/components/CopyClipboardButton.vue';
 
 export default {
+  emits: ['update:modelValue'],
   components: { CopyClipboardButton },
   props: {
-    value: Boolean,
+    modelValue: Boolean,
     generatedKeyResult: Object,
   },
   computed: {
     valueModel: {
-      get() { return this.value; },
-      set(value) { this.$emit('input', value); },
+      get() { return this.modelValue; },
+      set(value) { this.$emit('update:modelValue', value); },
     },
   },
 };

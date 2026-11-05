@@ -19,6 +19,15 @@ type capturedOIDCReconciler struct {
 	request pro_interfaces.OIDCGroupPreviewRequest
 }
 
+func TestRoleSyncServiceRejectsUntrustedLDAPGroupNames(t *testing.T) {
+	reconciler := &capturedOIDCReconciler{}
+	added, removed, err := NewRoleSyncServiceWithOIDC(reconciler).SyncGroupRoles(17, "corp", []string{"admin"})
+	assert.ErrorIs(t, err, db.ErrInvalidOperation)
+	assert.Empty(t, added)
+	assert.Empty(t, removed)
+	assert.Empty(t, reconciler.request.ProviderID)
+}
+
 func (s *capturedOIDCReconciler) ReconcileGroupMappings(_ context.Context, request pro_interfaces.OIDCGroupPreviewRequest) (pro_interfaces.OIDCGroupPreview, error) {
 	s.request = request
 	return pro_interfaces.OIDCGroupPreview{Additions: []pro_interfaces.OIDCGroupAssignmentChange{{

@@ -113,7 +113,7 @@ describe('deployment window UI contracts', () => {
       executionPreflightSignature: JSON.stringify(payload),
       executionPreflightPayloadSignature: JSON.stringify(payload),
       deploymentWindowOverrideReady: false,
-      $refs: { form: { validate: () => true } },
+      $refs: { form: { validate: async () => ({ valid: true }) } },
       $emit: (...args) => emitted.push(args),
       $t: (key) => key,
       beforeSave: async () => {},

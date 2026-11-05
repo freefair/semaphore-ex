@@ -54,7 +54,7 @@ export const enhancedMethods = {
   },
   async saveGeneratedSSHKey() {
     this.formError = null;
-    if (!this.$refs.form.validate()) {
+    if (!(await this.$refs.form.validate()).valid) {
       this.$emit('error', {});
       return null;
     }
@@ -86,8 +86,8 @@ export const enhancedMethods = {
       this.generateSSHKey = false;
     }
     if (this.item?.ssh) {
-      this.$set(this.item.ssh, 'private_key', '');
-      this.$set(this.item.ssh, 'passphrase', '');
+      this.item.ssh.private_key = '';
+      this.item.ssh.passphrase = '';
     }
   },
   generatedSSHKeyRequest() {

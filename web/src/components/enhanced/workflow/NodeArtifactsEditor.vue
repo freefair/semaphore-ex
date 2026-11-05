@@ -4,80 +4,80 @@
     class="d-flex align-center mb-2"
     data-testid="workflow-artifact-outputs"
   >
-    <span class="text-subtitle-2">{{ $t('workflowArtifactOutputs') }}</span>
+    <span class="text-label-large">{{ $t('workflowArtifactOutputs') }}</span>
     <v-spacer />
     <v-btn
       icon
-      small
+      size="small"
       :title="$t('workflowArtifactAddOutput')"
       :disabled="!canManage"
       @click="$emit('add-output')"
     >
-      <v-icon small>mdi-plus</v-icon>
+      <v-icon size="small">mdi-plus</v-icon>
     </v-btn>
   </div>
 
   <v-card
     v-for="(output, index) in outputs"
     :key="`artifact-output-${index}`"
-    outlined
+    variant="outlined"
     class="pa-2 mb-2"
   >
     <div class="d-flex align-start">
       <v-text-field
-        :value="output.name"
+        :model-value="output.name"
         :label="$t('workflowArtifactName')"
         :disabled="!canManage"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
         hide-details="auto"
         class="mr-1 mb-3"
-        @input="$emit('output-field', index, 'name', $event)"
+        @update:model-value="$emit('output-field', index, 'name', $event)"
       />
       <v-btn
         icon
-        small
+        size="small"
         :title="$t('workflowArtifactRemoveOutput')"
         :disabled="!canManage"
         @click="$emit('remove-output', index)"
       >
-        <v-icon small>mdi-close</v-icon>
+        <v-icon size="small">mdi-close</v-icon>
       </v-btn>
     </div>
     <v-select
-      :value="output.schema.type"
+      :model-value="output.schema.type"
       :items="artifactOutputTypes"
       item-value="value"
-      item-text="text"
+      item-title="text"
       :label="$t('workflowArtifactSchema')"
       :disabled="!canManage"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
       hide-details="auto"
       class="mb-3"
-      @change="$emit('output-type', index, $event)"
+      @update:model-value="$emit('output-type', index, $event)"
     />
     <v-text-field
-      :value="output.max_bytes"
+      :model-value="output.max_bytes"
       type="number"
       min="1"
       max="65536"
       :label="$t('workflowArtifactMaxBytes')"
       :disabled="!canManage"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
       hide-details="auto"
       class="mb-2"
-      @input="updateOutputNumber(index, $event)"
+      @update:model-value="updateOutputNumber(index, $event)"
     />
     <v-switch
-      :input-value="output.sensitive"
+      :model-value="output.sensitive"
       :label="$t('workflowArtifactSensitive')"
       :disabled="!canManage"
-      dense
+      density="compact"
       hide-details
       class="mt-1"
-      @change="$emit('output-field', index, 'sensitive', $event)"
+      @update:model-value="$emit('output-field', index, 'sensitive', $event)"
     />
   </v-card>
 
@@ -85,72 +85,72 @@
     class="d-flex align-center mt-4 mb-2"
     data-testid="workflow-artifact-inputs"
   >
-    <span class="text-subtitle-2">{{ $t('workflowArtifactInputs') }}</span>
+    <span class="text-label-large">{{ $t('workflowArtifactInputs') }}</span>
     <v-spacer />
     <v-btn
       icon
-      small
+      size="small"
       :title="$t('workflowArtifactAddInput')"
       :disabled="!canManage || reachableArtifactOutputs.length === 0"
       @click="$emit('add-input')"
     >
-      <v-icon small>mdi-plus</v-icon>
+      <v-icon size="small">mdi-plus</v-icon>
     </v-btn>
   </div>
 
   <div
     v-if="reachableArtifactOutputs.length === 0"
-    class="text-caption text--secondary mb-3"
+    class="text-body-small text--secondary mb-3"
   >{{ $t('workflowArtifactNoReachableOutputs') }}</div>
 
   <v-card
     v-for="(input, index) in inputs"
     :key="`artifact-input-${index}`"
-    outlined
+    variant="outlined"
     class="pa-2 mb-2"
   >
     <div class="d-flex align-start">
       <v-text-field
-        :value="input.name"
+        :model-value="input.name"
         :label="$t('workflowArtifactInputName')"
         :disabled="!canManage"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
         hide-details="auto"
         class="mr-1 mb-3"
-        @input="$emit('input-field', index, 'name', $event)"
+        @update:model-value="$emit('input-field', index, 'name', $event)"
       />
       <v-btn
         icon
-        small
+        size="small"
         :title="$t('workflowArtifactRemoveInput')"
         :disabled="!canManage"
         @click="$emit('remove-input', index)"
       >
-        <v-icon small>mdi-close</v-icon>
+        <v-icon size="small">mdi-close</v-icon>
       </v-btn>
     </div>
     <v-select
-      :value="artifactReferenceKey(input)"
+      :model-value="artifactReferenceKey(input)"
       :items="reachableArtifactOutputs"
       item-value="value"
-      item-text="text"
+      item-title="text"
       :label="$t('workflowArtifactSource')"
       :disabled="!canManage"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
       hide-details="auto"
       class="mb-2"
-      @change="$emit('input-reference', index, $event)"
+      @update:model-value="$emit('input-reference', index, $event)"
     />
     <v-switch
-      :input-value="input.required"
+      :model-value="input.required"
       :label="$t('workflowArtifactRequired')"
       :disabled="!canManage"
-      dense
+      density="compact"
       hide-details
       class="mt-1"
-      @change="$emit('input-field', index, 'required', $event)"
+      @update:model-value="$emit('input-field', index, 'required', $event)"
     />
   </v-card>
   </div>
@@ -158,6 +158,10 @@
 
 <script>
 export default {
+  emits: [
+    'add-input', 'add-output', 'input-field', 'input-reference', 'output-field',
+    'output-type', 'remove-input', 'remove-output',
+  ],
   props: {
     outputs: Array,
     inputs: Array,

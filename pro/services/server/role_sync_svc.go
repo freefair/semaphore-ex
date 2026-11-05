@@ -16,3 +16,7 @@ func NewRoleSyncServiceWithOIDC(pro_interfaces.OIDCGroupMappingService) pro_inte
 func (*RoleSyncServiceImpl) SyncLoginRoles(int, string, map[string]any) ([]db.MappedRole, []db.MappedRole, error) {
 	return nil, nil, db.ErrInvalidOperation
 }
+
+func (*RoleSyncServiceImpl) SyncGroupRoles(int, string, []string) ([]db.MappedRole, []db.MappedRole, error) {
+	return nil, nil, db.ErrInvalidOperation
+}

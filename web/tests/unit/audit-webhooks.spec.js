@@ -107,7 +107,7 @@ describe('audit webhook administration', () => {
 
     try {
       const context = {
-        $refs: { form: { validate: () => true } },
+        $refs: { form: { validate: async () => ({ valid: true }) } },
         $t: (key) => key,
         endpoint: 'https://audit.example.test/events',
         credential: 'write-only-secret',

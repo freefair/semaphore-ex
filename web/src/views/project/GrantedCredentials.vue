@@ -7,13 +7,19 @@
 
     <KeyStoreMenu :project-id="projectId" />
 
-    <v-alert v-if="!allowed" type="warning" text class="PageAlert" data-testid="granted-denied">
+    <v-alert
+      v-if="!allowed"
+      type="warning"
+      variant="tonal"
+      class="PageAlert"
+      data-testid="granted-denied"
+    >
       Your project role does not allow listing granted credential metadata. Credential values are
       never available from this page.
     </v-alert>
 
     <template v-else>
-      <v-alert type="info" text class="PageAlert">
+      <v-alert type="info" variant="tonal" class="PageAlert">
         Select a granted reference by name. The stored value, owner, provider path, and fingerprint
         stay hidden. Runtime resolution and use are introduced separately.
       </v-alert>
@@ -39,7 +45,13 @@
         </template>
       </v-data-table>
 
-      <v-alert v-if="selected" type="success" text class="PageAlert" data-testid="granted-selected">
+      <v-alert
+        v-if="selected"
+        type="success"
+        variant="tonal"
+        class="PageAlert"
+        data-testid="granted-selected"
+      >
         Selected <strong>{{ selected.display_name }}</strong> as credential reference
         <code>{{ selected.credential_id }}</code>. No credential value was retrieved.
       </v-alert>
@@ -69,13 +81,13 @@ export default {
       items: [],
       selectedId: null,
       headers: [
-        { text: 'Name', value: 'display_name' },
-        { text: 'Type', value: 'type' },
-        { text: 'Version', value: 'version' },
-        { text: 'Effective permission', value: 'operations' },
-        { text: 'Expires', value: 'expires_at' },
+        { title: 'Name', key: 'display_name' },
+        { title: 'Type', key: 'type' },
+        { title: 'Version', key: 'version' },
+        { title: 'Effective permission', key: 'operations' },
+        { title: 'Expires', key: 'expires_at' },
         {
-          text: 'Select', value: 'select', sortable: false, align: 'center',
+          title: 'Select', key: 'select', sortable: false, align: 'center',
         },
       ],
     };

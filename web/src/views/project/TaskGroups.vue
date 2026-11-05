@@ -10,10 +10,10 @@
     <v-divider />
     <div class="pa-6">
       <p class="text--secondary">{{ $t('taskGroupsManagedDescription') }}</p>
-      <v-alert v-if="error" type="error" dense>{{ error }}</v-alert>
+      <v-alert v-if="error" type="error" density="compact">{{ error }}</v-alert>
       <v-data-table :headers="headers" :items="items || []" :loading="items === null">
         <template v-slot:item.ownership="{ item }">
-          <v-chip small :outlined="item.project_id !== projectId">
+          <v-chip size="small" :variant="item.project_id !== projectId ? 'outlined' : 'flat'">
             {{ $t(item.project_id === projectId ? 'taskGroupsOwned' : 'taskGroupsShared') }}
           </v-chip>
         </template>
@@ -72,11 +72,11 @@ export default {
     allowActions() { return true; },
     getHeaders() {
       return [
-        { text: this.$t('name'), value: 'name' },
-        { text: this.$t('taskGroupsOwnership'), value: 'ownership' },
-        { text: this.$t('taskGroupsConcurrency'), value: 'max_parallel_tasks' },
-        { text: this.$t('taskGroupsRunners'), value: 'runner_ids' },
-        { text: this.$t('actions'), value: 'actions', sortable: false },
+        { title: this.$t('name'), key: 'name' },
+        { title: this.$t('taskGroupsOwnership'), key: 'ownership' },
+        { title: this.$t('taskGroupsConcurrency'), key: 'max_parallel_tasks' },
+        { title: this.$t('taskGroupsRunners'), key: 'runner_ids' },
+        { title: this.$t('actions'), key: 'actions', sortable: false },
       ];
     },
     getItemsUrl() { return `/api/project/${this.projectId}/task_groups`; },

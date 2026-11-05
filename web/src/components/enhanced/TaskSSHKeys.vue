@@ -1,15 +1,15 @@
 <template>
   <div>
-    <v-alert v-if="error" dense type="error">{{ error }}</v-alert>
+    <v-alert v-if="error" density="compact" type="error">{{ error }}</v-alert>
     <v-progress-linear v-if="loading" indeterminate class="mb-2" />
     <SSHKeyBindingsEditor
-      :value="value"
+      :model-value="modelValue"
       :keys="keys"
       :inherited="inheritedKeys"
       :always="project.always_ssh_keys || []"
       :inherit-label="template ? $t('taskSSHKeysInheritTemplate') : $t('taskSSHKeysInheritProject')"
       :disabled="disabled || loading || !!error"
-      @input="$emit('input', $event)"
+      @update:model-value="$emit('update:modelValue', $event)"
     />
   </div>
 </template>
@@ -20,10 +20,11 @@ import SSHKeyBindingsEditor from '@/components/enhanced/SSHKeyBindingsEditor.vue
 import { getErrorMessage } from '@/lib/error';
 
 export default {
+  emits: ['update:modelValue'],
   components: { SSHKeyBindingsEditor },
   props: {
     projectId: { type: [Number, String], required: true },
-    value: { type: Array, default: null },
+    modelValue: { type: Array, default: null },
     template: { type: Object, default: null },
     disabled: Boolean,
   },

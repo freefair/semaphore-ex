@@ -1,34 +1,45 @@
 <template>
   <div v-if="available">
-    <v-subheader class="px-0 mt-2">OIDC group mapping</v-subheader>
+    <v-list-subheader class="px-0 mt-2">OIDC group mapping</v-list-subheader>
     <v-card data-testid="oidc-group-mapping" style="background: var(--highlighted-card-bg-color)">
       <v-card-text>
-        <v-alert v-if="error" data-testid="oidc-group-error" type="error" dense outlined>
+        <v-alert
+          v-if="error"
+          data-testid="oidc-group-error"
+          type="error"
+          density="compact"
+          variant="outlined"
+        >
           {{ error }}
         </v-alert>
         <v-select
           v-model="providerId"
           data-testid="oidc-group-provider"
           :items="providers"
-          item-text="display_name"
+          item-title="display_name"
           item-value="id"
           label="OIDC provider"
-          outlined
-          dense
-          @change="loadProviderState"
+          variant="outlined"
+          density="compact"
+          @update:model-value="loadProviderState"
         />
-        <v-alert v-if="provider && !provider.claim_configuration.path" type="info" dense outlined>
+        <v-alert
+          v-if="provider && !provider.claim_configuration.path"
+          type="info"
+          density="compact"
+          variant="outlined"
+        >
           Configure a group claim path for this provider before creating mappings.
         </v-alert>
         <template v-if="provider && provider.claim_configuration.path">
-          <div class="text-caption text--secondary mb-3">
+          <div class="text-body-small text--secondary mb-3">
             Claim path: <code>{{ provider.claim_configuration.path }}</code>
             · Missing claim: <code>{{ provider.claim_configuration.missing_claim_policy }}</code>
           </div>
 
-          <v-simple-table
+          <v-table
             v-if="mappings.length"
-            dense
+            density="compact"
             class="oidc-responsive-table oidc-mapping-table"
             data-testid="oidc-group-mappings"
           >
@@ -41,37 +52,37 @@
                 <td class="text-right text-no-wrap">
                   <v-btn
                     icon
-                    small
+                    size="small"
                     :aria-label="`Edit ${mapping.id}`"
                     @click="editMapping(mapping)"
                   >
-                    <v-icon small>mdi-pencil</v-icon>
+                    <v-icon size="small">mdi-pencil</v-icon>
                   </v-btn>
                   <v-btn
                     icon
-                    small
+                    size="small"
                     :aria-label="`Delete ${mapping.id}`"
                     @click="deleteMapping(mapping)"
                   >
-                    <v-icon small>mdi-delete</v-icon>
+                    <v-icon size="small">mdi-delete</v-icon>
                   </v-btn>
                 </td>
               </tr>
             </tbody>
-          </v-simple-table>
-          <div v-else class="text-body-2 text--secondary mb-3">
+          </v-table>
+          <div v-else class="text-body-medium text--secondary mb-3">
             No OIDC group mappings are configured for this provider.
           </div>
 
-          <v-row dense class="mt-2">
+          <v-row density="compact" class="mt-2">
             <v-col cols="12" sm="6">
               <v-text-field
                 v-model.trim="mappingForm.id"
                 data-testid="oidc-mapping-id"
                 label="Mapping ID"
                 :disabled="mappingForm.expected_revision > 0"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
               />
             </v-col>
             <v-col cols="12" sm="6">
@@ -79,17 +90,18 @@
                 v-model="mappingForm.claim_value"
                 data-testid="oidc-claim-value"
                 label="Claim value"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
               />
             </v-col>
             <v-col cols="12" sm="4">
               <v-select
                 v-model="mappingForm.target.scope"
                 :items="roleScopes"
+                item-title="text"
                 label="Role scope"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
               />
             </v-col>
             <v-col v-if="mappingForm.target.scope === 'project'" cols="12" sm="4">
@@ -98,16 +110,16 @@
                 label="Project ID"
                 type="number"
                 min="1"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
               />
             </v-col>
             <v-col cols="12" :sm="mappingForm.target.scope === 'project' ? 4 : 8">
               <v-text-field
                 v-model.trim="mappingForm.target.role_id"
                 label="Role ID"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
               />
             </v-col>
           </v-row>
@@ -115,16 +127,16 @@
             <v-switch
               v-model="mappingForm.enabled"
               label="Enabled"
-              dense
+              density="compact"
               hide-details
               class="mt-0"
             />
             <v-spacer />
-            <v-btn text small @click="resetMappingForm">Clear</v-btn>
+            <v-btn variant="text" size="small" @click="resetMappingForm">Clear</v-btn>
             <v-btn
               data-testid="oidc-mapping-save"
               color="primary"
-              small
+              size="small"
               :loading="saving"
               :disabled="!canSaveMapping"
               @click="saveMapping"
@@ -133,7 +145,7 @@
 
           <v-divider class="my-4" />
           <div class="font-weight-medium mb-2">Redacted claim preview</div>
-          <v-row dense>
+          <v-row density="compact">
             <v-col cols="12" sm="4">
               <v-text-field
                 v-model.number="previewUserId"
@@ -141,8 +153,8 @@
                 label="User ID"
                 type="number"
                 min="1"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
               />
             </v-col>
             <v-col cols="12" sm="8">
@@ -152,26 +164,26 @@
                 label="Group claim values (one per line)"
                 hint="Only group values are sent; tokens and other claims are excluded."
                 rows="2"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
               />
             </v-col>
           </v-row>
           <v-btn
             data-testid="oidc-preview-run"
             color="primary"
-            outlined
-            small
+            variant="outlined"
+            size="small"
             :loading="previewing"
             :disabled="previewUserId <= 0"
             @click="previewMappings"
           >Preview mapping</v-btn>
 
           <div v-if="preview" data-testid="oidc-preview-result" class="mt-3">
-            <v-alert v-if="preview.preserved" type="info" dense outlined>
+            <v-alert v-if="preview.preserved" type="info" density="compact" variant="outlined">
               The claim was not trusted as present. Existing managed access is preserved.
             </v-alert>
-            <v-row dense>
+            <v-row density="compact">
               <v-col cols="6" sm="3">
                 <strong>Additions</strong><div>{{ preview.additions.length }}</div>
               </v-col>
@@ -188,16 +200,22 @@
             <div v-if="preview.unknown_values.length" class="mt-2">
               Unknown: <code>{{ preview.unknown_values.join(', ') }}</code>
             </div>
-            <v-alert v-if="blockedCount" type="warning" dense outlined class="mt-2 mb-0">
+            <v-alert
+              v-if="blockedCount"
+              type="warning"
+              density="compact"
+              variant="outlined"
+              class="mt-2 mb-0"
+            >
               Resolve assignment collisions or protected-administrator violations before using
               this mapping.
             </v-alert>
           </div>
 
           <v-divider class="my-4" />
-          <v-simple-table
+          <v-table
             v-if="assignments.length"
-            dense
+            density="compact"
             class="oidc-responsive-table"
             data-testid="oidc-effective-assignments"
           >
@@ -209,14 +227,14 @@
                 <td><code>{{ assignment.managed_by_mapping_id }}</code></td>
               </tr>
             </tbody>
-          </v-simple-table>
-          <div v-else class="text-body-2 text--secondary">
+          </v-table>
+          <div v-else class="text-body-medium text--secondary">
             No effective OIDC-managed assignments.
           </div>
 
-          <v-simple-table
+          <v-table
             v-if="history.length"
-            dense
+            density="compact"
             class="mt-4 oidc-responsive-table"
             data-testid="oidc-group-history"
           >
@@ -229,7 +247,7 @@
                 <td>{{ new Date(entry.created).toLocaleString() }}</td>
               </tr>
             </tbody>
-          </v-simple-table>
+          </v-table>
         </template>
       </v-card-text>
     </v-card>

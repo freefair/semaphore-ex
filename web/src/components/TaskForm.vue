@@ -1,36 +1,42 @@
 <template>
   <v-form
     ref="form"
-    lazy-validation
     v-model="formValid"
     v-if="isLoaded()"
     @submit.prevent="save()"
     class="task-form-layout"
+    data-testid="newTask-form"
+    :data-state="formSaving ? 'loading' : (formError
+      ? 'error'
+      : ((template.type === 'deploy' && buildTasks == null)
+        || (needInventory && inventory == null) ? 'loading' : 'ready'))"
   >
     <div class="task-form-inputs">
-      <v-alert v-if="inventoryRefresh" type="info" text dense>
+      <v-alert v-if="inventoryRefresh" type="info" variant="tonal" density="compact">
         {{ $t('hostsRefreshContext') }}
       </v-alert>
       <v-alert
-        :value="formError"
-        color="error"
-        class="pb-2"
-      >{{ formError }}
-      </v-alert>
+      :model-value="!!formError"
+      color="error"
+      class="pb-2"
+      data-testid="newTask-error"
+    >{{ formError }}
+    </v-alert>
 
       <v-alert
         color="blue"
-        dark
-        dismissible
-        dense
-        @input="item.commit_hash=null"
+        theme="dark"
+        closable
+        density="compact"
+        @update:model-value="item.commit_hash=null"
         v-model="hasCommit"
         class="overflow-hidden mt-2"
+        data-testid="newTask-commit"
       >
         <div
           style="font-weight: bold;"
         >
-          <v-icon small>mdi-source-fork</v-icon>
+          <v-icon size="small">mdi-source-fork</v-icon>
           {{ (item.commit_hash || '').substr(0, 10) }}
         </div>
         <div v-if="sourceTask && sourceTask.commit_message">
@@ -44,12 +50,14 @@
         :label="$t('buildVersion')"
         :items="buildTasks"
         item-value="id"
-        :item-text="(itm) => getTaskMessage(itm)"
+        :item-title="(itm) => getTaskMessage(itm)"
         :rules="[v => !!v || $t('build_version_required')]"
         required
         :disabled="formSaving"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
+        class="TaskForm__text"
+        data-testid="newTask-buildVersion"
       />
 
       <v-skeleton-loader
@@ -63,19 +71,20 @@
         v-model="item.message"
         :label="$t('messageOptional')"
         :disabled="formSaving"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
+        data-testid="newTask-message"
       />
 
       <TaskSSHKeys
         v-if="canOverrideSSHKeys"
         :project-id="template.project_id || projectId"
         :template="template"
-        :value="item.ssh_keys"
+        :model-value="item.ssh_keys"
         :disabled="formSaving"
-        @input="$set(item, 'ssh_keys', $event)"
+        @update:model-value="item.ssh_keys = $event"
       />
-      <p v-else class="text-body-2">
+      <p v-else class="text-body-medium">
         {{ $t(sameSSHKeyProject ? 'taskSSHKeysManaged' : 'taskSSHKeysCrossProject') }}
       </p>
 
@@ -91,8 +100,8 @@
           :rules="[
               val => !v.required || !!val || v.title + $t('isRequired'),
             ]"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
         />
 
         <v-select
@@ -107,16 +116,16 @@
             || v.title + ' ' + $t('isRequired')
           ]"
           :items="v.values"
-          item-text="name"
+          item-title="name"
           item-value="value"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
           :multiple="v.type === 'select'"
           :chips="v.type === 'select'"
         >
         <template v-if="v.type === 'select'" v-slot:selection="{ item, index }">
           <v-chip
-            small
+            size="small"
             close
             @click:close="deleteItem(v.name, index)"
           >
@@ -136,8 +145,8 @@
           ]"
           rows="3"
           auto-grow
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
         />
 
         <v-text-field
@@ -151,16 +160,16 @@
             val => !val || v.type !== 'int' || /^\d+$/.test(val) ||
             v.title + ' ' + $t('mustBeInteger'),
           ]"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
         />
       </div>
 
       <v-text-field
         v-model="git_branch"
         :label="fieldLabel('branch')"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
         required
         :disabled="formSaving"
         v-if="canOverrideBranch"
@@ -171,9 +180,9 @@
         :label="fieldLabel('inventory')"
         :items="inventory"
         item-value="id"
-        item-text="name"
-        outlined
-        dense
+        item-title="name"
+        variant="outlined"
+        density="compact"
         required
         :disabled="formSaving"
         v-if="inventory != null && needInventory && !inventoryRefresh"
@@ -211,9 +220,9 @@
         :block="deploymentWindowBlock"
         :message="deploymentWindowBlockMessage"
         :categories="deploymentWindowOverrideCategories"
-        :category.sync="deploymentWindowOverrideCategory"
-        :reference.sync="deploymentWindowOverrideReference"
-        :confirmed.sync="deploymentWindowOverrideConfirmed"
+        v-model:category="deploymentWindowOverrideCategory"
+        v-model:reference="deploymentWindowOverrideReference"
+        v-model:confirmed="deploymentWindowOverrideConfirmed"
         :disabled="formSaving"
         :format-date="formatDeploymentWindowDate"
       />
@@ -221,12 +230,12 @@
 
     <div class="task-form-review">
       <div v-if="executionPreflightLoading" class="mt-4" role="status">
-        <div class="text-subtitle-1 mb-2">{{ $t('executionPreflightLoading') }}</div>
+        <div class="text-body-large mb-2">{{ $t('executionPreflightLoading') }}</div>
         <v-progress-linear indeterminate />
       </div>
-      <v-alert v-if="executionPreflightError" type="error" text class="mt-4">
+      <v-alert v-if="executionPreflightError" type="error" variant="tonal" class="mt-4">
         {{ executionPreflightError }}
-        <v-btn text @click="refreshExecutionPreflight">{{ $t('retry') }}</v-btn>
+        <v-btn variant="text" @click="refreshExecutionPreflight">{{ $t('retry') }}</v-btn>
       </v-alert>
       <ExecutionPreflightReview :plan="executionPreflight" />
     </div>
@@ -361,7 +370,9 @@ export default {
 
     git_branch: {
       get() {
-        return (this.item || {}).git_branch || this.template.git_branch;
+        // A cleared field keeps '' (sent as is): fall back to the template's branch only while
+        // the task has none — in Vue 3 the getter re-runs after every edit.
+        return (this.item || {}).git_branch ?? this.template.git_branch;
       },
       set(newValue) {
         this.item.git_branch = newValue;
@@ -403,7 +414,7 @@ export default {
     this.refreshItem();
   },
 
-  beforeDestroy() {
+  beforeUnmount() {
     this.disposeExecutionPreflight();
   },
 
@@ -450,7 +461,7 @@ export default {
         // API parameters are JSON data; nested lists must also belong to this form.
         params: JSON.parse(JSON.stringify(v.params || {})),
       };
-      this.$set(this.item, 'ssh_keys', this.canOverrideSSHKeys ? (v.ssh_keys ?? null) : null);
+      this.item.ssh_keys = this.canOverrideSSHKeys ? (v.ssh_keys ?? null) : null;
 
       this.editedEnvironment = JSON.parse(v.environment || '{}');
       this.editedSecretEnvironment = JSON.parse(v.secret || '{}');
@@ -581,12 +592,54 @@ export default {
         if (sv.type !== 'select') return;
         const cur = this.editedEnvironment[sv.name];
         if (cur == null || cur === '') {
-          this.$set(this.editedEnvironment, sv.name, []);
+          this.editedEnvironment[sv.name] = [];
         } else if (!Array.isArray(cur)) {
-          this.$set(this.editedEnvironment, sv.name, [cur]);
+          this.editedEnvironment[sv.name] = [cur];
         }
       });
     },
   },
 };
 </script>
+<style lang="scss">
+// The close button of the commit alert, as `.v-alert__dismissible` of Vuetify 2: centred on the
+// alert's height and pulled 8 px into its padding (margin -16px -8px -16px 8px). Vuetify 4 puts it
+// in the first row of the alert grid, 16 px from the text.
+.TaskForm__commit > .v-alert__close {
+  grid-row: 1 / -1;
+  align-self: center;
+  margin-inline: 8px -8px;
+}
+
+.TaskForm__commit > .v-alert__close > .v-btn {
+  margin-block: 0;
+}
+
+// The text survey variable: the dense outlined auto-grow textarea of Vuetify 2 (`.v-textarea
+// textarea`) — lines of 28 px, 6 px above the text, none below, at least rows × 24 px high (its
+// `rowHeight`): a 78 px box for three rows, not 88 px.
+.TaskForm__text.v-textarea--field-sizing textarea.v-field__input {
+  line-height: 28px;
+  padding-top: 6px;
+  padding-bottom: 0;
+  min-height: calc(3 * 24px + 6px);
+}
+
+// Its resting label stays 8 px down, where it was.
+.TaskForm__text .v-field-label:not(.v-field-label--floating) {
+  top: 8px;
+}
+
+// The chips of a multiple survey select 4 px apart from the field edge and from each other
+// (`.v-select__selections .v-chip`: margin 0 4px), not 0 and 2 px with a 2 px column gap of the
+// field input as in Vuetify 4.
+.TaskForm__select.v-select--chips {
+  .v-field__input {
+    column-gap: 0;
+  }
+
+  .v-select__selection {
+    margin-inline: 4px;
+  }
+}
+</style>

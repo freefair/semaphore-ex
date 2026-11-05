@@ -68,59 +68,6 @@ func (c *UserController) GetUser(w http.ResponseWriter, r *http.Request) {
 // Proof of ownership is a successful bind with the user's own LDAP credentials.
 func linkLdapIdentity(w http.ResponseWriter, r *http.Request) {
 	linkLdapIdentityWithService(nil, nil, w, r)
-	/* Legacy implementation is superseded by the Enhanced LDAP service path.
-	var creds struct {
-		Username string `json:"username" binding:"required"`
-		Password string `json:"password" binding:"required"`
-		Provider string `json:"provider"` // LDAP provider ID, default "ldap"
-	}
-	if !helpers.Bind(w, r, &creds) {
-		return
-	}
-
-	providerID := creds.Provider
-	if providerID == "" {
-		providerID = "ldap"
-	}
-
-	provider, ok := util.Config.GetLdapProvider(providerID)
-	if !ok {
-		helpers.WriteErrorStatus(w, "LDAP provider not found", http.StatusBadRequest)
-		return
-	}
-
-	ldapUser, userDN, err := tryFindLDAPUser(provider, creds.Username, creds.Password)
-	if err != nil || ldapUser == nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
-	linked, err := linkExternalIdentity(helpers.Store(r), *currentUser, db.IdentityTypeLdap, providerID, userDN)
-	if err != nil {
-		switch {
-		case errors.Is(err, errIdentityLinkedToAnother):
-			helpers.WriteErrorStatus(w, "This LDAP account is already linked to another user.", http.StatusConflict)
-		case errors.Is(err, errProviderAlreadyLinked):
-			helpers.WriteErrorStatus(w, "Your account already has a linked LDAP identity. Unlink it first.", http.StatusConflict)
-		default:
-			log.WithError(err).WithFields(log.Fields{
-				"provider": providerID,
-				"user_dn":  userDN,
-				"context":  "ldap",
-			}).Warn("Failed to link LDAP identity")
-			helpers.WriteErrorStatus(w, "Failed to link LDAP account", http.StatusInternalServerError)
-		}
-		return
-	}
-
-	if linked {
-		helpers.Audit(r).Record(r.Context(), audit.Event{
-			Kind:     audit.IAMExternalIdentityLink,
-			Target:   audit.UserTarget(currentUser.ID, currentUser.Username),
-			Metadata: audit.AuthMethodMetadata{Method: audit.LoginMethodLDAP, Provider: providerID},
-		})
-	}
-	*/
 }
 
 func getAPITokens(w http.ResponseWriter, r *http.Request) {

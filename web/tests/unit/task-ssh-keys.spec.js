@@ -10,7 +10,10 @@ describe('task SSH key selection', () => {
   function editor(value, inherited = []) {
     const events = [];
     const context = {
-      value, inherited, disabled: false, $emit: (name, item) => events.push([name, item]),
+      modelValue: value,
+      inherited,
+      disabled: false,
+      $emit: (name, item) => events.push([name, item]),
     };
     Object.assign(context, Object.fromEntries(Object.entries(Editor.methods)
       .map(([name, method]) => [name, method.bind(context)])));
@@ -21,13 +24,13 @@ describe('task SSH key selection', () => {
     const inherited = [{ access_key_id: 1, hosts: ['github.com'] }];
     const { context, events } = editor(null, inherited);
     context.setInherited(false);
-    expect(events[0]).to.deep.equal(['input', inherited]);
+    expect(events[0]).to.deep.equal(['update:modelValue', inherited]);
     expect(events[0][1][0]).not.to.equal(inherited[0]);
-    context.value = events[0][1];
+    context.modelValue = events[0][1];
     context.removeBinding(0);
-    expect(events[1]).to.deep.equal(['input', []]);
+    expect(events[1]).to.deep.equal(['update:modelValue', []]);
     context.setInherited(true);
-    expect(events[2]).to.deep.equal(['input', null]);
+    expect(events[2]).to.deep.equal(['update:modelValue', null]);
   });
 
   it('changes hosts without mutating parent bindings or copying key material', () => {

@@ -1,15 +1,15 @@
 <template>
   <div>
     <v-btn color="primary" :loading="loading" @click="chooseContext">
-      <v-icon left>mdi-refresh</v-icon>{{ $t('hostsRefresh') }}
+      <v-icon start>mdi-refresh</v-icon>{{ $t('hostsRefresh') }}
     </v-btn>
     <v-dialog v-model="selecting" max-width="560">
       <v-card>
         <v-card-title>{{ $t('hostsRefresh') }}</v-card-title>
         <v-card-text>
           <p>{{ $t('hostsRefreshContext') }}</p>
-          <v-alert v-if="error" type="error" text>{{ error }}</v-alert>
-          <v-alert v-else-if="!templates.length" type="info" text>{{
+          <v-alert v-if="error" type="error" variant="tonal">{{ error }}</v-alert>
+          <v-alert v-else-if="!templates.length" type="info" variant="tonal">{{
             $t('hostsNoContext')
           }}</v-alert>
           <v-select
@@ -17,16 +17,16 @@
             v-model="templateId"
             :items="templates"
             item-value="id"
-            item-text="name"
+            item-title="name"
             :label="$t('taskTemplates')"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
           />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="selecting = false">{{ $t('cancel') }}</v-btn>
-          <v-btn color="primary" text :disabled="!templateId" @click="openTask">
+          <v-btn variant="text" @click="selecting = false">{{ $t('cancel') }}</v-btn>
+          <v-btn color="primary" variant="text" :disabled="!templateId" @click="openTask">
             {{ $t('hostsContinue') }}
           </v-btn>
         </v-card-actions>
@@ -52,6 +52,7 @@ import { getErrorMessage } from '@/lib/error';
 import { USER_PERMISSIONS } from '@/lib/constants';
 
 export default {
+  emits: ['started'],
   components: { NewTaskDialog },
   props: {
     projectId: Number,

@@ -12,30 +12,14 @@ npm run test:unit
 npm run build
 ```
 
-The normal test command needs no `VUE_CLI_TEST` or local-storage diagnostic flag.
-The configured output directory is also used by the embedded frontend; the production
-build restores production assets after the Mocha bundle has been generated.
-
-## Module Compilation
-
-The Vue CLI Babel preset enables CommonJS transformation when `NODE_ENV=test`.
-The Mocha runner bundles with Webpack, and Vue/Vuetify template loading introduces
-ES-module imports around the generated template exports. Converting those exports
-to CommonJS leaves the loader unable to import `render` and `staticRenderFns`.
-Components then mount without their compiled render functions.
-
-`web/babel.config.js` excludes `transform-modules-commonjs` and its dependent
-`transform-dynamic-import` only when Babel's environment is `test`.
-Webpack retains responsibility for module bundling. Production and development use
-the original preset behavior. The internal `VUE_CLI_TEST` switch is unnecessary.
+Vitest runs the component suite in jsdom using the Vue plugin from the Vite production build. The test setup installs Vuetify components and directives, the application formatters and browser API fixtures. The production build writes the ordinary frontend to `api/public`.
 
 ## Component and Socket Contracts
 
 Argument-picker stubs forward input and keyboard events through Vue component
 emissions, matching the component event boundary used by Vuetify. The tests cover
 trimmed input, Enter submission, form submission, rejected validation and unchanged
-caller-owned arrays. Each test gets its own Vuetify instance and uses a local Vue
-constructor so plugin registration does not change other suites.
+caller-owned arrays. The shared test setup registers Vuetify through Vue Test Utils. Individual mounts can provide a fresh instance for viewport-specific behavior.
 
 Confirmation-dialog tests supply translation context and the actual `title`/`text`
 props. They assert visible labels, confirmation/cancellation events, the bound close

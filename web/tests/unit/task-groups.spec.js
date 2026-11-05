@@ -74,14 +74,14 @@ describe('managed task groups', () => {
 
   it('rejects the intersection of conflicting runner definitions', () => {
     expect(Editor.computed.conflict.call({
-      value: [1, 2],
+      modelValue: [1, 2],
       groups: [{ id: 1, runner_ids: [4, 5] }, { id: 2, runner_ids: [6] }],
     })).to.equal(true);
   });
 
   it('accepts every selected group only when they have a common runner', () => {
     expect(Editor.computed.conflict.call({
-      value: [1, 2, 3],
+      modelValue: [1, 2, 3],
       groups: [{ id: 1, runner_ids: [4, 5] }, { id: 2, runner_ids: [5, 6] },
         { id: 3, runner_ids: [] }],
     })).to.equal(false);

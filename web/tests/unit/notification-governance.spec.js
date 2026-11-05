@@ -16,6 +16,19 @@ const notificationError = (status, secret = 'provider-secret') => ({
 describe('notification governance', () => {
   let originalAdapter;
 
+  [['saveDestination', 'destinationForm'], ['saveRule', 'ruleForm']].forEach(([method, form]) => {
+    it(`waits for ${form} validation and rejects an invalid submission`, async () => {
+      let writes = 0;
+      axios.defaults.adapter = async () => { writes += 1; return response({}); };
+      const context = { $refs: { [form]: { validate: async () => ({ valid: false }) } } };
+
+      await NotificationGovernance.methods[method].call(context);
+
+      expect(writes).to.equal(0);
+      expect(context.destinationSaving || context.ruleSaving).not.to.equal(true);
+    });
+  });
+
   beforeEach(() => {
     originalAdapter = axios.defaults.adapter;
   });
@@ -101,7 +114,7 @@ describe('notification governance', () => {
       });
     };
     const context = {
-      $refs: { destinationForm: { validate: () => true } },
+      $refs: { destinationForm: { validate: async () => ({ valid: true }) } },
       $t: translate,
       destinationSaving: false,
       destinationDialog: true,
@@ -172,7 +185,7 @@ describe('notification governance', () => {
         credential: '',
         enabled: true,
       },
-      $refs: { destinationForm: { validate: () => true } },
+      $refs: { destinationForm: { validate: async () => ({ valid: true }) } },
     };
 
     await NotificationGovernance.methods.saveDestination.call(context);
@@ -194,7 +207,7 @@ describe('notification governance', () => {
       });
     };
     const context = {
-      $refs: { ruleForm: { validate: () => true } },
+      $refs: { ruleForm: { validate: async () => ({ valid: true }) } },
       $t: translate,
       ruleSaving: false,
       ruleDialog: true,
@@ -391,7 +404,7 @@ describe('notification governance', () => {
       });
     };
     const context = {
-      $refs: { destinationForm: { validate: () => true } },
+      $refs: { destinationForm: { validate: async () => ({ valid: true }) } },
       $t: translate,
       destinationSaving: false,
       destinationDialog: true,
@@ -512,7 +525,7 @@ describe('notification governance', () => {
       });
     };
     const context = {
-      $refs: { destinationForm: { validate: () => true } },
+      $refs: { destinationForm: { validate: async () => ({ valid: true }) } },
       $t: translate,
       destinationSaving: false,
       destinationDialog: true,
@@ -620,7 +633,7 @@ describe('notification governance', () => {
       return response({ id: 60, provider: 'servicenow', revision: 1 });
     };
     const context = {
-      $refs: { destinationForm: { validate: () => true } },
+      $refs: { destinationForm: { validate: async () => ({ valid: true }) } },
       $t: translate,
       destinationSaving: false,
       destinationDialog: true,

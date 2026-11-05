@@ -1,19 +1,19 @@
 <template>
   <v-expansion-panels
     flat
-    accordion
+    variant="accordion"
     class="WorkflowParameterEditor"
     data-testid="workflow-parameters"
   >
     <v-expansion-panel>
-      <v-expansion-panel-header class="px-0 py-2">
+      <v-expansion-panel-title class="px-0 py-2">
         {{ $t('workflowParameters') }} ({{ items.length }})
-      </v-expansion-panel-header>
-      <v-expansion-panel-content class="WorkflowParameterEditor__content">
+      </v-expansion-panel-title>
+      <v-expansion-panel-text class="WorkflowParameterEditor__content">
         <v-card
           v-for="(parameter, index) in items"
           :key="`workflow-parameter-${index}`"
-          outlined
+          variant="outlined"
           class="pa-2 mb-2"
         >
           <div class="d-flex align-start">
@@ -21,44 +21,44 @@
               v-model="parameter.name"
               :label="$t('name')"
               :disabled="disabled"
-              dense
+              density="compact"
               hide-details="auto"
               class="mr-1"
-              @input="emitValue"
+              @update:model-value="emitValue"
             />
-            <v-btn icon small :disabled="disabled" @click="removeParameter(index)">
-              <v-icon small>mdi-close</v-icon>
+            <v-btn icon size="small" :disabled="disabled" @click="removeParameter(index)">
+              <v-icon size="small">mdi-close</v-icon>
             </v-btn>
           </div>
           <v-text-field
             v-model="parameter.description"
             :label="$t('description')"
             :disabled="disabled"
-            dense
+            density="compact"
             hide-details="auto"
-            @input="emitValue"
+            @update:model-value="emitValue"
           />
           <v-select
-            :value="parameter.type"
+            :model-value="parameter.type"
             :items="typeOptions"
             item-value="value"
-            item-text="text"
+            item-title="text"
             :label="$t('type')"
             :disabled="disabled"
-            dense
+            density="compact"
             hide-details="auto"
-            @change="setType(index, $event)"
+            @update:model-value="setType(index, $event)"
           />
 
           <v-text-field
             v-if="parameter.type === 'string'"
-            :value="parameter.default"
+            :model-value="parameter.default"
             :label="$t('default')"
             :disabled="disabled"
             clearable
-            dense
+            density="compact"
             hide-details="auto"
-            @input="setDefault(index, $event)"
+            @update:model-value="setDefault(index, $event)"
           />
           <div v-if="parameter.type === 'string'" class="d-flex">
             <v-text-field
@@ -67,10 +67,10 @@
               min="0"
               :label="$t('workflowMinimumLength')"
               :disabled="disabled"
-              dense
+              density="compact"
               hide-details="auto"
               class="mr-1"
-              @input="emitValue"
+              @update:model-value="emitValue"
             />
             <v-text-field
               v-model.number="parameter.max_length"
@@ -79,109 +79,109 @@
               :max="maxStringBytes"
               :label="$t('workflowMaximumLength')"
               :disabled="disabled"
-              dense
+              density="compact"
               hide-details="auto"
-              @input="emitValue"
+              @update:model-value="emitValue"
             />
           </div>
 
           <template v-else-if="parameter.type === 'integer'">
             <v-text-field
-              :value="parameter.default"
+              :model-value="parameter.default"
               type="number"
               :label="$t('default')"
               :disabled="disabled"
               clearable
-              dense
+              density="compact"
               hide-details="auto"
-              @input="setInteger(index, 'default', $event)"
+              @update:model-value="setInteger(index, 'default', $event)"
             />
             <div class="d-flex">
               <v-text-field
-                :value="parameter.minimum"
+                :model-value="parameter.minimum"
                 type="number"
                 :label="$t('workflowMinimum')"
                 :disabled="disabled"
                 clearable
-                dense
+                density="compact"
                 hide-details="auto"
                 class="mr-1"
-                @input="setInteger(index, 'minimum', $event)"
+                @update:model-value="setInteger(index, 'minimum', $event)"
               />
               <v-text-field
-                :value="parameter.maximum"
+                :model-value="parameter.maximum"
                 type="number"
                 :label="$t('workflowMaximum')"
                 :disabled="disabled"
                 clearable
-                dense
+                density="compact"
                 hide-details="auto"
-                @input="setInteger(index, 'maximum', $event)"
+                @update:model-value="setInteger(index, 'maximum', $event)"
               />
             </div>
           </template>
 
           <v-select
             v-else-if="parameter.type === 'boolean'"
-            :value="parameter.default"
+            :model-value="parameter.default"
             :items="booleanOptions"
             item-value="value"
-            item-text="text"
+            item-title="text"
             :label="$t('default')"
             :disabled="disabled"
             clearable
-            dense
+            density="compact"
             hide-details="auto"
-            @change="setDefault(index, $event)"
+            @update:model-value="setDefault(index, $event)"
           />
 
           <template v-else-if="parameter.type === 'enumeration'">
             <v-text-field
-              :value="(parameter.options || []).join(', ')"
+              :model-value="(parameter.options || []).join(', ')"
               :label="$t('workflowEnumerationOptions')"
               :disabled="disabled"
-              dense
+              density="compact"
               hide-details="auto"
-              @input="setOptions(index, $event)"
+              @update:model-value="setOptions(index, $event)"
             />
             <v-select
-              :value="parameter.default"
+              :model-value="parameter.default"
               :items="parameter.options || []"
               :label="$t('default')"
               :disabled="disabled"
               clearable
-              dense
+              density="compact"
               hide-details="auto"
-              @change="setDefault(index, $event)"
+              @update:model-value="setDefault(index, $event)"
             />
           </template>
 
           <template v-else-if="parameter.type === 'secret_reference'">
             <v-autocomplete
-              :value="secretOptionKeys(parameter)"
+              :model-value="secretOptionKeys(parameter)"
               :items="credentials"
               item-value="value"
-              item-text="text"
+              item-title="text"
               :label="$t('workflowApprovedCredentials')"
               :disabled="disabled"
               multiple
               chips
-              small-chips
-              dense
+
+              density="compact"
               hide-details="auto"
-              @change="setSecretOptions(index, $event)"
+              @update:model-value="setSecretOptions(index, $event)"
             />
             <v-select
-              :value="credentialReferenceKey(parameter.default)"
+              :model-value="credentialReferenceKey(parameter.default)"
               :items="secretOptionItems(parameter)"
               item-value="value"
-              item-text="text"
+              item-title="text"
               :label="$t('default')"
               :disabled="disabled"
               clearable
-              dense
+              density="compact"
               hide-details="auto"
-              @change="setSecretDefault(index, $event)"
+              @update:model-value="setSecretDefault(index, $event)"
             />
           </template>
 
@@ -189,28 +189,27 @@
             v-model="parameter.required"
             :label="$t('required')"
             :disabled="disabled"
-            dense
+            density="compact"
             hide-details
             class="mt-1"
-            @change="emitValue"
+            @update:model-value="emitValue"
           />
         </v-card>
 
-        <v-menu offset-y>
-          <template v-slot:activator="{ on, attrs }">
+        <v-menu location="bottom">
+          <template v-slot:activator="{ props }">
             <v-btn
-              text
-              small
+              variant="text"
+              size="small"
               color="primary"
               :disabled="disabled"
-              v-bind="attrs"
-              v-on="on"
+              v-bind="props"
             >
-              <v-icon left small>mdi-plus</v-icon>
+              <v-icon start size="small">mdi-plus</v-icon>
               {{ $t('workflowAddParameter') }}
             </v-btn>
           </template>
-          <v-list dense>
+          <v-list density="compact">
             <v-list-item
               v-for="option in typeOptions"
               :key="option.value"
@@ -220,7 +219,7 @@
             </v-list-item>
           </v-list>
         </v-menu>
-      </v-expansion-panel-content>
+      </v-expansion-panel-text>
     </v-expansion-panel>
   </v-expansion-panels>
 </template>
@@ -236,8 +235,9 @@ import {
 } from '@/lib/workflow-credential-references';
 
 export default {
+  emits: ['update:modelValue'],
   props: {
-    value: { type: Array, default: () => [] },
+    modelValue: { type: Array, default: () => [] },
     projectId: { type: Number, required: true },
     disabled: Boolean,
   },
@@ -266,7 +266,7 @@ export default {
     },
   },
   watch: {
-    value: {
+    modelValue: {
       immediate: true,
       deep: true,
       handler(value) {
@@ -313,7 +313,7 @@ export default {
       return parameter;
     },
     emitValue() {
-      this.$emit('input', JSON.parse(JSON.stringify(this.items)));
+      this.$emit('update:modelValue', JSON.parse(JSON.stringify(this.items)));
     },
     addParameter(type) {
       this.items.push(this.newParameter(type));
@@ -325,32 +325,32 @@ export default {
     },
     setType(index, type) {
       const current = this.items[index];
-      this.$set(this.items, index, {
+      this.items[index] = {
         ...this.newParameter(type),
         name: current.name,
         description: current.description,
         required: current.required,
-      });
+      };
       this.emitValue();
     },
     setDefault(index, value) {
-      if (value === null || value === undefined) this.$delete(this.items[index], 'default');
-      else this.$set(this.items[index], 'default', value);
+      if (value === null || value === undefined) delete this.items[index].default;
+      else this.items[index].default = value;
       this.emitValue();
     },
     setInteger(index, field, value) {
       if (value === null || value === undefined || value === '') {
-        this.$delete(this.items[index], field);
+        delete this.items[index][field];
       } else {
-        this.$set(this.items[index], field, Number(value));
+        this.items[index][field] = Number(value);
       }
       this.emitValue();
     },
     setOptions(index, value) {
       const options = value.split(',').map((entry) => entry.trim()).filter(Boolean);
-      this.$set(this.items[index], 'options', options);
+      this.items[index].options = options;
       if (this.items[index].default && !options.includes(this.items[index].default)) {
-        this.$delete(this.items[index], 'default');
+        delete this.items[index].default;
       }
       this.emitValue();
     },
@@ -367,9 +367,9 @@ export default {
         const reference = credential?.reference || credentialReferenceFromKey(key);
         return { ...reference, label: credential?.text || key };
       }).filter((option) => credentialReferenceKey(option));
-      this.$set(this.items[index], 'secret_options', options);
+      this.items[index].secret_options = options;
       const defaultKey = credentialReferenceKey(this.items[index].default);
-      if (defaultKey && !keys.includes(defaultKey)) this.$delete(this.items[index], 'default');
+      if (defaultKey && !keys.includes(defaultKey)) delete this.items[index].default;
       this.emitValue();
     },
     setSecretDefault(index, key) {

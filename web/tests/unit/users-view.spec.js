@@ -18,6 +18,7 @@ describe('Users.vue', () => {
       const c = {
         itemId: 'new',
         loaded: 0,
+        $t: (key) => key, // vue-i18n 11 (composition mode): the component translates with $t
         $i18n: { t: (key) => key },
         async loadItems() { this.loaded += 1; },
       };

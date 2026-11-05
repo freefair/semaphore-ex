@@ -6,7 +6,7 @@
         v-if="status"
         data-testid="totp-capability-state"
         :color="capabilityStateColor(status.capability_state)"
-        small
+        size="small"
         dark
       >
         {{ status.capability_state.replace('_', ' ') }}
@@ -14,19 +14,31 @@
     </div>
 
     <v-progress-linear v-if="loading" indeterminate color="primary" />
-    <v-alert v-if="error" data-testid="totp-error" type="error" dense outlined>
+    <v-alert
+      v-if="error"
+      data-testid="totp-error"
+      type="error"
+      density="compact"
+      variant="outlined"
+    >
       {{ error }}
     </v-alert>
 
     <template v-if="status && !loading">
-      <v-alert v-if="status.required" data-testid="totp-required" type="warning" dense outlined>
+      <v-alert
+        v-if="status.required"
+        data-testid="totp-required"
+        type="warning"
+        density="compact"
+        variant="outlined"
+      >
         TOTP enrollment is required by the current rollout policy.
       </v-alert>
       <v-alert
         v-if="status.capability_state === 'disabled' || status.capability_state === 'shadow'"
         type="info"
-        dense
-        outlined
+        density="compact"
+        variant="outlined"
       >
         <span v-if="status.capability_state === 'shadow'">
           TOTP is in shadow mode. Enforcement and enrollment are not yet user-visible.
@@ -35,7 +47,7 @@
       </v-alert>
 
       <template v-else-if="status.enrollment_state === 'active'">
-        <v-alert data-testid="totp-active" type="success" dense outlined>
+        <v-alert data-testid="totp-active" type="success" density="compact" variant="outlined">
           TOTP is active. {{ status.recovery_codes_remaining }} unused recovery codes remain.
         </v-alert>
         <v-text-field
@@ -44,13 +56,13 @@
           label="Current password"
           type="password"
           autocomplete="current-password"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
         />
         <v-btn
           data-testid="totp-reset"
           color="error"
-          outlined
+          variant="outlined"
           :loading="saving"
           :disabled="isSelf && !reauthentication"
           @click="resetEnrollment"
@@ -65,8 +77,8 @@
           label="Current password"
           type="password"
           autocomplete="current-password"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
         />
 
         <v-btn
@@ -83,7 +95,7 @@
         <v-card
           v-if="ceremony"
           data-testid="totp-ceremony"
-          outlined
+          variant="outlined"
           class="mt-3"
           style="background: var(--highlighted-card-bg-color)"
         >
@@ -109,8 +121,8 @@
                 label="Six-digit code"
                 inputmode="numeric"
                 maxlength="6"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 class="mt-5"
               />
               <v-btn
@@ -146,15 +158,15 @@
         <v-alert
           v-else-if="status.enrollment_state === 'pending_recovery_ack'"
           type="warning"
-          dense
-          outlined
+          density="compact"
+          variant="outlined"
           class="mt-3"
         >
           Recovery codes cannot be displayed again. Restart enrollment to generate a new set.
         </v-alert>
       </template>
 
-      <v-alert v-else type="info" dense outlined>
+      <v-alert v-else type="info" density="compact" variant="outlined">
         This user must complete enrollment from their own authenticated session.
       </v-alert>
     </template>

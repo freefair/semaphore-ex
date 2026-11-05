@@ -6,8 +6,8 @@
     :disabled="formSaving"
     data-testid="secretStorage-vaultCACertificate"
     rows="3"
-    outlined
-    dense
+    variant="outlined"
+    density="compact"
   ></v-textarea>
 
   <v-text-field
@@ -16,8 +16,8 @@
     hint="Go duration up to 30s, for example 5s"
     :disabled="formSaving"
     data-testid="secretStorage-vaultTimeout"
-    outlined
-    dense
+    variant="outlined"
+    density="compact"
   ></v-text-field>
 
   <v-select
@@ -25,11 +25,11 @@
     label="Authentication method"
     :items="runtimeAuthMethods"
     item-value="value"
-    item-text="text"
+    item-title="text"
     :disabled="formSaving"
     data-testid="secretStorage-vaultAuthMethod"
-    outlined
-    dense
+    variant="outlined"
+    density="compact"
   ></v-select>
 
   <v-text-field
@@ -41,8 +41,8 @@
     "
     :disabled="formSaving"
     data-testid="secretStorage-vaultAuthMount"
-    outlined
-    dense
+    variant="outlined"
+    density="compact"
   ></v-text-field>
 
   <v-text-field
@@ -52,8 +52,8 @@
     :rules="[(v) => !!v || 'Role ID is required']"
     :disabled="formSaving"
     data-testid="secretStorage-vaultRoleId"
-    outlined
-    dense
+    variant="outlined"
+    density="compact"
   ></v-text-field>
 
   <v-text-field
@@ -63,8 +63,8 @@
     :rules="[(v) => !!v || 'Kubernetes role is required']"
     :disabled="formSaving"
     data-testid="secretStorage-vaultKubernetesRole"
-    outlined
-    dense
+    variant="outlined"
+    density="compact"
   ></v-text-field>
 
   <SecretSourceToggle
@@ -79,6 +79,10 @@
 import SecretSourceToggle from '@/components/SecretSourceToggle.vue';
 
 export default {
+  emits: [
+    'update:authMethod', 'update:authMount', 'update:caCertificate', 'update:role',
+    'update:roleId', 'update:secretStorage', 'update:timeout',
+  ],
   components: { SecretSourceToggle },
   props: {
     caCertificate: String,

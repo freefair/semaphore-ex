@@ -5,31 +5,31 @@
     v-model="roleIdsModel"
     :items="workflowRoleOptions"
     item-value="value"
-    item-text="text"
+    item-title="text"
     :label="$t('workflowApprovalRoles')"
     :disabled="!canAdminister"
     multiple
     chips
-    small-chips
-    deletable-chips
-    outlined
-    dense
+
+    closable-chips
+    variant="outlined"
+    density="compact"
     hide-details="auto"
     class="mb-2"
-    @change="$emit('policy-change')"
+    @update:model-value="$emit('policy-change')"
   />
   <v-select
     v-model="modeModel"
     :items="approvalRoleModeOptions"
     item-value="value"
-    item-text="text"
+    item-title="text"
     :label="$t('workflowApprovalRoleMode')"
     :disabled="!canAdminister"
-    outlined
-    dense
+    variant="outlined"
+    density="compact"
     hide-details="auto"
     class="mb-2"
-    @change="$emit('policy-change')"
+    @update:model-value="$emit('policy-change')"
   />
   <v-text-field
     v-model.number="minimumApproversModel"
@@ -37,8 +37,8 @@
     min="1"
     :label="$t('workflowApprovalMinimumApprovers')"
     :disabled="!canAdminister"
-    outlined
-    dense
+    variant="outlined"
+    density="compact"
     hide-details="auto"
     class="mb-2"
     @change="$emit('policy-change')"
@@ -47,29 +47,30 @@
     v-model="timeoutOutcomeModel"
     :items="approvalTimeoutOutcomeOptions"
     item-value="value"
-    item-text="text"
+    item-title="text"
     :label="$t('workflowApprovalTimeoutOutcome')"
     :disabled="!canManage"
-    outlined
-    dense
+    variant="outlined"
+    density="compact"
     hide-details="auto"
     class="mb-2"
-    @change="$emit('edit')"
+    @update:model-value="$emit('edit')"
   />
   <v-switch
     v-model="initiatorSeparationModel"
     :label="$t('workflowApprovalSeparationOfDuties')"
     :disabled="!canAdminister"
-    dense
+    density="compact"
     hide-details
     class="mt-0"
-    @change="$emit('policy-change')"
+    @update:model-value="$emit('policy-change')"
   />
   </div>
 </template>
 
 <script>
 export default {
+  emits: ['edit', 'policy-change', 'policy-field', 'update:timeoutOutcome'],
   props: {
     policy: Object,
     timeoutOutcome: String,

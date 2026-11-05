@@ -1,9 +1,9 @@
 <template>
   <div data-testid="task-group-membership">
-    <v-chip v-for="group in groups" :key="group.key" small class="mr-1 mb-1">
+    <v-chip v-for="group in groups" :key="group.key" size="small" class="mr-1 mb-1">
       {{ group.label }}
     </v-chip>
-    <div class="text-caption text--secondary">{{ $t('taskGroupsSnapshotHint') }}</div>
+    <div class="text-body-small text--secondary">{{ $t('taskGroupsSnapshotHint') }}</div>
   </div>
 </template>
 <script>

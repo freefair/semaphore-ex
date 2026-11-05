@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { shallowMount } from '@vue/test-utils';
 import axios from 'axios';
-import Vuetify from 'vuetify';
+
 import WorkflowTriggersDialog from '@/components/WorkflowTriggersDialog.vue';
 import WorkflowView from '@/views/project/WorkflowView.vue';
 
@@ -25,21 +25,24 @@ describe('workflow triggers', () => {
 
   it('offers exactly the four trigger resource types in one focused component', () => {
     const wrapper = shallowMount(WorkflowTriggersDialog, {
-      vuetify: new Vuetify(),
-      propsData: {
-        value: false,
+
+      props: {
+        modelValue: false,
         projectId: 7,
         workflow: { id: 9, parameters: [] },
       },
-      mocks: {
-        $t: (key) => key,
+      global: {
+        renderStubDefaultSlot: true,
+        mocks: {
+          $t: (key) => key,
+        },
       },
     });
 
     expect(wrapper.vm.triggerTypes.map(({ value }) => value)).to.deep.equal([
       'manual', 'schedule', 'api', 'webhook',
     ]);
-    wrapper.destroy();
+    wrapper.unmount();
   });
 
   it('serializes only explicit fixed and request mappings', () => {
@@ -106,7 +109,7 @@ describe('workflow triggers', () => {
       dismissCredential: WorkflowTriggersDialog.methods.dismissCredential,
       async load() { loaded += 1; },
     };
-    await WorkflowTriggersDialog.watch.value.call(reopened, true);
+    await WorkflowTriggersDialog.watch.modelValue.call(reopened, true);
     expect(loaded).to.equal(1);
     expect(reopened.credential).to.equal('');
   });
@@ -118,7 +121,7 @@ describe('workflow triggers', () => {
       dismissCredential: WorkflowTriggersDialog.methods.dismissCredential,
     };
 
-    await WorkflowTriggersDialog.watch.value.call(closed, false);
+    await WorkflowTriggersDialog.watch.modelValue.call(closed, false);
 
     expect(closed.credential).to.equal('');
     expect(closed.credentialAcknowledged).to.equal(false);

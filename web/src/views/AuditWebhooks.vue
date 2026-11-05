@@ -10,7 +10,7 @@
       <v-spacer />
       <v-chip
         v-if="showAuditGovernance && configured"
-        small
+        size="small"
         :color="config.paused ? 'warning' : 'success'"
         dark
         data-testid="audit-webhook-state"
@@ -22,7 +22,7 @@
 
     <v-alert
       v-if="showAuditGovernance && unavailable"
-      text
+      variant="tonal"
       type="info"
       class="PageAlert"
       data-testid="unavailable"
@@ -33,23 +33,23 @@
     <div class="pa-4 audit-webhook-content">
       <v-alert
         v-if="showAuditGovernance && error"
-        text
+        variant="tonal"
         type="error"
         dismissible
-        @input="error = ''"
+        @update:model-value="error = ''"
       >
         {{ error }}
       </v-alert>
 
       <v-alert
         v-if="showAuditGovernance && signingSecret"
-        text
+        variant="tonal"
         type="warning"
         data-testid="audit-webhook-signing-secret"
       >
         <div class="font-weight-medium">{{ $t('webhookSigningSecretOnce') }}</div>
         <v-text-field
-          :value="signingSecret"
+          :model-value="signingSecret"
           readonly
           hide-details
           class="mt-2"
@@ -63,8 +63,8 @@
           data-testid="audit-webhook-signing-secret-acknowledge"
         />
         <v-btn
-          text
-          small
+          variant="text"
+          size="small"
           class="mt-2"
           :disabled="!signingSecretAcknowledged"
           data-testid="audit-webhook-signing-secret-dismiss"
@@ -75,13 +75,13 @@
       </v-alert>
 
       <template v-if="showAuditGovernance && !unavailable">
-      <v-card outlined class="mb-4">
+      <v-card variant="outlined" class="mb-4">
         <v-card-title class="subtitle-1">
-          <v-icon left>mdi-webhook</v-icon>
+          <v-icon start>mdi-webhook</v-icon>
           {{ $t('auditWebhookConfiguration') }}
         </v-card-title>
         <v-card-text>
-          <p class="text-body-2 mb-5">
+          <p class="text-body-medium mb-5">
             {{ $t('auditWebhookDescription') }}
           </p>
           <v-form ref="form" v-model="valid" @submit.prevent="saveConfiguration()">
@@ -92,8 +92,8 @@
               prepend-inner-icon="mdi-lock"
               :rules="endpointRules"
               :disabled="loading || saving"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               data-testid="audit-webhook-endpoint"
             />
             <v-text-field
@@ -104,8 +104,8 @@
               :hint="credentialHint"
               persistent-hint
               :disabled="loading || saving || removeCredential"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               data-testid="audit-webhook-credential"
             />
             <v-checkbox
@@ -113,21 +113,21 @@
               v-model="removeCredential"
               :label="$t('auditWebhookRemoveCredential')"
               :disabled="loading || saving"
-              dense
+              density="compact"
               data-testid="audit-webhook-remove-credential"
             />
           </v-form>
           <v-divider class="my-5" />
           <div class="d-flex flex-wrap align-center mb-2 audit-webhook-signing-status">
             <div>
-              <div class="text-subtitle-2">{{ $t('webhookSigning') }}</div>
-              <div class="text-caption" data-testid="audit-webhook-current-key">
+              <div class="text-label-large">{{ $t('webhookSigning') }}</div>
+              <div class="text-body-small" data-testid="audit-webhook-current-key">
                 {{ $t('webhookSigningCurrentKey') }}:
                 <code>{{ config.current_key_id || '—' }}</code>
               </div>
               <div
                 v-if="config.next_key_id"
-                class="text-caption"
+                class="text-body-small"
                 data-testid="audit-webhook-next-key"
               >
                 {{ nextSigningKeyStaged
@@ -136,7 +136,7 @@
               </div>
             </div>
             <v-spacer />
-            <v-chip small :color="hasCurrentSigningKey ? 'success' : 'warning'" dark>
+            <v-chip size="small" :color="hasCurrentSigningKey ? 'success' : 'warning'" dark>
               {{ hasCurrentSigningKey
                 ? $t('webhookSigningActive') : $t('webhookSigningSetupRequired') }}
             </v-chip>
@@ -144,8 +144,8 @@
           <div class="d-flex flex-wrap audit-webhook-signing-actions">
             <v-btn
               v-if="!hasCurrentSigningKey"
-              small
-              outlined
+              size="small"
+              variant="outlined"
               color="primary"
               :loading="signingMutating"
               data-testid="audit-webhook-signing-create"
@@ -153,16 +153,16 @@
             >{{ $t('webhookSigningCreate') }}</v-btn>
             <v-btn
               v-if="hasCurrentSigningKey && !hasNextSigningKey"
-              small
-              outlined
+              size="small"
+              variant="outlined"
               :loading="signingMutating"
               data-testid="audit-webhook-signing-stage"
               @click="stageSigningSecret()"
             >{{ $t('webhookSigningStage') }}</v-btn>
             <v-btn
               v-if="nextSigningKeyStaged"
-              small
-              outlined
+              size="small"
+              variant="outlined"
               color="primary"
               :loading="signingMutating"
               :disabled="!!signingSecret && !signingSecretAcknowledged"
@@ -171,16 +171,16 @@
             >{{ $t('webhookSigningPromote') }}</v-btn>
             <v-btn
               v-if="hasNextSigningKey"
-              small
-              outlined
+              size="small"
+              variant="outlined"
               :loading="testing"
               data-testid="audit-webhook-test-next"
               @click="sendTestDelivery('next')"
             >{{ $t('webhookSigningTestNext') }}</v-btn>
             <v-btn
               v-if="hasNextSigningKey"
-              small
-              text
+              size="small"
+              variant="text"
               color="error"
               :loading="signingMutating"
               data-testid="audit-webhook-signing-revoke"
@@ -197,40 +197,40 @@
             @click="saveConfiguration()"
             data-testid="audit-webhook-save"
           >
-            <v-icon left>mdi-content-save</v-icon>
+            <v-icon start>mdi-content-save</v-icon>
             {{ $t('save') }}
           </v-btn>
           <v-btn
             class="audit-webhook-action"
-            outlined
+            variant="outlined"
             :loading="testing"
             :disabled="!configured || !hasCurrentSigningKey || saving || pausing"
             @click="sendTestDelivery('current')"
             data-testid="audit-webhook-test"
           >
-            <v-icon left>mdi-send-check</v-icon>
+            <v-icon start>mdi-send-check</v-icon>
             {{ $t('auditWebhookSendTest') }}
           </v-btn>
           <v-spacer class="audit-webhook-spacer" />
           <v-btn
             v-if="configured"
             class="audit-webhook-action"
-            text
+            variant="text"
             :color="config.paused ? 'success' : 'warning'"
             :loading="pausing"
             :disabled="saving || testing"
             @click="setPaused(!config.paused)"
             data-testid="audit-webhook-pause-toggle"
           >
-            <v-icon left>{{ config.paused ? 'mdi-play' : 'mdi-pause' }}</v-icon>
+            <v-icon start>{{ config.paused ? 'mdi-play' : 'mdi-pause' }}</v-icon>
             {{ config.paused ? $t('resume') : $t('pause') }}
           </v-btn>
         </v-card-actions>
       </v-card>
 
-      <v-card outlined>
+      <v-card variant="outlined">
         <v-card-title class="subtitle-1">
-          <v-icon left>mdi-history</v-icon>
+          <v-icon start>mdi-history</v-icon>
           {{ $t('auditWebhookDeliveryHistory') }}
           <v-spacer />
           <v-btn
@@ -248,14 +248,19 @@
           :loading="historyLoading && deliveries.length === 0"
           :hide-default-footer="true"
           :mobile-breakpoint="720"
-          item-key="id"
+          item-value="id"
           data-testid="audit-webhook-history"
         >
           <template v-slot:item.event_id="{ item }">
             <code class="event-id">{{ item.event_id }}</code>
           </template>
           <template v-slot:item.status="{ item }">
-            <v-chip x-small dark :color="statusColor(item.status)" :data-status="item.status">
+            <v-chip
+              size="x-small"
+              dark
+              :color="statusColor(item.status)"
+              :data-status="item.status"
+            >
               {{ statusLabel(item.status) }}
             </v-chip>
           </template>
@@ -271,12 +276,12 @@
           <template v-slot:item.actions="{ item }">
             <v-btn
               icon
-              small
+              size="small"
               :aria-label="$t('webhookDeliveryAttempts')"
               data-testid="audit-webhook-attempts"
               @click="loadAttempts(item)"
             >
-              <v-icon small>mdi-format-list-bulleted</v-icon>
+              <v-icon size="small">mdi-format-list-bulleted</v-icon>
             </v-btn>
           </template>
           <template v-slot:no-data>
@@ -286,7 +291,7 @@
           </template>
         </v-data-table>
         <v-card-actions v-if="hasMore" class="justify-center">
-          <v-btn text :loading="historyLoading" @click="loadHistory(false)">
+          <v-btn variant="text" :loading="historyLoading" @click="loadHistory(false)">
             {{ $t('loadMore') }}
           </v-btn>
         </v-card-actions>
@@ -296,7 +301,7 @@
         <v-card data-testid="audit-webhook-attempt-history">
           <v-card-title>{{ $t('webhookDeliveryAttempts') }}</v-card-title>
           <v-card-text>
-            <div v-if="attemptDelivery" class="text-caption mb-3">
+            <div v-if="attemptDelivery" class="text-body-small mb-3">
               {{ $t('auditWebhookEventId') }}: <code>{{ attemptDelivery.event_id }}</code>
             </div>
             <v-data-table
@@ -304,10 +309,10 @@
               :items="attempts"
               :loading="attemptLoading"
               :hide-default-footer="true"
-              item-key="id"
+              item-value="id"
             >
               <template v-slot:item.outcome="{ item }">
-                <v-chip x-small dark :color="statusColor(item.outcome)">
+                <v-chip size="x-small" dark :color="statusColor(item.outcome)">
                   {{ statusLabel(item.outcome) }}
                 </v-chip>
               </template>
@@ -324,7 +329,7 @@
           </v-card-text>
           <v-card-actions>
             <v-spacer />
-            <v-btn text @click="attemptDialog = false">{{ $t('close') }}</v-btn>
+            <v-btn variant="text" @click="attemptDialog = false">{{ $t('close') }}</v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
@@ -453,26 +458,26 @@ export default {
 
     headers() {
       return [
-        { text: this.$t('auditWebhookEventId'), value: 'event_id', sortable: false },
-        { text: this.$t('status'), value: 'status', sortable: false },
-        { text: this.$t('attempts'), value: 'attempts', sortable: false },
-        { text: 'HTTP', value: 'http_status', sortable: false },
-        { text: this.$t('lastError'), value: 'last_error', sortable: false },
-        { text: this.$t('updated'), value: 'updated_at', sortable: false },
+        { title: this.$t('auditWebhookEventId'), key: 'event_id', sortable: false },
+        { title: this.$t('status'), key: 'status', sortable: false },
+        { title: this.$t('attempts'), key: 'attempts', sortable: false },
+        { title: 'HTTP', key: 'http_status', sortable: false },
+        { title: this.$t('lastError'), key: 'last_error', sortable: false },
+        { title: this.$t('updated'), key: 'updated_at', sortable: false },
         {
-          text: '', value: 'actions', sortable: false, align: 'end',
+          title: '', key: 'actions', sortable: false, align: 'end',
         },
       ];
     },
 
     attemptHeaders() {
       return [
-        { text: this.$t('webhookAttempt'), value: 'attempt', sortable: false },
-        { text: this.$t('webhookSigningKeyId'), value: 'key_id', sortable: false },
-        { text: this.$t('status'), value: 'outcome', sortable: false },
-        { text: 'HTTP', value: 'http_status', sortable: false },
-        { text: this.$t('lastError'), value: 'reason', sortable: false },
-        { text: this.$t('webhookSignedAt'), value: 'signed_at', sortable: false },
+        { title: this.$t('webhookAttempt'), key: 'attempt', sortable: false },
+        { title: this.$t('webhookSigningKeyId'), key: 'key_id', sortable: false },
+        { title: this.$t('status'), key: 'outcome', sortable: false },
+        { title: 'HTTP', key: 'http_status', sortable: false },
+        { title: this.$t('lastError'), key: 'reason', sortable: false },
+        { title: this.$t('webhookSignedAt'), key: 'signed_at', sortable: false },
       ];
     },
   },
@@ -526,7 +531,7 @@ export default {
     },
 
     async saveConfiguration() {
-      if (this.$refs.form && !this.$refs.form.validate()) {
+      if (this.$refs.form && !(await this.$refs.form.validate()).valid) {
         return;
       }
       this.saving = true;

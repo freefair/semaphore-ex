@@ -1,81 +1,81 @@
 <template>
   <v-expansion-panels
     flat
-    accordion
+    variant="accordion"
     class="WorkflowNodeOverridePolicyEditor mb-4"
     data-testid="workflow-node-override-policy"
   >
     <v-expansion-panel>
-      <v-expansion-panel-header class="px-0 py-2">
+      <v-expansion-panel-title class="px-0 py-2">
         {{ $t('workflowNodeOverrides') }}
-      </v-expansion-panel-header>
-      <v-expansion-panel-content class="WorkflowNodeOverridePolicyEditor__content">
+      </v-expansion-panel-title>
+      <v-expansion-panel-text class="WorkflowNodeOverridePolicyEditor__content">
         <v-autocomplete
           v-if="canOverrideInventory || policy.inventory_ids.length"
           v-model="policy.inventory_ids"
           :items="inventories"
           item-value="id"
-          item-text="name"
+          item-title="name"
           :label="$t('workflowApprovedInventories')"
           :disabled="disabled || !canOverrideInventory"
           multiple
           chips
-          small-chips
-          dense
+
+          density="compact"
           hide-details="auto"
-          @change="emitValue"
+          @update:model-value="emitValue"
         />
         <v-autocomplete
           v-model="policy.environment_ids"
           :items="environments"
           item-value="id"
-          item-text="name"
+          item-title="name"
           :label="$t('workflowApprovedEnvironments')"
           :disabled="disabled"
           multiple
           chips
-          small-chips
-          dense
+
+          density="compact"
           hide-details="auto"
-          @change="emitValue"
+          @update:model-value="emitValue"
         />
         <v-select
           v-if="secretParameters.length || policy.credential_parameters.length"
           v-model="policy.credential_parameters"
           :items="secretParameters"
           item-value="name"
-          item-text="name"
+          item-title="name"
           :label="$t('workflowApprovedCredentialParameters')"
           :disabled="disabled"
           multiple
           chips
-          small-chips
-          dense
+
+          density="compact"
           hide-details="auto"
-          @change="emitValue"
+          @update:model-value="emitValue"
         />
         <v-switch
           v-if="template && (template.allow_override_args_in_task || policy.allow_arguments)"
           v-model="policy.allow_arguments"
           :label="$t('workflowAllowArgumentsOverride')"
           :disabled="disabled || !template.allow_override_args_in_task"
-          dense
+          density="compact"
           hide-details
-          @change="emitValue"
+          @update:model-value="emitValue"
         />
         <v-switch
           v-if="template && (template.allow_override_branch_in_task || policy.allow_branch)"
           v-model="policy.allow_branch"
           :label="$t('workflowAllowBranchOverride')"
           :disabled="disabled || !template.allow_override_branch_in_task"
-          dense
+          density="compact"
           hide-details
-          @change="emitValue"
+          @update:model-value="emitValue"
         />
-        <div class="text-caption text--secondary mt-2">
+        <div class="text-body-small text--secondary mt-2">
           {{ $t('workflowNodeOverridesHint') }}
         </div>
-      </v-expansion-panel-content>
+      </v-expansion-panel-text>
     </v-expansion-panel>
   </v-expansion-panels>
 </template>
@@ -86,8 +86,9 @@ import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
 
 export default {
+  emits: ['update:modelValue'],
   props: {
-    value: { type: Object, default: () => ({}) },
+    modelValue: { type: Object, default: () => ({}) },
     projectId: { type: Number, required: true },
     template: { type: Object, default: null },
     parameters: { type: Array, default: () => [] },
@@ -95,7 +96,7 @@ export default {
   },
   data() {
     return {
-      policy: this.preparePolicy(this.value),
+      policy: this.preparePolicy(this.modelValue),
       inventories: [],
       environments: [],
     };
@@ -109,7 +110,7 @@ export default {
     },
   },
   watch: {
-    value: {
+    modelValue: {
       deep: true,
       handler(value) {
         const prepared = this.preparePolicy(value);
@@ -141,7 +142,7 @@ export default {
       };
     },
     emitValue() {
-      this.$emit('input', JSON.parse(JSON.stringify(this.policy)));
+      this.$emit('update:modelValue', JSON.parse(JSON.stringify(this.policy)));
     },
   },
 };

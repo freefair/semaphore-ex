@@ -118,7 +118,7 @@ describe('runtime secret provider component contracts', () => {
         access_key_id: null, mount: 'team', path: '', field: '',
       },
     ]);
-    expect(emitted[0].event).to.equal('input');
+    expect(emitted[0].event).to.equal('update:modelValue');
 
     const historyContext = {
       keys: [{ id: 7, name: 'Deployment key' }],
@@ -128,11 +128,13 @@ describe('runtime secret provider component contracts', () => {
     );
     expect(SecretStorageSyncHistoryDialog.methods.keyName.call(historyContext, 8)).to.equal('#8');
 
-    const headers = SecretStorages.methods.getHeaders.call({
-      $i18n: { t: (value) => value },
-      $vuetify: { breakpoint: { smAndDown: true } },
-    });
-    expect(headers.map(({ value }) => value)).to.deep.equal(['name', 'actions']);
+    const headers = SecretStorages.methods.getHeaders.call({ $t: (value) => value });
+    const display = { smAndDown: true };
+    const context = { headers, $vuetify: { display } };
+    expect(SecretStorages.computed.visibleHeaders.call(context).map(({ key }) => key))
+      .to.deep.equal(['name', 'actions']);
+    display.smAndDown = false;
+    expect(SecretStorages.computed.visibleHeaders.call(context)).to.equal(headers);
   });
 
   it('filters provider choices and obeys the execute capability for remote references', () => {

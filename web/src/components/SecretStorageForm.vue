@@ -1,6 +1,18 @@
 <template>
-  <v-form ref="form" lazy-validation v-model="formValid" v-if="item != null">
-    <v-alert :value="formError" type="error" class="mb-6" dismissible>{{ formError }} </v-alert>
+  <v-form
+    ref="form"
+    v-model="formValid"
+    v-if="item != null"
+    data-testid="secretStorage-form"
+    :data-state="formSaving ? 'loading' : (formError ? 'error' : 'ready')"
+  >
+    <v-alert
+      :model-value="!!formError"
+      type="error"
+      class="mb-6"
+      closable
+      data-testid="secretStorage-error"
+    >{{ formError }} </v-alert>
 
     <v-text-field
       v-model="item.name"
@@ -8,8 +20,9 @@
       :rules="[(v) => !!v || $t('name_required')]"
       required
       :disabled="formSaving"
-      outlined
-      dense
+      data-testid="secretStorage-name"
+      variant="outlined"
+      density="compact"
     ></v-text-field>
 
     <v-text-field
@@ -20,12 +33,20 @@
       :rules="[(v) => !!v || $t('url_required')]"
       required
       data-testid="secretStorage-vaultURL"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
     ></v-text-field>
 
-    <div v-if="item.type === 'vault' || item.type === 'openbao'">
-      <v-alert text type="info" dense data-testid="secretStorage-runtimeNotice">
+    <div
+      v-if="item.type === 'vault' || item.type === 'openbao'"
+      data-testid="secretStorage-vaultFields"
+    >
+      <v-alert
+        variant="tonal"
+        type="info"
+        density="compact"
+        data-testid="secretStorage-runtimeNotice"
+      >
         {{ runtimeProviderNotice }} Secret values are never listed or returned by the API.
       </v-alert>
 
@@ -34,14 +55,14 @@
         label="Synchronization direction"
         :items="runtimeSyncDirections"
         item-value="value"
-        item-text="text"
+        item-title="text"
         :disabled="formSaving"
         data-testid="secretStorage-syncDirection"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
       />
 
-      <v-alert v-if="isManagedOutbound" text type="warning" dense>
+      <v-alert v-if="isManagedOutbound" variant="tonal" type="warning" density="compact">
         Outbound synchronization writes only the selected Semaphore keys below. Existing remote
         values cause a conflict and require an explicit overwrite decision.
       </v-alert>
@@ -52,8 +73,8 @@
         hint="KV v2 mount; 'secret' by default"
         :disabled="formSaving"
         data-testid="secretStorage-vaultMount"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
       ></v-text-field>
 
       <v-text-field
@@ -66,18 +87,18 @@
         "
         :disabled="formSaving"
         data-testid="secretStorage-vaultNamespace"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
       ></v-text-field>
 
       <RuntimeProviderAuthFields
-        :ca-certificate.sync="item.params.ca_certificate"
-        :timeout.sync="item.params.timeout"
-        :auth-method.sync="item.params.auth_method"
-        :auth-mount.sync="item.params.auth_mount"
-        :role-id.sync="item.params.role_id"
-        :role.sync="item.params.role"
-        :secret-storage.sync="secretStorage"
+        v-model:ca-certificate="item.params.ca_certificate"
+        v-model:timeout="item.params.timeout"
+        v-model:auth-method="item.params.auth_method"
+        v-model:auth-mount="item.params.auth_mount"
+        v-model:role-id="item.params.role_id"
+        v-model:role="item.params.role"
+        v-model:secret-storage="secretStorage"
         :runtime-credential-label="runtimeCredentialLabel"
         :runtime-auth-methods="runtimeAuthMethods"
         :form-saving="formSaving"
@@ -92,9 +113,9 @@
         :rules="[(v) => !!v || itemId !== 'new' || $t('token_required')]"
         required
         data-testid="secretStorage-vaultToken"
-        outlined
-        dense
-        append-icon="mdi-lock"
+        variant="outlined"
+        density="compact"
+        append-inner-icon="mdi-lock"
       ></v-text-field>
 
       <v-text-field
@@ -105,13 +126,13 @@
         :rules="[(v) => !!v || itemId !== 'new' || $t('envvar_required')]"
         required
         data-testid="secretStorage-vaultTokenSource"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
       ></v-text-field>
 
       <div v-if="itemId !== 'new'" class="mb-5">
         <v-btn
-          outlined
+          variant="outlined"
           color="primary"
           :loading="connectionTesting"
           :disabled="formSaving || !canTestConnection"
@@ -123,8 +144,8 @@
         <v-alert
           v-if="connectionHealth"
           class="mt-3 mb-0"
-          dense
-          text
+          density="compact"
+          variant="tonal"
           :type="connectionHealth.state === 'healthy' ? 'success' : 'error'"
           data-testid="secretStorage-connectionHealth"
         >
@@ -135,24 +156,25 @@
 
     <InfisicalPAMStorageFields
       v-else-if="isInfisicalPAM"
-      :client-id.sync="item.params.client_id"
-      :organization-slug.sync="item.params.organization_slug"
-      :session-duration.sync="item.params.session_duration"
-      :ca-certificate.sync="item.params.ca_certificate"
-      :routes.sync="item.params.pam_routes"
-      :secret.sync="item.secret"
-      :secret-storage.sync="secretStorage"
+      v-model:client-id="item.params.client_id"
+      v-model:organization-slug="item.params.organization_slug"
+      v-model:session-duration="item.params.session_duration"
+      v-model:ca-certificate="item.params.ca_certificate"
+      v-model:routes="item.params.pam_routes"
+      v-model:secret="item.secret"
+      v-model:secret-storage="secretStorage"
       :is-new="itemId === 'new'"
       :form-saving="formSaving"
     />
 
-    <div v-else-if="item.type === 'dvls'">
+    <div v-else-if="item.type === 'dvls'" data-testid="secretStorage-dvlsFields">
       <v-checkbox
         class="pt-0 mb-2"
         style="margin-top: -5px"
         v-model="item.params.insecure_tls"
         label="Skip TLS certificate verification (insecure)"
         :disabled="formSaving"
+        data-testid="secretStorage-dvlsInsecureTls"
       />
 
       <v-text-field
@@ -162,8 +184,8 @@
         :rules="[(v) => !!v || itemId !== 'new' || $t('key_required')]"
         required
         data-testid="secretStorage-dvlsKey"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
       ></v-text-field>
 
       <v-text-field
@@ -173,8 +195,8 @@
         :rules="[(v) => !!v || itemId !== 'new' || $t('key_required')]"
         required
         data-testid="secretStorage-dvlsKey"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
       ></v-text-field>
 
       <SecretSourceToggle v-model="secretStorage" label="App secret" :disabled="formSaving" />
@@ -188,9 +210,9 @@
         :rules="[(v) => !!v || itemId !== 'new' || $t('secret_required')]"
         required
         data-testid="secretStorage-dvlsSecret"
-        outlined
-        dense
-        append-icon="mdi-lock"
+        variant="outlined"
+        density="compact"
+        append-inner-icon="mdi-lock"
       ></v-text-field>
 
       <v-text-field
@@ -202,12 +224,12 @@
         :rules="[(v) => !!v || itemId !== 'new' || $t('envvar_required')]"
         required
         data-testid="secretStorage-dvlsEnv"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
       ></v-text-field>
     </div>
 
-    <div v-else-if="item.type === 'aws_sm'">
+    <div v-else-if="item.type === 'aws_sm'" data-testid="secretStorage-awsFields">
       <v-text-field
         v-model="item.params.region"
         label="Region"
@@ -216,8 +238,8 @@
         required
         placeholder="us-east-1"
         data-testid="secretStorage-awsRegion"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
       ></v-text-field>
 
       <v-text-field
@@ -226,8 +248,8 @@
         :disabled="formSaving"
         hint="Leave empty to use the default AWS endpoint"
         data-testid="secretStorage-awsEndpointURL"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
       ></v-text-field>
 
       <v-checkbox
@@ -239,7 +261,10 @@
         data-testid="secretStorage-awsUseIamRole"
       />
 
-      <div :class="{ 'aws-credentials--inactive': useIamRole }">
+      <div
+        :class="{ 'aws-credentials--inactive': useIamRole }"
+        data-testid="secretStorage-awsCredentials"
+      >
         <v-text-field
           v-model="item.params.access_key_id"
           label="Access Key ID"
@@ -247,8 +272,8 @@
           :rules="[(v) => !!v || useIamRole || 'Access Key ID is required']"
           required
           data-testid="secretStorage-awsAccessKeyId"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
         ></v-text-field>
 
         <SecretSourceToggle
@@ -266,9 +291,9 @@
           :rules="[(v) => !!v || !awsSecretRequired || 'Secret Access Key is required']"
           required
           data-testid="secretStorage-awsSecretKey"
-          outlined
-          dense
-          append-icon="mdi-lock"
+          variant="outlined"
+          density="compact"
+          append-inner-icon="mdi-lock"
         ></v-text-field>
 
         <v-text-field
@@ -280,13 +305,13 @@
           :rules="[(v) => !!v || !awsSecretRequired || $t('envvar_required')]"
           required
           data-testid="secretStorage-awsSecretKeySource"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
         ></v-text-field>
       </div>
     </div>
 
-    <div v-else-if="item.type === 'azure_kv'">
+    <div v-else-if="item.type === 'azure_kv'" data-testid="secretStorage-azureFields">
       <v-text-field
         v-model="item.params.vault_url"
         label="Vault URL"
@@ -295,8 +320,8 @@
         required
         placeholder="https://my-vault.vault.azure.net"
         data-testid="secretStorage-azureVaultURL"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
       ></v-text-field>
 
       <v-text-field
@@ -306,8 +331,8 @@
         :rules="[(v) => !!v || 'Tenant ID is required']"
         required
         data-testid="secretStorage-azureTenantId"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
       ></v-text-field>
 
       <v-text-field
@@ -317,8 +342,8 @@
         :rules="[(v) => !!v || 'Client ID is required']"
         required
         data-testid="secretStorage-azureClientId"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
       ></v-text-field>
 
       <SecretSourceToggle v-model="secretStorage" label="Client Secret" :disabled="formSaving" />
@@ -332,9 +357,9 @@
         :rules="[(v) => !!v || itemId !== 'new' || 'Client Secret is required']"
         required
         data-testid="secretStorage-azureClientSecret"
-        outlined
-        dense
-        append-icon="mdi-lock"
+        variant="outlined"
+        density="compact"
+        append-inner-icon="mdi-lock"
       ></v-text-field>
 
       <v-text-field
@@ -346,8 +371,8 @@
         :rules="[(v) => !!v || itemId !== 'new' || $t('envvar_required')]"
         required
         data-testid="secretStorage-azureClientSecretSource"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
       ></v-text-field>
     </div>
 
@@ -358,9 +383,16 @@
       :disabled="formSaving"
       hide-details
       style="position: absolute; bottom: 15px; margin: 0; left: 25px"
+      data-testid="secretStorage-readonly"
     />
 
-    <v-alert v-else-if="isRuntimeProvider" text dense type="info" class="mb-3">
+    <v-alert
+      v-else-if="isRuntimeProvider"
+      variant="tonal"
+      density="compact"
+      type="info"
+      class="mb-3"
+    >
       {{
         isManagedOutbound
           ? 'Managed outbound writes are enabled for selected keys.'
@@ -375,27 +407,36 @@
         :label="isRuntimeProvider ? 'Automatic synchronization enabled' : $t('Sync keys enabled')"
         :disabled="formSaving"
         v-if="(!isRuntimeProvider || isManagedOutbound) && !isInfisicalPAM"
+        data-testid="secretStorage-syncEnabled"
       />
 
       <v-btn
         style="margin-right: -10px"
-        text
+        variant="text"
         color="primary"
         @click="syncSettingsDialog = true"
         :disabled="formSaving"
         v-if="item.sync_enabled || isManagedOutbound"
+        data-testid="secretStorage-syncPaths"
       >
-        <v-icon left>mdi-cog-sync</v-icon>
+        <v-icon start>mdi-cog-sync</v-icon>
         Sync paths
-        <v-chip class="ml-2" outlined style="transform: translateY(-1px)" color="primary" small>
+        <v-chip
+          class="ml-2 SecretStorageSyncPathsCount"
+          variant="outlined"
+          style="transform: translateY(-1px)"
+          color="primary"
+          size="small"
+          data-testid="secretStorage-syncPathsCount"
+        >
           {{ item.sync_paths.length }}</v-chip
         >
       </v-btn>
     </div>
 
     <v-dialog v-model="syncSettingsDialog" :max-width="isManagedOutbound ? 760 : 500" persistent>
-      <v-card>
-        <v-card-title>Sync paths</v-card-title>
+      <v-card data-testid="secretStorageSyncDialog">
+        <v-card-title data-testid="secretStorageSyncDialog-title">Sync paths</v-card-title>
         <v-card-text class="pt-4 pb-0">
           <v-text-field
             style="width: 140px"
@@ -406,20 +447,28 @@
             persistent-hint
             :disabled="formSaving"
             suffix="minutes"
-            outlined
-            dense
+            class="SecretStorageSyncInterval"
+            data-testid="secretStorageSync-syncInterval"
+            variant="outlined"
+            density="compact"
           ></v-text-field>
 
           <SecretStorageSyncOptionsForm
             v-model="item.sync_paths"
-            :managed="isRuntimeProvider"
+            data-testid="secretStorageSync-paths"
+          :managed="isRuntimeProvider"
             :keys="managedLocalKeys"
             :default-mount="item.params.mount || 'secret'"
           />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text color="blue darken-1" @click="syncSettingsDialog = false">
+          <v-btn
+            variant="text"
+            color="blue-darken-1"
+            @click="syncSettingsDialog = false"
+            data-testid="secretStorageSyncDialog-close"
+          >
             {{ $t('close') }}
           </v-btn>
         </v-card-actions>
@@ -502,7 +551,7 @@ export default {
       }
 
       if (!this.item.sync_paths) {
-        this.$set(this.item, 'sync_paths', []);
+        this.item.sync_paths = [];
       }
 
       if (this.itemId === 'new') {
@@ -512,16 +561,16 @@ export default {
       if (this.item.type === 'aws_sm' && this.item.params.use_iam_role === undefined) {
         // Storages created before the IAM role option always had an access key.
         const useIamRole = this.itemId !== 'new' && !this.item.params.access_key_id;
-        this.$set(this.item.params, 'use_iam_role', useIamRole);
+        this.item.params.use_iam_role = useIamRole;
       }
 
       this.initialUseIamRole = !!this.item.params.use_iam_role;
 
       if (this.item.type === 'vault' || this.item.type === 'openbao') {
-        this.$set(this.item.params, 'mount', this.item.params.mount || 'secret');
-        this.$set(this.item.params, 'auth_method', this.item.params.auth_method || 'token');
-        this.$set(this.item.params, 'timeout', this.item.params.timeout || '5s');
-        this.$set(this.item, 'sync_direction', this.item.sync_direction || 'read_only');
+        this.item.params.mount = this.item.params.mount || 'secret';
+        this.item.params.auth_method = this.item.params.auth_method || 'token';
+        this.item.params.timeout = this.item.params.timeout || '5s';
+        this.item.sync_direction = this.item.sync_direction || 'read_only';
         this.item.readonly = this.item.sync_direction !== 'outbound';
         if (this.item.sync_direction !== 'outbound') {
           this.item.sync_enabled = false;
@@ -585,7 +634,18 @@ export default {
   }
 }
 
-.theme--dark {
+// The path counter: the small chip of Vuetify 2 is 24 px high (`$chip-sizes` small), not 26.
+.SecretStorageSyncPathsCount.v-chip {
+  --v-chip-height: 24px;
+}
+
+// The "minutes" suffix in the field text colour (`.theme--light.v-input input`: .87), not the
+// secondary colour of Vuetify 4.
+.SecretStorageSyncInterval :deep(.v-field:not(.v-field--disabled) .v-text-field__suffix) {
+  color: rgba(var(--v-theme-on-surface), var(--v-high-emphasis-opacity));
+}
+
+.v-theme--dark {
   .aws-credentials--inactive {
     position: relative;
     &::after {

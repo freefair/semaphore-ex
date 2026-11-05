@@ -2,28 +2,28 @@
   <section class="TaskSummary px-5 py-5" aria-labelledby="task-summary-title">
     <div class="d-flex align-center flex-wrap mb-4 TaskSummary__heading">
       <div>
-        <h2 id="task-summary-title" class="text-h6 mb-1">Task summary</h2>
-        <p class="text-body-2 text--secondary mb-0">
+        <h2 id="task-summary-title" class="text-headline-small mb-1">Task summary</h2>
+        <p class="text-body-medium text--secondary mb-0">
           Persisted Ansible results for this task.
         </p>
       </div>
       <v-spacer />
       <v-btn
         v-if="featureAvailable && !loading"
-        text
-        small
+        variant="text"
+        size="small"
         color="primary"
         data-testid="task-summary-refresh"
         @click="loadData"
       >
-        <v-icon left small>mdi-refresh</v-icon>
+        <v-icon start size="small">mdi-refresh</v-icon>
         Refresh
       </v-btn>
     </div>
 
     <v-alert
       v-if="summaryDisplayState === 'unavailable'"
-      text
+      variant="tonal"
       type="info"
       class="PageAlert"
       data-testid="task-summary-unavailable"
@@ -37,26 +37,26 @@
       aria-live="polite"
     >
       <v-progress-linear indeterminate color="primary" class="mb-3" />
-      <span class="text-body-2 text--secondary">Loading persisted task results…</span>
+      <span class="text-body-medium text--secondary">Loading persisted task results…</span>
     </div>
 
     <v-alert
       v-else-if="summaryDisplayState === 'error'"
       type="error"
-      outlined
+      variant="outlined"
       data-testid="task-summary-error"
     >
       <div class="d-flex align-center flex-wrap">
         <span>Task results could not be loaded. The underlying task result is unchanged.</span>
         <v-spacer />
-        <v-btn small text color="error" @click="loadData">Retry</v-btn>
+        <v-btn size="small" variant="text" color="error" @click="loadData">Retry</v-btn>
       </div>
     </v-alert>
 
     <v-alert
       v-else-if="summaryDisplayState === 'unsupported'"
       type="warning"
-      outlined
+      variant="outlined"
       data-testid="task-summary-unsupported"
     >
       Runner result version {{ summary.runner_result_version }} is not supported by this server.
@@ -66,7 +66,7 @@
     <v-alert
       v-else-if="summaryDisplayState === 'empty'"
       type="info"
-      outlined
+      variant="outlined"
       data-testid="task-summary-empty"
     >
       This task produced no supported host results.
@@ -76,10 +76,10 @@
       <v-alert
         v-if="pageError"
         type="error"
-        outlined
+        variant="outlined"
         dismissible
         data-testid="task-summary-page-error"
-        @input="pageError = null"
+        @update:model-value="pageError = null"
       >
         This result page could not be loaded. The currently displayed results were kept.
       </v-alert>
@@ -87,7 +87,7 @@
       <v-alert
         v-if="summary.state === 'partial'"
         type="warning"
-        outlined
+        variant="outlined"
         data-testid="task-summary-partial"
       >
         <strong>Partial task summary.</strong>
@@ -98,7 +98,7 @@
       <v-alert
         v-else-if="summary.state === 'collecting'"
         type="info"
-        outlined
+        variant="outlined"
         data-testid="task-summary-collecting"
       >
         Results are still being collected. Refresh after the task finishes to see the final summary.
@@ -128,10 +128,10 @@
         </article>
       </div>
 
-      <v-btn-toggle v-model="tab" mandatory dense class="mb-4 TaskSummary__tabs">
+      <v-btn-toggle v-model="tab" mandatory density="compact" class="mb-4 TaskSummary__tabs">
         <v-btn value="errors" data-testid="task-summary-errors-tab">
           Failures
-          <v-chip x-small class="ml-2" :color="summary.failed_hosts ? 'error' : undefined">
+          <v-chip size="x-small" class="ml-2" :color="summary.failed_hosts ? 'error' : undefined">
             {{ summary.failed_hosts }}
           </v-chip>
         </v-btn>
@@ -140,7 +140,7 @@
       </v-btn-toggle>
 
       <div v-if="tab === 'errors'" data-testid="task-summary-errors">
-        <v-alert v-if="errorsPage.length === 0" text type="success">
+        <v-alert v-if="errorsPage.length === 0" variant="tonal" type="success">
           No failed or unreachable hosts in this result page.
         </v-alert>
         <v-data-table
@@ -149,9 +149,9 @@
           :items="errorsPage"
           :items-per-page="pageSize"
           hide-default-footer
-          single-expand
+          expand-strategy="single"
           show-expand
-          item-key="event_id"
+          item-value="event_id"
         >
           <template v-slot:item.error="{ item }">
             <span class="TaskSummary__error-preview">{{ item.error }}</span>
@@ -161,10 +161,12 @@
               {{ formatTime(item.output_time) }}
             </a>
           </template>
-          <template v-slot:expanded-item="{ headers, item }">
-            <td :colspan="headers.length" class="pa-3">
+          <template v-slot:expanded-row="{ columns, item }">
+        <tr>
+            <td :colspan="columns.length" class="pa-3">
               <pre class="TaskSummary__error-detail">{{ item.error }}</pre>
             </td>
+        </tr>
           </template>
         </v-data-table>
         <SummaryPagination
@@ -177,7 +179,7 @@
       </div>
 
       <div v-else-if="tab === 'hosts'" data-testid="task-summary-hosts">
-        <v-alert v-if="hostsPage.length === 0" text type="info">
+        <v-alert v-if="hostsPage.length === 0" variant="tonal" type="info">
           No host results on this page.
         </v-alert>
         <v-data-table
@@ -186,10 +188,10 @@
           :items="hostsPage"
           :items-per-page="pageSize"
           hide-default-footer
-          item-key="id"
+          item-value="id"
         >
           <template v-slot:item.status="{ item }">
-            <v-chip x-small :color="item.status === 'failed' ? 'error' : 'success'" dark>
+            <v-chip size="x-small" :color="item.status === 'failed' ? 'error' : 'success'" dark>
               {{ item.status }}
             </v-chip>
           </template>
@@ -204,7 +206,7 @@
       </div>
 
       <div v-else data-testid="task-summary-stages">
-        <v-alert v-if="stagesPage.length === 0" text type="info">
+        <v-alert v-if="stagesPage.length === 0" variant="tonal" type="info">
           No stage results on this page.
         </v-alert>
         <v-data-table
@@ -213,7 +215,7 @@
           :items="stagesPage"
           :items-per-page="pageSize"
           hide-default-footer
-          item-key="id"
+          item-value="id"
         />
         <SummaryPagination
           :has-previous="pagination.stages.history.length > 0"
@@ -230,23 +232,7 @@
 <script>
 import ProjectMixin from '@/components/ProjectMixin';
 
-const SummaryPagination = {
-  props: {
-    hasPrevious: Boolean,
-    hasNext: Boolean,
-    loading: Boolean,
-  },
-  template: `
-    <div class="d-flex justify-end align-center mt-3" data-testid="task-summary-pagination">
-      <v-btn small text :disabled="!hasPrevious || loading" @click="$emit('previous')">
-        <v-icon left small>mdi-chevron-left</v-icon>Previous
-      </v-btn>
-      <v-btn small text :disabled="!hasNext || loading" @click="$emit('next')">
-        Next<v-icon right small>mdi-chevron-right</v-icon>
-      </v-btn>
-    </div>
-  `,
-};
+import SummaryPagination from '@/components/enhanced/SummaryPagination.vue';
 
 function newPaginationState() {
   return { before: null, next: null, history: [] };
@@ -281,32 +267,32 @@ export default {
         errors: newPaginationState(),
       },
       errorHeaders: [
-        { text: 'Host', value: 'host', sortable: false },
-        { text: 'Stage', value: 'stage', sortable: false },
-        { text: 'Error', value: 'error', sortable: false },
-        { text: 'Raw log', value: 'output_time', sortable: false },
+        { title: 'Host', key: 'host', sortable: false },
+        { title: 'Stage', key: 'stage', sortable: false },
+        { title: 'Error', key: 'error', sortable: false },
+        { title: 'Raw log', key: 'output_time', sortable: false },
       ],
       hostHeaders: [
-        { text: 'Host', value: 'host', sortable: false },
-        { text: 'Status', value: 'status', sortable: false },
-        { text: 'Changed', value: 'changed', sortable: false },
-        { text: 'Failed', value: 'failed', sortable: false },
-        { text: 'Ignored', value: 'ignored', sortable: false },
-        { text: 'OK', value: 'ok', sortable: false },
-        { text: 'Rescued', value: 'rescued', sortable: false },
-        { text: 'Skipped', value: 'skipped', sortable: false },
-        { text: 'Unreachable', value: 'unreachable', sortable: false },
+        { title: 'Host', key: 'host', sortable: false },
+        { title: 'Status', key: 'status', sortable: false },
+        { title: 'Changed', key: 'changed', sortable: false },
+        { title: 'Failed', key: 'failed', sortable: false },
+        { title: 'Ignored', key: 'ignored', sortable: false },
+        { title: 'OK', key: 'ok', sortable: false },
+        { title: 'Rescued', key: 'rescued', sortable: false },
+        { title: 'Skipped', key: 'skipped', sortable: false },
+        { title: 'Unreachable', key: 'unreachable', sortable: false },
       ],
       stageHeaders: [
-        { text: 'Stage', value: 'stage', sortable: false },
-        { text: 'OK', value: 'ok', sortable: false },
-        { text: 'Changed', value: 'changed', sortable: false },
-        { text: 'Failed', value: 'failed', sortable: false },
-        { text: 'Ignored', value: 'ignored', sortable: false },
-        { text: 'Rescued', value: 'rescued', sortable: false },
-        { text: 'Skipped', value: 'skipped', sortable: false },
-        { text: 'Unreachable', value: 'unreachable', sortable: false },
-        { text: 'Duration (ms)', value: 'duration_ms', sortable: false },
+        { title: 'Stage', key: 'stage', sortable: false },
+        { title: 'OK', key: 'ok', sortable: false },
+        { title: 'Changed', key: 'changed', sortable: false },
+        { title: 'Failed', key: 'failed', sortable: false },
+        { title: 'Ignored', key: 'ignored', sortable: false },
+        { title: 'Rescued', key: 'rescued', sortable: false },
+        { title: 'Skipped', key: 'skipped', sortable: false },
+        { title: 'Unreachable', key: 'unreachable', sortable: false },
+        { title: 'Duration (ms)', key: 'duration_ms', sortable: false },
       ],
     };
   },

@@ -14,14 +14,14 @@ describe('automatic task execution review', () => {
 
   beforeEach(() => { originalPost = axios.post; });
   afterEach(() => {
-    if (wrapper) wrapper.destroy();
+    if (wrapper) wrapper.unmount();
     wrapper = null;
     axios.post = originalPost;
   });
 
   function open(app = 'bash', sourceTask = null) {
     wrapper = shallowMount(TaskForm, {
-      propsData: {
+      props: {
         itemId: 'new',
         projectId: 7,
         sourceTask,
@@ -29,7 +29,10 @@ describe('automatic task execution review', () => {
           id: 11, project_id: 7, app, type: '', survey_vars: [],
         },
       },
-      mocks: { $t: (key) => key },
+      global: {
+        renderStubDefaultSlot: true,
+        mocks: { $t: (key) => key },
+      },
     });
   }
 
@@ -43,18 +46,18 @@ describe('automatic task execution review', () => {
       open('terraform');
       await settle();
       const form = wrapper.findComponent(TaskParamsTerraformForm);
-      form.vm.$emit('input', { [option]: true });
+      form.vm.$emit('update:modelValue', { [option]: true });
       await wrapper.vm.$nextTick();
       expect(wrapper.vm.executionReady, 'edits must invalidate the old review').to.equal(false);
       await settle();
       expect(calls).to.have.length(2);
       expect(calls[1].params[option]).to.equal(true);
-      wrapper.vm.$refs.form.validate = () => true;
+      wrapper.vm.$refs.form.validate = async () => ({ valid: true });
       let submitted;
       wrapper.vm.submitTaskPayload = async (body) => { submitted = body; };
       await wrapper.vm.save();
       expect(submitted.params[option]).to.equal(true);
-      form.vm.$emit('input', { [option]: false });
+      form.vm.$emit('update:modelValue', { [option]: false });
       await settle();
       expect(calls).to.have.length(3);
       expect(calls[2].params[option]).to.equal(false);
@@ -71,13 +74,13 @@ describe('automatic task execution review', () => {
     };
     open('terraform', { params: { plan: true, auto_approve: true }, commit_hash: 'old-commit' });
     await settle();
-    wrapper.findComponent(TaskParamsTerraformForm).vm.$emit('input', {
+    wrapper.findComponent(TaskParamsTerraformForm).vm.$emit('update:modelValue', {
       plan: false, auto_approve: false,
     });
     await settle();
     expect(calls).to.have.length(2);
     expect(calls[1].params).to.deep.equal({ plan: false, auto_approve: false });
-    wrapper.vm.$refs.form.validate = () => true;
+    wrapper.vm.$refs.form.validate = async () => ({ valid: true });
     let submitted;
     wrapper.vm.submitTaskPayload = async (body) => { submitted = body; };
     await wrapper.vm.save();
@@ -118,7 +121,7 @@ describe('automatic task execution review', () => {
       const sourceTask = { params };
       open('terraform', sourceTask);
       await settle();
-      wrapper.findComponent(TaskParamsTerraformForm).vm.$emit('input', { plan: true });
+      wrapper.findComponent(TaskParamsTerraformForm).vm.$emit('update:modelValue', { plan: true });
       await settle();
       expect(sourceTask.params).to.equal(params);
       expect(JSON.parse(wrapper.vm.executionPreflightPayloadSignature).params.plan).to.equal(true);
@@ -136,7 +139,7 @@ describe('automatic task execution review', () => {
     expect(calls).to.have.length(1);
     expect(wrapper.vm.executionReady).to.equal(true);
     expect(wrapper.vm.executionPreflight.fingerprint).to.equal('first');
-    wrapper.vm.$refs.form.validate = () => true;
+    wrapper.vm.$refs.form.validate = async () => ({ valid: true });
     let submitted;
     wrapper.vm.submitTaskPayload = async (body, headers) => { submitted = { body, headers }; };
     await wrapper.vm.save();
@@ -230,7 +233,7 @@ describe('automatic task execution review', () => {
     open();
     await settle();
     const form = wrapper.vm;
-    wrapper.destroy();
+    wrapper.unmount();
     wrapper = null;
     respond({ data: plan('closed') });
     await settle();
@@ -248,7 +251,7 @@ describe('automatic task execution review', () => {
     open();
     await settle();
     expect(wrapper.vm.executionReady).to.equal(true);
-    wrapper.vm.$refs.form.validate = () => true;
+    wrapper.vm.$refs.form.validate = async () => ({ valid: true });
     let submitted = false;
     wrapper.vm.submitTaskPayload = async (body, headers) => {
       submitted = true;
@@ -262,7 +265,7 @@ describe('automatic task execution review', () => {
     axios.post = async () => ({ data: plan('first') });
     open();
     await settle();
-    wrapper.vm.$refs.form.validate = () => true;
+    wrapper.vm.$refs.form.validate = async () => ({ valid: true });
     let submits = 0;
     let expiry;
     wrapper.vm.scheduleExecutionPreflightExpiry = (...args) => { expiry = args; };

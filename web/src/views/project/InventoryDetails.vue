@@ -4,19 +4,19 @@
       <v-app-bar-nav-icon @click="showDrawer" />
       <v-toolbar-title>
         <router-link :to="`/project/${projectId}/inventory`">{{ $t('inventory') }}</router-link>
-        <v-icon small class="mx-2">mdi-chevron-right</v-icon>
+        <v-icon size="small" class="mx-2">mdi-chevron-right</v-icon>
         {{ inventory ? inventory.name : $t('hostsInventoryDetails') }}
       </v-toolbar-title>
     </v-toolbar>
     <v-divider />
     <div class="pa-4">
-      <v-alert v-if="error" type="error" text>{{ error }}</v-alert>
+      <v-alert v-if="error" type="error" variant="tonal">{{ error }}</v-alert>
       <v-skeleton-loader v-if="loading" type="article" />
       <template v-else-if="inventory">
-        <v-card outlined class="mb-4">
+        <v-card variant="outlined" class="mb-4">
           <v-card-text class="d-flex align-center flex-wrap inventory-details__summary">
             <div class="flex-grow-1">
-              <h2 class="text-h6 text--primary">{{ inventory.name }}</h2>
+              <h2 class="text-headline-small text--primary">{{ inventory.name }}</h2>
               <div>
                 {{ $t('type') }}: <code>{{ inventory.type }}</code>
               </div>
@@ -34,22 +34,22 @@
             />
           </v-card-text>
         </v-card>
-        <v-alert v-if="!ansible" type="info" text>{{ $t('hostsAnsibleOnly') }}</v-alert>
+        <v-alert v-if="!ansible" type="info" variant="tonal">{{ $t('hostsAnsibleOnly') }}</v-alert>
         <template v-else>
-          <v-alert v-if="refreshTask" type="info" text>
+          <v-alert v-if="refreshTask" type="info" variant="tonal">
             {{ $t('hostsRefreshStarted') }}
             <TaskLink :task-id="refreshTask" :label="`#${refreshTask}`" />
           </v-alert>
-          <v-alert v-if="latest && latest.state === 'error'" type="warning" text>
+          <v-alert v-if="latest && latest.state === 'error'" type="warning" variant="tonal">
             {{ $t('hostsRefreshFailed') }}
             <TaskLink :task-id="latest.task_id" :label="`#${latest.task_id}`" />
           </v-alert>
-          <p v-else-if="!latest" class="text-body-2">{{ $t('hostsNotResolved') }}</p>
-          <p v-else-if="latest.state === 'collecting'" class="text-body-2">
+          <p v-else-if="!latest" class="text-body-medium">{{ $t('hostsNotResolved') }}</p>
+          <p v-else-if="latest.state === 'collecting'" class="text-body-medium">
             {{ $t('hostsCollecting') }}
           </p>
-          <p v-else class="text-body-2 text--secondary">
-            {{ $t('hostsResolvedAt') }}: {{ latest.created | formatDate }} ·
+          <p v-else class="text-body-medium text--secondary">
+            {{ $t('hostsResolvedAt') }}: {{ $filters.formatDate(latest.created) }} ·
             {{ $t('hostsSnapshotCount', { count: latest.host_count }) }} ·
             <TaskLink :task-id="latest.task_id" :label="`#${latest.task_id}`" />
           </p>
@@ -117,7 +117,7 @@ export default {
     });
     this.load();
   },
-  beforeDestroy() {
+  beforeUnmount() {
     socket.removeListener(this.socketListener);
     this.requestId += 1;
     this.snapshotRequestId += 1;

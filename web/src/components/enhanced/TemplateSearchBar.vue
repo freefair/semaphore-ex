@@ -7,13 +7,13 @@
         :label="$t('templateSearchLabel')"
         prepend-inner-icon="mdi-magnify"
         clearable
-        dense
-        outlined
+        density="compact"
+        variant="outlined"
         hide-details
         maxlength="256"
         :loading="loading"
         data-testid="template-search"
-        @input="$emit('input', $event)"
+        @update:model-value="$emit('input', $event)"
         @click:clear="$emit('clear')"
         @keydown.esc.stop.prevent="$emit('clear')"
       />
@@ -29,8 +29,8 @@
 
     <v-alert
       v-if="error"
-      dense
-      text
+      density="compact"
+      variant="tonal"
       type="error"
       class="mx-4 mt-3 mb-0"
     >
@@ -41,6 +41,7 @@
 </template>
 <script>
 export default {
+  emits: ['clear', 'input', 'update:value'],
   props: {
     value: String, appliedSearch: String, loading: Boolean, count: Number, error: String,
   },

@@ -113,7 +113,7 @@ export const enhancedMethods = {
       return null;
     }
     this.formError = null;
-    if (!this.$refs.form.validate()) {
+    if (!(await this.$refs.form.validate()).valid) {
       this.$emit('error', {});
       return null;
     }

@@ -25,6 +25,13 @@ test('system information shows the backend capability state and reason', async (
   await page.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     const responses: Record<string, unknown> = {
+      '/api/capabilities/oidc/group-mapping/providers': [],
+      '/api/workflow-artifact-retention': {
+        global_policy: null,
+        effective: {
+          retention_seconds: 604800, max_artifact_bytes: 16777216, max_run_bytes: 67108864,
+        },
+      },
       '/api/user': {
         id: 7,
         name: 'Capability Admin',

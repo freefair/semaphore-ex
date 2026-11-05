@@ -77,7 +77,7 @@ export const enhancedMethods = {
   async downloadFileArtifact(artifact) {
     if (!this.fileArtifactDownloadable(artifact)) return;
     this.downloadingArtifactId = artifact.id;
-    this.$delete(this.fileArtifactDownloadErrors, artifact.id);
+    delete this.fileArtifactDownloadErrors[artifact.id];
     try {
       const url = this.fileArtifactDownloadURL(artifact);
       await axios.head(url);
@@ -88,13 +88,9 @@ export const enhancedMethods = {
       link.click();
       document.body.removeChild(link);
     } catch (err) {
-      this.$set(
-        this.fileArtifactDownloadErrors,
-        artifact.id,
-        err.response?.status === 404
-          ? this.$t('workflowFileArtifactDownloadDenied')
-          : getErrorMessage(err),
-      );
+      this.fileArtifactDownloadErrors[artifact.id] = err.response?.status === 404
+        ? this.$t('workflowFileArtifactDownloadDenied')
+        : getErrorMessage(err);
     } finally {
       this.downloadingArtifactId = null;
     }

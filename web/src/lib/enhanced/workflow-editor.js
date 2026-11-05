@@ -139,15 +139,15 @@ export const enhancedComputed = {
 
 export const enhancedMethods = {
   updateArtifactOutputField(index, field, value) {
-    this.$set(this.editingNode.artifact_outputs[index], field, value);
+    this.editingNode.artifact_outputs[index][field] = value;
     this.applyNodeEdit();
   },
   updateArtifactInputField(index, field, value) {
-    this.$set(this.editingNode.artifact_inputs[index], field, value);
+    this.editingNode.artifact_inputs[index][field] = value;
     this.applyNodeEdit();
   },
   updateApprovalPolicyField(field, value) {
-    this.$set(this.editingNode.approval_role_policy, field, value);
+    this.editingNode.approval_role_policy[field] = value;
   },
   clone(value) {
     return JSON.parse(JSON.stringify(value));
@@ -235,7 +235,7 @@ export const enhancedMethods = {
     if (value.startsWith('local:')) {
       this.editingNode.template_id = Number(value.slice('local:'.length));
       if (this.$delete) {
-        this.$delete(this.editingNode, 'cross_project_template_reference');
+        delete this.editingNode.cross_project_template_reference;
       } else {
         delete this.editingNode.cross_project_template_reference;
       }
@@ -252,7 +252,7 @@ export const enhancedMethods = {
       this.editingNode.task_params = {};
       this.editingNode.override_policy = {};
     }
-    this.$delete(this.editingNode, 'survey_inputs');
+    delete this.editingNode.survey_inputs;
     this.applyNodeEdit();
   },
   includePersistedCrossProjectReferences() {
@@ -347,7 +347,7 @@ export const enhancedMethods = {
     const schema = { type };
     if (type === 'object') schema.properties = {};
     if (type === 'array') schema.items = { type: 'string' };
-    this.$set(this.editingNode.artifact_outputs[index], 'schema', schema);
+    this.editingNode.artifact_outputs[index].schema = schema;
     this.applyNodeEdit();
   },
   artifactReferenceKey(input) {

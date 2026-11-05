@@ -141,15 +141,18 @@ describe('workflow parameters and node overrides', () => {
 
   it('initializes fields when the dialog is created already open', async () => {
     const wrapper = shallowMount(WorkflowRunDialog, {
-      propsData: {
-        value: true,
+      props: {
+        modelValue: true,
         projectId: 7,
         workflow: {
           parameters: [{ name: 'region', type: 'string' }],
           nodes: [{ id: 11, override_policy: { allow_branch: true } }],
         },
       },
-      mocks: { $t: (key) => key },
+      global: {
+        renderStubDefaultSlot: true,
+        mocks: { $t: (key) => key },
+      },
     });
     await wrapper.vm.$nextTick();
 

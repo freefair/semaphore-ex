@@ -1,7 +1,7 @@
 import './setup';
 import { expect } from 'chai';
 import { mount, shallowMount } from '@vue/test-utils';
-import Vuetify from 'vuetify';
+
 import axios from 'axios';
 import InventoryRefresh from '@/components/enhanced/InventoryRefresh.vue';
 import NewTaskDialog from '@/components/NewTaskDialog.vue';
@@ -19,13 +19,13 @@ describe('inventory host browser', () => {
   });
   afterEach(() => {
     axios.get = originalGet;
-    if (wrapper) wrapper.destroy();
+    if (wrapper) wrapper.unmount();
     wrapper = null;
     document.querySelectorAll('[data-app]').forEach((element) => element.remove());
   });
 
   it('resolves the reference-dialog inventory URL to a detail page', () => {
-    const match = router.match('/project/3/inventories/26');
+    const match = router.resolve('/project/3/inventories/26');
     expect(match.matched).to.have.length(1);
     expect(match.params).to.deep.equal({ projectId: '3', inventoryId: '26' });
   });
@@ -42,11 +42,14 @@ describe('inventory host browser', () => {
       },
     });
     wrapper = mount(InventoryRefresh, {
-      vuetify: new Vuetify(),
+
       attachTo: target,
-      propsData: { projectId: 7, inventoryId: 9, userPermissions: USER_PERMISSIONS.readProject },
-      mocks: { $t: (key) => key },
-      stubs: { TaskForm: true },
+      props: { projectId: 7, inventoryId: 9, userPermissions: USER_PERMISSIONS.readProject },
+      global: {
+        renderStubDefaultSlot: true,
+        mocks: { $t: (key) => key },
+        stubs: { TaskForm: true },
+      },
     });
     await wrapper.setData({ templateId: 11 });
     await wrapper.vm.openTask();
@@ -69,14 +72,17 @@ describe('inventory host browser', () => {
     };
     axios.get = async () => ({ data: { items: [host] } });
     wrapper = shallowMount(HostBrowser, {
-      vuetify: new Vuetify(),
-      propsData: { projectId: 7, inventoryId: 9 },
-      mocks: { $t: (key) => key },
+
+      props: { projectId: 7, inventoryId: 9 },
+      global: {
+        renderStubDefaultSlot: true,
+        mocks: { $t: (key) => key },
+      },
     });
     await wrapper.vm.load();
     wrapper.vm.selectHost(wrapper.vm.rows[0]);
     await wrapper.vm.load();
-    expect(wrapper.vm.expanded.map((item) => item.host)).to.deep.equal(['web']);
+    expect(wrapper.vm.expanded).to.deep.equal(['9:web']);
   });
 
   it('identifies user, schedule, integration and workflow triggers independently', () => {

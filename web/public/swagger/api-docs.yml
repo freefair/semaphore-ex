@@ -681,7 +681,8 @@ definitions:
         minimum: 1
       auth_method:
         type: string
-        example: none
+        example: ""
+        enum: ['', token, hmac, hmac-sha512, github, bitbucket, basic]
       auth_secret_id:
         type: integer
         x-nullable: true
@@ -706,7 +707,8 @@ definitions:
         type: integer
       auth_method:
         type: string
-        example: none
+        example: ""
+        enum: ['', token, hmac, hmac-sha512, github, bitbucket, basic]
       auth_secret_id:
         type: integer
         x-nullable: true

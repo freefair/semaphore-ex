@@ -1,10 +1,15 @@
 <template>
-  <v-dialog :value="value" max-width="920" scrollable @input="$emit('input', $event)">
+  <v-dialog
+    :model-value="modelValue"
+    max-width="920"
+    scrollable
+    @update:model-value="$emit('update:modelValue', $event)"
+  >
     <v-card>
       <v-card-title class="d-flex align-center">
         <span>{{ $t('crossProjectTemplates') }}</span>
         <v-spacer />
-        <v-btn icon :aria-label="$t('close')" @click="$emit('input', false)">
+        <v-btn icon :aria-label="$t('close')" @click="$emit('update:modelValue', false)">
           <v-icon>mdi-close</v-icon>
         </v-btn>
       </v-card-title>
@@ -13,19 +18,25 @@
 
       <v-card-text class="pa-0">
         <v-progress-linear v-if="loading" indeterminate color="primary" />
-        <v-alert v-if="error" type="error" text tile class="ma-4">{{ error }}</v-alert>
+        <v-alert v-if="error" type="error" variant="tonal" tile class="ma-4">{{ error }}</v-alert>
 
         <section v-if="ownerMode" class="pa-4">
           <div class="d-flex align-center mb-3">
             <div>
-              <div class="text-subtitle-1">{{ $t('publishedTemplateVersions') }}</div>
-              <div class="text-caption text--secondary">
+              <div class="text-body-large">{{ $t('publishedTemplateVersions') }}</div>
+              <div class="text-body-small text--secondary">
                 {{ $t('publishedTemplateVersionsHint') }}
               </div>
             </div>
             <v-spacer />
-            <v-btn color="primary" outlined small :loading="saving" @click="publishVersion">
-              <v-icon small left>mdi-tag-plus-outline</v-icon>
+            <v-btn
+              color="primary"
+              variant="outlined"
+              size="small"
+              :loading="saving"
+              @click="publishVersion"
+            >
+              <v-icon size="small" start>mdi-tag-plus-outline</v-icon>
               {{ $t('publishVersion') }}
             </v-btn>
           </div>
@@ -34,26 +45,31 @@
             <v-chip
               v-for="version in versions"
               :key="version.id"
-              small
-              outlined
+              size="small"
+              variant="outlined"
               class="mr-2 mb-2"
             >
               v{{ version.version_number }} · {{ shortFingerprint(version.content_fingerprint) }}
             </v-chip>
           </div>
-          <v-alert v-else type="info" text dense>{{ $t('noPublishedTemplateVersions') }}</v-alert>
+          <v-alert
+            v-else
+            type="info"
+            variant="tonal"
+            density="compact"
+          >{{ $t('noPublishedTemplateVersions') }}</v-alert>
 
-          <v-card outlined class="pa-4">
-            <div class="text-subtitle-1 mb-3">{{ $t('createCrossProjectGrant') }}</div>
-            <v-row dense>
+          <v-card variant="outlined" class="pa-4">
+            <div class="text-body-large mb-3">{{ $t('createCrossProjectGrant') }}</div>
+            <v-row density="compact">
               <v-col cols="12" sm="4">
                 <v-text-field
                   v-model="createForm.consumerProjectId"
                   type="number"
                   min="1"
                   :label="$t('consumerProjectId')"
-                  outlined
-                  dense
+                  variant="outlined"
+                  density="compact"
                   hide-details="auto"
                 />
               </v-col>
@@ -63,8 +79,8 @@
                   type="number"
                   min="1"
                   :label="$t('minimumVersion')"
-                  outlined
-                  dense
+                  variant="outlined"
+                  density="compact"
                   hide-details="auto"
                 />
               </v-col>
@@ -74,8 +90,8 @@
                   type="number"
                   min="1"
                   :label="$t('maximumVersion')"
-                  outlined
-                  dense
+                  variant="outlined"
+                  density="compact"
                   hide-details="auto"
                 />
               </v-col>
@@ -84,14 +100,14 @@
               <v-checkbox
                 v-model="createForm.allowReference"
                 :label="$t('allowWorkflowReference')"
-                dense
+                density="compact"
                 hide-details
                 class="mr-5 mt-0"
               />
               <v-checkbox
                 v-model="createForm.allowRun"
                 :label="$t('allowWorkflowRun')"
-                dense
+                density="compact"
                 hide-details
                 class="mr-5 mt-0"
               />
@@ -100,15 +116,15 @@
               v-model="createForm.reason"
               :label="$t('reason')"
               :counter="512"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               hide-details="auto"
               class="mt-3"
             />
             <div class="text-right mt-3">
               <v-btn
                 color="primary"
-                depressed
+                variant="flat"
                 :disabled="!createGrantValid || saving"
                 :loading="saving"
                 @click="createGrant"
@@ -120,27 +136,32 @@
         <v-divider v-if="ownerMode" />
 
         <section class="pa-4">
-          <div class="text-subtitle-1 mb-1">{{ $t('crossProjectGrants') }}</div>
-          <div class="text-caption text--secondary mb-3">
+          <div class="text-body-large mb-1">{{ $t('crossProjectGrants') }}</div>
+          <div class="text-body-small text--secondary mb-3">
             {{ $t('crossProjectGrantsHint') }}
           </div>
 
-          <v-alert v-if="!visibleGrants.length && !loading" type="info" text dense>
+          <v-alert
+            v-if="!visibleGrants.length && !loading"
+            type="info"
+            variant="tonal"
+            density="compact"
+          >
             {{ $t('noCrossProjectGrants') }}
           </v-alert>
 
           <v-card
             v-for="grant in visibleGrants"
             :key="grant.id"
-            outlined
+            variant="outlined"
             class="pa-3 mb-3"
           >
             <div class="d-flex flex-wrap align-center">
               <strong>#{{ grant.id }}</strong>
-              <v-chip x-small class="ml-2" :color="grantStatusColor(grant.status)">
+              <v-chip size="x-small" class="ml-2" :color="grantStatusColor(grant.status)">
                 {{ grant.status }}
               </v-chip>
-              <span class="text-caption text--secondary ml-3">
+              <span class="text-body-small text--secondary ml-3">
                 {{ $t('ownerProject') }} #{{ grant.owner_project_id }} →
                 {{ $t('consumerProject') }} #{{ grant.consumer_project_id }} ·
                 {{ $t('template') }} #{{ grant.template_id }} ·
@@ -150,41 +171,41 @@
               <v-spacer />
               <v-btn
                 v-if="canAcceptGrant(grant)"
-                small
-                text
+                size="small"
+                variant="text"
                 color="primary"
                 :disabled="saving"
                 @click="acceptGrant(grant)"
               >{{ $t('accept') }}</v-btn>
               <v-btn
                 v-if="canEditGrant(grant)"
-                small
-                text
+                size="small"
+                variant="text"
                 :disabled="saving"
                 @click="beginEdit(grant)"
               >{{ $t('edit') }}</v-btn>
               <v-btn
                 v-if="canDeleteGrant(grant)"
-                small
-                text
+                size="small"
+                variant="text"
                 color="error"
                 :disabled="saving"
                 @click="toggleDelete(grant)"
               >{{ deletingGrantId === grant.id ? $t('cancel') : $t('delete') }}</v-btn>
             </div>
 
-            <div v-if="grant.reason" class="text-body-2 mt-2">{{ grant.reason }}</div>
+            <div v-if="grant.reason" class="text-body-medium mt-2">{{ grant.reason }}</div>
 
             <v-card v-if="editingGrantId === grant.id" flat class="mt-3 pa-3 grant-edit-surface">
-              <v-row dense>
+              <v-row density="compact">
                 <v-col cols="6">
                   <v-text-field
                     v-model.number="editForm.minVersion"
                     type="number"
                     min="1"
                     :label="$t('minimumVersion')"
-                    dense
-                    outlined
+                    density="compact"
+                    variant="outlined"
                   />
                 </v-col>
                 <v-col cols="6">
@@ -193,8 +214,8 @@
                     type="number"
                     min="1"
                     :label="$t('maximumVersion')"
-                    dense
-                    outlined
+                    density="compact"
+                    variant="outlined"
                   />
                 </v-col>
               </v-row>
@@ -202,14 +223,14 @@
                 <v-checkbox
                   v-model="editForm.allowReference"
                   :label="$t('allowWorkflowReference')"
-                  dense
+                  density="compact"
                   hide-details
                   class="mr-5 mt-0"
                 />
                 <v-checkbox
                   v-model="editForm.allowRun"
                   :label="$t('allowWorkflowRun')"
-                  dense
+                  density="compact"
                   hide-details
                   class="mt-0"
                 />
@@ -218,16 +239,20 @@
                 v-model="editForm.reason"
                 :label="$t('reason')"
                 :counter="512"
-                dense
-                outlined
+                density="compact"
+                variant="outlined"
                 class="mt-3"
               />
               <div class="text-right">
-                <v-btn text small @click="editingGrantId = null">{{ $t('cancel') }}</v-btn>
+                <v-btn
+                  variant="text"
+                  size="small"
+                  @click="editingGrantId = null"
+                >{{ $t('cancel') }}</v-btn>
                 <v-btn
                   color="primary"
-                  depressed
-                  small
+                  variant="flat"
+                  size="small"
                   :disabled="!editGrantValid || saving"
                   @click="updateGrant(grant)"
                 >{{ $t('save') }}</v-btn>
@@ -235,10 +260,16 @@
             </v-card>
 
             <div v-if="deletingGrantId === grant.id" class="text-right mt-3">
-              <span class="text-caption text--secondary mr-3">
+              <span class="text-body-small text--secondary mr-3">
                 {{ $t('deleteGrantConfirmation') }}
               </span>
-              <v-btn color="error" depressed small :loading="saving" @click="deleteGrant(grant)">
+              <v-btn
+                color="error"
+                variant="flat"
+                size="small"
+                :loading="saving"
+                @click="deleteGrant(grant)"
+              >
                 {{ $t('delete') }}
               </v-btn>
             </div>
@@ -247,15 +278,15 @@
               <v-text-field
                 v-model="revokeReasons[grant.id]"
                 :label="$t('revocationReason')"
-                dense
-                outlined
+                density="compact"
+                variant="outlined"
                 hide-details="auto"
                 class="mr-2"
               />
               <v-btn
                 color="warning"
-                outlined
-                small
+                variant="outlined"
+                size="small"
                 :disabled="saving || !(revokeReasons[grant.id] || '').trim()"
                 @click="revokeGrant(grant)"
               >{{ $t('revoke') }}</v-btn>
@@ -276,8 +307,9 @@ const REFERENCE_OPERATION = 1;
 const RUN_OPERATION = 2;
 
 export default {
+  emits: ['changed', 'update:modelValue'],
   props: {
-    value: Boolean,
+    modelValue: Boolean,
     projectId: {
       type: Number,
       required: true,
@@ -329,7 +361,7 @@ export default {
     },
   },
   watch: {
-    value(open) {
+    modelValue(open) {
       if (open) this.load();
     },
   },

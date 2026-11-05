@@ -1,21 +1,33 @@
 <template>
   <div class="mb-5" data-testid="task-groups-editor">
-    <v-alert v-if="error" type="error" dense>{{ error }}</v-alert>
+    <v-alert v-if="error" type="error" density="compact">{{ error }}</v-alert>
     <v-autocomplete
-      :value="value || []"
-      @input="$emit('input', $event)"
+      :model-value="modelValue || []"
+      @update:model-value="$emit('update:modelValue', $event)"
       :items="options"
       item-value="id"
-      item-text="label"
+      item-title="label"
       :label="$t('taskGroupsTitle')"
       :hint="$t('taskGroupsSelectionHint')"
       :loading="loading"
       :disabled="disabled || loading || !!error"
       :rules="[v => (v || []).length <= 16 || $t('taskGroupsLimit')]"
-      multiple chips small-chips deletable-chips outlined dense persistent-hint
+      multiple
+      chips
+
+      closable-chips
+      variant="outlined"
+      density="compact"
+      persistent-hint
       data-testid="task-groups-select"
     />
-    <v-alert v-if="conflict" type="error" dense class="mt-3" data-testid="task-groups-conflict">
+    <v-alert
+      v-if="conflict"
+      type="error"
+      density="compact"
+      class="mt-3"
+      data-testid="task-groups-conflict"
+    >
       {{ $t('taskGroupsRunnerConflict') }}
     </v-alert>
   </div>
@@ -25,8 +37,9 @@ import axios from 'axios';
 import { getErrorMessage } from '@/lib/error';
 
 export default {
+  emits: ['update:modelValue'],
   props: {
-    value: { type: Array, default: () => [] },
+    modelValue: { type: Array, default: () => [] },
     projectId: { type: [Number, String], required: true },
     disabled: Boolean,
   },
@@ -43,7 +56,7 @@ export default {
     },
     conflict() {
       let allowed = null;
-      this.groups.filter((group) => (this.value || []).includes(group.id)).forEach((group) => {
+      this.groups.filter((group) => (this.modelValue || []).includes(group.id)).forEach((group) => {
         if (!(group.runner_ids || []).length) return;
         allowed = allowed === null ? group.runner_ids
           : allowed.filter((id) => group.runner_ids.includes(id));

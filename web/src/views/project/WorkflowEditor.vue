@@ -1,5 +1,9 @@
 <template>
-  <div class="WorkflowEditor">
+  <div
+    class="WorkflowEditor"
+    data-testid="workflowEditor-page"
+    :data-state="item == null || templates == null ? 'loading' : 'ready'"
+  >
     <WorkflowVersionsDialog
       v-if="!isNew"
       v-model="versionsDialog"
@@ -21,12 +25,22 @@
       :yes-button-title="$t('workflowLeaveWithoutSaving')"
       @yes="confirmLeave()"
       @no="cancelLeave()"
+      test-id="workflowEditorLeaveDialog"
     />
 
     <v-toolbar flat class="WorkflowEditor__toolbar">
-      <v-app-bar-nav-icon @click="showDrawer()"></v-app-bar-nav-icon>
-      <v-toolbar-title class="WorkflowEditor__title d-flex align-center">
-        <router-link :to="`/project/${projectId}/workflows`">
+      <v-app-bar-nav-icon
+        @click="showDrawer()"
+        data-testid="workflowEditor-drawerToggle"
+      ></v-app-bar-nav-icon>
+      <v-toolbar-title
+        class="WorkflowEditor__title d-flex align-center"
+        data-testid="workflowEditor-title"
+      >
+        <router-link
+          :to="`/project/${projectId}/workflows`"
+          data-testid="workflowEditor-backToList"
+        >
           {{ $t('workflows') }}
         </router-link>
         <span class="mx-2">/</span>
@@ -35,7 +49,7 @@
           class="WorkflowEditor__nameWrap"
           :class="{ 'WorkflowEditor__nameWrap--disabled': !canManage }"
         >
-          <v-icon small class="WorkflowEditor__nameIcon">mdi-pencil</v-icon>
+          <v-icon size="small" class="WorkflowEditor__nameIcon">mdi-pencil</v-icon>
           <span class="WorkflowEditor__nameSizer" :data-value="item.name || $t('newWorkflow')">
             <input
               v-model="item.name"
@@ -44,25 +58,36 @@
               :aria-label="$t('name')"
               size="1"
               class="WorkflowEditor__nameField"
-              @input="markDirty"
+              @update:model-value="markDirty"
+              data-testid="workflowEditor-name"
             />
           </span>
         </span>
         <v-chip
           v-if="item != null && item.revision"
-          x-small
-          outlined
-          class="ml-3"
+          size="x-small"
+          variant="outlined"
+          class="WorkflowEditor__chip ml-3"
           :title="$t('workflowRevisionHint')"
+          data-testid="workflowEditor-revision"
         >{{ $t('workflowRevisionLabel', { number: item.revision }) }}</v-chip>
-        <v-tooltip v-if="activeRuns > 0" bottom>
-          <template v-slot:activator="{ on, attrs }">
-            <v-chip x-small outlined color="warning" class="ml-2" v-bind="attrs" v-on="on">
-              <v-icon x-small left>mdi-play-circle-outline</v-icon>
-              {{ $tc('workflowActiveRunsCount', activeRuns, { count: activeRuns }) }}
+        <v-tooltip v-if="activeRuns > 0" location="bottom">
+          <template v-slot:activator="{ props }">
+            <v-chip
+              size="x-small"
+              variant="outlined"
+              color="warning"
+              class="WorkflowEditor__chip ml-2"
+              v-bind="props"
+              data-testid="workflowEditor-activeRuns"
+            >
+              <v-icon size="x-small" start>mdi-play-circle-outline</v-icon>
+              {{ $t('workflowActiveRunsCount', { count: activeRuns }, activeRuns) }}
             </v-chip>
           </template>
-          <span>{{ $t('workflowActiveRunsHint') }}</span>
+          <span
+            data-testid="workflowEditor-activeRunsHint"
+          >{{ $t('workflowActiveRunsHint') }}</span>
         </v-tooltip>
       </v-toolbar-title>
 
@@ -88,15 +113,30 @@
         <v-icon>mdi-share-variant-outline</v-icon>
       </v-btn>
 
-      <v-btn icon :disabled="!canUndo" :title="$t('workflowUndo')" @click="undo()">
+      <v-btn
+        icon
+        variant="text"
+        :disabled="!canUndo"
+        :title="$t('workflowUndo')"
+        @click="undo()"
+        data-testid="workflowEditor-undo"
+      >
         <v-icon>mdi-undo</v-icon>
       </v-btn>
-      <v-btn icon :disabled="!canRedo" :title="$t('workflowRedo')" class="mr-2" @click="redo()">
+      <v-btn
+        icon
+        variant="text"
+        :disabled="!canRedo"
+        :title="$t('workflowRedo')"
+        class="mr-2"
+        @click="redo()"
+        data-testid="workflowEditor-redo"
+      >
         <v-icon>mdi-redo</v-icon>
       </v-btn>
 
       <v-btn
-        text
+        variant="text"
         :disabled="!canManage || validating || saving"
         :loading="validating"
         @click="validate()"
@@ -104,7 +144,7 @@
       </v-btn>
 
       <v-btn
-        text
+        variant="text"
         :disabled="!canManage || !dirty || validating || saving"
         @click="discard()"
       >{{ $t('discard') }}
@@ -133,25 +173,31 @@
       <div class="d-flex align-center">
         <span>{{ $t('workflowConflictMessage') }}</span>
         <v-spacer />
-        <v-btn color="warning" outlined @click="reloadAfterConflict()">
+        <v-btn color="warning" variant="outlined" @click="reloadAfterConflict()">
           {{ $t('workflowReloadServerVersion') }}
         </v-btn>
       </div>
     </v-alert>
 
-    <div class="WorkflowEditor__body" v-if="item != null && templates != null">
+    <div
+      class="WorkflowEditor__body"
+      v-if="item != null && templates != null"
+      data-testid="workflowEditor-body"
+    >
       <!-- Palette + meta -->
       <div
         class="WorkflowEditor__side WorkflowEditor__side--left"
         :class="{ 'WorkflowEditor__side--collapsed': sideCollapsed }"
+        data-testid="workflowEditor-side"
       >
         <button
           type="button"
           class="WorkflowEditor__sideToggle"
           :title="$t(sideCollapsed ? 'workflowSidebarExpand' : 'workflowSidebarCollapse')"
           @click="toggleSide()"
+          data-testid="workflowEditor-sideToggle"
         >
-          <v-icon small>
+          <v-icon size="small">
             {{ sideCollapsed ? 'mdi-chevron-right' : 'mdi-chevron-left' }}
           </v-icon>
         </button>
@@ -159,11 +205,11 @@
         <div class="WorkflowEditor__sideScroll">
           <template v-if="!sideCollapsed">
             <WorkflowDefinitionSettings
-              :version-message.sync="item.version_message"
-              :max-parallel-tasks.sync="item.max_parallel_tasks"
-              :view-role-ids.sync="item.access_policy.view_role_ids"
-              :start-role-ids.sync="item.access_policy.start_role_ids"
-              :parameters.sync="item.parameters"
+              v-model:version-message="item.version_message"
+              v-model:max-parallel-tasks="item.max_parallel_tasks"
+              v-model:view-role-ids="item.access_policy.view_role_ids"
+              v-model:start-role-ids="item.access_policy.start_role_ids"
+              v-model:parameters="item.parameters"
               :project-id="projectId"
               :workflow-role-options="workflowRoleOptions"
               :version-message-too-long="versionMessageTooLong"
@@ -172,16 +218,17 @@
               @dirty="markDirty"
             >
               <template #start-version>
-                <v-text-field
-                  v-model="item.start_version"
-                  :label="$t('startVersion')"
-                  :hint="$t('workflowStartVersionHint')"
+              <v-text-field
+                v-model="item.start_version"
+                :label="$t('startVersion')"
+                :hint="$t('workflowStartVersionHint')"
                   persistent-hint
-                  class="mb-4"
+                class="mb-4"
                   :disabled="!canManage"
-                  outlined
-                  dense
-                  @input="markDirty"
+                variant="outlined"
+                density="compact"
+                data-testid="workflowEditor-startVersion"
+              @update:model-value="markDirty"
                 />
               </template>
             </WorkflowDefinitionSettings>
@@ -198,8 +245,14 @@
 
           <div class="pa-3">
             <template v-if="!sideCollapsed">
-              <div class="text-subtitle-2 mb-1">{{ $t('workflowEditorPalette') }}</div>
-              <div class="text-caption text--secondary mb-3">
+              <div
+                class="text-label-large mb-1"
+                data-testid="workflowEditor-paletteTitle"
+              >{{ $t('workflowEditorPalette') }}</div>
+              <div
+                class="text-body-small text-medium-emphasis mb-3"
+                data-testid="workflowEditor-paletteHint"
+              >
                 {{ $t('workflowPaletteClickHint') }}
               </div>
             </template>
@@ -212,24 +265,31 @@
               :title="sideCollapsed ? p.text : null"
               @dragstart="onDragStart($event, p.kind)"
               @click="addFromPalette(p.kind)"
+              :data-testid="`workflowEditor-palette-${p.kind}`"
             >
               <span
                 class="WorkflowEditor__paletteTile"
                 :class="`WorkflowEditor__paletteTile--${p.kind}`"
               >
-                <v-icon small :color="p.color">{{ p.icon }}</v-icon>
+                <v-icon size="small" :color="p.color">{{ p.icon }}</v-icon>
               </span>
               <span v-if="!sideCollapsed" class="WorkflowEditor__paletteText">{{ p.text }}</span>
             </div>
           </div>
           <div v-if="!sideCollapsed" class="pa-3" data-testid="workflow-validation-status">
-            <div class="text-subtitle-2 mb-2">{{ $t('workflowProblemsPanelTitle') }}</div>
-            <v-alert v-if="problems.length === 0" text dense
+            <div class="text-label-large mb-2">{{ $t('workflowProblemsPanelTitle') }}</div>
+            <v-alert v-if="problems.length === 0" variant="tonal" density="compact"
               :type="validationState === 'valid' ? 'success' : 'info'">
               {{ validationState === 'valid'
                 ? $t('workflowValidationPassed') : $t('workflowValidationNotRun') }}
             </v-alert>
-            <v-alert v-for="(problem, index) in problems" :key="index" text dense type="warning">
+            <v-alert
+              v-for="(problem, index) in problems"
+              :key="index"
+              variant="tonal"
+              density="compact"
+              type="warning"
+            >
               {{ problemText(problem) }}
             </v-alert>
           </div>
@@ -265,13 +325,14 @@
       <div
         v-if="editingNode || editingEdge"
         class="WorkflowEditor__side WorkflowEditor__side--right"
+        data-testid="workflowEditor-props"
       >
         <div v-if="editingNode" class="pa-3">
           <div class="d-flex align-center mb-2">
-            <span class="text-subtitle-2"> {{ $t('workflowNodeId') }} #{{ editingNode.id }} </span>
+            <span class="text-label-large"> {{ $t('workflowNodeId') }} #{{ editingNode.id }} </span>
             <v-spacer />
-            <v-btn icon small :disabled="!canManage" @click="deleteSelectedNode()">
-              <v-icon small>mdi-delete</v-icon>
+            <v-btn icon size="small" :disabled="!canManage" @click="deleteSelectedNode()">
+              <v-icon size="small">mdi-delete</v-icon>
             </v-btn>
           </div>
 
@@ -279,11 +340,11 @@
             v-model="editingNode.display_name"
             :label="$t('workflowDisplayName')"
             :disabled="!canManage"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
             hide-details="auto"
             class="mb-5"
-            @input="applyNodeEdit"
+            @update:model-value="applyNodeEdit"
           />
 
           <v-textarea
@@ -292,12 +353,12 @@
             :label="$t('workflowNoteText')"
             :placeholder="$t('workflowNotePlaceholder')"
             :disabled="!canManage"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
             auto-grow
             rows="4"
             hide-details="auto"
-            @input="applyNodeEdit"
+            @update:model-value="applyNodeEdit"
           />
 
           <template v-if="editingNode.kind !== 'note'">
@@ -305,42 +366,42 @@
               v-model="editingNode.kind"
               :items="kindOptions"
               item-value="value"
-              item-text="text"
+              item-title="text"
               :label="$t('workflowNodeKind')"
               :disabled="!canManage"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               hide-details="auto"
               class="mb-5"
-              @change="onKindChanged"
+              @update:model-value="onKindChanged"
             />
 
             <v-select
               v-model="editingNode.convergence_mode"
               :items="convergenceOptions"
               item-value="value"
-              item-text="text"
+              item-title="text"
               :label="$t('workflowConvergence')"
               :disabled="!canManage"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               hide-details="auto"
               class="mb-5"
-              @change="applyNodeEdit"
+              @update:model-value="applyNodeEdit"
             />
 
             <v-select
               v-model="editingNode.join_mode"
               :items="joinOptions"
               item-value="value"
-              item-text="text"
+              item-title="text"
               :label="$t('workflowJoinMode')"
               :disabled="!canManage"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               hide-details="auto"
               class="mb-5"
-              @change="applyNodeEdit"
+              @update:model-value="applyNodeEdit"
             />
 
             <v-autocomplete
@@ -348,12 +409,12 @@
               v-model="editingNodeTemplateChoice"
               :items="workflowTemplateChoices"
               item-value="value"
-              item-text="text"
+              item-title="text"
               :label="$t('taskTemplate')"
               :disabled="!canManage"
               :loading="crossProjectReferencesLoading"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               hide-details="auto"
               class="mb-5"
             />
@@ -361,8 +422,8 @@
             <v-alert
               v-if="editingNodeCrossProjectReference"
               :type="editingNodeCrossProjectReference.available ? 'info' : 'warning'"
-              text
-              dense
+              variant="tonal"
+              density="compact"
               class="mb-5"
             >
               {{ editingNodeCrossProjectReference.available
@@ -397,7 +458,7 @@
                   :workflow-vars="workflowSurveyVars"
                   :survey-inputs="editingNode.survey_inputs || []"
                   class="mt-2"
-                  @input="applyNodeEdit"
+                  @update:model-value="applyNodeEdit"
                   @bind="setEditingNodeSurveyBinding"
                   @unbind="removeEditingNodeSurveyBinding"
                 />
@@ -411,7 +472,7 @@
               :template="editingNodeTemplate"
               :parameters="item.parameters"
               :disabled="!canManage"
-              @input="applyNodeEdit"
+              @update:model-value="applyNodeEdit"
             />
 
             <WorkflowNodeArtifactsEditor
@@ -435,7 +496,7 @@
             <WorkflowNodeApprovalPolicy
               v-if="editingNode.kind === 'approval'"
               :policy="editingNode.approval_role_policy"
-              :timeout-outcome.sync="editingNode.approval_timeout_outcome"
+              v-model:timeout-outcome="editingNode.approval_timeout_outcome"
               :workflow-role-options="workflowRoleOptions"
               :approval-role-mode-options="approvalRoleModeOptions"
               :approval-timeout-outcome-options="approvalTimeoutOutcomeOptions"
@@ -451,20 +512,20 @@
                 min="1"
                 :label="$t('workflowApprovalTimeout')"
                 :disabled="!canManage"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 hide-details="auto"
                 class="mb-2"
-                @change="applyNodeEdit"
+                @update:model-value="applyNodeEdit"
               />
               <v-text-field
                 v-model="editingNode.approval_message"
                 :label="$t('workflowApprovalMessage')"
                 :disabled="!canManage"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 hide-details="auto"
-                @change="applyNodeEdit"
+                @update:model-value="applyNodeEdit"
               />
             </WorkflowNodeApprovalPolicy>
             <template v-if="editingNode.kind === 'delay'">
@@ -476,11 +537,11 @@
                 :hint="$t('workflowDelayHint')"
                 persistent-hint
                 :disabled="!canManage"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 hide-details="auto"
                 class="mb-2"
-                @change="applyNodeEdit"
+                @update:model-value="applyNodeEdit"
               />
             </template>
           </template>
@@ -489,20 +550,21 @@
         <WorkflowEdgeProperties
           v-else-if="editingEdge"
           :key="edgeKey(editingEdge)"
-          :value="editingEdge"
+          :model-value="editingEdge"
           :nodes="item.nodes"
           :templates="templates"
           :output-hints="outputHints"
           :can-manage="canManage"
-          @input="applyEdgeEdit"
+          @update:model-value="applyEdgeEdit"
           @delete="deleteSelectedEdge()"
           @close="closePanel()"
         />
       </div>
     </div>
 
-    <div v-else class="pa-4 text-center">
-      <v-progress-circular indeterminate color="primary" />
+    <div v-else class="pa-4 text-center" data-testid="workflowEditor-loading">
+      <!-- No track under the spinning arc: Vuetify 2 drew none for an indeterminate one -->
+      <v-progress-circular indeterminate color="primary" bg-color="transparent" />
     </div>
   </div>
 </template>
@@ -576,7 +638,7 @@ export default {
       editingEdge: null,
       // Collapses the palette and, through App.vue, the main navigation to
       // icon-only strips. Remembered per browser; App restores the navigation
-      // when the editor is left (see beforeDestroy).
+      // when the editor is left (see beforeUnmount).
       sideCollapsed: readSideCollapsed(),
       canUndo: false,
       canRedo: false,
@@ -721,7 +783,7 @@ export default {
     await this.loadData();
     if (this.canManageCrossProjectTemplates) await this.refreshCrossProjectReferences();
   },
-  beforeDestroy() {
+  beforeUnmount() {
     window.removeEventListener('keydown', this.onWindowKeyDown);
     window.removeEventListener('beforeunload', this.onBeforeUnload);
     document.documentElement.classList.remove('WorkflowEditor-html');
@@ -748,17 +810,17 @@ export default {
       if (!this.editingNode) return;
       const bindings = (this.editingNode.survey_inputs || [])
         .filter((binding) => binding.var !== name);
-      this.$set(this.editingNode, 'survey_inputs', [
+      this.editingNode.survey_inputs = [
         ...bindings, { var: name, workflow_var: workflowVar },
-      ]);
+      ];
       this.applyNodeEdit();
     },
     removeEditingNodeSurveyBinding(name) {
       if (!this.editingNode) return;
       const bindings = (this.editingNode.survey_inputs || [])
         .filter((binding) => binding.var !== name);
-      if (bindings.length) this.$set(this.editingNode, 'survey_inputs', bindings);
-      else this.$delete(this.editingNode, 'survey_inputs');
+      if (bindings.length) this.editingNode.survey_inputs = bindings;
+      else delete this.editingNode.survey_inputs;
       this.applyNodeEdit();
     },
     // Informational only (see activeRuns, outputHints); a failure must not
@@ -967,12 +1029,12 @@ export default {
       if (kind === 'approval' || kind === 'delay') {
         this.editingNode.template_id = null;
         if (this.$delete) {
-          this.$delete(this.editingNode, 'cross_project_template_reference');
+          delete this.editingNode.cross_project_template_reference;
         } else {
           delete this.editingNode.cross_project_template_reference;
         }
         this.editingNode.task_params = null;
-        this.$delete(this.editingNode, 'survey_inputs');
+        delete this.editingNode.survey_inputs;
         this.editingNode.artifact_outputs = [];
         this.editingNode.artifact_inputs = [];
       }
@@ -1166,6 +1228,71 @@ $worklow_pallete_width_collapsed: 60px;
   // Inline, borderless name editor in the toolbar title.
   &__title {
     overflow: visible;
+    // Vuetify 3 lets the title shrink to nothing (flex: 1 1, min-width: 0); as in
+    // Vuetify 2 it keeps the width of its content.
+    flex: 0 1 auto;
+    min-width: auto;
+
+    // Vuetify 3 wraps the title slot in a placeholder that clips (ellipsis) and is not
+    // a flex box: keep the link, the name editor and the chips in one centred row.
+    :deep(.v-toolbar-title__placeholder) {
+      display: flex;
+      align-items: center;
+      overflow: visible;
+    }
+  }
+
+  // The toolbar does not clip what does not fit (a phone: the chips and Save past the right edge),
+  // as in Vuetify 2 (`.v-toolbar__content` without overflow); the toolbar has the layout
+  // containment of Vuetify 2 (`.v-toolbar { contain: layout }`), so what sticks out is painted but
+  // does not widen the page.
+  &__toolbar {
+    contain: layout;
+
+    :deep(.v-toolbar__content) {
+      overflow: visible;
+    }
+  }
+
+  // The chips of the toolbar as in Vuetify 2 (`.v-chip`): x-small 16 px high, small 24 px, a
+  // 20 px line, the weight of the text around them (the revision chip sits in the bold title); the
+  // icon at its own size (x-small 12 px, small 16 px), 6 px out to the left and 6 px to the text
+  // (`$chip-icon-margin-*`); an outlined chip without a colour has the thin border of the theme
+  // (`.theme--light.v-chip`: dividers), not one in the text colour.
+  &__chip.v-chip {
+    line-height: 20px;
+    font-weight: inherit;
+
+    &.v-chip--size-x-small {
+      --v-chip-height: 16px;
+    }
+
+    &.v-chip--size-small {
+      --v-chip-height: 24px;
+    }
+
+    :deep(.v-icon--start) {
+      --v-icon-size-multiplier: 1;
+      margin-inline: -6px 6px;
+    }
+
+    &.v-chip--variant-outlined:not([class*="text-"]) {
+      border-color: rgba(var(--v-border-color), var(--v-border-opacity));
+    }
+  }
+
+  // The problems menu: the text 24 px after the icon (`v-list-item-icon` of Vuetify 2), not 16.
+  &__problems {
+    --v-list-prepend-gap: 24px;
+  }
+
+  // Icons without a colour of their own in the icon colour of Vuetify 2 (`.theme--light.v-icon`:
+  // .54, white in the dark theme), not in the text colour; a coloured one keeps its colour (an
+  // inline style).
+  &__nameIcon,
+  &__paletteTile > .v-icon,
+  &__sideToggle > .v-icon {
+    color: rgba(0, 0, 0, .54);
   }
 
   // Inline name editor: looks like a title, but the pencil + hover/focus
@@ -1423,9 +1550,15 @@ $worklow_pallete_width_collapsed: 60px;
     }
   }
 }
-.theme--dark {
+.v-theme--dark {
   .WorkflowEditor__sideToggle {
     background: #1e1e1e;
+  }
+
+  .WorkflowEditor__nameIcon,
+  .WorkflowEditor__paletteTile > .v-icon,
+  .WorkflowEditor__sideToggle > .v-icon {
+    color: #fff;
   }
 }
 

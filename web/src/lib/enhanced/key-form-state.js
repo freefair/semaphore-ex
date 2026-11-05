@@ -16,7 +16,7 @@ const enhancedWatch = {
       }
       const storage = this.runtimeSecretStorages.find((candidate) => candidate.id === storageId);
       if (storage && !this.item.source_storage_mount) {
-        this.$set(this.item, 'source_storage_mount', storage.params?.mount || 'secret');
+        this.item.source_storage_mount = storage.params?.mount || 'secret';
       }
     },
   },

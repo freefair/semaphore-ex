@@ -64,7 +64,7 @@ describe('global and template roles', () => {
   });
 
   it('refreshes user action headers when asynchronous global access resolves', () => {
-    const allHeaders = [{ value: 'name' }, { value: 'actions' }];
+    const allHeaders = [{ key: 'name' }, { key: 'actions' }];
     const context = {
       canManageUsers: false,
       headers: [],
@@ -73,7 +73,7 @@ describe('global and template roles', () => {
     };
 
     Users.methods.refreshHeaders.call(context);
-    expect(context.headers).to.deep.equal([{ value: 'name' }]);
+    expect(context.headers).to.deep.equal([{ key: 'name' }]);
 
     context.canManageUsers = true;
     Users.watch.canManageUsers.call(context);

@@ -22,6 +22,12 @@ func NewRoleSyncService(store db.RoleMappingStore) pro_interfaces.RoleSyncServic
 func NewRoleSyncServiceWithOIDC(oidc pro_interfaces.OIDCGroupMappingService) pro_interfaces.RoleSyncService {
 	return &RoleSyncServiceImpl{oidc: oidc}
 }
+
+// SyncGroupRoles rejects name-based group input because it cannot establish
+// immutable LDAP identities or assignment ownership.
+func (*RoleSyncServiceImpl) SyncGroupRoles(int, string, []string) ([]db.MappedRole, []db.MappedRole, error) {
+	return nil, nil, db.ErrInvalidOperation
+}
 func (s *RoleSyncServiceImpl) SyncLoginRoles(userID int, providerID string, claims map[string]any) ([]db.MappedRole, []db.MappedRole, error) {
 	if userID <= 0 {
 		return nil, nil, db.ErrInvalidOperation

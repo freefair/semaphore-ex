@@ -1,14 +1,16 @@
 <template>
   <v-form
     ref="form"
-    lazy-validation
     v-model="formValid"
     v-if="item != null"
+    data-testid="role-form"
+    :data-state="formSaving ? 'loading' : (formError ? 'error' : 'ready')"
   >
     <v-alert
-      :value="formError"
+      :model-value="!!formError"
       color="error"
       class="pb-2"
+      data-testid="role-error"
     >{{ formError }}
     </v-alert>
 
@@ -16,55 +18,58 @@
       v-model="item.name"
       :label="$t('name')"
       :rules="[v => !!v || $t('name_required')]"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
       required
       :disabled="formSaving"
+      data-testid="role-name"
     ></v-text-field>
 
     <v-text-field
       v-if="!projectId"
       v-model="item.slug"
       :label="$t('slug')"
-      @input="slugTouched = true"
+      @update:model-value="slugTouched = true"
       :rules="slugRules"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
       required
       :disabled="formSaving || !isNew"
       :hint="$t('slugHint')"
+      data-testid="role-slug"
     ></v-text-field>
 
-    <v-subheader class="pl-0">
+    <v-list-subheader class="pl-0">
       {{ projectId ? $t('permissions') : 'Global permissions' }}
-    </v-subheader>
+    </v-list-subheader>
 
     <template v-if="permissionCatalog.length > 0">
       <v-checkbox
         v-for="definition in permissionCatalog"
         :key="definition.id"
         class="mt-0"
-        :input-value="hasPermission(definition.permission)"
+        :model-value="hasPermission(definition.permission)"
         :label="definition.description"
         :disabled="formSaving"
-        @change="setPermission(definition.permission, $event)"
+        @update:model-value="setPermission(definition.permission, $event)"
       ></v-checkbox>
     </template>
 
     <template v-else>
-      <v-alert text dense type="info">
+      <v-alert variant="tonal" density="compact" type="info">
         No assignable permissions are available.
       </v-alert>
     </template>
 
     <template v-if="!projectId">
-      <v-subheader class="pl-0">Legacy project permissions</v-subheader>
+      <v-list-subheader class="pl-0">Legacy project permissions</v-list-subheader>
 
       <v-checkbox
         class="mt-0"
         v-model="permissions.canRunProjectTasks"
         :label="$t('canRunProjectTasks')"
         :disabled="formSaving"
+        data-testid="role-canRunProjectTasks"
       ></v-checkbox>
 
       <v-checkbox
@@ -229,7 +234,7 @@ export default {
 </script>
 
 <style scoped>
-.v-subheader {
+.v-list-subheader {
   font-weight: 500;
   font-size: 14px;
 }

@@ -1,22 +1,40 @@
 <template>
   <v-form v-if="item" ref="form" v-model="formValid" class="pt-4">
-    <v-alert v-if="formError" dense type="error">{{ formError }}</v-alert>
-    <v-text-field v-model="item.name" :label="$t('name')" outlined dense
+    <v-alert v-if="formError" density="compact" type="error">{{ formError }}</v-alert>
+    <v-text-field v-model="item.name" :label="$t('name')" variant="outlined" density="compact"
       :rules="[v => !!v?.trim() || $t('name_required')]" :disabled="formSaving" />
-    <v-textarea v-model="item.description" :label="$t('description')" outlined dense rows="2"
+    <v-textarea
+      v-model="item.description"
+      :label="$t('description')"
+      variant="outlined"
+      density="compact"
+      rows="2"
       :disabled="formSaving" />
     <v-text-field v-model.number="item.max_parallel_tasks" type="number" min="1" max="1000"
       :label="$t('taskGroupsConcurrency')" :hint="$t('taskGroupsConcurrencyHint')"
       :rules="[concurrencyRule]"
-      outlined dense persistent-hint class="mb-4" :disabled="formSaving" />
-    <v-autocomplete v-model="item.runner_ids" :items="runners" item-value="id" item-text="name"
+      variant="outlined" density="compact" persistent-hint class="mb-4" :disabled="formSaving" />
+    <v-autocomplete v-model="item.runner_ids" :items="runners" item-value="id" item-title="name"
       :label="$t('taskGroupsRunners')" :hint="$t('taskGroupsRunnersHint')"
-      multiple chips small-chips deletable-chips outlined dense persistent-hint class="mb-4"
+      multiple
+      chips
+
+      closable-chips
+      variant="outlined"
+      density="compact"
+      persistent-hint
+      class="mb-4"
       :disabled="formSaving" />
     <v-autocomplete v-model="item.shared_project_ids" :items="projects"
-      item-value="id" item-text="name"
+      item-value="id" item-title="name"
       :label="$t('taskGroupsProjectGrants')" :hint="$t('taskGroupsProjectGrantsHint')"
-      multiple chips small-chips deletable-chips outlined dense persistent-hint
+      multiple
+      chips
+
+      closable-chips
+      variant="outlined"
+      density="compact"
+      persistent-hint
       :disabled="formSaving || !canShare" />
   </v-form>
 </template>

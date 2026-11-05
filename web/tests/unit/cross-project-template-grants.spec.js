@@ -1,6 +1,5 @@
 import { expect } from 'chai';
 import axios from 'axios';
-import Vue from 'vue';
 import CrossProjectTemplateGrantsDialog from '@/components/CrossProjectTemplateGrantsDialog.vue';
 import WorkflowEditor from '@/views/project/WorkflowEditor.vue';
 
@@ -103,7 +102,6 @@ describe('cross-project template UI', () => {
 
   it('maps an exact grant version into the existing workflow node model', () => {
     const context = {
-      $delete: Vue.delete,
       editingNode: {
         survey_inputs: [{ var: 'target', workflow_var: 'source' }],
         template_id: 8,
@@ -135,7 +133,6 @@ describe('cross-project template UI', () => {
 
   it('switches back to a local template without retaining grant provenance', () => {
     const context = {
-      $delete: Vue.delete,
       editingNode: {
         survey_inputs: [{ var: 'target', workflow_var: 'source' }],
         template_id: 41,

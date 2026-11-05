@@ -1,35 +1,22 @@
 import { expect } from 'chai';
-import { createLocalVue, shallowMount } from '@vue/test-utils';
-import Vuetify from 'vuetify';
+import { shallowMount } from '@vue/test-utils';
+
 import ArgsPicker from '@/components/ArgsPicker.vue';
 
-const localVue = createLocalVue();
-localVue.use(Vuetify);
-
 const textField = {
-  props: ['value'],
-  render(h) {
-    return h('input', {
-      domProps: { value: this.value },
-      on: {
-        input: (event) => this.$emit('input', event.target.value),
-        keydown: (event) => this.$emit('keydown', event),
-      },
-    });
-  },
+  props: ['modelValue'],
+  emits: ['update:modelValue', 'keydown'],
+  template: `<input :value="modelValue" @input="$emit('update:modelValue', $event.target.value)"
+    @keydown="$emit('keydown', $event)" />`,
 };
 
 const form = {
   data: () => ({ valid: true }),
   methods: {
-    validate() { return this.valid; },
+    async validate() { return { valid: this.valid }; },
     resetValidation() { this.valid = true; },
   },
-  render(h) {
-    return h('form', {
-      on: { submit: (event) => this.$emit('submit', event) },
-    }, this.$slots.default);
-  },
+  template: '<form><slot /></form>',
 };
 
 describe('ArgsPicker.vue', () => {
@@ -37,21 +24,23 @@ describe('ArgsPicker.vue', () => {
 
   function mountArgs(vars = []) {
     wrapper = shallowMount(ArgsPicker, {
-      localVue,
-      vuetify: new Vuetify(),
-      propsData: { vars },
-      mocks: { $t: (key) => key },
-      stubs: {
-        VDialog: { template: '<div><slot /></div>' },
-        VTextField: textField,
-        VForm: form,
+
+      props: { vars },
+      global: {
+        renderStubDefaultSlot: true,
+        mocks: { $t: (key) => key },
+        stubs: {
+          VDialog: { template: '<div><slot /></div>' },
+          VTextField: textField,
+          VForm: form,
+        },
       },
     });
     return wrapper;
   }
 
   afterEach(() => {
-    wrapper?.destroy();
+    wrapper?.unmount();
     wrapper = null;
   });
 

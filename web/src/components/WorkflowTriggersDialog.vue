@@ -1,7 +1,7 @@
 <template>
   <v-dialog
     v-model="open"
-    :fullscreen="$vuetify.breakpoint.xsOnly"
+    :fullscreen="$vuetify.display.xs"
     max-width="960"
     scrollable
   >
@@ -17,13 +17,13 @@
       <v-alert
         v-if="credential"
         type="warning"
-        text
+        variant="tonal"
         class="mx-4 mb-2"
         data-testid="workflow-trigger-credential"
       >
         <div class="font-weight-medium">{{ revealedSecretMessage }}</div>
         <v-text-field
-          :value="credential"
+          :model-value="credential"
           readonly
           hide-details
           class="mt-2"
@@ -37,8 +37,8 @@
           data-testid="workflow-trigger-secret-acknowledge"
         />
         <v-btn
-          text
-          small
+          variant="text"
+          size="small"
           class="mt-2"
           :disabled="isSigningSecret && !credentialAcknowledged"
           data-testid="workflow-trigger-secret-dismiss"
@@ -52,46 +52,46 @@
         <v-alert
           v-if="!capabilityAllowsWrite"
           type="info"
-          text
+          variant="tonal"
           data-testid="workflow-trigger-capability"
         >
           {{ $t('workflowTriggersUnavailable') }}
         </v-alert>
 
         <div class="d-flex align-center mb-3">
-          <span class="text-body-2">{{ $t('workflowTriggersHint') }}</span>
+          <span class="text-body-medium">{{ $t('workflowTriggersHint') }}</span>
           <v-spacer />
           <v-btn
             color="primary"
-            depressed
+            variant="flat"
             :disabled="!capabilityAllowsWrite"
             data-testid="workflow-trigger-add"
             @click="beginCreate"
           >
-            <v-icon left>mdi-plus</v-icon>
+            <v-icon start>mdi-plus</v-icon>
             {{ $t('add') }}
           </v-btn>
         </div>
 
         <v-progress-linear v-if="loading" indeterminate color="primary" />
         <div
-          v-else-if="triggers.length && $vuetify.breakpoint.xsOnly"
+          v-else-if="triggers.length && $vuetify.display.xs"
           class="WorkflowTriggersDialog__mobile"
         >
           <v-card
             v-for="trigger in triggers"
             :key="trigger.id"
-            outlined
+            variant="outlined"
             class="pa-3 mb-3"
           >
             <div class="d-flex align-center">
               <div>
                 <div class="font-weight-medium">{{ trigger.name }}</div>
-                <div class="text-caption">
+                <div class="text-body-small">
                   {{ triggerTypeLabel(trigger.type) }}
                   <span v-if="trigger.cron_format"> · {{ trigger.cron_format }}</span>
                 </div>
-                <div v-if="trigger.type === 'webhook'" class="text-caption">
+                <div v-if="trigger.type === 'webhook'" class="text-body-small">
                   {{ $t('webhookSigningCurrentKey') }}:
                   <code>{{ trigger.current_signing_key_id || '—' }}</code>
                   <span v-if="trigger.next_signing_key_id" class="d-block">
@@ -101,78 +101,80 @@
                 </div>
               </div>
               <v-spacer />
-              <v-chip x-small :color="trigger.enabled ? 'success' : 'grey'" dark>
+              <v-chip size="x-small" :color="trigger.enabled ? 'success' : 'grey'" dark>
                 {{ trigger.enabled ? $t('enabled') : $t('disabled') }}
               </v-chip>
             </div>
-            <div class="text-caption mt-2">
+            <div class="text-body-small mt-2">
               {{ $t('workflowTriggerLastResult') }}:
               {{ trigger.last_result || $t('never') }}
               <span v-if="trigger.last_fired"> · {{ formatDate(trigger.last_fired) }}</span>
             </div>
             <div class="d-flex flex-wrap justify-end mt-2 WorkflowTriggersDialog__actions">
               <v-btn
-                icon small :title="$t('edit')" :disabled="!capabilityAllowsWrite"
+                icon size="small" :title="$t('edit')" :disabled="!capabilityAllowsWrite"
                 @click="beginEdit(trigger)"
-              ><v-icon small>mdi-pencil</v-icon></v-btn>
+              ><v-icon size="small">mdi-pencil</v-icon></v-btn>
               <v-btn
-                icon small :title="trigger.enabled ? $t('disable') : $t('enable')"
+                icon size="small" :title="trigger.enabled ? $t('disable') : $t('enable')"
                 :disabled="!capabilityAllowsWrite || mutating"
                 @click="setEnabled(trigger, !trigger.enabled)"
-              ><v-icon small>{{ trigger.enabled ? 'mdi-pause' : 'mdi-play' }}</v-icon></v-btn>
+              >
+                <v-icon size="small">{{ trigger.enabled ? 'mdi-pause' : 'mdi-play' }}</v-icon>
+              </v-btn>
               <v-btn
-                v-if="usesCredential(trigger)" icon small
+                v-if="usesCredential(trigger)" icon size="small"
                 :title="$t('workflowTriggerRotateCredential')"
                 :disabled="!capabilityAllowsWrite || mutating"
                 @click="rotate(trigger)"
-              ><v-icon small>mdi-key-sync</v-icon></v-btn>
+              ><v-icon size="small">mdi-key-sync</v-icon></v-btn>
               <v-btn
                 v-if="trigger.type === 'webhook' && !hasCurrentWebhookKey(trigger)"
-                icon small :title="$t('webhookSigningCreate')"
+                icon size="small" :title="$t('webhookSigningCreate')"
                 :disabled="!capabilityAllowsWrite || mutating"
                 data-testid="workflow-trigger-signing-bootstrap"
                 @click="bootstrapWebhookSigning(trigger)"
-              ><v-icon small>mdi-key-plus</v-icon></v-btn>
+              ><v-icon size="small">mdi-key-plus</v-icon></v-btn>
               <v-btn
                 v-if="canStageWebhookKey(trigger)"
-                icon small :title="$t('webhookSigningStage')"
+                icon size="small" :title="$t('webhookSigningStage')"
                 :disabled="!capabilityAllowsWrite || mutating"
                 data-testid="workflow-trigger-signing-stage"
                 @click="stageWebhookSigning(trigger)"
-              ><v-icon small>mdi-key-chain</v-icon></v-btn>
+              ><v-icon size="small">mdi-key-chain</v-icon></v-btn>
               <v-btn
                 v-if="hasStagedWebhookKey(trigger)"
-                icon small :title="$t('webhookSigningPromote')"
+                icon size="small" :title="$t('webhookSigningPromote')"
                 :disabled="!capabilityAllowsWrite || mutating
                   || (isSigningSecret && !credentialAcknowledged)"
                 data-testid="workflow-trigger-signing-promote"
                 @click="promoteWebhookSigning(trigger)"
-              ><v-icon small>mdi-key-arrow-right</v-icon></v-btn>
+              ><v-icon size="small">mdi-key-arrow-right</v-icon></v-btn>
               <v-btn
                 v-if="hasNextWebhookKey(trigger)"
-                icon small :title="$t('webhookSigningRevokeNext')"
+                icon size="small" :title="$t('webhookSigningRevokeNext')"
                 :disabled="!capabilityAllowsWrite || mutating"
                 data-testid="workflow-trigger-signing-revoke"
                 @click="revokeWebhookSigning(trigger)"
-              ><v-icon small>mdi-key-remove</v-icon></v-btn>
+              ><v-icon size="small">mdi-key-remove</v-icon></v-btn>
               <v-btn
-                icon small :title="$t('workflowTriggerTest')"
+                icon size="small" :title="$t('workflowTriggerTest')"
                 :disabled="!capabilityAllowsExecute || !trigger.enabled || mutating"
                 @click="beginTest(trigger)"
-              ><v-icon small>mdi-play-circle-outline</v-icon></v-btn>
+              ><v-icon size="small">mdi-play-circle-outline</v-icon></v-btn>
               <v-btn
-                icon small :title="$t('workflowTriggerHistory')"
+                icon size="small" :title="$t('workflowTriggerHistory')"
                 @click="showHistory(trigger)"
-              ><v-icon small>mdi-history</v-icon></v-btn>
+              ><v-icon size="small">mdi-history</v-icon></v-btn>
               <v-btn
-                icon small color="error" :title="$t('delete')"
+                icon size="small" color="error" :title="$t('delete')"
                 :disabled="!capabilityAllowsWrite || mutating"
                 @click="pendingDelete = trigger"
-              ><v-icon small>mdi-delete</v-icon></v-btn>
+              ><v-icon size="small">mdi-delete</v-icon></v-btn>
             </div>
           </v-card>
         </div>
-        <v-simple-table v-else-if="triggers.length" class="WorkflowTriggersDialog__table">
+        <v-table v-else-if="triggers.length" class="WorkflowTriggersDialog__table">
           <thead>
             <tr>
               <th>{{ $t('name') }}</th>
@@ -186,10 +188,10 @@
             <tr v-for="trigger in triggers" :key="trigger.id">
               <td>
                 <div class="font-weight-medium">{{ trigger.name }}</div>
-                <div v-if="trigger.cron_format" class="text-caption">
+                <div v-if="trigger.cron_format" class="text-body-small">
                   {{ trigger.cron_format }}
                 </div>
-                <div v-if="trigger.type === 'webhook'" class="text-caption">
+                <div v-if="trigger.type === 'webhook'" class="text-body-small">
                   {{ $t('webhookSigningCurrentKey') }}:
                   <code>{{ trigger.current_signing_key_id || '—' }}</code>
                   <span v-if="trigger.next_signing_key_id" class="d-block">
@@ -200,94 +202,96 @@
               </td>
               <td>{{ triggerTypeLabel(trigger.type) }}</td>
               <td>
-                <v-chip x-small :color="trigger.enabled ? 'success' : 'grey'" dark>
+                <v-chip size="x-small" :color="trigger.enabled ? 'success' : 'grey'" dark>
                   {{ trigger.enabled ? $t('enabled') : $t('disabled') }}
                 </v-chip>
               </td>
               <td>
                 <div>{{ trigger.last_result || $t('never') }}</div>
-                <div v-if="trigger.last_fired" class="text-caption">
+                <div v-if="trigger.last_fired" class="text-body-small">
                   {{ formatDate(trigger.last_fired) }}
                 </div>
               </td>
               <td class="text-right WorkflowTriggersDialog__actions">
                 <v-btn
                   icon
-                  small
+                  size="small"
                   :title="$t('edit')"
                   :disabled="!capabilityAllowsWrite"
                   @click="beginEdit(trigger)"
-                ><v-icon small>mdi-pencil</v-icon></v-btn>
+                ><v-icon size="small">mdi-pencil</v-icon></v-btn>
                 <v-btn
                   icon
-                  small
+                  size="small"
                   :title="trigger.enabled ? $t('disable') : $t('enable')"
                   :disabled="!capabilityAllowsWrite || mutating"
                   @click="setEnabled(trigger, !trigger.enabled)"
-                ><v-icon small>{{ trigger.enabled ? 'mdi-pause' : 'mdi-play' }}</v-icon></v-btn>
+                >
+                  <v-icon size="small">{{ trigger.enabled ? 'mdi-pause' : 'mdi-play' }}</v-icon>
+                </v-btn>
                 <v-btn
                   v-if="usesCredential(trigger)"
                   icon
-                  small
+                  size="small"
                   :title="$t('workflowTriggerRotateCredential')"
                   :disabled="!capabilityAllowsWrite || mutating"
                   @click="rotate(trigger)"
-                ><v-icon small>mdi-key-sync</v-icon></v-btn>
+                ><v-icon size="small">mdi-key-sync</v-icon></v-btn>
                 <v-btn
                   v-if="trigger.type === 'webhook' && !hasCurrentWebhookKey(trigger)"
-                  icon small :title="$t('webhookSigningCreate')"
+                  icon size="small" :title="$t('webhookSigningCreate')"
                   :disabled="!capabilityAllowsWrite || mutating"
                   data-testid="workflow-trigger-signing-bootstrap"
                   @click="bootstrapWebhookSigning(trigger)"
-                ><v-icon small>mdi-key-plus</v-icon></v-btn>
+                ><v-icon size="small">mdi-key-plus</v-icon></v-btn>
                 <v-btn
                   v-if="canStageWebhookKey(trigger)"
-                  icon small :title="$t('webhookSigningStage')"
+                  icon size="small" :title="$t('webhookSigningStage')"
                   :disabled="!capabilityAllowsWrite || mutating"
                   data-testid="workflow-trigger-signing-stage"
                   @click="stageWebhookSigning(trigger)"
-                ><v-icon small>mdi-key-chain</v-icon></v-btn>
+                ><v-icon size="small">mdi-key-chain</v-icon></v-btn>
                 <v-btn
                   v-if="hasStagedWebhookKey(trigger)"
-                  icon small :title="$t('webhookSigningPromote')"
+                  icon size="small" :title="$t('webhookSigningPromote')"
                   :disabled="!capabilityAllowsWrite || mutating
                     || (isSigningSecret && !credentialAcknowledged)"
                   data-testid="workflow-trigger-signing-promote"
                   @click="promoteWebhookSigning(trigger)"
-                ><v-icon small>mdi-key-arrow-right</v-icon></v-btn>
+                ><v-icon size="small">mdi-key-arrow-right</v-icon></v-btn>
                 <v-btn
                   v-if="hasNextWebhookKey(trigger)"
-                  icon small :title="$t('webhookSigningRevokeNext')"
+                  icon size="small" :title="$t('webhookSigningRevokeNext')"
                   :disabled="!capabilityAllowsWrite || mutating"
                   data-testid="workflow-trigger-signing-revoke"
                   @click="revokeWebhookSigning(trigger)"
-                ><v-icon small>mdi-key-remove</v-icon></v-btn>
+                ><v-icon size="small">mdi-key-remove</v-icon></v-btn>
                 <v-btn
                   icon
-                  small
+                  size="small"
                   :title="$t('workflowTriggerTest')"
                   :disabled="!capabilityAllowsExecute || !trigger.enabled || mutating"
                   @click="beginTest(trigger)"
-                ><v-icon small>mdi-play-circle-outline</v-icon></v-btn>
+                ><v-icon size="small">mdi-play-circle-outline</v-icon></v-btn>
                 <v-btn
                   icon
-                  small
+                  size="small"
                   :title="$t('workflowTriggerHistory')"
                   @click="showHistory(trigger)"
-                ><v-icon small>mdi-history</v-icon></v-btn>
+                ><v-icon size="small">mdi-history</v-icon></v-btn>
                 <v-btn
                   icon
-                  small
+                  size="small"
                   color="error"
                   :title="$t('delete')"
                   :disabled="!capabilityAllowsWrite || mutating"
                   @click="pendingDelete = trigger"
-                ><v-icon small>mdi-delete</v-icon></v-btn>
+                ><v-icon size="small">mdi-delete</v-icon></v-btn>
               </td>
             </tr>
           </tbody>
-        </v-simple-table>
-        <v-alert v-else text type="info">{{ $t('workflowTriggerNone') }}</v-alert>
+        </v-table>
+        <v-alert v-else variant="tonal" type="info">{{ $t('workflowTriggerNone') }}</v-alert>
       </v-card-text>
     </v-card>
 
@@ -301,6 +305,7 @@
           <v-select
             v-model="form.type"
             :items="triggerTypes"
+            item-title="text"
             :label="$t('type')"
             :disabled="editingId != null"
           />
@@ -314,28 +319,29 @@
           />
 
           <div v-if="parameters.length" class="mt-4">
-            <div class="text-subtitle-2 mb-2">{{ $t('workflowTriggerInputs') }}</div>
+            <div class="text-label-large mb-2">{{ $t('workflowTriggerInputs') }}</div>
             <div
               v-for="parameter in parameters"
               :key="parameter.name"
               class="WorkflowTriggersDialog__mapping mb-3"
             >
-              <div class="text-body-2 font-weight-medium mb-1">
+              <div class="text-body-medium font-weight-medium mb-1">
                 {{ parameter.name }}
                 <span v-if="parameter.required" class="error--text">*</span>
               </div>
               <v-select
                 v-model="form.sources[parameter.name]"
                 :items="mappingSources()"
+                item-title="text"
                 :label="$t('workflowTriggerInputSource')"
-                dense
+                density="compact"
                 hide-details
               />
               <v-text-field
                 v-if="form.sources[parameter.name] === 'request'"
                 v-model="form.requestKeys[parameter.name]"
                 :label="$t('workflowTriggerRequestField')"
-                dense
+                density="compact"
               />
               <v-select
                 v-else-if="form.sources[parameter.name] === 'fixed'
@@ -343,40 +349,42 @@
                 v-model="form.fixedValues[parameter.name]"
                 :items="parameter.options || []"
                 :label="$t('value')"
-                dense
+                density="compact"
               />
               <v-select
                 v-else-if="form.sources[parameter.name] === 'fixed'
                   && parameter.type === 'boolean'"
                 v-model="form.fixedValues[parameter.name]"
                 :items="booleanValues"
+                item-title="text"
                 :label="$t('value')"
-                dense
+                density="compact"
               />
               <v-select
                 v-else-if="form.sources[parameter.name] === 'fixed'
                   && parameter.type === 'secret_reference'"
                 v-model="form.fixedValues[parameter.name]"
                 :items="secretOptions(parameter)"
+                item-title="text"
                 :label="$t('workflowTriggerCredentialReference')"
-                dense
+                density="compact"
               />
               <v-text-field
                 v-else-if="form.sources[parameter.name] === 'fixed'"
                 v-model="form.fixedValues[parameter.name]"
                 :type="parameter.type === 'integer' ? 'number' : 'text'"
                 :label="$t('value')"
-                dense
+                density="compact"
               />
             </div>
           </div>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="formDialog = false">{{ $t('cancel') }}</v-btn>
+          <v-btn variant="text" @click="formDialog = false">{{ $t('cancel') }}</v-btn>
           <v-btn
             color="primary"
-            depressed
+            variant="flat"
             :loading="mutating"
             :disabled="!form.name || !form.type || (form.type === 'schedule' && !form.cron_format)"
             data-testid="workflow-trigger-save"
@@ -390,7 +398,7 @@
       <v-card data-testid="workflow-trigger-test-form">
         <v-card-title>{{ $t('workflowTriggerTest') }}</v-card-title>
         <v-card-text>
-          <div v-if="testRequestMappings.length === 0" class="text-body-2">
+          <div v-if="testRequestMappings.length === 0" class="text-body-medium">
             {{ $t('workflowTriggerTestNoInputs') }}
           </div>
           <template v-for="mapping in testRequestMappings">
@@ -399,6 +407,7 @@
               :key="mapping.key"
               v-model="testValues[mapping.key]"
               :items="booleanValues"
+              item-title="text"
               :label="mapping.key"
             />
             <v-select
@@ -413,6 +422,7 @@
               :key="mapping.key"
               v-model="testValues[mapping.key]"
               :items="secretOptions(mapping.parameterDefinition)"
+              item-title="text"
               :label="mapping.key"
             />
             <v-text-field
@@ -434,7 +444,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="testDialog = false">{{ $t('cancel') }}</v-btn>
+          <v-btn variant="text" @click="testDialog = false">{{ $t('cancel') }}</v-btn>
           <v-btn color="primary" :loading="mutating" @click="testFire">
             {{ $t('workflowTriggerTest') }}
           </v-btn>
@@ -449,7 +459,7 @@
           <v-progress-linear v-if="historyLoading" indeterminate />
           <v-list v-else-if="history.length" two-line>
             <v-list-item v-for="entry in history" :key="entry.id">
-              <v-list-item-content>
+              <div>
                 <v-list-item-title>{{ entry.result || entry.status }}</v-list-item-title>
                 <v-list-item-subtitle>
                   {{ formatDate(entry.created) }}
@@ -467,14 +477,18 @@
                     · {{ formatDate(entry.webhook_last_replayed_at) }}
                   </span>
                 </v-list-item-subtitle>
-              </v-list-item-content>
+              </div>
             </v-list-item>
           </v-list>
-          <v-alert v-else text type="info">{{ $t('workflowTriggerHistoryEmpty') }}</v-alert>
+          <v-alert
+            v-else
+            variant="tonal"
+            type="info"
+          >{{ $t('workflowTriggerHistoryEmpty') }}</v-alert>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="historyDialog = false">{{ $t('close') }}</v-btn>
+          <v-btn variant="text" @click="historyDialog = false">{{ $t('close') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -510,10 +524,11 @@ function emptyForm() {
 }
 
 export default {
+  emits: ['update:modelValue'],
   components: { YesNoDialog },
 
   props: {
-    value: Boolean,
+    modelValue: Boolean,
     projectId: { type: Number, required: true },
     workflow: { type: Object, required: true },
     systemInfo: Object,
@@ -551,8 +566,8 @@ export default {
 
   computed: {
     open: {
-      get() { return this.value; },
-      set(value) { this.$emit('input', value); },
+      get() { return this.modelValue; },
+      set(value) { this.$emit('update:modelValue', value); },
     },
 
     parameters() {
@@ -605,7 +620,7 @@ export default {
   },
 
   watch: {
-    async value(value) {
+    async modelValue(value) {
       this.dismissCredential();
       if (value) {
         await this.load();
@@ -650,13 +665,9 @@ export default {
       this.parameters.forEach((parameter) => {
         const mapping = mappings.find(({ parameter: name }) => name === parameter.name);
         const source = mapping?.source || (parameter.required ? 'fixed' : 'none');
-        this.$set(this.form.sources, parameter.name, source);
-        this.$set(this.form.requestKeys, parameter.name, mapping?.key || parameter.name);
-        this.$set(
-          this.form.fixedValues,
-          parameter.name,
-          mapping?.value ?? this.initialFixedValue(parameter),
-        );
+        this.form.sources[parameter.name] = source;
+        this.form.requestKeys[parameter.name] = mapping?.key || parameter.name;
+        this.form.fixedValues[parameter.name] = mapping?.value ?? this.initialFixedValue(parameter);
       });
     },
 
@@ -802,11 +813,7 @@ export default {
       this.testingTrigger = trigger;
       this.testValues = {};
       this.testRequestMappings.forEach((mapping) => {
-        this.$set(
-          this.testValues,
-          mapping.key,
-          this.initialFixedValue(mapping.parameterDefinition),
-        );
+        this.testValues[mapping.key] = this.initialFixedValue(mapping.parameterDefinition);
       });
       this.testDialog = true;
     },

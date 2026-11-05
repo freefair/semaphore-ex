@@ -633,6 +633,7 @@ func (t *TaskRunner) prepareError(err error, errMsg string) error {
 
 func (t *TaskRunner) populateWorkflowDetails() error {
 	t.Task.WorkflowTemplateID = nil
+	t.Task.WorkflowVersion = nil
 	if t.Task.WorkflowRunID == nil || t.pool.workflowRepo == nil {
 		return nil
 	}
@@ -645,6 +646,9 @@ func (t *TaskRunner) populateWorkflowDetails() error {
 	}
 	if run.WorkflowTemplateID != 0 {
 		t.Task.WorkflowTemplateID = &run.WorkflowTemplateID
+	}
+	if run.Version != nil && *run.Version != "" {
+		t.Task.WorkflowVersion = run.Version
 	}
 	return nil
 }

@@ -57,6 +57,40 @@ func loginWithIdentityServices(
 					ID: provider.ID, Name: provider.Name,
 				})
 			}
+			// Include unsupported legacy providers so their operator-facing error is reachable,
+			// but never shadow a managed provider, including an inactive one.
+			legacy := util.Config.ActiveLdapProviders()
+			var rejected []util.LdapProviderEntry
+			for _, entry := range legacy {
+				if legacyLDAPGroupSettingsConfigured(entry.Provider) {
+					rejected = append(rejected, entry)
+				}
+			}
+			if len(rejected) > 0 {
+				allManaged, err := ldapService.Providers(r.Context())
+				if err != nil {
+					writeLDAPError(w, err)
+					return
+				}
+				for _, entry := range rejected {
+					collision := false
+					for _, provider := range allManaged {
+						if strings.EqualFold(strings.TrimSpace(provider.ID), strings.TrimSpace(entry.ID)) {
+							collision = true
+							break
+						}
+					}
+					if !collision {
+						name := entry.Provider.DisplayName
+						if name == "" {
+							name = entry.ID
+						}
+						config.LdapProviders = append(config.LdapProviders, loginMetadataLdapProvider{
+							ID: entry.ID, Name: name, Color: entry.Provider.Color, Icon: entry.Provider.Icon,
+						})
+					}
+				}
+			}
 			config.LoginWithPassword = !util.Config.PasswordLoginDisable || len(managedProviders) > 0
 			config.LocalRecoveryOnly = util.Config.PasswordLoginDisable && len(managedProviders) > 0
 		} else {
@@ -159,6 +193,19 @@ func loginWithIdentityServices(
 			if provisioned {
 				recordExternalResolution(r, user, resolvedProvisioned, meta)
 			}
+			if errors.Is(err, pro_interfaces.ErrLDAPProviderNotFound) && hasUnsupportedLegacyLDAPProvider(providerID) {
+				collision, collisionErr := managedLDAPProviderIDExists(r.Context(), ldapService, providerID)
+				if collisionErr != nil {
+					recordLoginFailure(r, login.Auth, meta, audit.ReasonProviderError)
+					writeLDAPError(w, collisionErr)
+					return
+				}
+				if !collision {
+					recordLoginFailure(r, login.Auth, meta, audit.ReasonProviderError)
+					helpers.WriteErrorStatus(w, "LDAP_GROUP_MAPPING_UNSUPPORTED", http.StatusServiceUnavailable)
+					return
+				}
+			}
 			if !errors.Is(err, pro_interfaces.ErrLDAPUnavailable) {
 				outcome, reason := ldapAuditReason(err)
 				var actorID *int
@@ -211,6 +258,10 @@ func loginWithIdentityServices(
 			reason = ldapFailureReason(err)
 		}
 		recordLoginFailure(r, login.Auth, meta, reason)
+		if errors.Is(err, errLegacyLDAPGroupMappingUnsupported) {
+			helpers.WriteErrorStatus(w, "LDAP_GROUP_MAPPING_UNSUPPORTED", http.StatusServiceUnavailable)
+			return
+		}
 		if errors.Is(err, db.ErrNotFound) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -279,6 +330,30 @@ func passwordLoginAllowed(
 	return allowed, err
 }
 
+var errLegacyLDAPGroupMappingUnsupported = errors.New("legacy LDAP group mapping configuration is not supported")
+
+func managedLDAPProviderIDExists(ctx context.Context, service pro_interfaces.LDAPService, providerID string) (bool, error) {
+	providers, err := service.Providers(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, provider := range providers {
+		if strings.EqualFold(strings.TrimSpace(provider.ID), strings.TrimSpace(providerID)) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func legacyLDAPGroupSettingsConfigured(provider util.LdapProvider) bool {
+	return provider.GroupSearchDN != "" || provider.GroupSearchFilter != "" || provider.GroupNameAttribute != ""
+}
+
+func hasUnsupportedLegacyLDAPProvider(providerID string) bool {
+	provider, ok := util.Config.GetLdapProvider(providerID)
+	return ok && legacyLDAPGroupSettingsConfigured(provider)
+}
+
 func loginByLegacyLDAP(
 	ctx context.Context,
 	store db.Store,
@@ -288,6 +363,9 @@ func loginByLegacyLDAP(
 ) (db.User, externalResolution, error) {
 	ldapUser, externalID, err := authenticateLegacyLDAPProfile(ctx, providerID, auth, password)
 	if err != nil || ldapUser == nil {
+		if errors.Is(err, errLegacyLDAPGroupMappingUnsupported) {
+			return db.User{}, resolvedExisting, err
+		}
 		if err != nil {
 			log.WithError(err).WithFields(log.Fields{
 				"context": "ldap", "provider": providerID,
@@ -310,6 +388,9 @@ func authenticateLegacyLDAPProfile(
 	provider, ok := util.Config.GetLdapProvider(providerID)
 	if !ok {
 		return nil, "", pro_interfaces.ErrLDAPProviderNotFound
+	}
+	if legacyLDAPGroupSettingsConfigured(provider) {
+		return nil, "", errLegacyLDAPGroupMappingUnsupported
 	}
 	mappings := provider.GetMappings()
 	client := identityServices.NewLegacyLDAPClient()
@@ -350,6 +431,9 @@ func loginLegacyCompatible(
 	if _, ok := util.Config.GetLdapProvider("ldap"); ok {
 		ldapUser, externalID, err := authenticateLegacyLDAPProfile(ctx, "ldap", auth, password)
 		if err != nil {
+			if errors.Is(err, errLegacyLDAPGroupMappingUnsupported) {
+				return db.User{}, resolvedExisting, audit.AuthMethodMetadata{Method: audit.LoginMethodLDAP, Provider: "ldap"}, err
+			}
 			log.WithError(err).WithFields(log.Fields{
 				"context": "ldap", "provider": "ldap",
 			}).Warn("Failed to authenticate against legacy LDAP provider")

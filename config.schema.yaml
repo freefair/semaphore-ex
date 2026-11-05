@@ -138,6 +138,15 @@ properties:
     description: >
       Disable verification of the LDAP server's TLS certificate for the legacy
       flat ldap_* config. Defaults to false (certificates are verified).
+  ldap_group_search_dn:
+    type: string
+    description: Unsupported for legacy LDAP. Configure group mapping through the managed LDAP capability.
+  ldap_group_search_filter:
+    type: string
+    description: Unsupported for legacy LDAP. Configure group mapping through the managed LDAP capability.
+  ldap_group_name_attribute:
+    type: string
+    description: Unsupported for legacy LDAP. Configure group mapping through the managed LDAP capability.
   ldap_providers:
     type: object
     additionalProperties: { $ref: "#/$defs/LdapProvider" }
@@ -461,6 +470,15 @@ $defs:
         description: LDAP bind password (sensitive).
       search_dn:     { type: string }
       search_filter: { type: string }
+      group_search_dn:
+        type: string
+        description: Unsupported for legacy LDAP. Configure group mapping through the managed LDAP capability.
+      group_search_filter:
+        type: string
+        description: Unsupported for legacy LDAP. Configure group mapping through the managed LDAP capability.
+      group_name_attribute:
+        type: string
+        description: Unsupported for legacy LDAP. Configure group mapping through the managed LDAP capability.
       mappings:     { $ref: "#/$defs/LdapMappings" }
       color:        { type: string }
       icon:         { type: string, description: MDI icon name without the mdi- prefix. }

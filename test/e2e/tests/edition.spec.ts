@@ -1,11 +1,13 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { expect, test } from '@playwright/test';
 
 test('full-product production bundle loads', async ({ page }) => {
   const runtimeErrors: string[] = [];
   const initialRequests = new Set<string>();
-  let submittedCredentials: Record<string, unknown> | undefined;
+  const fixturePassword = randomUUID();
+  let submittedExpectedCredentials = false;
   page.on('pageerror', (error) => runtimeErrors.push(error.message));
   page.on('console', (message) => {
     const expectedAuthenticationRejection = message.text()
@@ -26,7 +28,9 @@ test('full-product production bundle loads', async ({ page }) => {
   });
   await page.route('**/api/auth/login', async (route) => {
     if (route.request().method() === 'POST') {
-      submittedCredentials = route.request().postDataJSON();
+      const submitted = route.request().postDataJSON();
+      submittedExpectedCredentials = submitted.auth === 'edition-smoke'
+        && submitted.password === fixturePassword;
       await route.fulfill({
         status: 401,
         contentType: 'application/json',
@@ -62,12 +66,9 @@ test('full-product production bundle loads', async ({ page }) => {
     fullPage: true,
   });
 
-  await page.getByTestId('auth-username').fill('edition-smoke');
-  await page.getByTestId('auth-password').fill('not-a-real-password');
+  await page.getByTestId('auth-username').locator('input').fill('edition-smoke');
+  await page.getByTestId('auth-password').locator('input').fill(fixturePassword);
   await page.getByTestId('auth-signin').click();
-  await expect.poll(() => submittedCredentials).toEqual({
-    auth: 'edition-smoke',
-    password: 'not-a-real-password',
-  });
+  await expect.poll(() => submittedExpectedCredentials).toBe(true);
   expect(runtimeErrors).toEqual([]);
 });

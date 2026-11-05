@@ -752,13 +752,14 @@ type ConfigType struct {
 	SecretsPath string `json:"secrets_path,omitempty" env:"SEMAPHORE_SECRETS_PATH"`
 
 	// HomeDirMode controls how the HOME environment variable is set for tasks.
-	//   "template_home" (default) — HOME is set to a per-template directory,
-	//       isolating .ansible/ across parallel tasks. Repo is cloned into a
-	//       "src" subdirectory under HOME.
+	//   "template_dir" (default) — HOME is not overridden (keeps the HOME of the
+	//       server or runner process). Ansible tasks get ANSIBLE_HOME set to a
+	//       per-template "_home/.ansible" directory under the project temp
+	//       directory, isolating .ansible/ across parallel tasks.
 	//   "project_home" — HOME is set to the project temp directory (legacy
 	//       behavior). Parallel ansible-galaxy runs in the same project may conflict.
-	//   "user_home" — HOME is not overridden (keeps the real user HOME).
-	//       ANSIBLE_HOME is set per template to isolate .ansible/ for Ansible tasks.
+	//   "user_home" — HOME is not overridden (keeps the real user HOME) and
+	//       ANSIBLE_HOME is not set.
 	HomeDirMode string `json:"home_dir_mode,omitempty" rule:"^(user_home|project_home|template_dir)?$" env:"SEMAPHORE_HOME_DIR_MODE" default:"template_dir"`
 
 	// SshConfigPath is a path to the custom SSH config file.
@@ -829,6 +830,10 @@ type ConfigType struct {
 	// certificate for the legacy flat ldap_* config. Defaults to false
 	// (certificates are verified). See LdapProvider.TLSSkipVerify.
 	LdapTLSSkipVerify bool `json:"ldap_tls_skip_verify,omitempty" env:"SEMAPHORE_LDAP_TLS_SKIP_VERIFY"`
+	// Legacy group settings are retained for explicit rejection at the LDAP boundary.
+	LdapGroupSearchDN      string `json:"ldap_group_search_dn,omitempty" env:"SEMAPHORE_LDAP_GROUP_SEARCH_DN"`
+	LdapGroupSearchFilter  string `json:"ldap_group_search_filter,omitempty" env:"SEMAPHORE_LDAP_GROUP_SEARCH_FILTER"`
+	LdapGroupNameAttribute string `json:"ldap_group_name_attribute,omitempty" env:"SEMAPHORE_LDAP_GROUP_NAME_ATTRIBUTE"`
 
 	// LdapProviders configures legacy LDAP providers. The selected Enhanced
 	// managed LDAP lifecycle uses database-backed providers instead. The key is

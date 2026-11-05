@@ -16,20 +16,20 @@
       </v-card-text>
 
       <v-card-text v-else-if="error" class="py-4">
-        <v-alert type="error" dense outlined>{{ error }}</v-alert>
+        <v-alert type="error" density="compact" variant="outlined">{{ error }}</v-alert>
       </v-card-text>
 
       <v-card-text v-else-if="health || dockerAdmin || kubernetesAdmin" class="py-2 mb-4">
-        <v-subheader v-if="health" class="px-0">{{ $t('runnerHealth') }}</v-subheader>
+        <v-list-subheader v-if="health" class="px-0">{{ $t('runnerHealth') }}</v-list-subheader>
         <v-card
           v-if="health"
           data-testid="runner-health-panel"
           style="background: var(--highlighted-card-bg-color)"
         >
           <v-card-text class="px-0 py-2">
-            <v-simple-table
-              v-if="!$vuetify.breakpoint.xsOnly"
-              dense
+            <v-table
+              v-if="!$vuetify.display.xs"
+              density="compact"
               class="RunnerHealthDialog__healthTable"
             >
               <tbody>
@@ -41,7 +41,7 @@
                         data-testid="runner-heartbeat-state"
                         :color="heartbeatColor"
                         :dark="health.heartbeat_state !== 'offline'"
-                        small
+                        size="small"
                       >
                         {{ heartbeatLabel }}
                       </v-chip>
@@ -60,7 +60,9 @@
                 <tr>
                   <td class="font-weight-medium">{{ $t('runnerStartedAt') }}</td>
                   <td>
-                    <span v-if="health.started_at">{{ health.started_at | formatDate }}</span>
+                    <span
+                      v-if="health.started_at"
+                    >{{ $filters.formatDate(health.started_at) }}</span>
                     <span v-else>{{ $t('notReported') }}</span>
                   </td>
                 </tr>
@@ -72,7 +74,7 @@
                   <td class="font-weight-medium">{{ $t('lastActivity') }}</td>
                   <td>
                     <span v-if="health.last_heartbeat">
-                      {{ health.last_heartbeat | formatDate }}
+                      {{ $filters.formatDate(health.last_heartbeat) }}
                     </span>
                     <span v-else>{{ $t('runnerHeartbeatNever') }}</span>
                   </td>
@@ -84,78 +86,80 @@
                   </td>
                 </tr>
               </tbody>
-            </v-simple-table>
+            </v-table>
             <v-list v-else class="RunnerHealthDialog__healthList">
               <v-list-item>
-                <v-list-item-content>
+                <div>
                   <v-list-item-subtitle>{{ $t('status') }}</v-list-item-subtitle>
                   <div class="RunnerHealthDialog__heartbeat mt-1">
                     <v-chip
                       data-testid="runner-heartbeat-state"
                       :color="heartbeatColor"
                       :dark="health.heartbeat_state !== 'offline'"
-                      small
+                      size="small"
                     >
                       {{ heartbeatLabel }}
                     </v-chip>
                     <span>{{ heartbeatMessage }}</span>
                   </div>
-                </v-list-item-content>
+                </div>
               </v-list-item>
               <v-list-item>
-                <v-list-item-content>
+                <div>
                   <v-list-item-subtitle>{{ $t('version') }}</v-list-item-subtitle>
                   <div>{{ health.version || $t('notReported') }}</div>
-                </v-list-item-content>
+                </div>
               </v-list-item>
               <v-list-item>
-                <v-list-item-content>
+                <div>
                   <v-list-item-subtitle>{{ $t('runnerPlatform') }}</v-list-item-subtitle>
                   <div>{{ health.platform || $t('notReported') }}</div>
-                </v-list-item-content>
+                </div>
               </v-list-item>
               <v-list-item>
-                <v-list-item-content>
+                <div>
                   <v-list-item-subtitle>{{ $t('runnerStartedAt') }}</v-list-item-subtitle>
-                  <div v-if="health.started_at">{{ health.started_at | formatDate }}</div>
+                  <div v-if="health.started_at">{{ $filters.formatDate(health.started_at) }}</div>
                   <div v-else>{{ $t('notReported') }}</div>
-                </v-list-item-content>
+                </div>
               </v-list-item>
               <v-list-item>
-                <v-list-item-content>
+                <div>
                   <v-list-item-subtitle>{{ $t('runnerUptime') }}</v-list-item-subtitle>
                   <div data-testid="runner-uptime">
                     {{ formatUptime(health.uptime_seconds) }}
                   </div>
-                </v-list-item-content>
+                </div>
               </v-list-item>
               <v-list-item>
-                <v-list-item-content>
+                <div>
                   <v-list-item-subtitle>{{ $t('lastActivity') }}</v-list-item-subtitle>
-                  <div v-if="health.last_heartbeat">{{ health.last_heartbeat | formatDate }}</div>
+                  <div
+                    v-if="health.last_heartbeat"
+                  >{{ $filters.formatDate(health.last_heartbeat) }}</div>
                   <div v-else>{{ $t('runnerHeartbeatNever') }}</div>
-                </v-list-item-content>
+                </div>
               </v-list-item>
               <v-list-item>
-                <v-list-item-content>
+                <div>
                   <v-list-item-subtitle>{{ $t('runnerCurrentLoad') }}</v-list-item-subtitle>
                   <div data-testid="runner-current-load">
                     {{ health.current_load }} / {{ health.max_parallel_tasks || '∞' }}
                   </div>
-                </v-list-item-content>
+                </div>
               </v-list-item>
             </v-list>
           </v-card-text>
         </v-card>
 
         <template v-if="dockerAdmin">
-          <v-subheader class="px-0 mt-3">Docker execution policy</v-subheader>
+          <v-list-subheader class="px-0 mt-3">Docker execution policy</v-list-subheader>
           <v-card
             data-testid="runner-docker-policy-panel"
             style="background: var(--highlighted-card-bg-color)"
           >
             <v-card-text>
-              <v-alert v-if="dockerPolicyError" type="error" dense text>
+              <v-alert v-if="dockerPolicyError" type="error" density="compact" variant="tonal">
                 {{ dockerPolicyError }}
               </v-alert>
               <template v-if="dockerPolicy">
@@ -164,7 +168,7 @@
                   <div>
                     <strong>Runner acknowledgement:</strong>
                     <v-chip
-                      small
+                      size="small"
                       :color="dockerPolicyAcknowledged ? 'success' : 'warning'"
                       :text-color="dockerPolicyAcknowledged ? 'white' : undefined"
                       data-testid="runner-docker-policy-ack"
@@ -193,8 +197,8 @@
                 </div>
                 <v-btn
                   class="mt-3"
-                  small
-                  outlined
+                  size="small"
+                  variant="outlined"
                   color="primary"
                   data-testid="runner-docker-policy-edit"
                   @click="beginDockerPolicyEdit"
@@ -209,23 +213,31 @@
                     v-model="dockerPolicyDraft.allowedImagesText"
                     label="Allowed immutable image digests (one per line)"
                     rows="3"
-                    outlined
-                    dense
+                    variant="outlined"
+                    density="compact"
                     hide-details="auto"
                   />
                   <v-row class="mt-1">
                     <v-col cols="12" sm="6">
-                      <v-text-field v-model="dockerPolicyDraft.network" label="Network" dense />
+                      <v-text-field
+                        v-model="dockerPolicyDraft.network"
+                        label="Network"
+                        density="compact"
+                      />
                     </v-col>
                     <v-col cols="12" sm="6">
-                      <v-text-field v-model="dockerPolicyDraft.user" label="Container user" dense />
+                      <v-text-field
+                        v-model="dockerPolicyDraft.user"
+                        label="Container user"
+                        density="compact"
+                      />
                     </v-col>
                     <v-col cols="12" sm="4">
                       <v-text-field
                         v-model.number="dockerPolicyDraft.nano_cpus"
                         type="number"
                         label="Nano CPUs"
-                        dense
+                        density="compact"
                       />
                     </v-col>
                     <v-col cols="12" sm="4">
@@ -233,7 +245,7 @@
                         v-model.number="dockerPolicyDraft.memory_bytes"
                         type="number"
                         label="Memory bytes"
-                        dense
+                        density="compact"
                       />
                     </v-col>
                     <v-col cols="12" sm="4">
@@ -241,7 +253,7 @@
                         v-model.number="dockerPolicyDraft.pids_limit"
                         type="number"
                         label="PID limit"
-                        dense
+                        density="compact"
                       />
                     </v-col>
                     <v-col cols="12" sm="6">
@@ -249,7 +261,7 @@
                         v-model.number="dockerPolicyDraft.pull_timeout_seconds"
                         type="number"
                         label="Pull timeout seconds"
-                        dense
+                        density="compact"
                       />
                     </v-col>
                     <v-col cols="12" sm="6">
@@ -257,20 +269,25 @@
                         v-model.number="dockerPolicyDraft.max_image_size_bytes"
                         type="number"
                         label="Maximum image bytes"
-                        dense
+                        density="compact"
                       />
                     </v-col>
                   </v-row>
                   <v-btn
                     color="primary"
-                    small
+                    size="small"
                     :loading="savingDockerPolicy"
                     data-testid="runner-docker-policy-save"
                     @click="saveDockerPolicy"
                   >
                     Save policy
                   </v-btn>
-                  <v-btn small text class="ml-2" @click="editingDockerPolicy = false">
+                  <v-btn
+                    size="small"
+                    variant="text"
+                    class="ml-2"
+                    @click="editingDockerPolicy = false"
+                  >
                     {{ $t('cancel') }}
                   </v-btn>
                 </div>
@@ -278,13 +295,13 @@
             </v-card-text>
           </v-card>
 
-          <v-subheader class="px-0 mt-3">Docker quarantine</v-subheader>
+          <v-list-subheader class="px-0 mt-3">Docker quarantine</v-list-subheader>
           <v-card
             data-testid="runner-docker-diagnostics-panel"
             style="background: var(--highlighted-card-bg-color)"
           >
             <v-card-text>
-              <v-alert v-if="dockerDiagnosticsError" type="error" dense text>
+              <v-alert v-if="dockerDiagnosticsError" type="error" density="compact" variant="tonal">
                 {{ dockerDiagnosticsError }}
               </v-alert>
               <div v-if="dockerDiagnostics.length">
@@ -296,12 +313,12 @@
                 >
                   <div>
                     <strong>{{ dockerDiagnosticTitle(diagnostic) }}</strong>
-                    <div class="text--secondary text-body-2">
-                      {{ diagnostic.observed_at | formatDate }}
+                    <div class="text--secondary text-body-medium">
+                      {{ $filters.formatDate(diagnostic.observed_at) }}
                     </div>
                   </div>
                   <v-btn
-                    small
+                    size="small"
                     color="warning"
                     :loading="remediatingDockerDiagnostics.includes(
                       dockerDiagnosticKey(diagnostic)
@@ -316,7 +333,7 @@
             </v-card-text>
             <v-card-actions v-if="dockerDiagnosticsNextCursor">
               <v-spacer />
-              <v-btn text color="primary" @click="loadDockerDiagnostics(true)">
+              <v-btn variant="text" color="primary" @click="loadDockerDiagnostics(true)">
                 Load more
               </v-btn>
             </v-card-actions>
@@ -324,13 +341,13 @@
         </template>
 
         <template v-if="kubernetesAdmin">
-          <v-subheader class="px-0 mt-3">Kubernetes execution policy</v-subheader>
+          <v-list-subheader class="px-0 mt-3">Kubernetes execution policy</v-list-subheader>
           <v-card
             data-testid="runner-kubernetes-policy-panel"
             style="background: var(--highlighted-card-bg-color)"
           >
             <v-card-text>
-              <v-alert v-if="kubernetesPolicyError" type="error" dense text>
+              <v-alert v-if="kubernetesPolicyError" type="error" density="compact" variant="tonal">
                 {{ kubernetesPolicyError }}
               </v-alert>
               <template v-if="kubernetesPolicy">
@@ -340,7 +357,7 @@
                   <div>
                     <strong>Runner acknowledgement:</strong>
                     <v-chip
-                      small
+                      size="small"
                       :color="kubernetesPolicyAcknowledged ? 'success' : 'warning'"
                       :text-color="kubernetesPolicyAcknowledged ? 'white' : undefined"
                       data-testid="runner-kubernetes-policy-ack"
@@ -381,13 +398,18 @@
             </v-card-text>
           </v-card>
 
-          <v-subheader class="px-0 mt-3">Kubernetes reconciliation</v-subheader>
+          <v-list-subheader class="px-0 mt-3">Kubernetes reconciliation</v-list-subheader>
           <v-card
             data-testid="runner-kubernetes-diagnostics-panel"
             style="background: var(--highlighted-card-bg-color)"
           >
             <v-card-text>
-              <v-alert v-if="kubernetesDiagnosticsError" type="error" dense text>
+              <v-alert
+                v-if="kubernetesDiagnosticsError"
+                type="error"
+                density="compact"
+                variant="tonal"
+              >
                 {{ kubernetesDiagnosticsError }}
               </v-alert>
               <div v-if="kubernetesDiagnostics.length">
@@ -399,13 +421,13 @@
                 >
                   <div>
                     <strong>{{ kubernetesDiagnosticTitle(diagnostic) }}</strong>
-                    <div class="text--secondary text-body-2">
+                    <div class="text--secondary text-body-medium">
                       {{ diagnostic.reason || 'No additional detail' }}
                     </div>
                   </div>
                   <v-btn
                     v-if="diagnostic.remediation"
-                    small
+                    size="small"
                     color="warning"
                     :loading="remediatingKubernetesDiagnostics.includes(
                       kubernetesDiagnosticKey(diagnostic)
@@ -422,17 +444,17 @@
           </v-card>
         </template>
 
-        <v-subheader v-if="projectId" class="px-0 mt-3">
+        <v-list-subheader v-if="projectId" class="px-0 mt-3">
           {{ $t('runnerAssignmentHistory') }}
-        </v-subheader>
+        </v-list-subheader>
         <v-card
           v-if="projectId"
           data-testid="runner-history-panel"
           style="background: var(--highlighted-card-bg-color)"
         >
-          <v-simple-table
-            v-if="history.length && !$vuetify.breakpoint.xsOnly"
-            dense
+          <v-table
+            v-if="history.length && !$vuetify.display.xs"
+            density="compact"
             style="background: transparent"
           >
             <thead>
@@ -451,40 +473,40 @@
                 <td style="min-width: 190px">
                   <div>
                     <span class="text--secondary">{{ $t('started') }}:</span>
-                    <span v-if="item.start"> {{ item.start | formatDate }}</span>
+                    <span v-if="item.start"> {{ $filters.formatDate(item.start) }}</span>
                     <span v-else> —</span>
                   </div>
                   <div>
                     <span class="text--secondary">{{ $t('end') }}:</span>
-                    <span v-if="item.end"> {{ item.end | formatDate }}</span>
+                    <span v-if="item.end"> {{ $filters.formatDate(item.end) }}</span>
                     <span v-else> —</span>
                   </div>
                 </td>
               </tr>
             </tbody>
-          </v-simple-table>
+          </v-table>
           <v-list v-else-if="history.length" class="RunnerHealthDialog__historyList">
             <v-list-item v-for="item in history" :key="item.task_id">
-              <v-list-item-content>
+              <div>
                 <v-list-item-title class="font-weight-medium" style="white-space: normal">
                   #{{ item.task_id }} — {{ item.template_name }}
                 </v-list-item-title>
                 <v-list-item-subtitle class="mt-1">
                   {{ item.status }}
                 </v-list-item-subtitle>
-                <div class="text-body-2 mt-2">
+                <div class="text-body-medium mt-2">
                   <div>
                     <span class="text--secondary">{{ $t('started') }}:</span>
-                    <span v-if="item.start"> {{ item.start | formatDate }}</span>
+                    <span v-if="item.start"> {{ $filters.formatDate(item.start) }}</span>
                     <span v-else> —</span>
                   </div>
                   <div>
                     <span class="text--secondary">{{ $t('end') }}:</span>
-                    <span v-if="item.end"> {{ item.end | formatDate }}</span>
+                    <span v-if="item.end"> {{ $filters.formatDate(item.end) }}</span>
                     <span v-else> —</span>
                   </div>
                 </div>
-              </v-list-item-content>
+              </div>
             </v-list-item>
           </v-list>
           <v-card-text v-else class="text--secondary">
@@ -494,7 +516,7 @@
             <v-spacer />
             <v-btn
               data-testid="runner-history-load-more"
-              text
+              variant="text"
               color="primary"
               :loading="historyLoading"
               @click="loadMore"
@@ -513,8 +535,9 @@ import axios from 'axios';
 import { getErrorMessage } from '@/lib/error';
 
 export default {
+  emits: ['update:modelValue'],
   props: {
-    value: Boolean,
+    modelValue: Boolean,
     projectId: Number,
     runner: Object,
   },
@@ -550,10 +573,10 @@ export default {
   computed: {
     dialog: {
       get() {
-        return this.value;
+        return this.modelValue;
       },
       set(value) {
-        this.$emit('input', value);
+        this.$emit('update:modelValue', value);
       },
     },
 
@@ -640,7 +663,7 @@ export default {
   },
 
   watch: {
-    value(open) {
+    modelValue(open) {
       if (open) {
         this.load();
       }
@@ -783,7 +806,7 @@ export default {
       if (!this.dockerRemediationKeys[diagnosticKey]) {
         const random = window.crypto?.randomUUID?.()
           || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        this.$set(this.dockerRemediationKeys, diagnosticKey, `ui-${random}`);
+        this.dockerRemediationKeys[diagnosticKey] = `ui-${random}`;
       }
       return this.dockerRemediationKeys[diagnosticKey];
     },
@@ -811,7 +834,7 @@ export default {
           `/api/runners/${this.runner.id}/docker-reconciliation/remediation`,
           payload,
         );
-        this.$delete(this.dockerRemediationKeys, diagnosticKey);
+        delete this.dockerRemediationKeys[diagnosticKey];
         await this.loadDockerDiagnostics(false);
       } catch (error) {
         this.dockerDiagnosticsError = getErrorMessage(error);
@@ -876,7 +899,7 @@ export default {
       if (!this.kubernetesRemediationKeys[diagnosticKey]) {
         const random = window.crypto?.randomUUID?.()
           || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        this.$set(this.kubernetesRemediationKeys, diagnosticKey, `ui-${random}`);
+        this.kubernetesRemediationKeys[diagnosticKey] = `ui-${random}`;
       }
       return this.kubernetesRemediationKeys[diagnosticKey];
     },
@@ -896,7 +919,7 @@ export default {
             idempotency_key: this.kubernetesRemediationIdempotencyKey(diagnostic),
           },
         );
-        this.$delete(this.kubernetesRemediationKeys, diagnosticKey);
+        delete this.kubernetesRemediationKeys[diagnosticKey];
         await this.loadKubernetesDiagnostics();
       } catch (error) {
         this.kubernetesDiagnosticsError = getErrorMessage(error);

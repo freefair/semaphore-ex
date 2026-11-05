@@ -1,75 +1,116 @@
 <template>
-  <div class="auth">
+  <div
+    class="auth"
+    data-testid="auth-page"
+    :data-state="loginWithPassword === null || signInProcess
+      ? 'loading' : (signInError != null ? 'error' : 'ready')"
+  >
     <v-dialog v-model="loginHelpDialog" max-width="600">
-      <v-card>
+      <v-card data-testid="authHelpDialog">
         <v-card-title>
           {{ $t('howToFixSigninIssues') }}
           <v-spacer></v-spacer>
-          <v-btn icon @click="loginHelpDialog = false">
+          <v-btn
+            icon
+            variant="text"
+            @click="loginHelpDialog = false"
+            data-testid="authHelpDialog-closeIcon"
+          >
             <v-icon>mdi-close</v-icon>
           </v-btn>
         </v-card-title>
         <v-card-text>
-          <p class="text-body-1">
+          <p class="text-body-large">
             {{ $t('firstlyYouNeedAccessToTheServerWhereSemaphoreRunni') }}
           </p>
-          <p class="text-body-1">
+          <p class="text-body-large">
             {{ $t('executeTheFollowingCommandOnTheServerToSeeExisting') }}
           </p>
-          <v-alert dense text color="info" style="font-family: monospace">
+          <v-alert
+            density="compact"
+            variant="tonal"
+            color="info"
+            style="font-family: monospace"
+            data-testid="authHelpDialog-userListCmd"
+          >
             {{ $t('semaphoreUserList') }}
           </v-alert>
-          <p class="text-body-1">
+          <p class="text-body-large">
             {{ $t('youCanChangePasswordOfExistingUser') }}
           </p>
-          <v-alert dense text color="info" style="font-family: monospace">
+          <v-alert
+            density="compact"
+            variant="tonal"
+            color="info"
+            style="font-family: monospace"
+            data-testid="authHelpDialog-changePasswordCmd"
+          >
             {{
               $t('semaphoreUserChangebyloginLoginUser123Password', {
                 makePasswordExample: makePasswordExample(),
               })
             }}
           </v-alert>
-          <p class="text-body-1">
+          <p class="text-body-large">
             {{ $t('orCreateNewAdminUser') }}
           </p>
-          <v-alert dense text color="info" style="font-family: monospace">
+          <v-alert
+            density="compact"
+            variant="tonal"
+            color="info"
+            style="font-family: monospace"
+            data-testid="authHelpDialog-addAdminCmd"
+          >
             semaphore user add --admin --login user123 --name User123 --email user123@example.com
             --password {{ makePasswordExample() }}
           </v-alert>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn color="blue darken-1" text @click="loginHelpDialog = false">
+          <v-btn
+            color="blue-darken-1"
+            variant="text"
+            @click="loginHelpDialog = false"
+            data-testid="authHelpDialog-close"
+          >
             {{ $t('close2') }}
           </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
 
-    <v-container fluid fill-height align-center justify-center class="pa-0">
-      <v-card class="px-5 py-5" style="border-radius: 15px">
+    <v-container fluid class="pa-0 fill-height d-flex align-center justify-center">
+      <v-card class="px-5 py-5" style="border-radius: 15px" data-testid="auth-card">
         <v-card-text>
           <v-form
             @submit.prevent
             ref="signInForm"
-            lazy-validation
             v-model="signInFormValid"
             style="width: 350px; max-width: 100%;"
+            data-testid="auth-form"
           >
             <v-img
               width="80"
               height="80"
-              transition="0"
+              :transition="false"
               src="favicon.png"
-              style="margin: auto"
-              class="mb-4"
+              class="mx-auto mb-4"
+              data-testid="auth-logo"
             />
 
-            <h2 v-if="screen === 'verification'" class="text-center pt-4 pb-6">
+            <h2
+              v-if="screen === 'verification'"
+              class="text-center pt-4 pb-6"
+              data-testid="auth-title-verification"
+            >
               Two-step verification
             </h2>
 
-            <h2 v-else-if="screen === 'recovery'" class="text-center pt-4 pb-6">
+            <h2
+              v-else-if="screen === 'recovery'"
+              class="text-center pt-4 pb-6"
+              data-testid="auth-title-recovery"
+            >
               Account recovery
             </h2>
 
@@ -77,28 +118,53 @@
               Set up two-step verification
             </h2>
 
-            <h2 v-else class="text-center pt-4 pb-6">Enter to your account</h2>
+            <h2
+              v-else
+              class="text-center pt-4 pb-6"
+              data-testid="auth-title-login"
+            >Enter to your account</h2>
 
-            <v-alert :value="signInError != null" color="error" style="margin-bottom: 20px"
+            <v-alert
+              :model-value="signInError != null"
+              color="error"
+              style="margin-bottom: 20px"
+              data-testid="auth-error"
               >{{ signInError }}
             </v-alert>
 
-            <div v-if="screen === 'verification'">
-              <div v-if="verificationMethod === 'totp'" class="text-center mb-4">
+            <div v-if="screen === 'verification'" data-testid="auth-verification">
+              <div
+                v-if="verificationMethod === 'totp'"
+                class="text-center mb-4"
+                data-testid="auth-verificationHint-totp"
+              >
                 Open the two-step verification app on your mobile device to get your verification
                 code.
               </div>
 
-              <div v-else-if="verificationMethod === 'email'" class="text-center mb-4">
+              <div
+                v-else-if=" verificationMethod === 'email'"
+                class="text-center mb-4"
+                data-testid="auth-verificationHint-email"
+              >
                 Check your email for the verification code we just sent you.
               </div>
 
-              <v-otp-input v-model="verificationCode" length="6" @finish="verify()"></v-otp-input>
+              <v-otp-input
+                v-model="verificationCode"
+                length="6"
+                @finish="verify()"
+                data-testid="auth-otp"
+              ></v-otp-input>
 
               <v-divider class="my-6" />
 
               <div class="text-center">
-                <a @click="signOut()" class="mr-6">{{ $t('Return to login') }}</a>
+                <a
+                  @click="signOut()"
+                  class="mr-6 text-primary cursor-pointer"
+                  data-testid="auth-returnToLogin"
+                >{{ $t('Return to login') }}</a>
                 <a
                   v-if="
                     verificationMethod === 'totp' &&
@@ -106,17 +172,20 @@
                     authMethods.totp.allow_recovery
                   "
                   @click="screen = 'recovery'"
+                  class="text-primary cursor-pointer"
+                  data-testid="auth-useRecoveryCode"
                 >
                   {{ $t('Use recovery code') }}
                 </a>
 
                 <v-btn
                   :width="200"
-                  small
+                  size="small"
                   :disabled="verificationEmailSending"
                   color="primary"
                   v-if="verificationMethod === 'email'"
                   @click="resendEmailVerification()"
+                  data-testid="auth-resendEmail"
                 >
                   {{
                     verificationEmailSending ? $t('Email sending...') : $t('Resend code to email')
@@ -125,27 +194,37 @@
               </div>
             </div>
 
-            <div v-else-if="screen === 'recovery'">
+            <div v-else-if="screen === 'recovery'" data-testid="auth-recovery">
               <div class="text-center mb-2">
                 Use your recovery code to regain access to your account.
               </div>
 
               <v-text-field
                 class="mt-6"
-                outlined
+                variant="outlined"
                 v-model="recoveryCode"
-                @keyup.enter.native="signIn"
+                @keyup.enter="signIn"
                 :label="$t('Recovery code')"
                 :rules="[(v) => !!v || $t('recoveryCode_required')]"
                 required
+                data-testid="auth-recoveryCode"
               />
 
               <div>
-                <v-btn style="width: 100%" color="primary" @click="recovery()"> Send </v-btn>
+                <v-btn
+                  style="width: 100%"
+                  color="primary"
+                  @click="recovery()"
+                  data-testid="auth-recoverySend"
+                > Send </v-btn>
               </div>
 
               <div class="text-center pt-6">
-                <a @click="screen = 'verification'">{{ $t('Return to verification') }}</a>
+                <a
+                  @click="screen = 'verification'"
+                  class="text-primary cursor-pointer"
+                  data-testid="auth-returnToVerification"
+                >{{ $t('Return to verification') }}</a>
               </div>
             </div>
 
@@ -155,16 +234,24 @@
               @cancel="signOut"
             />
 
-            <div v-else>
+            <div v-else data-testid="auth-login">
               <v-btn-toggle
                 v-if="loginTabs.length > 1"
                 v-model="loginTab"
                 mandatory
-                borderless
-                class="mb-7 d-flex"
-                :background-color="$vuetify.theme.dark ? '#212121' : 'grey lighten-3'"
+                variant="text"
+                class="auth__tabs mb-7 d-flex"
+                :class="$vuetify.theme.current.dark ? null : 'bg-grey-lighten-3'"
+                :style="$vuetify.theme.current.dark ? { backgroundColor: '#212121' } : null"
+                data-testid="auth-loginTabs"
               >
-                <v-btn v-for="tab in loginTabs" :key="tab.id || 'local'" small class="flex-grow-1">
+                <v-btn
+                  v-for="tab in loginTabs"
+                  :key="tab.id || 'local'"
+                  size="small"
+                  class="flex-grow-1"
+                  :data-testid="`auth-loginTab-${tab.id || 'local'}`"
+                >
                   {{ tab.name }}
                 </v-btn>
               </v-btn-toggle>
@@ -173,22 +260,25 @@
                 v-if="localRecoveryOnly && activeLoginTab && !activeLoginTab.ldap"
                 data-testid="auth-local-recovery"
                 type="info"
-                dense
-                outlined
+                density="compact"
+                variant="outlined"
               >
                 Password login is restricted to the tested local recovery administrator.
               </v-alert>
 
-              <div v-if="(activeLoginTab && activeLoginTab.ldap) || loginWithPassword">
+              <div
+                v-if="(activeLoginTab && activeLoginTab.ldap) || loginWithPassword"
+                data-testid="auth-passwordLogin"
+              >
                 <v-text-field
                   v-model="username"
                   v-bind:label="$t('username')"
                   :rules="[(v) => !!v || $t('username_required')]"
                   required
-                  outlined
+                  variant="outlined"
                   :disabled="signInProcess"
                   id="auth-username"
-                  dense
+                  density="compact"
                   data-testid="auth-username"
                 ></v-text-field>
 
@@ -198,16 +288,16 @@
                   :rules="[(v) => !!v || $t('password_required')]"
                   type="password"
                   required
-                  outlined
-                  dense
+                  variant="outlined"
+                  density="compact"
                   :disabled="signInProcess"
-                  @keyup.enter.native="signIn"
+                  @keyup.enter="signIn"
                   id="auth-password"
                   data-testid="auth-password"
                 ></v-text-field>
 
                 <v-btn
-                  large
+                  size="large"
                   color="primary"
                   @click="signIn"
                   :disabled="signInProcess"
@@ -221,29 +311,34 @@
 
               <div
                 class="auth__divider"
+                data-testid="auth-divider"
                 v-if="(loginWithPassword || ldapProviders.length > 0) && oidcProviders.length > 0"
               >
                 or
               </div>
 
               <v-btn
-                large
+                size="large"
                 v-for="provider in oidcProviders"
                 :color="provider.color || 'secondary'"
-                dark
                 class="mt-3"
                 @click="oidcSignIn(provider.id)"
                 block
                 :key="provider.id"
                 rounded
+                :data-testid="`auth-oidc-${provider.id}`"
               >
-                <v-icon left dark v-if="provider.icon"> mdi-{{ provider.icon }} </v-icon>
+                <v-icon start v-if="provider.icon"> mdi-{{ provider.icon }} </v-icon>
 
                 {{ provider.name }}
               </v-btn>
 
               <div class="text-center mt-6" v-if="loginWithPassword && false">
-                <a @click="loginHelpDialog = true">{{ $t('dontHaveAccountOrCantSignIn') }}</a>
+                <a
+                  @click="loginHelpDialog = true"
+                  class="text-primary cursor-pointer"
+                  data-testid="auth-help"
+                >{{ $t('dontHaveAccountOrCantSignIn') }}</a>
               </div>
             </div>
           </v-form>
@@ -274,6 +369,52 @@
     margin-left: 10px;
   }
 }
+// Sign-in / LDAP tabs as the borderless `v-btn-toggle` of Vuetify 2 with small buttons: 28 px
+// high, text in the primary text colour (.87), buttons without their own background on the grey
+// of the toggle, the inactive at .8 opacity, the active darkened by the .18 overlay of
+// `.v-btn--active`.
+.auth__tabs.v-btn-group {
+  height: 28px;
+  color: rgba(var(--v-theme-on-surface), var(--v-high-emphasis-opacity));
+
+  > .v-btn {
+    opacity: .8;
+  }
+
+  > .v-btn--active {
+    opacity: 1;
+
+    > .v-btn__overlay {
+      opacity: .18;
+    }
+  }
+}
+
+.auth {
+  // The large buttons (sign in, OIDC) in the type size of Vuetify 2 (`large` .875rem, as
+  // `default`; Vuetify 4 grows it to 1rem). Only this screen has large buttons.
+  .v-btn--size-large {
+    --v-btn-size: .875rem;
+  }
+
+  // The OTP cells as in Vuetify 2: outlined fields 56 px high across the whole form width,
+  // 8 px apart, a 4 px gutter above and 12 px below, digits in the field type size (1rem, .87).
+  .v-otp-input {
+    padding: 4px 0 12px;
+  }
+
+  .v-otp-input__content {
+    max-width: none;
+    height: 56px;
+    padding: 0;
+  }
+
+  .v-otp-input__field {
+    font-size: 1rem;
+    opacity: var(--v-high-emphasis-opacity);
+  }
+}
+
 .auth {
   height: 100dvh;
   background: #80808024;
@@ -490,7 +631,8 @@ export default {
     async verify() {
       this.signInError = null;
 
-      if (!this.$refs.signInForm.validate()) {
+      const { valid } = await this.$refs.signInForm.validate();
+      if (!valid) {
         return;
       }
 
@@ -517,7 +659,8 @@ export default {
     async signInWithEmail() {
       this.signInError = null;
 
-      if (!this.$refs.signInForm.validate()) {
+      const { valid } = await this.$refs.signInForm.validate();
+      if (!valid) {
         return;
       }
 
@@ -547,7 +690,8 @@ export default {
     async signIn() {
       this.signInError = null;
 
-      if (!this.$refs.signInForm.validate()) {
+      const { valid } = await this.$refs.signInForm.validate();
+      if (!valid) {
         return;
       }
 
@@ -578,6 +722,8 @@ export default {
       } catch (err) {
         if (err.response?.status === 401) {
           this.signInError = this.$t('incorrectUsrPwd');
+        } else if (err.response?.data?.error === 'LDAP_GROUP_MAPPING_UNSUPPORTED') {
+          this.signInError = 'Legacy LDAP group settings are unsupported. Ask an administrator to configure group mapping through managed LDAP.';
         } else {
           this.signInError = this.authenticationErrorMessage(err);
         }
@@ -591,8 +737,6 @@ export default {
       const returnTo = this.$route.query.return;
       if (returnTo) {
         params.set('return', returnTo);
-      } else if (this.$route.query.new_project === 'premium') {
-        params.set('return', '/project/premium');
       }
       const qs = params.toString();
       const suffix = qs ? `?${qs}` : '';

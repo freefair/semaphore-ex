@@ -1,13 +1,13 @@
 <template>
   <div>
     <template v-if="lifecycleDecision">
-      <v-subheader class="px-0 mt-2">{{ $t('lifecycleCapability') }}</v-subheader>
+      <v-list-subheader class="px-0 mt-2">{{ $t('lifecycleCapability') }}</v-list-subheader>
       <v-card
         data-testid="capability-lifecycle"
         style="background: var(--highlighted-card-bg-color)"
       >
         <v-card-text class="px-0 py-2">
-          <v-simple-table dense style="background: transparent">
+          <v-table density="compact" style="background: transparent">
             <tbody>
               <tr>
                 <td class="font-weight-medium" style="width: 200px">
@@ -17,7 +17,7 @@
                   <v-chip
                     data-testid="capability-state"
                     :color="capabilityStateColor(lifecycleDecision.state)"
-                    small
+                    size="small"
                     dark
                   >
                     {{ lifecycleDecision.state }}
@@ -29,40 +29,46 @@
                 <td><code data-testid="capability-reason">{{ lifecycleDecision.reason }}</code></td>
               </tr>
             </tbody>
-          </v-simple-table>
+          </v-table>
         </v-card-text>
       </v-card>
     </template>
 
     <template v-if="totpDecision && totpDecision.state !== 'unavailable'">
-      <v-subheader class="px-0 mt-2">TOTP rollout</v-subheader>
+      <v-list-subheader class="px-0 mt-2">TOTP rollout</v-list-subheader>
       <v-card data-testid="totp-rollout" style="background: var(--highlighted-card-bg-color)">
         <v-card-text>
-          <v-alert v-if="totpRolloutError" type="error" dense outlined>
+          <v-alert v-if="totpRolloutError" type="error" density="compact" variant="outlined">
             {{ totpRolloutError }}
           </v-alert>
           <v-select
             v-model="totpRollout.state"
             data-testid="totp-rollout-state"
             :items="totpRolloutStates"
+            item-title="text"
             label="Lifecycle state"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
           />
           <v-select
             v-if="totpRollout.state === 'required_selected'"
             v-model="totpRollout.selected_user_ids"
             data-testid="totp-selected-users"
             :items="totpUsers"
-            item-text="username"
+            item-title="username"
             item-value="id"
             label="Users required to enroll"
             multiple
             chips
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
           />
-          <v-alert v-if="totpRollout.state === 'required'" type="warning" dense outlined>
+          <v-alert
+            v-if="totpRollout.state === 'required'"
+            type="warning"
+            density="compact"
+            variant="outlined"
+          >
             Required mode is accepted only when every user can enroll and at least one local
             administrator has acknowledged unused recovery codes.
           </v-alert>
@@ -75,7 +81,7 @@
             Apply TOTP rollout
           </v-btn>
 
-          <v-simple-table v-if="totpTransitions.length" dense class="mt-4">
+          <v-table v-if="totpTransitions.length" density="compact" class="mt-4">
             <thead>
               <tr><th>Transition</th><th>Actor</th><th>Time</th></tr>
             </thead>
@@ -86,26 +92,26 @@
                 <td>{{ new Date(transition.created).toLocaleString() }}</td>
               </tr>
             </tbody>
-          </v-simple-table>
+          </v-table>
         </v-card-text>
       </v-card>
     </template>
 
     <template v-if="ldapDecision && ldapDecision.state !== 'unavailable'">
-      <v-subheader class="px-0 mt-2">LDAP authentication</v-subheader>
+      <v-list-subheader class="px-0 mt-2">LDAP authentication</v-list-subheader>
       <LdapCapabilityPanel />
     </template>
 
     <OidcGroupMappingPanel />
 
-    <v-subheader class="px-0 mt-2">Structured file logs</v-subheader>
+    <v-list-subheader class="px-0 mt-2">Structured file logs</v-list-subheader>
     <v-card
       v-if="structuredLogs"
       data-testid="structured-logs"
       style="background: var(--highlighted-card-bg-color)"
     >
       <v-card-text class="px-0 py-2">
-        <v-simple-table dense style="background: transparent">
+        <v-table density="compact" style="background: transparent">
           <tbody>
             <tr>
               <td class="font-weight-medium" style="width: 200px">Writer state</td>
@@ -113,7 +119,7 @@
                 <v-chip
                   data-testid="structured-logs-state"
                   :color="structuredLogStateColor(structuredLogs.state)"
-                  small
+                  size="small"
                   dark
                 >
                   {{ structuredLogs.state }}
@@ -148,15 +154,15 @@
               </td>
             </tr>
           </tbody>
-        </v-simple-table>
+        </v-table>
 
         <v-alert
           v-if="structuredLogs.state === 'dropping'"
           data-testid="structured-logs-dropping"
           class="mx-4 mt-3 mb-1"
           type="warning"
-          dense
-          outlined
+          density="compact"
+          variant="outlined"
         >
           The writer queue is full. New log records are being dropped without blocking task
           execution.
@@ -166,8 +172,8 @@
           data-testid="structured-logs-failed"
           class="mx-4 mt-3 mb-1"
           type="error"
-          dense
-          outlined
+          density="compact"
+          variant="outlined"
         >
           {{ structuredLogFailureText(structuredLogs) }}
         </v-alert>
@@ -176,16 +182,16 @@
           data-testid="structured-logs-disabled"
           class="mx-4 mt-3 mb-1"
           type="info"
-          dense
-          outlined
+          density="compact"
+          variant="outlined"
         >
           Structured file logging is disabled. Normal task execution is unaffected.
         </v-alert>
 
-        <v-simple-table
+        <v-table
           v-if="structuredLogs.destinations && structuredLogs.destinations.length"
           data-testid="structured-logs-destinations"
-          dense
+          density="compact"
           class="mt-2"
           style="background: transparent"
         >
@@ -197,15 +203,15 @@
               <td>{{ structuredLogRetention(destination) }}</td>
             </tr>
           </tbody>
-        </v-simple-table>
+        </v-table>
       </v-card-text>
     </v-card>
 
     <template v-if="debugFilter">
-      <v-subheader class="px-0 mt-2">Debug log filtering</v-subheader>
+      <v-list-subheader class="px-0 mt-2">Debug log filtering</v-list-subheader>
       <v-card data-testid="debug-filter" style="background: var(--highlighted-card-bg-color)">
         <v-card-text class="px-0 py-2">
-          <v-simple-table dense style="background: transparent">
+          <v-table density="compact" style="background: transparent">
             <tbody>
               <tr>
                 <td class="font-weight-medium" style="width: 200px">Instance</td>
@@ -221,7 +227,7 @@
                       v-for="entry in debugFilter.configured"
                       :key="`configured-${entry}`"
                       class="mr-1 my-1"
-                      small
+                      size="small"
                     >{{ entry }}</v-chip>
                   </template>
                   <span v-else data-testid="debug-filter-empty" class="text--secondary">
@@ -239,8 +245,8 @@
                       data-testid="debug-filter-effective"
                       class="mr-1 my-1"
                       color="primary"
-                      outlined
-                      small
+                      variant="outlined"
+                      size="small"
                     >{{ entry }}</v-chip>
                   </template>
                   <span v-else data-testid="debug-filter-none" class="text--secondary">
@@ -255,15 +261,15 @@
                 </td>
               </tr>
             </tbody>
-          </v-simple-table>
+          </v-table>
 
           <v-alert
             v-if="debugFilter.rejected && debugFilter.rejected.length"
             data-testid="debug-filter-rejected"
             class="mx-4 mt-3 mb-1"
             type="warning"
-            dense
-            outlined
+            density="compact"
+            variant="outlined"
           >
             Rejected entries keep the filter narrow:
             <div v-for="entry in debugFilter.rejected" :key="entry.entry">
@@ -275,8 +281,8 @@
             data-testid="debug-filter-reload-error"
             class="mx-4 mt-3 mb-1"
             type="error"
-            dense
-            outlined
+            density="compact"
+            variant="outlined"
           >
             Reload failed; the last-known-good filter remains active.
             <div><code>{{ debugFilter.reload_error }}</code></div>
@@ -294,6 +300,7 @@ import OidcGroupMappingPanel from '@/components/OidcGroupMappingPanel.vue';
 import { capabilityStateColor, findCapabilityDecision } from '@/lib/capabilities';
 
 export default {
+  emits: ['totp-rollout-updated'],
   components: { LdapCapabilityPanel, OidcGroupMappingPanel },
   props: {
     diagnostics: Object,

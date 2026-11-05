@@ -13,18 +13,18 @@
       </v-card-subtitle>
       <v-card-text>
         <v-progress-linear v-if="loading" indeterminate color="primary" />
-        <v-alert v-else-if="error" type="error" text>
+        <v-alert v-else-if="error" type="error" variant="tonal">
           {{ error }}
-          <v-btn text color="primary" @click="open(storage)">Retry</v-btn>
+          <v-btn variant="text" color="primary" @click="open(storage)">Retry</v-btn>
         </v-alert>
-        <v-alert v-else-if="history.length === 0" type="info" text>
+        <v-alert v-else-if="history.length === 0" type="info" variant="tonal">
           No synchronization has been attempted yet.
         </v-alert>
-        <v-expansion-panels v-else accordion>
+        <v-expansion-panels v-else variant="accordion">
           <v-expansion-panel v-for="operation in history" :key="operation.id">
-            <v-expansion-panel-header>
+            <v-expansion-panel-title>
               <div class="sync-operation-summary">
-                <v-chip small :color="statusColor(operation.status)" dark>
+                <v-chip size="small" :color="statusColor(operation.status)" dark>
                   {{ operation.status }}
                 </v-chip>
                 <span>{{ formatTimestamp(operation.finished_at || operation.created_at) }}</span>
@@ -33,12 +33,17 @@
                   {{ operation.conflict_count }} conflicts
                 </span>
               </div>
-            </v-expansion-panel-header>
-            <v-expansion-panel-content>
-              <v-alert v-if="operation.error_category" dense text type="warning">
+            </v-expansion-panel-title>
+            <v-expansion-panel-text>
+              <v-alert
+                v-if="operation.error_category"
+                density="compact"
+                variant="tonal"
+                type="warning"
+              >
                 {{ formatValue(operation.error_category) }}
               </v-alert>
-              <v-simple-table dense>
+              <v-table density="compact">
                 <thead>
                   <tr>
                     <th>Status</th>
@@ -58,7 +63,7 @@
                     <td>{{ outcome.remote_version || '—' }}</td>
                   </tr>
                 </tbody>
-              </v-simple-table>
+              </v-table>
               <v-btn
                 v-if="operation.status === 'conflict'"
                 class="mt-4"
@@ -68,7 +73,7 @@
               >
                 Confirm overwrite of observed versions
               </v-btn>
-            </v-expansion-panel-content>
+            </v-expansion-panel-text>
           </v-expansion-panel>
         </v-expansion-panels>
       </v-card-text>
@@ -81,6 +86,7 @@ import axios from 'axios';
 import { getErrorMessage } from '@/lib/error';
 
 export default {
+  emits: ['resolve'],
   props: {
     projectId: Number,
     keys: { type: Array, default: () => [] },

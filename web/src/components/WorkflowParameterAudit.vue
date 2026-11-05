@@ -8,11 +8,11 @@
     data-testid="workflow-parameter-audit"
   >
     <v-expansion-panel>
-      <v-expansion-panel-header class="py-2">
+      <v-expansion-panel-title class="py-2">
         {{ $t('workflowRunInputs') }} ({{ entryCount }})
-      </v-expansion-panel-header>
-      <v-expansion-panel-content>
-        <v-simple-table dense>
+      </v-expansion-panel-title>
+      <v-expansion-panel-text>
+        <v-table density="compact">
           <tbody>
             <tr v-for="entry in parameterEntries" :key="`parameter-${entry.name}`">
               <td class="font-weight-medium">{{ entry.name }}</td>
@@ -26,8 +26,8 @@
               <td colspan="2">{{ overrideValue(entry.overrides) }}</td>
             </tr>
           </tbody>
-        </v-simple-table>
-      </v-expansion-panel-content>
+        </v-table>
+      </v-expansion-panel-text>
     </v-expansion-panel>
   </v-expansion-panels>
 </template>

@@ -4,24 +4,24 @@
       v-model="expanded"
       flat
       tile
-      @change="onExpansion"
+      @update:model-value="onExpansion"
     >
       <v-expansion-panel>
-        <v-expansion-panel-header data-testid="notification-governance-toggle">
+        <v-expansion-panel-title data-testid="notification-governance-toggle">
           <div>
             <div class="subtitle-1">
-              <v-icon left>mdi-bell-cog-outline</v-icon>
+              <v-icon start>mdi-bell-cog-outline</v-icon>
               {{ $t('notificationGovernance') }}
             </div>
-            <div class="text-caption text--secondary">
+            <div class="text-body-small text--secondary">
               {{ $t('notificationGovernanceGlobalOnly') }}
             </div>
           </div>
-        </v-expansion-panel-header>
-        <v-expansion-panel-content>
+        </v-expansion-panel-title>
+        <v-expansion-panel-text>
           <v-alert
             v-if="unavailable"
-            text
+            variant="tonal"
             type="info"
             data-testid="notification-governance-unavailable"
           >
@@ -29,23 +29,29 @@
           </v-alert>
 
           <template v-else>
-            <v-alert v-if="error" text type="error" dismissible @input="error = ''">
+            <v-alert
+              v-if="error"
+              variant="tonal"
+              type="error"
+              dismissible
+              @update:model-value="error = ''"
+            >
               {{ error }}
             </v-alert>
 
-            <v-card outlined class="mb-4">
+            <v-card variant="outlined" class="mb-4">
               <v-card-title class="subtitle-1">
-                <v-icon left>mdi-bullhorn-outline</v-icon>
+                <v-icon start>mdi-bullhorn-outline</v-icon>
                 {{ $t('notificationDestinations') }}
                 <v-spacer />
                 <v-btn
                   color="primary"
-                  small
+                  size="small"
                   :disabled="loading"
                   @click="openDestination()"
                   data-testid="notification-destination-create"
                 >
-                  <v-icon left small>mdi-plus</v-icon>
+                  <v-icon start size="small">mdi-plus</v-icon>
                   {{ $t('add') }}
                 </v-btn>
               </v-card-title>
@@ -55,11 +61,11 @@
                 :loading="loading"
                 :hide-default-footer="true"
                 :mobile-breakpoint="720"
-                item-key="id"
+                item-value="id"
                 data-testid="notification-destinations"
               >
                 <template v-slot:item.state="{ item }">
-                  <v-chip x-small dark :color="destinationStateColor(item)">
+                  <v-chip size="x-small" dark :color="destinationStateColor(item)">
                     {{ destinationStateLabel(item) }}
                   </v-chip>
                 </template>
@@ -70,13 +76,13 @@
                   <div>{{ item.environment }}</div>
                   <div
                     v-if="['pagerduty', 'opsgenie'].includes(item.provider) && item.region"
-                    class="text-caption text--secondary"
+                    class="text-body-small text--secondary"
                   >
                     {{ $t('notificationRegion') }}: {{ providerRegionLabel(item.region) }}
                   </div>
                   <div
                     v-if="item.provider === 'opsgenie' && item.opsgenie"
-                    class="text-caption text--secondary"
+                    class="text-body-small text--secondary"
                   >
                     {{ $t('notificationOpsgeniePriority') }}:
                     {{ item.opsgenie.priority || $t('notificationOpsgeniePriorityAutomatic') }}
@@ -85,7 +91,7 @@
                   </div>
                   <div
                     v-if="item.provider === 'servicenow' && item.servicenow"
-                    class="text-caption text--secondary notification-governance-incident-key"
+                    class="text-body-small text--secondary notification-governance-incident-key"
                   >
                     {{ item.servicenow.instance_origin }}
                     · {{ serviceNowAuthModeLabel(item.servicenow.auth_mode) }}
@@ -93,28 +99,33 @@
                 </template>
                 <template v-slot:item.actions="{ item }">
                   <div class="notification-governance-row-actions">
-                    <v-btn icon small :aria-label="$t('edit')" @click="openDestination(item)">
-                      <v-icon small>mdi-pencil</v-icon>
+                    <v-btn
+                      icon
+                      size="small"
+                      :aria-label="$t('edit')"
+                      @click="openDestination(item)"
+                    >
+                      <v-icon size="small">mdi-pencil</v-icon>
                     </v-btn>
                     <v-btn
                       icon
-                      small
+                      size="small"
                       :loading="testingDestinationId === item.id"
                       :disabled="!canTest(item) || testingDestinationId !== null"
                       :aria-label="$t('notificationTestDelivery')"
                       @click="testDestination(item)"
                     >
-                      <v-icon small>mdi-send-check-outline</v-icon>
+                      <v-icon size="small">mdi-send-check-outline</v-icon>
                     </v-btn>
                     <v-btn
                       icon
-                      small
+                      size="small"
                       :loading="pausingDestinationId === item.id"
                       :disabled="pausingDestinationId !== null"
                       :aria-label="item.paused ? $t('resume') : $t('pause')"
                       @click="setDestinationPaused(item, !item.paused)"
                     >
-                      <v-icon small>{{ item.paused ? 'mdi-play' : 'mdi-pause' }}</v-icon>
+                      <v-icon size="small">{{ item.paused ? 'mdi-play' : 'mdi-pause' }}</v-icon>
                     </v-btn>
                   </div>
                 </template>
@@ -126,19 +137,19 @@
               </v-data-table>
             </v-card>
 
-            <v-card outlined class="mb-4">
+            <v-card variant="outlined" class="mb-4">
               <v-card-title class="subtitle-1">
-                <v-icon left>mdi-filter-cog-outline</v-icon>
+                <v-icon start>mdi-filter-cog-outline</v-icon>
                 {{ $t('notificationRules') }}
                 <v-spacer />
                 <v-btn
                   color="primary"
-                  small
+                  size="small"
                   :disabled="loading || destinations.length === 0"
                   @click="openRule()"
                   data-testid="notification-rule-create"
                 >
-                  <v-icon left small>mdi-plus</v-icon>
+                  <v-icon start size="small">mdi-plus</v-icon>
                   {{ $t('add') }}
                 </v-btn>
               </v-card-title>
@@ -148,7 +159,7 @@
                 :loading="loading"
                 :hide-default-footer="true"
                 :mobile-breakpoint="720"
-                item-key="id"
+                item-value="id"
                 data-testid="notification-rules"
               >
                 <template v-slot:item.destination_id="{ item }">
@@ -161,13 +172,13 @@
                   {{ item.lifecycle_actions.join(', ') }}
                 </template>
                 <template v-slot:item.enabled="{ item }">
-                  <v-chip x-small dark :color="item.enabled ? 'success' : 'grey'">
+                  <v-chip size="x-small" dark :color="item.enabled ? 'success' : 'grey'">
                     {{ item.enabled ? $t('enabled') : $t('disabled') }}
                   </v-chip>
                 </template>
                 <template v-slot:item.actions="{ item }">
-                  <v-btn icon small :aria-label="$t('edit')" @click="openRule(item)">
-                    <v-icon small>mdi-pencil</v-icon>
+                  <v-btn icon size="small" :aria-label="$t('edit')" @click="openRule(item)">
+                    <v-icon size="small">mdi-pencil</v-icon>
                   </v-btn>
                 </template>
                 <template v-slot:no-data>
@@ -178,33 +189,33 @@
               </v-data-table>
             </v-card>
 
-            <v-card outlined class="mb-4">
+            <v-card variant="outlined" class="mb-4">
               <v-card-title class="subtitle-1">
-                <v-icon left>mdi-routes</v-icon>
+                <v-icon start>mdi-routes</v-icon>
                 {{ $t('notificationRoutingPreview') }}
                 <v-spacer />
                 <v-btn
-                  outlined
-                  small
+                  variant="outlined"
+                  size="small"
                   :loading="previewing"
                   :disabled="previewing"
                   @click="previewRouting"
                   data-testid="notification-preview"
                 >
-                  <v-icon left small>mdi-eye-outline</v-icon>
+                  <v-icon start size="small">mdi-eye-outline</v-icon>
                   {{ $t('preview') }}
                 </v-btn>
               </v-card-title>
               <v-card-text>
-                <p class="text-body-2 mb-3">{{ $t('notificationPreviewDescription') }}</p>
-                <v-row dense>
+                <p class="text-body-medium mb-3">{{ $t('notificationPreviewDescription') }}</p>
+                <v-row density="compact">
                   <v-col cols="12" sm="4">
                     <v-select
                       v-model="previewSourceKind"
                       :items="sourceKindOptions"
                       :label="$t('notificationSources')"
-                      outlined
-                      dense
+                      variant="outlined"
+                      density="compact"
                       hide-details
                       data-testid="notification-preview-source"
                     />
@@ -214,8 +225,8 @@
                       v-model="previewAction"
                       :items="actionOptions"
                       :label="$t('notificationActions')"
-                      outlined
-                      dense
+                      variant="outlined"
+                      density="compact"
                       hide-details
                       data-testid="notification-preview-action"
                     />
@@ -225,8 +236,8 @@
                       v-model="previewSeverity"
                       :items="severityOptions"
                       :label="$t('notificationMinimumSeverity')"
-                      outlined
-                      dense
+                      variant="outlined"
+                      density="compact"
                       hide-details
                       data-testid="notification-preview-severity"
                     />
@@ -234,20 +245,20 @@
                 </v-row>
                 <v-list
                   v-if="preview.length > 0"
-                  dense
+                  density="compact"
                   class="py-0"
                   data-testid="notification-preview-results"
                 >
                   <v-list-item v-for="destination in preview" :key="destination.destination_id">
-                    <v-list-item-icon>
+                    <template #prepend>
                       <v-icon>mdi-check-circle-outline</v-icon>
-                    </v-list-item-icon>
-                    <v-list-item-content>
+                    </template>
+                    <div>
                       <v-list-item-title>{{ destination.name }}</v-list-item-title>
                       <v-list-item-subtitle>
                         {{ destination.provider }} · {{ destination.environment }}
                       </v-list-item-subtitle>
-                    </v-list-item-content>
+                    </div>
                   </v-list-item>
                 </v-list>
                 <div
@@ -260,9 +271,9 @@
               </v-card-text>
             </v-card>
 
-            <v-card outlined class="mb-4">
+            <v-card variant="outlined" class="mb-4">
               <v-card-title class="subtitle-1">
-                <v-icon left>mdi-routes-clock</v-icon>
+                <v-icon start>mdi-routes-clock</v-icon>
                 {{ $t('notificationEventHistory') }}
                 <v-spacer />
                 <v-btn
@@ -281,7 +292,7 @@
                 :loading="eventHistoryLoading && events.length === 0"
                 :hide-default-footer="true"
                 :mobile-breakpoint="720"
-                item-key="event_id"
+                item-value="event_id"
                 data-testid="notification-event-history"
               >
                 <template v-slot:item.source="{ item }">
@@ -304,7 +315,7 @@
               </v-data-table>
               <v-card-actions v-if="eventHistoryHasMore" class="justify-center">
                 <v-btn
-                  text
+                  variant="text"
                   :loading="eventHistoryLoading"
                   :disabled="eventHistoryLoading"
                   @click="loadEventHistory(false)"
@@ -314,9 +325,9 @@
               </v-card-actions>
             </v-card>
 
-            <v-card outlined>
+            <v-card variant="outlined">
               <v-card-title class="subtitle-1">
-                <v-icon left>mdi-history</v-icon>
+                <v-icon start>mdi-history</v-icon>
                 {{ $t('notificationDeliveryHistory') }}
                 <v-spacer />
                 <v-btn
@@ -335,29 +346,29 @@
                 :loading="historyLoading && deliveries.length === 0"
                 :hide-default-footer="true"
                 :mobile-breakpoint="720"
-                item-key="id"
+                item-value="id"
                 data-testid="notification-history"
               >
                 <template v-slot:item.destination_name="{ item }">
                   <div>{{ item.destination_name }}</div>
-                  <div class="text-caption text--secondary">
+                  <div class="text-body-small text--secondary">
                     {{ item.destination_environment }}
                     <template v-if="item.destination_region">
                       · {{ providerRegionLabel(item.destination_region) }}
                     </template>
                   </div>
-                  <div class="text-caption text--secondary notification-governance-incident-key">
+                  <div class="text-body-small text--secondary notification-governance-incident-key">
                     {{ $t('notificationIncidentKey') }}: {{ item.incident_key }}
                   </div>
                   <div
                     v-if="item.provider_request_id"
-                    class="text-caption text--secondary notification-governance-incident-key"
+                    class="text-body-small text--secondary notification-governance-incident-key"
                   >
                     {{ $t('notificationProviderRequestID') }}: {{ item.provider_request_id }}
                   </div>
                   <div
                     v-if="item.provider_record_id"
-                    class="text-caption text--secondary notification-governance-incident-key"
+                    class="text-body-small text--secondary notification-governance-incident-key"
                   >
                     {{ $t('notificationProviderRecordID') }}:
                     <a
@@ -370,7 +381,7 @@
                   </div>
                 </template>
                 <template v-slot:item.status="{ item }">
-                  <v-chip x-small dark :color="deliveryStatusColor(item.status)">
+                  <v-chip size="x-small" dark :color="deliveryStatusColor(item.status)">
                     {{ item.status }}
                   </v-chip>
                 </template>
@@ -389,8 +400,8 @@
                 <template v-slot:item.actions="{ item }">
                   <v-btn
                     v-if="item.status === 'failed'"
-                    text
-                    small
+                    variant="text"
+                    size="small"
                     color="primary"
                     :loading="retryingDeliveryId === item.id"
                     :disabled="retryingDeliveryId !== null"
@@ -406,7 +417,7 @@
               </v-data-table>
               <v-card-actions v-if="historyHasMore" class="justify-center">
                 <v-btn
-                  text
+                  variant="text"
                   :loading="historyLoading"
                   :disabled="historyLoading"
                   @click="loadHistory(false)"
@@ -416,7 +427,7 @@
               </v-card-actions>
             </v-card>
           </template>
-        </v-expansion-panel-content>
+        </v-expansion-panel-text>
       </v-expansion-panel>
     </v-expansion-panels>
 
@@ -431,36 +442,36 @@
               v-model.trim="destinationForm.name"
               :label="$t('name')"
               :rules="requiredRules"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="destinationSaving"
             />
             <v-text-field
               v-model.trim="destinationForm.provider"
               :label="$t('notificationProvider')"
               :rules="requiredRules"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="destinationSaving"
             />
             <v-text-field
               v-model.trim="destinationForm.environment"
               :label="$t('notificationEnvironment')"
               :rules="requiredRules"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="destinationSaving"
             />
             <v-select
               v-if="['pagerduty', 'opsgenie'].includes(destinationForm.provider.trim())"
               v-model="destinationForm.region"
               :items="providerRegionOptions"
-              item-text="text"
+              item-title="text"
               item-value="value"
               :label="$t('notificationRegion')"
               :rules="requiredRules"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="destinationSaving"
               data-testid="notification-destination-region"
             />
@@ -468,11 +479,11 @@
               v-if="destinationForm.provider.trim() === 'opsgenie'"
               v-model="destinationForm.opsgeniePriority"
               :items="opsgeniePriorityOptions"
-              item-text="text"
+              item-title="text"
               item-value="value"
               :label="$t('notificationOpsgeniePriority')"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="destinationSaving"
               data-testid="notification-destination-opsgenie-priority"
             />
@@ -483,8 +494,8 @@
               :hint="$t('notificationOpsgenieRespondersHint')"
               :rules="opsgenieResponderRules"
               persistent-hint
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               rows="3"
               :disabled="destinationSaving"
               data-testid="notification-destination-opsgenie-responders"
@@ -496,20 +507,20 @@
                 :hint="$t('notificationServiceNowInstanceOriginHint')"
                 :rules="serviceNowOriginRules"
                 persistent-hint
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 :disabled="destinationSaving"
                 data-testid="notification-destination-servicenow-origin"
               />
               <v-select
                 v-model="destinationForm.serviceNowAuthMode"
                 :items="serviceNowAuthModeOptions"
-                item-text="text"
+                item-title="text"
                 item-value="value"
                 :label="$t('notificationServiceNowAuthMode')"
                 :rules="requiredRules"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 :disabled="destinationSaving"
                 data-testid="notification-destination-servicenow-auth-mode"
               />
@@ -518,8 +529,8 @@
                 v-model.trim="destinationForm.serviceNowClientID"
                 :label="$t('notificationServiceNowClientID')"
                 :rules="requiredRules"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 :disabled="destinationSaving"
                 data-testid="notification-destination-servicenow-client-id"
               />
@@ -528,8 +539,8 @@
                 v-model.trim="destinationForm.serviceNowUsername"
                 :label="$t('username')"
                 :rules="requiredRules"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 :disabled="destinationSaving"
                 data-testid="notification-destination-servicenow-username"
               />
@@ -539,8 +550,8 @@
                 :label="$t('notificationServiceNowScope')"
                 :hint="$t('notificationServiceNowScopeHint')"
                 persistent-hint
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 :disabled="destinationSaving"
                 data-testid="notification-destination-servicenow-scope"
               />
@@ -550,8 +561,8 @@
                 :hint="$t('notificationServiceNowFieldMappingsHint')"
                 :rules="serviceNowFieldMappingRules"
                 persistent-hint
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 rows="4"
                 :disabled="destinationSaving"
                 data-testid="notification-destination-servicenow-mappings"
@@ -565,22 +576,22 @@
               autocomplete="new-password"
               :hint="$t('notificationCredentialPreserved')"
               persistent-hint
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="destinationSaving"
               data-testid="notification-destination-credential"
             />
             <v-checkbox
               v-model="destinationForm.enabled"
               :label="$t('enabled')"
-              dense
+              density="compact"
               :disabled="destinationSaving"
             />
           </v-form>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text :disabled="destinationSaving" @click="closeDestination">
+          <v-btn variant="text" :disabled="destinationSaving" @click="closeDestination">
             {{ $t('cancel') }}
           </v-btn>
           <v-btn
@@ -606,12 +617,12 @@
             <v-select
               v-model="ruleForm.destination_id"
               :items="destinationOptions"
-              item-text="text"
+              item-title="text"
               item-value="value"
               :label="$t('notificationDestination')"
               :rules="requiredRules"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="ruleSaving"
             />
             <v-select
@@ -619,8 +630,8 @@
               :items="sourceKindOptions"
               :label="$t('notificationSources')"
               multiple
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="ruleSaving"
             />
             <v-select
@@ -628,29 +639,29 @@
               :items="actionOptions"
               :label="$t('notificationActions')"
               multiple
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="ruleSaving"
             />
             <v-select
               v-model="ruleForm.minimum_severity"
               :items="severityOptions"
               :label="$t('notificationMinimumSeverity')"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="ruleSaving"
             />
             <v-checkbox
               v-model="ruleForm.enabled"
               :label="$t('enabled')"
-              dense
+              density="compact"
               :disabled="ruleSaving"
             />
           </v-form>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text :disabled="ruleSaving" @click="closeRule">{{ $t('cancel') }}</v-btn>
+          <v-btn variant="text" :disabled="ruleSaving" @click="closeRule">{{ $t('cancel') }}</v-btn>
           <v-btn
             color="primary"
             :loading="ruleSaving"
@@ -830,48 +841,48 @@ export default {
     },
     destinationHeaders() {
       return [
-        { text: this.$t('name'), value: 'name', sortable: false },
-        { text: this.$t('notificationProvider'), value: 'provider', sortable: false },
-        { text: this.$t('notificationEnvironment'), value: 'environment', sortable: false },
-        { text: this.$t('notificationCredential'), value: 'credential_configured', sortable: false },
-        { text: this.$t('status'), value: 'state', sortable: false },
+        { title: this.$t('name'), key: 'name', sortable: false },
+        { title: this.$t('notificationProvider'), key: 'provider', sortable: false },
+        { title: this.$t('notificationEnvironment'), key: 'environment', sortable: false },
+        { title: this.$t('notificationCredential'), key: 'credential_configured', sortable: false },
+        { title: this.$t('status'), key: 'state', sortable: false },
         {
-          text: '', value: 'actions', sortable: false, align: 'end',
+          title: '', key: 'actions', sortable: false, align: 'end',
         },
       ];
     },
     ruleHeaders() {
       return [
-        { text: this.$t('notificationDestination'), value: 'destination_id', sortable: false },
-        { text: this.$t('notificationSources'), value: 'source_kinds', sortable: false },
-        { text: this.$t('notificationActions'), value: 'lifecycle_actions', sortable: false },
-        { text: this.$t('notificationMinimumSeverity'), value: 'minimum_severity', sortable: false },
-        { text: this.$t('status'), value: 'enabled', sortable: false },
+        { title: this.$t('notificationDestination'), key: 'destination_id', sortable: false },
+        { title: this.$t('notificationSources'), key: 'source_kinds', sortable: false },
+        { title: this.$t('notificationActions'), key: 'lifecycle_actions', sortable: false },
+        { title: this.$t('notificationMinimumSeverity'), key: 'minimum_severity', sortable: false },
+        { title: this.$t('status'), key: 'enabled', sortable: false },
         {
-          text: '', value: 'actions', sortable: false, align: 'end',
+          title: '', key: 'actions', sortable: false, align: 'end',
         },
       ];
     },
     historyHeaders() {
       return [
-        { text: this.$t('notificationHistorySource'), value: 'source', sortable: false },
-        { text: this.$t('notificationHistoryLifecycle'), value: 'lifecycle', sortable: false },
-        { text: this.$t('notificationDestination'), value: 'destination_name', sortable: false },
-        { text: this.$t('status'), value: 'status', sortable: false },
-        { text: this.$t('attempts'), value: 'attempts', sortable: false },
-        { text: this.$t('notificationHistoryReason'), value: 'last_reason', sortable: false },
-        { text: this.$t('updated'), value: 'updated_at', sortable: false },
+        { title: this.$t('notificationHistorySource'), key: 'source', sortable: false },
+        { title: this.$t('notificationHistoryLifecycle'), key: 'lifecycle', sortable: false },
+        { title: this.$t('notificationDestination'), key: 'destination_name', sortable: false },
+        { title: this.$t('status'), key: 'status', sortable: false },
+        { title: this.$t('attempts'), key: 'attempts', sortable: false },
+        { title: this.$t('notificationHistoryReason'), key: 'last_reason', sortable: false },
+        { title: this.$t('updated'), key: 'updated_at', sortable: false },
         {
-          text: '', value: 'actions', sortable: false, align: 'end',
+          title: '', key: 'actions', sortable: false, align: 'end',
         },
       ];
     },
     eventHistoryHeaders() {
       return [
-        { text: this.$t('notificationHistorySource'), value: 'source', sortable: false },
-        { text: this.$t('notificationHistoryLifecycle'), value: 'lifecycle', sortable: false },
-        { text: this.$t('notificationRoutingOutcome'), value: 'routing_outcome', sortable: false },
-        { text: this.$t('notificationOccurred'), value: 'occurred_at', sortable: false },
+        { title: this.$t('notificationHistorySource'), key: 'source', sortable: false },
+        { title: this.$t('notificationHistoryLifecycle'), key: 'lifecycle', sortable: false },
+        { title: this.$t('notificationRoutingOutcome'), key: 'routing_outcome', sortable: false },
+        { title: this.$t('notificationOccurred'), key: 'occurred_at', sortable: false },
       ];
     },
     destinationOptions() {
@@ -1043,8 +1054,10 @@ export default {
     },
 
     async saveDestination() {
-      if (this.destinationSaving
-        || (this.$refs.destinationForm && !this.$refs.destinationForm.validate())) return;
+      if (this.destinationSaving) return;
+      if (this.$refs.destinationForm && !(await this.$refs.destinationForm.validate()).valid) {
+        return;
+      }
       this.destinationSaving = true;
       this.error = '';
       try {
@@ -1160,7 +1173,8 @@ export default {
     },
 
     async saveRule() {
-      if (this.ruleSaving || (this.$refs.ruleForm && !this.$refs.ruleForm.validate())) return;
+      if (this.ruleSaving) return;
+      if (this.$refs.ruleForm && !(await this.$refs.ruleForm.validate()).valid) return;
       this.ruleSaving = true;
       this.error = '';
       try {

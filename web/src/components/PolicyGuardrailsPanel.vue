@@ -3,20 +3,20 @@
     <h2 class="mt-8 mb-1">{{ $t('policyGuardrails') }}</h2>
     <v-divider class="mb-5" />
 
-    <v-alert v-if="error" text type="error" dismissible @input="error = ''">
+    <v-alert v-if="error" variant="tonal" type="error" dismissible @update:model-value="error = ''">
       {{ error }}
     </v-alert>
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
 
     <template v-if="canManage && state">
       <div class="d-flex flex-wrap align-center mb-3 policy-guardrail-status">
-        <v-chip small outlined class="mr-2 mb-2">
+        <v-chip size="small" variant="outlined" class="mr-2 mb-2">
           {{ $t('policyGuardrailDraftRevision') }} {{ state.draft.revision }}
         </v-chip>
-        <v-chip v-if="state.active" small color="success" dark class="mr-2 mb-2">
+        <v-chip v-if="state.active" size="small" color="success" dark class="mr-2 mb-2">
           {{ $t('policyGuardrailActiveRevision') }} {{ state.active.revision }}
         </v-chip>
-        <v-chip v-else small outlined class="mr-2 mb-2">
+        <v-chip v-else size="small" variant="outlined" class="mr-2 mb-2">
           {{ $t('policyGuardrailNoActiveRevision') }}
         </v-chip>
       </div>
@@ -24,7 +24,7 @@
       <v-textarea
         v-model="sourceYaml"
         :label="$t('policyGuardrailYaml')"
-        outlined
+        variant="outlined"
         rows="9"
         :disabled="busy"
         data-testid="policy-guardrail-source"
@@ -32,7 +32,7 @@
 
       <div class="d-flex flex-wrap mb-4 policy-guardrail-actions">
         <v-btn
-          small
+          size="small"
           color="primary"
           class="mr-2 mb-2"
           :disabled="!canWrite || busy"
@@ -43,8 +43,8 @@
           {{ $t('saveDraft') }}
         </v-btn>
         <v-btn
-          small
-          outlined
+          size="small"
+          variant="outlined"
           color="primary"
           class="mr-2 mb-2"
           :disabled="!canWrite || busy"
@@ -55,8 +55,8 @@
           {{ $t('validate') }}
         </v-btn>
         <v-btn
-          small
-          outlined
+          size="small"
+          variant="outlined"
           color="success"
           class="mr-2 mb-2"
           :disabled="!canWrite || busy"
@@ -66,8 +66,8 @@
         >
           {{ $t('publish') }}
         </v-btn>
-        <v-btn small text :disabled="busy" @click="load">
-          <v-icon left small>mdi-refresh</v-icon>
+        <v-btn size="small" variant="text" :disabled="busy" @click="load">
+          <v-icon start size="small">mdi-refresh</v-icon>
           {{ $t('refresh') }}
         </v-btn>
       </div>
@@ -75,8 +75,8 @@
       <v-alert
         v-if="validation"
         :type="validation.valid ? 'success' : 'warning'"
-        text
-        dense
+        variant="tonal"
+        density="compact"
         data-testid="policy-guardrail-validation"
       >
         <span v-if="validation.valid">
@@ -85,27 +85,27 @@
         <span v-else>{{ validationIssue }}</span>
       </v-alert>
 
-      <v-expansion-panels accordion flat class="mb-4">
+      <v-expansion-panels variant="accordion" flat class="mb-4">
         <v-expansion-panel>
-          <v-expansion-panel-header>
+          <v-expansion-panel-title>
             {{ $t('policyGuardrailFixtureAndImpact') }}
-          </v-expansion-panel-header>
-          <v-expansion-panel-content>
-            <p class="text-body-2 grey--text text--darken-1">
+          </v-expansion-panel-title>
+          <v-expansion-panel-text>
+            <p class="text-body-medium grey--text text--darken-1">
               {{ $t('policyGuardrailFixtureHint') }}
             </p>
             <v-textarea
               v-model="fixtureJson"
               :label="$t('policyGuardrailFixtureInput')"
-              outlined
+              variant="outlined"
               rows="9"
               :disabled="busy"
               data-testid="policy-guardrail-fixture"
             />
             <div class="d-flex flex-wrap">
               <v-btn
-                small
-                outlined
+                size="small"
+                variant="outlined"
                 color="primary"
                 class="mr-2 mb-2"
                 :disabled="!canExecute || busy"
@@ -116,8 +116,8 @@
                 {{ $t('test') }}
               </v-btn>
               <v-btn
-                small
-                outlined
+                size="small"
+                variant="outlined"
                 color="primary"
                 class="mb-2"
                 :disabled="!canExecute || busy"
@@ -138,22 +138,23 @@
               class="policy-guardrail-result"
               data-testid="policy-guardrail-impact-result"
             >{{ pretty(impactResult) }}</pre>
-          </v-expansion-panel-content>
+          </v-expansion-panel-text>
         </v-expansion-panel>
 
         <v-expansion-panel>
-          <v-expansion-panel-header>
+          <v-expansion-panel-title>
             {{ $t('policyGuardrailHistoryAndDiff') }}
-          </v-expansion-panel-header>
-          <v-expansion-panel-content>
-            <v-row dense>
+          </v-expansion-panel-title>
+          <v-expansion-panel-text>
+            <v-row density="compact">
               <v-col cols="12" sm="5">
                 <v-select
                   v-model="diffFrom"
                   :items="revisionOptions"
+                  item-title="text"
                   :label="$t('policyGuardrailFromRevision')"
-                  outlined
-                  dense
+                  variant="outlined"
+                  density="compact"
                   :disabled="busy"
                 />
               </v-col>
@@ -161,16 +162,17 @@
                 <v-select
                   v-model="diffTo"
                   :items="revisionOptions"
+                  item-title="text"
                   :label="$t('policyGuardrailToRevision')"
-                  outlined
-                  dense
+                  variant="outlined"
+                  density="compact"
                   :disabled="busy"
                 />
               </v-col>
               <v-col cols="12" sm="2" class="d-flex align-start">
                 <v-btn
-                  small
-                  outlined
+                  size="small"
+                  variant="outlined"
                   color="primary"
                   :disabled="!canReadDiff || busy"
                   :loading="action === 'diff'"
@@ -190,9 +192,9 @@
             <v-data-table
               :headers="revisionHeaders"
               :items="revisions"
-              dense
+              density="compact"
               :hide-default-footer="true"
-              item-key="id"
+              item-value="id"
               data-testid="policy-guardrail-revisions"
             >
               <template v-slot:item.created="{ item }">
@@ -210,14 +212,14 @@
               class="mt-4"
               :headers="evaluationHeaders"
               :items="evaluations"
-              dense
+              density="compact"
               :hide-default-footer="true"
-              item-key="id"
+              item-value="id"
               data-testid="policy-guardrail-evaluations"
             >
               <template v-slot:item.decision="{ item }">
                 <v-chip
-                  x-small
+                  size="x-small"
                   dark
                   :color="item.decision === 'deny' ? 'error' : 'success'"
                 >
@@ -231,14 +233,14 @@
                 <div class="py-3 grey--text">{{ $t('policyGuardrailNoEvaluations') }}</div>
               </template>
             </v-data-table>
-          </v-expansion-panel-content>
+          </v-expansion-panel-text>
         </v-expansion-panel>
       </v-expansion-panels>
     </template>
 
     <v-card
       v-if="canRollbackAction && (revisionOptions.length || !canManage)"
-      outlined
+      variant="outlined"
       data-testid="policy-guardrail-rollback-card"
     >
       <v-card-title class="subtitle-1">{{ $t('policyGuardrailRollback') }}</v-card-title>
@@ -247,9 +249,10 @@
           v-if="revisionOptions.length"
           v-model="rollbackRevision"
           :items="revisionOptions"
+          item-title="text"
           :label="$t('policyGuardrailTargetRevision')"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
           :disabled="busy"
         />
         <v-text-field
@@ -258,8 +261,8 @@
           type="number"
           min="1"
           :label="$t('policyGuardrailTargetRevision')"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
           :disabled="busy"
         />
         <v-text-field
@@ -268,14 +271,14 @@
           type="number"
           min="1"
           :label="$t('policyGuardrailDraftRevision')"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
           :disabled="busy"
         />
         <v-textarea
           v-model.trim="rollbackReason"
           :label="$t('policyGuardrailRollbackReason')"
-          outlined
+          variant="outlined"
           rows="2"
           counter="512"
           :disabled="busy"
@@ -373,16 +376,16 @@ export default {
     },
     revisionHeaders() {
       return [
-        { text: this.$t('revision'), value: 'revision', sortable: false },
-        { text: this.$t('policyGuardrailRollbackOf'), value: 'rollback', sortable: false },
-        { text: this.$t('created'), value: 'created', sortable: false },
+        { title: this.$t('revision'), key: 'revision', sortable: false },
+        { title: this.$t('policyGuardrailRollbackOf'), key: 'rollback', sortable: false },
+        { title: this.$t('created'), key: 'created', sortable: false },
       ];
     },
     evaluationHeaders() {
       return [
-        { text: this.$t('decision'), value: 'decision', sortable: false },
-        { text: this.$t('source'), value: 'source', sortable: false },
-        { text: this.$t('created'), value: 'created', sortable: false },
+        { title: this.$t('decision'), key: 'decision', sortable: false },
+        { title: this.$t('source'), key: 'source', sortable: false },
+        { title: this.$t('created'), key: 'created', sortable: false },
       ];
     },
   },

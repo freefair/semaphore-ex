@@ -1,50 +1,63 @@
 <template>
   <div>
-    <v-alert text v-if="!paths || paths.length === 0">
+    <v-alert
+      variant="tonal"
+      class="SyncPathsEmpty"
+      v-if="!paths || paths.length === 0"
+      data-testid="secretStorageSync-empty"
+    >
       {{ $t('No sync paths are defined.') }}
     </v-alert>
-    <div v-for="(p, i) in paths" :key="i" class="d-flex align-start mb-4">
+    <div
+      v-for="(p, i) in paths"
+      :key="i"
+      class="d-flex align-start mb-4"
+      data-testid="secretStorageSync-row"
+    >
       <div style="flex: 1; min-width: 0" class="mb-2">
-        <template v-if="managed">
+        <template v-if="managed"
+          >
           <v-autocomplete
             v-model="p.access_key_id"
-            :items="keys"
+          :items="keys"
             item-value="id"
-            item-text="name"
+            item-title="name"
             label="Semaphore key"
             :rules="[(value) => !!value || 'Select a key']"
-            outlined
-            dense
-            @change="emitPaths"
-          />
+          variant="outlined"
+          density="compact"
+          @update:model-value="emitPaths"
+
+          data-testid="secretStorageSync-path"
+        />
 
           <div class="managed-secret-target">
             <v-text-field
               v-model="p.mount"
               label="KV v2 mount"
               :rules="[(value) => !!value || 'Mount is required']"
-              outlined
-              dense
-              @input="emitPaths"
+              variant="outlined"
+              density="compact"
+              @update:model-value="emitPaths"
             />
             <v-text-field
               v-model="p.path"
               label="Remote path"
               :rules="[(value) => !!value || 'Remote path is required']"
-              outlined
-              dense
-              @input="emitPaths"
+              variant="outlined"
+              density="compact"
+              @update:model-value="emitPaths"
             />
             <v-text-field
               v-model="p.field"
               label="Remote field"
               :rules="[(value) => !!value || 'Remote field is required']"
-              outlined
-              dense
-              @input="emitPaths"
+              variant="outlined"
+              density="compact"
+              @update:model-value="emitPaths"
             />
           </div>
-          <div v-if="p.remote_version" class="text-caption mb-2">
+          <div v-if="p.remote_version" class="text-body-small mb-2">
             Last synchronized remote version: {{ p.remote_version }}
           </div>
         </template>
@@ -54,47 +67,55 @@
             class="mb-2"
             v-model="p.path"
             :label="$t('path')"
-            outlined
-            dense
-            @input="emitPaths"
+            variant="outlined"
+            density="compact"
+            @update:model-value="emitPaths"
             hide-details
+            data-testid="secretStorageSync-separator"
           />
-
           <div class="d-flex" style="gap: 8px">
             <v-text-field
               v-model="p.separator"
               :label="$t('separator')"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               style="flex: 1"
-              @input="emitPaths"
+              @update:model-value="emitPaths"
               hide-details
             />
             <v-text-field
-              v-model="p.prefix"
-              :label="$t('prefix')"
-              outlined
-              dense
-              style="flex: 1"
-              @input="emitPaths"
-              hide-details
-            />
-          </div>
+            v-model="p.prefix"
+            :label="$t('prefix')"
+            variant="outlined"
+            density="compact"
+            style="flex: 1"
+            @update:model-value="emitPaths"
+            hide-details
+            data-testid="secretStorageSync-prefix"
+          />
+        </div>
         </template>
       </div>
 
-      <v-btn icon class="ml-1 mt-1" aria-label="Remove sync mapping" @click="removePath(i)">
+      <v-btn
+        icon
+        variant="text"
+        class="ml-1 mt-1" aria-label="Remove sync mapping"
+        @click="removePath(i)"
+        data-testid="secretStorageSync-removePath"
+      >
         <v-icon>mdi-delete</v-icon>
       </v-btn>
     </div>
 
     <v-btn
-      text
+      variant="text"
       color="primary"
       @click="addPath"
       style="position: absolute; left: 12px; bottom: 12px"
+      data-testid="secretStorageSync-addPath"
     >
-      <v-icon left>mdi-plus</v-icon>
+      <v-icon start>mdi-plus</v-icon>
       Add path
     </v-btn>
   </div>
@@ -103,7 +124,7 @@
 <script>
 export default {
   props: {
-    value: {
+    modelValue: {
       type: Array,
       default: () => [],
     },
@@ -121,6 +142,8 @@ export default {
     },
   },
 
+  emits: ['update:modelValue'],
+
   data() {
     return {
       paths: [],
@@ -128,11 +151,13 @@ export default {
   },
 
   created() {
-    this.paths = this.value && this.value.length ? this.value.map((p) => ({ ...p })) : [];
+    this.paths = this.modelValue && this.modelValue.length
+      ? this.modelValue.map((p) => ({ ...p }))
+      : [];
   },
 
   watch: {
-    value(val) {
+    modelValue(val) {
       if (JSON.stringify(val) !== JSON.stringify(this.paths)) {
         this.paths = (val || []).map((p) => ({ ...p }));
       }
@@ -142,7 +167,7 @@ export default {
   methods: {
     emitPaths() {
       this.$emit(
-        'input',
+        'update:modelValue',
         this.paths.map((p) => ({ ...p })),
       );
     },
@@ -177,5 +202,17 @@ export default {
   .managed-secret-target {
     display: block;
   }
+}
+</style>
+<style lang="scss" scoped>
+// The `v-alert text` of Vuetify 2 without a colour is a sheet of the theme: its text and its tint
+// in the primary text colour (`.theme--light.v-sheet`: .87), not in the secondary text colour of
+// the card around it, which a tonal alert of Vuetify 4 inherits.
+.SyncPathsEmpty.v-theme--light {
+  color: rgba(0, 0, 0, .87);
+}
+
+.SyncPathsEmpty.v-theme--dark {
+  color: #fff;
 }
 </style>

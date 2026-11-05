@@ -2,7 +2,7 @@ import { expect } from 'chai';
 import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
-import * as compiler from 'vue-template-compiler';
+import { compileTemplate, parse } from 'vue/compiler-sfc';
 import OidcGroupMappingPanel from '@/components/OidcGroupMappingPanel.vue';
 
 describe('OIDC group mapping UI contracts', () => {
@@ -27,8 +27,9 @@ describe('OIDC group mapping UI contracts', () => {
 
   it('compiles the panel inside the existing system information surface', () => {
     const filename = path.resolve(process.cwd(), 'src/components/OidcGroupMappingPanel.vue');
-    const descriptor = compiler.parseComponent(fs.readFileSync(filename, 'utf8'));
-    const result = compiler.compile(descriptor.template.content);
+    const { descriptor, errors } = parse(fs.readFileSync(filename, 'utf8'), { filename });
+    expect(errors).to.deep.equal([]);
+    const result = compileTemplate({ source: descriptor.template.content, filename, id: 'oidc-panel' });
 
     expect(result.errors).to.deep.equal([]);
     expect(descriptor.template.content).to.include('data-testid="oidc-group-mapping"');

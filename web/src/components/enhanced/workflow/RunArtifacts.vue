@@ -8,30 +8,30 @@
     data-testid="workflow-artifact-metadata"
   >
     <v-expansion-panel>
-      <v-expansion-panel-header class="py-2">
+      <v-expansion-panel-title class="py-2">
         {{ $t('workflowArtifactRunMetadata') }} ({{ artifactMetadataCount }})
-      </v-expansion-panel-header>
-      <v-expansion-panel-content>
+      </v-expansion-panel-title>
+      <v-expansion-panel-text>
         <div class="WorkflowRun__artifactContent">
           <section v-if="fileArtifacts.length > 0">
-            <div class="text-subtitle-2 mb-1">
+            <div class="text-label-large mb-1">
               {{ $t('workflowFileArtifacts') }}
             </div>
-            <v-list dense class="py-0">
+            <v-list density="compact" class="py-0">
               <v-list-item
                 v-for="artifact in fileArtifacts"
                 :key="`file-artifact-${artifact.id}`"
                 class="px-0 WorkflowRun__fileArtifactItem"
                 data-testid="workflow-file-artifact"
               >
-                <v-list-item-content>
+                <div>
                   <v-list-item-title class="WorkflowRun__artifactTitle">
                     <strong>{{ artifact.filename }}</strong>
                     <span class="text--secondary">
                       · {{ nodeLabel(artifact.workflow_node_id) }}
                     </span>
                     <v-chip
-                      x-small
+                      size="x-small"
                       class="ml-2"
                       :color="fileArtifactStateColor(artifact)"
                     >{{ fileArtifactStateLabel(artifact) }}</v-chip>
@@ -51,63 +51,63 @@
                       }) }}
                     </span>
                   </v-list-item-subtitle>
-                  <div class="WorkflowRun__checksum text-caption mt-1">
+                  <div class="WorkflowRun__checksum text-body-small mt-1">
                     <span class="text--secondary">SHA-256</span>
                     <code class="ml-1">{{ artifact.sha256 }}</code>
                     <v-btn
-                      text
-                      x-small
+                      variant="text"
+                      size="x-small"
                       color="primary"
                       class="ml-1"
                       @click="$emit('copy-checksum', artifact.sha256)"
                     >{{ $t('workflowFileArtifactCopyChecksum') }}</v-btn>
                   </div>
-                  <div class="text-caption mt-1" :class="fileArtifactExpiryClass(artifact)">
+                  <div class="text-body-small mt-1" :class="fileArtifactExpiryClass(artifact)">
                     {{ fileArtifactExpiryLabel(artifact) }}
                   </div>
                   <v-alert
                     v-if="fileArtifactDownloadErrors[artifact.id]"
                     type="warning"
-                    dense
-                    text
+                    density="compact"
+                    variant="tonal"
                     class="mt-2 mb-0"
                   >{{ fileArtifactDownloadErrors[artifact.id] }}</v-alert>
-                </v-list-item-content>
-                <v-list-item-action>
+                </div>
+                <template #append>
                   <v-btn
-                    small
-                    outlined
+                    size="small"
+                    variant="outlined"
                     color="primary"
                     :loading="downloadingArtifactId === artifact.id"
                     :disabled="!fileArtifactDownloadable(artifact)"
                     @click="$emit('download', artifact)"
                   >
-                    <v-icon left small>mdi-download</v-icon>
+                    <v-icon start size="small">mdi-download</v-icon>
                     {{ $t('workflowFileArtifactDownload') }}
                   </v-btn>
-                </v-list-item-action>
+                </template>
               </v-list-item>
             </v-list>
           </section>
 
           <section v-if="artifacts.length > 0">
-            <div class="text-subtitle-2 mb-1">
+            <div class="text-label-large mb-1">
               {{ $t('workflowArtifactOutputs') }}
             </div>
-            <v-list dense class="py-0">
+            <v-list density="compact" class="py-0">
               <v-list-item
                 v-for="artifact in artifacts"
                 :key="`artifact-${artifact.workflow_node_id}-${artifact.name}`"
                 class="px-0"
               >
-                <v-list-item-content>
+                <div>
                   <v-list-item-title class="WorkflowRun__artifactTitle">
                     <strong>{{ artifact.name }}</strong>
                     <span class="text--secondary">
                       · {{ nodeLabel(artifact.workflow_node_id) }}
                     </span>
                     <v-chip
-                      x-small
+                      size="x-small"
                       class="ml-2"
                       :color="artifactAvailabilityColor(artifact.availability)"
                     >{{ artifact.availability }}</v-chip>
@@ -126,22 +126,22 @@
                     </span>
                     <span v-if="artifact.diagnostic"> · {{ artifact.diagnostic }}</span>
                   </v-list-item-subtitle>
-                </v-list-item-content>
+                </div>
               </v-list-item>
             </v-list>
           </section>
 
           <section v-if="resolvedArtifactInputs.length > 0">
-            <div class="text-subtitle-2 mb-1">
+            <div class="text-label-large mb-1">
               {{ $t('workflowArtifactInputs') }}
             </div>
-            <v-list dense class="py-0">
+            <v-list density="compact" class="py-0">
               <v-list-item
                 v-for="input in resolvedArtifactInputs"
                 :key="`artifact-input-${input.consumer_node_id}-${input.name}`"
                 class="px-0"
               >
-                <v-list-item-content>
+                <div>
                   <v-list-item-title class="WorkflowRun__artifactTitle">
                     <strong>{{ input.name }}</strong>
                     <span class="text--secondary">
@@ -149,7 +149,7 @@
                       {{ nodeLabel(input.source_node_id) }}.{{ input.output }}
                     </span>
                     <v-chip
-                      x-small
+                      size="x-small"
                       class="ml-2"
                       :color="artifactAvailabilityColor(input.availability)"
                     >{{ input.availability }}</v-chip>
@@ -168,12 +168,12 @@
                       }) }}
                     </span>
                   </v-list-item-subtitle>
-                </v-list-item-content>
+                </div>
               </v-list-item>
             </v-list>
           </section>
         </div>
-      </v-expansion-panel-content>
+      </v-expansion-panel-text>
     </v-expansion-panel>
   </v-expansion-panels>
 </template>
@@ -182,6 +182,7 @@
 import artifactPresentation from '@/lib/enhanced/workflow-artifact-presentation';
 
 export default {
+  emits: ['copy-checksum', 'download'],
   props: {
     workflow: Object,
     artifacts: Array,

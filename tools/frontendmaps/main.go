@@ -93,7 +93,7 @@ func run(configured options) error {
 
 func indexProductionAssets(root string) (map[string]string, error) {
 	assets := make(map[string]string)
-	for _, directory := range []string{"js", "css"} {
+	for _, directory := range []string{"js", "css", "assets"} {
 		directoryPath := filepath.Join(root, directory)
 		err := filepath.WalkDir(directoryPath, func(path string, entry fs.DirEntry, walkErr error) error {
 			if errors.Is(walkErr, os.ErrNotExist) {
@@ -183,7 +183,24 @@ func normalizeSourceMap(source string, productionAsset string, productionRoot st
 	if err != nil {
 		return err
 	}
-	document["file"] = filepath.ToSlash(relativeAsset)
+	relativeName := filepath.ToSlash(relativeAsset)
+	// Application debug artifacts must be portable across checkout and output paths.
+	// The static Swagger distribution carries its own third-party source namespaces.
+	if strings.HasPrefix(relativeName, "assets/") {
+		sources, ok := document["sources"].([]any)
+		if !ok {
+			return fmt.Errorf("application map %s has no sources array", relativeName)
+		}
+		for _, item := range sources {
+			source, ok := item.(string)
+			name, namespaced := strings.CutPrefix(source, "webpack://semaphore/")
+			if !ok || !namespaced || !fs.ValidPath(name) || name == "." ||
+				strings.ContainsAny(name, `\:`) {
+				return fmt.Errorf("application map %s contains an unscoped source", relativeName)
+			}
+		}
+	}
+	document["file"] = relativeName
 	encoded, err = json.Marshal(document)
 	if err != nil {
 		return fmt.Errorf("encode source map %s: %w", source, err)

@@ -3,7 +3,7 @@
     <v-alert
       v-if="item.recovery_reason"
       type="warning"
-      outlined
+      variant="outlined"
       class="mb-4"
       data-testid="task-recovery-reason"
     >
@@ -13,7 +13,7 @@
     <v-alert
       v-if="recoveryDiagnostics"
       :type="recoveryDiagnostics.quarantined ? 'warning' : 'info'"
-      outlined
+      variant="outlined"
       class="mb-4 TaskRunnerDetails__recoveryAlert"
       data-testid="task-recovery-diagnostics"
     >
@@ -21,7 +21,7 @@
         <strong>HA task recovery</strong>
         <v-chip
           v-if="recoveryDiagnostics.recovery_decision"
-          small
+          size="small"
           label
           :color="recoveryDecisionColor(recoveryDiagnostics.recovery_decision)"
           text-color="white"
@@ -49,7 +49,7 @@
         </div>
         <div v-if="recoveryDiagnostics.evidence_observed_at">
           <strong>Observed:</strong>
-          {{ recoveryDiagnostics.evidence_observed_at | formatDate }}
+          {{ $filters.formatDate(recoveryDiagnostics.evidence_observed_at) }}
         </div>
       </div>
       <div v-if="recoveryDiagnostics.recovery_reason" class="mt-2">
@@ -59,7 +59,7 @@
         v-if="recoveryDiagnostics.safe_action === 'retry_recovery'"
         class="mt-3"
         color="warning"
-        small
+        size="small"
         :loading="retryingRecovery"
         @click="retryTaskRecovery"
       >
@@ -73,8 +73,8 @@
     <v-alert
       v-else-if="item.recovery_reason && recoveryDiagnosticsError"
       type="error"
-      dense
-      text
+      density="compact"
+      variant="tonal"
       class="mb-4"
     >
       {{ recoveryDiagnosticsError }}
@@ -83,7 +83,7 @@
     <v-alert
       v-if="placementDecision"
       :type="placementRejected ? 'warning' : 'info'"
-      outlined
+      variant="outlined"
       class="mb-4"
       data-testid="task-placement-decision"
     >
@@ -99,14 +99,20 @@
     <v-row v-if="credentialUsage.length > 0 || credentialUsageError">
       <v-col cols="12">
         <v-card
-          :color="$vuetify.theme.dark ? '#212121' : 'white'"
+          :color="$vuetify.theme.current.dark ? '#212121' : 'white'"
           style="background: #8585850f"
           class="mb-5"
           data-testid="task-credential-usage"
         >
           <v-card-title>Credential provenance</v-card-title>
           <v-card-text>
-            <v-alert v-if="credentialUsageError" type="error" dense text class="mb-0">
+            <v-alert
+              v-if="credentialUsageError"
+              type="error"
+              density="compact"
+              variant="tonal"
+              class="mb-0"
+            >
               {{ credentialUsageError }}
             </v-alert>
             <div
@@ -125,7 +131,7 @@
                     {{ shortCredentialFingerprint(usage.snapshot.version_fingerprint) }}
                   </code> ·
                 </span>
-                <v-chip x-small :color="credentialOutcomeColor(usage.snapshot.outcome)">
+                <v-chip size="x-small" :color="credentialOutcomeColor(usage.snapshot.outcome)">
                   {{ usage.snapshot.outcome }}
                 </v-chip>
                 <span class="ml-2">{{ usage.snapshot.reason }}</span>
@@ -139,13 +145,19 @@
     <v-row v-if="runnerAttempts.length > 0 || runnerAttemptsError">
       <v-col cols="12">
         <v-card
-          :color="$vuetify.theme.dark ? '#212121' : 'white'"
+          :color="$vuetify.theme.current.dark ? '#212121' : 'white'"
           style="background: #8585850f"
           class="mb-5"
         >
           <v-card-title>Runner attempts</v-card-title>
           <v-card-text>
-            <v-alert v-if="runnerAttemptsError" type="error" dense text class="mb-0">
+            <v-alert
+              v-if="runnerAttemptsError"
+              type="error"
+              density="compact"
+              variant="tonal"
+              class="mb-0"
+            >
               {{ runnerAttemptsError }}
             </v-alert>
             <div
@@ -156,7 +168,12 @@
             >
               <div class="TaskRunnerDetails__attemptHeader">
                 <strong>Attempt #{{ attempt.generation }}</strong>
-                <v-chip small label :color="runnerAttemptColor(attempt.outcome)" text-color="white">
+                <v-chip
+                  size="small"
+                  label
+                  :color="runnerAttemptColor(attempt.outcome)"
+                  text-color="white"
+                >
                   {{ runnerAttemptLabel(attempt.outcome) }}
                 </v-chip>
               </div>
@@ -212,8 +229,10 @@
                   <strong>Lifecycle:</strong> {{ runnerAttemptLabel(attempt.outcome) }}
                 </div>
                 <div class="text--secondary">
-                  Assigned {{ attempt.assigned_at | formatDate }}
-                  <span v-if="attempt.ended_at"> · Ended {{ attempt.ended_at | formatDate }}</span>
+                  Assigned {{ $filters.formatDate(attempt.assigned_at) }}
+                  <span
+                    v-if="attempt.ended_at"
+                  > · Ended {{ $filters.formatDate(attempt.ended_at) }}</span>
                   <span v-else> · In progress</span>
                 </div>
                 <div v-if="attempt.reason" class="mt-1" data-testid="task-runner-attempt-reason">
@@ -262,7 +281,7 @@
     <v-row v-if="placementDecision?.evaluations?.length">
       <v-col cols="12">
         <v-card
-          :color="$vuetify.theme.dark ? '#212121' : 'white'"
+          :color="$vuetify.theme.current.dark ? '#212121' : 'white'"
           style="background: #8585850f"
           class="mb-5"
         >
@@ -282,8 +301,8 @@
                 <v-chip
                   v-for="criterion in evaluation.accepted_criteria"
                   :key="`accepted-${criterion}`"
-                  x-small
-                  outlined
+                  size="x-small"
+                  variant="outlined"
                   color="success"
                 >
                   {{ criterion }}
@@ -291,8 +310,8 @@
                 <v-chip
                   v-for="criterion in evaluation.rejected_criteria"
                   :key="`rejected-${criterion}`"
-                  x-small
-                  outlined
+                  size="x-small"
+                  variant="outlined"
                   color="error"
                 >
                   {{ criterion }}

@@ -7,8 +7,8 @@
       :rules="[(v) => !!v || 'Mount is required']"
       :disabled="disabled"
       data-testid="key-runtimeMount"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
     />
 
     <slot />
@@ -25,8 +25,8 @@
           :rules="[(v) => v == null || v >= 0 || 'Version must not be negative']"
           :disabled="disabled"
           data-testid="key-runtimeVersion"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
         />
       </v-col>
       <v-col cols="12" sm="7">
@@ -36,8 +36,8 @@
           :rules="[(v) => !!v || 'Field is required']"
           :disabled="disabled"
           data-testid="key-runtimeField"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
         />
       </v-col>
     </v-row>
@@ -46,6 +46,7 @@
 
 <script>
 export default {
+  emits: ['update:field', 'update:mount', 'update:version'],
   props: {
     active: Boolean, disabled: Boolean, mount: String, version: [Number, String], field: String,
   },

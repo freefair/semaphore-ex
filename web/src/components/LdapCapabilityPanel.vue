@@ -1,7 +1,13 @@
 <template>
   <v-card data-testid="ldap-capability" style="background: var(--highlighted-card-bg-color)">
     <v-card-text>
-      <v-alert v-if="error" data-testid="ldap-error" type="error" dense outlined>
+      <v-alert
+        v-if="error"
+        data-testid="ldap-error"
+        type="error"
+        density="compact"
+        variant="outlined"
+      >
         {{ error }}
       </v-alert>
       <div class="ldap-toolbar mb-4">
@@ -9,33 +15,38 @@
           v-model="selectedProviderID"
           data-testid="ldap-provider-select"
           :items="providers"
-          item-text="display_name"
+          item-title="display_name"
           item-value="id"
           label="LDAP provider"
           hide-details
-          outlined
-          dense
-          @change="selectProvider"
+          variant="outlined"
+          density="compact"
+          @update:model-value="selectProvider"
         />
-        <v-btn data-testid="ldap-provider-new" outlined @click="newProvider">
+        <v-btn data-testid="ldap-provider-new" variant="outlined" @click="newProvider">
           New provider
         </v-btn>
       </div>
 
       <v-form ref="configurationForm">
-        <v-row dense>
+        <v-row density="compact">
           <v-col cols="12" md="4">
             <v-text-field
               v-model="form.id"
               data-testid="ldap-provider-id"
               label="Provider ID"
               :disabled="providerExists"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
           <v-col cols="12" md="8">
-            <v-text-field v-model="form.display_name" label="Display name" outlined dense />
+            <v-text-field
+              v-model="form.display_name"
+              label="Display name"
+              variant="outlined"
+              density="compact"
+            />
           </v-col>
           <v-col cols="12" md="6">
             <v-text-field
@@ -44,27 +55,46 @@
               placeholder="ldaps://ldap.example.com:636"
               persistent-hint
               hint="Only LDAPS or LDAP upgraded with StartTLS is accepted."
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
           <v-col cols="12" sm="6" md="3">
-            <v-select v-model="form.tls_mode" :items="tlsModes" label="TLS mode" outlined dense />
+            <v-select
+              v-model="form.tls_mode"
+              :items="tlsModes"
+              item-title="text"
+              label="TLS mode"
+              variant="outlined"
+              density="compact"
+            />
           </v-col>
           <v-col cols="12" sm="6" md="3">
-            <v-select v-model="form.trust_mode" :items="trustModes" label="Trust" outlined dense />
+            <v-select
+              v-model="form.trust_mode"
+              :items="trustModes"
+              item-title="text"
+              label="Trust"
+              variant="outlined"
+              density="compact"
+            />
           </v-col>
           <v-col v-if="form.trust_mode === 'custom_ca'" cols="12">
             <v-textarea
               v-model="form.ca_pem"
               label="Custom CA certificate (PEM)"
               rows="4"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
           <v-col cols="12" md="6">
-            <v-text-field v-model="form.bind_dn" label="Bind DN" outlined dense />
+            <v-text-field
+              v-model="form.bind_dn"
+              label="Bind DN"
+              variant="outlined"
+              density="compact"
+            />
           </v-col>
           <v-col cols="12" md="6">
             <v-text-field
@@ -76,16 +106,16 @@
               :label="form.bind_password_configured
                 ? 'Replace bind password (leave blank to keep it)'
                 : 'Bind password'"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
           <v-col cols="12" md="6">
             <v-text-field
               v-model="form.search_base_dn"
               label="Fixed user search base"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
           <v-col cols="12" md="6">
@@ -95,8 +125,8 @@
               :placeholder="filterPlaceholder"
               persistent-hint
               :hint="filterHint"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
           <v-col cols="12" sm="6" md="3">
@@ -104,23 +134,33 @@
               v-model="form.identity_attribute"
               :items="identityAttributes"
               label="Immutable identity"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
           <v-col cols="12" sm="6" md="3">
             <v-text-field
               v-model="form.username_attribute"
               label="Username attribute"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
           <v-col cols="12" sm="6" md="3">
-            <v-text-field v-model="form.name_attribute" label="Name attribute" outlined dense />
+            <v-text-field
+              v-model="form.name_attribute"
+              label="Name attribute"
+              variant="outlined"
+              density="compact"
+            />
           </v-col>
           <v-col cols="12" sm="6" md="3">
-            <v-text-field v-model="form.email_attribute" label="Email attribute" outlined dense />
+            <v-text-field
+              v-model="form.email_attribute"
+              label="Email attribute"
+              variant="outlined"
+              density="compact"
+            />
           </v-col>
           <v-col cols="12">
             <v-divider class="mb-4" />
@@ -131,8 +171,8 @@
               v-model="form.group_search_base_dn"
               data-testid="ldap-group-search-base"
               label="Fixed group search base"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
           <v-col cols="12" md="6">
@@ -141,8 +181,8 @@
               label="User listing filter"
               hint="Static filter without username markers."
               persistent-hint
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
           <v-col cols="12" md="6">
@@ -151,8 +191,8 @@
               label="Group listing filter"
               hint="Static filter used with paged directory search."
               persistent-hint
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
           <v-col cols="12" sm="6" md="3">
@@ -160,16 +200,16 @@
               v-model="form.group_identity_attribute"
               :items="identityAttributes"
               label="Immutable group identity"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
           <v-col cols="12" sm="6" md="3">
             <v-text-field
               v-model="form.group_member_attribute"
               label="Group member attribute"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
           <v-col cols="12" sm="6" md="3">
@@ -179,8 +219,8 @@
               min="1"
               max="16"
               label="Nested group depth"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
         </v-row>
@@ -189,8 +229,8 @@
         v-if="configurationLocked"
         data-testid="ldap-configuration-locked"
         type="info"
-        dense
-        outlined
+        density="compact"
+        variant="outlined"
       >
         Move this provider to Shadow or Disabled before changing its connection configuration.
       </v-alert>
@@ -211,8 +251,8 @@
           v-if="readiness"
           data-testid="ldap-readiness"
           :type="readiness.status === 'ready' ? 'success' : 'warning'"
-          dense
-          outlined
+          density="compact"
+          variant="outlined"
         >
           <strong>{{ readiness.status }}</strong>
           <span v-if="readiness.checked_at"> · {{ formatTime(readiness.checked_at) }}</span>
@@ -223,14 +263,19 @@
             <span>Local recovery: {{ readiness.recovery ? 'passed' : 'not passed' }}</span>
           </div>
         </v-alert>
-        <v-alert type="info" dense outlined>
+        <v-alert type="info" density="compact" variant="outlined">
           Enabling directory login requires a successful directory login and a password check for
           a local administrator. Readiness expires after 15 minutes; that administrator remains
           the recovery login afterward.
         </v-alert>
-        <v-row dense>
+        <v-row density="compact">
           <v-col cols="12" md="6">
-            <v-text-field v-model="testUsername" label="Directory test username" outlined dense />
+            <v-text-field
+              v-model="testUsername"
+              label="Directory test username"
+              variant="outlined"
+              density="compact"
+            />
           </v-col>
           <v-col cols="12" md="6">
             <v-text-field
@@ -238,19 +283,19 @@
               type="password"
               autocomplete="off"
               label="Directory test password"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
           <v-col cols="12" md="6">
             <v-select
               v-model="recoveryAdminUserID"
               :items="localAdmins"
-              item-text="username"
+              item-title="username"
               item-value="id"
               label="Local recovery administrator"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
           <v-col cols="12" md="6">
@@ -259,14 +304,14 @@
               type="password"
               autocomplete="off"
               label="Local administrator password"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-col>
         </v-row>
         <v-btn
           data-testid="ldap-test"
-          outlined
+          variant="outlined"
           :loading="testLoading"
           :disabled="!testUsername
             || !testPassword
@@ -283,33 +328,34 @@
           v-model="form.state"
           data-testid="ldap-state"
           :items="states"
+          item-title="text"
           label="Lifecycle state"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
         />
         <v-select
           v-if="form.state === 'selected_users'"
           v-model="form.selected_user_ids"
           data-testid="ldap-selected-users"
           :items="eligibleUsers"
-          item-text="username"
+          item-title="username"
           item-value="id"
           label="Users with an already linked identity"
           multiple
           chips
           persistent-hint
           hint="Link the LDAP identity from the user profile before selecting the account here."
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
         />
-        <v-alert v-if="form.state === 'shadow'" type="info" dense outlined>
+        <v-alert v-if="form.state === 'shadow'" type="info" density="compact" variant="outlined">
           Shadow mode retains configuration and readiness but does not expose directory login.
         </v-alert>
         <v-alert
           v-if="form.state === 'selected_users' || form.state === 'active'"
           type="warning"
-          dense
-          outlined
+          density="compact"
+          variant="outlined"
         >
           Directory login will be exposed. Verify local recovery immediately before applying.
         </v-alert>
@@ -328,8 +374,8 @@
           <v-spacer />
           <v-btn
             data-testid="ldap-group-preview"
-            outlined
-            small
+            variant="outlined"
+            size="small"
             :loading="groupPreviewLoading"
             @click="previewGroupMappings"
           >
@@ -337,20 +383,20 @@
           </v-btn>
           <v-btn
             class="ml-2"
-            outlined
-            small
+            variant="outlined"
+            size="small"
             :loading="groupReconcileLoading"
             @click="reconcileGroupMappings"
           >
             Reconcile now
           </v-btn>
         </div>
-        <v-alert type="info" dense outlined>
+        <v-alert type="info" density="compact" variant="outlined">
           Mappings use immutable directory IDs. A preview never adopts or removes a manual role
           assignment, and Apply re-reads the directory before changing managed grants.
         </v-alert>
 
-        <v-simple-table v-if="groupMappings.length" dense data-testid="ldap-group-mappings">
+        <v-table v-if="groupMappings.length" density="compact" data-testid="ldap-group-mappings">
           <thead>
             <tr>
               <th>Mapping</th>
@@ -367,38 +413,38 @@
               <td class="text-right text-no-wrap">
                 <v-btn
                   icon
-                  small
+                  size="small"
                   :aria-label="`Edit ${mapping.id}`"
                   @click="editGroupMapping(mapping)"
                 >
-                  <v-icon small>mdi-pencil</v-icon>
+                  <v-icon size="small">mdi-pencil</v-icon>
                 </v-btn>
                 <v-btn
                   icon
-                  small
+                  size="small"
                   :aria-label="`Delete ${mapping.id}`"
                   @click="deleteGroupMapping(mapping)"
                 >
-                  <v-icon small>mdi-delete</v-icon>
+                  <v-icon size="small">mdi-delete</v-icon>
                 </v-btn>
               </td>
             </tr>
           </tbody>
-        </v-simple-table>
-        <v-alert v-else type="info" dense outlined>
+        </v-table>
+        <v-alert v-else type="info" density="compact" variant="outlined">
           No LDAP group mappings are configured for this provider.
         </v-alert>
 
         <v-form class="mt-4" data-testid="ldap-group-mapping-editor">
-          <v-row dense>
+          <v-row density="compact">
             <v-col cols="12" md="4">
               <v-text-field
                 v-model="mappingForm.id"
                 data-testid="ldap-group-mapping-id"
                 label="Mapping ID"
                 :disabled="mappingForm.expected_revision > 0"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
               />
             </v-col>
             <v-col cols="12" md="8">
@@ -407,30 +453,31 @@
                 data-testid="ldap-group-external-id"
                 label="Immutable group ID"
                 placeholder="entryuuid:00000000-0000-0000-0000-000000000000"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
               />
             </v-col>
             <v-col cols="12" sm="6" md="3">
               <v-select
                 v-model="mappingForm.scope"
                 :items="mappingScopes"
+                item-title="text"
                 label="Role scope"
-                outlined
-                dense
-                @change="mappingScopeChanged"
+                variant="outlined"
+                density="compact"
+                @update:model-value="mappingScopeChanged"
               />
             </v-col>
             <v-col v-if="mappingForm.scope === 'project'" cols="12" sm="6" md="4">
               <v-select
                 v-model="mappingForm.project_id"
                 :items="projects"
-                item-text="name"
+                item-title="name"
                 item-value="id"
                 label="Project"
-                outlined
-                dense
-                @change="loadProjectRoles"
+                variant="outlined"
+                density="compact"
+                @update:model-value="loadProjectRoles"
               />
             </v-col>
             <v-col cols="12" sm="6" :md="mappingForm.scope === 'project' ? 4 : 6">
@@ -438,11 +485,11 @@
                 v-model="mappingForm.role_id"
                 data-testid="ldap-group-role"
                 :items="mappingRoleOptions"
-                item-text="name"
+                item-title="name"
                 item-value="id"
                 label="Role"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
               />
             </v-col>
             <v-col cols="12" sm="6" md="2">
@@ -458,7 +505,7 @@
           >
             Save mapping
           </v-btn>
-          <v-btn v-if="mappingForm.expected_revision" text @click="resetMappingForm">
+          <v-btn v-if="mappingForm.expected_revision" variant="text" @click="resetMappingForm">
             Cancel edit
           </v-btn>
         </v-form>
@@ -467,16 +514,16 @@
           <v-divider class="my-6" />
           <h3 class="subtitle-1 mb-3">Latest dry-run</h3>
           <div class="ldap-preview-counts mb-3" data-testid="ldap-group-preview-counts">
-            <v-chip small>Add {{ groupPreview.additions.length }}</v-chip>
-            <v-chip small>Remove {{ groupPreview.removals.length }}</v-chip>
-            <v-chip small :color="groupPreview.unresolved.length ? 'warning' : undefined">
+            <v-chip size="small">Add {{ groupPreview.additions.length }}</v-chip>
+            <v-chip size="small">Remove {{ groupPreview.removals.length }}</v-chip>
+            <v-chip size="small" :color="groupPreview.unresolved.length ? 'warning' : undefined">
               Unresolved {{ groupPreview.unresolved.length }}
             </v-chip>
-            <v-chip small :color="groupPreview.collisions.length ? 'warning' : undefined">
+            <v-chip size="small" :color="groupPreview.collisions.length ? 'warning' : undefined">
               Collisions {{ groupPreview.collisions.length }}
             </v-chip>
             <v-chip
-              small
+              size="small"
               :color="groupPreview.protected_admin_violations.length ? 'error' : undefined"
             >
               Protected admins {{ groupPreview.protected_admin_violations.length }}
@@ -486,8 +533,8 @@
             v-if="groupPreview.unresolved.length"
             data-testid="ldap-group-unresolved"
             type="warning"
-            dense
-            outlined
+            density="compact"
+            variant="outlined"
           >
             <div class="font-weight-medium mb-1">
               Resolve these directory references before Apply:
@@ -499,15 +546,20 @@
               {{ item.kind }} · {{ item.external_id }} · {{ item.reason }}
             </div>
           </v-alert>
-          <v-alert v-if="groupPreview.collisions.length" type="warning" dense outlined>
+          <v-alert
+            v-if="groupPreview.collisions.length"
+            type="warning"
+            density="compact"
+            variant="outlined"
+          >
             Existing manual or conflicting project memberships were preserved. Edit the mapping
             or membership, then run a new preview.
           </v-alert>
           <v-alert
             v-if="groupPreview.protected_admin_violations.length"
             type="error"
-            dense
-            outlined
+            density="compact"
+            variant="outlined"
           >
             Apply is blocked because it would remove the last effective administrator.
           </v-alert>
@@ -525,7 +577,7 @@
         <template v-if="groupHistory.length">
           <v-divider class="my-6" />
           <h3 class="subtitle-1 mb-3">Reconciliation history</h3>
-          <v-simple-table dense data-testid="ldap-group-history">
+          <v-table density="compact" data-testid="ldap-group-history">
             <thead>
               <tr><th>Time</th><th>Source</th><th>Status</th><th>Changes</th><th>Issue</th></tr>
             </thead>
@@ -538,7 +590,7 @@
                 <td>{{ entry.error_code || '—' }}</td>
               </tr>
             </tbody>
-          </v-simple-table>
+          </v-table>
         </template>
       </template>
     </v-card-text>

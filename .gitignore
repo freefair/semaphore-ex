@@ -69,3 +69,4 @@ __debug_bin*
 /integration-tests/
 /pro_impl/
 /AGENTS/tmp/*
+/docs/

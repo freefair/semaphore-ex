@@ -1,15 +1,15 @@
 <template>
   <v-dialog
-    :value="value"
+    :model-value="modelValue"
     max-width="960"
     scrollable
-    @input="$emit('input', $event)"
+    @update:model-value="$emit('update:modelValue', $event)"
   >
     <v-card data-testid="workflow-versions-dialog">
       <v-card-title>
         {{ $t('workflowVersionHistory') }}
         <v-spacer />
-        <v-btn icon :aria-label="$t('close')" @click="$emit('input', false)">
+        <v-btn icon :aria-label="$t('close')" @click="$emit('update:modelValue', false)">
           <v-icon>mdi-close</v-icon>
         </v-btn>
       </v-card-title>
@@ -19,11 +19,11 @@
         <div v-if="loading" class="pa-8 text-center">
           <v-progress-circular indeterminate color="primary" />
         </div>
-        <v-alert v-else-if="error" type="error" text class="ma-4">
+        <v-alert v-else-if="error" type="error" variant="tonal" class="ma-4">
           <div class="d-flex align-center">
             <span>{{ error }}</span>
             <v-spacer />
-            <v-btn text color="error" @click="loadVersions">
+            <v-btn variant="text" color="error" @click="loadVersions">
               {{ $t('workflowVersionRetry') }}
             </v-btn>
           </div>
@@ -32,7 +32,7 @@
           {{ $t('workflowVersionHistoryEmpty') }}
         </div>
         <template v-else>
-          <v-simple-table>
+          <v-table>
             <thead>
               <tr>
                 <th>{{ $t('workflowVersion') }}</th>
@@ -47,22 +47,25 @@
                   <strong>#{{ version.version_number }}</strong>
                   <v-chip
                     v-if="version.version_number === latestVersionNumber"
-                    x-small
+                    size="x-small"
                     class="ml-2"
                   >{{ $t('workflowVersionCurrent') }}</v-chip>
-                  <div v-if="version.restored_from_version_id" class="text-caption text--secondary">
+                  <div
+                    v-if="version.restored_from_version_id"
+                    class="text-body-small text--secondary"
+                  >
                     {{ $t('workflowVersionRestored') }}
                   </div>
                 </td>
                 <td>{{ version.message || '—' }}</td>
                 <td>{{ formatCreated(version.created) }}</td>
                 <td class="text-right text-no-wrap">
-                  <v-btn small text @click="selectForCompare(version)">
+                  <v-btn size="small" variant="text" @click="selectForCompare(version)">
                     {{ $t('workflowVersionCompareAction') }}
                   </v-btn>
                   <v-btn
-                    small
-                    text
+                    size="small"
+                    variant="text"
                     color="primary"
                     :disabled="!canRestore || version.version_number === latestVersionNumber"
                     @click="previewRestore(version)"
@@ -70,33 +73,35 @@
                 </td>
               </tr>
             </tbody>
-          </v-simple-table>
+          </v-table>
 
           <v-divider />
           <div class="pa-4">
-            <div class="text-subtitle-2 mb-3">{{ $t('workflowVersionCompare') }}</div>
+            <div class="text-label-large mb-3">{{ $t('workflowVersionCompare') }}</div>
             <div class="d-flex flex-wrap align-center WorkflowVersionsDialog__compareControls">
               <v-select
                 v-model="compareFrom"
                 :items="versionOptions"
+                item-title="text"
                 :label="$t('workflowVersionCompareFrom')"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 hide-details
               />
               <v-icon class="mx-3">mdi-arrow-right</v-icon>
               <v-select
                 v-model="compareTo"
                 :items="versionOptions"
+                item-title="text"
                 :label="$t('workflowVersionCompareTo')"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 hide-details
               />
               <v-btn
                 class="ml-3"
                 color="primary"
-                outlined
+                variant="outlined"
                 :loading="comparing"
                 :disabled="!canCompare"
                 @click="compareVersions"
@@ -106,12 +111,12 @@
             <v-alert
               v-if="comparison && comparison.changes.length === 0"
               type="info"
-              text
+              variant="tonal"
               class="mt-4 mb-0"
             >{{ $t('workflowVersionNoChanges') }}</v-alert>
             <v-expansion-panels
               v-else-if="comparison"
-              accordion
+              variant="accordion"
               flat
               class="mt-4"
               data-testid="workflow-version-diff"
@@ -120,23 +125,23 @@
                 v-for="change in comparison.changes"
                 :key="change.section"
               >
-                <v-expansion-panel-header>{{ change.section }}</v-expansion-panel-header>
-                <v-expansion-panel-content>
+                <v-expansion-panel-title>{{ change.section }}</v-expansion-panel-title>
+                <v-expansion-panel-text>
                   <v-row>
                     <v-col cols="12" md="6">
-                      <div class="text-caption text--secondary mb-1">
+                      <div class="text-body-small text--secondary mb-1">
                         {{ $t('workflowVersionBefore') }}
                       </div>
                       <pre>{{ pretty(change.before) }}</pre>
                     </v-col>
                     <v-col cols="12" md="6">
-                      <div class="text-caption text--secondary mb-1">
+                      <div class="text-body-small text--secondary mb-1">
                         {{ $t('workflowVersionAfter') }}
                       </div>
                       <pre>{{ pretty(change.after) }}</pre>
                     </v-col>
                   </v-row>
-                </v-expansion-panel-content>
+                </v-expansion-panel-text>
               </v-expansion-panel>
             </v-expansion-panels>
           </div>
@@ -144,7 +149,7 @@
           <template v-if="restorePreview">
             <v-divider />
             <div class="pa-4" data-testid="workflow-version-restore-preview">
-              <v-alert type="warning" text>
+              <v-alert type="warning" variant="tonal">
                 {{ $t('workflowVersionRestorePreview', {
                   version: restorePreview.version.version_number,
                   sections: changedSections(restorePreview.diff),
@@ -154,12 +159,12 @@
                 v-model="restoreMessage"
                 :label="$t('workflowVersionMessage')"
                 :counter="512"
-                :rules="[value => byteLength(value) <= 512 || $t('workflowVersionMessageTooLong')]"
-                outlined
-                dense
+                :rules="[v => byteLength(v) <= 512 || $t('workflowVersionMessageTooLong')]"
+                variant="outlined"
+                density="compact"
               />
               <div class="d-flex justify-end">
-                <v-btn text @click="restorePreview = null">{{ $t('cancel') }}</v-btn>
+                <v-btn variant="text" @click="restorePreview = null">{{ $t('cancel') }}</v-btn>
                 <v-btn
                   color="warning"
                   class="ml-2"
@@ -181,8 +186,9 @@ import axios from 'axios';
 import { getErrorMessage } from '@/lib/error';
 
 export default {
+  emits: ['restored', 'update:modelValue'],
   props: {
-    value: Boolean,
+    modelValue: Boolean,
     projectId: {
       type: Number,
       required: true,
@@ -225,7 +231,7 @@ export default {
     },
   },
   watch: {
-    value(open) {
+    modelValue(open) {
       if (open) this.loadVersions();
     },
   },

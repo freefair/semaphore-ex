@@ -1,24 +1,24 @@
 <template>
   <section class="mt-6">
     <h3 class="mb-2">{{ $t('taskSSHKeys') }}</h3>
-    <p class="text-body-2">{{ $t('taskSSHKeysDescription') }}</p>
-    <v-alert v-if="error" dense type="error">{{ error }}</v-alert>
+    <p class="text-body-medium">{{ $t('taskSSHKeysDescription') }}</p>
+    <v-alert v-if="error" density="compact" type="error">{{ error }}</v-alert>
     <v-progress-linear v-if="loading" indeterminate class="mb-2" />
     <SSHKeyBindingsEditor
-      :value="project.default_ssh_keys || []"
+      :model-value="project.default_ssh_keys || []"
       :keys="keys"
       :title="$t('taskSSHKeysDefaults')"
       :description="$t('taskSSHKeysDefaultsHint')"
       :disabled="disabled || loading || !!error"
-      @input="$emit('defaults', $event)"
+      @update:model-value="$emit('defaults', $event)"
     />
     <SSHKeyBindingsEditor
-      :value="project.always_ssh_keys || []"
+      :model-value="project.always_ssh_keys || []"
       :keys="keys"
       :title="$t('taskSSHKeysAlways')"
       :description="$t('taskSSHKeysAlwaysHint')"
       :disabled="disabled || loading || !!error"
-      @input="$emit('always', $event)"
+      @update:model-value="$emit('always', $event)"
     />
   </section>
 </template>
@@ -29,6 +29,7 @@ import SSHKeyBindingsEditor from '@/components/enhanced/SSHKeyBindingsEditor.vue
 import { getErrorMessage } from '@/lib/error';
 
 export default {
+  emits: ['always', 'defaults'],
   components: { SSHKeyBindingsEditor },
   props: {
     project: { type: Object, required: true },

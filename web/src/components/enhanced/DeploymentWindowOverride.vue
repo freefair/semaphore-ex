@@ -3,15 +3,15 @@
     <v-alert
       v-if="block"
       type="warning"
-      text
-      dense
+      variant="tonal"
+      density="compact"
       data-testid="deployment-window-blocked"
     >
       <div>{{ message }}</div>
       <div
         v-if="block.next_eligible_known
           && block.next_eligible_at"
-        class="text-caption mt-1"
+        class="text-body-small mt-1"
       >
         {{ $t('deploymentWindowNextEligible') }}:
         {{ formatDate(block.next_eligible_at) }}
@@ -19,13 +19,14 @@
     </v-alert>
 
     <template v-if="block">
-      <div class="text-subtitle-2 mb-2">{{ $t('deploymentWindowEmergencyOverride') }}</div>
+      <div class="text-label-large mb-2">{{ $t('deploymentWindowEmergencyOverride') }}</div>
       <v-select
         v-model="categoryModel"
         :items="categories"
+        item-title="text"
         :label="$t('deploymentWindowOverrideCategory')"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
         :disabled="disabled"
       />
       <v-text-field
@@ -33,8 +34,8 @@
         :label="$t('deploymentWindowOverrideReference')"
         :hint="$t('deploymentWindowOverrideReferenceHint')"
         persistent-hint
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
         :disabled="disabled"
         data-testid="deployment-window-override-reference"
       />
@@ -51,6 +52,7 @@
 
 <script>
 export default {
+  emits: ['update:category', 'update:confirmed', 'update:reference'],
   props: {
     block: Object,
     message: String,

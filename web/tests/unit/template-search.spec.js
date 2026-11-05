@@ -86,7 +86,7 @@ describe('template search UI', () => {
         templateSearchError: null,
         appliedTemplateSearch: '100%_literal',
         items: [],
-        openedItems: [{ id: 9 }],
+        openedItems: [9],
         getItemsUrl: () => '/api/project/3/templates',
       };
       context.cancelTemplateSearchRequest = Templates.methods.cancelTemplateSearchRequest

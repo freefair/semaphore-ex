@@ -13,7 +13,7 @@ describe('monorepo task and template forms', () => {
 
   beforeEach(() => { adapter = axios.defaults.adapter; post = axios.post; });
   afterEach(() => {
-    if (wrapper) wrapper.destroy();
+    if (wrapper) wrapper.unmount();
     wrapper = null;
     axios.defaults.adapter = adapter;
     axios.post = post;
@@ -28,7 +28,7 @@ describe('monorepo task and template forms', () => {
       };
       axios.post = async () => ({ data: { fingerprint: 'review', review_token: 'review-token', findings: [] } });
       wrapper = shallowMount(TaskForm, {
-        propsData: {
+        props: {
           itemId: 'new',
           projectId: 7,
           template: {
@@ -42,7 +42,10 @@ describe('monorepo task and template forms', () => {
             repository_monorepo: monorepo,
           },
         },
-        mocks: { $t: (key) => key },
+        global: {
+          renderStubDefaultSlot: true,
+          mocks: { $t: (key) => key },
+        },
       });
       await settle();
       expect(repositoryCalls).to.deep.equal([]);

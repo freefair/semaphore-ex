@@ -7,7 +7,7 @@ export default {
   methods: {
 
     // The object's permissions come from the server: the project verbs plus the grants on it.
-    can(permission, item = this.item) {
+    can(permission, item = 'item' in this ? this.item : undefined) {
       if (this.isAdmin) {
         return true;
       }

@@ -6,7 +6,6 @@ import axios from 'axios';
 import TemplateForm from '@/components/TemplateForm.vue';
 import en from '@/lang/enhanced/en';
 import de from '@/lang/enhanced/de';
-import Vuetify from 'vuetify';
 
 describe('task dialog usability', () => {
   it('omits only routine provisional findings and retains actionable findings', () => {
@@ -17,19 +16,22 @@ describe('task dialog usability', () => {
       { code: 'policy_denied', severity: 'denial', message: 'Policy denied' },
     ];
     const wrapper = shallowMount(ExecutionPreflightReview, {
-      propsData: { plan: { definition: { name: 'Test' }, findings } },
-      mocks: { $t: (key) => key },
+      props: { plan: { definition: { name: 'Test' }, findings } },
+      global: {
+        renderStubDefaultSlot: true,
+        mocks: { $t: (key) => key },
+      },
     });
     expect(wrapper.text()).not.to.contain('Routine placement');
     expect(wrapper.text()).to.contain('Runner busy');
     expect(wrapper.text()).to.contain('Placement denied');
     expect(wrapper.text()).to.contain('Policy denied');
-    wrapper.destroy();
+    wrapper.unmount();
   });
 
   it('shows provisional state only for a provisional placement and preserves bindings', () => {
     const wrapper = shallowMount(ExecutionPreflightReview, {
-      propsData: {
+      props: {
         plan: {
           definition: { name: 'Test' },
           placements: [
@@ -46,13 +48,16 @@ describe('task dialog usability', () => {
           ],
         },
       },
-      mocks: { $t: (key) => key },
+      global: {
+        renderStubDefaultSlot: true,
+        mocks: { $t: (key) => key },
+      },
     });
     expect(wrapper.findAll('[data-testid="placement-provisional"]')).to.have.length(1);
     expect(wrapper.text()).to.contain('repository.ssh');
     expect(wrapper.text()).to.contain('inventory.repository.ssh');
     expect(wrapper.text()).not.to.contain('executionPreflightNoSecretValues');
-    wrapper.destroy();
+    wrapper.unmount();
   });
 
   it('keeps the full template name in the task heading', () => {
@@ -71,29 +76,32 @@ describe('task dialog usability', () => {
       let wrapper;
       try {
         wrapper = shallowMount(TemplateForm, {
-          vuetify: new Vuetify(),
-          propsData: {
+
+          props: {
             itemId: 'new', projectId: 7, app: 'terraform', features: {},
           },
-          mocks: { $t: (key) => messages[key] || key },
+          global: {
+            renderStubDefaultSlot: true,
+            mocks: { $t: (key) => messages[key] || key },
+          },
         });
         await new Promise((resolve) => { setTimeout(resolve, 20); });
-        const checkboxes = wrapper.findAll('v-checkbox-stub').wrappers;
+        const checkboxes = wrapper.findAllComponents({ name: 'VCheckbox' });
         const defaults = checkboxes.find((box) => box.attributes('label') === messages.templateAutoApproveDefault);
         const overrides = checkboxes.find((box) => box.attributes('label') === messages.templateAutoApproveOverride);
         expect(defaults).not.to.equal(undefined);
         expect(overrides).not.to.equal(undefined);
-        defaults.vm.$emit('change', true);
+        defaults.vm.$emit('update:modelValue', true);
         await wrapper.vm.$nextTick();
         expect(wrapper.vm.item.task_params.auto_approve).to.equal(true);
         expect(wrapper.vm.item.task_params.allow_auto_approve).not.to.equal(true);
-        overrides.vm.$emit('change', true);
-        defaults.vm.$emit('change', false);
+        overrides.vm.$emit('update:modelValue', true);
+        defaults.vm.$emit('update:modelValue', false);
         await wrapper.vm.$nextTick();
         expect(wrapper.vm.item.task_params.auto_approve).to.equal(false);
         expect(wrapper.vm.item.task_params.allow_auto_approve).to.equal(true);
       } finally {
-        if (wrapper) wrapper.destroy();
+        if (wrapper) wrapper.unmount();
         axios.defaults.adapter = adapter;
       }
     });

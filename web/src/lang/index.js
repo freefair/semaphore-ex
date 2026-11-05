@@ -1,11 +1,11 @@
 import enhancedMessages from './enhanced';
 
-const files = require.context('.', false, /\.js$/);
+const files = import.meta.glob('./*.js', { eager: true });
 const messages = {};
-files.keys().forEach((key) => {
+Object.keys(files).forEach((key) => {
   if (key === './index.js') return;
-  const locale = key.replace(/(\.\/|\.js)/g, '');
-  messages[locale] = { ...files(key).default, ...(enhancedMessages[locale] || {}) };
+  const locale = key.slice(2, -3);
+  messages[locale] = { ...files[key].default, ...(enhancedMessages[locale] || {}) };
 });
 const languages = Object.keys(messages);
 export { messages, languages };

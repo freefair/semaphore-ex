@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import axios from 'axios';
 import LdapCapabilityPanel from '@/components/LdapCapabilityPanel.vue';
 import Auth from '@/views/Auth.vue';
+import mockAxios, { httpError } from './helpers/axiosMock';
 
 describe('LDAP capability UI contracts', () => {
   let originalGet;
@@ -165,6 +166,25 @@ describe('LDAP capability UI contracts', () => {
     expect(Auth.methods.authenticationErrorMessage.call({ $t: (key) => key }, {
       response: { status: 429, data: { error: 'LDAP_THROTTLED' } },
     })).to.equal('ldapLoginThrottled');
+  });
+
+  it('explains unsupported legacy LDAP group settings on login', async () => {
+    const http = mockAxios();
+    http.respond(() => { throw httpError(503, { error: 'LDAP_GROUP_MAPPING_UNSUPPORTED' }); });
+    const context = {
+      $refs: { signInForm: { validate: async () => ({ valid: true }) } },
+      username: 'fixture',
+      password: 'secret',
+      loginTabs: [{ id: 'corp', ldap: true }],
+      activeLoginTab: { id: 'corp', ldap: true },
+    };
+    try {
+      await Auth.methods.signIn.call(context);
+      expect(context.signInError).to.contain('configure group mapping through managed LDAP');
+      expect(http.requests[0].data.provider).to.equal('corp');
+    } finally {
+      http.restore();
+    }
   });
 
   it('turns invalid readiness credentials into an actionable message', () => {

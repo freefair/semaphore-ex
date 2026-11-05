@@ -1,4 +1,5 @@
-@import '~vuetify/src/styles/settings/variables';
+@use 'sass:map';
+@use '@/scss/variables' as settings;
 
 .template-search-bar {
   align-items: center;
@@ -24,8 +25,8 @@
   overflow-wrap: anywhere;
 }
 
-.theme--dark .template-search-context,
-.theme--dark .template-search-results {
+.v-theme--dark .template-search-context,
+.v-theme--dark .template-search-results {
   color: rgba(255, 255, 255, 0.7);
 }
 
@@ -36,11 +37,11 @@
   padding: 0;
 }
 
-.theme--dark .template-search-match {
+.v-theme--dark .template-search-match {
   background: #675d20;
 }
 
-@media #{map-get($display-breakpoints, 'sm-and-down')} {
+@media #{map.get(settings.$display-breakpoints, 'sm-and-down')} {
   .template-search-bar {
     align-items: stretch;
     flex-direction: column;

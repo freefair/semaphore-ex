@@ -1,6 +1,6 @@
 <template>
   <div data-testid="secretStorage-infisical">
-    <v-alert text type="info" dense>
+    <v-alert variant="tonal" type="info" density="compact">
       {{ $t('infisicalPamNotice') }}
     </v-alert>
 
@@ -10,8 +10,8 @@
       :rules="[(v) => !!v || $t('infisicalPamClientIdRequired')]"
       :disabled="formSaving"
       data-testid="secretStorage-infisicalClientId"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
     ></v-text-field>
 
     <SecretSourceToggle
@@ -28,8 +28,8 @@
       :disabled="formSaving"
       :rules="[(v) => !!v || !isNew || $t('infisicalPamClientSecretRequired')]"
       data-testid="secretStorage-infisicalClientSecret"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
       append-icon="mdi-lock"
     ></v-text-field>
 
@@ -41,8 +41,8 @@
       :disabled="formSaving"
       :rules="[(v) => !!v || !isNew || $t('envvar_required')]"
       data-testid="secretStorage-infisicalClientSecretSource"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
     ></v-text-field>
 
     <v-text-field
@@ -50,8 +50,8 @@
       :label="$t('infisicalPamOrganizationSlug')"
       :disabled="formSaving"
       data-testid="secretStorage-infisicalOrganization"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
     ></v-text-field>
 
     <v-text-field
@@ -61,8 +61,8 @@
       placeholder="1h"
       :disabled="formSaving"
       data-testid="secretStorage-infisicalSessionDuration"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
     ></v-text-field>
 
     <v-textarea
@@ -71,21 +71,21 @@
       :disabled="formSaving"
       data-testid="secretStorage-infisicalCACertificate"
       rows="3"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
     ></v-textarea>
 
     <div class="d-flex align-center mb-2">
-      <div class="text-subtitle-1">{{ $t('infisicalPamRoutes') }}</div>
+      <div class="text-body-large">{{ $t('infisicalPamRoutes') }}</div>
       <v-spacer />
       <v-btn
-        text
+        variant="text"
         color="primary"
         :disabled="formSaving"
         data-testid="secretStorage-infisicalAddRoute"
         @click="addRoute"
       >
-        <v-icon left>mdi-plus</v-icon>
+        <v-icon start>mdi-plus</v-icon>
         {{ $t('infisicalPamAddRoute') }}
       </v-btn>
     </div>
@@ -97,25 +97,25 @@
       data-testid="secretStorage-infisicalRoute"
     >
       <v-text-field
-        :value="route.host"
+        :model-value="route.host"
         :label="$t('infisicalPamRouteHost')"
         placeholder="web-1.example.com"
         :rules="[(v) => hostPattern.test(v || '') || $t('infisicalPamRouteHostInvalid')]"
         :disabled="formSaving"
         class="mr-3"
-        outlined
-        dense
-        @input="updateRoute(index, 'host', $event)"
+        variant="outlined"
+        density="compact"
+        @update:model-value="updateRoute(index, 'host', $event)"
       ></v-text-field>
       <v-text-field
-        :value="route.account"
+        :model-value="route.account"
         :label="$t('infisicalPamRouteAccount')"
         placeholder="servers/web-1"
         :rules="[(v) => accountPattern.test(v || '') || $t('infisicalPamRouteAccountInvalid')]"
         :disabled="formSaving"
-        outlined
-        dense
-        @input="updateRoute(index, 'account', $event)"
+        variant="outlined"
+        density="compact"
+        @update:model-value="updateRoute(index, 'account', $event)"
       ></v-text-field>
       <v-btn
         icon
@@ -128,7 +128,7 @@
       </v-btn>
     </div>
 
-    <v-alert v-if="routeList.length === 0" text dense type="warning">
+    <v-alert v-if="routeList.length === 0" variant="tonal" density="compact" type="warning">
       {{ $t('infisicalPamNoRoutes') }}
     </v-alert>
   </div>
@@ -144,6 +144,10 @@ const ACCOUNT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _.-]*(\/[A-Za-z0-9][A-Za-z0-9 _.
 const DURATION_PATTERN = /^([0-9]+h)?([0-9]+m)?([0-9]+s)?$/;
 
 export default {
+  emits: [
+    'update:caCertificate', 'update:clientId', 'update:organizationSlug', 'update:routes',
+    'update:secret', 'update:secretStorage', 'update:sessionDuration',
+  ],
   components: { SecretSourceToggle },
   props: {
     clientId: String,

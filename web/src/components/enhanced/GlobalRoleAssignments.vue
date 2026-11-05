@@ -1,19 +1,19 @@
 <template>
   <div>
-  <v-alert :value="globalRoleError" color="error" class="pb-2">
+  <v-alert :model-value="globalRoleError" color="error" class="pb-2">
     {{ globalRoleError }}
   </v-alert>
 
-  <v-row align="center">
+  <v-row class="align-center">
     <v-col cols="12" sm="8">
       <v-select
         v-model="newGlobalRoleIdModel"
         :items="availableGlobalRoles"
         item-value="id"
-        item-text="name"
+        item-title="name"
         label="Global role"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
         hide-details
         :disabled="globalRolesLoading"
         data-testid="global-role-select"
@@ -38,15 +38,15 @@
       :key="assignment.id"
       class="px-0"
     >
-      <v-list-item-content>
+      <div>
         <v-list-item-title>{{ assignment.role_name }}</v-list-item-title>
         <TemplatePermissionsChips
           class="pt-1"
           scope="global"
           :permissions="assignment.global_permissions || 0"
         />
-      </v-list-item-content>
-      <v-list-item-action>
+      </div>
+      <template #append>
         <v-btn
           icon
           :disabled="globalRolesLoading"
@@ -55,33 +55,33 @@
         >
           <v-icon>mdi-delete</v-icon>
         </v-btn>
-      </v-list-item-action>
+      </template>
     </v-list-item>
   </v-list>
-  <v-alert v-else text dense type="info" class="mt-4">
+  <v-alert v-else variant="tonal" density="compact" type="info" class="mt-4">
     No global roles assigned.
   </v-alert>
 
-  <v-subheader class="px-0 mt-4">Effective global permissions</v-subheader>
-  <v-list dense class="px-0">
+  <v-list-subheader class="px-0 mt-4">Effective global permissions</v-list-subheader>
+  <v-list density="compact" class="px-0">
     <v-list-item
       v-for="decision in effectiveGlobalPermissions.decisions || []"
       :key="decision.permission"
       class="px-0"
     >
-      <v-list-item-icon class="mr-3">
+      <template #prepend>
         <v-icon :color="decision.allowed ? 'success' : 'grey'">
           {{ decision.allowed ? 'mdi-check-circle' : 'mdi-minus-circle-outline' }}
         </v-icon>
-      </v-list-item-icon>
-      <v-list-item-content>
+      </template>
+      <div>
         <v-list-item-title>
           {{ globalPermissionDescription(decision.permission) }}
         </v-list-item-title>
         <v-list-item-subtitle>
           {{ globalPermissionProvenance(decision) }}
         </v-list-item-subtitle>
-      </v-list-item-content>
+      </div>
     </v-list-item>
   </v-list>
   </div>
@@ -91,6 +91,7 @@
 import TemplatePermissionsChips from '@/components/TemplatePermissionsChips.vue';
 
 export default {
+  emits: ['assign', 'remove', 'update:newGlobalRoleId'],
   components: { TemplatePermissionsChips },
   props: {
     globalRoleError: String,

@@ -44,6 +44,21 @@ func linkLdapIdentityWithService(
 			ActorID: currentUser.ID, ProviderID: providerID,
 			Username: creds.Username, Password: creds.Password, Now: tz.Now(),
 		})
+		if errors.Is(err, pro_interfaces.ErrLDAPProviderNotFound) && hasUnsupportedLegacyLDAPProvider(providerID) {
+			collision, collisionErr := managedLDAPProviderIDExists(r.Context(), service, providerID)
+			if collisionErr != nil {
+				outcome, reason := ldapAuditReason(collisionErr)
+				recordLDAPAudit(auditFacade, r, &currentUser.ID, pro_interfaces.AuditActionLDAPLink, outcome, reason)
+				writeLDAPError(w, collisionErr)
+				return
+			}
+			if !collision {
+				recordLDAPAudit(auditFacade, r, &currentUser.ID, pro_interfaces.AuditActionLDAPLink,
+					pro_interfaces.AuditOutcomeFailure, pro_interfaces.AuditReasonProviderError)
+				helpers.WriteErrorStatus(w, "LDAP_GROUP_MAPPING_UNSUPPORTED", http.StatusServiceUnavailable)
+				return
+			}
+		}
 		if !errors.Is(err, pro_interfaces.ErrLDAPUnavailable) {
 			outcome, reason := ldapAuditReason(err)
 			recordLDAPAudit(auditFacade, r, &currentUser.ID,
@@ -66,6 +81,10 @@ func linkLdapIdentityWithService(
 	)
 	if errors.Is(err, pro_interfaces.ErrLDAPProviderNotFound) {
 		helpers.WriteErrorStatus(w, "LDAP provider not found", http.StatusBadRequest)
+		return
+	}
+	if errors.Is(err, errLegacyLDAPGroupMappingUnsupported) {
+		helpers.WriteErrorStatus(w, "LDAP_GROUP_MAPPING_UNSUPPORTED", http.StatusServiceUnavailable)
 		return
 	}
 	if err != nil || ldapUser == nil {

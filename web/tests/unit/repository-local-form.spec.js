@@ -11,15 +11,18 @@ describe('local repository shared checkout', () => {
     axios.defaults.adapter = async () => ({ data: [] });
   });
   afterEach(() => {
-    if (wrapper) wrapper.destroy();
+    if (wrapper) wrapper.unmount();
     axios.defaults.adapter = adapter;
   });
 
   ['/srv/repository', 'C:\\repository', '\\\\server\\share'].forEach((url) => {
     it(`clears shared checkout when entering ${url} and when loading a stale record`, async () => {
       wrapper = shallowMount(RepositoryForm, {
-        propsData: { itemId: 'new', projectId: 1 },
-        mocks: { $t: (key) => key },
+        props: { itemId: 'new', projectId: 1 },
+        global: {
+          renderStubDefaultSlot: true,
+          mocks: { $t: (key) => key },
+        },
       });
       await wrapper.vm.$nextTick();
       await wrapper.setData({ item: { git_url: 'https://example.com/repo', monorepo: true } });
@@ -33,8 +36,11 @@ describe('local repository shared checkout', () => {
 
   it('clears shared checkout through the local chip and preserves Git clones', async () => {
     wrapper = shallowMount(RepositoryForm, {
-      propsData: { itemId: 'new', projectId: 1 },
-      mocks: { $t: (key) => key },
+      props: { itemId: 'new', projectId: 1 },
+      global: {
+        renderStubDefaultSlot: true,
+        mocks: { $t: (key) => key },
+      },
     });
     await wrapper.vm.$nextTick();
     await wrapper.setData({ item: { git_url: 'file:///srv/repo', monorepo: true } });
@@ -47,8 +53,11 @@ describe('local repository shared checkout', () => {
 
   it('preserves a shared Git checkout using a one-letter SSH host alias', async () => {
     wrapper = shallowMount(RepositoryForm, {
-      propsData: { itemId: 'new', projectId: 1 },
-      mocks: { $t: (key) => key },
+      props: { itemId: 'new', projectId: 1 },
+      global: {
+        renderStubDefaultSlot: true,
+        mocks: { $t: (key) => key },
+      },
     });
     await wrapper.vm.$nextTick();
     await wrapper.setData({ item: { git_url: 'c:org/repo.git', monorepo: true } });

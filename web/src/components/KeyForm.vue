@@ -1,11 +1,18 @@
 <template>
   <v-form
     ref="form"
-    lazy-validation
     v-model="formValid"
     v-if="item != null && secretStorages != null"
+    class="KeyForm"
+    data-testid="key-form"
+    :data-state="formSaving ? 'loading' : (formError ? 'error' : 'ready')"
   >
-    <v-alert :value="formError" color="error" class="mb-6">{{ formError }}</v-alert>
+    <v-alert
+      :model-value="!!formError"
+      color="error"
+      class="mb-6"
+      data-testid="key-error"
+    >{{ formError }}</v-alert>
 
     <v-text-field
       v-model="item.name"
@@ -13,39 +20,59 @@
       :rules="[(v) => !!v || $t('name_required')]"
       required
       :disabled="formSaving"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
+      data-testid="key-name"
     />
 
     <v-card
       class="mb-6"
-      :color="$vuetify.theme.dark ? '#212121' : 'white'"
-      style="background: #8585850f"
+      :color="$vuetify.theme.current.dark ? '#212121' : 'white'"
+      data-testid="key-source"
     >
-      <v-tabs fixed-tabs v-model="sourceStorageTypeIndex">
-        <v-tab :disabled="formSaving || !canEditSecrets || isSynced" style="padding: 0"
+      <v-tabs
+        fixed-tabs
+        v-model="sourceStorageTypeIndex"
+        class="KeyForm__sourceTabs"
+        data-testid="key-sourceTabs"
+      >
+        <v-tab
+          :disabled="formSaving || !canEditSecrets || isSynced"
+          style="padding: 0"
+          data-testid="key-tab-local"
           >Local</v-tab
         >
         <v-tab
           :disabled="formSaving || !canEditSecrets || isSynced || !runtimeCanWrite"
           style="padding: 0"
+          data-testid="key-tab-storage"
           >
             Storage
           </v-tab
         >
-        <v-tab :disabled="formSaving || !canEditSecrets || isSynced" style="padding: 0">Env</v-tab>
-        <v-tab :disabled="formSaving || !canEditSecrets || isSynced" style="padding: 0">File</v-tab>
+        <v-tab
+          :disabled="formSaving || !canEditSecrets || isSynced"
+          style="padding: 0"
+          data-testid="key-tab-env"
+        >Env</v-tab>
+        <v-tab
+          :disabled="formSaving || !canEditSecrets || isSynced"
+          style="padding: 0"
+          data-testid="key-tab-file"
+        >File</v-tab>
       </v-tabs>
 
       <div
         :class="!supportStorages && sourceStorageType === 'vault' ? '' : 'ml-4 mr-4 mt-6'"
         v-if="sourceStorageType"
+        data-testid="key-sourceBody"
       >
         <v-alert
-          text
+          variant="tonal"
           color="hsl(348deg, 86%, 61%)"
-          class="PageAlert PageAlert--flat-top"
+          class="PageAlert PageAlert--flat-top mb-0"
           v-if="!supportStorages && sourceStorageType === 'vault'"
+          data-testid="key-storageUpgradeAlert"
         >
           Storage-backed keys are not enabled.
         </v-alert>
@@ -56,21 +83,22 @@
           :label="$t('Storage')"
           :items="runtimeSecretStorages"
           item-value="id"
-          item-text="name"
+          item-title="name"
           :disabled="formSaving || !canEditSecrets || isSynced || !runtimeCanWrite"
           data-testid="key-runtimeStorage"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
           clearable
+          :menu-props="storageMenu"
         />
 
         <RuntimeKeyReferenceFields
           :active="supportStorages && sourceStorageType === 'vault'
               && item.source_storage_id != null"
           :disabled="runtimeReferenceDisabled"
-          :mount.sync="item.source_storage_mount"
-          :version.sync="item.source_storage_version"
-          :field.sync="item.source_storage_field"
+          v-model:mount="item.source_storage_mount"
+          v-model:version="item.source_storage_version"
+          v-model:field="item.source_storage_field"
         >
           <v-text-field
             v-if="supportStorages && sourceStorageType === 'vault'
@@ -81,16 +109,16 @@
             :rules="[(v) => !!v || 'Secret path is required']"
             :disabled="runtimeReferenceDisabled"
             data-testid="key-runtimePath"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
           />
         </RuntimeKeyReferenceFields>
 
         <v-alert
           v-if="sourceStorageType === 'vault' && runtimeDecision
             && runtimeDecision.state !== 'active'"
-          dense
-          text
+          density="compact"
+          variant="tonal"
           :type="runtimeDecision.state === 'read_only' ? 'info' : 'warning'"
           data-testid="key-runtimeCapability"
         >
@@ -112,8 +140,9 @@
           "
           :rules="[(v) => !!v || $t('type_required')]"
           :disabled="formSaving || !canEditSecrets"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
+          :data-testid="`key-sourceStorageKey-${sourceStorageType}`"
         />
       </div>
     </v-card>
@@ -124,15 +153,21 @@
       :rules="[(v) => !!v || !canEditSecrets || $t('type_required')]"
       :items="inventoryTypes"
       item-value="id"
-      item-text="name"
+      item-title="name"
       :required="canEditSecrets"
       :disabled="formSaving || !canEditSecrets || runtimeTypeDisabled"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
+      data-testid="key-type"
     />
 
-    <v-alert v-if="isReadOnly" type="info" text>Read-only secret storage chosen.</v-alert>
-    <v-alert v-if="isNew && item.type === 'ssh' && sourceStorageType" type="info" text>
+    <v-alert
+      v-if="isReadOnly"
+      type="info"
+      variant="tonal"
+      data-testid="key-readOnlyAlert"
+    >Read-only secret storage chosen.</v-alert>
+    <v-alert v-if="isNew && item.type === 'ssh' && sourceStorageType" type="info" variant="tonal">
       Server generation is available only for Local storage.
     </v-alert>
 
@@ -141,13 +176,14 @@
       :label="$t('usernameOptional')"
       v-if="!isReadOnly && item.type === 'login_password'"
       :disabled="formSaving || !canEditSecrets"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
+      data-testid="key-loginPasswordLogin"
     />
 
     <v-text-field
       v-model="item.login_password.password"
-      :append-icon="showLoginPassword ? 'mdi-eye' : 'mdi-eye-off'"
+      :append-inner-icon="showLoginPassword ? 'mdi-eye' : 'mdi-eye-off'"
       :label="$t('password')"
       :rules="[(v) => !!v || !canEditSecrets || $t('password_required')]"
       :class="{ 'masked-secret-input': !showLoginPassword }"
@@ -155,14 +191,15 @@
       :required="canEditSecrets"
       :disabled="formSaving || !canEditSecrets"
       autocomplete="new-password"
-      @click:append="showLoginPassword = !showLoginPassword"
-      outlined
-      dense
+      @click:append-inner="showLoginPassword = !showLoginPassword"
+      variant="outlined"
+      density="compact"
+      data-testid="key-loginPasswordPassword"
     />
 
     <v-text-field
       v-model="item.string"
-      :append-icon="showString ? 'mdi-eye' : 'mdi-eye-off'"
+      :append-inner-icon="showString ? 'mdi-eye' : 'mdi-eye-off'"
       :label="$t('keyFormStringValue')"
       :rules="[(v) => !!v || !canEditSecrets || $t('value_required')]"
       :class="{ 'masked-secret-input': !showString }"
@@ -170,9 +207,10 @@
       :required="canEditSecrets"
       :disabled="formSaving || !canEditSecrets"
       autocomplete="new-password"
-      @click:append="showString = !showString"
-      outlined
-      dense
+      @click:append-inner="showString = !showString"
+      variant="outlined"
+      density="compact"
+      data-testid="key-stringValue"
     />
 
     <v-text-field
@@ -180,14 +218,15 @@
       :label="$t('usernameOptional')"
       v-if="!isReadOnly && item.type === 'ssh'"
       :disabled="formSaving || !canEditSecrets"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
+      data-testid="key-sshLogin"
     />
 
     <GeneratedSSHKeyControls
       :can-generate="canGenerateSSHKey"
-      :generate.sync="generateSSHKey"
-      :algorithm.sync="generatedSSHKeyAlgorithm"
+      v-model:generate="generateSSHKey"
+      v-model:algorithm="generatedSSHKeyAlgorithm"
       :algorithms="generatedSSHKeyAlgorithms"
       :metadata="generatedSSHKeyMetadata"
       :disabled="formSaving || !canEditSecrets"
@@ -195,40 +234,98 @@
 
     <v-text-field
       v-model="item.ssh.passphrase"
-      :append-icon="showSSHPassphrase ? 'mdi-eye' : 'mdi-eye-off'"
+      :append-inner-icon="showSSHPassphrase ? 'mdi-eye' : 'mdi-eye-off'"
       label="Passphrase (Optional)"
       :class="{ 'masked-secret-input': !showSSHPassphrase }"
       v-if="!isReadOnly && item.type === 'ssh' && !generateSSHKey"
       :disabled="formSaving || !canEditSecrets"
-      @click:append="showSSHPassphrase = !showSSHPassphrase"
-      outlined
-      dense
+      @click:append-inner="showSSHPassphrase = !showSSHPassphrase"
+      variant="outlined"
+      density="compact"
+      data-testid="key-sshPassphrase"
     />
 
     <v-textarea
-      outlined
+      variant="outlined"
       v-model="item.ssh.private_key"
       :label="$t('privateKey')"
       :disabled="formSaving || !canEditSecrets"
       :rules="[(v) => !canEditSecrets || !!v || $t('private_key_required')]"
       v-if="!isReadOnly && item.type === 'ssh' && !generateSSHKey"
+      class="KeyForm__privateKey"
+      data-testid="key-sshPrivateKey"
     />
 
     <v-checkbox
       v-model="item.override_secret"
       :label="$t('override')"
       v-if="!isNew && !generatedSSHKeyMetadata"
+        data-testid="key-overrideSecret"
     />
 
-    <v-alert dense text type="info" v-if="item.type === 'none'">
+    <v-alert
+      density="compact"
+      variant="tonal"
+      type="info"
+      v-if="item.type === 'none'"
+      data-testid="key-noneInfo"
+    >
       {{ $t('useThisTypeOfKeyForHttpsRepositoriesAndForPlaybook') }}
     </v-alert>
 
-    <v-alert dense text type="info" v-if="item.type === 'string'">
+    <v-alert
+      density="compact"
+      variant="tonal"
+      type="info"
+      v-if="item.type === 'string'"
+      data-testid="key-stringInfo"
+    >
       {{ $t('keyFormStringHint') }}
     </v-alert>
   </v-form>
 </template>
+<style lang="scss">
+// The source card is white (#212121 in the dark theme) as in Vuetify 2, where the colour class
+// of `color` hid the inline grey background the card had (removed: in Vuetify 4 it won).
+
+// The source tabs share the card width equally, as `fixed-tabs` of Vuetify 2 did
+// (`.v-tabs--fixed-tabs .v-tab { flex: 1 1 auto; width: 100% }`); Vuetify 4 sizes them by text.
+.KeyForm__sourceTabs .v-tab {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+// The outlined textarea of Vuetify 2 (`.v-textarea textarea`): lines of 28 px, 10 px above the
+// text, none below — 150 px for 5 rows (Vuetify 4: 24 px lines between 16 px paddings, 152 px).
+.KeyForm__privateKey textarea.v-field__input {
+  padding-top: 10px;
+  padding-bottom: 0;
+  line-height: 28px;
+}
+
+// The message of a disabled field (the stale "Private key is required" under Generate SSH Key)
+// in the disabled text colour, not dimmed again (Vuetify 2: no error state while disabled; the
+// grey outline — App.vue).
+.KeyForm .v-input--disabled > .v-input__details {
+  opacity: 1;
+
+  .v-messages {
+    color: rgba(var(--v-theme-on-surface), var(--v-disabled-opacity));
+  }
+}
+
+// A disabled checkbox (Generate SSH Key, Override) in the disabled text colour
+// (`.v-input--is-disabled` of Vuetify 2), not the medium emphasis dimmed to .38 again.
+.KeyForm .v-selection-control--disabled {
+  opacity: 1;
+
+  .v-label,
+  .v-selection-control__input > .v-icon {
+    color: rgba(var(--v-theme-on-surface), var(--v-disabled-opacity));
+    opacity: 1;
+  }
+}
+</style>
 <script>
 import enhancedWatch from '@/lib/enhanced/key-form-state';
 
@@ -282,6 +379,9 @@ export default {
         { id: 'ed25519', name: 'Ed25519 (recommended)' },
         { id: 'rsa-3072', name: 'RSA 3072 (compatibility)' },
       ],
+      // The list of the storage autocomplete 1 px under the field and at most 304 px high, as the
+      // `offset-y` menu of Vuetify 2 (`menuProps`; Vuetify 4: flush with the field, 310 px).
+      storageMenu: { maxHeight: 304, offset: 1 },
     };
   },
 
@@ -354,7 +454,7 @@ export default {
     afterLoadData() {
       this.isSynced = JSON.parse(this.item.plain || '{}').dvls_id != null;
       if (this.item.source_storage_type === 'vault' && !this.item.source_storage_mount) {
-        this.$set(this.item, 'source_storage_mount', 'secret');
+        this.item.source_storage_mount = 'secret';
       }
     },
 

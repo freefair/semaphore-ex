@@ -1,37 +1,53 @@
 <template>
-  <v-dialog :value="value" max-width="720" scrollable @input="$emit('input', $event)">
+  <v-dialog
+    :model-value="modelValue"
+    max-width="720"
+    scrollable
+    @update:model-value="$emit('update:modelValue', $event)"
+  >
     <v-card data-testid="workflow-run-inputs">
       <v-card-title>{{ $t('workflowRunInputs') }}</v-card-title>
       <v-card-text>
-        <v-alert v-if="preflightMessage" type="warning" dense text>
+        <v-alert v-if="preflightMessage" type="warning" density="compact" variant="tonal">
           {{ preflightMessage }}
         </v-alert>
         <v-alert
           v-if="deploymentWindowBlock"
           type="warning"
-          dense
-          text
+          density="compact"
+          variant="tonal"
           data-testid="deployment-window-blocked"
         >
           <div>{{ deploymentWindowBlockMessage }}</div>
           <div
             v-if="deploymentWindowBlock.next_eligible_known
               && deploymentWindowBlock.next_eligible_at"
-            class="text-caption mt-1"
+            class="text-body-small mt-1"
           >
             {{ $t('deploymentWindowNextEligible') }}:
             {{ formatDeploymentWindowDate(deploymentWindowBlock.next_eligible_at) }}
           </div>
         </v-alert>
-        <v-alert v-if="deploymentWindowOverrideError" type="error" dense text>
+        <v-alert
+          v-if="deploymentWindowOverrideError"
+          type="error"
+          density="compact"
+          variant="tonal"
+        >
           {{ deploymentWindowOverrideError }}
         </v-alert>
-        <v-alert v-for="error in errors" :key="error" type="error" dense text>
+        <v-alert
+          v-for="error in errors"
+          :key="error"
+          type="error"
+          density="compact"
+          variant="tonal"
+        >
           {{ error }}
         </v-alert>
 
         <template v-if="parameters.length">
-          <div class="text-subtitle-2 mb-2">{{ $t('workflowParameters') }}</div>
+          <div class="text-label-large mb-2">{{ $t('workflowParameters') }}</div>
           <template v-for="parameter in parameters">
             <v-text-field
               v-if="parameter.type === 'string'"
@@ -41,8 +57,8 @@
               :hint="parameterHint(parameter)"
               persistent-hint
               clearable
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
             <v-text-field
               v-else-if="parameter.type === 'integer'"
@@ -55,8 +71,8 @@
               :hint="parameterHint(parameter)"
               persistent-hint
               clearable
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
             <v-select
               v-else-if="parameter.type === 'boolean'"
@@ -64,13 +80,13 @@
               v-model="values[parameter.name]"
               :items="booleanOptions"
               item-value="value"
-              item-text="text"
+              item-title="text"
               :label="parameterLabel(parameter)"
               :hint="parameterHint(parameter)"
               persistent-hint
               clearable
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
             <v-select
               v-else-if="parameter.type === 'enumeration'"
@@ -81,8 +97,8 @@
               :hint="parameterHint(parameter)"
               persistent-hint
               clearable
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
             <v-select
               v-else-if="parameter.type === 'secret_reference'"
@@ -90,20 +106,20 @@
               v-model="values[parameter.name]"
               :items="secretOptions(parameter)"
               item-value="value"
-              item-text="text"
+              item-title="text"
               :label="parameterLabel(parameter)"
               :hint="parameterHint(parameter)"
               persistent-hint
               clearable
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </template>
         </template>
 
         <template v-if="surveyVars.length">
-          <div class="text-subtitle-2 mt-3 mb-2">{{ $t('surveyVariables') }}</div>
-          <v-form ref="surveyForm" lazy-validation>
+          <div class="text-label-large mt-3 mb-2">{{ $t('surveyVariables') }}</div>
+          <v-form ref="surveyForm">
             <SurveyFields
               :vars="surveyVars"
               :value="environment"
@@ -113,14 +129,14 @@
         </template>
 
         <template v-if="configurableNodes.length">
-          <div class="text-subtitle-2 mt-3 mb-2">{{ $t('workflowNodeOverrides') }}</div>
+          <div class="text-label-large mt-3 mb-2">{{ $t('workflowNodeOverrides') }}</div>
           <v-card
             v-for="node in configurableNodes"
             :key="`run-node-${node.id}`"
-            outlined
+            variant="outlined"
             class="pa-3 mb-3"
           >
-            <div class="text-body-2 font-weight-medium mb-2">
+            <div class="text-body-medium font-weight-medium mb-2">
               #{{ node.id }} {{ node.display_name }}
             </div>
             <v-select
@@ -128,25 +144,25 @@
               v-model="nodeValues[node.id].inventory_id"
               :items="allowedInventories(node)"
               item-value="id"
-              item-text="name"
+              item-title="name"
               :label="$t('inventory')"
               clearable
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
             <v-select
               v-if="node.override_policy.environment_ids.length"
               v-model="nodeValues[node.id].environment_ids"
               :items="allowedEnvironments(node)"
               item-value="id"
-              item-text="name"
+              item-title="name"
               :label="$t('environment')"
               multiple
               chips
-              small-chips
+
               clearable
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
             <v-text-field
               v-if="node.override_policy.allow_arguments"
@@ -155,30 +171,31 @@
               :hint="$t('workflowArgumentsOverrideHint')"
               persistent-hint
               clearable
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
             <v-text-field
               v-if="node.override_policy.allow_branch"
               v-model="nodeValues[node.id].git_branch"
               :label="$t('branch')"
               clearable
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
             />
           </v-card>
         </template>
 
         <template v-if="deploymentWindowBlock">
-          <div class="text-subtitle-2 mt-3 mb-2">
+          <div class="text-label-large mt-3 mb-2">
             {{ $t('deploymentWindowEmergencyOverride') }}
           </div>
           <v-select
             v-model="deploymentWindowOverrideCategory"
             :items="deploymentWindowOverrideCategories"
+            item-title="text"
             :label="$t('deploymentWindowOverrideCategory')"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
             :disabled="busy"
           />
           <v-text-field
@@ -186,8 +203,8 @@
             :label="$t('deploymentWindowOverrideReference')"
             :hint="$t('deploymentWindowOverrideReferenceHint')"
             persistent-hint
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
             :disabled="busy"
             data-testid="deployment-window-override-reference"
           />
@@ -203,7 +220,7 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn text :disabled="busy" @click="$emit('input', false)">
+        <v-btn variant="text" :disabled="busy" @click="$emit('update:modelValue', false)">
           {{ $t('cancel') }}
         </v-btn>
         <v-btn
@@ -235,9 +252,10 @@ const NODE_OVERRIDE_FIELDS = ['inventory_id', 'environment_ids', 'arguments', 'g
 const stringByteLength = (value) => new TextEncoder().encode(String(value)).length;
 
 export default {
+  emits: ['start', 'update:modelValue'],
   components: { ExecutionPreflightReview, SurveyFields },
   props: {
-    value: Boolean,
+    modelValue: Boolean,
     workflow: { type: Object, required: true },
     projectId: { type: Number, required: true },
     loading: Boolean,
@@ -341,7 +359,7 @@ export default {
     },
   },
   watch: {
-    value: {
+    modelValue: {
       immediate: true,
       handler(open) {
         if (open) {
@@ -514,7 +532,7 @@ export default {
     },
     async submit() {
       if (this.errors.length) return;
-      if (this.$refs.surveyForm && !this.$refs.surveyForm.validate()) return;
+      if (this.$refs.surveyForm && !(await this.$refs.surveyForm.validate()).valid) return;
       if (this.deploymentWindowBlock && !this.deploymentWindowOverrideReady) {
         this.deploymentWindowOverrideError = this.$t('deploymentWindowOverrideIncomplete');
         return;

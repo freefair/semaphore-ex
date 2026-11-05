@@ -1,29 +1,29 @@
 <template>
   <div class="host-browser">
-    <p class="text-body-2 text--secondary">{{ $t('hostsMembershipDescription') }}</p>
+    <p class="text-body-medium text--secondary">{{ $t('hostsMembershipDescription') }}</p>
     <div class="host-browser__filters">
       <v-text-field
         v-model="search"
         :label="$t('hostsSearch')"
         prepend-inner-icon="mdi-magnify"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
         clearable
         hide-details
-        @input="searchChanged"
+        @update:model-value="searchChanged"
       />
       <v-select
         v-if="!inventoryId"
         v-model="filterInventoryId"
         :items="inventories"
-        item-text="name"
+        item-title="name"
         item-value="id"
         :label="$t('inventory')"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
         clearable
         hide-details
-        @change="reload"
+        @update:model-value="reload"
       />
       <v-switch
         v-if="!inventoryId"
@@ -37,27 +37,27 @@
         <v-icon>mdi-refresh</v-icon>
       </v-btn>
     </div>
-    <v-alert v-if="error" type="error" text class="mt-4">{{ error }}</v-alert>
-    <div v-if="$vuetify.breakpoint.xsOnly" class="mt-4">
+    <v-alert v-if="error" type="error" variant="tonal" class="mt-4">{{ error }}</v-alert>
+    <div v-if="$vuetify.display.xs" class="mt-4">
       <v-progress-linear v-if="loading" indeterminate class="mb-3" />
-      <p v-if="!loading && !rows.length" class="text-body-2">{{ $t('hostsNoHosts') }}</p>
+      <p v-if="!loading && !rows.length" class="text-body-medium">{{ $t('hostsNoHosts') }}</p>
       <div v-for="(item, index) in rows" :key="item.key">
         <div
           v-if="grouped && !inventoryId
             && (index === 0 || rows[index - 1].inventory_id !== item.inventory_id)"
-          class="text-subtitle-1 mt-4 mb-2"
+          class="text-body-large mt-4 mb-2"
         >
           <router-link :to="`/project/${projectId}/inventories/${item.inventory_id}`">
             {{ item.inventory_name }}
           </router-link>
         </div>
-        <v-card outlined class="mb-3">
+        <v-card variant="outlined" class="mb-3">
           <div class="d-flex align-center px-3 pt-2">
-            <v-btn text class="host-browser__host px-0" :aria-label="item.host"
+            <v-btn variant="text" class="host-browser__host px-0" :aria-label="item.host"
                    @click="selectHost(item)">
-              <v-icon left small>mdi-server</v-icon>{{ item.host }}
-              <v-icon right small>
-                {{ expanded[0]?.key === item.key ? 'mdi-chevron-up' : 'mdi-chevron-down' }}
+              <v-icon start size="small">mdi-server</v-icon>{{ item.host }}
+              <v-icon end size="small">
+                {{ expanded[0] === item.key ? 'mdi-chevron-up' : 'mdi-chevron-down' }}
               </v-icon>
             </v-btn>
           </div>
@@ -68,11 +68,11 @@
               </router-link>
             </div>
             <div>{{ $t('hostsGroups') }}: {{ (item.groups || []).join(', ') || '—' }}</div>
-            <div class="text-caption mt-1">
-              {{ $t('hostsResolvedAt') }}: {{ item.resolved_at | formatDate }}
+            <div class="text-body-small mt-1">
+              {{ $t('hostsResolvedAt') }}: {{ $filters.formatDate(item.resolved_at) }}
             </div>
           </v-card-text>
-          <template v-if="expanded[0]?.key === item.key">
+          <template v-if="expanded[0] === item.key">
             <v-divider />
             <HostTaskHistory :project-id="projectId" :inventory-id="item.inventory_id"
                              :host="item.host" />
@@ -86,27 +86,27 @@
       :headers="headers"
       :items="rows"
       :loading="loading"
-      item-key="key"
+      item-value="key"
       :items-per-page="-1"
       hide-default-footer
       show-expand
-      single-expand
-      :expanded.sync="expanded"
-      :group-by="grouped && !inventoryId ? 'inventory_id' : null"
+      expand-strategy="single"
+      v-model:expanded="expanded"
+      :group-by="grouped && !inventoryId ? [{ key: 'inventory_id' }] : []"
       :no-data-text="$t('hostsNoHosts')"
     >
-      <template v-slot:group.header="{ group, items, toggle, isOpen }">
-        <td :colspan="headers.length + 1">
-          <v-btn icon small @click="toggle" :aria-label="$t('hostsToggleGroup')">
-            <v-icon>{{ isOpen ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
+      <template v-slot:group-header="{ item, columns, toggleGroup, isGroupOpen }">
+        <tr><td :colspan="columns.length">
+          <v-btn icon size="small" @click="toggleGroup(item)" :aria-label="$t('hostsToggleGroup')">
+            <v-icon>{{ isGroupOpen(item) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
           </v-btn>
-          <router-link :to="`/project/${projectId}/inventories/${group}`">
-            {{ items[0].inventory_name }}
+          <router-link :to="`/project/${projectId}/inventories/${item.value}`">
+            {{ item.items[0].raw.inventory_name }}
           </router-link>
-        </td>
+        </td></tr>
       </template>
       <template v-slot:item.host="{ item }">
-        <v-btn text class="host-browser__host px-0" @click="selectHost(item)">{{
+        <v-btn variant="text" class="host-browser__host px-0" @click="selectHost(item)">{{
           item.host
         }}</v-btn>
       </template>
@@ -118,8 +118,11 @@
       <template v-slot:item.groups="{ item }">
         <span>{{ (item.groups || []).join(', ') || '—' }}</span>
       </template>
-      <template v-slot:item.resolved_at="{ item }">{{ item.resolved_at | formatDate }}</template>
-      <template v-slot:expanded-item="{ headers: tableHeaders, item }">
+      <template
+        v-slot:item.resolved_at="{ item }"
+      >{{ $filters.formatDate(item.resolved_at) }}</template>
+      <template v-slot:expanded-row="{ columns: tableHeaders, item }">
+        <tr>
         <td :colspan="tableHeaders.length" class="pa-0">
           <HostTaskHistory
             :key="item.key"
@@ -128,10 +131,11 @@
             :host="item.host"
           />
         </td>
+        </tr>
       </template>
     </v-data-table>
     <div class="d-flex justify-end align-center mt-3">
-      <span class="text-body-2 text--secondary mr-3">{{
+      <span class="text-body-medium text--secondary mr-3">{{
         $t('hostsDisplayed', { count: rows.length })
       }}</span>
       <v-btn
@@ -172,10 +176,10 @@ export default {
   computed: {
     headers() {
       return [
-        { text: this.$t('hostsHost'), value: 'host' },
-        ...(!this.inventoryId ? [{ text: this.$t('inventory'), value: 'inventory_name' }] : []),
-        { text: this.$t('hostsGroups'), value: 'groups' },
-        { text: this.$t('hostsResolvedAt'), value: 'resolved_at' },
+        { title: this.$t('hostsHost'), key: 'host' },
+        ...(!this.inventoryId ? [{ title: this.$t('inventory'), key: 'inventory_name' }] : []),
+        { title: this.$t('hostsGroups'), key: 'groups' },
+        { title: this.$t('hostsResolvedAt'), key: 'resolved_at' },
       ].map((header) => ({ ...header, sortable: false }));
     },
   },
@@ -199,13 +203,13 @@ export default {
       }
     }
   },
-  beforeDestroy() {
+  beforeUnmount() {
     clearTimeout(this.searchTimer);
     this.requestId += 1;
   },
   methods: {
     selectHost(item) {
-      this.expanded = this.expanded[0]?.key === item.key ? [] : [item];
+      this.expanded = this.expanded[0] === item.key ? [] : [item.key];
     },
     searchChanged() {
       clearTimeout(this.searchTimer);
@@ -244,8 +248,8 @@ export default {
           ...item,
           key: `${item.inventory_id}:${item.host}`,
         }));
-        const expandedKeys = new Set(this.expanded.map((item) => item.key));
-        this.expanded = this.rows.filter((row) => expandedKeys.has(row.key));
+        const expandedKeys = new Set(this.expanded);
+        this.expanded = this.rows.filter((row) => expandedKeys.has(row.key)).map((row) => row.key);
         this.nextCursor = data.next_host
           ? { inventoryId: data.next_inventory_id, host: data.next_host }
           : null;

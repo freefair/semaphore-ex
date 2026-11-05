@@ -19,12 +19,12 @@
     </v-toolbar>
     <v-divider />
 
-    <v-alert v-if="!canRead" type="warning" text class="PageAlert">
+    <v-alert v-if="!canRead" type="warning" variant="tonal" class="PageAlert">
       You do not have permission to administer global credentials.
     </v-alert>
 
     <template v-else>
-      <v-alert type="info" text class="PageAlert" data-testid="credential-value-policy">
+      <v-alert type="info" variant="tonal" class="PageAlert" data-testid="credential-value-policy">
         Credential values are write-only. This page displays metadata and an opaque version
         fingerprint, never the stored value.
       </v-alert>
@@ -40,7 +40,7 @@
       >
         <template v-slot:item.display_name="{ item }">
           <strong>{{ item.display_name }}</strong>
-          <v-chip x-small class="ml-2" :color="item.enabled ? 'success' : 'grey'">
+          <v-chip size="x-small" class="ml-2" :color="item.enabled ? 'success' : 'grey'">
             {{ item.enabled ? 'Enabled' : 'Disabled' }}
           </v-chip>
         </template>
@@ -53,39 +53,53 @@
         <template v-slot:item.actions="{ item }">
           <v-btn
             icon
-            small
+            size="small"
             v-if="canMetadata"
             aria-label="Edit metadata"
             @click="openMetadata(item)"
           >
-            <v-icon small>mdi-pencil</v-icon>
-          </v-btn>
-          <v-btn icon small v-if="canRotate" aria-label="Rotate value" @click="openRotate(item)">
-            <v-icon small>mdi-refresh</v-icon>
-          </v-btn>
-          <v-btn icon small v-if="canGrant" aria-label="Manage grants" @click="openGrants(item)">
-            <v-icon small>mdi-share-variant</v-icon>
-          </v-btn>
-          <v-btn icon small v-if="canAudit" aria-label="View usage" @click="openUsage(item)">
-            <v-icon small>mdi-history</v-icon>
+            <v-icon size="small">mdi-pencil</v-icon>
           </v-btn>
           <v-btn
             icon
-            small
+            size="small"
+            v-if="canRotate"
+            aria-label="Rotate value"
+            @click="openRotate(item)"
+          >
+            <v-icon size="small">mdi-refresh</v-icon>
+          </v-btn>
+          <v-btn
+            icon
+            size="small"
+            v-if="canGrant"
+            aria-label="Manage grants"
+            @click="openGrants(item)"
+          >
+            <v-icon size="small">mdi-share-variant</v-icon>
+          </v-btn>
+          <v-btn icon size="small" v-if="canAudit" aria-label="View usage" @click="openUsage(item)">
+            <v-icon size="small">mdi-history</v-icon>
+          </v-btn>
+          <v-btn
+            icon
+            size="small"
             v-if="canMetadata"
             :aria-label="item.enabled ? 'Disable credential' : 'Enable credential'"
             @click="openEnabledChange(item, !item.enabled)"
           >
-            <v-icon small>{{ item.enabled ? 'mdi-pause-circle' : 'mdi-play-circle' }}</v-icon>
+            <v-icon
+              size="small"
+            >{{ item.enabled ? 'mdi-pause-circle' : 'mdi-play-circle' }}</v-icon>
           </v-btn>
           <v-btn
             icon
-            small
+            size="small"
             v-if="canMetadata && !item.enabled"
             aria-label="Delete credential"
             @click="openDelete(item)"
           >
-            <v-icon small>mdi-delete</v-icon>
+            <v-icon size="small">mdi-delete</v-icon>
           </v-btn>
         </template>
       </v-data-table>
@@ -99,7 +113,7 @@
           <v-select
             v-model="createForm.materialKind"
             :items="materialKinds"
-            item-text="text"
+            item-title="text"
             item-value="value"
             label="Material source"
           />
@@ -129,7 +143,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text :disabled="createSaving" @click="closeCreate">Cancel</v-btn>
+          <v-btn variant="text" :disabled="createSaving" @click="closeCreate">Cancel</v-btn>
           <v-btn
             color="primary"
             :disabled="!createValid || createSaving"
@@ -147,13 +161,13 @@
         <v-card-title>Edit credential metadata</v-card-title>
         <v-card-text>
           <v-text-field v-model="metadataForm.displayName" label="Display name" maxlength="128" />
-          <p class="text-caption mb-0">
+          <p class="text-body-small mb-0">
             Changing metadata never reads or replaces the stored value.
           </p>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="metadataDialog = false">Cancel</v-btn>
+          <v-btn variant="text" @click="metadataDialog = false">Cancel</v-btn>
           <v-btn
             color="primary"
             :disabled="!metadataForm.displayName.trim()"
@@ -190,7 +204,7 @@
               </template>
             </template>
             <template v-slot:item.outcome="{ item }">
-              <v-chip x-small :color="usageOutcomeColor(item.snapshot.outcome)">
+              <v-chip size="x-small" :color="usageOutcomeColor(item.snapshot.outcome)">
                 {{ item.snapshot.outcome }}
               </v-chip>
               <span class="ml-2">{{ item.snapshot.reason }}</span>
@@ -202,25 +216,31 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="usageDialog = false">Close</v-btn>
+          <v-btn variant="text" @click="usageDialog = false">Close</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
 
-    <v-dialog :value="Boolean(enabledTarget)" max-width="520" persistent>
+    <v-dialog :model-value="Boolean(enabledTarget)" max-width="520" persistent>
       <v-card>
         <v-card-title>
           {{ enabledTarget && enabledTarget.enabled ? 'Enable' : 'Disable' }} credential?
         </v-card-title>
         <v-card-text>
-          <v-alert v-if="impact" dense text type="info" data-testid="credential-impact">
+          <v-alert
+            v-if="impact"
+            density="compact"
+            variant="tonal"
+            type="info"
+            data-testid="credential-impact"
+          >
             {{ impactLabel(impact) }}
           </v-alert>
           Existing tasks resolve the credential only at dispatch time. Disabling it blocks new use.
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="enabledTarget = null">Cancel</v-btn>
+          <v-btn variant="text" @click="enabledTarget = null">Cancel</v-btn>
           <v-btn color="primary" @click="confirmEnabledChange">Confirm</v-btn>
         </v-card-actions>
       </v-card>
@@ -230,13 +250,19 @@
       <v-card>
         <v-card-title>Rotate credential</v-card-title>
         <v-card-text>
-          <v-alert v-if="impact" dense text type="info" data-testid="credential-impact">
+          <v-alert
+            v-if="impact"
+            density="compact"
+            variant="tonal"
+            type="info"
+            data-testid="credential-impact"
+          >
             {{ impactLabel(impact) }}
           </v-alert>
           <v-select
             v-model="rotateForm.materialKind"
             :items="materialKinds"
-            item-text="text"
+            item-title="text"
             item-value="value"
             label="Material source"
           />
@@ -266,7 +292,7 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text :disabled="rotateSaving" @click="closeRotate">Cancel</v-btn>
+          <v-btn variant="text" :disabled="rotateSaving" @click="closeRotate">Cancel</v-btn>
           <v-btn
             color="primary"
             :disabled="!rotateValid || rotateSaving"
@@ -288,7 +314,13 @@
           </span>
         </v-card-title>
         <v-card-text>
-          <v-alert v-if="impact" dense text type="info" data-testid="credential-impact">
+          <v-alert
+            v-if="impact"
+            density="compact"
+            variant="tonal"
+            type="info"
+            data-testid="credential-impact"
+          >
             {{ impactLabel(impact) }}
           </v-alert>
           <v-row>
@@ -296,7 +328,7 @@
               <v-select
                 v-model="grantForm.projectId"
                 :items="grantProjects"
-                item-text="name"
+                item-title="name"
                 item-value="id"
                 label="Project"
               />
@@ -315,7 +347,7 @@
           </v-row>
           <v-btn
             color="primary"
-            small
+            size="small"
             :disabled="!grantValid || grantSaving"
             :loading="grantSaving"
             @click="createGrant"
@@ -341,8 +373,8 @@
             </template>
             <template v-slot:item.actions="{ item }">
               <v-btn
-                text
-                small
+                variant="text"
+                size="small"
                 @click="setGrantStatus(item, item.status === 'active' ? 'revoke' : 'restore')"
               >
                 {{ item.status === 'active' ? 'Revoke' : 'Restore' }}
@@ -350,34 +382,40 @@
               <v-btn
                 v-if="item.status === 'revoked'"
                 icon
-                small
+                size="small"
                 aria-label="Delete grant"
                 @click="deleteGrant(item)"
               >
-                <v-icon small>mdi-delete</v-icon>
+                <v-icon size="small">mdi-delete</v-icon>
               </v-btn>
             </template>
           </v-data-table>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="grantsDialog = false">Close</v-btn>
+          <v-btn variant="text" @click="grantsDialog = false">Close</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
 
-    <v-dialog :value="Boolean(deleteTarget)" max-width="480" persistent>
+    <v-dialog :model-value="Boolean(deleteTarget)" max-width="480" persistent>
       <v-card>
         <v-card-title>Delete credential?</v-card-title>
         <v-card-text>
-          <v-alert v-if="impact" dense text type="info" data-testid="credential-impact">
+          <v-alert
+            v-if="impact"
+            density="compact"
+            variant="tonal"
+            type="info"
+            data-testid="credential-impact"
+          >
             {{ impactLabel(impact) }}
           </v-alert>
           The credential must be disabled and all project grants must be deleted first.
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="deleteTarget = null">Cancel</v-btn>
+          <v-btn variant="text" @click="deleteTarget = null">Cancel</v-btn>
           <v-btn color="error" @click="deleteCredential">Delete</v-btn>
         </v-card-actions>
       </v-card>
@@ -448,29 +486,29 @@ export default {
       ],
       providers: ['vault', 'openbao'],
       headers: [
-        { text: 'Name', value: 'display_name' },
-        { text: 'Type', value: 'type' },
-        { text: 'Storage', value: 'storage' },
-        { text: 'Current version', value: 'version' },
+        { title: 'Name', key: 'display_name' },
+        { title: 'Type', key: 'type' },
+        { title: 'Storage', key: 'storage' },
+        { title: 'Current version', key: 'version' },
         {
-          text: '', value: 'actions', sortable: false, align: 'end',
+          title: '', key: 'actions', sortable: false, align: 'end',
         },
       ],
       grantHeaders: [
-        { text: 'Project', value: 'project_id' },
-        { text: 'Allowed operations', value: 'operations' },
-        { text: 'Expires', value: 'expires_at' },
-        { text: 'Status', value: 'status' },
+        { title: 'Project', key: 'project_id' },
+        { title: 'Allowed operations', key: 'operations' },
+        { title: 'Expires', key: 'expires_at' },
+        { title: 'Status', key: 'status' },
         {
-          text: '', value: 'actions', sortable: false, align: 'end',
+          title: '', key: 'actions', sortable: false, align: 'end',
         },
       ],
       usageHeaders: [
-        { text: 'Task', value: 'identity' },
-        { text: 'Target', value: 'snapshot.target' },
-        { text: 'Version', value: 'version' },
-        { text: 'Result', value: 'outcome' },
-        { text: 'Time', value: 'occurred' },
+        { title: 'Task', key: 'identity' },
+        { title: 'Target', key: 'snapshot.target' },
+        { title: 'Version', key: 'version' },
+        { title: 'Result', key: 'outcome' },
+        { title: 'Time', key: 'occurred' },
       ],
     };
   },

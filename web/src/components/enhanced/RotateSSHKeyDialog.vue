@@ -3,7 +3,7 @@
     <v-card v-if="rotationItem" class="generated-ssh-key-rotation">
       <v-card-title>Rotate SSH key</v-card-title>
       <v-card-text>
-        <v-alert dense text type="warning">
+        <v-alert density="compact" variant="tonal" type="warning">
           Update every authorized_keys destination with the new public key immediately.
           Running jobs keep their already loaded key.
         </v-alert>
@@ -17,17 +17,26 @@
           v-model="rotationAlgorithmModel"
           :items="algorithms"
           item-value="id"
-          item-text="name"
+          item-title="name"
           label="Key algorithm"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
           :disabled="rotationLoading"
         />
-        <v-alert v-if="rotationError" dense text type="error">{{ rotationError }}</v-alert>
+        <v-alert
+          v-if="rotationError"
+          density="compact"
+          variant="tonal"
+          type="error"
+        >{{ rotationError }}</v-alert>
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn text :disabled="rotationLoading" @click="$emit('input', false)">
+        <v-btn
+          variant="text"
+          :disabled="rotationLoading"
+          @click="$emit('update:modelValue', false)"
+        >
           Cancel
         </v-btn>
         <v-btn
@@ -47,9 +56,10 @@
 import ObjectRefsView from '@/components/ObjectRefsView.vue';
 
 export default {
+  emits: ['rotate', 'update:modelValue', 'update:rotationAlgorithm'],
   components: { ObjectRefsView },
   props: {
-    value: Boolean,
+    modelValue: Boolean,
     rotationItem: Object,
     rotationRefs: Object,
     projectId: Number,
@@ -60,8 +70,8 @@ export default {
   },
   computed: {
     valueModel: {
-      get() { return this.value; },
-      set(value) { this.$emit('input', value); },
+      get() { return this.modelValue; },
+      set(value) { this.$emit('update:modelValue', value); },
     },
     rotationAlgorithmModel: {
       get() { return this.rotationAlgorithm; },

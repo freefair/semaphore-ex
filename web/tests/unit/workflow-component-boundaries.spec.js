@@ -6,21 +6,21 @@ import NodeApprovalPolicy from '@/components/enhanced/workflow/NodeApprovalPolic
 
 const textField = {
   name: 'VTextField',
-  props: ['value', 'disabled', 'label'],
-  render(h) { return h('input'); },
+  props: ['modelValue', 'disabled', 'label'],
+  template: '<input />',
 };
 const select = {
   name: 'VSelect',
-  props: ['value', 'disabled'],
-  render(h) { return h('select'); },
+  props: ['modelValue', 'disabled'],
+  template: '<select />',
 };
 const switchField = {
   name: 'VSwitch',
-  model: { prop: 'inputValue', event: 'change' },
-  props: ['inputValue', 'disabled'],
-  render(h) { return h('input'); },
+  props: ['modelValue', 'disabled'],
+  template: '<input />',
 };
 const options = {
+  renderStubDefaultSlot: true,
   mocks: { $t: (key) => key },
   stubs: { VTextField: textField, VSelect: select, VSwitch: switchField },
 };
@@ -29,8 +29,8 @@ describe('workflow component update boundaries', () => {
   it('emits numeric settings before dirty notification without mutating props', () => {
     const events = [];
     const wrapper = shallowMount(DefinitionSettings, {
-      ...options,
-      propsData: {
+      global: options,
+      props: {
         projectId: 1,
         versionMessage: 'before',
         maxParallelTasks: 1,
@@ -41,17 +41,17 @@ describe('workflow component update boundaries', () => {
         canManage: true,
         canAdminister: false,
       },
-      listeners: {
-        'update:maxParallelTasks': (value) => events.push(['value', value]),
-        dirty: () => events.push(['dirty']),
+      attrs: {
+        'onUpdate:maxParallelTasks': (value) => events.push(['value', value]),
+        onDirty: () => events.push(['dirty']),
       },
     });
-    wrapper.findAllComponents(textField).at(1).vm.$emit('input', '4');
+    wrapper.findAllComponents(textField).at(1).vm.$emit('update:modelValue', '4');
     expect(events).to.deep.equal([['value', 4], ['dirty']]);
     expect(wrapper.props('maxParallelTasks')).to.equal(1);
-    expect(wrapper.findAllComponents(select).wrappers.every((field) => field.props('disabled')))
+    expect(wrapper.findAllComponents(select).every((field) => field.props('disabled')))
       .to.equal(true);
-    wrapper.destroy();
+    wrapper.unmount();
   });
 
   it('emits artifact updates with numeric-input semantics and explicit switches', () => {
@@ -59,8 +59,8 @@ describe('workflow component update boundaries', () => {
       name: 'result', max_bytes: 1024, sensitive: false, schema: { type: 'string' },
     }];
     const wrapper = shallowMount(NodeArtifactsEditor, {
-      ...options,
-      propsData: {
+      global: options,
+      props: {
         outputs,
         inputs: [],
         artifactOutputTypes: [],
@@ -70,15 +70,15 @@ describe('workflow component update boundaries', () => {
       },
     });
     const fields = wrapper.findAllComponents(textField);
-    fields.at(1).vm.$emit('input', '2048');
-    fields.at(1).vm.$emit('input', '');
-    wrapper.findComponent(switchField).vm.$emit('change', true);
+    fields.at(1).vm.$emit('update:modelValue', '2048');
+    fields.at(1).vm.$emit('update:modelValue', '');
+    wrapper.findComponent(switchField).vm.$emit('update:modelValue', true);
     expect(wrapper.emitted('output-field')).to.deep.equal([
       [0, 'max_bytes', 2048], [0, 'max_bytes', ''], [0, 'sensitive', true],
     ]);
     expect(outputs[0].max_bytes).to.equal(1024);
     expect(outputs[0].sensitive).to.equal(false);
-    wrapper.destroy();
+    wrapper.unmount();
   });
 
   it('keeps policy mutation before normalization and preserves disabled controls', () => {
@@ -87,8 +87,8 @@ describe('workflow component update boundaries', () => {
       role_ids: [1], mode: 'any_of', minimum_distinct_approvers: 1, initiator_separation: false,
     };
     const wrapper = shallowMount(NodeApprovalPolicy, {
-      ...options,
-      propsData: {
+      global: options,
+      props: {
         policy,
         workflowRoleOptions: [],
         approvalRoleModeOptions: [],
@@ -96,17 +96,16 @@ describe('workflow component update boundaries', () => {
         canManage: true,
         canAdminister: false,
       },
-      listeners: {
-        'policy-field': (...args) => events.push(['field', ...args]),
-        'policy-change': () => events.push(['normalize']),
+      attrs: {
+        onPolicyField: (...args) => events.push(['field', ...args]),
+        onPolicyChange: () => events.push(['normalize']),
       },
     });
     const mode = wrapper.findAllComponents(select).at(1);
     expect(mode.props('disabled')).to.equal(true);
-    mode.vm.$emit('input', 'all_of');
-    mode.vm.$emit('change', 'all_of');
+    mode.vm.$emit('update:modelValue', 'all_of');
     expect(events).to.deep.equal([['field', 'mode', 'all_of'], ['normalize']]);
     expect(policy.mode).to.equal('any_of');
-    wrapper.destroy();
+    wrapper.unmount();
   });
 });

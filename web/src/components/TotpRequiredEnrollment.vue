@@ -3,7 +3,7 @@
     <v-alert v-if="error" color="error" class="mb-5">
       {{ error }}
     </v-alert>
-    <v-alert type="warning" dense outlined>
+    <v-alert type="warning" density="compact" variant="outlined">
       Your administrator requires TOTP before this account can continue.
     </v-alert>
 
@@ -14,8 +14,8 @@
         label="Confirm your password"
         type="password"
         autocomplete="current-password"
-        outlined
-        dense
+        variant="outlined"
+        density="compact"
       />
       <v-btn
         data-testid="auth-totp-begin"
@@ -55,8 +55,8 @@
           label="Six-digit code"
           inputmode="numeric"
           maxlength="6"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
         />
         <v-btn
           data-testid="auth-totp-confirm"
@@ -100,6 +100,7 @@ import axios from 'axios';
 import { getErrorMessage } from '@/lib/error';
 
 export default {
+  emits: ['cancel', 'complete'],
   data() {
     return {
       ceremony: null,

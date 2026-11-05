@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import axios from 'axios';
 import { shallowMount } from '@vue/test-utils';
-import Vuetify from 'vuetify';
+
 import KeyForm from '@/components/KeyForm.vue';
 import Keys from '@/views/project/Keys.vue';
 import ObjectRefsView from '@/components/ObjectRefsView.vue';
@@ -18,17 +18,20 @@ describe('generated SSH key UI', () => {
       config,
     });
     const wrapper = shallowMount(KeyForm, {
-      propsData: {
+      props: {
         supportStorages: false, systemInfo: {}, itemId: 'new', projectId: 1,
       },
-      vuetify: new Vuetify(),
-      stubs: {
-        GeneratedSSHKeyControls: {
-          template: '<div data-testid="dedicated-ssh-generation" />',
+
+      global: {
+        renderStubDefaultSlot: true,
+        stubs: {
+          GeneratedSSHKeyControls: {
+            template: '<div data-testid="dedicated-ssh-generation" />',
+          },
         },
-      },
-      mocks: {
-        $t: (key) => key,
+        mocks: {
+          $t: (key) => key,
+        },
       },
     });
     try {
@@ -41,7 +44,7 @@ describe('generated SSH key UI', () => {
       expect(wrapper.findAll('[label="Generate SSH Key"]')).to.have.length(0);
     } finally {
       axios.defaults.adapter = previousAdapter;
-      wrapper.destroy();
+      wrapper.unmount();
     }
   });
 
@@ -150,7 +153,7 @@ describe('generated SSH key UI', () => {
           ssh: { login: 'deploy', private_key: 'hidden', passphrase: 'hidden' },
         },
         generatedSSHKeyAlgorithm: 'ed25519',
-        $refs: { form: { validate: () => true } },
+        $refs: { form: { validate: async () => ({ valid: true }) } },
         $set(target, key, value) { Reflect.set(target, key, value); },
         $emit(event, value) { emitted.push({ event, value }); },
       };

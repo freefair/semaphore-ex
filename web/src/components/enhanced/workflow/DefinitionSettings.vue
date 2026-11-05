@@ -7,9 +7,9 @@
       :counter="512"
       :error-messages="versionMessageTooLong ? [$t('workflowVersionMessageTooLong')] : []"
       :disabled="!canManage"
-      outlined
-      dense
-      @input="$emit('dirty')"
+      variant="outlined"
+      density="compact"
+      @update:model-value="$emit('dirty')"
     />
     <slot name="start-version" />
     <v-text-field
@@ -21,49 +21,49 @@
       :hint="$t('workflowMaxParallelTasksHint')"
       persistent-hint
       :disabled="!canManage"
-      outlined
-      dense
-      @input="$emit('dirty')"
+      variant="outlined"
+      density="compact"
+      @update:model-value="$emit('dirty')"
     />
     <v-select
       v-model="viewRoleIdsModel"
       :items="workflowRoleOptions"
       item-value="value"
-      item-text="text"
+      item-title="text"
       :label="$t('workflowViewRoles')"
       :hint="$t('workflowRoleRestrictionHint')"
       persistent-hint
       multiple
       chips
-      small-chips
-      deletable-chips
+
+      closable-chips
       :disabled="!canAdminister"
-      outlined
-      dense
-      @change="$emit('dirty')"
+      variant="outlined"
+      density="compact"
+      @update:model-value="$emit('dirty')"
     />
     <v-select
       v-model="startRoleIdsModel"
       :items="workflowRoleOptions"
       item-value="value"
-      item-text="text"
+      item-title="text"
       :label="$t('workflowStartRoles')"
       :hint="$t('workflowRoleRestrictionHint')"
       persistent-hint
       multiple
       chips
-      small-chips
-      deletable-chips
+
+      closable-chips
       :disabled="!canAdminister"
-      outlined
-      dense
-      @change="$emit('dirty')"
+      variant="outlined"
+      density="compact"
+      @update:model-value="$emit('dirty')"
     />
     <WorkflowParameterEditor
       v-model="parametersModel"
       :project-id="projectId"
       :disabled="!canManage"
-      @input="$emit('dirty')"
+      @update:model-value="$emit('dirty')"
     />
   </div>
 </template>
@@ -72,6 +72,10 @@
 import WorkflowParameterEditor from '@/components/WorkflowParameterEditor.vue';
 
 export default {
+  emits: [
+    'dirty', 'update:maxParallelTasks', 'update:parameters', 'update:startRoleIds',
+    'update:versionMessage', 'update:viewRoleIds',
+  ],
   components: { WorkflowParameterEditor },
   props: {
     versionMessage: String,

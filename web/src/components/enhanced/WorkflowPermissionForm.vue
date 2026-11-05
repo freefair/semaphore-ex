@@ -1,24 +1,29 @@
 <template>
-  <v-form v-if="item" ref="form" v-model="formValid" lazy-validation>
-    <v-alert v-if="formError" type="error" dense outlined>{{ formError }}</v-alert>
+  <v-form v-if="item" ref="form" v-model="formValid">
+    <v-alert
+      v-if="formError"
+      type="error"
+      density="compact"
+      variant="outlined"
+    >{{ formError }}</v-alert>
     <v-select
       v-model="item.role_id"
       :items="roles"
       item-value="id"
-      item-text="name"
+      item-title="name"
       :label="$t('role')"
       :rules="[value => !!value || $t('role_required')]"
       :disabled="formSaving || !isNew"
-      outlined
-      dense
+      variant="outlined"
+      density="compact"
     />
     <v-checkbox
       v-for="permission in permissions"
       :key="permission.permission"
-      :input-value="hasPermission(permission.permission)"
+      :model-value="hasPermission(permission.permission)"
       :label="$t(permission.label)"
       :disabled="formSaving"
-      @change="setPermission(permission.permission, $event)"
+      @update:model-value="setPermission(permission.permission, $event)"
     />
   </v-form>
 </template>

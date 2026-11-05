@@ -1,29 +1,32 @@
 <template>
   <section data-testid="workflow-artifact-retention">
     <h2 v-if="projectId" class="mt-8 mb-1">{{ $t('workflowArtifactRetention') }}</h2>
-    <v-subheader v-else class="px-0 mt-2">
+    <v-list-subheader v-else class="px-0 mt-2">
       {{ $t('workflowArtifactRetention') }}
-    </v-subheader>
+    </v-list-subheader>
     <v-divider v-if="projectId" class="mb-4" />
 
-    <v-card outlined :style="projectId ? '' : 'background: var(--highlighted-card-bg-color)'">
+    <v-card
+      variant="outlined"
+      :style="projectId ? '' : 'background: var(--highlighted-card-bg-color)'"
+    >
       <v-card-text v-if="loading" class="py-6 text-center">
         <v-progress-circular indeterminate color="primary" size="28" />
       </v-card-text>
       <v-card-text v-else>
-        <v-alert v-if="error" type="error" dense outlined>
+        <v-alert v-if="error" type="error" density="compact" variant="outlined">
           {{ error }}
-          <v-btn text small class="ml-2" @click="load">
+          <v-btn variant="text" size="small" class="ml-2" @click="load">
             {{ $t('workflowArtifactRetentionRetry') }}
           </v-btn>
         </v-alert>
         <template v-if="state">
-          <div class="text-body-2 text--secondary mb-4">
+          <div class="text-body-medium text--secondary mb-4">
             {{ projectId
               ? $t('workflowArtifactRetentionProjectHint')
               : $t('workflowArtifactRetentionGlobalHint') }}
           </div>
-          <v-row dense>
+          <v-row density="compact">
             <v-col cols="12" sm="4">
               <v-text-field
                 v-model.number="form.retentionHours"
@@ -31,8 +34,8 @@
                 min="1"
                 :max="maxRetentionHours"
                 step="0.25"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 data-testid="artifact-retention-hours"
                 :label="$t('workflowArtifactRetentionHours')"
                 :error-messages="retentionHoursError"
@@ -45,8 +48,8 @@
                 min="1"
                 :max="maxArtifactMiB"
                 step="1"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 data-testid="artifact-retention-file-mib"
                 :label="$t('workflowArtifactMaxFileMiB')"
                 :error-messages="maxArtifactError"
@@ -59,8 +62,8 @@
                 min="1"
                 :max="maxRunMiB"
                 step="1"
-                outlined
-                dense
+                variant="outlined"
+                density="compact"
                 data-testid="artifact-retention-run-mib"
                 :label="$t('workflowArtifactMaxRunMiB')"
                 :error-messages="maxRunError"
@@ -68,13 +71,13 @@
             </v-col>
           </v-row>
           <div class="d-flex align-center flex-wrap">
-            <span class="text-caption text--secondary mr-3">
+            <span class="text-body-small text--secondary mr-3">
               {{ $t('workflowArtifactRetentionRevision', { revision: expectedRevision }) }}
             </span>
             <v-spacer />
             <v-btn
               color="primary"
-              small
+              size="small"
               :loading="saving"
               :disabled="!canSave"
               data-testid="artifact-retention-save"

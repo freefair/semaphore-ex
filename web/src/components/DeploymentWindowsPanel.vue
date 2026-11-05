@@ -10,21 +10,21 @@
     <h2 class="mt-8 mb-1">{{ $t('deploymentWindows') }}</h2>
     <v-divider class="mb-5" />
 
-    <v-alert v-if="error" text type="error" dismissible @input="error = ''">
+    <v-alert v-if="error" variant="tonal" type="error" dismissible @update:model-value="error = ''">
       {{ error }}
     </v-alert>
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
 
     <template v-if="policy">
-      <v-row dense>
+      <v-row density="compact">
         <v-col cols="12" sm="7">
           <v-text-field
             v-model.trim="policy.timezone"
             :label="$t('deploymentWindowsTimezone')"
             hint="IANA: Europe/Berlin"
             persistent-hint
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
             :disabled="!canWrite || saving"
             data-testid="deployment-windows-timezone"
           />
@@ -33,9 +33,10 @@
           <v-select
             v-model="policy.default"
             :items="defaultOptions"
+            item-title="text"
             :label="$t('deploymentWindowsDefault')"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
             :disabled="!canWrite || saving"
           />
         </v-col>
@@ -46,26 +47,26 @@
         <v-spacer />
         <v-btn
           v-if="canWrite"
-          small
-          outlined
+          size="small"
+          variant="outlined"
           color="primary"
           :disabled="saving || policy.rules.length >= 64"
           @click="addRule"
           data-testid="deployment-window-add-rule"
         >
-          <v-icon left small>mdi-plus</v-icon>
+          <v-icon start size="small">mdi-plus</v-icon>
           {{ $t('add') }}
         </v-btn>
       </div>
 
-      <v-alert v-if="policy.rules.length === 0" text dense type="info">
+      <v-alert v-if="policy.rules.length === 0" variant="tonal" density="compact" type="info">
         {{ $t('deploymentWindowRulesEmpty') }}
       </v-alert>
 
       <v-card
         v-for="(rule, index) in policy.rules"
         :key="ruleKey(rule, index)"
-        outlined
+        variant="outlined"
         class="pa-3 mb-3"
         data-testid="deployment-window-rule"
       >
@@ -73,7 +74,7 @@
           <v-switch
             v-model="rule.active"
             :label="$t('active')"
-            dense
+            density="compact"
             hide-details
             class="mt-0"
             :disabled="!canWrite || saving"
@@ -82,29 +83,30 @@
           <v-btn
             v-if="canWrite"
             icon
-            small
+            size="small"
             :aria-label="$t('delete')"
             :disabled="saving"
             @click="removeRule(index)"
           >
-            <v-icon small>mdi-delete-outline</v-icon>
+            <v-icon size="small">mdi-delete-outline</v-icon>
           </v-btn>
         </div>
         <v-text-field
           v-model.trim="rule.name"
           :label="$t('name')"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
           :disabled="!canWrite || saving"
         />
-        <v-row dense>
+        <v-row density="compact">
           <v-col cols="12" sm="6">
             <v-select
               v-model="rule.kind"
               :items="kindOptions"
+              item-title="text"
               :label="$t('deploymentWindowKind')"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="!canWrite || saving"
             />
           </v-col>
@@ -112,11 +114,12 @@
             <v-select
               v-model="rule.scope"
               :items="scopeOptions"
+              item-title="text"
               :label="$t('deploymentWindowScope')"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="!canWrite || saving"
-              @change="clearRuleTarget(rule)"
+              @update:model-value="clearRuleTarget(rule)"
             />
           </v-col>
         </v-row>
@@ -124,33 +127,33 @@
           v-if="rule.scope === 'template'"
           v-model="rule.template_id"
           :items="templates"
-          item-text="name"
+          item-title="name"
           item-value="id"
           :label="$t('taskTemplate')"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
           :disabled="!canWrite || saving"
         />
         <v-select
           v-if="rule.scope === 'workflow'"
           v-model="rule.workflow_id"
           :items="workflows"
-          item-text="name"
+          item-title="name"
           item-value="id"
           :label="$t('workflow')"
-          outlined
-          dense
+          variant="outlined"
+          density="compact"
           :disabled="!canWrite || saving"
         />
-        <v-row dense>
+        <v-row density="compact">
           <v-col cols="12" sm="8">
             <v-text-field
               v-model.trim="rule.recurrence"
               :label="$t('deploymentWindowRecurrence')"
               hint="0 9 * * 1-5"
               persistent-hint
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="!canWrite || saving"
             />
           </v-col>
@@ -161,20 +164,20 @@
               min="1"
               max="1440"
               :label="$t('deploymentWindowDuration')"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="!canWrite || saving"
             />
           </v-col>
         </v-row>
-        <v-row dense>
+        <v-row density="compact">
           <v-col cols="12" sm="6">
             <v-text-field
               v-model="rule.effective_from"
               type="date"
               :label="$t('deploymentWindowEffectiveFrom')"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="!canWrite || saving"
             />
           </v-col>
@@ -183,8 +186,8 @@
               v-model="rule.effective_until"
               type="date"
               :label="$t('deploymentWindowEffectiveUntil')"
-              outlined
-              dense
+              variant="outlined"
+              density="compact"
               :disabled="!canWrite || saving"
             />
           </v-col>
@@ -192,7 +195,7 @@
       </v-card>
 
       <div v-if="canWrite" class="d-flex justify-end mb-6">
-        <v-btn text color="error" :disabled="saving" @click="resetDialog = true">
+        <v-btn variant="text" color="error" :disabled="saving" @click="resetDialog = true">
           {{ $t('reset') }}
         </v-btn>
         <v-btn color="primary" :loading="saving" @click="savePolicy">
@@ -200,23 +203,24 @@
         </v-btn>
       </div>
 
-      <v-card outlined class="mb-4">
+      <v-card variant="outlined" class="mb-4">
         <v-card-title class="subtitle-1">{{ $t('deploymentWindowImpactPreview') }}</v-card-title>
         <v-card-text>
           <v-select
             v-model="previewTarget"
             :items="targetOptions"
+            item-title="text"
             :label="$t('deploymentWindowTarget')"
-            outlined
-            dense
+            variant="outlined"
+            density="compact"
             hide-details
             data-testid="deployment-window-preview-target"
           />
           <div class="d-flex mt-3">
             <v-btn
               v-if="canExecute"
-              small
-              outlined
+              size="small"
+              variant="outlined"
               color="primary"
               :disabled="!previewTarget"
               :loading="previewing"
@@ -225,8 +229,8 @@
               {{ $t('preview') }}
             </v-btn>
             <v-btn
-              small
-              text
+              size="small"
+              variant="text"
               color="primary"
               :disabled="!previewTarget"
               :loading="checkingStatus"
@@ -239,8 +243,8 @@
             v-if="decision"
             class="mt-3 mb-0"
             :type="decision.state === 'blocked' ? 'warning' : 'success'"
-            text
-            dense
+            variant="tonal"
+            density="compact"
             data-testid="deployment-window-decision"
           >
             <strong>{{ decisionLabel(decision) }}</strong>
@@ -252,19 +256,23 @@
         </v-card-text>
       </v-card>
 
-      <v-card outlined>
+      <v-card variant="outlined">
         <v-card-title class="subtitle-1">{{ $t('deploymentWindowHistory') }}</v-card-title>
         <v-data-table
           :headers="historyHeaders"
           :items="history"
           :hide-default-footer="true"
           :mobile-breakpoint="720"
-          dense
-          item-key="id"
+          density="compact"
+          item-value="id"
           data-testid="deployment-window-history"
         >
           <template v-slot:item.decision="{ item }">
-            <v-chip x-small dark :color="item.decision.state === 'blocked' ? 'warning' : 'success'">
+            <v-chip
+              size="x-small"
+              dark
+              :color="item.decision.state === 'blocked' ? 'warning' : 'success'"
+            >
               {{ decisionLabel(item.decision) }}
             </v-chip>
           </template>
@@ -359,10 +367,10 @@ export default {
     },
     historyHeaders() {
       return [
-        { text: this.$t('status'), value: 'decision', sortable: false },
-        { text: this.$t('source'), value: 'source', sortable: false },
-        { text: this.$t('deploymentWindowTarget'), value: 'target', sortable: false },
-        { text: this.$t('created'), value: 'created_at', sortable: false },
+        { title: this.$t('status'), key: 'decision', sortable: false },
+        { title: this.$t('source'), key: 'source', sortable: false },
+        { title: this.$t('deploymentWindowTarget'), key: 'target', sortable: false },
+        { title: this.$t('created'), key: 'created_at', sortable: false },
       ];
     },
   },
@@ -414,8 +422,7 @@ export default {
       this.policy.rules.splice(index, 1);
     },
     clearRuleTarget(rule) {
-      this.$set(rule, 'template_id', null);
-      this.$set(rule, 'workflow_id', null);
+      Object.assign(rule, { template_id: null, workflow_id: null });
     },
     policyPayload() {
       return {
