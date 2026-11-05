@@ -55,12 +55,68 @@ func NewVaultAccessKeyDeserializer(
 	}
 }
 
-func (d *VaultAccessKeyDeserializer) DeleteSecret(_ *db.AccessKey) error {
-	return errors.New("runtime secret providers are read-only")
+func (d *VaultAccessKeyDeserializer) DeleteSecret(key *db.AccessKey) error {
+	if key == nil {
+		return providerError(pro_interfaces.SecretProviderErrorValidation, "delete")
+	}
+	defer clearRuntimeAccessKeySecret(key)
+	if err := d.requireCapability(context.Background(), pro_interfaces.CapabilityAccessWrite); err != nil {
+		return err
+	}
+	reference, err := d.runtimeAccessKeyReference(key)
+	if err != nil {
+		return err
+	}
+	if err = d.requireWritableStorage(*key.ProjectID, reference.StorageID); err != nil {
+		return err
+	}
+	configuration, credential, err := d.configuration(*key.ProjectID, reference.StorageID)
+	if err != nil {
+		return err
+	}
+	defer zero(credential)
+	configuration.Auth.BootstrapCredential = credential
+	return d.client.DeleteManagedSecretField(context.Background(), configuration, reference)
 }
 
-func (d *VaultAccessKeyDeserializer) SerializeSecret(_ *db.AccessKey) error {
-	return errors.New("runtime secret providers are read-only")
+func (d *VaultAccessKeyDeserializer) SerializeSecret(key *db.AccessKey) error {
+	if key == nil {
+		return providerError(pro_interfaces.SecretProviderErrorValidation, "write")
+	}
+	defer clearRuntimeAccessKeySecret(key)
+	value, present, err := runtimeAccessKeySecretValue(key)
+	if err != nil {
+		return err
+	}
+	defer zero(value)
+	if !present {
+		return nil
+	}
+	if err = d.requireCapability(context.Background(), pro_interfaces.CapabilityAccessWrite); err != nil {
+		return err
+	}
+	reference, err := d.runtimeAccessKeyReference(key)
+	if err != nil {
+		return err
+	}
+	if err = d.requireWritableStorage(*key.ProjectID, reference.StorageID); err != nil {
+		return err
+	}
+	configuration, credential, err := d.configuration(*key.ProjectID, reference.StorageID)
+	if err != nil {
+		return err
+	}
+	defer zero(credential)
+	configuration.Auth.BootstrapCredential = credential
+	current, err := d.client.ReadManagedSecretField(context.Background(), configuration, reference)
+	if err != nil {
+		return err
+	}
+	defer zero(current.Value)
+	_, err = d.client.WriteManagedSecretField(
+		context.Background(), configuration, reference, value, current.Version,
+	)
+	return err
 }
 
 func (d *VaultAccessKeyDeserializer) DeserializeSecret(key *db.AccessKey) (string, error) {
@@ -151,6 +207,9 @@ func (d *VaultAccessKeyDeserializer) WriteManagedSecretField(
 	if err := d.requireCapability(ctx, pro_interfaces.CapabilityAccessWrite); err != nil {
 		return 0, err
 	}
+	if err := d.requireWritableStorage(projectID, reference.StorageID); err != nil {
+		return 0, err
+	}
 	configuration, credential, err := d.configuration(projectID, reference.StorageID)
 	if err != nil {
 		return 0, err
@@ -158,6 +217,108 @@ func (d *VaultAccessKeyDeserializer) WriteManagedSecretField(
 	defer zero(credential)
 	configuration.Auth.BootstrapCredential = credential
 	return d.client.WriteManagedSecretField(ctx, configuration, reference, value, expectedVersion)
+}
+
+func (d *VaultAccessKeyDeserializer) requireWritableStorage(projectID, storageID int) error {
+	if d.storages == nil {
+		return providerError(pro_interfaces.SecretProviderErrorValidation, "write")
+	}
+	storage, err := d.storages.GetSecretStorage(projectID, storageID)
+	if err != nil || storage.ProjectID != projectID || storage.ID != storageID {
+		return providerError(pro_interfaces.SecretProviderErrorValidation, "write")
+	}
+	if storage.ReadOnly {
+		return providerError(pro_interfaces.SecretProviderErrorPermission, "write")
+	}
+	return nil
+}
+
+func (d *VaultAccessKeyDeserializer) runtimeAccessKeyReference(
+	key *db.AccessKey,
+) (pro_interfaces.SecretReference, error) {
+	if key.ProjectID == nil || key.SourceStorageID == nil || key.SourceStorageKey == nil ||
+		key.SourceStorageType == nil || *key.SourceStorageType != db.AccessKeySourceStorageVault {
+		return pro_interfaces.SecretReference{}, providerError(
+			pro_interfaces.SecretProviderErrorValidation, "write",
+		)
+	}
+	if reference, err := pro_interfaces.DecodeSecretReference(*key.SourceStorageKey); err == nil {
+		if reference.StorageID != *key.SourceStorageID || reference.Version != 0 {
+			return pro_interfaces.SecretReference{}, providerError(
+				pro_interfaces.SecretProviderErrorValidation, "write",
+			)
+		}
+		return reference, nil
+	}
+	mount := strings.TrimSpace(key.SourceStorageMount)
+	if mount == "" && d.storages != nil {
+		storage, err := d.storages.GetSecretStorage(*key.ProjectID, *key.SourceStorageID)
+		if err == nil && storage.ProjectID == *key.ProjectID {
+			mount = stringParam(storage.Params, "mount")
+		}
+	}
+	if mount == "" {
+		mount = "secret"
+	}
+	reference := pro_interfaces.SecretReference{
+		StorageID: *key.SourceStorageID,
+		Mount:     mount,
+		Path:      *key.SourceStorageKey,
+		Version:   key.SourceStorageVersion,
+		Field:     key.SourceStorageField,
+	}
+	if err := reference.Validate(); err != nil || reference.Version != 0 {
+		return pro_interfaces.SecretReference{}, providerError(
+			pro_interfaces.SecretProviderErrorValidation, "write",
+		)
+	}
+	return reference, nil
+}
+
+func runtimeAccessKeySecretValue(key *db.AccessKey) ([]byte, bool, error) {
+	switch key.Type {
+	case db.AccessKeyString:
+		return []byte(key.String), key.String != "", nil
+	case db.AccessKeyLoginPassword:
+		if key.LoginPassword.Password == "" {
+			if key.LoginPassword.Login != "" {
+				return nil, false, providerError(pro_interfaces.SecretProviderErrorValidation, "write")
+			}
+			return nil, false, nil
+		}
+		value, err := json.Marshal(key.LoginPassword)
+		if err != nil {
+			return nil, false, providerError(pro_interfaces.SecretProviderErrorValidation, "write")
+		}
+		return value, true, nil
+	case db.AccessKeySSH:
+		if key.SshKey.PrivateKey == "" {
+			if key.SshKey.Login != "" || key.SshKey.Passphrase != "" {
+				return nil, false, providerError(pro_interfaces.SecretProviderErrorValidation, "write")
+			}
+			return nil, false, nil
+		}
+		value, err := json.Marshal(key.SshKey)
+		if err != nil {
+			return nil, false, providerError(pro_interfaces.SecretProviderErrorValidation, "write")
+		}
+		return value, true, nil
+	case db.AccessKeyNone:
+		return nil, false, nil
+	default:
+		return nil, false, providerError(pro_interfaces.SecretProviderErrorValidation, "write")
+	}
+}
+
+func clearRuntimeAccessKeySecret(key *db.AccessKey) {
+	if key == nil {
+		return
+	}
+	key.String = ""
+	key.LoginPassword = db.LoginPassword{}
+	key.SshKey = db.SshKey{}
+	key.Secret = nil
+	key.Plain = nil
 }
 
 func (d *VaultAccessKeyDeserializer) requireCapability(
@@ -405,12 +566,17 @@ func (c *vaultOpenBaoClient) ReadManagedSecretField(
 	if err != nil {
 		return pro_interfaces.ManagedSecretField{}, err
 	}
+	if response.Data.Metadata.Version <= 0 {
+		return pro_interfaces.ManagedSecretField{}, providerError(
+			pro_interfaces.SecretProviderErrorResponseInvalid, "read_managed",
+		)
+	}
 	value, exists := response.Data.Data[reference.Field]
 	if !exists {
 		return pro_interfaces.ManagedSecretField{Exists: false, Version: response.Data.Metadata.Version}, nil
 	}
 	text, ok := value.(string)
-	if !ok || response.Data.Metadata.Version <= 0 {
+	if !ok {
 		return pro_interfaces.ManagedSecretField{}, providerError(
 			pro_interfaces.SecretProviderErrorResponseInvalid, "read_managed",
 		)
@@ -446,13 +612,61 @@ func (c *vaultOpenBaoClient) WriteManagedSecretField(
 		} `json:"data"`
 	}
 	endpoint := "/v1/" + url.PathEscape(reference.Mount) + "/data/" + escapeSecretPath(reference.Path)
-	if err = c.doJSON(ctx, configuration, http.MethodPatch, endpoint, nil, token, payload, &response); err != nil {
+	method := http.MethodPatch
+	if expectedVersion == 0 {
+		method = http.MethodPost
+	}
+	if err = c.doJSON(ctx, configuration, method, endpoint, nil, token, payload, &response); err != nil {
 		return 0, err
 	}
 	if response.Data.Version <= 0 {
 		return 0, providerError(pro_interfaces.SecretProviderErrorResponseInvalid, "write_managed")
 	}
 	return response.Data.Version, nil
+}
+
+func (c *vaultOpenBaoClient) DeleteManagedSecretField(
+	ctx context.Context,
+	configuration pro_interfaces.SecretProviderConfiguration,
+	reference pro_interfaces.SecretReference,
+) error {
+	if err := reference.Validate(); err != nil || reference.StorageID != configuration.StorageID ||
+		reference.Version != 0 {
+		return providerError(pro_interfaces.SecretProviderErrorValidation, "delete_managed")
+	}
+	current, err := c.ReadManagedSecretField(ctx, configuration, reference)
+	if errorCategory(err) == pro_interfaces.SecretProviderErrorNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer zero(current.Value)
+	if !current.Exists {
+		return nil
+	}
+	token, _, err := c.token(ctx, configuration)
+	if err != nil {
+		return err
+	}
+	defer zero(token)
+	payload := map[string]any{
+		"options": map[string]int{"cas": current.Version},
+		"data":    map[string]any{reference.Field: nil},
+	}
+	var response struct {
+		Data struct {
+			Version int `json:"version"`
+		} `json:"data"`
+	}
+	endpoint := "/v1/" + url.PathEscape(reference.Mount) + "/data/" + escapeSecretPath(reference.Path)
+	if err = c.doJSON(ctx, configuration, http.MethodPatch, endpoint, nil, token, payload, &response); err != nil {
+		return err
+	}
+	if response.Data.Version <= 0 {
+		return providerError(pro_interfaces.SecretProviderErrorResponseInvalid, "delete_managed")
+	}
+	return nil
 }
 
 func (c *vaultOpenBaoClient) TestConnection(
@@ -663,8 +877,8 @@ func (c *vaultOpenBaoClient) doJSON(
 			return providerError(pro_interfaces.SecretProviderErrorNotFound, "request")
 		}
 		return providerError(pro_interfaces.SecretProviderErrorResponseInvalid, "request")
-	case http.StatusBadRequest:
-		if method == http.MethodPatch {
+	case http.StatusBadRequest, http.StatusConflict:
+		if method == http.MethodPatch || (method == http.MethodPost && strings.Contains(endpoint, "/data/")) {
 			return providerError(pro_interfaces.SecretProviderErrorConflict, "request")
 		}
 		return providerError(pro_interfaces.SecretProviderErrorResponseInvalid, "request")

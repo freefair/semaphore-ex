@@ -11708,8 +11708,10 @@ symbols:
     implementation: local
   - name: services/server:VaultAccessKeyDeserializer.DeleteSecret
     signature: func(key *db.AccessKey) error
-    selected_signature: func(_ *db.AccessKey) error
+    selected_signature: func(key *db.AccessKey) error
     implementation: local
+    behavior_tests:
+      - test/edition-contract/enhanced/services/server/vault_runtime_test.go::TestVaultRuntimeDeleteSecretRemovesOnlyManagedFieldWithCAS
   - name: services/server:VaultAccessKeyDeserializer.DeserializeSecret
     signature: func(key *db.AccessKey) (res string, err error)
     selected_signature: func(key *db.AccessKey) (string, error)
@@ -11724,8 +11726,13 @@ symbols:
     implementation: local
   - name: services/server:VaultAccessKeyDeserializer.SerializeSecret
     signature: func(key *db.AccessKey) (err error)
-    selected_signature: func(_ *db.AccessKey) error
+    selected_signature: func(key *db.AccessKey) error
     implementation: local
+    behavior_tests:
+      - test/edition-contract/enhanced/services/server/vault_runtime_test.go::TestVaultRuntimeSerializesCredentialsDirectlyToVaultAndOpenBao
+      - test/edition-contract/enhanced/services/server/vault_runtime_test.go::TestVaultRuntimeDirectWriteHonorsReadOnlyStorage
+      - services/server/runtime_secret_storage_ex_test.go::TestRuntimeSecretDirectStoragePersistsOnlyReferenceInSQL
+      - services/server/runtime_secret_storage_ex_test.go::TestRuntimeSecretReferenceOnlyCreationDoesNotContactProvider
   - name: services/server:VaultAccessKeyDeserializer.TestRuntimeSecretProvider
     signature: func(_ context.Context, _ int, storageID int) (pro_interfaces.SecretProviderHealth, error)
     selected_signature: func(ctx context.Context, projectID int, storageID int) (pro_interfaces.SecretProviderHealth, error)

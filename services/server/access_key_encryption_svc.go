@@ -132,6 +132,10 @@ func (s *accessKeyEncryptionServiceImpl) SerializeSecret(key *db.AccessKey) erro
 		return err
 	}
 	if readonly {
+		if key.SourceStorageType != nil &&
+			*key.SourceStorageType == db.AccessKeySourceStorageVault {
+			clearRuntimeSecretMaterial(key)
+		}
 		return common_errors.NewUserError(ErrReadOnlyStorage)
 	}
 
