@@ -211,11 +211,11 @@ type RunnerK8sConfig struct {
 	// Namespace is where ephemeral task Pods are created.
 	Namespace string `json:"namespace,omitempty" default:"semaphore" env:"SEMAPHORE_RUNNER_K8S_NAMESPACE"`
 
-	// Image is the default immutable container image used for task Jobs. The
-	// Kubernetes provider requires an OCI sha256 digest and has no mutable fallback.
+	// Image is required. Both this image and any template override must use an OCI sha256 digest.
 	Image string `json:"image,omitempty" env:"SEMAPHORE_RUNNER_K8S_IMAGE"`
 
-	// HelperImage is the immutable image used by the bundle extraction init container.
+	// HelperImage is required and must use an OCI sha256 digest. It runs the bundle extraction
+	// init container and, for workflow outputs, the output sidecar.
 	HelperImage string `json:"helper_image,omitempty" env:"SEMAPHORE_RUNNER_K8S_HELPER_IMAGE"`
 
 	// ServiceAccount is the dedicated workload identity for task Pods. The
@@ -225,8 +225,7 @@ type RunnerK8sConfig struct {
 	// PullSecrets is a comma-separated list of imagePullSecrets attached to each Pod.
 	PullSecrets string `json:"pull_secrets,omitempty" env:"SEMAPHORE_RUNNER_K8S_PULL_SECRETS"`
 
-	// PollIntervalSeconds controls how often the executor polls Pod status. Defaults
-	// to 3 seconds. Kept as a plain int (not time.Duration) for env-binding simplicity.
+	// PollIntervalSeconds sets the interval between Kubernetes status checks.
 	PollIntervalSeconds int `json:"poll_interval_seconds,omitempty" default:"3" env:"SEMAPHORE_RUNNER_K8S_POLL_INTERVAL_SECONDS"`
 
 	// CleanupGraceSeconds is the grace period when deleting Pods. Defaults to 30s.
@@ -250,13 +249,13 @@ type RunnerDockerConfig struct {
 	TLSVerify bool `json:"tls_verify,omitempty" env:"SEMAPHORE_RUNNER_DOCKER_TLS_VERIFY"`
 
 	// CertPath is the directory holding ca.pem, cert.pem and key.pem for mutual TLS
-	// against a remote daemon.
+	// against a remote daemon. Setting CertPath requires TLSVerify.
 	CertPath string `json:"cert_path,omitempty" env:"SEMAPHORE_RUNNER_DOCKER_CERT_PATH"`
 
-	// Image is the default image used for the build container of each task.
+	// Image is the default task image. A template can override it within the runner policy.
 	Image string `json:"image,omitempty" default:"semaphoreui/job:latest" env:"SEMAPHORE_RUNNER_DOCKER_IMAGE"`
 
-	// HelperImage is the image used for the transient git-clone container.
+	// HelperImage is the image used to populate the task bundle volume.
 	HelperImage string `json:"helper_image,omitempty" default:"semaphoreui/helper:latest" env:"SEMAPHORE_RUNNER_DOCKER_HELPER_IMAGE"`
 
 	// Network is retained for backward-compatible parsing. The centrally delivered
@@ -273,7 +272,7 @@ type RunnerDockerConfig struct {
 	// MemoryLimit, when non-empty, caps the build container memory (e.g. "2g").
 	MemoryLimit string `json:"memory_limit,omitempty" env:"SEMAPHORE_RUNNER_DOCKER_MEMORY_LIMIT"`
 
-	// PollIntervalSeconds controls how often container status is polled. Defaults to 2s.
+	// PollIntervalSeconds accepts nonnegative values for compatibility. Docker task execution does not use it.
 	PollIntervalSeconds int `json:"poll_interval_seconds,omitempty" default:"2" env:"SEMAPHORE_RUNNER_DOCKER_POLL_INTERVAL_SECONDS"`
 
 	// CleanupGraceSeconds is the timeout passed to docker stop. Defaults to 30s.

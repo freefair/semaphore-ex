@@ -24,6 +24,8 @@ only when the task touches that topic. Keep this file under 150 lines.
 
 ## Gotchas
 
+- For Docker and Kubernetes runner configuration, check the selected providers under
+  `test/edition-contract/enhanced/services/tasks` and the product Wiki executor guides.
 - `default:` struct tags in `util/config.go` are applied at config load (when the section exists),
   so they — not in-package fallback constants — are the effective documented defaults.
 - `config.schema.yaml` is not a source of truth; it drifts (gave wrong k8s executor image
