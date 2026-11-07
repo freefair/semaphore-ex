@@ -1,9 +1,10 @@
 import './setup';
 import { expect } from 'chai';
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 
 import axios from 'axios';
 import Workflows from '@/views/project/Workflows.vue';
+import mockAxios from './helpers/axiosMock';
 
 describe('workflow approvals inbox', () => {
   let originalGet;
@@ -50,11 +51,18 @@ describe('workflow action column permission', () => {
 });
 
 describe('workflow list scoped quick run', () => {
-  it('shows quick run only for rows with effective start access and no global grant', async () => {
-    const wrapper = mount(Workflows, {
+  let http;
 
-      props: { projectId: 7 },
-      methods: { can: () => false, loadItems: async () => {} },
+  beforeEach(() => { http = mockAxios(); });
+  afterEach(() => { http.restore(); });
+
+  it('shows quick run only for rows with effective start access and no global grant', async () => {
+    http.respond(() => [
+      { id: 1, name: 'Granted', effective_access: { start: true } },
+      { id: 2, name: 'Denied', effective_access: { start: false } },
+    ]);
+    const wrapper = mount(Workflows, {
+      props: { projectId: 7, userPermissions: 0 },
       global: {
         renderStubDefaultSlot: true,
         mocks: { $t: (key) => key, $i18n: { t: (key) => key }, $router: { push: () => {} } },
@@ -73,13 +81,11 @@ describe('workflow list scoped quick run', () => {
         },
       },
     });
-    await wrapper.setData({
-      filteredHeaders: wrapper.vm.headers,
-      items: [
-        { id: 1, name: 'Granted', effective_access: { start: true } },
-        { id: 2, name: 'Denied', effective_access: { start: false } },
-      ],
-    });
+    await flushPromises();
+    expect(http.requests.map((req) => [req.method, req.url])).to.deep.equal([
+      ['get', '/api/project/7/workflows'],
+    ]);
+    await wrapper.setData({ filteredHeaders: wrapper.vm.headers });
     expect(wrapper.find('[data-row="1"] button[title="workflowRunNow"]').exists()).to.equal(true);
     expect(wrapper.find('[data-row="2"] button[title="workflowRunNow"]').exists()).to.equal(false);
     await wrapper.find('[data-row="1"] button[title="workflowRunNow"]').trigger('click');
