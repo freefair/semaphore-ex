@@ -511,3 +511,10 @@ func TestJobPool_DuplicatePollDoesNotQueueAssignmentTwice(t *testing.T) {
 	assert.Equal(t, 31, queued.taskID)
 	assert.Equal(t, 1, queued.generation)
 }
+
+func TestIdleProgressIntervalPreservesContainerReconciliation(t *testing.T) {
+	assert.Equal(t, 30*time.Second, idleProgressInterval(nil))
+	for _, executor := range []util.ExecutorType{util.ExecutorTypeDocker, util.ExecutorTypeKubernetes} {
+		assert.Equal(t, time.Second, idleProgressInterval(&util.ExecutorConfig{Type: executor}))
+	}
+}

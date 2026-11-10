@@ -12,6 +12,17 @@ import (
 	"time"
 )
 
+// Container executors send reconciliation, telemetry, and remediation results
+// on the progress channel even when they have no running jobs.
+func idleProgressInterval(config *util.ExecutorConfig) time.Duration {
+	switch resolveExecutorType(config) {
+	case util.ExecutorTypeDocker, util.ExecutorTypeKubernetes:
+		return runnerProgressInterval
+	default:
+		return runnerIdleProgressInterval
+	}
+}
+
 func runnerTransportTrust(webHost string, conn *util.RunnerConnectionConfig) db.RunnerTransportTrust {
 	parsed, err := url.Parse(webHost)
 	if err != nil || !strings.EqualFold(parsed.Scheme, "https") {

@@ -133,6 +133,16 @@ func runService() {
 		log.WithField("redis", haRedis.Describe()).Info("HA Redis backend connected")
 	}
 
+	// The SQL store bypasses its runner cache in HA mode, keeping SQL
+	// authoritative even when a cache implementation is supplied.
+	if runnerCache := proHA.NewRunnerCache(haRedis); runnerCache != nil {
+		holder, ok := store.(db.RunnerCacheHolder)
+		if !ok {
+			log.Fatalf("store %T does not support a shared runner cache", store)
+		}
+		holder.SetRunnerCache(runnerCache)
+	}
+
 	appMetrics := metrics.NewMetrics()
 
 	auditService, auditErr := audit.StartService(

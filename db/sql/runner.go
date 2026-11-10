@@ -88,6 +88,7 @@ func (d *SqlDb) GetRunners(projectID int, activeOnly bool, tagFilterMode db.Runn
 }
 
 func (d *SqlDb) DeleteRunner(projectID int, runnerID int) (err error) {
+	defer d.runnerCache.Invalidate()
 	runner, err := d.GetRunner(projectID, runnerID)
 	if err != nil {
 		return err

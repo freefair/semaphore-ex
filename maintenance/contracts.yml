@@ -4275,6 +4275,22 @@ symbols:
   - name: db:RunnerAttemptSucceeded
     signature: db.RunnerAttemptOutcome = "succeeded"
     implementation: core
+  - name: db:RunnerCache
+    signature: interface{Forget(token string); Get(token string) (runner db.Runner, generation uint64, ok bool); Invalidate(); Put(token string, runner db.Runner, generation uint64)}
+    implementation: core
+    behavior_tests:
+    - db/sql/runner_cache_test.go::TestMemoryRunnerCache_DropsLookupThatRacedWithWrite
+    - db/sql/runner_cache_test.go::TestMemoryRunnerCache_ForgetDropsLookupThatRacedWithIt
+  - name: db:RunnerCacheHolder
+    signature: interface{SetRunnerCache(cache db.RunnerCache)}
+    implementation: core
+    behavior_tests:
+    - db/sql/runner_cache_test.go::TestSetRunnerCache_ReplacesTheCache
+  - name: db:RunnerCacheTTL
+    signature: time.Duration = 30000000000
+    implementation: core
+    behavior_tests:
+    - db/sql/runner_cache_test.go::TestMemoryRunnerCache_Expires
   - name: db:RunnerExecutorDocker
     signature: db.RunnerExecutorType = "docker"
     implementation: core
@@ -11320,6 +11336,13 @@ symbols:
     implementation: local
     behavior_tests:
     - test/edition-contract/enhanced/services/ha/sentinel_factory_ex_test.go::TestHAFactoriesBorrowOneConnectionAndKeepSQLAuthority
+  - name: services/ha:NewRunnerCache
+    signature: func(_ pro_interfaces.HARedis) db.RunnerCache
+    selected_signature: func(_ pro_interfaces.HARedis) db.RunnerCache
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/services/ha/runner_cache_ex_test.go::TestNewRunnerCache_HAAlwaysMisses
+    - db/sql/runner_cache_test.go::TestRunnerCache_HAReadsSQLAfterExternalRevocation
   - name: services/ha:NewScheduleDeduplicator
     signature: func(_ pro_interfaces.HARedis, _ db.Store) services/schedules.ScheduleDeduplicator
     selected_signature: func(_ pro_interfaces.HARedis, store db.Store) services/schedules.ScheduleDeduplicator

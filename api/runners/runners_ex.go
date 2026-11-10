@@ -23,6 +23,27 @@ func kubernetesNamespaceAllowed(policy db.KubernetesExecutionPolicy, namespace s
 	return false
 }
 
+// Changed placement capabilities and policy decisions reach SQL on this poll,
+// even when the previous heartbeat is recent.
+func runnerReportChanged(previous, current db.Runner) bool {
+	return previous.Version != current.Version ||
+		previous.Platform != current.Platform ||
+		previous.CurrentLoad != current.CurrentLoad ||
+		previous.InventoryRefreshVersion != current.InventoryRefreshVersion ||
+		previous.ExecutorType != current.ExecutorType ||
+		previous.DockerPolicyRevision != current.DockerPolicyRevision ||
+		previous.DockerPolicyHash != current.DockerPolicyHash ||
+		previous.K8sClusterAlias != current.K8sClusterAlias ||
+		previous.K8sNamespace != current.K8sNamespace ||
+		previous.K8sPolicyRevision != current.K8sPolicyRevision ||
+		previous.K8sPolicyHash != current.K8sPolicyHash ||
+		previous.TransportTrust != current.TransportTrust ||
+		previous.SecurityProtocolVersion != current.SecurityProtocolVersion ||
+		previous.SecurityCompliant != current.SecurityCompliant ||
+		previous.SecurityReason != current.SecurityReason ||
+		previous.SecurityRemediation != current.SecurityRemediation
+}
+
 // runnerSecurityReport translates only validated poll metadata into the
 // non-secret input consumed by the persisted runner-registration policy.
 func runnerSecurityReport(runner db.Runner, report runners.HealthReport) db.RunnerSecurityReport {

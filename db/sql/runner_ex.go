@@ -55,6 +55,7 @@ func (d *SqlDb) GetRunnerTaskHistory(
 }
 
 func (d *SqlDb) SetProjectRunnerActive(projectID int, runnerID int, active bool) error {
+	defer d.runnerCache.Invalidate()
 	query := "update runner set active=? where id=? and project_id=?"
 	args := []any{active, runnerID, projectID}
 	if !active {

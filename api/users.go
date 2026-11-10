@@ -186,6 +186,13 @@ func (c *UsersController) GetUserMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// userUpdateRequest is the body of PUT /users/{user_id}. CurrentPwd is read only when the body also carries
+// a new password, see allowPasswordChange.
+type userUpdateRequest struct {
+	db.UserWithPwd
+	CurrentPwd string `json:"current_password"`
+}
+
 func (c *UsersController) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	targetUser := helpers.GetFromContext(r, "_user").(db.User)
 	editor := helpers.GetFromContext(r, "user").(*db.User)
@@ -195,10 +202,11 @@ func (c *UsersController) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var user db.UserWithPwd
-	if !helpers.Bind(w, r, &user) {
+	var req userUpdateRequest
+	if !helpers.Bind(w, r, &req) {
 		return
 	}
+	user := req.UserWithPwd
 
 	if !canManageUsers && editor.ID != targetUser.ID {
 		c.log.WithFields(log.Fields{
@@ -231,6 +239,11 @@ func (c *UsersController) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	if targetUser.External && targetUser.Username != user.Username {
 		c.log.WithField("user_id", targetUser.ID).Debug("Username is not editable for external users")
 		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	// The password column is also written by POST /users/{user_id}/password; both routes apply one rule.
+	if user.Pwd != "" && !c.allowPasswordChange(w, r, editor, targetUser, req.CurrentPwd) {
 		return
 	}
 
@@ -289,31 +302,12 @@ func (c *UsersController) UpdateUserPassword(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if user.External {
-		c.log.WithField("user_id", user.ID).Debug("Password is not editable for external users")
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
 	if !helpers.Bind(w, r, &pwd) {
 		return
 	}
 
-	// CWE-620: require the current password when a user changes their own,
-	// so a stolen session can't be used to take over the account. Admins
-	// changing someone else's password are exempt — they can't know it.
-	if editor.ID == user.ID {
-		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd.CurrentPwd)); err != nil {
-			c.log.WithField("user_id", user.ID).Debug("Current password does not match")
-			helpers.Audit(r).Record(r.Context(), audit.Event{
-				Kind:    audit.IAMUserPasswordChange,
-				Outcome: audit.OutcomeFailure,
-				Reason:  audit.ReasonInvalidCurrentPassword,
-				Target:  audit.UserTarget(user.ID, user.Username),
-			})
-			helpers.WriteErrorStatus(w, "Current password is incorrect", http.StatusBadRequest)
-			return
-		}
+	if !c.allowPasswordChange(w, r, editor, user, pwd.CurrentPwd) {
+		return
 	}
 
 	if err := helpers.Store(r).SetUserPassword(user.ID, pwd.Pwd); err != nil {
@@ -329,6 +323,46 @@ func (c *UsersController) UpdateUserPassword(w http.ResponseWriter, r *http.Requ
 	helpers.Audit(r).Record(r.Context(), audit.Event{Kind: passwordKind, Target: audit.UserTarget(user.ID, user.Username)})
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// allowPasswordChange reports whether editor may give target a new password. When it does not, it has
+// already answered the request. Every handler that writes a password calls it before the write, so that
+// sibling routes cannot drift apart (GHSA-3gg5-457g-m9cg).
+//
+// CWE-620: a user changing their own password must give the current one, so that a stolen session or API
+// token can't be turned into the account's credential. This holds for admins too. An editor resetting
+// someone else's password is exempt after the handler checks the editor's permission; they cannot know
+// the target's password. External users have no local password to change.
+func (c *UsersController) allowPasswordChange(
+	w http.ResponseWriter,
+	r *http.Request,
+	editor *db.User,
+	target db.User,
+	currentPwd string,
+) bool {
+	if target.External {
+		c.log.WithField("user_id", target.ID).Debug("Password is not editable for external users")
+		w.WriteHeader(http.StatusBadRequest)
+		return false
+	}
+
+	if editor.ID != target.ID {
+		return true
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(target.Password), []byte(currentPwd)); err != nil {
+		c.log.WithField("user_id", target.ID).Debug("Current password does not match")
+		helpers.Audit(r).Record(r.Context(), audit.Event{
+			Kind:    audit.IAMUserPasswordChange,
+			Outcome: audit.OutcomeFailure,
+			Reason:  audit.ReasonInvalidCurrentPassword,
+			Target:  audit.UserTarget(target.ID, target.Username),
+		})
+		helpers.WriteErrorStatus(w, "Current password is incorrect", http.StatusBadRequest)
+		return false
+	}
+
+	return true
 }
 
 func (c *UsersController) DeleteUser(w http.ResponseWriter, r *http.Request) {

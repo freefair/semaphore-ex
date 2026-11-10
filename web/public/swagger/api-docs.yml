@@ -127,6 +127,14 @@ definitions:
         type: string
         x-example: test2@ansiblesemaphore.test
         example: test2@ansiblesemaphore.test
+      password:
+        type: string
+        format: password
+        description: New password for a local account. Omit to keep its password.
+      current_password:
+        type: string
+        format: password
+        description: Required when setting your own password, including as an administrator.
       alert:
         type: boolean
       admin:
@@ -1689,6 +1697,10 @@ paths:
               password:
                 type: string
                 format: password
+              current_password:
+                type: string
+                format: password
+                description: Required when changing your own password, including as an administrator.
       responses:
         204:
           description: Password updated

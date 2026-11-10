@@ -6,11 +6,23 @@ import (
 	"github.com/Masterminds/squirrel"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
+	"github.com/semaphoreui/semaphore/util"
 	"strings"
 	"time"
 )
 
 func (d *SqlDb) GetRunnerByToken(token string) (runner db.Runner, err error) {
+	// HA nodes cannot safely invalidate another process's cache. Consult SQL
+	// directly, including for stores created outside the HTTP server.
+	useCache := util.Config == nil || !util.HAEnabled()
+	var generation uint64
+	if useCache {
+		var ok bool
+		runner, generation, ok = d.runnerCache.Get(token)
+		if ok {
+			return runner, nil
+		}
+	}
 
 	runners := make([]db.Runner, 0)
 
@@ -29,6 +41,9 @@ func (d *SqlDb) GetRunnerByToken(token string) (runner db.Runner, err error) {
 
 	runner = runners[0]
 	err = d.loadRunnerTagsSingle(&runner)
+	if err == nil && useCache && runner.Token == token {
+		d.runnerCache.Put(token, runner, generation)
+	}
 	return
 }
 
@@ -115,11 +130,13 @@ func (d *SqlDb) GetGlobalRunnerTags() (res []db.RunnerTag, err error) {
 }
 
 func (d *SqlDb) DeleteGlobalRunner(runnerID int) (err error) {
+	defer d.runnerCache.Invalidate()
 	err = d.deleteObject(0, db.GlobalRunnerProps, runnerID)
 	return
 }
 
 func (d *SqlDb) ClearRunnerCache(runner db.Runner) (err error) {
+	defer d.runnerCache.Invalidate()
 	if runner.ProjectID == nil {
 		_, err = d.exec(
 			"update `runner` set `cleaning_requested`=? where id=?",
@@ -138,6 +155,11 @@ func (d *SqlDb) ClearRunnerCache(runner db.Runner) (err error) {
 }
 
 func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
+	defer func() {
+		if err == nil {
+			d.runnerCache.Forget(runner.Token)
+		}
+	}()
 	touchedAt := tz.Now()
 	runner.SecurityCheckedAt = &touchedAt
 	if runner.IsCacheClearPending() {
@@ -151,7 +173,7 @@ func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
 	}
 	if runner.ProjectID == nil {
 		_, err = d.exec(
-			"update `runner` set `touched`=?, `started_at`=?, `version`=?, `inventory_refresh_version`=?, `platform`=?, `current_load`=?, `executor_type`=?, `docker_policy_revision`=?, `docker_policy_hash`=?, `k8s_cluster_alias`=?, `k8s_policy_revision`=?, `k8s_policy_hash`=?, `security_compliant`=?, `security_reason`=?, `security_remediation`=?, `transport_trust`=?, `security_protocol_version`=?, `security_checked_at`=? where id=?",
+			"update `runner` set `touched`=?, `started_at`=?, `version`=?, `inventory_refresh_version`=?, `platform`=?, `current_load`=?, `executor_type`=?, `docker_policy_revision`=?, `docker_policy_hash`=?, `k8s_cluster_alias`=?, `k8s_namespace`=?, `k8s_policy_revision`=?, `k8s_policy_hash`=?, `security_compliant`=?, `security_reason`=?, `security_remediation`=?, `transport_trust`=?, `security_protocol_version`=?, `security_checked_at`=? where id=?",
 			touchedAt,
 			runner.StartedAt,
 			runner.Version,
@@ -162,6 +184,7 @@ func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
 			runner.DockerPolicyRevision,
 			runner.DockerPolicyHash,
 			runner.K8sClusterAlias,
+			runner.K8sNamespace,
 			runner.K8sPolicyRevision,
 			runner.K8sPolicyHash,
 			runner.SecurityCompliant,
@@ -175,7 +198,7 @@ func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
 	}
 
 	_, err = d.exec(
-		"update `runner` set `touched`=?, `started_at`=?, `version`=?, `inventory_refresh_version`=?, `platform`=?, `current_load`=?, `executor_type`=?, `docker_policy_revision`=?, `docker_policy_hash`=?, `k8s_cluster_alias`=?, `k8s_policy_revision`=?, `k8s_policy_hash`=?, `security_compliant`=?, `security_reason`=?, `security_remediation`=?, `transport_trust`=?, `security_protocol_version`=?, `security_checked_at`=? where id=? and project_id=?",
+		"update `runner` set `touched`=?, `started_at`=?, `version`=?, `inventory_refresh_version`=?, `platform`=?, `current_load`=?, `executor_type`=?, `docker_policy_revision`=?, `docker_policy_hash`=?, `k8s_cluster_alias`=?, `k8s_namespace`=?, `k8s_policy_revision`=?, `k8s_policy_hash`=?, `security_compliant`=?, `security_reason`=?, `security_remediation`=?, `transport_trust`=?, `security_protocol_version`=?, `security_checked_at`=? where id=? and project_id=?",
 		touchedAt,
 		runner.StartedAt,
 		runner.Version,
@@ -186,6 +209,7 @@ func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
 		runner.DockerPolicyRevision,
 		runner.DockerPolicyHash,
 		runner.K8sClusterAlias,
+		runner.K8sNamespace,
 		runner.K8sPolicyRevision,
 		runner.K8sPolicyHash,
 		runner.SecurityCompliant,
@@ -201,6 +225,7 @@ func (d *SqlDb) TouchRunner(runner db.Runner) (err error) {
 }
 
 func (d *SqlDb) UpdateRunner(runner db.Runner) (err error) {
+	defer d.runnerCache.Invalidate()
 	runner, err = d.prepareRunnerForUpdate(runner)
 	if err != nil {
 		return
@@ -225,6 +250,7 @@ func (d *SqlDb) UpdateRunner(runner db.Runner) (err error) {
 }
 
 func (d *SqlDb) RegisterRunner(registrationTokenHash string, report db.RunnerSecurityReport) (runner db.Runner, err error) {
+	defer d.runnerCache.Invalidate()
 	runners := make([]db.Runner, 0)
 
 	err = d.getObjects(0, db.GlobalRunnerProps, db.RetrieveQueryParams{}, func(builder squirrel.SelectBuilder) squirrel.SelectBuilder {
@@ -333,6 +359,7 @@ func (d *SqlDb) RegisterRunner(registrationTokenHash string, report db.RunnerSec
 }
 
 func (d *SqlDb) ResetRunnerRegistration(runnerID int, registrationTokenHash string, expiresAt time.Time) (err error) {
+	defer d.runnerCache.Invalidate()
 	_, err = d.exec(
 		"update `runner` set `token`='', `active`=false, `public_key`=null, `registration_kind`='one_time', `security_compliant`=case when `registration_policy`='standard' then true else false end, `security_reason`='registration required', `security_remediation`='Register with the new one-time token.', `transport_trust`='plaintext', `security_protocol_version`=0, `security_checked_at`=null, `registration_token`=?, `registration_token_expires_at`=? where id=?",
 		registrationTokenHash,
@@ -342,6 +369,7 @@ func (d *SqlDb) ResetRunnerRegistration(runnerID int, registrationTokenHash stri
 }
 
 func (d *SqlDb) CreateRunner(runner db.Runner) (newRunner db.Runner, err error) {
+	defer d.runnerCache.Invalidate()
 	runner, err = prepareRunnerForCreate(runner)
 	if err != nil {
 		return db.Runner{}, err

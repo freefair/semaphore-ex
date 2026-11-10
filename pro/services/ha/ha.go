@@ -34,3 +34,4 @@ func NewWorkflowRunLocker(_ pro_interfaces.HARedis, _ db.Store) pro_interfaces.W
 	return nil
 }
 func NewAuditExportLeaser(_ pro_interfaces.HARedis) pro_interfaces.AuditExportLeaser { return nil }
+func NewRunnerCache(_ pro_interfaces.HARedis) db.RunnerCache                         { return nil }

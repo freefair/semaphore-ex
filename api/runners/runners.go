@@ -67,6 +67,18 @@ func RunnerMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// maxRunnerTouchInterval caps how stale the stored heartbeat of a polling
+// runner may get before GetRunner writes it again.
+const maxRunnerTouchInterval = 45 * time.Second
+
+// runnerTouchInterval is how often GetRunner persists the heartbeat of a
+// runner that keeps polling. It stays well below the offline timeout, so
+// skipping writes in between never makes a live runner look offline.
+func runnerTouchInterval() time.Duration {
+	interval := min(util.Config.RunnersOfflineTimeout()/3, maxRunnerTouchInterval)
+	return interval
+}
+
 type RunnerController struct {
 	runnerRepo                db.RunnerManager
 	taskPool                  *tasks.TaskPool
@@ -96,7 +108,8 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 		"runner_id": runner.ID,
 	})
 
-	clearCache := false
+	clearCache := runner.IsCacheClearPending()
+	persisted := runner
 	report, err := runners.ParseHealthReport(r.Header)
 	if err != nil {
 		helpers.WriteErrorStatus(w, "Invalid runner health report", http.StatusBadRequest)
@@ -116,6 +129,8 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 		helpers.WriteJSON(w, http.StatusConflict, securityDecision)
 		return
 	}
+	startedAtChanged := false
+	now := tz.Now()
 
 	// The runner reports its process start time on every poll. It changes on
 	// every restart and is persisted next to "touched", so the task reconciler
@@ -125,26 +140,38 @@ func (c *RunnerController) GetRunner(w http.ResponseWriter, r *http.Request) {
 			if runner.StartedAt != nil && startedAt.After(*runner.StartedAt) {
 				runnerLog.Debug("Runner process restart detected")
 			}
+			startedAtChanged = runner.StartedAt == nil || !startedAt.Equal(*runner.StartedAt)
 			runner.StartedAt = &startedAt
 		} else {
 			runnerLog.WithError(parseErr).Warn("invalid X-Runner-Started-At header")
 		}
 	}
 
-	wasOffline := !runner.IsOnline(tz.Now(), util.Config.RunnersOfflineTimeout())
+	wasOffline := !runner.IsOnline(now, util.Config.RunnersOfflineTimeout())
 
-	if err := c.runnerRepo.TouchRunner(runner); err != nil {
-		runnerLog.WithError(err).Error("runner touch failed")
-		helpers.WriteError(w, err)
-		return
+	// A clean request is pending until "touched" passes it, so touch right away
+	// to deliver it only once. Otherwise skip the write while the stored
+	// heartbeat is fresh enough.
+	lastTouch := time.Duration(0)
+	if runner.Touched != nil {
+		lastTouch = now.Sub(*runner.Touched)
+	}
+
+	if wasOffline || runnerReportChanged(persisted, runner) ||
+		startedAtChanged ||
+		clearCache ||
+		runner.Touched == nil ||
+		lastTouch >= runnerTouchInterval() {
+
+		if err := c.runnerRepo.TouchRunner(runner); err != nil {
+			runnerLog.WithError(err).Error("runner touch failed")
+			helpers.WriteError(w, err)
+			return
+		}
 	}
 
 	if wasOffline {
 		runnerLog.Debug("Runner became online")
-	}
-
-	if runner.IsCacheClearPending() {
-		clearCache = true
 	}
 
 	data := runners.RunnerState{
