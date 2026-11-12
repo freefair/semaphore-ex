@@ -187,8 +187,9 @@ func TestVaultManagedSecretFieldUsesKVPatchAndCAS(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	deserializer, _ := newRuntimeDeserializer(
+	deserializer, _ := newRuntimeDeserializerWithStorage(
 		server.URL, nil, "bootstrap-token", runtimeCapabilityProvider{active: true},
+		db.SecretStorageTypeVault, false,
 	)
 	reference := pro_interfaces.SecretReference{
 		StorageID: 9, Mount: "team", Path: "apps/api", Field: "password",
@@ -217,13 +218,13 @@ func TestVaultManagedSecretFieldClassifiesMissingAndCASConflict(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 	}))
 	defer server.Close()
-	deserializer, _ := newRuntimeDeserializer(
+	deserializer, _ := newRuntimeDeserializerWithStorage(
 		server.URL, nil, "bootstrap-token", runtimeCapabilityProvider{active: true},
+		db.SecretStorageTypeVault, false,
 	)
 	reference := pro_interfaces.SecretReference{
 		StorageID: 9, Mount: "secret", Path: "missing", Field: "value",
 	}
-
 	field, err := deserializer.ReadManagedSecretField(context.Background(), 3, reference)
 	require.NoError(t, err)
 	assert.False(t, field.Exists)
@@ -234,6 +235,250 @@ func TestVaultManagedSecretFieldClassifiesMissingAndCASConflict(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, pro_interfaces.SecretProviderErrorConflict, errorCategory(err))
 	assert.NotContains(t, err.Error(), "not-in-error")
+}
+
+func TestVaultRuntimeSerializesCredentialsDirectlyToVaultAndOpenBao(t *testing.T) {
+	tests := []struct {
+		name        string
+		storageType db.SecretStorageType
+		keyType     db.AccessKeyType
+		stringValue string
+		loginPass   db.LoginPassword
+		sshKey      db.SshKey
+		expected    string
+		method      string
+		version     int
+	}{
+		{
+			name: "Vault string creates missing KV v2 document", storageType: db.SecretStorageTypeVault,
+			keyType: db.AccessKeyString, stringValue: "string-secret", expected: "string-secret",
+			method: http.MethodPost, version: 0,
+		},
+		{
+			name: "OpenBao login password updates only the field", storageType: db.SecretStorageTypeOpenBao,
+			keyType: db.AccessKeyLoginPassword, loginPass: db.LoginPassword{Login: "svc", Password: "password"},
+			expected: `{"login":"svc","password":"password"}`, method: http.MethodPatch, version: 7,
+		},
+		{
+			name: "OpenBao login password creates missing KV v2 document", storageType: db.SecretStorageTypeOpenBao,
+			keyType: db.AccessKeyLoginPassword, loginPass: db.LoginPassword{Login: "svc", Password: "password"},
+			expected: `{"login":"svc","password":"password"}`, method: http.MethodPost, version: 0,
+		},
+		{
+			name: "Vault login password updates only the field", storageType: db.SecretStorageTypeVault,
+			keyType: db.AccessKeyLoginPassword, loginPass: db.LoginPassword{Login: "svc", Password: "password"},
+			expected: `{"login":"svc","password":"password"}`, method: http.MethodPatch, version: 7,
+		},
+		{
+			name: "Vault SSH key creates missing KV v2 document", storageType: db.SecretStorageTypeVault,
+			keyType: db.AccessKeySSH, sshKey: db.SshKey{
+				Login: "deploy", Passphrase: "phrase", PrivateKey: "private-key",
+			},
+			expected: `{"login":"deploy","passphrase":"phrase","private_key":"private-key"}`,
+			method:   http.MethodPost, version: 0,
+		},
+		{
+			name: "OpenBao string updates only the field", storageType: db.SecretStorageTypeOpenBao,
+			keyType: db.AccessKeyString, stringValue: "updated-secret", expected: "updated-secret",
+			method: http.MethodPatch, version: 7,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/v1/team/data/apps/credential", r.URL.Path)
+				switch r.Method {
+				case http.MethodGet:
+					if tt.version == 0 {
+						http.NotFound(w, r)
+						return
+					}
+					writeJSON(t, w, map[string]any{"data": map[string]any{
+						"data":     map[string]any{"secret": "remote-before", "sibling": "preserve"},
+						"metadata": map[string]any{"version": tt.version},
+					}})
+				case tt.method:
+					if tt.method == http.MethodPatch {
+						assert.Equal(t, "application/merge-patch+json", r.Header.Get("Content-Type"))
+					} else {
+						assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+					}
+					var body struct {
+						Options map[string]int `json:"options"`
+						Data    map[string]any `json:"data"`
+					}
+					require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+					assert.Equal(t, tt.version, body.Options["cas"])
+					assert.Equal(t, map[string]any{"secret": tt.expected}, body.Data,
+						"writes must neither copy siblings nor serialize locally")
+					writeJSON(t, w, map[string]any{"data": map[string]any{"version": tt.version + 1}})
+				default:
+					assert.Failf(t, "unexpected method", "method=%s", r.Method)
+					http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+				}
+			}))
+			defer server.Close()
+			deserializer, _ := newRuntimeDeserializerWithStorage(
+				server.URL, db.MapStringAnyField{"mount": "team"}, "bootstrap-token",
+				runtimeCapabilityProvider{active: true}, tt.storageType, false,
+			)
+			projectID, storageID := 3, 9
+			sourceType := db.AccessKeySourceStorageVault
+			path := "apps/credential"
+			key := db.AccessKey{
+				ProjectID: &projectID, SourceStorageID: &storageID,
+				SourceStorageType: &sourceType, SourceStorageKey: &path,
+				SourceStorageMount: "team", SourceStorageField: "secret", Type: tt.keyType,
+				String: tt.stringValue, LoginPassword: tt.loginPass, SshKey: tt.sshKey,
+			}
+
+			err := deserializer.SerializeSecret(&key)
+
+			require.NoError(t, err)
+			assert.Empty(t, key.String)
+			assert.Equal(t, db.LoginPassword{}, key.LoginPassword)
+			assert.Equal(t, db.SshKey{}, key.SshKey)
+			assert.Nil(t, key.Secret)
+		})
+	}
+}
+
+func TestVaultRuntimeDeleteSecretRemovesOnlyManagedFieldWithCAS(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/team/data/apps/credential", r.URL.Path)
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(t, w, map[string]any{"data": map[string]any{
+				"data":     map[string]any{"secret": "private-value", "sibling": "preserve"},
+				"metadata": map[string]any{"version": 5},
+			}})
+		case http.MethodPatch:
+			assert.Equal(t, "application/merge-patch+json", r.Header.Get("Content-Type"))
+			var body struct {
+				Options map[string]int `json:"options"`
+				Data    map[string]any `json:"data"`
+			}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, 5, body.Options["cas"])
+			assert.Equal(t, map[string]any{"secret": nil}, body.Data)
+			writeJSON(t, w, map[string]any{"data": map[string]any{"version": 6}})
+		default:
+			assert.Failf(t, "unexpected method", "method=%s", r.Method)
+			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+	deserializer, _ := newRuntimeDeserializerWithStorage(
+		server.URL, db.MapStringAnyField{"mount": "team"}, "bootstrap-token",
+		runtimeCapabilityProvider{active: true}, db.SecretStorageTypeVault, false,
+	)
+	projectID, storageID := 3, 9
+	sourceType := db.AccessKeySourceStorageVault
+	encoded, err := (pro_interfaces.SecretReference{
+		StorageID: storageID, Mount: "team", Path: "apps/credential", Field: "secret",
+	}).Encode()
+	require.NoError(t, err)
+	key := db.AccessKey{
+		ProjectID: &projectID, SourceStorageID: &storageID,
+		SourceStorageType: &sourceType, SourceStorageKey: &encoded,
+		String: "must-not-be-persisted",
+	}
+
+	err = deserializer.DeleteSecret(&key)
+
+	require.NoError(t, err)
+	assert.Empty(t, key.String)
+}
+
+func TestVaultRuntimeDirectWriteHonorsReadOnlyStorage(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer server.Close()
+	deserializer, reader := newRuntimeDeserializerWithStorage(
+		server.URL, nil, "bootstrap-token", runtimeCapabilityProvider{active: true},
+		db.SecretStorageTypeVault, true,
+	)
+	projectID, storageID := 3, 9
+	sourceType := db.AccessKeySourceStorageVault
+	path := "apps/credential"
+	key := db.AccessKey{
+		ProjectID: &projectID, SourceStorageID: &storageID,
+		SourceStorageType: &sourceType, SourceStorageKey: &path,
+		SourceStorageMount: "secret", SourceStorageField: "value",
+		Type: db.AccessKeyString, String: "must-not-be-persisted",
+	}
+
+	err := deserializer.SerializeSecret(&key)
+
+	require.Error(t, err)
+	assert.Equal(t, pro_interfaces.SecretProviderErrorPermission, errorCategory(err))
+	assert.Zero(t, requests.Load())
+	assert.Zero(t, reader.reads.Load(), "read-only storage must not read its bootstrap credential")
+	assert.Empty(t, key.String)
+	assert.Nil(t, key.Secret)
+}
+
+func TestVaultRuntimeCredentialWritesReportPermissionAndCASConflicts(t *testing.T) {
+	tests := []struct {
+		name     string
+		handler  http.HandlerFunc
+		category pro_interfaces.SecretProviderErrorCategory
+	}{
+		{
+			name: "provider permission denied",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				http.NotFound(w, r)
+			},
+			category: pro_interfaces.SecretProviderErrorPermission,
+		},
+		{
+			name: "CAS conflict",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					writeJSON(t, w, map[string]any{"data": map[string]any{
+						"data":     map[string]any{"value": "remote-before"},
+						"metadata": map[string]any{"version": 4},
+					}})
+					return
+				}
+				w.WriteHeader(http.StatusBadRequest)
+			},
+			category: pro_interfaces.SecretProviderErrorConflict,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(tt.handler)
+			defer server.Close()
+			deserializer, _ := newRuntimeDeserializerWithStorage(
+				server.URL, nil, "bootstrap-token", runtimeCapabilityProvider{active: true},
+				db.SecretStorageTypeVault, false,
+			)
+			projectID, storageID := 3, 9
+			sourceType := db.AccessKeySourceStorageVault
+			path := "apps/credential"
+			key := db.AccessKey{
+				ProjectID: &projectID, SourceStorageID: &storageID,
+				SourceStorageType: &sourceType, SourceStorageKey: &path,
+				SourceStorageMount: "secret", SourceStorageField: "value",
+				Type: db.AccessKeyString, String: "must-not-be-persisted",
+			}
+
+			err := deserializer.SerializeSecret(&key)
+
+			require.Error(t, err)
+			assert.Equal(t, tt.category, errorCategory(err))
+			assert.NotContains(t, err.Error(), "must-not-be-persisted")
+			assert.Empty(t, key.String)
+			assert.Nil(t, key.Secret)
+		})
+	}
 }
 
 func TestVaultRuntimeAppRoleCachesAndRenewsOnlyProviderToken(t *testing.T) {
@@ -404,6 +649,19 @@ func newRuntimeDeserializer(
 	credential string,
 	provider pro_interfaces.CapabilityProvider,
 ) (*VaultAccessKeyDeserializer, *runtimeCredentialReader) {
+	return newRuntimeDeserializerWithStorage(
+		address, params, credential, provider, db.SecretStorageTypeVault, true,
+	)
+}
+
+func newRuntimeDeserializerWithStorage(
+	address string,
+	params db.MapStringAnyField,
+	credential string,
+	provider pro_interfaces.CapabilityProvider,
+	storageType db.SecretStorageType,
+	readOnly bool,
+) (*VaultAccessKeyDeserializer, *runtimeCredentialReader) {
 	projectID := 3
 	storageID := 9
 	if params == nil {
@@ -415,8 +673,8 @@ func newRuntimeDeserializer(
 		params["auth_method"] = "token"
 	}
 	storageRepo := &runtimeSecretStorageRepo{storage: db.SecretStorage{
-		ID: storageID, ProjectID: projectID, Type: db.SecretStorageTypeVault,
-		Params: params, ReadOnly: true,
+		ID: storageID, ProjectID: projectID, Type: storageType,
+		Params: params, ReadOnly: readOnly,
 	}}
 	accessKeyRepo := &runtimeSecretAccessKeyRepo{key: db.AccessKey{
 		ID: 12, ProjectID: &projectID, StorageID: &storageID,

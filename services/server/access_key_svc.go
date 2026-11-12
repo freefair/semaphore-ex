@@ -132,16 +132,25 @@ func (s *AccessKeyServiceImpl) Create(key db.AccessKey) (newKey db.AccessKey, er
 	if err = s.requireRuntimeSecretWrite(key); err != nil {
 		return
 	}
-	if err = normalizeRuntimeSecretReference(&key, s.secretStorageRepo); err != nil {
+	isRuntimeVault := key.SourceStorageType != nil &&
+		*key.SourceStorageType == db.AccessKeySourceStorageVault
+	if isRuntimeVault {
+		defer clearRuntimeSecretMaterial(&key)
+	}
+	if err = prepareRuntimeSecretReference(&key, s.secretStorageRepo); err != nil {
 		return
 	}
 
 	// SerializeSecret encrypts/persists the secret for writable backends. For read-only
-	// external storage the secret is not stored in Semaphore, so SerializeSecret fails
-	// with ErrReadOnlyStorage; we still create the access key row (metadata / reference).
+	// external storage a value cannot be saved, but an empty runtime reference remains
+	// valid metadata. Writable runtime providers serialize the value externally.
+	hasRuntimeValue := hasRuntimeSecretMaterial(key)
 	err = s.encryptionService.SerializeSecret(&key)
-	if err != nil && !errors.Is(err, ErrReadOnlyStorage) {
+	if err != nil && (!errors.Is(err, ErrReadOnlyStorage) || hasRuntimeValue) {
 		return
+	}
+	if isRuntimeVault {
+		clearRuntimeSecretMaterial(&key)
 	}
 
 	newKey, err = s.accessKeyRepo.CreateAccessKey(key)
@@ -163,7 +172,12 @@ func (s *AccessKeyServiceImpl) Update(key db.AccessKey) (err error) {
 	if err = s.requireRuntimeSecretWrite(key); err != nil {
 		return
 	}
-	if err = normalizeRuntimeSecretReference(&key, s.secretStorageRepo); err != nil {
+	isRuntimeVault := key.SourceStorageType != nil &&
+		*key.SourceStorageType == db.AccessKeySourceStorageVault
+	if isRuntimeVault {
+		defer clearRuntimeSecretMaterial(&key)
+	}
+	if err = prepareRuntimeSecretReference(&key, s.secretStorageRepo); err != nil {
 		return
 	}
 
@@ -189,12 +203,17 @@ func (s *AccessKeyServiceImpl) Update(key db.AccessKey) (err error) {
 	}
 
 	if !key.IsNativelyReadOnly() {
+		hasRuntimeValue := hasRuntimeSecretMaterial(key)
 		err = s.encryptionService.SerializeSecret(&key)
 		if err != nil && !(key.SourceStorageType != nil &&
 			*key.SourceStorageType == db.AccessKeySourceStorageVault &&
-			errors.Is(err, ErrReadOnlyStorage)) {
+			errors.Is(err, ErrReadOnlyStorage) && !hasRuntimeValue) {
 			return
 		}
+	}
+	if isRuntimeVault {
+		clearRuntimeSecretMaterial(&key)
+		key.IgnorePlain = false
 	}
 
 	err = s.accessKeyRepo.UpdateAccessKey(key)

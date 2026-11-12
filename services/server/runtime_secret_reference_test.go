@@ -80,6 +80,16 @@ func (runtimeReadOnlyEncryption) SerializeSecret(*db.AccessKey) error {
 	return ErrReadOnlyStorage
 }
 
+type capturingRuntimeSecretEncryption struct {
+	AccessKeyEncryptionService
+	serialized db.AccessKey
+}
+
+func (e *capturingRuntimeSecretEncryption) SerializeSecret(key *db.AccessKey) error {
+	e.serialized = *key
+	return nil
+}
+
 type runtimeStorageRepository struct {
 	db.SecretStorageRepository
 	storage db.SecretStorage
@@ -115,7 +125,7 @@ func TestRuntimeSecretAccessKeyPersistsCanonicalReferenceWithoutPlaintext(t *tes
 
 	_, err := service.Create(db.AccessKey{
 		Name: "runtime", Type: db.AccessKeyString, ProjectID: &projectID,
-		String: "must-never-be-persisted", SourceStorageID: &storageID,
+		SourceStorageID:   &storageID,
 		SourceStorageType: &sourceType, SourceStorageKey: &path,
 		SourceStorageVersion: 4, SourceStorageField: "password",
 	})
@@ -139,6 +149,107 @@ func TestRuntimeSecretAccessKeyPersistsCanonicalReferenceWithoutPlaintext(t *tes
 	assert.Equal(t, "team", exposed.SourceStorageMount)
 	assert.Equal(t, 4, exposed.SourceStorageVersion)
 	assert.Equal(t, "password", exposed.SourceStorageField)
+}
+
+func TestRuntimeSecretAccessKeyRejectsSecretInputForReadOnlyStorage(t *testing.T) {
+	projectID := 3
+	storageID := 9
+	storageRepo := &runtimeStorageRepository{storage: db.SecretStorage{
+		ID: storageID, ProjectID: projectID, Type: db.SecretStorageTypeVault,
+		Params: db.MapStringAnyField{"mount": "team"}, ReadOnly: true,
+	}}
+	accessRepo := &capturingRuntimeAccessKeyRepo{}
+	encryption := NewAccessKeyEncryptionService(accessRepo, nil, storageRepo, nil)
+	service := NewAccessKeyService(
+		accessRepo, encryption, storageRepo, runtimeSecretWriteCapability{enabled: true},
+	)
+	sourceType := db.AccessKeySourceStorageVault
+	path := "apps/api"
+
+	_, err := service.Create(db.AccessKey{
+		Name: "runtime", Type: db.AccessKeyString, ProjectID: &projectID,
+		String: "must-not-be-persisted", SourceStorageID: &storageID,
+		SourceStorageType: &sourceType, SourceStorageKey: &path, SourceStorageField: "password",
+	})
+
+	require.ErrorIs(t, err, ErrReadOnlyStorage)
+	assert.Empty(t, accessRepo.created.Name)
+}
+
+func TestRuntimeSecretOverrideRejectsSecretInputForReadOnlyStorage(t *testing.T) {
+	projectID, storageID := 3, 9
+	sourceType := db.AccessKeySourceStorageVault
+	path := "apps/api"
+	storageRepo := &runtimeStorageRepository{storage: db.SecretStorage{
+		ID: storageID, ProjectID: projectID, Type: db.SecretStorageTypeVault,
+		Params: db.MapStringAnyField{"mount": "team"}, ReadOnly: true,
+	}}
+	accessRepo := &capturingRuntimeAccessKeyRepo{existing: db.AccessKey{
+		ID: 12, ProjectID: &projectID, SourceStorageID: &storageID,
+		SourceStorageType: &sourceType,
+	}}
+	encryption := NewAccessKeyEncryptionService(accessRepo, nil, storageRepo, nil)
+	service := NewAccessKeyService(
+		accessRepo, encryption, storageRepo, runtimeSecretWriteCapability{enabled: true},
+	)
+
+	err := service.Update(db.AccessKey{
+		ID: 12, Name: "runtime", Type: db.AccessKeyString, ProjectID: &projectID,
+		String: "must-not-be-persisted", SourceStorageID: &storageID,
+		SourceStorageType: &sourceType, SourceStorageKey: &path,
+		SourceStorageField: "password", OverrideSecret: true,
+	})
+
+	require.ErrorIs(t, err, ErrReadOnlyStorage)
+	assert.Empty(t, accessRepo.updated.Name)
+}
+
+func TestRuntimeSecretCreateAndOverrideSerializeBeforeClearingLocalValue(t *testing.T) {
+	for _, operation := range []string{"create", "override"} {
+		t.Run(operation, func(t *testing.T) {
+			projectID, storageID := 3, 9
+			sourceType := db.AccessKeySourceStorageVault
+			path := "apps/api"
+			storageRepo := &runtimeStorageRepository{storage: db.SecretStorage{
+				ID: storageID, ProjectID: projectID, Type: db.SecretStorageTypeVault,
+				Params: db.MapStringAnyField{"mount": "team"}, ReadOnly: false,
+			}}
+			accessRepo := &capturingRuntimeAccessKeyRepo{existing: db.AccessKey{
+				ID: 12, ProjectID: &projectID, SourceStorageID: &storageID,
+				SourceStorageType: &sourceType,
+			}}
+			encryption := &capturingRuntimeSecretEncryption{}
+			service := NewAccessKeyService(
+				accessRepo, encryption, storageRepo, runtimeSecretWriteCapability{enabled: true},
+			)
+			key := db.AccessKey{
+				ID: 12, Name: "runtime", Type: db.AccessKeyString, ProjectID: &projectID,
+				String: "external-only-value", SourceStorageID: &storageID,
+				SourceStorageType: &sourceType, SourceStorageKey: &path,
+				SourceStorageField: "password",
+			}
+
+			if operation == "create" {
+				_, err := service.Create(key)
+				require.NoError(t, err)
+				assert.Equal(t, "external-only-value", encryption.serialized.String)
+				assert.Empty(t, accessRepo.created.String)
+				assert.Nil(t, accessRepo.created.Secret)
+			} else {
+				key.OverrideSecret = true
+				err := service.Update(key)
+				require.NoError(t, err)
+				assert.Equal(t, "external-only-value", encryption.serialized.String)
+				assert.Empty(t, accessRepo.updated.String)
+				assert.Nil(t, accessRepo.updated.Secret)
+			}
+			require.NotNil(t, encryption.serialized.SourceStorageKey)
+			reference, err := pro_interfaces.DecodeSecretReference(*encryption.serialized.SourceStorageKey)
+			require.NoError(t, err)
+			assert.Equal(t, path, reference.Path)
+			assert.Equal(t, "team", reference.Mount)
+		})
+	}
 }
 
 func TestRuntimeSecretAccessKeyWriteIsBlockedWhenCapabilityIsDisabled(t *testing.T) {

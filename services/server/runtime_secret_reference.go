@@ -18,6 +18,17 @@ func normalizeRuntimeSecretReference(key *db.AccessKey, storageRepo db.SecretSto
 	if key.SourceStorageType == nil || *key.SourceStorageType != db.AccessKeySourceStorageVault {
 		return nil
 	}
+	if err := prepareRuntimeSecretReference(key, storageRepo); err != nil {
+		return err
+	}
+	clearRuntimeSecretMaterial(key)
+	return nil
+}
+
+func prepareRuntimeSecretReference(key *db.AccessKey, storageRepo db.SecretStorageRepository) error {
+	if key.SourceStorageType == nil || *key.SourceStorageType != db.AccessKeySourceStorageVault {
+		return nil
+	}
 	if key.SourceStorageID == nil || key.SourceStorageKey == nil {
 		return common_errors.NewValidationError("runtime secret storage and path are required")
 	}
@@ -54,11 +65,34 @@ func normalizeRuntimeSecretReference(key *db.AccessKey, storageRepo db.SecretSto
 		return common_errors.NewValidationError(err.Error())
 	}
 	key.SourceStorageKey = &encoded
+	return nil
+}
+
+func clearRuntimeSecretMaterial(key *db.AccessKey) {
+	if key == nil {
+		return
+	}
 	key.String = ""
 	key.LoginPassword = db.LoginPassword{}
 	key.SshKey = db.SshKey{}
 	key.Secret = nil
-	return nil
+	key.Plain = nil
+}
+
+func hasRuntimeSecretMaterial(key db.AccessKey) bool {
+	if key.SourceStorageType == nil || *key.SourceStorageType != db.AccessKeySourceStorageVault {
+		return false
+	}
+	switch key.Type {
+	case db.AccessKeyString:
+		return key.String != ""
+	case db.AccessKeyLoginPassword:
+		return key.LoginPassword.Login != "" || key.LoginPassword.Password != ""
+	case db.AccessKeySSH:
+		return key.SshKey.Login != "" || key.SshKey.Passphrase != "" || key.SshKey.PrivateKey != ""
+	default:
+		return false
+	}
 }
 
 // ExposeRuntimeSecretReference expands canonical metadata for API/UI use. It
