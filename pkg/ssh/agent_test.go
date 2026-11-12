@@ -286,6 +286,9 @@ func TestAgent_Listen_CreatesSocketDir(t *testing.T) {
 
 	err = agent.Listen()
 	require.NoError(t, err)
+	info, err := os.Stat(agent.SocketFile)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	require.NoError(t, agent.Close())
 }
 

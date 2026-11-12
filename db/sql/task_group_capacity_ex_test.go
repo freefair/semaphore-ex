@@ -24,7 +24,7 @@ func taskGroupMultiConnectionStores(t *testing.T) (*SqlDb, *SqlDb) {
 	if driver == "" {
 		driver = util.DbDriverSQLite
 	}
-	config := &util.ConfigType{Dialect: driver, Log: &util.ConfigLog{Events: &util.EventLogType{}, Tasks: &util.TaskLogType{}}, Process: &util.ConfigProcess{}, Runners: &util.RunnersConfig{}}
+	config := &util.ConfigType{Dialect: driver, Log: &util.ConfigLog{Events: &util.EventLogType{}, Tasks: &util.TaskLogType{}}, Runners: &util.RunnersConfig{}}
 	if driver == util.DbDriverSQLite {
 		config.SQLite = &util.DbConfig{Hostname: filepath.Join(t.TempDir(), "groups.sqlite")}
 	} else {

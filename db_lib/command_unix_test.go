@@ -41,6 +41,13 @@ func assertChildCannotRunAfterCleanup(t *testing.T, releaseFile, survivedFile st
 	}, 250*time.Millisecond, 15*time.Millisecond, "child ran after process-group cleanup")
 }
 
+func Test_AppSysProcAttr_StartsNewSession(t *testing.T) {
+	attributes := appSysProcAttr()
+
+	require.NotNil(t, attributes)
+	assert.True(t, attributes.Setsid, "app must lead its own process group")
+}
+
 func Test_RunCommand_DoesNotStartWhenCancellationIsPending(t *testing.T) {
 	t.Parallel()
 

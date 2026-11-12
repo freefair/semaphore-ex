@@ -2,7 +2,6 @@ package db_lib
 
 import (
 	"fmt"
-	"github.com/semaphoreui/semaphore/util"
 	"os"
 	"path/filepath"
 )
@@ -15,11 +14,6 @@ func installInventoryResolver(directory string) (string, error) {
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return "", err
 	}
-	if util.Config != nil {
-		if err := util.ChownDir(directory); err != nil {
-			return "", fmt.Errorf("secure inventory resolver directory: %w", err)
-		}
-	}
 	file, err := os.CreateTemp(directory, "inventory-resolver-*.py")
 	if err != nil {
 		return "", err
@@ -30,12 +24,6 @@ func installInventoryResolver(directory string) (string, error) {
 	if writeErr != nil || closeErr != nil {
 		_ = os.Remove(name)
 		return "", fmt.Errorf("write inventory resolver: %v %v", writeErr, closeErr)
-	}
-	if util.Config != nil {
-		if err := util.ChownDir(name); err != nil {
-			_ = os.Remove(name)
-			return "", fmt.Errorf("secure inventory resolver: %w", err)
-		}
 	}
 	return filepath.Abs(name)
 }

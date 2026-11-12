@@ -85,6 +85,14 @@ func (a *Agent) Listen() error {
 		return fmt.Errorf("listening on socket %q: %w", a.SocketFile, err)
 	}
 
+	// Anyone able to connect to the socket can authenticate with the key it
+	// holds. The directory is shared with the repository checkout and stays
+	// traversable, so the restriction goes on the socket itself.
+	if err := os.Chmod(a.SocketFile, 0o600); err != nil {
+		_ = l.Close()
+		return fmt.Errorf("securing socket %q: %w", a.SocketFile, err)
+	}
+
 	l.SetUnlinkOnClose(true)
 	runtime := &agentRuntime{listener: l, done: make(chan struct{}), connections: make(map[net.Conn]struct{})}
 	a.runtime = runtime

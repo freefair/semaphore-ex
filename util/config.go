@@ -1,6 +1,7 @@
 package util
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base32"
@@ -403,35 +404,6 @@ type MetricsConfig struct {
 	Enabled  bool   `json:"enabled" env:"SEMAPHORE_METRICS_ENABLED"`
 	Username string `json:"username,omitempty" env:"SEMAPHORE_METRICS_USERNAME"`
 	Password string `json:"password,omitempty" env:"SEMAPHORE_METRICS_PASSWORD,sensitive"`
-}
-
-type ConfigProcess struct {
-	User       string  `json:"user,omitempty" env:"SEMAPHORE_PROCESS_USER"`
-	UID        *uint32 `json:"uid,omitempty" env:"SEMAPHORE_PROCESS_UID"`
-	Chroot     string  `json:"chroot,omitempty" env:"SEMAPHORE_PROCESS_CHROOT"`
-	GID        *uint32 `json:"gid,omitempty" env:"SEMAPHORE_PROCESS_GID"`
-	NoNewPrivs bool    `json:"no_new_privs,omitempty" env:"SEMAPHORE_PROCESS_NO_NEW_PRIVS"`
-
-	// AppNamespaces controls Linux namespace isolation for child apps
-	// (ansible, terraform, shell templates). Git is never isolated —
-	// SSH agent forwarding and credential helpers need host access.
-	AppNamespaces ConfigAppNamespaces `json:"app_namespaces"`
-}
-
-// ConfigAppNamespaces mirrors the CLONE_NEW* flags applied to app runs.
-// Each flag is a standard Linux namespace and is a no-op on non-Linux.
-type ConfigAppNamespaces struct {
-	// User isolates UIDs/GIDs (CLONE_NEWUSER). Enables unprivileged use
-	// of the other namespaces.
-	User bool `json:"user,omitempty" env:"SEMAPHORE_PROCESS_APP_NS_USER"`
-	// Mount hides host mount points such as secret tmpfs (CLONE_NEWNS).
-	Mount bool `json:"mount,omitempty" env:"SEMAPHORE_PROCESS_APP_NS_MOUNT"`
-	// PID hides host processes from child apps (CLONE_NEWPID).
-	PID bool `json:"pid,omitempty" env:"SEMAPHORE_PROCESS_APP_NS_PID"`
-	// IPC isolates SysV IPC and POSIX message queues (CLONE_NEWIPC).
-	IPC bool `json:"ipc,omitempty" env:"SEMAPHORE_PROCESS_APP_NS_IPC"`
-	// UTS isolates hostname and domain (CLONE_NEWUTS).
-	UTS bool `json:"uts,omitempty" env:"SEMAPHORE_PROCESS_APP_NS_UTS"`
 }
 
 type ScheduleConfig struct {
@@ -923,8 +895,6 @@ type ConfigType struct {
 
 	Log *ConfigLog `json:"log,omitempty"`
 
-	Process *ConfigProcess `json:"process,omitempty"`
-
 	Schedule *ScheduleConfig `json:"schedule,omitempty"`
 
 	Debugging *DebuggingConfig `json:"debugging,omitempty"`
@@ -1152,8 +1122,15 @@ func ConfigInit(configPath string, noConfigFile bool) (usedConfigPath *string) {
 	Config = NewConfigType()
 	Config.Apps = map[string]App{}
 
+	var removedProcessSettings []string
 	if !noConfigFile {
-		usedConfigPath = loadConfigFile(configPath)
+		usedConfigPath, removedProcessSettings = loadConfigFile(configPath)
+	}
+
+	// Refuse to start on the removed `process` settings: ignoring them would
+	// silently run tasks with the privileges of the Semaphore process.
+	if err := checkRemovedProcessSettings(removedProcessSettings, usedConfigPath); err != nil {
+		exitOnConfigError("Configuration error: " + err.Error() + ".")
 	}
 
 	loadConfigEnvironment()
@@ -1165,12 +1142,6 @@ func ConfigInit(configPath string, noConfigFile bool) (usedConfigPath *string) {
 
 	//fmt.Println("Validating config")
 	validateConfig()
-
-	if Config.Process.NoNewPrivs {
-		if err := SetNoNewPrivs(); err != nil {
-			panic(fmt.Errorf("failed to set no_new_privs: %w", err))
-		}
-	}
 
 	var encryption []byte
 
@@ -1209,7 +1180,7 @@ func ConfigInit(configPath string, noConfigFile bool) (usedConfigPath *string) {
 	return
 }
 
-func loadConfigFile(configPath string) (usedConfigPath *string) {
+func loadConfigFile(configPath string) (usedConfigPath *string, removedProcessSettings []string) {
 	if configPath == "" {
 		configPath = os.Getenv("SEMAPHORE_CONFIG_PATH")
 	}
@@ -1241,7 +1212,8 @@ func loadConfigFile(configPath string) (usedConfigPath *string) {
 			if err != nil {
 				continue
 			}
-			decodeConfig(file, p)
+			removedProcessSettings = decodeConfig(file, p)
+			_ = file.Close()
 			usedConfigPath = &p
 			break
 		}
@@ -1251,7 +1223,8 @@ func loadConfigFile(configPath string) (usedConfigPath *string) {
 		file, err := os.Open(p)
 		exitOnConfigFileError(err)
 		usedConfigPath = &p
-		decodeConfig(file, p)
+		removedProcessSettings = decodeConfig(file, p)
+		_ = file.Close()
 	}
 
 	return
@@ -2252,37 +2225,47 @@ func exitOnConfigFileError(err error) {
 	}
 }
 
-func decodeConfig(file io.Reader, configPath string) {
-	if isYAMLConfig(configPath) {
-		decodeConfigYAML(file)
-		return
-	}
-	if err := json.NewDecoder(file).Decode(&Config); err != nil {
+func decodeConfig(file io.Reader, configPath string) []string {
+	names, err := decodeConfigDocument(file, configPath)
+	if err != nil {
 		fmt.Println("Could not decode configuration!")
 		panic(err)
 	}
+	return names
+}
+
+// decodeConfigDocument decodes one document once from the opened file. The
+// legacy section and current configuration therefore always describe the same
+// input, including when the path is replaced or names a FIFO.
+func decodeConfigDocument(file io.Reader, configPath string) ([]string, error) {
+	if isYAMLConfig(configPath) {
+		var raw any
+		if err := yaml.NewDecoder(file).Decode(&raw); err != nil {
+			return nil, err
+		}
+		data, err := json.Marshal(raw)
+		if err != nil {
+			return nil, err
+		}
+		file = bytes.NewReader(data)
+	}
+	document := struct {
+		*ConfigType
+		Process *legacyProcess `json:"process"`
+	}{ConfigType: Config}
+	if err := json.NewDecoder(file).Decode(&document); err != nil {
+		return nil, err
+	}
+	Config = document.ConfigType
+	if document.Process == nil {
+		return nil, nil
+	}
+	return document.Process.enabledSettings()
 }
 
 func isYAMLConfig(configPath string) bool {
 	ext := strings.ToLower(filepath.Ext(configPath))
 	return ext == ".yaml" || ext == ".yml"
-}
-
-func decodeConfigYAML(file io.Reader) {
-	var raw any
-	if err := yaml.NewDecoder(file).Decode(&raw); err != nil {
-		fmt.Println("Could not decode configuration!")
-		panic(err)
-	}
-	data, err := json.Marshal(raw)
-	if err != nil {
-		fmt.Println("Could not decode configuration!")
-		panic(err)
-	}
-	if err := json.Unmarshal(data, &Config); err != nil {
-		fmt.Println("Could not decode configuration!")
-		panic(err)
-	}
 }
 
 func mapToQueryString(m map[string]string) (str string) {

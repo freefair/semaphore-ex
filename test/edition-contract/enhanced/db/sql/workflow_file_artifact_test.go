@@ -658,8 +658,8 @@ func workflowFileArtifactMatrixStore(t *testing.T) *coresql.SqlDb {
 	util.Config = &util.ConfigType{
 		Dialect: dialect, MySQL: dbConfig, Postgres: dbConfig,
 		Log:     &util.ConfigLog{Events: &util.EventLogType{}, Tasks: &util.TaskLogType{}},
-		Process: &util.ConfigProcess{}, Runners: &util.RunnersConfig{},
-		Apps: map[string]util.App{"ansible": {}, "bash": {}},
+		Runners: &util.RunnersConfig{},
+		Apps:    map[string]util.App{"ansible": {}, "bash": {}},
 	}
 	store := coresql.CreateDb(dialect)
 	store.Connect()

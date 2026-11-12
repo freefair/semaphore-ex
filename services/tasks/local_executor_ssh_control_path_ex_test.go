@@ -99,23 +99,3 @@ func TestContainerEnvironmentDropsRunnerHostControlPath(t *testing.T) {
 	assert.NotContains(t, environment, "ANSIBLE_SSH_CONTROL_PATH_DIR=/tmp/sxcp123")
 	assert.NotContains(t, environment, "ANSIBLE_SSH_CONTROL_PATH=%(directory)s/%%C")
 }
-
-func TestTaskSSHControlPathIsRemovedWhenOwnershipCannotBeSet(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root may change ownership to any user")
-	}
-	configureRepositoryAgentTest(t)
-	foreign := uint32(os.Geteuid() + 4242)
-	util.Config.Process = &util.ConfigProcess{UID: &foreign, GID: &foreign}
-	before, err := filepath.Glob(filepath.Join(taskSSHControlPathParent(), "sxcp*"))
-	require.NoError(t, err)
-	executor := &LocalExecutor{Template: db.Template{ProjectID: 1}, Logger: task_logger.NopLogger{}}
-
-	err = executor.prepareTaskSSHControlPath()
-
-	assert.ErrorContains(t, err, "securing task SSH control path directory")
-	assert.Empty(t, executor.taskSSHControlPathDir)
-	after, globErr := filepath.Glob(filepath.Join(taskSSHControlPathParent(), "sxcp*"))
-	require.NoError(t, globErr)
-	assert.ElementsMatch(t, before, after, "the directory is removed when chown fails")
-}

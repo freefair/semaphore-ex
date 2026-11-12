@@ -49,7 +49,7 @@ type fakeKubernetesClient struct {
 func TestKubernetesExecutorKillCancelsMonorepoMaterializerLockWait(t *testing.T) {
 	root := t.TempDir()
 	previousConfig := util.Config
-	util.Config = &util.ConfigType{TmpPath: root, Process: &util.ConfigProcess{}}
+	util.Config = &util.ConfigType{TmpPath: root}
 	t.Cleanup(func() { util.Config = previousConfig })
 	repository := filepath.Join(root, "repository")
 	require.NoError(t, os.MkdirAll(repository, 0o755))

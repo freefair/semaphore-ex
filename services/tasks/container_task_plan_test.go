@@ -212,7 +212,7 @@ func TestContainerTaskPlanExportsWorkflowOutputsOnlyForWorkflowRuns(t *testing.T
 func TestPrepareContainerTaskKeepsMonorepoStableUntilBundleRead(t *testing.T) {
 	root := t.TempDir()
 	previousConfig := util.Config
-	util.Config = &util.ConfigType{TmpPath: root, Process: &util.ConfigProcess{}}
+	util.Config = &util.ConfigType{TmpPath: root}
 	t.Cleanup(func() { util.Config = previousConfig })
 	repository := filepath.Join(root, "repository")
 	require.NoError(t, os.MkdirAll(repository, 0o755))
@@ -272,7 +272,7 @@ func TestPrepareContainerTaskKeepsMonorepoStableUntilBundleRead(t *testing.T) {
 func TestPrepareContainerTaskLockWaitStopsWithTask(t *testing.T) {
 	root := t.TempDir()
 	previousConfig := util.Config
-	util.Config = &util.ConfigType{TmpPath: root, Process: &util.ConfigProcess{}}
+	util.Config = &util.ConfigType{TmpPath: root}
 	t.Cleanup(func() { util.Config = previousConfig })
 	repository := filepath.Join(root, "repository")
 	require.NoError(t, os.MkdirAll(repository, 0o755))
@@ -320,7 +320,7 @@ func TestPrepareContainerTaskLockWaitStopsWithTask(t *testing.T) {
 func TestPrepareContainerTaskFailureReleasesMonorepoLease(t *testing.T) {
 	root := t.TempDir()
 	previousConfig := util.Config
-	util.Config = &util.ConfigType{TmpPath: root, Process: &util.ConfigProcess{}}
+	util.Config = &util.ConfigType{TmpPath: root}
 	t.Cleanup(func() { util.Config = previousConfig })
 	repository := filepath.Join(root, "repository")
 	require.NoError(t, os.MkdirAll(repository, 0o755))
@@ -341,7 +341,7 @@ func TestPrepareContainerTaskFailureReleasesMonorepoLease(t *testing.T) {
 func TestPrepareContainerTaskBundleCloseReleasesMonorepoLease(t *testing.T) {
 	root := t.TempDir()
 	previousConfig := util.Config
-	util.Config = &util.ConfigType{TmpPath: root, Process: &util.ConfigProcess{}}
+	util.Config = &util.ConfigType{TmpPath: root}
 	t.Cleanup(func() { util.Config = previousConfig })
 	repository := filepath.Join(root, "repository")
 	require.NoError(t, os.MkdirAll(repository, 0o755))
@@ -580,7 +580,6 @@ func TestPrepareContainerTaskCarriesMappingsWithoutRunnerPaths(t *testing.T) {
 	util.Config = &util.ConfigType{
 		TmpPath: root,
 		Ssh:     &util.SshConfig{StrictHostKeyChecking: util.SshStrictHostKeyCheckingAcceptNew},
-		Process: &util.ConfigProcess{},
 	}
 	t.Cleanup(func() {
 		util.Config = previousConfig

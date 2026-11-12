@@ -22,7 +22,7 @@ func terraformLockingFixture(t *testing.T, name, script string) (*TerraformApp, 
 	binary := filepath.Join(dir, "terraform-fixture")
 	require.NoError(t, os.WriteFile(binary, []byte("#!/bin/sh\n"+script), 0o700))
 	previous := util.Config
-	util.Config = &util.ConfigType{Apps: map[string]util.App{name: {AppPath: binary}}, TmpPath: dir, Process: &util.ConfigProcess{}}
+	util.Config = &util.ConfigType{Apps: map[string]util.App{name: {AppPath: binary}}, TmpPath: dir}
 	t.Cleanup(func() { util.Config = previous })
 	app := &TerraformApp{Name: name, Template: db.Template{ID: 1}, Repository: db.Repository{GitURL: dir}}
 	app.SetLogger(task_logger.NopLogger{})

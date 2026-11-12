@@ -24,7 +24,7 @@ func TestWorkflowIdentitySurvivesExecutionPreparation(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				previous := util.Config
-				util.Config = &util.ConfigType{TmpPath: t.TempDir(), WebHost: "https://semaphore.example.test", Ssh: &util.SshConfig{StrictHostKeyChecking: util.SshStrictHostKeyCheckingAcceptNew}, Process: &util.ConfigProcess{}}
+				util.Config = &util.ConfigType{TmpPath: t.TempDir(), WebHost: "https://semaphore.example.test", Ssh: &util.SshConfig{StrictHostKeyChecking: util.SshStrictHostKeyCheckingAcceptNew}}
 				t.Cleanup(func() { util.Config = previous })
 				repository := t.TempDir()
 				require.NoError(t, os.WriteFile(filepath.Join(repository, "run.sh"), []byte("#!/bin/sh\n"), 0600))

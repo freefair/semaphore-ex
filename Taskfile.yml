@@ -165,9 +165,11 @@ tasks:
       - npm run test:unit
 
   test:be:
-    desc: Run go code tests
+    desc: Run Go tests for all active workspace modules
     cmds:
-      - go test -v -coverprofile=coverage.out ./...
+      # A recursive package pattern stops at nested modules. Using module import
+      # paths also keeps workspaces in directories with spaces addressable.
+      - go test -v -coverprofile=coverage.out $(go list -m -f '{{ "{{.Path}}/..." }}')
 
   dredd:goodman:
     desc: Installs goodman which is required by dredd

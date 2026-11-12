@@ -41,7 +41,7 @@ func TestTerraformInitPreservesTaskAgentEnvironment(t *testing.T) {
 	binary := filepath.Join(fixture, "terraform")
 	require.NoError(t, os.WriteFile(binary, []byte("#!/bin/sh\nprintf '%s\\n%s\\n%s\\n' \"$SSH_AUTH_SOCK\" \"$GIT_SSH_COMMAND\" \"$GIT_TERMINAL_PROMPT\" > \"$TASK_AGENT_CAPTURE_FILE\"\n"), 0o700))
 	previous := util.Config
-	util.Config = &util.ConfigType{Apps: map[string]util.App{"terraform": {AppPath: binary}}, TmpPath: fixture, Process: &util.ConfigProcess{}, EnvVars: map[string]string{"TASK_AGENT_CAPTURE_FILE": output}, Ssh: &util.SshConfig{StrictHostKeyChecking: util.SshStrictHostKeyCheckingNo}}
+	util.Config = &util.ConfigType{Apps: map[string]util.App{"terraform": {AppPath: binary}}, TmpPath: fixture, EnvVars: map[string]string{"TASK_AGENT_CAPTURE_FILE": output}, Ssh: &util.SshConfig{StrictHostKeyChecking: util.SshStrictHostKeyCheckingNo}}
 	t.Cleanup(func() { util.Config = previous })
 
 	app := TerraformApp{Logger: task_logger.NopLogger{}, Name: "terraform", Template: db.Template{ID: 1}, Repository: db.Repository{GitURL: fixture}, Inventory: db.Inventory{SSHKey: db.AccessKey{Type: db.AccessKeySSH}}}
@@ -61,7 +61,7 @@ func TestTerraformInitFallsBackToInventoryAgent(t *testing.T) {
 	binary := filepath.Join(fixture, "terraform")
 	require.NoError(t, os.WriteFile(binary, []byte("#!/bin/sh\nprintf '%s\\n%s' \"$SSH_AUTH_SOCK\" \"$GIT_TERMINAL_PROMPT\" > \"$TASK_AGENT_CAPTURE_FILE\"\n"), 0o700))
 	previous := util.Config
-	util.Config = &util.ConfigType{Apps: map[string]util.App{"terraform": {AppPath: binary}}, TmpPath: fixture, Process: &util.ConfigProcess{}, EnvVars: map[string]string{"TASK_AGENT_CAPTURE_FILE": output}, Ssh: &util.SshConfig{StrictHostKeyChecking: util.SshStrictHostKeyCheckingNo}}
+	util.Config = &util.ConfigType{Apps: map[string]util.App{"terraform": {AppPath: binary}}, TmpPath: fixture, EnvVars: map[string]string{"TASK_AGENT_CAPTURE_FILE": output}, Ssh: &util.SshConfig{StrictHostKeyChecking: util.SshStrictHostKeyCheckingNo}}
 	t.Cleanup(func() { util.Config = previous })
 	app := TerraformApp{Logger: task_logger.NopLogger{}, Name: "terraform", Template: db.Template{ID: 1}, Repository: db.Repository{GitURL: fixture}, Inventory: db.Inventory{SSHKey: db.AccessKey{Type: db.AccessKeySSH}}}
 	app.reader.EOF = true

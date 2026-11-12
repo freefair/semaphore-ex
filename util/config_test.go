@@ -463,7 +463,7 @@ func TestLoadConfigFile_YAML(t *testing.T) {
 	p := filepath.Join(dir, "config.yaml")
 	require.NoError(t, os.WriteFile(p, []byte("port: \":9999\"\ncookie_hash: yaml-hash\n"), 0600))
 
-	used := loadConfigFile(p)
+	used, _ := loadConfigFile(p)
 	require.NotNil(t, used)
 	assert.Equal(t, p, *used)
 	assert.Equal(t, ListenPort(":9999"), Config.Port)
@@ -477,7 +477,7 @@ func TestLoadConfigFile_JSON(t *testing.T) {
 	p := filepath.Join(dir, "config.json")
 	require.NoError(t, os.WriteFile(p, []byte(`{"port":":8888"}`), 0600))
 
-	used := loadConfigFile(p)
+	used, _ := loadConfigFile(p)
 	require.NotNil(t, used)
 	assert.Equal(t, p, *used)
 	assert.Equal(t, ListenPort(":8888"), Config.Port)
@@ -720,21 +720,6 @@ func TestLoadEnvironmentToObject_PrimitivePointers(t *testing.T) {
 
 	require.NotNil(t, val.MapPtr)
 	assert.Equal(t, map[string]int{"a": 1, "b": 2}, *val.MapPtr)
-}
-
-func TestLoadEnvironmentToObject_ConfigProcess_UID_GID(t *testing.T) {
-	Config = NewConfigType()
-	setTestEnv(t, "SEMAPHORE_PROCESS_USER", "semaphore")
-	setTestEnv(t, "SEMAPHORE_PROCESS_UID", "1001")
-	setTestEnv(t, "SEMAPHORE_PROCESS_GID", "1002")
-
-	loadConfigEnvironment()
-
-	assert.Equal(t, "semaphore", Config.Process.User)
-	require.NotNil(t, Config.Process.UID)
-	assert.Equal(t, uint32(1001), *Config.Process.UID)
-	require.NotNil(t, Config.Process.GID)
-	assert.Equal(t, uint32(1002), *Config.Process.GID)
 }
 
 func TestCastValueToKind_IntegerBoundaries(t *testing.T) {

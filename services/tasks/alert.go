@@ -3,9 +3,12 @@ package tasks
 import (
 	"bytes"
 	"embed"
+	"encoding/json"
 	"fmt"
+	"html"
 	htmltemplate "html/template"
 	"net/http"
+	"net/url"
 	"strconv"
 	"text/template"
 
@@ -37,6 +40,30 @@ type alertTask struct {
 
 type alertChat struct {
 	ID string
+}
+
+// notificationJSONAlert escapes dynamic fields for JSON string literals. Telegram
+// additionally interprets the text as HTML, so escape text before JSON encoding.
+func notificationJSONAlert(alert Alert, telegram bool) Alert {
+	escape := func(value string) string {
+		if telegram {
+			value = html.EscapeString(value)
+		}
+		encoded, _ := json.Marshal(value)
+		return string(encoded[1 : len(encoded)-1])
+	}
+	alert.Name = escape(alert.Name)
+	alert.Author = escape(alert.Author)
+	alert.Color = escape(alert.Color)
+	alert.Task.ID = escape(alert.Task.ID)
+	alert.Task.URL = escape(alert.Task.URL)
+	alert.Task.Result = escape(alert.Task.Result)
+	alert.Task.Desc = escape(alert.Task.Desc)
+	alert.Task.Version = escape(alert.Task.Version)
+	// The chat identifier is JSON data, not part of Telegram's HTML text.
+	encoded, _ := json.Marshal(alert.Chat.ID)
+	alert.Chat.ID = string(encoded[1 : len(encoded)-1])
+	return alert
 }
 
 func (t *TaskRunner) shouldSkipStatusAlert() bool {
@@ -157,7 +184,7 @@ func (t *TaskRunner) sendTelegramAlert() {
 		Color:  t.alertColor("telegram"),
 		Task: alertTask{
 			ID:      strconv.Itoa(t.Task.ID),
-			URL:     t.taskLink(),
+			URL:     t.telegramTaskLink(),
 			Result:  t.Task.Status.Format(),
 			Version: version,
 			Desc:    t.Task.Message,
@@ -174,7 +201,7 @@ func (t *TaskRunner) sendTelegramAlert() {
 		panic(err)
 	}
 
-	if err := tpl.Execute(body, alert); err != nil {
+	if err := tpl.Execute(body, notificationJSONAlert(alert, true)); err != nil {
 		t.Log("Can't generate telegram alert template!")
 		panic(err)
 	}
@@ -240,7 +267,7 @@ func (t *TaskRunner) sendSlackAlert() {
 		panic(err)
 	}
 
-	if err := tpl.Execute(body, alert); err != nil {
+	if err := tpl.Execute(body, notificationJSONAlert(alert, false)); err != nil {
 		t.Log("Can't generate slack alert template!")
 		panic(err)
 	}
@@ -303,7 +330,7 @@ func (t *TaskRunner) sendRocketChatAlert() {
 		panic(err)
 	}
 
-	if err := tpl.Execute(body, alert); err != nil {
+	if err := tpl.Execute(body, notificationJSONAlert(alert, false)); err != nil {
 		t.Log("Can't generate rocketchat alert template!")
 		panic(err)
 	}
@@ -365,7 +392,7 @@ func (t *TaskRunner) sendMicrosoftTeamsAlert() {
 		panic(err)
 	}
 
-	if err := tpl.Execute(body, alert); err != nil {
+	if err := tpl.Execute(body, notificationJSONAlert(alert, false)); err != nil {
 		t.Log("Can't generate microsoft teams alert template!")
 		panic(err)
 	}
@@ -427,7 +454,7 @@ func (t *TaskRunner) sendDingTalkAlert() {
 		panic(err)
 	}
 
-	if err := tpl.Execute(body, alert); err != nil {
+	if err := tpl.Execute(body, notificationJSONAlert(alert, false)); err != nil {
 		t.Log("Can't generate dingtalk alert template!")
 		panic(err)
 	}
@@ -490,7 +517,7 @@ func (t *TaskRunner) sendGotifyAlert() {
 		panic(err)
 	}
 
-	if err := tpl.Execute(body, alert); err != nil {
+	if err := tpl.Execute(body, notificationJSONAlert(alert, false)); err != nil {
 		t.Log("Can't generate gotify alert template!")
 		panic(err)
 	}
@@ -550,9 +577,24 @@ func (t *TaskRunner) alertInfos() (string, string) {
 		}
 
 		author = user.Name
+	} else if t.Task.ScheduleID != nil {
+		author = t.scheduleAuthor(*t.Task.ScheduleID)
 	}
 
 	return author, version
+}
+
+// scheduleAuthor names the schedule that started the task. The schedule may be
+// gone already (a one-off schedule is deleted after its run), so a failed lookup
+// degrades to the bare word instead of breaking the alert.
+func (t *TaskRunner) scheduleAuthor(scheduleID int) string {
+	schedule, err := t.pool.store.GetSchedule(t.Task.ProjectID, scheduleID)
+
+	if err != nil || schedule.Name == "" {
+		return "schedule"
+	}
+
+	return "schedule " + schedule.Name
 }
 
 func (t *TaskRunner) alertColor(kind string) string {
@@ -590,6 +632,20 @@ func (t *TaskRunner) alertColor(kind string) string {
 	}
 
 	return ""
+}
+
+// telegramTaskLink returns the task link only when it is an absolute http(s)
+// URL. Without web_host the link is a relative path, and Telegram rejects the
+// whole message for such an href, so the template prints a plain task id then.
+func (t *TaskRunner) telegramTaskLink() string {
+	link := t.taskLink()
+
+	u, err := url.Parse(link)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+
+	return link
 }
 
 func (t *TaskRunner) taskLink() string {

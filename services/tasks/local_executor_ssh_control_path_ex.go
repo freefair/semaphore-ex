@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/semaphoreui/semaphore/util"
 )
 
 // prepareTaskSSHControlPath gives every task a private directory for SSH
@@ -20,16 +18,6 @@ func (t *LocalExecutor) prepareTaskSSHControlPath() error {
 	directory, err := os.MkdirTemp(taskSSHControlPathParent(), "sxcp")
 	if err != nil {
 		return fmt.Errorf("creating task SSH control path directory: %w", err)
-	}
-	// With process.user, Ansible runs as another user and must own the
-	// directory to create master sockets in it. A hand-built configuration
-	// (a test, a command) has no process section.
-	if util.Config != nil && util.Config.Process != nil {
-		err = util.ChownDir(directory)
-	}
-	if err != nil {
-		_ = os.RemoveAll(directory)
-		return fmt.Errorf("securing task SSH control path directory: %w", err)
 	}
 	t.taskSSHControlPathDir = directory
 	return nil
