@@ -4,11 +4,14 @@ set -Eeuo pipefail
 
 usage() {
   cat <<'HELP'
-Usage: preflight.sh [--fetch] --output NEW_DIRECTORY REPOSITORY_DIR
+Usage: preflight.sh [--fetch] [--upstream-ref TAG] --output NEW_DIRECTORY REPOSITORY_DIR
 
 Capture exact product refs, upstream seam and migration diffs, fork changes,
-and merge conflict previews. Cached refs are used unless --fetch is supplied.
-The output directory must be new. Conflict previews are evidence, not approval.
+and merge conflict previews against an upstream release. Cached refs are used
+unless --fetch is supplied. The incoming upstream ref defaults to the newest
+final upstream release tag (vX.Y.Z), as reported by tools/releaseline; the fork
+merges releases, not upstream develop. The output directory must be new.
+Conflict previews are evidence, not approval.
 
 Example:
   bash tools/upstream-sync/preflight.sh --fetch --output /tmp/semaphore-review .
@@ -28,22 +31,26 @@ check_remote() {
 }
 
 capture_repository() {
-  local repository="$1" label="$2" branch="$3" output="$4" fetch_refs="$5"
+  local repository="$1" label="$2" branch="$3" output="$4" fetch_refs="$5" upstream_ref="$6"
   local head origin upstream base object_dir result fingerprint_before fingerprint_after
   [[ "$(git -C "$repository" branch --show-current)" == "$branch" ]] || die "$label must be on $branch"
   if [[ "$fetch_refs" == true ]]; then
     GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes' git -C "$repository" fetch origin "$branch"
-    GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes' git -C "$repository" fetch upstream "$branch"
+    GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes' git -C "$repository" fetch --tags upstream
+  fi
+  if [[ -z "$upstream_ref" ]]; then
+    upstream_ref="$(cd "$repository" && go run ./tools/releaseline -mode latest -head HEAD | awk '$1 == "tag:" {print $2}')"
+    [[ -n "$upstream_ref" ]] || die 'No final upstream release tag found; fetch upstream tags'
   fi
   head="$(git -C "$repository" rev-parse --verify 'HEAD^{commit}')"
   origin="$(git -C "$repository" rev-parse --verify "origin/$branch^{commit}")"
-  upstream="$(git -C "$repository" rev-parse --verify "upstream/$branch^{commit}")"
+  upstream="$(git -C "$repository" rev-parse --verify "$upstream_ref^{commit}")"
   base="$(git -C "$repository" merge-base "$head" "$upstream")"
   [[ -n "$base" ]] || die "$label has unrelated history"
   mkdir -p "$output/$label/objects"
   {
     printf 'head: %s\norigin: %s\nupstream: %s\nmerge_base: %s\n' "$head" "$origin" "$upstream" "$base"
-    printf 'branch: %s\nfetched: %s\n' "$branch" "$fetch_refs"
+    printf 'upstream_ref: %s\nbranch: %s\nfetched: %s\n' "$upstream_ref" "$branch" "$fetch_refs"
     printf 'upstream_only: %s\nfork_only: %s\n' \
       "$(git -C "$repository" rev-list --count "$head..$upstream")" \
       "$(git -C "$repository" rev-list --count "$upstream..$head")"
@@ -75,13 +82,14 @@ capture_repository() {
 
 main() {
   [[ "${GOFLAGS-}" != *-overlay* ]] || die 'Run retained assessment/verification without Go overlays; use the checker directly for mutation experiments'
-  local fetch_refs=false output='' repository='' option fingerprint
+  local fetch_refs=false output='' repository='' upstream_ref='' option fingerprint
   while [[ $# -gt 0 ]]; do
     option="$1"
     case "$option" in
       -h|--help) usage; return ;;
       --fetch) fetch_refs=true; shift ;;
       --output) [[ $# -ge 2 ]] || die '--output needs a directory'; output="$2"; shift 2 ;;
+      --upstream-ref) [[ $# -ge 2 ]] || die '--upstream-ref needs a tag'; upstream_ref="$2"; shift 2 ;;
       -*) die "Unknown option $option" ;;
       *) [[ -z "$repository" ]] || die 'Only one repository is accepted'; repository="$1"; shift ;;
     esac
@@ -95,7 +103,7 @@ main() {
   [[ ! -e "$output" ]] || die 'Output already exists; preserve earlier evidence and choose a new directory'
   mkdir -p "$output"
   output="$(cd "$output" && pwd -P)"
-  capture_repository "$repository" root develop "$output" "$fetch_refs"
+  capture_repository "$repository" root develop "$output" "$fetch_refs" "$upstream_ref"
   (
     cd "$repository"
     go run ./tools/upstreamcheck -root "$repository" -mode incoming -incoming-ref "$(awk '$1 == "upstream:" {print $2}' "$output/root/refs.yml")" > "$output/root/migration-decisions.yml" || exit "$?"
