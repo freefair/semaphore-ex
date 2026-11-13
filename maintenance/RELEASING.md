@@ -6,9 +6,10 @@ The tag triggers everything; nothing is built or published by hand.
 
 ## Version scheme
 
-`vX.Y.Z-ex.N`: `X.Y.Z` is the upstream Semaphore UI line the head is based on
-(the next upstream release the merged `develop` precedes or matches; check it with
-`git describe --tags --exclude '*-ex*' develop` before each release). The EX number
+`vX.Y.Z-ex.N`: `X.Y.Z` is the newest final upstream Semaphore UI release merged into
+`develop`; the fork integrates upstream release tags, not upstream `develop`
+([ADR 0060](https://github.com/freefair/semaphore-ex/wiki/ADR-0060-Release-Based-Upstream-Sync)).
+`go run ./tools/releaseline -mode next -head develop` prints the next tag. The EX number
 `N` counts fork releases continuously across upstream lines and does not restart when
 `X.Y.Z` changes: `v2.20.16-ex.2.1.7` follows `v2.20.0-ex.2.1.6`.
 Release candidates are `vX.Y.Z-ex.N-rcM`.
@@ -47,6 +48,15 @@ image build in parallel. Each final image initially receives only its versioned
 tag. A final promotion job needs all three successful builds and assigns `latest`
 to the exact image digests without rebuilding. The GitHub release remains a draft
 until artifact verification and publication.
+
+## Automated releases
+
+The daily `semaphore-ex-full-sync` automation releases on its own after it has
+integrated a new final upstream release and the required CI on the published head
+succeeded. It follows the steps below with the version from `tools/releaseline
+-mode next`, verifies the published artifacts, and publishes the draft as latest.
+Without a new upstream release it neither merges nor releases. A release of other
+changes on `develop` is requested explicitly.
 
 ## Image cache policy
 

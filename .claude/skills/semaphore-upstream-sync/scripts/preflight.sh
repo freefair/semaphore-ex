@@ -13,7 +13,8 @@ usage() {
 Usage: $(basename "${BASH_SOURCE[0]}") REPOSITORY_DIR
 
 Optional read-only identity check before an upstream merge.
-Expects both root remotes to have been fetched. For the required retained
+Expects both root remotes and upstream tags to have been fetched.
+The upstream side is the newest final upstream release tag. For the required retained
 assessment, run tools/upstream-sync/preflight.sh from the repository root:
   bash tools/upstream-sync/preflight.sh --fetch --output NEW_DIRECTORY .
 
@@ -55,21 +56,22 @@ upstream_url="$(git -C "${repository_dir}" remote get-url upstream 2>/dev/null |
 
 git -C "${repository_dir}" rev-parse --verify origin/develop >/dev/null 2>&1 \
   || die 'origin/develop is unavailable; fetch origin first'
-git -C "${repository_dir}" rev-parse --verify upstream/develop >/dev/null 2>&1 \
-  || die 'upstream/develop is unavailable; fetch upstream first'
+upstream_release="$(git -C "${repository_dir}" tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
+[[ -n "${upstream_release}" ]] || die 'no final upstream release tag; fetch upstream tags first'
 
-merge_base="$(git -C "${repository_dir}" merge-base origin/develop upstream/develop)"
-[[ -n "${merge_base}" ]] || die 'origin/develop and upstream/develop have no merge base'
+merge_base="$(git -C "${repository_dir}" merge-base origin/develop "${upstream_release}")"
+[[ -n "${merge_base}" ]] || die "origin/develop and ${upstream_release} have no merge base"
 
 read -r upstream_only fork_only < <(
-  git -C "${repository_dir}" rev-list --left-right --count upstream/develop...develop
+  git -C "${repository_dir}" rev-list --left-right --count "${upstream_release}...develop"
 )
 dirty_entries="$(git -C "${repository_dir}" status --porcelain | wc -l | tr -d ' ')"
 
 printf 'branch=%s\n' "${branch}"
 printf 'head=%s\n' "$(git -C "${repository_dir}" rev-parse HEAD)"
 printf 'origin_develop=%s\n' "$(git -C "${repository_dir}" rev-parse origin/develop)"
-printf 'upstream_develop=%s\n' "$(git -C "${repository_dir}" rev-parse upstream/develop)"
+printf 'upstream_release=%s\n' "${upstream_release}"
+printf 'upstream_release_commit=%s\n' "$(git -C "${repository_dir}" rev-parse "${upstream_release}^{commit}")"
 printf 'merge_base=%s\n' "${merge_base}"
 printf 'upstream_only=%s\n' "${upstream_only}"
 printf 'fork_only=%s\n' "${fork_only}"

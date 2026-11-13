@@ -19,7 +19,7 @@ independently; they are security and runtime controls rather than product-editio
 
 During execution of the approved enhanced-edition slice plan, resolve local, reversible implementation and design details with best engineering judgment. Continue without asking for routine preferences. Ask Dennis only when work is blocked by missing authority or information, an irreversible or destructive action, or a choice that materially changes the approved product scope.
 
-The `semaphore-ex-full-sync` automation runs in explicitly authorized autonomous mode. A request for a full sync and push authorizes the complete workflow: assessment, recovery refs, upstream merges, scope-preserving compatibility fixes, required reviews and verification, related Wiki updates, commits, ordinary pushes to product `develop` and Wiki `master`, and repair of in-scope CI failures. Carry this authority across compaction, resume, and subsequent scheduled runs until Dennis revokes it. State and execute scope-preserving plans without another approval round. Claude CLI consultation with task-relevant source is included.
+The `semaphore-ex-full-sync` automation runs in explicitly authorized autonomous mode. A request for a full sync and push authorizes the complete workflow: assessment, recovery refs, upstream merges, scope-preserving compatibility fixes, required reviews and verification, related Wiki updates, commits, ordinary pushes to product `develop` and Wiki `master`, repair of in-scope CI failures, and tagging and publishing the EX release once the required CI succeeds. Carry this authority across compaction, resume, and subsequent scheduled runs until Dennis revokes it. State and execute scope-preserving plans without another approval round. Claude CLI consultation with task-relevant source is included.
 
 Task-owned local QA servers, databases, repositories, test accounts, sessions, and synthetic test data are disposable infrastructure. Create, seed, migrate, rebuild, reset, restart, stop, and clean up these fixtures as needed for verification without asking Dennis. Verify that their paths and loopback endpoints belong to the task first. Generate ephemeral authentication material at runtime and keep it out of source, logs, commits, and reports. This fixture authority excludes existing shared or remote runtime infrastructure and unrelated user data.
 
@@ -53,7 +53,10 @@ Maintain the project-specific sync skill in
 `.agents/skills/` links to that same source. Keep skill instructions, metadata,
 and helpers in this repository so policy changes and the skill stay aligned.
 
-Use regular upstream merges into the long-lived `develop` branch.
+Merge final upstream release tags (`vX.Y.Z`, no `-rc` or `-beta`) into the long-lived
+`develop` branch, never upstream `develop`. `go run ./tools/releaseline -mode latest -head develop`
+reports the newest release and whether `develop` already contains it; without a new
+release a sync ends without changes.
 Maintain English docs in the product Wiki repository on `master`; there is no
 separate docs fork to merge. Preserve published fork history. An assessment-only request
 remains read-only. A full sync with push, including the scheduled automation, carries
@@ -65,12 +68,13 @@ explicit request and are not the routine update procedure.
 Follow [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Upstream-Maintenance) and
 `maintenance/README.md`. Run the repository-owned `tools/upstream-sync/preflight.sh`
 with retained evidence before merging. Capture exact refs, review local changes,
-and merge the reviewed upstream SHA. Maintain related documentation independently in the Wiki.
+and merge the reviewed upstream release tag. Maintain related documentation independently in the Wiki.
 Use ordinary pushes. If the recorded remote tip changes, fetch and inspect the
 concurrent work, incorporate compatible changes, and repeat affected verification
 before pushing normally. Existing publication authority remains valid; ask only
 when reconciliation would cross a genuine scope or authority boundary.
-Routine sync publication covers branch pushes, not release tags or deployments.
+A sync that integrated a new upstream release also publishes the EX release after the
+required CI succeeds. Deployments are never part of a sync.
 This repository policy supersedes older rebase instructions in personal sync skills.
 
 Keep upstream migration IDs canonical and register new upstream SQL only in the
@@ -101,7 +105,8 @@ the run. Classify baseline failures only with exact-upstream reproduction. Verif
 changed UI in the browser and wait for the required workflows on the exact pushed
 head. Preserve recovery branches and stashes until their deletion is authorized.
 
-Releases follow `maintenance/RELEASING.md`: a `vX.Y.Z-ex.N` tag verifies successful
+Releases follow `maintenance/RELEASING.md`; `go run ./tools/releaseline -mode next -head develop`
+names the version. A `vX.Y.Z-ex.N` tag verifies successful
 Dev and Full Product Build runs for that exact commit, then builds signed packages,
 server images and runner images in parallel. Promote latest only after all builds
 succeed. Beta dry runs are optional packaging diagnostics, not ordinary release

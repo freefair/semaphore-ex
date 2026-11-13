@@ -5,7 +5,7 @@ description: Merge upstream into the freefair/semaphore-ex full-product fork whi
 
 # Semaphore Upstream Sync
 
-Maintain one upstream-compatible, full-featured product through regular upstream merges into the long-lived fork. Preserve published history and shipped migration identities.
+Maintain one upstream-compatible, full-featured product by merging final upstream release tags (`vX.Y.Z`) into the long-lived fork; upstream `develop` is never the merge source. Preserve published history and shipped migration identities.
 
 ## Required Sources
 
@@ -29,7 +29,7 @@ Technical failure is not missing consent. Diagnose and repair in-scope failures 
 
 Routine syncs use merges and ordinary fast-forward pushes. Rebases, other history rewrites, force-pushes, and deletion of recovery branches or restored stashes require separate explicit authorization. A failed normal push is a reason to reassess concurrent work, not to force it.
 
-Routine publication covers product and Wiki branch pushes. Release tags, deployments, and changes to other repositories require their own scope; a secondary automation working directory is a read-only reference unless explicitly included.
+Routine publication covers product and Wiki branch pushes and, after a new upstream release was integrated and the required CI succeeded, the EX release tag and its publication. Deployments and changes to other repositories require their own scope; a secondary automation working directory is a read-only reference unless explicitly included.
 
 Keep helper/tooling changes in their own explicitly requested scope. Preserve unrelated tracked/untracked work and review unpublished commits before including them.
 
@@ -37,7 +37,14 @@ Keep helper/tooling changes in their own explicitly requested scope. Preserve un
 
 1. Verify root `develop`: `origin` is `freefair/semaphore-ex`, `upstream` is `semaphoreui/semaphore`. The Wiki is maintained independently; no local docs checkout is required. Reconcile unexpected branches, ancestry, or local/origin divergence before merging.
 2. Use `GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes'` for network Git commands.
-3. From the root, run the repository-owned preflight with a new evidence directory:
+3. Fetch upstream tags and check for a new final upstream release:
+
+   ```bash
+   GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes' git fetch --tags upstream
+   go run ./tools/releaseline -mode latest -head origin/develop
+   ```
+
+   `merged: true` means there is no new release; end the sync without changes. Otherwise run the repository-owned preflight with a new evidence directory; it assesses that release tag by default:
 
    ```bash
    bash tools/upstream-sync/preflight.sh --fetch --output /tmp/semaphore-assessment .
@@ -46,7 +53,7 @@ Keep helper/tooling changes in their own explicitly requested scope. Preserve un
    Omit `--fetch` only when deliberately assessing recorded local refs. Read product exact SHAs, source fingerprints, seam/schema diffs, incoming migration decisions, and merge conflict previews. The preview never chooses a semantic resolution.
 4. For an actual update, create a clearly named local `codex/` recovery branch at the product pre-merge head. Preserve unrelated working state without staging it. Retain recovery points until cleanup is authorized.
 5. Review related English documentation in the published product Wiki and update it independently when product behavior changes. Do not recreate a docs submodule.
-6. If root upstream has commits not already included, merge its recorded SHA into `develop` using `git merge --no-ff --no-commit <recorded-root-upstream-sha>`. An already-contained upstream needs no artificial merge.
+6. Merge the recorded upstream release tag into `develop` using `git merge --no-ff --no-commit vX.Y.Z`. Release branches carry backports of upstream `develop` work the fork may already contain: `git log --cherry-mark --right-only --no-merges develop...vX.Y.Z` marks them with `=`. Keep the fork version for conflicts that come only from such backports and integrate the commits marked `>` deliberately.
 7. Resolve conflicts against the relevant slice contracts and current upstream behavior. Run focused checks for each manual resolution. Review the final result against both pre-merge parents and run the complete retained gates before committing the merge and any separate compatibility changes.
 
 The skill-local `scripts/preflight.sh REPOSITORY_DIR` remains an optional read-only identity diagnostic. It is not the retained assessment gate and does not replace the repository-owned tools. If required tooling is missing, report that gap rather than falling back to a rebase.
@@ -94,6 +101,15 @@ GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes' git push origin develop:develop
 ```
 
 Wiki publication is independent and does not update a product submodule pointer.
+
+After a new upstream release was integrated and CI is green on the published head, release it:
+
+1. `go run ./tools/releaseline -mode next -head develop` names the version: the newest merged upstream release as base line and the next EX number, which continues across upstream lines.
+2. Add its `CHANGELOG.md` section covering everything since the previous EX release, check `bash tools/release-notes.sh <version>`, push, and wait for Dev and Full Product Build on that exact commit.
+3. Create and push the annotated tag, wait for `Full Product Release`, verify the checksum signature, one archive checksum, both image versions and the `latest` digests, then publish the draft with `gh release edit <version> --draft=false --latest`.
+4. Update the pinned version in the Wiki installation examples.
+
+Never move, delete or reuse a tag; a failed release is fixed and published under the next version.
 
 Read remote SHAs back and require equality with the corresponding local heads. Wait for required workflows on those exact commits, inspect failures, and fix in-scope root causes before reporting completion. Treat Dependabot update failures as separate scope unless they break the selected build.
 

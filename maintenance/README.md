@@ -98,7 +98,7 @@ against the prior reviewed ledger. The CI gate uses the push predecessor or PR
 base, so changing a SQL checksum and its ledger entry together still fails.
 
 ```bash
-go run ./tools/upstreamcheck -mode incoming -incoming-ref upstream/develop
+go run ./tools/upstreamcheck -mode incoming -incoming-ref vX.Y.Z   # the upstream release tag being merged
 go run ./tools/upstreamcheck -mode migrations > /tmp/migration-candidate.yml
 ```
 
