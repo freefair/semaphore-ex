@@ -25,7 +25,9 @@ Task-owned local QA servers, databases, repositories, test accounts, sessions, a
 
 Distinguish missing authority from technical failures. Investigate failed commands and continue through safe, authorized alternatives. For a guard false positive, retain the denial and diagnose the exact trigger without reading protected secrets. Prefer correcting the fixture or command structure; a standing sync approval does not disable safeguards or override a tool's explicit approval requirement. Ask only for authority or information that is actually missing, identifying the exact action and reason. Prior requests already answered by this standing authorization are resolved, not pending blockers.
 
-Keep enhanced-edition work upstream-compatible. Prefer implementing existing interfaces and extension seams; leave Community behavior and shared UI untouched wherever possible. UI changes must be the smallest integration needed for the selected slice and should reuse existing routes, views, and components instead of redesigning shared surfaces.
+Keep enhanced-edition code upstream-compatible. Prefer implementing existing interfaces and extension seams, and keep edits to shared files to the wiring a feature needs.
+
+Usable UX takes precedence over minimal UI change. The UI gets what a task needs to be found, understood and completed: a feature lives where its users look for it, with its own route, view or settings section when no existing surface fits, instead of being attached to an unrelated one. Read-only information views hold no settings. Feedback and errors appear next to the action that caused them. Evaluate UI work against the `ux-design-laws` knowledge topic and verify it task-based in the browser. See ADR 0061 in the Wiki.
 
 Keep [Wiki documentation](https://github.com/freefair/semaphore-ex/wiki/Implementation-Status) up to date.
 
