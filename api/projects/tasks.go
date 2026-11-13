@@ -114,6 +114,11 @@ func (c *TaskController) AddTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err = db.ValidateTaskSurveyValues(tpl.SurveyVars, taskObj.Environment, taskObj.Secret); err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+
 	newTask, planned, err := taskPool(r).AddTaskWithExecutionPreflightPlanAndDeploymentWindowOverrideFrom(
 		r.Context(),
 		taskObj,

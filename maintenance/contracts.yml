@@ -5581,6 +5581,12 @@ symbols:
   - name: db:ValidateSurveyVar
     signature: func(v db.SurveyVar) error
     implementation: core
+  - name: db:ValidateTaskSurveyValues
+    signature: func(vars []db.SurveyVar, environment string, secret string) error
+    implementation: core
+    behavior_tests:
+    - db/Task_survey_test.go::TestValidateTaskSurveyValues
+    - api/projects/task_survey_validation_test.go::TestAddTaskRejectsSurveyAnswersTheTemplateDoesNotAllow
   - name: db:ValidateTemplateRolePerm
     signature: func(permission db.TemplateRolePerm) error
     implementation: core
