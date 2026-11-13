@@ -12,6 +12,73 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+## [v2.20.24-ex.2.1.8] - 2026-11-13
+
+Based on upstream Semaphore UI release v2.20.24. From this release on, the fork
+integrates final upstream releases instead of upstream `develop`; this release
+also contains upstream `develop` work up to 2026-11-11 that upstream has not
+released yet.
+
+### Upgrade notes
+
+- The `process` configuration section (`user`, `uid`, `gid`, `chroot`,
+  `no_new_privs`, `app_namespaces`) is no longer supported. A configuration that
+  still sets it stops the server at startup with a message naming the settings.
+  Tasks now run with the privileges of the Semaphore process; restrict that
+  process through its service unit or a non-root container user, then remove
+  the settings.
+- New project tasks reject survey answers the template survey does not declare,
+  and secret answers sent in the clear environment, with HTTP 400. API clients
+  that pass extra variables through `environment` must declare them in the
+  template survey.
+- The environment variable for `auth.max_session_life_hours` is now
+  `SEMAPHORE_SESSION_MAX_LIFE_HOURS`; `SEMAPHORE_AUTH_MAX_SESSION_LIFE_HOURS`
+  still works when the new name is unset. The new
+  `auth.session_inactivity_hours` (`SEMAPHORE_SESSION_INACTIVITY_HOURS`) sets
+  how long an unused session stays valid; the default is seven days.
+
+### Added
+
+- `read_project` permission and object-level read grants: lists, task logs,
+  live task updates, events and workflows show only what a member may read.
+- Workflow permissions: workflow verbs in roles, per-workflow role grants with a
+  Permissions tab, and effective permissions in the API. Backups write format
+  version 4 and carry workflow grants.
+- Workflow approval audit events.
+- LDAP group search at sign-in for group-to-role mappings, with paged search
+  and case-insensitive uid matching.
+- Runner cache that keeps runner state across HA nodes, with authoritative
+  revocation.
+- `tools/releaseline` reports the newest upstream release, whether `develop`
+  contains it, and the next EX release tag.
+
+### Changed
+
+- The web interface runs on Vue 3.5 and Vuetify 4, built with Vite 8 and tested
+  with Vitest; screens keep their previous look.
+- Upstream maintenance merges final upstream release tags, and the daily sync
+  automation publishes the EX release after a new upstream release passed CI
+  ([ADR 0060](https://github.com/freefair/semaphore-ex/wiki/ADR-0060-Release-Based-Upstream-Sync)).
+- Telegram alerts are more compact and name the schedule as author.
+- Local task processes inherit the service identity; task-private SSH resources
+  and cancellation are preserved.
+
+### Fixed
+
+- Survey defaults of mixed types keep their value in the API schema.
+- Template, vault and state screens behave correctly for members without read
+  permission.
+
+### Security
+
+- Survey answer validation for new tasks (upstream v2.20.24).
+- `PUT /users/{id}` requires the current password for a password change
+  (GHSA-3gg5-457g-m9cg).
+- Regression coverage for cross-project repository creation
+  (GHSA-q9cq-8j9q-r93m) and vault reparenting (GHSA-ffp6-w57q-758q).
+- Built with Go 1.26.11 for the `net/http` server crash GO-2026-6859.
+- go-jose 4.1.6 and follow-redirects 1.16.2.
+
 ## [v2.20.16-ex.2.1.7] - 2026-11-01
 
 ### Changed
