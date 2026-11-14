@@ -2568,7 +2568,7 @@ paths:
       in: path
       required: true
       type: string
-      x-example: dredd-project-role
+      x-example: '26'
     get:
       tags: [project]
       summary: Get project role

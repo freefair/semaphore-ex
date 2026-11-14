@@ -300,6 +300,7 @@ var pathSubPatterns = []func() string{
 		return string(globalRole.ID)
 	}, // global role_id, x-example: 24
 	func() string { return strconv.Itoa(permID) }, // perm_id, x-example: 25
+	addProjectRole, // project role_id, x-example: 26
 }
 
 // alterRequestPath with the above slice of functions
