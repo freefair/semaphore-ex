@@ -19,6 +19,9 @@ type User struct {
 	External bool      `db:"external" json:"external"`
 	Alert    bool      `db:"alert" json:"alert"`
 	Pro      bool      `db:"pro" json:"pro"`
+	// Disabled is an explicit account lifecycle state. It is deliberately not
+	// inferred from roles so every authentication path can fail closed.
+	Disabled bool `db:"disabled" json:"disabled"`
 
 	Totp     *UserTotp     `db:"-" json:"totp,omitempty"`
 	EmailOtp *UserEmailOtp `db:"-" json:"email_otp,omitempty"`

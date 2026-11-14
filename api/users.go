@@ -249,7 +249,25 @@ func (c *UsersController) UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	meta := userUpdateMetadata(targetUser, user)
 	user.ID = targetUser.ID
-	if err := helpers.Store(r).UpdateUser(user); err != nil {
+	store := helpers.Store(r)
+	if user.Pwd != "" {
+		securityStore, ok := store.(db.UserSecurityRepository)
+		if !ok {
+			helpers.WriteErrorStatus(w, "User security persistence is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		currentSessionID := 0
+		if editor.ID == targetUser.ID {
+			if session, found := getSession(r); found {
+				currentSessionID = session.ID
+			}
+		}
+		if err := securityStore.UpdateUserAndRevokeSessions(user, currentSessionID); err != nil {
+			c.log.WithError(err).WithField("user_id", targetUser.ID).Error("Failed to update user and revoke sessions")
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+	} else if err := store.UpdateUser(user); err != nil {
 		c.log.WithError(err).WithField("user_id", targetUser.ID).Error("Failed to update user")
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -310,7 +328,18 @@ func (c *UsersController) UpdateUserPassword(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := helpers.Store(r).SetUserPassword(user.ID, pwd.Pwd); err != nil {
+	securityStore, ok := helpers.Store(r).(db.UserSecurityRepository)
+	if !ok {
+		helpers.WriteErrorStatus(w, "User security persistence is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	currentSessionID := 0
+	if editor.ID == user.ID {
+		if session, found := getSession(r); found {
+			currentSessionID = session.ID
+		}
+	}
+	if err := securityStore.SetUserPasswordAndRevokeSessions(user.ID, pwd.Pwd, currentSessionID); err != nil {
 		c.log.WithError(err).WithField("user_id", user.ID).Error("Failed to set user password")
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -322,6 +351,51 @@ func (c *UsersController) UpdateUserPassword(w http.ResponseWriter, r *http.Requ
 	}
 	helpers.Audit(r).Record(r.Context(), audit.Event{Kind: passwordKind, Target: audit.UserTarget(user.ID, user.Username)})
 
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// SetUserDisabled changes a target user's durable authentication lifecycle
+// state. It is deliberately separate from profile edits: only an authorised
+// administrator can make a user inaccessible, and they can never do so to
+// their own current account.
+func (c *UsersController) SetUserDisabled(w http.ResponseWriter, r *http.Request) {
+	target := helpers.GetFromContext(r, "_user").(db.User)
+	editor := helpers.GetFromContext(r, "user").(*db.User)
+	canManageUsers, err := hasGlobalPermission(r, editor, db.CanManageGlobalUsers)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	if !canManageUsers || editor.ID == target.ID {
+		helpers.RecordDenied(r, "admin", 0)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	var request struct {
+		Disabled bool `json:"disabled"`
+	}
+	if !helpers.Bind(w, r, &request) {
+		return
+	}
+	securityStore, ok := helpers.Store(r).(db.UserSecurityRepository)
+	if !ok {
+		helpers.WriteErrorStatus(w, "User security persistence is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err = securityStore.SetUserDisabledAndRevokeCredentials(target.ID, request.Disabled); err != nil {
+		if errors.Is(err, db.ErrLastGlobalAdministrator) {
+			helpers.WriteErrorStatus(w, "At least one effective administrator must remain active", http.StatusConflict)
+			return
+		}
+		c.log.WithError(err).WithField("user_id", target.ID).Error("Failed to change user lifecycle state")
+		helpers.WriteErrorStatus(w, "Failed to change user lifecycle state", http.StatusInternalServerError)
+		return
+	}
+	kind := audit.IAMUserReactivate
+	if request.Disabled {
+		kind = audit.IAMUserDeactivate
+	}
+	helpers.Audit(r).Record(r.Context(), audit.Event{Kind: kind, Target: audit.UserTarget(target.ID, target.Username)})
 	w.WriteHeader(http.StatusNoContent)
 }
 

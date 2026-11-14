@@ -33,6 +33,8 @@ const (
 	IAMUserCreate                  Kind = "iam.user/create"
 	IAMUserUpdate                  Kind = "iam.user/update"
 	IAMUserDelete                  Kind = "iam.user/delete"
+	IAMUserDeactivate              Kind = "iam.user/deactivate"
+	IAMUserReactivate              Kind = "iam.user/reactivate"
 	IAMUserAutoProvision           Kind = "iam.user/auto_provision"
 	IAMUserPasswordChange          Kind = "iam.user_password/change"
 	IAMUserPasswordAdminReset      Kind = "iam.user_password/admin_reset"

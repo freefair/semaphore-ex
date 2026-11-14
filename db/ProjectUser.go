@@ -78,7 +78,7 @@ var rolePermissions = map[ProjectUserRole]ProjectUserPermission{
 	ProjectTaskRunner: CanRunProjectTasks | CanViewProjectResources |
 		CanViewWorkflows | CanStartWorkflows | CanStopWorkflows |
 		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanReadTaskGroups | CanReadProject | CanApproveWorkflows,
-	ProjectGuest: CanViewProjectResources | CanViewWorkflows | CanReadTaskGroups | CanReadProject | CanApproveWorkflows,
+	ProjectGuest: CanViewProjectResources | CanViewWorkflows | CanReadTaskGroups | CanReadProject,
 }
 
 func (r ProjectUserRole) IsValid() bool {

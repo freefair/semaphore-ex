@@ -35,7 +35,8 @@ func (d *SqlDb) CreateAPIToken(token db.APIToken) (db.APIToken, error) {
 }
 
 func (d *SqlDb) GetAPIToken(tokenID string) (token db.APIToken, err error) {
-	err = d.selectOne(&token, d.PrepareQuery("select * from user__token where id=? and expired=false"), tokenID)
+	err = d.selectOne(&token, d.PrepareQuery(
+		"select t.* from user__token t join `user` u on u.id=t.user_id where t.id=? and t.expired=false and u.disabled=false"), tokenID)
 
 	return
 }
@@ -85,7 +86,9 @@ func (d *SqlDb) GetAPITokensByPrefix(userID int, tokenPrefix string) (tokens []d
 }
 
 func (d *SqlDb) GetSession(userID int, sessionID int) (session db.Session, err error) {
-	err = d.selectOne(&session, "select * from session where id=? and user_id=? and expired=false", sessionID, userID)
+	err = d.selectOne(&session,
+		"select s.* from session s join `user` u on u.id=s.user_id where s.id=? and s.user_id=? and s.expired=false and u.disabled=false",
+		sessionID, userID)
 
 	return
 }

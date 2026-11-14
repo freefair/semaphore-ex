@@ -5,7 +5,140 @@ import (
 	"errors"
 	"github.com/go-gorp/gorp/v3"
 	"github.com/semaphoreui/semaphore/db"
+	"golang.org/x/crypto/bcrypt"
 )
+
+// SetUserPasswordAndRevokeSessions updates the password and expires every
+// session except the caller's current session in one transaction. A zero
+// currentSessionID intentionally expires all sessions for an administrator reset.
+func (d *SqlDb) SetUserPasswordAndRevokeSessions(userID int, password string, currentSessionID int) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 11)
+	if err != nil {
+		return err
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec(d.PrepareQuery("update `user` set password=? where id=?"), string(hash), userID)
+	if err = validateMutationResult(result, err); err != nil {
+		return err
+	}
+	if currentSessionID > 0 {
+		_, err = tx.Exec(d.PrepareQuery("update session set expired=true where user_id=? and id<>?"), userID, currentSessionID)
+	} else {
+		_, err = tx.Exec(d.PrepareQuery("update session set expired=true where user_id=?"), userID)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// UpdateUserAndRevokeSessions is the profile-route equivalent of
+// SetUserPasswordAndRevokeSessions. It preserves the one current session only
+// when a user changes their own password.
+func (d *SqlDb) UpdateUserAndRevokeSessions(user db.UserWithPwd, currentSessionID int) error {
+	pwdHash, err := bcrypt.GenerateFromPassword([]byte(user.Pwd), 11)
+	if err != nil {
+		return err
+	}
+	hasGlobalRoles, err := d.IsMigrationApplied(db.Migration{Version: "2.20.1-ex1.29"})
+	if err != nil {
+		return err
+	}
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if hasGlobalRoles {
+		if err = lockGlobalRoleMutations(tx, d); err != nil {
+			return err
+		}
+		var current db.User
+		if err = tx.SelectOne(&current, d.PrepareQuery("select * from `user` where id=?"), user.ID); err != nil {
+			return err
+		}
+		if current.Admin && !user.Admin {
+			if err = requireGlobalAdministratorWithoutUserTx(tx, d, user.ID); err != nil {
+				return err
+			}
+		}
+	}
+	if err = d.updateUserFields(tx, user, pwdHash); err != nil {
+		return err
+	}
+	if currentSessionID > 0 {
+		_, err = tx.Exec(d.PrepareQuery("update session set expired=true where user_id=? and id<>?"), user.ID, currentSessionID)
+	} else {
+		_, err = tx.Exec(d.PrepareQuery("update session set expired=true where user_id=?"), user.ID)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// SetUserDisabledAndRevokeCredentials changes lifecycle state, expires all
+// browser sessions and API tokens, and protects the final effective global
+// administrator while the global-role lock serializes concurrent changes.
+func (d *SqlDb) SetUserDisabledAndRevokeCredentials(userID int, disabled bool) error {
+	tx, err := d.Sql().Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = lockGlobalRoleMutations(tx, d); err != nil {
+		return err
+	}
+	var current db.User
+	if err = tx.SelectOne(&current, d.PrepareQuery("select * from `user` where id=?"), userID); err != nil {
+		return err
+	}
+	if current.Disabled == disabled {
+		return tx.Commit()
+	}
+	if disabled {
+		effectiveAdmin, adminErr := isEffectiveGlobalAdministratorTx(tx, d, userID)
+		if adminErr != nil {
+			return adminErr
+		}
+		if effectiveAdmin {
+			if err = requireActiveGlobalAdministratorWithoutUserTx(tx, d, userID); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err = tx.Exec(d.PrepareQuery("update `user` set disabled=? where id=?"), disabled, userID); err != nil {
+		return err
+	}
+	if disabled {
+		if _, err = tx.Exec(d.PrepareQuery("update session set expired=true where user_id=?"), userID); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(d.PrepareQuery("update user__token set expired=true where user_id=?"), userID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func requireActiveGlobalAdministratorWithoutUserTx(tx *gorp.Transaction, d *SqlDb, excludedUserID int) error {
+	count, err := tx.SelectInt(d.PrepareQuery(
+		"select count(distinct u.id) from `user` u where u.id<>? and u.disabled=false and (u.admin=true or exists ("+
+			"select 1 from user__global_role a join role r on r.role_id=a.role_id and r.project_id is null "+
+			"where a.user_id=u.id and (r.global_permissions & ?) = ?))"),
+		excludedUserID, db.CanManageGlobalRoles, db.CanManageGlobalRoles)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return db.ErrLastGlobalAdministrator
+	}
+	return nil
+}
 
 func (d *SqlDb) updateUserFields(
 	tx interface {

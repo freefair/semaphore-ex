@@ -49,6 +49,8 @@ func Catalog() []Entry {
 		{Kind: IAMUserCreate, Type: TypeCreation, Metadata: UserCreateMetadata{}},
 		{Kind: IAMUserUpdate, Type: TypeChange, Metadata: UserUpdateMetadata{}},
 		{Kind: IAMUserDelete, Type: TypeDeletion},
+		{Kind: IAMUserDeactivate, Type: TypeChange},
+		{Kind: IAMUserReactivate, Type: TypeChange},
 		{Kind: IAMUserAutoProvision, Type: TypeCreation, Metadata: AuthMethodMetadata{}},
 		{Kind: IAMUserPasswordChange, Type: TypeChange, Reasons: []Reason{ReasonInvalidCurrentPassword}},
 		{Kind: IAMUserPasswordAdminReset, Type: TypeChange},

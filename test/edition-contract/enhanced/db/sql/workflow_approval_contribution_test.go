@@ -84,7 +84,7 @@ func TestWorkflowApprovalContributionUsesCustomRoleFromMultiRoleMembershipAndRej
 	require.NoError(t, err)
 	customRole, err := store.CreateProjectRole(db.Role{
 		ID: "workflow-custom-approver", Slug: "workflow-custom-approver", Name: "Workflow Custom Approver",
-		ProjectID: &projectID, Permissions: db.CanRunProjectTasks, Revision: 4,
+		ProjectID: &projectID, Permissions: db.CanRunProjectTasks | db.CanApproveWorkflows, Revision: 4,
 	})
 	require.NoError(t, err)
 	_, err = store.CreateProjectUserWithRoleRefs(

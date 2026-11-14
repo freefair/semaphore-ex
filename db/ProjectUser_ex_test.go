@@ -20,7 +20,7 @@ func TestBuiltInProjectRolePermissionsRemainDeterministic(t *testing.T) {
 		ProjectTaskRunner: CanRunProjectTasks | CanViewProjectResources |
 			CanViewWorkflows | CanStartWorkflows | CanStopWorkflows |
 			CanListGrantedCredentials | CanConsumeGrantedCredentials | CanReadTaskGroups | CanReadProject | CanApproveWorkflows,
-		ProjectGuest: CanViewProjectResources | CanViewWorkflows | CanReadTaskGroups | CanReadProject | CanApproveWorkflows,
+		ProjectGuest: CanViewProjectResources | CanViewWorkflows | CanReadTaskGroups | CanReadProject,
 	}
 
 	permissions := BuiltInProjectRolePermissions()
@@ -31,7 +31,8 @@ func TestBuiltInProjectRolePermissionsRemainDeterministic(t *testing.T) {
 	}
 
 	permissions[ProjectGuest] = 0
-	assert.Equal(t, CanViewProjectResources|CanViewWorkflows|CanReadTaskGroups|CanReadProject|CanApproveWorkflows, ProjectGuest.GetPermissions())
+	assert.Equal(t, CanViewProjectResources|CanViewWorkflows|CanReadTaskGroups|CanReadProject, ProjectGuest.GetPermissions())
+	assert.False(t, ProjectGuest.Can(CanApproveWorkflows))
 	assert.True(t, ProjectOwner.Can(CanManagePolicyGuardrails))
 	assert.True(t, ProjectOwner.Can(CanRollbackPolicyGuardrails))
 	assert.True(t, ProjectManager.Can(CanManagePolicyGuardrails))

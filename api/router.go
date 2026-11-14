@@ -501,6 +501,7 @@ func Route(
 
 	userAPI.Methods("PUT").HandlerFunc(usersController.UpdateUser)
 	userAPI.Methods("DELETE").HandlerFunc(usersController.DeleteUser)
+	userAPI.Path("/deactivation").HandlerFunc(usersController.SetUserDisabled).Methods("PUT")
 
 	userPasswordAPI := authenticatedAPI.PathPrefix("/users/{user_id}").Subrouter()
 	userPasswordAPI.Use(

@@ -33,7 +33,16 @@ func (d *SqlDb) CreateUserWithoutPassword(user db.User) (newUser db.User, err er
 	user.Password = ""
 	user.Created = db.GetParsedTime(tz.Now())
 
-	err = d.Sql().Insert(&user)
+	hasDisabled, err := d.IsMigrationApplied(db.Migration{Version: "2.20.18-ex1.1"})
+	if err != nil {
+		return
+	}
+	if hasDisabled {
+		err = d.Sql().Insert(&user)
+	} else {
+		user.ID, err = d.insert("id", "insert into `user` (created, username, name, email, password, admin, external, alert, pro) values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			user.Created, user.Username, user.Name, user.Email, user.Password, user.Admin, user.External, user.Alert, user.Pro)
+	}
 
 	if err != nil {
 		return
@@ -752,7 +761,7 @@ func (d *SqlDb) GetUsers(params db.RetrieveQueryParams) (users []db.User, err er
 func (d *SqlDb) GetUserByLoginOrEmail(login string, email string) (user db.User, err error) {
 	err = d.selectOne(
 		&user,
-		d.PrepareQuery("select * from `user` where email=? or username=?"),
+		d.PrepareQuery("select * from `user` where disabled=false and (email=? or username=?)"),
 		email, login)
 
 	if err != nil {

@@ -28,6 +28,15 @@ type TOTPRepository interface {
 	CountRecoverableTOTPAdmins(excludeUserID int) (int, error)
 }
 
+// UserSecurityRepository keeps credential-changing lifecycle operations
+// transactional. Callers must fail closed when the selected store does not
+// provide this Enhanced persistence boundary.
+type UserSecurityRepository interface {
+	SetUserPasswordAndRevokeSessions(userID int, password string, currentSessionID int) error
+	UpdateUserAndRevokeSessions(user UserWithPwd, currentSessionID int) error
+	SetUserDisabledAndRevokeCredentials(userID int, disabled bool) error
+}
+
 // LDAPRepository persists provider configuration, rollout selection,
 // readiness, transitions, and authentication throttling without credentials.
 type LDAPRepository interface {

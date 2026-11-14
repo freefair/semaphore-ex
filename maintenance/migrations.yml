@@ -1224,3 +1224,10 @@ migrations:
   rationale: >-
     Preserve existing project read access using the new EX read bit, without rewriting independent template
     allow/deny masks. See Wiki ADR0056.
+- registered: true
+  id: 2.20.18-ex1.1
+  owner: fork
+  rationale: Add durable user deactivation and remove workflow approval from Guest-only workflow grants.
+  files:
+    migrations_ex/v2.20.18-ex1.1.sql: 5637edbedbcd72883349cae7af6455b00a926c71643f7d9551115b886da9187e
+    migrations_ex/v2.20.18-ex1.1.err.sql: ee625f263c5e22394f0dea38e9b2332fb38bee058124e7054e7ad59c046412d6
