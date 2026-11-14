@@ -41,7 +41,7 @@ func visibleTemplatesWhere(projectID int, userID int, alias string) (string, []a
 	// This is only a candidate filter: the EX evaluator applies inherited
 	// permissions and all matching allow/deny overrides before returning rows.
 	project, args := readsProject(projectID, userID)
-	resourceView := "exists (select 1 from project__user_role pur join `role` r on r.role_id=pur.role_id where pur.project_id=? and pur.user_id=? and r.permissions & " + strconv.Itoa(int(db.CanViewProjectResources)) + " <> 0)"
+	resourceView := "exists (select 1 from project__user_role pur join `role` r on r.role_id=pur.role_id where pur.project_id=? and pur.user_id=? and r.permissions & " + strconv.Itoa(int(db.CanViewTemplates|db.CanViewProjectResources)) + " <> 0)"
 	grant := "exists (select 1 from project__template_role g where g.template_id=" + alias + ".id and g.allowed_permissions & 1 <> 0)"
 	args = append(args, projectID, userID)
 	return "(" + project + " or " + resourceView + " or " + grant + ")", args

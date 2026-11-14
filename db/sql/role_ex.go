@@ -17,6 +17,7 @@ func (d *SqlDb) GetProjectRoleByID(projectID int, roleID db.ProjectRoleID) (db.R
 }
 
 func (d *SqlDb) CreateProjectRole(role db.Role) (db.Role, error) {
+	role.Permissions = db.NormalizeProjectResourcePermissions(role.Permissions)
 	if err := db.ValidateProjectRole(role); err != nil {
 		return db.Role{}, err
 	}
@@ -45,6 +46,7 @@ func (d *SqlDb) UpdateProjectRole(
 	role db.Role,
 	expectedRevision int,
 ) (db.Role, error) {
+	role.Permissions = db.NormalizeProjectResourcePermissions(role.Permissions)
 	if role.ProjectID == nil || *role.ProjectID != projectID {
 		return db.Role{}, db.ErrNotFound
 	}
@@ -320,7 +322,7 @@ func (d *SqlDb) projectWorkflowRoleIdentityForReference(
 		return db.ProjectWorkflowRoleIdentity{}, "", false, false, err
 	}
 	return db.ProjectWorkflowRoleIdentity{
-		Reference: db.ProjectRoleReferenceForCustomRole(role.ID), Permissions: role.Permissions, Revision: role.Revision,
+		Reference: db.ProjectRoleReferenceForCustomRole(role.ID), Permissions: db.NormalizeProjectResourcePermissions(role.Permissions), Revision: role.Revision,
 	}, string(role.ID), false, false, nil
 }
 
@@ -345,7 +347,7 @@ func (d *SqlDb) projectWorkflowRoleIdentityBase(
 		return db.ProjectWorkflowRoleIdentity{}, "", false, err
 	}
 	return db.ProjectWorkflowRoleIdentity{
-		Reference: db.ProjectRoleReferenceForCustomRole(role.ID), Permissions: role.Permissions, Revision: role.Revision,
+		Reference: db.ProjectRoleReferenceForCustomRole(role.ID), Permissions: db.NormalizeProjectResourcePermissions(role.Permissions), Revision: role.Revision,
 	}, string(role.ID), false, nil
 }
 

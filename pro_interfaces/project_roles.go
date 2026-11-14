@@ -6,10 +6,45 @@ import "github.com/semaphoreui/semaphore/db"
 type PermissionID string
 
 const (
-	PermissionReadProject                     PermissionID = "project.read"
-	PermissionApproveWorkflow                 PermissionID = "workflow.approve"
-	PermissionRunProjectTasks                 PermissionID = "project.tasks.run"
-	PermissionUpdateProject                   PermissionID = "project.settings.update"
+	PermissionReadProject        PermissionID = "project.read"
+	PermissionApproveWorkflow    PermissionID = "workflow.approve"
+	PermissionRunProjectTasks    PermissionID = "project.tasks.run"
+	PermissionUpdateProject      PermissionID = "project.settings.update"
+	permissionViewTemplates      PermissionID = "project.templates.view"
+	permissionCreateTemplates    PermissionID = "project.templates.create"
+	permissionUpdateTemplates    PermissionID = "project.templates.update"
+	permissionDeleteTemplates    PermissionID = "project.templates.delete"
+	permissionViewInventories    PermissionID = "project.inventories.view"
+	permissionCreateInventories  PermissionID = "project.inventories.create"
+	permissionUpdateInventories  PermissionID = "project.inventories.update"
+	permissionDeleteInventories  PermissionID = "project.inventories.delete"
+	permissionViewRepositories   PermissionID = "project.repositories.view"
+	permissionCreateRepositories PermissionID = "project.repositories.create"
+	permissionUpdateRepositories PermissionID = "project.repositories.update"
+	permissionDeleteRepositories PermissionID = "project.repositories.delete"
+	permissionViewAccessKeys     PermissionID = "project.access_keys.view"
+	permissionCreateAccessKeys   PermissionID = "project.access_keys.create"
+	permissionUpdateAccessKeys   PermissionID = "project.access_keys.update"
+	permissionDeleteAccessKeys   PermissionID = "project.access_keys.delete"
+	permissionUseAccessKeys      PermissionID = "project.access_keys.use"
+	permissionViewEnvironments   PermissionID = "project.environments.view"
+	permissionCreateEnvironments PermissionID = "project.environments.create"
+	permissionUpdateEnvironments PermissionID = "project.environments.update"
+	permissionDeleteEnvironments PermissionID = "project.environments.delete"
+	permissionViewSchedules      PermissionID = "project.schedules.view"
+	permissionCreateSchedules    PermissionID = "project.schedules.create"
+	permissionUpdateSchedules    PermissionID = "project.schedules.update"
+	permissionDeleteSchedules    PermissionID = "project.schedules.delete"
+	permissionViewIntegrations   PermissionID = "project.integrations.view"
+	permissionCreateIntegrations PermissionID = "project.integrations.create"
+	permissionUpdateIntegrations PermissionID = "project.integrations.update"
+	permissionDeleteIntegrations PermissionID = "project.integrations.delete"
+	permissionViewViews          PermissionID = "project.views.view"
+	permissionCreateViews        PermissionID = "project.views.create"
+	permissionUpdateViews        PermissionID = "project.views.update"
+	permissionDeleteViews        PermissionID = "project.views.delete"
+	// Deprecated coarse IDs are retained only for decoding historical API
+	// payloads. They are intentionally absent from the assignable catalog.
 	PermissionViewProjectResources            PermissionID = "project.resources.view"
 	PermissionManageProjectResources          PermissionID = "project.resources.manage"
 	PermissionManageProjectUsers              PermissionID = "project.members.manage"
@@ -60,6 +95,8 @@ const (
 type PermissionDefinition struct {
 	ID                      PermissionID             `json:"id"`
 	Description             string                   `json:"description"`
+	Group                   string                   `json:"group,omitempty"`
+	Action                  string                   `json:"action,omitempty"`
 	Scope                   PermissionScope          `json:"scope"`
 	Permission              db.ProjectUserPermission `json:"permission"`
 	CapabilityPrerequisites []CapabilityID           `json:"capability_prerequisites"`
@@ -128,7 +165,7 @@ func cloneCapabilityIDs(ids []CapabilityID) []CapabilityID {
 }
 
 func permissionCatalog() []PermissionDefinition {
-	return []PermissionDefinition{
+	definitions := []PermissionDefinition{
 		{
 			ID: PermissionRunProjectTasks, Description: "Run project tasks",
 			Scope: PermissionScopeProject, Permission: db.CanRunProjectTasks,
@@ -141,17 +178,9 @@ func permissionCatalog() []PermissionDefinition {
 			Scope: PermissionScopeProject, Permission: db.CanUpdateProject,
 			CapabilityPrerequisites: []CapabilityID{},
 		},
-		{
-			ID: PermissionViewProjectResources, Description: "View project resources",
-			Scope: PermissionScopeProject, Permission: db.CanViewProjectResources,
-			CapabilityPrerequisites: []CapabilityID{},
-		},
-		{
-			ID:          PermissionManageProjectResources,
-			Description: "Create, update, and delete project resources",
-			Scope:       PermissionScopeProject, Permission: db.CanManageProjectResources,
-			CapabilityPrerequisites: []CapabilityID{},
-		},
+	}
+	definitions = append(definitions, resourcePermissionDefinitions()...)
+	definitions = append(definitions, []PermissionDefinition{
 		{
 			ID: PermissionManageProjectUsers, Description: "Manage project members and roles",
 			Scope: PermissionScopeProject, Permission: db.CanManageProjectUsers,
@@ -261,7 +290,41 @@ func permissionCatalog() []PermissionDefinition {
 			Scope: PermissionScopeTemplate, Permission: 8,
 			CapabilityPrerequisites: []CapabilityID{CapabilityProjectRoles},
 		},
+	}...)
+	return definitions
+}
+
+func resourcePermissionDefinitions() []PermissionDefinition {
+	type actionDefinition struct {
+		id          PermissionID
+		permission  db.ProjectUserPermission
+		action      string
+		description string
 	}
+	type resourceDefinition struct {
+		group   string
+		actions []actionDefinition
+	}
+	resources := []resourceDefinition{
+		{"templates", []actionDefinition{{permissionViewTemplates, db.CanViewTemplates, "view", "View templates"}, {permissionCreateTemplates, db.CanCreateTemplates, "create", "Create templates"}, {permissionUpdateTemplates, db.CanUpdateTemplates, "update", "Update templates"}, {permissionDeleteTemplates, db.CanDeleteTemplates, "delete", "Delete templates"}}},
+		{"inventories", []actionDefinition{{permissionViewInventories, db.CanViewInventories, "view", "View inventories"}, {permissionCreateInventories, db.CanCreateInventories, "create", "Create inventories"}, {permissionUpdateInventories, db.CanUpdateInventories, "update", "Update inventories"}, {permissionDeleteInventories, db.CanDeleteInventories, "delete", "Delete inventories"}}},
+		{"repositories", []actionDefinition{{permissionViewRepositories, db.CanViewRepositories, "view", "View repositories"}, {permissionCreateRepositories, db.CanCreateRepositories, "create", "Create repositories"}, {permissionUpdateRepositories, db.CanUpdateRepositories, "update", "Update repositories"}, {permissionDeleteRepositories, db.CanDeleteRepositories, "delete", "Delete repositories"}}},
+		{"access_keys", []actionDefinition{{permissionViewAccessKeys, db.CanViewAccessKeys, "view", "View access key metadata"}, {permissionCreateAccessKeys, db.CanCreateAccessKeys, "create", "Create access keys"}, {permissionUpdateAccessKeys, db.CanUpdateAccessKeys, "update", "Update access keys"}, {permissionDeleteAccessKeys, db.CanDeleteAccessKeys, "delete", "Delete access keys"}, {permissionUseAccessKeys, db.CanUseAccessKeys, "use", "Use access keys in task configuration and execution"}}},
+		{"environments", []actionDefinition{{permissionViewEnvironments, db.CanViewEnvironments, "view", "View variable groups"}, {permissionCreateEnvironments, db.CanCreateEnvironments, "create", "Create variable groups"}, {permissionUpdateEnvironments, db.CanUpdateEnvironments, "update", "Update variable groups"}, {permissionDeleteEnvironments, db.CanDeleteEnvironments, "delete", "Delete variable groups"}}},
+		{"schedules", []actionDefinition{{permissionViewSchedules, db.CanViewSchedules, "view", "View schedules"}, {permissionCreateSchedules, db.CanCreateSchedules, "create", "Create schedules"}, {permissionUpdateSchedules, db.CanUpdateSchedules, "update", "Update schedules"}, {permissionDeleteSchedules, db.CanDeleteSchedules, "delete", "Delete schedules"}}},
+		{"integrations", []actionDefinition{{permissionViewIntegrations, db.CanViewIntegrations, "view", "View integrations"}, {permissionCreateIntegrations, db.CanCreateIntegrations, "create", "Create integrations"}, {permissionUpdateIntegrations, db.CanUpdateIntegrations, "update", "Update integrations"}, {permissionDeleteIntegrations, db.CanDeleteIntegrations, "delete", "Delete integrations"}}},
+		{"views", []actionDefinition{{permissionViewViews, db.CanViewViews, "view", "View template views"}, {permissionCreateViews, db.CanCreateViews, "create", "Create template views"}, {permissionUpdateViews, db.CanUpdateViews, "update", "Update template views"}, {permissionDeleteViews, db.CanDeleteViews, "delete", "Delete template views"}}},
+	}
+	definitions := make([]PermissionDefinition, 0, 33)
+	for _, resource := range resources {
+		for _, action := range resource.actions {
+			definitions = append(definitions, PermissionDefinition{
+				ID: action.id, Description: action.description, Group: resource.group, Action: action.action,
+				Scope: PermissionScopeProject, Permission: action.permission, CapabilityPrerequisites: []CapabilityID{},
+			})
+		}
+	}
+	return definitions
 }
 
 // PermissionEffect describes why one layer decided an action.
@@ -328,6 +391,20 @@ type EffectivePermissionDecision struct {
 type EffectiveGlobalPermissions struct {
 	Permissions db.GlobalPermission           `json:"permissions"`
 	Decisions   []EffectivePermissionDecision `json:"decisions"`
+}
+
+// EffectiveProjectPermissions is the member-facing union of project role
+// grants. Sources identify the role that contributed each permission without
+// exposing unrelated role assignments.
+type EffectiveProjectPermissions struct {
+	Permissions []PermissionID                     `json:"permissions"`
+	Sources     []EffectiveProjectPermissionSource `json:"sources"`
+}
+
+type EffectiveProjectPermissionSource struct {
+	Permission PermissionID `json:"permission"`
+	RoleID     string       `json:"role_id"`
+	RoleName   string       `json:"role_name"`
 }
 
 // EffectiveTemplatePermissions is the current user's bounded authorization
@@ -469,11 +546,13 @@ func evaluateTemplatePermission(request PermissionEvaluationRequest) EffectivePe
 func inheritedProjectPermission(permission PermissionID) (PermissionID, bool) {
 	switch permission {
 	case PermissionReadTemplate:
-		return PermissionViewProjectResources, true
+		return permissionViewTemplates, true
 	case PermissionRunTemplate:
 		return PermissionRunProjectTasks, true
-	case PermissionEditTemplate, PermissionDeleteTemplate:
-		return PermissionManageProjectResources, true
+	case PermissionEditTemplate:
+		return permissionUpdateTemplates, true
+	case PermissionDeleteTemplate:
+		return permissionDeleteTemplates, true
 	default:
 		return "", false
 	}

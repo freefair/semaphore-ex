@@ -85,6 +85,7 @@ func (c *BackupController) canExportObjects(r *http.Request, projectID int, temp
 	for _, role := range member.MappedRoles {
 		base |= role.RolePermissions
 	}
+	base = db.NormalizeProjectResourcePermissions(base)
 	if !base.Can(db.CanReadProject | db.CanViewProjectResources) {
 		return false
 	}

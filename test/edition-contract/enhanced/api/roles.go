@@ -289,6 +289,46 @@ func (c *RolesController) GetProjectPermissionCatalog(w http.ResponseWriter, r *
 	helpers.WriteJSON(w, http.StatusOK, pro_interfaces.ProjectPermissionCatalog())
 }
 
+func (c *RolesController) GetEffectiveProjectPermissions(w http.ResponseWriter, r *http.Request) {
+	project, ok := projectRoleRequestProject(w, r)
+	if !ok {
+		return
+	}
+	userID, ok := helpers.GetIntParamOrAbort("user_id", w, r)
+	if !ok {
+		return
+	}
+	actor := helpers.UserFromContext(r)
+	permissions, _ := helpers.GetOkFromContext(r, "permissions")
+	projectPermissions, validPermissions := permissions.(db.ProjectUserPermission)
+	if actor == nil || (!actor.Admin && actor.ID != userID && (!validPermissions || !projectPermissions.Can(db.CanManageProjectUsers))) {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	roles, err := c.store.GetProjectUserRoles(project.ID, userID)
+	if err != nil {
+		helpers.WriteError(w, err)
+		return
+	}
+	catalog := pro_interfaces.ProjectPermissionCatalog()
+	result := pro_interfaces.EffectiveProjectPermissions{
+		Permissions: make([]pro_interfaces.PermissionID, 0),
+		Sources:     make([]pro_interfaces.EffectiveProjectPermissionSource, 0),
+	}
+	for _, definition := range catalog {
+		for _, role := range roles {
+			if role.Permissions.Can(definition.Permission) {
+				result.Permissions = append(result.Permissions, definition.ID)
+				result.Sources = append(result.Sources, pro_interfaces.EffectiveProjectPermissionSource{
+					Permission: definition.ID, RoleID: string(role.ID), RoleName: role.Name,
+				})
+				break
+			}
+		}
+	}
+	helpers.WriteJSON(w, http.StatusOK, result)
+}
+
 func (c *RolesController) GetProjectRoles(w http.ResponseWriter, r *http.Request) {
 	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead) {
 		return

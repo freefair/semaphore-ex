@@ -50,12 +50,60 @@ const (
 	CanShareTaskGroups
 	CanReadProject
 	CanApproveWorkflows
+	// Resource permissions deliberately occupy new bits so the EX migration can
+	// translate every persisted coarse grant without changing an existing bit.
+	CanViewTemplates ProjectUserPermission = 1 << (iota + 0)
+	CanCreateTemplates
+	CanUpdateTemplates
+	CanDeleteTemplates
+	CanViewInventories
+	CanCreateInventories
+	CanUpdateInventories
+	CanDeleteInventories
+	CanViewRepositories
+	CanCreateRepositories
+	CanUpdateRepositories
+	CanDeleteRepositories
+	CanViewAccessKeys
+	CanCreateAccessKeys
+	CanUpdateAccessKeys
+	CanDeleteAccessKeys
+	CanUseAccessKeys
+	CanViewEnvironments
+	CanCreateEnvironments
+	CanUpdateEnvironments
+	CanDeleteEnvironments
+	CanViewSchedules
+	CanCreateSchedules
+	CanUpdateSchedules
+	CanDeleteSchedules
+	CanViewIntegrations
+	CanCreateIntegrations
+	CanUpdateIntegrations
+	CanDeleteIntegrations
+	CanViewViews
+	CanCreateViews
+	CanUpdateViews
+	CanDeleteViews
 )
 
 const (
+	AllProjectResourceViewPermissions = CanViewTemplates | CanViewInventories |
+		CanViewRepositories | CanViewAccessKeys | CanViewEnvironments |
+		CanViewSchedules | CanViewIntegrations | CanViewViews
+	AllProjectResourceMutationPermissions = CanCreateTemplates | CanUpdateTemplates | CanDeleteTemplates |
+		CanCreateInventories | CanUpdateInventories | CanDeleteInventories |
+		CanCreateRepositories | CanUpdateRepositories | CanDeleteRepositories |
+		CanCreateAccessKeys | CanUpdateAccessKeys | CanDeleteAccessKeys | CanUseAccessKeys |
+		CanCreateEnvironments | CanUpdateEnvironments | CanDeleteEnvironments |
+		CanCreateSchedules | CanUpdateSchedules | CanDeleteSchedules |
+		CanCreateIntegrations | CanUpdateIntegrations | CanDeleteIntegrations |
+		CanCreateViews | CanUpdateViews | CanDeleteViews
+	AllProjectResourcePermissions = AllProjectResourceViewPermissions | AllProjectResourceMutationPermissions
+
 	CanRunWorkflows          = CanStartWorkflows
 	WorkflowGrantPermissions = CanRunWorkflows | CanEditWorkflows | CanApproveWorkflows | CanReadProject
-	TemplateGrantPermissions = CanRunProjectTasks | CanManageProjectResources | CanReadProject
+	TemplateGrantPermissions = CanRunProjectTasks | CanUpdateTemplates | CanReadProject
 )
 
 // Viewer scopes a list to the requesting member.
@@ -65,20 +113,20 @@ type Viewer struct {
 }
 
 var rolePermissions = map[ProjectUserRole]ProjectUserPermission{
-	ProjectOwner: CanRunProjectTasks | CanUpdateProject | CanManageProjectResources |
-		CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
+	ProjectOwner: CanRunProjectTasks | CanUpdateProject | AllProjectResourcePermissions |
+		CanManageProjectUsers | CanViewWorkflows |
 		CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
 		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails |
 		CanReadTaskGroups | CanCreateTaskGroups | CanUpdateTaskGroups | CanDeleteTaskGroups | CanShareTaskGroups | CanReadProject | CanApproveWorkflows,
-	ProjectManager: CanRunProjectTasks | CanManageProjectResources | CanViewProjectResources |
+	ProjectManager: CanRunProjectTasks | AllProjectResourcePermissions |
 		CanViewWorkflows | CanEditWorkflows | CanStartWorkflows | CanStopWorkflows |
 		CanAdministerWorkflows | CanListGrantedCredentials | CanConsumeGrantedCredentials |
 		CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails |
 		CanReadTaskGroups | CanCreateTaskGroups | CanUpdateTaskGroups | CanDeleteTaskGroups | CanShareTaskGroups | CanReadProject | CanApproveWorkflows,
-	ProjectTaskRunner: CanRunProjectTasks | CanViewProjectResources |
+	ProjectTaskRunner: CanRunProjectTasks | AllProjectResourceViewPermissions |
 		CanViewWorkflows | CanStartWorkflows | CanStopWorkflows |
 		CanListGrantedCredentials | CanConsumeGrantedCredentials | CanReadTaskGroups | CanReadProject | CanApproveWorkflows,
-	ProjectGuest: CanViewProjectResources | CanViewWorkflows | CanReadTaskGroups | CanReadProject,
+	ProjectGuest: AllProjectResourceViewPermissions | CanViewWorkflows | CanReadTaskGroups | CanReadProject,
 }
 
 func (r ProjectUserRole) IsValid() bool {
@@ -100,7 +148,7 @@ type ProjectUser struct {
 var ErrProjectWorkflowRoleIdentityUnavailable = errors.New("project workflow role identity is unavailable")
 
 func (r ProjectUserRole) Can(permissions ProjectUserPermission) bool {
-	return (rolePermissions[r] & permissions) == permissions
+	return rolePermissions[r].Can(permissions)
 }
 
 func (r ProjectUserRole) GetPermissions() ProjectUserPermission {

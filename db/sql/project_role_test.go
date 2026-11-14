@@ -57,6 +57,51 @@ func TestProjectRolePersistenceIsScopedAndRevisionFenced(t *testing.T) {
 	assert.ErrorIs(t, err, db.ErrNotFound)
 }
 
+func TestRoleWritesAndReadsNormalizeLegacyResourcePermissions(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "Normalized role project"})
+	require.NoError(t, err)
+
+	projectRole, err := store.CreateProjectRole(db.Role{
+		ID: "normalized_project", Name: "Normalized project", ProjectID: &project.ID,
+		Permissions: db.CanViewProjectResources, Revision: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, db.AllProjectResourceViewPermissions, projectRole.Permissions)
+	assert.Zero(t, projectRole.Permissions&(db.CanViewProjectResources|db.CanManageProjectResources))
+
+	projectRole.Permissions = db.CanManageProjectResources
+	projectRole, err = store.UpdateProjectRole(project.ID, projectRole, projectRole.Revision)
+	require.NoError(t, err)
+	assert.Equal(t, db.AllProjectResourceMutationPermissions, projectRole.Permissions)
+
+	globalRole, err := store.CreateGlobalRole(db.Role{
+		ID: "normalized_global", Name: "Normalized global", Permissions: db.CanViewProjectResources, Revision: 1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, db.AllProjectResourceViewPermissions, globalRole.Permissions)
+	globalRole.Permissions = db.CanManageProjectResources
+	globalRole, err = store.UpdateGlobalRole(globalRole, globalRole.Revision)
+	require.NoError(t, err)
+	assert.Equal(t, db.AllProjectResourceMutationPermissions, globalRole.Permissions)
+
+	imported, err := store.CreateRole(db.Role{ID: "normalized_import", Slug: "normalized_import", Name: "Normalized import", Permissions: db.CanViewProjectResources})
+	require.NoError(t, err)
+	assert.Equal(t, db.AllProjectResourceViewPermissions, imported.Permissions)
+
+	user, err := store.CreateUserWithoutPassword(db.User{Username: "normalized-reader", Name: "Normalized reader", Email: "normalized-reader@example.test"})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUser(db.ProjectUser{ProjectID: project.ID, UserID: user.ID, RoleID: &projectRole.ID, Revision: 1})
+	require.NoError(t, err)
+	_, err = store.exec("update role set permissions=? where role_id=?", db.CanViewProjectResources, projectRole.ID)
+	require.NoError(t, err)
+	roles, err := store.GetProjectUserRoles(project.ID, user.ID)
+	require.NoError(t, err)
+	require.Len(t, roles, 1)
+	assert.Equal(t, db.AllProjectResourceViewPermissions, roles[0].Permissions)
+}
+
 func TestConcurrentProjectRoleEditsAllowExactlyOneRevision(t *testing.T) {
 	store := InitConfigCreateTestStore()
 	t.Cleanup(store.Close)

@@ -59,6 +59,30 @@ func TestEXBackupPermissionSchemaRoundTripPreservesDeniesAndWorkflowGrants(t *te
 	assert.Equal(t, db.CanReadProject|db.CanStartWorkflows, workflowGrants[0].Permissions)
 }
 
+func TestEXBackupRestoreNormalizesLegacyCoarseRolePermissions(t *testing.T) {
+	previous := util.Config
+	t.Cleanup(func() { util.Config = previous })
+	util.Config = &util.ConfigType{TmpPath: t.TempDir()}
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, _ := createBackupFixture(t, store)
+	backup, err := GetBackup(project.ID, store, proFactory.NewWorkflowStore(store))
+	require.NoError(t, err)
+	backup.PermissionSchema = "semaphore-ex"
+	version := 4
+	backup.Version = &version
+	backup.Meta.Name = "Normalized coarse role"
+	backup.Roles = []BackupRole{{Role: db.Role{Name: "legacy view", Permissions: db.CanViewProjectResources}}}
+
+	restored, err := backup.Restore(restoreUser(t, store), store, proFactory.NewWorkflowStore(store))
+	require.NoError(t, err)
+	roles, err := store.GetProjectRoles(restored.ID)
+	require.NoError(t, err)
+	require.Len(t, roles, 1)
+	assert.Equal(t, db.AllProjectResourceViewPermissions, roles[0].Permissions)
+	assert.Zero(t, roles[0].Permissions&(db.CanViewProjectResources|db.CanManageProjectResources))
+}
+
 func TestEXPermissionSchemaRequiresCurrentBackupVersion(t *testing.T) {
 	v2, v3, v4 := 2, 3, 4
 	tests := []struct {

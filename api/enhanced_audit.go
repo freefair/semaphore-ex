@@ -361,7 +361,7 @@ func projectPermissionDenied(r *http.Request) bool {
 	user, userOK := helpers.GetFromContext(r, "user").(*db.User)
 	permissions, permissionsOK := helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
 	return userOK && permissionsOK && !user.Admin &&
-		permissions&db.CanManageProjectResources != db.CanManageProjectResources
+		!permissions.Can(db.AllProjectResourceMutationPermissions)
 }
 
 type enhancedAuditDescriptor struct {

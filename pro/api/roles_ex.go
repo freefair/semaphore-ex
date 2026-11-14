@@ -28,3 +28,8 @@ func (c *RolesController) GetEffectiveGlobalPermissions(w http.ResponseWriter, r
 func (c *RolesController) GetProjectPermissionCatalog(w http.ResponseWriter, r *http.Request) {
 	helpers.WriteJSON(w, http.StatusOK, []string{})
 }
+
+// GetEffectiveProjectPermissions is an unwired Community compatibility stub.
+func (c *RolesController) GetEffectiveProjectPermissions(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}

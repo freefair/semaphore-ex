@@ -54,6 +54,38 @@ func TestWorkflowTriggerSignedWebhookClaimsBeforeMappingAndNeverFallsBackToBeare
 	require.Len(t, history, 2, "strict mapping failures are durably claimed after verification")
 }
 
+func TestWorkflowTriggerAuthorizationUsesFineGrainedCustomRolePermissions(t *testing.T) {
+	fixture := newWorkflowTriggerServiceFixture(t)
+	identity := fixture.identity
+	identity.member.Role = "release_operator"
+	identity.customRole = db.Role{
+		ID: "release_operator", Permissions: db.AllProjectResourceMutationPermissions,
+	}
+
+	err := fixture.service.(*workflowTriggerService).authorize(
+		context.Background(), &fixture.actor, fixture.projectID,
+		pro_interfaces.CapabilityAccessRead, db.CanManageProjectResources,
+	)
+
+	require.NoError(t, err)
+}
+
+func TestWorkflowTriggerAuthorizationDeniesAnIncompleteCustomRole(t *testing.T) {
+	fixture := newWorkflowTriggerServiceFixture(t)
+	identity := fixture.identity
+	identity.member.Role = "partial_operator"
+	identity.customRole = db.Role{
+		ID: "partial_operator", Permissions: db.AllProjectResourceMutationPermissions &^ db.CanDeleteViews,
+	}
+
+	err := fixture.service.(*workflowTriggerService).authorize(
+		context.Background(), &fixture.actor, fixture.projectID,
+		pro_interfaces.CapabilityAccessRead, db.CanManageProjectResources,
+	)
+
+	assert.ErrorIs(t, err, pro_interfaces.ErrWorkflowTriggerPermissionDenied)
+}
+
 func TestWorkflowTriggerSigningLifecycleFailsClosedAndOverlapsOnlyDuringRotation(t *testing.T) {
 	fixture := newWorkflowTriggerServiceFixture(t)
 	implementation := fixture.service.(*workflowTriggerService)
@@ -596,8 +628,9 @@ func (s *workflowTriggerStarter) GetWorkflowRunArtifacts(int, int, *int) ([]db.W
 }
 
 type workflowTriggerIdentity struct {
-	user   db.User
-	member db.ProjectUser
+	user       db.User
+	member     db.ProjectUser
+	customRole db.Role
 }
 
 func (s *workflowTriggerIdentity) GetUser(int) (db.User, error) { return s.user, nil }
@@ -605,6 +638,9 @@ func (s *workflowTriggerIdentity) GetProjectUser(int, int) (db.ProjectUser, erro
 	return s.member, nil
 }
 func (s *workflowTriggerIdentity) GetProjectOrGlobalRoleBySlug(int, string) (db.Role, error) {
+	if s.customRole.ID != "" {
+		return s.customRole, nil
+	}
 	return db.Role{}, db.ErrNotFound
 }
 

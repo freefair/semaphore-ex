@@ -27,6 +27,9 @@ func TestMigration22049AddsWorkflowRolePolicyStorageAndMigratesRoleBits(t *testi
 		Revision: 1,
 	})
 	require.NoError(t, err)
+	legacyPermissions := db.CanRunProjectTasks | db.CanManageProjectResources | db.CanViewProjectResources
+	_, err = store.exec("update role set permissions=? where role_id in (?, ?)", legacyPermissions, legacyRole.ID, globalRole.ID)
+	require.NoError(t, err)
 
 	require.NoError(t, db.Migrate(store, nil))
 	assert.Contains(t, sqliteColumnNames(t, store, "project__workflow_template"), "access_policy")
@@ -59,7 +62,7 @@ func TestMigration22049AddsWorkflowRolePolicyStorageAndMigratesRoleBits(t *testi
 
 	unmappedGlobal, err := store.GetGlobalRoleByID(globalRole.ID)
 	require.NoError(t, err)
-	assert.Equal(t, globalRole.Permissions|db.CanReadProject|db.CanApproveWorkflows, unmappedGlobal.Permissions)
+	assert.Equal(t, db.NormalizeProjectResourcePermissions(legacyPermissions)|db.CanReadProject|db.CanApproveWorkflows, unmappedGlobal.Permissions)
 
 	require.NoError(t, db.Rollback(store, legacyVersion))
 	assert.NotContains(t, sqliteColumnNames(t, store, "project__workflow_template"), "access_policy")

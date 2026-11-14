@@ -185,7 +185,7 @@ func TestProjectRunnerPermissionAuditDoesNotDuplicateDownstreamCapabilityDenial(
 	request := httptest.NewRequest(http.MethodPost, "/api/project/12/runners", bytes.NewBufferString(`{"name":"capability-denied"}`))
 	request = mux.SetURLVars(request, map[string]string{"project_id": "12"})
 	request = helpers.SetContextValue(request, "user", &db.User{ID: 11})
-	request = helpers.SetContextValue(request, "permissions", db.CanManageProjectResources)
+	request = helpers.SetContextValue(request, "permissions", db.AllProjectResourceMutationPermissions)
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, request)

@@ -156,7 +156,7 @@ func (d *SqlDb) GetTemplatePermissionContext(
 	var overridePtr *db.TemplateRolePerm
 	overrideFound := false
 	for _, role := range roles {
-		projectPermissions |= role.Permissions
+		projectPermissions |= db.NormalizeProjectResourcePermissions(role.Permissions)
 		roleIDs := []*db.ProjectRoleID{nil}
 		if role.Builtin {
 			roleIDs = []*db.ProjectRoleID{&role.ID, nil}
@@ -246,7 +246,7 @@ func (d *SqlDb) normalizeTemplateRole(
 		role.Revision = 1
 	}
 	if role.AllowedPermissions == 0 && role.DeniedPermissions == 0 && role.Permissions != 0 {
-		role.AllowedPermissions = db.ProjectPermissionsToTemplate(role.Permissions)
+		role.AllowedPermissions = db.ProjectPermissionsToTemplate(db.NormalizeProjectResourcePermissions(role.Permissions))
 	}
 	role.Permissions = db.TemplatePermissionsToProject(role.AllowedPermissions)
 	if role.RoleID != nil {

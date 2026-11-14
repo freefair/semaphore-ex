@@ -135,6 +135,10 @@ func TestPermissionNames(t *testing.T) {
 	assert.Equal(t, []string{}, PermissionNames(0))
 	assert.Equal(t, []string{"run_tasks", "manage_users"}, PermissionNames(db.CanRunProjectTasks|db.CanManageProjectUsers))
 	assert.Equal(t, []string{"read_project", "run_tasks", "update_project", "manage_resources", "manage_users", "run_workflows", "edit_workflows", "approve_workflows"}, PermissionNames(db.KnownRolePermissions|db.CanReadProject|db.CanRunWorkflows|db.CanEditWorkflows|db.CanApproveWorkflows))
+	assert.Equal(t, []string{"view_templates", "create_templates", "use_access_keys", "update_views"}, PermissionNames(
+		db.CanViewTemplates|db.CanCreateTemplates|db.CanUseAccessKeys|db.CanUpdateViews,
+	))
+	assert.Equal(t, []string{"view_resources", "manage_resources"}, PermissionNames(db.AllProjectResourcePermissions))
 }
 
 func TestTruncateName(t *testing.T) {

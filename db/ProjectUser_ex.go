@@ -152,7 +152,24 @@ func (identity ProjectWorkflowRoleIdentity) Validate() error {
 }
 
 func (p ProjectUserPermission) Can(permissions ProjectUserPermission) bool {
-	return (p & permissions) == permissions
+	available := NormalizeProjectResourcePermissions(p)
+	required := NormalizeProjectResourcePermissions(permissions)
+	return (available & required) == required
+}
+
+// NormalizeProjectResourcePermissions expands the retired coarse resource
+// permissions into their explicit successors. It removes the coarse bits so
+// newly persisted masks have one canonical representation. The function is
+// deliberately also used at read boundaries: roles imported by older clients
+// or restored from a backup can otherwise bypass the EX migration.
+func NormalizeProjectResourcePermissions(permissions ProjectUserPermission) ProjectUserPermission {
+	if permissions&CanViewProjectResources != 0 {
+		permissions = permissions&^CanViewProjectResources | AllProjectResourceViewPermissions
+	}
+	if permissions&CanManageProjectResources != 0 {
+		permissions = permissions&^CanManageProjectResources | AllProjectResourceMutationPermissions
+	}
+	return permissions
 }
 
 // BuiltInProjectRolePermissions returns an isolated deterministic mapping for

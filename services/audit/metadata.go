@@ -167,6 +167,7 @@ func GlobalPermissionNames(p db.GlobalPermission) []string {
 }
 
 func PermissionNames(p db.ProjectUserPermission) []string {
+	p = db.NormalizeProjectResourcePermissions(p)
 	names := []string{}
 	if p&db.CanReadProject != 0 {
 		names = append(names, "read_project")
@@ -177,9 +178,7 @@ func PermissionNames(p db.ProjectUserPermission) []string {
 	if p&db.CanUpdateProject != 0 {
 		names = append(names, "update_project")
 	}
-	if p&db.CanManageProjectResources != 0 {
-		names = append(names, "manage_resources")
-	}
+	names = append(names, projectResourcePermissionNames(p)...)
 	if p&db.CanManageProjectUsers != 0 {
 		names = append(names, "manage_users")
 	}
@@ -191,6 +190,68 @@ func PermissionNames(p db.ProjectUserPermission) []string {
 	}
 	if p&db.CanApproveWorkflows != 0 {
 		names = append(names, "approve_workflows")
+	}
+	return names
+}
+
+// projectResourcePermissionNames preserves the historic aggregate labels only
+// for their complete D5-equivalent sets. Partial grants remain attributable to
+// the individual resource actions that are effective.
+func projectResourcePermissionNames(p db.ProjectUserPermission) []string {
+	if p.Can(db.AllProjectResourcePermissions) {
+		return []string{"view_resources", "manage_resources"}
+	}
+	if p.Can(db.AllProjectResourceMutationPermissions) {
+		return []string{"manage_resources"}
+	}
+	if p.Can(db.AllProjectResourceViewPermissions) {
+		return []string{"view_resources"}
+	}
+
+	permissions := []struct {
+		permission db.ProjectUserPermission
+		name       string
+	}{
+		{db.CanViewTemplates, "view_templates"},
+		{db.CanCreateTemplates, "create_templates"},
+		{db.CanUpdateTemplates, "update_templates"},
+		{db.CanDeleteTemplates, "delete_templates"},
+		{db.CanViewInventories, "view_inventories"},
+		{db.CanCreateInventories, "create_inventories"},
+		{db.CanUpdateInventories, "update_inventories"},
+		{db.CanDeleteInventories, "delete_inventories"},
+		{db.CanViewRepositories, "view_repositories"},
+		{db.CanCreateRepositories, "create_repositories"},
+		{db.CanUpdateRepositories, "update_repositories"},
+		{db.CanDeleteRepositories, "delete_repositories"},
+		{db.CanViewAccessKeys, "view_access_keys"},
+		{db.CanCreateAccessKeys, "create_access_keys"},
+		{db.CanUpdateAccessKeys, "update_access_keys"},
+		{db.CanDeleteAccessKeys, "delete_access_keys"},
+		{db.CanUseAccessKeys, "use_access_keys"},
+		{db.CanViewEnvironments, "view_environments"},
+		{db.CanCreateEnvironments, "create_environments"},
+		{db.CanUpdateEnvironments, "update_environments"},
+		{db.CanDeleteEnvironments, "delete_environments"},
+		{db.CanViewSchedules, "view_schedules"},
+		{db.CanCreateSchedules, "create_schedules"},
+		{db.CanUpdateSchedules, "update_schedules"},
+		{db.CanDeleteSchedules, "delete_schedules"},
+		{db.CanViewIntegrations, "view_integrations"},
+		{db.CanCreateIntegrations, "create_integrations"},
+		{db.CanUpdateIntegrations, "update_integrations"},
+		{db.CanDeleteIntegrations, "delete_integrations"},
+		{db.CanViewViews, "view_views"},
+		{db.CanCreateViews, "create_views"},
+		{db.CanUpdateViews, "update_views"},
+		{db.CanDeleteViews, "delete_views"},
+	}
+
+	names := make([]string, 0, len(permissions))
+	for _, permission := range permissions {
+		if p.Can(permission.permission) {
+			names = append(names, permission.name)
+		}
 	}
 	return names
 }

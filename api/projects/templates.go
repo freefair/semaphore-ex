@@ -121,10 +121,11 @@ func GetTemplateRefs(w http.ResponseWriter, r *http.Request) {
 		for _, role := range member.MappedRoles {
 			base |= role.RolePermissions
 		}
-		if !base.Can(db.CanReadProject | db.CanViewProjectResources) {
+		base = db.NormalizeProjectResourcePermissions(base)
+		if !base.Can(db.CanReadProject | db.CanViewInventories) {
 			refs.Inventories = []db.ObjectReferrer{}
 		}
-		if !base.Can(db.CanReadProject) {
+		if !base.Can(db.CanReadProject | db.CanViewSchedules) {
 			refs.Schedules = []db.ObjectReferrer{}
 		}
 		filter := db.TemplateFilter{Viewer: &db.Viewer{UserID: user.ID}}

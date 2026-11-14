@@ -73,6 +73,7 @@ func (d *SqlDb) GetSharedRoles() (roles []db.Role, err error) {
 }
 
 func (d *SqlDb) CreateRole(role db.Role) (db.Role, error) {
+	role.Permissions = db.NormalizeProjectResourcePermissions(role.Permissions)
 	if err := db.ValidateRole(role, true); err != nil {
 		return db.Role{}, err
 	}
@@ -112,6 +113,7 @@ func (d *SqlDb) CreateRole(role db.Role) (db.Role, error) {
 }
 
 func (d *SqlDb) UpdateRole(role db.Role) error {
+	role.Permissions = db.NormalizeProjectResourcePermissions(role.Permissions)
 	result, err := d.exec("update role set name=?, permissions=?, global_permissions=?, revision=revision+1 where role_id=? and revision=?",
 		role.Name, role.Permissions, role.GlobalPermissions, role.ID, role.Revision)
 	if err != nil {

@@ -69,16 +69,14 @@ func TestProjectRoleControllerCRUDCatalogIsolationAndStaleWrites(t *testing.T) {
 	assert.Equal(t, http.StatusOK, catalogResponse.Code)
 	var catalog []pro_interfaces.PermissionDefinition
 	require.NoError(t, json.Unmarshal(catalogResponse.Body.Bytes(), &catalog))
-	require.Len(t, catalog, 22)
-	assert.Equal(t, pro_interfaces.PermissionViewWorkflow, catalog[7].ID)
-	assert.Equal(t, pro_interfaces.PermissionAdministerWorkflow, catalog[11].ID)
-	assert.Equal(t, pro_interfaces.PermissionManagePolicyGuardrails, catalog[15].ID)
-	assert.Equal(t, pro_interfaces.PermissionRollbackPolicyGuardrails, catalog[16].ID)
-	assert.Equal(t, pro_interfaces.PermissionReadTaskGroups, catalog[17].ID)
-	assert.Equal(t, pro_interfaces.PermissionCreateTaskGroups, catalog[18].ID)
-	assert.Equal(t, pro_interfaces.PermissionUpdateTaskGroups, catalog[19].ID)
-	assert.Equal(t, pro_interfaces.PermissionDeleteTaskGroups, catalog[20].ID)
-	assert.Equal(t, pro_interfaces.PermissionShareTaskGroups, catalog[21].ID)
+	require.Len(t, catalog, 53)
+	definitions := map[pro_interfaces.PermissionID]pro_interfaces.PermissionDefinition{}
+	for _, definition := range catalog {
+		definitions[definition.ID] = definition
+	}
+	assert.Equal(t, "templates", definitions[pro_interfaces.PermissionID("project.templates.view")].Group)
+	assert.Equal(t, "view", definitions[pro_interfaces.PermissionID("project.templates.view")].Action)
+	assert.Equal(t, "use", definitions[pro_interfaces.PermissionID("project.access_keys.use")].Action)
 
 	createResponse := serveProjectRoleRequest(
 		t, project, http.MethodPost, "/api/project/1/roles",
@@ -148,6 +146,41 @@ func TestProjectRoleControllerFailsClosedWhenCapabilityIsUnavailable(t *testing.
 		controller.GetProjectPermissionCatalog,
 	)
 	assert.Equal(t, http.StatusForbidden, response.Code)
+}
+
+func TestEffectiveProjectPermissionsReturnsUnionAndSources(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "effective permissions"})
+	require.NoError(t, err)
+	manager, err := store.CreateUserWithoutPassword(db.User{Username: "permission-manager", Name: "Permission Manager", Email: "permission-manager@example.test"})
+	require.NoError(t, err)
+	member, err := store.CreateUserWithoutPassword(db.User{Username: "permission-member", Name: "Permission Member", Email: "permission-member@example.test"})
+	require.NoError(t, err)
+	viewRole, err := store.CreateProjectRole(db.Role{ID: "template_viewer", Name: "Template viewer", ProjectID: &project.ID, Permissions: db.CanViewTemplates, Revision: 1})
+	require.NoError(t, err)
+	keyRole, err := store.CreateProjectRole(db.Role{ID: "key_user", Name: "Key user", ProjectID: &project.ID, Permissions: db.CanUseAccessKeys, Revision: 1})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUserWithRoleRefs(db.ProjectUser{ProjectID: project.ID, UserID: member.ID, Revision: 1}, []db.ProjectRoleID{viewRole.ID, keyRole.ID})
+	require.NoError(t, err)
+
+	controller := NewRolesController(store, features.NewCapabilityProvider(store))
+	request := httptest.NewRequest(http.MethodGet, "/api/project/1/users/2/effective-permissions", nil)
+	request = helpers.SetContextValue(request, "project", project)
+	request = helpers.SetContextValue(request, "user", &manager)
+	request = helpers.SetContextValue(request, "permissions", db.CanManageProjectUsers)
+	request = mux.SetURLVars(request, map[string]string{"user_id": strconv.Itoa(member.ID)})
+	response := httptest.NewRecorder()
+	controller.GetEffectiveProjectPermissions(response, request)
+
+	assert.Equal(t, http.StatusOK, response.Code)
+	var effective pro_interfaces.EffectiveProjectPermissions
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &effective))
+	assert.Equal(t, []pro_interfaces.PermissionID{"project.templates.view", "project.access_keys.use"}, effective.Permissions)
+	assert.Equal(t, []pro_interfaces.EffectiveProjectPermissionSource{
+		{Permission: "project.templates.view", RoleID: string(viewRole.ID), RoleName: viewRole.Name},
+		{Permission: "project.access_keys.use", RoleID: string(keyRole.ID), RoleName: keyRole.Name},
+	}, effective.Sources)
 }
 
 func TestProjectRoleControllerForceDeleteReportsImpactThenDeletes(t *testing.T) {

@@ -157,7 +157,7 @@ func (c *IntegrationController) workflowIntegrationAuthorityAllowed(w http.Respo
 		return false
 	}
 	principal, err := c.store.GetUser(*integration.WorkflowUserID)
-	if err != nil {
+	if err != nil || principal.Disabled {
 		w.WriteHeader(http.StatusForbidden)
 		return false
 	}

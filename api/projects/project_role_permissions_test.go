@@ -72,7 +72,7 @@ func TestProjectMiddlewareResolvesCustomRoleByScopedImmutableID(t *testing.T) {
 
 	ProjectMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		called = true
-		assert.Equal(t, db.CanViewProjectResources, helpers.GetFromContext(r, "permissions"))
+		assert.Equal(t, db.AllProjectResourceViewPermissions, helpers.GetFromContext(r, "permissions"))
 		assert.Equal(t, []db.Role{store.role}, helpers.GetFromContext(r, "projectRoles"))
 	})).ServeHTTP(recorder, request)
 

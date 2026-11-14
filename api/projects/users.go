@@ -182,6 +182,7 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 		for _, role := range user.Roles {
 			item.EffectivePermissions |= role.Permissions
 		}
+		item.EffectivePermissions = db.NormalizeProjectResourcePermissions(item.EffectivePermissions)
 		for _, role := range member.MappedRoles {
 			item.MappedRoles = append(item.MappedRoles, mappedRole{Provider: role.Provider, Group: role.Group, Role: role.RoleSlug})
 		}

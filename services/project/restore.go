@@ -127,6 +127,7 @@ func (e BackupRole) Restore(b *BackupDB) error {
 			role.Permissions |= db.CanReadProject | db.CanApproveWorkflows
 		}
 	}
+	role.Permissions = db.NormalizeProjectResourcePermissions(role.Permissions)
 	newRole, err := b.store.CreateRole(role)
 	if err != nil {
 		return err

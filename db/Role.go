@@ -102,7 +102,7 @@ func ValidateRole(role Role, isNew bool) error {
 	// Built-in roles define the complete current project-permission catalog.
 	// Keeping this derived from Owner avoids rejecting newer EX bits in role
 	// imports while still rejecting values outside the typed permission space.
-	if role.Permissions&^ProjectOwner.GetPermissions() != 0 {
+	if role.Permissions&^(ProjectOwner.GetPermissions()|CanManageProjectResources|CanViewProjectResources) != 0 {
 		return &common_errors.ValidationError{Message: "Role permissions contain unknown bits"}
 	}
 	if !isNew {

@@ -2412,6 +2412,30 @@ definitions:
       decisions:
         type: array
         items: {$ref: '#/definitions/EXEffectivePermissionDecision'}
+  EXProjectPermissionDefinition:
+    type: object
+    required: [id, description, group, action, scope, permission, capability_prerequisites]
+    properties:
+      id: {type: string, example: project.templates.view}
+      description: {type: string, example: View templates}
+      group: {type: string, example: templates}
+      action: {type: string, example: view}
+      scope: {type: string, enum: [project]}
+      permission: {type: integer}
+      capability_prerequisites: {type: array, items: {type: string}}
+  EXEffectiveProjectPermissionSource:
+    type: object
+    required: [permission, role_id, role_name]
+    properties:
+      permission: {type: string, example: project.templates.view}
+      role_id: {type: string, example: role_0123456789abcdef0123456789abcdef}
+      role_name: {type: string, example: Template reader}
+  EXEffectiveProjectPermissions:
+    type: object
+    required: [permissions, sources]
+    properties:
+      permissions: {type: array, items: {type: string}}
+      sources: {type: array, items: {$ref: '#/definitions/EXEffectiveProjectPermissionSource'}}
   EXGlobalPermissionDefinition:
     type: object
     required: [id, description, scope, permission, capability_prerequisites]
@@ -2466,6 +2490,23 @@ definitions:
       enabled: {type: boolean}
       revision: {type: integer}
 paths:
+  /project/{project_id}/roles/permissions:
+    get:
+      tags: [project]
+      summary: List grouped project permission catalog
+      description: Returns assignable project permissions with stable resource group and action fields for the role matrix.
+      responses:
+        '200': {description: Project permission catalog, schema: {type: array, items: {$ref: '#/definitions/EXProjectPermissionDefinition'}}}
+        '403': {description: Permission denied or capability unavailable}
+  /project/{project_id}/users/{user_id}/effective-permissions:
+    get:
+      tags: [project]
+      summary: Get effective project permissions for a member
+      description: The member may inspect themself; project members managers may inspect any member.
+      responses:
+        '200': {description: Effective project permission union with role sources, schema: {$ref: '#/definitions/EXEffectiveProjectPermissions'}}
+        '403': {description: Permission denied}
+        '404': {description: Project member not found}
   /roles:
     get:
       tags: [user]

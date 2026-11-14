@@ -43,7 +43,7 @@ func TestMigration22029BackfillsProjectRoleIdentityAndAssignments(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, db.ProjectRoleID("legacy-viewer"), role.ID)
 	assert.Equal(t, 1, role.Revision)
-	assert.True(t, role.Permissions&db.CanViewProjectResources != 0)
+	assert.True(t, role.Permissions.Can(db.CanViewProjectResources))
 
 	assignment, err := store.GetProjectUser(project.ID, user.ID)
 	require.NoError(t, err)

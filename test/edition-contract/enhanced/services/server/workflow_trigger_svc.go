@@ -798,9 +798,9 @@ func (s *workflowTriggerService) authorize(
 		if getErr != nil {
 			return pro_interfaces.ErrWorkflowTriggerPermissionDenied
 		}
-		permissions = role.Permissions
+		permissions = db.NormalizeProjectResourcePermissions(role.Permissions)
 	}
-	if permissions&permission != permission {
+	if !permissions.Can(permission) {
 		return pro_interfaces.ErrWorkflowTriggerPermissionDenied
 	}
 	return nil

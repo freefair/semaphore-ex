@@ -50,6 +50,7 @@ func ProjectMiddleware(next http.Handler) http.Handler {
 		for _, role := range member.MappedRoles {
 			permissions |= role.RolePermissions
 		}
+		permissions = db.NormalizeProjectResourcePermissions(permissions)
 
 		basePermissions := permissions
 		if helpers.HasParam("template_id", r) {
@@ -102,7 +103,7 @@ func GetMustCanMiddleware(permissions db.ProjectUserPermission) mux.MiddlewareFu
 				required = db.CanReadProject
 			}
 
-			if !me.Admin && userPerms&required != required {
+			if !me.Admin && !userPerms.Can(required) {
 				projectID := 0
 				if project, ok := helpers.GetOkFromContext(r, "project"); ok {
 					projectID = project.(db.Project).ID

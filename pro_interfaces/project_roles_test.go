@@ -10,37 +10,36 @@ import (
 
 func TestProjectPermissionCatalogIsStableTypedAndIsolated(t *testing.T) {
 	catalog := ProjectPermissionCatalog()
-	require.Len(t, catalog, 22)
-	assert.Equal(t, []PermissionID{
-		PermissionRunProjectTasks,
-		PermissionReadProject,
-		PermissionApproveWorkflow,
-		PermissionUpdateProject,
-		PermissionViewProjectResources,
-		PermissionManageProjectResources,
-		PermissionManageProjectUsers,
-		PermissionViewWorkflow,
-		PermissionEditWorkflow,
-		PermissionStartWorkflow,
-		PermissionStopWorkflow,
-		PermissionAdministerWorkflow,
-		PermissionListGrantedCredentials,
-		PermissionConsumeGrantedCredentials,
-		PermissionOverrideDeploymentWindow,
-		PermissionManagePolicyGuardrails,
-		PermissionRollbackPolicyGuardrails,
-		PermissionReadTaskGroups,
-		PermissionCreateTaskGroups,
-		PermissionUpdateTaskGroups,
-		PermissionDeleteTaskGroups,
-		PermissionShareTaskGroups,
-	}, []PermissionID{
-		catalog[0].ID, catalog[1].ID, catalog[2].ID, catalog[3].ID, catalog[4].ID,
-		catalog[5].ID, catalog[6].ID, catalog[7].ID, catalog[8].ID, catalog[9].ID,
-		catalog[10].ID, catalog[11].ID, catalog[12].ID, catalog[13].ID, catalog[14].ID,
-		catalog[15].ID, catalog[16].ID, catalog[17].ID, catalog[18].ID, catalog[19].ID,
-		catalog[20].ID, catalog[21].ID,
+	require.Len(t, catalog, 53)
+	ids := make([]PermissionID, 0, len(catalog))
+	for _, definition := range catalog {
+		ids = append(ids, definition.ID)
+	}
+	// Every permission ID clients already store keeps its meaning. Only the two
+	// coarse resource IDs are replaced by the per-resource actions (D5).
+	assert.Subset(t, ids, []PermissionID{
+		PermissionRunProjectTasks, PermissionReadProject, PermissionApproveWorkflow,
+		PermissionUpdateProject, PermissionManageProjectUsers, PermissionViewWorkflow,
+		PermissionEditWorkflow, PermissionStartWorkflow, PermissionStopWorkflow,
+		PermissionAdministerWorkflow, PermissionListGrantedCredentials,
+		PermissionConsumeGrantedCredentials, PermissionOverrideDeploymentWindow,
+		PermissionManagePolicyGuardrails, PermissionRollbackPolicyGuardrails,
+		PermissionReadTaskGroups, PermissionCreateTaskGroups, PermissionUpdateTaskGroups,
+		PermissionDeleteTaskGroups, PermissionShareTaskGroups,
 	})
+	assert.NotContains(t, ids, PermissionViewProjectResources)
+	assert.NotContains(t, ids, PermissionManageProjectResources)
+	resourceCounts := map[string]int{}
+	for _, definition := range catalog {
+		if definition.Group != "" {
+			resourceCounts[definition.Group]++
+			assert.NotEmpty(t, definition.Action)
+		}
+	}
+	assert.Equal(t, map[string]int{
+		"templates": 4, "inventories": 4, "repositories": 4, "access_keys": 5,
+		"environments": 4, "schedules": 4, "integrations": 4, "views": 4,
+	}, resourceCounts)
 
 	seenPermissions := make(map[db.ProjectUserPermission]struct{}, len(catalog))
 	for _, definition := range catalog {

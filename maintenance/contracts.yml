@@ -1,5 +1,123 @@
 format: 1
 symbols:
+  - name: pro_interfaces:EffectiveProjectPermissionSource
+    signature: struct{Permission pro_interfaces.PermissionID "json:\"permission\""; RoleID string "json:\"role_id\""; RoleName string "json:\"role_name\""}
+    implementation: core
+  - name: pro_interfaces:EffectiveProjectPermissions
+    signature: struct{Permissions []pro_interfaces.PermissionID "json:\"permissions\""; Sources []pro_interfaces.EffectiveProjectPermissionSource "json:\"sources\""}
+    implementation: core
+  - name: db:AllProjectResourceMutationPermissions
+    signature: db.ProjectUserPermission = 33626895538978816
+    implementation: core
+  - name: db:AllProjectResourcePermissions
+    signature: db.ProjectUserPermission = 36028797014769664
+    implementation: core
+  - name: db:AllProjectResourceViewPermissions
+    signature: db.ProjectUserPermission = 2401901475790848
+    implementation: core
+    behavior_tests:
+    - db/ProjectUser_ex_test.go::TestNormalizeProjectResourcePermissionsKeepsLegacySemanticsFailClosed
+    - db/sql/migration_2_20_66_test.go::TestMigration_2_20_18_EX_1_3_SplitsAndRestoresEveryLegacyCustomRoleBit
+    - api/project_permission_routes_ex_test.go::TestProjectPermissionCatalogRouteMatrix
+  - name: db:CanCreateAccessKeys
+    signature: db.ProjectUserPermission = 34359738368
+    implementation: core
+  - name: db:CanCreateEnvironments
+    signature: db.ProjectUserPermission = 1099511627776
+    implementation: core
+  - name: db:CanCreateIntegrations
+    signature: db.ProjectUserPermission = 281474976710656
+    implementation: core
+  - name: db:CanCreateInventories
+    signature: db.ProjectUserPermission = 134217728
+    implementation: core
+  - name: db:CanCreateRepositories
+    signature: db.ProjectUserPermission = 2147483648
+    implementation: core
+  - name: db:CanCreateSchedules
+    signature: db.ProjectUserPermission = 17592186044416
+    implementation: core
+  - name: db:CanCreateTemplates
+    signature: db.ProjectUserPermission = 8388608
+    implementation: core
+  - name: db:CanCreateViews
+    signature: db.ProjectUserPermission = 4503599627370496
+    implementation: core
+  - name: db:CanDeleteAccessKeys
+    signature: db.ProjectUserPermission = 137438953472
+    implementation: core
+  - name: db:CanDeleteEnvironments
+    signature: db.ProjectUserPermission = 4398046511104
+    implementation: core
+  - name: db:CanDeleteIntegrations
+    signature: db.ProjectUserPermission = 1125899906842624
+    implementation: core
+  - name: db:CanDeleteInventories
+    signature: db.ProjectUserPermission = 536870912
+    implementation: core
+  - name: db:CanDeleteRepositories
+    signature: db.ProjectUserPermission = 8589934592
+    implementation: core
+  - name: db:CanDeleteSchedules
+    signature: db.ProjectUserPermission = 70368744177664
+    implementation: core
+  - name: db:CanDeleteTemplates
+    signature: db.ProjectUserPermission = 33554432
+    implementation: core
+  - name: db:CanDeleteViews
+    signature: db.ProjectUserPermission = 18014398509481984
+    implementation: core
+  - name: db:CanUpdateAccessKeys
+    signature: db.ProjectUserPermission = 68719476736
+    implementation: core
+  - name: db:CanUpdateEnvironments
+    signature: db.ProjectUserPermission = 2199023255552
+    implementation: core
+  - name: db:CanUpdateIntegrations
+    signature: db.ProjectUserPermission = 562949953421312
+    implementation: core
+  - name: db:CanUpdateInventories
+    signature: db.ProjectUserPermission = 268435456
+    implementation: core
+  - name: db:CanUpdateRepositories
+    signature: db.ProjectUserPermission = 4294967296
+    implementation: core
+  - name: db:CanUpdateSchedules
+    signature: db.ProjectUserPermission = 35184372088832
+    implementation: core
+  - name: db:CanUpdateTemplates
+    signature: db.ProjectUserPermission = 16777216
+    implementation: core
+  - name: db:CanUpdateViews
+    signature: db.ProjectUserPermission = 9007199254740992
+    implementation: core
+  - name: db:CanUseAccessKeys
+    signature: db.ProjectUserPermission = 274877906944
+    implementation: core
+  - name: db:CanViewAccessKeys
+    signature: db.ProjectUserPermission = 17179869184
+    implementation: core
+  - name: db:CanViewEnvironments
+    signature: db.ProjectUserPermission = 549755813888
+    implementation: core
+  - name: db:CanViewIntegrations
+    signature: db.ProjectUserPermission = 140737488355328
+    implementation: core
+  - name: db:CanViewInventories
+    signature: db.ProjectUserPermission = 67108864
+    implementation: core
+  - name: db:CanViewRepositories
+    signature: db.ProjectUserPermission = 1073741824
+    implementation: core
+  - name: db:CanViewSchedules
+    signature: db.ProjectUserPermission = 8796093022208
+    implementation: core
+  - name: db:CanViewTemplates
+    signature: db.ProjectUserPermission = 4194304
+    implementation: core
+  - name: db:CanViewViews
+    signature: db.ProjectUserPermission = 2251799813685248
+    implementation: core
   - name: api/projects:NewCrossProjectTemplateController
     signature: func(_ pro_interfaces.CrossProjectTemplateService) pro_interfaces.CrossProjectTemplateController
     selected_signature: func(service pro_interfaces.CrossProjectTemplateService) pro_interfaces.CrossProjectTemplateController
@@ -266,6 +384,12 @@ symbols:
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
     implementation: local
+  - name: api:RolesController.GetEffectiveProjectPermissions
+    signature: func(w net/http.ResponseWriter, r *net/http.Request)
+    selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
+    implementation: local
+    behavior_tests:
+    - test/edition-contract/enhanced/api/roles_test.go::TestEffectiveProjectPermissionsReturnsUnionAndSources
   - name: api:RolesController.GetProjectRole
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
@@ -2820,7 +2944,7 @@ symbols:
     behavior_tests:
     - db/Workflow_inputs_test.go::TestIsValidWorkflowOutputName
   - name: db:KnownProjectRolePermissions
-    signature: db.ProjectUserPermission = 4194303
+    signature: db.ProjectUserPermission = 36028797018963967
     implementation: core
     behavior_tests:
       - db/Role_ex_test.go::TestKnownProjectRolePermissionsIncludesEnhancedBits
@@ -3964,6 +4088,13 @@ symbols:
   - name: db:ProjectUserPermission
     signature: int64
     implementation: core
+  - name: db:NormalizeProjectResourcePermissions
+    signature: func(permissions db.ProjectUserPermission) db.ProjectUserPermission
+    implementation: core
+    behavior_tests:
+    - db/ProjectUser_ex_test.go::TestNormalizeProjectResourcePermissionsKeepsLegacySemanticsFailClosed
+    - db/sql/project_role_test.go::TestRoleWritesAndReadsNormalizeLegacyResourcePermissions
+    - services/project/backup_permissions_ex_test.go::TestEXBackupRestoreNormalizesLegacyCoarseRolePermissions
   - name: db:ProjectUserProps
     signature: db.ObjectProps
     implementation: core
@@ -5181,7 +5312,7 @@ symbols:
       string}
     implementation: core
   - name: db:TemplateGrantPermissions
-    signature: db.ProjectUserPermission = 1048581
+    signature: db.ProjectUserPermission = 17825793
     implementation: core
   - name: db:TemplateJWTParams
     signature: >-
@@ -9826,7 +9957,7 @@ symbols:
     - pro_interfaces/project_roles_test.go::TestProjectPermissionCatalogIsStableTypedAndIsolated
   - name: pro_interfaces:PermissionDefinition
     signature: >-
-      struct{ID pro_interfaces.PermissionID "json:\"id\""; Description string "json:\"description\""; Scope pro_interfaces.PermissionScope
+      struct{ID pro_interfaces.PermissionID "json:\"id\""; Description string "json:\"description\""; Group string "json:\"group,omitempty\""; Action string "json:\"action,omitempty\""; Scope pro_interfaces.PermissionScope
       "json:\"scope\""; Permission db.ProjectUserPermission "json:\"permission\""; CapabilityPrerequisites []pro_interfaces.CapabilityID
       "json:\"capability_prerequisites\""}
     implementation: core

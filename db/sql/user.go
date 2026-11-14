@@ -518,6 +518,9 @@ func (d *SqlDb) GetProjectUserRoles(projectID, userID int) (roles []db.Role, err
 		}
 		roles = append(roles, role)
 	}
+	for index := range roles {
+		roles[index].Permissions = db.NormalizeProjectResourcePermissions(roles[index].Permissions)
+	}
 	return
 }
 

@@ -40,7 +40,7 @@ func (c *TaskController) PreviewTask(w http.ResponseWriter, r *http.Request) {
 	taskObj := helpers.GetFromContext(r, "task").(db.Task)
 	if taskObj.SSHKeys != nil {
 		permissions, ok := helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
-		if !user.Admin && (!ok || !permissions.Can(db.CanManageProjectResources)) {
+		if !user.Admin && (!ok || !permissions.Can(db.CanUseAccessKeys)) {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
@@ -270,7 +270,7 @@ func (c *TaskController) authorizeWorkflowTask(
 			user := helpers.UserFromContext(r)
 			permissions, ok := helpers.GetOkFromContext(r, "permissions")
 			value, valid := permissions.(db.ProjectUserPermission)
-			return user != nil && (user.Admin || ok && valid && value.Can(db.CanManageProjectResources))
+			return user != nil && (user.Admin || ok && valid && value.Can(db.CanUpdateTemplates))
 		}
 		if permission != pro_interfaces.PermissionViewWorkflow {
 			user := helpers.UserFromContext(r)

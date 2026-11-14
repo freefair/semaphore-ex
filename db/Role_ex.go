@@ -29,7 +29,8 @@ const KnownProjectRolePermissions = CanRunProjectTasks | CanUpdateProject | CanM
 	CanManageProjectUsers | CanViewProjectResources | CanViewWorkflows |
 	CanEditWorkflows | CanStartWorkflows | CanStopWorkflows | CanAdministerWorkflows |
 	CanListGrantedCredentials | CanConsumeGrantedCredentials | CanOverrideDeploymentWindow | CanManagePolicyGuardrails | CanRollbackPolicyGuardrails | CanReadTaskGroups | CanCreateTaskGroups |
-	CanUpdateTaskGroups | CanDeleteTaskGroups | CanShareTaskGroups | CanReadProject | CanApproveWorkflows
+	CanUpdateTaskGroups | CanDeleteTaskGroups | CanShareTaskGroups | CanReadProject | CanApproveWorkflows |
+	AllProjectResourcePermissions
 
 // ValidateProjectRole validates the Enhanced project-scoped role contract.
 // Slug remains an internal compatibility key; callers address roles by ID.
@@ -111,14 +112,17 @@ type TemplatePermissionContext struct {
 // broad project role and independent template actions.
 func ProjectPermissionsToTemplate(permissions ProjectUserPermission) TemplatePermission {
 	var result TemplatePermission
-	if permissions.Can(CanViewProjectResources) {
+	if permissions.Can(CanViewTemplates) {
 		result |= CanReadTemplate
 	}
 	if permissions.Can(CanRunProjectTasks) {
 		result |= CanRunTemplate
 	}
-	if permissions.Can(CanManageProjectResources) {
-		result |= CanEditTemplate | CanDeleteTemplate
+	if permissions.Can(CanUpdateTemplates) {
+		result |= CanEditTemplate
+	}
+	if permissions.Can(CanDeleteTemplates) {
+		result |= CanDeleteTemplate
 	}
 	return result
 }
@@ -143,7 +147,10 @@ func TemplatePermissionsToProject(permissions TemplatePermission) ProjectUserPer
 	if permissions.Can(CanRunTemplate) {
 		result |= CanRunProjectTasks
 	}
-	if permissions.Can(CanEditTemplate) || permissions.Can(CanDeleteTemplate) {
+	if permissions.Can(CanEditTemplate) {
+		result |= CanManageProjectResources
+	}
+	if permissions.Can(CanDeleteTemplate) {
 		result |= CanManageProjectResources
 	}
 	return result

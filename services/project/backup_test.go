@@ -634,10 +634,10 @@ func TestRestore_DropsUnknownPermissionBits(t *testing.T) {
   "keys": [{"name": "noop", "owner": "", "type": "none"}],
   "meta": {"name": "Restored Roles", "type": ""},
   "repositories": [{"git_branch": "master", "git_url": "git@example.com:test/test.git", "name": "Repo", "ssh_key": "noop"}],
-  "roles": [{"name": "ops", "permissions": 1099511627777}],
+  "roles": [{"name": "ops", "permissions": 36028797018963976}],
   "templates": [{
     "app": "", "name": "Tpl", "playbook": "test.yml", "repository": "Repo", "type": "",
-    "roles": [{"role": "ops", "is_global": false, "permissions": 1099511627780}],
+    "roles": [{"role": "ops", "is_global": false, "permissions": 36028797023158272}],
     "vaults": [], "view": null, "environments": []
   }]
 }`
@@ -653,7 +653,8 @@ func TestRestore_DropsUnknownPermissionBits(t *testing.T) {
 	roles, err := store.GetProjectRoles(project.ID)
 	require.NoError(t, err)
 	require.Len(t, roles, 1)
-	assert.Equal(t, db.CanRunProjectTasks|db.CanReadProject|db.CanApproveWorkflows, roles[0].Permissions)
+	assert.Equal(t, db.CanManageProjectUsers|db.CanReadProject|db.CanApproveWorkflows, roles[0].Permissions)
+	assert.Zero(t, roles[0].Permissions&(db.CanViewProjectResources|db.CanManageProjectResources))
 
 	templates, err := store.GetTemplates(project.ID, db.TemplateFilter{}, db.RetrieveQueryParams{})
 	require.NoError(t, err)
@@ -661,7 +662,8 @@ func TestRestore_DropsUnknownPermissionBits(t *testing.T) {
 	perms, err := store.GetTemplateRoles(project.ID, templates[0].ID)
 	require.NoError(t, err)
 	require.Len(t, perms, 1)
-	assert.Equal(t, db.CanManageProjectResources, perms[0].Permissions)
+	// Bit 55 is unknown and dropped; the template view bit survives as read access.
+	assert.Equal(t, db.CanReadTemplate, perms[0].AllowedPermissions)
 }
 
 // Verify refuses an integration whose target is missing, doubled or unknown
@@ -943,7 +945,7 @@ func TestRestore_LiftsMasksOfAVersion2File(t *testing.T) {
 	roles, err := store.GetProjectRoles(project.ID)
 	require.NoError(t, err)
 	require.Len(t, roles, 1)
-	assert.Equal(t, db.CanRunProjectTasks|db.CanManageProjectResources|db.CanStartWorkflows|db.CanEditWorkflows|db.CanApproveWorkflows|db.CanReadProject|db.CanViewProjectResources|db.CanViewWorkflows, roles[0].Permissions, "5 lifted: run and approve workflows, edit workflows, read")
+	assert.Equal(t, db.CanRunProjectTasks|db.AllProjectResourcePermissions|db.CanStartWorkflows|db.CanEditWorkflows|db.CanApproveWorkflows|db.CanReadProject|db.CanViewWorkflows, roles[0].Permissions, "5 lifted: run and approve workflows, edit workflows, read")
 
 	templates, err := store.GetTemplates(project.ID, db.TemplateFilter{}, db.RetrieveQueryParams{})
 	require.NoError(t, err)
@@ -965,8 +967,8 @@ func TestRestore_ReadBitByFileVersion(t *testing.T) {
 		wantRole  db.ProjectUserPermission
 		wantGrant db.TemplatePermission
 	}{
-		{3, 0, db.CanReadProject | db.CanViewProjectResources | db.CanViewWorkflows, db.CanReadTemplate | db.CanRunTemplate},
-		{3, 1, db.CanRunProjectTasks | db.CanReadProject | db.CanViewProjectResources | db.CanViewWorkflows, db.CanReadTemplate | db.CanRunTemplate},
+		{3, 0, db.CanReadProject | db.AllProjectResourceViewPermissions | db.CanViewWorkflows, db.CanReadTemplate | db.CanRunTemplate},
+		{3, 1, db.CanRunProjectTasks | db.CanReadProject | db.AllProjectResourceViewPermissions | db.CanViewWorkflows, db.CanReadTemplate | db.CanRunTemplate},
 		{4, 0, 0, db.CanRunTemplate},
 	}
 	for _, tt := range tests {

@@ -29,7 +29,7 @@ func applyEffectiveTemplatePermissions(
 	templatePermissions db.ProjectUserPermission,
 ) db.ProjectUserPermission {
 	const templateMappedProjectPermissions = db.CanRunProjectTasks |
-		db.CanManageProjectResources | db.CanViewProjectResources
+		db.CanViewTemplates | db.CanUpdateTemplates | db.CanDeleteTemplates
 	return projectPermissions&^templateMappedProjectPermissions | templatePermissions
 }
 

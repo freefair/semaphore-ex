@@ -148,7 +148,7 @@ func (d *SqlDb) batchTaskViewers(projectID, templateID int, workflowRunID *int) 
 					break
 				}
 				role.Slug = *assignment.Slug
-				role.Permissions = *assignment.Permissions
+				role.Permissions = db.NormalizeProjectResourcePermissions(*assignment.Permissions)
 				role.ProjectID = assignment.RoleProjectID
 				if workflowRunID != nil && role.ProjectID != nil {
 					identities = append(identities, db.ProjectWorkflowRoleIdentity{Reference: db.ProjectRoleReferenceForCustomRole(role.ID), Permissions: role.Permissions, Revision: *assignment.Revision, Origin: db.ProjectWorkflowRoleOriginManual})

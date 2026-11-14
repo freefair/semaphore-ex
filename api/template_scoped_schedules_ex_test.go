@@ -56,6 +56,10 @@ func TestScopedTemplateRouteDoesNotExposeProjectSchedules(t *testing.T) {
 	role.Permissions = db.CanReadProject
 	role, err = store.UpdateProjectRole(project.ID, role, role.Revision)
 	require.NoError(t, err)
+	assert.Equal(t, http.StatusForbidden, send(base+"/schedules").Code, "project read alone must not disclose schedules")
+	role.Permissions |= db.CanViewSchedules
+	role, err = store.UpdateProjectRole(project.ID, role, role.Revision)
+	require.NoError(t, err)
 	allowed := send(base + "/schedules")
 	assert.Equal(t, http.StatusOK, allowed.Code, allowed.Body.String())
 	assert.Contains(t, allowed.Body.String(), "private schedule")

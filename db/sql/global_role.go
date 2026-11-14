@@ -22,6 +22,7 @@ func (d *SqlDb) GetGlobalRoles() (roles []db.Role, err error) {
 }
 
 func (d *SqlDb) CreateGlobalRole(role db.Role) (db.Role, error) {
+	role.Permissions = db.NormalizeProjectResourcePermissions(role.Permissions)
 	role.ProjectID = nil
 	role.Name = strings.TrimSpace(role.Name)
 	if role.Slug == "" {
@@ -37,6 +38,7 @@ func (d *SqlDb) UpdateGlobalRole(
 	role db.Role,
 	expectedRevision int,
 ) (db.Role, error) {
+	role.Permissions = db.NormalizeProjectResourcePermissions(role.Permissions)
 	if expectedRevision <= 0 || role.Revision != expectedRevision {
 		return db.Role{}, db.ErrGlobalRoleRevisionConflict
 	}
