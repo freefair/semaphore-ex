@@ -366,7 +366,9 @@ func (c *UsersController) SetUserDisabled(w http.ResponseWriter, r *http.Request
 		helpers.WriteError(w, err)
 		return
 	}
-	if !canManageUsers || editor.ID == target.ID {
+	// Same gate as the sibling user handlers: delegated user managers never
+	// change the lifecycle of an administrator.
+	if !canManageUsers || editor.ID == target.ID || (target.Admin && !editor.Admin) {
 		helpers.RecordDenied(r, "admin", 0)
 		w.WriteHeader(http.StatusForbidden)
 		return
