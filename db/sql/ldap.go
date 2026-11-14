@@ -30,17 +30,17 @@ func (d *SqlDb) SaveLDAPProvider(provider db.LDAPProvider) error {
 			`update ldap_provider set display_name=?, state=?, server_url=?, tls_mode=?, trust_mode=?,
 			 ca_pem=?, bind_dn=?, encrypted_bind_password=?, search_base_dn=?, user_filter=?,
 			 identity_attribute=?, username_attribute=?, name_attribute=?, email_attribute=?,
-			 group_search_base_dn=?, group_user_filter=?, group_filter=?, group_identity_attribute=?,
+			 group_search_base_dn=?, group_user_filter=?, group_filter=?, group_identity_attribute=?, group_name_attribute=?,
 			 group_member_attribute=?, group_max_depth=?,
-			 readiness_status=?, readiness_code=?, readiness_checked_at=?, recovery_admin_user_id=?,
+			 readiness_status=?, readiness_code=?, readiness_detail=?, readiness_checked_at=?, recovery_admin_user_id=?,
 			 recovery_checked_at=?, config_version=config_version+1, updated=? where id=?`,
 			provider.DisplayName, provider.State, provider.ServerURL, provider.TLSMode, provider.TrustMode,
 			provider.CAPEM, provider.BindDN, provider.EncryptedBindPassword, provider.SearchBaseDN,
 			provider.UserFilter, provider.IdentityAttribute, provider.UsernameAttribute,
 			provider.NameAttribute, provider.EmailAttribute,
 			provider.GroupSearchBaseDN, provider.GroupUserFilter, provider.GroupFilter,
-			provider.GroupIdentityAttribute, provider.GroupMemberAttribute, provider.GroupMaxDepth,
-			provider.ReadinessStatus, provider.ReadinessCode, provider.ReadinessCheckedAt, provider.RecoveryAdminUserID,
+			provider.GroupIdentityAttribute, provider.GroupNameAttribute, provider.GroupMemberAttribute, provider.GroupMaxDepth,
+			provider.ReadinessStatus, provider.ReadinessCode, provider.ReadinessDetail, provider.ReadinessCheckedAt, provider.RecoveryAdminUserID,
 			provider.RecoveryCheckedAt, provider.Updated, provider.ID,
 		)
 		return err
@@ -50,17 +50,17 @@ func (d *SqlDb) SaveLDAPProvider(provider db.LDAPProvider) error {
 			 (id, display_name, state, server_url, tls_mode, trust_mode, ca_pem, bind_dn,
 			 encrypted_bind_password, search_base_dn, user_filter, identity_attribute,
 			 username_attribute, name_attribute, email_attribute, group_search_base_dn,
-			 group_user_filter, group_filter, group_identity_attribute, group_member_attribute,
+			 group_user_filter, group_filter, group_identity_attribute, group_name_attribute, group_member_attribute,
 			 group_max_depth, readiness_status,
-			 readiness_code, readiness_checked_at, recovery_admin_user_id, recovery_checked_at,
-			 config_version, created, updated) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+			 readiness_code, readiness_detail, readiness_checked_at, recovery_admin_user_id, recovery_checked_at,
+			 config_version, created, updated) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
 			provider.ID, provider.DisplayName, provider.State, provider.ServerURL, provider.TLSMode,
 			provider.TrustMode, provider.CAPEM, provider.BindDN, provider.EncryptedBindPassword,
 			provider.SearchBaseDN, provider.UserFilter, provider.IdentityAttribute,
 			provider.UsernameAttribute, provider.NameAttribute, provider.EmailAttribute,
 			provider.GroupSearchBaseDN, provider.GroupUserFilter, provider.GroupFilter,
-			provider.GroupIdentityAttribute, provider.GroupMemberAttribute, provider.GroupMaxDepth,
-			provider.ReadinessStatus, provider.ReadinessCode, provider.ReadinessCheckedAt,
+			provider.GroupIdentityAttribute, provider.GroupNameAttribute, provider.GroupMemberAttribute, provider.GroupMaxDepth,
+			provider.ReadinessStatus, provider.ReadinessCode, provider.ReadinessDetail, provider.ReadinessCheckedAt,
 			provider.RecoveryAdminUserID, provider.RecoveryCheckedAt, provider.Created, provider.Updated,
 		)
 		return err
@@ -73,14 +73,15 @@ func (d *SqlDb) SaveLDAPReadiness(
 	providerID string,
 	status string,
 	code string,
+	detail string,
 	checkedAt time.Time,
 	recoveryAdminUserID *int,
 	expectedConfigVersion int,
 ) error {
 	result, err := d.exec(
-		`update ldap_provider set readiness_status=?, readiness_code=?, readiness_checked_at=?,
+		`update ldap_provider set readiness_status=?, readiness_code=?, readiness_detail=?, readiness_checked_at=?,
 			 recovery_admin_user_id=?, recovery_checked_at=?, updated=? where id=? and config_version=?`,
-		status, code, checkedAt, recoveryAdminUserID, checkedAt, checkedAt, providerID, expectedConfigVersion,
+		status, code, detail, checkedAt, recoveryAdminUserID, checkedAt, checkedAt, providerID, expectedConfigVersion,
 	)
 	if err != nil {
 		return validateMutationResult(result, err)
@@ -127,6 +128,14 @@ func (d *SqlDb) ConfigureLDAPProvider(
 		)
 		if readinessErr != nil || readyAdmins != 1 {
 			return db.ErrLDAPReadiness
+		}
+		enabledMappings, mappingErr := tx.SelectInt(d.PrepareQuery(
+			"select count(1) from ldap_group_mapping where provider_id=? and enabled=true"), providerID)
+		if mappingErr != nil {
+			return mappingErr
+		}
+		if enabledMappings == 0 {
+			return db.ErrLDAPNoEnabledGroupMapping
 		}
 	}
 	if state == "selected_users" && len(selectedUserIDs) == 0 {

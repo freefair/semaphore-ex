@@ -101,6 +101,12 @@ definitions:
     $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailDiff"
   PolicyGuardrailEvaluationRecord:
     $ref: "./api-docs-ex.yml#/definitions/PolicyGuardrailEvaluationRecord"
+  LDAPReadiness:
+    $ref: "./api-docs-ex.yml#/definitions/LDAPReadiness"
+  LDAPDirectoryGroup:
+    $ref: "./api-docs-ex.yml#/definitions/LDAPDirectoryGroup"
+  LDAPGroupMapping:
+    $ref: "./api-docs-ex.yml#/definitions/LDAPGroupMapping"
   Option:
     type: object
     properties:
@@ -5557,6 +5563,10 @@ paths:
     $ref: "./api-docs-ex.yml#/paths/~1policy-guardrails~1rollback"
   /terraform/{alias}:
     $ref: "./api-docs-ex.yml#/paths/~1terraform~1{alias}"
+  /capabilities/ldap/groups:
+    $ref: "./api-docs-ex.yml#/paths/~1capabilities~1ldap~1groups"
+  /capabilities/ldap/test:
+    $ref: "./api-docs-ex.yml#/paths/~1capabilities~1ldap~1test"
   /project/{project_id}/inventory/{inventory_id}/terraform/aliases:
     $ref: "./api-docs-ex.yml#/paths/~1project~1{project_id}~1inventory~1{inventory_id}~1terraform~1aliases"
   /project/{project_id}/inventory/{inventory_id}/terraform/aliases/{alias_id}:

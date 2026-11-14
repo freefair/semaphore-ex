@@ -44,6 +44,7 @@ type ldapProviderBody struct {
 	GroupUserFilter        string                       `json:"group_user_filter"`
 	GroupFilter            string                       `json:"group_filter"`
 	GroupIdentityAttribute string                       `json:"group_identity_attribute"`
+	GroupNameAttribute     string                       `json:"group_name_attribute"`
 	GroupMemberAttribute   string                       `json:"group_member_attribute"`
 	GroupMaxDepth          int                          `json:"group_max_depth"`
 }
@@ -76,6 +77,7 @@ func (c *LDAPController) Configure(w http.ResponseWriter, r *http.Request) {
 			NameAttribute: body.NameAttribute, EmailAttribute: body.EmailAttribute,
 			GroupSearchBaseDN: body.GroupSearchBaseDN, GroupUserFilter: body.GroupUserFilter,
 			GroupFilter: body.GroupFilter, GroupIdentityAttribute: body.GroupIdentityAttribute,
+			GroupNameAttribute:   body.GroupNameAttribute,
 			GroupMemberAttribute: body.GroupMemberAttribute, GroupMaxDepth: body.GroupMaxDepth,
 		},
 	})
@@ -111,6 +113,10 @@ func (c *LDAPController) Test(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		c.recordError(r, pro_interfaces.AuditActionLDAPTest, err)
+		if readiness.Status == pro_interfaces.LDAPReadinessFailed {
+			helpers.WriteJSON(w, http.StatusOK, readiness)
+			return
+		}
 		writeLDAPError(w, err)
 		return
 	}
@@ -181,7 +187,9 @@ func (c *LDAPController) recordError(
 	case errors.Is(err, pro_interfaces.ErrLDAPForbidden),
 		errors.Is(err, pro_interfaces.ErrLDAPDisabled),
 		errors.Is(err, pro_interfaces.ErrLDAPReconfigurationRequiresInactive),
-		errors.Is(err, pro_interfaces.ErrLDAPIdentityCollision):
+		errors.Is(err, pro_interfaces.ErrLDAPIdentityCollision),
+		errors.Is(err, pro_interfaces.ErrLDAPNoGroupAccess),
+		errors.Is(err, pro_interfaces.ErrLDAPNoGroupMapping):
 		outcome = pro_interfaces.AuditOutcomeDenied
 		reason = pro_interfaces.AuditReasonLDAPPolicy
 	case errors.Is(err, pro_interfaces.ErrLDAPReadiness):
@@ -235,7 +243,9 @@ func ldapAuditReason(err error) (pro_interfaces.AuditOutcome, string) {
 		return pro_interfaces.AuditOutcomeDenied, pro_interfaces.AuditReasonThrottled
 	case errors.Is(err, pro_interfaces.ErrLDAPForbidden),
 		errors.Is(err, pro_interfaces.ErrLDAPDisabled),
-		errors.Is(err, pro_interfaces.ErrLDAPIdentityCollision):
+		errors.Is(err, pro_interfaces.ErrLDAPIdentityCollision),
+		errors.Is(err, pro_interfaces.ErrLDAPNoGroupAccess),
+		errors.Is(err, pro_interfaces.ErrLDAPNoGroupMapping):
 		return pro_interfaces.AuditOutcomeDenied, pro_interfaces.AuditReasonLDAPPolicy
 	case errors.Is(err, pro_interfaces.ErrLDAPProviderUnavailable),
 		errors.Is(err, pro_interfaces.ErrLDAPReferral),
@@ -253,10 +263,12 @@ func writeLDAPError(w http.ResponseWriter, err error) {
 		helpers.WriteErrorStatus(w, validationError.Error(), http.StatusBadRequest)
 	case errors.Is(err, pro_interfaces.ErrLDAPInvalidCredentials):
 		helpers.WriteErrorStatus(w, "LDAP_INVALID_CREDENTIALS", http.StatusUnauthorized)
-	case errors.Is(err, pro_interfaces.ErrLDAPProviderUnavailable),
-		errors.Is(err, pro_interfaces.ErrLDAPReferral),
-		errors.Is(err, pro_interfaces.ErrLDAPDuplicateIdentity):
+	case errors.Is(err, pro_interfaces.ErrLDAPProviderUnavailable):
 		helpers.WriteErrorStatus(w, "LDAP_PROVIDER_UNAVAILABLE", http.StatusServiceUnavailable)
+	case errors.Is(err, pro_interfaces.ErrLDAPReferral):
+		helpers.WriteErrorStatus(w, "LDAP_REFERRAL", http.StatusServiceUnavailable)
+	case errors.Is(err, pro_interfaces.ErrLDAPDuplicateIdentity):
+		helpers.WriteErrorStatus(w, "LDAP_DUPLICATE_IDENTITY", http.StatusConflict)
 	case errors.Is(err, pro_interfaces.ErrLDAPThrottled):
 		w.Header().Set("Retry-After", "300")
 		helpers.WriteErrorStatus(w, "LDAP_THROTTLED", http.StatusTooManyRequests)
@@ -270,6 +282,10 @@ func writeLDAPError(w http.ResponseWriter, err error) {
 		helpers.WriteErrorStatus(w, "LDAP_DISABLED", http.StatusForbidden)
 	case errors.Is(err, pro_interfaces.ErrLDAPForbidden):
 		helpers.WriteErrorStatus(w, "LDAP_FORBIDDEN", http.StatusForbidden)
+	case errors.Is(err, pro_interfaces.ErrLDAPNoGroupAccess):
+		helpers.WriteErrorStatus(w, "LDAP_NO_GROUP_ACCESS", http.StatusForbidden)
+	case errors.Is(err, pro_interfaces.ErrLDAPNoGroupMapping):
+		helpers.WriteErrorStatus(w, "LDAP_NO_GROUP_MAPPING", http.StatusConflict)
 	case errors.Is(err, pro_interfaces.ErrLDAPGroupPreviewStale):
 		helpers.WriteErrorStatus(w, "LDAP_GROUP_PREVIEW_STALE", http.StatusConflict)
 	case errors.Is(err, pro_interfaces.ErrLDAPGroupMappingCollision):

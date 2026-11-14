@@ -202,6 +202,7 @@ func (s *ldapService) computeLDAPGroupPreview(
 	defer cleanup()
 	snapshot, err := s.client.ReadGroupSnapshot(ctx, configuration)
 	if err != nil {
+		logLDAPOperationFailure(provider.ID, "group_search", "group_search_failed", err, configuration)
 		return pro_interfaces.LDAPGroupPreview{}, err
 	}
 	mappingRevision, err := s.repository.GetLDAPGroupMappingRevision(providerID)
@@ -262,12 +263,17 @@ func (s *ldapService) computeLDAPGroupPreview(
 			ProtectedAdministrator: assignment.ProtectedAdministrator,
 		})
 	}
-	return pro_interfaces.ComputeLDAPGroupPreview(pro_interfaces.LDAPGroupPreviewInput{
+	preview, err := pro_interfaces.ComputeLDAPGroupPreview(pro_interfaces.LDAPGroupPreviewInput{
 		ProviderID: providerID, MappingRevision: mappingRevision,
 		DirectoryRevision: snapshot.Revision, CapturedAt: snapshot.CapturedAt,
 		Mappings: mappings, DirectoryGroupIDs: snapshot.GroupExternalIDs,
 		DirectoryUsers: directoryUsers, LinkedUsers: linked, ExistingAssignments: assignments,
 	})
+	if err != nil {
+		return pro_interfaces.LDAPGroupPreview{}, err
+	}
+	preview.RevokedUserIDs = ldapGroupAccessRevocations(directoryUsers, linked, mappings)
+	return preview, nil
 }
 
 func (s *ldapService) applyLDAPGroupPreview(
@@ -280,8 +286,8 @@ func (s *ldapService) applyLDAPGroupPreview(
 	}
 	appliedAt := request.Now
 	reconciliation.AppliedAt = &appliedAt
-	_, err = s.repository.ApplyLDAPGroupPreview(
-		reconciliation, ldapGroupChangesToDB(preview.Additions), ldapGroupChangesToDB(preview.Removals))
+	_, err = s.repository.ApplyLDAPGroupPreviewAndRevoke(
+		reconciliation, ldapGroupChangesToDB(preview.Additions), ldapGroupChangesToDB(preview.Removals), preview.RevokedUserIDs)
 	if errors.Is(err, db.ErrLDAPGroupPreviewStale) {
 		return preview, pro_interfaces.ErrLDAPGroupPreviewStale
 	}
@@ -342,7 +348,7 @@ func ldapGroupMappingToDB(mapping pro_interfaces.LDAPGroupMapping) db.LDAPGroupM
 		projectID = &value
 	}
 	return db.LDAPGroupMapping{
-		ID: mapping.ID, ProviderID: mapping.ProviderID, GroupExternalID: mapping.GroupExternalID,
+		ID: mapping.ID, ProviderID: mapping.ProviderID, GroupExternalID: mapping.GroupExternalID, GroupName: mapping.GroupName,
 		TargetScope: string(mapping.Target.Scope), ProjectID: projectID, RoleID: mapping.Target.RoleID,
 		Enabled: mapping.Enabled, Revision: mapping.Revision, Created: mapping.Created, Updated: mapping.Updated,
 	}
@@ -356,7 +362,7 @@ func ldapGroupMappingFromDB(mapping db.LDAPGroupMapping) pro_interfaces.LDAPGrou
 		target.ProjectID = *mapping.ProjectID
 	}
 	return pro_interfaces.LDAPGroupMapping{
-		ID: mapping.ID, ProviderID: mapping.ProviderID, GroupExternalID: mapping.GroupExternalID,
+		ID: mapping.ID, ProviderID: mapping.ProviderID, GroupExternalID: mapping.GroupExternalID, GroupName: mapping.GroupName,
 		Target: target, Enabled: mapping.Enabled, Revision: mapping.Revision,
 		Created: mapping.Created, Updated: mapping.Updated,
 	}

@@ -23,10 +23,12 @@ type LDAPProvider struct {
 	GroupUserFilter        string     `db:"group_user_filter"`
 	GroupFilter            string     `db:"group_filter"`
 	GroupIdentityAttribute string     `db:"group_identity_attribute"`
+	GroupNameAttribute     string     `db:"group_name_attribute"`
 	GroupMemberAttribute   string     `db:"group_member_attribute"`
 	GroupMaxDepth          int        `db:"group_max_depth"`
 	ReadinessStatus        string     `db:"readiness_status"`
 	ReadinessCode          string     `db:"readiness_code"`
+	ReadinessDetail        string     `db:"readiness_detail"`
 	ReadinessCheckedAt     *time.Time `db:"readiness_checked_at"`
 	RecoveryAdminUserID    *int       `db:"recovery_admin_user_id"`
 	RecoveryCheckedAt      *time.Time `db:"recovery_checked_at"`
@@ -38,6 +40,7 @@ type LDAPGroupMapping struct {
 	ID              string    `db:"id" json:"id"`
 	ProviderID      string    `db:"provider_id" json:"provider_id"`
 	GroupExternalID string    `db:"group_external_id" json:"group_external_id"`
+	GroupName       string    `db:"group_name" json:"group_name"`
 	TargetScope     string    `db:"target_scope" json:"target_scope"`
 	ProjectID       *int      `db:"project_id" json:"project_id,omitempty"`
 	RoleID          string    `db:"role_id" json:"role_id"`

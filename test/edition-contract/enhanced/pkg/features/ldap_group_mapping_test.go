@@ -147,7 +147,7 @@ func TestLDAPLoginRefreshesAuthenticatedUsersManagedAssignments(t *testing.T) {
 	}
 	client.groupSnapshot = pro_interfaces.LDAPGroupDirectorySnapshot{
 		Revision: "login-directory", CapturedAt: now,
-		GroupExternalIDs: []string{"entryuuid:40112233-4455-6677-8899-aabbccddeeff"},
+		GroupExternalIDs: []string{"entryuuid:10112233-4455-6677-8899-aabbccddeeff", "entryuuid:40112233-4455-6677-8899-aabbccddeeff"},
 		Users: []pro_interfaces.LDAPDirectoryUser{{
 			ExternalID:       client.result.Identity.ExternalID,
 			GroupExternalIDs: []string{"entryuuid:40112233-4455-6677-8899-aabbccddeeff"},
@@ -161,6 +161,104 @@ func TestLDAPLoginRefreshesAuthenticatedUsersManagedAssignments(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, assignments, 1)
 	assert.Equal(t, globalRole.ID, assignments[0].RoleID)
+}
+
+func TestLDAPGroupReconcileRevokesSessionsWhenLinkedUserLosesEveryMapping(t *testing.T) {
+	store, service, client, now := readyActiveLDAPServiceTest(t)
+	client.result.Identity = pro_interfaces.LDAPIdentity{
+		ExternalID: "entryuuid:70112233-4455-6677-8899-aabbccddeeff",
+		Username:   "revoked-user", Name: "Revoked user", Email: "revoked@example.test",
+	}
+	client.groupSnapshot = pro_interfaces.LDAPGroupDirectorySnapshot{
+		Revision: "allowed", CapturedAt: now,
+		GroupExternalIDs: []string{"entryuuid:10112233-4455-6677-8899-aabbccddeeff"},
+		Users: []pro_interfaces.LDAPDirectoryUser{{
+			ExternalID:       client.result.Identity.ExternalID,
+			GroupExternalIDs: []string{"entryuuid:10112233-4455-6677-8899-aabbccddeeff"},
+		}},
+	}
+	user, _, err := service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
+		ProviderID: "corp", Username: "revoked-user", Password: "directory-password", Now: now.Add(time.Second),
+	})
+	require.NoError(t, err)
+	session, err := store.CreateSession(db.Session{UserID: user.ID, Created: now, LastActive: now})
+	require.NoError(t, err)
+	client.groupSnapshot.Revision = "access-lost"
+	client.groupSnapshot.Users[0].GroupExternalIDs = nil
+
+	_, err = service.ReconcileGroupMappings(context.Background(), pro_interfaces.LDAPGroupPreviewRequest{
+		ProviderID: "corp", Source: "scheduled", Now: now.Add(2 * time.Second),
+	})
+
+	require.NoError(t, err)
+	_, err = store.GetSession(user.ID, session.ID)
+	assert.Error(t, err)
+}
+
+func TestLDAPGroupMappingsSupportBuiltInProjectTargetsAndPersistGroupNames(t *testing.T) {
+	store, service, client, now := newLDAPServiceTest(t)
+	admin, err := store.CreateUser(db.UserWithPwd{User: db.User{
+		Username: "builtin-admin", Name: "Builtin admin", Email: "builtin-admin@example.test", Admin: true,
+	}, Pwd: "local-password"})
+	require.NoError(t, err)
+	_, err = service.Configure(context.Background(), pro_interfaces.LDAPConfigureRequest{
+		ActorID: admin.ID, ActorIsAdmin: true, Provider: testLDAPProviderInput(), Now: now,
+	})
+	require.NoError(t, err)
+	project, err := store.CreateProject(db.Project{Name: "Builtin LDAP targets", Created: now})
+	require.NoError(t, err)
+	user, err := store.CreateUserWithoutPassword(db.User{
+		Username: "builtin-user", Name: "Builtin user", Email: "builtin-user@example.test", External: true,
+	})
+	require.NoError(t, err)
+	_, err = store.CreateExternalIdentity(db.UserExternalIdentity{
+		UserID: user.ID, Type: db.IdentityTypeLdap, Provider: "corp", ExternalUID: "entryuuid:80112233-4455-6677-8899-aabbccddeeff",
+	})
+	require.NoError(t, err)
+	mapping, err := service.SaveGroupMapping(context.Background(), pro_interfaces.LDAPGroupMappingRequest{
+		ActorID: admin.ID, ActorIsAdmin: true, Now: now,
+		Mapping: pro_interfaces.LDAPGroupMapping{
+			ID: "task-runners", ProviderID: "corp", GroupName: "Task runners", Enabled: true,
+			GroupExternalID: "entryuuid:10112233-4455-6677-8899-aabbccddeeff",
+			Target: pro_interfaces.LDAPRoleTarget{
+				Scope: pro_interfaces.LDAPRoleScopeProject, ProjectID: project.ID, RoleID: "builtin:task_runner",
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Task runners", mapping.GroupName)
+	mappings, err := service.GroupMappings(context.Background(), "corp")
+	require.NoError(t, err)
+	require.Len(t, mappings, 1)
+	assert.Equal(t, "Task runners", mappings[0].GroupName)
+	client.groupSnapshot = pro_interfaces.LDAPGroupDirectorySnapshot{
+		Revision: "builtin-role", CapturedAt: now,
+		GroupExternalIDs: []string{"entryuuid:10112233-4455-6677-8899-aabbccddeeff"},
+		Users: []pro_interfaces.LDAPDirectoryUser{{
+			ExternalID:       "entryuuid:80112233-4455-6677-8899-aabbccddeeff",
+			GroupExternalIDs: []string{"entryuuid:10112233-4455-6677-8899-aabbccddeeff"},
+		}},
+	}
+	_, err = service.ReconcileGroupMappings(context.Background(), pro_interfaces.LDAPGroupPreviewRequest{
+		ProviderID: "corp", Source: "scheduled", Now: now.Add(time.Second),
+	})
+	require.NoError(t, err)
+	roles, err := store.GetProjectUserRoles(project.ID, user.ID)
+	require.NoError(t, err)
+	require.Len(t, roles, 1)
+	assert.Equal(t, "task_runner", roles[0].Slug)
+
+	_, err = service.SaveGroupMapping(context.Background(), pro_interfaces.LDAPGroupMappingRequest{
+		ActorID: admin.ID, ActorIsAdmin: true, Now: now.Add(2 * time.Second),
+		Mapping: pro_interfaces.LDAPGroupMapping{
+			ID: "unknown-builtin", ProviderID: "corp", Enabled: true,
+			GroupExternalID: "entryuuid:20112233-4455-6677-8899-aabbccddeeff",
+			Target: pro_interfaces.LDAPRoleTarget{
+				Scope: pro_interfaces.LDAPRoleScopeProject, ProjectID: project.ID, RoleID: "builtin:unknown",
+			},
+		},
+	})
+	assert.Error(t, err)
 }
 
 func reconciliationStatuses(history []db.LDAPGroupReconciliation) []string {

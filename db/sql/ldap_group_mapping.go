@@ -44,9 +44,9 @@ func (d *SqlDb) SaveLDAPGroupMapping(
 		}
 		_, err = tx.Exec(d.PrepareQuery(
 			`insert into ldap_group_mapping
-			 (id, provider_id, group_external_id, target_scope, project_id, role_id,
-			  enabled, revision, created, updated) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
-			mapping.ID, mapping.ProviderID, mapping.GroupExternalID, mapping.TargetScope,
+				 (id, provider_id, group_external_id, group_name, target_scope, project_id, role_id,
+			  enabled, revision, created, updated) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+			mapping.ID, mapping.ProviderID, mapping.GroupExternalID, mapping.GroupName, mapping.TargetScope,
 			mapping.ProjectID, mapping.RoleID, mapping.Enabled, mapping.Revision,
 			mapping.Created, mapping.Updated,
 		)
@@ -58,10 +58,10 @@ func (d *SqlDb) SaveLDAPGroupMapping(
 		return db.LDAPGroupMapping{}, db.ErrLDAPGroupMappingRevisionConflict
 	default:
 		result, updateErr := tx.Exec(d.PrepareQuery(
-			`update ldap_group_mapping set group_external_id=?, target_scope=?, project_id=?,
+			`update ldap_group_mapping set group_external_id=?, group_name=?, target_scope=?, project_id=?,
 			 role_id=?, enabled=?, revision=revision+1, updated=?
 			 where provider_id=? and id=? and revision=?`),
-			mapping.GroupExternalID, mapping.TargetScope, mapping.ProjectID, mapping.RoleID,
+			mapping.GroupExternalID, mapping.GroupName, mapping.TargetScope, mapping.ProjectID, mapping.RoleID,
 			mapping.Enabled, mapping.Updated, mapping.ProviderID, mapping.ID, expectedRevision,
 		)
 		if updateErr != nil {
@@ -326,6 +326,28 @@ func (d *SqlDb) ApplyLDAPGroupPreview(
 	additions []db.LDAPGroupAssignmentChange,
 	removals []db.LDAPGroupAssignmentChange,
 ) (db.LDAPGroupReconciliation, error) {
+	return d.applyLDAPGroupPreview(reconciliation, additions, removals, nil)
+}
+
+// ApplyLDAPGroupPreviewAndRevoke applies managed assignments and expires all
+// browser sessions for LDAP users who no longer have an enabled mapping. The
+// operation is one transaction so another API node cannot observe a grant
+// removal before the revocation is durable.
+func (d *SqlDb) ApplyLDAPGroupPreviewAndRevoke(
+	reconciliation db.LDAPGroupReconciliation,
+	additions []db.LDAPGroupAssignmentChange,
+	removals []db.LDAPGroupAssignmentChange,
+	revokeUserIDs []int,
+) (db.LDAPGroupReconciliation, error) {
+	return d.applyLDAPGroupPreview(reconciliation, additions, removals, revokeUserIDs)
+}
+
+func (d *SqlDb) applyLDAPGroupPreview(
+	reconciliation db.LDAPGroupReconciliation,
+	additions []db.LDAPGroupAssignmentChange,
+	removals []db.LDAPGroupAssignmentChange,
+	revokeUserIDs []int,
+) (db.LDAPGroupReconciliation, error) {
 	tx, err := d.Sql().Begin()
 	if err != nil {
 		return db.LDAPGroupReconciliation{}, err
@@ -357,6 +379,14 @@ func (d *SqlDb) ApplyLDAPGroupPreview(
 	}
 	for _, change := range additions {
 		if err = addLDAPManagedAssignmentTx(tx, d, reconciliation.ProviderID, change, reconciliation.Created); err != nil {
+			return db.LDAPGroupReconciliation{}, err
+		}
+	}
+	for _, userID := range revokeUserIDs {
+		if userID <= 0 {
+			continue
+		}
+		if _, err = tx.Exec(d.PrepareQuery("update session set expired=true where user_id=?"), userID); err != nil {
 			return db.LDAPGroupReconciliation{}, err
 		}
 	}
@@ -487,6 +517,9 @@ func requireLDAPGroupMappingRoleTx(tx *gorp.Transaction, d *SqlDb, mapping db.LD
 	case "project":
 		if mapping.ProjectID == nil {
 			return db.ErrNotFound
+		}
+		if db.IsBuiltInProjectRoleReference(db.ProjectRoleReference(mapping.RoleID)) {
+			return nil
 		}
 		count, err = tx.SelectInt(d.PrepareQuery(
 			"select count(1) from `role` where role_id=? and project_id=?"), mapping.RoleID, *mapping.ProjectID)

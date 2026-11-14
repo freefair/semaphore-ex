@@ -145,6 +145,24 @@ func TestLDAPClientRejectsReferrals(t *testing.T) {
 	assert.ErrorIs(t, err, pro_interfaces.ErrLDAPReferral)
 }
 
+func TestLDAPClientAcceptsOneUserWithContinuationReference(t *testing.T) {
+	connection := &fakeLDAPConnection{searchResult: &ldap.SearchResult{
+		Entries: []*ldap.Entry{ldap.NewEntry("uid=alice,dc=example,dc=test", map[string][]string{
+			"entryUUID": {"00112233-4455-6677-8899-aabbccddeeff"}, "uid": {"alice"},
+			"cn": {"Alice"}, "mail": {"alice@example.test"},
+		})},
+		Referrals: []string{"ldaps://directory.example.test/dc=other"},
+	}}
+	client := &ldapClient{timeout: ldapOperationTimeout, dial: func(string, pro_interfaces.LDAPTLSMode, *tls.Config, time.Duration) (ldapConnection, error) {
+		return connection, nil
+	}}
+	result, err := client.Authenticate(context.Background(), pro_interfaces.LDAPClientRequest{
+		Configuration: validLDAPClientConfiguration(), Username: "alice", Credential: "password",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "alice", result.Identity.Username)
+}
+
 func TestLDAPClientRejectsReferralResultCodes(t *testing.T) {
 	connection := &fakeLDAPConnection{
 		searchError: ldap.NewError(ldap.LDAPResultReferral, errors.New("directory referral detail")),
@@ -346,18 +364,19 @@ func TestLDAPGroupSearchFollowsPagingCookie(t *testing.T) {
 	assert.Equal(t, []byte("next-page"), control.Cookie)
 }
 
-func TestLDAPGroupSearchRejectsReferralsOnEveryPage(t *testing.T) {
+func TestLDAPGroupSearchIgnoresContinuationReferencesOnEveryPage(t *testing.T) {
 	connection := &fakeLDAPConnection{pagedResults: []*ldap.SearchResult{{
 		Referrals: []string{"ldaps://outside.example.test/dc=escape"},
 	}}}
 	client := &ldapClient{}
 
-	_, err := client.searchLDAPPageSet(context.Background(), connection, ldap.NewSearchRequest(
+	entries, err := client.searchLDAPPageSet(context.Background(), connection, ldap.NewSearchRequest(
 		"dc=example,dc=test", ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		"(objectClass=person)", nil, nil,
 	))
 
-	assert.ErrorIs(t, err, pro_interfaces.ErrLDAPReferral)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
 }
 
 func TestLDAPGroupSearchRejectsNonProgressingPages(t *testing.T) {
@@ -465,6 +484,77 @@ func TestValidateLDAPGroupConfigurationRequiresStaticFiltersAndBoundedDepth(t *t
 	assert.Error(t, validateLDAPGroupConfiguration(configuration))
 }
 
+func TestLDAPGroupNameAttributeDefaultsToCNAndRejectsInvalidValues(t *testing.T) {
+	configuration := validLDAPGroupClientConfiguration()
+	assert.Equal(t, "cn", ldapGroupNameAttribute(configuration))
+	configuration.GroupNameAttribute = "display name"
+	assert.Error(t, validateLDAPGroupConfiguration(configuration))
+}
+
+func TestLDAPClientSearchGroupsEscapesQueryCapsResultsAndUsesConfiguredName(t *testing.T) {
+	configuration := validLDAPGroupClientConfiguration()
+	configuration.GroupNameAttribute = "displayName"
+	entries := make([]*ldap.Entry, 0, 51)
+	for index := 0; index < 51; index++ {
+		entries = append(entries, ldap.NewEntry(
+			fmt.Sprintf("cn=group-%02d,ou=groups,dc=example,dc=test", index),
+			map[string][]string{
+				"entryUUID":   {fmt.Sprintf("%08x-4455-6677-8899-aabbccddeeff", index+1)},
+				"cn":          {fmt.Sprintf("cn-%02d", index)},
+				"displayName": {fmt.Sprintf("Directory group %02d", index)},
+			},
+		))
+	}
+	connection := &fakeLDAPConnection{searchResult: &ldap.SearchResult{Entries: entries}}
+	client := &ldapClient{timeout: ldapOperationTimeout, dial: func(string, pro_interfaces.LDAPTLSMode, *tls.Config, time.Duration) (ldapConnection, error) {
+		return connection, nil
+	}}
+
+	groups, err := client.SearchGroups(context.Background(), configuration, `*)(cn=*`)
+
+	require.NoError(t, err)
+	require.Len(t, groups, 50)
+	assert.Equal(t, "entryuuid:00000001-4455-6677-8899-aabbccddeeff", groups[0].ExternalID)
+	assert.Equal(t, "Directory group 00", groups[0].Name)
+	require.NotNil(t, connection.searchRequest)
+	assert.Equal(t, 50, connection.searchRequest.SizeLimit)
+	assert.Contains(t, connection.searchRequest.Filter, `\2a\29\28cn=\2a`)
+	assert.NotContains(t, connection.searchRequest.Filter, `*)(cn=*`)
+}
+
+func TestLDAPClientSearchGroupsIgnoresContinuationReferencesAndRejectsReferralResults(t *testing.T) {
+	configuration := validLDAPGroupClientConfiguration()
+	entry := ldap.NewEntry("cn=engineering,ou=groups,dc=example,dc=test", map[string][]string{
+		"entryUUID": {"00112233-4455-6677-8899-aabbccddeeff"}, "cn": {"Engineering"},
+	})
+	t.Run("continuation references", func(t *testing.T) {
+		connection := &fakeLDAPConnection{searchResult: &ldap.SearchResult{
+			Entries: []*ldap.Entry{entry}, Referrals: []string{"ldaps://directory.example.test/dc=other"},
+		}}
+		client := &ldapClient{timeout: ldapOperationTimeout, dial: func(string, pro_interfaces.LDAPTLSMode, *tls.Config, time.Duration) (ldapConnection, error) {
+			return connection, nil
+		}}
+
+		groups, err := client.SearchGroups(context.Background(), configuration, "engineer")
+
+		require.NoError(t, err)
+		assert.Equal(t, []pro_interfaces.LDAPDirectoryGroup{{
+			ExternalID: "entryuuid:00112233-4455-6677-8899-aabbccddeeff", Name: "Engineering",
+			DN: "cn=engineering,ou=groups,dc=example,dc=test",
+		}}, groups)
+	})
+	t.Run("referral result", func(t *testing.T) {
+		connection := &fakeLDAPConnection{searchError: ldap.NewError(ldap.LDAPResultReferral, errors.New("referral detail"))}
+		client := &ldapClient{timeout: ldapOperationTimeout, dial: func(string, pro_interfaces.LDAPTLSMode, *tls.Config, time.Duration) (ldapConnection, error) {
+			return connection, nil
+		}}
+
+		_, err := client.SearchGroups(context.Background(), configuration, "engineer")
+
+		assert.ErrorIs(t, err, pro_interfaces.ErrLDAPReferral)
+	})
+}
+
 func validLDAPClientConfiguration() pro_interfaces.LDAPClientConfiguration {
 	return pro_interfaces.LDAPClientConfiguration{
 		ServerURL:         "ldaps://ldap.example.test:636",
@@ -479,4 +569,15 @@ func validLDAPClientConfiguration() pro_interfaces.LDAPClientConfiguration {
 		NameAttribute:     "cn",
 		EmailAttribute:    "mail",
 	}
+}
+
+func validLDAPGroupClientConfiguration() pro_interfaces.LDAPClientConfiguration {
+	configuration := validLDAPClientConfiguration()
+	configuration.GroupSearchBaseDN = "ou=groups,dc=example,dc=test"
+	configuration.GroupUserFilter = "(objectClass=person)"
+	configuration.GroupFilter = "(objectClass=groupOfNames)"
+	configuration.GroupIdentityAttribute = "entryUUID"
+	configuration.GroupMemberAttribute = "member"
+	configuration.GroupMaxDepth = 1
+	return configuration
 }

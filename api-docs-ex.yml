@@ -2433,6 +2433,38 @@ definitions:
       template_grants: {type: integer, minimum: 0}
       mappings: {type: integer, minimum: 0}
 
+  LDAPReadiness:
+    type: object
+    required: [status, connection, search, bind, recovery, code]
+    properties:
+      status: {type: string, enum: [untested, ready, failed]}
+      connection: {type: boolean}
+      search: {type: boolean}
+      bind: {type: boolean}
+      recovery: {type: boolean}
+      code: {type: string}
+      detail:
+        type: string
+        description: Administrator-safe diagnostic; never contains credentials.
+      checked_at: {type: string, format: date-time}
+  LDAPDirectoryGroup:
+    type: object
+    required: [external_id, name, dn]
+    properties:
+      external_id: {type: string, description: Immutable lowercase LDAP identity stored by mappings.}
+      name: {type: string}
+      dn: {type: string}
+  LDAPGroupMapping:
+    type: object
+    required: [id, provider_id, group_external_id, target, enabled, revision]
+    properties:
+      id: {type: string}
+      provider_id: {type: string}
+      group_external_id: {type: string}
+      group_name: {type: string, maxLength: 255, description: Display-only group label.}
+      target: {type: object, properties: {scope: {type: string, enum: [global, project]}, project_id: {type: integer}, role_id: {type: string}}}
+      enabled: {type: boolean}
+      revision: {type: integer}
 paths:
   /roles:
     get:
@@ -5022,3 +5054,29 @@ paths:
       tags: [terraform-state]
       summary: Delete a Terraform HTTP backend alias
       responses: {204: {description: Alias deleted}, 404: {description: Alias not found}}
+  /capabilities/ldap/groups:
+    get:
+      tags: [authentication]
+      summary: Search LDAP directory groups for a mapping
+      parameters:
+      - {name: provider_id, in: query, required: true, type: string}
+      - {name: query, in: query, required: true, type: string, maxLength: 255}
+      responses:
+        200:
+          description: At most fifty directory groups. Continuation references are rejected and never followed.
+          schema: {type: array, maxItems: 50, items: {$ref: './api-docs.yml#/definitions/LDAPDirectoryGroup'}}
+        400: {description: Missing search parameters}
+        403: {description: Administrator permission required}
+        404: {description: LDAP provider not found}
+        409: {description: LDAP duplicate identity}
+        503: {description: LDAP provider unavailable or referral rejected}
+  /capabilities/ldap/test:
+    post:
+      tags: [authentication]
+      summary: Test LDAP connectivity and local recovery readiness
+      responses:
+        200:
+          description: Always returns readiness after a directory-stage failure; status failed carries code and safe detail.
+          schema: {$ref: './api-docs.yml#/definitions/LDAPReadiness'}
+        403: {description: Administrator permission required}
+        404: {description: LDAP provider not found}

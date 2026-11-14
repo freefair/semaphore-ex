@@ -289,7 +289,8 @@ func managedLDAPLoginFailureReason(err error) audit.Reason {
 	switch {
 	case errors.Is(err, pro_interfaces.ErrLDAPInvalidCredentials):
 		return audit.ReasonInvalidCredentials
-	case errors.Is(err, pro_interfaces.ErrLDAPDisabled), errors.Is(err, pro_interfaces.ErrLDAPForbidden):
+	case errors.Is(err, pro_interfaces.ErrLDAPDisabled), errors.Is(err, pro_interfaces.ErrLDAPForbidden),
+		errors.Is(err, pro_interfaces.ErrLDAPNoGroupAccess), errors.Is(err, pro_interfaces.ErrLDAPNoGroupMapping):
 		return audit.ReasonMethodDisabled
 	case errors.Is(err, pro_interfaces.ErrLDAPProviderUnavailable), errors.Is(err, pro_interfaces.ErrLDAPReferral):
 		return audit.ReasonProviderError

@@ -34,7 +34,7 @@ func (s *ldapGroupSchedulerServiceStub) ReconcileGroupMappings(
 	return pro_interfaces.LDAPGroupPreview{}, nil
 }
 
-func TestLDAPGroupSchedulerRunsOnlyActiveProvidersWithMappings(t *testing.T) {
+func TestLDAPGroupSchedulerRunsAllActiveProvidersIncludingEmptyMappings(t *testing.T) {
 	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	service := &ldapGroupSchedulerServiceStub{
 		providers: []pro_interfaces.LDAPProviderConfiguration{
@@ -50,9 +50,10 @@ func TestLDAPGroupSchedulerRunsOnlyActiveProvidersWithMappings(t *testing.T) {
 
 	scheduler.tick(context.Background(), now)
 
-	if assert.Len(t, service.requests, 1) {
+	if assert.Len(t, service.requests, 2) {
 		assert.Equal(t, "active", service.requests[0].ProviderID)
 		assert.Equal(t, "scheduled", service.requests[0].Source)
 		assert.Equal(t, now, service.requests[0].Now)
+		assert.Equal(t, "empty", service.requests[1].ProviderID)
 	}
 }

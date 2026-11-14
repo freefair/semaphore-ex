@@ -53,6 +53,16 @@ func TestConfigureLDAPProviderPersistsSelectionOnlyForSelectedState(t *testing.T
 	})
 	require.NoError(t, err)
 	require.NoError(t, store.SaveLDAPProvider(readyLDAPProvider("corp", now, &admin.ID)))
+	// Turning directory login on requires an enabled group mapping (D1).
+	auditor, err := store.CreateGlobalRole(db.Role{
+		ID: "selection_auditor", Name: "Selection auditor", GlobalPermissions: db.CanReadGlobalAudit, Revision: 1,
+	})
+	require.NoError(t, err)
+	_, err = store.SaveLDAPGroupMapping(db.LDAPGroupMapping{
+		ID: "auditors", ProviderID: "corp", GroupExternalID: "entryuuid:30112233-4455-6677-8899-aabbccddeeff",
+		TargetScope: "global", RoleID: string(auditor.ID), Enabled: true, Revision: 1, Created: now, Updated: now,
+	}, 0)
+	require.NoError(t, err)
 
 	require.NoError(t, store.ConfigureLDAPProvider(
 		"corp", "selected_users", []int{ldapUser.ID}, admin.ID, now, 15*time.Minute,
@@ -86,7 +96,7 @@ func TestSaveLDAPReadinessRejectsStaleProviderVersion(t *testing.T) {
 	provider.Updated = testedVersion.Add(time.Minute)
 	require.NoError(t, store.SaveLDAPProvider(provider))
 
-	err := store.SaveLDAPReadiness("corp", "ready", "ready", testedVersion.Add(2*time.Minute), nil, 1)
+	err := store.SaveLDAPReadiness("corp", "ready", "ready", "", testedVersion.Add(2*time.Minute), nil, 1)
 
 	assert.ErrorIs(t, err, db.ErrLDAPReadiness)
 	stored, err := store.GetLDAPProvider("corp")
@@ -94,6 +104,24 @@ func TestSaveLDAPReadinessRejectsStaleProviderVersion(t *testing.T) {
 	assert.Equal(t, "untested", stored.ReadinessStatus)
 	assert.Equal(t, provider.ServerURL, stored.ServerURL)
 	assert.Equal(t, 2, stored.ConfigVersion)
+}
+
+func TestSaveLDAPReadinessPersistsSafeDetail(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	provider := readyLDAPProvider("corp", now, nil)
+	provider.ReadinessStatus = "untested"
+	provider.ReadinessCode = "configuration_changed"
+	provider.ReadinessCheckedAt = nil
+	provider.RecoveryCheckedAt = nil
+	require.NoError(t, store.SaveLDAPProvider(provider))
+	require.NoError(t, store.SaveLDAPReadiness("corp", "failed", "connection_failed",
+		"dial tcp 127.0.0.1:636: connection refused", now, nil, 1))
+	stored, err := store.GetLDAPProvider("corp")
+	require.NoError(t, err)
+	assert.Equal(t, "connection_failed", stored.ReadinessCode)
+	assert.Equal(t, "dial tcp 127.0.0.1:636: connection refused", stored.ReadinessDetail)
 }
 
 func readyLDAPProvider(id string, checkedAt time.Time, recoveryAdminUserID *int) db.LDAPProvider {

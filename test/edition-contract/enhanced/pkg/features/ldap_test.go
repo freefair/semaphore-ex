@@ -17,12 +17,15 @@ import (
 )
 
 type ldapClientStub struct {
-	result        pro_interfaces.LDAPClientResult
-	err           error
-	requests      []pro_interfaces.LDAPClientRequest
-	groupSnapshot pro_interfaces.LDAPGroupDirectorySnapshot
-	groupErr      error
-	groupRequests []pro_interfaces.LDAPClientConfiguration
+	result         pro_interfaces.LDAPClientResult
+	err            error
+	requests       []pro_interfaces.LDAPClientRequest
+	groupSnapshot  pro_interfaces.LDAPGroupDirectorySnapshot
+	groupErr       error
+	groupRequests  []pro_interfaces.LDAPClientConfiguration
+	groups         []pro_interfaces.LDAPDirectoryGroup
+	groupQueries   []string
+	groupSearchErr error
 }
 
 func (c *ldapClientStub) Validate(pro_interfaces.LDAPClientConfiguration) error { return nil }
@@ -40,7 +43,26 @@ func (c *ldapClientStub) ReadGroupSnapshot(
 	configuration pro_interfaces.LDAPClientConfiguration,
 ) (pro_interfaces.LDAPGroupDirectorySnapshot, error) {
 	c.groupRequests = append(c.groupRequests, configuration)
+	if c.groupSnapshot.Users == nil && c.result.Identity.ExternalID != "" {
+		return pro_interfaces.LDAPGroupDirectorySnapshot{
+			Revision: "stub-directory", CapturedAt: time.Unix(1_700_000_000, 0).UTC(),
+			GroupExternalIDs: []string{"entryuuid:10112233-4455-6677-8899-aabbccddeeff"},
+			Users: []pro_interfaces.LDAPDirectoryUser{{
+				ExternalID:       c.result.Identity.ExternalID,
+				GroupExternalIDs: []string{"entryuuid:10112233-4455-6677-8899-aabbccddeeff"},
+			}},
+		}, c.groupErr
+	}
 	return c.groupSnapshot, c.groupErr
+}
+
+func (c *ldapClientStub) SearchGroups(
+	_ context.Context,
+	_ pro_interfaces.LDAPClientConfiguration,
+	query string,
+) ([]pro_interfaces.LDAPDirectoryGroup, error) {
+	c.groupQueries = append(c.groupQueries, query)
+	return c.groups, c.groupSearchErr
 }
 
 func TestLDAPConfigureStoresWriteOnlyEncryptedCredential(t *testing.T) {
@@ -108,6 +130,19 @@ func TestLDAPLifecycleRequiresDirectoryAndLocalRecoveryReadiness(t *testing.T) {
 	})
 	if err != nil || !readiness.Recovery {
 		t.Fatalf("test LDAP readiness: %#v, %v", readiness, err)
+	}
+	role, err := store.CreateGlobalRole(db.Role{ID: "ldap-ready", Name: "LDAP ready", GlobalPermissions: db.CanReadGlobalAudit, Revision: 1})
+	if err != nil {
+		t.Fatalf("create LDAP readiness role: %v", err)
+	}
+	_, err = service.SaveGroupMapping(context.Background(), pro_interfaces.LDAPGroupMappingRequest{
+		ActorID: admin.ID, ActorIsAdmin: true, Now: now,
+		Mapping: pro_interfaces.LDAPGroupMapping{ID: "ldap-ready", ProviderID: "corp", Enabled: true,
+			GroupExternalID: "entryuuid:10112233-4455-6677-8899-aabbccddeeff",
+			Target:          pro_interfaces.LDAPRoleTarget{Scope: pro_interfaces.LDAPRoleScopeGlobal, RoleID: string(role.ID)}},
+	})
+	if err != nil {
+		t.Fatalf("create LDAP readiness mapping: %v", err)
 	}
 	configuration, err := service.SetState(context.Background(), pro_interfaces.LDAPStateRequest{
 		ActorID: admin.ID, ActorIsAdmin: true, ProviderID: "corp", State: pro_interfaces.LDAPStateActive, Now: now,
@@ -192,6 +227,127 @@ func TestLDAPAuthenticateReportsProvisioningOnlyOnce(t *testing.T) {
 	if err != nil || provisioned || second.ID != first.ID {
 		t.Fatalf("repeat LDAP authentication = user=%#v provisioned=%t err=%v", second, provisioned, err)
 	}
+}
+
+func TestLDAPLoginRejectsUnmappedDirectoryUserBeforeProvisioning(t *testing.T) {
+	store, service, client, now := readyActiveLDAPServiceTest(t)
+	client.result.Identity = pro_interfaces.LDAPIdentity{
+		ExternalID: "entryuuid:40112233-4455-6677-8899-aabbccddeeff",
+		Username:   "unmapped", Name: "Unmapped User", Email: "unmapped@example.test",
+	}
+	client.groupSnapshot = pro_interfaces.LDAPGroupDirectorySnapshot{
+		Revision: "unmapped", CapturedAt: now,
+		GroupExternalIDs: []string{"entryuuid:20112233-4455-6677-8899-aabbccddeeff"},
+		Users: []pro_interfaces.LDAPDirectoryUser{{
+			ExternalID:       client.result.Identity.ExternalID,
+			GroupExternalIDs: []string{"entryuuid:20112233-4455-6677-8899-aabbccddeeff"},
+		}},
+	}
+	_, provisioned, err := service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
+		ProviderID: "corp", Username: "unmapped", Password: "directory-password", Now: now.Add(time.Second),
+	})
+	assert.ErrorIs(t, err, pro_interfaces.ErrLDAPNoGroupAccess)
+	assert.False(t, provisioned)
+	_, lookupErr := store.GetUserByLoginOrEmail("unmapped", "unmapped@example.test")
+	assert.ErrorIs(t, lookupErr, db.ErrNotFound)
+}
+
+func TestLDAPLoginRejectsDisabledOnlyGroupMappingBeforeProvisioning(t *testing.T) {
+	store, service, client, now := newLDAPServiceTest(t)
+	_, err := service.Configure(context.Background(), pro_interfaces.LDAPConfigureRequest{
+		ActorID: 1, ActorIsAdmin: true, Provider: testLDAPProviderInput(), Now: now,
+	})
+	require.NoError(t, err)
+	role, err := store.CreateGlobalRole(db.Role{
+		ID: "disabled-ldap-login", Name: "Disabled LDAP login", GlobalPermissions: db.CanReadGlobalAudit, Revision: 1,
+	})
+	require.NoError(t, err)
+	_, err = service.SaveGroupMapping(context.Background(), pro_interfaces.LDAPGroupMappingRequest{
+		ActorID: 1, ActorIsAdmin: true, Now: now,
+		Mapping: pro_interfaces.LDAPGroupMapping{
+			ID: "disabled-ldap-login", ProviderID: "corp", Enabled: false,
+			GroupExternalID: "entryuuid:10112233-4455-6677-8899-aabbccddeeff",
+			Target:          pro_interfaces.LDAPRoleTarget{Scope: pro_interfaces.LDAPRoleScopeGlobal, RoleID: string(role.ID)},
+		},
+	})
+	require.NoError(t, err)
+	provider, err := store.GetLDAPProvider("corp")
+	require.NoError(t, err)
+	provider.State = string(pro_interfaces.LDAPStateActive)
+	require.NoError(t, store.SaveLDAPProvider(provider))
+	client.result.Identity = pro_interfaces.LDAPIdentity{
+		ExternalID: "entryuuid:40112233-4455-6677-8899-aabbccddeeff",
+		Username:   "disabled-only", Name: "Disabled only", Email: "disabled-only@example.test",
+	}
+
+	_, provisioned, err := service.Authenticate(context.Background(), pro_interfaces.LDAPAuthenticationRequest{
+		ProviderID: "corp", Username: "disabled-only", Password: "directory-password", Now: now.Add(time.Second),
+	})
+
+	assert.ErrorIs(t, err, pro_interfaces.ErrLDAPNoGroupMapping)
+	assert.False(t, provisioned)
+	_, lookupErr := store.GetUserByLoginOrEmail("disabled-only", "disabled-only@example.test")
+	assert.ErrorIs(t, lookupErr, db.ErrNotFound)
+}
+
+func TestLDAPGroupSearchRequiresProviderAndQueryAndMapsClientFailures(t *testing.T) {
+	_, service, client, now := newLDAPServiceTest(t)
+	_, err := service.Configure(context.Background(), pro_interfaces.LDAPConfigureRequest{
+		ActorID: 1, ActorIsAdmin: true, Provider: testLDAPProviderInput(), Now: now,
+	})
+	require.NoError(t, err)
+	client.groups = []pro_interfaces.LDAPDirectoryGroup{{
+		ExternalID: "entryuuid:10112233-4455-6677-8899-aabbccddeeff", Name: "Engineering",
+	}}
+
+	_, err = service.SearchGroups(context.Background(), "", "engineering")
+	assert.Error(t, err)
+	_, err = service.SearchGroups(context.Background(), "corp", "")
+	assert.Error(t, err)
+	_, err = service.SearchGroups(context.Background(), "missing", "engineering")
+	assert.ErrorIs(t, err, pro_interfaces.ErrLDAPProviderNotFound)
+
+	groups, err := service.SearchGroups(context.Background(), "corp", " engineering ")
+	require.NoError(t, err)
+	assert.Equal(t, client.groups, groups)
+	assert.Equal(t, []string{" engineering "}, client.groupQueries)
+
+	client.groupSearchErr = pro_interfaces.ErrLDAPReferral
+	_, err = service.SearchGroups(context.Background(), "corp", "engineering")
+	assert.ErrorIs(t, err, pro_interfaces.ErrLDAPReferral)
+}
+
+func TestLDAPReadinessFailureRedactsTripwiresAndSurvivesProviderReload(t *testing.T) {
+	store, service, client, now := newLDAPServiceTest(t)
+	input := testLDAPProviderInput()
+	input.BindDN = "cn=bind-tripwire,dc=example,dc=test"
+	input.BindPassword = "bind-password-tripwire"
+	_, err := service.Configure(context.Background(), pro_interfaces.LDAPConfigureRequest{
+		ActorID: 1, ActorIsAdmin: true, Provider: input, Now: now,
+	})
+	require.NoError(t, err)
+	client.result.Readiness = pro_interfaces.LDAPReadiness{
+		Code:   "service_bind_failed",
+		Detail: "directory rejected cn=bind-tripwire,dc=example,dc=test bind-password-tripwire user-password-tripwire",
+	}
+	client.err = pro_interfaces.ErrLDAPProviderUnavailable
+
+	readiness, err := service.Test(context.Background(), pro_interfaces.LDAPTestRequest{
+		ActorID: 1, ActorIsAdmin: true, ProviderID: "corp", Username: "probe", Password: "user-password-tripwire", Now: now,
+	})
+
+	assert.ErrorIs(t, err, pro_interfaces.ErrLDAPProviderUnavailable)
+	assert.NotEmpty(t, readiness.Detail)
+	for _, tripwire := range []string{"bind-tripwire", "bind-password-tripwire", "user-password-tripwire"} {
+		assert.NotContains(t, readiness.Detail, tripwire)
+	}
+	stored, err := store.GetLDAPProvider("corp")
+	require.NoError(t, err)
+	assert.Equal(t, readiness.Detail, stored.ReadinessDetail)
+	providers, err := service.Providers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, providers, 1)
+	assert.Equal(t, readiness.Detail, providers[0].Readiness.Detail)
 }
 
 func TestDisablingLDAPRejectsLoginAndPreservesLinkedIdentity(t *testing.T) {
@@ -298,6 +454,22 @@ func readyActiveLDAPServiceTest(
 	if err != nil {
 		t.Fatalf("test LDAP: %v", err)
 	}
+	role, err := store.CreateGlobalRole(db.Role{
+		ID: "ldap-login", Name: "LDAP login", GlobalPermissions: db.CanReadGlobalAudit, Revision: 1,
+	})
+	if err != nil {
+		t.Fatalf("create LDAP login role: %v", err)
+	}
+	_, err = service.SaveGroupMapping(context.Background(), pro_interfaces.LDAPGroupMappingRequest{
+		ActorID: admin.ID, ActorIsAdmin: true, Now: now,
+		Mapping: pro_interfaces.LDAPGroupMapping{
+			ID: "ldap-login", ProviderID: "corp", GroupExternalID: "entryuuid:10112233-4455-6677-8899-aabbccddeeff",
+			Target: pro_interfaces.LDAPRoleTarget{Scope: pro_interfaces.LDAPRoleScopeGlobal, RoleID: string(role.ID)}, Enabled: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create LDAP login mapping: %v", err)
+	}
 	_, err = service.SetState(context.Background(), pro_interfaces.LDAPStateRequest{
 		ActorID: admin.ID, ActorIsAdmin: true, ProviderID: "corp", State: pro_interfaces.LDAPStateActive, Now: now,
 	})
@@ -317,7 +489,7 @@ func testLDAPProviderInput() pro_interfaces.LDAPProviderInput {
 		IdentityAttribute: "entryUUID", UsernameAttribute: "uid", NameAttribute: "cn", EmailAttribute: "mail",
 		GroupSearchBaseDN: "ou=groups,dc=example,dc=test",
 		GroupUserFilter:   "(objectClass=person)", GroupFilter: "(objectClass=groupOfNames)",
-		GroupIdentityAttribute: "entryUUID", GroupMemberAttribute: "member", GroupMaxDepth: 4,
+		GroupIdentityAttribute: "entryUUID", GroupNameAttribute: "cn", GroupMemberAttribute: "member", GroupMaxDepth: 4,
 	}
 }
 

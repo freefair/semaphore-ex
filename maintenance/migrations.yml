@@ -1231,3 +1231,10 @@ migrations:
   files:
     migrations_ex/v2.20.18-ex1.1.sql: 5637edbedbcd72883349cae7af6455b00a926c71643f7d9551115b886da9187e
     migrations_ex/v2.20.18-ex1.1.err.sql: ee625f263c5e22394f0dea38e9b2332fb38bee058124e7054e7ad59c046412d6
+- registered: true
+  id: 2.20.18-ex1.2
+  owner: fork
+  rationale: Persist sanitized LDAP readiness details, the group name attribute and group mapping display names.
+  files:
+    migrations_ex/v2.20.18-ex1.2.sql: 06c238b2115051af63d59300b536017041941074593629c5bd8eb4644db42091
+    migrations_ex/v2.20.18-ex1.2.err.sql: de298d42a1c280caf895279fea15a30738808e1e988bb2adac853f93bc0618ec

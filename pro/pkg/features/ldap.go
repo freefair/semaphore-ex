@@ -25,6 +25,10 @@ func (*communityLDAPService) LoginProviders(context.Context) ([]pro_interfaces.L
 	return nil, pro_interfaces.ErrLDAPUnavailable
 }
 
+func (*communityLDAPService) SearchGroups(context.Context, string, string) ([]pro_interfaces.LDAPDirectoryGroup, error) {
+	return nil, pro_interfaces.ErrLDAPUnavailable
+}
+
 func (*communityLDAPService) AllowLocalRecovery(context.Context, string) (bool, error) {
 	return false, pro_interfaces.ErrLDAPUnavailable
 }

@@ -38,6 +38,7 @@ type LDAPGroupMapping struct {
 	ID              string         `json:"id"`
 	ProviderID      string         `json:"provider_id"`
 	GroupExternalID string         `json:"group_external_id"`
+	GroupName       string         `json:"group_name,omitempty"`
 	Target          LDAPRoleTarget `json:"target"`
 	Enabled         bool           `json:"enabled"`
 	Revision        int            `json:"revision"`
@@ -113,8 +114,10 @@ type LDAPGroupPreview struct {
 	Additions                []LDAPGroupAssignmentChange   `json:"additions"`
 	Removals                 []LDAPGroupAssignmentChange   `json:"removals"`
 	Unresolved               []LDAPGroupUnresolvedItem     `json:"unresolved"`
+	Skipped                  []LDAPGroupUnresolvedItem     `json:"skipped"`
 	Collisions               []LDAPGroupCollision          `json:"collisions"`
 	ProtectedAdminViolations []LDAPProtectedAdminViolation `json:"protected_admin_violations"`
+	RevokedUserIDs           []int                         `json:"-"`
 }
 
 func (p LDAPGroupPreview) IsFresh(mappingRevision int, directoryRevision string) bool {
@@ -135,6 +138,7 @@ func NormalizeLDAPGroupMapping(mapping *LDAPGroupMapping) error {
 	mapping.ID = strings.ToLower(strings.TrimSpace(mapping.ID))
 	mapping.ProviderID = strings.ToLower(strings.TrimSpace(mapping.ProviderID))
 	mapping.GroupExternalID = strings.ToLower(strings.TrimSpace(mapping.GroupExternalID))
+	mapping.GroupName = strings.TrimSpace(mapping.GroupName)
 	mapping.Target.RoleID = strings.TrimSpace(mapping.Target.RoleID)
 	if !ldapMappingIDPattern.MatchString(mapping.ID) {
 		return common_errors.NewValidationError("invalid LDAP group mapping ID")
@@ -144,6 +148,9 @@ func NormalizeLDAPGroupMapping(mapping *LDAPGroupMapping) error {
 	}
 	if !ldapImmutableIdentityPattern.MatchString(mapping.GroupExternalID) {
 		return common_errors.NewValidationError("LDAP group identity must use an allow-listed immutable UUID attribute")
+	}
+	if len(mapping.GroupName) > 255 {
+		return common_errors.NewValidationError("LDAP group display name must not exceed 255 characters")
 	}
 	if mapping.Target.RoleID == "" || len(mapping.Target.RoleID) > 64 {
 		return common_errors.NewValidationError("LDAP group mapping requires a role ID")
@@ -181,6 +188,7 @@ func ComputeLDAPGroupPreview(input LDAPGroupPreviewInput) (LDAPGroupPreview, err
 		Additions:                make([]LDAPGroupAssignmentChange, 0),
 		Removals:                 make([]LDAPGroupAssignmentChange, 0),
 		Unresolved:               make([]LDAPGroupUnresolvedItem, 0),
+		Skipped:                  make([]LDAPGroupUnresolvedItem, 0),
 		Collisions:               make([]LDAPGroupCollision, 0),
 		ProtectedAdminViolations: make([]LDAPProtectedAdminViolation, 0),
 	}
@@ -222,7 +230,7 @@ func ComputeLDAPGroupPreview(input LDAPGroupPreviewInput) (LDAPGroupPreview, err
 		externalID := strings.ToLower(strings.TrimSpace(directoryUser.ExternalID))
 		userID, found := linked[externalID]
 		if !found {
-			preview.Unresolved = append(preview.Unresolved, LDAPGroupUnresolvedItem{
+			preview.Skipped = append(preview.Skipped, LDAPGroupUnresolvedItem{
 				Kind: "user", ExternalID: externalID, Reason: "directory_user_not_linked",
 			})
 			continue
@@ -308,7 +316,7 @@ func ComputeLDAPGroupPreview(input LDAPGroupPreviewInput) (LDAPGroupPreview, err
 				if assignment.ManagedByMappingID != entry.change.MappingID {
 					preview.Collisions = append(preview.Collisions, LDAPGroupCollision{
 						UserID: entry.change.UserID, MappingID: entry.change.MappingID, Target: entry.change.Target,
-						Reason: "existing_project_membership_preserved",
+						Reason:    "existing_project_membership_preserved",
 						Conflicts: []string{assignment.Target.RoleID},
 					})
 					manual = false
@@ -384,6 +392,10 @@ func sortLDAPGroupPreview(preview *LDAPGroupPreview) {
 	sort.Slice(preview.Removals, func(i, j int) bool { return changeLess(preview.Removals[i], preview.Removals[j]) })
 	sort.Slice(preview.Unresolved, func(i, j int) bool {
 		left, right := preview.Unresolved[i], preview.Unresolved[j]
+		return left.Kind+":"+left.ExternalID+":"+left.MappingID < right.Kind+":"+right.ExternalID+":"+right.MappingID
+	})
+	sort.Slice(preview.Skipped, func(i, j int) bool {
+		left, right := preview.Skipped[i], preview.Skipped[j]
 		return left.Kind+":"+left.ExternalID+":"+left.MappingID < right.Kind+":"+right.ExternalID+":"+right.MappingID
 	})
 	sort.Slice(preview.Collisions, func(i, j int) bool {

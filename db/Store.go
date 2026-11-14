@@ -163,6 +163,7 @@ var ErrNotFound = errors.New("no rows in result set")
 // the final recovery administrator or enable an unenforceable required policy.
 var ErrTOTPReadiness = errors.New("TOTP administrator recovery is not ready")
 var ErrLDAPReadiness = errors.New("LDAP local administrator recovery is not ready")
+var ErrLDAPNoEnabledGroupMapping = errors.New("LDAP provider has no enabled group mapping")
 var ErrInvalidOperation = errors.New("invalid operation")
 var ErrRunnerAlreadyRegistered = errors.New("runner is already registered")
 var ErrRegistrationTokenExpired = errors.New("registration token expired")

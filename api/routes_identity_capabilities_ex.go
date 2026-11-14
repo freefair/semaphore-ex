@@ -19,6 +19,7 @@ func registerIdentityCapabilityRoutes(
 	adminAPI.Path("/capabilities/ldap/state").HandlerFunc(ldapController.SetState).Methods("PUT")
 	adminAPI.Path("/capabilities/ldap/transitions").HandlerFunc(ldapController.Transitions).Methods("GET", "HEAD")
 	adminAPI.Path("/capabilities/ldap/group-mappings").HandlerFunc(ldapController.GroupMappings).Methods("GET", "HEAD")
+	adminAPI.Path("/capabilities/ldap/groups").HandlerFunc(ldapController.SearchGroups).Methods("GET", "HEAD")
 	adminAPI.Path("/capabilities/ldap/group-mappings/{mapping_id}").HandlerFunc(ldapController.SaveGroupMapping).Methods("PUT")
 	adminAPI.Path("/capabilities/ldap/group-mappings/{mapping_id}").HandlerFunc(ldapController.DeleteGroupMapping).Methods("DELETE")
 	adminAPI.Path("/capabilities/ldap/group-mappings/preview").HandlerFunc(ldapController.PreviewGroupMappings).Methods("POST")

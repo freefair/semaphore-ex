@@ -43,7 +43,7 @@ type LDAPRepository interface {
 	GetLDAPProvider(providerID string) (LDAPProvider, error)
 	GetLDAPProviders() ([]LDAPProvider, error)
 	SaveLDAPProvider(provider LDAPProvider) error
-	SaveLDAPReadiness(providerID string, status string, code string, checkedAt time.Time,
+	SaveLDAPReadiness(providerID string, status string, code string, detail string, checkedAt time.Time,
 		recoveryAdminUserID *int, expectedConfigVersion int) error
 	ConfigureLDAPProvider(providerID string, state string, selectedUserIDs []int, actorID int, changedAt time.Time, readinessMaxAge time.Duration) error
 	GetLDAPSelectedUsers(providerID string) ([]int, error)
@@ -63,6 +63,9 @@ type LDAPRepository interface {
 	GetLDAPGroupPreview(providerID string, token string) (LDAPGroupReconciliation, error)
 	ApplyLDAPGroupPreview(reconciliation LDAPGroupReconciliation,
 		additions []LDAPGroupAssignmentChange, removals []LDAPGroupAssignmentChange) (LDAPGroupReconciliation, error)
+	ApplyLDAPGroupPreviewAndRevoke(reconciliation LDAPGroupReconciliation,
+		additions []LDAPGroupAssignmentChange, removals []LDAPGroupAssignmentChange,
+		revokeUserIDs []int) (LDAPGroupReconciliation, error)
 	GetLDAPGroupReconciliationHistory(providerID string, limit int) ([]LDAPGroupReconciliation, error)
 }
 

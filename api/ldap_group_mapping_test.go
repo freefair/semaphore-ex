@@ -23,6 +23,7 @@ func TestLDAPGroupMappingControllerWritesStableTargetAndAudits(t *testing.T) {
 		strings.NewReader(`{
 			"provider_id":"corp",
 			"group_external_id":"entryuuid:40f1c82a-b773-4d41-a587-7c4cf7f3cd67",
+			"group_name":"Engineering",
 			"target":{"scope":"global","role_id":"global_auditor"},
 			"enabled":true,
 			"expected_revision":0
@@ -37,6 +38,7 @@ func TestLDAPGroupMappingControllerWritesStableTargetAndAudits(t *testing.T) {
 	assert.Equal(t, 7, service.groupSaveRequest.ActorID)
 	assert.Equal(t, "engineering", service.groupSaveRequest.Mapping.ID)
 	assert.Equal(t, pro_interfaces.LDAPRoleScopeGlobal, service.groupSaveRequest.Mapping.Target.Scope)
+	assert.Equal(t, "Engineering", service.groupSaveRequest.Mapping.GroupName)
 	require.Len(t, audit.events, 1)
 	assert.Equal(t, pro_interfaces.AuditActionLDAPGroupMappingWrite, audit.events[0].Action)
 	assert.Equal(t, pro_interfaces.AuditTargetLDAPGroupMapping, audit.events[0].TargetType)

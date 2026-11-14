@@ -42,6 +42,13 @@ var immutableLDAPAttributes = map[string]string{
 	"ipauniqueid": "ipaUniqueID",
 }
 
+type ldapIdentityError struct {
+	code   string
+	detail string
+}
+
+func (e *ldapIdentityError) Error() string { return e.detail }
+
 type ldapConnection interface {
 	Bind(username string, password string) error
 	Search(*ldap.SearchRequest) (*ldap.SearchResult, error)
@@ -80,22 +87,27 @@ func (c *ldapClient) Authenticate(
 		Status: pro_interfaces.LDAPReadinessFailed,
 	}}
 	if err := ctx.Err(); err != nil {
+		result.Readiness.Code = "connection_failed"
+		result.Readiness.Detail = safeLDAPDetail(err, request.Configuration, request.Credential)
 		return result, fmt.Errorf("LDAP request cancelled: %w", err)
 	}
 	serverURL, tlsConfig, err := validateLDAPConfiguration(request.Configuration)
 	if err != nil {
 		result.Readiness.Code = "invalid_configuration"
+		result.Readiness.Detail = safeLDAPDetail(err, request.Configuration, request.Credential)
 		return result, err
 	}
 	if strings.TrimSpace(request.Username) == "" || request.Credential == "" {
 		result.Readiness.Code = "invalid_credentials"
+		result.Readiness.Detail = "username and password are required"
 		return result, pro_interfaces.ErrLDAPInvalidCredentials
 	}
 
 	connection, err := c.dial(serverURL, request.Configuration.TLSMode, tlsConfig, c.timeout)
 	if err != nil {
 		result.Readiness.Code = "connection_failed"
-		return result, fmt.Errorf("%w: connect", pro_interfaces.ErrLDAPProviderUnavailable)
+		result.Readiness.Detail = safeLDAPDetail(err, request.Configuration, request.Credential)
+		return result, fmt.Errorf("%w: connect: %w", pro_interfaces.ErrLDAPProviderUnavailable, err)
 	}
 	defer func() { _ = connection.Close() }()
 	connection.SetTimeout(c.timeout)
@@ -103,12 +115,14 @@ func (c *ldapClient) Authenticate(
 
 	if err = connection.Bind(request.Configuration.BindDN, request.Configuration.BindPassword); err != nil {
 		result.Readiness.Code = "service_bind_failed"
-		return result, fmt.Errorf("%w: service bind", pro_interfaces.ErrLDAPProviderUnavailable)
+		result.Readiness.Detail = safeLDAPDetail(err, request.Configuration, request.Credential)
+		return result, fmt.Errorf("%w: service bind: %w", pro_interfaces.ErrLDAPProviderUnavailable, err)
 	}
 
 	filter, err := buildLDAPFilter(request.Configuration.UserFilter, request.Username)
 	if err != nil {
 		result.Readiness.Code = "invalid_filter"
+		result.Readiness.Detail = safeLDAPDetail(err, request.Configuration, request.Credential)
 		return result, err
 	}
 	attributes := []string{
@@ -132,26 +146,32 @@ func (c *ldapClient) Authenticate(
 	searchResult, err := connection.Search(searchRequest)
 	if errors.Is(err, ldap.ErrSizeLimitExceeded) {
 		result.Readiness.Code = "duplicate_identity"
+		result.Readiness.Detail = "LDAP search returned more than one entry"
 		return result, pro_interfaces.ErrLDAPDuplicateIdentity
 	}
 	if ldap.IsErrorWithCode(err, ldap.LDAPResultReferral) {
 		result.Readiness.Code = "referral_rejected"
+		result.Readiness.Detail = safeLDAPDetail(err, request.Configuration, request.Credential)
 		return result, pro_interfaces.ErrLDAPReferral
 	}
 	if err != nil {
 		result.Readiness.Code = "search_failed"
-		return result, fmt.Errorf("%w: search", pro_interfaces.ErrLDAPProviderUnavailable)
+		result.Readiness.Detail = safeLDAPDetail(err, request.Configuration, request.Credential)
+		return result, fmt.Errorf("%w: search: %w", pro_interfaces.ErrLDAPProviderUnavailable, err)
 	}
-	if len(searchResult.Referrals) != 0 {
+	if len(searchResult.Referrals) != 0 && len(searchResult.Entries) != 1 {
 		result.Readiness.Code = "referral_rejected"
+		result.Readiness.Detail = "LDAP search returned a continuation reference without exactly one identity"
 		return result, pro_interfaces.ErrLDAPReferral
 	}
 	if len(searchResult.Entries) == 0 {
 		result.Readiness.Code = "invalid_credentials"
+		result.Readiness.Detail = "LDAP search returned no matching user"
 		return result, pro_interfaces.ErrLDAPInvalidCredentials
 	}
 	if len(searchResult.Entries) != 1 {
 		result.Readiness.Code = "duplicate_identity"
+		result.Readiness.Detail = "LDAP search returned more than one entry"
 		return result, pro_interfaces.ErrLDAPDuplicateIdentity
 	}
 	result.Readiness.Search = true
@@ -159,15 +179,16 @@ func (c *ldapClient) Authenticate(
 	entry := searchResult.Entries[0]
 	identity, err := ldapIdentityFromEntry(entry, request.Configuration)
 	if err != nil {
-		result.Readiness.Code = "invalid_identity"
+		result.Readiness.Code, result.Readiness.Detail = ldapIdentityReadinessFailure(err)
 		return result, err
 	}
 	if err = connection.Bind(entry.DN, request.Credential); err != nil {
 		result.Readiness.Code = "invalid_credentials"
+		result.Readiness.Detail = safeLDAPDetail(err, request.Configuration, request.Credential)
 		if ldap.IsErrorWithCode(err, ldap.LDAPResultInvalidCredentials) {
 			return result, pro_interfaces.ErrLDAPInvalidCredentials
 		}
-		return result, fmt.Errorf("%w: user bind", pro_interfaces.ErrLDAPProviderUnavailable)
+		return result, fmt.Errorf("%w: user bind: %w", pro_interfaces.ErrLDAPProviderUnavailable, err)
 	}
 
 	result.Identity = identity
@@ -320,6 +341,86 @@ func (c *ldapClient) ReadGroupSnapshot(
 	return result, nil
 }
 
+// SearchGroups returns at most fifty direct group matches for the mapping
+// editor. It never follows continuation references.
+func (c *ldapClient) SearchGroups(
+	ctx context.Context,
+	configuration pro_interfaces.LDAPClientConfiguration,
+	query string,
+) ([]pro_interfaces.LDAPDirectoryGroup, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	serverURL, tlsConfig, err := validateLDAPConfiguration(configuration)
+	if err != nil {
+		return nil, err
+	}
+	if err = validateLDAPGroupConfiguration(configuration); err != nil {
+		return nil, err
+	}
+	connection, err := c.dial(serverURL, configuration.TLSMode, tlsConfig, c.timeout)
+	if err != nil {
+		return nil, fmt.Errorf("%w: connect: %w", pro_interfaces.ErrLDAPProviderUnavailable, err)
+	}
+	defer func() { _ = connection.Close() }()
+	connection.SetTimeout(c.timeout)
+	if err = connection.Bind(configuration.BindDN, configuration.BindPassword); err != nil {
+		return nil, fmt.Errorf("%w: service bind: %w", pro_interfaces.ErrLDAPProviderUnavailable, err)
+	}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []pro_interfaces.LDAPDirectoryGroup{}, nil
+	}
+	nameAttribute := ldapGroupNameAttribute(configuration)
+	nameFilter := "(cn=*" + ldap.EscapeFilter(query) + "*)"
+	if !strings.EqualFold(nameAttribute, "cn") {
+		nameFilter = "(|" + nameFilter + "(" + nameAttribute + "=*" + ldap.EscapeFilter(query) + "*))"
+	}
+	filter := "(&" + configuration.GroupFilter + nameFilter + ")"
+	if _, err = ldap.CompileFilter(filter); err != nil {
+		return nil, err
+	}
+	identityAttribute, err := canonicalIdentityAttribute(configuration.GroupIdentityAttribute)
+	if err != nil {
+		return nil, err
+	}
+	result, err := connection.Search(ldap.NewSearchRequest(
+		configuration.GroupSearchBaseDN, ldap.ScopeWholeSubtree, ldap.NeverDerefAliases,
+		50, int(c.timeout/time.Second), false, filter,
+		[]string{identityAttribute, "cn", nameAttribute}, nil,
+	))
+	if ldap.IsErrorWithCode(err, ldap.LDAPResultReferral) {
+		return nil, pro_interfaces.ErrLDAPReferral
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w: group search: %w", pro_interfaces.ErrLDAPProviderUnavailable, err)
+	}
+	// Continuation references are informational here: the request never
+	// follows them, and the returned entries remain bounded by this server.
+	// A referral LDAP result code above is still rejected fail-closed.
+	groups := make([]pro_interfaces.LDAPDirectoryGroup, 0, len(result.Entries))
+	for _, entry := range result.Entries {
+		externalID, identityErr := immutableLDAPExternalID(entry, identityAttribute)
+		if identityErr != nil {
+			return nil, identityErr
+		}
+		name := strings.TrimSpace(entry.GetEqualFoldAttributeValue(nameAttribute))
+		groups = append(groups, pro_interfaces.LDAPDirectoryGroup{
+			ExternalID: externalID, Name: name, DN: entry.DN,
+		})
+	}
+	sort.Slice(groups, func(left, right int) bool {
+		if groups[left].Name == groups[right].Name {
+			return groups[left].ExternalID < groups[right].ExternalID
+		}
+		return groups[left].Name < groups[right].Name
+	})
+	if len(groups) > 50 {
+		groups = groups[:50]
+	}
+	return groups, nil
+}
+
 func (c *ldapClient) searchLDAPPageSet(
 	ctx context.Context,
 	connection ldapConnection,
@@ -352,10 +453,9 @@ func (c *ldapClient) searchLDAPPageSet(
 			abandonPaging()
 			return nil, fmt.Errorf("%w: paged search", pro_interfaces.ErrLDAPProviderUnavailable)
 		}
-		if len(result.Referrals) != 0 {
-			abandonPaging()
-			return nil, pro_interfaces.ErrLDAPReferral
-		}
+		// Continuation references carry no entries and are never followed. A
+		// completed page remains authoritative; LDAP result-code referrals above
+		// still fail closed.
 		if len(entries)+len(result.Entries) > ldapGroupEntryLimit {
 			abandonPaging()
 			return nil, ldapGroupLimitError("entries", ldapGroupEntryLimit)
@@ -491,7 +591,7 @@ func validateLDAPConfiguration(
 	}
 	groupFields := []string{
 		configuration.GroupSearchBaseDN, configuration.GroupUserFilter, configuration.GroupFilter,
-		configuration.GroupIdentityAttribute, configuration.GroupMemberAttribute,
+		configuration.GroupIdentityAttribute, configuration.GroupNameAttribute, configuration.GroupMemberAttribute,
 	}
 	groupConfigured := false
 	for _, value := range groupFields {
@@ -544,6 +644,9 @@ func validateLDAPGroupConfiguration(configuration pro_interfaces.LDAPClientConfi
 	if _, err := canonicalIdentityAttribute(configuration.GroupIdentityAttribute); err != nil {
 		return err
 	}
+	if !ldapAttributePattern.MatchString(ldapGroupNameAttribute(configuration)) {
+		return fmt.Errorf("invalid LDAP group name attribute")
+	}
 	if !ldapAttributePattern.MatchString(configuration.GroupMemberAttribute) {
 		return fmt.Errorf("invalid LDAP group member attribute")
 	}
@@ -551,6 +654,14 @@ func validateLDAPGroupConfiguration(configuration pro_interfaces.LDAPClientConfi
 		return fmt.Errorf("LDAP group max depth must be between 1 and %d", ldapGroupMaxDepthLimit)
 	}
 	return nil
+}
+
+func ldapGroupNameAttribute(configuration pro_interfaces.LDAPClientConfiguration) string {
+	attribute := strings.TrimSpace(configuration.GroupNameAttribute)
+	if attribute == "" {
+		return "cn"
+	}
+	return attribute
 }
 
 func dialLDAP(
@@ -643,24 +754,65 @@ func ldapIdentityFromEntry(
 		return pro_interfaces.LDAPIdentity{}, err
 	}
 	identityValues := entry.GetEqualFoldRawAttributeValues(identityAttribute)
+	if len(identityValues) == 0 {
+		return pro_interfaces.LDAPIdentity{}, &ldapIdentityError{
+			code: "identity_attribute_missing", detail: "missing attribute " + identityAttribute,
+		}
+	}
 	if len(identityValues) != 1 {
-		return pro_interfaces.LDAPIdentity{}, fmt.Errorf("LDAP immutable identity must have exactly one value")
+		return pro_interfaces.LDAPIdentity{}, &ldapIdentityError{
+			code: "identity_attribute_missing", detail: "attribute " + identityAttribute + " must have exactly one value",
+		}
 	}
 	normalizedIdentity, err := normalizeLDAPIdentity(identityAttribute, identityValues[0])
 	if err != nil {
-		return pro_interfaces.LDAPIdentity{}, err
+		return pro_interfaces.LDAPIdentity{}, &ldapIdentityError{
+			code: "identity_not_uuid", detail: "attribute " + identityAttribute + " is not a UUID",
+		}
+	}
+	attributes := map[string]string{
+		configuration.UsernameAttribute: strings.TrimSpace(entry.GetEqualFoldAttributeValue(configuration.UsernameAttribute)),
+		configuration.NameAttribute:     strings.TrimSpace(entry.GetEqualFoldAttributeValue(configuration.NameAttribute)),
+		configuration.EmailAttribute:    strings.TrimSpace(entry.GetEqualFoldAttributeValue(configuration.EmailAttribute)),
+	}
+	for _, attribute := range []string{configuration.UsernameAttribute, configuration.NameAttribute, configuration.EmailAttribute} {
+		if attributes[attribute] == "" {
+			return pro_interfaces.LDAPIdentity{}, &ldapIdentityError{
+				code: "required_attribute_missing", detail: "missing attribute " + attribute,
+			}
+		}
 	}
 	identity := pro_interfaces.LDAPIdentity{
 		ExternalID: strings.ToLower(identityAttribute) + ":" + normalizedIdentity,
-		Username: strings.ToLower(strings.TrimSpace(
-			entry.GetEqualFoldAttributeValue(configuration.UsernameAttribute))),
-		Name:  strings.TrimSpace(entry.GetEqualFoldAttributeValue(configuration.NameAttribute)),
-		Email: strings.ToLower(strings.TrimSpace(entry.GetEqualFoldAttributeValue(configuration.EmailAttribute))),
-	}
-	if identity.Username == "" || identity.Name == "" || identity.Email == "" {
-		return pro_interfaces.LDAPIdentity{}, fmt.Errorf("LDAP identity is missing required attributes")
+		Username:   strings.ToLower(attributes[configuration.UsernameAttribute]),
+		Name:       attributes[configuration.NameAttribute],
+		Email:      strings.ToLower(attributes[configuration.EmailAttribute]),
 	}
 	return identity, nil
+}
+
+func ldapIdentityReadinessFailure(err error) (string, string) {
+	var identityErr *ldapIdentityError
+	if errors.As(err, &identityErr) {
+		return identityErr.code, identityErr.detail
+	}
+	return "invalid_identity", "LDAP identity extraction failed"
+}
+
+func safeLDAPDetail(err error, configuration pro_interfaces.LDAPClientConfiguration, credential string) string {
+	if err == nil {
+		return ""
+	}
+	detail := err.Error()
+	for _, secret := range []string{configuration.BindPassword, configuration.BindDN, credential} {
+		if secret != "" {
+			detail = strings.ReplaceAll(detail, secret, "[redacted]")
+		}
+	}
+	if len(detail) > 1024 {
+		detail = detail[:1024]
+	}
+	return detail
 }
 
 func canonicalIdentityAttribute(attribute string) (string, error) {

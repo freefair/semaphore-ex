@@ -35,6 +35,9 @@ type ldapServiceStub struct {
 	groupDeleteRequest  pro_interfaces.LDAPGroupMappingDeleteRequest
 	groupPreviewRequest pro_interfaces.LDAPGroupPreviewRequest
 	groupApplyRequest   pro_interfaces.LDAPGroupApplyRequest
+	groups              []pro_interfaces.LDAPDirectoryGroup
+	groupSearchProvider string
+	groupSearchQuery    string
 }
 
 func (*ldapServiceStub) Initialize(context.Context) error { return nil }
@@ -56,6 +59,11 @@ func (s *ldapServiceStub) Link(_ context.Context, request pro_interfaces.LDAPLin
 }
 func (s *ldapServiceStub) Providers(context.Context) ([]pro_interfaces.LDAPProviderConfiguration, error) {
 	return s.providers, s.err
+}
+func (s *ldapServiceStub) SearchGroups(_ context.Context, providerID string, query string) ([]pro_interfaces.LDAPDirectoryGroup, error) {
+	s.groupSearchProvider = providerID
+	s.groupSearchQuery = query
+	return s.groups, s.err
 }
 func (s *ldapServiceStub) Configure(
 	_ context.Context, request pro_interfaces.LDAPConfigureRequest,
@@ -161,6 +169,26 @@ func TestLDAPControllerReadinessAndStateContracts(t *testing.T) {
 	assert.Equal(t, []int{11, 12}, service.stateRequest.SelectedUserIDs)
 }
 
+func TestLDAPGroupSearchControllerRequiresParametersAndReturnsDirectoryGroups(t *testing.T) {
+	service := &ldapServiceStub{groups: []pro_interfaces.LDAPDirectoryGroup{{
+		ExternalID: "entryuuid:10112233-4455-6677-8899-aabbccddeeff", Name: "Engineering",
+	}}}
+	controller := NewLDAPController(service, nil)
+
+	missing := httptest.NewRecorder()
+	controller.SearchGroups(missing, httptest.NewRequest(http.MethodGet, "/api/capabilities/ldap/groups?provider_id=corp", nil))
+	assert.Equal(t, http.StatusBadRequest, missing.Code)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/capabilities/ldap/groups?provider_id=corp&query=engineering", nil)
+	recorder := httptest.NewRecorder()
+	controller.SearchGroups(recorder, request)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "corp", service.groupSearchProvider)
+	assert.Equal(t, "engineering", service.groupSearchQuery)
+	assert.Contains(t, recorder.Body.String(), `"name":"Engineering"`)
+}
+
 func TestWriteLDAPErrorReturnsStableSecurityStatuses(t *testing.T) {
 	tests := []struct {
 		err    error
@@ -169,7 +197,10 @@ func TestWriteLDAPErrorReturnsStableSecurityStatuses(t *testing.T) {
 	}{
 		{pro_interfaces.ErrLDAPInvalidCredentials, http.StatusUnauthorized, "LDAP_INVALID_CREDENTIALS"},
 		{pro_interfaces.ErrLDAPProviderUnavailable, http.StatusServiceUnavailable, "LDAP_PROVIDER_UNAVAILABLE"},
-		{pro_interfaces.ErrLDAPReferral, http.StatusServiceUnavailable, "LDAP_PROVIDER_UNAVAILABLE"},
+		{pro_interfaces.ErrLDAPReferral, http.StatusServiceUnavailable, "LDAP_REFERRAL"},
+		{pro_interfaces.ErrLDAPDuplicateIdentity, http.StatusConflict, "LDAP_DUPLICATE_IDENTITY"},
+		{pro_interfaces.ErrLDAPNoGroupAccess, http.StatusForbidden, "LDAP_NO_GROUP_ACCESS"},
+		{pro_interfaces.ErrLDAPNoGroupMapping, http.StatusConflict, "LDAP_NO_GROUP_MAPPING"},
 		{pro_interfaces.ErrLDAPThrottled, http.StatusTooManyRequests, "LDAP_THROTTLED"},
 		{pro_interfaces.ErrLDAPIdentityCollision, http.StatusConflict, "LDAP_IDENTITY_COLLISION"},
 		{pro_interfaces.ErrLDAPReconfigurationRequiresInactive, http.StatusConflict, "LDAP_RECONFIGURATION_REQUIRES_INACTIVE"},

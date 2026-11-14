@@ -72,15 +72,6 @@ func (s *LDAPGroupReconciliationScheduler) tick(ctx context.Context, now time.Ti
 			provider.State != pro_interfaces.LDAPStateSelectedUsers {
 			continue
 		}
-		mappings, mappingErr := s.service.GroupMappings(ctx, provider.ID)
-		if mappingErr != nil {
-			log.WithError(mappingErr).WithField("provider_id", provider.ID).
-				Warn("LDAP group reconciliation: failed to list mappings")
-			continue
-		}
-		if len(mappings) == 0 {
-			continue
-		}
 		if _, reconcileErr := s.service.ReconcileGroupMappings(ctx, pro_interfaces.LDAPGroupPreviewRequest{
 			ProviderID: provider.ID, Source: "scheduled", Now: now,
 		}); reconcileErr != nil {

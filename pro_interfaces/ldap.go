@@ -47,7 +47,10 @@ type LDAPReadiness struct {
 	Bind       bool                `json:"bind"`
 	Recovery   bool                `json:"recovery"`
 	Code       string              `json:"code,omitempty"`
-	CheckedAt  *time.Time          `json:"checked_at,omitempty"`
+	// Detail is an administrator-safe diagnostic. It never contains a bind DN,
+	// password, user password, or other credential material.
+	Detail    string     `json:"detail,omitempty"`
+	CheckedAt *time.Time `json:"checked_at,omitempty"`
 }
 
 // LDAPProviderConfiguration is the secret-free administrative view.
@@ -71,6 +74,7 @@ type LDAPProviderConfiguration struct {
 	GroupUserFilter        string        `json:"group_user_filter,omitempty"`
 	GroupFilter            string        `json:"group_filter,omitempty"`
 	GroupIdentityAttribute string        `json:"group_identity_attribute,omitempty"`
+	GroupNameAttribute     string        `json:"group_name_attribute,omitempty"`
 	GroupMemberAttribute   string        `json:"group_member_attribute,omitempty"`
 	GroupMaxDepth          int           `json:"group_max_depth,omitempty"`
 	SelectedUserIDs        []int         `json:"selected_user_ids"`
@@ -101,6 +105,7 @@ type LDAPProviderInput struct {
 	GroupUserFilter        string
 	GroupFilter            string
 	GroupIdentityAttribute string
+	GroupNameAttribute     string
 	GroupMemberAttribute   string
 	GroupMaxDepth          int
 }
@@ -172,6 +177,7 @@ type LDAPClientConfiguration struct {
 	GroupUserFilter        string
 	GroupFilter            string
 	GroupIdentityAttribute string
+	GroupNameAttribute     string
 	GroupMemberAttribute   string
 	GroupMaxDepth          int
 }
@@ -280,6 +286,15 @@ type LDAPClient interface {
 	Validate(LDAPClientConfiguration) error
 	Authenticate(context.Context, LDAPClientRequest) (LDAPClientResult, error)
 	ReadGroupSnapshot(context.Context, LDAPClientConfiguration) (LDAPGroupDirectorySnapshot, error)
+	SearchGroups(context.Context, LDAPClientConfiguration, string) ([]LDAPDirectoryGroup, error)
+}
+
+// LDAPDirectoryGroup is the bounded, secret-free result returned to an
+// administrator selecting a group mapping. Name is display-only.
+type LDAPDirectoryGroup struct {
+	ExternalID string `json:"external_id"`
+	Name       string `json:"name"`
+	DN         string `json:"dn"`
 }
 
 // LDAPService is the framework-free enhanced LDAP identity boundary.
@@ -305,6 +320,7 @@ type LDAPService interface {
 	ApplyGroupPreview(context.Context, LDAPGroupApplyRequest) (LDAPGroupPreview, error)
 	ReconcileGroupMappings(context.Context, LDAPGroupPreviewRequest) (LDAPGroupPreview, error)
 	GroupReconciliationHistory(context.Context, string, int) ([]db.LDAPGroupReconciliation, error)
+	SearchGroups(context.Context, string, string) ([]LDAPDirectoryGroup, error)
 }
 
 var (
@@ -320,6 +336,8 @@ var (
 	ErrLDAPForbidden                       = errors.New("LDAP operation forbidden")
 	ErrLDAPReferral                        = errors.New("LDAP referral rejected")
 	ErrLDAPDuplicateIdentity               = errors.New("LDAP search returned duplicate identities")
+	ErrLDAPNoGroupAccess                   = errors.New("LDAP user is not in an enabled group mapping")
+	ErrLDAPNoGroupMapping                  = errors.New("LDAP provider requires an enabled group mapping")
 	ErrLDAPGroupPreviewStale               = errors.New("LDAP group preview is stale")
 	ErrLDAPGroupMappingCollision           = errors.New("LDAP group mapping collision")
 	ErrLDAPGroupProtectedAdministrator     = errors.New("LDAP group mapping would remove a protected administrator")

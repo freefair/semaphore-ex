@@ -17,6 +17,7 @@ import (
 type ldapGroupMappingBody struct {
 	ProviderID       string                        `json:"provider_id" binding:"required"`
 	GroupExternalID  string                        `json:"group_external_id" binding:"required"`
+	GroupName        string                        `json:"group_name"`
 	Target           pro_interfaces.LDAPRoleTarget `json:"target" binding:"required"`
 	Enabled          bool                          `json:"enabled"`
 	ExpectedRevision int                           `json:"expected_revision"`
@@ -50,7 +51,7 @@ func (c *LDAPController) SaveGroupMapping(w http.ResponseWriter, r *http.Request
 	}
 	mappingID := strings.TrimSpace(mux.Vars(r)["mapping_id"])
 	mapping := pro_interfaces.LDAPGroupMapping{
-		ID: mappingID, ProviderID: body.ProviderID, GroupExternalID: body.GroupExternalID,
+		ID: mappingID, ProviderID: body.ProviderID, GroupExternalID: body.GroupExternalID, GroupName: body.GroupName,
 		Target: body.Target, Enabled: body.Enabled, Revision: body.ExpectedRevision,
 	}
 	saved, err := c.service.SaveGroupMapping(r.Context(), pro_interfaces.LDAPGroupMappingRequest{
@@ -65,6 +66,24 @@ func (c *LDAPController) SaveGroupMapping(w http.ResponseWriter, r *http.Request
 	c.recordLDAPGroup(r, pro_interfaces.AuditActionLDAPGroupMappingWrite,
 		pro_interfaces.AuditOutcomeAllowed, string(pro_interfaces.CapabilityReasonActive), saved.GroupExternalID)
 	helpers.WriteJSON(w, http.StatusOK, saved)
+}
+
+func (c *LDAPController) SearchGroups(w http.ResponseWriter, r *http.Request) {
+	providerID := strings.TrimSpace(r.URL.Query().Get("provider_id"))
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+	if providerID == "" || query == "" {
+		helpers.WriteErrorStatus(w, "LDAP_GROUP_SEARCH_PARAMETERS_REQUIRED", http.StatusBadRequest)
+		return
+	}
+	groups, err := c.service.SearchGroups(r.Context(), providerID, query)
+	if err != nil {
+		c.recordLDAPGroupError(r, pro_interfaces.AuditActionLDAPGroupMappingRead, err, "provider:"+providerID)
+		writeLDAPError(w, err)
+		return
+	}
+	c.recordLDAPGroup(r, pro_interfaces.AuditActionLDAPGroupMappingRead,
+		pro_interfaces.AuditOutcomeAllowed, string(pro_interfaces.CapabilityReasonActive), "provider:"+providerID)
+	helpers.WriteJSON(w, http.StatusOK, groups)
 }
 
 func (c *LDAPController) DeleteGroupMapping(w http.ResponseWriter, r *http.Request) {

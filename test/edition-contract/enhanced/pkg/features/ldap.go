@@ -133,6 +133,7 @@ func (s *ldapService) Authenticate(
 		clientConfiguration, request.Username, request.Password,
 	))
 	if err != nil {
+		logLDAPFailure(provider.ID, clientResult.Readiness, err)
 		if errors.Is(err, pro_interfaces.ErrLDAPInvalidCredentials) {
 			attempt, recordErr := s.repository.RecordLDAPAuthFailure(
 				provider.ID, subjectHash, request.Now,
@@ -145,6 +146,9 @@ func (s *ldapService) Authenticate(
 				return db.User{}, false, pro_interfaces.ErrLDAPThrottled
 			}
 		}
+		return db.User{}, false, err
+	}
+	if err = s.requireLDAPGroupAccess(ctx, provider, clientConfiguration, clientResult.Identity); err != nil {
 		return db.User{}, false, err
 	}
 	user, provisioned, err := s.resolveIdentity(provider.ID, clientResult.Identity, state)
@@ -317,6 +321,7 @@ func (s *ldapService) Configure(
 		GroupSearchBaseDN: strings.TrimSpace(input.GroupSearchBaseDN),
 		GroupUserFilter:   strings.TrimSpace(input.GroupUserFilter), GroupFilter: strings.TrimSpace(input.GroupFilter),
 		GroupIdentityAttribute: strings.TrimSpace(input.GroupIdentityAttribute),
+		GroupNameAttribute:     strings.TrimSpace(input.GroupNameAttribute),
 		GroupMemberAttribute:   strings.TrimSpace(input.GroupMemberAttribute), GroupMaxDepth: input.GroupMaxDepth,
 		ReadinessStatus: string(pro_interfaces.LDAPReadinessUntested), ReadinessCode: "configuration_changed",
 		Created: created, Updated: request.Now,
@@ -355,10 +360,13 @@ func (s *ldapService) Test(
 	))
 	result.Readiness.CheckedAt = &request.Now
 	if testErr != nil {
+		result.Readiness.Detail = safeLDAPReadinessDetail(
+			result.Readiness.Detail, configuration, request.Password)
 		_ = s.repository.SaveLDAPReadiness(
 			provider.ID, string(pro_interfaces.LDAPReadinessFailed),
-			result.Readiness.Code, request.Now, nil, provider.ConfigVersion,
+			result.Readiness.Code, result.Readiness.Detail, request.Now, nil, provider.ConfigVersion,
 		)
+		logLDAPFailure(provider.ID, result.Readiness, testErr)
 		return result.Readiness, testErr
 	}
 	recoveryAdmin, err := s.repository.GetUser(request.RecoveryAdminUserID)
@@ -368,8 +376,9 @@ func (s *ldapService) Test(
 		) != nil {
 		result.Readiness.Status = pro_interfaces.LDAPReadinessFailed
 		result.Readiness.Code = "local_recovery_failed"
+		result.Readiness.Detail = "local recovery administrator authentication failed"
 		_ = s.repository.SaveLDAPReadiness(
-			provider.ID, string(result.Readiness.Status), result.Readiness.Code, request.Now, nil,
+			provider.ID, string(result.Readiness.Status), result.Readiness.Code, result.Readiness.Detail, request.Now, nil,
 			provider.ConfigVersion,
 		)
 		return result.Readiness, pro_interfaces.ErrLDAPReadiness
@@ -379,7 +388,7 @@ func (s *ldapService) Test(
 	result.Readiness.Code = "ready"
 	if err = s.repository.SaveLDAPReadiness(
 		provider.ID, string(result.Readiness.Status), result.Readiness.Code,
-		request.Now, &request.RecoveryAdminUserID, provider.ConfigVersion,
+		result.Readiness.Detail, request.Now, &request.RecoveryAdminUserID, provider.ConfigVersion,
 	); err != nil {
 		return pro_interfaces.LDAPReadiness{}, err
 	}
@@ -408,6 +417,9 @@ func (s *ldapService) SetState(
 	); err != nil {
 		if errors.Is(err, db.ErrLDAPReadiness) {
 			return pro_interfaces.LDAPProviderConfiguration{}, pro_interfaces.ErrLDAPReadiness
+		}
+		if errors.Is(err, db.ErrLDAPNoEnabledGroupMapping) {
+			return pro_interfaces.LDAPProviderConfiguration{}, pro_interfaces.ErrLDAPNoGroupMapping
 		}
 		if errors.Is(err, db.ErrNotFound) {
 			return pro_interfaces.LDAPProviderConfiguration{}, pro_interfaces.ErrLDAPProviderNotFound
@@ -514,6 +526,7 @@ func (s *ldapService) providerConfiguration(
 	readiness := pro_interfaces.LDAPReadiness{
 		Status: pro_interfaces.LDAPReadinessStatus(provider.ReadinessStatus),
 		Code:   provider.ReadinessCode, CheckedAt: provider.ReadinessCheckedAt,
+		Detail: provider.ReadinessDetail,
 	}
 	if readiness.Status == pro_interfaces.LDAPReadinessReady {
 		readiness.Connection = true
@@ -532,6 +545,7 @@ func (s *ldapService) providerConfiguration(
 		NameAttribute: provider.NameAttribute, EmailAttribute: provider.EmailAttribute,
 		GroupSearchBaseDN: provider.GroupSearchBaseDN, GroupUserFilter: provider.GroupUserFilter,
 		GroupFilter: provider.GroupFilter, GroupIdentityAttribute: provider.GroupIdentityAttribute,
+		GroupNameAttribute:   provider.GroupNameAttribute,
 		GroupMemberAttribute: provider.GroupMemberAttribute, GroupMaxDepth: provider.GroupMaxDepth,
 		SelectedUserIDs: selected, EligibleUserIDs: eligible,
 		RecoveryAdminUserID: provider.RecoveryAdminUserID,
@@ -555,6 +569,7 @@ func (s *ldapService) clientConfiguration(
 		EmailAttribute:    provider.EmailAttribute,
 		GroupSearchBaseDN: provider.GroupSearchBaseDN, GroupUserFilter: provider.GroupUserFilter,
 		GroupFilter: provider.GroupFilter, GroupIdentityAttribute: provider.GroupIdentityAttribute,
+		GroupNameAttribute:   provider.GroupNameAttribute,
 		GroupMemberAttribute: provider.GroupMemberAttribute, GroupMaxDepth: provider.GroupMaxDepth,
 	}
 	configuration.BindPassword = string(secret)
@@ -577,6 +592,7 @@ func clientConfigurationFromInput(
 		EmailAttribute:    strings.TrimSpace(input.EmailAttribute),
 		GroupSearchBaseDN: strings.TrimSpace(input.GroupSearchBaseDN), GroupUserFilter: strings.TrimSpace(input.GroupUserFilter),
 		GroupFilter: strings.TrimSpace(input.GroupFilter), GroupIdentityAttribute: strings.TrimSpace(input.GroupIdentityAttribute),
+		GroupNameAttribute:   strings.TrimSpace(input.GroupNameAttribute),
 		GroupMemberAttribute: strings.TrimSpace(input.GroupMemberAttribute), GroupMaxDepth: input.GroupMaxDepth,
 	}
 	configuration.BindPassword = bindSecret
@@ -594,4 +610,23 @@ func zeroLDAPBytes(value []byte) {
 	for index := range value {
 		value[index] = 0
 	}
+}
+
+func safeLDAPReadinessDetail(
+	detail string,
+	configuration pro_interfaces.LDAPClientConfiguration,
+	credential string,
+) string {
+	if strings.TrimSpace(detail) == "" {
+		return "LDAP readiness check failed"
+	}
+	for _, secret := range []string{configuration.BindPassword, configuration.BindDN, credential} {
+		if secret != "" {
+			detail = strings.ReplaceAll(detail, secret, "[redacted]")
+		}
+	}
+	if len(detail) > 1024 {
+		return detail[:1024]
+	}
+	return detail
 }
