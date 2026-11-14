@@ -56,6 +56,11 @@
 
     <v-divider style="margin-top: -1px" />
 
+    <p
+      class="text-body-medium text-medium-emphasis mx-4 mt-3 mb-0"
+      data-testid="team-rolesCombine"
+    >{{ $t('teamRolesCombine') }}</p>
+
     <v-data-table
       data-testid="team-table"
       :data-state="pendingSaves > 0 ? 'loading' : (items.length === 0 ? 'empty' : 'ready')"

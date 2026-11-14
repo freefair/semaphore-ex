@@ -304,7 +304,17 @@
             density="compact"
             class="mt-3"
             data-testid="ldap-group-role"
-          />
+          >
+            <template v-slot:no-data>
+              <EmptyPickerHint
+                v-if="editor.scope === 'global'"
+                :text="$t('ldapMappingNoGlobalRoles')"
+                :link-text="$t('ldapMappingCreateGlobalRole')"
+                to="/admin/roles"
+                test-id="ldap-group-role-empty"
+              />
+            </template>
+          </v-select>
           <v-switch
             v-model="editor.enabled"
             :label="$t('ldapMappingEnabledSwitch')"
@@ -374,6 +384,7 @@
 <script>
 import axios from 'axios';
 import { ldapErrorText, LDAP_ERROR_MESSAGES, mappingIdFromName } from '@/lib/enhanced/ldap';
+import EmptyPickerHint from '@/components/enhanced/EmptyPickerHint.vue';
 
 function emptyEditor() {
   return {
@@ -400,6 +411,7 @@ function normalizePreview(preview) {
 }
 
 export default {
+  components: { EmptyPickerHint },
   data() {
     return {
       providers: [],
@@ -464,7 +476,9 @@ export default {
       this.providers = providers.data || [];
       this.users = users.data || [];
       this.projects = projects.data || [];
-      this.globalRoles = roles.data || [];
+      // /api/roles also lists the built-in project roles for older pickers;
+      // only stored global roles can be the target of a global mapping.
+      this.globalRoles = (roles.data || []).filter((role) => !role.builtin);
       this.providerID = this.providers.length ? this.providers[0].id : '';
       await this.loadMappings();
     } catch (error) {

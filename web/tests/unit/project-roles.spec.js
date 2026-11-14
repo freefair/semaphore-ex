@@ -21,6 +21,25 @@ describe('custom project roles', () => {
     });
   });
 
+  it('lists built-in project roles read-only next to custom ones', async () => {
+    const context = {
+      projectId: 7,
+      canManageRoles: true,
+      getItemsUrl: () => '/api/project/7/roles',
+      loadEndpoint: async (url) => ({
+        '/api/project/7/roles': [{ id: 'role_a', name: 'Operator', builtin: false }],
+        '/api/project/7/roles/permissions': [{ id: 'project.read' }],
+        '/api/project/7/roles/all': [
+          { id: 'role_a', name: 'Operator', builtin: false },
+          { id: 'builtin:guest', name: 'Guest', builtin: true },
+        ],
+      })[url],
+    };
+    await Roles.methods.loadItems.call(context);
+    expect(context.items.map((role) => role.id)).to.deep.equal(['role_a', 'builtin:guest']);
+    expect(context.projectPermissionCatalog).to.deep.equal([{ id: 'project.read' }]);
+  });
+
   it('keeps immutable IDs as the UI resource identity', () => {
     expect(Roles.computed.IDFieldName()).to.equal('id');
     expect(Roles.methods.getDeleteItemUrl.call({

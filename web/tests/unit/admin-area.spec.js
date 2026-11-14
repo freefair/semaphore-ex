@@ -6,6 +6,8 @@ import {
 } from '@/lib/enhanced/admin-sections';
 import { environmentVariable, notificationChannelStates } from '@/lib/enhanced/notification-channels';
 import TwoFactorPolicyPanel from '@/components/enhanced/TwoFactorPolicyPanel.vue';
+import AdminLayout from '@/views/admin/AdminLayout.vue';
+import EventBus from '@/event-bus';
 
 const NONE = {
   admin: false,
@@ -58,6 +60,19 @@ describe('administration area', () => {
       expect(record.redirect).to.equal(target);
     });
     expect(LEGACY_ADMIN_REDIRECTS['/role-mappings']).to.equal('/admin/group-mappings');
+  });
+});
+
+describe('administration back button', () => {
+  it('lets the app choose the project instead of opening an empty root page', () => {
+    const emitted = [];
+    const listener = () => emitted.push('i-open-last-project');
+    EventBus.$on('i-open-last-project', listener);
+    const pushed = [];
+    AdminLayout.methods.backToProjects.call({ $router: { push: (path) => pushed.push(path) } });
+    EventBus.$off('i-open-last-project', listener);
+    expect(emitted).to.deep.equal(['i-open-last-project']);
+    expect(pushed).to.deep.equal([]);
   });
 });
 

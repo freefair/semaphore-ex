@@ -1,4 +1,9 @@
 export default {
+  ansibleSemaphore: 'Semaphore EX',
+  teamRolesCombine: 'A member can hold several roles; their permissions add up. Remove a role to take its permissions away.',
+  roleBuiltinReadOnly: 'Built-in, cannot be changed',
+  ldapMappingNoGlobalRoles: 'There is no global role yet. Built-in roles only apply inside a project.',
+  ldapMappingCreateGlobalRole: 'Create a global role',
   back: 'Back',
   templateRowDetails: 'Last tasks',
   enterFullscreen: 'Full screen',

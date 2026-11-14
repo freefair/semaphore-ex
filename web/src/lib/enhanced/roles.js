@@ -28,10 +28,17 @@ export const enhancedMethods = {
     const catalogUrl = this.projectId
       ? `/api/project/${this.projectId}/roles/permissions`
       : '/api/roles/project-permissions';
-    [this.items, this.projectPermissionCatalog] = await Promise.all([
+    const [items, catalog, all] = await Promise.all([
       this.loadEndpoint(this.getItemsUrl()),
       // The summary falls back to raw IDs when the catalog is unavailable.
       this.loadEndpoint(catalogUrl).catch(() => []),
+      // Built-in project roles are listed read-only so they can be compared
+      // with custom ones before assigning them.
+      this.projectId
+        ? this.loadEndpoint(`/api/project/${this.projectId}/roles/all`).catch(() => [])
+        : Promise.resolve([]),
     ]);
+    this.projectPermissionCatalog = catalog;
+    this.items = [...items, ...(all || []).filter((role) => role.builtin)];
   },
 };

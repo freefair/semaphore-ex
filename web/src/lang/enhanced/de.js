@@ -1,4 +1,9 @@
 export default {
+  ansibleSemaphore: 'Semaphore EX',
+  teamRolesCombine: 'Ein Mitglied kann mehrere Rollen haben; ihre Berechtigungen addieren sich. Wer eine Rolle entfernt, nimmt ihre Berechtigungen weg.',
+  roleBuiltinReadOnly: 'Eingebaut, nicht änderbar',
+  ldapMappingNoGlobalRoles: 'Es gibt noch keine globale Rolle. Eingebaute Rollen gelten nur innerhalb eines Projekts.',
+  ldapMappingCreateGlobalRole: 'Globale Rolle anlegen',
   delete: 'Löschen',
   back: 'Zurück',
   templateRowDetails: 'Letzte Tasks',

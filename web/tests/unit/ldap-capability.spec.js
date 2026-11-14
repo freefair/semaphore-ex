@@ -256,6 +256,25 @@ describe('LDAP group mappings', () => {
     Object.assign(axios, original);
   });
 
+  it('offers only stored global roles as targets of a global mapping', async () => {
+    axios.get = async (url) => {
+      if (url === '/api/roles') {
+        return {
+          data: [
+            { id: 'builtin:guest', name: 'Guest', builtin: true },
+            { id: 'role_auditor', name: 'Auditor', builtin: false },
+          ],
+        };
+      }
+      return { data: [] };
+    };
+    const context = component(LdapGroupMappingPanel);
+    context.loadMappings = async () => {};
+    await LdapGroupMappingPanel.created.call(context);
+    context.editor = { ...context.editor, scope: 'global' };
+    expect(context.roleOptions.map((role) => role.id)).to.deep.equal(['role_auditor']);
+  });
+
   it('saves a mapping picked from the directory with its immutable ID and name', async () => {
     let request;
     axios.put = async (url, data) => { request = { url, data }; return { data: {} }; };

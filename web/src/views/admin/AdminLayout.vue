@@ -63,6 +63,7 @@
 </template>
 
 <script>
+import EventBus from '@/event-bus';
 import enhancedComputed from '@/lib/enhanced/app';
 import { adminAccess, visibleAdminSections } from '@/lib/enhanced/admin-sections';
 
@@ -109,8 +110,10 @@ export default {
       }
     },
 
+    // '/' has no component of its own; the app picks the project (or the new
+    // project form) only on its first load, so pushing '/' left a blank page.
     backToProjects() {
-      this.$router.push('/');
+      EventBus.$emit('i-open-last-project');
     },
   },
 };

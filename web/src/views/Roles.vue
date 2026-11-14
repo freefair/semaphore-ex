@@ -110,7 +110,15 @@
     >
       <template v-slot:item.name="{ item }">
         <div data-testid="roles-rowName">{{ item.name }}</div>
+        <!-- Project role IDs are generated and internal; global slugs are chosen by an
+             administrator and stay as secondary detail. -->
         <div
+          v-if="item.builtin"
+          class="text-medium-emphasis text-body-small"
+          data-testid="roles-rowBuiltin"
+        >{{ $t('roleBuiltinReadOnly') }}</div>
+        <div
+          v-else-if="!projectId"
           class="text-medium-emphasis text-body-small"
           data-testid="roles-rowSlug"
         >{{ item.slug }}</div>
