@@ -501,7 +501,17 @@ func Route(
 
 	userAPI.Methods("PUT").HandlerFunc(usersController.UpdateUser)
 	userAPI.Methods("DELETE").HandlerFunc(usersController.DeleteUser)
-	userAPI.Path("/deactivation").HandlerFunc(usersController.SetUserDisabled).Methods("PUT")
+
+	// userAPI matches /users/{user_id} exactly, so a sub-path registered on it
+	// never matches; deactivation needs its own prefix router with the same
+	// middleware chain.
+	userLifecycleAPI := authenticatedAPI.PathPrefix("/users/{user_id}").Subrouter()
+	userLifecycleAPI.Use(
+		delegatedProjectRolesSnapshot,
+		EnhancedGlobalPermissionAuditMiddleware(auditFacade),
+		usersController.GetUserMiddleware,
+	)
+	userLifecycleAPI.Path("/deactivation").HandlerFunc(usersController.SetUserDisabled).Methods("PUT")
 
 	userPasswordAPI := authenticatedAPI.PathPrefix("/users/{user_id}").Subrouter()
 	userPasswordAPI.Use(
