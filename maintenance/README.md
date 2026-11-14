@@ -30,7 +30,8 @@ bash tools/upstream-sync/verify.sh --quick --output /tmp/semaphore-quick-checks
 Each output directory must be new. Assessment fetches only when requested. It
 captures product local, origin, upstream and merge-base SHAs; source status;
 upstream seam/schema patches; full binary patches and fingerprints of staged/unstaged source; fork delta summaries; incoming migration decisions;
-and merge-tree conflict previews. Merge-tree writes its objects into the evidence
+merge-tree conflict previews; and the incoming upstream frontend commits that need a
+port decision (`root/upstream-web-commits.txt`, see ADR 0062 in the Wiki). Merge-tree writes its objects into the evidence
 directory, leaving repository objects, indexes, worktrees, and branches untouched.
 Assessment requires new source files to be reviewed and staged, and rejects source/HEAD changes during capture.
 The checker uses Go export data and therefore needs dependencies and the embedded

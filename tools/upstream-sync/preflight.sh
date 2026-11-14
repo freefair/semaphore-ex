@@ -11,7 +11,8 @@ and merge conflict previews against an upstream release. Cached refs are used
 unless --fetch is supplied. The incoming upstream ref defaults to the newest
 final upstream release tag (vX.Y.Z), as reported by tools/releaseline; the fork
 merges releases, not upstream develop. The output directory must be new.
-Conflict previews are evidence, not approval.
+Conflict previews are evidence, not approval. root/upstream-web-commits.txt
+lists the incoming upstream frontend commits that need a port decision.
 
 Example:
   bash tools/upstream-sync/preflight.sh --fetch --output /tmp/semaphore-review .
@@ -66,6 +67,20 @@ capture_repository() {
     git -C "$repository" diff --no-ext-diff "$base" "$upstream" -- pro pro_interfaces 'db/*_pro.go' > "$output/$label/upstream-seams.patch"
     git -C "$repository" diff --no-ext-diff "$base" "$upstream" -- db/Migration.go db/sql/migrations > "$output/$label/upstream-migrations.patch"
     git -C "$repository" diff --no-ext-diff "$upstream" "$head" -- maintenance > "$output/$label/ownership-and-contracts.patch"
+    # Upstream frontend changes are ported into the fork-owned UI, not merged textually (ADR 0062).
+    # ">" commits need a port decision. "=" commits have an equivalent patch in fork history,
+    # which is only a hint: the behavior must still be present in the current UI.
+    # "M" lines are upstream merges whose own conflict resolution changed web/.
+    {
+      git -C "$repository" log --no-merges --cherry-mark --right-only --format='%m %h %s' \
+        "$head...$upstream" -- web
+      local merge subject
+      while read -r merge subject; do
+        if [[ -n "$(git -C "$repository" show --cc --format= "$merge" -- web)" ]]; then
+          printf 'M %s %s\n' "$merge" "$subject"
+        fi
+      done < <(git -C "$repository" rev-list --merges --full-history --format='%h %s' --no-commit-header "$head..$upstream" -- web)
+    } > "$output/$label/upstream-web-commits.txt"
   fi
   # Isolate merge-tree's loose objects as well as its output; no repository writes.
   object_dir="$(git -C "$repository" rev-parse --path-format=absolute --git-path objects)"
@@ -112,7 +127,7 @@ main() {
   fingerprint="$(git -C "$repository" diff --no-ext-diff --binary HEAD -- . ':(exclude).claude/task-notes' ':(exclude).claude/rules' | shasum -a 256 | awk '{print $1}')"
   [[ "$fingerprint" == "$(cat "$output/root/working-tree.sha256")" ]] || die 'Root source changed during assessment'
   [[ "$(git -C "$repository" rev-parse HEAD)" == "$(awk '$1 == "head:" {print $2}' "$output/root/refs.yml")" ]] || die 'Root HEAD changed during assessment'
-  (cd "$output" && shasum -a 256 root/*.yml root/*.patch root/*.sha256 contracts-and-migrations.log) > "$output/checksums.sha256"
+  (cd "$output" && shasum -a 256 root/*.yml root/*.patch root/*.sha256 root/upstream-web-commits.txt contracts-and-migrations.log) > "$output/checksums.sha256"
   printf 'Assessment retained in %s\nReview conflicts and new contracts before merging; no merge or push was performed.\n' "$output"
 }
 
