@@ -49,12 +49,19 @@ Can use used in tandem with ItemFormBase.js. See KeyForm.vue for example.
             @click="toggleFullscreen()"
             class="mr-3"
             v-if="expandable"
+            :aria-label="$t(fullscreen ? 'exitFullscreen' : 'enterFullscreen')"
             data-testid="editDialog-fullscreen"
           >
             <v-icon>mdi-arrow-{{ fullscreen ? 'collapse' : 'expand' }}</v-icon>
           </v-btn>
 
-          <v-btn icon variant="text" @click="close()" data-testid="editDialog-close">
+          <v-btn
+            icon
+            variant="text"
+            @click="close()"
+            :aria-label="$t('close')"
+            data-testid="editDialog-close"
+          >
             <v-icon>mdi-close</v-icon>
           </v-btn>
         </div>

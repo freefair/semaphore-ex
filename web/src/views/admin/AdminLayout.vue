@@ -29,7 +29,13 @@
         @update:model-value="(path) => $router.push(path)"
       />
 
-      <v-list class="admin-layout__list" density="compact" nav>
+      <v-list
+        class="admin-layout__list"
+        density="compact"
+        nav
+        role="navigation"
+        :aria-label="$t('administration')"
+      >
         <v-list-item
           v-for="section in sections"
           :key="section.key"

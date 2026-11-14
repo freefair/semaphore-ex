@@ -114,6 +114,7 @@
               <v-btn
                 icon size="small" :title="$t('edit')" :disabled="!capabilityAllowsWrite"
                 @click="beginEdit(trigger)"
+                :aria-label="$t('edit')"
               ><v-icon size="small">mdi-pencil</v-icon></v-btn>
               <v-btn
                 icon size="small" :title="trigger.enabled ? $t('disable') : $t('enable')"
@@ -170,6 +171,7 @@
                 icon size="small" color="error" :title="$t('delete')"
                 :disabled="!capabilityAllowsWrite || mutating"
                 @click="pendingDelete = trigger"
+                :aria-label="$t('delete')"
               ><v-icon size="small">mdi-delete</v-icon></v-btn>
             </div>
           </v-card>
@@ -219,6 +221,7 @@
                   :title="$t('edit')"
                   :disabled="!capabilityAllowsWrite"
                   @click="beginEdit(trigger)"
+                  :aria-label="$t('edit')"
                 ><v-icon size="small">mdi-pencil</v-icon></v-btn>
                 <v-btn
                   icon
@@ -286,6 +289,7 @@
                   :title="$t('delete')"
                   :disabled="!capabilityAllowsWrite || mutating"
                   @click="pendingDelete = trigger"
+                  :aria-label="$t('delete')"
                 ><v-icon size="small">mdi-delete</v-icon></v-btn>
               </td>
             </tr>

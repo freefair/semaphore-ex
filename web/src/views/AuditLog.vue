@@ -12,7 +12,8 @@
         variant="text"
         class="mr-4"
         data-testid="audit-back"
-        @click="returnToProjects">
+        @click="returnToProjects"
+        :aria-label="$t('back')">
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
       <v-toolbar-title data-testid="audit-title">{{ $t('audit_log') }}</v-toolbar-title>

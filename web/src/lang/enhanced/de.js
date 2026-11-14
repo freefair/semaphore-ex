@@ -1,4 +1,16 @@
 export default {
+  delete: 'Löschen',
+  back: 'Zurück',
+  templateRowDetails: 'Letzte Tasks',
+  enterFullscreen: 'Vollbild',
+  exitFullscreen: 'Vollbild verlassen',
+  navigation: 'Navigation',
+  language: 'Sprache',
+  // Ein Name für einen Eintrag des Schlüsselspeichers, egal welches Formular ihn wählt (Phase 6).
+  accessKey: 'Schlüssel',
+  credential: 'Schlüssel',
+  userCredentials: 'Verbindungsschlüssel',
+  sudoCredentialsOptional: 'Sudo-Schlüssel (optional)',
   userInitialSecretHint: 'Semaphore verschickt es nicht. Gib es der Person selbst weiter; sie kann es nach der Anmeldung ändern.',
   taskFailedBeforeHosts: 'Der Task ist fehlgeschlagen, bevor ein Host ein Ergebnis gemeldet hat. Letzte Log-Zeilen:',
   taskFailedSeeLog: 'Der Log-Reiter zeigt, was passiert ist.',

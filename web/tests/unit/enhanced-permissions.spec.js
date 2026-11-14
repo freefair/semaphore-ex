@@ -72,7 +72,7 @@ describe('Enhanced permission constants', () => {
       descriptor(2, 'canUpdateProject', 'green'),
       descriptor(4, 'canManageProjectResources', 'orange'),
       descriptor(8, 'canManageProjectUsers', 'red'),
-      descriptor(1048576, 'canReadProject', 'grey'),
+      descriptor(1048576, 'canReadProject', 'grey-darken-2'),
       descriptor(2097152, 'canApproveWorkflows', 'deep-purple'),
       descriptor(16, 'canViewProjectResources', 'purple'),
       descriptor(1024, 'List granted credential metadata', 'teal'),

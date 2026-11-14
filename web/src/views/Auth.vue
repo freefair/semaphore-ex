@@ -94,6 +94,7 @@
               height="80"
               :transition="false"
               src="favicon.png"
+              alt="Semaphore EX"
               class="mx-auto mb-4"
               data-testid="auth-logo"
             />

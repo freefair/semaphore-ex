@@ -150,6 +150,7 @@
           <v-btn
             @click="askDeleteItem(item.id)"
             data-testid="inventory-rowDelete"
+            :aria-label="$t('delete')"
           >
             <v-icon>mdi-delete</v-icon>
           </v-btn>
@@ -157,6 +158,7 @@
             @click="itemApp = getAppByType(item.type); editItem(item.id)"
             v-if="!['tofu', 'terraform'].includes(getAppByType(item.type))"
             data-testid="inventory-rowEdit"
+            :aria-label="$t('edit')"
           >
             <v-icon>mdi-pencil</v-icon>
           </v-btn>

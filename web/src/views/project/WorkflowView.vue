@@ -77,6 +77,7 @@
         @click="deleteDialog = true"
         v-if="canAdminister"
         data-testid="workflow-delete"
+        :aria-label="$t('delete')"
       >
         <v-icon>mdi-delete</v-icon>
       </v-btn>
@@ -87,6 +88,7 @@
         :to="`/project/${projectId}/workflows/${itemId}/edit`"
         v-if="canUpdate"
         data-testid="workflow-edit"
+        :aria-label="$t('edit')"
       >
         <v-icon>mdi-pencil</v-icon>
       </v-btn>

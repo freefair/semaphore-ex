@@ -95,6 +95,7 @@
         class="mr-4"
         @click="returnToProjects()"
         data-testid="cluster-back"
+        :aria-label="$t('back')"
       >
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>

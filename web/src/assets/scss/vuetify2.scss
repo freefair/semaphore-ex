@@ -572,9 +572,10 @@
   color: #fff;
 }
 
-// VDataTable: the no-data line in the disabled text colour (`.v-data-table__empty-wrapper`).
+// VDataTable: the no-data line in the medium-emphasis text colour. Vuetify 2's disabled colour
+// (`.v-data-table__empty-wrapper`) reached only 2.7:1 on white; WCAG AA asks 4.5:1.
 .v-data-table-rows-no-data {
-  color: rgba(var(--v-theme-on-surface), var(--v-disabled-opacity));
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
 }
 
 // On a phone (rows as cards below 600 px, `mobileBreakpoint` of plugins/vuetify.js) the no-data

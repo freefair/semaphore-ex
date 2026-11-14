@@ -1,4 +1,16 @@
 export default {
+  back: 'Back',
+  templateRowDetails: 'Last tasks',
+  enterFullscreen: 'Full screen',
+  exitFullscreen: 'Exit full screen',
+  navigation: 'Navigation',
+  language: 'Language',
+  // One name for an entry of the Key Store, whatever form picks it (Phase 6).
+  accessKey: 'Key',
+  credential: 'Key',
+  userCredentials: 'Connection key',
+  sudoCredentialsOptional: 'Sudo key (optional)',
+  environment_required: 'Variable group is required',
   userInitialSecretHint: 'Semaphore does not send it. Give it to the person yourself; they can change it after signing in.',
   taskFailedBeforeHosts: 'The task failed before any host reported a result. Last log lines:',
   taskFailedSeeLog: 'The log tab shows what happened.',

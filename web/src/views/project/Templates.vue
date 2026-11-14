@@ -128,6 +128,7 @@
         icon
         variant="text"
         @click="settingsSheet = true"
+        :aria-label="$t('columns')"
         data-testid="templates-tableSettings"
       >
         <v-icon>mdi-cog</v-icon>
@@ -137,9 +138,12 @@
     <!-- The active tab follows the route, as in Vuetify 2. Vuetify 3/4 select a link tab only when
          its link becomes active, and a group ignores the selection of a disabled tab: the tabs are
          disabled while the view loads, so the tab of the new view stayed unselected. -->
+    <!-- The edit button sits beside the tab list: a tablist may only contain tabs. -->
+    <div class="d-flex align-center">
     <v-tabs
       show-arrows
       class="pl-4"
+      style="flex: 0 1 auto; min-width: 0"
       :model-value="viewId"
       data-testid="templates-viewTabs"
     >
@@ -156,18 +160,20 @@
         data-testid="templates-viewTab"
       >{{ view.title }}
       </v-tab>
+    </v-tabs>
 
       <v-btn
         icon
         variant="text"
-        class="mt-2 ml-4"
+        class="ml-4"
         @click="editViewsDialog = true"
         v-if="can('project.views.update')"
+        :aria-label="$t('editViews')"
         data-testid="templates-editViews"
       >
         <v-icon>mdi-pencil</v-icon>
       </v-btn>
-    </v-tabs>
+    </div>
 
     <v-divider style="margin-top: -1px;"/>
 
@@ -199,6 +205,21 @@
       data-testid="templates-table"
       :data-state="viewItemsLoading ? 'loading' : (items.length === 0 ? 'empty' : 'ready')"
     >
+      <!-- Vuetify's expand toggle has no accessible name; this one says what it opens. -->
+      <template v-slot:item.data-table-expand="{ internalItem, isExpanded, toggleExpand }">
+        <v-btn
+          icon
+          size="small"
+          variant="text"
+          :aria-label="`${$t('templateRowDetails')}: ${internalItem.raw.name}`"
+          :aria-expanded="String(isExpanded(internalItem))"
+          @click="toggleExpand(internalItem)"
+          data-testid="templates-rowExpand"
+        >
+          <v-icon>{{ isExpanded(internalItem) ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+        </v-btn>
+      </template>
+
       <template v-slot:item.name="{ item }">
         <v-icon
           class="mr-3 templates-table__app-icon"
@@ -303,6 +324,7 @@
           <v-btn
             v-if="can(USER_PERMISSIONS.runProjectTasks, item)"
             @click="createTask(item.id)"
+            :aria-label="`${$t('run')}: ${item.name}`"
             data-testid="templates-rowRun"
           >
             <v-icon>mdi-play</v-icon>

@@ -50,7 +50,8 @@
         variant="text"
         class="mr-4"
         @click="returnToProjects()"
-        data-testid="roles-back">
+        data-testid="roles-back"
+        :aria-label="$t('back')">
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
       <v-toolbar-title
@@ -148,6 +149,7 @@
             class="mr-1"
             @click="askDeleteItem(item.id)"
             data-testid="roles-rowDelete"
+            :aria-label="$t('delete')"
           >
             <v-icon>mdi-delete</v-icon>
           </v-btn>
@@ -158,6 +160,7 @@
             class="mr-1"
             @click="editItem(item.id)"
             data-testid="roles-rowEdit"
+            :aria-label="$t('edit')"
           >
             <v-icon>mdi-pencil</v-icon>
           </v-btn>

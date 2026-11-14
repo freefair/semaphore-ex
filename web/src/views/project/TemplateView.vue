@@ -169,6 +169,7 @@
         @click="askDelete()"
         v-if="canUpdate"
         data-testid="template-delete"
+        :aria-label="$t('delete')"
       >
         <v-icon>mdi-delete</v-icon>
       </v-btn>
@@ -189,6 +190,7 @@
         @click="editDialog = true"
         v-if="canUpdate"
         data-testid="template-edit"
+        :aria-label="$t('edit')"
       >
         <v-icon>mdi-pencil</v-icon>
       </v-btn>

@@ -7,7 +7,7 @@ describe('structured file log diagnostics', () => {
     const text = EnhancedSystemInfoPanel.methods.structuredLogStateText;
 
     expect(color('healthy')).to.equal('success');
-    expect(color('disabled')).to.equal('grey');
+    expect(color('disabled')).to.equal('grey-darken-2');
     expect(color('dropping')).to.equal('warning');
     expect(color('failed')).to.equal('error');
     ['healthy', 'disabled', 'dropping', 'failed'].forEach((state) => {

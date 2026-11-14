@@ -154,12 +154,14 @@
           <v-btn
             @click="askDeleteItem(item.id)"
             data-testid="schedule-rowDelete"
+            :aria-label="$t('delete')"
           >
             <v-icon>mdi-delete</v-icon>
           </v-btn>
           <v-btn
             @click="editSchedule(item.id, item.type)"
             data-testid="schedule-rowEdit"
+            :aria-label="$t('edit')"
           >
             <v-icon>mdi-pencil</v-icon>
           </v-btn>

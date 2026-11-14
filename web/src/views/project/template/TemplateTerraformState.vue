@@ -198,6 +198,7 @@
               :disabled="inventoryId === template.inventory_id"
               @click="deleteInventoryDialog = true;"
               data-testid="templateState-delete"
+              :aria-label="$t('delete')"
             >
               <v-icon>mdi-delete</v-icon>
             </v-btn>
@@ -207,6 +208,7 @@
               variant="text"
               @click="itemId = inventoryId; inventoryDialog = true;"
               data-testid="templateState-edit"
+              :aria-label="$t('edit')"
             >
               <v-icon>mdi-pencil</v-icon>
             </v-btn>
@@ -260,6 +262,7 @@
               variant="text"
               @click="editAlias(alias.id)"
               data-testid="templateState-aliasEdit"
+              :aria-label="$t('edit')"
             >
               <v-icon>mdi-pencil</v-icon>
             </v-btn>
@@ -268,6 +271,7 @@
               variant="text"
               @click="deleteAlias(alias.id)"
               data-testid="templateState-aliasDelete"
+              :aria-label="$t('delete')"
             >
               <v-icon>mdi-delete</v-icon>
             </v-btn>

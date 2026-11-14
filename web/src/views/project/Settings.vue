@@ -181,7 +181,10 @@
             </v-btn>
           </v-col>
           <v-col>
-            <div style="font-size: 14px; color: #ff5252" data-testid="settings-deleteProjectText">
+            <div
+              style="font-size: 14px; color: rgb(var(--v-theme-error))"
+              data-testid="settings-deleteProjectText"
+            >
               {{ $t('onceYouDeleteAProjectThereIsNoGoingBackPleaseBeCer') }}
             </div>
           </v-col>

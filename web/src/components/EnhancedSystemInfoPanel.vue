@@ -240,9 +240,9 @@ export default {
     capabilityStateColor,
     structuredLogStateColor(state) {
       return {
-        healthy: 'success', disabled: 'grey', dropping: 'warning', failed: 'error',
+        healthy: 'success', disabled: 'grey-darken-2', dropping: 'warning', failed: 'error',
       }[state]
-        || 'grey';
+        || 'grey-darken-2';
     },
     structuredLogStateText(state) {
       return {

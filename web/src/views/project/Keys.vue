@@ -117,12 +117,14 @@
           <v-btn
             @click="askDeleteItem(item.id)"
             data-testid="keystore-rowDelete"
+            :aria-label="$t('delete')"
           >
             <v-icon>mdi-delete</v-icon>
           </v-btn>
           <v-btn
             @click="editItem(item.id)"
             data-testid="keystore-rowEdit"
+            :aria-label="$t('edit')"
           >
             <v-icon>mdi-pencil</v-icon>
           </v-btn>

@@ -85,7 +85,8 @@
         variant="text"
         class="mr-4"
         @click="returnToProjects()"
-        data-testid="users-back">
+        data-testid="users-back"
+        :aria-label="$t('back')">
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
       <v-toolbar-title data-testid="users-title">{{ $t('users') }}</v-toolbar-title>

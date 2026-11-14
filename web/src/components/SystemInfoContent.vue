@@ -110,7 +110,7 @@
               <td data-testid="systemInfo-passwordLogin">
                 <v-icon
                   size="small"
-                  :color="info.auth.password_login_enabled ? 'success' : 'grey'"
+                  :color="info.auth.password_login_enabled ? 'success' : 'grey-darken-2'"
                 >
                   {{
                     info.auth.password_login_enabled ? 'mdi-check-circle' : 'mdi-close-circle'
@@ -121,7 +121,7 @@
             <tr>
               <td class="font-weight-medium">TOTP</td>
               <td data-testid="systemInfo-totp">
-                <v-icon size="small" :color="info.auth.totp_enabled ? 'success' : 'grey'">
+                <v-icon size="small" :color="info.auth.totp_enabled ? 'success' : 'grey-darken-2'">
                   {{ info.auth.totp_enabled ? 'mdi-check-circle' : 'mdi-close-circle' }}
                 </v-icon>
               </td>
@@ -129,7 +129,10 @@
             <tr>
               <td class="font-weight-medium">{{ $t('emailOtp') }}</td>
               <td data-testid="systemInfo-emailOtp">
-                <v-icon size="small" :color="info.auth.email_otp_enabled ? 'success' : 'grey'">
+                <v-icon
+                  size="small"
+                  :color="info.auth.email_otp_enabled ? 'success' : 'grey-darken-2'"
+                >
                   {{
                     info.auth.email_otp_enabled ? 'mdi-check-circle' : 'mdi-close-circle'
                   }}
@@ -139,7 +142,7 @@
             <tr>
               <td class="font-weight-medium">LDAP</td>
               <td data-testid="systemInfo-ldap">
-                <v-icon size="small" :color="info.auth.ldap_enabled ? 'success' : 'grey'">
+                <v-icon size="small" :color="info.auth.ldap_enabled ? 'success' : 'grey-darken-2'">
                   {{ info.auth.ldap_enabled ? 'mdi-check-circle' : 'mdi-close-circle' }}
                 </v-icon>
               </td>
@@ -176,7 +179,7 @@
                 {{ formatNotificationName(name) }}
               </td>
               <td>
-                <v-icon size="small" :color="enabled ? 'success' : 'grey'">
+                <v-icon size="small" :color="enabled ? 'success' : 'grey-darken-2'">
                   {{ enabled ? 'mdi-check-circle' : 'mdi-close-circle' }}
                 </v-icon>
               </td>
@@ -199,7 +202,7 @@
                 {{ $t('highAvailability') }}
               </td>
               <td data-testid="systemInfo-haEnabled">
-                <v-icon size="small" :color="info.cluster.ha_enabled ? 'success' : 'grey'">
+                <v-icon size="small" :color="info.cluster.ha_enabled ? 'success' : 'grey-darken-2'">
                   {{ info.cluster.ha_enabled ? 'mdi-check-circle' : 'mdi-close-circle' }}
                 </v-icon>
               </td>
@@ -229,7 +232,7 @@
               <td data-testid="systemInfo-useRemoteRunner">
                 <v-icon
                   size="small"
-                  :color="info.runners.use_remote_runner ? 'success' : 'grey'"
+                  :color="info.runners.use_remote_runner ? 'success' : 'grey-darken-2'"
                 >
                   {{ info.runners.use_remote_runner ? 'mdi-check-circle' : 'mdi-close-circle' }}
                 </v-icon>
@@ -300,7 +303,7 @@
               <td data-testid="systemInfo-nonAdminCanCreateProject">
                 <v-icon
                   size="small"
-                  :color="info.features.non_admin_can_create_project ? 'success' : 'grey'"
+                  :color="info.features.non_admin_can_create_project ? 'success' : 'grey-darken-2'"
                 >
                   {{
                     info.features.non_admin_can_create_project

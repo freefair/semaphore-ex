@@ -331,7 +331,13 @@
           <div class="d-flex align-center mb-2">
             <span class="text-label-large"> {{ $t('workflowNodeId') }} #{{ editingNode.id }} </span>
             <v-spacer />
-            <v-btn icon size="small" :disabled="!canManage" @click="deleteSelectedNode()">
+            <v-btn
+              icon
+              size="small"
+              :disabled="!canManage"
+              @click="deleteSelectedNode()"
+              :aria-label="$t('delete')"
+            >
               <v-icon size="small">mdi-delete</v-icon>
             </v-btn>
           </div>

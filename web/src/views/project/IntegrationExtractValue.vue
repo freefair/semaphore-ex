@@ -97,6 +97,7 @@
             class="mr-1"
             @click="askDeleteItem(item.id)"
             data-testid="integrationValue-rowDelete"
+            :aria-label="$t('delete')"
           >
             <v-icon>mdi-delete</v-icon>
           </v-btn>
@@ -107,6 +108,7 @@
             class="mr-1"
             @click="editItem(item.id)"
             data-testid="integrationValue-rowEdit"
+            :aria-label="$t('edit')"
           >
             <v-icon>mdi-pencil</v-icon>
           </v-btn>

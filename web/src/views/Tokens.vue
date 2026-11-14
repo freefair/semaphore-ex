@@ -64,7 +64,14 @@
     </v-dialog>
 
     <v-toolbar flat>
-      <v-btn icon variant="text" class="mr-4" @click="returnToProjects()" data-testid="tokens-back">
+      <v-btn
+        icon
+        variant="text"
+        class="mr-4"
+        @click="returnToProjects()"
+        data-testid="tokens-back"
+        :aria-label="$t('back')"
+      >
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
       <v-toolbar-title
@@ -188,6 +195,7 @@
             class="mr-1"
             @click="deleteItem(item.id)"
             data-testid="tokens-rowDelete"
+            :aria-label="$t('delete')"
           >
             <v-icon>mdi-delete</v-icon>
           </v-btn>

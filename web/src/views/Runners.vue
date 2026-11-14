@@ -438,6 +438,7 @@ semaphore runner start --config ./config.runner.json</pre
         class="mr-4"
         @click="returnToProjects()"
         data-testid="runners-back"
+        :aria-label="$t('back')"
       >
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
@@ -752,6 +753,7 @@ semaphore runner start --config ./config.runner.json</pre
             @click="askDeleteItem(item.id)"
             data-testid="runners-rowDelete"
             :disabled="(item.project_id == null && !isAdmin) || isRunnerDeleting(item.id)"
+            :aria-label="$t('delete')"
           >
             <v-icon>mdi-delete</v-icon>
           </v-btn>
@@ -764,6 +766,7 @@ semaphore runner start --config ./config.runner.json</pre
             @click="editItem(item.id)"
             data-testid="runners-rowEdit"
             :disabled="(item.project_id == null && !isAdmin) || isRunnerDeleting(item.id)"
+            :aria-label="$t('edit')"
           >
             <v-icon>mdi-pencil</v-icon>
           </v-btn>

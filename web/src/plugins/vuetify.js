@@ -42,16 +42,19 @@ const semaphoreAliases = Object.fromEntries(
   Object.keys(SEMAPHORE_ICONS).map((name) => [name, `semaphore:${name}`]),
 );
 
-// Default palette of Vuetify 2.
+// Default palette of Vuetify 2. The light status colours are darkened so white
+// text on chips, buttons and alerts meets WCAG AA (4.5:1): error 4.98, info
+// 5.75 (5.4 as outlined text on the #f8f8f8 page), success 5.13, warning 5.02.
+// Vuetify 2's values reached 2.4 to 3.2.
 const colors = {
   light: {
     primary: '#1976D2',
     secondary: '#424242',
     accent: '#82B1FF',
-    error: '#FF5252',
-    info: '#2196F3',
-    success: '#4CAF50',
-    warning: '#FB8C00',
+    error: '#D32F2F',
+    info: '#1565C0',
+    success: '#2E7D32',
+    warning: '#B45309',
     // `amber darken-3` of the palette with white text: Vuetify 2 drew coloured buttons and alerts
     // dark (white text), Vuetify 4 picks black for this colour.
     'amber-darken-3': '#FF8F00',

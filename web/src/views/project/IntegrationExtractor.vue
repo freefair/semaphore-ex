@@ -79,6 +79,7 @@
           @click="deleteAlias(alias.id)"
           v-if="can('project.integrations.update')"
           data-testid="integration-aliasDelete"
+          :aria-label="$t('delete')"
         >
           <v-icon>mdi-delete</v-icon>
         </v-btn>

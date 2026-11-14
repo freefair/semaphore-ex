@@ -30,6 +30,7 @@
       v-if="canEdit && !editable"
       class="ml-1 SingleLineEditable__button"
       data-testid="singleLineEditable-edit"
+      :aria-label="$t('edit')"
     >
       <v-icon>mdi-pencil</v-icon>
     </v-btn>

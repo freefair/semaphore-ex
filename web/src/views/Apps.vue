@@ -38,6 +38,7 @@
           class="mr-4"
           @click="returnToProjects()"
           data-testid="apps-back"
+          :aria-label="$t('back')"
       >
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
@@ -101,6 +102,7 @@
               @click="askDeleteItem(item.id)"
               :disabled="item.id === userId"
               data-testid="apps-rowDelete"
+              :aria-label="$t('delete')"
           >
             <v-icon>mdi-delete</v-icon>
           </v-btn>
@@ -111,6 +113,7 @@
               class="mr-1"
               @click="editItem(item.id)"
               data-testid="apps-rowEdit"
+              :aria-label="$t('edit')"
           >
             <v-icon>mdi-pencil</v-icon>
           </v-btn>

@@ -213,7 +213,7 @@
         </v-theme-provider>
       </v-menu>
 
-      <v-list class="pt-0" v-if="!project">
+      <v-list class="pt-0" v-if="!project" role="navigation" :aria-label="$t('navigation')">
         <v-list-item
           v-if="user.can_create_project"
           key="new_project"
@@ -243,7 +243,7 @@
         </v-list-item>
       </v-list>
 
-      <v-list class="pt-0" v-if="project">
+      <v-list class="pt-0" v-if="project" role="navigation" :aria-label="$t('navigation')">
         <v-list-item
           key="dashboard"
           :to="`/project/${projectId}/history`"
@@ -343,6 +343,7 @@
               <v-switch
                 class="DarkModeSwitch"
                 v-model="darkMode"
+                :aria-label="$t('darkMode')"
                 inset
                 flat
                 hide-details
@@ -382,7 +383,13 @@
               max-width="235"
             >
               <template v-slot:activator="{ props }">
-                <v-btn icon variant="text" v-bind="props" data-testid="sidebar-langMenu">
+                <v-btn
+                  icon
+                  variant="text"
+                  v-bind="props"
+                  :aria-label="$t('language')"
+                  data-testid="sidebar-langMenu"
+                >
                   <img
                     style="border-radius: 30px; max-width: 100%"
                     :src="`flags/${lang.flag}.svg`"

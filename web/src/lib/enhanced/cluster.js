@@ -16,7 +16,7 @@ export const enhancedMethods = {
   nodeStateColor(node) {
     if (node.ready) return 'success';
     if (!node.alive || node.compatibility_state === 'stale') return 'warning';
-    if (node.compatibility_state === 'draining') return 'grey';
+    if (node.compatibility_state === 'draining') return 'grey-darken-2';
     return 'error';
   },
   nodeVersion(node) {
@@ -33,7 +33,7 @@ export const enhancedMethods = {
   coordinatorStateColor(coordinator) {
     if (coordinator.live_events === 'healthy') return 'success';
     if (coordinator.live_events === 'degraded') return 'warning';
-    return 'grey';
+    return 'grey-darken-2';
   },
   workflowProgressionLabel(progression) {
     return this.$t('clusterWorkflowProgressionSummary', {

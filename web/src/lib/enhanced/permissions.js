@@ -34,7 +34,7 @@ export const GLOBAL_PERMISSIONS = {
 export const ENHANCED_PROJECT_ROLE_PERMISSIONS = [{
   permission: ENHANCED_USER_PERMISSIONS.readProject,
   label: 'canReadProject',
-  color: 'grey',
+  color: 'grey-darken-2',
   textColor: 'white',
 }, {
   permission: ENHANCED_USER_PERMISSIONS.approveWorkflows,

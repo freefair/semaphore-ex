@@ -91,10 +91,14 @@
           >
             <v-icon>mdi-sync</v-icon>
           </v-btn>
-          <v-btn @click="askDeleteItem(item.id)" data-testid="varGroup-rowDelete">
+          <v-btn
+            @click="askDeleteItem(item.id)"
+            data-testid="varGroup-rowDelete"
+            :aria-label="$t('delete')"
+          >
             <v-icon>mdi-delete</v-icon>
           </v-btn>
-          <v-btn @click="editItem(item.id)" data-testid="varGroup-rowEdit">
+          <v-btn @click="editItem(item.id)" data-testid="varGroup-rowEdit" :aria-label="$t('edit')">
             <v-icon>mdi-pencil</v-icon>
           </v-btn>
         </v-btn-group>

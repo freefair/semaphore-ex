@@ -99,6 +99,7 @@
             class="pt-0 mt-0"
             :menu-props="{ contentClass: 'TeamRoleMenu TeamAutocompleteMenu', maxHeight: 304 }"
             @update:model-value="updateProjectUser(item)"
+            :aria-label="`${$t('Roles')}: ${item.name || item.username}`"
             data-testid="team-rowRolesSelect"
           >
             <template v-slot:item="{ props, item: role }">
@@ -148,6 +149,7 @@
             @click="askDeleteItem(item.id)"
 
             data-testid="team-rowDelete"
+            :aria-label="$t('delete')"
           >
             <v-icon>mdi-delete</v-icon>
           </v-btn>

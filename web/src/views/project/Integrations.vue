@@ -96,6 +96,7 @@
           variant="text"
           @click="deleteAlias(alias.id)"
           data-testid="integrations-aliasDelete"
+          :aria-label="$t('delete')"
         >
           <v-icon>mdi-delete</v-icon>
         </v-btn>
@@ -159,12 +160,14 @@
           <v-btn
             @click="askDeleteItem(item.id)"
             data-testid="integrations-rowDelete"
+            :aria-label="$t('delete')"
           >
             <v-icon>mdi-delete</v-icon>
           </v-btn>
           <v-btn
             @click="editItem(item.id)"
             data-testid="integrations-rowEdit"
+            :aria-label="$t('edit')"
           >
             <v-icon>mdi-pencil</v-icon>
           </v-btn>

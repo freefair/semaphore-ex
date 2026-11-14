@@ -80,6 +80,7 @@
             variant="text"
             @click="removeView(view.id)"
             data-testid="viewsForm-viewDelete"
+            :aria-label="$t('delete')"
           >
             <v-icon>mdi-delete</v-icon>
           </v-btn>

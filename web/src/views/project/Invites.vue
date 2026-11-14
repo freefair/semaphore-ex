@@ -77,6 +77,7 @@
             @click="askDeleteItem(item.id)"
             v-if="can(USER_PERMISSIONS.manageProjectUsers)"
             data-testid="invites-rowDelete"
+            :aria-label="$t('delete')"
           >
             <v-icon>mdi-delete</v-icon>
           </v-btn>

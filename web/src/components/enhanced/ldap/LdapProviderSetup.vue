@@ -381,12 +381,18 @@
             item-title="username"
             item-value="id"
             :label="$t('ldapRecoveryAdmin')"
-            :hint="$t('ldapRecoveryAdminHint')"
-            persistent-hint
             :disabled="!providerExists"
+            hide-details
             variant="outlined"
             density="compact"
           />
+          <!-- Outside the field so it stays readable while the field is disabled. -->
+          <div
+            class="text-body-small text-medium-emphasis mt-1 px-4"
+            data-testid="ldap-recovery-admin-hint"
+          >
+            {{ $t('ldapRecoveryAdminHint') }}
+          </div>
         </v-col>
         <v-col cols="12" md="6">
           <v-text-field
