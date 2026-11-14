@@ -54,7 +54,7 @@
       >ExtractValue</v-toolbar-title>
       <v-spacer></v-spacer>
       <v-btn
-        v-if="!readOnly && can(USER_PERMISSIONS.manageProjectResources)"
+        v-if="!readOnly && can('project.integrations.update')"
         color="primary"
         variant="elevated"
         @click="editItem('new')"

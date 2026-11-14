@@ -73,7 +73,7 @@
         color="primary"
         variant="elevated"
         @click="editItem('new')"
-        v-if="can(USER_PERMISSIONS.manageProjectResources)"
+        v-if="canCreateItem()"
         data-testid="keystore-new"
       >{{ $t('newKey') }}</v-btn>
     </v-toolbar>
@@ -190,6 +190,10 @@ export default {
   },
 
   methods: {
+    permissionResource() {
+      return 'access_keys';
+    },
+
     ...enhancedMethods,
 
     getHeaders() {

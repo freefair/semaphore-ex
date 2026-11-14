@@ -279,7 +279,6 @@ import TaskParamsTerraformForm from '@/components/TaskParamsTerraformForm.vue';
 import ExecutionPreflightReview from '@/components/ExecutionPreflightReview.vue';
 import TaskSSHKeys from '@/components/enhanced/TaskSSHKeys.vue';
 import PermissionsCheck from '@/components/PermissionsCheck';
-import { USER_PERMISSIONS } from '@/lib/constants';
 
 export default {
   mixins: [ItemFormBase, AppFieldsMixin, PermissionsCheck],
@@ -327,7 +326,7 @@ export default {
         || Number(this.template.project_id) === Number(this.projectId);
     },
     canOverrideSSHKeys() {
-      return this.sameSSHKeyProject && this.can(USER_PERMISSIONS.manageProjectResources);
+      return this.sameSSHKeyProject && this.can('project.access_keys.use');
     },
     needInventory() {
       return this.canRead && this.needField('inventory') && this.template.task_params?.allow_override_inventory;

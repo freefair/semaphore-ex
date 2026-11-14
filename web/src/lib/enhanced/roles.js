@@ -25,6 +25,13 @@ export const enhancedMethods = {
       this.items = [];
       return;
     }
-    this.items = await this.loadEndpoint(this.getItemsUrl());
+    const catalogUrl = this.projectId
+      ? `/api/project/${this.projectId}/roles/permissions`
+      : '/api/roles/project-permissions';
+    [this.items, this.projectPermissionCatalog] = await Promise.all([
+      this.loadEndpoint(this.getItemsUrl()),
+      // The summary falls back to raw IDs when the catalog is unavailable.
+      this.loadEndpoint(catalogUrl).catch(() => []),
+    ]);
   },
 };

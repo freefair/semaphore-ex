@@ -54,7 +54,7 @@
         color="primary"
         variant="elevated"
         @click="editItem('new')"
-        v-if="can(USER_PERMISSIONS.manageProjectResources)"
+        v-if="canCreateItem()"
         data-testid="repositories-new"
       >{{ $t('newRepository') }}</v-btn>
     </v-toolbar>
@@ -149,6 +149,10 @@ export default {
   },
 
   methods: {
+    permissionResource() {
+      return 'repositories';
+    },
+
     isLocalRepositoryPath,
 
     getHeaders() {

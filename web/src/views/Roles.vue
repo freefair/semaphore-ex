@@ -7,6 +7,7 @@
     <EditDialog
       test-id="roleDialog"
       v-model="editDialog"
+      :max-width="900"
       save-button-text="Save"
       :title="itemId === 'new' ? $t('newRole') : $t('editRole')"
       @save="loadItems()"
@@ -121,9 +122,10 @@
         >{{ $t(roleScope(item)) }}</v-chip>
       </template>
       <template v-slot:item.permissions="{ item }">
-        <TemplatePermissionsChips
+        <PermissionSummary
           class="py-1"
-          :permissions="item.permissions"
+          :permission-ids="item.permission_ids || []"
+          :catalog="projectPermissionCatalog"
           data-testid="roles-rowPermissions"
         />
       </template>
@@ -197,6 +199,7 @@ import EditDialog from '@/components/EditDialog.vue';
 import RoleForm from '@/components/EditRoleForm.vue';
 import TeamMenu from '@/components/TeamMenu.vue';
 import TemplatePermissionsChips from '@/components/TemplatePermissionsChips.vue';
+import PermissionSummary from '@/components/enhanced/PermissionSummary.vue';
 import { roleScope } from '@/lib/roles';
 import { USER_PERMISSIONS } from '@/lib/constants';
 
@@ -217,12 +220,14 @@ export default {
     RoleForm,
     EditDialog,
     TemplatePermissionsChips,
+    PermissionSummary,
   },
 
   data() {
     return {
       roleImpact: null,
       forceDeleteDialog: false,
+      projectPermissionCatalog: [],
     };
   },
 
@@ -267,7 +272,7 @@ export default {
       ];
       if (!this.projectId) {
         headers.splice(2, 0, {
-          title: 'Legacy project permissions',
+          title: this.$t('permissions'),
           key: 'permissions',
         });
       }

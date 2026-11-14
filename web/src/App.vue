@@ -1080,7 +1080,7 @@ html.WorkflowEditor-html body {
 </style>
 
 <script>
-import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/app';
+import enhancedComputed from '@/lib/enhanced/app';
 
 import axios from 'axios';
 import { parseQuery } from 'vue-router';
@@ -1097,7 +1097,9 @@ import RestoreProjectForm from '@/components/RestoreProjectForm.vue';
 import RestoreProjectResult from '@/components/RestoreProjectResult.vue';
 import YesNoDialog from '@/components/YesNoDialog.vue';
 import TaskLogDialog from '@/components/TaskLogDialog.vue';
+import { computed } from 'vue';
 import delay from '@/lib/delay';
+import { hasProjectPermission } from '@/lib/enhanced/project-access';
 
 const PROJECT_COLORS = ['red', 'blue', 'orange', 'green'];
 
@@ -1179,6 +1181,16 @@ export default {
     UserForm,
     EditDialog,
     ProjectForm,
+  },
+  provide() {
+    // Views and dialogs decide on the server's permission ID list; see
+    // lib/enhanced/project-access.js for why masks are not usable here.
+    return {
+      projectAccess: computed(() => ({
+        admin: !!(this.user && this.user.admin),
+        ids: (this.userRole || {}).permission_ids,
+      })),
+    };
   },
   data() {
     return {
@@ -1313,7 +1325,7 @@ export default {
 
     canReadProject() {
       return (this.user && this.user.admin)
-        || (((this.userRole || {}).permissions || 0) & USER_PERMISSIONS.readProject) !== 0;
+        || hasProjectPermission((this.userRole || {}).permission_ids, USER_PERMISSIONS.readProject);
     },
 
     navItems() {
@@ -1434,9 +1446,26 @@ export default {
         });
       }
       const features = (this.systemInfo || {}).features || {};
+      // Each page appears for exactly the people the server lets read it (D5).
+      // Template lists follow project membership and template grants, and the
+      // inventory list keeps the project read boundary it always had; hosts and
+      // host configuration need the inventory view permission.
+      const viewPermission = {
+        schedule: 'project.schedules.view',
+        inventory: 'project.read',
+        hosts: 'project.inventories.view',
+        host_config: 'project.inventories.view',
+        environment: 'project.environments.view',
+        keys: 'project.access_keys.view',
+        repositories: 'project.repositories.view',
+        integrations: 'project.integrations.view',
+      };
+      const admin = !!(this.user && this.user.admin);
+      const ids = (this.userRole || {}).permission_ids;
       return items.filter((item) => (
         (item.key !== 'workflows' || features.workflows)
-        && (item.key !== 'repositories' || this.canViewProjectResources())
+        && (admin || !viewPermission[item.key]
+          || hasProjectPermission(ids, viewPermission[item.key]))
       ));
     },
 
@@ -1640,8 +1669,6 @@ export default {
         this.drawer = false;
       }, 0);
     },
-
-    ...enhancedMethods,
 
     showNewProjectDialogue(projectType = '') {
       if (!this.user.can_create_project) {

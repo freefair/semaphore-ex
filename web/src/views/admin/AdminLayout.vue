@@ -57,7 +57,7 @@
 </template>
 
 <script>
-import { enhancedComputed } from '@/lib/enhanced/app';
+import enhancedComputed from '@/lib/enhanced/app';
 import { adminAccess, visibleAdminSections } from '@/lib/enhanced/admin-sections';
 
 export default {

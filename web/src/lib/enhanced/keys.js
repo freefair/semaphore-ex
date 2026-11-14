@@ -26,7 +26,7 @@ const enhancedMethods = {
     this.generatedKeyDialog = true;
   },
   canRotateSSHKey(item) {
-    return this.can(this.USER_PERMISSIONS.manageProjectResources)
+    return this.can('project.access_keys.update')
         && item.type === 'ssh' && !item.synchronized && !item.source_storage_type;
   },
   async beginSSHKeyRotation(item) {

@@ -12,7 +12,7 @@
 
     <div class="px-4 pt-3 pb-2">
       <v-switch
-        v-if="can(USER_PERMISSIONS.manageProjectResources)"
+        v-if="can('project.integrations.update')"
         class="mt-0 IntegrationExtractorSwitch"
         v-model="integration.searchable"
         :label="$t('globalAlias')"
@@ -77,7 +77,7 @@
           icon
           variant="text"
           @click="deleteAlias(alias.id)"
-          v-if="can(USER_PERMISSIONS.manageProjectResources)"
+          v-if="can('project.integrations.update')"
           data-testid="integration-aliasDelete"
         >
           <v-icon>mdi-delete</v-icon>
@@ -88,7 +88,7 @@
         color="primary"
         @click="addAlias()"
         :disabled="aliases == null"
-        v-if="can(USER_PERMISSIONS.manageProjectResources)"
+        v-if="can('project.integrations.update')"
         data-testid="integration-addAlias"
       >
         {{ aliases == null ? $t('LoadAlias') : $t('AddAlias') }}

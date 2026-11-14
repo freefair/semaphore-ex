@@ -1,27 +1,23 @@
 import { expect } from 'chai';
+import { mount } from '@vue/test-utils';
+import RolePermissionMatrix from '@/components/enhanced/RolePermissionMatrix.vue';
 import axios from 'axios';
 import EditRoleForm from '@/components/EditRoleForm.vue';
 import Roles from '@/views/Roles.vue';
 import Team from '@/views/project/Team.vue';
-import EventBus from '@/event-bus';
-import { USER_PERMISSIONS, USER_ROLES } from '@/lib/constants';
-import canViewProjectResources from '@/lib/project-permissions';
+import { USER_ROLES } from '@/lib/constants';
 
 describe('custom project roles', () => {
-  it('preserves the existing global-role editor contract', () => {
+  it('starts global and project roles with an empty permission ID list', () => {
     expect(EditRoleForm.methods.getNewItem.call({ projectId: null })).to.deep.equal({
       name: '',
       slug: '',
-      permissions: 0,
+      permission_ids: [],
       global_permissions: 0,
     });
-    expect(EditRoleForm.data()).to.have.nested.property(
-      'permissions.canManageProjectUsers',
-      false,
-    );
     expect(EditRoleForm.methods.getNewItem.call({ projectId: 7 })).to.deep.equal({
       name: '',
-      permissions: 0,
+      permission_ids: [],
     });
   });
 
@@ -36,56 +32,54 @@ describe('custom project roles', () => {
     );
   });
 
-  it('uses backend catalog bits without a duplicated checkbox model', () => {
-    const context = { item: { permissions: 0 }, projectId: 7 };
-    EditRoleForm.methods.setPermission.call(
-      context,
-      USER_PERMISSIONS.viewProjectResources,
-      true,
-    );
-    expect(context.item.permissions).to.equal(USER_PERMISSIONS.viewProjectResources);
-    expect(EditRoleForm.methods.hasPermission.call(
-      context,
-      USER_PERMISSIONS.viewProjectResources,
-    )).to.equal(true);
-    EditRoleForm.methods.setPermission.call(
-      context,
-      USER_PERMISSIONS.viewProjectResources,
-      false,
-    );
-    expect(context.item.permissions).to.equal(0);
+  it('edits project permissions as IDs in the resource matrix', async () => {
+    const catalog = [
+      { id: 'project.read', description: 'Read project' },
+      { id: 'project.templates.view', description: 'View templates' },
+      { id: 'project.templates.update', description: 'Update templates' },
+      { id: 'project.access_keys.use', description: 'Use access keys' },
+    ];
+    const wrapper = mount(RolePermissionMatrix, {
+      props: { catalog, modelValue: ['project.templates.view'] },
+      global: { mocks: { $t: (key) => key } },
+    });
+    expect(wrapper.find('[data-testid="role-matrix-templates"]').exists()).to.equal(true);
+    expect(wrapper.find('[data-testid="role-matrix-access_keys"]').exists()).to.equal(true);
+    wrapper.vm.toggle('project.templates.update', true);
+    expect(wrapper.emitted('update:modelValue')[0][0]).to.deep.equal([
+      'project.templates.view', 'project.templates.update',
+    ]);
+    wrapper.vm.toggle('project.templates.view', false);
+    expect(wrapper.emitted('update:modelValue')[1][0]).to.deep.equal([]);
+    expect(wrapper.text()).to.include('Read project');
   });
 
-  it('preserves built-in access while exposing custom effective permissions', () => {
-    expect(USER_ROLES.every((role) => (
-      role.permissions & USER_PERMISSIONS.viewProjectResources
-    ) === USER_PERMISSIONS.viewProjectResources)).to.equal(true);
+  it('exposes a custom role\'s permissions to the member summary', () => {
     const custom = {
       id: 'role_0123456789abcdef0123456789abcdef',
       name: 'Resource viewer',
       slug: 'resource-viewer',
-      permissions: USER_PERMISSIONS.viewProjectResources,
+      permission_ids: ['project.templates.view', 'project.inventories.view'],
     };
     const roles = [...USER_ROLES, custom];
-    expect(Team.methods.memberPermissions.call({ roles }, { roles: [custom.slug] })).to.equal(
-      USER_PERMISSIONS.viewProjectResources,
+    const ids = Team.methods.memberPermissionIds.call({ roles }, { roles: [custom.slug] });
+    expect(ids).to.deep.equal(
+      ['project.templates.view', 'project.inventories.view'],
     );
-  });
-
-  it('hides repository navigation only when the backend permission is absent', () => {
-    expect(canViewProjectResources(
-      { admin: false },
-      { permissions: USER_PERMISSIONS.viewProjectResources },
-    )).to.equal(true);
-    expect(canViewProjectResources({ admin: false }, { permissions: 0 })).to.equal(false);
   });
 
   it('restores the authoritative membership after a rejected assignment', async () => {
     const previousAdapter = axios.defaults.adapter;
     let reloads = 0;
-    let snackbar;
-    const captureSnackbar = (message) => { snackbar = message; };
-    EventBus.$once('i-snackbar', captureSnackbar);
+    const context = {
+      projectId: 1,
+      saving: Promise.resolve(),
+      pendingSaves: 0,
+      rowStatus: {},
+      setRowStatus: Team.methods.setRowStatus,
+      $t: (key) => key,
+      loadItems: async () => { reloads += 1; },
+    };
 
     axios.defaults.adapter = async () => {
       const error = new Error('Request failed with status code 409');
@@ -94,18 +88,12 @@ describe('custom project roles', () => {
     };
 
     try {
-      await Team.methods.updateProjectUser.call({
-        projectId: 1,
-        saving: Promise.resolve(),
-        pendingSaves: 0,
-        loadItems: async () => { reloads += 1; },
-      }, { id: 1, roles: ['guest'], revision: 1 });
+      await Team.methods.updateProjectUser.call(context, { id: 1, roles: ['guest'], revision: 1 });
     } finally {
       axios.defaults.adapter = previousAdapter;
-      EventBus.$off('i-snackbar', captureSnackbar);
     }
 
     expect(reloads).to.equal(1);
-    expect(snackbar).to.deep.equal({ color: 'error', text: 'last administrator' });
+    expect(context.rowStatus[1]).to.deep.equal({ type: 'error', text: 'last administrator' });
   });
 });

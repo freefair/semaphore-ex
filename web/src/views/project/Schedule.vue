@@ -58,7 +58,7 @@
             v-bind="props"
             color="primary"
             variant="elevated"
-            v-if="can(USER_PERMISSIONS.manageProjectResources)"
+            v-if="canCreateItem()"
             data-testid="schedule-new"
           >{{ $t('newSchedule') }}
             <v-icon>mdi-chevron-down</v-icon>
@@ -107,7 +107,7 @@
              of the switch (beside the 100 % wide «Template») shrank to it: the switch covered
              the names -->
         <v-switch
-          :disabled="!can(USER_PERMISSIONS.manageProjectResources)"
+          :disabled="!canResource('update')"
           v-model="item.active"
           inset
           style="min-width: max-content"
@@ -285,6 +285,10 @@ export default {
     };
   },
   methods: {
+    permissionResource() {
+      return 'schedules';
+    },
+
     ...enhancedMethods,
     editSchedule(id, type) {
       this.scheduleType = type;

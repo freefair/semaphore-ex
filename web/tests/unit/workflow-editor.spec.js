@@ -97,8 +97,8 @@ describe('workflow editor authoring lifecycle', () => {
       },
       projectId: 7,
       workflowRoleOptions: [
-        { value: 'builtin:owner', permissions: 1 },
-        { value: 'role:viewer', permissions: 32 },
+        { value: 'builtin:owner', canRunTasks: true },
+        { value: 'role:viewer', canRunTasks: false },
       ],
       clone: WorkflowEditor.methods.clone,
     };

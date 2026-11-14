@@ -1,4 +1,6 @@
 import '@/../tests/unit/local-storage-fixture';
+import ProjectAccess from '@/components/enhanced/ProjectAccess';
+import { requiredPermissionIds } from '@/lib/enhanced/project-access';
 import { expect } from 'chai';
 import axios from 'axios';
 import WorkflowArtifactRetentionPanel from '@/components/WorkflowArtifactRetentionPanel.vue';
@@ -24,14 +26,17 @@ describe('workflow artifact retention UI', () => {
       .to.equal('/api/workflow-artifact-retention');
     expect(WorkflowArtifactRetentionPanel.computed.baseUrl.call({ projectId: 7 }))
       .to.equal('/api/project/7/workflow-artifact-retention');
-    expect(Settings.computed.canManageArtifactRetention.call({
+    const settingsWith = (ids) => ({
       isAdmin: false,
-      userPermissions: USER_PERMISSIONS.manageProjectResources,
-    })).to.equal(true);
-    expect(Settings.computed.canManageArtifactRetention.call({
-      isAdmin: false,
-      userPermissions: 0,
-    })).to.equal(false);
+      projectAccess: { admin: false, ids },
+      projectCan: ProjectAccess.methods.projectCan,
+    });
+    const allMutations = requiredPermissionIds(USER_PERMISSIONS.manageProjectResources);
+    expect(Settings.computed.canManageArtifactRetention.call(settingsWith(allMutations)))
+      .to.equal(true);
+    expect(Settings.computed.canManageArtifactRetention.call(settingsWith([]))).to.equal(false);
+    expect(Settings.computed.canManageArtifactRetention.call(settingsWith(['project.templates.update'])))
+      .to.equal(false);
   });
 
   it('maps effective policy values without allowing the request to select scope or actor', () => {

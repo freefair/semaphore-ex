@@ -12,7 +12,7 @@ describe('scoped template permissions', () => {
       can: PermissionsCheck.methods.can,
       projectId: 7,
       itemId: 11,
-      userPermissions: USER_PERMISSIONS.runProjectTasks,
+      projectAccess: { admin: false, ids: ['project.tasks.run'] },
       isAdmin: false,
       USER_PERMISSIONS,
       loadProjectResource: async () => ({ id: 11, name: 'Scoped template' }),
@@ -37,7 +37,10 @@ describe('scoped template permissions', () => {
       can: PermissionsCheck.methods.can,
       projectId: 7,
       itemId: 11,
-      userPermissions: USER_PERMISSIONS.viewProjectResources | USER_PERMISSIONS.readProject,
+      projectAccess: {
+        admin: false,
+        ids: ['project.read', 'project.inventories.view', 'project.environments.view', 'project.repositories.view'],
+      },
       USER_PERMISSIONS,
       isAdmin: false,
       loadProjectResource: async () => ({ id: 11 }),
@@ -59,7 +62,7 @@ describe('scoped template permissions', () => {
       can: PermissionsCheck.methods.can,
       projectId: 7,
       itemId: 11,
-      userPermissions: 0,
+      projectAccess: { admin: false, ids: [] },
       isAdmin: true,
       USER_PERMISSIONS,
       loadProjectResource: async () => ({ id: 11 }),
@@ -81,7 +84,11 @@ describe('scoped template permissions', () => {
     const context = {
       can: PermissionsCheck.methods.can,
       projectId: 7,
-      userPermissions: USER_PERMISSIONS.runProjectTasks | USER_PERMISSIONS.readProject,
+      // D5: each picker needs the view permission of its own resource type.
+      projectAccess: {
+        admin: false,
+        ids: ['project.tasks.run', 'project.read', 'project.environments.view'],
+      },
       isAdmin: false,
       USER_PERMISSIONS,
       loadProjectResources: async (name) => {

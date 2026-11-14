@@ -1,5 +1,6 @@
 import './setup';
 import { expect } from 'chai';
+import { reactive } from 'vue';
 import { mount, shallowMount } from '@vue/test-utils';
 
 import axios from 'axios';
@@ -9,7 +10,6 @@ import HostBrowser from '@/components/enhanced/HostBrowser.vue';
 import HostTaskHistory from '@/components/enhanced/HostTaskHistory.vue';
 import InventoryDetails from '@/views/project/InventoryDetails.vue';
 import router from '@/router';
-import { USER_PERMISSIONS } from '@/lib/constants';
 
 describe('inventory host browser', () => {
   let originalGet;
@@ -41,11 +41,13 @@ describe('inventory host browser', () => {
         id: 11, project_id: 7, app: 'ansible', name: 'Test',
       },
     });
+    const access = reactive({ admin: false, ids: ['project.read'] });
     wrapper = mount(InventoryRefresh, {
 
       attachTo: target,
-      props: { projectId: 7, inventoryId: 9, userPermissions: USER_PERMISSIONS.readProject },
+      props: { projectId: 7, inventoryId: 9 },
       global: {
+        provide: { projectAccess: access },
         renderStubDefaultSlot: true,
         mocks: { $t: (key) => key },
         stubs: { TaskForm: true },
@@ -60,7 +62,8 @@ describe('inventory host browser', () => {
     expect(dialog.props('sourceTask').params).to.deep.equal({ inventory_refresh: true });
     expect(dialog.vm.saveButtonText).to.equal('hostsRefresh');
     expect(dialog.props('canRead')).to.equal(true);
-    await wrapper.setProps({ userPermissions: 0, isAdmin: false });
+    access.ids = [];
+    await wrapper.vm.$nextTick();
     expect(dialog.props('canRead')).to.equal(false);
     await wrapper.setProps({ isAdmin: true });
     expect(dialog.props('canRead')).to.equal(true);

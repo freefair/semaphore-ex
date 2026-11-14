@@ -32,6 +32,8 @@ describe('Team.vue', () => {
     saving: Promise.resolve(),
     pendingSaves: 0,
     async loadItems() { this.loaded += 1; },
+    rowStatus: {},
+    setRowStatus: Team.methods.setRowStatus,
     // vue-i18n 11 (composition mode): the component translates with $t
     $t: (key) => key,
     ...extra,
@@ -45,26 +47,20 @@ describe('Team.vue', () => {
     expect(http.requests[0].url).to.equal('/api/project/1/users/5');
     expect(http.requests[0].data).to.deep.equal({ roles: ['owner', 'guest'], revision: 4 });
     expect(c.loaded).to.equal(1);
+    expect(c.rowStatus[5]).to.deep.equal({ type: 'success', text: 'teamRolesSaved' });
   });
 
-  it('does not save an empty list', async () => {
-    const shown = [];
-    const listener = (e) => shown.push(e.text);
-    EventBus.$on('i-snackbar', listener);
+  it('does not save an empty list and says so in the row', async () => {
     const c = ctx();
 
     await Team.methods.updateProjectUser.call(c, { id: 5, revision: 4, roles: [] });
 
-    EventBus.$off('i-snackbar', listener);
     expect(http.requests).to.have.length(0);
-    expect(shown).to.deep.equal(['memberNeedsRole']);
+    expect(c.rowStatus[5]).to.deep.equal({ type: 'error', text: 'memberNeedsRole' });
     expect(c.loaded).to.equal(1);
   });
 
-  it('shows the server refusal', async () => {
-    const shown = [];
-    const listener = (e) => shown.push(e.text);
-    EventBus.$on('i-snackbar', listener);
+  it('shows the server refusal in the member row', async () => {
     http.respond(() => {
       throw httpError(400, { error: 'The project needs at least one Owner' });
     });
@@ -72,8 +68,7 @@ describe('Team.vue', () => {
 
     await Team.methods.updateProjectUser.call(c, { id: 5, revision: 4, roles: ['guest'] });
 
-    EventBus.$off('i-snackbar', listener);
-    expect(shown).to.deep.equal(['The project needs at least one Owner']);
+    expect(c.rowStatus[5]).to.deep.equal({ type: 'error', text: 'The project needs at least one Owner' });
     expect(c.loaded).to.equal(1);
   });
 
@@ -125,22 +120,37 @@ describe('Team.vue', () => {
   it('shows the union of all assigned role permissions', () => {
     const c = ctx({
       roles: [
-        { slug: 'run', permissions: 1 },
-        { slug: 'edit', permissions: 4 },
+        { slug: 'run', permission_ids: ['project.tasks.run'] },
+        { slug: 'edit', permission_ids: ['project.templates.update', 'project.tasks.run'] },
       ],
     });
-    expect(Team.methods.memberPermissions.call(c, { roles: ['run', 'edit'] })).to.equal(5);
+    expect(Team.methods.memberPermissionIds.call(c, { roles: ['run', 'edit'] })).to.deep.equal([
+      'project.tasks.run', 'project.templates.update',
+    ]);
   });
 
   it('includes mapped role permissions without making them manual roles', () => {
-    const c = ctx({ roles: [{ slug: 'run', permissions: 1 }, { slug: 'edit', permissions: 4 }] });
+    const c = ctx({
+      roles: [
+        { slug: 'run', permission_ids: ['project.tasks.run'] },
+        { slug: 'edit', permission_ids: ['project.templates.update'] },
+      ],
+    });
     const member = {
       roles: ['run'], mapped_roles: [{ role: 'edit', provider: 'qa', group: 'operators' }],
     };
-    expect(Team.methods.memberPermissions.call(c, member)).to.equal(5);
+    expect(Team.methods.memberPermissionIds.call(c, member)).to.deep.equal([
+      'project.tasks.run', 'project.templates.update',
+    ]);
     expect(member.roles).to.deep.equal(['run']);
     const mappedOnly = { roles: [], mapped_roles: member.mapped_roles };
-    expect(Team.methods.memberPermissions.call(c, mappedOnly)).to.equal(4);
+    expect(Team.methods.memberPermissionIds.call(c, mappedOnly)).to.deep.equal(['project.templates.update']);
+  });
+
+  it('prefers the effective list the server sends for a member', () => {
+    const c = ctx({ roles: [{ slug: 'run', permission_ids: ['project.tasks.run'] }] });
+    const member = { roles: ['run'], permission_ids: ['project.read'] };
+    expect(Team.methods.memberPermissionIds.call(c, member)).to.deep.equal(['project.read']);
   });
 
   it('keeps a role missing from the list', () => {
@@ -150,16 +160,12 @@ describe('Team.vue', () => {
   });
 
   it('keeps refusing an empty list without mapped roles', async () => {
-    const shown = [];
-    const listener = (e) => shown.push(e.text);
-    EventBus.$on('i-snackbar', listener);
     const c = ctx();
 
     await Team.methods.updateProjectUser.call(c, { id: 5, roles: [], mapped_roles: [] });
 
-    EventBus.$off('i-snackbar', listener);
     expect(http.requests).to.have.length(0);
-    expect(shown).to.deep.equal(['memberNeedsRole']);
+    expect(c.rowStatus[5]).to.deep.equal({ type: 'error', text: 'memberNeedsRole' });
   });
 
   it('does not save a directory-managed member', async () => {

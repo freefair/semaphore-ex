@@ -6,6 +6,7 @@ import ObjectRefsDialog from '@/components/ObjectRefsDialog.vue';
 
 import { getErrorMessage } from '@/lib/error';
 import { USER_PERMISSIONS } from '@/lib/constants';
+import { resourcePermission } from '@/lib/enhanced/project-access';
 import PermissionsCheck from '@/components/PermissionsCheck';
 import ProjectMixin from '@/components/ProjectMixin';
 
@@ -59,8 +60,26 @@ export default {
   },
 
   methods: {
+    // The project resource type this list manages (D5), e.g. 'inventories'.
+    // Without one, actions keep the historic manage-everything boundary.
+    permissionResource() {
+      return null;
+    },
+
+    canResource(action) {
+      const resource = this.permissionResource();
+      if (!resource) {
+        return this.can(USER_PERMISSIONS.manageProjectResources);
+      }
+      return this.can(resourcePermission(resource, action));
+    },
+
+    canCreateItem() {
+      return this.canResource('create');
+    },
+
     allowActions() {
-      return this.can(USER_PERMISSIONS.manageProjectResources);
+      return this.canResource('update') || this.canResource('delete');
     },
 
     // eslint-disable-next-line no-empty-function

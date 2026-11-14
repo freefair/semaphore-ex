@@ -25,24 +25,26 @@ describe('global and template roles', () => {
     expect(hasGlobalPermission(null, GLOBAL_PERMISSIONS.manageSystem, true)).to.equal(true);
   });
 
-  it('edits typed global and legacy project masks independently', async () => {
-    const item = { permissions: 0, global_permissions: 0 };
+  it('edits global masks and project permission IDs independently', async () => {
+    const item = { permission_ids: ['project.read'], global_permissions: 0 };
     EditRoleForm.methods.setPermission.call({ item, projectId: null }, 2, true);
     expect(item.global_permissions).to.equal(2);
-    expect(item.permissions).to.equal(0);
+    expect(item.permission_ids).to.deep.equal(['project.read']);
 
     const context = {
       item,
       projectId: null,
       permissionCatalog: [],
+      projectPermissionCatalog: [],
       loadEndpoint: async (url) => [{ id: url }],
     };
     await EditRoleForm.methods.beforeLoadData.call(context);
     expect(context.permissionCatalog[0].id).to.equal('/api/roles/permissions');
+    expect(context.projectPermissionCatalog[0].id).to.equal('/api/roles/project-permissions');
     expect(EditRoleForm.methods.getNewItem.call({ projectId: null })).to.deep.equal({
       name: '',
       slug: '',
-      permissions: 0,
+      permission_ids: [],
       global_permissions: 0,
     });
   });
@@ -161,9 +163,15 @@ describe('global and template roles', () => {
     }, { revision: 3 })).to.equal(
       '/api/project/7/templates/9/perms/11?revision=3',
     );
+    // Managing a template's permissions needs project.templates.update (D5),
+    // the permission the backend route requires; it is not the broad
+    // manage-every-resource boundary.
+    expect(TemplatePerms.methods.allowActions.call({
+      can: (permission) => permission === 'project.templates.update',
+    })).to.equal(true);
     expect(TemplatePerms.methods.allowActions.call({
       can: (permission) => permission === USER_PERMISSIONS.manageProjectResources,
-    })).to.equal(true);
+    })).to.equal(false);
   });
 
   it('shows not found when a read override hides template detail', async () => {

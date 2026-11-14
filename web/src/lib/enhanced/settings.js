@@ -3,8 +3,8 @@ import { USER_PERMISSIONS } from '@/lib/constants';
 
 const enhancedComputed = {
   canManageArtifactRetention() {
-    return Boolean(this.isAdmin
-        || ((this.userPermissions || 0) & USER_PERMISSIONS.manageProjectResources));
+    // Retention belongs to the project's resources: the historic boundary.
+    return this.projectCan(USER_PERMISSIONS.manageProjectResources);
   },
   deploymentWindowsDecision() {
     const decision = findCapabilityDecision(this.systemInfo, 'deployment_windows');
@@ -16,12 +16,10 @@ const enhancedComputed = {
       ? decision : null;
   },
   canManagePolicyGuardrails() {
-    return Boolean(this.isAdmin
-        || ((this.userPermissions || 0) & USER_PERMISSIONS.managePolicyGuardrails));
+    return this.projectCan(USER_PERMISSIONS.managePolicyGuardrails);
   },
   canRollbackPolicyGuardrails() {
-    return Boolean(this.isAdmin
-        || ((this.userPermissions || 0) & USER_PERMISSIONS.rollbackPolicyGuardrails));
+    return this.projectCan(USER_PERMISSIONS.rollbackPolicyGuardrails);
   },
 };
 

@@ -46,7 +46,7 @@
         color="primary"
         variant="elevated"
         @click="editItem('new')"
-        v-if="can(USER_PERMISSIONS.manageProjectResources)"
+        v-if="canCreateItem()"
         data-testid="hostConfig-new"
       >{{ $t('addMapping') }}</v-btn>
     </v-toolbar>
@@ -161,6 +161,10 @@ export default {
   },
 
   methods: {
+    permissionResource() {
+      return 'inventories';
+    },
+
     getHeaders() {
       return [{
         title: this.$t('hostConfigHostOrUrl'),

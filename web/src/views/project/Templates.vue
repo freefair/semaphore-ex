@@ -162,7 +162,7 @@
         variant="text"
         class="mt-2 ml-4"
         @click="editViewsDialog = true"
-        v-if="can(USER_PERMISSIONS.manageProjectResources)"
+        v-if="can('project.views.update')"
         data-testid="templates-editViews"
       >
         <v-icon>mdi-pencil</v-icon>
@@ -466,7 +466,7 @@ export default {
 
     // A new template needs an inventory and a repository, which only project read can list.
     canCreate() {
-      return this.can(this.USER_PERMISSIONS.manageProjectResources)
+      return this.can('project.templates.create')
         && this.can(this.USER_PERMISSIONS.readProject);
     },
 
@@ -590,7 +590,7 @@ export default {
         method: 'get',
         url: `/api/project/${this.projectId}/views`,
         responseType: 'json',
-      })).data.filter((v) => !v.hidden || this.can(this.USER_PERMISSIONS.manageProjectResources));
+      })).data.filter((v) => !v.hidden || this.can('project.views.update'));
       this.views.sort((v1, v2) => v1.position - v2.position);
 
       if (this.viewId != null && !this.views.some((v) => v.id === this.viewId)) {
@@ -714,10 +714,8 @@ export default {
         this.repositories,
       ] = await Promise.all([
         canRead ? this.loadProjectResources('inventory') : [],
-        canRead ? this.loadProjectResources('environment') : [],
-        canRead && (this.isAdmin
-          || (this.userPermissions & this.USER_PERMISSIONS.viewProjectResources))
-          ? this.loadProjectResources('repositories') : [],
+        canRead && this.can('project.environments.view') ? this.loadProjectResources('environment') : [],
+        canRead && this.can('project.repositories.view') ? this.loadProjectResources('repositories') : [],
       ]);
     },
 

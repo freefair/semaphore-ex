@@ -60,6 +60,7 @@
 </template>
 
 <script>
+import ProjectAccess from '@/components/enhanced/ProjectAccess';
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import KeyStoreMenu from '@/components/KeyStoreMenu.vue';
@@ -67,6 +68,7 @@ import { getErrorMessage } from '@/lib/error';
 import { USER_PERMISSIONS } from '@/lib/constants';
 
 export default {
+  mixins: [ProjectAccess],
   components: { KeyStoreMenu },
 
   props: {
@@ -95,10 +97,7 @@ export default {
 
   computed: {
     allowed() {
-      if (this.isAdmin) return true;
-      // eslint-disable-next-line no-bitwise
-      return ((this.userPermissions || 0) & USER_PERMISSIONS.listGrantedCredentials)
-        === USER_PERMISSIONS.listGrantedCredentials;
+      return this.projectCan(USER_PERMISSIONS.listGrantedCredentials);
     },
     selected() {
       return this.items.find((item) => item.credential_id === this.selectedId) || null;

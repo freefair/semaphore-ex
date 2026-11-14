@@ -55,7 +55,7 @@
       <v-btn
         color="primary"
         variant="elevated"
-        v-if="can(USER_PERMISSIONS.manageProjectResources)"
+        v-if="canCreateItem()"
         @click="editItem('new')"
         data-testid="integrations-new"
         >{{ $t('NewIntegration') }}
@@ -91,7 +91,7 @@
         />
 
         <v-btn
-          v-if="can(USER_PERMISSIONS.manageProjectResources)"
+          v-if="canResource('update')"
           icon
           variant="text"
           @click="deleteAlias(alias.id)"
@@ -101,7 +101,7 @@
         </v-btn>
       </div>
       <v-btn
-        v-if="can(USER_PERMISSIONS.manageProjectResources)"
+        v-if="canResource('update')"
         color="primary"
         @click="addAlias()"
         :disabled="aliases == null"
@@ -232,6 +232,10 @@ export default {
   },
 
   methods: {
+    permissionResource() {
+      return 'integrations';
+    },
+
     allowActions() {
       return this.can(USER_PERMISSIONS.updateProject);
     },

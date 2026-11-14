@@ -89,7 +89,7 @@
             v-bind="props"
             color="primary"
             variant="elevated"
-            v-if="can(USER_PERMISSIONS.manageProjectResources)"
+            v-if="canCreateItem()"
             data-testid="inventory-new"
           >{{ $t('newInventory') }}
             <v-icon>mdi-chevron-down</v-icon>
@@ -224,6 +224,10 @@ export default {
   },
 
   methods: {
+    permissionResource() {
+      return 'inventories';
+    },
+
     async attachInventory(templateId) {
       await axios({
         method: 'post',

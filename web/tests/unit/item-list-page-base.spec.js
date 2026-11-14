@@ -1,10 +1,11 @@
 import './setup';
 import { expect } from 'chai';
-import { h } from 'vue';
+import { computed, h } from 'vue';
 import { shallowMount } from '@vue/test-utils';
 import ItemListPageBase from '@/components/ItemListPageBase';
 import EventBus from '@/event-bus';
 import { USER_PERMISSIONS } from '@/lib/constants';
+import { requiredPermissionIds } from '@/lib/enhanced/project-access';
 import mockAxios, { httpError } from './helpers/axiosMock';
 
 const Host = {
@@ -38,15 +39,17 @@ async function flush() {
   await new Promise((resolve) => { setTimeout(resolve, 0); });
 }
 
-function mountHost(props = {}) {
-  return shallowMount(Host, {
-    props: {
-      projectId: 7,
-      userPermissions: USER_PERMISSIONS.manageProjectResources,
-      ...props,
-    },
+const ALL_MUTATIONS = requiredPermissionIds(USER_PERMISSIONS.manageProjectResources);
+
+function mountHost(props = {}, ids = ALL_MUTATIONS, component = Host) {
+  return shallowMount(component, {
+    props: { projectId: 7, ...props },
+    global: { provide: { projectAccess: computed(() => ({ admin: false, ids })) } },
   });
 }
+
+// A list page that declares its resource type decides per action (D5).
+const KeysHost = { ...Host, methods: { ...Host.methods, permissionResource: () => 'access_keys' } };
 
 describe('ItemListPageBase mixin', () => {
   let http;
@@ -61,8 +64,21 @@ describe('ItemListPageBase mixin', () => {
   });
 
   it('hides the actions column without manageProjectResources permission', () => {
-    const wrapper = mountHost({ userPermissions: USER_PERMISSIONS.runProjectTasks });
+    const wrapper = mountHost({}, ['project.tasks.run']);
     expect(wrapper.vm.headers.map((header) => header.key)).to.deep.equal(['name']);
+  });
+
+  it('decides per action on a page that declares its resource type', () => {
+    const editor = mountHost({}, ['project.access_keys.update'], KeysHost);
+    expect(editor.vm.headers.map((header) => header.key)).to.deep.equal(['name', 'actions']);
+    expect(editor.vm.canCreateItem()).to.equal(false);
+
+    const creator = mountHost({}, ['project.access_keys.create'], KeysHost);
+    expect(creator.vm.headers.map((header) => header.key)).to.deep.equal(['name']);
+    expect(creator.vm.canCreateItem()).to.equal(true);
+
+    const otherResource = mountHost({}, ['project.templates.update', 'project.templates.delete'], KeysHost);
+    expect(otherResource.vm.headers.map((header) => header.key)).to.deep.equal(['name']);
   });
 
   it('keeps the actions column with manageProjectResources permission', () => {
@@ -71,7 +87,7 @@ describe('ItemListPageBase mixin', () => {
   });
 
   it('keeps the actions column for admins', () => {
-    const wrapper = mountHost({ userPermissions: 0, isAdmin: true });
+    const wrapper = mountHost({ isAdmin: true }, []);
     expect(wrapper.vm.headers.map((header) => header.key)).to.deep.equal(['name', 'actions']);
   });
 

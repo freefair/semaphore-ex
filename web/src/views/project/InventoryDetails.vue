@@ -65,6 +65,7 @@
   </div>
 </template>
 <script>
+import ProjectAccess from '@/components/enhanced/ProjectAccess';
 import axios from 'axios';
 import EventBus from '@/event-bus';
 import socket from '@/socket';
@@ -75,6 +76,7 @@ import HostBrowser from '@/components/enhanced/HostBrowser.vue';
 import InventoryRefresh from '@/components/enhanced/InventoryRefresh.vue';
 
 export default {
+  mixins: [ProjectAccess],
   components: { TaskLink, HostBrowser, InventoryRefresh },
   props: { projectId: Number, userPermissions: Number, isAdmin: Boolean },
   data: () => ({
@@ -95,8 +97,7 @@ export default {
       return ['static', 'static-yaml', 'file'].includes(this.inventory?.type);
     },
     canRun() {
-      // eslint-disable-next-line no-bitwise
-      return this.isAdmin || (this.userPermissions & USER_PERMISSIONS.runProjectTasks) !== 0;
+      return this.projectCan(USER_PERMISSIONS.runProjectTasks);
     },
   },
   watch: {

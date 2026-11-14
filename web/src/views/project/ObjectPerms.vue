@@ -228,7 +228,7 @@ export default {
     allowActions() {
       return this.workflow
         ? Boolean(this.workflow?.effective_access?.administer)
-        : this.can(USER_PERMISSIONS.manageProjectResources);
+        : this.can('project.templates.update');
     },
 
     getHeaders() {

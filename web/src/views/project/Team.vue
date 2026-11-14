@@ -116,10 +116,26 @@
                     :data-testid="`team-rowRole-${role.slug}`">{{ role.name }}</v-chip>
           </div>
         </div>
-        <TemplatePermissionsChips
+        <div
+          v-if="rowStatus[item.id]"
+          :class="`text-${rowStatus[item.id].type} text-body-small mt-1`"
+          role="status"
+          :data-testid="`team-rowStatus-${item.id}`"
+        >{{ rowStatus[item.id].text }}</div>
+        <PermissionSummary
           class="mt-1"
-          :permissions="memberPermissions(item)"
+          :permission-ids="memberPermissionIds(item)"
+          :catalog="permissionCatalog"
         />
+        <v-btn
+          v-if="canInspectPermissions(item)"
+          variant="text"
+          size="small"
+          class="px-0 mt-1"
+          prepend-icon="mdi-shield-search"
+          @click="showEffectivePermissions(item)"
+          :data-testid="`team-effectivePermissions-${item.id}`"
+        >{{ $t('permEffectiveShow') }}</v-btn>
       </template>
 
       <template v-slot:item.actions="{ item }">
@@ -138,6 +154,52 @@
         </v-btn-group>
       </template>
     </v-data-table>
+
+    <v-dialog
+      :model-value="effective != null"
+      @update:model-value="(open) => { if (!open) effective = null; }"
+      max-width="720"
+      scrollable
+    >
+      <v-card v-if="effective" data-testid="team-effectivePermissionsDialog">
+        <v-card-title>
+          {{ $t('permEffectiveTitle') }}: {{ effective.member.name || effective.member.username }}
+        </v-card-title>
+        <v-card-text>
+          <v-progress-linear v-if="effective.loading" indeterminate />
+          <v-alert
+            v-else-if="effective.error"
+            type="error"
+            variant="tonal"
+            data-testid="team-effectivePermissionsError"
+          >{{ effective.error }} {{ effective.detail }}</v-alert>
+          <template v-else>
+            <PermissionSummary
+              :permission-ids="effective.permissions"
+              :catalog="permissionCatalog"
+            />
+            <v-table density="compact" class="mt-4" data-testid="team-effectivePermissionsSources">
+              <thead>
+                <tr>
+                  <th>{{ $t('permissions') }}</th>
+                  <th>{{ $t('permEffectiveGrantedBy') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="permissionId in effective.permissions" :key="permissionId">
+                  <td>{{ permissionDescription(permissionId) }}</td>
+                  <td>{{ effectiveSourcesFor(permissionId).join(', ') }}</td>
+                </tr>
+              </tbody>
+            </v-table>
+          </template>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="effective = null">{{ $t('close') }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 <style lang="scss">
@@ -237,7 +299,7 @@ import axios from 'axios';
 import { USER_PERMISSIONS } from '@/lib/constants';
 import groupRolesForSelect from '@/lib/roles';
 import TeamMenu from '@/components/TeamMenu.vue';
-import TemplatePermissionsChips from '@/components/TemplatePermissionsChips.vue';
+import PermissionSummary from '@/components/enhanced/PermissionSummary.vue';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
 
@@ -246,22 +308,27 @@ function isDirectoryManaged(member) {
 }
 
 export default {
-  components: { TeamMenu, EditTeamMemberDialog, TemplatePermissionsChips },
+  components: { TeamMenu, EditTeamMemberDialog, PermissionSummary },
   mixins: [ItemListPageBase],
 
   props: {
     systemInfo: Object,
+    userId: Number,
   },
 
   data() {
     return {
       roles: null,
+      rowStatus: {},
+      permissionCatalog: [],
+      effective: null,
       saving: Promise.resolve(),
       pendingSaves: 0,
     };
   },
 
   async created() {
+    this.loadPermissionCatalog();
     this.roles = (
       await axios({
         method: 'get',
@@ -324,11 +391,12 @@ export default {
               data: { roles, revision: user.revision },
             });
             Object.assign(user, { revision: user.revision + 1 });
+            this.setRowStatus(user.id, 'success', this.$t('teamRolesSaved'));
           } catch (err) {
-            EventBus.$emit('i-snackbar', { color: 'error', text: err.response?.data?.message || getErrorMessage(err) });
+            this.setRowStatus(user.id, 'error', err.response?.data?.message || getErrorMessage(err));
           }
         } else {
-          EventBus.$emit('i-snackbar', { color: 'error', text: this.$t('memberNeedsRole') });
+          this.setRowStatus(user.id, 'error', this.$t('memberNeedsRole'));
         }
         this.pendingSaves -= 1;
         // A reload before the next queued save would drop the pick it is saving.

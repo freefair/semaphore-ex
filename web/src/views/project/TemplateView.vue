@@ -522,10 +522,8 @@ export default {
         ] = await Promise.all([
           this.loadProjectResource('templates', this.itemId),
           canRead ? this.loadProjectResources('inventory') : [],
-          canRead ? this.loadProjectResources('environment') : [],
-          canRead && (this.isAdmin
-            || (this.userPermissions & USER_PERMISSIONS.viewProjectResources))
-            ? this.loadProjectResources('repositories') : [],
+          canRead && this.can('project.environments.view', null) ? this.loadProjectResources('environment') : [],
+          canRead && this.can('project.repositories.view', null) ? this.loadProjectResources('repositories') : [],
         ]);
       } catch (err) {
         // A deleted template or one the member may not read answers 404, the page says so.

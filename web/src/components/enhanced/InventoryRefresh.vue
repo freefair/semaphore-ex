@@ -46,12 +46,14 @@
   </div>
 </template>
 <script>
+import ProjectAccess from '@/components/enhanced/ProjectAccess';
 import axios from 'axios';
 import NewTaskDialog from '@/components/NewTaskDialog.vue';
 import { getErrorMessage } from '@/lib/error';
 import { USER_PERMISSIONS } from '@/lib/constants';
 
 export default {
+  mixins: [ProjectAccess],
   emits: ['started'],
   components: { NewTaskDialog },
   props: {
@@ -71,8 +73,7 @@ export default {
   }),
   computed: {
     canReadProject() {
-      return this.isAdmin
-        || ((this.userPermissions || 0) & USER_PERMISSIONS.readProject) !== 0;
+      return this.projectCan(USER_PERMISSIONS.readProject);
     },
     sourceTask() {
       return {

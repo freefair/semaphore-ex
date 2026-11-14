@@ -70,7 +70,7 @@
             v-bind="props"
             color="primary"
             variant="elevated"
-            v-if="can(USER_PERMISSIONS.manageProjectResources)"
+            v-if="canCreateItem()"
             :disabled="!runtimeCanWrite"
             data-testid="secretStorage-newMenu"
           >
@@ -342,6 +342,10 @@ export default {
   },
 
   methods: {
+    permissionResource() {
+      return 'access_keys';
+    },
+
     ...enhancedMethods,
 
     async syncItem(itemId, resolveOperationId = null) {

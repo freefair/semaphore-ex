@@ -2,6 +2,7 @@ import axios from 'axios';
 import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
 import { USER_PERMISSIONS, USER_ROLES } from '@/lib/constants';
+import { hasProjectPermission } from '@/lib/enhanced/project-access';
 import { validateWorkflowDefinition, WORKFLOW_DEFINITION_VERSION } from '@/lib/workflowValidation';
 
 export const enhancedComputed = {
@@ -61,15 +62,17 @@ export const enhancedComputed = {
         && reference.template_version_number === current.template_version_number) || null;
   },
   workflowRoleOptions() {
+    // Built-in masks are small constants; custom roles answer with their ID
+    // list because their masks exceed what a browser number keeps exactly.
     const builtIns = USER_ROLES.map((role) => ({
       value: `builtin:${role.slug}`,
       text: role.name,
-      permissions: role.permissions,
+      canRunTasks: (role.permissions & USER_PERMISSIONS.runProjectTasks) !== 0,
     }));
     const custom = this.projectRoles.map((role) => ({
       value: `role:${role.id}`,
       text: role.name,
-      permissions: role.permissions || 0,
+      canRunTasks: hasProjectPermission(role.permission_ids, USER_PERMISSIONS.runProjectTasks),
     }));
     return [...builtIns, ...custom];
   },
@@ -307,8 +310,7 @@ export const enhancedMethods = {
       revision: 0,
       mode: 'any_of',
       role_ids: this.workflowRoleOptions
-        .filter((role) => (role.permissions & USER_PERMISSIONS.runProjectTasks)
-            === USER_PERMISSIONS.runProjectTasks)
+        .filter((role) => role.canRunTasks)
         .map((role) => role.value),
       minimum_distinct_approvers: 1,
       initiator_separation: false,

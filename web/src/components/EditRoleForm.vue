@@ -39,11 +39,17 @@
       data-testid="role-slug"
     ></v-text-field>
 
-    <v-list-subheader class="pl-0">
-      {{ projectId ? $t('permissions') : 'Global permissions' }}
-    </v-list-subheader>
+    <template v-if="projectId">
+      <v-list-subheader class="pl-0">{{ $t('permissions') }}</v-list-subheader>
+      <RolePermissionMatrix
+        v-model="item.permission_ids"
+        :catalog="permissionCatalog"
+        :disabled="formSaving"
+      />
+    </template>
 
-    <template v-if="permissionCatalog.length > 0">
+    <template v-else>
+      <v-list-subheader class="pl-0">Global permissions</v-list-subheader>
       <v-checkbox
         v-for="definition in permissionCatalog"
         :key="definition.id"
@@ -53,46 +59,21 @@
         :disabled="formSaving"
         @update:model-value="setPermission(definition.permission, $event)"
       ></v-checkbox>
+
+      <v-list-subheader class="pl-0">{{ $t('permissions') }}</v-list-subheader>
+      <RolePermissionMatrix
+        v-model="item.permission_ids"
+        :catalog="projectPermissionCatalog"
+        :disabled="formSaving"
+      />
     </template>
 
-    <template v-else>
-      <v-alert variant="tonal" density="compact" type="info">
-        No assignable permissions are available.
-      </v-alert>
-    </template>
-
-    <template v-if="!projectId">
-      <v-list-subheader class="pl-0">Legacy project permissions</v-list-subheader>
-
-      <v-checkbox
-        class="mt-0"
-        v-model="permissions.canRunProjectTasks"
-        :label="$t('canRunProjectTasks')"
-        :disabled="formSaving"
-        data-testid="role-canRunProjectTasks"
-      ></v-checkbox>
-
-      <v-checkbox
-        class="mt-0"
-        v-model="permissions.canUpdateProject"
-        :label="$t('canUpdateProject')"
-        :disabled="formSaving"
-      ></v-checkbox>
-
-      <v-checkbox
-        class="mt-0"
-        v-model="permissions.canManageProjectResources"
-        :label="$t('canManageProjectResources')"
-        :disabled="formSaving"
-      ></v-checkbox>
-
-      <v-checkbox
-        class="mt-0"
-        v-model="permissions.canManageProjectUsers"
-        :label="$t('canManageProjectUsers')"
-        :disabled="formSaving"
-      ></v-checkbox>
-    </template>
+    <v-alert
+      v-if="permissionCatalog.length === 0"
+      variant="tonal"
+      density="compact"
+      type="info"
+    >No assignable permissions are available.</v-alert>
 
   </v-form>
 </template>
@@ -101,21 +82,18 @@
 import enhancedMethods from '@/lib/enhanced/edit-role-form';
 
 import ItemFormBase from '@/components/ItemFormBase';
+import RolePermissionMatrix from '@/components/enhanced/RolePermissionMatrix.vue';
 import { isValidSlug, slugFromName } from '@/lib/roles';
 
 export default {
+  components: { RolePermissionMatrix },
   mixins: [ItemFormBase],
 
   data() {
     return {
       permissionCatalog: [],
+      projectPermissionCatalog: [],
       slugTouched: false,
-      permissions: {
-        canRunProjectTasks: false,
-        canUpdateProject: false,
-        canManageProjectResources: false,
-        canManageProjectUsers: false,
-      },
     };
   },
 
@@ -131,34 +109,6 @@ export default {
       if (!this.projectId && this.isNew && !this.slugTouched && this.item) {
         this.item.slug = slugFromName(name);
       }
-    },
-
-    // Watch permissions and update the item.permissions value
-    permissions: {
-      handler(newPermissions) {
-        if (this.projectId || !this.item) return;
-
-        let permissionValue = (this.item.permissions || 0) & ~15;
-        if (newPermissions.canRunProjectTasks) permissionValue |= 1;
-        if (newPermissions.canUpdateProject) permissionValue |= 2;
-        if (newPermissions.canManageProjectResources) permissionValue |= 4;
-        if (newPermissions.canManageProjectUsers) permissionValue |= 8;
-
-        this.item.permissions = permissionValue;
-      },
-      deep: true,
-    },
-
-    'item.permissions': {
-      handler(newPermissions) {
-        if (this.projectId || newPermissions === undefined || newPermissions === null) return;
-
-        this.permissions.canRunProjectTasks = !!(newPermissions & 1);
-        this.permissions.canUpdateProject = !!(newPermissions & 2);
-        this.permissions.canManageProjectResources = !!(newPermissions & 4);
-        this.permissions.canManageProjectUsers = !!(newPermissions & 8);
-      },
-      immediate: true,
     },
   },
 
@@ -191,7 +141,7 @@ export default {
     getNewItem() {
       const item = {
         name: '',
-        permissions: 0,
+        permission_ids: [],
       };
       if (!this.projectId) {
         item.slug = '';
@@ -200,34 +150,8 @@ export default {
       return item;
     },
 
-    beforeSave() {
-      if (this.projectId || !this.item) return;
-
-      let permissionValue = (this.item.permissions || 0) & ~15;
-      if (this.permissions.canRunProjectTasks) permissionValue |= 1;
-      if (this.permissions.canUpdateProject) permissionValue |= 2;
-      if (this.permissions.canManageProjectResources) permissionValue |= 4;
-      if (this.permissions.canManageProjectUsers) permissionValue |= 8;
-      this.item.permissions = permissionValue;
-    },
-
-    afterLoadData() {
-      if (this.projectId || this.item.permissions === undefined) return;
-      this.permissions.canRunProjectTasks = !!(this.item.permissions & 1);
-      this.permissions.canUpdateProject = !!(this.item.permissions & 2);
-      this.permissions.canManageProjectResources = !!(this.item.permissions & 4);
-      this.permissions.canManageProjectUsers = !!(this.item.permissions & 8);
-    },
-
     afterReset() {
       this.slugTouched = false;
-      if (this.projectId) return;
-      this.permissions = {
-        canRunProjectTasks: false,
-        canUpdateProject: false,
-        canManageProjectResources: false,
-        canManageProjectUsers: false,
-      };
     },
   },
 };

@@ -218,6 +218,7 @@
   }
 </style>
 <script>
+import ProjectAccess from '@/components/enhanced/ProjectAccess';
 import enhancedComputed from '@/lib/enhanced/settings';
 
 import EventBus from '@/event-bus';
@@ -233,6 +234,7 @@ import PolicyGuardrailsPanel from '@/components/PolicyGuardrailsPanel.vue';
 import WorkflowArtifactRetentionPanel from '@/components/WorkflowArtifactRetentionPanel.vue';
 
 export default {
+  mixins: [ProjectAccess],
   components: {
     DashboardMenu,
     TestAlertReport,

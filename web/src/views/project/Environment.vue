@@ -58,7 +58,7 @@
         variant="elevated"
         color="primary"
         @click="editItem('new')"
-        v-if="can(USER_PERMISSIONS.manageProjectResources)"
+        v-if="canCreateItem()"
         data-testid="varGroup-new"
         >{{ $t('newEnvironment') }}
       </v-btn>
@@ -126,6 +126,10 @@ export default {
     };
   },
   methods: {
+    permissionResource() {
+      return 'environments';
+    },
+
     async syncItem(itemId) {
       try {
         await axios({
