@@ -5059,8 +5059,8 @@ paths:
       tags: [authentication]
       summary: Search LDAP directory groups for a mapping
       parameters:
-      - {name: provider_id, in: query, required: true, type: string}
-      - {name: query, in: query, required: true, type: string, maxLength: 255}
+      - {name: provider_id, in: query, required: true, type: string, x-example: corp}
+      - {name: query, in: query, required: true, type: string, maxLength: 255, x-example: ops}
       responses:
         200:
           description: At most fifty directory groups. Continuation references are rejected and never followed.

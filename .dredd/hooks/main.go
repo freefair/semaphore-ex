@@ -24,6 +24,8 @@ var skipTests = []string{
 	"runner > /api/project/{project_id}/runners > Add project runner > 201 > application/json",
 	// Sends real notifications on every configured channel.
 	"project > /api/project/{project_id}/notifications/test > Send test notification > 200 > application/json",
+	// Needs a reachable LDAP directory; covered by the api and enhanced module tests.
+	"authentication > /api/capabilities/ldap/groups > Search LDAP directory groups for a mapping > 200 > application/json",
 }
 
 // Dredd expects that you have already set up the database and run all migrations before it begins.
