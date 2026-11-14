@@ -44,6 +44,19 @@ func TestResolveExternalUser_CreatesUserAndIdentity(t *testing.T) {
 	assert.Equal(t, "cn=jdoe,dc=x", ids[0].ExternalUID)
 }
 
+func TestResolveExternalUser_RefusesDisabledLinkedIdentity(t *testing.T) {
+	store := setupIdentityTest(t, "auto")
+	first, _, err := resolveExternalUser(store, ldapProfile("cn=jdoe,dc=x", "jdoe@example.com"))
+	require.NoError(t, err)
+
+	securityStore, ok := store.(db.UserSecurityRepository)
+	require.True(t, ok)
+	require.NoError(t, securityStore.SetUserDisabledAndRevokeCredentials(first.ID, true))
+
+	_, _, err = resolveExternalUser(store, ldapProfile("cn=jdoe,dc=x", "jdoe@example.com"))
+	assert.ErrorIs(t, err, errExternalIdentityDisabled)
+}
+
 func TestResolveExternalUser_FindsByIdentityAfterEmailChange(t *testing.T) {
 	store := setupIdentityTest(t, "auto")
 

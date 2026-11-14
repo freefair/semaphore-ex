@@ -479,7 +479,7 @@ func requireGlobalAdministratorWithoutUserTx(
 ) error {
 	count, err := tx.SelectInt(d.PrepareQuery(
 		"select count(distinct u.id) from `user` u "+
-			"where u.id<>? and (u.admin=true or exists ("+
+			"where u.id<>? and u.disabled=false and (u.admin=true or exists ("+
 			"select 1 from user__global_role a "+
 			"join role r on r.role_id=a.role_id and r.project_id is null "+
 			"where a.user_id=u.id and (r.global_permissions & ?) = ?))"),

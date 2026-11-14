@@ -143,6 +143,31 @@ func TestUserMutationsProtectLastEffectiveGlobalAdministrator(t *testing.T) {
 	require.NoError(t, store.UpdateUser(db.UserWithPwd{User: second}))
 }
 
+func TestUserMutationsDoNotCountDisabledGlobalAdministrator(t *testing.T) {
+	store := InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+
+	active, err := store.CreateUserWithoutPassword(db.User{
+		Username: "active-global-admin", Name: "Active global admin",
+		Email: "active-global-admin@example.test", Admin: true,
+	})
+	require.NoError(t, err)
+	disabled, err := store.CreateUserWithoutPassword(db.User{
+		Username: "disabled-global-admin", Name: "Disabled global admin",
+		Email: "disabled-global-admin@example.test", Admin: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.SetUserDisabledAndRevokeCredentials(disabled.ID, true))
+
+	demoted := active
+	demoted.Admin = false
+	err = store.UpdateUser(db.UserWithPwd{User: demoted})
+	assert.ErrorIs(t, err, db.ErrLastGlobalAdministrator)
+
+	err = store.DeleteUser(active.ID)
+	assert.ErrorIs(t, err, db.ErrLastGlobalAdministrator)
+}
+
 func TestConcurrentGlobalAdministratorRevocationRetainsOneAdministrator(t *testing.T) {
 	store := InitConfigCreateTestStore()
 	t.Cleanup(store.Close)

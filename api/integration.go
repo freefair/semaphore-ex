@@ -615,6 +615,11 @@ func (c *IntegrationController) integrationWorkflowActor(r *http.Request, integr
 	if err != nil {
 		return nil, err
 	}
+	// Webhook delivery has no authenticated session to reject for us. Reloaded
+	// principals must therefore enforce the same lifecycle boundary explicitly.
+	if actor.Disabled {
+		return nil, fmt.Errorf("workflow integration principal %d is disabled", actor.ID)
+	}
 	if c.capabilityProvider == nil {
 		return nil, pro_interfaces.CapabilityDeniedError{Decision: pro_interfaces.NewCapabilityDecision(
 			pro_interfaces.CapabilityWorkflowTriggers, pro_interfaces.CapabilityStateUnavailable,

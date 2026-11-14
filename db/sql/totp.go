@@ -484,7 +484,7 @@ func (d *SqlDb) CountRecoverableTOTPAdmins(excludeUserID int) (int, error) {
 
 const recoverableTOTPAdminsQuery = "select count(distinct u.id) from `user` u " +
 	"join user__totp t on t.user_id=u.id " +
-	"where u.admin=true and u.external=false and u.id<>? " +
+	"where u.admin=true and u.disabled=false and u.external=false and u.id<>? " +
 	"and t.state='active' and t.recovery_acknowledged_at is not null " +
 	"and exists (select 1 from user__totp_recovery_code c " +
 	"where c.totp_id=t.id and c.consumed_at is null)"

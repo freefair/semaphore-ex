@@ -13,6 +13,7 @@ var (
 	errIdentityLinkedToAnother  = errors.New("external identity is already linked to another account")
 	errProviderAlreadyLinked    = errors.New("account already has an identity for this provider, unlink it first")
 	errCannotUnlinkLastIdentity = errors.New("cannot unlink the last external identity")
+	errExternalIdentityDisabled = errors.New("external identity belongs to a disabled user")
 )
 
 type externalResolution int
@@ -64,6 +65,9 @@ func resolveExternalUser(store db.Store, p externalUserProfile) (db.User, extern
 		user, uErr := store.GetUser(identity.UserID)
 		if uErr != nil {
 			return db.User{}, resolvedExisting, uErr
+		}
+		if user.Disabled {
+			return db.User{}, resolvedExisting, errExternalIdentityDisabled
 		}
 		synced, err := syncExternalUserAttrs(store, user, p)
 		return synced, resolvedExisting, err

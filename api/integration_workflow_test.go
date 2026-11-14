@@ -218,6 +218,28 @@ func TestReceiveIntegration_WorkflowStartFailsClosedWithoutPersistedPrincipal(t 
 	assert.Empty(t, svc.calls, "a missing stored principal must never select another project member")
 }
 
+func TestReceiveIntegration_WorkflowStartFailsClosedForDisabledPrincipal(t *testing.T) {
+	f := newWorkflowWebhookFixture(t)
+	require.NotNil(t, f.integration.WorkflowUserID)
+	_, err := f.store.CreateUserWithoutPassword(db.User{
+		Username: "workflow-hook-recovery-admin", Name: "Workflow hook recovery admin",
+		Email: "workflow-hook-recovery-admin@example.test", Admin: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.store.SetUserDisabledAndRevokeCredentials(*f.integration.WorkflowUserID, true))
+
+	svc := &stubWorkflowService{}
+	wfStore := &stubWorkflowStore{workflows: map[int]db.WorkflowTemplate{
+		f.workflowID: {ID: f.workflowID, ProjectID: f.project.ID, Name: "deploy"},
+	}}
+	ctrl := NewIntegrationController(f.store, &stubIntegrationService{}, wfStore, svc, workflowCapabilityProvider{allowed: true})
+
+	w := f.receive(t, ctrl)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Empty(t, svc.calls, "a disabled persisted principal must not start a workflow")
+}
+
 func TestReceiveIntegration_WorkflowUnavailableInOpenSourceBuild(t *testing.T) {
 	f := newWorkflowWebhookFixture(t)
 	svc := &stubWorkflowService{}
