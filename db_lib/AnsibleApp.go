@@ -122,11 +122,18 @@ func (t *AnsibleApp) InstallRequirements(args LocalAppInstallingArgs) error {
 	t.galaxyInstaller = args.Installer
 	defer t.destroyGalaxyKey()
 
-	err = t.installCollectionsRequirements(args.EnvironmentVars, collectionArgs)
+	collectionsFound, err := t.installCollectionsRequirements(args.EnvironmentVars, collectionArgs)
 	if err != nil {
 		return err
 	}
-	return t.installRolesRequirements(args.EnvironmentVars, roleArgs)
+	rolesFound, err := t.installRolesRequirements(args.EnvironmentVars, roleArgs)
+	if err != nil {
+		return err
+	}
+	if !collectionsFound && !rolesFound {
+		t.Log("No Galaxy requirements found; skipping galaxy install.\n")
+	}
+	return nil
 }
 
 // galaxyGitEnvForRun returns the git credentials galaxy's clones need. The
@@ -193,12 +200,14 @@ func (t *AnsibleApp) requirementsHashFilePath(requirementsType GalaxyRequirement
 	return path.Join(internalDir, fmt.Sprintf("requirements_%x_%s.md5", sum, requirementsType))
 }
 
-func (t *AnsibleApp) installGalaxyRequirementsFile(requirementsType GalaxyRequirementsType, requirementsFilePath string, environmentVars, extraArgs []string) error {
+func (t *AnsibleApp) installGalaxyRequirementsFile(requirementsType GalaxyRequirementsType, requirementsFilePath string, environmentVars, extraArgs []string) (bool, error) {
 	requirementsHashFilePath := t.requirementsHashFilePath(requirementsType, requirementsFilePath)
 
 	if _, err := os.Stat(requirementsFilePath); err != nil {
-		t.Log("No " + requirementsFilePath + " file found. Skip galaxy install process.\n")
-		return nil
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
 	}
 
 	if hasRequirementsChanges(requirementsFilePath, requirementsHashFilePath) {
@@ -211,19 +220,19 @@ func (t *AnsibleApp) installGalaxyRequirementsFile(requirementsType GalaxyRequir
 		}, extraArgs...)
 
 		if err := t.runGalaxy(galaxyArgs, environmentVars); err != nil {
-			return err
+			return true, err
 		}
 		if err := os.MkdirAll(t.Repository.GetInternalPath(t.Template.ID), 0o755); err != nil {
-			return err
+			return true, err
 		}
 		if err := writeMD5Hash(requirementsFilePath, requirementsHashFilePath); err != nil {
-			return err
+			return true, err
 		}
 	} else {
 		t.Log(requirementsFilePath + " has no changes. Skip galaxy install process.\n")
 	}
 
-	return nil
+	return true, nil
 }
 
 func (t *AnsibleApp) GetPlaybookDir() string {
@@ -239,44 +248,34 @@ const (
 	GalaxyCollection = galaxy.InstallCollection
 )
 
-func (t *AnsibleApp) installRolesRequirements(environmentVars, extraArgs []string) (err error) {
-	// default roles path
-	err = t.installGalaxyRequirementsFile(GalaxyRole, path.Join(t.GetPlaybookDir(), "roles", "requirements.yml"), environmentVars, extraArgs)
-	if err != nil {
-		return
-	}
-	err = t.installGalaxyRequirementsFile(GalaxyRole, path.Join(t.GetPlaybookDir(), "requirements.yml"), environmentVars, extraArgs)
-	if err != nil {
-		return
-	}
-
-	// alternative roles path
-	err = t.installGalaxyRequirementsFile(GalaxyRole, path.Join(t.getRepoPath(), "roles", "requirements.yml"), environmentVars, extraArgs)
-	if err != nil {
-		return
-	}
-	err = t.installGalaxyRequirementsFile(GalaxyRole, path.Join(t.getRepoPath(), "requirements.yml"), environmentVars, extraArgs)
-	return
+func (t *AnsibleApp) installRolesRequirements(environmentVars, extraArgs []string) (bool, error) {
+	return t.installGalaxyRequirements(GalaxyRole, []string{
+		path.Join(t.GetPlaybookDir(), "roles", "requirements.yml"),
+		path.Join(t.GetPlaybookDir(), "requirements.yml"),
+		path.Join(t.getRepoPath(), "roles", "requirements.yml"),
+		path.Join(t.getRepoPath(), "requirements.yml"),
+	}, environmentVars, extraArgs)
 }
 
-func (t *AnsibleApp) installCollectionsRequirements(environmentVars, extraArgs []string) (err error) {
-	// default collections path
-	err = t.installGalaxyRequirementsFile(GalaxyCollection, path.Join(t.GetPlaybookDir(), "collections", "requirements.yml"), environmentVars, extraArgs)
-	if err != nil {
-		return
-	}
-	err = t.installGalaxyRequirementsFile(GalaxyCollection, path.Join(t.GetPlaybookDir(), "requirements.yml"), environmentVars, extraArgs)
-	if err != nil {
-		return
-	}
+func (t *AnsibleApp) installCollectionsRequirements(environmentVars, extraArgs []string) (bool, error) {
+	return t.installGalaxyRequirements(GalaxyCollection, []string{
+		path.Join(t.GetPlaybookDir(), "collections", "requirements.yml"),
+		path.Join(t.GetPlaybookDir(), "requirements.yml"),
+		path.Join(t.getRepoPath(), "collections", "requirements.yml"),
+		path.Join(t.getRepoPath(), "requirements.yml"),
+	}, environmentVars, extraArgs)
+}
 
-	// alternative collections path
-	err = t.installGalaxyRequirementsFile(GalaxyCollection, path.Join(t.getRepoPath(), "collections", "requirements.yml"), environmentVars, extraArgs)
-	if err != nil {
-		return
+func (t *AnsibleApp) installGalaxyRequirements(requirementsType GalaxyRequirementsType, paths []string, environmentVars, extraArgs []string) (bool, error) {
+	found := false
+	for _, requirementsPath := range paths {
+		exists, err := t.installGalaxyRequirementsFile(requirementsType, requirementsPath, environmentVars, extraArgs)
+		if err != nil {
+			return found, err
+		}
+		found = found || exists
 	}
-	err = t.installGalaxyRequirementsFile(GalaxyCollection, path.Join(t.getRepoPath(), "requirements.yml"), environmentVars, extraArgs)
-	return
+	return found, nil
 }
 
 func (t *AnsibleApp) runGalaxy(args []string, environmentVars []string) error {
