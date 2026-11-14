@@ -78,6 +78,8 @@ func TestProjectRoleControllerCRUDCatalogIsolationAndStaleWrites(t *testing.T) {
 	assert.Equal(t, "templates", definitions[pro_interfaces.PermissionID("project.templates.view")].Group)
 	assert.Equal(t, "view", definitions[pro_interfaces.PermissionID("project.templates.view")].Action)
 	assert.Equal(t, "use", definitions[pro_interfaces.PermissionID("project.access_keys.use")].Action)
+	assert.Equal(t, "", definitions[pro_interfaces.PermissionReadProject].Group)
+	assert.Equal(t, "", definitions[pro_interfaces.PermissionReadProject].Action)
 
 	createResponse := serveProjectRoleRequest(
 		t, project, http.MethodPost, "/api/project/1/roles",
@@ -410,6 +412,9 @@ func TestGlobalRoleControllerCRUDCatalogAssignmentsAndProvenance(t *testing.T) {
 	require.NoError(t, json.Unmarshal(projectCatalogResponse.Body.Bytes(), &projectCatalog))
 	require.NotEmpty(t, projectCatalog)
 	assert.Equal(t, pro_interfaces.PermissionScopeProject, projectCatalog[0].Scope)
+	assert.Equal(t, pro_interfaces.ProjectPermissionCatalog(), projectCatalog)
+	assert.Equal(t, "", projectCatalog[0].Group)
+	assert.Equal(t, "", projectCatalog[0].Action)
 
 	createResponse := serveGlobalRoleRequest(
 		t, store, admin, http.MethodPost, "/api/roles",

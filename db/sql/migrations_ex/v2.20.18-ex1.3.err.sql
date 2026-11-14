@@ -1,7 +1,10 @@
--- Restore the historical coarse resource permissions for rollback. The new
--- action bits are EX-owned, so collapsing them is safe for this rollback.
+-- Restore the exact masks present when the forward migration ran. The
+-- read_project compatibility grants cannot be inferred from fine bits alone.
 update role
 set permissions = (
-    permissions & ~36028797014769664
-) | case when (permissions & 2401901475790848) <> 0 then 16 else 0 end
-  | case when (permissions & 33626895538978816) <> 0 then 4 else 0 end;
+    select permissions
+    from ex_role_permissions_2_20_18_ex1_3
+    where ex_role_permissions_2_20_18_ex1_3.role_id = role.role_id
+)
+where role_id in (select role_id from ex_role_permissions_2_20_18_ex1_3);
+drop table ex_role_permissions_2_20_18_ex1_3;

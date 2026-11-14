@@ -99,8 +99,8 @@ const (
 type PermissionDefinition struct {
 	ID                      PermissionID             `json:"id"`
 	Description             string                   `json:"description"`
-	Group                   string                   `json:"group,omitempty"`
-	Action                  string                   `json:"action,omitempty"`
+	Group                   string                   `json:"group"`
+	Action                  string                   `json:"action"`
 	Scope                   PermissionScope          `json:"scope"`
 	Permission              db.ProjectUserPermission `json:"permission"`
 	CapabilityPrerequisites []CapabilityID           `json:"capability_prerequisites"`

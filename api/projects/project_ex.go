@@ -7,6 +7,27 @@ import (
 	"net/http"
 )
 
+// GetMustCanReadProjectMiddleware preserves the historical project resource
+// boundary: reads require read_project, while mutations are authorized by their
+// resource-specific action middleware. Template children retain their bounded
+// template grants and therefore bypass the project-wide read check.
+func GetMustCanReadProjectMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead || helpers.HasParam("template_id", r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		user := helpers.GetFromContext(r, "user").(*db.User)
+		permissions := helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
+		if !user.Admin && !permissions.Can(db.CanReadProject) {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // GetMustHaveBaseProjectPermissionMiddleware checks the project role before a
 // template override is applied. Template ACL administration is policy control,
 // not a template content action, so an edit-only override cannot administer it.

@@ -9979,7 +9979,7 @@ symbols:
     - pro_interfaces/project_roles_test.go::TestProjectPermissionCatalogIsStableTypedAndIsolated
   - name: pro_interfaces:PermissionDefinition
     signature: >-
-      struct{ID pro_interfaces.PermissionID "json:\"id\""; Description string "json:\"description\""; Group string "json:\"group,omitempty\""; Action string "json:\"action,omitempty\""; Scope pro_interfaces.PermissionScope
+      struct{ID pro_interfaces.PermissionID "json:\"id\""; Description string "json:\"description\""; Group string "json:\"group\""; Action string "json:\"action\""; Scope pro_interfaces.PermissionScope
       "json:\"scope\""; Permission db.ProjectUserPermission "json:\"permission\""; CapabilityPrerequisites []pro_interfaces.CapabilityID
       "json:\"capability_prerequisites\""}
     implementation: core

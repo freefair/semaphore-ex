@@ -522,7 +522,7 @@ func Route(
 	userPasswordAPI.Path("/identities/{type}/{provider}").HandlerFunc(usersController.DeleteUserIdentity).Methods("DELETE")
 
 	projectGet := authenticatedAPI.Path("/project/{project_id}").Subrouter()
-	projectGet.Use(projects.ProjectMiddleware, projects.GetMustCanMiddleware(db.CanReadProject))
+	projectGet.Use(projects.ProjectMiddleware)
 	projectGet.Methods("GET", "HEAD").HandlerFunc(projects.GetProject)
 
 	//
@@ -565,31 +565,30 @@ func Route(
 	projectMemberAPI.Path("/tasks").HandlerFunc(taskController.GetAllTasks).Methods("GET", "HEAD")
 	projectMemberAPI.HandleFunc("/tasks/last", taskController.GetLastTasks).Methods("GET", "HEAD")
 	projectMemberAPI.Path("/stats").HandlerFunc(taskController.GetTaskStats).Methods("GET", "HEAD")
-	projectMemberAPI.Path("/templates").Handler(projects.GetMustHavePermissionMiddleware(db.CanViewTemplates)(http.HandlerFunc(projects.GetTemplates))).Methods("GET", "HEAD")
-	projectMemberAPI.Path("/workflows").Handler(
-		projects.GetMustCanMiddleware(db.CanViewWorkflows)(workflowAudit(http.HandlerFunc(workflowController.GetWorkflows))),
-	).Methods("GET", "HEAD")
-	projectMemberAPI.Path("/views").Handler(projects.GetMustHavePermissionMiddleware(db.CanViewViews)(http.HandlerFunc(projects.GetViews))).Methods("GET", "HEAD")
+	projectMemberAPI.Path("/templates").HandlerFunc(projects.GetTemplates).Methods("GET", "HEAD")
+	projectMemberAPI.Path("/workflows").Handler(workflowAudit(http.HandlerFunc(workflowController.GetWorkflows))).Methods("GET", "HEAD")
+	projectMemberAPI.Path("/views").HandlerFunc(projects.GetViews).Methods("GET", "HEAD")
 	projectMemberAPI.Path("/roles/all").HandlerFunc(rolesController.GetProjectAndGlobalRoles).Methods("GET", "HEAD")
 
 	projectMemberViews := projectMemberAPI.PathPrefix("/views").Subrouter()
 	projectMemberViews.Use(projects.ViewMiddleware)
-	projectMemberViews.Handle("/{view_id}/templates", projects.GetMustHavePermissionMiddleware(db.CanViewViews)(http.HandlerFunc(projects.GetViewTemplates))).Methods("GET", "HEAD")
+	projectMemberViews.HandleFunc("/{view_id}/templates", projects.GetViewTemplates).Methods("GET", "HEAD")
 
 	projectUserAPI := authenticatedAPI.PathPrefix("/project/{project_id}").Subrouter()
 	projectUserAPI.Use(
 		projects.ProjectMiddleware,
 		EnhancedProjectPermissionAuditMiddleware(auditFacade),
+		projects.GetMustCanReadProjectMiddleware,
 	)
-	// Routes outside the resource matrix retain their former management
-	// boundary. Requiring the complete explicit mutation set is equivalent for
-	// migrated roles and prevents a partial resource role from gaining access.
+	// Mutations outside the resource matrix retain their former management
+	// boundary. GET and HEAD preserve the historical read_project boundary
+	// installed above.
 	projectResourceManager := projects.GetMustHavePermissionMiddleware(db.AllProjectResourceMutationPermissions)
 
-	projectUserAPI.Path("/events").Handler(projectResourceManager(http.HandlerFunc(getAllEvents))).Methods("GET", "HEAD")
-	projectUserAPI.Handle("/events/last", projectResourceManager(http.HandlerFunc(getLastEvents))).Methods("GET", "HEAD")
+	projectUserAPI.Path("/events").HandlerFunc(getAllEvents).Methods("GET", "HEAD")
+	projectUserAPI.HandleFunc("/events/last", getLastEvents).Methods("GET", "HEAD")
 
-	projectUserAPI.Path("/users").Handler(projectResourceManager(http.HandlerFunc(projects.GetUsers))).Methods("GET", "HEAD")
+	projectUserAPI.Path("/users").HandlerFunc(projects.GetUsers).Methods("GET", "HEAD")
 
 	projectUserAPI.Path("/keys").Handler(projects.GetMustHavePermissionMiddleware(db.CanViewAccessKeys)(http.HandlerFunc(projects.GetKeys))).Methods("GET", "HEAD")
 	projectUserAPI.Path("/keys").Handler(projects.GetMustHavePermissionMiddleware(db.CanCreateAccessKeys)(http.HandlerFunc(keyController.AddKey))).Methods("POST")
@@ -598,7 +597,7 @@ func Route(
 	projectUserAPI.Path("/secret_storages").Handler(projects.GetMustHavePermissionMiddleware(db.CanViewAccessKeys)(http.HandlerFunc(secretStorageController.GetSecretStorages))).Methods("GET", "HEAD")
 	projectUserAPI.Path("/secret_storages").Handler(projects.GetMustHavePermissionMiddleware(db.CanCreateAccessKeys)(http.HandlerFunc(secretStorageController.Add))).Methods("POST")
 
-	projectUserAPI.Path("/inventory").Handler(projects.GetMustHavePermissionMiddleware(db.CanViewInventories)(http.HandlerFunc(projects.GetInventory))).Methods("GET", "HEAD")
+	projectUserAPI.Path("/inventory").HandlerFunc(projects.GetInventory).Methods("GET", "HEAD")
 	projectUserAPI.Handle("/hosts", projects.GetMustHavePermissionMiddleware(db.CanViewInventories)(http.HandlerFunc(taskController.GetInventoryHosts))).Methods("GET", "HEAD")
 	projectUserAPI.Handle("/hosts/tasks", projects.GetMustHavePermissionMiddleware(db.CanViewInventories)(http.HandlerFunc(taskController.GetHostTasks))).Methods("GET", "HEAD")
 	projectUserAPI.Path("/inventory").Handler(projects.GetMustHavePermissionMiddleware(db.CanCreateInventories)(http.HandlerFunc(projects.AddInventory))).Methods("POST")
@@ -608,10 +607,10 @@ func Route(
 	projectUserAPI.Path("/environment").Handler(projects.GetMustHavePermissionMiddleware(db.CanViewEnvironments)(http.HandlerFunc(projects.GetEnvironment))).Methods("GET", "HEAD")
 	projectUserAPI.Path("/environment").Handler(projects.GetMustHavePermissionMiddleware(db.CanCreateEnvironments)(http.HandlerFunc(environmentController.AddEnvironment))).Methods("POST")
 
-	projectUserAPI.Path("/tasks").Handler(projectResourceManager(http.HandlerFunc(taskController.GetAllTasks))).Methods("GET", "HEAD")
-	projectUserAPI.Handle("/tasks/last", projectResourceManager(http.HandlerFunc(taskController.GetLastTasks))).Methods("GET", "HEAD")
+	projectUserAPI.Path("/tasks").HandlerFunc(taskController.GetAllTasks).Methods("GET", "HEAD")
+	projectUserAPI.HandleFunc("/tasks/last", taskController.GetLastTasks).Methods("GET", "HEAD")
 
-	projectUserAPI.Path("/stats").Handler(projectResourceManager(http.HandlerFunc(taskController.GetTaskStats))).Methods("GET", "HEAD")
+	projectUserAPI.Path("/stats").HandlerFunc(taskController.GetTaskStats).Methods("GET", "HEAD")
 
 	projectUserAPI.Path("/templates").Handler(projects.GetMustHavePermissionMiddleware(db.CanViewTemplates)(http.HandlerFunc(projects.GetTemplates))).Methods("GET", "HEAD")
 	projectUserAPI.Path("/templates").Handler(projects.GetMustHavePermissionMiddleware(db.CanCreateTemplates)(http.HandlerFunc(templateController.AddTemplate))).Methods("POST")
@@ -637,25 +636,25 @@ func Route(
 
 	projectUserAPI.Path("/integrations").Handler(projects.GetMustHavePermissionMiddleware(db.CanViewIntegrations)(http.HandlerFunc(projects.GetIntegrations))).Methods("GET", "HEAD")
 	projectUserAPI.Path("/integrations").Handler(projects.GetMustHavePermissionMiddleware(db.CanCreateIntegrations)(http.HandlerFunc(projectIntegrationController.AddIntegration))).Methods("POST")
-	projectUserAPI.Path("/backup").Handler(projectResourceManager(http.HandlerFunc(backupController.GetBackup))).Methods("GET", "HEAD")
+	projectUserAPI.Path("/backup").HandlerFunc(backupController.GetBackup).Methods("GET", "HEAD")
 	projectUserAPI.Path("/notifications/test").Handler(projectResourceManager(http.HandlerFunc(projectController.SendTestNotification))).Methods("POST")
 
-	projectUserAPI.Path("/runners").Handler(projectResourceManager(http.HandlerFunc(projectRunnerController.GetRunners))).Methods("GET", "HEAD")
+	projectUserAPI.Path("/runners").HandlerFunc(projectRunnerController.GetRunners).Methods("GET", "HEAD")
 	projectUserAPI.Path("/runners").Handler(projectResourceManager(http.HandlerFunc(projectRunnerController.AddRunner))).Methods("POST")
 	// History intentionally does not require a live runner row: finished task
 	// snapshots remain queryable after the runner has been deleted.
-	projectUserAPI.Path("/runners/{runner_id}/history").Handler(projectResourceManager(http.HandlerFunc(projectRunnerController.GetRunnerHistory))).Methods("GET", "HEAD")
-	projectUserAPI.Path("/runner_tags").Handler(projectResourceManager(http.HandlerFunc(projectRunnerController.GetRunnerTags))).Methods("GET", "HEAD")
+	projectUserAPI.Path("/runners/{runner_id}/history").HandlerFunc(projectRunnerController.GetRunnerHistory).Methods("GET", "HEAD")
+	projectUserAPI.Path("/runner_tags").HandlerFunc(projectRunnerController.GetRunnerTags).Methods("GET", "HEAD")
 
 	projectRunnersAPI := projectUserAPI.PathPrefix("/runners").Subrouter()
-	projectRunnersAPI.Use(projectResourceManager, projectRunnerController.RunnerMiddleware)
+	projectRunnersAPI.Use(projectRunnerController.RunnerMiddleware)
 	projectRunnersAPI.Path("/{runner_id}").HandlerFunc(projectRunnerController.GetRunner).Methods("GET", "HEAD")
 	projectRunnersAPI.Path("/{runner_id}/health").HandlerFunc(projectRunnerController.GetRunnerHealth).Methods("GET", "HEAD")
-	projectRunnersAPI.Path("/{runner_id}").HandlerFunc(projectRunnerController.UpdateRunner).Methods("PUT", "POST")
-	projectRunnersAPI.Path("/{runner_id}/active").HandlerFunc(projectRunnerController.SetRunnerActive).Methods("POST")
-	projectRunnersAPI.Path("/{runner_id}/registration-token").HandlerFunc(projectRunnerController.RegenerateRegistrationToken).Methods("POST")
-	projectRunnersAPI.Path("/{runner_id}").HandlerFunc(projectRunnerController.DeleteRunner).Methods("DELETE")
-	projectRunnersAPI.Path("/{runner_id}/cache").HandlerFunc(projectRunnerController.ClearRunnerCache).Methods("DELETE")
+	projectRunnersAPI.Path("/{runner_id}").Handler(projectResourceManager(http.HandlerFunc(projectRunnerController.UpdateRunner))).Methods("PUT", "POST")
+	projectRunnersAPI.Path("/{runner_id}/active").Handler(projectResourceManager(http.HandlerFunc(projectRunnerController.SetRunnerActive))).Methods("POST")
+	projectRunnersAPI.Path("/{runner_id}/registration-token").Handler(projectResourceManager(http.HandlerFunc(projectRunnerController.RegenerateRegistrationToken))).Methods("POST")
+	projectRunnersAPI.Path("/{runner_id}").Handler(projectResourceManager(http.HandlerFunc(projectRunnerController.DeleteRunner))).Methods("DELETE")
+	projectRunnersAPI.Path("/{runner_id}/cache").Handler(projectResourceManager(http.HandlerFunc(projectRunnerController.ClearRunnerCache))).Methods("DELETE")
 
 	projectRoleOptionsAPI := authenticatedAPI.PathPrefix("/project/{project_id}/roles").Subrouter()
 	projectRoleOptionsAPI.Use(projects.ProjectMiddleware)
@@ -793,21 +792,21 @@ func Route(
 	projectInventoryManagement := projectUserAPI.PathPrefix("/inventory").Subrouter()
 	projectInventoryManagement.Use(projects.InventoryMiddleware)
 
-	projectInventoryManagement.Handle("/{inventory_id}", projects.GetMustHavePermissionMiddleware(db.CanViewInventories)(http.HandlerFunc(projects.GetInventory))).Methods("GET", "HEAD")
-	projectInventoryManagement.Handle("/{inventory_id}/refs", projects.GetMustHavePermissionMiddleware(db.CanViewInventories)(http.HandlerFunc(projects.GetInventoryRefs))).Methods("GET", "HEAD")
+	projectInventoryManagement.HandleFunc("/{inventory_id}", projects.GetInventory).Methods("GET", "HEAD")
+	projectInventoryManagement.HandleFunc("/{inventory_id}/refs", projects.GetInventoryRefs).Methods("GET", "HEAD")
 	projectInventoryManagement.Handle("/{inventory_id}/hosts/snapshots", projects.GetMustHavePermissionMiddleware(db.CanViewInventories)(http.HandlerFunc(taskController.GetInventoryHostSnapshots))).Methods("GET", "HEAD")
 	projectInventoryManagement.Handle("/{inventory_id}", projects.GetMustHavePermissionMiddleware(db.CanUpdateInventories)(http.HandlerFunc(projects.UpdateInventory))).Methods("PUT")
 	projectInventoryManagement.Handle("/{inventory_id}", projects.GetMustHavePermissionMiddleware(db.CanDeleteInventories)(http.HandlerFunc(projects.RemoveInventory))).Methods("DELETE")
 
-	projectInventoryManagement.Handle("/{inventory_id}/terraform/aliases", projects.GetMustHavePermissionMiddleware(db.CanViewInventories)(http.HandlerFunc(terraformInventoryController.GetTerraformInventoryAliases))).Methods("GET", "HEAD")
+	projectInventoryManagement.HandleFunc("/{inventory_id}/terraform/aliases", terraformInventoryController.GetTerraformInventoryAliases).Methods("GET", "HEAD")
 	projectInventoryManagement.Handle("/{inventory_id}/terraform/aliases", projects.GetMustHavePermissionMiddleware(db.CanUpdateInventories|db.CanUseAccessKeys)(http.HandlerFunc(terraformInventoryController.AddTerraformInventoryAlias))).Methods("POST")
-	projectInventoryManagement.Handle("/{inventory_id}/terraform/aliases/{alias_id}", projects.GetMustHavePermissionMiddleware(db.CanViewInventories)(http.HandlerFunc(terraformInventoryController.GetTerraformInventoryAlias))).Methods("GET")
+	projectInventoryManagement.HandleFunc("/{inventory_id}/terraform/aliases/{alias_id}", terraformInventoryController.GetTerraformInventoryAlias).Methods("GET")
 	projectInventoryManagement.Handle("/{inventory_id}/terraform/aliases/{alias_id}", projects.GetMustHavePermissionMiddleware(db.CanDeleteInventories)(http.HandlerFunc(terraformInventoryController.DeleteTerraformInventoryAlias))).Methods("DELETE")
 	projectInventoryManagement.Handle("/{inventory_id}/terraform/aliases/{alias_id}", projects.GetMustHavePermissionMiddleware(db.CanUpdateInventories|db.CanUseAccessKeys)(http.HandlerFunc(terraformInventoryController.SetTerraformInventoryAliasAccessKey))).Methods("PUT")
 
-	projectInventoryManagement.Handle("/{inventory_id}/terraform/states", projects.GetMustHavePermissionMiddleware(db.CanViewInventories)(http.HandlerFunc(terraformInventoryController.GetTerraformInventoryStates))).Methods("GET", "HEAD")
-	projectInventoryManagement.Handle("/{inventory_id}/terraform/states/latest", projects.GetMustHavePermissionMiddleware(db.CanViewInventories)(http.HandlerFunc(terraformInventoryController.GetTerraformInventoryLatestState))).Methods("GET", "HEAD")
-	projectInventoryManagement.Handle("/{inventory_id}/terraform/states/{state_id}", projects.GetMustHavePermissionMiddleware(db.CanViewInventories)(http.HandlerFunc(terraformInventoryController.GetTerraformInventoryState))).Methods("GET")
+	projectInventoryManagement.HandleFunc("/{inventory_id}/terraform/states", terraformInventoryController.GetTerraformInventoryStates).Methods("GET", "HEAD")
+	projectInventoryManagement.HandleFunc("/{inventory_id}/terraform/states/latest", terraformInventoryController.GetTerraformInventoryLatestState).Methods("GET", "HEAD")
+	projectInventoryManagement.HandleFunc("/{inventory_id}/terraform/states/{state_id}", terraformInventoryController.GetTerraformInventoryState).Methods("GET")
 	projectInventoryManagement.Handle("/{inventory_id}/terraform/states/{state_id}", projects.GetMustHavePermissionMiddleware(db.CanDeleteInventories)(http.HandlerFunc(terraformInventoryController.DeleteTerraformInventoryState))).Methods("DELETE")
 
 	projectEnvManagement := projectUserAPI.PathPrefix("/environment").Subrouter()

@@ -15,12 +15,15 @@ func TestMigration_2_20_18_EX_1_3_SplitsAndRestoresEveryLegacyCustomRoleBit(t *t
 
 	project, err := store.CreateProject(db.Project{Name: "resource permission migration"})
 	require.NoError(t, err)
-	legacyUnrelated := db.CanRunProjectTasks | db.CanUpdateProject | db.CanManageProjectUsers |
+	legacyUnrelated := db.CanUpdateProject | db.CanManageProjectUsers |
 		db.CanViewWorkflows | db.CanEditWorkflows | db.CanStartWorkflows | db.CanStopWorkflows |
 		db.CanAdministerWorkflows | db.CanListGrantedCredentials | db.CanConsumeGrantedCredentials |
 		db.CanOverrideDeploymentWindow | db.CanManagePolicyGuardrails | db.CanRollbackPolicyGuardrails |
 		db.CanReadTaskGroups | db.CanCreateTaskGroups | db.CanUpdateTaskGroups | db.CanDeleteTaskGroups |
-		db.CanShareTaskGroups | db.CanReadProject | db.CanApproveWorkflows
+		db.CanShareTaskGroups | db.CanApproveWorkflows
+	readProjectResourcePermissions := db.CanViewTemplates | db.CanViewAccessKeys |
+		db.CanViewEnvironments | db.CanViewSchedules |
+		db.CanViewIntegrations | db.CanViewViews
 
 	type storedRole struct {
 		name    string
@@ -28,11 +31,33 @@ func TestMigration_2_20_18_EX_1_3_SplitsAndRestoresEveryLegacyCustomRoleBit(t *t
 		mask    db.ProjectUserPermission
 		role    db.Role
 	}
-	cases := []storedRole{
-		{name: "project_view", project: true, mask: legacyUnrelated | db.CanViewProjectResources},
-		{name: "project_manage", project: true, mask: legacyUnrelated | db.CanManageProjectResources},
-		{name: "project_both", project: true, mask: legacyUnrelated | db.CanViewProjectResources | db.CanManageProjectResources},
-		{name: "global_both", mask: legacyUnrelated | db.CanViewProjectResources | db.CanManageProjectResources},
+	cases := make([]storedRole, 0, 32)
+	legacyCombinations := []struct {
+		name string
+		mask db.ProjectUserPermission
+	}{
+		{name: "none", mask: 0},
+		{name: "read", mask: db.CanReadProject},
+		{name: "run", mask: db.CanRunProjectTasks},
+		{name: "view", mask: db.CanViewProjectResources},
+		{name: "manage", mask: db.CanManageProjectResources},
+		{name: "read_run", mask: db.CanReadProject | db.CanRunProjectTasks},
+		{name: "read_view", mask: db.CanReadProject | db.CanViewProjectResources},
+		{name: "read_manage", mask: db.CanReadProject | db.CanManageProjectResources},
+		{name: "run_view", mask: db.CanRunProjectTasks | db.CanViewProjectResources},
+		{name: "run_manage", mask: db.CanRunProjectTasks | db.CanManageProjectResources},
+		{name: "view_manage", mask: db.CanViewProjectResources | db.CanManageProjectResources},
+		{name: "read_run_view", mask: db.CanReadProject | db.CanRunProjectTasks | db.CanViewProjectResources},
+		{name: "read_run_manage", mask: db.CanReadProject | db.CanRunProjectTasks | db.CanManageProjectResources},
+		{name: "read_view_manage", mask: db.CanReadProject | db.CanViewProjectResources | db.CanManageProjectResources},
+		{name: "run_view_manage", mask: db.CanRunProjectTasks | db.CanViewProjectResources | db.CanManageProjectResources},
+		{name: "all", mask: db.CanReadProject | db.CanRunProjectTasks | db.CanViewProjectResources | db.CanManageProjectResources},
+	}
+	for _, legacy := range legacyCombinations {
+		cases = append(cases,
+			storedRole{name: "project_" + legacy.name, project: true, mask: legacyUnrelated | legacy.mask},
+			storedRole{name: "global_" + legacy.name, mask: legacyUnrelated | legacy.mask},
+		)
 	}
 	for index := range cases {
 		role := db.Role{ID: db.ProjectRoleID("legacy_resource_" + cases[index].name), Name: "Legacy " + cases[index].name, Permissions: cases[index].mask, Revision: 1}
@@ -59,13 +84,16 @@ func TestMigration_2_20_18_EX_1_3_SplitsAndRestoresEveryLegacyCustomRoleBit(t *t
 				migrated, err = store.GetGlobalRoleByID(testCase.role.ID)
 			}
 			require.NoError(t, err)
-			assert.Equal(t, legacyUnrelated, migrated.Permissions&legacyUnrelated)
+			assert.Equal(t, legacyUnrelated|testCase.mask&db.CanRunProjectTasks, migrated.Permissions&(legacyUnrelated|db.CanRunProjectTasks))
 			assert.Zero(t, migrated.Permissions&(db.CanViewProjectResources|db.CanManageProjectResources))
-			if testCase.mask&db.CanViewProjectResources != 0 {
-				assert.Equal(t, db.AllProjectResourceViewPermissions, migrated.Permissions&db.AllProjectResourceViewPermissions)
-			} else {
-				assert.Zero(t, migrated.Permissions&db.AllProjectResourceViewPermissions)
+			var expectedViews db.ProjectUserPermission
+			if testCase.mask&db.CanReadProject != 0 {
+				expectedViews |= readProjectResourcePermissions
 			}
+			if testCase.mask&db.CanViewProjectResources != 0 {
+				expectedViews |= db.AllProjectResourceViewPermissions
+			}
+			assert.Equal(t, expectedViews, migrated.Permissions&db.AllProjectResourceViewPermissions)
 			if testCase.mask&db.CanManageProjectResources != 0 {
 				assert.Equal(t, db.AllProjectResourceMutationPermissions, migrated.Permissions&db.AllProjectResourceMutationPermissions)
 			} else {

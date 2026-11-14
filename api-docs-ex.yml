@@ -2608,7 +2608,25 @@ paths:
       summary: List grouped project permission catalog
       description: Returns assignable project permissions with stable resource group and action fields for the role matrix.
       responses:
-        '200': {description: Project permission catalog, schema: {type: array, items: {$ref: '#/definitions/EXProjectPermissionDefinition'}}}
+        '200':
+          description: Project permission catalog
+          schema: {type: array, items: {$ref: '#/definitions/EXProjectPermissionDefinition'}}
+          examples:
+            application/json:
+            - id: project.read
+              description: Read project resources
+              group: ''
+              action: ''
+              scope: project
+              permission: 1048576
+              capability_prerequisites: []
+            - id: project.templates.view
+              description: View templates
+              group: templates
+              action: view
+              scope: project
+              permission: 4194304
+              capability_prerequisites: []
         '403': {description: Permission denied or capability unavailable}
   /project/{project_id}/users/{user_id}/effective-permissions:
     parameters:
@@ -3055,24 +3073,23 @@ paths:
           description: Project permission catalog for global roles
           schema:
             type: array
-            items:
-              type: object
-              required: [id, description, scope, permission, capability_prerequisites]
-              properties:
-                id:
-                  type: string
-                description:
-                  type: string
-                scope:
-                  type: string
-                  enum: [project]
-                permission:
-                  type: integer
-                capability_prerequisites:
-                  type: array
-                  x-nullable: true
-                  items:
-                    type: string
+            items: {$ref: '#/definitions/EXProjectPermissionDefinition'}
+          examples:
+            application/json:
+            - id: project.read
+              description: Read project resources
+              group: ''
+              action: ''
+              scope: project
+              permission: 1048576
+              capability_prerequisites: []
+            - id: project.templates.view
+              description: View templates
+              group: templates
+              action: view
+              scope: project
+              permission: 4194304
+              capability_prerequisites: []
         '403':
           description: Permission denied or capability unavailable
   /project/{project_id}/templates/{template_id}/perms/catalog:

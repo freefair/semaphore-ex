@@ -1243,5 +1243,5 @@ migrations:
   owner: fork
   rationale: Replace coarse project-resource view/manage grants with explicit per-resource actions.
   files:
-    migrations_ex/v2.20.18-ex1.3.sql: 8e935f22dd308bfe3086065819f7653543d62a49d351cfdb83b10fba46115565
-    migrations_ex/v2.20.18-ex1.3.err.sql: fbd89c48a6d6d19ff2bab5f482ed84b2349df52eb21100748128276873d4af8a
+    migrations_ex/v2.20.18-ex1.3.sql: 77b642f6843079fe6e7a0cf15138dcda56e880599c89a6f2174b2a8da2c58d5d
+    migrations_ex/v2.20.18-ex1.3.err.sql: d5f3efc65164a08a8f9e80f649f4c8f482b074a8c6136b1e91a530c1a491cec4

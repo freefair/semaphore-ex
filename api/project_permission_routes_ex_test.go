@@ -39,6 +39,21 @@ func (route projectPermissionRoute) key() string {
 	return route.method + " " + route.path
 }
 
+// membershipRead reports endpoints that were, and remain, visible to every
+// project member. Keeping them in the matrix prevents a fine-grained action
+// from silently replacing membership visibility with a new requirement.
+func (route projectPermissionRoute) membershipRead() bool {
+	switch route.key() {
+	case "GET /api/project/{project_id}",
+		"GET /api/project/{project_id}/templates",
+		"GET /api/project/{project_id}/workflows",
+		"GET /api/project/{project_id}/views":
+		return true
+	default:
+		return false
+	}
+}
+
 // projectPermissionRoutes has one representative router route for every
 // project-scoped catalog action.  The specialised child routes below remain in
 // this table as well: their parent resource permission is their contract.
@@ -64,7 +79,7 @@ func projectPermissionRoutes() []projectPermissionRoute {
 		{"create templates", http.MethodPost, "/api/project/{project_id}/templates", `{}`, db.CanCreateTemplates, false},
 		{"update templates", http.MethodPut, "/api/project/{project_id}/templates/1", `{}`, db.CanUpdateTemplates, false},
 		{"delete templates", http.MethodDelete, "/api/project/{project_id}/templates/1", "", db.CanDeleteTemplates, false},
-		{"view inventories", http.MethodGet, "/api/project/{project_id}/inventory", "", db.CanViewInventories, true},
+		{"view inventories", http.MethodGet, "/api/project/{project_id}/hosts", "", db.CanViewInventories, true},
 		{"create inventories", http.MethodPost, "/api/project/{project_id}/inventory", `{}`, db.CanCreateInventories, false},
 		{"update inventories", http.MethodPut, "/api/project/{project_id}/inventory/1", `{}`, db.CanUpdateInventories, false},
 		{"delete inventories", http.MethodDelete, "/api/project/{project_id}/inventory/1", "", db.CanDeleteInventories, false},
@@ -219,11 +234,19 @@ func TestProjectPermissionCatalogRouteMatrix(t *testing.T) {
 			fullAccess := fixture.customActor(t, fmt.Sprintf("full_%d", index), fullPermissions)
 
 			denied := fixture.request(t, route, noAccess)
-			assert.Contains(t, []int{http.StatusForbidden, http.StatusNotFound}, denied.Code, "%s must not leak or allow without %d", route.name, route.permission)
+			if route.membershipRead() {
+				assert.Equal(t, http.StatusOK, denied.Code, "%s remains visible to any project member", route.name)
+			} else {
+				assert.Contains(t, []int{http.StatusForbidden, http.StatusNotFound}, denied.Code, "%s must not leak or allow without %d", route.name, route.permission)
+			}
 
 			read := fixture.request(t, route, readAccess)
 			if route.read {
-				assert.Equal(t, http.StatusOK, read.Code, "%s must be readable with its view permission: %s", route.name, read.Body.String())
+				if route.name == "view inventories" {
+					assert.NotEqual(t, http.StatusForbidden, read.Code, "%s must pass its view middleware: %s", route.name, read.Body.String())
+				} else {
+					assert.Equal(t, http.StatusOK, read.Code, "%s must be readable with its view permission: %s", route.name, read.Body.String())
+				}
 			} else {
 				assert.Contains(t, []int{http.StatusForbidden, http.StatusNotFound}, read.Code, "%s must refuse a read-only member", route.name)
 			}
@@ -403,6 +426,70 @@ func TestBuiltInRolesMatchLegacyRouteMatrix(t *testing.T) {
 	}
 }
 
+// TestCustomRolesPreserveLegacyResourceReadAccess covers the Phase 4 routes
+// whose old read_project/coarse-view boundary was replaced by a fine view
+// action. The migration projection is deliberately exercised with every
+// combination of the old read, run, view, and manage bits, rather than only
+// the four built-in masks.
+func TestCustomRolesPreserveLegacyResourceReadAccess(t *testing.T) {
+	type readRoute struct {
+		name string
+		old  db.ProjectUserPermission
+		new  db.ProjectUserPermission
+	}
+	readRoutes := []readRoute{
+		{"keys and secret storages", db.CanReadProject, db.CanReadProject | db.CanViewAccessKeys},
+		{"environment", db.CanReadProject, db.CanReadProject | db.CanViewEnvironments},
+		{"inventory hosts and host configurations", db.CanReadProject | db.CanViewProjectResources, db.CanReadProject | db.CanViewInventories},
+		{"schedules", db.CanReadProject, db.CanReadProject | db.CanViewSchedules},
+		{"integrations and aliases", db.CanReadProject, db.CanReadProject | db.CanViewIntegrations},
+		{"repository details, refs, branches, and playbooks", db.CanReadProject | db.CanViewProjectResources, db.CanReadProject | db.CanViewRepositories},
+		{"view details", db.CanReadProject, db.CanReadProject | db.CanViewViews},
+	}
+	legacyMasks := []db.ProjectUserPermission{
+		0,
+		db.CanReadProject,
+		db.CanRunProjectTasks,
+		db.CanViewProjectResources,
+		db.CanManageProjectResources,
+		db.CanReadProject | db.CanRunProjectTasks,
+		db.CanReadProject | db.CanViewProjectResources,
+		db.CanReadProject | db.CanManageProjectResources,
+		db.CanRunProjectTasks | db.CanViewProjectResources,
+		db.CanRunProjectTasks | db.CanManageProjectResources,
+		db.CanViewProjectResources | db.CanManageProjectResources,
+		db.CanReadProject | db.CanRunProjectTasks | db.CanViewProjectResources,
+		db.CanReadProject | db.CanRunProjectTasks | db.CanManageProjectResources,
+		db.CanReadProject | db.CanViewProjectResources | db.CanManageProjectResources,
+		db.CanRunProjectTasks | db.CanViewProjectResources | db.CanManageProjectResources,
+		db.CanReadProject | db.CanRunProjectTasks | db.CanViewProjectResources | db.CanManageProjectResources,
+	}
+	migrate := func(permissions db.ProjectUserPermission) db.ProjectUserPermission {
+		migrated := permissions &^ (db.CanViewProjectResources | db.CanManageProjectResources)
+		if permissions.Can(db.CanReadProject) {
+			migrated |= db.CanViewTemplates | db.CanViewAccessKeys |
+				db.CanViewEnvironments | db.CanViewSchedules | db.CanViewIntegrations | db.CanViewViews
+		}
+		if permissions.Can(db.CanViewProjectResources) {
+			migrated |= db.AllProjectResourceViewPermissions
+		}
+		if permissions.Can(db.CanManageProjectResources) {
+			migrated |= db.AllProjectResourceMutationPermissions
+		}
+		return migrated
+	}
+
+	for _, permissions := range legacyMasks {
+		t.Run(fmt.Sprintf("mask_%d", permissions), func(t *testing.T) {
+			for _, route := range readRoutes {
+				t.Run(route.name, func(t *testing.T) {
+					assert.Equal(t, permissions.Can(route.old), migrate(permissions).Can(route.new))
+				})
+			}
+		})
+	}
+}
+
 func resourceReadPermission(permission db.ProjectUserPermission) db.ProjectUserPermission {
 	for _, definition := range pro_interfaces.ProjectPermissionCatalog() {
 		if definition.Permission == permission && definition.Group != "" {
@@ -444,12 +531,33 @@ DELETE /api/project/{project_id}/templates/{template_id}/perms/{perm_id}
 GET /api/project/{project_id}/backup
 GET /api/project/{project_id}/deployment-windows
 GET /api/project/{project_id}/deployment-windows/history
+GET /api/project/{project_id}/environment/{environment_id}
+GET /api/project/{project_id}/environment/{environment_id}/refs
 GET /api/project/{project_id}/events
 GET /api/project/{project_id}/events/last
 GET /api/project/{project_id}/granted-credentials
 GET /api/project/{project_id}/hosts
 GET /api/project/{project_id}/hosts/tasks
+GET /api/project/{project_id}/host_configs/{host_config_id}
 GET /api/project/{project_id}/integrations/aliases
+GET /api/project/{project_id}/integrations/{integration_id}
+GET /api/project/{project_id}/integrations/{integration_id}/aliases
+GET /api/project/{project_id}/integrations/{integration_id}/matchers
+GET /api/project/{project_id}/integrations/{integration_id}/matchers/{matcher_id}
+GET /api/project/{project_id}/integrations/{integration_id}/matchers/{matcher_id}/refs
+GET /api/project/{project_id}/integrations/{integration_id}/refs
+GET /api/project/{project_id}/integrations/{integration_id}/values
+GET /api/project/{project_id}/integrations/{integration_id}/values/{value_id}
+GET /api/project/{project_id}/integrations/{integration_id}/values/{value_id}/refs
+GET /api/project/{project_id}/inventory
+GET /api/project/{project_id}/inventory/{inventory_id}
+GET /api/project/{project_id}/inventory/{inventory_id}/hosts/snapshots
+GET /api/project/{project_id}/inventory/{inventory_id}/refs
+GET /api/project/{project_id}/inventory/{inventory_id}/terraform/aliases
+GET /api/project/{project_id}/inventory/{inventory_id}/terraform/aliases/{alias_id}
+GET /api/project/{project_id}/inventory/{inventory_id}/terraform/states
+GET /api/project/{project_id}/inventory/{inventory_id}/terraform/states/latest
+GET /api/project/{project_id}/inventory/{inventory_id}/terraform/states/{state_id}
 GET /api/project/{project_id}/keys/{key_id}
 GET /api/project/{project_id}/keys/{key_id}/refs
 GET /api/project/{project_id}/notification-governance/deliveries
@@ -472,6 +580,10 @@ GET /api/project/{project_id}/runners
 GET /api/project/{project_id}/runners/{runner_id}
 GET /api/project/{project_id}/runners/{runner_id}/health
 GET /api/project/{project_id}/runners/{runner_id}/history
+GET /api/project/{project_id}/schedules/{schedule_id}
+GET /api/project/{project_id}/secret_storages/{storage_id}
+GET /api/project/{project_id}/secret_storages/{storage_id}/refs
+GET /api/project/{project_id}/secret_storages/{storage_id}/sync/history
 GET /api/project/{project_id}/task_groups/runners
 GET /api/project/{project_id}/task_groups/{group_id}
 GET /api/project/{project_id}/templates/{template_id}/perms
@@ -479,6 +591,7 @@ GET /api/project/{project_id}/templates/{template_id}/perms/catalog
 GET /api/project/{project_id}/templates/{template_id}/perms/{perm_id}
 GET /api/project/{project_id}/templates/{template_id}/versions
 GET /api/project/{project_id}/users
+GET /api/project/{project_id}/views/{view_id}
 GET /api/project/{project_id}/workflow-artifact-retention
 POST /api/project/{project_id}/deployment-windows/preview
 POST /api/project/{project_id}/integrations/aliases
