@@ -8,7 +8,7 @@
       v-model="editDialog"
       test-id="scheduleDialog"
       :save-button-text="$t('save')"
-      :title="$t('editSchedule')"
+      :title="itemId === 'new' ? $t('newSchedule') : $t('editSchedule')"
       :max-width="500"
       @save="loadItems"
     >

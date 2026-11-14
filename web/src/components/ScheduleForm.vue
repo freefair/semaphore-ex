@@ -12,7 +12,8 @@
     :data-state="formSaving ? 'loading' : (formError ? 'error' : 'ready')"
   >
     <v-alert
-      v-model="showInfo"
+      :model-value="showInfo && !item.timezone"
+      @update:model-value="showInfo = $event"
       color="info"
       variant="tonal"
       closable
@@ -596,9 +597,9 @@ export default {
   watch: {
     rawCron(val) {
       if (val) {
-        localStorage.removeItem('schedule__raw_cron');
+        localStorage.setItem('schedule__raw_cron', 'raw');
       } else {
-        localStorage.setItem('schedule__raw_cron', '1');
+        localStorage.removeItem('schedule__raw_cron');
       }
     },
 
@@ -613,7 +614,7 @@ export default {
 
   async created() {
     this.showInfo = localStorage.getItem('schedule__hide_info') !== '1';
-    this.rawCron = localStorage.getItem('schedule__raw_cron') !== '1';
+    this.rawCron = localStorage.getItem('schedule__raw_cron') === 'raw';
 
     this.templates = (await axios({
       method: 'get',
@@ -678,7 +679,7 @@ export default {
       return {
         name: '',
         template_id: null,
-        cron_format: '* * * * *',
+        cron_format: '0 0 * * *',
         active: true,
         run_once: false,
         delete_after_run: false,
@@ -870,7 +871,7 @@ export default {
       } else if (this.type === 'run_at') {
         this.setDefaultRunAt();
       } else if (this.isNew) {
-        this.item.cron_format = '* * * * *';
+        this.item.cron_format = '0 0 * * *';
       }
 
       if (this.type === 'run_at') {
@@ -941,6 +942,7 @@ export default {
       this.minutes = selections.minutes;
 
       this.item.cron_format = buildCronFormat(selections);
+      this.validateCronFormat(this.item.cron_format);
     },
 
     getItemsUrl() {
