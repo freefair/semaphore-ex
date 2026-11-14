@@ -235,7 +235,7 @@ func AddUser(w http.ResponseWriter, r *http.Request) {
 		ProjectID:   project.ID,
 		ObjectType:  db.EventUser,
 		ObjectID:    projectUser.UserID,
-		Description: fmt.Sprintf("User ID %d added to team", projectUser.UserID),
+		Description: fmt.Sprintf("%s added to team", teamMemberLabel(r, projectUser.UserID)),
 	})
 
 	target := audit.UserTarget(projectUser.UserID, "")
@@ -295,7 +295,7 @@ func removeUser(targetUser db.User, roles []db.Role, w http.ResponseWriter, r *h
 		ProjectID:   project.ID,
 		ObjectType:  db.EventUser,
 		ObjectID:    targetUser.ID,
-		Description: fmt.Sprintf("User ID %d removed from team", targetUser.ID),
+		Description: fmt.Sprintf("%s removed from team", teamUserLabel(targetUser)),
 	})
 	helpers.Audit(r).Record(r.Context(), event)
 
@@ -373,7 +373,7 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 		ProjectID:   project.ID,
 		ObjectType:  db.EventUser,
 		ObjectID:    targetUser.ID,
-		Description: fmt.Sprintf("Changed role for User ID %d", targetUser.ID),
+		Description: fmt.Sprintf("Changed role for %s", teamUserLabel(targetUser)),
 	})
 	event.Metadata = audit.ProjectRoleMetadata{
 		OldRoles: audit.NewRoleRefs(oldRoles),
