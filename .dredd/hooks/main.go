@@ -192,6 +192,20 @@ func main() {
 	h.Before("user > /api/users/{user_id}/global-roles/{assignment_id} > Removes a global role from the user > 204 > application/json", func(transaction *trans.Transaction) {
 		setRequestQuery(transaction, "revision", strconv.Itoa(globalRoleAssignment.Revision))
 	})
+	h.Before("project > /api/project/{project_id}/roles/{role_id} > Get project role > 200 > application/json", func(transaction *trans.Transaction) {
+		addCapabilities([]string{"project_roles"})
+		dbConnect()
+		defer store.Close()
+		useProjectRolePath(transaction, addProjectRole())
+	})
+	h.Before("project > /api/project/{project_id}/roles/{role_id} > Update project role > 200 > application/json", func(transaction *trans.Transaction) {
+		addCapabilities([]string{"project_roles"})
+		dbConnect()
+		defer store.Close()
+		role := addProjectRole()
+		useProjectRolePath(transaction, role)
+		transaction.Request.Body = fmt.Sprintf("{\"name\":\"Dredd project role\",\"permission_ids\":[\"project.read\"],\"revision\":%d}", role.Revision)
+	})
 	h.Before("user > /api/roles > Create canonical EX global role > 201 > application/json", func(transaction *trans.Transaction) {
 		transaction.Request.Body = "{\"name\":\"Dredd canonical global role\",\"global_permissions\":8}"
 	})

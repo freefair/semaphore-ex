@@ -249,6 +249,29 @@ func addGlobalRole() *db.Role {
 	return &role
 }
 
+func addProjectRole() db.Role {
+	uid := getUUID()
+	role, err := store.CreateProjectRole(db.Role{
+		ID:          db.ProjectRoleID("dredd_project_" + uid),
+		Slug:        "dredd_project_" + uid,
+		Name:        "ITPR-" + uid,
+		ProjectID:   &userProject.ID,
+		Permissions: db.CanReadProject,
+		Revision:    1,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return role
+}
+
+// useProjectRolePath points a transaction at a project role created for it;
+// the specification's example role ID does not exist in the Dredd database.
+func useProjectRolePath(t *transaction.Transaction, role db.Role) {
+	uri := fmt.Sprintf("/api/project/%d/roles/%s", userProject.ID, role.ID)
+	t.FullPath, t.Request.URI = uri, uri
+}
+
 func addGlobalRoleAssignment(userID int, roleID db.ProjectRoleID) *db.GlobalRoleAssignment {
 	assignment, err := store.CreateGlobalRoleAssignment(db.GlobalRoleAssignment{
 		UserID: userID, RoleID: roleID, Revision: 1,

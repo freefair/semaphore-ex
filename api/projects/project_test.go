@@ -92,9 +92,9 @@ func TestGetUserRole_RoleOnlyForOneRole(t *testing.T) {
 		roles []db.Role
 		want  string
 	}{
-		{"one role", []db.Role{manager}, `{"role":"manager","roles":["manager"],"role_name":"Manager","permissions":0}`},
-		{"two roles", []db.Role{manager, runner}, `{"role":"","roles":["manager","task_runner"],"role_name":"","permissions":0}`},
-		{"admin without roles", nil, `{"role":"","roles":[],"role_name":"","permissions":0}`},
+		{"one role", []db.Role{manager}, `{"role":"manager","roles":["manager"],"role_name":"Manager","permissions":0,"permission_ids":[]}`},
+		{"two roles", []db.Role{manager, runner}, `{"role":"","roles":["manager","task_runner"],"role_name":"","permissions":0,"permission_ids":[]}`},
+		{"admin without roles", nil, `{"role":"","roles":[],"role_name":"","permissions":0,"permission_ids":[]}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

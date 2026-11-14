@@ -269,7 +269,9 @@ func GetUserRole(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	result.Permissions = helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
-	user := helpers.UserFromContext(r)
+	// Only an authenticated administrator gets the full catalog; a request
+	// without a user in its context is treated as a member.
+	user, _ := helpers.GetFromContext(r, "user").(*db.User)
 	if user != nil && user.Admin {
 		result.PermissionIDs = pro_interfaces.ProjectPermissionIDs(db.ProjectOwner.GetPermissions())
 	} else {
