@@ -6,6 +6,18 @@ symbols:
   - name: pro_interfaces:EffectiveProjectPermissions
     signature: struct{Permissions []pro_interfaces.PermissionID "json:\"permissions\""; Sources []pro_interfaces.EffectiveProjectPermissionSource "json:\"sources\""}
     implementation: core
+  - name: pro_interfaces:ProjectPermissionIDs
+    signature: func(permissions db.ProjectUserPermission) []pro_interfaces.PermissionID
+    implementation: core
+    behavior_tests:
+    - pro_interfaces/project_roles_test.go::TestProjectPermissionIDsRoundTripOnlyAssignableCatalogEntries
+    - api/project_permission_ids_route_ex_test.go::TestProjectPermissionIDsRouterContracts
+  - name: pro_interfaces:ProjectPermissionMaskFromIDs
+    signature: func(ids []pro_interfaces.PermissionID) (db.ProjectUserPermission, error)
+    implementation: core
+    behavior_tests:
+    - pro_interfaces/project_roles_test.go::TestProjectPermissionMaskFromIDsRejectsUnassignableIdentifiers
+    - api/project_permission_ids_route_ex_test.go::TestProjectPermissionIDsRouterContracts
   - name: db:AllProjectResourceMutationPermissions
     signature: db.ProjectUserPermission = 33626895538978816
     implementation: core

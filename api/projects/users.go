@@ -6,6 +6,7 @@ import (
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/audit"
 	"net/http"
 	"slices"
@@ -45,15 +46,16 @@ func UserMiddleware(next http.Handler) http.Handler {
 }
 
 type projUser struct {
-	ID                   int                      `json:"id"`
-	Username             string                   `json:"username"`
-	Name                 string                   `json:"name"`
-	Role                 string                   `json:"role"`
-	Roles                []string                 `json:"roles"`
-	RoleID               *db.ProjectRoleID        `json:"role_id,omitempty"`
-	Revision             int                      `json:"revision"`
-	EffectivePermissions db.ProjectUserPermission `json:"effective_permissions"`
-	MappedRoles          []mappedRole             `json:"mapped_roles,omitempty"`
+	ID                   int                           `json:"id"`
+	Username             string                        `json:"username"`
+	Name                 string                        `json:"name"`
+	Role                 string                        `json:"role"`
+	Roles                []string                      `json:"roles"`
+	RoleID               *db.ProjectRoleID             `json:"role_id,omitempty"`
+	Revision             int                           `json:"revision"`
+	EffectivePermissions db.ProjectUserPermission      `json:"effective_permissions"`
+	PermissionIDs        []pro_interfaces.PermissionID `json:"permission_ids"`
+	MappedRoles          []mappedRole                  `json:"mapped_roles,omitempty"`
 }
 
 // mappedRole exposes directory provenance for roles excluded from the mutable
@@ -179,13 +181,15 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 		for _, role := range member.Roles {
 			item.Roles = append(item.Roles, role.Slug)
 		}
-		for _, role := range user.Roles {
+		for _, role := range member.Roles {
 			item.EffectivePermissions |= role.Permissions
 		}
-		item.EffectivePermissions = db.NormalizeProjectResourcePermissions(item.EffectivePermissions)
 		for _, role := range member.MappedRoles {
+			item.EffectivePermissions |= role.RolePermissions
 			item.MappedRoles = append(item.MappedRoles, mappedRole{Provider: role.Provider, Group: role.Group, Role: role.RoleSlug})
 		}
+		item.EffectivePermissions = db.NormalizeProjectResourcePermissions(item.EffectivePermissions)
+		item.PermissionIDs = pro_interfaces.ProjectPermissionIDs(item.EffectivePermissions)
 		// One value would hide the other roles, so old clients see it only for a single role.
 		if len(user.Roles) == 1 {
 			role := user.Roles[0]

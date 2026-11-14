@@ -2346,13 +2346,17 @@ definitions:
         format: date-time
   EXGlobalRole:
     type: object
-    required: [id, slug, name, permissions, global_permissions, revision, builtin]
+    required: [id, slug, name, permissions, permission_ids, global_permissions, revision, builtin]
     description: A role returned by the EX role picker. Stored EX global roles carry separate project and instance-wide permission masks; the list also includes immutable built-in project-role options, which cannot be assigned as global roles.
     properties:
       id: {type: string, example: role_0123456789abcdef0123456789abcdef}
       slug: {type: string, example: role_0123456789abcdef0123456789abcdef}
       name: {type: string, example: Audit reader}
       permissions: {type: integer, example: 0}
+      permission_ids:
+        type: array
+        description: Catalog-ordered, browser-safe representation of the project permissions.
+        items: {type: string, example: project.templates.view}
       global_permissions: {type: integer, example: 8}
       project_id: {type: integer, x-nullable: true, readOnly: true}
       revision: {type: integer, minimum: 1, example: 1}
@@ -2363,16 +2367,61 @@ definitions:
     properties:
       name: {type: string, example: Audit reader}
       permissions: {type: integer, default: 0}
+      permission_ids:
+        type: array
+        description: Authoritative project permissions when present. If permissions is also supplied, its normalized value must match.
+        items: {type: string}
       global_permissions: {type: integer, default: 0}
   EXGlobalRoleUpdateRequest:
     type: object
-    required: [name, permissions, global_permissions, revision]
+    required: [name, global_permissions, revision]
     properties:
       id: {type: string, description: Optional consistency value; when present it must equal the path ID.}
       name: {type: string, example: Audit reader}
       permissions: {type: integer, example: 0}
+      permission_ids:
+        type: array
+        description: Authoritative project permissions when present. Retired and unknown permission IDs are rejected.
+        items: {type: string}
       global_permissions: {type: integer, example: 8}
       revision: {type: integer, minimum: 1, example: 1}
+  EXProjectRole:
+    type: object
+    required: [id, slug, name, permissions, permission_ids, revision, builtin]
+    properties:
+      id: {type: string, example: role_0123456789abcdef0123456789abcdef}
+      slug: {type: string, example: role_0123456789abcdef0123456789abcdef}
+      name: {type: string, example: Deployment operator}
+      permissions: {type: integer, description: Legacy project permission mask.}
+      permission_ids:
+        type: array
+        description: Catalog-ordered, browser-safe representation of the project permissions.
+        items: {type: string, example: project.templates.view}
+      project_id: {type: integer, x-nullable: true, readOnly: true}
+      revision: {type: integer, minimum: 1}
+      builtin: {type: boolean, readOnly: true}
+  EXProjectRoleCreateRequest:
+    type: object
+    required: [name]
+    properties:
+      name: {type: string, example: Deployment operator}
+      permissions: {type: integer, default: 0}
+      permission_ids:
+        type: array
+        description: Authoritative project permissions when present. If permissions is also supplied, its normalized value must match.
+        items: {type: string}
+  EXProjectRoleUpdateRequest:
+    type: object
+    required: [name, revision]
+    properties:
+      id: {type: string, description: Optional consistency value; when present it must equal the path ID.}
+      name: {type: string, example: Deployment operator}
+      permissions: {type: integer, example: 0}
+      permission_ids:
+        type: array
+        description: Authoritative project permissions when present. Retired and unknown permission IDs are rejected.
+        items: {type: string}
+      revision: {type: integer, minimum: 1}
   EXGlobalRoleAssignment:
     type: object
     required: [id, user_id, role_id, revision]
@@ -2490,6 +2539,67 @@ definitions:
       enabled: {type: boolean}
       revision: {type: integer}
 paths:
+  /project/{project_id}/roles:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    get:
+      tags: [project]
+      summary: List project roles
+      responses:
+        '200': {description: Project roles, schema: {type: array, items: {$ref: '#/definitions/EXProjectRole'}}}
+        '403': {description: Permission denied or capability unavailable}
+    post:
+      tags: [project]
+      summary: Create project role
+      consumes: [application/json]
+      parameters:
+      - name: Project role
+        in: body
+        required: true
+        schema: {$ref: '#/definitions/EXProjectRoleCreateRequest'}
+      responses:
+        '201': {description: Project role created, schema: {$ref: '#/definitions/EXProjectRole'}}
+        '400': {description: Invalid role, unknown permission ID, retired permission ID, or conflicting permissions mask}
+        '403': {description: Permission denied or capability unavailable}
+  /project/{project_id}/roles/{role_id}:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - name: role_id
+      in: path
+      required: true
+      type: string
+    get:
+      tags: [project]
+      summary: Get project role
+      responses:
+        '200': {description: Project role, schema: {$ref: '#/definitions/EXProjectRole'}}
+        '403': {description: Permission denied or capability unavailable}
+        '404': {description: Project role not found}
+    put:
+      tags: [project]
+      summary: Update project role
+      consumes: [application/json]
+      parameters:
+      - name: Project role
+        in: body
+        required: true
+        schema: {$ref: '#/definitions/EXProjectRoleUpdateRequest'}
+      responses:
+        '200': {description: Project role updated, schema: {$ref: '#/definitions/EXProjectRole'}}
+        '400': {description: Invalid role, unknown permission ID, retired permission ID, or conflicting permissions mask}
+        '403': {description: Permission denied or capability unavailable}
+        '404': {description: Project role not found}
+        '409': {description: Revision conflict}
+  /project/{project_id}/roles/all:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    get:
+      tags: [project]
+      summary: List available project roles
+      description: Returns project roles and immutable built-in project-role options with catalog-ordered permission_ids.
+      responses:
+        '200': {description: Available project roles, schema: {type: array, items: {$ref: '#/definitions/EXProjectRole'}}}
+        '403': {description: Project membership required}
   /project/{project_id}/roles/permissions:
     parameters:
     - $ref: ./api-docs.yml#/parameters/project_id

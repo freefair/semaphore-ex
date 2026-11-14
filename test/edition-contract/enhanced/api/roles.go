@@ -21,6 +21,59 @@ type RolesController struct {
 	capabilityProvider pro_interfaces.CapabilityProvider
 }
 
+// roleResponse keeps the legacy numeric permissions field while adding the
+// browser-safe project permission representation.
+type roleResponse struct {
+	db.Role
+	PermissionIDs []pro_interfaces.PermissionID `json:"permission_ids"`
+}
+
+type roleInput struct {
+	ID                db.ProjectRoleID               `json:"id"`
+	Slug              string                         `json:"slug"`
+	Name              string                         `json:"name"`
+	Permissions       *db.ProjectUserPermission      `json:"permissions"`
+	PermissionIDs     *[]pro_interfaces.PermissionID `json:"permission_ids"`
+	GlobalPermissions db.GlobalPermission            `json:"global_permissions"`
+	Revision          int                            `json:"revision"`
+}
+
+func roleResponseFor(role db.Role) roleResponse {
+	return roleResponse{Role: role, PermissionIDs: pro_interfaces.ProjectPermissionIDs(role.Permissions)}
+}
+
+func roleResponsesFor(roles []db.Role) []roleResponse {
+	responses := make([]roleResponse, len(roles))
+	for index, role := range roles {
+		responses[index] = roleResponseFor(role)
+	}
+	return responses
+}
+
+func roleFromInput(w http.ResponseWriter, input roleInput) (db.Role, bool) {
+	role := db.Role{
+		ID: input.ID, Slug: input.Slug, Name: input.Name,
+		GlobalPermissions: input.GlobalPermissions, Revision: input.Revision,
+	}
+	if input.Permissions != nil {
+		role.Permissions = *input.Permissions
+	}
+	if input.PermissionIDs == nil {
+		return role, true
+	}
+	permissions, err := pro_interfaces.ProjectPermissionMaskFromIDs(*input.PermissionIDs)
+	if err != nil {
+		helpers.WriteErrorStatus(w, err.Error(), http.StatusBadRequest)
+		return db.Role{}, false
+	}
+	if input.Permissions != nil && db.NormalizeProjectResourcePermissions(*input.Permissions) != permissions {
+		helpers.WriteErrorStatus(w, "permissions conflicts with permission_ids", http.StatusBadRequest)
+		return db.Role{}, false
+	}
+	role.Permissions = permissions
+	return role, true
+}
+
 func NewRolesController(
 	store db.Store,
 	capabilityProvider pro_interfaces.CapabilityProvider,
@@ -58,7 +111,7 @@ func (c *RolesController) GetGlobalRole(w http.ResponseWriter, r *http.Request) 
 		writeGlobalRoleError(w, err)
 		return
 	}
-	helpers.WriteJSON(w, http.StatusOK, role)
+	helpers.WriteJSON(w, http.StatusOK, roleResponseFor(role))
 }
 
 func (c *RolesController) GetRoles(w http.ResponseWriter, r *http.Request) {
@@ -77,19 +130,19 @@ func (c *RolesController) GetRoles(w http.ResponseWriter, r *http.Request) {
 	if roles == nil {
 		roles = make([]db.Role, 0)
 	}
-	helpers.WriteJSON(w, http.StatusOK, roles)
+	helpers.WriteJSON(w, http.StatusOK, roleResponsesFor(roles))
 }
 
 func (c *RolesController) AddRole(w http.ResponseWriter, r *http.Request) {
 	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessWrite) {
 		return
 	}
-	var input struct {
-		Name              string                   `json:"name"`
-		Permissions       db.ProjectUserPermission `json:"permissions"`
-		GlobalPermissions db.GlobalPermission      `json:"global_permissions"`
-	}
+	var input roleInput
 	if !helpers.Bind(w, r, &input) {
+		return
+	}
+	inputRole, ok := roleFromInput(w, input)
+	if !ok {
 		return
 	}
 	roleID, err := newProjectRoleID()
@@ -98,8 +151,8 @@ func (c *RolesController) AddRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role, err := c.store.CreateGlobalRole(db.Role{
-		ID: roleID, Slug: string(roleID), Name: input.Name,
-		Permissions: input.Permissions, GlobalPermissions: input.GlobalPermissions,
+		ID: roleID, Slug: string(roleID), Name: inputRole.Name,
+		Permissions: inputRole.Permissions, GlobalPermissions: inputRole.GlobalPermissions,
 		Revision: 1,
 	})
 	if err != nil {
@@ -107,7 +160,7 @@ func (c *RolesController) AddRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.recordGlobalRoleAudit(r, audit.IAMRoleCreate, role, nil)
-	helpers.WriteJSON(w, http.StatusCreated, role)
+	helpers.WriteJSON(w, http.StatusCreated, roleResponseFor(role))
 }
 
 func (c *RolesController) UpdateRole(w http.ResponseWriter, r *http.Request) {
@@ -118,8 +171,12 @@ func (c *RolesController) UpdateRole(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var role db.Role
-	if !helpers.Bind(w, r, &role) {
+	var input roleInput
+	if !helpers.Bind(w, r, &input) {
+		return
+	}
+	role, ok := roleFromInput(w, input)
+	if !ok {
 		return
 	}
 	if role.ID != "" && role.ID != roleID {
@@ -137,7 +194,7 @@ func (c *RolesController) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.recordGlobalRoleAudit(r, audit.IAMRoleUpdate, updated, nil)
-	helpers.WriteJSON(w, http.StatusOK, updated)
+	helpers.WriteJSON(w, http.StatusOK, roleResponseFor(updated))
 }
 
 func (c *RolesController) DeleteRole(w http.ResponseWriter, r *http.Request) {
@@ -358,7 +415,7 @@ func (c *RolesController) GetProjectRoles(w http.ResponseWriter, r *http.Request
 	if roles == nil {
 		roles = make([]db.Role, 0)
 	}
-	helpers.WriteJSON(w, http.StatusOK, roles)
+	helpers.WriteJSON(w, http.StatusOK, roleResponsesFor(roles))
 }
 
 func (c *RolesController) GetProjectAndGlobalRoles(w http.ResponseWriter, r *http.Request) {
@@ -375,7 +432,7 @@ func (c *RolesController) GetProjectAndGlobalRoles(w http.ResponseWriter, r *htt
 		return
 	}
 	roles = append(roles, virtualBuiltinProjectRoles()...)
-	helpers.WriteJSON(w, http.StatusOK, roles)
+	helpers.WriteJSON(w, http.StatusOK, roleResponsesFor(roles))
 }
 
 func virtualBuiltinProjectRoles() []db.Role {
@@ -422,11 +479,12 @@ func (c *RolesController) AddProjectRole(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	var input struct {
-		Name        string                   `json:"name"`
-		Permissions db.ProjectUserPermission `json:"permissions"`
-	}
+	var input roleInput
 	if !helpers.Bind(w, r, &input) {
+		return
+	}
+	inputRole, ok := roleFromInput(w, input)
+	if !ok {
 		return
 	}
 	roleID, err := newProjectRoleID()
@@ -435,15 +493,15 @@ func (c *RolesController) AddProjectRole(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	role, err := c.store.CreateProjectRole(db.Role{
-		ID: roleID, Slug: string(roleID), Name: input.Name,
-		Permissions: input.Permissions, ProjectID: &project.ID, Revision: 1,
+		ID: roleID, Slug: string(roleID), Name: inputRole.Name,
+		Permissions: inputRole.Permissions, ProjectID: &project.ID, Revision: 1,
 	})
 	if err != nil {
 		writeProjectRoleError(w, err)
 		return
 	}
 	c.recordProjectRoleAudit(r, audit.IAMProjectRoleDefinitionCreate, role, nil)
-	helpers.WriteJSON(w, http.StatusCreated, role)
+	helpers.WriteJSON(w, http.StatusCreated, roleResponseFor(role))
 }
 
 func (c *RolesController) GetProjectRole(w http.ResponseWriter, r *http.Request) {
@@ -463,7 +521,7 @@ func (c *RolesController) GetProjectRole(w http.ResponseWriter, r *http.Request)
 		writeProjectRoleError(w, err)
 		return
 	}
-	helpers.WriteJSON(w, http.StatusOK, role)
+	helpers.WriteJSON(w, http.StatusOK, roleResponseFor(role))
 }
 
 func (c *RolesController) UpdateProjectRole(w http.ResponseWriter, r *http.Request) {
@@ -478,8 +536,12 @@ func (c *RolesController) UpdateProjectRole(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	var role db.Role
-	if !helpers.Bind(w, r, &role) {
+	var input roleInput
+	if !helpers.Bind(w, r, &input) {
+		return
+	}
+	role, ok := roleFromInput(w, input)
+	if !ok {
 		return
 	}
 	if role.ID != "" && role.ID != roleID {
@@ -494,7 +556,7 @@ func (c *RolesController) UpdateProjectRole(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	c.recordProjectRoleAudit(r, audit.IAMProjectRoleDefinitionUpdate, updated, nil)
-	helpers.WriteJSON(w, http.StatusOK, updated)
+	helpers.WriteJSON(w, http.StatusOK, roleResponseFor(updated))
 }
 
 func (c *RolesController) DeleteProjectRole(w http.ResponseWriter, r *http.Request) {

@@ -11,6 +11,22 @@ type RolesController struct {
 	store db.Store
 }
 
+type projectPermissionRoleResponse struct {
+	db.Role
+	PermissionIDs []pro_interfaces.PermissionID `json:"permission_ids"`
+}
+
+func projectPermissionRoleResponses(roles []db.Role) []projectPermissionRoleResponse {
+	responses := make([]projectPermissionRoleResponse, len(roles))
+	for index, role := range roles {
+		responses[index] = projectPermissionRoleResponse{
+			Role:          role,
+			PermissionIDs: pro_interfaces.ProjectPermissionIDs(role.Permissions),
+		}
+	}
+	return responses
+}
+
 func NewRolesController(store db.Store, _ pro_interfaces.CapabilityProvider) *RolesController {
 	return &RolesController{
 		store: store,
@@ -59,7 +75,7 @@ func (c *RolesController) GetProjectAndGlobalRoles(w http.ResponseWriter, r *htt
 		return
 	}
 	roles = append(roles, projectRoles...)
-	helpers.WriteJSON(w, http.StatusOK, roles)
+	helpers.WriteJSON(w, http.StatusOK, projectPermissionRoleResponses(roles))
 }
 
 func (c *RolesController) AddProjectRole(w http.ResponseWriter, r *http.Request) {

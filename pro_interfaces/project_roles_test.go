@@ -84,6 +84,39 @@ func TestPermissionCatalogUsesExplicitGlobalAndTemplateScopes(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestProjectPermissionIDsRoundTripOnlyAssignableCatalogEntries(t *testing.T) {
+	requested := []PermissionID{
+		permissionDeleteViews,
+		PermissionRunProjectTasks,
+		permissionViewRepositories,
+	}
+
+	permissions, err := ProjectPermissionMaskFromIDs(requested)
+	require.NoError(t, err)
+	assert.Equal(t, []PermissionID{
+		PermissionRunProjectTasks,
+		permissionViewRepositories,
+		permissionDeleteViews,
+	}, ProjectPermissionIDs(permissions))
+}
+
+func TestProjectPermissionMaskFromIDsRejectsUnassignableIdentifiers(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		id   PermissionID
+	}{
+		{name: "unknown", id: "project.unknown"},
+		{name: "retired view resources", id: PermissionViewProjectResources},
+		{name: "retired manage resources", id: PermissionManageProjectResources},
+		{name: "global permission", id: PermissionManageGlobalUsers},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := ProjectPermissionMaskFromIDs([]PermissionID{testCase.id})
+			assert.ErrorContains(t, err, string(testCase.id))
+		})
+	}
+}
+
 func TestDBGlobalPermissionCatalogUsesAuthoritativeGlobalIDs(t *testing.T) {
 	authoritative := GlobalPermissionCatalog()
 	databaseCatalog := db.GlobalPermissionCatalog()

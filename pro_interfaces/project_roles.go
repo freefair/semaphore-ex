@@ -1,6 +1,10 @@
 package pro_interfaces
 
-import "github.com/semaphoreui/semaphore/db"
+import (
+	"fmt"
+
+	"github.com/semaphoreui/semaphore/db"
+)
 
 // PermissionID is a stable API identifier for one assignable permission.
 type PermissionID string
@@ -105,6 +109,39 @@ type PermissionDefinition struct {
 // ProjectPermissionCatalog returns an isolated, stable-order catalog.
 func ProjectPermissionCatalog() []PermissionDefinition {
 	return permissionDefinitions(PermissionScopeProject)
+}
+
+// ProjectPermissionIDs returns the stable, catalog-ordered IDs represented by
+// a project permission mask. It is the browser-safe projection of masks whose
+// resource bits exceed JSON's exact integer range and JavaScript bitwise range.
+func ProjectPermissionIDs(permissions db.ProjectUserPermission) []PermissionID {
+	permissions = db.NormalizeProjectResourcePermissions(permissions)
+	ids := make([]PermissionID, 0)
+	for _, definition := range ProjectPermissionCatalog() {
+		if permissions.Can(definition.Permission) {
+			ids = append(ids, definition.ID)
+		}
+	}
+	return ids
+}
+
+// ProjectPermissionMaskFromIDs resolves only currently assignable project
+// permissions. Retired coarse resource IDs deliberately remain rejected so a
+// write cannot recreate a non-canonical permission mask.
+func ProjectPermissionMaskFromIDs(ids []PermissionID) (db.ProjectUserPermission, error) {
+	var permissions db.ProjectUserPermission
+	for _, id := range ids {
+		switch id {
+		case PermissionViewProjectResources, PermissionManageProjectResources:
+			return 0, fmt.Errorf("retired project permission ID %q", id)
+		}
+		definition, found := PermissionDefinitionByID(id)
+		if !found || definition.Scope != PermissionScopeProject {
+			return 0, fmt.Errorf("unknown project permission ID %q", id)
+		}
+		permissions |= definition.Permission
+	}
+	return db.NormalizeProjectResourcePermissions(permissions), nil
 }
 
 // GlobalPermissionCatalog returns global permissions in stable API order.

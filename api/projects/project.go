@@ -6,6 +6,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
 	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/services/tasks"
@@ -247,11 +248,12 @@ func GetProject(w http.ResponseWriter, r *http.Request) {
 
 func GetUserRole(w http.ResponseWriter, r *http.Request) {
 	result := struct {
-		Role        string                   `json:"role"`
-		Roles       []string                 `json:"roles"`
-		RoleName    string                   `json:"role_name"`
-		RoleID      *db.ProjectRoleID        `json:"role_id,omitempty"`
-		Permissions db.ProjectUserPermission `json:"permissions"`
+		Role          string                        `json:"role"`
+		Roles         []string                      `json:"roles"`
+		RoleName      string                        `json:"role_name"`
+		RoleID        *db.ProjectRoleID             `json:"role_id,omitempty"`
+		Permissions   db.ProjectUserPermission      `json:"permissions"`
+		PermissionIDs []pro_interfaces.PermissionID `json:"permission_ids"`
 	}{Roles: []string{}}
 	roles := helpers.GetFromContext(r, "projectRoles").([]db.Role)
 	for _, role := range roles {
@@ -267,6 +269,12 @@ func GetUserRole(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	result.Permissions = helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
+	user := helpers.UserFromContext(r)
+	if user != nil && user.Admin {
+		result.PermissionIDs = pro_interfaces.ProjectPermissionIDs(db.ProjectOwner.GetPermissions())
+	} else {
+		result.PermissionIDs = pro_interfaces.ProjectPermissionIDs(result.Permissions)
+	}
 	helpers.WriteJSON(w, http.StatusOK, result)
 }
 

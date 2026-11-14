@@ -463,7 +463,7 @@ func (c *TemplateController) GetEffectiveTemplatePermissions(w http.ResponseWrit
 	projectGrant := &pro_interfaces.PermissionGrant{
 		Scope: pro_interfaces.PermissionScopeProject, RoleID: permissionContext.RoleID,
 		RoleName:    permissionContext.RoleName,
-		Permissions: projectPermissionIDs(permissionContext.ProjectPermissions),
+		Permissions: pro_interfaces.ProjectPermissionIDs(permissionContext.ProjectPermissions),
 	}
 	var templateOverride *pro_interfaces.PermissionOverride
 	if permissionContext.Override != nil {
@@ -487,16 +487,6 @@ func (c *TemplateController) GetEffectiveTemplatePermissions(w http.ResponseWrit
 		Permissions: permissionContext.EffectivePermissions,
 		Decisions:   decisions,
 	})
-}
-
-func projectPermissionIDs(permissions db.ProjectUserPermission) []pro_interfaces.PermissionID {
-	result := make([]pro_interfaces.PermissionID, 0)
-	for _, definition := range pro_interfaces.ProjectPermissionCatalog() {
-		if permissions.Can(definition.Permission) {
-			result = append(result, definition.ID)
-		}
-	}
-	return result
 }
 
 func templatePermissionIDs(permissions db.TemplatePermission) []pro_interfaces.PermissionID {
