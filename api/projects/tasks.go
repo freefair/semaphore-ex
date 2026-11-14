@@ -364,7 +364,7 @@ func (c *TaskController) GetTaskPermissionsMiddleware(next http.Handler) http.Ha
 
 		permissions = applyEffectiveTemplatePermissions(
 			permissions,
-			db.TemplatePermissionsToProject(permissionContext.EffectivePermissions),
+			db.TemplatePermissionsToProjectAuthorization(permissionContext.EffectivePermissions),
 		)
 
 		r = helpers.SetContextValue(r, "permissions", permissions)

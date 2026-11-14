@@ -227,7 +227,7 @@ func TestTaskMiddlewares_ReadThroughGrants(t *testing.T) {
 	require.NoError(t, err)
 	w, effective := runTaskMiddlewares(f, task.ID, &bob, 0)
 	assert.Equal(t, http.StatusNoContent, w.Code)
-	assert.Equal(t, db.CanViewProjectResources|db.CanRunProjectTasks, effective)
+	assert.Equal(t, db.CanViewTemplates|db.CanRunProjectTasks, effective)
 
 	workflowID, runID := permissionTaskWorkflow(t, f, bob.ID)
 	other, err := f.store.CreateTemplate(db.Template{Name: "node", Playbook: "node.yml", ProjectID: f.project.ID, RepositoryID: f.template.RepositoryID, InventoryID: f.template.InventoryID})

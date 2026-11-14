@@ -156,6 +156,28 @@ func TemplatePermissionsToProject(permissions TemplatePermission) ProjectUserPer
 	return result
 }
 
+// TemplatePermissionsToProjectAuthorization maps a template grant to only the
+// project permission bits that represent actions on that same template. Unlike
+// TemplatePermissionsToProject, it is safe for an authorization context: the
+// latter preserves a legacy coarse wire representation which Can expands to
+// every project resource permission.
+func TemplatePermissionsToProjectAuthorization(permissions TemplatePermission) ProjectUserPermission {
+	var result ProjectUserPermission
+	if permissions.Can(CanReadTemplate) {
+		result |= CanViewTemplates
+	}
+	if permissions.Can(CanRunTemplate) {
+		result |= CanRunProjectTasks
+	}
+	if permissions.Can(CanEditTemplate) {
+		result |= CanUpdateTemplates
+	}
+	if permissions.Can(CanDeleteTemplate) {
+		result |= CanDeleteTemplates
+	}
+	return result
+}
+
 func ValidateTemplateRolePerm(permission TemplateRolePerm) error {
 	if permission.ProjectID <= 0 || permission.TemplateID <= 0 {
 		return &common_errors.ValidationError{Message: "Template role requires a project and template"}

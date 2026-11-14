@@ -235,6 +235,144 @@ func TestProjectPermissionCatalogRouteMatrix(t *testing.T) {
 	}
 }
 
+func TestTemplateGrantCannotUseProjectAccessKeysWhenStartingATask(t *testing.T) {
+	fixture := newProjectPermissionFixture(t)
+	role, err := fixture.store.CreateProjectRole(db.Role{
+		ID: "template-task-grant", Slug: "template-task-grant", Name: "Template task grant",
+		ProjectID: &fixture.project.ID, Revision: 1,
+	})
+	require.NoError(t, err)
+	user, err := fixture.store.CreateUserWithoutPassword(db.User{
+		Username: "template-task-grant", Name: "Template task grant", Email: "template-task-grant@example.invalid",
+	})
+	require.NoError(t, err)
+	_, err = fixture.store.CreateProjectUser(db.ProjectUser{
+		ProjectID: fixture.project.ID, UserID: user.ID, RoleID: &role.ID, Revision: 1,
+	})
+	require.NoError(t, err)
+	_, err = fixture.store.CreateTemplateRole(db.TemplateRolePerm{
+		ProjectID: fixture.project.ID, TemplateID: fixture.template.ID, RoleID: &role.ID,
+		AllowedPermissions: db.CanReadTemplate | db.CanRunTemplate | db.CanEditTemplate,
+		Revision:           1,
+	})
+	require.NoError(t, err)
+	apiKey := "template-task-grant-key"
+	_, err = fixture.store.CreateAPIToken(db.APIToken{ID: apiKey, UserID: user.ID, Name: "template task grant"})
+	require.NoError(t, err)
+
+	response := fixture.request(t, projectPermissionRoute{
+		method: http.MethodPost,
+		path:   "/api/project/{project_id}/tasks",
+		body:   `{"template_id":%template_id%,"ssh_keys":[{"access_key_id":%access_key_id%,"hosts":["example.invalid"]}]}`,
+	}, apiKey)
+
+	assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+}
+
+func TestTemplateGrantRoutesAreLimitedToTheGrantedTemplate(t *testing.T) {
+	fixture := newProjectPermissionFixture(t)
+	otherTemplate, err := fixture.store.CreateTemplate(db.Template{
+		ProjectID: fixture.project.ID, RepositoryID: fixture.template.RepositoryID,
+		Name: "other template", Playbook: "site.yml",
+	})
+	require.NoError(t, err)
+	createUserWithGrant := func(name string, grant db.TemplatePermission) string {
+		t.Helper()
+		role, createErr := fixture.store.CreateProjectRole(db.Role{
+			ID: db.ProjectRoleID(name), Slug: name, Name: name,
+			ProjectID: &fixture.project.ID, Revision: 1,
+		})
+		require.NoError(t, createErr)
+		user, createErr := fixture.store.CreateUserWithoutPassword(db.User{
+			Username: name, Name: name, Email: name + "@example.invalid",
+		})
+		require.NoError(t, createErr)
+		_, createErr = fixture.store.CreateProjectUser(db.ProjectUser{
+			ProjectID: fixture.project.ID, UserID: user.ID, RoleID: &role.ID, Revision: 1,
+		})
+		require.NoError(t, createErr)
+		_, createErr = fixture.store.CreateTemplateRole(db.TemplateRolePerm{
+			ProjectID: fixture.project.ID, TemplateID: fixture.template.ID, RoleID: &role.ID,
+			AllowedPermissions: grant, Revision: 1,
+		})
+		require.NoError(t, createErr)
+		apiKey := name + "-key"
+		_, createErr = fixture.store.CreateAPIToken(db.APIToken{ID: apiKey, UserID: user.ID, Name: name})
+		require.NoError(t, createErr)
+		return apiKey
+	}
+
+	editKey := createUserWithGrant("template-route-editor", db.CanEditTemplate)
+	assert.NotEqual(t, http.StatusForbidden, fixture.request(t, projectPermissionRoute{
+		method: http.MethodPut,
+		path:   fmt.Sprintf("/api/project/{project_id}/templates/%d/description", fixture.template.ID),
+		body:   `{"description":"limited edit"}`,
+	}, editKey).Code)
+	assert.Equal(t, http.StatusForbidden, fixture.request(t, projectPermissionRoute{
+		method: http.MethodPut,
+		path:   fmt.Sprintf("/api/project/{project_id}/templates/%d/description", otherTemplate.ID),
+		body:   `{"description":"forbidden edit"}`,
+	}, editKey).Code)
+
+	readKey := createUserWithGrant("template-route-reader", db.CanReadTemplate)
+	assert.Equal(t, http.StatusOK, fixture.request(t, projectPermissionRoute{
+		method: http.MethodGet,
+		path:   fmt.Sprintf("/api/project/{project_id}/templates/%d", fixture.template.ID),
+	}, readKey).Code)
+	assert.Equal(t, http.StatusNotFound, fixture.request(t, projectPermissionRoute{
+		method: http.MethodGet,
+		path:   fmt.Sprintf("/api/project/{project_id}/templates/%d", otherTemplate.ID),
+	}, readKey).Code)
+}
+
+func TestEffectiveProjectPermissionsRouteEnforcesMembershipVisibility(t *testing.T) {
+	fixture := newProjectPermissionFixture(t)
+	managerRole, err := fixture.store.CreateProjectRole(db.Role{
+		ID: "effective-route-manager", Slug: "effective-route-manager", Name: "Effective route manager",
+		ProjectID: &fixture.project.ID, Permissions: db.CanManageProjectUsers, Revision: 1,
+	})
+	require.NoError(t, err)
+	memberRole, err := fixture.store.CreateProjectRole(db.Role{
+		ID: "effective-route-member", Slug: "effective-route-member", Name: "Effective route member",
+		ProjectID: &fixture.project.ID, Permissions: db.CanViewTemplates, Revision: 1,
+	})
+	require.NoError(t, err)
+	createMember := func(name string, role db.ProjectRoleID) (db.User, string) {
+		t.Helper()
+		user, createErr := fixture.store.CreateUserWithoutPassword(db.User{
+			Username: name, Name: name, Email: name + "@example.invalid",
+		})
+		require.NoError(t, createErr)
+		_, createErr = fixture.store.CreateProjectUser(db.ProjectUser{
+			ProjectID: fixture.project.ID, UserID: user.ID, RoleID: &role, Revision: 1,
+		})
+		require.NoError(t, createErr)
+		apiKey := name + "-key"
+		_, createErr = fixture.store.CreateAPIToken(db.APIToken{ID: apiKey, UserID: user.ID, Name: name})
+		require.NoError(t, createErr)
+		return user, apiKey
+	}
+	_, managerKey := createMember("effective-route-manager", managerRole.ID)
+	member, memberKey := createMember("effective-route-member", memberRole.ID)
+	_, plainKey := createMember("effective-route-plain", memberRole.ID)
+	nonMember, err := fixture.store.CreateUserWithoutPassword(db.User{
+		Username: "effective-route-outsider", Name: "Effective route outsider", Email: "effective-route-outsider@example.invalid",
+	})
+	require.NoError(t, err)
+
+	request := func(apiKey string, userID int) *httptest.ResponseRecorder {
+		return fixture.request(t, projectPermissionRoute{
+			method: http.MethodGet,
+			path:   fmt.Sprintf("/api/project/{project_id}/users/%d/effective-permissions", userID),
+		}, apiKey)
+	}
+
+	assert.Equal(t, http.StatusOK, request(memberKey, member.ID).Code)
+	assert.Equal(t, http.StatusOK, request(managerKey, member.ID).Code)
+	assert.Equal(t, http.StatusForbidden, request(plainKey, member.ID).Code)
+	assert.Equal(t, http.StatusNotFound, request(managerKey, nonMember.ID).Code)
+}
+
 // TestBuiltInRolesMatchLegacyRouteMatrix records the before/after compatibility
 // contract at the same route granularity as the custom-role matrix.  D2 is the
 // sole deliberate change: guests no longer approve workflows.

@@ -58,12 +58,15 @@ func ProjectMiddleware(next http.Handler) http.Handler {
 			if !templateOk {
 				return
 			}
-			grants, err := helpers.Store(r).GetTemplatePermission(project.ID, templateID, user.ID)
+			permissionContext, err := helpers.Store(r).GetTemplatePermissionContext(project.ID, templateID, user.ID)
 			if err != nil {
 				helpers.WriteError(w, err)
 				return
 			}
-			permissions = applyEffectiveTemplatePermissions(permissions, grants)
+			permissions = applyEffectiveTemplatePermissions(
+				permissions,
+				db.TemplatePermissionsToProjectAuthorization(permissionContext.EffectivePermissions),
+			)
 		}
 
 		effectiveRoles := append([]db.Role(nil), member.Roles...)

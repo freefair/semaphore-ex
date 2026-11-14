@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/semaphoreui/semaphore/api/helpers"
@@ -181,6 +182,106 @@ func TestEffectiveProjectPermissionsReturnsUnionAndSources(t *testing.T) {
 		{Permission: "project.templates.view", RoleID: string(viewRole.ID), RoleName: viewRole.Name},
 		{Permission: "project.access_keys.use", RoleID: string(keyRole.ID), RoleName: keyRole.Name},
 	}, effective.Sources)
+}
+
+func TestEffectiveProjectPermissionsEnforcesCapabilityAndMembershipVisibility(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "effective permission visibility"})
+	require.NoError(t, err)
+	manager, err := store.CreateUserWithoutPassword(db.User{Username: "effective-manager", Name: "Effective manager", Email: "effective-manager@example.test"})
+	require.NoError(t, err)
+	member, err := store.CreateUserWithoutPassword(db.User{Username: "effective-member", Name: "Effective member", Email: "effective-member@example.test"})
+	require.NoError(t, err)
+	plainMember, err := store.CreateUserWithoutPassword(db.User{Username: "effective-plain", Name: "Effective plain", Email: "effective-plain@example.test"})
+	require.NoError(t, err)
+	nonMember, err := store.CreateUserWithoutPassword(db.User{Username: "effective-non-member", Name: "Effective non-member", Email: "effective-non-member@example.test"})
+	require.NoError(t, err)
+	role, err := store.CreateProjectRole(db.Role{ID: "effective-viewer", Name: "Effective viewer", ProjectID: &project.ID, Permissions: db.CanViewTemplates, Revision: 1})
+	require.NoError(t, err)
+	managerRole, err := store.CreateProjectRole(db.Role{ID: "effective-manager", Name: "Effective manager", ProjectID: &project.ID, Permissions: db.CanManageProjectUsers, Revision: 1})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUserWithRoleRefs(db.ProjectUser{ProjectID: project.ID, UserID: manager.ID, Revision: 1}, []db.ProjectRoleID{managerRole.ID})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUserWithRoleRefs(db.ProjectUser{ProjectID: project.ID, UserID: member.ID, Revision: 1}, []db.ProjectRoleID{role.ID})
+	require.NoError(t, err)
+	_, err = store.CreateProjectUserWithRoleRefs(db.ProjectUser{ProjectID: project.ID, UserID: plainMember.ID, Revision: 1}, []db.ProjectRoleID{role.ID})
+	require.NoError(t, err)
+
+	request := func(actor *db.User, userID int, permissions db.ProjectUserPermission) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/api/project/1/users/2/effective-permissions", nil)
+		r = helpers.SetContextValue(r, "project", project)
+		r = helpers.SetContextValue(r, "user", actor)
+		r = helpers.SetContextValue(r, "permissions", permissions)
+		return mux.SetURLVars(r, map[string]string{"user_id": strconv.Itoa(userID)})
+	}
+
+	controller := NewRolesController(store, features.NewCapabilityProvider(store))
+	self := httptest.NewRecorder()
+	controller.GetEffectiveProjectPermissions(self, request(&member, member.ID, role.Permissions))
+	assert.Equal(t, http.StatusOK, self.Code)
+
+	managerResponse := httptest.NewRecorder()
+	controller.GetEffectiveProjectPermissions(managerResponse, request(&manager, member.ID, managerRole.Permissions))
+	assert.Equal(t, http.StatusOK, managerResponse.Code)
+
+	plainResponse := httptest.NewRecorder()
+	controller.GetEffectiveProjectPermissions(plainResponse, request(&plainMember, member.ID, role.Permissions))
+	assert.Equal(t, http.StatusForbidden, plainResponse.Code)
+
+	nonMemberResponse := httptest.NewRecorder()
+	controller.GetEffectiveProjectPermissions(nonMemberResponse, request(&manager, nonMember.ID, managerRole.Permissions))
+	assert.Equal(t, http.StatusNotFound, nonMemberResponse.Code)
+
+	capabilityDenied := httptest.NewRecorder()
+	NewRolesController(store, deniedProjectRoleCapabilityProvider{}).GetEffectiveProjectPermissions(
+		capabilityDenied, request(&manager, member.ID, managerRole.Permissions),
+	)
+	assert.Equal(t, http.StatusForbidden, capabilityDenied.Code)
+}
+
+func TestEffectiveProjectPermissionsIncludesMappedRoleSources(t *testing.T) {
+	store := coresql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "mapped effective permissions"})
+	require.NoError(t, err)
+	manager, err := store.CreateUserWithoutPassword(db.User{Username: "mapped-manager", Name: "Mapped manager", Email: "mapped-manager@example.test"})
+	require.NoError(t, err)
+	mappedMember, err := store.CreateUserWithoutPassword(db.User{Username: "mapped-member", Name: "Mapped member", Email: "mapped-member@example.test"})
+	require.NoError(t, err)
+	role, err := store.CreateProjectRole(db.Role{ID: "mapped-integration-role", Name: "Mapped integration role", ProjectID: &project.ID, Permissions: db.CanViewIntegrations, Revision: 1})
+	require.NoError(t, err)
+	mapping, err := store.SaveOIDCGroupMapping(db.OIDCGroupMapping{
+		ID: "mapped-effective", ProviderID: "test", ClaimValue: "operators", TargetScope: "project",
+		ProjectID: &project.ID, RoleID: string(role.ID), Enabled: true, Revision: 1,
+		Created: time.Now().UTC(), Updated: time.Now().UTC(),
+	}, 0)
+	require.NoError(t, err)
+	revision, err := store.GetOIDCGroupMappingRevision(mapping.ProviderID)
+	require.NoError(t, err)
+	_, err = store.ApplyOIDCGroupReconciliation(db.OIDCGroupReconciliation{
+		ProviderID: mapping.ProviderID, UserID: mappedMember.ID, Source: "test", Status: "applied",
+		Token: "mapped-effective", MappingRevision: revision, ClaimRevision: "test", PreviewJSON: "{}", Created: time.Now().UTC(),
+	}, []db.OIDCGroupAssignmentChange{{
+		MappingID: mapping.ID, UserID: mappedMember.ID, TargetScope: "project", ProjectID: &project.ID, RoleID: string(role.ID),
+	}}, nil)
+	require.NoError(t, err)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/project/1/users/2/effective-permissions", nil)
+	request = helpers.SetContextValue(request, "project", project)
+	request = helpers.SetContextValue(request, "user", &manager)
+	request = helpers.SetContextValue(request, "permissions", db.CanManageProjectUsers)
+	request = mux.SetURLVars(request, map[string]string{"user_id": strconv.Itoa(mappedMember.ID)})
+	response := httptest.NewRecorder()
+	NewRolesController(store, features.NewCapabilityProvider(store)).GetEffectiveProjectPermissions(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var effective pro_interfaces.EffectiveProjectPermissions
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &effective))
+	assert.Equal(t, []pro_interfaces.PermissionID{"project.integrations.view"}, effective.Permissions)
+	assert.Equal(t, []pro_interfaces.EffectiveProjectPermissionSource{{
+		Permission: "project.integrations.view", RoleID: string(role.ID), RoleName: role.Name,
+	}}, effective.Sources)
 }
 
 func TestProjectRoleControllerForceDeleteReportsImpactThenDeletes(t *testing.T) {

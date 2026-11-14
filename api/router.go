@@ -743,7 +743,10 @@ func Route(
 	projectUserManagement.HandleFunc("/{user_id}", projects.RemoveUser).Methods("DELETE")
 
 	projectEffectivePermissionsAPI := authenticatedAPI.PathPrefix("/project/{project_id}/users").Subrouter()
-	projectEffectivePermissionsAPI.Use(projects.ProjectMiddleware)
+	projectEffectivePermissionsAPI.Use(
+		projects.ProjectMiddleware,
+		EnhancedProjectPermissionAuditMiddleware(auditFacade),
+	)
 	projectEffectivePermissionsAPI.HandleFunc("/{user_id}/effective-permissions", rolesController.GetEffectiveProjectPermissions).Methods("GET", "HEAD")
 
 	//

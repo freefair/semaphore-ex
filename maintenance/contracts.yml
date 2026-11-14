@@ -390,6 +390,8 @@ symbols:
     implementation: local
     behavior_tests:
     - test/edition-contract/enhanced/api/roles_test.go::TestEffectiveProjectPermissionsReturnsUnionAndSources
+    - test/edition-contract/enhanced/api/roles_test.go::TestEffectiveProjectPermissionsEnforcesCapabilityAndMembershipVisibility
+    - test/edition-contract/enhanced/api/roles_test.go::TestEffectiveProjectPermissionsIncludesMappedRoleSources
   - name: api:RolesController.GetProjectRole
     signature: func(w net/http.ResponseWriter, r *net/http.Request)
     selected_signature: func(w net/http.ResponseWriter, r *net/http.Request)
@@ -5354,6 +5356,14 @@ symbols:
   - name: db:TemplatePermissionsToProject
     signature: func(permissions db.TemplatePermission) db.ProjectUserPermission
     implementation: core
+  - name: db:TemplatePermissionsToProjectAuthorization
+    signature: func(permissions db.TemplatePermission) db.ProjectUserPermission
+    implementation: core
+    behavior_tests:
+    - api/projects/template_scoped_route_ex_test.go::TestTemplateGrantsDoNotAuthorizeProjectResourceMutations
+    - api/project_permission_routes_ex_test.go::TestTemplateGrantCannotUseProjectAccessKeysWhenStartingATask
+    - api/project_permission_routes_ex_test.go::TestTemplateGrantRoutesAreLimitedToTheGrantedTemplate
+    - api/projects/tasks_test.go::TestTaskMiddlewares_ReadThroughGrants
   - name: db:TemplateProps
     signature: db.ObjectProps
     implementation: core

@@ -290,6 +290,9 @@ func (c *RolesController) GetProjectPermissionCatalog(w http.ResponseWriter, r *
 }
 
 func (c *RolesController) GetEffectiveProjectPermissions(w http.ResponseWriter, r *http.Request) {
+	if !c.requireCapability(w, r, pro_interfaces.CapabilityAccessRead) {
+		return
+	}
 	project, ok := projectRoleRequestProject(w, r)
 	if !ok {
 		return
@@ -305,10 +308,20 @@ func (c *RolesController) GetEffectiveProjectPermissions(w http.ResponseWriter, 
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	roles, err := c.store.GetProjectUserRoles(project.ID, userID)
+	member, err := c.store.GetProjectMember(project.ID, userID)
 	if err != nil {
 		helpers.WriteError(w, err)
 		return
+	}
+	roles := append([]db.Role(nil), member.Roles...)
+	for _, role := range member.MappedRoles {
+		roles = append(roles, db.Role{
+			ID:          role.RoleID,
+			Slug:        role.RoleSlug,
+			Name:        role.RoleName,
+			Permissions: role.RolePermissions,
+			Builtin:     strings.HasPrefix(string(role.RoleID), "builtin:"),
+		})
 	}
 	catalog := pro_interfaces.ProjectPermissionCatalog()
 	result := pro_interfaces.EffectiveProjectPermissions{
