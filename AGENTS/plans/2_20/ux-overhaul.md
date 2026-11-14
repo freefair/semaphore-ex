@@ -1,7 +1,7 @@
 # UX overhaul of the fork-owned frontend
 
 Status: plan; policy changes are in place (ADR 0061, ADR 0062), implementation is not started.
-Phase 1 starts after Dennis' go. The decisions in [Open decisions](#open-decisions) block only the items that name them.
+Phase 1 starts after Dennis' go. Dennis decided D1 to D5 on 2026-11-14; see [Decisions](#decisions).
 
 ## Contents
 
@@ -15,7 +15,7 @@ Phase 1 starts after Dennis' go. The decisions in [Open decisions](#open-decisio
 - [Phase 5: core flows](#phase-5-core-flows)
 - [Phase 6: language, accessibility and remaining rules](#phase-6-language-accessibility-and-remaining-rules)
 - [Acceptance and verification](#acceptance-and-verification)
-- [Open decisions](#open-decisions)
+- [Decisions](#decisions)
 
 ## Outcome
 
@@ -65,7 +65,7 @@ Security-relevant implementation and verification run through the dedicated Terr
 4. **Truthful test alerts.** "Test alerts" reports per channel whether it was sent, skipped or failed, and says when no channel or no recipient is configured.
 5. **TOTP enrollment.** Show the secret as text with copy beside the QR code; recovery codes get copy and download, an "I have stored these codes" confirmation, and a warning that restarting enrollment invalidates them. Verify errors appear at the code field.
 6. **Schedule default.** A new schedule starts disabled or with a non-repeating placeholder that cannot be saved unchanged; the friendly picker is the default view.
-7. **Guest role.** See decision D2.
+7. **Guest role.** The built-in Guest role loses `workflow.approve` (D2). Existing Guest assignments lose it through a migration; roles that should approve use an explicit role.
 
 ## Phase 2: administration area
 
@@ -75,7 +75,7 @@ Security-relevant implementation and verification run through the dedicated Terr
    - Roles and permissions
    - Authentication: local login and password policy, two-factor policy (today "TOTP rollout"), LDAP providers, OIDC providers
    - Group mappings: one list for LDAP and OIDC providers
-   - Notifications: channels with their state; a channel configured in the server configuration says so and names the configuration key (D4)
+   - Notifications: channels with their state. Channels stay configured in the server configuration (D4); the UI states for each channel whether it is configured, names the configuration keys to set, and links to the Wiki page.
    - Audit: audit log, audit webhooks
    - Runners and cluster
    - Global credentials
@@ -89,8 +89,10 @@ Security-relevant implementation and verification run through the dedicated Terr
 1. **LDAP setup as steps:** Configure → Test → Activate, with a visible step state and the 15-minute readiness window shown as a countdown in the Activate step.
 2. **LDAP diagnostics:** the server logs the underlying error per stage with provider ID and without credentials; the API returns distinct codes for unavailable, referral and duplicate identity; the UI shows the failed stage and the reason in words. Investigate the `localhost` failure on the way.
 3. **Directory presets:** "Active Directory" and "OpenLDAP" fill filters, identity and attribute fields; the immutable-ID format follows the preset.
-4. **Continuation references:** see decision D3.
-5. **Group mappings:** pick a group by searching the directory by name instead of typing an immutable ID; the ID is stored and shown as detail. Built-in roles are offered for project scope. Errors appear in the mapping dialog. Unlinked users: see decision D1.
+4. **Continuation references:** LDAP search ignores continuation references when the result already identifies exactly one user; referrals are still never followed, and a referral result code still fails (D3).
+5. **Group mappings:** pick a group by searching the directory by name instead of typing an immutable ID; the ID is stored and shown as detail. Built-in roles are offered for project scope. Errors appear in the mapping dialog.
+   - Group apply skips directory users without a linked account and lists them as a notice; it no longer blocks (D1).
+   - Login requires group membership (D1): a directory user whose groups match no enabled mapping of that provider cannot log in and sees a plain message to contact the administrator. Activating a provider requires at least one enabled mapping. A linked user who no longer matches any mapping is denied at the next login, loses managed grants on reconcile, and has open sessions revoked. Local login, including the recovery administrator, is unaffected.
 6. **Lifecycle wording:** "Disabled / Shadow / Selected users / Active" get one line of explanation each, shown with the options.
 
 ## Phase 4: roles and permissions
@@ -100,7 +102,7 @@ Security-relevant implementation and verification run through the dedicated Terr
 3. Member role assignment states whether it adds or replaces; saving gives feedback.
 4. An "effective permissions" view per member.
 5. Internal role IDs only as secondary detail.
-6. Per-resource permissions: see decision D5.
+6. **Per-resource permissions (D5):** replace `project.resources.view` and `project.resources.manage` with view, create, update and delete per resource type: templates, inventories, repositories, access keys, variable groups, schedules and integrations. Access keys additionally separate "use in a task" from managing them. A migration maps every existing role to the equivalent set, so no assignment gains or loses access. Enforcement stays in the backend for every endpoint; the UI only reflects it.
 
 ## Phase 5: core flows
 
@@ -123,16 +125,19 @@ These are upstream surfaces that the fork now owns (ADR 0062).
 ## Acceptance and verification
 
 - Each phase: unit tests for changed behavior (Vitest, Go with testify), the complete retained gates (`tools/upstream-sync/verify.sh`), and browser verification of the changed areas.
+- Permission changes: verify with separate test users for no access, read access and write access on each affected resource type and endpoint.
 - Each phase that touches a task area: rerun the matching assessment task with a context-free participant on a disposable local instance; the phase is accepted when that task succeeds without workarounds.
 - End of the overhaul: all seven assessment tasks succeed.
 - Wiki: update Implementation-Status and the affected feature pages per phase.
 
-## Open decisions
+## Decisions
 
-| ID | Question | Blocks |
-|---|---|---|
-| D1 | Should a directory user without a linked Semaphore account be skipped with a notice during group apply, instead of blocking the whole apply? | Phase 3.5 |
-| D2 | Should the built-in Guest role lose "approve workflows"? | Phase 1.7 |
-| D3 | Should LDAP search ignore continuation references in a result that already identifies exactly one user, while still never following referrals? | Phase 3.4 |
-| D4 | Mail server: configurable in the UI (needs secret storage for SMTP credentials), or stay in the server configuration with a precise hint in the UI? | Phase 2 Notifications |
-| D5 | Should project permissions be split per resource type (templates, inventories, keys, repositories, variable groups)? This is a backend model change with migrations. | Phase 4.6 |
+Decided by Dennis on 2026-11-14:
+
+| ID | Decision |
+|---|---|
+| D1 | Group apply skips unlinked directory users instead of blocking. Without a matching group a directory user gets no access. |
+| D2 | The built-in Guest role loses "approve workflows". |
+| D3 | Continuation references are ignored when exactly one user is identified; referrals are never followed. |
+| D4 | The mail server stays in the server configuration; the UI states what is missing and where to set it. |
+| D5 | Project permissions are split per resource type and action, choosing the safest model over the simplest. |
