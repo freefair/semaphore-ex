@@ -25,7 +25,7 @@ Task-owned local QA servers, databases, repositories, test accounts, sessions, a
 
 Distinguish missing authority from technical failures. Investigate failed commands and continue through safe, authorized alternatives. For a guard false positive, retain the denial and diagnose the exact trigger without reading protected secrets. Prefer correcting the fixture or command structure; a standing sync approval does not disable safeguards or override a tool's explicit approval requirement. Ask only for authority or information that is actually missing, identifying the exact action and reason. Prior requests already answered by this standing authorization are resolved, not pending blockers.
 
-Keep enhanced-edition code upstream-compatible. Prefer implementing existing interfaces and extension seams, and keep edits to shared files to the wiring a feature needs.
+Keep enhanced-edition backend code upstream-compatible. Prefer implementing existing interfaces and extension seams, and keep edits to shared backend files to the wiring a feature needs. The frontend under `web/` is fork-owned (ADR 0062).
 
 Usable UX takes precedence over minimal UI change. The UI gets what a task needs to be found, understood and completed: a feature lives where its users look for it, with its own route, view or settings section when no existing surface fits, instead of being attached to an unrelated one. Read-only information views hold no settings. Feedback and errors appear next to the action that caused them. Evaluate UI work against the `ux-design-laws` knowledge topic and verify it task-based in the browser. See ADR 0061 in the Wiki.
 
@@ -91,9 +91,11 @@ and retain references to them. An embedded Community method satisfying an interf
 is not proof of implemented behavior. Intentional shared aliases and unwired
 scaffolding require a recorded rationale.
 
-For future product changes, prefer `test/edition-contract/enhanced` and focused UI
-components behind existing interfaces, props, and events. Shared-file edits must
-be the smallest integration needed. Keep refactors and unrelated fixes outside
+For future product changes, prefer `test/edition-contract/enhanced` for backend
+behavior. Shared backend-file edits must be the smallest integration needed. The
+frontend under `web/` is fork-owned: a sync ports each incoming upstream frontend
+change into the fork's UI before committing the merge and records it as ported,
+adapted, present or rejected (ADR 0062). Keep refactors and unrelated fixes outside
 upstream syncs; document any shared-file change and its contract coverage.
 Follow `maintenance/source-boundaries.md`: use same-package `_ex.go` files when
 public API identity prevents a module move; keep authoritative integration calls

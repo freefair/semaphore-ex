@@ -53,8 +53,19 @@ Keep helper/tooling changes in their own explicitly requested scope. Preserve un
    Omit `--fetch` only when deliberately assessing recorded local refs. Read product exact SHAs, source fingerprints, seam/schema diffs, incoming migration decisions, and merge conflict previews. The preview never chooses a semantic resolution.
 4. For an actual update, create a clearly named local `codex/` recovery branch at the product pre-merge head. Preserve unrelated working state without staging it. Retain recovery points until cleanup is authorized.
 5. Review related English documentation in the published product Wiki and update it independently when product behavior changes. Do not recreate a docs submodule.
-6. Merge the recorded upstream release tag into `develop` using `git merge --no-ff --no-commit vX.Y.Z`. Release branches carry backports of upstream `develop` work the fork may already contain: `git log --cherry-mark --right-only --no-merges develop...vX.Y.Z` marks them with `=`. Keep the fork version for conflicts that come only from such backports and integrate the commits marked `>` deliberately.
-7. Resolve conflicts against the relevant slice contracts and current upstream behavior. Run focused checks for each manual resolution. Review the final result against both pre-merge parents and run the complete retained gates before committing the merge and any separate compatibility changes.
+6. Merge the recorded upstream release tag into `develop` using `git merge --no-ff --no-commit vX.Y.Z`. Release branches carry backports of upstream `develop` work the fork may already contain: `git log --cherry-mark --right-only --no-merges develop...vX.Y.Z` marks them with `=`. Keep the fork version for conflicts that come only from such backports and integrate the other commits deliberately.
+7. Resolve conflicts against the relevant slice contracts and current upstream behavior. Run focused checks for each manual resolution.
+8. Port upstream frontend changes before committing the merge (ADR 0062). The fork owns `web/`: an incoming upstream change there is a requirement, not text to splice. Work through every line of the preflight's `root/upstream-web-commits.txt`:
+   - `>`: an upstream commit to port.
+   - `=`: an equivalent patch exists in fork history. This is only a hint; confirm the behavior is still present in the current UI, otherwise treat the line like `>`.
+   - `M`: an upstream merge whose own conflict resolution changed `web/`; review `git show --cc <sha> -- web` and port that resolution like a commit.
+   Decide each line:
+   - **ported**: the upstream change applies to an area the fork has not reworked; take it as is.
+   - **adapted**: the fork reworked the area; implement the upstream behavior in the fork's UI, following the `ux-design-laws` knowledge topic.
+   - **present**: (`=` lines only) the behavior is confirmed in the current UI.
+   - **rejected**: the change does not apply to the fork's UI (for example, a commercial upgrade surface); state why.
+   Resolve a `web/` conflict by building the upstream behavior into the fork's version, not by merging both texts. Security-relevant frontend changes are never rejected without a Terra review. Record one line per entry (`<sha> ported|adapted|present|rejected <reason>`) in the merge commit message body. Verify adapted areas task-based in the browser.
+9. Review the final result against both pre-merge parents and run the complete retained gates before committing the merge and any separate compatibility changes.
 
 The skill-local `scripts/preflight.sh REPOSITORY_DIR` remains an optional read-only identity diagnostic. It is not the retained assessment gate and does not replace the repository-owned tools. If required tooling is missing, report that gap rather than falling back to a rebase.
 
@@ -64,7 +75,7 @@ The skill-local `scripts/preflight.sh REPOSITORY_DIR` remains an optional read-o
 
 - **Exported seams:** Use `maintenance/contracts.yml` and the seam diffs. Implement required behavior in the selected Enhanced module at `test/edition-contract/enhanced`, maintaining the corresponding root null contract where appropriate. Embedded null stores can satisfy an interface while inheriting a placeholder; exercise new/changed methods with observable behavior tests before updating the inventory. Preserve migration and contract baselines rather than regenerating them blindly.
 - **Durability and security:** Preserve upstream concurrency/finalization changes, authoritative SQL lifecycle transitions, HA fencing, permissions, credential redaction, and fail-closed configuration handling.
-- **Feature boundaries:** Prefer the existing Enhanced module and focused UI components with narrow props/events. Keep shared-file edits small; broad refactoring and unrelated fixes belong in separate work.
+- **Feature boundaries:** Prefer the existing Enhanced module for backend behavior. Keep shared backend-file edits small; broad refactoring and unrelated fixes belong in separate work. The frontend under `web/` is fork-owned and follows step 8.
 - **Product identity:** Preserve ordinary enablement flags, permissions, safety policies, and lifecycle controls. Keep subscription, quota, edition, upgrade, and external commercial-module behavior absent. Keep gitless build contexts independent of `.git` and external module checkouts.
 
 For security-sensitive conflicts and the final tracked diff, use the repository-required dedicated Terra review. The primary agent inspects the evidence and verifies integrated fixes.

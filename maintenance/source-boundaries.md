@@ -24,7 +24,7 @@ Direct Dredd invocations must generate it first.
 | Normalized Ansible summaries | Enhanced `db/sql/ansible_task.go` and `db/factory/ansible_task.go` | Task persistence and scoped HTTP consumers use the selected factory |
 | Summary rendering | `web/src/components/EnhancedTaskSummary.vue` | `TaskLogView.vue` selects the component; upstream `AnsibleStageView.vue` remains compatibility source |
 | Independent Vue options and state | `web/src/lib/enhanced` option objects and state factories | Hosts explicitly spread options at the original position; lifecycle hooks and shared state dependencies remain visible |
-| New UI behavior | Focused components with narrow props/events | Existing permission and lifecycle controls remain authoritative |
+| UI under `web/` | Fork-owned: rework any view or component where usable UX needs it (ADR 0061); upstream frontend changes are ported, not merged textually (ADR 0062) | Backend permission and lifecycle controls remain authoritative |
 | Fork locale messages | `web/src/lang/enhanced/{en,de}.js` | Locale setup combines upstream and fork dictionaries |
 | Governance and identity route registration | `api/routes_governance_ex.go` and `api/routes_identity_capabilities_ex.go` | The authenticated router supplies existing middleware closures in their original registration order |
 | Fork-only API definitions and paths | `api-docs-ex.yml` | `api-docs.yml` retains reference entries and changes to existing upstream contracts |
