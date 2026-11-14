@@ -27,6 +27,7 @@ export const enhancedMethods = {
   async onUserSaved(event) {
     if (event.action !== 'new' || !event.item || !event.item.id) return;
     this.itemId = event.item.id;
+    this.createdUserName = event.item.name || event.item.username || '';
     EventBus.$emit('i-snackbar', { color: 'success', text: this.$t('userCreated') });
     await this.loadItems();
   },

@@ -1,8 +1,12 @@
 import canViewProjectResources from '@/lib/project-permissions';
 import { GLOBAL_PERMISSIONS, USER_PERMISSIONS } from '@/lib/constants';
 import { hasGlobalPermission } from '@/lib/role-permissions';
+import { adminAccess, visibleAdminSections } from '@/lib/enhanced/admin-sections';
 
 export const enhancedComputed = {
+  hasAdministrationAccess() {
+    return visibleAdminSections(adminAccess(this)).length > 0;
+  },
   canReadTaskGroups() {
     return this.user?.admin || ((this.userRole?.permissions || 0)
       & USER_PERMISSIONS.readTaskGroups) === USER_PERMISSIONS.readTaskGroups;

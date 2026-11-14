@@ -89,6 +89,7 @@
 
     <v-toolbar flat>
       <v-btn
+        v-if="!insideAdmin"
         icon
         variant="text"
         class="mr-4"
@@ -364,6 +365,8 @@ import RedisMemoryChart from '@/components/RedisMemoryChart.vue';
 const MEMORY_WINDOW_MS = 60 * 60 * 1000;
 
 export default {
+  inject: { insideAdmin: { default: false } },
+
   components: { RedisMemoryChart },
 
   props: {

@@ -90,13 +90,6 @@
       </template>
     </EditDialog>
 
-    <SystemInfoDialog
-      v-model="systemInfoDialog"
-      :system-info="systemInfo"
-      @totp-rollout-updated="loadUserInfo"
-      v-if="user && canManageGlobalSystem"
-    />
-
     <v-snackbar
       v-model="snackbar"
       :color="snackbarColor"
@@ -456,16 +449,17 @@
             <v-theme-provider :theme="menuTheme">
               <v-list>
                 <v-list-item
-                  key="system-info"
-                  data-testid="menu-system-info"
-                v-if="canManageGlobalSystem"
-                  @click="systemInfoDialog = true"
+                  key="administration"
+                  to="/admin"
+                  :active="isRouteActive('/admin')"
+                  v-if="hasAdministrationAccess"
+                  data-testid="menu-administration"
                 >
                   <template v-slot:prepend>
-                    <v-icon>mdi-server</v-icon>
+                    <v-icon>mdi-cog</v-icon>
                   </template>
 
-                  {{ $t('systemInfo') }}
+                  {{ $t('administration') }}
                 </v-list-item>
 
                 <v-list-item v-else key="version" data-testid="sidebar-userMenu-version">
@@ -474,138 +468,6 @@
                   </template>
 
                   {{ systemInfo.version }}
-                </v-list-item>
-
-              <v-divider />
-
-                <v-list-item
-                  key="runners"
-                  to="/runners"
-                  :active="isRouteActive('/runners')"
-                  v-if="canManageGlobalSystem"
-                  data-testid="sidebar-userMenu-runners"
-                >
-                  <template v-slot:prepend>
-                    <v-icon>mdi-cogs</v-icon>
-                  </template>
-
-                  {{ $t('runners') }}
-                </v-list-item>
-
-                <v-list-item
-                  key="cluster"
-                  to="/cluster"
-                  :active="isRouteActive('/cluster')"
-                  v-if="canManageGlobalSystem"
-                  data-testid="sidebar-userMenu-cluster"
-                >
-                  <template v-slot:prepend>
-                    <v-icon>mdi-server-network</v-icon>
-                  </template>
-
-                  {{ $t('cluster') }}
-                </v-list-item>
-
-                <v-list-item
-                key="audit-webhooks"
-                to="/audit-webhooks"
-                v-if="canAccessGlobalGovernance"
-                data-testid="sidebar-audit-webhooks"
-              >
-                <template v-slot:prepend>
-                  <v-icon>
-                    {{ canManageGlobalSystem ? 'mdi-webhook' : 'mdi-shield-check-outline' }}
-                  </v-icon>
-                </template>
-
-                <v-list-item-title>
-                  {{ canManageGlobalSystem ? $t('auditWebhook') : $t('policyGuardrails') }}
-                </v-list-item-title>
-              </v-list-item>
-
-              <v-list-item
-                key="global-credentials"
-                to="/global-credentials"
-                v-if="canAccessGlobalCredentials"
-                data-testid="sidebar-global-credentials"
-              >
-                <template v-slot:prepend>
-                  <v-icon>mdi-key-chain</v-icon>
-                </template>
-
-                <v-list-item-title>
-                  Global credentials
-                </v-list-item-title>
-              </v-list-item>
-
-              <v-list-item
-                  key="tasks"
-                  to="/tasks"
-                  :active="isRouteActive('/tasks')"
-                  v-if="canManageGlobalSystem"
-                  data-testid="sidebar-userMenu-tasks"
-                >
-                  <template v-slot:prepend>
-                    <v-icon>mdi-check-all</v-icon>
-                  </template>
-
-                  {{ $t('activeTasks') }}
-                </v-list-item>
-
-                <v-list-item
-                  key="users"
-                  to="/users"
-                  :active="isRouteActive('/users')"
-                  v-if="canManageGlobalUsers"
-                  data-testid="sidebar-userMenu-users"
-                >
-                  <template v-slot:prepend>
-                    <v-icon>mdi-account-multiple</v-icon>
-                  </template>
-
-                  {{ $t('users') }}
-                </v-list-item>
-
-                <v-list-item
-                  key="audit-log"
-                  to="/audit-log"
-                  :active="isRouteActive('/audit-log')"
-                  v-if="user.can_read_audit_log"
-                  data-testid="sidebar-userMenu-auditLog"
-                >
-                  <template v-slot:prepend>
-                    <v-icon>mdi-shield-search</v-icon>
-                  </template>
-
-                  {{ $t('audit_log') }}
-                </v-list-item>
-
-                <v-list-item
-                  key="roles"
-                  to="/roles"
-                  :active="isRouteActive('/roles')"
-                  v-if="canManageGlobalRoles"
-                  data-testid="sidebar-userMenu-roles"
-                >
-                  <template v-slot:prepend>
-                    <v-icon>mdi-account-cog</v-icon>
-                  </template>
-
-                  {{ $t('Roles') }}
-                </v-list-item>
-
-                <v-list-item
-                  key="role-mappings"
-                  to="/role-mappings"
-                  :active="isRouteActive('/role-mappings')"
-                  v-if=" user.admin"
-                  data-testid="sidebar-userMenu-roleMappings"
-                >
-                  <template v-slot:prepend>
-                    <v-icon>mdi-account-group</v-icon>
-                  </template>
-
-                  {{ $t('roleMappings') }}
                 </v-list-item>
 
                 <v-divider />
@@ -1235,7 +1097,6 @@ import RestoreProjectForm from '@/components/RestoreProjectForm.vue';
 import RestoreProjectResult from '@/components/RestoreProjectResult.vue';
 import YesNoDialog from '@/components/YesNoDialog.vue';
 import TaskLogDialog from '@/components/TaskLogDialog.vue';
-import SystemInfoDialog from '@/components/SystemInfoDialog.vue';
 import delay from '@/lib/delay';
 
 const PROJECT_COLORS = ['red', 'blue', 'orange', 'green'];
@@ -1318,7 +1179,6 @@ export default {
     UserForm,
     EditDialog,
     ProjectForm,
-    SystemInfoDialog,
   },
   data() {
     return {
@@ -1339,8 +1199,6 @@ export default {
       newProjectType: '',
       userDialog: null,
       hideUserDialogButtons: false,
-
-      systemInfoDialog: null,
 
       restoreProjectDialog: null,
       restoreProjectResult: null,
@@ -1663,18 +1521,24 @@ export default {
       await this.trySelectMostSuitableProject();
     });
 
+    EventBus.$on('i-edit-account', () => {
+      this.userDialog = true;
+    });
+
     EventBus.$on('i-user', async (e) => {
       let text;
+      const name = e.item?.name || e.item?.username;
+      const subject = name ? `User ${name}` : 'User';
 
       switch (e.action) {
         case 'new':
-          text = `User ${e.item.name} created`;
+          text = `${subject} created`;
           break;
         case 'edit':
-          text = `User ${e.item.name} saved`;
+          text = `${subject} saved`;
           break;
         case 'delete':
-          text = `User ${e.item.name} deleted`;
+          text = `${subject} deleted`;
           break;
         default:
           throw new Error('Unknown project action');

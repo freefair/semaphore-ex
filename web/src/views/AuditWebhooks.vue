@@ -1,7 +1,12 @@
 <template>
   <div data-testid="audit-webhook-page">
     <v-toolbar flat>
-      <v-btn icon class="mr-4" @click="returnToProjects()" aria-label="Back to projects">
+      <v-btn
+        v-if="!insideAdmin"
+        icon
+        class="mr-4"
+        @click="returnToProjects()"
+        aria-label="Back to projects">
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
       <v-toolbar-title>
@@ -361,6 +366,8 @@ import { hasGlobalPermission } from '@/lib/role-permissions';
 const PAGE_SIZE = 25;
 
 export default {
+  inject: { insideAdmin: { default: false } },
+
   name: 'AuditWebhooks',
 
   components: {

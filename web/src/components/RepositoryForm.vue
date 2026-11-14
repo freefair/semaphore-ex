@@ -175,6 +175,7 @@
 }
 </style>
 <script>
+import { preselectNoneKeyWatch } from '@/lib/enhanced/default-credentials';
 import axios from 'axios';
 import ItemFormBase from '@/components/ItemFormBase';
 import { getRepositoryUrlType } from '@/lib/repositoryUrl';
@@ -208,6 +209,9 @@ export default {
     })).data;
   },
   computed: {
+    isLoaded() {
+      return this.item != null && this.keys != null;
+    },
     // A string key is a bare value with no login or private key, so it can not
     // authenticate a user; the picker offers only the types the executor accepts.
     sshKeys() {
@@ -221,7 +225,7 @@ export default {
     },
   },
 
-  watch: { ...repositoryFormWatch },
+  watch: { ...repositoryFormWatch, ...preselectNoneKeyWatch('ssh_key_id') },
 
   methods: {
     ...repositoryFormMethods,

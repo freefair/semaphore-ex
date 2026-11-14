@@ -239,6 +239,7 @@
 }
 </style>
 <script>
+import { preselectNoneKeyWatch } from '@/lib/enhanced/default-credentials';
 /* eslint-disable import/no-extraneous-dependencies,import/extensions */
 
 import ItemFormBase from '@/components/ItemFormBase';
@@ -325,6 +326,10 @@ export default {
     isLoaded() {
       return this.item != null && this.keys != null;
     },
+  },
+
+  watch: {
+    ...preselectNoneKeyWatch('ssh_key_id'),
   },
 
   async created() {

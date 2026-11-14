@@ -122,7 +122,7 @@
               v-else
               class="text-center pt-4 pb-6"
               data-testid="auth-title-login"
-            >Enter to your account</h2>
+            >{{ $t('authSignInTitle') }}</h2>
 
             <v-alert
               :model-value="signInError != null"
@@ -244,12 +244,15 @@
                 :class="$vuetify.theme.current.dark ? null : 'bg-grey-lighten-3'"
                 :style="$vuetify.theme.current.dark ? { backgroundColor: '#212121' } : null"
                 data-testid="auth-loginTabs"
+                role="group"
+                :aria-label="$t('authLoginMethod')"
               >
                 <v-btn
-                  v-for="tab in loginTabs"
+                  v-for="(tab, index) in loginTabs"
                   :key="tab.id || 'local'"
                   size="small"
                   class="flex-grow-1"
+                  :aria-pressed="loginTab === index ? 'true' : 'false'"
                   :data-testid="`auth-loginTab-${tab.id || 'local'}`"
                 >
                   {{ tab.name }}
@@ -493,7 +496,7 @@ export default {
     loginTabs() {
       const tabs = [];
       if (this.loginWithPassword) {
-        tabs.push({ id: null, name: this.$t('signIn') });
+        tabs.push({ id: null, name: this.$t('authLocalAccountTab') });
       }
       this.ldapProviders.forEach((p) => tabs.push({ id: p.id, name: p.name, ldap: true }));
       return tabs;

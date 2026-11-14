@@ -43,7 +43,13 @@
     />
 
     <v-toolbar flat>
-      <v-btn icon variant="text" class="mr-4" @click="returnToProjects()" data-testid="roles-back">
+      <v-btn
+        v-if="!insideAdmin"
+        icon
+        variant="text"
+        class="mr-4"
+        @click="returnToProjects()"
+        data-testid="roles-back">
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
       <v-toolbar-title
@@ -195,6 +201,8 @@ import { roleScope } from '@/lib/roles';
 import { USER_PERMISSIONS } from '@/lib/constants';
 
 export default {
+  inject: { insideAdmin: { default: false } },
+
   mixins: [ItemListPageBase],
 
   props: {

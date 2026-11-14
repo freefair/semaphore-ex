@@ -204,6 +204,14 @@
             v-if="canRead && needField('repository')"
             data-testid="templateForm-repositoryId"
           >
+            <template v-slot:no-data>
+              <EmptyPickerHint
+                :text="$t('templateNoRepositories')"
+                :link-text="$t('templateAddRepository')"
+                :to="`/project/${projectId}/repositories`"
+                test-id="templateForm-noRepositories"
+              />
+            </template>
           </v-autocomplete>
           <v-tooltip
             location="bottom"
@@ -367,7 +375,16 @@
           :disabled="formSaving"
           v-if="canRead && needField('inventory')"
           data-testid="templateForm-inventoryId"
-        ></v-autocomplete>
+        >
+          <template v-slot:no-data>
+            <EmptyPickerHint
+              :text="$t('templateNoInventories')"
+              :link-text="$t('templateAddInventory')"
+              :to="`/project/${projectId}/inventory`"
+              test-id="templateForm-noInventories"
+            />
+          </template>
+        </v-autocomplete>
 
         <v-autocomplete
           v-model="item.environment_ids"
@@ -840,7 +857,7 @@
             <div
               class="text-label-large mb-2"
               data-testid="templateForm-galaxyPromptsTitle"
-            >{{ $t('prompts') }}</div>
+            >{{ $t('templateAskAtLaunch') }}</div>
 
             <v-checkbox
               class="mt-0"
@@ -1018,12 +1035,15 @@ import AppsMixin from '@/components/AppsMixin';
 import RichEditor from '@/components/RichEditor.vue';
 import DropdownCard from '@/components/DropdownCard.vue';
 import CollapsibleSection from '@/components/CollapsibleSection.vue';
+import uniqueById from '@/lib/enhanced/collections';
+import EmptyPickerHint from '@/components/enhanced/EmptyPickerHint.vue';
 import SurveyVars from './SurveyVars';
 
 export default {
   mixins: [ItemFormBase, AppFieldsMixin, AppsMixin],
 
   components: {
+    EmptyPickerHint,
     DropdownCard,
     CollapsibleSection,
     RichEditor,
@@ -1513,7 +1533,8 @@ export default {
         this.canRead ? this.loadProjectResources('runner_tags') : [],
       ]);
 
-      this.inventory = [...inventory1, ...inventory2];
+      // Template-scoped and project inventories overlap; list each once.
+      this.inventory = uniqueById([...inventory1, ...inventory2]);
 
       const builds = [];
       const deploys = [];

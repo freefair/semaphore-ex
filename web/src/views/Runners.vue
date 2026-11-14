@@ -432,6 +432,7 @@ semaphore runner start --config ./config.runner.json</pre
 
     <v-toolbar flat v-if="!projectId" data-testid="runners-toolbar">
       <v-btn
+        v-if="!insideAdmin"
         icon
         variant="text"
         class="mr-4"
@@ -882,6 +883,8 @@ import PageMixin from '@/components/PageMixin';
 import HighlightedCard from '@/components/HighlightedCard.vue';
 
 export default {
+  inject: { insideAdmin: { default: false } },
+
   mixins: [ItemListPageBase, PageMixin],
 
   components: {

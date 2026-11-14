@@ -8,7 +8,6 @@ import TemplateTerraformState from '@/views/project/template/TemplateTerraformSt
 import Invites from '@/views/project/Invites.vue';
 import ObjectPerms from '@/views/project/ObjectPerms.vue';
 import Roles from '@/views/Roles.vue';
-import RoleMappings from '@/views/RoleMappings.vue';
 import AuditLog from '@/views/AuditLog.vue';
 import Schedule from '../views/project/Schedule.vue';
 import History from '../views/project/History.vue';
@@ -37,6 +36,13 @@ import GlobalCredentials from '../views/GlobalCredentials.vue';
 import Stats from '../views/project/Stats.vue';
 import Tokens from '../views/Tokens.vue';
 import AcceptInvite from '../views/AcceptInvite.vue';
+import AdminLayout from '../views/admin/AdminLayout.vue';
+import AdminAuthentication from '../views/admin/AdminAuthentication.vue';
+import AdminGroupMappings from '../views/admin/AdminGroupMappings.vue';
+import AdminNotifications from '../views/admin/AdminNotifications.vue';
+import AdminWorkflows from '../views/admin/AdminWorkflows.vue';
+import AdminSystemInformation from '../views/admin/AdminSystemInformation.vue';
+import { LEGACY_ADMIN_REDIRECTS } from '../lib/enhanced/admin-sections';
 import SecretStorage from '../views/project/SecretStorages.vue';
 import Workflows from '../views/project/Workflows.vue';
 import WorkflowView from '../views/project/WorkflowView.vue';
@@ -229,41 +235,29 @@ const routes = [
     component: Auth,
   },
   {
-    path: '/users',
-    component: Users,
+    path: '/admin',
+    component: AdminLayout,
+    children: [
+      { path: 'users', component: Users },
+      { path: 'roles', component: Roles },
+      { path: 'authentication', component: AdminAuthentication },
+      { path: 'group-mappings', component: AdminGroupMappings },
+      { path: 'notifications', component: AdminNotifications },
+      { path: 'audit-log', component: AuditLog },
+      { path: 'audit-webhooks', component: AuditWebhooks },
+      { path: 'credentials', component: GlobalCredentials },
+      { path: 'workflows', component: AdminWorkflows },
+      { path: 'runners', component: Runners },
+      { path: 'cluster', component: Cluster },
+      { path: 'tasks', component: Tasks },
+      { path: 'system', component: AdminSystemInformation },
+    ],
   },
   {
     path: '/users/roles',
-    redirect: '/roles',
+    redirect: '/admin/roles',
   },
-  {
-    path: '/roles',
-    component: Roles,
-  },
-  {
-    path: '/role-mappings',
-    component: RoleMappings,
-  },
-  {
-    path: '/runners',
-    component: Runners,
-  },
-  {
-    path: '/cluster',
-    component: Cluster,
-  },
-  {
-    path: '/audit-webhooks',
-    component: AuditWebhooks,
-  },
-  {
-    path: '/global-credentials',
-    component: GlobalCredentials,
-  },
-  {
-    path: '/tasks',
-    component: Tasks,
-  },
+  ...Object.entries(LEGACY_ADMIN_REDIRECTS).map(([path, redirect]) => ({ path, redirect })),
   {
     path: '/apps',
     component: Apps,
@@ -271,10 +265,6 @@ const routes = [
   {
     path: '/tokens',
     component: Tokens,
-  },
-  {
-    path: '/audit-log',
-    component: AuditLog,
   },
   {
     path: '/accept-invite/:token',

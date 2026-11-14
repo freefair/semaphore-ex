@@ -6,6 +6,7 @@
   >
     <v-toolbar flat>
       <v-btn
+        v-if="!insideAdmin"
         icon
         variant="text"
         class="mr-4"
@@ -89,6 +90,8 @@ import ItemListPageBase from '@/components/ItemListPageBase';
 import TaskStatus from '@/components/TaskStatus.vue';
 
 export default {
+  inject: { insideAdmin: { default: false } },
+
   mixins: [ItemListPageBase],
 
   components: {

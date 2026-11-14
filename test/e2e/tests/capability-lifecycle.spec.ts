@@ -101,7 +101,8 @@ test('system information shows the backend capability state and reason', async (
 
   await page.goto('/');
   await page.getByText('Capability Admin', { exact: true }).click();
-  await page.getByTestId('menu-system-info').click();
+  await page.getByTestId('menu-administration').click();
+  await page.getByTestId('admin-nav-system').click();
 
   await expect(page.getByTestId('capability-lifecycle')).toBeVisible();
   await expect(page.getByTestId('capability-state')).toHaveText('disabled');

@@ -2,7 +2,6 @@ import { expect } from 'chai';
 import axios from 'axios';
 import TotpEnrollmentPanel from '@/components/TotpEnrollmentPanel.vue';
 import TotpRequiredEnrollment from '@/components/TotpRequiredEnrollment.vue';
-import EnhancedSystemInfoPanel from '@/components/EnhancedSystemInfoPanel.vue';
 import { capabilityStateColor } from '@/lib/capabilities';
 
 describe('TOTP lifecycle UI contracts', () => {
@@ -99,33 +98,18 @@ describe('TOTP lifecycle UI contracts', () => {
     ]);
   });
 
-  it('loads and persists administrator rollout configuration with selected users', async () => {
-    axios.get = async (url) => ({
-      data: {
-        '/api/capabilities/totp': { state: 'required_selected', selected_user_ids: [4] },
-        '/api/users': [{ id: 4, username: 'local', external: false }],
-        '/api/capabilities/totp/transitions': [{ id: 1, to_state: 'required_selected' }],
-      }[url],
-    });
-    let saved;
-    axios.put = async (url, data) => { saved = { url, data }; };
-    const context = {
-      totpDecision: { state: 'optional' },
-      totpRollout: { state: 'disabled', selected_user_ids: [] },
-      totpUsers: [],
-      totpTransitions: [],
-      totpRolloutError: null,
-      totpRolloutSaving: false,
+  it('formats and exports only the current enrollment ceremony values', () => {
+    const ceremony = {
+      provisioning_uri: 'otpauth://totp/Semaphore:test?secret=JBSWY3DPEHPK3PXP&issuer=Semaphore',
+      recovery_codes: ['ALPHA', 'BRAVO'],
     };
-    const emitted = [];
-    context.$emit = (event) => emitted.push(event);
-    context.loadTotpRollout = EnhancedSystemInfoPanel.methods.loadTotpRollout.bind(context);
+    const context = { ceremony };
+    const secret = TotpEnrollmentPanel.computed.secret.call(context);
+    context.secret = secret;
 
-    await context.loadTotpRollout();
-    expect(context.totpRollout.selected_user_ids).to.deep.equal([4]);
-    await EnhancedSystemInfoPanel.methods.saveTotpRollout.call(context);
-    expect(saved.url).to.equal('/api/capabilities/totp');
-    expect(saved.data.state).to.equal('required_selected');
-    expect(emitted).to.deep.equal(['totp-rollout-updated']);
+    expect(secret).to.equal('JBSWY3DPEHPK3PXP');
+    expect(TotpEnrollmentPanel.computed.groupedSecret.call(context)).to.equal('JBSW Y3DP EHPK 3PXP');
+    expect(TotpEnrollmentPanel.computed.recoveryCodesText.call(context)).to.equal('ALPHA\nBRAVO');
+    expect(TotpRequiredEnrollment.computed.secret.call({ ceremony })).to.equal(secret);
   });
 });

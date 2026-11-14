@@ -8,7 +8,7 @@
       v-model="editDialog"
       test-id="userDialog"
       :save-button-text="itemId === 'new' ? $t('create') : $t('save')"
-      :title="itemId === 'new' ? $t('newUser') : $t('editUser')"
+      :title="dialogTitle"
       :dont-close-on-save="itemId === 'new'"
       @save="loadItems()"
       :hide-buttons="hideEditDialogButtons"
@@ -34,13 +34,58 @@
     <YesNoDialog
       test-id="usersDeleteDialog"
       :title="$t('deleteUser')"
-      :text="$t('askDeleteUser')"
+      :text="$t('userDeleteConsequences')"
       v-model="deleteItemDialog"
       @yes="deleteItem(itemId)"
     />
 
+    <v-dialog
+      :model-value="Boolean(lifecycleTarget)"
+      max-width="560"
+      data-testid="users-lifecycleDialog"
+      @update:model-value="closeLifecycleDialog"
+    >
+      <v-card v-if="lifecycleTarget">
+        <v-card-title>
+          {{ lifecycleTarget.disabled
+            ? $t('userReactivateTitle', { name: lifecycleTarget.name })
+            : $t('userDeactivateTitle', { name: lifecycleTarget.name }) }}
+        </v-card-title>
+        <v-card-text>
+          {{ lifecycleTarget.disabled ? $t('userReactivateText') : $t('userDeactivateText') }}
+          <v-alert
+            v-if="lifecycleError"
+            type="error"
+            variant="outlined"
+            density="compact"
+            role="alert"
+            class="mt-3"
+            data-testid="users-lifecycleError"
+          >{{ lifecycleError }}</v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="closeLifecycleDialog(false)">{{ $t('cancel') }}</v-btn>
+          <v-btn
+            :color="lifecycleTarget.disabled ? 'primary' : 'error'"
+            :loading="lifecycleSaving"
+            data-testid="users-lifecycleConfirm"
+            @click="changeLifecycle"
+          >
+            {{ lifecycleTarget.disabled ? $t('userReactivate') : $t('userDeactivate') }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-toolbar flat>
-      <v-btn icon variant="text" class="mr-4" @click="returnToProjects()" data-testid="users-back">
+      <v-btn
+        v-if="!insideAdmin"
+        icon
+        variant="text"
+        class="mr-4"
+        @click="returnToProjects()"
+        data-testid="users-back">
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
       <v-toolbar-title data-testid="users-title">{{ $t('users') }}</v-toolbar-title>
@@ -71,6 +116,16 @@
       data-testid="users-table"
       :data-state="items.length === 0 ? 'empty' : 'ready'"
     >
+      <template v-slot:item.disabled="{ item }">
+        <v-chip
+          size="small"
+          :color="item.disabled ? 'error' : 'success'"
+          :data-testid="`users-rowStatus-${item.disabled ? 'deactivated' : 'active'}`"
+        >
+          {{ item.disabled ? $t('userStatusDeactivated') : $t('userStatusActive') }}
+        </v-chip>
+      </template>
+
       <template v-slot:item.external="{ item }">
         <v-icon
           v-if="item.external"
@@ -90,26 +145,34 @@
       </template>
 
       <template v-slot:item.actions="{ item }">
-        <div v-if="canManageUsers" style="white-space: nowrap" data-testid="users-rowActions">
+        <div v-if="canManageUsers" class="UsersTable__actions" data-testid="users-rowActions">
           <v-btn
-            icon
             variant="text"
-            class="mr-1"
-            @click="askDeleteItem(item.id)"
-            data-testid="users-rowDelete"
-          >
-            <v-icon>mdi-delete</v-icon>
-          </v-btn>
-
-          <v-btn
-            icon
-            variant="text"
-            class="mr-1"
+            size="small"
+            prepend-icon="mdi-pencil"
             @click="editItem(item.id)"
             data-testid="users-rowEdit"
-          >
-            <v-icon>mdi-pencil</v-icon>
-          </v-btn>
+          >{{ $t('edit') }}</v-btn>
+
+          <v-btn
+            v-if="item.id !== userId"
+            variant="text"
+            size="small"
+            :prepend-icon="item.disabled ? 'mdi-account-check' : 'mdi-account-cancel'"
+            @click="openLifecycleDialog(item)"
+            :data-testid="item.disabled ? 'users-rowReactivate' : 'users-rowDeactivate'"
+          >{{ item.disabled ? $t('userReactivate') : $t('userDeactivate') }}</v-btn>
+
+          <v-btn
+            v-if="item.id !== userId"
+            variant="text"
+            size="small"
+            color="error"
+            prepend-icon="mdi-delete"
+            class="UsersTable__delete"
+            @click="askDeleteItem(item.id)"
+            data-testid="users-rowDelete"
+          >{{ $t('delete') }}</v-btn>
         </div>
       </template>
     </v-data-table>
@@ -146,10 +209,23 @@
     }
   }
 }
+
+.UsersTable__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+// Delete sits apart from the frequent actions so a slip cannot hit it.
+.UsersTable__delete {
+  margin-left: 16px;
+}
 </style>
 <script>
 import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/users';
 
+import axios from 'axios';
 import EventBus from '@/event-bus';
 import YesNoDialog from '@/components/YesNoDialog.vue';
 import ItemListPageBase from '@/components/ItemListPageBase';
@@ -157,11 +233,14 @@ import EditDialog from '@/components/EditDialog.vue';
 import UserForm from '@/components/UserForm.vue';
 
 export default {
+  inject: { insideAdmin: { default: false } },
+
   mixins: [ItemListPageBase],
 
   props: {
     authMethods: Object,
     systemInfo: Object,
+    userId: Number,
   },
 
   components: {
@@ -173,11 +252,21 @@ export default {
   data() {
     return {
       hideEditDialogButtons: false,
+      createdUserName: '',
+      lifecycleTarget: null,
+      lifecycleSaving: false,
+      lifecycleError: '',
     };
   },
 
   computed: {
     ...enhancedComputed,
+
+    dialogTitle() {
+      if (this.itemId === 'new') return this.$t('newUser');
+      if (this.createdUserName) return this.$t('userCreatedAssignRoles', { name: this.createdUserName });
+      return this.$t('editUser');
+    },
 
   },
   watch: {
@@ -209,6 +298,10 @@ export default {
           key: 'email',
         },
         {
+          title: this.$t('userStatus'),
+          key: 'disabled',
+        },
+        {
           title: this.$t('alert'),
           key: 'alert',
         },
@@ -227,6 +320,41 @@ export default {
           sortable: false,
         },
       ];
+    },
+
+    editItem(itemId) {
+      this.createdUserName = '';
+      ItemListPageBase.methods.editItem.call(this, itemId);
+    },
+
+    openLifecycleDialog(user) {
+      this.lifecycleError = '';
+      this.lifecycleTarget = user;
+    },
+
+    closeLifecycleDialog(open) {
+      if (!open) this.lifecycleTarget = null;
+    },
+
+    async changeLifecycle() {
+      const target = this.lifecycleTarget;
+      this.lifecycleSaving = true;
+      this.lifecycleError = '';
+      try {
+        await axios.put(`/api/users/${target.id}/deactivation`, { disabled: !target.disabled });
+        EventBus.$emit('i-snackbar', {
+          color: 'success',
+          text: target.disabled
+            ? this.$t('userReactivated', { name: target.name })
+            : this.$t('userDeactivated', { name: target.name }),
+        });
+        this.lifecycleTarget = null;
+        await this.loadItems();
+      } catch (err) {
+        this.lifecycleError = err.response?.data?.error || err.message;
+      } finally {
+        this.lifecycleSaving = false;
+      }
     },
 
     async returnToProjects() {

@@ -82,7 +82,7 @@
               :disabled="!canSave"
               data-testid="artifact-retention-save"
               @click="save"
-            >{{ $t('save') }}</v-btn>
+            >{{ $t('workflowArtifactRetentionSave') }}</v-btn>
           </div>
         </template>
       </v-card-text>

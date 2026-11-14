@@ -6,7 +6,13 @@
     :data-state="loading ? 'loading' : failed ? 'error' : events.length ? 'ready' : 'empty'"
   >
     <v-toolbar flat class="flex-grow-0">
-      <v-btn icon variant="text" class="mr-4" data-testid="audit-back" @click="returnToProjects">
+      <v-btn
+        v-if="!insideAdmin"
+        icon
+        variant="text"
+        class="mr-4"
+        data-testid="audit-back"
+        @click="returnToProjects">
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
       <v-toolbar-title data-testid="audit-title">{{ $t('audit_log') }}</v-toolbar-title>
@@ -297,6 +303,8 @@ import {
 } from '@/lib/auditEvent';
 
 export default {
+  inject: { insideAdmin: { default: false } },
+
   mixins: [PageMixin],
 
   props: {

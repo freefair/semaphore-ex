@@ -11,7 +11,7 @@
       <v-text-field
         v-model="reauthentication"
         data-testid="auth-totp-reauthentication"
-        label="Confirm your password"
+        :label="$t('totpConfirmPassword')"
         type="password"
         autocomplete="current-password"
         variant="outlined"
@@ -30,33 +30,57 @@
     </template>
 
     <template v-else>
-      <p>Scan this QR code with an authenticator app.</p>
+      <p>{{ $t('totpScanQr') }}</p>
       <img
         data-testid="auth-totp-qr"
         :src="qrUrl"
         class="totp-required-enrollment__qr"
         alt="TOTP enrollment QR code"
       />
+      <div class="mt-3" data-testid="auth-totp-secret">
+        <strong>{{ $t('totpSecret') }}</strong>
+        <code>{{ groupedSecret }}</code>
+        <v-btn size="small" variant="text" @click="copyToClipboard(secret)">{{ $t('copy') }}</v-btn>
+      </div>
+      <div class="mt-2" data-testid="auth-totp-uri">
+        <strong>{{ $t('totpProvisioningUri') }}</strong>
+        <v-btn
+          size="small"
+          variant="text"
+          @click="copyToClipboard(ceremony.provisioning_uri)"
+        >{{ $t('copy') }}</v-btn>
+      </div>
 
-      <div class="subtitle-1 mt-5 mb-2">Single-use recovery codes</div>
-      <p>Store all codes. They cannot be displayed again.</p>
+      <div class="subtitle-1 mt-5 mb-2">{{ $t('totpRecoveryCodesTitle') }}</div>
+      <p>{{ $t('totpStoreCodes') }}</p>
       <div
         class="totp-required-enrollment__recovery-grid"
         data-testid="auth-totp-recovery-codes"
       >
         <code v-for="code in ceremony.recovery_codes" :key="code">{{ code }}</code>
       </div>
+      <v-btn
+        size="small"
+        variant="text"
+        @click="copyToClipboard(recoveryCodesText)"
+      >{{ $t('totpCopyAllRecoveryCodes') }}</v-btn>
+      <v-btn
+        size="small"
+        variant="text"
+        @click="downloadRecoveryCodes"
+      >{{ $t('totpDownloadRecoveryCodes') }}</v-btn>
 
       <template v-if="stage === 'confirm'">
         <v-text-field
           v-model="passcode"
           data-testid="auth-totp-confirm-code"
           class="mt-5"
-          label="Six-digit code"
+          :label="$t('totpSixDigitCode')"
           inputmode="numeric"
           maxlength="6"
           variant="outlined"
           density="compact"
+          :error-messages="passcodeError"
         />
         <v-btn
           data-testid="auth-totp-confirm"
@@ -66,7 +90,7 @@
           :disabled="passcode.length !== 6"
           @click="confirmEnrollment"
         >
-          Verify code
+          {{ $t('totpVerifyCode') }}
         </v-btn>
       </template>
 
@@ -74,7 +98,7 @@
         <v-checkbox
           v-model="recoveryStored"
           data-testid="auth-totp-recovery-ack-checkbox"
-          label="I stored these recovery codes"
+          :label="$t('totpStoredCodes')"
         />
         <v-btn
           data-testid="auth-totp-recovery-ack"
@@ -110,12 +134,22 @@ export default {
       stage: 'confirm',
       saving: false,
       error: null,
+      passcodeError: '',
     };
   },
   computed: {
     qrUrl() {
       if (!this.ceremony) return null;
       return `${document.baseURI}api/auth/totp/enroll/${this.ceremony.id}/qr`;
+    },
+    secret() {
+      return this.ceremony ? new URL(this.ceremony.provisioning_uri).searchParams.get('secret') || '' : '';
+    },
+    groupedSecret() {
+      return this.secret.match(/.{1,4}/g)?.join(' ') || '';
+    },
+    recoveryCodesText() {
+      return this.ceremony.recovery_codes.join('\n');
     },
   },
   methods: {
@@ -128,6 +162,7 @@ export default {
       });
     },
     async confirmEnrollment() {
+      this.passcodeError = '';
       await this.run(async () => {
         await axios.post(`/api/auth/totp/enroll/${this.ceremony.id}/confirm`, {
           reauthentication: this.reauthentication,
@@ -135,6 +170,17 @@ export default {
         });
         this.stage = 'acknowledge';
       });
+    },
+    async copyToClipboard(value) {
+      await navigator.clipboard.writeText(value);
+    },
+    downloadRecoveryCodes() {
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(new Blob([`${this.recoveryCodesText}\n`], { type: 'text/plain' }));
+      link.href = url;
+      link.download = 'semaphore-recovery-codes.txt';
+      link.click();
+      URL.revokeObjectURL(url);
     },
     async acknowledgeRecovery() {
       await this.run(async () => {
@@ -152,6 +198,11 @@ export default {
         await operation();
       } catch (error) {
         this.error = getErrorMessage(error);
+        if (this.stage === 'confirm') {
+          this.passcodeError = this.error === 'INVALID_PASSCODE'
+            ? this.$t('totpInvalidPasscode')
+            : this.error;
+        }
       } finally {
         this.saving = false;
       }

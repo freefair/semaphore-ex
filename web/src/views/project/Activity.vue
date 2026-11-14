@@ -31,6 +31,9 @@
       <template v-slot:item.created="{ item }">
         {{ $filters.formatDate(item.created) }}
       </template>
+      <template v-slot:item.description="{ item }">
+        <span class="ActivityTable__description">{{ describe(item.description) }}</span>
+      </template>
     </v-data-table>
   </div>
 </template>
@@ -40,10 +43,15 @@
   max-width: calc(var(--breakpoint-lg) - var(--nav-drawer-width));
   margin: auto;
 }
+
+.ActivityTable__description {
+  overflow-wrap: anywhere;
+}
 </style>
 <script>
 import ItemListPageBase from '@/components/ItemListPageBase';
 import DashboardMenu from '@/components/DashboardMenu.vue';
+import { activityDescription } from '@/lib/enhanced/activity';
 
 export default {
   components: { DashboardMenu },
@@ -51,6 +59,10 @@ export default {
   mixins: [ItemListPageBase],
 
   methods: {
+    describe(description) {
+      return activityDescription(description, this.$t);
+    },
+
     getHeaders() {
       return [
         {

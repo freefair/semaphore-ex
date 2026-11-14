@@ -58,7 +58,7 @@
             color="primary"
             @click="saveProject()"
             data-testid="settings-save"
-          >{{ $t('save') }}</v-btn>
+          >{{ $t('settingsSaveGeneral') }}</v-btn>
         </div>
 
         <v-progress-linear

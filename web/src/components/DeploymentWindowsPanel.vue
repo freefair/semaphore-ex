@@ -199,7 +199,7 @@
           {{ $t('reset') }}
         </v-btn>
         <v-btn color="primary" :loading="saving" @click="savePolicy">
-          {{ $t('save') }}
+          {{ $t('deploymentWindowsSave') }}
         </v-btn>
       </div>
 

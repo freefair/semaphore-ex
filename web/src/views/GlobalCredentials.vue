@@ -1,7 +1,12 @@
 <template>
   <div>
     <v-toolbar flat>
-      <v-btn icon class="mr-4" aria-label="Back to projects" @click="returnToProjects">
+      <v-btn
+        v-if="!insideAdmin"
+        icon
+        class="mr-4"
+        aria-label="Back to projects"
+        @click="returnToProjects">
         <v-icon>mdi-arrow-left</v-icon>
       </v-btn>
       <v-toolbar-title>Global credentials</v-toolbar-title>
@@ -448,6 +453,8 @@ function emptyCreateForm() {
 }
 
 export default {
+  inject: { insideAdmin: { default: false } },
+
   props: {
     systemInfo: Object,
     isAdmin: Boolean,
