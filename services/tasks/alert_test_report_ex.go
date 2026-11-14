@@ -136,7 +136,7 @@ func runTestAlertChannel(
 		case strings.HasPrefix(line, "attempting to send"):
 			attempted = true
 		case strings.HasPrefix(line, "can't") || strings.Contains(line, "is empty"):
-			failure = output
+			failure = sanitizedTestAlertFailure(line)
 		}
 	}
 	switch {
@@ -148,6 +148,27 @@ func runTestAlertChannel(
 		return TestAlertFailed, "The channel did not confirm delivery; see the server log."
 	default:
 		return TestAlertFailed, "The channel was not attempted; check its server configuration."
+	}
+}
+
+// sanitizedTestAlertFailure turns a sender log line into a fixed message. Raw
+// sender errors can embed webhook URLs and bot tokens from the server
+// configuration, and project managers may run test alerts, so only the
+// receiver's HTTP status code is passed through.
+func sanitizedTestAlertFailure(line string) string {
+	if _, after, found := strings.Cut(line, "response code: "); found {
+		code := strings.TrimSpace(after)
+		if len(code) == 3 && strings.Trim(code, "0123456789") == "" {
+			return "The receiver answered with HTTP " + code + "."
+		}
+	}
+	switch {
+	case strings.Contains(line, "template") || strings.Contains(line, "is empty"):
+		return "The notification text could not be generated; see the server log."
+	case strings.Contains(line, "error"):
+		return "The receiver could not be reached; see the server log."
+	default:
+		return "Sending failed; see the server log."
 	}
 }
 

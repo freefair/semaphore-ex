@@ -1,6 +1,8 @@
 package tasks
 
 import (
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -108,8 +110,35 @@ func TestSendProjectTestAlertsReport_WebhookOutcome(t *testing.T) {
 			assert.Equal(t, tt.status, slack.Status)
 			assert.Equal(t, tt.sent, report.Sent)
 			if !tt.sent {
-				assert.Contains(t, slack.Detail, "slack")
+				assert.Equal(t, "The receiver answered with HTTP 500.", slack.Detail)
 			}
 		})
 	}
+}
+
+func TestSendProjectTestAlertsReport_NeverExposesWebhookSecrets(t *testing.T) {
+	project, store := testAlertProject(t, true)
+	util.Config.TelegramAlert = true
+	util.Config.TelegramChat = "100"
+	util.Config.TelegramToken = "123456:bot-token-secret"
+	util.Config.SlackAlert = true
+	util.Config.SlackUrl = "https://hooks.example.invalid/services/T000/B000/webhook-secret"
+	previous := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, errors.New("dial tcp: connection refused")
+	})
+
+	report, err := SendProjectTestAlertsReport(project, store)
+
+	require.NoError(t, err)
+	for _, name := range []string{"telegram", "slack"} {
+		channel := channelReport(t, report, name)
+		assert.Equal(t, TestAlertFailed, channel.Status, name)
+		assert.Equal(t, "The receiver could not be reached; see the server log.", channel.Detail, name)
+	}
+	body, err := json.Marshal(report)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), "bot-token-secret")
+	assert.NotContains(t, string(body), "webhook-secret")
 }
