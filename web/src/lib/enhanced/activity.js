@@ -24,3 +24,14 @@ export function activityDescription(description, t) {
     outcome: t(`activityOutcome_${event.outcome}`),
   });
 }
+
+// The people who appear in the loaded entries, for the user filter.
+export function activityUsers(items) {
+  return [...new Set((items || []).map((item) => item.username).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+}
+
+export function filterActivityByUser(items, username) {
+  if (!username) return items || [];
+  return (items || []).filter((item) => item.username === username);
+}

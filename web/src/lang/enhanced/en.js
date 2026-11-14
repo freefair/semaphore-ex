@@ -1,4 +1,7 @@
 export default {
+  userInitialSecretHint: 'Semaphore does not send it. Give it to the person yourself; they can change it after signing in.',
+  taskFailedBeforeHosts: 'The task failed before any host reported a result. Last log lines:',
+  taskFailedSeeLog: 'The log tab shows what happened.',
   teamRolesSaved: 'Roles saved.',
   permResourceViews: 'Template views',
   permActionView: 'View',

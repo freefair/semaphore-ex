@@ -19,9 +19,23 @@
       :can-read="can(USER_PERMISSIONS.readProject)"
     />
 
+    <div class="ActivityTable ActivityTable__filter mt-4">
+      <v-select
+        v-model="userFilter"
+        :items="activityUsers(items)"
+        :label="$t('user')"
+        clearable
+        variant="outlined"
+        density="compact"
+        hide-details
+        style="max-width: 320px"
+        data-testid="activity-userFilter"
+      />
+    </div>
+
     <v-data-table
       :headers="headers"
-      :items="items"
+      :items="filterActivityByUser(items, userFilter)"
       class="mt-4 CenterToScreen FixedPageSizeTable ActivityTable"
       :items-per-page-options="[20]"
       :items-per-page="20"
@@ -30,6 +44,9 @@
     >
       <template v-slot:item.created="{ item }">
         {{ $filters.formatDate(item.created) }}
+      </template>
+      <template v-slot:item.username="{ item }">
+        {{ item.username || '—' }}
       </template>
       <template v-slot:item.description="{ item }">
         <span class="ActivityTable__description">{{ describe(item.description) }}</span>
@@ -51,14 +68,21 @@
 <script>
 import ItemListPageBase from '@/components/ItemListPageBase';
 import DashboardMenu from '@/components/DashboardMenu.vue';
-import { activityDescription } from '@/lib/enhanced/activity';
+import { activityDescription, activityUsers, filterActivityByUser } from '@/lib/enhanced/activity';
 
 export default {
   components: { DashboardMenu },
 
   mixins: [ItemListPageBase],
 
+  data() {
+    return { userFilter: null };
+  },
+
   methods: {
+    activityUsers,
+    filterActivityByUser,
+
     describe(description) {
       return activityDescription(description, this.$t);
     },

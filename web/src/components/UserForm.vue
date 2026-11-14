@@ -114,6 +114,8 @@
             :required="isNew && !item.external"
             :rules="isNew && !item.external ? [(v) => !!v || $t('password_required')] : []"
             :disabled="item.external || formSaving"
+            :hint="$t('userInitialSecretHint')"
+            persistent-hint
             variant="outlined"
             density="compact"
           ></v-text-field>

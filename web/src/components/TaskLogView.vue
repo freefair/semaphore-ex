@@ -160,6 +160,8 @@
         :features="systemInfo.features"
         :project-id="projectId"
         :task-id="itemId"
+        :task-status="item.status"
+        :failure-lines="taskFailureLines(output)"
       />
     </div>
 
@@ -291,6 +293,7 @@ import TaskLogViewRecord from '@/components/TaskLogViewRecord.vue';
 import ProjectMixin from '@/components/ProjectMixin';
 import AnsibleStageView from '@/components/EnhancedTaskSummary.vue';
 import TaskDetails from '@/components/TaskDetails.vue';
+import { taskFailureLines } from '@/lib/enhanced/task-failure';
 
 const LOG_KEEPS = 100;
 const LOG_BUFFER = Math.round(LOG_KEEPS / 3);
@@ -460,6 +463,7 @@ export default {
   },
 
   methods: {
+    taskFailureLines,
     async confirmTask() {
       await axios({
         method: 'post',

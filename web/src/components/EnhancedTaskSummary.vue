@@ -64,6 +64,21 @@
     </v-alert>
 
     <v-alert
+      v-else-if="summaryDisplayState === 'empty' && taskStatus === 'error'"
+      type="error"
+      variant="outlined"
+      data-testid="task-summary-failed-early"
+    >
+      <strong>{{ $t('taskFailedBeforeHosts') }}</strong>
+      <pre
+        v-if="failureLines.length > 0"
+        class="TaskSummary__failureLines mt-2"
+        data-testid="task-summary-failure-lines"
+      >{{ failureLines.join('\n') }}</pre>
+      <div v-else class="mt-1">{{ $t('taskFailedSeeLog') }}</div>
+    </v-alert>
+
+    <v-alert
       v-else-if="summaryDisplayState === 'empty'"
       type="info"
       variant="outlined"
@@ -245,6 +260,8 @@ export default {
     projectId: Number,
     taskId: Number,
     features: Object,
+    taskStatus: { type: String, default: '' },
+    failureLines: { type: Array, default: () => [] },
   },
 
   mixins: [ProjectMixin],
@@ -425,6 +442,13 @@ export default {
 </script>
 
 <style lang="scss">
+.TaskSummary__failureLines {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: monospace;
+  font-size: 13px;
+}
+
 .TaskSummary {
   max-width: 1200px;
 }
