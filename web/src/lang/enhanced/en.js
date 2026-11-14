@@ -1,4 +1,11 @@
 export default {
+  testAlertSentSummary: 'Test notification delivered on at least one channel.',
+  testAlertNotSentSummary: 'No channel delivered the test notification.',
+  testAlertConfigKeys: 'Enable it in the server configuration:',
+  testAlertStatusSent: 'delivered',
+  testAlertStatusFailed: 'failed',
+  testAlertStatusNoRecipients: 'no project member has alerts enabled in their account',
+  testAlertStatusNotConfigured: 'not configured on this server',
   integrationWorkflowAliasAuthority: 'Existing matching alias URLs follow the workflow target. Remove old aliases before changing it if their holders must lose access.',
   integrationAliasesForbidden: 'You do not have access to these webhook aliases.',
   integrationWorkflowTargetUnavailable: 'This integration runs workflow #{id}. Workflows are disabled on this server, so the target cannot be changed here.',

@@ -72,6 +72,8 @@
           style="margin-top: -36px; width: 170px;"
           data-testid="settings-testAlertsProgress"
         ></v-progress-linear>
+
+        <TestAlertReport v-if="testAlertReport" :report="testAlertReport" />
       </div>
 
       <WorkflowArtifactRetentionPanel
@@ -225,6 +227,7 @@ import axios from 'axios';
 import YesNoDialog from '@/components/YesNoDialog.vue';
 import delay from '@/lib/delay';
 import DashboardMenu from '@/components/DashboardMenu.vue';
+import TestAlertReport from '@/components/enhanced/TestAlertReport.vue';
 import DeploymentWindowsPanel from '@/components/DeploymentWindowsPanel.vue';
 import PolicyGuardrailsPanel from '@/components/PolicyGuardrailsPanel.vue';
 import WorkflowArtifactRetentionPanel from '@/components/WorkflowArtifactRetentionPanel.vue';
@@ -232,6 +235,7 @@ import WorkflowArtifactRetentionPanel from '@/components/WorkflowArtifactRetenti
 export default {
   components: {
     DashboardMenu,
+    TestAlertReport,
     DeploymentWindowsPanel,
     PolicyGuardrailsPanel,
     WorkflowArtifactRetentionPanel,
@@ -252,6 +256,7 @@ export default {
       backupProgress: false,
       clearCacheProgress: false,
       testNotificationProgress: false,
+      testAlertReport: null,
     };
   },
 
@@ -262,16 +267,14 @@ export default {
   methods: {
     async sendTestNotification() {
       this.testNotificationProgress = true;
+      this.testAlertReport = null;
       try {
-        await axios({
+        const response = await axios({
           method: 'post',
           url: `/api/project/${this.projectId}/notifications/test`,
           responseType: 'json',
         });
-        EventBus.$emit('i-snackbar', {
-          color: 'success',
-          text: 'Test notification sent.',
-        });
+        this.testAlertReport = response.data;
       } catch (err) {
         let msg;
         if (err.response.status === 409) {

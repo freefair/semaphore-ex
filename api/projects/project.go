@@ -132,13 +132,13 @@ func (c *ProjectController) SendTestNotification(w http.ResponseWriter, r *http.
 		return
 	}
 
-	err := tasks.SendProjectTestAlerts(project, helpers.Store(r))
+	report, err := tasks.SendProjectTestAlertsReport(project, helpers.Store(r))
 	if err != nil {
 		helpers.WriteError(w, err)
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	helpers.WriteJSON(w, http.StatusOK, report)
 }
 
 func (c *ProjectController) UpdateProject(w http.ResponseWriter, r *http.Request) {

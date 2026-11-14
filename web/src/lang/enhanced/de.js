@@ -1,4 +1,11 @@
 export default {
+  testAlertSentSummary: 'Die Testbenachrichtigung wurde über mindestens einen Kanal zugestellt.',
+  testAlertNotSentSummary: 'Kein Kanal hat die Testbenachrichtigung zugestellt.',
+  testAlertConfigKeys: 'In der Serverkonfiguration aktivieren:',
+  testAlertStatusSent: 'zugestellt',
+  testAlertStatusFailed: 'fehlgeschlagen',
+  testAlertStatusNoRecipients: 'kein Projektmitglied hat Benachrichtigungen in seinem Konto aktiviert',
+  testAlertStatusNotConfigured: 'auf diesem Server nicht konfiguriert',
   integrationWorkflowAliasAuthority: 'Bestehende passende Alias-URLs folgen dem Workflow-Ziel. Entferne alte Aliase vor der Änderung, wenn deren Empfänger keinen Zugriff mehr haben sollen.',
   integrationAliasesForbidden: 'Du hast keinen Zugriff auf diese Webhook-Aliase.',
   integrationWorkflowTargetUnavailable: 'Diese Integration startet Workflow #{id}. Workflows sind auf diesem Server deaktiviert; das Ziel kann hier nicht geändert werden.',

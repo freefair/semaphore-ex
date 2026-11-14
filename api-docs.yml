@@ -40,6 +40,10 @@ schemes:
 basePath: /api
 
 definitions:
+  TestAlertReport:
+    $ref: './api-docs-ex.yml#/definitions/TestAlertReport'
+  TestAlertChannelReport:
+    $ref: './api-docs-ex.yml#/definitions/TestAlertChannelReport'
   InventoryRefresh:
     $ref: './api-docs-ex.yml#/definitions/InventoryRefresh'
   InventoryHost:
@@ -5217,10 +5221,12 @@ paths:
       parameters:
         - $ref: "#/parameters/project_id"
       responses:
+        200:
+          description: Per-channel outcome of the test notification
+          schema:
+            $ref: "#/definitions/TestAlertReport"
         409:
           description: Alerts not enabled for the project
-#        204:
-#          description: Test notification dispatched (or alerts disabled)
 
   # project runners
   /project/{project_id}/runners:

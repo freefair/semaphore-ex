@@ -1,5 +1,37 @@
 # Fork-owned API definitions and paths, referenced by api-docs.yml.
 definitions:
+  TestAlertReport:
+    type: object
+    required: [sent, channels]
+    properties:
+      sent:
+        type: boolean
+        description: True only when at least one channel confirmed delivery.
+      channels:
+        type: array
+        items: {$ref: './api-docs.yml#/definitions/TestAlertChannelReport'}
+  TestAlertChannelReport:
+    type: object
+    required: [channel, configured, status, recipients, config_keys, detail]
+    properties:
+      channel:
+        type: string
+        enum: [email, telegram, slack, rocketchat, microsoft_teams, dingtalk, gotify]
+      configured:
+        type: boolean
+        description: Whether the channel is enabled in the server configuration.
+      status:
+        type: string
+        enum: [sent, failed, not_configured, no_recipients]
+      recipients:
+        type: integer
+        description: E-mail recipients with alerts enabled; 0 for other channels.
+      config_keys:
+        type: array
+        items: {type: string}
+        description: Server configuration keys that enable the channel.
+      detail:
+        type: string
   RepositoryMonorepoPolicy:
     type: boolean
     readOnly: true

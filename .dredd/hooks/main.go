@@ -22,6 +22,8 @@ var skipTests = []string{
 	"authentication > /api/auth/login > Performs Login > 204 > application/json",
 	"authentication > /api/auth/logout > Destroys current session > 204 > application/json",
 	"runner > /api/project/{project_id}/runners > Add project runner > 201 > application/json",
+	// Sends real notifications on every configured channel.
+	"project > /api/project/{project_id}/notifications/test > Send test notification > 200 > application/json",
 }
 
 // Dredd expects that you have already set up the database and run all migrations before it begins.
