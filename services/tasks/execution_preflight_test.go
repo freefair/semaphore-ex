@@ -64,6 +64,20 @@ func TestBuildTaskExecutionPreflightIsSideEffectFreeAndValueFree(t *testing.T) {
 	assert.Equal(t, []pro_interfaces.ExecutionPreflightChangeCode{pro_interfaces.ExecutionChangeInput, pro_interfaces.ExecutionChangeReference}, componentChanges(snapshot.Components, changed.Components))
 }
 
+func TestExecutionPreflightCredentialReferencesSkipNoneAndUseMetadataName(t *testing.T) {
+	store, pool, _, template, _ := createTaskPreflightFixture(t)
+	none, err := store.CreateAccessKey(db.AccessKey{ProjectID: &template.ProjectID, Name: "none", Type: db.AccessKeyNone})
+	require.NoError(t, err)
+	credential, err := store.CreateAccessKey(db.AccessKey{ProjectID: &template.ProjectID, Name: "deploy key", Type: db.AccessKeySSH})
+	require.NoError(t, err)
+	plan := pro_interfaces.ExecutionPreflightPlan{References: []pro_interfaces.ExecutionPreflightReference{}}
+	pool.appendCredentialReference(&plan, template.ProjectID, &none.ID, "inventory.ssh")
+	pool.appendCredentialReference(&plan, template.ProjectID, &credential.ID, "repository.ssh")
+	require.Len(t, plan.References, 1)
+	assert.Equal(t, "deploy key", plan.References[0].Name)
+	assert.Equal(t, credential.ID, plan.References[0].ID)
+}
+
 func TestTaskExecutionPreflightSnapshotsInheritedSSHBindingsAndDetectsRotation(t *testing.T) {
 	store, pool, actor, template, _ := createTaskPreflightFixture(t)
 	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &template.ProjectID, Name: "dependency", Type: db.AccessKeySSH})

@@ -168,7 +168,7 @@ func (p *TaskPool) buildAutomaticTaskPolicyGuardrailDescriptor(
 		},
 		environmentCredentials: make([]pro_interfaces.PolicyGuardrailCredentialReferenceMetadata, 0),
 	}
-	appendCredentialReference(&descriptor.plan, &repository.SSHKeyID, "repository.ssh")
+	p.appendCredentialReference(&descriptor.plan, projectID, &repository.SSHKeyID, "repository.ssh")
 	inventory, inventoryID, err := p.taskPreflightInventory(template, task)
 	if err != nil {
 		return automaticTaskPolicyGuardrailDescriptor{}, err
@@ -177,8 +177,8 @@ func (p *TaskPool) buildAutomaticTaskPolicyGuardrailDescriptor(
 	if inventoryID != nil {
 		inventorySnapshot := sanitizedExecutionSnapshotInventory(inventory)
 		descriptor.snapshot.Inventory = &inventorySnapshot
-		appendCredentialReference(&descriptor.plan, inventory.SSHKeyID, "inventory.ssh")
-		appendCredentialReference(&descriptor.plan, inventory.BecomeKeyID, "inventory.become")
+		p.appendCredentialReference(&descriptor.plan, projectID, inventory.SSHKeyID, "inventory.ssh")
+		p.appendCredentialReference(&descriptor.plan, projectID, inventory.BecomeKeyID, "inventory.become")
 		if inventory.UsesRepository() {
 			inventoryRepository, repositoryErr := p.store.GetRepository(projectID, *inventory.RepositoryID)
 			if repositoryErr != nil {
@@ -186,7 +186,7 @@ func (p *TaskPool) buildAutomaticTaskPolicyGuardrailDescriptor(
 			}
 			inventoryRepositorySnapshot := sanitizedExecutionSnapshotRepository(inventoryRepository)
 			descriptor.snapshot.InventoryRepository = &inventoryRepositorySnapshot
-			appendCredentialReference(&descriptor.plan, &inventoryRepository.SSHKeyID, "inventory.repository.ssh")
+			p.appendCredentialReference(&descriptor.plan, projectID, &inventoryRepository.SSHKeyID, "inventory.repository.ssh")
 		}
 	}
 	for _, environmentID := range template.EnvironmentIDs {
@@ -210,7 +210,7 @@ func (p *TaskPool) buildAutomaticTaskPolicyGuardrailDescriptor(
 		descriptor.snapshot.Environments = append(descriptor.snapshot.Environments, environmentSnapshot)
 	}
 	for _, vault := range template.Vaults {
-		appendCredentialReference(&descriptor.plan, vault.VaultKeyID, "vault.password")
+		p.appendCredentialReference(&descriptor.plan, projectID, vault.VaultKeyID, "vault.password")
 	}
 	requestedImage, err := template.ResolveExecutorImage()
 	if err != nil {

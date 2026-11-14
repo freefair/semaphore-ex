@@ -629,7 +629,7 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 			})
 			resourceState = append(resourceState, inventoryRepository.ID, inventoryRepository.Name,
 				inventoryRepository.GitURL, inventoryRepository.GitBranch, inventoryRepository.SSHKeyID)
-			appendCredentialReference(&plan, &inventoryRepository.SSHKeyID, "inventory.repository.ssh")
+			p.appendCredentialReference(&plan, template.ProjectID, &inventoryRepository.SSHKeyID, "inventory.repository.ssh")
 			if err = p.appendExecutionPreflightCredentialState(&resourceState, template.ProjectID, &inventoryRepository.SSHKeyID); err != nil {
 				return ExecutionPreflightSnapshot{}, nil, err
 			}
@@ -641,8 +641,8 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 		})
 		resourceState = append(resourceState, inventory.ID, inventory.Name, inventory.Type, inventory.Inventory,
 			inventory.SSHKeyID, inventory.BecomeKeyID, inventory.RepositoryID, inventory.RunnerTag)
-		appendCredentialReference(&plan, inventory.SSHKeyID, "inventory.ssh")
-		appendCredentialReference(&plan, inventory.BecomeKeyID, "inventory.become")
+		p.appendCredentialReference(&plan, template.ProjectID, inventory.SSHKeyID, "inventory.ssh")
+		p.appendCredentialReference(&plan, template.ProjectID, inventory.BecomeKeyID, "inventory.become")
 		if err = p.appendExecutionPreflightCredentialState(&resourceState, template.ProjectID, inventory.SSHKeyID); err != nil {
 			return ExecutionPreflightSnapshot{}, nil, err
 		}
@@ -670,7 +670,7 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 			Name: repository.Name, Revision: repository.GitBranch, Visible: true,
 		})
 		resourceState = append(resourceState, repository.ID, repository.Name, repository.GitURL, repository.GitBranch, repository.SSHKeyID, repository.Monorepo)
-		appendCredentialReference(&plan, &repository.SSHKeyID, "repository.ssh")
+		p.appendCredentialReference(&plan, template.ProjectID, &repository.SSHKeyID, "repository.ssh")
 		if err = p.appendExecutionPreflightCredentialState(&resourceState, template.ProjectID, &repository.SSHKeyID); err != nil {
 			return ExecutionPreflightSnapshot{}, nil, err
 		}
@@ -714,7 +714,7 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 			Name: pointerString(vault.Name), Revision: string(vault.Type), Visible: true,
 		})
 		resourceState = append(resourceState, vault.ID, vault.Type, vault.Name, vault.Script, vault.VaultKeyID)
-		appendCredentialReference(&plan, vault.VaultKeyID, "vault.password")
+		p.appendCredentialReference(&plan, template.ProjectID, vault.VaultKeyID, "vault.password")
 		if err = p.appendExecutionPreflightCredentialState(&resourceState, template.ProjectID, vault.VaultKeyID); err != nil {
 			return ExecutionPreflightSnapshot{}, nil, err
 		}
@@ -1038,13 +1038,20 @@ func stringSet(values []string) map[string]bool {
 	return result
 }
 
-func appendCredentialReference(plan *pro_interfaces.ExecutionPreflightPlan, credentialID *int, target string) {
+func (p *TaskPool) appendCredentialReference(plan *pro_interfaces.ExecutionPreflightPlan, projectID int, credentialID *int, target string) {
 	if credentialID == nil || *credentialID <= 0 {
 		return
 	}
+	name := "Credential #" + strconv.Itoa(*credentialID)
+	if key, err := p.store.GetAccessKey(projectID, *credentialID); err == nil {
+		if key.Type == db.AccessKeyNone {
+			return
+		}
+		name = key.Name
+	}
 	plan.References = append(plan.References, pro_interfaces.ExecutionPreflightReference{
 		Kind: pro_interfaces.ExecutionReferenceCredential, ID: *credentialID,
-		Name: "Credential #" + strconv.Itoa(*credentialID), BindingTarget: target, Visible: true,
+		Name: name, BindingTarget: target, Visible: true,
 	})
 }
 
