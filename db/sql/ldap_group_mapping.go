@@ -386,7 +386,12 @@ func (d *SqlDb) applyLDAPGroupPreview(
 		if userID <= 0 {
 			continue
 		}
+		// Losing directory access ends every credential: browser sessions and
+		// API tokens alike, in the same transaction as the role changes.
 		if _, err = tx.Exec(d.PrepareQuery("update session set expired=true where user_id=?"), userID); err != nil {
+			return db.LDAPGroupReconciliation{}, err
+		}
+		if _, err = tx.Exec(d.PrepareQuery("update user__token set expired=true where user_id=?"), userID); err != nil {
 			return db.LDAPGroupReconciliation{}, err
 		}
 	}

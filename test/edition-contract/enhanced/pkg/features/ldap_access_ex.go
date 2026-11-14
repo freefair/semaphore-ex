@@ -107,25 +107,27 @@ func ldapGroupAccessRevocations(
 			enabledGroups[strings.ToLower(strings.TrimSpace(mapping.GroupExternalID))] = true
 		}
 	}
-	linked := make(map[string]int, len(linkedUsers))
-	for _, linkedUser := range linkedUsers {
-		linked[strings.ToLower(strings.TrimSpace(linkedUser.ExternalID))] = linkedUser.UserID
+	// Start from the linked accounts, not the directory snapshot: a linked
+	// person who is no longer in the snapshot has no group either and loses
+	// access (fail closed).
+	directoryGroups := make(map[string][]string, len(directoryUsers))
+	for _, directoryUser := range directoryUsers {
+		directoryGroups[strings.ToLower(strings.TrimSpace(directoryUser.ExternalID))] = directoryUser.GroupExternalIDs
 	}
 	revocations := make([]int, 0)
-	for _, directoryUser := range directoryUsers {
-		userID, isLinked := linked[strings.ToLower(strings.TrimSpace(directoryUser.ExternalID))]
-		if !isLinked || userID <= 0 {
+	for _, linkedUser := range linkedUsers {
+		if linkedUser.UserID <= 0 {
 			continue
 		}
 		allowed := false
-		for _, groupID := range directoryUser.GroupExternalIDs {
+		for _, groupID := range directoryGroups[strings.ToLower(strings.TrimSpace(linkedUser.ExternalID))] {
 			if enabledGroups[strings.ToLower(strings.TrimSpace(groupID))] {
 				allowed = true
 				break
 			}
 		}
 		if !allowed {
-			revocations = append(revocations, userID)
+			revocations = append(revocations, linkedUser.UserID)
 		}
 	}
 	return revocations

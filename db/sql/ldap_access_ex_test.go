@@ -58,6 +58,10 @@ func TestApplyLDAPGroupPreviewAndRevokeExpiresSessionsOfListedUsersOnly(t *testi
 	require.NoError(t, err)
 	lostSession, err := store.CreateSession(db.Session{UserID: lost.ID, Created: now, LastActive: now})
 	require.NoError(t, err)
+	_, err = store.CreateAPIToken(db.APIToken{ID: "lost-access-api-key", UserID: lost.ID, Name: "lost access"})
+	require.NoError(t, err)
+	_, err = store.CreateAPIToken(db.APIToken{ID: "kept-access-api-key", UserID: kept.ID, Name: "kept access"})
+	require.NoError(t, err)
 	keptSession, err := store.CreateSession(db.Session{UserID: kept.ID, Created: now, LastActive: now})
 	require.NoError(t, err)
 	revision, err := store.GetLDAPGroupMappingRevision("corp")
@@ -82,6 +86,13 @@ func TestApplyLDAPGroupPreviewAndRevokeExpiresSessionsOfListedUsersOnly(t *testi
 	}
 	assert.True(t, sessionExpired(lostSession.ID))
 	assert.False(t, sessionExpired(keptSession.ID))
+	keyExpired := func(keyID string) bool {
+		var expired bool
+		require.NoError(t, store.Sql().QueryRow("select expired from user__token where id=?", keyID).Scan(&expired))
+		return expired
+	}
+	assert.True(t, keyExpired("lost-access-api-key"))
+	assert.False(t, keyExpired("kept-access-api-key"))
 	// GetSession serves only live sessions.
 	_, err = store.GetSession(lost.ID, lostSession.ID)
 	assert.Error(t, err)
