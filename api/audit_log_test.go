@@ -233,6 +233,30 @@ func TestAuditRoutes_PreserveLegacyAndCanonicalStreams(t *testing.T) {
 	assert.Contains(t, response.Body.String(), legacy)
 }
 
+func TestAuditLogListsEventsRecordedThroughEnhancedFacade(t *testing.T) {
+	r := auditLogRequest(t, "/api/audit-log/events", 0)
+	store := helpers.Store(r)
+	actor, createErr := store.CreateUserWithoutPassword(db.User{Username: "audit-recorder", Name: "Audit Recorder", Email: "audit-recorder@example.test"})
+	require.NoError(t, createErr)
+	actorID := actor.ID
+	facade := audit.NewServiceFacade(store, auditRouteLogWriter{}, metrics.NewMetrics())
+	err := facade.Record(context.Background(), pro_interfaces.AuditEvent{
+		CorrelationID: "internal", ActorID: &actorID, Action: pro_interfaces.AuditActionGlobalUserRead,
+		TargetType: pro_interfaces.AuditTargetGlobalUser, TargetID: "users",
+		Outcome: pro_interfaces.AuditOutcomeAllowed, Source: pro_interfaces.AuditSourceAPI,
+		Reason: string(pro_interfaces.CapabilityReasonActive),
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	getAuditEvents(notFiltered(t))(w, r)
+	require.Equal(t, http.StatusOK, w.Code)
+	var page auditPage
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
+	require.Len(t, page.Events, 1)
+	assert.Equal(t, "enhanced.global_user_read", page.Events[0].EventCode)
+}
+
 type auditRouteLogWriter struct{}
 
 func (auditRouteLogWriter) WriteEventLog(pro_interfaces.EventLogRecord) error { return nil }

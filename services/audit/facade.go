@@ -17,10 +17,11 @@ type EventRepository interface {
 }
 
 type serviceFacade struct {
-	repository EventRepository
-	logWriter  pro_interfaces.LogWriteService
-	metrics    *metrics.Metrics
-	webhook    pro_interfaces.AuditWebhookService
+	repository        EventRepository
+	canonicalRecorder db.AuditEventManager
+	logWriter         pro_interfaces.LogWriteService
+	metrics           *metrics.Metrics
+	webhook           pro_interfaces.AuditWebhookService
 }
 
 func NewServiceFacade(
@@ -33,7 +34,11 @@ func NewServiceFacade(
 	if len(webhook) > 0 {
 		webhookService = webhook[0]
 	}
-	return &serviceFacade{repository: repository, logWriter: logWriter, metrics: appMetrics, webhook: webhookService}
+	canonicalRecorder, _ := repository.(db.AuditEventManager)
+	return &serviceFacade{
+		repository: repository, canonicalRecorder: canonicalRecorder, logWriter: logWriter,
+		metrics: appMetrics, webhook: webhookService,
+	}
 }
 
 func (f *serviceFacade) Record(ctx context.Context, event pro_interfaces.AuditEvent) error {
@@ -77,6 +82,9 @@ func (f *serviceFacade) Record(ctx context.Context, event pro_interfaces.AuditEv
 			f.webhook.Notify()
 		}
 	}
+	if databaseErr == nil && f.canonicalRecorder != nil {
+		_, databaseErr = f.canonicalRecorder.CreateAuditEvent(ctx, canonicalAuditRow(event, description))
+	}
 	f.metrics.ObserveDependency(pro_interfaces.DependencyAuditDatabase, time.Since(databaseStart), databaseErr == nil)
 	if databaseErr != nil {
 		f.metrics.RecordDroppedRecord(pro_interfaces.AuditSinkDatabase, pro_interfaces.DroppedRecordWriteFailure)
@@ -109,6 +117,26 @@ func (f *serviceFacade) Record(ctx context.Context, event pro_interfaces.AuditEv
 		return fmt.Errorf("audit persistence failed")
 	}
 	return nil
+}
+
+// canonicalAuditRow mirrors the Enhanced allowlisted event into the durable
+// audit stream used by /api/audit-log. The legacy activity event remains for
+// compatibility, but it is no longer the only database recording path.
+func canonicalAuditRow(event pro_interfaces.AuditEvent, metadata string) db.AuditEvent {
+	actorID := ""
+	actorType := "system"
+	if event.ActorID != nil {
+		actorID = fmt.Sprintf("%d", *event.ActorID)
+		actorType = "user"
+	}
+	return db.AuditEvent{
+		EventID: event.EventID, SchemaVersion: SchemaVersion,
+		Category: "enhanced", EventCode: "enhanced." + string(event.Action), Type: string(TypeInfo),
+		Action: string(event.Action), Outcome: string(event.Outcome), Reason: string(event.Reason),
+		ActorType: actorType, ActorID: actorID, SourceIP: event.SourceIP, UserAgent: event.UserAgent,
+		TargetType: string(event.TargetType), TargetID: event.TargetID, ProjectID: event.ProjectID,
+		RequestID: event.CorrelationID, InstanceID: "enhanced", Metadata: metadata,
+	}
 }
 
 var _ pro_interfaces.AuditServiceFacade = (*serviceFacade)(nil)
