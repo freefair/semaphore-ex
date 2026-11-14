@@ -85,6 +85,8 @@ func TestGetUserRoleIncludesCustomRoleDisplayName(t *testing.T) {
 	roleID := db.ProjectRoleID("role_resource_viewer")
 	request = helpers.SetContextValue(request, "projectRoles", []db.Role{{ID: roleID, Slug: "resource-viewer", Name: "Resource viewer", Permissions: db.CanViewProjectResources}})
 	request = helpers.SetContextValue(request, "permissions", db.CanViewProjectResources)
+	// GetUserRole runs behind authentication; the user is always in the context.
+	request = helpers.SetContextValue(request, "user", &db.User{ID: 2})
 	response := httptest.NewRecorder()
 
 	GetUserRole(response, request)
@@ -94,7 +96,12 @@ func TestGetUserRoleIncludesCustomRoleDisplayName(t *testing.T) {
 		"roles":["resource-viewer"],
 		"role_name":"Resource viewer",
 		"role_id":"role_resource_viewer",
-		"permissions":16
+		"permissions":16,
+		"permission_ids":[
+			"project.templates.view","project.inventories.view","project.repositories.view",
+			"project.access_keys.view","project.environments.view","project.schedules.view",
+			"project.integrations.view","project.views.view"
+		]
 	}`, response.Body.String())
 }
 

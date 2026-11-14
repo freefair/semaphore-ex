@@ -2559,7 +2559,7 @@ paths:
         schema: {$ref: '#/definitions/EXProjectRoleCreateRequest'}
       responses:
         '201': {description: Project role created, schema: {$ref: '#/definitions/EXProjectRole'}}
-        '400': {description: Invalid role, unknown permission ID, retired permission ID, or conflicting permissions mask}
+        '400': {description: 'Invalid role, unknown permission ID, retired permission ID, or conflicting permissions mask'}
         '403': {description: Permission denied or capability unavailable}
   /project/{project_id}/roles/{role_id}:
     parameters:
@@ -2586,7 +2586,7 @@ paths:
         schema: {$ref: '#/definitions/EXProjectRoleUpdateRequest'}
       responses:
         '200': {description: Project role updated, schema: {$ref: '#/definitions/EXProjectRole'}}
-        '400': {description: Invalid role, unknown permission ID, retired permission ID, or conflicting permissions mask}
+        '400': {description: 'Invalid role, unknown permission ID, retired permission ID, or conflicting permissions mask'}
         '403': {description: Permission denied or capability unavailable}
         '404': {description: Project role not found}
         '409': {description: Revision conflict}
