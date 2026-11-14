@@ -2461,6 +2461,12 @@ definitions:
     $ref: "./api-docs-ex.yml#/definitions/WorkflowTriggerHistoryEntry"
   WorkflowTriggerFireResult:
     $ref: "./api-docs-ex.yml#/definitions/WorkflowTriggerFireResult"
+  EXProjectPermissionDefinition:
+    $ref: "./api-docs-ex.yml#/definitions/EXProjectPermissionDefinition"
+  EXEffectiveProjectPermissions:
+    $ref: "./api-docs-ex.yml#/definitions/EXEffectiveProjectPermissions"
+  EXEffectiveProjectPermissionSource:
+    $ref: "./api-docs-ex.yml#/definitions/EXEffectiveProjectPermissionSource"
   EXGlobalRole:
     $ref: "./api-docs-ex.yml#/definitions/EXGlobalRole"
   EXGlobalRoleCreateRequest:
@@ -2759,6 +2765,10 @@ parameters:
     x-example: 22
 
 paths:
+  /project/{project_id}/roles/permissions:
+    $ref: './api-docs-ex.yml#/paths/~1project~1{project_id}~1roles~1permissions'
+  /project/{project_id}/users/{user_id}/effective-permissions:
+    $ref: './api-docs-ex.yml#/paths/~1project~1{project_id}~1users~1{user_id}~1effective-permissions'
   /project/{project_id}/hosts:
     $ref: './api-docs-ex.yml#/paths/~1project~1{project_id}~1hosts'
   /project/{project_id}/hosts/tasks:

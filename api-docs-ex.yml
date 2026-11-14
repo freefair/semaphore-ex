@@ -2491,6 +2491,8 @@ definitions:
       revision: {type: integer}
 paths:
   /project/{project_id}/roles/permissions:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
     get:
       tags: [project]
       summary: List grouped project permission catalog
@@ -2499,6 +2501,9 @@ paths:
         '200': {description: Project permission catalog, schema: {type: array, items: {$ref: '#/definitions/EXProjectPermissionDefinition'}}}
         '403': {description: Permission denied or capability unavailable}
   /project/{project_id}/users/{user_id}/effective-permissions:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - $ref: ./api-docs.yml#/parameters/user_id
     get:
       tags: [project]
       summary: Get effective project permissions for a member
