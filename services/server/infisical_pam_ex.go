@@ -245,3 +245,61 @@ func LoadProjectInfisicalPAM(
 	}
 	return result, nil
 }
+
+// LoadInfisicalPAMForProject returns the PAM configuration of the project's
+// own Infisical storages and of the global storages granted to the project.
+// A host routed by more than one of them fails the task, as within a project.
+func LoadInfisicalPAMForProject(
+	storages db.SecretStorageRepository,
+	keys db.AccessKeyManager,
+	global db.GlobalSecretStorageRepository,
+	projectID int,
+) ([]db.TaskInfisicalPAM, error) {
+	result, err := LoadProjectInfisicalPAM(storages, keys, projectID)
+	if err != nil || global == nil {
+		return result, err
+	}
+	granted, err := global.GetGlobalSecretStoragesForProject(projectID)
+	if err != nil {
+		return nil, err
+	}
+	routedBy := map[string]string{}
+	for _, config := range result {
+		for _, route := range config.Routes {
+			routedBy[route.Host] = "project storage #" + fmt.Sprint(config.StorageID)
+		}
+	}
+	for _, storage := range granted {
+		if storage.Type != db.SecretStorageTypeInfisical {
+			continue
+		}
+		config, err := infisicalPAMFromParams(storage.Params)
+		if err != nil {
+			return nil, common_errors.NewValidationError(fmt.Sprintf("global Infisical storage %q is invalid: %s", storage.Name, err.Error()))
+		}
+		if len(config.Routes) == 0 {
+			continue
+		}
+		owner := fmt.Sprintf("global storage %q", storage.Name)
+		for _, route := range config.Routes {
+			if other, exists := routedBy[route.Host]; exists && other != owner {
+				return nil, common_errors.NewValidationError(fmt.Sprintf("host %q is routed by more than one Infisical storage", route.Host))
+			}
+			routedBy[route.Host] = owner
+		}
+		if storage.CredentialKeyID == nil {
+			return nil, common_errors.NewValidationError(fmt.Sprintf("global Infisical storage %q has no client secret", storage.Name))
+		}
+		key, err := global.GetGlobalSecretStorageKey(*storage.CredentialKeyID)
+		if err != nil {
+			return nil, common_errors.NewValidationError(fmt.Sprintf("global Infisical storage %q has no client secret", storage.Name))
+		}
+		config.StorageID = storage.ID
+		config.Global = true
+		config.StorageName = storage.Name
+		config.CredentialKeyID = key.ID
+		config.Credential = key
+		result = append(result, config)
+	}
+	return result, nil
+}

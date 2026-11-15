@@ -4,6 +4,9 @@ import (
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/db/factory"
 	"github.com/semaphoreui/semaphore/pkg/debuglog"
+	proServer "github.com/semaphoreui/semaphore/pro/services/server"
+	"github.com/semaphoreui/semaphore/pro_interfaces"
+	"github.com/semaphoreui/semaphore/services/server"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
 	"os"
@@ -90,4 +93,12 @@ func createStoreWithMigrationVersionAndConfigPath(token string, undoTo *string, 
 	util.LookupDefaultApps()
 
 	return store, usedConfigPath
+}
+
+// globalCredentialExternalAdapter resolves configured Vault/OpenBao providers
+// and the global Infisical storages managed in the UI. A store without global
+// storages leaves Infisical references unavailable, failing closed.
+func globalCredentialExternalAdapter(store db.Store, encryption server.AccessKeyEncryptionService) pro_interfaces.GlobalCredentialExternalAdapter {
+	repo, _ := store.(db.GlobalSecretStorageRepository)
+	return server.NewGlobalCredentialProviderRouter(proServer.NewGlobalCredentialExternalAdapter(util.Config), repo, encryption)
 }

@@ -233,7 +233,7 @@ func runService() {
 		store,
 		pro_interfaces.GlobalCredentialRuntimeDependencies{
 			Cipher: util.Config, Capability: capabilityProvider,
-			External: proServer.NewGlobalCredentialExternalAdapter(util.Config),
+			External: globalCredentialExternalAdapter(store, encryptionService),
 		},
 	))
 	taskPool.SetAuditRecorder(auditService.Recorder())

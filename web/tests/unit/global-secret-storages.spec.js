@@ -1,0 +1,112 @@
+import { expect } from 'chai';
+import { mount } from '@vue/test-utils';
+import GlobalSecretStorages from '@/views/GlobalSecretStorages.vue';
+import GlobalCredentialReferenceFields, {
+  referencePayload, referenceValid,
+} from '@/components/enhanced/GlobalCredentialReferenceFields.vue';
+import mockAxios, { httpError } from './helpers/axiosMock';
+
+const Host = { extends: GlobalSecretStorages, methods: { validateForm: async () => true } };
+const flush = async () => new Promise((resolve) => { setTimeout(resolve, 0); });
+const global = { mocks: { $t: (key) => key }, stubs: { InfisicalPAMStorageFields: true } };
+
+describe('global secret storages', () => {
+  let http;
+  let wrapper;
+  let saveResponse;
+  const storage = {
+    id: 3,
+    revision: 2,
+    name: 'Company Infisical',
+    type: 'infisical',
+    params: { url: 'https://app.infisical.com', client_id: 'client', pam_routes: [] },
+    project_ids: [7],
+  };
+
+  beforeEach(() => {
+    saveResponse = (req) => req.data;
+    http = mockAxios();
+    http.respond((req) => {
+      if (req.method === 'put' || req.method === 'post') return saveResponse(req);
+      if (req.url === '/api/projects') return [{ id: 7, name: 'Deploy' }];
+      return [JSON.parse(JSON.stringify(storage))];
+    });
+  });
+  afterEach(() => { wrapper?.unmount(); http.restore(); });
+
+  it('lists storages with their granted projects', async () => {
+    wrapper = mount(GlobalSecretStorages, { global });
+    await flush();
+    expect(wrapper.vm.items).to.have.length(1);
+    expect(wrapper.vm.projectName(7)).to.equal('Deploy');
+  });
+
+  it('sends the revision and the secret source and keeps the dialog open on errors', async () => {
+    wrapper = mount(Host, { global });
+    await flush();
+    wrapper.vm.openEditor(wrapper.vm.items[0]);
+    wrapper.vm.secretSource = 'env';
+    wrapper.vm.form.secret = 'INFISICAL_CLIENT_SECRET';
+    saveResponse = () => { throw httpError(409, { error: 'changed by someone else' }); };
+
+    await wrapper.vm.save();
+
+    const put = http.requests.find((req) => req.method === 'put');
+    expect(put.url).to.equal('/api/global-secret-storages/3');
+    expect(put.data.revision).to.equal(2);
+    expect(put.data.source_storage_type).to.equal('env');
+    expect(put.data.secret).to.equal('INFISICAL_CLIENT_SECRET');
+    expect(wrapper.vm.editorOpen).to.equal(true);
+    expect(wrapper.vm.saveError).to.not.equal(null);
+  });
+
+  it('does not prefill the client secret when editing', async () => {
+    wrapper = mount(GlobalSecretStorages, { global });
+    await flush();
+    wrapper.vm.openEditor({ ...wrapper.vm.items[0], secret: 'should-not-appear' });
+    expect(wrapper.vm.form.secret).to.equal('');
+  });
+});
+
+describe('global credential reference fields', () => {
+  const providers = [
+    { provider: 'openbao', provider_id: 'primary', name: 'primary' },
+    { provider: 'infisical', provider_id: 'storage-3', name: 'Company Infisical' },
+  ];
+
+  it('switches to Infisical with the current version by default', async () => {
+    const wrapper = mount(GlobalCredentialReferenceFields, {
+      props: {
+        form: {
+          provider: 'vault', providerId: '', mount: '', environment: '', path: '', version: 1, field: '',
+        },
+        providers,
+      },
+    });
+    wrapper.vm.selectSource('infisical|storage-3');
+    const [[form]] = wrapper.emitted('update:form');
+    expect(form.provider).to.equal('infisical');
+    expect(form.providerId).to.equal('storage-3');
+    expect(form.version).to.equal(0);
+    wrapper.unmount();
+  });
+
+  it('validates and builds Infisical references', () => {
+    const form = {
+      provider: 'infisical', providerId: 'storage-3', mount: 'proj-1', environment: 'prod', path: '', version: 0, field: 'DB_PASSWORD',
+    };
+    expect(referenceValid(form)).to.equal(true);
+    expect(referenceValid({ ...form, environment: '' })).to.equal(false);
+    expect(referencePayload(form)).to.deep.equal({
+      provider: 'infisical', provider_id: 'storage-3', mount: 'proj-1', path: '', version: 0, field: 'DB_PASSWORD', environment: 'prod',
+    });
+  });
+
+  it('keeps the Vault rules for Vault references', () => {
+    const form = {
+      provider: 'vault', providerId: 'primary', mount: 'kv', environment: '', path: 'app', version: 0, field: 'token',
+    };
+    expect(referenceValid(form)).to.equal(false, 'Vault references pin a version');
+    expect(referencePayload({ ...form, version: 2 })).to.not.have.property('environment');
+  });
+});

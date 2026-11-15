@@ -56,6 +56,21 @@ type Options struct {
 	// ResetAfterCancel drops a cancellation connection with a TCP reset right
 	// after the handshake, as a gateway that is done with it may.
 	ResetAfterCancel bool
+	// Secrets serves GET /api/v4/secrets/{name}. Keys are
+	// "projectId|environment|secretPath|name".
+	Secrets map[string]FakeSecret
+}
+
+// FakeSecret is one secret the fake API returns.
+type FakeSecret struct {
+	Value   string
+	Version int
+	Hidden  bool
+}
+
+// SecretKey builds the Options.Secrets key of one secret.
+func SecretKey(projectID, environment, path, name string) string {
+	return projectID + "|" + environment + "|" + path + "|" + name
 }
 
 // Environment is a running fake PAM installation.
@@ -180,6 +195,10 @@ func (e *Environment) Commands() []string {
 }
 
 func (e *Environment) serveAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v4/secrets/") {
+		e.serveSecret(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method", http.StatusMethodNotAllowed)
 		return
@@ -462,4 +481,31 @@ func writeError(w http.ResponseWriter, status int, name string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": name, "message": "test", "statusCode": status})
+}
+
+func (e *Environment) serveSecret(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") != AccessToken {
+		writeError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	query := r.URL.Query()
+	name := strings.TrimPrefix(r.URL.Path, "/api/v4/secrets/")
+	secret, ok := e.Options.Secrets[SecretKey(query.Get("projectId"), query.Get("environment"), query.Get("secretPath"), name)]
+	if !ok {
+		writeError(w, http.StatusNotFound, "NotFound")
+		return
+	}
+	version := secret.Version
+	if requested := query.Get("version"); requested != "" && requested != fmt.Sprint(secret.Version) {
+		writeError(w, http.StatusNotFound, "NotFound")
+		return
+	}
+	value := secret.Value
+	if secret.Hidden {
+		value = "<hidden-by-infisical>"
+	}
+	writeJSON(w, map[string]any{"secret": map[string]any{
+		"secretKey": name, "secretValue": value, "version": version, "secretValueHidden": secret.Hidden,
+		"environment": query.Get("environment"), "secretPath": query.Get("secretPath"),
+	}})
 }

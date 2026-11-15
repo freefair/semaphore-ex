@@ -332,6 +332,7 @@ func Route(
 		delegatedProjectRolesSnapshot,
 		globalSystemPermission,
 	)
+	registerGlobalSecretStorages(authenticatedAPI, store, accessKeyService, auditFacade, delegatedProjectRolesSnapshot)
 
 	authenticatedAPI.Path("/users").Handler(
 		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(

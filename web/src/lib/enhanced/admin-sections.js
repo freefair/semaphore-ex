@@ -58,6 +58,13 @@ export const ADMIN_SECTIONS = [
     visible: (access) => access.credentials,
   },
   {
+    key: 'secret-storages',
+    path: '/admin/secret-storages',
+    icon: 'mdi-safe-square-outline',
+    label: 'adminSecretStorages',
+    visible: (access) => access.admin,
+  },
+  {
     key: 'workflows',
     path: '/admin/workflows',
     icon: 'mdi-sitemap',

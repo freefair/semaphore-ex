@@ -33,6 +33,7 @@ import Runners from '../views/Runners.vue';
 import Cluster from '../views/Cluster.vue';
 import AuditWebhooks from '../views/AuditWebhooks.vue';
 import GlobalCredentials from '../views/GlobalCredentials.vue';
+import GlobalSecretStorages from '../views/GlobalSecretStorages.vue';
 import Stats from '../views/project/Stats.vue';
 import Tokens from '../views/Tokens.vue';
 import AcceptInvite from '../views/AcceptInvite.vue';
@@ -246,6 +247,7 @@ const routes = [
       { path: 'audit-log', component: AuditLog },
       { path: 'audit-webhooks', component: AuditWebhooks },
       { path: 'credentials', component: GlobalCredentials },
+      { path: 'secret-storages', component: GlobalSecretStorages },
       { path: 'workflows', component: AdminWorkflows },
       { path: 'runners', component: Runners },
       { path: 'cluster', component: Cluster },

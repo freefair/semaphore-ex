@@ -132,19 +132,11 @@
             hint="Write-only; it cannot be displayed again."
             persistent-hint
           />
-          <template v-else>
-            <v-select v-model="createForm.provider" :items="providers" label="Provider" />
-            <v-text-field v-model="createForm.providerId" label="Provider ID" />
-            <v-text-field v-model="createForm.mount" label="Mount" />
-            <v-text-field v-model="createForm.path" label="Secret path" />
-            <v-text-field
-              v-model.number="createForm.version"
-              label="Secret version"
-              type="number"
-              min="1"
-            />
-            <v-text-field v-model="createForm.field" label="Field" />
-          </template>
+          <GlobalCredentialReferenceFields
+            v-else
+            v-model:form="createForm"
+            :providers="providers"
+          />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
@@ -281,19 +273,11 @@
             hint="Write-only; submitting creates a new immutable version."
             persistent-hint
           />
-          <template v-else>
-            <v-select v-model="rotateForm.provider" :items="providers" label="Provider" />
-            <v-text-field v-model="rotateForm.providerId" label="Provider ID" />
-            <v-text-field v-model="rotateForm.mount" label="Mount" />
-            <v-text-field v-model="rotateForm.path" label="Secret path" />
-            <v-text-field
-              v-model.number="rotateForm.version"
-              label="Secret version"
-              type="number"
-              min="1"
-            />
-            <v-text-field v-model="rotateForm.field" label="Field" />
-          </template>
+          <GlobalCredentialReferenceFields
+            v-else
+            v-model:form="rotateForm"
+            :providers="providers"
+          />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
@@ -452,6 +436,9 @@ import EventBus from '@/event-bus';
 import { getErrorMessage } from '@/lib/error';
 import { GLOBAL_PERMISSIONS } from '@/lib/constants';
 import { hasGlobalPermission } from '@/lib/role-permissions';
+import GlobalCredentialReferenceFields, {
+  referencePayload, referenceValid,
+} from '@/components/enhanced/GlobalCredentialReferenceFields.vue';
 
 function emptyMaterialForm() {
   return {
@@ -460,6 +447,7 @@ function emptyMaterialForm() {
     provider: 'vault',
     providerId: '',
     mount: '',
+    environment: '',
     path: '',
     version: 1,
     field: '',
@@ -471,6 +459,8 @@ function emptyCreateForm() {
 }
 
 export default {
+  components: { GlobalCredentialReferenceFields },
+
   inject: { insideAdmin: { default: false } },
 
   props: {
@@ -507,9 +497,9 @@ export default {
       usage: [],
       materialKinds: [
         { text: 'Encrypted local value', value: 'local_encrypted' },
-        { text: 'External Vault/OpenBao reference', value: 'external_reference' },
+        { text: 'External reference (Vault, OpenBao or Infisical)', value: 'external_reference' },
       ],
-      providers: ['vault', 'openbao'],
+      providers: [],
       headers: [
         { title: 'Name', key: 'display_name' },
         { title: 'Type', key: 'type' },
@@ -587,6 +577,7 @@ export default {
 
   created() {
     if (this.canRead) this.load();
+    if (this.canCreate || this.canRotate) this.loadProviders();
   },
 
   methods: {
@@ -605,21 +596,19 @@ export default {
     },
     materialValid(form) {
       if (form.materialKind === 'local_encrypted') return form.stringValue.length > 0;
-      return form.providerId !== '' && form.mount !== '' && form.path !== ''
-        && Number(form.version) > 0 && form.field !== '';
+      return referenceValid(form);
     },
     materialPayload(form) {
       if (form.materialKind === 'local_encrypted') return { string_value: form.stringValue };
-      return {
-        external_reference: {
-          provider: form.provider,
-          provider_id: form.providerId,
-          mount: form.mount,
-          path: form.path,
-          version: Number(form.version),
-          field: form.field,
-        },
-      };
+      return { external_reference: referencePayload(form) };
+    },
+    async loadProviders() {
+      try {
+        this.providers = (await axios.get('/api/global-credentials/providers')).data || [];
+      } catch (error) {
+        // Without metadata or rotate permission the list is not needed.
+        this.providers = [];
+      }
     },
     async createCredential() {
       if (this.createSaving) return;

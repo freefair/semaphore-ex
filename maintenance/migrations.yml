@@ -1252,3 +1252,10 @@ migrations:
   files:
     migrations_ex/v2.20.18-ex1.4.sql: 755e6dbc9fadad47971f7408aa0e10efc08bb48457fdb1d24525dfe2420cecc2
     migrations_ex/v2.20.18-ex1.4.err.sql: a1555044b5f216fa27a733a9cacc5d35170f1bb9659b87f9bf9dc481f13ff597
+- registered: true
+  id: 2.20.18-ex1.5
+  owner: fork
+  rationale: Store global secret storages (Infisical) and the projects that use their SSH routes.
+  files:
+    migrations_ex/v2.20.18-ex1.5.sql: 180068444ae833f71d44b5b8bfd421c7cbaac6eed65c3d3fc6ca92ae530b4911
+    migrations_ex/v2.20.18-ex1.5.err.sql: 68c9170f44afc0cb4284bd2f4eab318d665cdc32826ca7c481505f4754b43b21

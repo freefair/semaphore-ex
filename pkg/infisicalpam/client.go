@@ -333,8 +333,6 @@ type errorBody struct {
 }
 
 func (c *Client) post(ctx context.Context, operation, path, bearer string, body, result any) error {
-	endpoint := *c.base
-	endpoint.Path = c.base.Path + path
 	payload := []byte("{}")
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -344,11 +342,26 @@ func (c *Client) post(ctx context.Context, operation, path, bearer string, body,
 		payload = encoded
 	}
 	defer zero(payload)
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(payload))
+	return c.do(ctx, http.MethodPost, operation, path, nil, bearer, payload, result)
+}
+
+// do sends one request. The response body is read with a size bound and
+// zeroed after decoding; redirects are never followed.
+func (c *Client) do(ctx context.Context, method, operation, path string, query url.Values, bearer string, payload []byte, result any) error {
+	endpoint := *c.base
+	endpoint.Path = c.base.Path + path
+	endpoint.RawQuery = query.Encode()
+	var body io.Reader
+	if payload != nil {
+		body = bytes.NewReader(payload)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
 	if err != nil {
 		return newError(ErrorValidation, operation, err)
 	}
-	request.Header.Set("Content-Type", "application/json")
+	if payload != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", userAgent)
 	if bearer != "" {

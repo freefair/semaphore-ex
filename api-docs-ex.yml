@@ -1972,7 +1972,10 @@ definitions:
         type: boolean
   GlobalCredentialExternalReference:
     type: object
-    description: Value-free Vault or OpenBao reference. The server stores but does not resolve it in this API layer.
+    description: Value-free Vault, OpenBao or Infisical reference. The server stores but does not resolve it in this API
+      layer. For infisical, provider_id names a global secret storage (storage-<id>), mount is the Infisical project ID,
+      environment the environment slug, path the folder relative to the root ("" for the root), field the secret name
+      and version an optional pin (0 reads the current version).
     required:
     - provider
     - provider_id
@@ -1987,21 +1990,116 @@ definitions:
         enum:
         - vault
         - openbao
+        - infisical
       provider_id:
         type: string
         maxLength: 64
       mount:
         type: string
         maxLength: 128
+      environment:
+        type: string
+        maxLength: 64
+        description: Infisical environment slug; omitted for Vault and OpenBao.
       path:
         type: string
         maxLength: 512
       version:
         type: integer
-        minimum: 1
+        minimum: 0
+        description: At least 1 for Vault and OpenBao; 0 reads the current Infisical version.
       field:
         type: string
+        maxLength: 255
+  GlobalSecretStorage:
+    type: object
+    description: A connection configured once for the server. Only Infisical is supported. The client secret is write-only
+      and never returned.
+    required:
+    - id
+    - name
+    - type
+    - params
+    - revision
+    - project_ids
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
         maxLength: 128
+      type:
+        type: string
+        enum:
+        - infisical
+      params:
+        type: object
+        description: url, client_id, organization_slug, ca_certificate, session_duration and pam_routes, as for a project
+          Infisical storage.
+      revision:
+        type: integer
+      created:
+        type: string
+        format: date-time
+      updated:
+        type: string
+        format: date-time
+      project_ids:
+        type: array
+        description: Projects whose tasks use the storage's SSH routes.
+        items:
+          type: integer
+  GlobalSecretStorageInput:
+    type: object
+    required:
+    - name
+    - type
+    - params
+    properties:
+      name:
+        type: string
+        maxLength: 128
+      type:
+        type: string
+        enum:
+        - infisical
+      params:
+        type: object
+      revision:
+        type: integer
+        description: Required on update; the stored revision the change is based on.
+      project_ids:
+        type: array
+        items:
+          type: integer
+      secret:
+        type: string
+        format: password
+        description: Client secret, or the environment variable name or file path for those sources. Required on create;
+          omit on update to keep the stored secret.
+      source_storage_type:
+        type: string
+        enum:
+        - env
+        - file
+  GlobalCredentialProvider:
+    type: object
+    description: A value-free source a global credential can reference.
+    required:
+    - provider
+    - provider_id
+    - name
+    properties:
+      provider:
+        type: string
+        enum:
+        - vault
+        - openbao
+        - infisical
+      provider_id:
+        type: string
+      name:
+        type: string
   GlobalCredentialMaterialInput:
     type: object
     description: Write-only material. Supply exactly one of string_value or external_reference. No response returns
@@ -2565,6 +2663,104 @@ definitions:
       enabled: {type: boolean}
       revision: {type: integer}
 paths:
+  /global-secret-storages:
+    get:
+      tags:
+      - global-secret-storage
+      summary: List global secret storages
+      description: Administrators only. Client secrets are never returned.
+      responses:
+        200:
+          description: Storages
+          schema:
+            type: array
+            items:
+              $ref: ./api-docs.yml#/definitions/GlobalSecretStorage
+        403:
+          description: Not an administrator
+    post:
+      tags:
+      - global-secret-storage
+      summary: Create a global Infisical connection
+      parameters:
+      - name: Storage
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/GlobalSecretStorageInput
+      responses:
+        201:
+          description: Created storage
+          schema:
+            $ref: ./api-docs.yml#/definitions/GlobalSecretStorage
+        400:
+          description: Invalid connection settings
+        403:
+          description: Not an administrator
+  /global-secret-storages/{storage_id}:
+    parameters:
+    - name: storage_id
+      in: path
+      type: integer
+      required: true
+      x-example: 1
+    get:
+      tags:
+      - global-secret-storage
+      summary: Get a global secret storage
+      responses:
+        200:
+          description: Storage
+          schema:
+            $ref: ./api-docs.yml#/definitions/GlobalSecretStorage
+        404:
+          description: Not found
+    put:
+      tags:
+      - global-secret-storage
+      summary: Update a global secret storage
+      description: Fails with 409 when the stored revision differs from the supplied one.
+      parameters:
+      - name: Storage
+        in: body
+        required: true
+        schema:
+          $ref: ./api-docs.yml#/definitions/GlobalSecretStorageInput
+      responses:
+        200:
+          description: Updated storage
+          schema:
+            $ref: ./api-docs.yml#/definitions/GlobalSecretStorage
+        400:
+          description: Invalid connection settings
+        409:
+          description: Revision conflict
+    delete:
+      tags:
+      - global-secret-storage
+      summary: Delete a global secret storage and its client secret
+      description: Global credentials that reference the storage stop resolving; its SSH routes no longer apply.
+      responses:
+        204:
+          description: Deleted
+        404:
+          description: Not found
+  /global-credentials/providers:
+    get:
+      tags:
+      - global-credential
+      summary: List sources a global credential can reference
+      description: Requires global.credentials.metadata.manage or global.credentials.rotate. Configured Vault/OpenBao
+        providers and global secret storages, without addresses or credentials.
+      responses:
+        200:
+          description: Providers
+          schema:
+            type: array
+            items:
+              $ref: ./api-docs.yml#/definitions/GlobalCredentialProvider
+        403:
+          description: Missing global credential permission
   /project/{project_id}/roles:
     parameters:
     - $ref: ./api-docs.yml#/parameters/project_id

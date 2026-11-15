@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/services/server"
 )
 
@@ -9,7 +10,7 @@ import (
 // like host mapping credentials. The result lives on the in-memory task and
 // never persists.
 func (t *TaskRunner) refreshInfisicalPAM() error {
-	configs, err := server.LoadProjectInfisicalPAM(t.pool.store, t.pool.store, t.Template.ProjectID)
+	configs, err := server.LoadInfisicalPAMForProject(t.pool.store, t.pool.store, globalSecretStorages(t.pool.store), t.Template.ProjectID)
 	if err != nil {
 		return err
 	}
@@ -29,4 +30,13 @@ func (t *TaskRunner) refreshInfisicalPAM() error {
 // that dispatches the task to a remote runner.
 func (t *TaskRunner) RefreshInfisicalPAMForDispatch() error {
 	return t.refreshInfisicalPAM()
+}
+
+// globalSecretStorages returns the store's global storages, or nil when the
+// store does not persist them; their routes then do not apply.
+func globalSecretStorages(store db.Store) db.GlobalSecretStorageRepository {
+	if repo, ok := store.(db.GlobalSecretStorageRepository); ok {
+		return repo
+	}
+	return nil
 }

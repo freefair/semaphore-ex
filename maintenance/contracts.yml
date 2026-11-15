@@ -18,6 +18,11 @@ symbols:
     behavior_tests:
     - pro_interfaces/project_roles_test.go::TestProjectPermissionMaskFromIDsRejectsUnassignableIdentifiers
     - api/project_permission_ids_route_ex_test.go::TestProjectPermissionIDsRouterContracts
+  - name: db:AccessKeyGlobalSecretStorage
+    signature: db.AccessKeyOwner = "global_storage"
+    implementation: core
+    behavior_tests:
+    - db/sql/global_secret_storage_ex_test.go::TestGlobalSecretStorageRepository
   - name: db:AllProjectResourceMutationPermissions
     signature: db.ProjectUserPermission = 33626895538978816
     implementation: core
@@ -2516,9 +2521,7 @@ symbols:
       json:\"current_version\""; Created time.Time "db:\"created\" json:\"created\""; Updated time.Time "db:\"updated\" json:\"updated\""}
     implementation: core
   - name: db:GlobalCredentialExternalReference
-    signature: >-
-      struct{Provider string "json:\"provider\""; ProviderID string "json:\"provider_id\""; Mount string "json:\"mount\""; Path string
-      "json:\"path\""; Version int "json:\"version\""; Field string "json:\"field\""}
+    signature: struct{Provider string "json:\"provider\""; ProviderID string "json:\"provider_id\""; Mount string "json:\"mount\""; Environment string "json:\"environment,omitempty\""; Path string "json:\"path\""; Version int "json:\"version\""; Field string "json:\"field\""}
     implementation: core
   - name: db:GlobalCredentialGrant
     signature: >-
@@ -2576,6 +2579,12 @@ symbols:
   - name: db:GlobalCredentialMaterialLocalEncrypted
     signature: db.GlobalCredentialMaterialKind = "local_encrypted"
     implementation: core
+  - name: db:GlobalCredentialProviderInfisical
+    signature: untyped string = "infisical"
+    implementation: core
+    behavior_tests:
+    - db/sql/global_secret_storage_ex_test.go::TestInfisicalGlobalCredentialReferenceValidation
+    - services/server/global_secret_storage_ex_test.go::TestGlobalInfisicalSecretSourceResolvesGlobalCredentials
   - name: db:GlobalCredentialRepository
     signature: >-
       interface{CreateGlobalCredential(db.GlobalCredential, db.GlobalCredentialVersion) (db.GlobalCredential, db.GlobalCredentialVersion,
@@ -2646,6 +2655,23 @@ symbols:
   - name: db:GlobalRunnerProps
     signature: db.ObjectProps
     implementation: core
+  - name: db:GlobalSecretStorage
+    signature: struct{ID int "db:\"id\" json:\"id\""; Name string "db:\"name\" json:\"name\""; Type db.SecretStorageType "db:\"type\" json:\"type\""; Params db.MapStringAnyField "db:\"params\" json:\"params\""; CredentialKeyID *int "db:\"credential_key_id\" json:\"-\""; Revision int "db:\"revision\" json:\"revision\""; Created time.Time "db:\"created\" json:\"created\""; Updated time.Time "db:\"updated\" json:\"updated\""; ProjectIDs []int "db:\"-\" json:\"project_ids\""; Secret string "db:\"-\" json:\"secret,omitempty\""; SourceStorageType *db.AccessKeySourceStorageType "db:\"-\" json:\"source_storage_type,omitempty\""}
+    implementation: core
+    behavior_tests:
+    - db/sql/global_secret_storage_ex_test.go::TestGlobalSecretStorageRepository
+    - services/server/global_secret_storage_ex_test.go::TestGlobalSecretStorageServiceKeepsTheClientSecretOutOfResponses
+  - name: db:GlobalSecretStorageProviderID
+    signature: func(storageID int) string
+    implementation: core
+    behavior_tests:
+    - db/sql/global_secret_storage_ex_test.go::TestGlobalSecretStorageProviderID
+  - name: db:GlobalSecretStorageRepository
+    signature: interface{CreateGlobalSecretStorage(storage db.GlobalSecretStorage) (db.GlobalSecretStorage, error); DeleteGlobalSecretStorage(storageID int) error; DeleteGlobalSecretStorageKey(keyID int) error; GetGlobalSecretStorage(storageID int) (db.GlobalSecretStorage, error); GetGlobalSecretStorageKey(keyID int) (db.AccessKey, error); GetGlobalSecretStorages() ([]db.GlobalSecretStorage, error); GetGlobalSecretStoragesForProject(projectID int) ([]db.GlobalSecretStorage, error); UpdateGlobalSecretStorage(storage db.GlobalSecretStorage, expectedRevision int) (db.GlobalSecretStorage, error)}
+    implementation: core
+    behavior_tests:
+    - db/sql/global_secret_storage_ex_test.go::TestGlobalSecretStorageRepository
+    - services/server/global_secret_storage_ex_test.go::TestLoadInfisicalPAMForProjectAddsGrantedGlobalStorages
   - name: db:HashWorkflowTriggerCredential
     signature: func(credential string) string
     implementation: core
@@ -3957,6 +3983,11 @@ symbols:
   - name: db:OwnershipFilter
     signature: struct{WithoutOwnerOnly bool; TemplateID *int; EnvironmentID *int}
     implementation: core
+  - name: db:ParseGlobalSecretStorageProviderID
+    signature: func(providerID string) (int, bool)
+    implementation: core
+    behavior_tests:
+    - db/sql/global_secret_storage_ex_test.go::TestGlobalSecretStorageProviderID
   - name: db:PolicyGuardrailDecision
     signature: string
     implementation: core
@@ -5094,7 +5125,7 @@ symbols:
     - db/sql/task_groups_ex_test.go::TestResolveTaskGroupsRequiresExplicitConsumerProjectGrant
     - db/sql/template_task_groups_ex_test.go::TestTemplateTaskGroupsRejectConflictingRunnerTags
   - name: db:TaskInfisicalPAM
-    signature: struct{StorageID int "json:\"storage_id\""; SiteURL string "json:\"site_url\""; ClientID string "json:\"client_id\""; OrganizationSlug string "json:\"organization_slug,omitempty\""; CACertificate string "json:\"ca_certificate,omitempty\""; SessionDuration string "json:\"session_duration\""; Routes []db.InfisicalPAMRoute "json:\"routes\""; CredentialKeyID int "json:\"credential_key_id\""; Credential db.AccessKey "json:\"-\""}
+    signature: struct{StorageID int "json:\"storage_id\""; SiteURL string "json:\"site_url\""; ClientID string "json:\"client_id\""; OrganizationSlug string "json:\"organization_slug,omitempty\""; CACertificate string "json:\"ca_certificate,omitempty\""; SessionDuration string "json:\"session_duration\""; Routes []db.InfisicalPAMRoute "json:\"routes\""; CredentialKeyID int "json:\"credential_key_id\""; Credential db.AccessKey "json:\"-\""; Global bool "json:\"global,omitempty\""; StorageName string "json:\"storage_name,omitempty\""}
     implementation: core
     behavior_tests:
     - services/runners/executor_factory_infisical_pam_ex_test.go::TestJobDataInfisicalPAMCarriesNoSecret

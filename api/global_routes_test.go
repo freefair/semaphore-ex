@@ -89,6 +89,7 @@ func additionalGlobalPermissionCoverage() []string {
 		"GET /api/audit-log/events/export",
 		"POST /api/notification-governance/routing/preview",
 		"GET /api/global-credentials/grant-projects",
+		"GET /api/global-credentials/providers",
 		"POST /api/notification-governance/deliveries/1/retry",
 		"POST /api/policy-guardrails/publish",
 		"GET /api/notification-governance/destinations/1",

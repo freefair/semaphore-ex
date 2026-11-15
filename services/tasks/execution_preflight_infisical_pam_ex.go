@@ -21,7 +21,7 @@ func (p *TaskPool) appendInfisicalPAMPreflight(
 	state *[]any,
 	projectID int,
 ) ([]db.TaskInfisicalPAM, error) {
-	configs, err := server.LoadProjectInfisicalPAM(p.store, p.store, projectID)
+	configs, err := server.LoadInfisicalPAMForProject(p.store, p.store, globalSecretStorages(p.store), projectID)
 	if err != nil {
 		var validation *common_errors.ValidationError
 		if !errors.As(err, &validation) {
@@ -44,6 +44,9 @@ func (p *TaskPool) appendInfisicalPAMPreflight(
 	}
 	for _, config := range configs {
 		name := names[config.StorageID]
+		if config.Global {
+			name = "Global Infisical storage: " + config.StorageName
+		}
 		if name == "" {
 			name = "Infisical storage #" + strconv.Itoa(config.StorageID)
 		}
@@ -51,8 +54,14 @@ func (p *TaskPool) appendInfisicalPAMPreflight(
 			Kind: pro_interfaces.ExecutionReferenceSecretStorage, ID: config.StorageID,
 			Name: name, BindingTarget: infisicalPAMRoutesTarget(config.Routes), Visible: true,
 		})
-		*state = append(*state, config.StorageID, config.SiteURL, config.ClientID, config.OrganizationSlug,
+		*state = append(*state, config.Global, config.StorageID, config.SiteURL, config.ClientID, config.OrganizationSlug,
 			config.CACertificate, config.SessionDuration, config.Routes)
+		if config.Global {
+			// The key was loaded with the configuration; its encrypted state
+			// binds a rotated client secret into the review.
+			*state = append(*state, executionPreflightCredentialState(config.Credential))
+			continue
+		}
 		credentialID := config.CredentialKeyID
 		if err = p.appendExecutionPreflightCredentialState(state, projectID, &credentialID); err != nil {
 			return nil, err

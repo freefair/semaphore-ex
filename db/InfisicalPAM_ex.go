@@ -26,4 +26,8 @@ type TaskInfisicalPAM struct {
 	Routes           []InfisicalPAMRoute `json:"routes"`
 	CredentialKeyID  int                 `json:"credential_key_id"`
 	Credential       AccessKey           `json:"-"`
+	// Global marks a global secret storage granted to the project; StorageID
+	// then is the global storage's ID.
+	Global      bool   `json:"global,omitempty"`
+	StorageName string `json:"storage_name,omitempty"`
 }

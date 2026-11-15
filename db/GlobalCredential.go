@@ -69,21 +69,35 @@ var (
 // GlobalCredentialExternalReference is a value-free identity held outside a
 // project SecretStorage. Slice 060 persists but never resolves this value.
 // Provider-specific resolution is deliberately deferred to Slice 061.
+//
+// For the infisical provider, ProviderID names a global secret storage
+// (GlobalSecretStorageProviderID), Mount is the Infisical project ID,
+// Environment the environment slug, Path the folder relative to the root
+// ("" for the root), Field the secret name and Version an optional pin
+// (0 reads the current version).
 type GlobalCredentialExternalReference struct {
-	Provider   string `json:"provider"`
-	ProviderID string `json:"provider_id"`
-	Mount      string `json:"mount"`
-	Path       string `json:"path"`
-	Version    int    `json:"version"`
-	Field      string `json:"field"`
+	Provider    string `json:"provider"`
+	ProviderID  string `json:"provider_id"`
+	Mount       string `json:"mount"`
+	Environment string `json:"environment,omitempty"`
+	Path        string `json:"path"`
+	Version     int    `json:"version"`
+	Field       string `json:"field"`
 }
 
+// GlobalCredentialProviderInfisical resolves references through a global
+// Infisical secret storage.
+const GlobalCredentialProviderInfisical = "infisical"
+
 func (r GlobalCredentialExternalReference) IsZero() bool {
-	return r.Provider == "" && r.ProviderID == "" && r.Mount == "" && r.Path == "" && r.Version == 0 && r.Field == ""
+	return r.Provider == "" && r.ProviderID == "" && r.Mount == "" && r.Environment == "" && r.Path == "" && r.Version == 0 && r.Field == ""
 }
 
 func (r GlobalCredentialExternalReference) Validate() error {
-	if (r.Provider != "vault" && r.Provider != "openbao") ||
+	if r.Provider == GlobalCredentialProviderInfisical {
+		return r.validateInfisical()
+	}
+	if (r.Provider != "vault" && r.Provider != "openbao") || r.Environment != "" ||
 		!globalCredentialIdentifierPattern.MatchString(r.ProviderID) ||
 		!globalCredentialMountPattern.MatchString(r.Mount) ||
 		!globalCredentialFieldPattern.MatchString(r.Field) || r.Version <= 0 ||
@@ -91,6 +105,22 @@ func (r GlobalCredentialExternalReference) Validate() error {
 		return errors.New("global credential external reference is invalid")
 	}
 	return nil
+}
+
+func (r GlobalCredentialExternalReference) validateInfisical() error {
+	if _, ok := ParseGlobalSecretStorageProviderID(r.ProviderID); !ok ||
+		!globalCredentialMountPattern.MatchString(r.Mount) ||
+		!regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`).MatchString(r.Environment) ||
+		!regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,254}$`).MatchString(r.Field) ||
+		r.Version < 0 || (r.Path != "" && !validGlobalCredentialReferencePath(r.Path)) {
+		return errors.New("global credential external reference is invalid")
+	}
+	return nil
+}
+
+// InfisicalSecretPath is the absolute Infisical folder of the reference.
+func (r GlobalCredentialExternalReference) InfisicalSecretPath() string {
+	return "/" + r.Path
 }
 
 // Scan implements sql.Scanner for the one value-free structured database

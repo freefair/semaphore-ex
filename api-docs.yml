@@ -2514,6 +2514,12 @@ definitions:
     $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialMaterialInput"
   GlobalCredentialCreateRequest:
     $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialCreateRequest"
+  GlobalSecretStorage:
+    $ref: './api-docs-ex.yml#/definitions/GlobalSecretStorage'
+  GlobalSecretStorageInput:
+    $ref: './api-docs-ex.yml#/definitions/GlobalSecretStorageInput'
+  GlobalCredentialProvider:
+    $ref: './api-docs-ex.yml#/definitions/GlobalCredentialProvider'
   GlobalCredentialSummary:
     $ref: "./api-docs-ex.yml#/definitions/GlobalCredentialSummary"
   GlobalCredentialDetail:
@@ -5539,6 +5545,12 @@ paths:
         204:
           description: Runner cache cleared
 
+  /global-secret-storages:
+    $ref: "./api-docs-ex.yml#/paths/~1global-secret-storages"
+  /global-secret-storages/{storage_id}:
+    $ref: "./api-docs-ex.yml#/paths/~1global-secret-storages~1{storage_id}"
+  /global-credentials/providers:
+    $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1providers"
   /global-credentials:
     $ref: "./api-docs-ex.yml#/paths/~1global-credentials"
   /global-credentials/grant-projects:
