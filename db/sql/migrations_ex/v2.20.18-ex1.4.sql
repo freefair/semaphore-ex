@@ -11,12 +11,14 @@ create index `project__environment_credential__credential`
 create table `project__schedule_credential_principal` (
  `schedule_id` int not null primary key, `user_id` int null,
  `pending_token` varchar(64) null, `pending_since` datetime null,
+ `config_fingerprint` varchar(64) null,
  foreign key (`schedule_id`) references `project__schedule`(`id`) on delete cascade,
  foreign key (`user_id`) references `user`(`id`) on delete cascade
 );
 create table `project__integration_credential_principal` (
  `integration_id` int not null primary key, `user_id` int null,
  `pending_token` varchar(64) null, `pending_since` datetime null,
+ `config_fingerprint` varchar(64) null,
  foreign key (`integration_id`) references `project__integration`(`id`) on delete cascade,
  foreign key (`user_id`) references `user`(`id`) on delete cascade
 );

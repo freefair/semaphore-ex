@@ -3,6 +3,7 @@ package sql
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
@@ -49,7 +50,11 @@ func (d *SqlDb) setCredentialPrincipal(kind db.CredentialPrincipalKind, triggerI
 	if err != nil || exists {
 		return err
 	}
-	if _, err = d.exec("insert into "+table+" ("+column+", user_id) values (?, ?)", triggerID, userID); err != nil {
+	fingerprint, err := d.credentialPrincipalFingerprint(kind, triggerID)
+	if err != nil {
+		return err
+	}
+	if _, err = d.exec("insert into "+table+" ("+column+", user_id, config_fingerprint) values (?, ?, ?)", triggerID, userID, fingerprint); err != nil {
 		if exists, existsErr := d.credentialPrincipalRowExists(table, column, triggerID); existsErr == nil && exists {
 			// A concurrent change inserted its claim first.
 			return nil
@@ -128,9 +133,22 @@ func (d *SqlDb) FinishCredentialPrincipalChange(kind db.CredentialPrincipalKind,
 	if err != nil || token == "" || userID <= 0 {
 		return db.ErrInvalidOperation
 	}
+	// The fingerprint is taken after the change, so the principal answers
+	// for exactly the configuration this change left behind.
+	fingerprint, err := d.credentialPrincipalFingerprint(kind, triggerID)
+	if errors.Is(err, db.ErrNotFound) {
+		// The change deleted the trigger; its row went with it.
+		return nil
+	}
+	if err != nil {
+		if invalidateErr := d.invalidateCredentialPrincipal(table, column, triggerID); invalidateErr != nil {
+			return invalidateErr
+		}
+		return err
+	}
 	result, err := d.exec(
-		"update "+table+" set user_id=?, pending_token=NULL, pending_since=NULL where "+column+"=? and pending_token=?",
-		userID, triggerID, token)
+		"update "+table+" set user_id=?, config_fingerprint=?, pending_token=NULL, pending_since=NULL where "+column+"=? and pending_token=?",
+		userID, fingerprint, triggerID, token)
 	if err != nil {
 		return err
 	}
@@ -169,7 +187,7 @@ func (d *SqlDb) invalidateCredentialPrincipal(table string, column string, trigg
 	if _, err := rand.Read(raw); err != nil {
 		return err
 	}
-	_, err := d.exec("update "+table+" set user_id=NULL, pending_token=?, pending_since=? where "+column+"=?",
+	_, err := d.exec("update "+table+" set user_id=NULL, config_fingerprint=NULL, pending_token=?, pending_since=? where "+column+"=?",
 		hex.EncodeToString(raw), tz.Now(), triggerID)
 	return err
 }
@@ -190,12 +208,21 @@ func (d *SqlDb) GetTaskCredentialPrincipal(task db.Task) (int, bool, error) {
 		return 0, false, err
 	}
 	var rows []struct {
-		UserID *int `db:"user_id"`
+		UserID      *int    `db:"user_id"`
+		Fingerprint *string `db:"config_fingerprint"`
 	}
-	if _, err = d.selectAll(&rows, "select user_id from "+table+" where "+column+"=? and pending_token is null", triggerID); err != nil {
+	if _, err = d.selectAll(&rows, "select user_id, config_fingerprint from "+table+" where "+column+"=? and pending_token is null", triggerID); err != nil {
 		return 0, false, err
 	}
-	if len(rows) != 1 || rows[0].UserID == nil {
+	if len(rows) != 1 || rows[0].UserID == nil || rows[0].Fingerprint == nil {
+		return 0, false, nil
+	}
+	current, err := d.credentialPrincipalFingerprint(kind, triggerID)
+	if err != nil {
+		return 0, false, err
+	}
+	if current != *rows[0].Fingerprint {
+		// The trigger was written after its principal's change.
 		return 0, false, nil
 	}
 	return *rows[0].UserID, true, nil

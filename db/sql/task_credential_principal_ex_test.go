@@ -40,7 +40,11 @@ func TestTaskCredentialPrincipals(t *testing.T) {
 		if _, err = store.exec("delete from "+table+" where "+column+"=?", triggerID); err != nil {
 			return err
 		}
-		_, err = store.exec("insert into "+table+" ("+column+", user_id) values (?, ?)", triggerID, userID)
+		fingerprint, err := store.credentialPrincipalFingerprint(kind, triggerID)
+		if err != nil {
+			return err
+		}
+		_, err = store.exec("insert into "+table+" ("+column+", user_id, config_fingerprint) values (?, ?, ?)", triggerID, userID, fingerprint)
 		return err
 	}
 	change := func(kind db.CredentialPrincipalKind, triggerID int, userID int) {
@@ -219,6 +223,73 @@ func TestTaskCredentialPrincipals(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, ok)
 		require.NoError(t, store.FinishCredentialPrincipalChange(db.CredentialPrincipalSchedule, fresh.ID, token, first.ID))
+	})
+
+	t.Run("a later write ends the principal's responsibility", func(t *testing.T) {
+		require.NoError(t, seed(db.CredentialPrincipalSchedule, schedule.ID, first.ID))
+		task := db.Task{ProjectID: projectID, ScheduleID: &schedule.ID}
+		_, found, err := store.GetTaskCredentialPrincipal(task)
+		require.NoError(t, err)
+		require.True(t, found)
+
+		current, err := store.GetSchedule(projectID, schedule.ID)
+		require.NoError(t, err)
+		current.CronFormat = "*/5 * * * *"
+		require.NoError(t, store.UpdateSchedule(current))
+		_, found, err = store.GetTaskCredentialPrincipal(task)
+		require.NoError(t, err)
+		assert.False(t, found, "a write outside the principal's change must not run under it")
+	})
+
+	t.Run("a change that writes the trigger answers for what it wrote", func(t *testing.T) {
+		require.NoError(t, seed(db.CredentialPrincipalSchedule, schedule.ID, first.ID))
+		token, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
+		require.NoError(t, err)
+		require.True(t, ok)
+		current, err := store.GetSchedule(projectID, schedule.ID)
+		require.NoError(t, err)
+		current.CronFormat = "0 3 * * *"
+		require.NoError(t, store.UpdateSchedule(current))
+		require.NoError(t, store.FinishCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID, token, first.ID))
+		userID, found, err := store.GetTaskCredentialPrincipal(db.Task{ProjectID: projectID, ScheduleID: &schedule.ID})
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, first.ID, userID)
+	})
+
+	t.Run("operational changes keep the principal", func(t *testing.T) {
+		require.NoError(t, seed(db.CredentialPrincipalSchedule, schedule.ID, first.ID))
+		task := db.Task{ProjectID: projectID, ScheduleID: &schedule.ID}
+		require.NoError(t, store.SetScheduleCommitHash(projectID, schedule.ID, "0123abcd"))
+		require.NoError(t, store.SetScheduleActive(projectID, schedule.ID, false))
+		require.NoError(t, store.SetScheduleActive(projectID, schedule.ID, true))
+		userID, found, err := store.GetTaskCredentialPrincipal(task)
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, first.ID, userID)
+	})
+
+	t.Run("an integration matcher written later ends the principal's responsibility", func(t *testing.T) {
+		require.NoError(t, seed(db.CredentialPrincipalIntegration, integration.ID, first.ID))
+		task := db.Task{ProjectID: projectID, IntegrationID: &integration.ID}
+		_, found, err := store.GetTaskCredentialPrincipal(task)
+		require.NoError(t, err)
+		require.True(t, found)
+		_, err = store.CreateIntegrationMatcher(projectID, db.IntegrationMatcher{IntegrationID: integration.ID, Name: "branch", MatchType: db.IntegrationMatchBody, Method: db.IntegrationMatchMethodEquals, BodyDataType: db.IntegrationBodyDataJSON, Key: "ref", Value: "main"})
+		require.NoError(t, err)
+		_, found, err = store.GetTaskCredentialPrincipal(task)
+		require.NoError(t, err)
+		assert.False(t, found)
+	})
+
+	t.Run("finishing on a deleted trigger is no error", func(t *testing.T) {
+		gone, err := store.CreateSchedule(db.Schedule{ProjectID: projectID, TemplateID: template.ID, Name: "gone", CronFormat: "* * * * *", Type: db.ScheduleTypeCron, TaskParams: &db.TaskParams{}})
+		require.NoError(t, err)
+		token, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, gone.ID)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.NoError(t, store.DeleteSchedule(projectID, gone.ID))
+		assert.NoError(t, store.FinishCredentialPrincipalChange(db.CredentialPrincipalSchedule, gone.ID, token, first.ID))
 	})
 
 	t.Run("invalid IDs are rejected", func(t *testing.T) {
