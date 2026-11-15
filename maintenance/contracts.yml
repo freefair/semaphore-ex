@@ -6,6 +6,11 @@ symbols:
   - name: pro_interfaces:EffectiveProjectPermissions
     signature: struct{Permissions []pro_interfaces.PermissionID "json:\"permissions\""; Sources []pro_interfaces.EffectiveProjectPermissionSource "json:\"sources\""}
     implementation: core
+  - name: pro_interfaces:GlobalCredentialPrincipalMemo
+    signature: struct{Resolved bool; UserID int}
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/server/global_credential_runtime_test.go::TestGlobalCredentialRuntimeAuthorizesActorlessTasksThroughTheTriggerPrincipal
   - name: pro_interfaces:ProjectPermissionIDs
     signature: func(permissions db.ProjectUserPermission) []pro_interfaces.PermissionID
     implementation: core
@@ -9183,10 +9188,7 @@ symbols:
     signature: pro_interfaces.GlobalCredentialResolutionReason = "task_permission_denied"
     implementation: core
   - name: pro_interfaces:GlobalCredentialResolutionRequest
-    signature: >-
-      struct{TaskID int "json:\"task_id\""; ProjectID int "json:\"project_id\""; TemplateID int "json:\"template_id\""; ActorID int
-      "json:\"actor_id\""; RunnerID *int "json:\"runner_id,omitempty\""; DispatchGeneration int "json:\"dispatch_generation,omitempty\"";
-      Binding pro_interfaces.GlobalCredentialTaskBinding "json:\"binding\""}
+    signature: struct{TaskID int "json:\"task_id\""; ProjectID int "json:\"project_id\""; TemplateID int "json:\"template_id\""; ActorID int "json:\"actor_id\""; RunnerID *int "json:\"runner_id,omitempty\""; DispatchGeneration int "json:\"dispatch_generation,omitempty\""; Binding pro_interfaces.GlobalCredentialTaskBinding "json:\"binding\""; Principal *pro_interfaces.GlobalCredentialPrincipalMemo "json:\"-\""}
     implementation: core
   - name: pro_interfaces:GlobalCredentialResolutionSnapshot
     signature: >-

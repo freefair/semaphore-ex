@@ -192,6 +192,7 @@ func runtimeGlobalCredentialFixture(t *testing.T, kind db.GlobalCredentialMateri
 type principalStore struct {
 	*storepkg.SqlDb
 	principal int
+	lookups   *int
 }
 
 func (s principalStore) GetTask(projectID int, taskID int) (db.Task, error) {
@@ -214,6 +215,9 @@ func (s principalStore) AbortCredentialPrincipalChange(db.CredentialPrincipalKin
 	return nil
 }
 func (s principalStore) GetTaskCredentialPrincipal(db.Task) (int, bool, error) {
+	if s.lookups != nil {
+		*s.lookups++
+	}
 	return s.principal, s.principal > 0, nil
 }
 
@@ -234,6 +238,23 @@ func TestGlobalCredentialRuntimeAuthorizesActorlessTasksThroughTheTriggerPrincip
 		}, injector)
 		return snapshot, injector, err
 	}
+
+	t.Run("one dispatch looks the principal up once", func(t *testing.T) {
+		lookups := 0
+		resolver := NewGlobalCredentialRuntimeResolverWithDependencies(principalStore{SqlDb: store, principal: admin.ID, lookups: &lookups},
+			runtimeGlobalCredentialCipher{value: []byte("schedule-value")}, runtimeCapabilityProvider{active: true}, nil)
+		memo := &pro_interfaces.GlobalCredentialPrincipalMemo{}
+		for _, target := range []string{"TF_VAR_first", "TF_VAR_second"} {
+			injector := &runtimeGlobalCredentialInjector{}
+			_, err := resolver.ResolveAndInject(context.Background(), pro_interfaces.GlobalCredentialResolutionRequest{
+				TaskID: 48, ProjectID: project.ID, TemplateID: 99, Principal: memo,
+				Binding: pro_interfaces.GlobalCredentialTaskBinding{CredentialID: credential.ID, Target: target, Env: true},
+			}, injector)
+			require.NoError(t, err, target)
+			assert.NotEmpty(t, injector.delivered, target)
+		}
+		assert.Equal(t, 1, lookups)
+	})
 
 	t.Run("a principal allowed to consume receives the value", func(t *testing.T) {
 		snapshot, injector, err := resolve(admin.ID)

@@ -155,6 +155,16 @@ func (s *globalCredentialRuntimeResolver) authorize(request pro_interfaces.Globa
 // unattendedPrincipal returns the user who answers for an actorless task's
 // trigger, or 0 when the task has none or the store cannot tell.
 func (s *globalCredentialRuntimeResolver) unattendedPrincipal(request pro_interfaces.GlobalCredentialResolutionRequest) int {
+	if memo := request.Principal; memo != nil {
+		if !memo.Resolved {
+			memo.UserID, memo.Resolved = s.lookupUnattendedPrincipal(request), true
+		}
+		return memo.UserID
+	}
+	return s.lookupUnattendedPrincipal(request)
+}
+
+func (s *globalCredentialRuntimeResolver) lookupUnattendedPrincipal(request pro_interfaces.GlobalCredentialResolutionRequest) int {
 	principals, ok := s.store.(db.TaskCredentialPrincipalRepository)
 	if !ok {
 		return 0

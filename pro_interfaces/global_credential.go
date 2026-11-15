@@ -99,6 +99,16 @@ type GlobalCredentialResolutionRequest struct {
 	RunnerID           *int                        `json:"runner_id,omitempty"`
 	DispatchGeneration int                         `json:"dispatch_generation,omitempty"`
 	Binding            GlobalCredentialTaskBinding `json:"binding"`
+	// Principal carries the unattended principal across the bindings of one
+	// dispatch, so it is looked up once per task start. Nil looks it up for
+	// every binding.
+	Principal *GlobalCredentialPrincipalMemo `json:"-"`
+}
+
+// GlobalCredentialPrincipalMemo holds the outcome of one principal lookup.
+type GlobalCredentialPrincipalMemo struct {
+	Resolved bool
+	UserID   int
 }
 
 func (r GlobalCredentialResolutionRequest) Validate() error {

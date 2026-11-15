@@ -257,16 +257,58 @@ func TestTaskCredentialPrincipals(t *testing.T) {
 		assert.Equal(t, first.ID, userID)
 	})
 
-	t.Run("operational changes keep the principal", func(t *testing.T) {
+	t.Run("the scheduler's commit tracking keeps the principal", func(t *testing.T) {
 		require.NoError(t, seed(db.CredentialPrincipalSchedule, schedule.ID, first.ID))
 		task := db.Task{ProjectID: projectID, ScheduleID: &schedule.ID}
 		require.NoError(t, store.SetScheduleCommitHash(projectID, schedule.ID, "0123abcd"))
-		require.NoError(t, store.SetScheduleActive(projectID, schedule.ID, false))
-		require.NoError(t, store.SetScheduleActive(projectID, schedule.ID, true))
 		userID, found, err := store.GetTaskCredentialPrincipal(task)
 		require.NoError(t, err)
 		assert.True(t, found)
 		assert.Equal(t, first.ID, userID)
+	})
+
+	t.Run("activation outside the principal's change ends its responsibility", func(t *testing.T) {
+		require.NoError(t, store.SetScheduleActive(projectID, schedule.ID, false))
+		require.NoError(t, seed(db.CredentialPrincipalSchedule, schedule.ID, first.ID))
+		require.NoError(t, store.SetScheduleActive(projectID, schedule.ID, true))
+		_, found, err := store.GetTaskCredentialPrincipal(db.Task{ProjectID: projectID, ScheduleID: &schedule.ID})
+		require.NoError(t, err)
+		assert.False(t, found)
+	})
+
+	t.Run("routing changes outside the principal's change end its responsibility", func(t *testing.T) {
+		task := db.Task{ProjectID: projectID, IntegrationID: &integration.ID}
+		writes := []struct {
+			name  string
+			write func() error
+		}{
+			{"searchable", func() error {
+				current, err := store.GetIntegration(projectID, integration.ID)
+				if err != nil {
+					return err
+				}
+				current.Searchable = !current.Searchable
+				return store.UpdateIntegration(current)
+			}},
+			{"integration alias", func() error {
+				_, err := store.CreateIntegrationAlias(db.IntegrationAlias{Alias: "qa-own-alias", ProjectID: projectID, IntegrationID: &integration.ID})
+				return err
+			}},
+			{"project alias", func() error {
+				_, err := store.CreateIntegrationAlias(db.IntegrationAlias{Alias: "qa-project-alias", ProjectID: projectID})
+				return err
+			}},
+		}
+		for _, tc := range writes {
+			require.NoError(t, seed(db.CredentialPrincipalIntegration, integration.ID, first.ID), tc.name)
+			_, found, err := store.GetTaskCredentialPrincipal(task)
+			require.NoError(t, err, tc.name)
+			require.True(t, found, tc.name)
+			require.NoError(t, tc.write(), tc.name)
+			_, found, err = store.GetTaskCredentialPrincipal(task)
+			require.NoError(t, err, tc.name)
+			assert.False(t, found, tc.name)
+		}
 	})
 
 	t.Run("an integration matcher written later ends the principal's responsibility", func(t *testing.T) {

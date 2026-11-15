@@ -16,14 +16,16 @@ import (
 // it. Any later write, from any node and at any time, ends the principal's
 // responsibility without depending on claim timing.
 //
-// The fingerprint covers what decides which task runs and what it receives.
-// Fields the system changes on its own (the last seen commit, activation by
-// the scheduler) and purely descriptive ones (names) are left out, so normal
-// operation does not invalidate a principal.
+// The fingerprint covers what decides whether, when and which task runs
+// and what it receives, including activation and webhook routing. The last
+// seen commit, which the scheduler updates on its own, and names are left
+// out. Deactivation by the scheduler changes the fingerprint, but an inactive
+// schedule does not run, and reactivating it is a change of its own.
 
 type scheduleCredentialFingerprint struct {
 	TemplateID     int            `json:"template_id"`
 	CronFormat     string         `json:"cron_format"`
+	Active         bool           `json:"active"`
 	Timezone       *string        `json:"timezone"`
 	Type           string         `json:"type"`
 	DeleteAfterRun bool           `json:"delete_after_run"`
@@ -39,6 +41,9 @@ type integrationCredentialFingerprint struct {
 	AuthMethod     db.IntegrationAuthMethod     `json:"auth_method"`
 	AuthSecretID   *int                         `json:"auth_secret_id"`
 	AuthHeader     string                       `json:"auth_header"`
+	Searchable     bool                         `json:"searchable"`
+	Aliases        []string                     `json:"aliases"`
+	ProjectAliases []string                     `json:"project_aliases"`
 	TaskParams     *db.TaskParams               `json:"task_params"`
 	Matchers       []db.IntegrationMatcher      `json:"matchers"`
 	ExtractValues  []db.IntegrationExtractValue `json:"extract_values"`
@@ -66,6 +71,7 @@ func (d *SqlDb) credentialPrincipalFingerprint(kind db.CredentialPrincipalKind, 
 		payload = scheduleCredentialFingerprint{
 			TemplateID:     schedule.TemplateID,
 			CronFormat:     schedule.CronFormat,
+			Active:         schedule.Active,
 			Timezone:       schedule.Timezone,
 			Type:           schedule.Type,
 			DeleteAfterRun: schedule.DeleteAfterRun,
@@ -90,6 +96,16 @@ func (d *SqlDb) credentialPrincipalFingerprint(kind db.CredentialPrincipalKind, 
 		if err != nil {
 			return "", err
 		}
+		// A project alias reaches every searchable integration of the
+		// project, so it belongs to each integration's configuration.
+		aliases, err := d.integrationAliasNames(projectID, &triggerID)
+		if err != nil {
+			return "", err
+		}
+		projectAliases, err := d.integrationAliasNames(projectID, nil)
+		if err != nil {
+			return "", err
+		}
 		sort.Slice(matchers, func(i, j int) bool { return matchers[i].ID < matchers[j].ID })
 		sort.Slice(extractValues, func(i, j int) bool { return extractValues[i].ID < extractValues[j].ID })
 		payload = integrationCredentialFingerprint{
@@ -99,6 +115,9 @@ func (d *SqlDb) credentialPrincipalFingerprint(kind db.CredentialPrincipalKind, 
 			AuthMethod:     integration.AuthMethod,
 			AuthSecretID:   integration.AuthSecretID,
 			AuthHeader:     integration.AuthHeader,
+			Searchable:     integration.Searchable,
+			Aliases:        aliases,
+			ProjectAliases: projectAliases,
 			TaskParams:     integration.TaskParams,
 			Matchers:       matchers,
 			ExtractValues:  extractValues,
@@ -112,6 +131,19 @@ func (d *SqlDb) credentialPrincipalFingerprint(kind db.CredentialPrincipalKind, 
 	}
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func (d *SqlDb) integrationAliasNames(projectID int, integrationID *int) ([]string, error) {
+	aliases, err := d.GetIntegrationAliases(projectID, integrationID)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(aliases))
+	for _, alias := range aliases {
+		names = append(names, alias.Alias)
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func (d *SqlDb) triggerProjectID(table string, triggerID int) (int, error) {

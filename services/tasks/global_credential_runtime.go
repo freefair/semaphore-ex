@@ -47,11 +47,12 @@ func (p *TaskPool) ResolveTaskGlobalCredentials(
 	if runner.Task.UserID != nil {
 		actorID = *runner.Task.UserID
 	}
+	principal := &pro_interfaces.GlobalCredentialPrincipalMemo{}
 	for _, binding := range bindings {
 		_, resolveErr := p.globalCredentialResolver.ResolveAndInject(ctx, pro_interfaces.GlobalCredentialResolutionRequest{
 			TaskID: runner.Task.ID, ProjectID: runner.Task.ProjectID, TemplateID: runner.Task.TemplateID,
 			ActorID: actorID, RunnerID: runnerID, DispatchGeneration: runner.Task.AssignmentGeneration,
-			Binding: binding,
+			Binding: binding, Principal: principal,
 		}, injector)
 		if resolveErr != nil {
 			return "", resolveErr
