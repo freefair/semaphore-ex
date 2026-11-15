@@ -1485,6 +1485,23 @@ symbols:
   - name: db:ConvertFlatToNested
     signature: func(flatMap map[string]string) map[string]any
     implementation: core
+  - name: db:CredentialPrincipalIntegration
+    signature: db.CredentialPrincipalKind = "integration"
+    implementation: core
+    behavior_tests:
+    - db/sql/task_credential_principal_ex_test.go::TestTaskCredentialPrincipals
+    - api/projects/credential_principal_ex_test.go::TestCredentialPrincipalMiddlewares
+  - name: db:CredentialPrincipalKind
+    signature: string
+    implementation: core
+    behavior_tests:
+    - db/sql/task_credential_principal_ex_test.go::TestTaskCredentialPrincipals
+  - name: db:CredentialPrincipalSchedule
+    signature: db.CredentialPrincipalKind = "schedule"
+    implementation: core
+    behavior_tests:
+    - db/sql/task_credential_principal_ex_test.go::TestTaskCredentialPrincipals
+    - api/projects/credential_principal_ex_test.go::TestCredentialPrincipalMiddlewares
   - name: db:CrossProjectTemplateDeletionStore
     signature: interface{DeleteTemplateWithCrossProjectGrantGuard(ownerProjectID int, templateID int) error}
     implementation: core
@@ -5069,7 +5086,7 @@ symbols:
     - services/tasks/executor_image_test.go::TestAddTaskOverwritesRequestTaskGroupsWithTemplateSnapshot
     - db/sql/task_groups_ex_test.go::TestTaskGroupSnapshotSurvivesTemplateChanges
   - name: db:TaskCredentialPrincipalRepository
-    signature: interface{ClearIntegrationCredentialPrincipal(integrationID int) error; ClearScheduleCredentialPrincipal(scheduleID int) error; GetTaskCredentialPrincipal(task db.Task) (userID int, ok bool, err error); SetIntegrationCredentialPrincipal(integrationID int, userID int) error; SetScheduleCredentialPrincipal(scheduleID int, userID int) error}
+    signature: interface{AbortCredentialPrincipalChange(kind db.CredentialPrincipalKind, triggerID int, token string) error; BeginCredentialPrincipalChange(kind db.CredentialPrincipalKind, triggerID int) (token string, ok bool, err error); FinishCredentialPrincipalChange(kind db.CredentialPrincipalKind, triggerID int, token string, userID int) error; GetTaskCredentialPrincipal(task db.Task) (userID int, ok bool, err error); SetIntegrationCredentialPrincipal(integrationID int, userID int) error; SetScheduleCredentialPrincipal(scheduleID int, userID int) error}
     implementation: core
     behavior_tests:
     - db/sql/task_credential_principal_ex_test.go::TestTaskCredentialPrincipals

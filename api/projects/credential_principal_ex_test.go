@@ -77,6 +77,7 @@ func TestCredentialPrincipalMiddlewares(t *testing.T) {
 		r := httptest.NewRequest(method, "/", nil)
 		r = helpers.SetContextValue(r, "store", store)
 		r = helpers.SetContextValue(r, "user", &editor)
+		r = helpers.SetContextValue(r, "permissions", db.CanUpdateSchedules|db.CanUpdateIntegrations)
 		for key, value := range values {
 			r = helpers.SetContextValue(r, key, value)
 		}
@@ -119,6 +120,30 @@ func TestCredentialPrincipalMiddlewares(t *testing.T) {
 		assert.Equal(t, owner.ID, userID)
 	})
 
+	t.Run("a request the route refuses touches no principal", func(t *testing.T) {
+		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, owner.ID))
+		r := request(http.MethodPut, map[string]any{"schedule": schedule})
+		r = helpers.SetContextValue(r, "permissions", db.ProjectUserPermission(0))
+		ScheduleCredentialPrincipalMiddleware(answer(http.StatusForbidden)).ServeHTTP(httptest.NewRecorder(), r)
+		userID, ok := principal(scheduleTask)
+		assert.True(t, ok)
+		assert.Equal(t, owner.ID, userID)
+	})
+
+	t.Run("a concurrent change is refused", func(t *testing.T) {
+		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, owner.ID))
+		token, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
+		require.NoError(t, err)
+		require.True(t, ok)
+		called := false
+		recorder := httptest.NewRecorder()
+		ScheduleCredentialPrincipalMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })).
+			ServeHTTP(recorder, request(http.MethodPut, map[string]any{"schedule": schedule}))
+		assert.Equal(t, http.StatusConflict, recorder.Code)
+		assert.False(t, called, "the change must not run while another one holds the trigger")
+		require.NoError(t, store.AbortCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID, token))
+	})
+
 	t.Run("a project alias change moves every integration of the project", func(t *testing.T) {
 		require.NoError(t, store.SetIntegrationCredentialPrincipal(first.ID, owner.ID))
 		require.NoError(t, store.SetIntegrationCredentialPrincipal(second.ID, owner.ID))
@@ -128,4 +153,17 @@ func TestCredentialPrincipalMiddlewares(t *testing.T) {
 			assert.Equal(t, editor.ID, userID, integration.Name)
 		}
 	})
+}
+
+func TestStatusRecorderKeepsTheFirstStatus(t *testing.T) {
+	recorder := &statusRecorder{ResponseWriter: httptest.NewRecorder(), status: http.StatusOK}
+	recorder.WriteHeader(http.StatusInternalServerError)
+	recorder.WriteHeader(http.StatusNoContent)
+	assert.Equal(t, http.StatusInternalServerError, recorder.status)
+
+	implicit := &statusRecorder{ResponseWriter: httptest.NewRecorder(), status: http.StatusOK}
+	_, err := implicit.Write([]byte("ok"))
+	require.NoError(t, err)
+	implicit.WriteHeader(http.StatusBadRequest)
+	assert.Equal(t, http.StatusOK, implicit.status, "a body without header is a 200")
 }

@@ -2,8 +2,10 @@ package sql
 
 import (
 	"testing"
+	"time"
 
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/tz"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,6 +64,61 @@ func TestTaskCredentialPrincipals(t *testing.T) {
 		_, ok, err := store.GetTaskCredentialPrincipal(db.Task{ProjectID: projectID, IntegrationID: &integration.ID})
 		require.NoError(t, err)
 		assert.False(t, ok, "the previous principal must not answer for the failed change")
+	})
+
+	t.Run("a claim hides the principal and serializes changes", func(t *testing.T) {
+		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, first.ID))
+		token, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
+		require.NoError(t, err)
+		require.True(t, ok)
+		_, found, err := store.GetTaskCredentialPrincipal(db.Task{ProjectID: projectID, ScheduleID: &schedule.ID})
+		require.NoError(t, err)
+		assert.False(t, found, "no principal while a change is in progress")
+
+		_, ok, err = store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
+		require.NoError(t, err)
+		assert.False(t, ok, "a second change is refused")
+
+		assert.Error(t, store.FinishCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID, "other-token", first.ID))
+		require.NoError(t, store.FinishCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID, token, first.ID))
+		userID, found, err := store.GetTaskCredentialPrincipal(db.Task{ProjectID: projectID, ScheduleID: &schedule.ID})
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, first.ID, userID)
+	})
+
+	t.Run("an aborted change leaves no principal", func(t *testing.T) {
+		require.NoError(t, store.SetIntegrationCredentialPrincipal(integration.ID, first.ID))
+		token, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalIntegration, integration.ID)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.NoError(t, store.AbortCredentialPrincipalChange(db.CredentialPrincipalIntegration, integration.ID, token))
+		_, found, err := store.GetTaskCredentialPrincipal(db.Task{ProjectID: projectID, IntegrationID: &integration.ID})
+		require.NoError(t, err)
+		assert.False(t, found)
+		_, ok, err = store.BeginCredentialPrincipalChange(db.CredentialPrincipalIntegration, integration.ID)
+		require.NoError(t, err)
+		assert.True(t, ok, "the released trigger can be claimed again")
+	})
+
+	t.Run("a stale claim expires", func(t *testing.T) {
+		_, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
+		require.NoError(t, err)
+		require.True(t, ok)
+		_, err = store.exec("update project__schedule_credential_principal set pending_since=? where schedule_id=?", tz.Now().Add(-2*time.Minute), schedule.ID)
+		require.NoError(t, err)
+		_, ok, err = store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
+		require.NoError(t, err)
+		assert.True(t, ok)
+	})
+
+	t.Run("a trigger without row can be claimed", func(t *testing.T) {
+		fresh, err := store.CreateSchedule(db.Schedule{ProjectID: projectID, TemplateID: template.ID, Name: "fresh", CronFormat: "* * * * *", Type: db.ScheduleTypeCron, TaskParams: &db.TaskParams{}})
+		require.NoError(t, err)
+		token, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, fresh.ID)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.NoError(t, store.FinishCredentialPrincipalChange(db.CredentialPrincipalSchedule, fresh.ID, token, first.ID))
 	})
 
 	t.Run("invalid IDs are rejected", func(t *testing.T) {

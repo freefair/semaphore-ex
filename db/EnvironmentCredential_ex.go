@@ -74,17 +74,36 @@ func ValidateEnvironmentCredentials(credentials []EnvironmentCredential) error {
 	return nil
 }
 
+// CredentialPrincipalKind names the trigger a credential principal belongs to.
+type CredentialPrincipalKind string
+
+const (
+	CredentialPrincipalSchedule    CredentialPrincipalKind = "schedule"
+	CredentialPrincipalIntegration CredentialPrincipalKind = "integration"
+)
+
 // TaskCredentialPrincipalRepository records who answers for the global
 // credentials a schedule or an integration consumes. Their tasks have no
 // starting user; the principal is the user who last created or changed the
 // trigger, and the resolver checks that user's permissions at dispatch.
 // *SqlDb implements it; callers obtain it by type assertion.
 type TaskCredentialPrincipalRepository interface {
+	// SetScheduleCredentialPrincipal and SetIntegrationCredentialPrincipal
+	// record the principal of a newly created trigger.
 	SetScheduleCredentialPrincipal(scheduleID int, userID int) error
 	SetIntegrationCredentialPrincipal(integrationID int, userID int) error
-	ClearScheduleCredentialPrincipal(scheduleID int) error
-	ClearIntegrationCredentialPrincipal(integrationID int) error
+	// BeginCredentialPrincipalChange claims a trigger for one change and
+	// removes its principal until the change finishes. ok is false while
+	// another change holds a fresh claim.
+	BeginCredentialPrincipalChange(kind CredentialPrincipalKind, triggerID int) (token string, ok bool, err error)
+	// FinishCredentialPrincipalChange makes userID the principal if the
+	// claim is still this change's.
+	FinishCredentialPrincipalChange(kind CredentialPrincipalKind, triggerID int, token string, userID int) error
+	// AbortCredentialPrincipalChange releases the claim and leaves the
+	// trigger without principal.
+	AbortCredentialPrincipalChange(kind CredentialPrincipalKind, triggerID int, token string) error
 	// GetTaskCredentialPrincipal returns the principal of the schedule or
-	// integration that started the task; ok is false when there is none.
+	// integration that started the task; ok is false when there is none or
+	// a change is in progress.
 	GetTaskCredentialPrincipal(task Task) (userID int, ok bool, err error)
 }

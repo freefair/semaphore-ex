@@ -201,6 +201,15 @@ func (s principalStore) GetTask(projectID int, taskID int) (db.Task, error) {
 
 func (s principalStore) SetScheduleCredentialPrincipal(int, int) error    { return nil }
 func (s principalStore) SetIntegrationCredentialPrincipal(int, int) error { return nil }
+func (s principalStore) BeginCredentialPrincipalChange(db.CredentialPrincipalKind, int) (string, bool, error) {
+	return "", false, nil
+}
+func (s principalStore) FinishCredentialPrincipalChange(db.CredentialPrincipalKind, int, string, int) error {
+	return nil
+}
+func (s principalStore) AbortCredentialPrincipalChange(db.CredentialPrincipalKind, int, string) error {
+	return nil
+}
 func (s principalStore) GetTaskCredentialPrincipal(db.Task) (int, bool, error) {
 	return s.principal, s.principal > 0, nil
 }

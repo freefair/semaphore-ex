@@ -14,41 +14,41 @@ import (
 // responsibility to the acting user, so a user without consume permission
 // cannot reuse someone else's.
 //
-// The principal is removed before the change and written after it succeeds.
-// No node can dispatch with the previous principal while the change is being
-// written, and a failed change leaves the trigger without principal: its
-// unattended credential use stays blocked until a successful change.
+// A change first claims the trigger in the database: the claim removes the
+// principal, so no node can dispatch with the previous one while the change
+// is written, and refuses a concurrent change, so the principal is always
+// the user whose change came last. A successful change makes the acting user
+// the principal; a failed one leaves none until the next successful change.
 
 // recordScheduleCredentialPrincipal sets the principal of a new schedule.
 func recordScheduleCredentialPrincipal(r *http.Request, scheduleID int) {
-	recordCredentialPrincipals(r, "schedule", func(repo db.TaskCredentialPrincipalRepository, userID int) error {
+	recordNewTriggerPrincipal(r, db.CredentialPrincipalSchedule, func(repo db.TaskCredentialPrincipalRepository, userID int) error {
 		return repo.SetScheduleCredentialPrincipal(scheduleID, userID)
 	})
 }
 
 // recordIntegrationCredentialPrincipal sets the principal of a new integration.
 func recordIntegrationCredentialPrincipal(r *http.Request, integrationID int) {
-	recordCredentialPrincipals(r, "integration", func(repo db.TaskCredentialPrincipalRepository, userID int) error {
+	recordNewTriggerPrincipal(r, db.CredentialPrincipalIntegration, func(repo db.TaskCredentialPrincipalRepository, userID int) error {
 		return repo.SetIntegrationCredentialPrincipal(integrationID, userID)
 	})
 }
 
 // ScheduleCredentialPrincipalMiddleware wraps the write routes of one
-// schedule (update, activation). It needs the schedule in the context.
+// schedule (update, activation, deletion). It needs the schedule in the
+// context.
 func ScheduleCredentialPrincipalMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		schedule, ok := helpers.GetFromContext(r, "schedule").(db.Schedule)
-		if isReadOnlyMethod(r.Method) || !ok {
+		required := db.CanUpdateSchedules
+		if r.Method == http.MethodDelete {
+			required = db.CanDeleteSchedules
+		}
+		if isReadOnlyMethod(r.Method) || !ok || !mayChangeTrigger(r, required) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		guardCredentialPrincipalChange(w, r, next, "schedule",
-			func(repo db.TaskCredentialPrincipalRepository) error {
-				return repo.ClearScheduleCredentialPrincipal(schedule.ID)
-			},
-			func(repo db.TaskCredentialPrincipalRepository, userID int) error {
-				return repo.SetScheduleCredentialPrincipal(schedule.ID, userID)
-			})
+		guardCredentialPrincipalChange(w, r, next, db.CredentialPrincipalSchedule, []int{schedule.ID})
 	})
 }
 
@@ -58,7 +58,11 @@ func ScheduleCredentialPrincipalMiddleware(next http.Handler) http.Handler {
 // all of them.
 func IntegrationCredentialPrincipalMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isReadOnlyMethod(r.Method) {
+		required := db.CanUpdateIntegrations
+		if r.Method == http.MethodDelete {
+			required = db.CanDeleteIntegrations
+		}
+		if isReadOnlyMethod(r.Method) || !mayChangeTrigger(r, required) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -75,75 +79,103 @@ func IntegrationCredentialPrincipalMiddleware(next http.Handler) http.Handler {
 				ids = append(ids, integration.ID)
 			}
 		}
-		guardCredentialPrincipalChange(w, r, next, "integration",
-			func(repo db.TaskCredentialPrincipalRepository) error {
-				for _, id := range ids {
-					if err := repo.ClearIntegrationCredentialPrincipal(id); err != nil {
-						return err
-					}
-				}
-				return nil
-			},
-			func(repo db.TaskCredentialPrincipalRepository, userID int) error {
-				for _, id := range ids {
-					if err := repo.SetIntegrationCredentialPrincipal(id, userID); err != nil {
-						return err
-					}
-				}
-				return nil
-			})
+		guardCredentialPrincipalChange(w, r, next, db.CredentialPrincipalIntegration, ids)
 	})
 }
 
-func guardCredentialPrincipalChange(
-	w http.ResponseWriter,
-	r *http.Request,
-	next http.Handler,
-	kind string,
-	clear func(db.TaskCredentialPrincipalRepository) error,
-	set func(db.TaskCredentialPrincipalRepository, int) error,
-) {
+// mayChangeTrigger mirrors the route's permission check, so a request the
+// route will refuse does not touch any principal.
+func mayChangeTrigger(r *http.Request, required db.ProjectUserPermission) bool {
+	user := helpers.UserFromContext(r)
+	permissions, _ := helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
+	return user != nil && (user.Admin || permissions.Can(required))
+}
+
+func guardCredentialPrincipalChange(w http.ResponseWriter, r *http.Request, next http.Handler, kind db.CredentialPrincipalKind, ids []int) {
 	repo, ok := helpers.Store(r).(db.TaskCredentialPrincipalRepository)
-	if !ok {
+	if !ok || len(ids) == 0 {
 		next.ServeHTTP(w, r)
 		return
 	}
-	if err := clear(repo); err != nil {
-		log.WithError(err).WithFields(log.Fields{"kind": kind, "context": "credential_principal"}).
-			Error("failed to clear the credential principal before a change")
-		helpers.WriteError(w, err)
-		return
+	claims := make(map[int]string, len(ids))
+	release := func() {
+		for id, token := range claims {
+			if err := repo.AbortCredentialPrincipalChange(kind, id, token); err != nil {
+				logPrincipalError(err, kind, id, "failed to release the credential principal claim")
+			}
+		}
+	}
+	for _, id := range ids {
+		token, claimed, err := repo.BeginCredentialPrincipalChange(kind, id)
+		if err != nil {
+			release()
+			logPrincipalError(err, kind, id, "failed to claim the trigger for a change")
+			helpers.WriteError(w, err)
+			return
+		}
+		if !claimed {
+			release()
+			helpers.WriteErrorStatus(w, "Another change to this "+string(kind)+" is in progress; try again", http.StatusConflict)
+			return
+		}
+		claims[id] = token
 	}
 	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	defer func() {
+		// A panicking handler leaves no principal behind.
+		if recovered := recover(); recovered != nil {
+			release()
+			panic(recovered)
+		}
+	}()
 	next.ServeHTTP(recorder, r)
-	if recorder.status < 200 || recorder.status > 299 {
+	user := helpers.UserFromContext(r)
+	if recorder.status < 200 || recorder.status > 299 || user == nil {
+		release()
 		return
 	}
-	recordCredentialPrincipals(r, kind, set)
+	for id, token := range claims {
+		if err := repo.FinishCredentialPrincipalChange(kind, id, token, user.ID); err != nil {
+			logPrincipalError(err, kind, id, "failed to record the credential principal")
+		}
+	}
 }
 
-func recordCredentialPrincipals(r *http.Request, kind string, set func(db.TaskCredentialPrincipalRepository, int) error) {
+func recordNewTriggerPrincipal(r *http.Request, kind db.CredentialPrincipalKind, set func(db.TaskCredentialPrincipalRepository, int) error) {
 	repo, ok := helpers.Store(r).(db.TaskCredentialPrincipalRepository)
 	user := helpers.UserFromContext(r)
 	if !ok || user == nil {
 		return
 	}
 	if err := set(repo, user.ID); err != nil {
-		log.WithError(err).WithFields(log.Fields{"kind": kind, "context": "credential_principal"}).
-			Error("failed to record the credential principal")
+		logPrincipalError(err, kind, 0, "failed to record the credential principal")
 	}
+}
+
+func logPrincipalError(err error, kind db.CredentialPrincipalKind, id int, message string) {
+	log.WithError(err).WithFields(log.Fields{"kind": kind, "id": id, "context": "credential_principal"}).Error(message)
 }
 
 func isReadOnlyMethod(method string) bool {
 	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
 }
 
+// statusRecorder keeps the status the client receives: the first written
+// header, or 200 for a body written without one.
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
+	status      int
+	wroteHeader bool
 }
 
 func (r *statusRecorder) WriteHeader(status int) {
-	r.status = status
+	if !r.wroteHeader {
+		r.status, r.wroteHeader = status, true
+	}
 	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *statusRecorder) Write(body []byte) (int, error) {
+	r.wroteHeader = true
+	return r.ResponseWriter.Write(body)
 }

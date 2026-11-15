@@ -1250,7 +1250,7 @@ migrations:
   owner: fork
   rationale: Store Variable Group references to global credentials and the principals who answer for schedules and integrations that consume them.
   files:
-    migrations_ex/v2.20.18-ex1.4.sql: 6d01bf30f2bebfc570ec5b9fc4ebfdf2a144f09475dc2bf2a860fd76d798685b
+    migrations_ex/v2.20.18-ex1.4.sql: 0116423fe786d2791097f36c3df508c525b230937725dded27faed899ac5350c
     migrations_ex/v2.20.18-ex1.4.err.sql: 2e0153d363cc5035fe00c5b5f36523090fc00c87fdc6e0587f09354b5afb9508
 - registered: true
   id: 2.20.18-ex1.5
