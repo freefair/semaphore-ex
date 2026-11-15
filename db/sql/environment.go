@@ -10,7 +10,10 @@ func (d *SqlDb) GetEnvironment(projectID int, environmentID int) (environment db
 		return
 	}
 
-	err = d.fillEnvironmentSync(&environment)
+	if err = d.fillEnvironmentSync(&environment); err != nil {
+		return
+	}
+	err = d.fillEnvironmentCredentials(&environment)
 	return
 }
 
@@ -60,6 +63,9 @@ func (d *SqlDb) GetEnvironments(projectID int, params db.RetrieveQueryParams) ([
 		if err = d.fillEnvironmentSync(&environments[i]); err != nil {
 			return environments, err
 		}
+		if err = d.fillEnvironmentCredentials(&environments[i]); err != nil {
+			return environments, err
+		}
 	}
 
 	return environments, nil
@@ -86,7 +92,10 @@ func (d *SqlDb) UpdateEnvironment(env db.Environment) error {
 		return err
 	}
 
-	return d.saveEnvironmentSync(env)
+	if err = d.saveEnvironmentSync(env); err != nil {
+		return err
+	}
+	return d.saveEnvironmentCredentials(env, env.CredentialsSet)
 }
 
 func (d *SqlDb) CreateEnvironment(env db.Environment) (newEnv db.Environment, err error) {
@@ -119,8 +128,14 @@ func (d *SqlDb) CreateEnvironment(env db.Environment) (newEnv db.Environment, er
 	if err = d.saveEnvironmentSync(newEnv); err != nil {
 		return
 	}
+	if err = d.saveEnvironmentCredentials(newEnv, len(newEnv.Credentials) > 0); err != nil {
+		return
+	}
 
-	err = d.fillEnvironmentSync(&newEnv)
+	if err = d.fillEnvironmentSync(&newEnv); err != nil {
+		return
+	}
+	err = d.fillEnvironmentCredentials(&newEnv)
 	return
 }
 

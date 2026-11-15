@@ -39,6 +39,13 @@ func (t *LocalExecutor) prepare(username string, incomingVersion *string, alias 
 		return
 	}
 	environmentVariables = append(environmentVariables, surveyEnvVars...)
+
+	credentialEnvVars, err := t.credentialEnvVars()
+	if err != nil {
+		t.Log(err.Error())
+		return
+	}
+	environmentVariables = append(environmentVariables, credentialEnvVars...)
 	if t.Template.App == db.AppAnsible && proFeatures.Compatibility().Edition == pro_interfaces.EditionEnhanced {
 		callbackEnvironment, callbackErr := stage_parsers.TaskSummaryCallbackEnvironment(
 			path.Join(t.Repository.GetInternalPath(t.Template.ID), "callbacks"),

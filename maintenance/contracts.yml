@@ -2124,16 +2124,28 @@ symbols:
     signature: func(snapshot db.TaskExecutionSnapshot) (string, error)
     implementation: core
   - name: db:Environment
-    signature: struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; Name string "db:\"name\" json:\"name\" binding:\"required\""; ProjectID
-      int "db:\"project_id\" json:\"project_id\" backup:\"-\""; Password *string "db:\"password\" json:\"password\""; JSON string "db:\"json\"
-      json:\"json\" binding:\"required\""; ENV *string "db:\"env\" json:\"env\" binding:\"required\""; Secrets []db.EnvironmentSecret
-      "db:\"-\" json:\"secrets,omitempty\" backup:\"-\""; SecretStorageID *int "db:\"secret_storage_id\" json:\"secret_storage_id,omitempty\"
-      backup:\"-\""; SecretStorageKeyPrefix *string "db:\"secret_storage_key_prefix\" json:\"secret_storage_key_prefix,omitempty\"";
-      SecretStorageIDSet bool "db:\"-\" json:\"-\" backup:\"-\""; SecretStorageKeyPrefixSet bool "db:\"-\" json:\"-\" backup:\"-\"";
-      SyncEnabled bool "db:\"-\" json:\"sync_enabled\""; SyncInterval int "db:\"-\" json:\"sync_interval\""; LastSyncedAt *time.Time
-      "db:\"-\" json:\"last_synced_at,omitempty\""; LastSyncFailedAt *time.Time "db:\"-\" json:\"last_sync_failed_at,omitempty\""; SyncPaths
-      []db.SecretSyncPath "db:\"-\" json:\"sync_paths\""}
+    signature: struct{ID int "db:\"id\" json:\"id\" backup:\"-\""; Name string "db:\"name\" json:\"name\" binding:\"required\""; ProjectID int "db:\"project_id\" json:\"project_id\" backup:\"-\""; Password *string "db:\"password\" json:\"password\""; JSON string "db:\"json\" json:\"json\" binding:\"required\""; ENV *string "db:\"env\" json:\"env\" binding:\"required\""; Secrets []db.EnvironmentSecret "db:\"-\" json:\"secrets,omitempty\" backup:\"-\""; Credentials []db.EnvironmentCredential "db:\"-\" json:\"credentials\" backup:\"-\""; CredentialsSet bool "db:\"-\" json:\"-\" backup:\"-\""; SecretStorageID *int "db:\"secret_storage_id\" json:\"secret_storage_id,omitempty\" backup:\"-\""; SecretStorageKeyPrefix *string "db:\"secret_storage_key_prefix\" json:\"secret_storage_key_prefix,omitempty\""; SecretStorageIDSet bool "db:\"-\" json:\"-\" backup:\"-\""; SecretStorageKeyPrefixSet bool "db:\"-\" json:\"-\" backup:\"-\""; SyncEnabled bool "db:\"-\" json:\"sync_enabled\""; SyncInterval int "db:\"-\" json:\"sync_interval\""; LastSyncedAt *time.Time "db:\"-\" json:\"last_synced_at,omitempty\""; LastSyncFailedAt *time.Time "db:\"-\" json:\"last_sync_failed_at,omitempty\""; SyncPaths []db.SecretSyncPath "db:\"-\" json:\"sync_paths\""}
     implementation: core
+  - name: db:EnvironmentCredential
+    signature: struct{Name string "json:\"name\""; Target db.EnvironmentCredentialTarget "json:\"target\""; CredentialID int "json:\"credential_id\""}
+    implementation: core
+    behavior_tests:
+    - db/sql/environment_credential_ex_test.go::TestEnvironmentCredentialReferencesRoundTrip
+  - name: db:EnvironmentCredentialTarget
+    signature: string
+    implementation: core
+    behavior_tests:
+    - db/sql/environment_credential_ex_test.go::TestValidateEnvironmentCredentials
+  - name: db:EnvironmentCredentialTargetEnv
+    signature: db.EnvironmentCredentialTarget = "env"
+    implementation: core
+    behavior_tests:
+    - services/tasks/global_credential_environment_ex_test.go::TestLocalExecutorDeliversEnvironmentTargetCredentials
+  - name: db:EnvironmentCredentialTargetVar
+    signature: db.EnvironmentCredentialTarget = "var"
+    implementation: core
+    behavior_tests:
+    - services/tasks/global_credential_environment_ex_test.go::TestResolveTaskGlobalCredentialsIncludesVariableGroupReferences
   - name: db:EnvironmentManager
     signature: >-
       interface{CreateEnvironment(env db.Environment) (db.Environment, error); DeleteEnvironment(projectID int, templateID int) error;
@@ -2524,6 +2536,11 @@ symbols:
   - name: db:GlobalCredentialGrantOperationConsume
     signature: db.GlobalCredentialGrantOperation = 2
     implementation: core
+  - name: db:GlobalCredentialGrantOperationConsumeUnattended
+    signature: db.GlobalCredentialGrantOperation = 4
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/server/global_credential_runtime_test.go::TestGlobalCredentialRuntimeAdmitsActorlessTaskOnlyWithUnattendedGrant
   - name: db:GlobalCredentialGrantOperationReference
     signature: db.GlobalCredentialGrantOperation = 1
     implementation: core
@@ -2949,6 +2966,12 @@ symbols:
     implementation: core
     behavior_tests:
     - services/project/backup_upstream_format_ex_test.go::TestVerifyUpstreamFormat2RoleSlugs
+  - name: db:IsValidEnvironmentCredentialName
+    signature: func(target db.EnvironmentCredentialTarget, name string) bool
+    implementation: core
+    behavior_tests:
+    - db/sql/environment_credential_ex_test.go::TestValidateEnvironmentCredentials
+    - test/edition-contract/enhanced/services/server/global_credential_runtime_test.go::TestGlobalCredentialTaskBindingTargets
   - name: db:IsValidProjectRoleReferenceSyntax
     signature: func(reference db.ProjectRoleReference) bool
     implementation: core
@@ -3442,6 +3465,11 @@ symbols:
   - name: db:MaxDeploymentWindowRules
     signature: untyped int = 64
     implementation: core
+  - name: db:MaxEnvironmentCredentials
+    signature: untyped int = 64
+    implementation: core
+    behavior_tests:
+    - db/sql/environment_credential_ex_test.go::TestValidateEnvironmentCredentials
   - name: db:MaxExecutorImageLength
     signature: untyped int = 255
     implementation: core
@@ -5643,6 +5671,12 @@ symbols:
   - name: db:ValidateDockerRunnerBoot
     signature: func(boot string) error
     implementation: core
+  - name: db:ValidateEnvironmentCredentials
+    signature: func(credentials []db.EnvironmentCredential) error
+    implementation: core
+    behavior_tests:
+    - db/sql/environment_credential_ex_test.go::TestValidateEnvironmentCredentials
+    - api/projects/environment_credentials_ex_test.go::TestValidateEnvironmentCredentialChanges
   - name: db:ValidateGitURL
     signature: func(rawURL string, objectName string) error
     implementation: core
@@ -9131,7 +9165,7 @@ symbols:
       "json:\"fingerprint\""; MaterialKind db.GlobalCredentialMaterialKind "json:\"material_kind\""}
     implementation: core
   - name: pro_interfaces:GlobalCredentialTaskBinding
-    signature: struct{CredentialID int "json:\"credential_id\""; Target string "json:\"target\""}
+    signature: struct{CredentialID int "json:\"credential_id\""; Target string "json:\"target\""; Env bool "json:\"env,omitempty\""}
     implementation: core
   - name: pro_interfaces:GlobalCredentialUsageDTO
     signature: struct{ID int "json:\"id\""; Snapshot pro_interfaces.GlobalCredentialResolutionSnapshot "json:\"snapshot\""}

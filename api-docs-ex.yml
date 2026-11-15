@@ -2140,11 +2140,13 @@ definitions:
         minimum: 1
       operations:
         type: integer
-        description: Bit mask containing reference (1), consume (2), or both (3).
+        description: Bit mask of reference (1), consume (2) and use by tasks without a starting user such as schedules and integrations (4). Bit 4 requires consume.
         enum:
         - 1
         - 2
         - 3
+        - 6
+        - 7
       expires_at:
         type: string
         format: date-time
@@ -2158,6 +2160,27 @@ definitions:
         revision:
           type: integer
           minimum: 1
+  EnvironmentCredential:
+    type: object
+    description: Value-free reference from a Variable Group to a global credential granted to the project. The value is resolved for each task at dispatch.
+    required:
+    - name
+    - target
+    - credential_id
+    additionalProperties: false
+    properties:
+      name:
+        type: string
+        description: Extra variable name (lowercase letters, digits and _) or environment variable name (letters, digits and _, not starting with a digit).
+        example: TF_VAR_license_key
+      target:
+        type: string
+        enum:
+        - var
+        - env
+      credential_id:
+        type: integer
+        minimum: 1
   GlobalCredentialGrant:
     type: object
     required:
@@ -2182,6 +2205,8 @@ definitions:
         - 1
         - 2
         - 3
+        - 6
+        - 7
       expires_at:
         type: string
         format: date-time
@@ -2225,6 +2250,7 @@ definitions:
         enum:
         - 1
         - 3
+        - 7
       grant_id:
         type: integer
       grant_revision:

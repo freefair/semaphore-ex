@@ -258,6 +258,12 @@ func (c *EnvironmentController) UpdateEnvironment(w http.ResponseWriter, r *http
 		return
 	}
 	preserveOmittedEnvironmentSecretStorage(&env, oldEnv)
+	if env.CredentialsSet {
+		if status, err := validateEnvironmentCredentialChanges(r, env, oldEnv.Credentials); err != nil {
+			writeEnvironmentCredentialError(w, status, err)
+			return
+		}
+	}
 
 	if err := helpers.Store(r).UpdateEnvironment(env); err != nil {
 		helpers.WriteError(w, err)
@@ -304,6 +310,11 @@ func (c *EnvironmentController) AddEnvironment(w http.ResponseWriter, r *http.Re
 		helpers.WriteJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "Project ID in body and URL must be the same",
 		})
+		return
+	}
+
+	if status, err := validateEnvironmentCredentialChanges(r, env, nil); err != nil {
+		writeEnvironmentCredentialError(w, status, err)
 		return
 	}
 

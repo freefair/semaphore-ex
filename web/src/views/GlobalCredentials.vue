@@ -341,6 +341,13 @@
             <v-col cols="12" md="4">
               <v-checkbox v-model="grantForm.reference" label="Reference" hide-details />
               <v-checkbox v-model="grantForm.consume" label="Consume" hide-details />
+              <v-checkbox
+                v-model="grantForm.unattended"
+                label="Schedules and integrations"
+                :disabled="!grantForm.consume"
+                hide-details
+                data-testid="grant-unattended"
+              />
             </v-col>
             <v-col cols="12" md="3">
               <v-text-field
@@ -372,6 +379,17 @@
             </template>
             <template v-slot:item.operations="{ item }">
               {{ operationLabel(item.operations) }}
+            </template>
+            <template v-slot:item.unattended="{ item }">
+              <v-switch
+                :model-value="(item.operations & 4) === 4"
+                :disabled="(item.operations & 2) !== 2 || grantSaving"
+                color="primary"
+                density="compact"
+                hide-details
+                data-testid="grant-unattended-toggle"
+                @update:model-value="setGrantUnattended(item, $event)"
+              />
             </template>
             <template v-slot:item.expires_at="{ item }">
               {{ dateLabel(item.expires_at) }}
@@ -478,7 +496,7 @@ export default {
       grants: [],
       grantProjects: [],
       grantForm: {
-        projectId: null, reference: true, consume: false, expiresAt: '',
+        projectId: null, reference: true, consume: false, unattended: false, expiresAt: '',
       },
       deleteTarget: null,
       enabledTarget: null,
@@ -504,6 +522,7 @@ export default {
       grantHeaders: [
         { title: 'Project', key: 'project_id' },
         { title: 'Allowed operations', key: 'operations' },
+        { title: 'Schedules and integrations', key: 'unattended', sortable: false },
         { title: 'Expires', key: 'expires_at' },
         { title: 'Status', key: 'status' },
         {
@@ -704,7 +723,7 @@ export default {
     async openGrants(item) {
       this.grantCredential = item;
       this.grantForm = {
-        projectId: null, reference: true, consume: false, expiresAt: '',
+        projectId: null, reference: true, consume: false, unattended: false, expiresAt: '',
       };
       this.grantsDialog = true;
       await Promise.all([this.loadGrants(), this.loadImpact(item)]);
@@ -750,6 +769,7 @@ export default {
       let operations = 0;
       if (this.grantForm.reference) operations += 1;
       if (this.grantForm.consume) operations += 2;
+      if (this.grantForm.consume && this.grantForm.unattended) operations += 4;
       try {
         await axios.post(`/api/global-credentials/${this.grantCredential.id}/grants`, {
           project_id: this.grantForm.projectId,
@@ -758,9 +778,28 @@ export default {
             ? new Date(this.grantForm.expiresAt).toISOString() : null,
         });
         this.grantForm = {
-          projectId: null, reference: true, consume: false, expiresAt: '',
+          projectId: null, reference: true, consume: false, unattended: false, expiresAt: '',
         };
         await Promise.all([this.loadGrants(), this.loadImpact(this.grantCredential)]);
+      } catch (error) {
+        this.notifyError(error);
+      } finally {
+        this.grantSaving = false;
+      }
+    },
+    async setGrantUnattended(grant, enabled) {
+      if (this.grantSaving) return;
+      this.grantSaving = true;
+      // eslint-disable-next-line no-bitwise
+      const operations = enabled ? (grant.operations | 4) : (grant.operations & ~4);
+      try {
+        await axios.put(`/api/global-credentials/${this.grantCredential.id}/grants/${grant.id}`, {
+          project_id: grant.project_id,
+          operations,
+          expires_at: grant.expires_at || null,
+          revision: grant.revision,
+        });
+        await this.loadGrants();
       } catch (error) {
         this.notifyError(error);
       } finally {
@@ -793,8 +832,11 @@ export default {
       return (this.grantProjects.find((project) => project.id === id) || {}).name || `Project ${id}`;
     },
     operationLabel(operations) {
-      if (operations === 3) return 'Reference and consume';
-      if (operations === 2) return 'Consume';
+      // The unattended bit is shown in its own column.
+      // eslint-disable-next-line no-bitwise
+      const visible = operations & 3;
+      if (visible === 3) return 'Reference and consume';
+      if (visible === 2) return 'Consume';
       return 'Reference';
     },
     materialKindLabel(kind) {

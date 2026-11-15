@@ -59,6 +59,12 @@ type Environment struct {
 	// Secrets is a field which used to update secrets associated with the environment.
 	Secrets []EnvironmentSecret `db:"-" json:"secrets,omitempty" backup:"-"`
 
+	// Credentials references global credentials granted to the project.
+	// Persisted in project__environment_credential; CredentialsSet tells an
+	// omitted field (keep) from an explicit list (replace) on update.
+	Credentials    []EnvironmentCredential `db:"-" json:"credentials" backup:"-"`
+	CredentialsSet bool                    `db:"-" json:"-" backup:"-"`
+
 	SecretStorageID        *int    `db:"secret_storage_id" json:"secret_storage_id,omitempty" backup:"-"`
 	SecretStorageKeyPrefix *string `db:"secret_storage_key_prefix" json:"secret_storage_key_prefix,omitempty"`
 	// These flags distinguish omitted update fields from explicit JSON null.
@@ -86,6 +92,7 @@ func (env *Environment) UnmarshalJSON(data []byte) error {
 	*env = Environment(decoded)
 	_, env.SecretStorageIDSet = fields["secret_storage_id"]
 	_, env.SecretStorageKeyPrefixSet = fields["secret_storage_key_prefix"]
+	_, env.CredentialsSet = fields["credentials"]
 	return nil
 }
 
@@ -138,6 +145,10 @@ func (env *Environment) Validate() (err error) {
 	err = validateJSON(env.JSON, false)
 	if err != nil {
 		err = common_errors.NewValidationError("Extra variables " + err.Error())
+		return
+	}
+
+	if err = ValidateEnvironmentCredentials(env.Credentials); err != nil {
 		return
 	}
 

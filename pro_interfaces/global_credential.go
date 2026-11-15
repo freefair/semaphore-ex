@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"time"
 
 	"github.com/semaphoreui/semaphore/db"
@@ -14,8 +13,6 @@ const (
 	GlobalCredentialUsagePageMax = 100
 	GlobalCredentialBindingMax   = 64
 )
-
-var globalCredentialBindingTargetPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
 // GlobalCredentialResolutionOutcome is deliberately closed because it is
 // persisted in the append-only usage ledger and shown to administrators.
@@ -50,10 +47,17 @@ const (
 type GlobalCredentialTaskBinding struct {
 	CredentialID int    `json:"credential_id"`
 	Target       string `json:"target"`
+	// Env delivers the value as a process environment variable instead of
+	// an extra variable. Variable Group references can set it.
+	Env bool `json:"env,omitempty"`
 }
 
 func (b GlobalCredentialTaskBinding) Validate() error {
-	if b.CredentialID <= 0 || !globalCredentialBindingTargetPattern.MatchString(b.Target) {
+	target := db.EnvironmentCredentialTargetVar
+	if b.Env {
+		target = db.EnvironmentCredentialTargetEnv
+	}
+	if b.CredentialID <= 0 || !db.IsValidEnvironmentCredentialName(target, b.Target) {
 		return errors.New("global credential task binding is invalid")
 	}
 	return nil

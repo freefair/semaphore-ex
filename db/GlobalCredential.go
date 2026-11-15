@@ -42,9 +42,14 @@ type GlobalCredentialGrantOperation int64
 const (
 	GlobalCredentialGrantOperationReference GlobalCredentialGrantOperation = 1 << iota
 	GlobalCredentialGrantOperationConsume
+	// GlobalCredentialGrantOperationConsumeUnattended lets tasks without a
+	// starting user (schedules, integrations) consume the credential. It is
+	// separate from consume so actorless use is an explicit, revocable choice.
+	GlobalCredentialGrantOperationConsumeUnattended
 )
 
-const allGlobalCredentialGrantOperations = GlobalCredentialGrantOperationReference | GlobalCredentialGrantOperationConsume
+const allGlobalCredentialGrantOperations = GlobalCredentialGrantOperationReference |
+	GlobalCredentialGrantOperationConsume | GlobalCredentialGrantOperationConsumeUnattended
 
 type GlobalCredentialGrantStatus string
 
@@ -291,6 +296,7 @@ func ValidateGlobalCredentialVersion(version GlobalCredentialVersion) error {
 func ValidateGlobalCredentialGrant(grant GlobalCredentialGrant) error {
 	if grant.CredentialID <= 0 || grant.ProjectID <= 0 || grant.Revision <= 0 ||
 		grant.Operations == 0 || grant.Operations&^allGlobalCredentialGrantOperations != 0 ||
+		(grant.Operations.Can(GlobalCredentialGrantOperationConsumeUnattended) && !grant.Operations.Can(GlobalCredentialGrantOperationConsume)) ||
 		grant.CreatedByUserID <= 0 ||
 		(grant.Status != GlobalCredentialGrantStatusActive && grant.Status != GlobalCredentialGrantStatusRevoked) {
 		return errors.New("global credential grant is invalid")

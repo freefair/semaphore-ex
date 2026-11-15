@@ -129,8 +129,12 @@ export default {
       }
     },
     operationLabel(operations) {
-      if (operations === 3) return 'Reference and consume';
-      if (operations === 2) return 'Consume only';
+      // eslint-disable-next-line no-bitwise
+      const visible = operations & 3;
+      // eslint-disable-next-line no-bitwise
+      const unattended = (operations & 4) === 4 ? ', schedules and integrations' : '';
+      if (visible === 3) return `Reference and consume${unattended}`;
+      if (visible === 2) return `Consume only${unattended}`;
       return 'Reference only';
     },
     dateLabel(value) {

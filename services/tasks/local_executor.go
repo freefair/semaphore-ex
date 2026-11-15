@@ -243,6 +243,7 @@ func (t *LocalExecutor) getEnvironmentExtraVars(username string, incomingVersion
 			delete(extraVars, v.Name)
 		}
 	}
+	t.removeCredentialEnvTargets(extraVars)
 
 	vars := make(map[string]any)
 	vars["task_details"] = t.getTaskDetails(username, incomingVersion)

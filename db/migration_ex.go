@@ -232,5 +232,6 @@ func GetEXMigrations() []Migration {
 		{Version: "2.20.18-ex1.1"},
 		{Version: "2.20.18-ex1.2"},
 		{Version: "2.20.18-ex1.3"},
+		{Version: "2.20.18-ex1.4"},
 	}
 }

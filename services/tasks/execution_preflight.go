@@ -704,6 +704,7 @@ func (p *TaskPool) buildTaskExecutionPreflight(
 		for _, key := range keys {
 			resourceState = append(resourceState, executionPreflightCredentialState(key))
 		}
+		p.appendEnvironmentCredentialReferences(&plan, &resourceState, environment)
 		snapshotEnvironment := sanitizedExecutionSnapshotEnvironment(environment)
 		snapshotEnvironment.Secrets = executionSnapshotEnvironmentSecrets(keys)
 		snapshotEnvironments = append(snapshotEnvironments, snapshotEnvironment)

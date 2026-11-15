@@ -11,6 +11,7 @@ import (
 	"github.com/semaphoreui/semaphore/services/audit"
 	"github.com/semaphoreui/semaphore/util"
 	log "github.com/sirupsen/logrus"
+	"sort"
 	"strconv"
 )
 
@@ -215,6 +216,7 @@ func (t *TaskRunner) mergeEnvironmentLayers(environments []db.Environment, useSn
 	mergedENV := make(map[string]string)
 	var mergedSecrets []db.EnvironmentSecret
 	secretIndex := make(map[string]int)
+	mergedCredentials := make(map[string]db.EnvironmentCredential)
 
 	var lastEnv db.Environment
 
@@ -264,10 +266,17 @@ func (t *TaskRunner) mergeEnvironmentLayers(environments []db.Environment, useSn
 			}
 		}
 
+		// A later group replaces an earlier reference with the same name,
+		// like its variables and secrets.
+		for _, credential := range env.Credentials {
+			mergedCredentials[credential.Name] = credential
+		}
+
 		lastEnv = env
 	}
 
 	t.Environment = lastEnv
+	t.Environment.Credentials = sortedEnvironmentCredentials(mergedCredentials)
 
 	if len(mergedJSON) > 0 {
 		b, err := json.Marshal(mergedJSON)
@@ -316,4 +325,13 @@ func (t *TaskRunner) resolveExecutionSnapshotEnvironmentSecrets(environment *db.
 	}
 	environment.Secrets = resolved
 	return nil
+}
+
+func sortedEnvironmentCredentials(byName map[string]db.EnvironmentCredential) []db.EnvironmentCredential {
+	credentials := make([]db.EnvironmentCredential, 0, len(byName))
+	for _, credential := range byName {
+		credentials = append(credentials, credential)
+	}
+	sort.Slice(credentials, func(left, right int) bool { return credentials[left].Name < credentials[right].Name })
+	return credentials
 }

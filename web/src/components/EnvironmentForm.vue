@@ -559,6 +559,122 @@
             </template>
           </v-data-table>
         </div>
+
+        <div data-testid="varGroup-globalCredentials">
+          <div class="EnvSubheader d-flex align-center text-medium-emphasis mt-4">
+            {{ $t('varGroupGlobalCredentials') }}
+
+            <v-spacer />
+
+            <v-btn
+              v-if="grantedCredentials != null"
+              icon
+              variant="text"
+              @click="addCredential()"
+              data-testid="varGroup-addGlobalCredential"
+            >
+              <v-icon> mdi-plus </v-icon>
+            </v-btn>
+          </div>
+
+          <v-alert
+            v-if="grantedCredentialsError"
+            type="error"
+            variant="tonal"
+            density="compact"
+            class="mb-2"
+            data-testid="varGroup-globalCredentialsError"
+          >
+            {{ grantedCredentialsError }}
+          </v-alert>
+
+          <v-alert
+            v-if="grantedCredentials == null"
+            type="info"
+            variant="tonal"
+            density="compact"
+            class="mb-2"
+            data-testid="varGroup-globalCredentialsDenied"
+          >
+            {{ $t('varGroupGlobalCredentialsDenied') }}
+          </v-alert>
+
+          <v-data-table
+            :items="credentials"
+            :items-per-page="-1"
+            class="elevation-1 FieldTable EnvTable"
+            hide-default-footer
+            :no-data-text="$t('noValues')"
+            style="background: #8585850f"
+            :headers="credentialTableHeaders"
+            hide-default-header
+            data-testid="varGroup-globalCredentialTable"
+            :data-state="credentials.length === 0 ? 'empty' : 'ready'"
+          >
+            <template v-slot:item="props">
+              <tr data-testid="varGroup-globalCredentialRow">
+                <td class="pa-1">
+                  <v-text-field
+                    variant="solo-inverted"
+                    flat
+                    density="comfortable"
+                    hide-details="auto"
+                    v-model="props.item.name"
+                    class="v-text-field--solo--no-min-height EnvField"
+                    :placeholder="$t('name')"
+                    :rules="[credentialNameRule(props.item)]"
+                    :disabled="grantedCredentials == null"
+                    data-testid="varGroup-globalCredentialName"
+                  ></v-text-field>
+                </td>
+
+                <td class="pa-1" style="width: 210px">
+                  <v-select
+                    variant="solo-inverted"
+                    flat
+                    density="comfortable"
+                    hide-details
+                    v-model="props.item.target"
+                    :items="credentialTargets"
+                    item-title="title"
+                    item-value="value"
+                    class="EnvField"
+                    :disabled="grantedCredentials == null"
+                    data-testid="varGroup-globalCredentialTarget"
+                  ></v-select>
+                </td>
+
+                <td class="pa-1">
+                  <v-select
+                    variant="solo-inverted"
+                    flat
+                    density="comfortable"
+                    hide-details="auto"
+                    v-model="props.item.credential_id"
+                    :items="credentialChoices(props.item)"
+                    item-title="title"
+                    item-value="value"
+                    :placeholder="$t('varGroupGlobalCredential')"
+                    :rules="[(v) => !!v || $t('varGroupGlobalCredentialRequired')]"
+                    class="EnvField"
+                    :disabled="grantedCredentials == null"
+                    data-testid="varGroup-globalCredentialSelect"
+                  ></v-select>
+                </td>
+
+                <td style="width: 38px">
+                  <v-icon
+                    v-if="grantedCredentials != null"
+                    size="small"
+                    class="pa-1 EnvRemove"
+                    @click="removeCredential(props.item)"
+                    data-testid="varGroup-globalCredentialRemove"
+                  > mdi-delete </v-icon>
+                </td>
+              </tr>
+            </template>
+          </v-data-table>
+        </div>
       </v-window-item>
     </v-window>
   </v-form>
@@ -697,6 +813,7 @@ import enhancedComputed from '@/lib/enhanced/environment-form';
 
 /* eslint-disable import/no-extraneous-dependencies,import/extensions */
 
+import axios from 'axios';
 import ItemFormBase from '@/components/ItemFormBase';
 
 import { markRaw } from 'vue';
@@ -759,6 +876,13 @@ export default {
 
   computed: {
     ...enhancedComputed,
+
+    credentialTargets() {
+      return [
+        { title: this.$t('varGroupGlobalCredentialTargetEnv'), value: 'env' },
+        { title: this.$t('varGroupGlobalCredentialTargetVar'), value: 'var' },
+      ];
+    },
 
     secretStorage() {
       if (this.item && this.item.secret_storage_id && this.secretStorages) {
@@ -930,6 +1054,10 @@ export default {
       extraVars: [],
       env: [],
       secrets: [],
+      credentials: [],
+      // Granted global credentials of the project; null when the role may not list them.
+      grantedCredentials: [],
+      grantedCredentialsError: null,
 
       tab: 'variables',
 
@@ -946,6 +1074,9 @@ export default {
       ],
       envTableHeaders: [{ key: 'name' }, { key: 'value' }, { key: 'actions', sortable: false }],
       secretTableHeaders: [{ key: 'name' }, { key: 'value' }, { key: 'actions', sortable: false }],
+      credentialTableHeaders: [
+        { key: 'name' }, { key: 'target' }, { key: 'credential' }, { key: 'actions', sortable: false },
+      ],
 
       extraVarTypes: [
         { text: 'String', value: 'string' },
@@ -1157,6 +1288,11 @@ export default {
 
       this.item.env = JSON.stringify(env);
       this.item.secrets = secrets;
+      this.item.credentials = (this.credentials || []).map((c) => ({
+        name: c.name,
+        target: c.target,
+        credential_id: c.credential_id,
+      }));
     },
 
     async afterLoadData() {
@@ -1212,12 +1348,73 @@ export default {
         type: x.type,
       }));
 
+      this.credentials = (this.item?.credentials || []).map((x) => ({ ...x }));
+      await this.loadGrantedCredentials();
+
       // Object.keys(env).forEach((x) => {
       //   const index = PREDEFINED_ENV_VARS.findIndex((v) => v.name === x);
       //   if (index !== -1 && PREDEFINED_ENV_VARS[index].value === env[x]) {
       //     this.predefinedEnvVars.push(index);
       //   }
       // });
+    },
+
+    async loadGrantedCredentials() {
+      try {
+        const response = await axios.get(
+          `/api/project/${this.projectId}/granted-credentials?count=100&offset=0`,
+        );
+        this.grantedCredentials = (response.data || [])
+          .filter((credential) => (credential.operations & 1) === 1);
+      } catch (error) {
+        // The list is optional for the form: a failure must not block editing
+        // the rest of the Variable Group. It is shown next to the section.
+        if (error?.response?.status === 403) {
+          this.grantedCredentials = null;
+          return;
+        }
+        this.grantedCredentials = [];
+        this.grantedCredentialsError = getErrorMessage(error);
+      }
+    },
+
+    addCredential() {
+      this.credentials.push({ name: '', target: 'env', credential_id: null });
+    },
+
+    removeCredential(credential) {
+      this.credentials = this.credentials.filter((c) => c !== credential);
+    },
+
+    credentialChoices(row) {
+      const choices = (this.grantedCredentials || []).map((credential) => ({
+        title: credential.display_name,
+        value: credential.credential_id,
+      }));
+      // A reference stays visible after its grant ends; the task is blocked at start.
+      if (row.credential_id && !choices.some((choice) => choice.value === row.credential_id)) {
+        choices.push({
+          title: this.$t('varGroupGlobalCredentialUnavailable', { id: row.credential_id }),
+          value: row.credential_id,
+        });
+      }
+      return choices;
+    },
+
+    credentialNameRule(row) {
+      return (value) => {
+        const name = value || '';
+        const pattern = row.target === 'var' ? /^[a-z][a-z0-9_]{0,63}$/ : /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+        if (!pattern.test(name)) {
+          return row.target === 'var'
+            ? this.$t('varGroupGlobalCredentialVarName')
+            : this.$t('varGroupGlobalCredentialEnvName');
+        }
+        if (this.credentials.filter((c) => c.name === name).length > 1) {
+          return this.$t('varGroupGlobalCredentialDuplicate');
+        }
+        return true;
+      };
     },
 
     getItemsUrl() {

@@ -187,3 +187,74 @@ func runtimeGlobalCredentialFixture(t *testing.T, kind db.GlobalCredentialMateri
 	require.NoError(t, err)
 	return store, actor, project, credential, grant
 }
+
+func TestGlobalCredentialRuntimeAdmitsActorlessTaskOnlyWithUnattendedGrant(t *testing.T) {
+	store, _, project, credential, grant := runtimeGlobalCredentialFixture(t, db.GlobalCredentialMaterialLocalEncrypted)
+	grant.Operations = db.GlobalCredentialGrantOperationConsume | db.GlobalCredentialGrantOperationConsumeUnattended
+	_, err := store.UpdateGlobalCredentialGrant(grant, grant.Revision, time.Now().UTC())
+	require.NoError(t, err)
+	resolver := NewGlobalCredentialRuntimeResolverWithDependencies(store, runtimeGlobalCredentialCipher{value: []byte("schedule-value")}, runtimeCapabilityProvider{active: true}, nil)
+
+	t.Run("a schedule receives the value", func(t *testing.T) {
+		injector := &runtimeGlobalCredentialInjector{}
+		snapshot, err := resolver.ResolveAndInject(context.Background(), pro_interfaces.GlobalCredentialResolutionRequest{
+			TaskID: 48, ProjectID: project.ID, TemplateID: 99,
+			Binding: pro_interfaces.GlobalCredentialTaskBinding{CredentialID: credential.ID, Target: "TF_VAR_token", Env: true},
+		}, injector)
+		require.NoError(t, err)
+		assert.Equal(t, pro_interfaces.GlobalCredentialResolutionAllowed, snapshot.Outcome)
+		assert.Equal(t, "schedule-value", injector.delivered)
+	})
+
+	t.Run("a user still needs consume permission", func(t *testing.T) {
+		member, err := store.CreateUserWithoutPassword(db.User{Username: "runtime-member", Name: "Member", Email: "runtime-member@example.test"})
+		require.NoError(t, err)
+		injector := &runtimeGlobalCredentialInjector{}
+		snapshot, err := resolver.ResolveAndInject(context.Background(), pro_interfaces.GlobalCredentialResolutionRequest{
+			TaskID: 49, ProjectID: project.ID, TemplateID: 99, ActorID: member.ID,
+			Binding: pro_interfaces.GlobalCredentialTaskBinding{CredentialID: credential.ID, Target: "deploy_token"},
+		}, injector)
+		assert.ErrorIs(t, err, pro_interfaces.ErrGlobalCredentialResolutionDenied)
+		assert.Equal(t, pro_interfaces.GlobalCredentialResolutionReasonTaskPermission, snapshot.Reason)
+		assert.Empty(t, injector.delivered)
+	})
+
+	t.Run("revoking unattended use blocks the schedule again", func(t *testing.T) {
+		current, err := store.GetGlobalCredentialGrantForProject(credential.ID, project.ID)
+		require.NoError(t, err)
+		current.Operations = db.GlobalCredentialGrantOperationConsume
+		_, err = store.UpdateGlobalCredentialGrant(current, current.Revision, time.Now().UTC())
+		require.NoError(t, err)
+		injector := &runtimeGlobalCredentialInjector{}
+		snapshot, err := resolver.ResolveAndInject(context.Background(), pro_interfaces.GlobalCredentialResolutionRequest{
+			TaskID: 50, ProjectID: project.ID, TemplateID: 99,
+			Binding: pro_interfaces.GlobalCredentialTaskBinding{CredentialID: credential.ID, Target: "deploy_token"},
+		}, injector)
+		assert.ErrorIs(t, err, pro_interfaces.ErrGlobalCredentialResolutionDenied)
+		assert.Equal(t, pro_interfaces.GlobalCredentialResolutionReasonActorRequired, snapshot.Reason)
+		assert.Empty(t, injector.delivered)
+	})
+}
+
+func TestGlobalCredentialTaskBindingTargets(t *testing.T) {
+	tests := []struct {
+		name    string
+		binding pro_interfaces.GlobalCredentialTaskBinding
+		valid   bool
+	}{
+		{"extra variable", pro_interfaces.GlobalCredentialTaskBinding{CredentialID: 1, Target: "deploy_token"}, true},
+		{"environment variable", pro_interfaces.GlobalCredentialTaskBinding{CredentialID: 1, Target: "TF_VAR_token", Env: true}, true},
+		{"environment name as extra variable", pro_interfaces.GlobalCredentialTaskBinding{CredentialID: 1, Target: "TF_VAR_token"}, false},
+		{"reserved environment variable", pro_interfaces.GlobalCredentialTaskBinding{CredentialID: 1, Target: "SEMAPHORE_JWT", Env: true}, false},
+		{"missing credential", pro_interfaces.GlobalCredentialTaskBinding{Target: "deploy_token"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.valid {
+				assert.NoError(t, tt.binding.Validate())
+			} else {
+				assert.Error(t, tt.binding.Validate())
+			}
+		})
+	}
+}

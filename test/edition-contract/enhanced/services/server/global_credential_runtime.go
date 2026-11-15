@@ -115,15 +115,18 @@ type globalCredentialAuthorizationState struct {
 }
 
 func (s *globalCredentialRuntimeResolver) authorize(request pro_interfaces.GlobalCredentialResolutionRequest, now time.Time) (globalCredentialAuthorizationState, pro_interfaces.GlobalCredentialResolutionReason) {
-	if request.ActorID <= 0 {
-		return globalCredentialAuthorizationState{}, pro_interfaces.GlobalCredentialResolutionReasonActorRequired
-	}
-	permission, err := s.store.GetTemplatePermissionContext(request.ProjectID, request.TemplateID, request.ActorID)
-	if err != nil || !permission.EffectivePermissions.Can(db.CanRunTemplate) {
-		return globalCredentialAuthorizationState{}, pro_interfaces.GlobalCredentialResolutionReasonTaskPermission
-	}
-	if !permission.ProjectPermissions.Can(db.CanConsumeGrantedCredentials) {
-		return globalCredentialAuthorizationState{}, pro_interfaces.GlobalCredentialResolutionReasonConsumePermission
+	// A task without a starting user (schedule, integration) has nobody whose
+	// permissions could authorize the use. Only a grant that explicitly
+	// allows unattended use admits it; it is checked below with the grant.
+	unattended := request.ActorID <= 0
+	if !unattended {
+		permission, err := s.store.GetTemplatePermissionContext(request.ProjectID, request.TemplateID, request.ActorID)
+		if err != nil || !permission.EffectivePermissions.Can(db.CanRunTemplate) {
+			return globalCredentialAuthorizationState{}, pro_interfaces.GlobalCredentialResolutionReasonTaskPermission
+		}
+		if !permission.ProjectPermissions.Can(db.CanConsumeGrantedCredentials) {
+			return globalCredentialAuthorizationState{}, pro_interfaces.GlobalCredentialResolutionReasonConsumePermission
+		}
 	}
 	credential, err := s.store.GetGlobalCredential(request.Binding.CredentialID)
 	if err != nil || !credential.Enabled {
@@ -136,6 +139,9 @@ func (s *globalCredentialRuntimeResolver) authorize(request pro_interfaces.Globa
 	grant, err := s.store.GetGlobalCredentialGrantForProject(credential.ID, request.ProjectID)
 	if err != nil || !grant.IsEffectiveAt(request.ProjectID, db.GlobalCredentialGrantOperationConsume, credential.Enabled, now) {
 		return globalCredentialAuthorizationState{}, pro_interfaces.GlobalCredentialResolutionReasonGrantUnavailable
+	}
+	if unattended && !grant.IsEffectiveAt(request.ProjectID, db.GlobalCredentialGrantOperationConsumeUnattended, credential.Enabled, now) {
+		return globalCredentialAuthorizationState{}, pro_interfaces.GlobalCredentialResolutionReasonActorRequired
 	}
 	return globalCredentialAuthorizationState{credential: credential, version: version, grant: grant}, pro_interfaces.GlobalCredentialResolutionReasonAllowed
 }
