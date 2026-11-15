@@ -12,6 +12,68 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+## [v2.20.24-ex.2.1.9] - 2026-11-15
+
+Based on upstream Semaphore UI release v2.20.24. A usability overhaul of
+administration, directory sign-in and project permissions, checked with
+first-time users on seven everyday tasks.
+
+### Upgrade notes
+
+- Directory (LDAP) sign-in now admits only people who match an enabled group
+  mapping. An active provider without one keeps working for administrators with
+  local accounts, but directory users are refused until a mapping exists:
+  create one under Administration > Group mappings before or right after the
+  upgrade. People who lose every mapping lose their managed roles, sessions and
+  API tokens at the next reconciliation.
+- Project permissions are split per resource type and action (templates,
+  inventories, repositories, keys, variable groups, schedules, integrations,
+  views). Migration `v2.20.18-ex1.3` gives every existing role the equivalent
+  set, so no assignment gains or loses access, and its rollback restores the
+  original masks. The permission IDs `project.resources.view` and
+  `project.resources.manage` are retired; role writes that use them are refused.
+- API responses with a project permission mask also carry `permission_ids`, and
+  role writes accept them. Masks now use bits beyond 2^53, which JavaScript
+  numbers cannot hold exactly: browser clients should use `permission_ids`.
+- The built-in Guest role no longer includes "approve workflows".
+- Changing a password ends the user's other sessions.
+
+### Added
+
+- An Administration area with its own sections (users, roles, authentication,
+  group mappings, notifications, audit, credentials, workflows, runners,
+  cluster, tasks, system information). Settings left the System information
+  dialog, which now only shows information.
+- LDAP setup in five numbered steps with Active Directory and OpenLDAP presets,
+  a test that reports each stage and the reason of a failure, and directory
+  group search for mappings.
+- User deactivation and reactivation; deactivated users cannot sign in, use API
+  tokens or act through integrations.
+- A role matrix (resource type by action), grouped permission summaries, and an
+  effective permissions view that names the granting roles.
+- The task summary names the reason when a task failed before any host
+  reported a result, and the activity feed can be filtered by person.
+
+### Changed
+
+- Test alerts report per channel whether they were delivered, failed, or are
+  not configured, and name the server settings to set.
+- New schedules start at a daily time instead of every minute and preview their
+  next runs.
+- The execution review names the selected keys and leaves out "None" keys.
+- Two-factor login policy, TOTP enrollment and recovery codes are clearer, with
+  the secret shown as text.
+- Status colours and controls meet WCAG 2.2 AA on the overhauled pages.
+
+### Fixed
+
+- Group mapping apply no longer fails because one directory user has no account.
+- Template grants no longer widen to permissions on other resource types.
+- The last-administrator and TOTP recovery checks no longer count deactivated
+  administrators.
+- Test alert failures no longer echo webhook URLs or tokens.
+- Missing Galaxy requirements are logged once instead of once per path.
+
 ## [v2.20.24-ex.2.1.8] - 2026-11-13
 
 Based on upstream Semaphore UI release v2.20.24. From this release on, the fork
