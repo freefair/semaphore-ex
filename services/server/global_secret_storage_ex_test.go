@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/semaphoreui/semaphore/db"
@@ -22,7 +23,8 @@ func newGlobalStorageFixture(t *testing.T) (*sql.SqlDb, GlobalSecretStorageServi
 }
 
 func infisicalParams(siteURL string, ca []byte) db.MapStringAnyField {
-	return db.MapStringAnyField{"url": siteURL, "client_id": pamtest.ClientID, "ca_certificate": string(ca)}
+	return db.MapStringAnyField{"url": siteURL, "client_id": pamtest.ClientID, "ca_certificate": string(ca),
+		"secret_scopes": []any{map[string]any{"project_id": "proj-1", "environment": "prod", "path": ""}}}
 }
 
 func TestGlobalSecretStorageServiceKeepsTheClientSecretOutOfResponses(t *testing.T) {
@@ -258,4 +260,99 @@ func TestLoadInfisicalPAMForProjectAddsGrantedGlobalStorages(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, configs, 1)
 	})
+}
+
+func TestGlobalInfisicalSecretSourceReadsOnlyInsideItsScopes(t *testing.T) {
+	fake := pamtest.Start(t, pamtest.Options{Secrets: map[string]pamtest.FakeSecret{
+		pamtest.SecretKey("proj-1", "prod", "/apps/web", "DB_PASSWORD"):     {Value: "web-value", Version: 1},
+		pamtest.SecretKey("proj-1", "prod", "/apps/billing", "DB_PASSWORD"): {Value: "billing-value", Version: 1},
+		pamtest.SecretKey("proj-1", "dev", "/apps/web", "DB_PASSWORD"):      {Value: "dev-value", Version: 1},
+		pamtest.SecretKey("proj-2", "prod", "/apps/web", "DB_PASSWORD"):     {Value: "other-value", Version: 1},
+	}})
+	store, service, encryption := newGlobalStorageFixture(t)
+	params := infisicalParams(fake.URL(), fake.APICACert)
+	params["secret_scopes"] = []any{map[string]any{"project_id": "proj-1", "environment": "prod", "path": "/apps/web/"}}
+	storage, err := service.Create(db.GlobalSecretStorage{Name: "Scoped", Type: db.SecretStorageTypeInfisical, Secret: pamtest.ClientSecret, Params: params})
+	require.NoError(t, err)
+	assert.Equal(t, []any{map[string]any{"project_id": "proj-1", "environment": "prod", "path": "apps/web"}}, storage.Params["secret_scopes"], "scope folders are normalized")
+	router := NewGlobalCredentialProviderRouter(nil, store, encryption)
+	resolve := func(project, environment, path string) error {
+		_, err := router.ResolveGlobalCredentialExternal(context.Background(), db.GlobalCredentialExternalReference{
+			Provider: db.GlobalCredentialProviderInfisical, ProviderID: db.GlobalSecretStorageProviderID(storage.ID),
+			Mount: project, Environment: environment, Path: path, Field: "DB_PASSWORD",
+		})
+		return err
+	}
+
+	assert.NoError(t, resolve("proj-1", "prod", "apps/web"))
+	for name, args := range map[string][3]string{
+		"other folder":       {"proj-1", "prod", "apps/billing"},
+		"folder name prefix": {"proj-1", "prod", "apps/webshop"},
+		"parent folder":      {"proj-1", "prod", "apps"},
+		"other environment":  {"proj-1", "dev", "apps/web"},
+		"other project":      {"proj-2", "prod", "apps/web"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Error(t, resolve(args[0], args[1], args[2]))
+		})
+	}
+
+	t.Run("a storage without scopes reads nothing", func(t *testing.T) {
+		unscoped := infisicalParams(fake.URL(), fake.APICACert)
+		delete(unscoped, "secret_scopes")
+		empty, err := service.Create(db.GlobalSecretStorage{Name: "PAM only", Type: db.SecretStorageTypeInfisical, Secret: pamtest.ClientSecret, Params: unscoped})
+		require.NoError(t, err)
+		_, err = router.ResolveGlobalCredentialExternal(context.Background(), db.GlobalCredentialExternalReference{
+			Provider: db.GlobalCredentialProviderInfisical, ProviderID: db.GlobalSecretStorageProviderID(empty.ID),
+			Mount: "proj-1", Environment: "prod", Path: "apps/web", Field: "DB_PASSWORD",
+		})
+		assert.Error(t, err)
+	})
+}
+
+func TestGlobalSecretStorageServiceValidatesScopesAndRunnerTrust(t *testing.T) {
+	_, service, _ := newGlobalStorageFixture(t)
+	create := func(change func(db.MapStringAnyField)) error {
+		params := db.MapStringAnyField{"url": "https://app.infisical.com", "client_id": "client-id"}
+		change(params)
+		_, err := service.Create(db.GlobalSecretStorage{Name: "Check", Type: db.SecretStorageTypeInfisical, Secret: "s", Params: params})
+		return err
+	}
+	assert.Error(t, create(func(p db.MapStringAnyField) { p["secret_scopes"] = "everything" }))
+	assert.Error(t, create(func(p db.MapStringAnyField) {
+		p["secret_scopes"] = []any{map[string]any{"project_id": "", "environment": "prod"}}
+	}))
+	assert.Error(t, create(func(p db.MapStringAnyField) {
+		p["secret_scopes"] = []any{map[string]any{"project_id": "proj-1", "environment": "Prod"}}
+	}))
+	assert.Error(t, create(func(p db.MapStringAnyField) {
+		p["secret_scopes"] = []any{map[string]any{"project_id": "proj-1", "environment": "prod", "path": "apps/.."}}
+	}))
+	assert.Error(t, create(func(p db.MapStringAnyField) { p["allow_remote_runners"] = "yes" }))
+
+	created, err := service.Create(db.GlobalSecretStorage{Name: "Runners", Type: db.SecretStorageTypeInfisical, Secret: "s",
+		Params: db.MapStringAnyField{"url": "https://app.infisical.com", "client_id": "client-id"}})
+	require.NoError(t, err)
+	assert.Equal(t, false, created.Params["allow_remote_runners"], "remote runners are off by default")
+	assert.Equal(t, []any{}, created.Params["secret_scopes"])
+}
+
+func TestLoadInfisicalPAMForProjectCarriesRunnerTrust(t *testing.T) {
+	store, service, _ := newGlobalStorageFixture(t)
+	project, err := store.CreateProject(db.Project{Name: "granted"})
+	require.NoError(t, err)
+	for _, allowed := range []bool{false, true} {
+		_, err := service.Create(db.GlobalSecretStorage{
+			Name: "Runner trust " + fmt.Sprint(allowed), Type: db.SecretStorageTypeInfisical, Secret: "s",
+			Params: db.MapStringAnyField{"url": "https://app.infisical.com", "client_id": "client-id", "allow_remote_runners": allowed,
+				"pam_routes": []any{map[string]any{"host": fmt.Sprintf("host-%t", allowed), "account": "servers/web"}}},
+			ProjectIDs: []int{project.ID},
+		})
+		require.NoError(t, err)
+	}
+	configs, err := LoadInfisicalPAMForProject(infisicalStorageRepository{}, infisicalKeyRepository{keys: map[int][]db.AccessKey{}}, store, project.ID)
+	require.NoError(t, err)
+	require.Len(t, configs, 2)
+	assert.False(t, configs[0].AllowRemoteRunners)
+	assert.True(t, configs[1].AllowRemoteRunners)
 }

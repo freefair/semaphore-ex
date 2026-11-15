@@ -83,7 +83,20 @@ func (d *SqlDb) CreateGlobalSecretStorage(storage db.GlobalSecretStorage) (db.Gl
 		_, _ = d.exec("delete from global_secret_storage where id=?", insertID)
 		return db.GlobalSecretStorage{}, err
 	}
-	return d.GetGlobalSecretStorage(insertID)
+	storage.ID, storage.Revision, storage.Created, storage.Updated = insertID, 1, now, now
+	return d.readCommittedGlobalSecretStorage(storage), nil
+}
+
+// readCommittedGlobalSecretStorage returns the stored row after a committed
+// write. A failed read must not look like a failed write: the caller would
+// then remove the client secret the committed row already references.
+func (d *SqlDb) readCommittedGlobalSecretStorage(written db.GlobalSecretStorage) db.GlobalSecretStorage {
+	if stored, err := d.GetGlobalSecretStorage(written.ID); err == nil {
+		return stored
+	}
+	written.Secret = ""
+	written.ProjectIDs = normalizedGlobalSecretStorageProjects(written.ProjectIDs)
+	return written
 }
 
 func (d *SqlDb) UpdateGlobalSecretStorage(storage db.GlobalSecretStorage, expectedRevision int) (db.GlobalSecretStorage, error) {
@@ -120,7 +133,8 @@ func (d *SqlDb) UpdateGlobalSecretStorage(storage db.GlobalSecretStorage, expect
 	if err = tx.Commit(); err != nil {
 		return db.GlobalSecretStorage{}, err
 	}
-	return d.GetGlobalSecretStorage(storage.ID)
+	storage.Revision = expectedRevision + 1
+	return d.readCommittedGlobalSecretStorage(storage), nil
 }
 
 func (d *SqlDb) DeleteGlobalSecretStorage(storageID int) error {
@@ -165,22 +179,28 @@ func (d *SqlDb) replaceGlobalSecretStorageProjectsTx(tx gorp.SqlExecutor, storag
 	if _, err := tx.Exec(d.PrepareQuery("delete from global_secret_storage_project where storage_id=?"), storageID); err != nil {
 		return err
 	}
-	unique := make(map[int]struct{}, len(projectIDs))
-	ordered := make([]int, 0, len(projectIDs))
 	for _, projectID := range projectIDs {
 		if projectID <= 0 {
 			return db.ErrInvalidOperation
 		}
+	}
+	for _, projectID := range normalizedGlobalSecretStorageProjects(projectIDs) {
+		if _, err := tx.Exec(d.PrepareQuery("insert into global_secret_storage_project (storage_id, project_id) values (?, ?)"), storageID, projectID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func normalizedGlobalSecretStorageProjects(projectIDs []int) []int {
+	unique := make(map[int]struct{}, len(projectIDs))
+	ordered := make([]int, 0, len(projectIDs))
+	for _, projectID := range projectIDs {
 		if _, seen := unique[projectID]; !seen {
 			unique[projectID] = struct{}{}
 			ordered = append(ordered, projectID)
 		}
 	}
 	sort.Ints(ordered)
-	for _, projectID := range ordered {
-		if _, err := tx.Exec(d.PrepareQuery("insert into global_secret_storage_project (storage_id, project_id) values (?, ?)"), storageID, projectID); err != nil {
-			return err
-		}
-	}
-	return nil
+	return ordered
 }

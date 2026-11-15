@@ -2,7 +2,7 @@ import { expect } from 'chai';
 import { mount } from '@vue/test-utils';
 import GlobalSecretStorages from '@/views/GlobalSecretStorages.vue';
 import GlobalCredentialReferenceFields, {
-  referencePayload, referenceValid,
+  referenceInScope, referencePayload, referenceValid,
 } from '@/components/enhanced/GlobalCredentialReferenceFields.vue';
 import mockAxios, { httpError } from './helpers/axiosMock';
 
@@ -91,14 +91,19 @@ describe('global credential reference fields', () => {
     wrapper.unmount();
   });
 
-  it('validates and builds Infisical references', () => {
+  it('validates and builds Infisical references inside the scopes', () => {
     const form = {
-      provider: 'infisical', providerId: 'storage-3', mount: 'proj-1', environment: 'prod', path: '', version: 0, field: 'DB_PASSWORD',
+      provider: 'infisical', providerId: 'storage-3', mount: 'proj-1', environment: 'prod', path: 'apps/web', version: 0, field: 'DB_PASSWORD',
     };
-    expect(referenceValid(form)).to.equal(true);
-    expect(referenceValid({ ...form, environment: '' })).to.equal(false);
+    const scopes = [{ project_id: 'proj-1', environment: 'prod', path: 'apps' }];
+    expect(referenceValid(form, scopes)).to.equal(true);
+    expect(referenceValid({ ...form, environment: '' }, scopes)).to.equal(false);
+    expect(referenceValid({ ...form, path: 'appsx' }, scopes)).to.equal(false, 'a folder prefix is not a parent');
+    expect(referenceValid({ ...form, mount: 'proj-2' }, scopes)).to.equal(false);
+    expect(referenceValid(form, [])).to.equal(false, 'a connection without scopes reads nothing');
+    expect(referenceInScope({ ...form, path: '' }, [{ project_id: 'proj-1', environment: 'prod', path: '' }])).to.equal(true);
     expect(referencePayload(form)).to.deep.equal({
-      provider: 'infisical', provider_id: 'storage-3', mount: 'proj-1', path: '', version: 0, field: 'DB_PASSWORD', environment: 'prod',
+      provider: 'infisical', provider_id: 'storage-3', mount: 'proj-1', path: 'apps/web', version: 0, field: 'DB_PASSWORD', environment: 'prod',
     });
   });
 

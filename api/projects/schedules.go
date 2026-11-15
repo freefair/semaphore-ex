@@ -161,6 +161,7 @@ func AddSchedule(w http.ResponseWriter, r *http.Request) {
 		helpers.WriteError(w, err)
 		return
 	}
+	recordScheduleCredentialPrincipal(r, schedule.ID)
 
 	helpers.EventLog(r, helpers.EventLogCreate, helpers.EventLogItem{
 		UserID:      helpers.UserFromContext(r).ID,
@@ -216,6 +217,7 @@ func UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 		helpers.WriteError(w, err)
 		return
 	}
+	recordScheduleCredentialPrincipal(r, oldSchedule.ID)
 
 	helpers.EventLog(r, helpers.EventLogUpdate, helpers.EventLogItem{
 		UserID:      helpers.UserFromContext(r).ID,
@@ -267,6 +269,7 @@ func SetScheduleActive(w http.ResponseWriter, r *http.Request) {
 		helpers.WriteError(w, err)
 		return
 	}
+	recordScheduleCredentialPrincipal(r, oldSchedule.ID)
 
 	helpers.EventLog(r, helpers.EventLogUpdate, helpers.EventLogItem{
 		UserID:      helpers.UserFromContext(r).ID,

@@ -4,8 +4,17 @@ create table `project__environment_credential` (
  `name` varchar(128) not null, `target` varchar(8) not null,
  unique (`environment_id`, `name`),
  foreign key (`project_id`) references `project`(`id`) on delete cascade,
- foreign key (`environment_id`) references `project__environment`(`id`) on delete cascade,
- foreign key (`credential_id`) references `global_credential`(`id`) on delete cascade
+ foreign key (`environment_id`) references `project__environment`(`id`) on delete cascade
 );
 create index `project__environment_credential__credential`
  on `project__environment_credential` (`credential_id`);
+create table `project__schedule_credential_principal` (
+ `schedule_id` int not null primary key, `user_id` int not null,
+ foreign key (`schedule_id`) references `project__schedule`(`id`) on delete cascade,
+ foreign key (`user_id`) references `user`(`id`) on delete cascade
+);
+create table `project__integration_credential_principal` (
+ `integration_id` int not null primary key, `user_id` int not null,
+ foreign key (`integration_id`) references `project__integration`(`id`) on delete cascade,
+ foreign key (`user_id`) references `user`(`id`) on delete cascade
+);

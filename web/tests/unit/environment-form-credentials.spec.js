@@ -64,6 +64,27 @@ describe('variable group global credential references', () => {
     ]);
   });
 
+  it('reads every page of granted credentials', async () => {
+    const page = (offset, size) => Array.from({ length: size }, (_, index) => ({
+      credential_id: offset + index + 10, display_name: `Credential ${offset + index}`, operations: 3,
+    }));
+    granted = () => [];
+    http.respond((req) => {
+      if (['put', 'post'].includes(req.method)) return req.data;
+      if (req.url.includes('/granted-credentials')) {
+        const offset = Number(new URL(req.url, 'http://x').searchParams.get('offset'));
+        return offset === 0 ? page(0, 100) : page(100, 5);
+      }
+      if (req.url.endsWith('/secret_storages')) return [];
+      return JSON.parse(JSON.stringify(group));
+    });
+    wrapper = mount(Host, { props: { projectId: 7, itemId: 1 } });
+    await flush();
+    await flush();
+
+    expect(wrapper.vm.grantedCredentials).to.have.length(105);
+  });
+
   it('keeps a reference whose grant ended visible', async () => {
     granted = () => [];
     wrapper = mount(Host, { props: { projectId: 7, itemId: 1 } });

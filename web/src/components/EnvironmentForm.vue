@@ -1361,11 +1361,20 @@ export default {
 
     async loadGrantedCredentials() {
       try {
-        const response = await axios.get(
-          `/api/project/${this.projectId}/granted-credentials?count=100&offset=0`,
-        );
-        this.grantedCredentials = (response.data || [])
-          .filter((credential) => (credential.operations & 3) === 3);
+        const pageSize = 100;
+        const all = [];
+        // Pages are read until a short page; the bound keeps a broken
+        // server from looping forever.
+        for (let page = 0; page < 100; page += 1) {
+          // eslint-disable-next-line no-await-in-loop
+          const response = await axios.get(
+            `/api/project/${this.projectId}/granted-credentials?count=${pageSize}&offset=${page * pageSize}`,
+          );
+          const items = Array.isArray(response.data) ? response.data : [];
+          all.push(...items);
+          if (items.length < pageSize) break;
+        }
+        this.grantedCredentials = all.filter((credential) => (credential.operations & 3) === 3);
       } catch (error) {
         // The list is optional for the form: a failure must not block editing
         // the rest of the Variable Group. It is shown next to the section.

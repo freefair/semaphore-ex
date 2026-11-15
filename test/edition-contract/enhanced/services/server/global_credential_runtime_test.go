@@ -188,50 +188,85 @@ func runtimeGlobalCredentialFixture(t *testing.T, kind db.GlobalCredentialMateri
 	return store, actor, project, credential, grant
 }
 
-func TestGlobalCredentialRuntimeAdmitsActorlessTaskOnlyWithUnattendedGrant(t *testing.T) {
-	store, _, project, credential, grant := runtimeGlobalCredentialFixture(t, db.GlobalCredentialMaterialLocalEncrypted)
+// principalStore answers task and principal lookups for an actorless task.
+type principalStore struct {
+	*storepkg.SqlDb
+	principal int
+}
+
+func (s principalStore) GetTask(projectID int, taskID int) (db.Task, error) {
+	scheduleID := 5
+	return db.Task{ID: taskID, ProjectID: projectID, ScheduleID: &scheduleID}, nil
+}
+
+func (s principalStore) SetScheduleCredentialPrincipal(int, int) error    { return nil }
+func (s principalStore) SetIntegrationCredentialPrincipal(int, int) error { return nil }
+func (s principalStore) GetTaskCredentialPrincipal(db.Task) (int, bool, error) {
+	return s.principal, s.principal > 0, nil
+}
+
+func TestGlobalCredentialRuntimeAuthorizesActorlessTasksThroughTheTriggerPrincipal(t *testing.T) {
+	store, admin, project, credential, grant := runtimeGlobalCredentialFixture(t, db.GlobalCredentialMaterialLocalEncrypted)
 	grant.Operations = db.GlobalCredentialGrantOperationConsume | db.GlobalCredentialGrantOperationConsumeUnattended
 	_, err := store.UpdateGlobalCredentialGrant(grant, grant.Revision, time.Now().UTC())
 	require.NoError(t, err)
-	resolver := NewGlobalCredentialRuntimeResolverWithDependencies(store, runtimeGlobalCredentialCipher{value: []byte("schedule-value")}, runtimeCapabilityProvider{active: true}, nil)
-
-	t.Run("a schedule receives the value", func(t *testing.T) {
+	member, err := store.CreateUserWithoutPassword(db.User{Username: "runtime-member", Name: "Member", Email: "runtime-member@example.test"})
+	require.NoError(t, err)
+	resolve := func(principal int) (pro_interfaces.GlobalCredentialResolutionSnapshot, *runtimeGlobalCredentialInjector, error) {
+		resolver := NewGlobalCredentialRuntimeResolverWithDependencies(principalStore{SqlDb: store, principal: principal},
+			runtimeGlobalCredentialCipher{value: []byte("schedule-value")}, runtimeCapabilityProvider{active: true}, nil)
 		injector := &runtimeGlobalCredentialInjector{}
 		snapshot, err := resolver.ResolveAndInject(context.Background(), pro_interfaces.GlobalCredentialResolutionRequest{
 			TaskID: 48, ProjectID: project.ID, TemplateID: 99,
 			Binding: pro_interfaces.GlobalCredentialTaskBinding{CredentialID: credential.ID, Target: "TF_VAR_token", Env: true},
 		}, injector)
+		return snapshot, injector, err
+	}
+
+	t.Run("a principal allowed to consume receives the value", func(t *testing.T) {
+		snapshot, injector, err := resolve(admin.ID)
 		require.NoError(t, err)
 		assert.Equal(t, pro_interfaces.GlobalCredentialResolutionAllowed, snapshot.Outcome)
+		assert.Equal(t, admin.ID, snapshot.ActorID, "the usage history names the principal")
 		assert.Equal(t, "schedule-value", injector.delivered)
 	})
 
-	t.Run("a user still needs consume permission", func(t *testing.T) {
-		member, err := store.CreateUserWithoutPassword(db.User{Username: "runtime-member", Name: "Member", Email: "runtime-member@example.test"})
+	t.Run("a principal without consume permission is denied", func(t *testing.T) {
+		snapshot, injector, err := resolve(member.ID)
+		assert.ErrorIs(t, err, pro_interfaces.ErrGlobalCredentialResolutionDenied)
+		assert.Equal(t, pro_interfaces.GlobalCredentialResolutionReasonTaskPermission, snapshot.Reason)
+		assert.Empty(t, injector.delivered)
+	})
+
+	t.Run("a trigger without principal is denied", func(t *testing.T) {
+		snapshot, injector, err := resolve(0)
+		assert.ErrorIs(t, err, pro_interfaces.ErrGlobalCredentialResolutionDenied)
+		assert.Equal(t, pro_interfaces.GlobalCredentialResolutionReasonActorRequired, snapshot.Reason)
+		assert.Empty(t, injector.delivered)
+	})
+
+	t.Run("revoking unattended use blocks an authorized principal", func(t *testing.T) {
+		current, err := store.GetGlobalCredentialGrantForProject(credential.ID, project.ID)
 		require.NoError(t, err)
+		current.Operations = db.GlobalCredentialGrantOperationConsume
+		_, err = store.UpdateGlobalCredentialGrant(current, current.Revision, time.Now().UTC())
+		require.NoError(t, err)
+		snapshot, injector, err := resolve(admin.ID)
+		assert.ErrorIs(t, err, pro_interfaces.ErrGlobalCredentialResolutionDenied)
+		assert.Equal(t, pro_interfaces.GlobalCredentialResolutionReasonActorRequired, snapshot.Reason)
+		assert.Empty(t, injector.delivered)
+	})
+
+	t.Run("a started task is checked against its user, not a principal", func(t *testing.T) {
+		resolver := NewGlobalCredentialRuntimeResolverWithDependencies(principalStore{SqlDb: store, principal: admin.ID},
+			runtimeGlobalCredentialCipher{value: []byte("schedule-value")}, runtimeCapabilityProvider{active: true}, nil)
 		injector := &runtimeGlobalCredentialInjector{}
 		snapshot, err := resolver.ResolveAndInject(context.Background(), pro_interfaces.GlobalCredentialResolutionRequest{
 			TaskID: 49, ProjectID: project.ID, TemplateID: 99, ActorID: member.ID,
 			Binding: pro_interfaces.GlobalCredentialTaskBinding{CredentialID: credential.ID, Target: "deploy_token"},
 		}, injector)
 		assert.ErrorIs(t, err, pro_interfaces.ErrGlobalCredentialResolutionDenied)
-		assert.Equal(t, pro_interfaces.GlobalCredentialResolutionReasonTaskPermission, snapshot.Reason)
-		assert.Empty(t, injector.delivered)
-	})
-
-	t.Run("revoking unattended use blocks the schedule again", func(t *testing.T) {
-		current, err := store.GetGlobalCredentialGrantForProject(credential.ID, project.ID)
-		require.NoError(t, err)
-		current.Operations = db.GlobalCredentialGrantOperationConsume
-		_, err = store.UpdateGlobalCredentialGrant(current, current.Revision, time.Now().UTC())
-		require.NoError(t, err)
-		injector := &runtimeGlobalCredentialInjector{}
-		snapshot, err := resolver.ResolveAndInject(context.Background(), pro_interfaces.GlobalCredentialResolutionRequest{
-			TaskID: 50, ProjectID: project.ID, TemplateID: 99,
-			Binding: pro_interfaces.GlobalCredentialTaskBinding{CredentialID: credential.ID, Target: "deploy_token"},
-		}, injector)
-		assert.ErrorIs(t, err, pro_interfaces.ErrGlobalCredentialResolutionDenied)
-		assert.Equal(t, pro_interfaces.GlobalCredentialResolutionReasonActorRequired, snapshot.Reason)
+		assert.Equal(t, member.ID, snapshot.ActorID)
 		assert.Empty(t, injector.delivered)
 	})
 }

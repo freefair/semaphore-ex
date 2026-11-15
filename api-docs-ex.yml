@@ -2034,8 +2034,10 @@ definitions:
         - infisical
       params:
         type: object
-        description: url, client_id, organization_slug, ca_certificate, session_duration and pam_routes, as for a project
-          Infisical storage.
+        description: url, client_id, organization_slug, ca_certificate, session_duration and pam_routes as for a project
+          Infisical storage; secret_scopes (list of project_id, environment and optional folder path) bounds what global
+          credentials may read, none means SSH routing only; allow_remote_runners (default false) lets the machine identity
+          reach remote runners for the routes.
       revision:
         type: integer
       created:
@@ -2100,6 +2102,18 @@ definitions:
         type: string
       name:
         type: string
+      scopes:
+        type: array
+        description: Infisical secret scopes of a global secret storage.
+        items:
+          type: object
+          properties:
+            project_id:
+              type: string
+            environment:
+              type: string
+            path:
+              type: string
   GlobalCredentialMaterialInput:
     type: object
     description: Write-only material. Supply exactly one of string_value or external_reference. No response returns
@@ -2745,7 +2759,7 @@ paths:
           description: Deleted
         404:
           description: Not found
-  /global-credentials/providers:
+  /global-credential-providers:
     get:
       tags:
       - global-credential

@@ -57,16 +57,25 @@ func (s *globalCredentialRuntimeResolver) ResolveAndInject(
 	injector pro_interfaces.GlobalCredentialInjector,
 ) (pro_interfaces.GlobalCredentialResolutionSnapshot, error) {
 	now := s.now().UTC()
-	snapshot := snapshotForRequest(request, now)
 	if request.Validate() != nil || injector == nil || s.store == nil {
+		snapshot := snapshotForRequest(request, now)
 		snapshot.Outcome, snapshot.Reason = pro_interfaces.GlobalCredentialResolutionDenied, pro_interfaces.GlobalCredentialResolutionReasonActorRequired
 		return snapshot, pro_interfaces.ErrGlobalCredentialResolutionDenied
 	}
+	// A task without a starting user (schedule, integration) is answered for
+	// by the user who last created or changed its trigger. That user's
+	// permissions are checked like a starting user's, and the grant must
+	// allow unattended use in addition.
+	unattended := request.ActorID <= 0
+	if unattended {
+		request.ActorID = s.unattendedPrincipal(request)
+	}
+	snapshot := snapshotForRequest(request, now)
 	if err := s.requireCapability(ctx, now); err != nil {
 		snapshot.Outcome, snapshot.Reason = pro_interfaces.GlobalCredentialResolutionDenied, pro_interfaces.GlobalCredentialResolutionReasonCapability
 		return s.recordDenied(snapshot)
 	}
-	state, reason := s.authorize(request, now)
+	state, reason := s.authorize(request, now, unattended)
 	snapshot = state.snapshot(snapshot, pro_interfaces.GlobalCredentialResolutionDenied, reason, now)
 	if reason != pro_interfaces.GlobalCredentialResolutionReasonAllowed {
 		return s.recordDenied(snapshot)
@@ -82,7 +91,7 @@ func (s *globalCredentialRuntimeResolver) ResolveAndInject(
 	if s.beforeFinalCheck != nil {
 		s.beforeFinalCheck()
 	}
-	finalState, finalReason := s.authorize(request, s.now().UTC())
+	finalState, finalReason := s.authorize(request, s.now().UTC(), unattended)
 	finalSnapshot := finalState.snapshot(snapshot, pro_interfaces.GlobalCredentialResolutionDenied, finalReason, s.now().UTC())
 	if finalReason != pro_interfaces.GlobalCredentialResolutionReasonAllowed ||
 		finalState.version.Version != state.version.Version ||
@@ -114,19 +123,16 @@ type globalCredentialAuthorizationState struct {
 	version    db.GlobalCredentialVersion
 }
 
-func (s *globalCredentialRuntimeResolver) authorize(request pro_interfaces.GlobalCredentialResolutionRequest, now time.Time) (globalCredentialAuthorizationState, pro_interfaces.GlobalCredentialResolutionReason) {
-	// A task without a starting user (schedule, integration) has nobody whose
-	// permissions could authorize the use. Only a grant that explicitly
-	// allows unattended use admits it; it is checked below with the grant.
-	unattended := request.ActorID <= 0
-	if !unattended {
-		permission, err := s.store.GetTemplatePermissionContext(request.ProjectID, request.TemplateID, request.ActorID)
-		if err != nil || !permission.EffectivePermissions.Can(db.CanRunTemplate) {
-			return globalCredentialAuthorizationState{}, pro_interfaces.GlobalCredentialResolutionReasonTaskPermission
-		}
-		if !permission.ProjectPermissions.Can(db.CanConsumeGrantedCredentials) {
-			return globalCredentialAuthorizationState{}, pro_interfaces.GlobalCredentialResolutionReasonConsumePermission
-		}
+func (s *globalCredentialRuntimeResolver) authorize(request pro_interfaces.GlobalCredentialResolutionRequest, now time.Time, unattended bool) (globalCredentialAuthorizationState, pro_interfaces.GlobalCredentialResolutionReason) {
+	if request.ActorID <= 0 {
+		return globalCredentialAuthorizationState{}, pro_interfaces.GlobalCredentialResolutionReasonActorRequired
+	}
+	permission, err := s.store.GetTemplatePermissionContext(request.ProjectID, request.TemplateID, request.ActorID)
+	if err != nil || !permission.EffectivePermissions.Can(db.CanRunTemplate) {
+		return globalCredentialAuthorizationState{}, pro_interfaces.GlobalCredentialResolutionReasonTaskPermission
+	}
+	if !permission.ProjectPermissions.Can(db.CanConsumeGrantedCredentials) {
+		return globalCredentialAuthorizationState{}, pro_interfaces.GlobalCredentialResolutionReasonConsumePermission
 	}
 	credential, err := s.store.GetGlobalCredential(request.Binding.CredentialID)
 	if err != nil || !credential.Enabled {
@@ -144,6 +150,24 @@ func (s *globalCredentialRuntimeResolver) authorize(request pro_interfaces.Globa
 		return globalCredentialAuthorizationState{}, pro_interfaces.GlobalCredentialResolutionReasonActorRequired
 	}
 	return globalCredentialAuthorizationState{credential: credential, version: version, grant: grant}, pro_interfaces.GlobalCredentialResolutionReasonAllowed
+}
+
+// unattendedPrincipal returns the user who answers for an actorless task's
+// trigger, or 0 when the task has none or the store cannot tell.
+func (s *globalCredentialRuntimeResolver) unattendedPrincipal(request pro_interfaces.GlobalCredentialResolutionRequest) int {
+	principals, ok := s.store.(db.TaskCredentialPrincipalRepository)
+	if !ok {
+		return 0
+	}
+	task, err := s.store.GetTask(request.ProjectID, request.TaskID)
+	if err != nil {
+		return 0
+	}
+	userID, found, err := principals.GetTaskCredentialPrincipal(task)
+	if err != nil || !found {
+		return 0
+	}
+	return userID
 }
 
 func (s *globalCredentialRuntimeResolver) resolveMaterial(ctx context.Context, version db.GlobalCredentialVersion) ([]byte, int, error) {

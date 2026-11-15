@@ -107,6 +107,82 @@
               :is-new="!form.id"
               :form-saving="saving"
             />
+            <div class="d-flex align-center mt-4 mb-2">
+              <div class="text-body-large">{{ $t('globalSecretStorageScopes') }}</div>
+              <v-spacer />
+              <v-btn
+                variant="text"
+                color="primary"
+                :disabled="saving"
+                data-testid="global-storage-add-scope"
+                @click="addScope"
+              >
+                <v-icon start>mdi-plus</v-icon>
+                {{ $t('globalSecretStorageAddScope') }}
+              </v-btn>
+            </div>
+            <v-alert
+              v-if="form.params.secret_scopes.length === 0"
+              type="info"
+              variant="tonal"
+              density="compact"
+              class="mb-2"
+            >
+              {{ $t('globalSecretStorageNoScopes') }}
+            </v-alert>
+            <div
+              v-for="(scope, index) in form.params.secret_scopes"
+              :key="index"
+              class="d-flex align-start"
+              data-testid="global-storage-scope"
+            >
+              <v-text-field
+                v-model="scope.project_id"
+                :label="$t('globalSecretStorageScopeProject')"
+                :rules="[scopeProjectRule]"
+                :disabled="saving"
+                class="mr-3"
+                variant="outlined"
+                density="compact"
+              />
+              <v-text-field
+                v-model="scope.environment"
+                :label="$t('globalSecretStorageScopeEnvironment')"
+                placeholder="prod"
+                :rules="[scopeEnvironmentRule]"
+                :disabled="saving"
+                class="mr-3"
+                variant="outlined"
+                density="compact"
+              />
+              <v-text-field
+                v-model="scope.path"
+                :label="$t('globalSecretStorageScopeFolder')"
+                placeholder="apps/web"
+                :disabled="saving"
+                variant="outlined"
+                density="compact"
+              />
+              <v-btn
+                icon
+                class="ml-1 mt-1"
+                :disabled="saving"
+                :aria-label="$t('delete')"
+                @click="form.params.secret_scopes.splice(index, 1)"
+              >
+                <v-icon>mdi-delete</v-icon>
+              </v-btn>
+            </div>
+
+            <v-checkbox
+              v-model="form.params.allow_remote_runners"
+              :label="$t('globalSecretStorageRemoteRunners')"
+              :hint="$t('globalSecretStorageRemoteRunnersHint')"
+              persistent-hint
+              :disabled="saving"
+              data-testid="global-storage-remote-runners"
+            />
+
             <v-autocomplete
               v-model="form.project_ids"
               :items="projects"
@@ -201,7 +277,14 @@ function emptyForm() {
     name: '',
     type: 'infisical',
     params: {
-      url: '', client_id: '', organization_slug: '', session_duration: '', ca_certificate: '', pam_routes: [],
+      url: '',
+      client_id: '',
+      organization_slug: '',
+      session_duration: '',
+      ca_certificate: '',
+      pam_routes: [],
+      secret_scopes: [],
+      allow_remote_runners: false,
     },
     secret: '',
     source_storage_type: undefined,
@@ -260,6 +343,19 @@ export default {
       }
     },
 
+    addScope() {
+      this.form.params.secret_scopes.push({ project_id: '', environment: '', path: '' });
+    },
+
+    scopeProjectRule(value) {
+      return !!(value || '').trim() || this.$t('globalSecretStorageScopeProjectRequired');
+    },
+
+    scopeEnvironmentRule(value) {
+      return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value || '')
+        || this.$t('globalSecretStorageScopeEnvironmentInvalid');
+    },
+
     urlRule(value) {
       return /^https:\/\/\S+$/.test(value || '') || this.$t('globalSecretStorageUrlInvalid');
     },
@@ -273,6 +369,7 @@ export default {
       if (item) {
         Object.assign(form, JSON.parse(JSON.stringify(item)));
         form.params = { ...emptyForm().params, ...form.params };
+        form.params.secret_scopes = form.params.secret_scopes || [];
         form.secret = '';
       }
       this.form = form;

@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -31,7 +32,7 @@ func TestExecutionPreflightListsEnvironmentCredentialReferences(t *testing.T) {
 	pool.appendEnvironmentCredentialReferences(&plan, &state, environment)
 
 	assert.Equal(t, []pro_interfaces.ExecutionPreflightReference{
-		{Kind: pro_interfaces.ExecutionReferenceCredential, ID: credential.ID, Name: "Global credential: License server", Revision: "global", BindingTarget: "env:TF_VAR_license", Visible: true},
+		{Kind: pro_interfaces.ExecutionReferenceCredential, ID: credential.ID, Name: "Global credential #" + strconv.Itoa(credential.ID), Revision: "global", BindingTarget: "env:TF_VAR_license", Visible: true},
 		{Kind: pro_interfaces.ExecutionReferenceCredential, ID: 999_999, Name: "Global credential #999999", Revision: "global", BindingTarget: "var:missing", Visible: true},
 	}, plan.References)
 	assert.Equal(t, []any{

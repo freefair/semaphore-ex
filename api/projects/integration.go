@@ -322,6 +322,7 @@ func (c *IntegrationController) AddIntegration(w http.ResponseWriter, r *http.Re
 		helpers.WriteError(w, errIntegration)
 		return
 	}
+	recordIntegrationCredentialPrincipal(r, newIntegration.ID)
 
 	// auth_method=none lets anyone start the template, which is what SIEM rules look for.
 	helpers.Audit(r).Record(r.Context(), audit.Event{
@@ -376,6 +377,7 @@ func (c *IntegrationController) UpdateIntegration(w http.ResponseWriter, r *http
 		helpers.WriteError(w, err)
 		return
 	}
+	recordIntegrationCredentialPrincipal(r, oldIntegration.ID)
 
 	helpers.Audit(r).Record(r.Context(), audit.Event{
 		Kind:      audit.ResourceIntegrationUpdate,

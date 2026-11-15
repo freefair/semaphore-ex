@@ -5549,8 +5549,8 @@ paths:
     $ref: "./api-docs-ex.yml#/paths/~1global-secret-storages"
   /global-secret-storages/{storage_id}:
     $ref: "./api-docs-ex.yml#/paths/~1global-secret-storages~1{storage_id}"
-  /global-credentials/providers:
-    $ref: "./api-docs-ex.yml#/paths/~1global-credentials~1providers"
+  /global-credential-providers:
+    $ref: "./api-docs-ex.yml#/paths/~1global-credential-providers"
   /global-credentials:
     $ref: "./api-docs-ex.yml#/paths/~1global-credentials"
   /global-credentials/grant-projects:

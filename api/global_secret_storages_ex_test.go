@@ -74,7 +74,7 @@ func TestGlobalSecretStorageControllerNeverReturnsTheClientSecret(t *testing.T) 
 		util.Config.GlobalCredentialProviders = map[string]util.GlobalCredentialProviderConfig{"primary": {Type: "openbao", URL: "https://openbao.example.test"}}
 		t.Cleanup(func() { util.Config.GlobalCredentialProviders = previous })
 		providers := httptest.NewRecorder()
-		controller.ListProviders(providers, globalStorageRequest(http.MethodGet, "/api/global-credentials/providers", "", nil))
+		controller.ListProviders(providers, globalStorageRequest(http.MethodGet, "/api/global-credential-providers", "", nil))
 		require.Equal(t, http.StatusOK, providers.Code)
 		var listed []GlobalCredentialProviderDTO
 		require.NoError(t, json.Unmarshal(providers.Body.Bytes(), &listed))
@@ -109,4 +109,19 @@ func TestGlobalSecretStorageRoutesRequireAdministrators(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The credential item route is registered earlier and matches any
+// /global-credentials/{x}; the provider list must not live under it.
+func TestGlobalCredentialProvidersRouteIsNotShadowed(t *testing.T) {
+	router := mux.NewRouter()
+	api := router.PathPrefix("/api").Subrouter()
+	api.Path("/global-credentials/{credential_id}").HandlerFunc(func(http.ResponseWriter, *http.Request) {}).Methods("GET", "HEAD")
+	registerGlobalSecretStorageRoutes(api, newGlobalSecretStorageTestController(t), nil, func(h http.Handler) http.Handler { return h })
+
+	var match mux.RouteMatch
+	require.True(t, router.Match(httptest.NewRequest(http.MethodGet, "/api/global-credential-providers", nil), &match))
+	template, err := match.Route.GetPathTemplate()
+	require.NoError(t, err)
+	assert.Equal(t, "/api/global-credential-providers", template)
 }

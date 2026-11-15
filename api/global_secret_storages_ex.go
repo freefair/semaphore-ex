@@ -32,6 +32,9 @@ type GlobalCredentialProviderDTO struct {
 	Provider   string `json:"provider"`
 	ProviderID string `json:"provider_id"`
 	Name       string `json:"name"`
+	// Scopes lists where an Infisical connection may read secrets; empty
+	// for Vault/OpenBao providers.
+	Scopes []db.GlobalSecretStorageScope `json:"scopes,omitempty"`
 }
 
 // registerGlobalSecretStorages wires the routes when the store persists
@@ -83,7 +86,7 @@ func registerGlobalSecretStorageRoutes(
 	authenticatedAPI.Path("/global-secret-storages/{storage_id}").Handler(admin(controller.Get)).Methods("GET", "HEAD")
 	authenticatedAPI.Path("/global-secret-storages/{storage_id}").Handler(admin(controller.Update)).Methods("PUT")
 	authenticatedAPI.Path("/global-secret-storages/{storage_id}").Handler(admin(controller.Delete)).Methods("DELETE")
-	authenticatedAPI.Path("/global-credentials/providers").Handler(providerRead(controller.ListProviders)).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/global-credential-providers").Handler(providerRead(controller.ListProviders)).Methods("GET", "HEAD")
 }
 
 func (c *GlobalSecretStorageController) List(w http.ResponseWriter, r *http.Request) {
@@ -150,6 +153,7 @@ func (c *GlobalSecretStorageController) ListProviders(w http.ResponseWriter, r *
 	for _, storage := range storages {
 		providers = append(providers, GlobalCredentialProviderDTO{
 			Provider: db.GlobalCredentialProviderInfisical, ProviderID: db.GlobalSecretStorageProviderID(storage.ID), Name: storage.Name,
+			Scopes: server.GlobalSecretStorageScopes(storage),
 		})
 	}
 	helpers.WriteJSON(w, http.StatusOK, providers)

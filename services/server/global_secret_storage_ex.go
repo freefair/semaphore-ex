@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -147,12 +148,86 @@ func normalizeGlobalSecretStorage(storage *db.GlobalSecretStorage, requireSecret
 			return common_errors.NewValidationError("project IDs are invalid")
 		}
 	}
+	scopes, err := globalStorageScopes(storage.Params)
+	if err != nil {
+		return err
+	}
 	project := db.SecretStorage{Type: db.SecretStorageTypeInfisical, Params: storage.Params, Secret: "validated", ID: 1}
 	if err := ValidateInfisicalStorage(&project); err != nil {
 		return err
 	}
+	allowRemoteRunners, err := globalStorageAllowsRemoteRunners(storage.Params)
+	if err != nil {
+		return err
+	}
 	storage.Params = project.Params
+	storage.Params[globalStorageParamScopes] = scopesParam(scopes)
+	storage.Params[globalStorageParamRemoteRunners] = allowRemoteRunners
 	return nil
+}
+
+const (
+	globalStorageParamScopes        = "secret_scopes"
+	globalStorageParamRemoteRunners = "allow_remote_runners"
+)
+
+func globalStorageAllowsRemoteRunners(params db.MapStringAnyField) (bool, error) {
+	raw, ok := params[globalStorageParamRemoteRunners]
+	if !ok || raw == nil {
+		return false, nil
+	}
+	allowed, ok := raw.(bool)
+	if !ok {
+		return false, common_errors.NewValidationError("allow_remote_runners must be true or false")
+	}
+	return allowed, nil
+}
+
+// globalStorageScopes reads the administrator's secret scopes. A storage
+// without scopes serves SSH routing only.
+func globalStorageScopes(params db.MapStringAnyField) ([]db.GlobalSecretStorageScope, error) {
+	raw, ok := params[globalStorageParamScopes]
+	if !ok || raw == nil {
+		return []db.GlobalSecretStorageScope{}, nil
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return nil, common_errors.NewValidationError("secret scopes are invalid")
+	}
+	var scopes []db.GlobalSecretStorageScope
+	if err = json.Unmarshal(encoded, &scopes); err != nil {
+		return nil, common_errors.NewValidationError("secret scopes are invalid")
+	}
+	if len(scopes) > db.MaxGlobalSecretStorageScopes {
+		return nil, common_errors.NewValidationError("too many secret scopes")
+	}
+	for i := range scopes {
+		scopes[i].ProjectID = strings.TrimSpace(scopes[i].ProjectID)
+		scopes[i].Environment = strings.TrimSpace(scopes[i].Environment)
+		scopes[i].Path = strings.Trim(strings.TrimSpace(scopes[i].Path), "/")
+		if !scopes[i].Validate() {
+			return nil, common_errors.NewValidationError("a secret scope needs an Infisical project ID, an environment slug and an optional folder such as apps/web")
+		}
+	}
+	return scopes, nil
+}
+
+func scopesParam(scopes []db.GlobalSecretStorageScope) []any {
+	result := make([]any, 0, len(scopes))
+	for _, scope := range scopes {
+		result = append(result, map[string]any{"project_id": scope.ProjectID, "environment": scope.Environment, "path": scope.Path})
+	}
+	return result
+}
+
+// GlobalSecretStorageScopes returns a storage's validated secret scopes, for
+// the value-free provider list shown to credential administrators.
+func GlobalSecretStorageScopes(storage db.GlobalSecretStorage) []db.GlobalSecretStorageScope {
+	scopes, err := globalStorageScopes(storage.Params)
+	if err != nil {
+		return []db.GlobalSecretStorageScope{}
+	}
+	return scopes
 }
 
 // globalInfisicalSecretSource resolves global credentials stored in Infisical.
@@ -212,6 +287,22 @@ func (s *globalInfisicalSecretSource) resolve(
 	}
 	config, err := infisicalPAMFromParams(storage.Params)
 	if err != nil {
+		return pro_interfaces.GlobalCredentialExternalResult{}, unavailable
+	}
+	// Only secrets inside an administrator's scope are read, however broad
+	// the machine identity's own access is.
+	scopes, err := globalStorageScopes(storage.Params)
+	if err != nil {
+		return pro_interfaces.GlobalCredentialExternalResult{}, unavailable
+	}
+	admitted := false
+	for _, scope := range scopes {
+		if scope.Admits(reference) {
+			admitted = true
+			break
+		}
+	}
+	if !admitted {
 		return pro_interfaces.GlobalCredentialExternalResult{}, unavailable
 	}
 	key, err := s.repo.GetGlobalSecretStorageKey(*storage.CredentialKeyID)

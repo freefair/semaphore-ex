@@ -33,7 +33,7 @@ func TestRequiresDedicatedStateFixture(t *testing.T) {
 		"/api/audit-webhook/signing-secret?revision=0",
 		"/api/global-credentials/21/grants",
 		"/api/global-secret-storages/3",
-		"/api/global-credentials/providers",
+		"/api/global-credential-providers",
 		"/api/project/1/policy-guardrails/draft",
 		"/api/project/1/keys/generate",
 		"/api/project/1/keys/3/rotate",

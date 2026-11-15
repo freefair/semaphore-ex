@@ -12,7 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type taskCredentialBindingRecorder struct{ bindings []pro_interfaces.GlobalCredentialTaskBinding }
+type taskCredentialBindingRecorder struct {
+	bindings []pro_interfaces.GlobalCredentialTaskBinding
+}
 
 func (s *taskCredentialBindingRecorder) ResolveAndInject(ctx context.Context, request pro_interfaces.GlobalCredentialResolutionRequest, injector pro_interfaces.GlobalCredentialInjector) (pro_interfaces.GlobalCredentialResolutionSnapshot, error) {
 	s.bindings = append(s.bindings, request.Binding)
@@ -159,4 +161,39 @@ func TestLoadEnvironmentsMergesCredentialReferencesAcrossGroups(t *testing.T) {
 		{Name: "LICENSE", Target: db.EnvironmentCredentialTargetEnv, CredentialID: second.ID},
 		{Name: "shared_name", Target: db.EnvironmentCredentialTargetVar, CredentialID: third.ID},
 	}, runner.Environment.Credentials, "a later group replaces an earlier reference of the same name")
+}
+
+func TestLocalExecutorKeepsCredentialExtraVariablesOffCommandLines(t *testing.T) {
+	setupExecutorConfig(t)
+	references := []db.EnvironmentCredential{
+		{Name: "license_key", Target: db.EnvironmentCredentialTargetVar, CredentialID: 2},
+		{Name: "API_TOKEN", Target: db.EnvironmentCredentialTargetEnv, CredentialID: 3},
+	}
+	tests := []struct {
+		app     db.TemplateApp
+		env     []string
+		inExtra bool
+	}{
+		{db.AppAnsible, []string{"API_TOKEN=env-value"}, true},
+		{db.AppTerraform, []string{"TF_VAR_license_key=var-value", "API_TOKEN=env-value"}, false},
+		{db.AppTofu, []string{"TF_VAR_license_key=var-value", "API_TOKEN=env-value"}, false},
+		{db.AppBash, []string{"license_key=var-value", "API_TOKEN=env-value"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.app), func(t *testing.T) {
+			executor := &LocalExecutor{
+				Template:    db.Template{App: tt.app},
+				Secret:      `{"license_key":"var-value","API_TOKEN":"env-value"}`,
+				Environment: db.Environment{Credentials: references},
+			}
+			envVars, err := executor.credentialEnvVars()
+			require.NoError(t, err)
+			assert.ElementsMatch(t, tt.env, envVars)
+			extraVars, err := executor.getEnvironmentExtraVars("user", nil)
+			require.NoError(t, err)
+			_, present := extraVars["license_key"]
+			assert.Equal(t, tt.inExtra, present)
+			assert.NotContains(t, extraVars, "API_TOKEN")
+		})
+	}
 }

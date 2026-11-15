@@ -2543,7 +2543,7 @@ symbols:
     signature: db.GlobalCredentialGrantOperation = 4
     implementation: core
     behavior_tests:
-    - test/edition-contract/enhanced/services/server/global_credential_runtime_test.go::TestGlobalCredentialRuntimeAdmitsActorlessTaskOnlyWithUnattendedGrant
+    - test/edition-contract/enhanced/services/server/global_credential_runtime_test.go::TestGlobalCredentialRuntimeAuthorizesActorlessTasksThroughTheTriggerPrincipal
   - name: db:GlobalCredentialGrantOperationReference
     signature: db.GlobalCredentialGrantOperation = 1
     implementation: core
@@ -2672,6 +2672,12 @@ symbols:
     behavior_tests:
     - db/sql/global_secret_storage_ex_test.go::TestGlobalSecretStorageRepository
     - services/server/global_secret_storage_ex_test.go::TestLoadInfisicalPAMForProjectAddsGrantedGlobalStorages
+  - name: db:GlobalSecretStorageScope
+    signature: struct{ProjectID string "json:\"project_id\""; Environment string "json:\"environment\""; Path string "json:\"path\""}
+    implementation: core
+    behavior_tests:
+    - services/server/global_secret_storage_ex_test.go::TestGlobalInfisicalSecretSourceReadsOnlyInsideItsScopes
+    - services/server/global_secret_storage_ex_test.go::TestGlobalSecretStorageServiceValidatesScopesAndRunnerTrust
   - name: db:HashWorkflowTriggerCredential
     signature: func(credential string) string
     implementation: core
@@ -3499,6 +3505,11 @@ symbols:
   - name: db:MaxExecutorImageLength
     signature: untyped int = 255
     implementation: core
+  - name: db:MaxGlobalSecretStorageScopes
+    signature: untyped int = 100
+    implementation: core
+    behavior_tests:
+    - services/server/global_secret_storage_ex_test.go::TestGlobalSecretStorageServiceValidatesScopesAndRunnerTrust
   - name: db:MaxPolicyGuardrailCompiledBytes
     signature: untyped int = 262144
     implementation: core
@@ -5057,6 +5068,12 @@ symbols:
     - db/sql/task_ssh_key_persistence_test.go::TestTaskSSHKeyBindingsRoundTrip
     - services/tasks/executor_image_test.go::TestAddTaskOverwritesRequestTaskGroupsWithTemplateSnapshot
     - db/sql/task_groups_ex_test.go::TestTaskGroupSnapshotSurvivesTemplateChanges
+  - name: db:TaskCredentialPrincipalRepository
+    signature: interface{GetTaskCredentialPrincipal(task db.Task) (userID int, ok bool, err error); SetIntegrationCredentialPrincipal(integrationID int, userID int) error; SetScheduleCredentialPrincipal(scheduleID int, userID int) error}
+    implementation: core
+    behavior_tests:
+    - db/sql/task_credential_principal_ex_test.go::TestTaskCredentialPrincipals
+    - test/edition-contract/enhanced/services/server/global_credential_runtime_test.go::TestGlobalCredentialRuntimeAuthorizesActorlessTasksThroughTheTriggerPrincipal
   - name: db:TaskExecutionEvidence
     signature: >-
       struct{TaskID int "json:\"task_id\""; Generation int "json:\"generation\""; State db.TaskExecutionEvidenceState "json:\"state\"";
@@ -5125,7 +5142,7 @@ symbols:
     - db/sql/task_groups_ex_test.go::TestResolveTaskGroupsRequiresExplicitConsumerProjectGrant
     - db/sql/template_task_groups_ex_test.go::TestTemplateTaskGroupsRejectConflictingRunnerTags
   - name: db:TaskInfisicalPAM
-    signature: struct{StorageID int "json:\"storage_id\""; SiteURL string "json:\"site_url\""; ClientID string "json:\"client_id\""; OrganizationSlug string "json:\"organization_slug,omitempty\""; CACertificate string "json:\"ca_certificate,omitempty\""; SessionDuration string "json:\"session_duration\""; Routes []db.InfisicalPAMRoute "json:\"routes\""; CredentialKeyID int "json:\"credential_key_id\""; Credential db.AccessKey "json:\"-\""; Global bool "json:\"global,omitempty\""; StorageName string "json:\"storage_name,omitempty\""}
+    signature: struct{StorageID int "json:\"storage_id\""; SiteURL string "json:\"site_url\""; ClientID string "json:\"client_id\""; OrganizationSlug string "json:\"organization_slug,omitempty\""; CACertificate string "json:\"ca_certificate,omitempty\""; SessionDuration string "json:\"session_duration\""; Routes []db.InfisicalPAMRoute "json:\"routes\""; CredentialKeyID int "json:\"credential_key_id\""; Credential db.AccessKey "json:\"-\""; Global bool "json:\"global,omitempty\""; StorageName string "json:\"storage_name,omitempty\""; AllowRemoteRunners bool "json:\"-\""}
     implementation: core
     behavior_tests:
     - services/runners/executor_factory_infisical_pam_ex_test.go::TestJobDataInfisicalPAMCarriesNoSecret

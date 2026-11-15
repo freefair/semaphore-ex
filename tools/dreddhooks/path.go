@@ -12,6 +12,7 @@ var dedicatedStateFixturePaths = []*regexp.Regexp{
 	regexp.MustCompile(`^/api/workflow-artifact-retention(?:/|$)`),
 	regexp.MustCompile(`^/api/global-credentials(?:/|$)`),
 	regexp.MustCompile(`^/api/global-secret-storages(?:/|$)`),
+	regexp.MustCompile(`^/api/global-credential-providers(?:/|$)`),
 	regexp.MustCompile(`^/api/policy-guardrails(?:/|$)`),
 	regexp.MustCompile(`^/api/project/\d+/(?:granted-credentials|policy-guardrails|workflow-artifact-retention)(?:/|$)`),
 	regexp.MustCompile(`^/api/project/\d+/keys/(?:generate|\d+/rotate)(?:/|$)`),

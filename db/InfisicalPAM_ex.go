@@ -30,4 +30,8 @@ type TaskInfisicalPAM struct {
 	// then is the global storage's ID.
 	Global      bool   `json:"global,omitempty"`
 	StorageName string `json:"storage_name,omitempty"`
+	// AllowRemoteRunners lets a global storage's machine identity go to
+	// remote runners. It is server-side only: a runner of one project could
+	// otherwise reuse an identity shared by several projects.
+	AllowRemoteRunners bool `json:"-"`
 }

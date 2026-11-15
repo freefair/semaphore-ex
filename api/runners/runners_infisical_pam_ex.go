@@ -33,6 +33,13 @@ func (c *RunnerController) prepareInfisicalPAMDispatch(tsk *tasks.TaskRunner, ru
 		tsk.Log("Infisical PAM routes are not applied: container tasks cannot reach the runner's Infisical PAM broker")
 		return true
 	}
+	if storage, blocked := globalInfisicalPAMWithoutRunnerTrust(tsk.Task.InfisicalPAM); blocked {
+		tsk.Log("Global Infisical storage \"" + storage + "\" routes hosts of this task but is not allowed on remote runners. " +
+			"Run the task on the server, or allow remote runners for the storage under Administration.")
+		tsk.FailDispatch()
+		c.taskPool.FinalizeRemoteTask(tsk, runner)
+		return false
+	}
 	if !runners.RunnerSupportsInfisicalPAM(header) {
 		tsk.Log("Runner does not support Infisical PAM routing. Upgrade the runner before retrying the task.")
 		tsk.FailDispatch()
@@ -57,4 +64,16 @@ func collectInfisicalPAMAccessKeys(configs []db.TaskInfisicalPAM, keys map[int]d
 	for _, config := range configs {
 		keys[config.CredentialKeyID] = config.Credential
 	}
+}
+
+// globalInfisicalPAMWithoutRunnerTrust names a global storage whose machine
+// identity must not leave the server. A project storage's identity belongs to
+// one project; a global one may be shared by several.
+func globalInfisicalPAMWithoutRunnerTrust(configs []db.TaskInfisicalPAM) (string, bool) {
+	for _, config := range configs {
+		if config.Global && !config.AllowRemoteRunners && len(config.Routes) > 0 {
+			return config.StorageName, true
+		}
+	}
+	return "", false
 }

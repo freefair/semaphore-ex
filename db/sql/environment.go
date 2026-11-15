@@ -129,6 +129,8 @@ func (d *SqlDb) CreateEnvironment(env db.Environment) (newEnv db.Environment, er
 		return
 	}
 	if err = d.saveEnvironmentCredentials(newEnv, len(newEnv.Credentials) > 0); err != nil {
+		// The create answers with an error, so it must not leave the group.
+		_ = d.DeleteEnvironment(newEnv.ProjectID, newEnv.ID)
 		return
 	}
 

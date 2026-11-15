@@ -11,6 +11,21 @@
       @update:model-value="selectSource"
     />
     <template v-if="isInfisical">
+      <v-alert
+        type="info"
+        variant="tonal"
+        density="compact"
+        class="mb-4"
+        data-testid="credential-reference-scopes"
+      >
+        <template v-if="scopes.length === 0">
+          This connection has no secret scopes; an administrator adds them under
+          Global secret storages.
+        </template>
+        <template v-else>
+          Allowed: {{ scopes.map(scopeLabel).join(', ') }}
+        </template>
+      </v-alert>
       <v-text-field
         :model-value="form.mount"
         label="Infisical project ID"
@@ -30,6 +45,7 @@
         placeholder="apps/web"
         hint="Relative to the root folder; empty reads from the root."
         persistent-hint
+        :rules="[() => inScope || 'Outside the scopes of this connection']"
         data-testid="credential-reference-infisical-folder"
         @update:model-value="update('path', $event)"
       />
@@ -81,10 +97,18 @@
 <script>
 const PROVIDER_LABELS = { vault: 'Vault', openbao: 'OpenBao', infisical: 'Infisical' };
 
-export function referenceValid(form) {
+// Mirrors the server's scope check so a reference outside every scope is
+// caught in the form; the server remains authoritative.
+export function referenceInScope(form, scopes) {
+  return (scopes || []).some((scope) => scope.project_id === form.mount
+    && scope.environment === form.environment
+    && (!scope.path || form.path === scope.path || (form.path || '').startsWith(`${scope.path}/`)));
+}
+
+export function referenceValid(form, scopes) {
   if (form.provider === 'infisical') {
     return form.providerId !== '' && form.mount !== '' && form.environment !== ''
-      && form.field !== '' && Number(form.version) >= 0;
+      && form.field !== '' && Number(form.version) >= 0 && referenceInScope(form, scopes);
   }
   return form.providerId !== '' && form.mount !== '' && form.path !== ''
     && Number(form.version) > 0 && form.field !== '';
@@ -109,12 +133,20 @@ export default {
   emits: ['update:form'],
   props: {
     form: { type: Object, required: true },
-    // Value-free provider identities from GET /api/global-credentials/providers.
+    // Value-free provider identities from GET /api/global-credential-providers.
     providers: { type: Array, default: () => [] },
   },
   computed: {
     isInfisical() {
       return this.form.provider === 'infisical';
+    },
+    scopes() {
+      const provider = this.providers.find((p) => p.provider === this.form.provider
+        && p.provider_id === this.form.providerId);
+      return (provider && provider.scopes) || [];
+    },
+    inScope() {
+      return referenceInScope(this.form, this.scopes);
     },
     sourceKey() {
       return this.form.providerId ? `${this.form.provider}|${this.form.providerId}` : null;
@@ -127,6 +159,9 @@ export default {
     },
   },
   methods: {
+    scopeLabel(scope) {
+      return `${scope.project_id} / ${scope.environment}${scope.path ? ` / ${scope.path}` : ''}`;
+    },
     update(key, value) {
       this.$emit('update:form', { ...this.form, [key]: value });
     },

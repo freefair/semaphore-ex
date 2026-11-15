@@ -297,6 +297,7 @@ func LoadInfisicalPAMForProject(
 		config.StorageID = storage.ID
 		config.Global = true
 		config.StorageName = storage.Name
+		config.AllowRemoteRunners, _ = globalStorageAllowsRemoteRunners(storage.Params)
 		config.CredentialKeyID = key.ID
 		config.Credential = key
 		result = append(result, config)

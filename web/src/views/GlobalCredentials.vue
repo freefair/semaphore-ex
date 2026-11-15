@@ -596,7 +596,9 @@ export default {
     },
     materialValid(form) {
       if (form.materialKind === 'local_encrypted') return form.stringValue.length > 0;
-      return referenceValid(form);
+      const provider = this.providers.find((p) => p.provider === form.provider
+        && p.provider_id === form.providerId);
+      return referenceValid(form, provider && provider.scopes);
     },
     materialPayload(form) {
       if (form.materialKind === 'local_encrypted') return { string_value: form.stringValue };
@@ -604,7 +606,7 @@ export default {
     },
     async loadProviders() {
       try {
-        this.providers = (await axios.get('/api/global-credentials/providers')).data || [];
+        this.providers = (await axios.get('/api/global-credential-providers')).data || [];
       } catch (error) {
         // Without metadata or rotate permission the list is not needed.
         this.providers = [];

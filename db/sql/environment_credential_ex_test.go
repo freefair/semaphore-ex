@@ -72,6 +72,23 @@ func TestEnvironmentCredentialReferencesRoundTrip(t *testing.T) {
 		assert.Error(t, store.UpdateEnvironment(loaded))
 	})
 
+	t.Run("a reference outlives a deleted credential", func(t *testing.T) {
+		loaded, err := store.GetEnvironment(project.ID, created.ID)
+		require.NoError(t, err)
+		gone, _, err := store.CreateGlobalCredential(
+			db.GlobalCredential{Type: db.GlobalCredentialTypeString, DisplayName: "Gone", OwnerUserID: owner.ID, Enabled: false, Created: now},
+			db.GlobalCredentialVersion{MaterialKind: db.GlobalCredentialMaterialLocalEncrypted, EncryptedMaterial: "envelope", CreatedByUserID: owner.ID})
+		require.NoError(t, err)
+		loaded.Credentials = []db.EnvironmentCredential{{Name: "gone_key", Target: db.EnvironmentCredentialTargetVar, CredentialID: gone.ID}}
+		loaded.CredentialsSet = true
+		require.NoError(t, store.UpdateEnvironment(loaded))
+		_, err = store.exec("delete from global_credential where id=?", gone.ID)
+		require.NoError(t, err)
+		reloaded, err := store.GetEnvironment(project.ID, created.ID)
+		require.NoError(t, err)
+		assert.Equal(t, loaded.Credentials, reloaded.Credentials, "the task must be blocked, not run without the value")
+	})
+
 	t.Run("deleting the variable group removes its references", func(t *testing.T) {
 		require.NoError(t, store.DeleteEnvironment(project.ID, created.ID))
 		var count int
@@ -100,6 +117,10 @@ func TestValidateEnvironmentCredentials(t *testing.T) {
 		{"lowercase environment variable", []db.EnvironmentCredential{{Name: "token", Target: db.EnvironmentCredentialTargetEnv, CredentialID: 1}}, true},
 		{"environment variable with a dash", []db.EnvironmentCredential{{Name: "MY-TOKEN", Target: db.EnvironmentCredentialTargetEnv, CredentialID: 1}}, false},
 		{"environment variable starting with a digit", []db.EnvironmentCredential{{Name: "1TOKEN", Target: db.EnvironmentCredentialTargetEnv, CredentialID: 1}}, false},
+		{"names differing only by case", []db.EnvironmentCredential{
+			{Name: "TOKEN", Target: db.EnvironmentCredentialTargetEnv, CredentialID: 1},
+			{Name: "token", Target: db.EnvironmentCredentialTargetEnv, CredentialID: 1},
+		}, false},
 		{"same name for both targets", []db.EnvironmentCredential{
 			{Name: "token", Target: db.EnvironmentCredentialTargetVar, CredentialID: 1},
 			{Name: "token", Target: db.EnvironmentCredentialTargetEnv, CredentialID: 1},

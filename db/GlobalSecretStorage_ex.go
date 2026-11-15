@@ -1,6 +1,7 @@
 package db
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -70,4 +71,34 @@ type GlobalSecretStorageRepository interface {
 	// GetGlobalSecretStorageKey loads the encrypted client secret record.
 	GetGlobalSecretStorageKey(keyID int) (AccessKey, error)
 	DeleteGlobalSecretStorageKey(keyID int) error
+}
+
+// GlobalSecretStorageScope admits global credentials to the secrets of one
+// Infisical project environment, optionally below one folder. The scopes are
+// set by an administrator and bound what delegated credential administrators
+// can read through the connection's machine identity.
+type GlobalSecretStorageScope struct {
+	ProjectID   string `json:"project_id"`
+	Environment string `json:"environment"`
+	// Path is a folder relative to the root; "" admits the whole environment.
+	Path string `json:"path"`
+}
+
+// MaxGlobalSecretStorageScopes bounds the scopes of one storage.
+const MaxGlobalSecretStorageScopes = 100
+
+func (s GlobalSecretStorageScope) Validate() bool {
+	reference := GlobalCredentialExternalReference{
+		Provider: GlobalCredentialProviderInfisical, ProviderID: GlobalSecretStorageProviderID(1),
+		Mount: s.ProjectID, Environment: s.Environment, Path: s.Path, Field: "scope",
+	}
+	return reference.Validate() == nil && regexp.MustCompile(`^[A-Za-z0-9]`).MatchString(s.ProjectID)
+}
+
+// Admits reports whether the reference lies within the scope.
+func (s GlobalSecretStorageScope) Admits(reference GlobalCredentialExternalReference) bool {
+	if reference.Mount != s.ProjectID || reference.Environment != s.Environment {
+		return false
+	}
+	return s.Path == "" || reference.Path == s.Path || strings.HasPrefix(reference.Path, s.Path+"/")
 }
