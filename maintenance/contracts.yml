@@ -5069,7 +5069,7 @@ symbols:
     - services/tasks/executor_image_test.go::TestAddTaskOverwritesRequestTaskGroupsWithTemplateSnapshot
     - db/sql/task_groups_ex_test.go::TestTaskGroupSnapshotSurvivesTemplateChanges
   - name: db:TaskCredentialPrincipalRepository
-    signature: interface{GetTaskCredentialPrincipal(task db.Task) (userID int, ok bool, err error); SetIntegrationCredentialPrincipal(integrationID int, userID int) error; SetScheduleCredentialPrincipal(scheduleID int, userID int) error}
+    signature: interface{ClearIntegrationCredentialPrincipal(integrationID int) error; ClearScheduleCredentialPrincipal(scheduleID int) error; GetTaskCredentialPrincipal(task db.Task) (userID int, ok bool, err error); SetIntegrationCredentialPrincipal(integrationID int, userID int) error; SetScheduleCredentialPrincipal(scheduleID int, userID int) error}
     implementation: core
     behavior_tests:
     - db/sql/task_credential_principal_ex_test.go::TestTaskCredentialPrincipals

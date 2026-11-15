@@ -46,3 +46,86 @@ func TestTriggerChangesRecordTheActingUserAsCredentialPrincipal(t *testing.T) {
 		})
 	}
 }
+
+func TestCredentialPrincipalMiddlewares(t *testing.T) {
+	store := sql.InitConfigCreateTestStore()
+	t.Cleanup(store.Close)
+	project, err := store.CreateProject(db.Project{Name: "middleware project"})
+	require.NoError(t, err)
+	key, err := store.CreateAccessKey(db.AccessKey{ProjectID: &project.ID, Name: "none", Type: db.AccessKeyNone})
+	require.NoError(t, err)
+	repository, err := store.CreateRepository(db.Repository{ProjectID: project.ID, Name: "repo", GitURL: "https://example.test/repo.git", GitBranch: "main", SSHKeyID: key.ID})
+	require.NoError(t, err)
+	template, err := store.CreateTemplate(db.Template{ProjectID: project.ID, RepositoryID: repository.ID, Name: "deploy", Playbook: "site.yml"})
+	require.NoError(t, err)
+	schedule, err := store.CreateSchedule(db.Schedule{ProjectID: project.ID, TemplateID: template.ID, Name: "nightly", CronFormat: "* * * * *", Type: db.ScheduleTypeCron, TaskParams: &db.TaskParams{}})
+	require.NoError(t, err)
+	first, err := store.CreateIntegration(db.Integration{ProjectID: project.ID, TemplateID: &template.ID, Name: "first", AuthMethod: db.IntegrationAuthNone, TaskParams: &db.TaskParams{}})
+	require.NoError(t, err)
+	second, err := store.CreateIntegration(db.Integration{ProjectID: project.ID, TemplateID: &template.ID, Name: "second", AuthMethod: db.IntegrationAuthNone, TaskParams: &db.TaskParams{}})
+	require.NoError(t, err)
+	owner, err := store.CreateUserWithoutPassword(db.User{Username: "principal-owner", Name: "Owner", Email: "principal-owner@example.test"})
+	require.NoError(t, err)
+	editor, err := store.CreateUserWithoutPassword(db.User{Username: "principal-editor", Name: "Editor", Email: "principal-editor@example.test"})
+	require.NoError(t, err)
+	principal := func(task db.Task) (int, bool) {
+		userID, ok, err := store.GetTaskCredentialPrincipal(task)
+		require.NoError(t, err)
+		return userID, ok
+	}
+	request := func(method string, values map[string]any) *http.Request {
+		r := httptest.NewRequest(method, "/", nil)
+		r = helpers.SetContextValue(r, "store", store)
+		r = helpers.SetContextValue(r, "user", &editor)
+		for key, value := range values {
+			r = helpers.SetContextValue(r, key, value)
+		}
+		return r
+	}
+	answer := func(status int) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) })
+	}
+	scheduleTask := db.Task{ProjectID: project.ID, ScheduleID: &schedule.ID}
+
+	t.Run("a successful schedule change moves the responsibility", func(t *testing.T) {
+		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, owner.ID))
+		ScheduleCredentialPrincipalMiddleware(answer(http.StatusNoContent)).ServeHTTP(httptest.NewRecorder(), request(http.MethodPut, map[string]any{"schedule": schedule}))
+		userID, ok := principal(scheduleTask)
+		assert.True(t, ok)
+		assert.Equal(t, editor.ID, userID)
+	})
+
+	t.Run("a failed schedule change leaves no principal", func(t *testing.T) {
+		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, owner.ID))
+		ScheduleCredentialPrincipalMiddleware(answer(http.StatusBadRequest)).ServeHTTP(httptest.NewRecorder(), request(http.MethodPut, map[string]any{"schedule": schedule}))
+		_, ok := principal(scheduleTask)
+		assert.False(t, ok)
+	})
+
+	t.Run("reading changes nothing", func(t *testing.T) {
+		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, owner.ID))
+		ScheduleCredentialPrincipalMiddleware(answer(http.StatusOK)).ServeHTTP(httptest.NewRecorder(), request(http.MethodGet, map[string]any{"schedule": schedule}))
+		userID, _ := principal(scheduleTask)
+		assert.Equal(t, owner.ID, userID)
+	})
+
+	t.Run("an integration change moves only that integration", func(t *testing.T) {
+		require.NoError(t, store.SetIntegrationCredentialPrincipal(first.ID, owner.ID))
+		require.NoError(t, store.SetIntegrationCredentialPrincipal(second.ID, owner.ID))
+		IntegrationCredentialPrincipalMiddleware(answer(http.StatusOK)).ServeHTTP(httptest.NewRecorder(), request(http.MethodPost, map[string]any{"project": project, "integration": first}))
+		userID, _ := principal(db.Task{ProjectID: project.ID, IntegrationID: &first.ID})
+		assert.Equal(t, editor.ID, userID)
+		userID, _ = principal(db.Task{ProjectID: project.ID, IntegrationID: &second.ID})
+		assert.Equal(t, owner.ID, userID)
+	})
+
+	t.Run("a project alias change moves every integration of the project", func(t *testing.T) {
+		require.NoError(t, store.SetIntegrationCredentialPrincipal(first.ID, owner.ID))
+		require.NoError(t, store.SetIntegrationCredentialPrincipal(second.ID, owner.ID))
+		IntegrationCredentialPrincipalMiddleware(answer(http.StatusOK)).ServeHTTP(httptest.NewRecorder(), request(http.MethodPost, map[string]any{"project": project}))
+		for _, integration := range []db.Integration{first, second} {
+			userID, _ := principal(db.Task{ProjectID: project.ID, IntegrationID: &integration.ID})
+			assert.Equal(t, editor.ID, userID, integration.Name)
+		}
+	})
+}

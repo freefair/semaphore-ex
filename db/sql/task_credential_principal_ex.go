@@ -16,23 +16,29 @@ func (d *SqlDb) SetIntegrationCredentialPrincipal(integrationID int, userID int)
 	return d.setCredentialPrincipal("project__integration_credential_principal", "integration_id", integrationID, userID)
 }
 
+// setCredentialPrincipal fails closed: the previous principal is removed on
+// its own before the new one is written, so a failed write leaves the trigger
+// without principal (its unattended use blocked) rather than with the
+// previous user still answering for a change someone else made.
 func (d *SqlDb) setCredentialPrincipal(table, column string, triggerID int, userID int) error {
 	if triggerID <= 0 || userID <= 0 {
 		return db.ErrInvalidOperation
 	}
-	tx, err := d.Sql().Begin()
-	if err != nil {
+	if _, err := d.exec("delete from "+table+" where "+column+"=?", triggerID); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(d.PrepareQuery("delete from "+table+" where "+column+"=?"), triggerID); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if _, err = tx.Exec(d.PrepareQuery("insert into "+table+" ("+column+", user_id) values (?, ?)"), triggerID, userID); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	return tx.Commit()
+	_, err := d.exec("insert into "+table+" ("+column+", user_id) values (?, ?)", triggerID, userID)
+	return err
+}
+
+func (d *SqlDb) ClearScheduleCredentialPrincipal(scheduleID int) error {
+	_, err := d.exec("delete from project__schedule_credential_principal where schedule_id=?", scheduleID)
+	return err
+}
+
+func (d *SqlDb) ClearIntegrationCredentialPrincipal(integrationID int) error {
+	_, err := d.exec("delete from project__integration_credential_principal where integration_id=?", integrationID)
+	return err
 }
 
 func (d *SqlDb) GetTaskCredentialPrincipal(task db.Task) (int, bool, error) {

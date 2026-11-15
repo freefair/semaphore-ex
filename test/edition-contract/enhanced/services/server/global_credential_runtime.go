@@ -167,6 +167,12 @@ func (s *globalCredentialRuntimeResolver) unattendedPrincipal(request pro_interf
 	if err != nil || !found {
 		return 0
 	}
+	// A disabled user answers for nothing: offboarding must stop the
+	// unattended use of everything that user set up.
+	user, err := s.store.GetUser(userID)
+	if err != nil || user.Disabled {
+		return 0
+	}
 	return userID
 }
 

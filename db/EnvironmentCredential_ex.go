@@ -82,6 +82,8 @@ func ValidateEnvironmentCredentials(credentials []EnvironmentCredential) error {
 type TaskCredentialPrincipalRepository interface {
 	SetScheduleCredentialPrincipal(scheduleID int, userID int) error
 	SetIntegrationCredentialPrincipal(integrationID int, userID int) error
+	ClearScheduleCredentialPrincipal(scheduleID int) error
+	ClearIntegrationCredentialPrincipal(integrationID int) error
 	// GetTaskCredentialPrincipal returns the principal of the schedule or
 	// integration that started the task; ok is false when there is none.
 	GetTaskCredentialPrincipal(task Task) (userID int, ok bool, err error)

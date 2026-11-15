@@ -56,6 +56,14 @@ func TestTaskCredentialPrincipals(t *testing.T) {
 		assert.False(t, ok, "unattended use must stop rather than fall back to nobody")
 	})
 
+	t.Run("a failed write leaves no principal", func(t *testing.T) {
+		require.NoError(t, store.SetIntegrationCredentialPrincipal(integration.ID, first.ID))
+		assert.Error(t, store.SetIntegrationCredentialPrincipal(integration.ID, 999_999), "the user does not exist")
+		_, ok, err := store.GetTaskCredentialPrincipal(db.Task{ProjectID: projectID, IntegrationID: &integration.ID})
+		require.NoError(t, err)
+		assert.False(t, ok, "the previous principal must not answer for the failed change")
+	})
+
 	t.Run("invalid IDs are rejected", func(t *testing.T) {
 		assert.Error(t, store.SetScheduleCredentialPrincipal(0, first.ID))
 		assert.Error(t, store.SetIntegrationCredentialPrincipal(integration.ID, 0))

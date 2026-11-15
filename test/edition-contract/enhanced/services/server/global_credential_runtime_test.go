@@ -238,6 +238,16 @@ func TestGlobalCredentialRuntimeAuthorizesActorlessTasksThroughTheTriggerPrincip
 		assert.Empty(t, injector.delivered)
 	})
 
+	t.Run("a disabled principal is denied", func(t *testing.T) {
+		disabled, err := store.CreateUserWithoutPassword(db.User{Username: "runtime-disabled", Name: "Disabled", Email: "runtime-disabled@example.test", Admin: true})
+		require.NoError(t, err)
+		require.NoError(t, store.SetUserDisabledAndRevokeCredentials(disabled.ID, true))
+		snapshot, injector, err := resolve(disabled.ID)
+		assert.ErrorIs(t, err, pro_interfaces.ErrGlobalCredentialResolutionDenied)
+		assert.Equal(t, pro_interfaces.GlobalCredentialResolutionReasonActorRequired, snapshot.Reason)
+		assert.Empty(t, injector.delivered)
+	})
+
 	t.Run("a trigger without principal is denied", func(t *testing.T) {
 		snapshot, injector, err := resolve(0)
 		assert.ErrorIs(t, err, pro_interfaces.ErrGlobalCredentialResolutionDenied)

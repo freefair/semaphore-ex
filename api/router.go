@@ -992,7 +992,7 @@ func Route(
 	projectTaskManagement.HandleFunc("/{task_id}/ansible/summary/errors", taskController.GetTaskSummaryErrors).Methods("GET", "HEAD")
 
 	projectScheduleManagement := projectUserAPI.PathPrefix("/schedules").Subrouter()
-	projectScheduleManagement.Use(projects.SchedulesMiddleware)
+	projectScheduleManagement.Use(projects.SchedulesMiddleware, projects.ScheduleCredentialPrincipalMiddleware)
 	projectScheduleManagement.Handle("/{schedule_id}", projects.GetMustHavePermissionMiddleware(db.CanViewSchedules)(http.HandlerFunc(projects.GetSchedule))).Methods("GET", "HEAD")
 	projectScheduleManagement.Handle("/{schedule_id}", projects.GetMustHavePermissionMiddleware(db.CanUpdateSchedules)(http.HandlerFunc(projects.UpdateSchedule))).Methods("PUT")
 	projectScheduleManagement.Handle("/{schedule_id}/active", projects.GetMustHavePermissionMiddleware(db.CanUpdateSchedules)(http.HandlerFunc(projects.SetScheduleActive))).Methods("PUT")
@@ -1005,13 +1005,13 @@ func Route(
 	projectViewManagement.Handle("/{view_id}", projects.GetMustHavePermissionMiddleware(db.CanDeleteViews)(http.HandlerFunc(projects.RemoveView))).Methods("DELETE")
 
 	projectIntegrationsAliasAPI := projectUserAPI.PathPrefix("/integrations").Subrouter()
-	projectIntegrationsAliasAPI.Use(projects.ProjectMiddleware)
+	projectIntegrationsAliasAPI.Use(projects.ProjectMiddleware, projects.IntegrationCredentialPrincipalMiddleware)
 	projectIntegrationsAliasAPI.Handle("/aliases", projects.GetMustHavePermissionMiddleware(db.CanViewIntegrations)(projectIntegrationController.ProjectWorkflowIntegrationAliasMiddleware(http.HandlerFunc(projects.GetIntegrationAlias)))).Methods("GET", "HEAD")
 	projectIntegrationsAliasAPI.Handle("/aliases", projects.GetMustHavePermissionMiddleware(db.CanUpdateIntegrations)(projectIntegrationController.ProjectWorkflowIntegrationAliasMiddleware(http.HandlerFunc(projects.AddIntegrationAlias)))).Methods("POST")
 	projectIntegrationsAliasAPI.Handle("/aliases/{alias_id}", projects.GetMustHavePermissionMiddleware(db.CanDeleteIntegrations)(projectIntegrationController.ProjectWorkflowIntegrationAliasMiddleware(http.HandlerFunc(projects.RemoveIntegrationAlias)))).Methods("DELETE")
 
 	projectIntegrationsAPI := projectUserAPI.PathPrefix("/integrations").Subrouter()
-	projectIntegrationsAPI.Use(projects.ProjectMiddleware, projects.IntegrationMiddleware)
+	projectIntegrationsAPI.Use(projects.ProjectMiddleware, projects.IntegrationMiddleware, projects.IntegrationCredentialPrincipalMiddleware)
 	projectIntegrationsAPI.Handle("/{integration_id}", projects.GetMustHavePermissionMiddleware(db.CanUpdateIntegrations)(http.HandlerFunc(projectIntegrationController.UpdateIntegration))).Methods("PUT")
 	projectIntegrationsAPI.Handle("/{integration_id}", projects.GetMustHavePermissionMiddleware(db.CanDeleteIntegrations)(http.HandlerFunc(projects.DeleteIntegration))).Methods("DELETE")
 	projectIntegrationsAPI.Handle("/{integration_id}", projects.GetMustHavePermissionMiddleware(db.CanViewIntegrations)(http.HandlerFunc(projects.GetIntegration))).Methods("GET")

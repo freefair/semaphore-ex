@@ -377,7 +377,6 @@ func (c *IntegrationController) UpdateIntegration(w http.ResponseWriter, r *http
 		helpers.WriteError(w, err)
 		return
 	}
-	recordIntegrationCredentialPrincipal(r, oldIntegration.ID)
 
 	helpers.Audit(r).Record(r.Context(), audit.Event{
 		Kind:      audit.ResourceIntegrationUpdate,
