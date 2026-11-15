@@ -103,17 +103,31 @@
             @update:model-value="fromRuntimePicker"
             @manual="runtimeManual = true"
           />
+        </template>
+
+        <template v-if="runtimeReferenceActive">
+          <v-switch
+            :model-value="!item.source_storage_version"
+            :label="$t('keyRuntimeLatest')"
+            color="primary"
+            density="compact"
+            hide-details
+            :disabled="runtimeReferenceDisabled"
+            data-testid="key-runtimeLatest"
+            @update:model-value="item.source_storage_version = $event ? 0 : 1"
+          />
           <v-text-field
+            v-if="item.source_storage_version"
             v-model.number="item.source_storage_version"
             :label="$t('keyRuntimeVersion')"
-            :hint="$t('keyRuntimeVersionHint')"
-            persistent-hint
             type="number"
-            min="0"
+            min="1"
+            :rules="[(v) => v >= 1 || $t('keyRuntimeVersionInvalid')]"
             :disabled="runtimeReferenceDisabled"
             data-testid="key-runtimeVersion"
             variant="outlined"
             density="compact"
+            class="mt-2"
           />
         </template>
 
@@ -132,15 +146,55 @@
           </template>
         </v-alert>
 
+        <template v-if="infisicalManual">
+          <v-text-field
+            v-model="item.source_storage_mount"
+            :label="$t('keyInfisicalProject')"
+            :rules="[(v) => !!v || $t('keyInfisicalRequired')]"
+            :disabled="runtimeReferenceDisabled"
+            data-testid="key-infisicalProject"
+            variant="outlined"
+            density="compact"
+          />
+          <v-text-field
+            v-model="infisicalEnvironment"
+            :label="$t('keyInfisicalEnvironment')"
+            placeholder="prod"
+            :rules="[(v) => !!v || $t('keyInfisicalRequired')]"
+            :disabled="runtimeReferenceDisabled"
+            data-testid="key-infisicalEnvironment"
+            variant="outlined"
+            density="compact"
+          />
+          <v-text-field
+            v-model="infisicalFolder"
+            :label="$t('keyInfisicalFolder')"
+            placeholder="apps/web"
+            :disabled="runtimeReferenceDisabled"
+            data-testid="key-infisicalFolder"
+            variant="outlined"
+            density="compact"
+          />
+          <v-text-field
+            v-model="item.source_storage_field"
+            :label="$t('keyInfisicalSecret')"
+            placeholder="DB_PASSWORD"
+            :rules="[(v) => !!v || $t('keyInfisicalRequired')]"
+            :disabled="runtimeReferenceDisabled"
+            data-testid="key-infisicalSecret"
+            variant="outlined"
+            density="compact"
+          />
+        </template>
+
         <RuntimeKeyReferenceFields
-          :active="runtimeReferenceActive && runtimeManual"
+          :active="runtimeReferenceActive && runtimeManual && runtimeStoreType !== 'infisical'"
           :disabled="runtimeReferenceDisabled"
           v-model:mount="item.source_storage_mount"
-          v-model:version="item.source_storage_version"
           v-model:field="item.source_storage_field"
         >
           <v-text-field
-            v-if="runtimeReferenceActive && runtimeManual"
+            v-if="runtimeReferenceActive && runtimeManual && runtimeStoreType !== 'infisical'"
             v-model="item.source_storage_key"
             label="Secret path"
             hint="Path within the mount"
@@ -440,6 +494,28 @@ export default {
     runtimeStoreType() {
       const storage = (this.secretStorages || []).find((s) => s.id === this.item.source_storage_id);
       return storage && storage.type === 'infisical' ? 'infisical' : 'vault';
+    },
+    infisicalManual() {
+      return this.runtimeReferenceActive && this.runtimeManual && this.runtimeStoreType === 'infisical';
+    },
+    // An Infisical reference keeps "environment/folder" in its path.
+    infisicalEnvironment: {
+      get() {
+        return (this.item.source_storage_key || '').split('/')[0];
+      },
+      set(value) {
+        const folder = (this.item.source_storage_key || '').split('/').slice(1).join('/');
+        this.item.source_storage_key = [String(value || '').trim(), folder].filter((part) => part).join('/');
+      },
+    },
+    infisicalFolder: {
+      get() {
+        return (this.item.source_storage_key || '').split('/').slice(1).join('/');
+      },
+      set(value) {
+        const folder = String(value || '').replace(/^\/+|\/+$/g, '');
+        this.item.source_storage_key = [this.infisicalEnvironment, folder].filter((part) => part).join('/');
+      },
     },
     runtimePickerValue() {
       if (this.runtimeStoreType === 'infisical') {

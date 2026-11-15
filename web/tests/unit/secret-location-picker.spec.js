@@ -151,4 +151,38 @@ describe('SecretLocationPicker.vue', () => {
     expect(wrapper.vm.error).to.deep.equal({ message: 'The connection may not list this.', reason: 'permission' });
     expect(wrapper.find('[data-testid="secret-picker-error"]').exists()).to.equal(true);
   });
+
+  it('offers no entry of the previous folder while the next one loads', async () => {
+    let release;
+    const slow = (location) => {
+      if (location.path === 'apps') {
+        return new Promise((resolve) => { release = () => resolve([{ kind: 'secret', name: 'DB_PASSWORD', value: 'DB_PASSWORD' }]); });
+      }
+      return infisicalStore([])(location);
+    };
+    const wrapper = mountPicker({ modelValue: { project: 'proj-1', environment: 'prod' }, storeType: 'infisical', load: slow });
+    await flushPromises();
+    const opening = wrapper.vm.choose({ kind: 'folder', name: 'apps', value: 'apps' });
+    await wrapper.vm.$nextTick();
+    expect(wrapper.vm.entries).to.deep.equal([], 'ROOT_TOKEN must not be chosen for apps');
+    release();
+    await opening;
+    expect(wrapper.vm.entries.map((e) => e.name)).to.deep.equal(['DB_PASSWORD']);
+  });
+
+  it('marks the chosen secret as selected for assistive technology', async () => {
+    const wrapper = mountPicker({
+      modelValue: {
+        project: 'proj-1', environment: 'prod', path: '', secret: 'ROOT_TOKEN',
+      },
+      storeType: 'infisical',
+      load: infisicalStore([]),
+    });
+    await flushPromises();
+    const chosen = wrapper.vm.entries
+      .filter((entry) => wrapper.vm.isChosen(entry))
+      .map((entry) => entry.name);
+    expect(chosen).to.deep.equal(['ROOT_TOKEN']);
+    expect(wrapper.html()).to.contain('role="status"');
+  });
 });

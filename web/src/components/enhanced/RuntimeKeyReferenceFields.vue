@@ -16,20 +16,7 @@
     <v-row
       v-if="active"
     >
-      <v-col cols="12" sm="5">
-        <v-text-field
-          v-model.number="versionModel"
-          label="Version (optional)"
-          type="number"
-          min="0"
-          :rules="[(v) => v == null || v >= 0 || 'Version must not be negative']"
-          :disabled="disabled"
-          data-testid="key-runtimeVersion"
-          variant="outlined"
-          density="compact"
-        />
-      </v-col>
-      <v-col cols="12" sm="7">
+      <v-col cols="12">
         <v-text-field
           v-model="fieldModel"
           label="Field"
@@ -46,18 +33,14 @@
 
 <script>
 export default {
-  emits: ['update:field', 'update:mount', 'update:version'],
+  emits: ['update:field', 'update:mount'],
   props: {
-    active: Boolean, disabled: Boolean, mount: String, version: [Number, String], field: String,
+    active: Boolean, disabled: Boolean, mount: String, field: String,
   },
   computed: {
     mountModel: {
       get() { return this.mount; },
       set(value) { this.$emit('update:mount', value); },
-    },
-    versionModel: {
-      get() { return this.version; },
-      set(value) { this.$emit('update:version', value); },
     },
     fieldModel: {
       get() { return this.field; },

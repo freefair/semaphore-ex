@@ -14,11 +14,7 @@
             :no-data-text="$t('secretPickerNoProject')"
             data-testid="secret-picker-project"
             @update:model-value="selectProject"
-          >
-            <template v-slot:item="{ props: itemProps, item }">
-              <v-list-item v-bind="itemProps" :subtitle="item.value" />
-            </template>
-          </v-autocomplete>
+          />
         </v-col>
         <v-col cols="12" sm="6">
           <v-autocomplete
@@ -88,22 +84,28 @@
       <v-progress-linear v-if="loading.entries" indeterminate height="2" />
       <v-list
         density="compact"
+        role="listbox"
+        :aria-label="crumbs.map((crumb) => crumb.name).join(' / ')"
+        :aria-busy="loading.entries ? 'true' : 'false'"
         class="SecretLocationPicker__entries py-0"
         data-testid="secret-picker-entries"
       >
         <v-list-item
           v-for="entry in visibleEntries"
           :key="`${entry.kind}:${entry.value}`"
+          role="option"
+          :aria-selected="isChosen(entry) ? 'true' : 'false'"
           :prepend-icon="entry.kind === 'folder' ? 'mdi-folder-outline' : 'mdi-key-outline'"
           :title="entry.name"
           :active="isChosen(entry)"
-          :disabled="disabled"
+          :disabled="disabled || loading.entries"
           color="primary"
           :data-testid="`secret-picker-entry-${entry.kind}`"
           @click="choose(entry)"
         >
-          <template v-if="entry.kind === 'folder'" v-slot:append>
-            <v-icon size="small">mdi-chevron-right</v-icon>
+          <template v-slot:append>
+            <v-icon v-if="entry.kind === 'folder'" size="small">mdi-chevron-right</v-icon>
+            <v-icon v-else-if="isChosen(entry)" size="small" color="primary">mdi-check</v-icon>
           </template>
         </v-list-item>
         <v-list-item
@@ -151,12 +153,15 @@
     </v-alert>
 
     <div
-      v-if="summary"
-      class="text-body-medium mb-4"
+      role="status"
+      aria-live="polite"
+      :class="summary ? 'text-body-medium mb-4' : ''"
       data-testid="secret-picker-summary"
     >
-      <v-icon size="small" class="mr-1">{{ summaryIcon }}</v-icon>
-      {{ summary }}
+      <template v-if="summary">
+        <v-icon size="small" class="mr-1">{{ summaryIcon }}</v-icon>
+        {{ summary }}
+      </template>
     </div>
   </div>
 </template>
@@ -350,6 +355,8 @@ export default {
     async openFolder(path) {
       this.folder = path;
       this.filter = '';
+      // Entries of the previous folder must not be chosen for the new one.
+      this.entries = [];
       if (this.target === 'folder') {
         this.emit({ path });
       }

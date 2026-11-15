@@ -5,6 +5,7 @@
       <v-spacer />
       <v-btn
         color="primary"
+        :aria-label="$t('globalSecretStorageAdd')"
         data-testid="global-storage-create"
         @click="openEditor(null)"
       >
@@ -111,8 +112,12 @@
     </v-data-table>
 
     <v-dialog v-model="editorOpen" max-width="860" persistent scrollable>
-      <v-card data-testid="global-storage-dialog">
-        <v-card-title>
+      <v-card
+        data-testid="global-storage-dialog"
+        role="dialog"
+        aria-labelledby="global-storage-dialog-title"
+      >
+        <v-card-title id="global-storage-dialog-title">
           {{ form.id ? $t('globalSecretStorageEdit') : $t('globalSecretStorageAdd') }}
         </v-card-title>
         <v-card-text>
@@ -203,31 +208,28 @@
               />
             </template>
 
-            <div class="d-flex align-center flex-wrap mt-2 mb-6">
-              <v-btn
-                variant="outlined"
-                color="primary"
-                prepend-icon="mdi-connection"
-                :loading="testing"
-                :disabled="saving"
-                data-testid="global-storage-test"
-                @click="testDraft"
-              >
-                {{ $t('globalSecretStorageTest') }}
-              </v-btn>
-              <div
+            <v-btn
+              variant="outlined"
+              color="primary"
+              prepend-icon="mdi-connection"
+              class="mt-2"
+              :loading="testing"
+              :disabled="saving"
+              data-testid="global-storage-test"
+              @click="testDraft"
+            >
+              {{ $t('globalSecretStorageTest') }}
+            </v-btn>
+            <div ref="testResult" role="status" aria-live="polite" class="mt-3 mb-6">
+              <v-alert
                 v-if="testResult"
-                class="ml-3 text-body-medium"
-                :class="testResult.ok ? 'text-success' : 'text-error'"
-                role="status"
-                aria-live="polite"
+                :type="testResult.ok ? 'success' : 'error'"
+                variant="tonal"
+                density="compact"
                 data-testid="global-storage-test-result"
               >
-                <v-icon size="small" class="mr-1">
-                  {{ testResult.ok ? 'mdi-check-circle' : 'mdi-alert-circle' }}
-                </v-icon>
                 {{ testResult.text }}
-              </div>
+              </v-alert>
             </div>
 
             <v-divider class="mb-4" />
@@ -236,6 +238,7 @@
               <v-spacer />
               <v-btn
                 v-if="!scopeEditor"
+                ref="addScope"
                 variant="text"
                 color="primary"
                 prepend-icon="mdi-plus"
@@ -259,12 +262,12 @@
             >
               {{ noScopesText }}
             </v-alert>
+            <div role="status" aria-live="polite" class="d-sr-only">{{ scopeAnnouncement }}</div>
             <v-list v-if="form.params.secret_scopes.length" density="compact" class="py-0 mb-3">
               <v-list-item
                 v-for="(scope, index) in form.params.secret_scopes"
                 :key="scopeKey(scope)"
                 :title="scopeLabel(scope)"
-                :subtitle="scopeIdentifiers(scope)"
                 prepend-icon="mdi-folder-key-outline"
                 data-testid="global-storage-scope"
               >
@@ -285,6 +288,7 @@
             </v-list>
             <v-card
               v-if="scopeEditor"
+              ref="scopeEditor"
               variant="tonal"
               class="pa-3 mb-4"
               data-testid="global-storage-scope-editor"
@@ -322,6 +326,16 @@
                   density="compact"
                 />
               </template>
+              <v-alert
+                v-if="scopePending"
+                type="warning"
+                variant="tonal"
+                density="compact"
+                class="mb-3"
+                data-testid="global-storage-scope-pending"
+              >
+                {{ $t('globalSecretStorageScopePending') }}
+              </v-alert>
               <div class="d-flex justify-end">
                 <v-btn variant="text" @click="closeScopeEditor">{{ $t('cancel') }}</v-btn>
                 <v-btn
@@ -532,6 +546,9 @@ export default {
       scopeSummary: '',
       scopeLoader: null,
       scopeNames: {},
+      scopePending: false,
+      scopeAnnouncement: '',
+      testRequest: 0,
       deleteTarget: null,
       deleting: false,
       deleteError: null,
@@ -593,6 +610,14 @@ export default {
           return 'Token';
       }
     },
+    connectionInputs() {
+      const params = this.form.params || {};
+      return JSON.stringify([
+        this.form.type, this.form.secret, this.secretSource, params.url, params.client_id,
+        params.organization_slug, params.ca_certificate, params.namespace, params.auth_method,
+        params.auth_mount, params.role_id, params.role, params.timeout,
+      ]);
+    },
     credentialInputLabel() {
       if (this.secretSource === 'database') {
         return this.credentialLabel;
@@ -613,6 +638,15 @@ export default {
       return this.form.type === 'infisical'
         ? !!(this.scopeDraft.project && this.scopeDraft.environment)
         : !!(this.scopeDraft.mount || this.scopeDraft.project);
+    },
+  },
+
+  watch: {
+    // A test result describes the settings it was made with; any change to
+    // them makes it stale.
+    connectionInputs() {
+      this.testRequest += 1;
+      this.testResult = null;
     },
   },
 
@@ -685,18 +719,33 @@ export default {
     },
 
     async testDraft() {
+      this.testRequest += 1;
+      const request = this.testRequest;
       this.testing = true;
       this.testResult = null;
+      let result;
       try {
         const response = await axios.post('/api/global-secret-storage-drafts/test', {
           storage: storageBody(this.form, this.secretSource),
         });
-        this.testResult = { ok: true, text: this.identityText(response.data) };
-        this.resolveScopeNames();
+        result = { ok: true, text: this.identityText(response.data) };
       } catch (error) {
-        this.testResult = { ok: false, text: browseError(error).message };
+        result = { ok: false, text: browseError(error).message };
       } finally {
         this.testing = false;
+      }
+      // A result belongs to the settings it was asked for; an edit since
+      // then made it stale.
+      if (request !== this.testRequest) {
+        return;
+      }
+      this.testResult = result;
+      if (result.ok) {
+        this.resolveScopeNames();
+      }
+      await this.$nextTick();
+      if (this.$refs.testResult && this.$refs.testResult.scrollIntoView) {
+        this.$refs.testResult.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       }
     },
 
@@ -765,15 +814,8 @@ export default {
       return parts.join(' / ');
     },
 
-    scopeIdentifiers(scope) {
-      if (this.form.type !== 'infisical') {
-        return '';
-      }
-      const known = this.scopeNames[`root:${scope.project_id}`];
-      return known ? `${this.$t('globalSecretStorageProjectId')}: ${scope.project_id}` : '';
-    },
-
     openScopeEditor() {
+      this.scopePending = false;
       this.scopeDraft = emptyScope();
       this.scopeSummary = '';
       this.scopeManual = false;
@@ -781,6 +823,7 @@ export default {
     },
 
     closeScopeEditor() {
+      this.scopePending = false;
       this.scopeEditor = false;
       this.scopeManual = false;
       this.scopeDraft = emptyScope();
@@ -801,8 +844,16 @@ export default {
         if (this.scopeSummary) {
           this.labelScope(scope, this.scopeSummary);
         }
+        this.scopeAnnouncement = this.$t('globalSecretStorageScopeAdded', { scope: this.scopeLabel(scope) });
       }
       this.closeScopeEditor();
+      this.$nextTick(() => {
+        const button = this.$refs.addScope;
+        const element = button && (button.$el || button);
+        if (element && element.focus) {
+          element.focus();
+        }
+      });
     },
 
     labelScope(scope, label) {
@@ -821,6 +872,17 @@ export default {
     },
 
     async save() {
+      if (this.scopeEditor) {
+        // A location picked but not added would be lost silently.
+        this.scopePending = true;
+        await this.$nextTick();
+        const editor = this.$refs.scopeEditor;
+        const element = editor && (editor.$el || editor);
+        if (element && element.scrollIntoView) {
+          element.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+        return;
+      }
       if (!(await this.validateForm())) return;
       this.saving = true;
       this.saveError = null;

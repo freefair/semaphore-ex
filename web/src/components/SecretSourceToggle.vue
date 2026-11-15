@@ -1,5 +1,8 @@
 <template>
-  <div class="d-flex justify-space-between align-center mb-2" data-testid="secretSource-toggle">
+  <div
+    class="SecretSourceToggle d-flex justify-space-between align-center mb-2"
+    data-testid="secretSource-toggle"
+  >
     <b style="font-size: 13px; margin-left: 5px" data-testid="secretSource-label">{{ label }}</b>
     <v-btn-toggle
         data-testid="secretSource-options"
@@ -82,6 +85,25 @@ export default {
     &.v-theme--dark {
       color: #fff;
     }
+  }
+}
+
+// On a phone the label takes its own line and the choices wrap, so every
+// source stays visible instead of running past the card edge (ADR 0061:
+// usable UX over parity with the old layout).
+@media (max-width: 599px) {
+  .SecretSourceToggle {
+    flex-wrap: wrap;
+    row-gap: 4px;
+
+    > b {
+      flex: 1 0 100%;
+    }
+  }
+
+  .SecretSourceToggle__options {
+    flex-wrap: wrap;
+    height: auto;
   }
 }
 </style>

@@ -5,8 +5,8 @@
       :items="sourceItems"
       item-title="title"
       item-value="value"
-      label="Source"
-      :no-data-text="'No provider is configured'"
+      :label="$t('gcRefSource')"
+      :no-data-text="$t('gcRefNoSource')"
       data-testid="credential-reference-source"
       @update:model-value="selectSource"
     />
@@ -18,8 +18,7 @@
       class="mb-4"
       data-testid="credential-reference-no-scopes"
     >
-      This connection may not read any secret yet. An administrator adds secret scopes
-      under Administration > Global secret storages.
+      {{ $t('gcRefNoScopes') }}
     </v-alert>
     <SecretLocationPicker
       v-else-if="browsable && !manual"
@@ -39,7 +38,7 @@
         density="compact"
         class="mb-4"
       >
-        Entering the location by hand.
+        {{ $t('gcRefManual') }}
         <template v-slot:append>
           <v-btn
             variant="text"
@@ -47,35 +46,35 @@
             data-testid="credential-reference-pick"
             @click="manual = false"
           >
-            Pick from the store
+            {{ $t('gcRefPick') }}
           </v-btn>
         </template>
       </v-alert>
       <template v-if="isInfisical">
         <v-text-field
           :model-value="form.mount"
-          label="Infisical project ID"
+          :label="$t('keyInfisicalProject')"
           data-testid="credential-reference-infisical-project"
           @update:model-value="update('mount', $event)"
         />
         <v-text-field
           :model-value="form.environment"
-          label="Environment slug"
+          :label="$t('keyInfisicalEnvironment')"
           placeholder="prod"
           data-testid="credential-reference-infisical-environment"
           @update:model-value="update('environment', $event)"
         />
         <v-text-field
           :model-value="form.path"
-          label="Folder (optional)"
+          :label="$t('keyInfisicalFolder')"
           placeholder="apps/web"
-          :rules="[() => inScope || 'Outside the scopes of this connection']"
+          :rules="[() => inScope || $t('gcRefOutsideScope')]"
           data-testid="credential-reference-infisical-folder"
           @update:model-value="update('path', $event)"
         />
         <v-text-field
           :model-value="form.field"
-          label="Secret name"
+          :label="$t('keyInfisicalSecret')"
           placeholder="DB_PASSWORD"
           data-testid="credential-reference-infisical-name"
           @update:model-value="update('field', $event)"
@@ -84,19 +83,19 @@
       <template v-else>
         <v-text-field
           :model-value="form.mount"
-          label="KV v2 mount"
+          :label="$t('secretPickerMount')"
           data-testid="credential-reference-mount"
           @update:model-value="update('mount', $event)"
         />
         <v-text-field
           :model-value="form.path"
-          label="Secret path"
+          :label="$t('gcRefPath')"
           data-testid="credential-reference-path"
           @update:model-value="update('path', $event)"
         />
         <v-text-field
           :model-value="form.field"
-          label="Field"
+          :label="$t('secretPickerField')"
           data-testid="credential-reference-field"
           @update:model-value="update('field', $event)"
         />
@@ -105,10 +104,10 @@
     <v-text-field
       v-if="form.providerId && !isInfisical"
       :model-value="form.version"
-      label="Secret version"
+      :label="$t('gcRefVersion')"
       type="number"
       min="1"
-      hint="Global credentials pin a version; picking a field fills in the current one."
+      :hint="$t('gcRefVersionHint')"
       persistent-hint
       data-testid="credential-reference-version"
       @update:model-value="update('version', Number($event))"
@@ -208,7 +207,8 @@ export default {
     },
     sourceItems() {
       return this.providers.map((provider) => ({
-        title: `${provider.name} (${PROVIDER_LABELS[provider.provider] || provider.provider}${provider.source === 'configuration' ? ', configuration file' : ''})`,
+        title: `${provider.name} (${PROVIDER_LABELS[provider.provider] || provider.provider}${
+          provider.source === 'configuration' ? `, ${this.$t('globalSecretStorageFromConfiguration')}` : ''})`,
         value: `${provider.provider}|${provider.provider_id}`,
       }));
     },

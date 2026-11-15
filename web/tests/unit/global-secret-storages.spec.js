@@ -82,6 +82,7 @@ describe('global credential reference fields', () => {
         },
         providers,
       },
+      global: { mocks: { $t: (key) => key } },
     });
     wrapper.vm.selectSource('infisical|storage-3');
     const [[form]] = wrapper.emitted('update:form');

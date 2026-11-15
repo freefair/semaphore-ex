@@ -44,6 +44,7 @@
               v-model="p.path"
               label="Remote path"
               :rules="[(value) => !!value || 'Remote path is required']"
+              ref="remotePath"
               :append-inner-icon="loader ? 'mdi-folder-search-outline' : undefined"
               variant="outlined"
               density="compact"
@@ -126,14 +127,20 @@
       max-width="680"
       @update:model-value="browseIndex = null"
     >
-      <v-card v-if="browseIndex != null" data-testid="secretStorageSync-browse">
-        <v-card-title>{{ $t('syncBrowseTitle') }}</v-card-title>
+      <v-card
+        v-if="browseIndex != null"
+        role="dialog"
+        aria-labelledby="sync-browse-title"
+        data-testid="secretStorageSync-browse"
+      >
+        <v-card-title id="sync-browse-title">{{ $t('syncBrowseTitle') }}</v-card-title>
         <v-card-text>
           <SecretLocationPicker
             v-model="browseValue"
             store-type="vault"
             target="folder"
             :load="loader"
+            @manual="enterByHand"
           />
           <div class="text-body-medium text-medium-emphasis">{{ $t('syncBrowseHint') }}</div>
         </v-card-text>
@@ -210,6 +217,19 @@ export default {
   },
 
   methods: {
+    // enterByHand closes the browser and puts the cursor into the row's
+    // remote path, where the location is typed instead.
+    enterByHand() {
+      const index = this.browseIndex;
+      this.browseIndex = null;
+      this.$nextTick(() => {
+        const fields = [].concat(this.$refs.remotePath || []);
+        const field = fields[index];
+        if (field && field.focus) {
+          field.focus();
+        }
+      });
+    },
     openBrowse(index) {
       const current = this.paths[index];
       const folder = (current.path || '').includes('/')
