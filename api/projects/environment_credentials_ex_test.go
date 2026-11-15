@@ -37,6 +37,7 @@ func TestValidateEnvironmentCredentialChanges(t *testing.T) {
 	}
 	granted := createCredential("granted", project.ID, db.GlobalCredentialGrantOperationReference|db.GlobalCredentialGrantOperationConsume)
 	consumeOnly := createCredential("consume only", project.ID, db.GlobalCredentialGrantOperationConsume)
+	referenceOnly := createCredential("reference only", project.ID, db.GlobalCredentialGrantOperationReference)
 	foreign := createCredential("foreign", other.ID, db.GlobalCredentialGrantOperationReference)
 
 	request := func(permissions db.ProjectUserPermission) *http.Request {
@@ -50,6 +51,7 @@ func TestValidateEnvironmentCredentialChanges(t *testing.T) {
 		return []db.EnvironmentCredential{{Name: "license_key", Target: db.EnvironmentCredentialTargetVar, CredentialID: credentialID}}
 	}
 
+	listAndConsume := db.CanListGrantedCredentials | db.CanConsumeGrantedCredentials
 	tests := []struct {
 		name        string
 		permissions db.ProjectUserPermission
@@ -57,12 +59,14 @@ func TestValidateEnvironmentCredentialChanges(t *testing.T) {
 		previous    []db.EnvironmentCredential
 		status      int
 	}{
-		{"granted credential", db.CanListGrantedCredentials, reference(granted.ID), nil, http.StatusOK},
+		{"granted credential", listAndConsume, reference(granted.ID), nil, http.StatusOK},
 		{"missing permission", 0, reference(granted.ID), nil, http.StatusForbidden},
-		{"grant without reference", db.CanListGrantedCredentials, reference(consumeOnly.ID), nil, http.StatusBadRequest},
-		{"credential of another project", db.CanListGrantedCredentials, reference(foreign.ID), nil, http.StatusBadRequest},
-		{"unknown credential", db.CanListGrantedCredentials, reference(999_999), nil, http.StatusBadRequest},
-		{"invalid name", db.CanListGrantedCredentials, []db.EnvironmentCredential{{Name: "Bad-Name", Target: db.EnvironmentCredentialTargetVar, CredentialID: granted.ID}}, nil, http.StatusBadRequest},
+		{"list without consume permission", db.CanListGrantedCredentials, reference(granted.ID), nil, http.StatusForbidden},
+		{"grant without reference", listAndConsume, reference(consumeOnly.ID), nil, http.StatusBadRequest},
+		{"grant without consume", listAndConsume, reference(referenceOnly.ID), nil, http.StatusBadRequest},
+		{"credential of another project", listAndConsume, reference(foreign.ID), nil, http.StatusBadRequest},
+		{"unknown credential", listAndConsume, reference(999_999), nil, http.StatusBadRequest},
+		{"invalid name", listAndConsume, []db.EnvironmentCredential{{Name: "Bad-Name", Target: db.EnvironmentCredentialTargetVar, CredentialID: granted.ID}}, nil, http.StatusBadRequest},
 		{"unchanged reference without permission", 0, reference(foreign.ID), reference(foreign.ID), http.StatusOK},
 		{"removing references without permission", 0, nil, reference(granted.ID), http.StatusOK},
 	}

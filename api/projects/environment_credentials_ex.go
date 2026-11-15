@@ -32,10 +32,14 @@ func validateEnvironmentCredentialChanges(r *http.Request, env db.Environment, p
 		return http.StatusOK, nil
 	}
 
+	// Adding a reference prepares the use of the value, so it needs the same
+	// project permission a user needs to consume the credential in a task.
+	// Unattended tasks (schedules, integrations) check no user at dispatch;
+	// this check is what ties their references to an authorized person.
 	user := helpers.UserFromContext(r)
 	permissions, _ := helpers.GetFromContext(r, "permissions").(db.ProjectUserPermission)
-	if user == nil || (!user.Admin && !permissions.Can(db.CanListGrantedCredentials)) {
-		return http.StatusForbidden, errors.New("referencing global credentials requires the permission to list granted credentials")
+	if user == nil || (!user.Admin && !permissions.Can(db.CanListGrantedCredentials|db.CanConsumeGrantedCredentials)) {
+		return http.StatusForbidden, errors.New("referencing global credentials requires the permissions to list and consume granted credentials")
 	}
 
 	store := helpers.Store(r)
@@ -46,7 +50,7 @@ func validateEnvironmentCredentialChanges(r *http.Request, env db.Environment, p
 			return http.StatusBadRequest, common_errors.NewValidationError("global credential for " + reference.Name + " is not granted to this project")
 		}
 		grant, err := store.GetGlobalCredentialGrantForProject(credential.ID, env.ProjectID)
-		if err != nil || !grant.IsEffectiveAt(env.ProjectID, db.GlobalCredentialGrantOperationReference, credential.Enabled, now) {
+		if err != nil || !grant.IsEffectiveAt(env.ProjectID, db.GlobalCredentialGrantOperationReference|db.GlobalCredentialGrantOperationConsume, credential.Enabled, now) {
 			return http.StatusBadRequest, common_errors.NewValidationError("global credential for " + reference.Name + " is not granted to this project")
 		}
 	}

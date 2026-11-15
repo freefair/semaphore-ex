@@ -32,6 +32,7 @@ describe('variable group global credential references', () => {
     granted = () => [
       { credential_id: 4, display_name: 'License server', operations: 3 },
       { credential_id: 5, display_name: 'Consume only', operations: 2 },
+      { credential_id: 6, display_name: 'Reference only', operations: 1 },
     ];
     http = mockAxios();
     http.respond((req) => {

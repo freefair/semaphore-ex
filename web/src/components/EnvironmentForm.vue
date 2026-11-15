@@ -1365,7 +1365,7 @@ export default {
           `/api/project/${this.projectId}/granted-credentials?count=100&offset=0`,
         );
         this.grantedCredentials = (response.data || [])
-          .filter((credential) => (credential.operations & 1) === 1);
+          .filter((credential) => (credential.operations & 3) === 3);
       } catch (error) {
         // The list is optional for the form: a failure must not block editing
         // the rest of the Variable Group. It is shown next to the section.
