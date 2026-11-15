@@ -612,8 +612,8 @@
             :data-state="credentials.length === 0 ? 'empty' : 'ready'"
           >
             <template v-slot:item="props">
-              <tr data-testid="varGroup-globalCredentialRow">
-                <td class="pa-1">
+              <tr class="EnvCredentialRow" data-testid="varGroup-globalCredentialRow">
+                <td class="pa-1 EnvCredentialName">
                   <v-text-field
                     variant="solo-inverted"
                     flat
@@ -628,7 +628,7 @@
                   ></v-text-field>
                 </td>
 
-                <td class="pa-1" style="width: 210px">
+                <td class="pa-1 EnvCredentialTarget">
                   <v-select
                     variant="solo-inverted"
                     flat
@@ -644,7 +644,7 @@
                   ></v-select>
                 </td>
 
-                <td class="pa-1">
+                <td class="pa-1 EnvCredentialChoice">
                   <v-select
                     variant="solo-inverted"
                     flat
@@ -662,7 +662,7 @@
                   ></v-select>
                 </td>
 
-                <td style="width: 38px">
+                <td class="EnvCredentialRemove">
                   <v-icon
                     v-if="grantedCredentials != null"
                     size="small"
@@ -680,6 +680,46 @@
   </v-form>
 </template>
 <style lang="scss">
+// A global credential row: name, delivery target and credential side by side,
+// stacked on phones so every field stays fully visible without scrolling.
+.EnvCredentialRow > .EnvCredentialName {
+  min-width: 220px;
+}
+
+.EnvCredentialRow > .EnvCredentialTarget {
+  min-width: 210px;
+}
+
+.EnvCredentialRow > .EnvCredentialRemove {
+  width: 38px;
+}
+
+@media (max-width: 599px) {
+  .EnvCredentialRow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .EnvCredentialRow > td {
+    height: auto !important;
+    min-width: 0 !important;
+  }
+
+  .EnvCredentialRow > .EnvCredentialName,
+  .EnvCredentialRow > .EnvCredentialTarget {
+    flex: 1 1 100%;
+  }
+
+  .EnvCredentialRow > .EnvCredentialChoice {
+    flex: 1 1 0;
+  }
+
+  .EnvCredentialRow > .EnvCredentialRemove {
+    flex: 0 0 38px;
+  }
+}
+
 // v-subheader of Vuetify 2: a 48 px row, 14 px text in the letter spacing of the card text.
 .EnvSubheader {
   height: 48px;

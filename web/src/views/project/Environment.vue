@@ -8,7 +8,7 @@
       v-model="editDialog"
       :save-button-text="$t('save')"
       :title="$t('editEnvironment')"
-      :max-width="700"
+      :max-width="900"
       @save="loadItems"
       :help-button="true"
       :no-escape="editNoEscape"
