@@ -161,6 +161,16 @@ func TestSecretBrowseServiceListsGlobalInfisicalByName(t *testing.T) {
 		assert.ErrorContains(t, err, "enter the credential again")
 		_, err = storages.Update(moved, storage.Revision)
 		assert.ErrorContains(t, err, "enter the credential again")
+
+		widened := storage
+		widened.Secret = ""
+		widened.Params = db.MapStringAnyField{}
+		for key, value := range storage.Params {
+			widened.Params[key] = value
+		}
+		widened.Params["allow_remote_runners"] = true
+		_, err = storages.Update(widened, storage.Revision)
+		assert.ErrorContains(t, err, "enter the credential again", "remote runners would receive the credential")
 	})
 
 	t.Run("a saved connection's draft without a new secret uses the stored one", func(t *testing.T) {

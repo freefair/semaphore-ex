@@ -456,7 +456,12 @@ func connectionTargetChanged(current db.GlobalSecretStorage, edited db.GlobalSec
 			return true
 		}
 	}
-	return false
+	// Allowing remote runners sends the credential to every runner of the
+	// routed projects. PAM routes and project assignments do not: without
+	// remote runners the credential stays on the server.
+	allowedBefore, _ := globalStorageAllowsRemoteRunners(current.Params)
+	allowedNow, _ := globalStorageAllowsRemoteRunners(edited.Params)
+	return allowedNow && !allowedBefore
 }
 
 func errNewCredentialRequired() error {
