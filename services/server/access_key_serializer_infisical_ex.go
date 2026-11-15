@@ -65,7 +65,7 @@ func (d *infisicalAccessKeyDeserializer) DeserializeSecret(key *db.AccessKey) (s
 		return "", unavailable
 	}
 	storage, err := d.storages.GetSecretStorage(*key.ProjectID, *key.SourceStorageID)
-	if err != nil || storage.Type != db.SecretStorageTypeInfisical {
+	if err != nil || !InfisicalStorageSuppliesKeyValues(storage) {
 		return "", unavailable
 	}
 	credentials, err := d.keys.GetAccessKeys(*key.ProjectID, db.GetAccessKeyOptions{

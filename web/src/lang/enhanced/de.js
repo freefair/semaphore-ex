@@ -565,4 +565,6 @@ export default {
   gcRefPath: 'Secret-Pfad',
   gcRefVersion: 'Festgelegte Version',
   gcRefVersionHint: 'Die Zugangsdaten lesen immer diese Version; die Auswahl eines Felds setzt die aktuelle.',
+  infisicalKeyValues: 'Werte für Key-Store-Keys liefern',
+  infisicalKeyValuesHint: 'Keys dieses Projekts können dann jedes Secret lesen, das die Machine Identity lesen darf.',
 };

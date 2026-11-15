@@ -46,7 +46,9 @@ as well as Infisical, and project Infisical storages supply Key Store values.
 - Global Vault and OpenBao connections under Administration > Global secret
   storages, with token, AppRole or Kubernetes authentication and mount-and-folder
   scopes. Providers from the configuration file are listed read-only.
-- Key Store keys can read their value from a project Infisical storage.
+- Key Store keys can read their value from a project Infisical storage once
+  the storage's "Supply Key Store values" option is on; it is off for existing
+  storages.
 
 ### Changed
 

@@ -51,6 +51,9 @@ func normalizeRuntimeSecretReference(key *db.AccessKey, storageRepo db.SecretSto
 		Field:     key.SourceStorageField,
 	}
 	if storage.Type == db.SecretStorageTypeInfisical {
+		if !InfisicalStorageSuppliesKeyValues(storage) {
+			return common_errors.NewValidationError("this Infisical storage does not supply key values; enable it in the storage settings")
+		}
 		if err := validateInfisicalKeyReference(reference); err != nil {
 			return err
 		}

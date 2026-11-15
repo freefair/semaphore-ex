@@ -75,6 +75,18 @@
       variant="outlined"
       density="compact"
     ></v-textarea>
+
+    <v-checkbox
+      v-if="section === 'all'"
+      :model-value="!!keyValues"
+      :label="$t('infisicalKeyValues')"
+      :hint="$t('infisicalKeyValuesHint')"
+      persistent-hint
+      :disabled="formSaving"
+      class="mb-4"
+      data-testid="secretStorage-infisicalKeyValues"
+      @update:model-value="$emit('update:keyValues', !!$event)"
+    />
     </template>
 
     <template v-if="section !== 'connection'">
@@ -150,13 +162,15 @@ const DURATION_PATTERN = /^([0-9]+h)?([0-9]+m)?([0-9]+s)?$/;
 export default {
   emits: [
     'update:caCertificate', 'update:clientId', 'update:organizationSlug', 'update:routes',
-    'update:secret', 'update:secretStorage', 'update:sessionDuration',
+    'update:secret', 'update:secretStorage', 'update:sessionDuration', 'update:keyValues',
   ],
   components: { SecretSourceToggle },
   props: {
     // 'all' shows connection and SSH routes; 'connection' and 'routes' show
     // one part, so a dialog can place its connection test between them.
     section: { type: String, default: 'all' },
+    // A project storage supplies Key Store values only when this is on.
+    keyValues: Boolean,
     clientId: String,
     organizationSlug: String,
     sessionDuration: String,

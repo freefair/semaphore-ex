@@ -38,7 +38,7 @@ func TestInfisicalAccessKeyDeserializerReadsTheReferencedSecret(t *testing.T) {
 		pamtest.SecretKey("proj-1", "prod", "/", "ROOT_TOKEN"):          {Value: "root-value", Version: 1},
 	}})
 	storage := db.SecretStorage{ID: 5, ProjectID: 3, Type: db.SecretStorageTypeInfisical, Params: db.MapStringAnyField{
-		"url": env.API.URL, "client_id": pamtest.ClientID, "ca_certificate": string(env.APICACert),
+		"url": env.API.URL, "client_id": pamtest.ClientID, "ca_certificate": string(env.APICACert), "key_values": true,
 	}}
 	keys := infisicalKeyRepository{keys: map[int][]db.AccessKey{5: {{ID: 50, Type: db.AccessKeyString, String: pamtest.ClientSecret}}}}
 	deserializer := newInfisicalAccessKeyDeserializer(keys, singleStorageRepository{storage: storage}, plainCredentialDecryption{})
@@ -79,6 +79,14 @@ func TestInfisicalAccessKeyDeserializerReadsTheReferencedSecret(t *testing.T) {
 		assert.NotContains(t, err.Error(), "proj-1")
 	})
 
+	t.Run("a storage that does not supply key values is not read", func(t *testing.T) {
+		routingOnly := storage
+		routingOnly.Params = db.MapStringAnyField{"url": env.API.URL, "client_id": pamtest.ClientID, "ca_certificate": string(env.APICACert)}
+		closed := newInfisicalAccessKeyDeserializer(keys, singleStorageRepository{storage: routingOnly}, plainCredentialDecryption{})
+		_, err := closed.DeserializeSecret(key(pro_interfaces.SecretReference{StorageID: 5, Mount: "proj-1", Path: "prod", Field: "ROOT_TOKEN"}))
+		assert.Error(t, err)
+	})
+
 	t.Run("Infisical storages cannot be written", func(t *testing.T) {
 		assert.Error(t, deserializer.SerializeSecret(&db.AccessKey{}))
 		assert.Error(t, deserializer.DeleteSecret(&db.AccessKey{}))
@@ -86,7 +94,7 @@ func TestInfisicalAccessKeyDeserializerReadsTheReferencedSecret(t *testing.T) {
 }
 
 func TestNormalizeRuntimeSecretReferenceAcceptsInfisicalStorages(t *testing.T) {
-	storage := db.SecretStorage{ID: 5, ProjectID: 3, Type: db.SecretStorageTypeInfisical}
+	storage := db.SecretStorage{ID: 5, ProjectID: 3, Type: db.SecretStorageTypeInfisical, Params: db.MapStringAnyField{"key_values": true}}
 	projectID, storageID := 3, 5
 	vault := db.AccessKeySourceStorageVault
 	build := func(path string) *db.AccessKey {
@@ -102,4 +110,25 @@ func TestNormalizeRuntimeSecretReferenceAcceptsInfisicalStorages(t *testing.T) {
 
 	assert.Error(t, normalizeRuntimeSecretReference(build("Prod Env/apps"), singleStorageRepository{storage: storage}),
 		"the first path segment must be an environment slug")
+}
+
+func TestInfisicalStoragesSupplyKeyValuesOnlyWhenEnabled(t *testing.T) {
+	projectID, storageID := 3, 5
+	vault := db.AccessKeySourceStorageVault
+	path := "prod"
+	key := &db.AccessKey{ProjectID: &projectID, SourceStorageID: &storageID, SourceStorageType: &vault,
+		SourceStorageKey: &path, SourceStorageMount: "proj-1", SourceStorageField: "ROOT_TOKEN"}
+	routingOnly := db.SecretStorage{ID: 5, ProjectID: 3, Type: db.SecretStorageTypeInfisical}
+	assert.ErrorContains(t, normalizeRuntimeSecretReference(key, singleStorageRepository{storage: routingOnly}), "does not supply key values")
+
+	storage := db.SecretStorage{Type: db.SecretStorageTypeInfisical, Secret: "secret", Params: db.MapStringAnyField{
+		"url": "https://app.infisical.com", "client_id": "client", "key_values": true,
+	}}
+	require.NoError(t, ValidateInfisicalStorage(&storage))
+	assert.True(t, InfisicalStorageSuppliesKeyValues(storage))
+
+	invalid := db.SecretStorage{Type: db.SecretStorageTypeInfisical, Secret: "secret", Params: db.MapStringAnyField{
+		"url": "https://app.infisical.com", "client_id": "client", "key_values": "yes",
+	}}
+	assert.Error(t, ValidateInfisicalStorage(&invalid))
 }

@@ -1045,4 +1045,6 @@ export default {
   gcRefPath: 'Secret path',
   gcRefVersion: 'Pinned version',
   gcRefVersionHint: 'The credential always reads this version; picking a field fills in the current one.',
+  infisicalKeyValues: 'Supply Key Store values',
+  infisicalKeyValuesHint: 'Keys of this project can then read any secret the machine identity may read.',
 };

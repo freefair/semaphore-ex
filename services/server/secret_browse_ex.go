@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/semaphoreui/semaphore/db"
+	"github.com/semaphoreui/semaphore/pkg/common_errors"
 	"github.com/semaphoreui/semaphore/pkg/infisicalpam"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
 )
@@ -90,6 +91,10 @@ func (s *secretBrowseService) BrowseProjectStorage(
 		}
 		return browser.BrowseRuntimeSecretProvider(ctx, projectID, storageID, location)
 	case db.SecretStorageTypeInfisical:
+		// Browsing serves key references, which the storage must allow.
+		if !InfisicalStorageSuppliesKeyValues(storage) {
+			return nil, common_errors.NewValidationError("this Infisical storage does not supply key values; enable it in the storage settings")
+		}
 		session, err := s.projectInfisical(ctx, projectID, storage)
 		if err != nil {
 			return nil, err

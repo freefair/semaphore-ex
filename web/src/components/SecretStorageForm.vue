@@ -161,6 +161,7 @@
       v-model:session-duration="item.params.session_duration"
       v-model:ca-certificate="item.params.ca_certificate"
       v-model:routes="item.params.pam_routes"
+      v-model:key-values="item.params.key_values"
       v-model:secret="item.secret"
       v-model:secret-storage="secretStorage"
       :is-new="itemId === 'new'"

@@ -18,6 +18,10 @@ const (
 	infisicalParamCACertificate    = "ca_certificate"
 	infisicalParamSessionDuration  = "session_duration"
 	infisicalParamRoutes           = "pam_routes"
+	// infisicalParamKeyValues opts a project storage in to supplying Key
+	// Store values; off by default, so an identity set up for SSH routing
+	// does not expose its secrets to everyone who may create keys.
+	infisicalParamKeyValues = "key_values"
 
 	defaultInfisicalSessionDuration = time.Hour
 	maximumInfisicalCACertificate   = 64 << 10
@@ -34,7 +38,8 @@ func ValidateInfisicalStorage(storage *db.SecretStorage) error {
 	if storage.Params == nil {
 		storage.Params = db.MapStringAnyField{}
 	}
-	config, err := infisicalPAMFromParams(storage.Params)
+	params := storage.Params
+	config, err := infisicalPAMFromParams(params)
 	if err != nil {
 		return err
 	}
@@ -49,6 +54,15 @@ func ValidateInfisicalStorage(storage *db.SecretStorage) error {
 	}
 	if config.CACertificate != "" {
 		storage.Params[infisicalParamCACertificate] = config.CACertificate
+	}
+	if raw, ok := params[infisicalParamKeyValues]; ok && raw != nil {
+		enabled, isBool := raw.(bool)
+		if !isBool {
+			return common_errors.NewValidationError("key_values must be true or false")
+		}
+		if enabled {
+			storage.Params[infisicalParamKeyValues] = true
+		}
 	}
 	if storage.Secret == "" && storage.ID == 0 {
 		return common_errors.NewValidationError("client secret is required")
@@ -303,4 +317,11 @@ func LoadInfisicalPAMForProject(
 		result = append(result, config)
 	}
 	return result, nil
+}
+
+// InfisicalStorageSuppliesKeyValues reports whether a project Infisical
+// storage may back Key Store keys.
+func InfisicalStorageSuppliesKeyValues(storage db.SecretStorage) bool {
+	enabled, _ := storage.Params[infisicalParamKeyValues].(bool)
+	return storage.Type == db.SecretStorageTypeInfisical && enabled
 }

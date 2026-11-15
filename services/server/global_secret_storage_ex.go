@@ -176,6 +176,7 @@ func normalizeGlobalSecretStorage(storage *db.GlobalSecretStorage, requireSecret
 			return err
 		}
 		storage.Params = project.Params
+		delete(storage.Params, infisicalParamKeyValues)
 		storage.Params[globalStorageParamRemoteRunners] = allowRemoteRunners
 	case db.SecretStorageTypeVault, db.SecretStorageTypeOpenBao:
 		if kv == nil {
