@@ -2284,7 +2284,7 @@ definitions:
       name:
         type: string
         description: Extra variable name (lowercase letters, digits and _) or environment variable name (letters, digits and _, not starting with a digit).
-        example: TF_VAR_license_key
+        example: license_key
       target:
         type: string
         enum:

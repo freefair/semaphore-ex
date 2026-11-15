@@ -1040,6 +1040,7 @@ definitions:
       credentials:
         type: array
         description: Global credential references. Omit to keep the stored references on update.
+        example: []
         items:
           $ref: './api-docs-ex.yml#/definitions/EnvironmentCredential'
 
@@ -1070,6 +1071,7 @@ definitions:
       credentials:
         type: array
         description: Global credential references. Omit to keep the stored references on update.
+        example: []
         items:
           $ref: './api-docs-ex.yml#/definitions/EnvironmentCredential'
 
