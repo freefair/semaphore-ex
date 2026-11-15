@@ -12,6 +12,49 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+## [v2.20.24-ex.2.1.11] - 2026-11-16
+
+Based on upstream Semaphore UI release v2.20.24. Secret stores are browsed by
+name instead of typed by identifier, global connections cover Vault and OpenBao
+as well as Infisical, and project Infisical storages supply Key Store values.
+
+### Upgrade notes
+
+- No database migration, no removed configuration key and no changed existing
+  API route. New routes: `/api/global-secret-storage-drafts/test` and `/browse`,
+  `/api/global-secret-storages/{id}/test`,
+  `/api/global-credential-providers/{id}/browse`, and
+  `/api/project/{id}/secret_storages/{id}/identity` and `/browse`.
+- `GET /api/global-credential-providers` reports each source's real type and a
+  new `source` field (`database` or `configuration`).
+- A global connection can no longer take a `SEMAPHORE_` environment variable as
+  its credential. Changing the address, CA certificate, namespace,
+  authentication, client ID or organization of a global connection, or allowing
+  remote runners, requires entering the credential again.
+- Configuration-file global credential providers named `storage-<number>` are
+  shadowed by database connections with that ID; rename such providers.
+
+### Added
+
+- Secret stores are browsed instead of typed. Forms list Infisical projects,
+  environments, folders and secrets, and Vault/OpenBao mounts, folders, secrets
+  and fields by name, with a breadcrumb, search and manual entry as a fallback.
+  This covers global connection scopes, global credential references, Key Store
+  keys from a storage and managed sync targets. Listings never carry values.
+- Connection tests report who a connection acts as, or what to fix, next to the
+  button; global connections can be tested before they are saved.
+- Global Vault and OpenBao connections under Administration > Global secret
+  storages, with token, AppRole or Kubernetes authentication and mount-and-folder
+  scopes. Providers from the configuration file are listed read-only.
+- Key Store keys can read their value from a project Infisical storage.
+
+### Changed
+
+- Changing the address, CA certificate, authentication or remote-runner access
+  of a global connection requires entering its credential again.
+- Key Store versions use an "always read the latest version" switch instead of
+  the number 0, and the credential source choice wraps on phones.
+
 ## [v2.20.24-ex.2.1.10] - 2026-11-15
 
 Based on upstream Semaphore UI release v2.20.24. Passwords, license keys and
