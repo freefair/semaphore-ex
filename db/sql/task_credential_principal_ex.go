@@ -3,17 +3,12 @@ package sql
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"time"
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/tz"
 )
 
 var _ db.TaskCredentialPrincipalRepository = (*SqlDb)(nil)
-
-// credentialPrincipalClaimLifetime bounds how long a crashed request can
-// keep a trigger claimed; the trigger has no principal meanwhile.
-const credentialPrincipalClaimLifetime = time.Minute
 
 // errLostCredentialPrincipalClaim reports a change whose claim another
 // change took over; the trigger is left without principal.
@@ -42,19 +37,47 @@ func (d *SqlDb) SetIntegrationCredentialPrincipal(integrationID int, userID int)
 	return d.setCredentialPrincipal(db.CredentialPrincipalIntegration, integrationID, userID)
 }
 
-// setCredentialPrincipal records the principal of a new trigger. It fails
-// closed: the previous row is removed on its own before the new one is
-// written, so a failed write leaves the trigger without principal.
+// setCredentialPrincipal records the principal of a new trigger. It only
+// inserts: a change that claimed or finished on the trigger between its
+// creation and this call owns the row, and the creator must not replace it.
 func (d *SqlDb) setCredentialPrincipal(kind db.CredentialPrincipalKind, triggerID int, userID int) error {
 	table, column, err := credentialPrincipalTable(kind)
 	if err != nil || triggerID <= 0 || userID <= 0 {
 		return db.ErrInvalidOperation
 	}
-	if _, err = d.exec("delete from "+table+" where "+column+"=?", triggerID); err != nil {
+	exists, err := d.credentialPrincipalRowExists(table, column, triggerID)
+	if err != nil || exists {
 		return err
 	}
-	_, err = d.exec("insert into "+table+" ("+column+", user_id) values (?, ?)", triggerID, userID)
-	return err
+	if _, err = d.exec("insert into "+table+" ("+column+", user_id) values (?, ?)", triggerID, userID); err != nil {
+		if exists, existsErr := d.credentialPrincipalRowExists(table, column, triggerID); existsErr == nil && exists {
+			// A concurrent change inserted its claim first.
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func (d *SqlDb) credentialPrincipalRowExists(table string, column string, triggerID int) (bool, error) {
+	var count int
+	if err := d.selectOne(&count, "select count(*) from "+table+" where "+column+"=?", triggerID); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// RenewCredentialPrincipalChange extends a claim this change still holds.
+func (d *SqlDb) RenewCredentialPrincipalChange(kind db.CredentialPrincipalKind, triggerID int, token string) error {
+	table, column, err := credentialPrincipalTable(kind)
+	if err != nil || token == "" {
+		return db.ErrInvalidOperation
+	}
+	result, err := d.exec("update "+table+" set pending_since=? where "+column+"=? and pending_token=?", tz.Now(), triggerID, token)
+	if err != nil {
+		return err
+	}
+	return requireOneRow(result, errLostCredentialPrincipalClaim)
 }
 
 // BeginCredentialPrincipalChange claims a trigger for one change. While the
@@ -74,18 +97,18 @@ func (d *SqlDb) BeginCredentialPrincipalChange(kind db.CredentialPrincipalKind, 
 	now := tz.Now()
 	result, err := d.exec(
 		"update "+table+" set user_id=NULL, pending_token=?, pending_since=? where "+column+"=? and (pending_token is null or pending_since < ?)",
-		token, now, triggerID, now.Add(-credentialPrincipalClaimLifetime))
+		token, now, triggerID, now.Add(-db.CredentialPrincipalClaimLifetime))
 	if err != nil {
 		return "", false, err
 	}
 	if affected, affectedErr := result.RowsAffected(); affectedErr == nil && affected == 1 {
 		return token, true, nil
 	}
-	var existing int
-	if err = d.selectOne(&existing, "select count(*) from "+table+" where "+column+"=?", triggerID); err != nil {
+	exists, err := d.credentialPrincipalRowExists(table, column, triggerID)
+	if err != nil {
 		return "", false, err
 	}
-	if existing > 0 {
+	if exists {
 		return "", false, nil
 	}
 	if _, err = d.exec("insert into "+table+" ("+column+", user_id, pending_token, pending_since) values (?, NULL, ?, ?)",

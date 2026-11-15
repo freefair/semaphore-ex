@@ -1485,6 +1485,12 @@ symbols:
   - name: db:ConvertFlatToNested
     signature: func(flatMap map[string]string) map[string]any
     implementation: core
+  - name: db:CredentialPrincipalClaimLifetime
+    signature: time.Duration = 300000000000
+    implementation: core
+    behavior_tests:
+    - db/sql/task_credential_principal_ex_test.go::TestTaskCredentialPrincipals
+    - api/projects/credential_principal_ex_test.go::TestCredentialPrincipalRenewalStops
   - name: db:CredentialPrincipalIntegration
     signature: db.CredentialPrincipalKind = "integration"
     implementation: core
@@ -5086,7 +5092,7 @@ symbols:
     - services/tasks/executor_image_test.go::TestAddTaskOverwritesRequestTaskGroupsWithTemplateSnapshot
     - db/sql/task_groups_ex_test.go::TestTaskGroupSnapshotSurvivesTemplateChanges
   - name: db:TaskCredentialPrincipalRepository
-    signature: interface{AbortCredentialPrincipalChange(kind db.CredentialPrincipalKind, triggerID int, token string) error; BeginCredentialPrincipalChange(kind db.CredentialPrincipalKind, triggerID int) (token string, ok bool, err error); FinishCredentialPrincipalChange(kind db.CredentialPrincipalKind, triggerID int, token string, userID int) error; GetTaskCredentialPrincipal(task db.Task) (userID int, ok bool, err error); SetIntegrationCredentialPrincipal(integrationID int, userID int) error; SetScheduleCredentialPrincipal(scheduleID int, userID int) error}
+    signature: interface{AbortCredentialPrincipalChange(kind db.CredentialPrincipalKind, triggerID int, token string) error; BeginCredentialPrincipalChange(kind db.CredentialPrincipalKind, triggerID int) (token string, ok bool, err error); FinishCredentialPrincipalChange(kind db.CredentialPrincipalKind, triggerID int, token string, userID int) error; GetTaskCredentialPrincipal(task db.Task) (userID int, ok bool, err error); RenewCredentialPrincipalChange(kind db.CredentialPrincipalKind, triggerID int, token string) error; SetIntegrationCredentialPrincipal(integrationID int, userID int) error; SetScheduleCredentialPrincipal(scheduleID int, userID int) error}
     implementation: core
     behavior_tests:
     - db/sql/task_credential_principal_ex_test.go::TestTaskCredentialPrincipals

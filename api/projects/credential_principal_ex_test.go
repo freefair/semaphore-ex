@@ -3,6 +3,7 @@ package projects
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
@@ -87,9 +88,16 @@ func TestCredentialPrincipalMiddlewares(t *testing.T) {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) })
 	}
 	scheduleTask := db.Task{ProjectID: project.ID, ScheduleID: &schedule.ID}
+	// seed records user as the author of the last change.
+	seed := func(kind db.CredentialPrincipalKind, triggerID int, user db.User) {
+		token, ok, err := store.BeginCredentialPrincipalChange(kind, triggerID)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.NoError(t, store.FinishCredentialPrincipalChange(kind, triggerID, token, user.ID))
+	}
 
 	t.Run("a successful schedule change moves the responsibility", func(t *testing.T) {
-		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, owner.ID))
+		seed(db.CredentialPrincipalSchedule, schedule.ID, owner)
 		ScheduleCredentialPrincipalMiddleware(answer(http.StatusNoContent)).ServeHTTP(httptest.NewRecorder(), request(http.MethodPut, map[string]any{"schedule": schedule}))
 		userID, ok := principal(scheduleTask)
 		assert.True(t, ok)
@@ -97,22 +105,22 @@ func TestCredentialPrincipalMiddlewares(t *testing.T) {
 	})
 
 	t.Run("a failed schedule change leaves no principal", func(t *testing.T) {
-		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, owner.ID))
+		seed(db.CredentialPrincipalSchedule, schedule.ID, owner)
 		ScheduleCredentialPrincipalMiddleware(answer(http.StatusBadRequest)).ServeHTTP(httptest.NewRecorder(), request(http.MethodPut, map[string]any{"schedule": schedule}))
 		_, ok := principal(scheduleTask)
 		assert.False(t, ok)
 	})
 
 	t.Run("reading changes nothing", func(t *testing.T) {
-		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, owner.ID))
+		seed(db.CredentialPrincipalSchedule, schedule.ID, owner)
 		ScheduleCredentialPrincipalMiddleware(answer(http.StatusOK)).ServeHTTP(httptest.NewRecorder(), request(http.MethodGet, map[string]any{"schedule": schedule}))
 		userID, _ := principal(scheduleTask)
 		assert.Equal(t, owner.ID, userID)
 	})
 
 	t.Run("an integration change moves only that integration", func(t *testing.T) {
-		require.NoError(t, store.SetIntegrationCredentialPrincipal(first.ID, owner.ID))
-		require.NoError(t, store.SetIntegrationCredentialPrincipal(second.ID, owner.ID))
+		seed(db.CredentialPrincipalIntegration, first.ID, owner)
+		seed(db.CredentialPrincipalIntegration, second.ID, owner)
 		IntegrationCredentialPrincipalMiddleware(answer(http.StatusOK)).ServeHTTP(httptest.NewRecorder(), request(http.MethodPost, map[string]any{"project": project, "integration": first}))
 		userID, _ := principal(db.Task{ProjectID: project.ID, IntegrationID: &first.ID})
 		assert.Equal(t, editor.ID, userID)
@@ -121,7 +129,7 @@ func TestCredentialPrincipalMiddlewares(t *testing.T) {
 	})
 
 	t.Run("a request the route refuses touches no principal", func(t *testing.T) {
-		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, owner.ID))
+		seed(db.CredentialPrincipalSchedule, schedule.ID, owner)
 		r := request(http.MethodPut, map[string]any{"schedule": schedule})
 		r = helpers.SetContextValue(r, "permissions", db.ProjectUserPermission(0))
 		ScheduleCredentialPrincipalMiddleware(answer(http.StatusForbidden)).ServeHTTP(httptest.NewRecorder(), r)
@@ -131,7 +139,7 @@ func TestCredentialPrincipalMiddlewares(t *testing.T) {
 	})
 
 	t.Run("a concurrent change is refused", func(t *testing.T) {
-		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, owner.ID))
+		seed(db.CredentialPrincipalSchedule, schedule.ID, owner)
 		token, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
 		require.NoError(t, err)
 		require.True(t, ok)
@@ -145,14 +153,32 @@ func TestCredentialPrincipalMiddlewares(t *testing.T) {
 	})
 
 	t.Run("a project alias change moves every integration of the project", func(t *testing.T) {
-		require.NoError(t, store.SetIntegrationCredentialPrincipal(first.ID, owner.ID))
-		require.NoError(t, store.SetIntegrationCredentialPrincipal(second.ID, owner.ID))
+		seed(db.CredentialPrincipalIntegration, first.ID, owner)
+		seed(db.CredentialPrincipalIntegration, second.ID, owner)
 		IntegrationCredentialPrincipalMiddleware(answer(http.StatusOK)).ServeHTTP(httptest.NewRecorder(), request(http.MethodPost, map[string]any{"project": project}))
 		for _, integration := range []db.Integration{first, second} {
 			userID, _ := principal(db.Task{ProjectID: project.ID, IntegrationID: &integration.ID})
 			assert.Equal(t, editor.ID, userID, integration.Name)
 		}
 	})
+}
+
+func TestCredentialPrincipalRenewalStops(t *testing.T) {
+	repo := &countingPrincipalRepository{}
+	stop := renewCredentialPrincipalClaims(repo, db.CredentialPrincipalSchedule, map[int]string{1: "token"})
+	stop()
+	stop()
+	assert.Zero(t, repo.renewals.Load(), "no renewal is due before a fifth of the lifetime")
+}
+
+type countingPrincipalRepository struct {
+	db.TaskCredentialPrincipalRepository
+	renewals atomic.Int32
+}
+
+func (r *countingPrincipalRepository) RenewCredentialPrincipalChange(db.CredentialPrincipalKind, int, string) error {
+	r.renewals.Add(1)
+	return nil
 }
 
 func TestStatusRecorderKeepsTheFirstStatus(t *testing.T) {

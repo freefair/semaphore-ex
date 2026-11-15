@@ -2,6 +2,8 @@ package projects
 
 import (
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
@@ -120,6 +122,8 @@ func guardCredentialPrincipalChange(w http.ResponseWriter, r *http.Request, next
 		}
 		claims[id] = token
 	}
+	stopRenewal := renewCredentialPrincipalClaims(repo, kind, claims)
+	defer stopRenewal()
 	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	defer func() {
 		// A panicking handler leaves no principal behind.
@@ -129,6 +133,7 @@ func guardCredentialPrincipalChange(w http.ResponseWriter, r *http.Request, next
 		}
 	}()
 	next.ServeHTTP(recorder, r)
+	stopRenewal()
 	user := helpers.UserFromContext(r)
 	if recorder.status < 200 || recorder.status > 299 || user == nil {
 		release()
@@ -138,6 +143,38 @@ func guardCredentialPrincipalChange(w http.ResponseWriter, r *http.Request, next
 		if err := repo.FinishCredentialPrincipalChange(kind, id, token, user.ID); err != nil {
 			logPrincipalError(err, kind, id, "failed to record the credential principal")
 		}
+	}
+}
+
+// renewCredentialPrincipalClaims keeps the claims of a running change
+// alive, so they expire only when this node dies or stalls. The returned
+// function stops the renewal and may be called more than once.
+func renewCredentialPrincipalClaims(repo db.TaskCredentialPrincipalRepository, kind db.CredentialPrincipalKind, claims map[int]string) func() {
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(db.CredentialPrincipalClaimLifetime / 5)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				for id, token := range claims {
+					if err := repo.RenewCredentialPrincipalChange(kind, id, token); err != nil {
+						logPrincipalError(err, kind, id, "failed to renew the credential principal claim")
+					}
+				}
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			close(done)
+			<-stopped
+		})
 	}
 }
 

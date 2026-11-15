@@ -31,9 +31,28 @@ func TestTaskCredentialPrincipals(t *testing.T) {
 		assert.False(t, ok)
 	})
 
+	// seed puts a trigger into the state "user made the last change".
+	seed := func(kind db.CredentialPrincipalKind, triggerID int, userID int) error {
+		table, column, err := credentialPrincipalTable(kind)
+		if err != nil {
+			return err
+		}
+		if _, err = store.exec("delete from "+table+" where "+column+"=?", triggerID); err != nil {
+			return err
+		}
+		_, err = store.exec("insert into "+table+" ("+column+", user_id) values (?, ?)", triggerID, userID)
+		return err
+	}
+	change := func(kind db.CredentialPrincipalKind, triggerID int, userID int) {
+		token, ok, err := store.BeginCredentialPrincipalChange(kind, triggerID)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.NoError(t, store.FinishCredentialPrincipalChange(kind, triggerID, token, userID))
+	}
+
 	t.Run("the last change wins", func(t *testing.T) {
 		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, first.ID))
-		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, second.ID))
+		change(db.CredentialPrincipalSchedule, schedule.ID, second.ID)
 		userID, ok, err := store.GetTaskCredentialPrincipal(db.Task{ProjectID: projectID, ScheduleID: &schedule.ID})
 		require.NoError(t, err)
 		assert.True(t, ok)
@@ -58,16 +77,50 @@ func TestTaskCredentialPrincipals(t *testing.T) {
 		assert.False(t, ok, "unattended use must stop rather than fall back to nobody")
 	})
 
-	t.Run("a failed write leaves no principal", func(t *testing.T) {
-		require.NoError(t, store.SetIntegrationCredentialPrincipal(integration.ID, first.ID))
-		assert.Error(t, store.SetIntegrationCredentialPrincipal(integration.ID, 999_999), "the user does not exist")
-		_, ok, err := store.GetTaskCredentialPrincipal(db.Task{ProjectID: projectID, IntegrationID: &integration.ID})
+	t.Run("creation does not replace a change that came first", func(t *testing.T) {
+		require.NoError(t, seed(db.CredentialPrincipalIntegration, integration.ID, first.ID))
+		require.NoError(t, store.SetIntegrationCredentialPrincipal(integration.ID, second.ID))
+		userID, ok, err := store.GetTaskCredentialPrincipal(db.Task{ProjectID: projectID, IntegrationID: &integration.ID})
 		require.NoError(t, err)
-		assert.False(t, ok, "the previous principal must not answer for the failed change")
+		assert.True(t, ok)
+		assert.Equal(t, first.ID, userID)
+
+		token, claimed, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalIntegration, integration.ID)
+		require.NoError(t, err)
+		require.True(t, claimed)
+		require.NoError(t, store.SetIntegrationCredentialPrincipal(integration.ID, second.ID))
+		_, ok, err = store.GetTaskCredentialPrincipal(db.Task{ProjectID: projectID, IntegrationID: &integration.ID})
+		require.NoError(t, err)
+		assert.False(t, ok, "a claim in progress is not overwritten by the creator")
+		require.NoError(t, store.AbortCredentialPrincipalChange(db.CredentialPrincipalIntegration, integration.ID, token))
+	})
+
+	t.Run("a failed creation leaves no principal", func(t *testing.T) {
+		fresh, err := store.CreateSchedule(db.Schedule{ProjectID: projectID, TemplateID: template.ID, Name: "orphan", CronFormat: "* * * * *", Type: db.ScheduleTypeCron, TaskParams: &db.TaskParams{}})
+		require.NoError(t, err)
+		assert.Error(t, store.SetScheduleCredentialPrincipal(fresh.ID, 999_999), "the user does not exist")
+		_, ok, err := store.GetTaskCredentialPrincipal(db.Task{ProjectID: projectID, ScheduleID: &fresh.ID})
+		require.NoError(t, err)
+		assert.False(t, ok)
+	})
+
+	t.Run("renewal keeps a claim from being taken over", func(t *testing.T) {
+		require.NoError(t, seed(db.CredentialPrincipalSchedule, schedule.ID, first.ID))
+		token, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
+		require.NoError(t, err)
+		require.True(t, ok)
+		_, err = store.exec("update project__schedule_credential_principal set pending_since=? where schedule_id=?", tz.Now().Add(-db.CredentialPrincipalClaimLifetime-time.Minute), schedule.ID)
+		require.NoError(t, err)
+		require.NoError(t, store.RenewCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID, token))
+		_, ok, err = store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
+		require.NoError(t, err)
+		assert.False(t, ok, "a renewed claim is not stale")
+		assert.Error(t, store.RenewCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID, "not-held"))
+		require.NoError(t, store.FinishCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID, token, first.ID))
 	})
 
 	t.Run("a claim hides the principal and serializes changes", func(t *testing.T) {
-		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, first.ID))
+		require.NoError(t, seed(db.CredentialPrincipalSchedule, schedule.ID, first.ID))
 		token, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
 		require.NoError(t, err)
 		require.True(t, ok)
@@ -87,17 +140,17 @@ func TestTaskCredentialPrincipals(t *testing.T) {
 	})
 
 	t.Run("finishing with a claim that is not held invalidates the trigger", func(t *testing.T) {
-		require.NoError(t, store.SetIntegrationCredentialPrincipal(integration.ID, first.ID))
+		require.NoError(t, seed(db.CredentialPrincipalIntegration, integration.ID, first.ID))
 		assert.Error(t, store.FinishCredentialPrincipalChange(db.CredentialPrincipalIntegration, integration.ID, "not-held", first.ID))
 		_, found, err := store.GetTaskCredentialPrincipal(db.Task{ProjectID: projectID, IntegrationID: &integration.ID})
 		require.NoError(t, err)
 		assert.False(t, found)
-		_, err = store.exec("update project__integration_credential_principal set pending_since=? where integration_id=?", tz.Now().Add(-2*time.Minute), integration.ID)
+		_, err = store.exec("update project__integration_credential_principal set pending_since=? where integration_id=?", tz.Now().Add(-db.CredentialPrincipalClaimLifetime-time.Minute), integration.ID)
 		require.NoError(t, err)
 	})
 
 	t.Run("an aborted change leaves no principal", func(t *testing.T) {
-		require.NoError(t, store.SetIntegrationCredentialPrincipal(integration.ID, first.ID))
+		require.NoError(t, seed(db.CredentialPrincipalIntegration, integration.ID, first.ID))
 		token, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalIntegration, integration.ID)
 		require.NoError(t, err)
 		require.True(t, ok)
@@ -114,7 +167,7 @@ func TestTaskCredentialPrincipals(t *testing.T) {
 		_, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
 		require.NoError(t, err)
 		require.True(t, ok)
-		_, err = store.exec("update project__schedule_credential_principal set pending_since=? where schedule_id=?", tz.Now().Add(-2*time.Minute), schedule.ID)
+		_, err = store.exec("update project__schedule_credential_principal set pending_since=? where schedule_id=?", tz.Now().Add(-db.CredentialPrincipalClaimLifetime-time.Minute), schedule.ID)
 		require.NoError(t, err)
 		_, ok, err = store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
 		require.NoError(t, err)
@@ -122,11 +175,11 @@ func TestTaskCredentialPrincipals(t *testing.T) {
 	})
 
 	t.Run("a taken-over claim leaves neither change as principal", func(t *testing.T) {
-		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, first.ID))
+		require.NoError(t, seed(db.CredentialPrincipalSchedule, schedule.ID, first.ID))
 		slow, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
 		require.NoError(t, err)
 		require.True(t, ok)
-		_, err = store.exec("update project__schedule_credential_principal set pending_since=? where schedule_id=?", tz.Now().Add(-2*time.Minute), schedule.ID)
+		_, err = store.exec("update project__schedule_credential_principal set pending_since=? where schedule_id=?", tz.Now().Add(-db.CredentialPrincipalClaimLifetime-time.Minute), schedule.ID)
 		require.NoError(t, err)
 		fast, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
 		require.NoError(t, err)
@@ -142,11 +195,11 @@ func TestTaskCredentialPrincipals(t *testing.T) {
 	})
 
 	t.Run("a takeover finished first is invalidated by the late change", func(t *testing.T) {
-		require.NoError(t, store.SetScheduleCredentialPrincipal(schedule.ID, first.ID))
+		require.NoError(t, seed(db.CredentialPrincipalSchedule, schedule.ID, first.ID))
 		slow, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
 		require.NoError(t, err)
 		require.True(t, ok)
-		_, err = store.exec("update project__schedule_credential_principal set pending_since=? where schedule_id=?", tz.Now().Add(-2*time.Minute), schedule.ID)
+		_, err = store.exec("update project__schedule_credential_principal set pending_since=? where schedule_id=?", tz.Now().Add(-db.CredentialPrincipalClaimLifetime-time.Minute), schedule.ID)
 		require.NoError(t, err)
 		fast, ok, err := store.BeginCredentialPrincipalChange(db.CredentialPrincipalSchedule, schedule.ID)
 		require.NoError(t, err)

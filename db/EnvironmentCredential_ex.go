@@ -3,6 +3,7 @@ package db
 import (
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/semaphoreui/semaphore/pkg/common_errors"
 )
@@ -82,6 +83,11 @@ const (
 	CredentialPrincipalIntegration CredentialPrincipalKind = "integration"
 )
 
+// CredentialPrincipalClaimLifetime is how long a claim stays valid without
+// renewal. A running change renews its claim well within it, so another
+// change can take a claim over only when its holder died or stalled.
+const CredentialPrincipalClaimLifetime = 5 * time.Minute
+
 // TaskCredentialPrincipalRepository records who answers for the global
 // credentials a schedule or an integration consumes. Their tasks have no
 // starting user; the principal is the user who last created or changed the
@@ -89,13 +95,16 @@ const (
 // *SqlDb implements it; callers obtain it by type assertion.
 type TaskCredentialPrincipalRepository interface {
 	// SetScheduleCredentialPrincipal and SetIntegrationCredentialPrincipal
-	// record the principal of a newly created trigger.
+	// record the principal of a newly created trigger. A trigger that
+	// already has a row, because a change reached it first, keeps it.
 	SetScheduleCredentialPrincipal(scheduleID int, userID int) error
 	SetIntegrationCredentialPrincipal(integrationID int, userID int) error
 	// BeginCredentialPrincipalChange claims a trigger for one change and
 	// removes its principal until the change finishes. ok is false while
 	// another change holds a fresh claim.
 	BeginCredentialPrincipalChange(kind CredentialPrincipalKind, triggerID int) (token string, ok bool, err error)
+	// RenewCredentialPrincipalChange extends a claim the change still holds.
+	RenewCredentialPrincipalChange(kind CredentialPrincipalKind, triggerID int, token string) error
 	// FinishCredentialPrincipalChange makes userID the principal if the
 	// claim is still this change's.
 	FinishCredentialPrincipalChange(kind CredentialPrincipalKind, triggerID int, token string, userID int) error

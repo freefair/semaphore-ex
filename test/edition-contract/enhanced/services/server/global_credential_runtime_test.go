@@ -204,6 +204,9 @@ func (s principalStore) SetIntegrationCredentialPrincipal(int, int) error { retu
 func (s principalStore) BeginCredentialPrincipalChange(db.CredentialPrincipalKind, int) (string, bool, error) {
 	return "", false, nil
 }
+func (s principalStore) RenewCredentialPrincipalChange(db.CredentialPrincipalKind, int, string) error {
+	return nil
+}
 func (s principalStore) FinishCredentialPrincipalChange(db.CredentialPrincipalKind, int, string, int) error {
 	return nil
 }
