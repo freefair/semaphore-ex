@@ -456,6 +456,14 @@ func (s *secretBrowseService) prepareDraft(draft db.GlobalSecretStorage) (db.Glo
 		}
 		storage.Type = current.Type
 		if storage.Secret == "" {
+			// The stored credential only goes where it went before.
+			probe := storage
+			if err := normalizeGlobalSecretStorage(&probe, false, s.kv); err != nil {
+				return db.GlobalSecretStorage{}, err
+			}
+			if connectionTargetChanged(current, probe) {
+				return db.GlobalSecretStorage{}, errNewCredentialRequired()
+			}
 			secret, err := s.globalSecret(current)
 			if err != nil {
 				return db.GlobalSecretStorage{}, err

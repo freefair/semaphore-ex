@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/semaphoreui/semaphore/db"
@@ -72,6 +73,9 @@ func (s *globalSecretStorageService) Update(storage db.GlobalSecretStorage, expe
 	storage.Type = current.Type
 	if err = normalizeGlobalSecretStorage(&storage, false, s.kv); err != nil {
 		return db.GlobalSecretStorage{}, err
+	}
+	if storage.Secret == "" && connectionTargetChanged(current, storage) {
+		return db.GlobalSecretStorage{}, errNewCredentialRequired()
 	}
 	storage.CredentialKeyID = current.CredentialKeyID
 	var replaced *int
@@ -439,4 +443,22 @@ func (s *globalInfisicalSecretSource) resolveKV(
 		return pro_interfaces.GlobalCredentialExternalResult{}, unavailable
 	}
 	return pro_interfaces.GlobalCredentialExternalResult{Value: value, ProviderVersion: reference.Version}, nil
+}
+
+// connectionTargetChanged reports whether an edit points a connection at a
+// different place or trust anchor. The stored credential must not follow it
+// there: whoever edits a connection could otherwise send a credential they
+// cannot see, for example one read from an environment variable, to an
+// address of their choice.
+func connectionTargetChanged(current db.GlobalSecretStorage, edited db.GlobalSecretStorage) bool {
+	for _, key := range []string{"url", "ca_certificate", "namespace", "auth_method", "auth_mount", "client_id", "organization_slug"} {
+		if fmt.Sprint(current.Params[key]) != fmt.Sprint(edited.Params[key]) {
+			return true
+		}
+	}
+	return false
+}
+
+func errNewCredentialRequired() error {
+	return common_errors.NewValidationError("enter the credential again: the address or authentication of the connection changed")
 }

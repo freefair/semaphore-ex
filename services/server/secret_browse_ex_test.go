@@ -149,6 +149,20 @@ func TestSecretBrowseServiceListsGlobalInfisicalByName(t *testing.T) {
 		assert.Error(t, err)
 	})
 
+	t.Run("the stored credential never follows a changed address", func(t *testing.T) {
+		moved := storage
+		moved.Secret = ""
+		moved.Params = db.MapStringAnyField{}
+		for key, value := range storage.Params {
+			moved.Params[key] = value
+		}
+		moved.Params["url"] = "https://attacker.example.test"
+		_, err := browse.TestGlobalDraft(ctx, moved)
+		assert.ErrorContains(t, err, "enter the credential again")
+		_, err = storages.Update(moved, storage.Revision)
+		assert.ErrorContains(t, err, "enter the credential again")
+	})
+
 	t.Run("a saved connection's draft without a new secret uses the stored one", func(t *testing.T) {
 		draft := storage
 		draft.Secret = ""
