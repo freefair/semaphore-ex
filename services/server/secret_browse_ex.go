@@ -321,7 +321,7 @@ func (s *secretBrowseService) globalKVConnection(storage db.GlobalSecretStorage)
 		return pro_interfaces.GlobalKVConnection{}, err
 	}
 	return pro_interfaces.GlobalKVConnection{
-		StorageID: globalKVCacheID(storage), Type: string(storage.Type), Params: storage.Params, Credential: []byte(secret),
+		StorageID: storage.ID, Revision: storage.Revision, Type: string(storage.Type), Params: storage.Params, Credential: []byte(secret),
 	}, nil
 }
 
@@ -513,12 +513,4 @@ func draftStorageID(storage db.GlobalSecretStorage) int {
 		return storage.ID
 	}
 	return 1 << 30
-}
-
-// globalKVCacheID keys a saved connection's token cache by its ID and
-// revision, so a changed address or credential never reuses a token issued
-// before the change. The key is collision-free: the ID fills the high and
-// the revision the low 31 bits.
-func globalKVCacheID(storage db.GlobalSecretStorage) int {
-	return storage.ID<<31 | (storage.Revision & 0x7fffffff)
 }

@@ -117,6 +117,9 @@ type GlobalKVConnection struct {
 	// draft never reads or fills a token cache, so a changed address or a
 	// second draft cannot receive a token issued for another connection.
 	Draft bool
+	// Revision of a saved connection. Each revision gets its own token
+	// cache, so a changed address or credential never reuses a token.
+	Revision int
 }
 
 // GlobalKVStore serves global Vault/OpenBao connections kept in the database:

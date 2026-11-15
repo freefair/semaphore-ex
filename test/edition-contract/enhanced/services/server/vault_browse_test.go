@@ -128,3 +128,13 @@ func TestVaultBrowseListsNamesWithoutValues(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
+
+func TestGlobalKVStoreKeepsOneTokenCachePerConnectionRevision(t *testing.T) {
+	store := NewGlobalKVStore().(*globalKVStore)
+	first := store.clientFor(pro_interfaces.GlobalKVConnection{StorageID: 2, Revision: 1})
+	assert.Same(t, first, store.clientFor(pro_interfaces.GlobalKVConnection{StorageID: 2, Revision: 1}))
+	assert.NotSame(t, first, store.clientFor(pro_interfaces.GlobalKVConnection{StorageID: 4, Revision: 1}), "another connection")
+	assert.NotSame(t, first, store.clientFor(pro_interfaces.GlobalKVConnection{StorageID: 2, Revision: 2}), "a changed connection")
+	assert.NotSame(t, store.clientFor(pro_interfaces.GlobalKVConnection{StorageID: 2, Revision: 2, Draft: true}),
+		store.clientFor(pro_interfaces.GlobalKVConnection{StorageID: 2, Revision: 2, Draft: true}), "drafts never share a cache")
+}

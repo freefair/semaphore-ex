@@ -340,12 +340,4 @@ func TestGlobalSecretStorageGuardsTheStoredCredential(t *testing.T) {
 		assert.True(t, connectionTargetChanged(current, edited))
 	})
 
-	t.Run("token caches of different connections never share a key", func(t *testing.T) {
-		assert.NotEqual(t,
-			globalKVCacheID(db.GlobalSecretStorage{ID: 11, Revision: 3533}),
-			globalKVCacheID(db.GlobalSecretStorage{ID: 52, Revision: 2100}))
-		assert.NotEqual(t,
-			globalKVCacheID(db.GlobalSecretStorage{ID: 1, Revision: 2}),
-			globalKVCacheID(db.GlobalSecretStorage{ID: 2, Revision: 1}))
-	})
 }

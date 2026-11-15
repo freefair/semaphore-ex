@@ -181,10 +181,10 @@ func TestGlobalInfisicalSecretSourceReadsTheClientSecretFromTheEnvironment(t *te
 		pamtest.SecretKey("proj-1", "prod", "/", "LICENSE_KEY"): {Value: "license-value", Version: 1},
 	}})
 	store, service, encryption := newGlobalStorageFixture(t)
-	t.Setenv("SEMAPHORE_TEST_INFISICAL_CLIENT", pamtest.ClientSecret)
+	t.Setenv("QA_TEST_INFISICAL_CLIENT", pamtest.ClientSecret)
 	source := db.AccessKeySourceStorageEnv
 	storage, err := service.Create(db.GlobalSecretStorage{
-		Name: "Infisical", Type: db.SecretStorageTypeInfisical, Secret: "SEMAPHORE_TEST_INFISICAL_CLIENT", SourceStorageType: &source,
+		Name: "Infisical", Type: db.SecretStorageTypeInfisical, Secret: "QA_TEST_INFISICAL_CLIENT", SourceStorageType: &source,
 		Params: infisicalParams(fake.URL(), fake.APICACert),
 	})
 	require.NoError(t, err)

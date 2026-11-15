@@ -441,7 +441,7 @@ func (s *globalInfisicalSecretSource) resolveKV(
 	credential := []byte(key.String)
 	defer zeroBytes(credential)
 	value, err := s.kv.ReadGlobalKV(ctx, pro_interfaces.GlobalKVConnection{
-		StorageID: globalKVCacheID(storage), Type: string(storage.Type), Params: storage.Params, Credential: credential,
+		StorageID: storage.ID, Revision: storage.Revision, Type: string(storage.Type), Params: storage.Params, Credential: credential,
 	}, pro_interfaces.SecretReference{
 		Mount: reference.Mount, Path: reference.Path, Version: reference.Version, Field: reference.Field,
 	})

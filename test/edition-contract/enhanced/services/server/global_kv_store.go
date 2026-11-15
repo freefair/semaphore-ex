@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pro_interfaces"
@@ -12,21 +13,37 @@ import (
 // parameter rules as project storages and a client of its own, so global
 // and project storages never share a cached token.
 type globalKVStore struct {
-	client *vaultOpenBaoClient
+	mu      sync.Mutex
+	clients map[int]globalKVClient
+}
+
+// globalKVClient is the client, and so the token cache, of one revision of
+// one saved connection.
+type globalKVClient struct {
+	revision int
+	client   *vaultOpenBaoClient
 }
 
 // NewGlobalKVStore returns the global Vault/OpenBao port.
 func NewGlobalKVStore() pro_interfaces.GlobalKVStore {
-	return &globalKVStore{client: newVaultOpenBaoClient()}
+	return &globalKVStore{clients: map[int]globalKVClient{}}
 }
 
-// clientFor returns the shared client for saved connections and a fresh one,
-// with an empty token cache, for drafts.
+// clientFor returns a fresh client, with an empty token cache, for drafts,
+// and for a saved connection the client of its current revision. A new
+// revision replaces the previous client, so no token outlives a change.
 func (s *globalKVStore) clientFor(connection pro_interfaces.GlobalKVConnection) *vaultOpenBaoClient {
 	if connection.Draft {
 		return newVaultOpenBaoClient()
 	}
-	return s.client
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.clients[connection.StorageID]
+	if !ok || current.revision != connection.Revision {
+		current = globalKVClient{revision: connection.Revision, client: newVaultOpenBaoClient()}
+		s.clients[connection.StorageID] = current
+	}
+	return current.client
 }
 
 func (s *globalKVStore) configuration(connection pro_interfaces.GlobalKVConnection) (pro_interfaces.SecretProviderConfiguration, error) {
