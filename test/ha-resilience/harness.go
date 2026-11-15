@@ -114,6 +114,9 @@ func (h *Harness) Run(ctx context.Context) (runErr error) {
 		if err := h.writeReport(); err != nil && runErr == nil {
 			runErr = err
 		}
+		if runErr != nil {
+			h.writeFailureEvidence()
+		}
 		if !h.config.KeepEnvironment {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
@@ -206,4 +209,33 @@ func randomBase64(bytesCount int) (string, error) {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(buffer), nil
+}
+
+// writeFailureEvidence keeps what a failed run needs for diagnosis next to the
+// report, before the disposable environment is removed: the container logs and
+// the scheduling state. The environment's credentials are generated per run.
+func (h *Harness) writeFailureEvidence() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	dir := filepath.Dir(h.config.ReportPath)
+	if logs, err := h.commands.compose(ctx, "logs", "--no-color", "--timestamps"); err == nil {
+		_ = os.WriteFile(filepath.Join(dir, "compose.log"), []byte(logs), 0o644)
+	}
+	var state strings.Builder
+	for _, query := range []string{
+		"select now();",
+		"select id, type, active, run_at, delete_after_run from project__schedule order by id;",
+		"select id, schedule_id, status, runner_id, assignment_generation, created, start from task order by id;",
+		"select id, active, touched from runner order by id;",
+		"select node_id, boot_id from cluster__node order by node_id;",
+	} {
+		output, err := h.commands.sql(ctx, query)
+		state.WriteString("-- " + query + "\n")
+		if err != nil {
+			state.WriteString("error: " + err.Error() + "\n\n")
+			continue
+		}
+		state.WriteString(output + "\n\n")
+	}
+	_ = os.WriteFile(filepath.Join(dir, "state.txt"), []byte(state.String()), 0o644)
 }

@@ -199,6 +199,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ha-resilience-${{ github.sha }}
-          path: dist/ha-resilience/report.json
+          # report.json always; compose.log and state.txt when the gate fails.
+          path: dist/ha-resilience/
           if-no-files-found: error
           retention-days: 14
