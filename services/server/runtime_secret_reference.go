@@ -26,7 +26,8 @@ func normalizeRuntimeSecretReference(key *db.AccessKey, storageRepo db.SecretSto
 	}
 	storage, err := storageRepo.GetSecretStorage(*key.ProjectID, *key.SourceStorageID)
 	if err != nil || storage.ProjectID != *key.ProjectID ||
-		(storage.Type != db.SecretStorageTypeVault && storage.Type != db.SecretStorageTypeOpenBao) {
+		(storage.Type != db.SecretStorageTypeVault && storage.Type != db.SecretStorageTypeOpenBao &&
+			storage.Type != db.SecretStorageTypeInfisical) {
 		return common_errors.NewValidationError("runtime secret storage is invalid")
 	}
 	if decoded, err := pro_interfaces.DecodeSecretReference(*key.SourceStorageKey); err == nil {
@@ -36,7 +37,7 @@ func normalizeRuntimeSecretReference(key *db.AccessKey, storageRepo db.SecretSto
 		return nil
 	}
 	mount := key.SourceStorageMount
-	if mount == "" {
+	if mount == "" && storage.Type != db.SecretStorageTypeInfisical {
 		mount = runtimeSecretStringParam(storage.Params, "mount")
 	}
 	if mount == "" {
@@ -48,6 +49,11 @@ func normalizeRuntimeSecretReference(key *db.AccessKey, storageRepo db.SecretSto
 		Path:      *key.SourceStorageKey,
 		Version:   key.SourceStorageVersion,
 		Field:     key.SourceStorageField,
+	}
+	if storage.Type == db.SecretStorageTypeInfisical {
+		if err := validateInfisicalKeyReference(reference); err != nil {
+			return err
+		}
 	}
 	encoded, err := reference.Encode()
 	if err != nil {

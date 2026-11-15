@@ -96,7 +96,7 @@
           <SecretLocationPicker
             :key="`runtime-${item.source_storage_id}`"
             :model-value="runtimePickerValue"
-            store-type="vault"
+            :store-type="runtimeStoreType"
             :load="runtimeLoader"
             :disabled="runtimeReferenceDisabled"
             data-testid="key-runtimePicker"
@@ -435,7 +435,22 @@ export default {
     runtimeLoader() {
       return projectStorageLoader(this.projectId, this.item.source_storage_id);
     },
+    // Infisical storages store project, "environment/folder" and the secret
+    // name in the mount, path and field of the reference.
+    runtimeStoreType() {
+      const storage = (this.secretStorages || []).find((s) => s.id === this.item.source_storage_id);
+      return storage && storage.type === 'infisical' ? 'infisical' : 'vault';
+    },
     runtimePickerValue() {
+      if (this.runtimeStoreType === 'infisical') {
+        const [environment, ...folder] = (this.item.source_storage_key || '').split('/');
+        return {
+          project: this.item.source_storage_mount,
+          environment,
+          path: folder.join('/'),
+          secret: this.item.source_storage_field,
+        };
+      }
       return {
         mount: this.item.source_storage_mount,
         secret: this.item.source_storage_key,
@@ -509,6 +524,12 @@ export default {
     // A picked location fills the reference; the version stays as set, so 0
     // keeps following the current version.
     fromRuntimePicker(value) {
+      if (this.runtimeStoreType === 'infisical') {
+        this.item.source_storage_mount = value.project || '';
+        this.item.source_storage_key = [value.environment, value.path].filter((part) => part).join('/');
+        this.item.source_storage_field = value.secret || '';
+        return;
+      }
       this.item.source_storage_mount = value.mount || '';
       this.item.source_storage_key = value.secret || '';
       this.item.source_storage_field = value.field || '';

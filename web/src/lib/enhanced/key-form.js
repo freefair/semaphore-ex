@@ -21,7 +21,7 @@ export const enhancedComputed = {
   },
   runtimeSecretStorages() {
     return (this.secretStorages || []).filter((storage) => (
-      storage.type === 'vault' || storage.type === 'openbao'
+      storage.type === 'vault' || storage.type === 'openbao' || storage.type === 'infisical'
     ));
   },
   canGenerateSSHKey() {
