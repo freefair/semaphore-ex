@@ -26,10 +26,13 @@ type GlobalSecretStorageService interface {
 type globalSecretStorageService struct {
 	repo db.GlobalSecretStorageRepository
 	keys AccessKeyService
+	kv   pro_interfaces.GlobalKVStore
 }
 
-func NewGlobalSecretStorageService(repo db.GlobalSecretStorageRepository, keys AccessKeyService) GlobalSecretStorageService {
-	return &globalSecretStorageService{repo: repo, keys: keys}
+// NewGlobalSecretStorageService manages global connections. kv validates
+// Vault/OpenBao connections; without it only Infisical can be configured.
+func NewGlobalSecretStorageService(repo db.GlobalSecretStorageRepository, keys AccessKeyService, kv pro_interfaces.GlobalKVStore) GlobalSecretStorageService {
+	return &globalSecretStorageService{repo: repo, keys: keys, kv: kv}
 }
 
 func (s *globalSecretStorageService) List() ([]db.GlobalSecretStorage, error) {
@@ -42,7 +45,7 @@ func (s *globalSecretStorageService) Get(storageID int) (db.GlobalSecretStorage,
 
 func (s *globalSecretStorageService) Create(storage db.GlobalSecretStorage) (db.GlobalSecretStorage, error) {
 	storage.ID = 0
-	if err := normalizeGlobalSecretStorage(&storage, true); err != nil {
+	if err := normalizeGlobalSecretStorage(&storage, true, s.kv); err != nil {
 		return db.GlobalSecretStorage{}, err
 	}
 	key, err := s.createKey(storage)
@@ -67,7 +70,7 @@ func (s *globalSecretStorageService) Update(storage db.GlobalSecretStorage, expe
 		return db.GlobalSecretStorage{}, err
 	}
 	storage.Type = current.Type
-	if err = normalizeGlobalSecretStorage(&storage, false); err != nil {
+	if err = normalizeGlobalSecretStorage(&storage, false, s.kv); err != nil {
 		return db.GlobalSecretStorage{}, err
 	}
 	storage.CredentialKeyID = current.CredentialKeyID
@@ -123,47 +126,80 @@ func (s *globalSecretStorageService) createKey(storage db.GlobalSecretStorage) (
 	return s.keys.Create(key)
 }
 
-// normalizeGlobalSecretStorage validates the connection with the same rules as
-// a project Infisical storage, including PAM routes.
-func normalizeGlobalSecretStorage(storage *db.GlobalSecretStorage, requireSecret bool) error {
+// normalizeGlobalSecretStorage validates a connection. Infisical follows the
+// rules of a project Infisical storage, including PAM routes; Vault and
+// OpenBao follow those of a project Vault/OpenBao storage and keep only known
+// parameters, so no credential can end up in clear parameters.
+func normalizeGlobalSecretStorage(storage *db.GlobalSecretStorage, requireSecret bool, kv pro_interfaces.GlobalKVStore) error {
 	storage.Name = strings.TrimSpace(storage.Name)
 	if storage.Name == "" || len(storage.Name) > 128 {
 		return common_errors.NewValidationError("name is required and must not exceed 128 characters")
-	}
-	if storage.Type != db.SecretStorageTypeInfisical {
-		return common_errors.NewValidationError("only Infisical can be configured as a global secret storage")
 	}
 	if storage.SourceStorageType != nil {
 		switch *storage.SourceStorageType {
 		case db.AccessKeySourceStorageEnv, db.AccessKeySourceStorageFile:
 		default:
-			return common_errors.NewValidationError("unsupported client secret source")
+			return common_errors.NewValidationError("unsupported credential source")
 		}
 	}
 	if requireSecret && storage.Secret == "" {
-		return common_errors.NewValidationError("client secret is required")
+		return common_errors.NewValidationError("the credential is required")
 	}
 	for _, projectID := range storage.ProjectIDs {
 		if projectID <= 0 {
 			return common_errors.NewValidationError("project IDs are invalid")
 		}
 	}
-	scopes, err := globalStorageScopes(storage.Params)
+	scopes, err := globalStorageScopes(storage.Type, storage.Params)
 	if err != nil {
 		return err
 	}
-	project := db.SecretStorage{Type: db.SecretStorageTypeInfisical, Params: storage.Params, Secret: "validated", ID: 1}
-	if err := ValidateInfisicalStorage(&project); err != nil {
-		return err
+	switch storage.Type {
+	case db.SecretStorageTypeInfisical:
+		project := db.SecretStorage{Type: db.SecretStorageTypeInfisical, Params: storage.Params, Secret: "validated", ID: 1}
+		if err := ValidateInfisicalStorage(&project); err != nil {
+			return err
+		}
+		allowRemoteRunners, err := globalStorageAllowsRemoteRunners(storage.Params)
+		if err != nil {
+			return err
+		}
+		storage.Params = project.Params
+		storage.Params[globalStorageParamRemoteRunners] = allowRemoteRunners
+	case db.SecretStorageTypeVault, db.SecretStorageTypeOpenBao:
+		if kv == nil {
+			return common_errors.NewValidationError("Vault and OpenBao connections are not available in this build")
+		}
+		if len(storage.ProjectIDs) > 0 {
+			return common_errors.NewValidationError("project assignments apply to Infisical SSH routes only")
+		}
+		params := db.MapStringAnyField{}
+		for key, value := range storage.Params {
+			if key == globalStorageParamScopes {
+				continue
+			}
+			if !globalKVParams()[key] {
+				return common_errors.NewValidationError("unknown Vault/OpenBao setting " + key)
+			}
+			params[key] = value
+		}
+		if err := kv.ValidateGlobalKV(string(storage.Type), params); err != nil {
+			return common_errors.NewValidationError("check the address, authentication method and role of the connection")
+		}
+		storage.Params = params
+	default:
+		return common_errors.NewValidationError("a global connection is Infisical, Vault or OpenBao")
 	}
-	allowRemoteRunners, err := globalStorageAllowsRemoteRunners(storage.Params)
-	if err != nil {
-		return err
-	}
-	storage.Params = project.Params
 	storage.Params[globalStorageParamScopes] = scopesParam(scopes)
-	storage.Params[globalStorageParamRemoteRunners] = allowRemoteRunners
 	return nil
+}
+
+// globalKVParams lists the settings a global Vault/OpenBao connection keeps.
+func globalKVParams() map[string]bool {
+	return map[string]bool{
+		"url": true, "namespace": true, "ca_certificate": true, "timeout": true, "max_response_bytes": true,
+		"auth_method": true, "auth_mount": true, "role_id": true, "role": true,
+	}
 }
 
 const (
@@ -183,9 +219,11 @@ func globalStorageAllowsRemoteRunners(params db.MapStringAnyField) (bool, error)
 	return allowed, nil
 }
 
-// globalStorageScopes reads the administrator's secret scopes. A storage
-// without scopes serves SSH routing only.
-func globalStorageScopes(params db.MapStringAnyField) ([]db.GlobalSecretStorageScope, error) {
+// globalStorageScopes reads the administrator's secret scopes. An Infisical
+// scope is a project, an environment and an optional folder; a Vault/OpenBao
+// scope is a KV v2 mount and an optional folder. An Infisical storage without
+// scopes serves SSH routing only.
+func globalStorageScopes(storageType db.SecretStorageType, params db.MapStringAnyField) ([]db.GlobalSecretStorageScope, error) {
 	raw, ok := params[globalStorageParamScopes]
 	if !ok || raw == nil {
 		return []db.GlobalSecretStorageScope{}, nil
@@ -205,8 +243,14 @@ func globalStorageScopes(params db.MapStringAnyField) ([]db.GlobalSecretStorageS
 		scopes[i].ProjectID = strings.TrimSpace(scopes[i].ProjectID)
 		scopes[i].Environment = strings.TrimSpace(scopes[i].Environment)
 		scopes[i].Path = strings.Trim(strings.TrimSpace(scopes[i].Path), "/")
+		if storageType == db.SecretStorageTypeVault || storageType == db.SecretStorageTypeOpenBao {
+			if scopes[i].Environment != "" || pro_interfaces.ValidateSecretBrowseKVLocation(scopes[i].ProjectID, scopes[i].Path) != nil {
+				return nil, common_errors.NewValidationError("a secret scope needs a KV v2 mount and an optional folder")
+			}
+			continue
+		}
 		if !scopes[i].Validate() {
-			return nil, common_errors.NewValidationError("a secret scope needs an Infisical project ID, an environment slug and an optional folder such as apps/web")
+			return nil, common_errors.NewValidationError("a secret scope needs an Infisical project, an environment and an optional folder")
 		}
 	}
 	return scopes, nil
@@ -223,7 +267,7 @@ func scopesParam(scopes []db.GlobalSecretStorageScope) []any {
 // GlobalSecretStorageScopes returns a storage's validated secret scopes, for
 // the value-free provider list shown to credential administrators.
 func GlobalSecretStorageScopes(storage db.GlobalSecretStorage) []db.GlobalSecretStorageScope {
-	scopes, err := globalStorageScopes(storage.Params)
+	scopes, err := globalStorageScopes(storage.Type, storage.Params)
 	if err != nil {
 		return []db.GlobalSecretStorageScope{}
 	}
@@ -234,10 +278,12 @@ func GlobalSecretStorageScopes(storage db.GlobalSecretStorage) []db.GlobalSecret
 type globalInfisicalSecretSource struct {
 	repo       db.GlobalSecretStorageRepository
 	encryption AccessKeyEncryptionService
+	kv         pro_interfaces.GlobalKVStore
 }
 
-// globalCredentialProviderRouter sends infisical references to the global
-// Infisical storages and every other provider to the configured adapter.
+// globalCredentialProviderRouter sends infisical references and Vault/OpenBao
+// references to a global connection in the database to those connections,
+// and every other provider to the configured adapter.
 type globalCredentialProviderRouter struct {
 	fallback  pro_interfaces.GlobalCredentialExternalAdapter
 	infisical *globalInfisicalSecretSource
@@ -249,10 +295,11 @@ func NewGlobalCredentialProviderRouter(
 	fallback pro_interfaces.GlobalCredentialExternalAdapter,
 	repo db.GlobalSecretStorageRepository,
 	encryption AccessKeyEncryptionService,
+	kv pro_interfaces.GlobalKVStore,
 ) pro_interfaces.GlobalCredentialExternalAdapter {
 	return &globalCredentialProviderRouter{
 		fallback:  fallback,
-		infisical: &globalInfisicalSecretSource{repo: repo, encryption: encryption},
+		infisical: &globalInfisicalSecretSource{repo: repo, encryption: encryption, kv: kv},
 	}
 }
 
@@ -262,6 +309,9 @@ func (r *globalCredentialProviderRouter) ResolveGlobalCredentialExternal(
 ) (pro_interfaces.GlobalCredentialExternalResult, error) {
 	if reference.Provider == db.GlobalCredentialProviderInfisical {
 		return r.infisical.resolve(ctx, reference)
+	}
+	if _, stored := db.ParseGlobalSecretStorageProviderID(reference.ProviderID); stored {
+		return r.infisical.resolveKV(ctx, reference)
 	}
 	if r.fallback == nil {
 		return pro_interfaces.GlobalCredentialExternalResult{}, errors.New("global credential provider unavailable")
@@ -291,7 +341,7 @@ func (s *globalInfisicalSecretSource) resolve(
 	}
 	// Only secrets inside an administrator's scope are read, however broad
 	// the machine identity's own access is.
-	scopes, err := globalStorageScopes(storage.Params)
+	scopes, err := globalStorageScopes(storage.Type, storage.Params)
 	if err != nil {
 		return pro_interfaces.GlobalCredentialExternalResult{}, unavailable
 	}
@@ -339,4 +389,54 @@ func zeroBytes(value []byte) {
 	for index := range value {
 		value[index] = 0
 	}
+}
+
+// resolveKV reads a Vault/OpenBao reference through a global connection kept
+// in the database, inside the connection's scopes. Errors are value-free.
+func (s *globalInfisicalSecretSource) resolveKV(
+	ctx context.Context,
+	reference db.GlobalCredentialExternalReference,
+) (pro_interfaces.GlobalCredentialExternalResult, error) {
+	unavailable := errors.New("global credential provider unavailable")
+	if s == nil || s.repo == nil || s.encryption == nil || s.kv == nil || reference.Validate() != nil {
+		return pro_interfaces.GlobalCredentialExternalResult{}, unavailable
+	}
+	storageID, _ := db.ParseGlobalSecretStorageProviderID(reference.ProviderID)
+	storage, err := s.repo.GetGlobalSecretStorage(storageID)
+	if err != nil || string(storage.Type) != reference.Provider || storage.CredentialKeyID == nil {
+		return pro_interfaces.GlobalCredentialExternalResult{}, unavailable
+	}
+	scopes, err := globalStorageScopes(storage.Type, storage.Params)
+	if err != nil {
+		return pro_interfaces.GlobalCredentialExternalResult{}, unavailable
+	}
+	admitted := false
+	for _, scope := range scopes {
+		if scope.Admits(reference) {
+			admitted = true
+			break
+		}
+	}
+	if !admitted {
+		return pro_interfaces.GlobalCredentialExternalResult{}, unavailable
+	}
+	key, err := s.repo.GetGlobalSecretStorageKey(*storage.CredentialKeyID)
+	if err != nil {
+		return pro_interfaces.GlobalCredentialExternalResult{}, unavailable
+	}
+	if err = s.encryption.DeserializeSecret(&key); err != nil || key.String == "" {
+		return pro_interfaces.GlobalCredentialExternalResult{}, unavailable
+	}
+	credential := []byte(key.String)
+	defer zeroBytes(credential)
+	value, err := s.kv.ReadGlobalKV(ctx, pro_interfaces.GlobalKVConnection{
+		StorageID: globalKVCacheID(storage), Type: string(storage.Type), Params: storage.Params, Credential: credential,
+	}, pro_interfaces.SecretReference{
+		Mount: reference.Mount, Path: reference.Path, Version: reference.Version, Field: reference.Field,
+	})
+	if err != nil || len(value) == 0 {
+		zeroBytes(value)
+		return pro_interfaces.GlobalCredentialExternalResult{}, unavailable
+	}
+	return pro_interfaces.GlobalCredentialExternalResult{Value: value, ProviderVersion: reference.Version}, nil
 }

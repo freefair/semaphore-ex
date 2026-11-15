@@ -118,6 +118,8 @@ func projectPermissionRoutes() []projectPermissionRoute {
 		{"secret storages use key create", http.MethodPost, "/api/project/{project_id}/secret_storages", `{}`, db.CanCreateAccessKeys, false},
 		{"secret storages use key update", http.MethodPut, "/api/project/{project_id}/secret_storages/1", `{}`, db.CanUpdateAccessKeys, false},
 		{"secret storages use key delete", http.MethodDelete, "/api/project/{project_id}/secret_storages/1", "", db.CanDeleteAccessKeys, false},
+		{"browse a secret storage when creating keys", http.MethodGet, "/api/project/{project_id}/secret_storages/1/browse", "", db.CanCreateAccessKeys, false},
+		{"test a secret storage's identity", http.MethodPost, "/api/project/{project_id}/secret_storages/1/identity", `{}`, db.CanUpdateAccessKeys, false},
 	}
 }
 
@@ -582,6 +584,7 @@ GET /api/project/{project_id}/runners/{runner_id}/health
 GET /api/project/{project_id}/runners/{runner_id}/history
 GET /api/project/{project_id}/schedules/{schedule_id}
 GET /api/project/{project_id}/secret_storages/{storage_id}
+GET /api/project/{project_id}/secret_storages/{storage_id}/browse
 GET /api/project/{project_id}/secret_storages/{storage_id}/refs
 GET /api/project/{project_id}/secret_storages/{storage_id}/sync/history
 GET /api/project/{project_id}/task_groups/runners

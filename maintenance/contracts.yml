@@ -1,5 +1,110 @@
 format: 1
 symbols:
+  - name: services/server:NewGlobalKVStore
+    signature: func() pro_interfaces.GlobalKVStore
+    selected_signature: func() pro_interfaces.GlobalKVStore
+    implementation: local
+    behavior_tests:
+    - services/server/secret_browse_ex_test.go::TestGlobalSecretStorageServiceAcceptsVaultAndOpenBao
+    - services/server/secret_browse_ex_test.go::TestGlobalCredentialProviderRouterReadsVaultThroughScopedConnections
+  - name: pro_interfaces:GlobalKVStore
+    signature: interface{BrowseGlobalKV(context.Context, pro_interfaces.GlobalKVConnection, pro_interfaces.SecretBrowseLocation) ([]pro_interfaces.SecretBrowseNode, error); GlobalKVIdentity(context.Context, pro_interfaces.GlobalKVConnection) (pro_interfaces.SecretBrowseIdentity, error); ReadGlobalKV(context.Context, pro_interfaces.GlobalKVConnection, pro_interfaces.SecretReference) ([]byte, error); ValidateGlobalKV(storageType string, params map[string]any) error}
+    implementation: core
+    behavior_tests:
+    - services/server/secret_browse_ex_test.go::TestGlobalSecretStorageServiceAcceptsVaultAndOpenBao
+    - services/server/secret_browse_ex_test.go::TestGlobalCredentialProviderRouterReadsVaultThroughScopedConnections
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceKeepsGlobalVaultInsideItsScopes
+  - name: pro_interfaces:GlobalKVConnection
+    signature: struct{StorageID int; Type string; Params map[string]any; Credential []byte; Draft bool}
+    implementation: core
+    behavior_tests:
+    - services/server/secret_browse_ex_test.go::TestGlobalSecretStorageServiceAcceptsVaultAndOpenBao
+    - services/server/secret_browse_ex_test.go::TestGlobalCredentialProviderRouterReadsVaultThroughScopedConnections
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceKeepsGlobalVaultInsideItsScopes
+  - name: pro_interfaces:SecretBrowseNodeKind
+    signature: string
+    implementation: core
+    behavior_tests:
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceListsGlobalInfisicalByName
+    - test/edition-contract/enhanced/services/server/vault_browse_test.go::TestVaultBrowseListsNamesWithoutValues
+  - name: pro_interfaces:SecretBrowseNode
+    signature: struct{Kind pro_interfaces.SecretBrowseNodeKind "json:\"kind\""; Name string "json:\"name\""; Value string "json:\"value\""; Version int "json:\"version,omitempty\""}
+    implementation: core
+    behavior_tests:
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceListsGlobalInfisicalByName
+    - test/edition-contract/enhanced/services/server/vault_browse_test.go::TestVaultBrowseListsNamesWithoutValues
+  - name: pro_interfaces:SecretBrowseLocation
+    signature: struct{Project string "json:\"project,omitempty\""; Environment string "json:\"environment,omitempty\""; Mount string "json:\"mount,omitempty\""; Path string "json:\"path,omitempty\""; Secret string "json:\"secret,omitempty\""}
+    implementation: core
+    behavior_tests:
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceListsGlobalInfisicalByName
+    - test/edition-contract/enhanced/services/server/vault_browse_test.go::TestVaultBrowseListsNamesWithoutValues
+  - name: pro_interfaces:SecretBrowseIdentity
+    signature: struct{Name string "json:\"name\""; Description string "json:\"description,omitempty\""}
+    implementation: core
+    behavior_tests:
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceListsGlobalInfisicalByName
+    - test/edition-contract/enhanced/services/server/vault_browse_test.go::TestVaultBrowseListsNamesWithoutValues
+  - name: pro_interfaces:SecretBrowseSecret
+    signature: pro_interfaces.SecretBrowseNodeKind = "secret"
+    implementation: core
+    behavior_tests:
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceListsGlobalInfisicalByName
+    - test/edition-contract/enhanced/services/server/vault_browse_test.go::TestVaultBrowseListsNamesWithoutValues
+  - name: pro_interfaces:SecretBrowseEnvironment
+    signature: pro_interfaces.SecretBrowseNodeKind = "environment"
+    implementation: core
+    behavior_tests:
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceListsGlobalInfisicalByName
+    - test/edition-contract/enhanced/services/server/vault_browse_test.go::TestVaultBrowseListsNamesWithoutValues
+  - name: pro_interfaces:SecretBrowseProject
+    signature: pro_interfaces.SecretBrowseNodeKind = "project"
+    implementation: core
+    behavior_tests:
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceListsGlobalInfisicalByName
+    - test/edition-contract/enhanced/services/server/vault_browse_test.go::TestVaultBrowseListsNamesWithoutValues
+  - name: pro_interfaces:SecretBrowseFolder
+    signature: pro_interfaces.SecretBrowseNodeKind = "folder"
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/server/vault_browse_test.go::TestVaultBrowseListsNamesWithoutValues
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceKeepsGlobalVaultInsideItsScopes
+  - name: pro_interfaces:SecretBrowseField
+    signature: pro_interfaces.SecretBrowseNodeKind = "field"
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/server/vault_browse_test.go::TestVaultBrowseListsNamesWithoutValues
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceKeepsGlobalVaultInsideItsScopes
+  - name: pro_interfaces:SecretBrowseMount
+    signature: pro_interfaces.SecretBrowseNodeKind = "mount"
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/server/vault_browse_test.go::TestVaultBrowseListsNamesWithoutValues
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceKeepsGlobalVaultInsideItsScopes
+  - name: pro_interfaces:RuntimeSecretBrowser
+    signature: interface{BrowseRuntimeSecretProvider(context.Context, int, int, pro_interfaces.SecretBrowseLocation) ([]pro_interfaces.SecretBrowseNode, error); RuntimeSecretProviderIdentity(context.Context, int, int) (pro_interfaces.SecretBrowseIdentity, error)}
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/server/vault_browse_test.go::TestVaultBrowseListsNamesWithoutValues
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceKeepsGlobalVaultInsideItsScopes
+  - name: pro_interfaces:VaultOpenBaoBrowser
+    signature: interface{Identity(context.Context, pro_interfaces.SecretProviderConfiguration) (pro_interfaces.SecretBrowseIdentity, error); ListKV(context.Context, pro_interfaces.SecretProviderConfiguration, string, string) ([]pro_interfaces.SecretBrowseNode, error); ListKVFields(context.Context, pro_interfaces.SecretProviderConfiguration, string, string) ([]pro_interfaces.SecretBrowseNode, error); ListKVMounts(context.Context, pro_interfaces.SecretProviderConfiguration) ([]pro_interfaces.SecretBrowseNode, error)}
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/server/vault_browse_test.go::TestVaultBrowseListsNamesWithoutValues
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceKeepsGlobalVaultInsideItsScopes
+  - name: pro_interfaces:ValidateSecretBrowseKVLocation
+    signature: func(mount string, path string) (#rv1 error)
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/server/vault_browse_test.go::TestVaultBrowseListsNamesWithoutValues
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceKeepsGlobalVaultInsideItsScopes
+  - name: pro_interfaces:BrowseKV
+    signature: func(ctx context.Context, browser pro_interfaces.VaultOpenBaoBrowser, configuration pro_interfaces.SecretProviderConfiguration, location pro_interfaces.SecretBrowseLocation) ([]pro_interfaces.SecretBrowseNode, error)
+    implementation: core
+    behavior_tests:
+    - test/edition-contract/enhanced/services/server/vault_browse_test.go::TestVaultBrowseListsNamesWithoutValues
+    - services/server/secret_browse_ex_test.go::TestSecretBrowseServiceKeepsGlobalVaultInsideItsScopes
   - name: pro_interfaces:EffectiveProjectPermissionSource
     signature: struct{Permission pro_interfaces.PermissionID "json:\"permission\""; RoleID string "json:\"role_id\""; RoleName string "json:\"role_name\""}
     implementation: core

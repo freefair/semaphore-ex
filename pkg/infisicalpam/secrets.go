@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
-	"strings"
 )
 
 // SecretRequest names one secret of an Infisical project environment.
@@ -34,19 +33,7 @@ func (r SecretRequest) validate() error {
 	if r.Version < 0 {
 		return errors.New("version is invalid")
 	}
-	if r.Path == "/" {
-		return nil
-	}
-	if !strings.HasPrefix(r.Path, "/") || strings.HasSuffix(r.Path, "/") || len(r.Path) > 512 {
-		return errors.New("secret path is invalid")
-	}
-	segment := regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
-	for _, part := range strings.Split(r.Path[1:], "/") {
-		if !segment.MatchString(part) {
-			return errors.New("secret path is invalid")
-		}
-	}
-	return nil
+	return validateSecretPath(r.Path)
 }
 
 // Secret is one resolved value. Callers must zero Value after use.

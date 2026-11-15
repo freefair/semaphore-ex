@@ -2084,6 +2084,72 @@ definitions:
         enum:
         - env
         - file
+  SecretBrowseNode:
+    type: object
+    description: One entry of a value-free secret store listing.
+    required:
+    - kind
+    - name
+    - value
+    properties:
+      kind:
+        type: string
+        enum: [project, environment, mount, folder, secret, field]
+      name:
+        type: string
+        description: Shown to people.
+        example: Infrastructure
+      value:
+        type: string
+        description: The identifier a reference stores.
+        example: proj-1
+      version:
+        type: integer
+        description: Current version of a secret, when the store reports it.
+  SecretBrowseIdentity:
+    type: object
+    description: Who a connection acts as, without credential material.
+    required:
+    - name
+    properties:
+      name:
+        type: string
+        example: Acme
+      description:
+        type: string
+  SecretBrowseLocation:
+    type: object
+    description: The level to list. No project or mount lists the first level; a path lists a folder; a secret lists its fields.
+    properties:
+      project:
+        type: string
+      environment:
+        type: string
+      mount:
+        type: string
+      path:
+        type: string
+      secret:
+        type: string
+  GlobalSecretStorageDraftRequest:
+    type: object
+    description: A global connection as entered in its dialog. With the id of a saved connection and no secret, the stored credential is used.
+    required:
+    - storage
+    properties:
+      storage:
+        $ref: ./api-docs.yml#/definitions/GlobalSecretStorageInput
+      location:
+        $ref: '#/definitions/SecretBrowseLocation'
+  SecretBrowseError:
+    type: object
+    properties:
+      error:
+        type: string
+        description: What happened and what to do next.
+      reason:
+        type: string
+        enum: [validation, not_found, authentication, permission, tls, timeout, unavailable, response_invalid, capability_disabled]
   GlobalCredentialProvider:
     type: object
     description: A value-free source a global credential can reference.
@@ -2102,9 +2168,15 @@ definitions:
         type: string
       name:
         type: string
+      source:
+        type: string
+        description: database for connections managed under Administration, configuration for providers from the configuration file. Only database connections can be browsed.
+        enum:
+        - database
+        - configuration
       scopes:
         type: array
-        description: Infisical secret scopes of a global secret storage.
+        description: Secret scopes of a database connection. For Vault/OpenBao project_id is the KV v2 mount and environment is empty.
         items:
           type: object
           properties:
@@ -2695,7 +2767,7 @@ paths:
     post:
       tags:
       - global-secret-storage
-      summary: Create a global Infisical connection
+      summary: Create a global Infisical, Vault or OpenBao connection
       parameters:
       - name: Storage
         in: body
@@ -2759,6 +2831,197 @@ paths:
           description: Deleted
         404:
           description: Not found
+  /global-secret-storages/{storage_id}/test:
+    parameters:
+    - name: storage_id
+      in: path
+      type: integer
+      required: true
+      x-example: 1
+    post:
+      tags:
+      - global-secret-storage
+      summary: Test a saved global connection
+      description: Administrators only. Reports who the connection acts as.
+      responses:
+        200:
+          description: The connection works
+          schema:
+            $ref: '#/definitions/SecretBrowseIdentity'
+        400:
+          description: The store refused the connection; the message says what to change
+          schema:
+            $ref: '#/definitions/SecretBrowseError'
+        502:
+          description: The store could not be reached
+          schema:
+            $ref: '#/definitions/SecretBrowseError'
+  /global-secret-storage-drafts/test:
+    post:
+      tags:
+      - global-secret-storage
+      summary: Test a global connection before saving it
+      description: Administrators only.
+      parameters:
+      - name: Draft
+        in: body
+        required: true
+        schema:
+          $ref: '#/definitions/GlobalSecretStorageDraftRequest'
+      responses:
+        200:
+          description: The connection works
+          schema:
+            $ref: '#/definitions/SecretBrowseIdentity'
+        400:
+          description: Invalid settings or refused connection
+          schema:
+            $ref: '#/definitions/SecretBrowseError'
+        502:
+          description: The store could not be reached
+          schema:
+            $ref: '#/definitions/SecretBrowseError'
+  /global-secret-storage-drafts/browse:
+    post:
+      tags:
+      - global-secret-storage
+      summary: List one level of a global connection being edited
+      description: Administrators only. Names and identifiers, never values; not limited by the connection's scopes, so scopes can be picked.
+      parameters:
+      - name: Draft
+        in: body
+        required: true
+        schema:
+          $ref: '#/definitions/GlobalSecretStorageDraftRequest'
+      responses:
+        200:
+          description: Entries
+          schema:
+            type: array
+            items:
+              $ref: '#/definitions/SecretBrowseNode'
+        400:
+          description: Invalid settings, location or refused listing
+          schema:
+            $ref: '#/definitions/SecretBrowseError'
+        502:
+          description: The store could not be reached
+          schema:
+            $ref: '#/definitions/SecretBrowseError'
+  /global-credential-providers/{provider_id}/browse:
+    parameters:
+    - name: provider_id
+      in: path
+      type: string
+      required: true
+      x-example: storage-1
+    - name: project
+      in: query
+      type: string
+      description: Infisical project ID
+    - name: environment
+      in: query
+      type: string
+      description: Infisical environment slug
+    - name: mount
+      in: query
+      type: string
+      description: Vault/OpenBao KV v2 mount
+    - name: path
+      in: query
+      type: string
+      description: Folder below the project environment or mount
+    - name: secret
+      in: query
+      type: string
+      description: Vault/OpenBao secret whose field names to list
+    get:
+      tags:
+      - global-credential
+      summary: List one level of a global connection for a credential reference
+      description: Requires global.credentials.metadata.manage or global.credentials.rotate. Limited to the connection's secret scopes; names and identifiers, never values.
+      responses:
+        200:
+          description: Entries
+          schema:
+            type: array
+            items:
+              $ref: '#/definitions/SecretBrowseNode'
+        400:
+          description: Not a database connection, invalid location or refused listing
+          schema:
+            $ref: '#/definitions/SecretBrowseError'
+        502:
+          description: The store could not be reached
+          schema:
+            $ref: '#/definitions/SecretBrowseError'
+  /project/{project_id}/secret_storages/{storage_id}/identity:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - name: storage_id
+      in: path
+      type: integer
+      required: true
+      x-example: 1
+    post:
+      tags: [project]
+      summary: Test a project secret storage and report who it acts as
+      responses:
+        200:
+          description: The storage works
+          schema:
+            $ref: '#/definitions/SecretBrowseIdentity'
+        400:
+          description: The store refused the connection
+          schema:
+            $ref: '#/definitions/SecretBrowseError'
+        403:
+          description: Missing permission to update keys
+  /project/{project_id}/secret_storages/{storage_id}/browse:
+    parameters:
+    - $ref: ./api-docs.yml#/parameters/project_id
+    - name: storage_id
+      in: path
+      type: integer
+      required: true
+      x-example: 1
+    - name: project
+      in: query
+      type: string
+      description: Infisical project ID
+    - name: environment
+      in: query
+      type: string
+      description: Infisical environment slug
+    - name: mount
+      in: query
+      type: string
+      description: Vault/OpenBao KV v2 mount
+    - name: path
+      in: query
+      type: string
+      description: Folder below the project environment or mount
+    - name: secret
+      in: query
+      type: string
+      description: Vault/OpenBao secret whose field names to list
+    get:
+      tags: [project]
+      summary: List one level of a project Vault, OpenBao or Infisical storage
+      description: Requires permission to create or update keys. Names and identifiers, never values.
+      responses:
+        200:
+          description: Entries
+          schema:
+            type: array
+            items:
+              $ref: '#/definitions/SecretBrowseNode'
+        400:
+          description: Invalid location or refused listing
+          schema:
+            $ref: '#/definitions/SecretBrowseError'
+        403:
+          description: Missing permission to create or update keys
   /global-credential-providers:
     get:
       tags:

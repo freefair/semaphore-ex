@@ -23,7 +23,7 @@ func newGlobalSecretStorageTestController(t *testing.T) *GlobalSecretStorageCont
 	store := sql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
 	encryption := server.NewAccessKeyEncryptionService(store, nil, nil, nil)
-	return NewGlobalSecretStorageController(server.NewGlobalSecretStorageService(store, server.NewAccessKeyService(store, encryption, nil)))
+	return NewGlobalSecretStorageController(server.NewGlobalSecretStorageService(store, server.NewAccessKeyService(store, encryption, nil), nil))
 }
 
 func globalStorageRequest(method, path, body string, vars map[string]string) *http.Request {
@@ -79,8 +79,8 @@ func TestGlobalSecretStorageControllerNeverReturnsTheClientSecret(t *testing.T) 
 		var listed []GlobalCredentialProviderDTO
 		require.NoError(t, json.Unmarshal(providers.Body.Bytes(), &listed))
 		assert.Equal(t, []GlobalCredentialProviderDTO{
-			{Provider: "openbao", ProviderID: "primary", Name: "primary"},
-			{Provider: "infisical", ProviderID: "storage-" + id, Name: "Infisical"},
+			{Provider: "openbao", ProviderID: "primary", Name: "primary", Source: "configuration"},
+			{Provider: "infisical", ProviderID: "storage-" + id, Name: "Infisical", Source: "database"},
 		}, listed)
 		assert.NotContains(t, providers.Body.String(), "openbao.example.test")
 	})
@@ -117,7 +117,7 @@ func TestGlobalCredentialProvidersRouteIsNotShadowed(t *testing.T) {
 	router := mux.NewRouter()
 	api := router.PathPrefix("/api").Subrouter()
 	api.Path("/global-credentials/{credential_id}").HandlerFunc(func(http.ResponseWriter, *http.Request) {}).Methods("GET", "HEAD")
-	registerGlobalSecretStorageRoutes(api, newGlobalSecretStorageTestController(t), nil, func(h http.Handler) http.Handler { return h })
+	registerGlobalSecretStorageRoutes(api, newGlobalSecretStorageTestController(t), NewSecretBrowseController(nil), nil, func(h http.Handler) http.Handler { return h })
 
 	var match mux.RouteMatch
 	require.True(t, router.Match(httptest.NewRequest(http.MethodGet, "/api/global-credential-providers", nil), &match))

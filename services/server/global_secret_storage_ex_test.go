@@ -19,7 +19,7 @@ func newGlobalStorageFixture(t *testing.T) (*sql.SqlDb, GlobalSecretStorageServi
 	store := sql.InitConfigCreateTestStore()
 	t.Cleanup(store.Close)
 	encryption := NewAccessKeyEncryptionService(store, nil, nil, nil)
-	return store, NewGlobalSecretStorageService(store, NewAccessKeyService(store, encryption, nil)), encryption
+	return store, NewGlobalSecretStorageService(store, NewAccessKeyService(store, encryption, nil), nil), encryption
 }
 
 func infisicalParams(siteURL string, ca []byte) db.MapStringAnyField {
@@ -133,7 +133,7 @@ func TestGlobalInfisicalSecretSourceResolvesGlobalCredentials(t *testing.T) {
 	})
 	require.NoError(t, err)
 	fallback := &recordingExternalAdapter{}
-	router := NewGlobalCredentialProviderRouter(fallback, store, encryption)
+	router := NewGlobalCredentialProviderRouter(fallback, store, encryption, nil)
 	reference := func(path, field string, version int) db.GlobalCredentialExternalReference {
 		return db.GlobalCredentialExternalReference{
 			Provider: db.GlobalCredentialProviderInfisical, ProviderID: db.GlobalSecretStorageProviderID(storage.ID),
@@ -188,7 +188,7 @@ func TestGlobalInfisicalSecretSourceReadsTheClientSecretFromTheEnvironment(t *te
 		Params: infisicalParams(fake.URL(), fake.APICACert),
 	})
 	require.NoError(t, err)
-	router := NewGlobalCredentialProviderRouter(nil, store, encryption)
+	router := NewGlobalCredentialProviderRouter(nil, store, encryption, nil)
 
 	result, err := router.ResolveGlobalCredentialExternal(context.Background(), db.GlobalCredentialExternalReference{
 		Provider: db.GlobalCredentialProviderInfisical, ProviderID: db.GlobalSecretStorageProviderID(storage.ID),
@@ -275,7 +275,7 @@ func TestGlobalInfisicalSecretSourceReadsOnlyInsideItsScopes(t *testing.T) {
 	storage, err := service.Create(db.GlobalSecretStorage{Name: "Scoped", Type: db.SecretStorageTypeInfisical, Secret: pamtest.ClientSecret, Params: params})
 	require.NoError(t, err)
 	assert.Equal(t, []any{map[string]any{"project_id": "proj-1", "environment": "prod", "path": "apps/web"}}, storage.Params["secret_scopes"], "scope folders are normalized")
-	router := NewGlobalCredentialProviderRouter(nil, store, encryption)
+	router := NewGlobalCredentialProviderRouter(nil, store, encryption, nil)
 	resolve := func(project, environment, path string) error {
 		_, err := router.ResolveGlobalCredentialExternal(context.Background(), db.GlobalCredentialExternalReference{
 			Provider: db.GlobalCredentialProviderInfisical, ProviderID: db.GlobalSecretStorageProviderID(storage.ID),

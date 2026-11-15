@@ -332,7 +332,8 @@ func Route(
 		delegatedProjectRolesSnapshot,
 		globalSystemPermission,
 	)
-	registerGlobalSecretStorages(authenticatedAPI, store, accessKeyService, auditFacade, delegatedProjectRolesSnapshot)
+	secretBrowseService := newSecretBrowseService(store, encryptionService)
+	registerGlobalSecretStorages(authenticatedAPI, store, accessKeyService, secretBrowseService, auditFacade, delegatedProjectRolesSnapshot)
 
 	authenticatedAPI.Path("/users").Handler(
 		delegatedProjectRolesSnapshot(EnhancedGlobalPermissionAuditMiddleware(auditFacade)(
@@ -779,6 +780,7 @@ func Route(
 	projectSecretStorageManagement.Handle("/{storage_id}/sync", projects.GetMustHavePermissionMiddleware(db.CanUpdateAccessKeys)(http.HandlerFunc(secretStorageController.SyncSecrets))).Methods("POST")
 	projectSecretStorageManagement.Handle("/{storage_id}/sync/history", projects.GetMustHavePermissionMiddleware(db.CanViewAccessKeys)(http.HandlerFunc(secretStorageController.GetSyncHistory))).Methods("GET", "HEAD")
 	projectSecretStorageManagement.Handle("/{storage_id}/test", projects.GetMustHavePermissionMiddleware(db.CanUpdateAccessKeys)(http.HandlerFunc(secretStorageController.TestConnection))).Methods("POST")
+	registerProjectSecretBrowseRoutes(projectSecretStorageManagement, NewSecretBrowseController(secretBrowseService))
 
 	projectRepositoriesAPI := projectUserAPI.PathPrefix("/repositories").Subrouter()
 	projectRepositoriesAPI.Path("").Handler(projects.GetMustHavePermissionMiddleware(db.CanViewRepositories)(http.HandlerFunc(projects.GetRepositories))).Methods("GET", "HEAD")

@@ -59,6 +59,32 @@ type Options struct {
 	// Secrets serves GET /api/v4/secrets/{name}. Keys are
 	// "projectId|environment|secretPath|name".
 	Secrets map[string]FakeSecret
+	// Projects serves the browse endpoints: the project list, and folders and
+	// secret keys derived from the paths in Secrets.
+	Projects []FakeProject
+	// Organization answers GET /api/v1/identities/details.
+	Organization FakeOrganization
+}
+
+// FakeProject is one project of the fake browse API.
+type FakeProject struct {
+	ID           string
+	Name         string
+	Slug         string
+	Environments []FakeEnvironment
+}
+
+// FakeEnvironment is one environment of a fake project.
+type FakeEnvironment struct {
+	Name string
+	Slug string
+}
+
+// FakeOrganization is the organization of the fake machine identity.
+type FakeOrganization struct {
+	ID   string
+	Name string
+	Slug string
 }
 
 // FakeSecret is one secret the fake API returns.
@@ -95,6 +121,7 @@ type Environment struct {
 	cancelled []string
 	commands  []string
 	sessions  int
+	browsed   []string
 }
 
 // AccessRecord is one observed access request.
@@ -197,6 +224,9 @@ func (e *Environment) Commands() []string {
 func (e *Environment) serveAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v4/secrets/") {
 		e.serveSecret(w, r)
+		return
+	}
+	if r.Method == http.MethodGet && e.serveBrowse(w, r) {
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -508,4 +538,89 @@ func (e *Environment) serveSecret(w http.ResponseWriter, r *http.Request) {
 		"secretKey": name, "secretValue": value, "version": version, "secretValueHidden": secret.Hidden,
 		"environment": query.Get("environment"), "secretPath": query.Get("secretPath"),
 	}})
+}
+
+// Browsed returns the browse requests seen, as "path?query".
+func (e *Environment) Browsed() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]string(nil), e.browsed...)
+}
+
+// serveBrowse answers the browse endpoints and reports whether it did.
+func (e *Environment) serveBrowse(w http.ResponseWriter, r *http.Request) bool {
+	switch r.URL.Path {
+	case "/api/v1/identities/details", "/api/v1/projects", "/api/v2/folders", "/api/v4/secrets":
+	default:
+		return false
+	}
+	e.mu.Lock()
+	e.browsed = append(e.browsed, r.URL.Path+"?"+r.URL.RawQuery)
+	e.mu.Unlock()
+	if strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") != AccessToken {
+		writeError(w, http.StatusUnauthorized, "Unauthorized")
+		return true
+	}
+	query := r.URL.Query()
+	switch r.URL.Path {
+	case "/api/v1/identities/details":
+		org := e.Options.Organization
+		writeJSON(w, map[string]any{"identityDetails": map[string]any{"organization": map[string]any{
+			"id": org.ID, "name": org.Name, "slug": org.Slug,
+		}}})
+	case "/api/v1/projects":
+		projects := make([]map[string]any, 0, len(e.Options.Projects))
+		for _, project := range e.Options.Projects {
+			environments := make([]map[string]any, 0, len(project.Environments))
+			for _, environment := range project.Environments {
+				environments = append(environments, map[string]any{"name": environment.Name, "slug": environment.Slug, "id": environment.Slug + "-id"})
+			}
+			projects = append(projects, map[string]any{"id": project.ID, "name": project.Name, "slug": project.Slug, "environments": environments})
+		}
+		writeJSON(w, map[string]any{"projects": projects, "totalCount": len(projects)})
+	case "/api/v2/folders":
+		parent := query.Get("path")
+		seen := map[string]bool{}
+		folders := make([]map[string]any, 0)
+		for key := range e.Options.Secrets {
+			parts := strings.SplitN(key, "|", 4)
+			if parts[0] != query.Get("projectId") || parts[1] != query.Get("environment") {
+				continue
+			}
+			child := childFolder(parent, parts[2])
+			if child != "" && !seen[child] {
+				seen[child] = true
+				folders = append(folders, map[string]any{"id": child + "-id", "name": child})
+			}
+		}
+		writeJSON(w, map[string]any{"folders": folders})
+	case "/api/v4/secrets":
+		secrets := make([]map[string]any, 0)
+		for key, secret := range e.Options.Secrets {
+			parts := strings.SplitN(key, "|", 4)
+			if parts[0] != query.Get("projectId") || parts[1] != query.Get("environment") || parts[2] != query.Get("secretPath") {
+				continue
+			}
+			entry := map[string]any{"secretKey": parts[3], "version": secret.Version, "type": "shared", "secretValueHidden": true, "secretValue": "<hidden-by-infisical>"}
+			if query.Get("viewSecretValue") != "false" {
+				entry["secretValue"], entry["secretValueHidden"] = secret.Value, false
+			}
+			secrets = append(secrets, entry)
+		}
+		writeJSON(w, map[string]any{"secrets": secrets, "imports": []any{}})
+	}
+	return true
+}
+
+// childFolder returns the folder directly below parent on the way to path.
+func childFolder(parent, path string) string {
+	prefix := strings.TrimSuffix(parent, "/") + "/"
+	if !strings.HasPrefix(path, prefix) || path == parent {
+		return ""
+	}
+	rest := strings.TrimPrefix(path, prefix)
+	if rest == "" {
+		return ""
+	}
+	return strings.SplitN(rest, "/", 2)[0]
 }

@@ -100,5 +100,5 @@ func createStoreWithMigrationVersionAndConfigPath(token string, undoTo *string, 
 // storages leaves Infisical references unavailable, failing closed.
 func globalCredentialExternalAdapter(store db.Store, encryption server.AccessKeyEncryptionService) pro_interfaces.GlobalCredentialExternalAdapter {
 	repo, _ := store.(db.GlobalSecretStorageRepository)
-	return server.NewGlobalCredentialProviderRouter(proServer.NewGlobalCredentialExternalAdapter(util.Config), repo, encryption)
+	return server.NewGlobalCredentialProviderRouter(proServer.NewGlobalCredentialExternalAdapter(util.Config), repo, encryption, proServer.NewGlobalKVStore())
 }

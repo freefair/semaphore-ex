@@ -659,7 +659,7 @@ func (c *vaultOpenBaoClient) doJSON(
 	case http.StatusForbidden:
 		return providerError(pro_interfaces.SecretProviderErrorPermission, "request")
 	case http.StatusNotFound:
-		if method == http.MethodGet && strings.Contains(endpoint, "/data/") {
+		if method == http.MethodGet && (strings.Contains(endpoint, "/data/") || strings.Contains(endpoint, "/metadata/")) {
 			return providerError(pro_interfaces.SecretProviderErrorNotFound, "request")
 		}
 		return providerError(pro_interfaces.SecretProviderErrorResponseInvalid, "request")

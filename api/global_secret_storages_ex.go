@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	proServer "github.com/semaphoreui/semaphore/pro/services/server"
 	"net/http"
 	"sort"
 	"strconv"
@@ -32,8 +33,11 @@ type GlobalCredentialProviderDTO struct {
 	Provider   string `json:"provider"`
 	ProviderID string `json:"provider_id"`
 	Name       string `json:"name"`
-	// Scopes lists where an Infisical connection may read secrets; empty
-	// for Vault/OpenBao providers.
+	// Source is "database" for connections managed under Administration and
+	// "configuration" for providers from the configuration file. Only
+	// database connections can be browsed.
+	Source string `json:"source"`
+	// Scopes lists where a database connection may read secrets.
 	Scopes []db.GlobalSecretStorageScope `json:"scopes,omitempty"`
 }
 
@@ -43,6 +47,7 @@ func registerGlobalSecretStorages(
 	authenticatedAPI *mux.Router,
 	store db.Store,
 	accessKeyService server.AccessKeyService,
+	browse server.SecretBrowseService,
 	auditFacade pro_interfaces.AuditServiceFacade,
 	delegatedProjectRolesSnapshot func(http.Handler) http.Handler,
 ) {
@@ -51,13 +56,15 @@ func registerGlobalSecretStorages(
 		return
 	}
 	registerGlobalSecretStorageRoutes(authenticatedAPI,
-		NewGlobalSecretStorageController(server.NewGlobalSecretStorageService(repo, accessKeyService)),
+		NewGlobalSecretStorageController(server.NewGlobalSecretStorageService(repo, accessKeyService, proServer.NewGlobalKVStore())),
+		NewSecretBrowseController(browse),
 		auditFacade, delegatedProjectRolesSnapshot)
 }
 
 func registerGlobalSecretStorageRoutes(
 	authenticatedAPI *mux.Router,
 	controller *GlobalSecretStorageController,
+	browse *SecretBrowseController,
 	auditFacade pro_interfaces.AuditServiceFacade,
 	delegatedProjectRolesSnapshot func(http.Handler) http.Handler,
 ) {
@@ -87,6 +94,10 @@ func registerGlobalSecretStorageRoutes(
 	authenticatedAPI.Path("/global-secret-storages/{storage_id}").Handler(admin(controller.Update)).Methods("PUT")
 	authenticatedAPI.Path("/global-secret-storages/{storage_id}").Handler(admin(controller.Delete)).Methods("DELETE")
 	authenticatedAPI.Path("/global-credential-providers").Handler(providerRead(controller.ListProviders)).Methods("GET", "HEAD")
+	authenticatedAPI.Path("/global-secret-storage-drafts/test").Handler(admin(browse.TestGlobalDraft)).Methods("POST")
+	authenticatedAPI.Path("/global-secret-storage-drafts/browse").Handler(admin(browse.BrowseGlobalDraft)).Methods("POST")
+	authenticatedAPI.Path("/global-secret-storages/{storage_id}/test").Handler(admin(browse.TestGlobalStorage)).Methods("POST")
+	authenticatedAPI.Path("/global-credential-providers/{provider_id}/browse").Handler(providerRead(browse.BrowseProvider)).Methods("GET", "HEAD")
 }
 
 func (c *GlobalSecretStorageController) List(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +152,7 @@ func (c *GlobalSecretStorageController) ListProviders(w http.ResponseWriter, r *
 	providers := make([]GlobalCredentialProviderDTO, 0)
 	if util.Config != nil {
 		for id, provider := range util.Config.GlobalCredentialProviders {
-			providers = append(providers, GlobalCredentialProviderDTO{Provider: provider.Type, ProviderID: id, Name: id})
+			providers = append(providers, GlobalCredentialProviderDTO{Provider: provider.Type, ProviderID: id, Name: id, Source: "configuration"})
 		}
 	}
 	sort.Slice(providers, func(left, right int) bool { return providers[left].ProviderID < providers[right].ProviderID })
@@ -152,8 +163,8 @@ func (c *GlobalSecretStorageController) ListProviders(w http.ResponseWriter, r *
 	}
 	for _, storage := range storages {
 		providers = append(providers, GlobalCredentialProviderDTO{
-			Provider: db.GlobalCredentialProviderInfisical, ProviderID: db.GlobalSecretStorageProviderID(storage.ID), Name: storage.Name,
-			Scopes: server.GlobalSecretStorageScopes(storage),
+			Provider: string(storage.Type), ProviderID: db.GlobalSecretStorageProviderID(storage.ID), Name: storage.Name,
+			Source: "database", Scopes: server.GlobalSecretStorageScopes(storage),
 		})
 	}
 	helpers.WriteJSON(w, http.StatusOK, providers)
