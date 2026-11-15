@@ -1021,4 +1021,8 @@ export default {
   secretPickerScope: 'Scope: {location}',
   secretPickerAllFolders: 'all folders',
   secretPickerRoot: 'Root',
+  keyRuntimeVersion: 'Version (optional)',
+  keyRuntimeVersionHint: '0 always reads the current version.',
+  keyRuntimeManual: 'Entering the location by hand.',
+  keyRuntimePick: 'Pick from the storage',
 };

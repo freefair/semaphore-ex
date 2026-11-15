@@ -541,4 +541,8 @@ export default {
   secretPickerScope: 'Scope: {location}',
   secretPickerAllFolders: 'alle Ordner',
   secretPickerRoot: 'Wurzel',
+  keyRuntimeVersion: 'Version (optional)',
+  keyRuntimeVersionHint: '0 liest immer die aktuelle Version.',
+  keyRuntimeManual: 'Der Ort wird von Hand eingegeben.',
+  keyRuntimePick: 'Aus dem Storage wählen',
 };

@@ -92,20 +92,58 @@
           :menu-props="storageMenu"
         />
 
+        <template v-if="runtimeReferenceActive && !runtimeManual">
+          <SecretLocationPicker
+            :key="`runtime-${item.source_storage_id}`"
+            :model-value="runtimePickerValue"
+            store-type="vault"
+            :load="runtimeLoader"
+            :disabled="runtimeReferenceDisabled"
+            data-testid="key-runtimePicker"
+            @update:model-value="fromRuntimePicker"
+            @manual="runtimeManual = true"
+          />
+          <v-text-field
+            v-model.number="item.source_storage_version"
+            :label="$t('keyRuntimeVersion')"
+            :hint="$t('keyRuntimeVersionHint')"
+            persistent-hint
+            type="number"
+            min="0"
+            :disabled="runtimeReferenceDisabled"
+            data-testid="key-runtimeVersion"
+            variant="outlined"
+            density="compact"
+          />
+        </template>
+
+        <v-alert
+          v-if="runtimeReferenceActive && runtimeManual"
+          type="info"
+          variant="tonal"
+          density="compact"
+          class="mb-4"
+        >
+          {{ $t('keyRuntimeManual') }}
+          <template v-slot:append>
+            <v-btn variant="text" size="small" @click="runtimeManual = false">
+              {{ $t('keyRuntimePick') }}
+            </v-btn>
+          </template>
+        </v-alert>
+
         <RuntimeKeyReferenceFields
-          :active="supportStorages && sourceStorageType === 'vault'
-              && item.source_storage_id != null"
+          :active="runtimeReferenceActive && runtimeManual"
           :disabled="runtimeReferenceDisabled"
           v-model:mount="item.source_storage_mount"
           v-model:version="item.source_storage_version"
           v-model:field="item.source_storage_field"
         >
           <v-text-field
-            v-if="supportStorages && sourceStorageType === 'vault'
-              && item.source_storage_id != null"
+            v-if="runtimeReferenceActive && runtimeManual"
             v-model="item.source_storage_key"
             label="Secret path"
-            hint="Path within the mount; values are not browsed"
+            hint="Path within the mount"
             :rules="[(v) => !!v || 'Secret path is required']"
             :disabled="runtimeReferenceDisabled"
             data-testid="key-runtimePath"
@@ -329,6 +367,8 @@
 <script>
 import enhancedWatch from '@/lib/enhanced/key-form-state';
 
+import SecretLocationPicker from '@/components/enhanced/SecretLocationPicker.vue';
+import { projectStorageLoader } from '@/lib/enhanced/secret-browse';
 import RuntimeKeyReferenceFields from '@/components/enhanced/RuntimeKeyReferenceFields.vue';
 import GeneratedSSHKeyControls from '@/components/enhanced/GeneratedSSHKeyControls.vue';
 import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/key-form';
@@ -339,6 +379,7 @@ export default {
   mixins: [ItemFormBase],
 
   components: {
+    SecretLocationPicker,
     RuntimeKeyReferenceFields,
     GeneratedSSHKeyControls,
   },
@@ -350,6 +391,7 @@ export default {
 
   data() {
     return {
+      runtimeManual: false,
       showLoginPassword: false,
       showSSHPassphrase: false,
       showString: false,
@@ -386,6 +428,20 @@ export default {
   },
 
   computed: {
+    runtimeReferenceActive() {
+      return this.supportStorages && this.sourceStorageType === 'vault'
+        && this.item.source_storage_id != null;
+    },
+    runtimeLoader() {
+      return projectStorageLoader(this.projectId, this.item.source_storage_id);
+    },
+    runtimePickerValue() {
+      return {
+        mount: this.item.source_storage_mount,
+        secret: this.item.source_storage_key,
+        field: this.item.source_storage_field,
+      };
+    },
     ...enhancedComputed,
 
     sourceStorageType() {
@@ -450,6 +506,13 @@ export default {
   },
 
   methods: {
+    // A picked location fills the reference; the version stays as set, so 0
+    // keeps following the current version.
+    fromRuntimePicker(value) {
+      this.item.source_storage_mount = value.mount || '';
+      this.item.source_storage_key = value.secret || '';
+      this.item.source_storage_field = value.field || '';
+    },
     ...enhancedMethods,
     afterLoadData() {
       this.isSynced = JSON.parse(this.item.plain || '{}').dvls_id != null;
