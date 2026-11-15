@@ -459,6 +459,7 @@
           :managed="isRuntimeProvider"
             :keys="managedLocalKeys"
             :default-mount="item.params.mount || 'secret'"
+            :loader="syncLoader"
           />
         </v-card-text>
         <v-card-actions>
@@ -485,6 +486,7 @@ import { enhancedComputed, enhancedMethods } from '@/lib/enhanced/secret-storage
 
 import ItemFormBase from '@/components/ItemFormBase';
 import SecretStorageSyncOptionsForm from '@/components/SecretStorageSyncOptionsForm.vue';
+import { projectStorageLoader } from '@/lib/enhanced/secret-browse';
 import SecretSourceToggle from '@/components/SecretSourceToggle.vue';
 
 export default {
@@ -517,6 +519,13 @@ export default {
   },
 
   computed: {
+    // A saved Vault/OpenBao storage can be browsed for sync locations.
+    syncLoader() {
+      if (this.itemId === 'new' || !this.isRuntimeProvider) {
+        return null;
+      }
+      return projectStorageLoader(this.projectId, this.itemId);
+    },
     ...enhancedComputed,
 
     useIamRole() {

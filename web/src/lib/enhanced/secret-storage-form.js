@@ -39,9 +39,12 @@ export const enhancedComputed = {
       return '';
     }
     if (this.connectionHealth.state === 'healthy') {
-      return `Connection healthy (${this.connectionHealth.latency_ms || 0} ms)`;
+      const identity = this.connectionHealth.identity
+        ? `Connected as ${this.connectionHealth.identity}` : 'Connected';
+      return `${identity} (${this.connectionHealth.latency_ms || 0} ms)`;
     }
-    return `Connection failed: ${this.connectionHealth.error_category || 'unavailable'}`;
+    return this.connectionHealth.message
+      || `Connection failed: ${this.connectionHealth.error_category || 'unavailable'}`;
   },
 };
 
@@ -49,14 +52,23 @@ export const enhancedMethods = {
   async testConnection() {
     this.connectionTesting = true;
     this.connectionHealth = null;
+    const started = Date.now();
     try {
-      this.connectionHealth = (
-        await axios.post(`/api/project/${this.projectId}/secret_storages/${this.itemId}/test`)
+      // The identity test answers who the storage acts as, or says what to
+      // fix when the store refuses it.
+      const identity = (
+        await axios.post(`/api/project/${this.projectId}/secret_storages/${this.itemId}/identity`)
       ).data;
+      this.connectionHealth = {
+        state: 'healthy',
+        identity: identity.name,
+        latency_ms: Date.now() - started,
+      };
     } catch (err) {
-      this.connectionHealth = err.response?.data || {
+      this.connectionHealth = {
         state: 'failed',
-        error_category: getErrorMessage(err),
+        message: err.response?.data?.error || getErrorMessage(err),
+        error_category: err.response?.data?.reason,
       };
     } finally {
       this.connectionTesting = false;

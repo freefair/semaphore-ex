@@ -545,4 +545,7 @@ export default {
   keyRuntimeVersionHint: '0 liest immer die aktuelle Version.',
   keyRuntimeManual: 'Der Ort wird von Hand eingegeben.',
   keyRuntimePick: 'Aus dem Storage wählen',
+  syncBrowseTitle: 'Ordner im Storage wählen',
+  syncBrowseHint: 'Das Secret behält seinen Namen; die Synchronisation legt es in diesem Ordner an, falls es noch nicht existiert.',
+  syncBrowseUse: 'Diesen Ordner verwenden',
 };
