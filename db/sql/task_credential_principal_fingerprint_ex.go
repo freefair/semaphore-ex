@@ -16,16 +16,16 @@ import (
 // it. Any later write, from any node and at any time, ends the principal's
 // responsibility without depending on claim timing.
 //
-// The fingerprint covers what decides whether, when and which task runs
-// and what it receives, including activation and webhook routing. The last
-// seen commit, which the scheduler updates on its own, and names are left
-// out. Deactivation by the scheduler changes the fingerprint, but an inactive
-// schedule does not run, and reactivating it is a change of its own.
+// The fingerprint covers what decides which task runs and what it
+// receives, including webhook routing. Left out are the last seen commit and
+// activation, which the scheduler changes on its own (a one-shot schedule is
+// deactivated right after it fires, before its task is dispatched), and names.
+// Activation only decides whether the configuration the principal saved runs;
+// activating through the API is a change that moves the responsibility.
 
 type scheduleCredentialFingerprint struct {
 	TemplateID     int            `json:"template_id"`
 	CronFormat     string         `json:"cron_format"`
-	Active         bool           `json:"active"`
 	Timezone       *string        `json:"timezone"`
 	Type           string         `json:"type"`
 	DeleteAfterRun bool           `json:"delete_after_run"`
@@ -71,7 +71,6 @@ func (d *SqlDb) credentialPrincipalFingerprint(kind db.CredentialPrincipalKind, 
 		payload = scheduleCredentialFingerprint{
 			TemplateID:     schedule.TemplateID,
 			CronFormat:     schedule.CronFormat,
-			Active:         schedule.Active,
 			Timezone:       schedule.Timezone,
 			Type:           schedule.Type,
 			DeleteAfterRun: schedule.DeleteAfterRun,

@@ -267,13 +267,14 @@ func TestTaskCredentialPrincipals(t *testing.T) {
 		assert.Equal(t, first.ID, userID)
 	})
 
-	t.Run("activation outside the principal's change ends its responsibility", func(t *testing.T) {
-		require.NoError(t, store.SetScheduleActive(projectID, schedule.ID, false))
+	t.Run("the scheduler's deactivation of a fired one-shot schedule keeps the principal", func(t *testing.T) {
 		require.NoError(t, seed(db.CredentialPrincipalSchedule, schedule.ID, first.ID))
-		require.NoError(t, store.SetScheduleActive(projectID, schedule.ID, true))
-		_, found, err := store.GetTaskCredentialPrincipal(db.Task{ProjectID: projectID, ScheduleID: &schedule.ID})
+		require.NoError(t, store.SetScheduleActive(projectID, schedule.ID, false))
+		userID, found, err := store.GetTaskCredentialPrincipal(db.Task{ProjectID: projectID, ScheduleID: &schedule.ID})
 		require.NoError(t, err)
-		assert.False(t, found)
+		assert.True(t, found, "the task it just created must still receive its credentials")
+		assert.Equal(t, first.ID, userID)
+		require.NoError(t, store.SetScheduleActive(projectID, schedule.ID, true))
 	})
 
 	t.Run("routing changes outside the principal's change end its responsibility", func(t *testing.T) {
