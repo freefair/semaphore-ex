@@ -987,7 +987,7 @@ export default {
   globalSecretStorageRemoteRunnersHint: 'The machine identity goes to every remote runner that runs a task with these routes. Without this, such tasks run only on the server.',
   globalSecretStorageFromConfiguration: 'configuration file',
   globalSecretStorageScopesNone: 'none',
-  globalSecretStorageScopesCount: '{count} scopes',
+  globalSecretStorageScopesCount: '{n} scope | {n} scopes',
   globalSecretStorageScopesColumn: 'Scopes',
   globalSecretStorageRoutesColumn: 'SSH routes',
   globalSecretStorageTest: 'Test connection',

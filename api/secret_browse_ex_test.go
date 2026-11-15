@@ -119,3 +119,11 @@ func TestSecretBrowseControllerTestsDraftsFromTheBody(t *testing.T) {
 	controller.TestGlobalDraft(response, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`not json`)))
 	assert.Equal(t, http.StatusBadRequest, response.Code)
 }
+
+func TestSecretTestFailuresPointAtTheCredential(t *testing.T) {
+	response := httptest.NewRecorder()
+	writeSecretTestResult(response, nil, pro_interfaces.SecretProviderError{Category: pro_interfaces.SecretProviderErrorPermission})
+	assert.Equal(t, http.StatusBadRequest, response.Code)
+	assert.Contains(t, response.Body.String(), "refused the credential")
+	assert.NotContains(t, response.Body.String(), "list access")
+}

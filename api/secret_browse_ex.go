@@ -38,7 +38,7 @@ func (c *SecretBrowseController) TestGlobalDraft(w http.ResponseWriter, r *http.
 		return
 	}
 	identity, err := c.service.TestGlobalDraft(r.Context(), request.Storage)
-	writeSecretBrowseResult(w, identity, err)
+	writeSecretTestResult(w, identity, err)
 }
 
 // BrowseGlobalDraft lists a global connection as entered in its dialog.
@@ -58,7 +58,7 @@ func (c *SecretBrowseController) TestGlobalStorage(w http.ResponseWriter, r *htt
 		return
 	}
 	identity, err := c.service.TestGlobalStorage(r.Context(), id)
-	writeSecretBrowseResult(w, identity, err)
+	writeSecretTestResult(w, identity, err)
 }
 
 // BrowseProvider lists a global connection for the global credential form,
@@ -82,7 +82,7 @@ func (c *SecretBrowseController) TestProjectStorage(w http.ResponseWriter, r *ht
 		return
 	}
 	identity, err := c.service.TestProjectStorage(r.Context(), storage.ProjectID, storage.ID)
-	writeSecretBrowseResult(w, identity, err)
+	writeSecretTestResult(w, identity, err)
 }
 
 // BrowseProjectStorage lists one level of a project storage.
@@ -121,6 +121,21 @@ func writeSecretBrowseResult(w http.ResponseWriter, value any, err error) {
 		return
 	}
 	message, status, reason := secretBrowseFailure(err)
+	helpers.WriteJSON(w, status, map[string]string{"error": message, "reason": reason})
+}
+
+// writeSecretTestResult answers a connection test. A refusal there means the
+// credential or its policy, not a missing list permission: Vault and OpenBao
+// answer an unknown token with 403.
+func writeSecretTestResult(w http.ResponseWriter, value any, err error) {
+	if err == nil {
+		helpers.WriteJSON(w, http.StatusOK, value)
+		return
+	}
+	message, status, reason := secretBrowseFailure(err)
+	if reason == "permission" || reason == "authentication" {
+		message = "The store refused the credential. Check the token, client secret or role, and that its policy allows reading its own identity."
+	}
 	helpers.WriteJSON(w, status, map[string]string{"error": message, "reason": reason})
 }
 

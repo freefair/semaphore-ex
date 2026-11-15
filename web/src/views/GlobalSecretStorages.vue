@@ -64,7 +64,7 @@
         <span v-else-if="item.scopeCount === 0" class="text-medium-emphasis">
           {{ $t('globalSecretStorageScopesNone') }}
         </span>
-        <span v-else>{{ $t('globalSecretStorageScopesCount', { count: item.scopeCount }) }}</span>
+        <span v-else>{{ $t('globalSecretStorageScopesCount', item.scopeCount) }}</span>
       </template>
       <template v-slot:item.routes="{ item }">
         <span v-if="item.type !== 'infisical'" class="text-medium-emphasis">—</span>
@@ -127,7 +127,7 @@
               variant="outlined"
               divided
               density="comfortable"
-              class="mb-4"
+              class="mb-4 GlobalStorageType"
               :disabled="saving || !!form.id"
               data-testid="global-storage-type"
               @update:model-value="selectType"
@@ -861,3 +861,15 @@ export default {
   },
 };
 </script>
+
+<style lang="scss">
+// The type switch spans the dialog so all three types fit on a phone.
+.GlobalStorageType {
+  width: 100%;
+
+  > .v-btn {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}
+</style>

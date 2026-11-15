@@ -16,7 +16,7 @@
             @update:model-value="selectProject"
           >
             <template v-slot:item="{ props: itemProps, item }">
-              <v-list-item v-bind="itemProps" :subtitle="item.raw.value" />
+              <v-list-item v-bind="itemProps" :subtitle="item.value" />
             </template>
           </v-autocomplete>
         </v-col>

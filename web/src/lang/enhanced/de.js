@@ -507,7 +507,7 @@ export default {
   globalSecretStorageRemoteRunnersHint: 'Die Machine Identity geht an jeden Remote-Runner, der einen Task mit diesen Routen ausführt. Ohne diese Option laufen solche Tasks nur auf dem Server.',
   globalSecretStorageFromConfiguration: 'Konfigurationsdatei',
   globalSecretStorageScopesNone: 'keine',
-  globalSecretStorageScopesCount: '{count} Scopes',
+  globalSecretStorageScopesCount: '{n} Scope | {n} Scopes',
   globalSecretStorageScopesColumn: 'Scopes',
   globalSecretStorageRoutesColumn: 'SSH-Routen',
   globalSecretStorageTest: 'Verbindung testen',
