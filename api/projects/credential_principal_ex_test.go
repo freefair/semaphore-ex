@@ -1,10 +1,12 @@
 package projects
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/semaphoreui/semaphore/api/helpers"
 	"github.com/semaphoreui/semaphore/db"
@@ -164,20 +166,69 @@ func TestCredentialPrincipalMiddlewares(t *testing.T) {
 }
 
 func TestCredentialPrincipalRenewalStops(t *testing.T) {
-	repo := &countingPrincipalRepository{}
-	stop := renewCredentialPrincipalClaims(repo, db.CredentialPrincipalSchedule, map[int]string{1: "token"})
-	stop()
-	stop()
-	assert.Zero(t, repo.renewals.Load(), "no renewal is due before a fifth of the lifetime")
+	claims := map[int]string{1: "token"}
+	// settled waits until no renewal arrived for a while and returns the count.
+	settled := func(t *testing.T, repo *countingPrincipalRepository) int32 {
+		last := repo.renewals.Load()
+		for i := 0; i < 50; i++ {
+			time.Sleep(20 * time.Millisecond)
+			current := repo.renewals.Load()
+			if current == last {
+				return current
+			}
+			last = current
+		}
+		t.Fatal("renewal never stopped")
+		return 0
+	}
+
+	t.Run("a running change renews its claims", func(t *testing.T) {
+		repo := &countingPrincipalRepository{}
+		stop := renewCredentialPrincipalClaims(context.Background(), repo, db.CredentialPrincipalSchedule, claims, time.Millisecond, time.Hour)
+		assert.Eventually(t, func() bool { return repo.renewals.Load() >= 3 }, 5*time.Second, time.Millisecond)
+		stop()
+		stop()
+		count := repo.renewals.Load()
+		time.Sleep(20 * time.Millisecond)
+		assert.Equal(t, count, repo.renewals.Load(), "no renewal after stop")
+	})
+
+	t.Run("an ended request ends the renewal", func(t *testing.T) {
+		repo := &countingPrincipalRepository{}
+		ctx, cancel := context.WithCancel(context.Background())
+		stop := renewCredentialPrincipalClaims(ctx, repo, db.CredentialPrincipalSchedule, claims, time.Millisecond, time.Hour)
+		defer stop()
+		assert.Eventually(t, func() bool { return repo.renewals.Load() >= 1 }, 5*time.Second, time.Millisecond)
+		cancel()
+		settled(t, repo)
+	})
+
+	t.Run("the cap ends the renewal", func(t *testing.T) {
+		repo := &countingPrincipalRepository{}
+		stop := renewCredentialPrincipalClaims(context.Background(), repo, db.CredentialPrincipalSchedule, claims, time.Millisecond, 30*time.Millisecond)
+		defer stop()
+		settled(t, repo)
+	})
+
+	t.Run("a lost claim ends the renewal", func(t *testing.T) {
+		repo := &countingPrincipalRepository{fail: true}
+		stop := renewCredentialPrincipalClaims(context.Background(), repo, db.CredentialPrincipalSchedule, claims, time.Millisecond, time.Hour)
+		defer stop()
+		assert.Equal(t, int32(1), settled(t, repo))
+	})
 }
 
 type countingPrincipalRepository struct {
 	db.TaskCredentialPrincipalRepository
 	renewals atomic.Int32
+	fail     bool
 }
 
 func (r *countingPrincipalRepository) RenewCredentialPrincipalChange(db.CredentialPrincipalKind, int, string) error {
 	r.renewals.Add(1)
+	if r.fail {
+		return db.ErrInvalidOperation
+	}
 	return nil
 }
 

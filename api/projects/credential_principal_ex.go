@@ -1,6 +1,7 @@
 package projects
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"time"
@@ -122,7 +123,7 @@ func guardCredentialPrincipalChange(w http.ResponseWriter, r *http.Request, next
 		}
 		claims[id] = token
 	}
-	stopRenewal := renewCredentialPrincipalClaims(repo, kind, claims)
+	stopRenewal := renewCredentialPrincipalClaims(r.Context(), repo, kind, claims, db.CredentialPrincipalClaimLifetime/5, maxCredentialPrincipalRenewal)
 	defer stopRenewal()
 	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	defer func() {
@@ -146,24 +147,40 @@ func guardCredentialPrincipalChange(w http.ResponseWriter, r *http.Request, next
 	}
 }
 
+// maxCredentialPrincipalRenewal bounds how long one request can hold a
+// trigger. A request that is still running afterwards lets its claim
+// expire; if it finishes later, it finds the claim lost and leaves the
+// trigger without principal.
+const maxCredentialPrincipalRenewal = 3 * db.CredentialPrincipalClaimLifetime
+
 // renewCredentialPrincipalClaims keeps the claims of a running change
-// alive, so they expire only when this node dies or stalls. The returned
-// function stops the renewal and may be called more than once.
-func renewCredentialPrincipalClaims(repo db.TaskCredentialPrincipalRepository, kind db.CredentialPrincipalKind, claims map[int]string) func() {
+// alive, so they expire only when this node dies or stalls. Renewal ends
+// when the request ends, after maxDuration, or when a claim is lost. The
+// returned function stops the renewal and may be called more than once.
+func renewCredentialPrincipalClaims(ctx context.Context, repo db.TaskCredentialPrincipalRepository, kind db.CredentialPrincipalKind, claims map[int]string, interval time.Duration, maxDuration time.Duration) func() {
 	done := make(chan struct{})
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		ticker := time.NewTicker(db.CredentialPrincipalClaimLifetime / 5)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+		deadline := time.NewTimer(maxDuration)
+		defer deadline.Stop()
 		for {
 			select {
 			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-deadline.C:
+				log.WithFields(log.Fields{"kind": kind, "context": "credential_principal"}).
+					Warn("a change held its trigger for too long; its claim is left to expire")
 				return
 			case <-ticker.C:
 				for id, token := range claims {
 					if err := repo.RenewCredentialPrincipalChange(kind, id, token); err != nil {
 						logPrincipalError(err, kind, id, "failed to renew the credential principal claim")
+						return
 					}
 				}
 			}
