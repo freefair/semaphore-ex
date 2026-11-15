@@ -3,7 +3,6 @@ package sql
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"time"
 
 	"github.com/semaphoreui/semaphore/db"
@@ -15,6 +14,14 @@ var _ db.TaskCredentialPrincipalRepository = (*SqlDb)(nil)
 // credentialPrincipalClaimLifetime bounds how long a crashed request can
 // keep a trigger claimed; the trigger has no principal meanwhile.
 const credentialPrincipalClaimLifetime = time.Minute
+
+// errLostCredentialPrincipalClaim reports a change whose claim another
+// change took over; the trigger is left without principal.
+const errLostCredentialPrincipalClaim = credentialPrincipalError("the credential principal claim was lost")
+
+type credentialPrincipalError string
+
+func (e credentialPrincipalError) Error() string { return string(e) }
 
 func credentialPrincipalTable(kind db.CredentialPrincipalKind) (string, string, error) {
 	switch kind {
@@ -90,7 +97,9 @@ func (d *SqlDb) BeginCredentialPrincipalChange(kind db.CredentialPrincipalKind, 
 }
 
 // FinishCredentialPrincipalChange makes userID the principal if the claim
-// is still this change's.
+// is still this change's. A lost claim means another change took the
+// trigger over while this one ran, so neither can tell whose configuration
+// was written last: the trigger is invalidated instead.
 func (d *SqlDb) FinishCredentialPrincipalChange(kind db.CredentialPrincipalKind, triggerID int, token string, userID int) error {
 	table, column, err := credentialPrincipalTable(kind)
 	if err != nil || token == "" || userID <= 0 {
@@ -102,16 +111,43 @@ func (d *SqlDb) FinishCredentialPrincipalChange(kind db.CredentialPrincipalKind,
 	if err != nil {
 		return err
 	}
-	return requireOneRow(result, errors.New("the credential principal claim was lost"))
+	if requireOneRow(result, errLostCredentialPrincipalClaim) == nil {
+		return nil
+	}
+	if err = d.invalidateCredentialPrincipal(table, column, triggerID); err != nil {
+		return err
+	}
+	return errLostCredentialPrincipalClaim
 }
 
-// AbortCredentialPrincipalChange releases a claim without a principal.
+// AbortCredentialPrincipalChange releases a claim without a principal. A
+// lost claim invalidates the trigger, as in FinishCredentialPrincipalChange.
 func (d *SqlDb) AbortCredentialPrincipalChange(kind db.CredentialPrincipalKind, triggerID int, token string) error {
 	table, column, err := credentialPrincipalTable(kind)
 	if err != nil || token == "" {
 		return db.ErrInvalidOperation
 	}
-	_, err = d.exec("update "+table+" set pending_token=NULL, pending_since=NULL where "+column+"=? and pending_token=?", triggerID, token)
+	result, err := d.exec("update "+table+" set pending_token=NULL, pending_since=NULL where "+column+"=? and pending_token=?", triggerID, token)
+	if err != nil {
+		return err
+	}
+	if requireOneRow(result, errLostCredentialPrincipalClaim) == nil {
+		return nil
+	}
+	return d.invalidateCredentialPrincipal(table, column, triggerID)
+}
+
+// invalidateCredentialPrincipal removes the principal and replaces any claim
+// with a fresh token nobody holds, so a change that took the trigger over
+// cannot finish either. The trigger has no principal until a later change
+// completes without interference.
+func (d *SqlDb) invalidateCredentialPrincipal(table string, column string, triggerID int) error {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return err
+	}
+	_, err := d.exec("update "+table+" set user_id=NULL, pending_token=?, pending_since=? where "+column+"=?",
+		hex.EncodeToString(raw), tz.Now(), triggerID)
 	return err
 }
 
