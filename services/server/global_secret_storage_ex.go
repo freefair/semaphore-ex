@@ -141,7 +141,14 @@ func normalizeGlobalSecretStorage(storage *db.GlobalSecretStorage, requireSecret
 	}
 	if storage.SourceStorageType != nil {
 		switch *storage.SourceStorageType {
-		case db.AccessKeySourceStorageEnv, db.AccessKeySourceStorageFile:
+		case db.AccessKeySourceStorageEnv:
+			// Semaphore's own settings, such as its encryption keys, are never
+			// a connection credential: sending one to a connection's address
+			// would hand it to whoever chose the address.
+			if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(storage.Secret)), "SEMAPHORE_") {
+				return common_errors.NewValidationError("a SEMAPHORE_ variable cannot be a connection credential")
+			}
+		case db.AccessKeySourceStorageFile:
 		default:
 			return common_errors.NewValidationError("unsupported credential source")
 		}
@@ -452,7 +459,7 @@ func (s *globalInfisicalSecretSource) resolveKV(
 // address of their choice.
 func connectionTargetChanged(current db.GlobalSecretStorage, edited db.GlobalSecretStorage) bool {
 	for _, key := range []string{"url", "ca_certificate", "namespace", "auth_method", "auth_mount", "client_id", "organization_slug"} {
-		if fmt.Sprint(current.Params[key]) != fmt.Sprint(edited.Params[key]) {
+		if paramText(current.Params[key]) != paramText(edited.Params[key]) {
 			return true
 		}
 	}
@@ -466,4 +473,18 @@ func connectionTargetChanged(current db.GlobalSecretStorage, edited db.GlobalSec
 
 func errNewCredentialRequired() error {
 	return common_errors.NewValidationError("enter the credential again: the address or authentication of the connection changed")
+}
+
+// paramText compares parameters by their text: absent and empty are the
+// same, everything else must match exactly, so the string "<nil>" is not
+// mistaken for an absent value.
+func paramText(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	default:
+		return fmt.Sprintf("%T:%v", value, value)
+	}
 }

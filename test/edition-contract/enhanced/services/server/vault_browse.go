@@ -76,6 +76,9 @@ func (c *vaultOpenBaoClient) ListKVMounts(
 			continue
 		}
 		nodes = append(nodes, pro_interfaces.SecretBrowseNode{Kind: pro_interfaces.SecretBrowseMount, Name: name, Value: name})
+		if len(nodes) >= maximumBrowseEntries {
+			break
+		}
 	}
 	return sortedBrowseNodes(nodes), nil
 }
@@ -170,6 +173,9 @@ func (c *vaultOpenBaoClient) ListKVFields(
 		nodes = append(nodes, pro_interfaces.SecretBrowseNode{
 			Kind: pro_interfaces.SecretBrowseField, Name: field, Value: field, Version: response.Data.Metadata.Version,
 		})
+		if len(nodes) >= maximumBrowseEntries {
+			break
+		}
 	}
 	clear(response.Data.Data)
 	return sortedBrowseNodes(nodes), nil

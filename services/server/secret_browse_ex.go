@@ -3,8 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
-	"hash/fnv"
 	"strings"
 
 	"github.com/semaphoreui/semaphore/db"
@@ -151,6 +149,9 @@ func (s *secretBrowseService) BrowseGlobalStorage(
 		}
 		return session.browse(ctx, location, scopes)
 	case db.SecretStorageTypeVault, db.SecretStorageTypeOpenBao:
+		if !kvLocationAllowed(location, scopes) {
+			return []pro_interfaces.SecretBrowseNode{}, nil
+		}
 		connection, err := s.globalKVConnection(storage)
 		if err != nil {
 			return nil, err
@@ -393,6 +394,22 @@ func filterKVScopes(nodes []pro_interfaces.SecretBrowseNode, location pro_interf
 	return filtered
 }
 
+// kvLocationAllowed decides before any provider call whether a scoped
+// listing may touch a location: mounts are listed and filtered afterwards;
+// a folder must lie inside a scope or on the way to one; field names, which
+// require reading the secret, only inside a scope.
+func kvLocationAllowed(location pro_interfaces.SecretBrowseLocation, scopes []db.GlobalSecretStorageScope) bool {
+	if scopes == nil || location.Mount == "" {
+		return true
+	}
+	if location.Secret != "" {
+		inside, _ := scopeFolderAccess(scopes, location.Mount, "", location.Secret)
+		return inside
+	}
+	inside, onTheWay := scopeFolderAccess(scopes, location.Mount, "", location.Path)
+	return inside || len(onTheWay) > 0
+}
+
 func joinBrowsePath(parent string, name string) string {
 	if parent == "" {
 		return name
@@ -500,9 +517,8 @@ func draftStorageID(storage db.GlobalSecretStorage) int {
 
 // globalKVCacheID keys a saved connection's token cache by its ID and
 // revision, so a changed address or credential never reuses a token issued
-// before the change.
+// before the change. The key is collision-free: the ID fills the high and
+// the revision the low 31 bits.
 func globalKVCacheID(storage db.GlobalSecretStorage) int {
-	hash := fnv.New32a()
-	_, _ = fmt.Fprintf(hash, "global-secret-storage:%d:%d", storage.ID, storage.Revision)
-	return int(hash.Sum32()&0x3fffffff) + 1
+	return storage.ID<<31 | (storage.Revision & 0x7fffffff)
 }

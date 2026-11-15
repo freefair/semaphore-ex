@@ -302,3 +302,50 @@ func TestGlobalCredentialProviderRouterReadsVaultThroughScopedConnections(t *tes
 		assert.Error(t, err)
 	})
 }
+
+func TestSecretBrowseServiceDoesNotReadOutsideScopes(t *testing.T) {
+	kv := &fakeKV{}
+	browse, storages, _ := browseFixture(t, kv)
+	storage, err := storages.Create(db.GlobalSecretStorage{
+		Name: "Vault", Type: db.SecretStorageTypeVault, Secret: "vault-token",
+		Params: db.MapStringAnyField{"url": "https://vault.example.test",
+			"secret_scopes": []any{map[string]any{"project_id": "secret", "path": "apps/web"}}},
+	})
+	require.NoError(t, err)
+	before := len(kv.credentials)
+
+	for _, location := range []pro_interfaces.SecretBrowseLocation{
+		{Mount: "secret", Secret: "infra/root"},
+		{Mount: "secret", Path: "infra"},
+		{Mount: "other"},
+	} {
+		nodes, err := browse.BrowseGlobalStorage(context.Background(), storage.ID, location, true)
+		require.NoError(t, err)
+		assert.Empty(t, nodes, location)
+	}
+	assert.Len(t, kv.credentials, before, "the store is not asked about locations outside the scopes")
+}
+
+func TestGlobalSecretStorageGuardsTheStoredCredential(t *testing.T) {
+	t.Run("Semaphore's own settings are no connection credential", func(t *testing.T) {
+		source := db.AccessKeySourceStorageEnv
+		storage := db.GlobalSecretStorage{Name: "Vault", Type: db.SecretStorageTypeVault, Secret: "semaphore_access_key_encryption",
+			SourceStorageType: &source, Params: db.MapStringAnyField{"url": "https://vault.example.test"}}
+		assert.ErrorContains(t, normalizeGlobalSecretStorage(&storage, true, &fakeKV{}), "SEMAPHORE_")
+	})
+
+	t.Run("an absent setting differs from the text <nil>", func(t *testing.T) {
+		current := db.GlobalSecretStorage{Params: db.MapStringAnyField{"url": "https://vault.example.test"}}
+		edited := db.GlobalSecretStorage{Params: db.MapStringAnyField{"url": "https://vault.example.test", "namespace": "<nil>"}}
+		assert.True(t, connectionTargetChanged(current, edited))
+	})
+
+	t.Run("token caches of different connections never share a key", func(t *testing.T) {
+		assert.NotEqual(t,
+			globalKVCacheID(db.GlobalSecretStorage{ID: 11, Revision: 3533}),
+			globalKVCacheID(db.GlobalSecretStorage{ID: 52, Revision: 2100}))
+		assert.NotEqual(t,
+			globalKVCacheID(db.GlobalSecretStorage{ID: 1, Revision: 2}),
+			globalKVCacheID(db.GlobalSecretStorage{ID: 2, Revision: 1}))
+	})
+}
