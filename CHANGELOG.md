@@ -12,6 +12,39 @@ release, so every release needs its section here before the tag is pushed.
 
 ## [Unreleased]
 
+## [v2.20.24-ex.2.1.10] - 2026-11-15
+
+Based on upstream Semaphore UI release v2.20.24. Passwords, license keys and
+other secrets can now be configured once for the whole server and passed to any
+task, with Infisical as a source.
+
+### Added
+
+- Variable Groups reference global credentials granted to their project, as an
+  extra variable or an environment variable. Tasks receive the value at
+  dispatch, locally and on runners; it never becomes a command-line argument
+  and is redacted in the task log. Terraform and OpenTofu receive extra
+  variables as `TF_VAR_<name>`.
+- Global Infisical connections under Administration > Global secret storages.
+  A global credential can read one secret from a connection, limited to the
+  project, environment and folder scopes an administrator sets. A connection
+  can also carry PAM SSH routes for selected projects; its machine identity
+  reaches remote runners only when the connection allows it.
+- Grants have a new operation, *schedules and integrations*, that lets tasks
+  without a starting user consume a credential. The user who last saved the
+  schedule or integration answers for it and must be active and allowed to
+  consume; any later change by someone else ends that responsibility.
+
+### Upgrade notes
+
+- Migrations `v2.20.18-ex1.4` and `v2.20.18-ex1.5` add the Variable Group
+  references, the credential principals of schedules and integrations, and the
+  global secret storages.
+- Unattended use is off for every existing grant. Schedules and integrations
+  that should receive a credential need the new grant operation and a save by a
+  user allowed to consume it.
+- Variable Group references are not part of project backups.
+
 ## [v2.20.24-ex.2.1.9] - 2026-11-15
 
 Based on upstream Semaphore UI release v2.20.24. A usability overhaul of
