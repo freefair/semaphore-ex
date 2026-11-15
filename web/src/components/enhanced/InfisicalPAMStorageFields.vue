@@ -1,6 +1,7 @@
 <template>
   <div data-testid="secretStorage-infisical">
-    <v-alert variant="tonal" type="info" density="compact">
+    <template v-if="section !== 'routes'">
+    <v-alert v-if="section === 'all'" variant="tonal" type="info" density="compact">
       {{ $t('infisicalPamNotice') }}
     </v-alert>
 
@@ -74,7 +75,9 @@
       variant="outlined"
       density="compact"
     ></v-textarea>
+    </template>
 
+    <template v-if="section !== 'connection'">
     <div class="d-flex align-center mb-2">
       <div class="text-body-large">{{ $t('infisicalPamRoutes') }}</div>
       <v-spacer />
@@ -131,6 +134,7 @@
     <v-alert v-if="routeList.length === 0" variant="tonal" density="compact" type="warning">
       {{ $t('infisicalPamNoRoutes') }}
     </v-alert>
+    </template>
   </div>
 </template>
 
@@ -150,6 +154,9 @@ export default {
   ],
   components: { SecretSourceToggle },
   props: {
+    // 'all' shows connection and SSH routes; 'connection' and 'routes' show
+    // one part, so a dialog can place its connection test between them.
+    section: { type: String, default: 'all' },
     clientId: String,
     organizationSlug: String,
     sessionDuration: String,

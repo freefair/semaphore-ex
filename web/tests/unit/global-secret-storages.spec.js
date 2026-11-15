@@ -115,3 +115,33 @@ describe('global credential reference fields', () => {
     expect(referencePayload({ ...form, version: 2 })).to.not.have.property('environment');
   });
 });
+
+describe('GlobalSecretStorages storageBody', () => {
+  it('sends only the settings a connection type has', async () => {
+    const { storageBody } = await import('@/views/GlobalSecretStorages.vue');
+    const body = storageBody({
+      id: null,
+      name: 'Vault',
+      type: 'vault',
+      params: {
+        url: 'https://vault.example.test', namespace: '', auth_method: 'approle', role_id: 'semaphore', secret_scopes: [{ project_id: 'secret', environment: '', path: 'apps' }],
+      },
+      secret: 'secret-id',
+      project_ids: [3],
+    }, 'database');
+    expect(body.params).to.deep.equal({
+      url: 'https://vault.example.test', auth_method: 'approle', role_id: 'semaphore', secret_scopes: [{ project_id: 'secret', environment: '', path: 'apps' }],
+    });
+    expect(body.project_ids).to.deep.equal([], 'project assignments belong to Infisical SSH routes');
+    expect(body.source_storage_type).to.equal(undefined);
+  });
+
+  it('marks a credential read from an environment variable', async () => {
+    const { storageBody } = await import('@/views/GlobalSecretStorages.vue');
+    const body = storageBody({
+      type: 'infisical', params: { url: 'https://app.infisical.com', secret_scopes: [] }, project_ids: [1], secret: 'INFISICAL_SECRET',
+    }, 'env');
+    expect(body.source_storage_type).to.equal('env');
+    expect(body.project_ids).to.deep.equal([1]);
+  });
+});
