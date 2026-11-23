@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/semaphoreui/semaphore/api/sockets"
 	"github.com/semaphoreui/semaphore/db"
 	"github.com/semaphoreui/semaphore/pkg/task_logger"
@@ -153,6 +154,22 @@ func (t *TaskRunner) resolveExecutionSnapshotInventory() error {
 		t.Inventory.Repository.SSHKey = key
 		if err = t.pool.encryptionService.DeserializeSecret(&t.Inventory.Repository.SSHKey); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// decryptInventoryKeys decrypts the inventory user and become keys in place:
+// the task SSH agent and container credentials read them directly.
+func (t *TaskRunner) decryptInventoryKeys() error {
+	if t.Inventory.SSHKeyID != nil && t.Inventory.SSHKey.Type != db.AccessKeyNone {
+		if err := t.pool.encryptionService.DeserializeSecret(&t.Inventory.SSHKey); err != nil {
+			return fmt.Errorf("resolving inventory SSH key %d: %w", *t.Inventory.SSHKeyID, err)
+		}
+	}
+	if t.Inventory.BecomeKeyID != nil && t.Inventory.BecomeKey.Type != db.AccessKeyNone {
+		if err := t.pool.encryptionService.DeserializeSecret(&t.Inventory.BecomeKey); err != nil {
+			return fmt.Errorf("resolving inventory become key %d: %w", *t.Inventory.BecomeKeyID, err)
 		}
 	}
 	return nil
