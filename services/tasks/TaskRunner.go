@@ -808,6 +808,9 @@ func (t *TaskRunner) populateDetails() error {
 			return err
 		}
 	}
+	if err = t.decryptInventoryKeys(); err != nil {
+		return err
+	}
 
 	if executionSnapshot != nil {
 		if err = t.resolveExecutionSnapshotTemplateVaults(); err != nil {
